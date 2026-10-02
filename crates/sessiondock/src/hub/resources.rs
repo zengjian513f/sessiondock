@@ -299,3 +299,86 @@ pub async fn probe(
     }).buffer_unordered(8).collect().await;
     Ok(json!({"partial":results.iter().any(|r| r["ok"] != true),"nodes":results}))
 }
+
+/// One cached collector snapshot per node for the entire sidebar, not a fleet
+/// request for each historical session. Rows use native identities, never UIDs.
+pub fn list_summary(documents: Vec<(String, Value)>, mut partial: bool) -> Value {
+    let mut sessions: BTreeMap<(String, String, String), (Session, Vec<Value>)> = BTreeMap::new();
+    for (node_id, document) in documents {
+        let Ok(resources) = serde_json::from_value::<Resources>(document) else {
+            partial = true;
+            continue;
+        };
+        let age = now() - resources.sampled_at;
+        if resources.version != 1
+            || resources.node_id != node_id
+            || resources.boot_id.is_empty()
+            || !age.is_finite()
+            || !(-5.0..=15.0).contains(&age)
+        {
+            partial = true;
+            continue;
+        }
+        for row in process_links::resource_summary::sessions(&resources) {
+            let Ok(session) = serde_json::from_value::<Session>(row["session"].clone()) else {
+                continue;
+            };
+            sessions
+                .entry((
+                    session.node_id.clone(),
+                    session.source.clone(),
+                    session.sid.clone(),
+                ))
+                .or_insert_with(|| (session, Vec::new()))
+                .1
+                .push(row);
+        }
+    }
+    let rows: Vec<_> = sessions
+        .into_values()
+        .map(|(session, rows)| {
+            let all = process_links::resource_summary::totals(&rows);
+            let metrics: serde_json::Map<_, _> = [
+                "cpu_cores",
+                "memory_pss_bytes",
+                "proc_storage_read_bytes_per_second",
+                "proc_storage_write_bytes_per_second",
+            ]
+            .into_iter()
+            .map(|key| (key.to_owned(), all[key].clone()))
+            .collect();
+            json!({"session":session,"metrics":metrics})
+        })
+        .collect();
+    json!({"sampled_at":now(),"scope":"direct","partial":partial,"sessions":rows})
+}
+
+pub async fn get_list_summary(registry: &Registry, client: &Client) -> Value {
+    let results: Vec<_> = stream::iter(registry.all())
+        .map(|node| async move {
+            if registry.offline(&node.id) {
+                return None;
+            }
+            let target = registry.target(&node).ok()?;
+            match tokio::time::timeout(
+                Duration::from_secs(3),
+                client.json(
+                    &target,
+                    "GET",
+                    "/api/resources",
+                    None,
+                    Duration::from_secs(3),
+                ),
+            )
+            .await
+            {
+                Ok(Ok((200, value))) => Some((node.id.clone(), value)),
+                _ => None,
+            }
+        })
+        .buffer_unordered(8)
+        .collect()
+        .await;
+    let partial = results.iter().any(Option::is_none);
+    list_summary(results.into_iter().flatten().collect(), partial)
+}
