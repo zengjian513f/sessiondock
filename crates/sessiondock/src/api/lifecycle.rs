@@ -509,11 +509,24 @@ async fn resolve_resume(
                     message: "原生会话身份缺失、冲突或不支持续接；不会按显示 SID、文件名或目录猜测"
                         .into(),
                 })?;
-            let cwd = snapshot.list["sessions"]
+            let row = snapshot.list["sessions"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .find(|row| row["uid"] == scope.uid)
+                .find(|row| row["uid"] == scope.uid);
+            if scope.source == "opencode"
+                && row
+                    .and_then(|row| row["path"].as_str())
+                    .is_some_and(|path| {
+                        crate::sessions::opencode::isolated_store(std::path::Path::new(path))
+                    })
+            {
+                return Err(crate::sessions::SessionError {
+                    status: 501,
+                    message: crate::sessions::opencode::ISOLATED_CONTROL_NOTE.to_owned(),
+                });
+            }
+            let cwd = row
                 .and_then(|row| row["cwd"].as_str())
                 .filter(|cwd| !cwd.is_empty())
                 .map(str::to_owned);

@@ -14,6 +14,7 @@ loopback server, temporary directories only.
 import base64
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import sys
@@ -214,7 +215,8 @@ def main():
                 page.locator('#q').press('Enter')
                 page.wait_for_function("old => String(document.querySelector('#stat').dataset.seq || '') !== old", arg=old)
                 expect(page.locator(f'#side .item[data-uid="{seeded["uid"]}"]')).to_be_visible()
-                expect(page.locator(f'#side .item[data-uid="{seeded["uid"]}"] .m')).to_contain_text('命中')
+                expect(page.locator(f'#side .item[data-uid="{seeded["uid"]}"] .m [title]').first) \
+                    .to_have_attribute('title', re.compile('命中'))
                 page.locator('#q').fill('')
                 page.locator('#q').press('Enter')
 
