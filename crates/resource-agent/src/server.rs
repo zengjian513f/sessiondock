@@ -136,6 +136,7 @@ impl Config {
 struct Diagnostic {
     supported: bool,
     deadline: Option<Instant>,
+    leases: BTreeMap<Option<String>, Instant>,
     state: &'static str,
     window: IoWindow,
     lost: Arc<AtomicU64>,
@@ -157,13 +158,17 @@ impl Diagnostic {
 fn diagnostic_worker(uid: u32, control: Arc<Mutex<Diagnostic>>) {
     let mut child: Option<std::process::Child> = None;
     let mut receiver = None;
+    let mut sent_deadline = None;
     loop {
         let mut d = control.lock().unwrap_or_else(|e| e.into_inner());
+        d.leases.retain(|_, deadline| *deadline > Instant::now());
+        d.deadline = d.leases.values().copied().max();
         let expired = d
             .deadline
             .is_some_and(|deadline| deadline <= Instant::now());
         if STOP.load(Ordering::Relaxed) || expired || d.deadline.is_none() {
             d.deadline = None;
+            d.leases.clear();
             d.window = IoWindow::new(false);
             if let Some(mut running) = child.take() {
                 let failed = d.state == "failed";
@@ -186,13 +191,28 @@ fn diagnostic_worker(uid: u32, control: Arc<Mutex<Diagnostic>>) {
             match io_events::start(uid, sender, d.lost.clone()) {
                 Ok(running) => {
                     child = Some(running);
+                    sent_deadline = None;
                     receiver = Some(rx);
                 }
                 Err(error) => {
                     eprintln!("I/O probe start failed: {error}");
                     d.deadline = None;
+                    d.leases.clear();
                     d.state = "failed";
                     d.window = IoWindow::new(false);
+                }
+            }
+        }
+        if let (Some(running), Some(deadline)) = (child.as_mut(), d.deadline) {
+            if sent_deadline != Some(deadline) {
+                if io_events::renew(running, deadline.saturating_duration_since(Instant::now()))
+                    .is_ok()
+                {
+                    sent_deadline = Some(deadline);
+                } else {
+                    d.state = "failed";
+                    d.deadline = None;
+                    d.leases.clear();
                 }
             }
         }
@@ -203,6 +223,7 @@ fn diagnostic_worker(uid: u32, control: Arc<Mutex<Diagnostic>>) {
                     io_events::Event::Failed => {
                         d.state = "failed";
                         d.deadline = None;
+                        d.leases.clear();
                     }
                     _ => {}
                 }
@@ -218,6 +239,7 @@ fn diagnostic_worker(uid: u32, control: Arc<Mutex<Diagnostic>>) {
                     d.state = "failed";
                 }
                 d.deadline = None;
+                d.leases.clear();
                 d.window = IoWindow::new(false);
             }
         }
@@ -256,21 +278,41 @@ impl State {
             Request::Health => Ok(
                 json!({"service":"resource-agent", "version":1, "node_id":self.engine.node_id, "boot_id":self.engine.boot_id, "sampled_at":self.report.sampled_at,"collector":self.status,"processes":self.snapshot.entries.len(),"fork_events":self.forks,"exec_events":self.execs,"exit_events":self.exits}),
             ),
-            Request::Probe { enabled } => {
+            Request::Probe {
+                enabled,
+                lease_id,
+                lease_seconds,
+            } => {
                 let mut diagnostic = self.diagnostic.lock().unwrap_or_else(|e| e.into_inner());
                 if !diagnostic.supported {
                     return Err("此机器不支持临时 I/O 探测");
                 }
+                diagnostic
+                    .leases
+                    .retain(|_, deadline| *deadline > Instant::now());
+                let was_active = diagnostic.deadline.is_some_and(|d| d > Instant::now());
                 if enabled {
-                    // Repeated clicks never extend an existing lease.
-                    if diagnostic.deadline.is_none() && diagnostic.state != "stopping" {
-                        diagnostic.deadline = Some(Instant::now() + Duration::from_secs(60));
-                        diagnostic.state = "starting";
-                        diagnostic.window = IoWindow::new(true);
-                        diagnostic.lost.store(0, Ordering::Relaxed);
+                    if lease_id.is_some() || !diagnostic.leases.contains_key(&None) {
+                        let seconds = if lease_id.is_some() {
+                            lease_seconds.unwrap_or(60).clamp(1, 60)
+                        } else {
+                            60
+                        };
+                        diagnostic
+                            .leases
+                            .insert(lease_id, Instant::now() + Duration::from_secs(seconds));
                     }
+                } else if lease_id.is_some() {
+                    diagnostic.leases.remove(&lease_id);
                 } else {
-                    diagnostic.deadline = None;
+                    diagnostic.leases.clear();
+                }
+                diagnostic.deadline = diagnostic.leases.values().copied().max();
+                if diagnostic.deadline.is_some() && !was_active {
+                    diagnostic.state = "starting";
+                    diagnostic.window = IoWindow::new(true);
+                    diagnostic.lost.store(0, Ordering::Relaxed);
+                } else if diagnostic.deadline.is_none() {
                     if matches!(diagnostic.state, "starting" | "active") {
                         diagnostic.state = "stopping";
                     }
@@ -1123,6 +1165,10 @@ pub fn run() -> io::Result<()> {
     let diagnostic = Arc::new(Mutex::new(Diagnostic {
         supported: config.events && config.proc_root == Path::new("/proc"),
         deadline: io_enabled.then(|| Instant::now() + Duration::from_secs(60)),
+        leases: io_enabled
+            .then(|| (None, Instant::now() + Duration::from_secs(60)))
+            .into_iter()
+            .collect(),
         state: if io_enabled { "starting" } else { "off" },
         window: IoWindow::new(io_enabled),
         lost: Arc::new(AtomicU64::new(0)),

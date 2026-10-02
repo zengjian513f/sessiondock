@@ -4,6 +4,7 @@
   const fields = [
     ['cpu_cores', 'CPU', 'core'], ['gpu_count', 'GPU', 'gpu'],
     ['gpu_memory_bytes', '显存', 'bytes'], ['memory_pss_bytes', '内存 · PSS', 'bytes'],
+    ['process_count', '进程数', 'count'],
     ['memory_bandwidth_bytes_per_second', '内存带宽', 'rate'],
     ['proc_storage_read_bytes_per_second', '存储层读取', 'rate'], ['proc_storage_write_bytes_per_second', '存储层写入', 'rate'],
     ['disk_read_operations_per_second', '本地读次数', 'ops'], ['disk_write_operations_per_second', '本地写次数', 'ops'],
@@ -17,6 +18,7 @@
     disk_write_operations_per_second: '60 秒临时探测：本地普通文件成功写入次数；不是硬盘物理 IOPS，不含内存映射、io_uring 和 splice。',
     nfs_read_operations_per_second: '60 秒临时探测：NFS 文件成功读取次数，含缓存命中；不是远程 RPC 次数，不含内存映射、io_uring 和 splice。',
     nfs_write_operations_per_second: '60 秒临时探测：NFS 文件成功写入次数；不是远程 RPC 次数，不含内存映射、io_uring 和 splice。',
+    process_count: '当前采样中已归属的进程数，按机器和进程身份去重。',
     cpu_cores: '占用的逻辑 CPU 核数；不同机器的核数不代表相同算力。',
     gpu_count: '使用到的计算设备数，同机按设备去重；不代表独占或满卡算力。约 10 秒更新。',
     gpu_memory_bytes: '计算进程的显存占用；不含纯图形任务，共享计算服务可能无法细分到工作进程。约 10 秒更新。',
@@ -34,6 +36,7 @@
   const reasons = {unsupported: '采集端不支持', unavailable: '暂无采样', offline: '机器离线', stale: '采样已过期', partial: '部分覆盖', warming_up: '等待下一次采样'};
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[ch]));
   function number(value, unit) {
+    if (unit === 'count') return `${value.toLocaleString('zh-CN')}<small> 个</small>`;
     if (unit === 'ops') return `${value.toLocaleString('zh-CN', {maximumFractionDigits: 1})}<small> 次/s</small>`;
     if (unit === 'core') return `${value.toLocaleString('zh-CN', {maximumFractionDigits: 2})}<small> 核</small>`;
     if (unit === 'gpu') return `${value.toLocaleString('zh-CN')}<small> 张</small>`;
@@ -54,21 +57,21 @@
       return `<div class="sr-metric${item.status === 'partial' ? ' sr-partial' : ''}" tabindex="0" title="${esc(tip)}"><dt>${label}</dt><dd>${usable ? number(item.value, unit) : '—'}</dd></div>`;
     }).join('');
   }
-  const probeTip = '在关联机器上临时开启逐次调用的文件 I/O、NFS 和网络测量，会增加采集开销，其他受监控会话也共享探测；停止会关闭这些机器的共享探测。60 秒后自动停止，关闭页面也不影响到期停止。';
-  const probeStates = {off:'未开启', starting:'正在启动', active:'探测中', stopping:'正在停止', failed:'探测失败', unsupported:'不支持探测'};
+  const probeStates = {off:'未探测', starting:'正在启动', active:'探测中', stopping:'正在停止', failed:'探测失败', unsupported:'不支持探测'};
   function diagnostic(node) {
     const item = node.diagnostic;
     if (!item) return '';
     const seconds = Math.max(0, Math.ceil(Number(item.remaining_seconds) || 0));
-    return `<span class="sr-diagnostic${item.state === 'failed' ? ' sr-error' : ''}" data-probe-state="${esc(item.state)}" data-probe-seconds="${seconds}" title="${esc(item.error || probeTip)}">${esc(probeStates[item.state] || '探测状态未知')}${item.state === 'active' ? ` · ${seconds} 秒` : ''}${item.error ? ` · ${esc(item.error)}` : ''}</span>`;
+    return `<span class="sr-diagnostic${item.state === 'failed' ? ' sr-error' : ''}" data-probe-state="${esc(item.state)}" data-probe-seconds="${seconds}">${esc(probeStates[item.state] || '探测状态未知')}${item.error ? ` · ${esc(item.error)}` : ''}</span>`;
   }
+  let probeSupported = false, observedProbeState = 'off';
   function updateProbe(data) {
     const nodes = data.nodes || [];
-    const running = nodes.some(node => ['starting', 'active', 'stopping'].includes(node.diagnostic?.state));
-    const button = dialog.querySelector('.sr-probe');
-    button.textContent = running ? '停止探测' : '探测 60 秒';
-    button.dataset.enabled = String(running);
-    button.disabled = probePending || !nodes.length || nodes.every(node => node.diagnostic?.state === 'unsupported');
+    probeSupported = nodes.some(node => node.diagnostic && node.diagnostic.state !== 'unsupported');
+    observedProbeState = nodes.some(node => node.diagnostic?.state === 'active') ? 'active'
+      : nodes.some(node => node.diagnostic?.state === 'starting') ? 'starting'
+      : nodes.some(node => node.diagnostic?.state === 'failed') ? 'failed' : 'off';
+    paintProbeStatus();
   }
   function render(data) {
     const nodes = data.nodes || [];
@@ -85,7 +88,9 @@
     if (!response.ok) throw new Error(response.status === 404 ? '此服务尚未提供资源统计，请更新服务端。' : `资源统计暂不可用（${response.status}）`);
     return response.json();
   };
+  let requestedSession = null;
   function selection() {
+    if (requestedSession) return requestedSession;
     if (typeof S === 'undefined') return null;
     return S.sessions?.find(row => row.uid === S.sel) || null;
   }
@@ -99,14 +104,14 @@
         <button type="button" data-scope="direct" aria-pressed="false" title="仅统计归属当前会话的进程，包含 SSH 远端命令；不包含已单独归属子会话的进程。">仅当前会话</button>
         <button type="button" data-scope="inclusive" aria-pressed="true" title="包含当前会话及已确认关联的子会话进程，无论在本机还是远端。子代理需要有可识别的进程归属。">包含子会话</button>
       </div>
-      <div class="sr-probe-controls"><button type="button" class="sr-probe" disabled title="${esc(probeTip)}">探测 60 秒</button></div></div><span class="sr-probe-error sr-error" role="status"></span>
+      <div class="sr-probe-controls"><span class="sr-probe" role="status">未探测</span></div></div><span class="sr-probe-error sr-error" role="status"></span>
       <div class="sr-content" aria-live="polite"></div>`;
     document.body.append(dialog);
     content = dialog.querySelector('.sr-content');
     subtitle = dialog.querySelector('.sr-subtitle');
     dialog.querySelector('.sr-close').onclick = () => dialog.close();
     dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
-    dialog.addEventListener('close', () => { generation++; pending = false; });
+    dialog.addEventListener('close', () => { generation++; pending = false; void reconcileProbe(); });
     dialog.querySelectorAll('[data-scope]').forEach(button => {
       button.onclick = () => {
         scope = button.dataset.scope;
@@ -116,36 +121,61 @@
       };
     });
     dialog.querySelector('.sr-refresh').onclick = () => refresh(true);
-    dialog.querySelector('.sr-probe').onclick = async () => {
-      if (probePending) return;
-      const selected = selection();
-      if (!selected) return;
-      const uid = selected.uid, selectedScope = scope;
-      const button = dialog.querySelector('.sr-probe');
-      const enabled = button.dataset.enabled !== 'true';
-      const errorLabel = dialog.querySelector('.sr-probe-error');
-      probePending = true;
-      button.disabled = true;
-      errorLabel.textContent = '';
-      try {
-        const path = 'api/session/resources/probe';
-        const response = await fetch(typeof appUrl === 'function' ? appUrl(path) : path, {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({uid, scope: selectedScope, enabled}),
-        });
-        if (!response.ok) throw new Error(`探测请求失败（${response.status}）`);
-        const result = await response.json().catch(() => null);
-        const failures = (result?.nodes || []).filter(node => node.ok === false);
-        if (failures.length && dialog.open && selection()?.uid === uid && scope === selectedScope) {
-          errorLabel.textContent = failures.map(node => `${node.node_name || node.node_id || '关联机器'}：${node.error || '探测请求失败'}`).join('；');
-        }
-      } catch (error) {
-        if (dialog.open && selection()?.uid === uid && scope === selectedScope) errorLabel.textContent = error.message || '探测请求失败';
-      } finally {
-        probePending = false;
-        if (dialog.open) await refresh(true);
-      }
-    };
+  }
+
+  let lease = null, leaseId = '', lastSentActivity = 0, lastProbeRequest = 0, pageGone = false;
+  function lastActivity() { return globalThis.SessionDockSleep?.lastActivity || 0; }
+  function wantsProbe() {
+    return !!dialog?.open && !pageGone && !globalThis.SessionDockSleep?.sleeping
+      && Date.now() - lastActivity() < 60000 && probeSupported;
+  }
+  function paintProbeStatus() {
+    if (!dialog) return;
+    const state = !wantsProbe() ? 'off' : observedProbeState === 'active' ? 'active'
+      : probePending ? 'starting' : observedProbeState;
+    const label = dialog.querySelector('.sr-probe');
+    label.dataset.state = state;
+    label.textContent = probeStates[state] || '未探测';
+  }
+  async function reconcileProbe() {
+    paintProbeStatus();
+    if (probePending) return;
+    const selected = selection();
+    const desired = wantsProbe() && selected ? {uid:selected.uid, scope, lease_id:leaseId} : null;
+    const changed = lease && (!desired || lease.uid !== desired.uid || lease.scope !== desired.scope || lease.lease_id !== desired.lease_id);
+    const now = Date.now(), activity = lastActivity();
+    if (!changed && (!desired || document.hidden || (lease && (activity <= lastSentActivity || now-lastProbeRequest < 10000))
+        || (!lease && now-lastProbeRequest < 10000))) return;
+    const target = changed ? lease : desired;
+    const enabled = !changed;
+    probePending = true;
+    lastProbeRequest = now;
+    paintProbeStatus();
+    try {
+      const path = 'api/session/resources/probe';
+      const response = await fetch(typeof appUrl === 'function' ? appUrl(path) : path, {
+        method:'POST', headers:{'Content-Type':'application/json'}, keepalive:true, signal:AbortSignal.timeout(8000),
+        body:JSON.stringify({...target, enabled, lease_seconds:Math.max(1, Math.min(60, Math.ceil((activity+60000-now)/1000)))})
+      });
+      if (!response.ok) throw new Error(`探测请求失败（${response.status}）`);
+      const result = await response.json();
+      if (enabled) { lease = target; lastSentActivity = activity; }
+      const failures = (result.nodes || []).filter(node => node.ok === false);
+      if (dialog?.open) dialog.querySelector('.sr-probe-error').textContent = failures.map(node => `${node.node_name || '关联机器'}：${node.error || '探测请求失败'}`).join('；');
+      if (enabled && failures.length && failures.length === (result.nodes || []).length) observedProbeState = 'failed';
+    } catch (error) {
+      // A lost response can still have installed a lease. Retain its identity
+      // so closing/idle can release it; the server also enforces its deadline.
+      if (enabled) { lease = target; lastSentActivity = activity; }
+      observedProbeState = 'failed';
+      if (dialog?.open) dialog.querySelector('.sr-probe-error').textContent = error.message || '探测请求失败';
+    } finally {
+      if (!enabled) { lease = null; lastProbeRequest = 0; }
+      probePending = false;
+      paintProbeStatus();
+      if (dialog?.open) void refresh();
+      if (!wantsProbe() || changed) void reconcileProbe();
+    }
   }
 
   async function refresh(force = false) {
@@ -157,7 +187,6 @@
     subtitle.textContent = selected.title || selected.sid || selected.uid;
     const ticket = ++generation;
     pending = true;
-    if (changed || force) dialog.querySelector('.sr-probe').disabled = true;
     if (changed) dialog.querySelector('.sr-probe-error').textContent = '';
     if (changed || force || !content.innerHTML) content.innerHTML = '<p class="sr-empty">正在读取资源采样…</p>';
     try {
@@ -165,36 +194,22 @@
       if (ticket !== generation || !dialog.open) return;
       content.innerHTML = render(data);
       updateProbe(data);
+      void reconcileProbe();
     } catch (error) {
-      if (ticket === generation && dialog.open) { dialog.querySelector('.sr-probe').disabled = true; content.innerHTML = `<p class="sr-empty sr-error">${esc(error.message || '资源统计暂不可用')}</p>`; }
+      if (ticket === generation && dialog.open) { content.innerHTML = `<p class="sr-empty sr-error">${esc(error.message || '资源统计暂不可用')}</p>`; }
     } finally { if (ticket === generation) pending = false; }
   }
-  function open() { ensure(); if (!dialog.open) dialog.showModal(); refresh(true); }
-  function attach() {
-    const actions = document.querySelector('#detail > .dhead .dhead-actions');
-    if (!actions || actions.querySelector('[data-session-resources]')) return;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'iconbtn sr-open';
-    button.dataset.sessionResources = '';
-    button.innerHTML = '<svg class="ui-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 9h3l2-6 3 10 2-6h2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    button.title = '查看会话资源';
-    button.setAttribute('aria-label', '查看会话资源');
-    button.setAttribute('aria-haspopup', 'dialog');
-    button.onclick = open;
-    actions.prepend(button);
+  function open(session) {
+    requestedSession = session?.uid ? {uid:session.uid, title:session.title, sid:session.sid} : null;
+    ensure();
+    leaseId = crypto.randomUUID();
+    probeSupported = false; observedProbeState = 'off'; lastProbeRequest = 0;
+    if (!dialog.open) dialog.showModal();
+    refresh(true);
   }
-  const detail = document.querySelector('#detail');
-  if (detail) new MutationObserver(attach).observe(detail, {childList: true, subtree: true});
-  attach();
-  setInterval(() => {
-    if (!dialog?.open || document.hidden) return;
-    dialog.querySelectorAll('[data-probe-state="active"]').forEach(label => {
-      const seconds = Math.max(0, Number(label.dataset.probeSeconds) - 1);
-      label.dataset.probeSeconds = String(seconds);
-      label.textContent = seconds ? `探测中 · ${seconds} 秒` : '等待探测状态更新';
-    });
-  }, 1000);
+  setInterval(() => { void reconcileProbe(); }, 1000);
   setInterval(() => { if (dialog?.open && !document.hidden) refresh(); }, 5000);
+  addEventListener('pagehide', () => { pageGone = true; void reconcileProbe(); });
+  addEventListener('pageshow', () => { pageGone = false; });
   window.SessionDockResources = {render, open, setLoader: fn => { loader = fn; }};
 })();

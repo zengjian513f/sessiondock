@@ -573,7 +573,12 @@ pub fn spawn(state: AppState) {
     });
 }
 
-pub async fn probe(state: &AppState, enabled: bool) -> Result<serde_json::Value, ApiError> {
+pub async fn probe(
+    state: &AppState,
+    enabled: bool,
+    lease_id: Option<String>,
+    lease_seconds: Option<u64>,
+) -> Result<serde_json::Value, ApiError> {
     let path = agent_socket(state).ok_or_else(|| {
         ApiError::new(
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -582,7 +587,14 @@ pub async fn probe(state: &AppState, enabled: bool) -> Result<serde_json::Value,
         )
     })?;
     tokio::task::spawn_blocking(move || {
-        process_links::agent::request(&path, &process_links::agent::Request::Probe { enabled })
+        process_links::agent::request(
+            &path,
+            &process_links::agent::Request::Probe {
+                enabled,
+                lease_id,
+                lease_seconds,
+            },
+        )
     })
     .await
     .map_err(|_| {

@@ -43,12 +43,15 @@ struct Api {
     destroy: unsafe extern "C" fn(P) -> c_int,
     lookup: unsafe extern "C" fn(c_int, *const c_void, P) -> c_int,
     next: unsafe extern "C" fn(c_int, *const c_void, P) -> c_int,
+    update: unsafe extern "C" fn(c_int, *const c_void, *const c_void, u64) -> c_int,
     delete: unsafe extern "C" fn(c_int, *const c_void) -> c_int,
 }
 pub struct Probe {
     api: Api,
     object: P,
     links: Vec<P>,
+    config: c_int,
+    uid: u32,
     totals: c_int,
     losses: c_int,
     pub start_ns: u64,
@@ -104,6 +107,7 @@ impl Probe {
             let attach = function!(lib, "bpf_program__attach", unsafe extern "C" fn(P) -> P);
             let api = Api {
                 lib,
+                update,
                 close,
                 destroy,
                 lookup: function!(
@@ -133,6 +137,8 @@ impl Probe {
                 api,
                 object,
                 links: Vec::new(),
+                config: -1,
+                uid,
                 totals: -1,
                 losses: -1,
                 start_ns,
@@ -173,6 +179,7 @@ impl Probe {
             // Probes stay disabled until every link is attached. Start the
             // first full two-second generation at this activation boundary.
             probe.start_ns = monotonic_ns();
+            probe.config = fd(config_map);
             let config = Config {
                 start_ns: probe.start_ns,
                 stop_ns: deadline,
@@ -191,6 +198,38 @@ impl Probe {
             }
             Ok(probe)
         }
+    }
+    pub fn renew(&mut self, deadline: u64) -> io::Result<()> {
+        let now = monotonic_ns();
+        let deadline = deadline.min(now.saturating_add(60_000_000_000));
+        let config = Config {
+            start_ns: self.start_ns,
+            stop_ns: deadline,
+            uid: self.uid,
+            padding: 0,
+        };
+        let zero = 0u32;
+        if unsafe {
+            (self.api.update)(
+                self.config,
+                (&zero as *const u32).cast(),
+                (&config as *const Config).cast(),
+                0,
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        self.stop_ns = deadline;
+        unsafe {
+            libc::alarm(
+                deadline
+                    .saturating_sub(now)
+                    .div_ceil(1_000_000_000)
+                    .clamp(1, 60) as u32,
+            );
+        }
+        Ok(())
     }
     pub fn losses(&self) -> io::Result<u64> {
         let key = 0u32;

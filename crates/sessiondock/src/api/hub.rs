@@ -485,6 +485,8 @@ async fn handle(
             &body.uid,
             inclusive,
             body.enabled,
+            body.lease_id.as_deref(),
+            body.lease_seconds,
         )
         .await
         .map_err(Reply::Invalid)?);
