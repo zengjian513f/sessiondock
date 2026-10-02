@@ -62,6 +62,7 @@ pub fn router() -> Router<AppState> {
     let router = Router::new()
         .route("/health", get(health::get_health))
         .route("/resources", get(process_links::resources))
+        .route("/resources/summary", get(process_links::list_resources))
         .route("/session/resources", get(process_links::session_resources))
         .route(
             "/session/resources/probe",

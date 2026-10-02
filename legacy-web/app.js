@@ -4288,6 +4288,8 @@ function agentRow(s, a, depth) {
        <div class="m">${esc(agentMeta(s.uid, a))}</div>
        ${a.snippet ? `<div class="snip" title="${esc(a.snippet)}">${sidebarSnippet(a.snippet)}</div>` : ''}
      </div>`);
+  it._resourceSession = s; it._resourceAgent = true; it._resourceMeta = agentMeta(s.uid, a);
+  globalThis.SessionDockSidebarResources?.paint(it);
   it.dataset.key = rowKey({s, agent: a});
   it.dataset.owner = s.uid;
   it.dataset.agent = a.id;
@@ -4361,7 +4363,9 @@ function patchSidebarRow(node, row, highlightKey) {
   }
   const meta = node.querySelector('.m');
   const metaText = agent ? agentMeta(s.uid, agent) : itemMeta(s);
+  node._resourceSession = s; node._resourceAgent = !!agent; node._resourceMeta = metaText;
   if (meta && meta.textContent !== metaText) meta.textContent = metaText;
+  globalThis.SessionDockSidebarResources?.paint(node);
   const snippet = node.querySelector('.snip'), snippetText = sidebarRowSnippet(s, agent);
   if (snippet && (snippet.title !== snippetText || node._highlightKey !== highlightKey)) {
     snippet.title = snippetText;
@@ -4446,6 +4450,8 @@ function createSidebarRow(r, picked = pickedSessions) {
        ${snippet ? `<div class="snip" title="${esc(snippet)}">${sidebarSnippet(snippet)}</div>` : ''}
      </div>
      ${s.pending ? '' : starButtonMarkup(s.uid, !!s.starred, 'item-star')}`);
+  it._resourceSession = s; it._resourceAgent = false; it._resourceMeta = meta;
+  globalThis.SessionDockSidebarResources?.paint(it);
   globalThis.SessionDockGroups?.paintRow(it, s);
   it.dataset.uid = s.uid;
   it.dataset.key = s.uid;

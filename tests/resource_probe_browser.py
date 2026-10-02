@@ -24,6 +24,7 @@ class Collector:
     def __init__(self, path, node_id, bindings):
         self.path, self.node_id, self.bindings = path, node_id, bindings
         self.calls, self.fail, self.enabled = [], False, False
+        self.cpu = 2
         self.socket = socket.socket(socket.AF_UNIX)
         self.socket.bind(str(path))
         self.socket.listen()
@@ -54,6 +55,10 @@ class Collector:
                     elif op == 'resources':
                         samples = [{'process': b['process'], 'cpu_seconds': 0, 'rss_bytes': 0, 'threads': 1,
                                     'read_bytes': None, 'write_bytes': None, 'metrics': {
+                                        'cpu_cores': {'value':self.cpu,'status':'ok'},
+                                        'memory_pss_bytes': {'value':32*1024**2,'status':'ok'},
+                                        'proc_storage_read_bytes_per_second': {'value':1024,'status':'partial'},
+                                        'proc_storage_write_bytes_per_second': {'value':2048,'status':'partial'},
                                         'disk_read_operations_per_second': {'value': 12.5 if self.enabled else None, 'status': 'partial' if self.enabled else 'unavailable'}}}
                                    for b in self.bindings]
                         result = {**report, 'availability': 'observed', 'method': 'fixture', 'samples': samples,
@@ -125,7 +130,36 @@ def main():
         assert all(row['diagnostic']['state'] == 'off' for row in view['nodes'])
         page = context.new_page()
         page.goto(base, wait_until='networkidle')
-        page.locator(f'[data-uid="{uid}"]').first.click()
+        sidebar = page.locator(f'#side .item[data-uid="{uid}"]')
+        wait_for(lambda: sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '4')
+        assert sidebar.locator('.m .ui-icon').count() == 4
+        assert sidebar.locator('[data-resource="memory_pss_bytes"] .item-resource-value').inner_text() == '64M'
+        assert sidebar.locator('[data-resource="proc_storage_read_bytes_per_second"] .item-resource-value').inner_text() == '2K/s'
+        assert sidebar.locator('[data-resource="proc_storage_write_bytes_per_second"] .item-resource-value').inner_text() == '4K/s'
+        assert '不含单独归属的子会话' in sidebar.locator('.m').get_attribute('title')
+        assert sidebar.locator('.body > :nth-child(2)').get_attribute('class') == 'm item-resource-line'
+        sidebar.click()
+        saved = sidebar.element_handle()
+        collectors[0].cpu = 3
+        page.evaluate('SessionDockSidebarResources.refresh()')
+        assert sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '5'
+        assert sidebar.evaluate('(node, old) => node === old', saved)
+        assert 'sel' in sidebar.get_attribute('class')
+        page.route('**/api/resources/summary', lambda route: route.fulfill(status=503, body='unavailable'))
+        page.evaluate('SessionDockSidebarResources.refresh()')
+        assert sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '—'
+        page.unroute('**/api/resources/summary')
+        page.evaluate('SessionDockSidebarResources.refresh()')
+        assert sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '5'
+        page.set_viewport_size({'width':390,'height':844})
+        if not sidebar.is_visible():
+            page.locator('.mobile-back:visible').click()
+        assert sidebar.is_visible()
+        assert sidebar.locator('.m').evaluate('(e) => e.clientWidth > 0 && e.scrollWidth <= e.clientWidth')
+        page.screenshot(path='/tmp/sidebar-resources-mobile.png')
+        page.set_viewport_size({'width':1280,'height':960})
+
+        page.screenshot(path='/tmp/sidebar-resources-desktop.png')
         page.get_by_role('button', name='查看会话资源').click()
         assert '64' in page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='内存带宽')).inner_text()
         page.get_by_role('button', name='探测 60 秒', exact=True).click()
@@ -152,7 +186,7 @@ def main():
         assert context.request.post(local[0][0] + '/api/session/resources/probe', data={'uid': 'codex:missing', 'scope': 'direct', 'enabled': True}).status == 404
         assert counts == [len(c.calls) for c in collectors]
         assert not collectors[2].calls and not collectors[3].calls
-        print('PASS real browser/Hub/node probe start-stop, diagnostic GET, partial error, related-only routing, offline exclusion, authentication and invalid-session gate', flush=True)
+        print('PASS sidebar resource badges, refresh, outage, mobile layout and real browser/Hub/node probe start-stop, diagnostic GET, partial error, related-only routing, offline exclusion, authentication and invalid-session gate', flush=True)
 
 
 if __name__ == '__main__':

@@ -276,3 +276,18 @@ recovers its orphan groups on restart. Removing a group returns its threads to
 the parent monitor without stopping them. The shared resctrl mount remains
 available to other monitoring applications. Temporary I/O probe controls have
 no effect on this resident collector. Private agent instances default to off.
+
+### Sidebar resource summary
+
+`GET /api/resources/summary` reads each execution node once and returns four
+metrics for all currently attributed sessions, keyed by native node/source/SID:
+CPU cores, PSS, and proc storage read/write bytes per second. The scope is direct
+ownership, including SSH commands owned by that session, excluding separately
+owned child sessions. The Hub merges execution-machine rows without inferring
+identity from UI UIDs. Offline/unsupported/stale contributors set `partial`;
+missing sessions and measurements remain unknown.
+
+The sidebar polls once every five seconds while visible. It updates only the
+second-row badges, preserving selection, focus, expansion and list ordering.
+Old time/size/model metadata is retained in that row's tooltip. Agent subrows
+without independent process attribution never copy the parent's usage.
