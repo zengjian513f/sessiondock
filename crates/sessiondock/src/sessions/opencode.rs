@@ -25,20 +25,6 @@ use std::time::Duration;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::{Value, json};
 
-pub(crate) mod discovery;
-
-/// Supplemental stores have no configured launcher in their original sandbox.
-/// Their history remains readable, but the default CLI must not control them.
-pub(crate) const ISOLATED_CONTROL_NOTE: &str =
-    "独立沙箱中的 OpenCode 会话：历史可读；网页暂不支持在原沙箱中恢复或删除";
-
-pub(crate) fn isolated_store(path: &Path) -> bool {
-    fs::read(path.join(SUMMARY_FILE))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .is_some_and(|summary| summary["database"].is_string())
-}
-
 /// Mirror layout version recorded in every `summary.json`.
 pub const FORMAT: &str = "sessiondock-opencode-mirror";
 pub const SUMMARY_FILE: &str = "summary.json";
@@ -103,8 +89,6 @@ pub struct Mirror {
     sessions: HashMap<String, Mirrored>,
     polls: u32,
     last_error: Option<String>,
-    /// Independently stored sessions proven by native command receipts.
-    external: Option<HashMap<String, Value>>,
 }
 
 impl Mirror {
@@ -116,7 +100,6 @@ impl Mirror {
             sessions: HashMap::new(),
             polls: 0,
             last_error: None,
-            external: None,
         }
     }
 
@@ -192,32 +175,12 @@ impl Mirror {
         let mut work = Vec::new();
         for row in rows {
             let id = row.id.clone();
-            if self
-                .external
-                .as_ref()
-                .is_some_and(|sessions| !sessions.contains_key(&id))
-            {
-                continue;
-            }
             if !safe_id(&id) || !safe_id(&row.project) {
                 continue;
             }
             seen.insert(id.clone());
-            let project = if self.external.is_some() {
-                format!("discovered-{}", row.project)
-            } else {
-                row.project.clone()
-            };
-            let dir = self.root.join(project).join(&id);
-            let summary = if let Some(external) = &self.external {
-                let mut value: Value =
-                    serde_json::from_str(&summary_json(&row, projects.get(&row.project)))?;
-                value["database"] = json!(self.database);
-                value["launch_parent"] = external[&id].clone();
-                format!("{value}\n")
-            } else {
-                summary_json(&row, projects.get(&row.project))
-            };
+            let dir = self.root.join(&row.project).join(&id);
+            let summary = summary_json(&row, projects.get(&row.project));
             let changed = match self.sessions.get(&id) {
                 Some(known) => {
                     known.dir != dir
@@ -287,22 +250,13 @@ impl Mirror {
                 remove_session_dir(&self.root, &known.dir);
             }
         }
-        // Supplemental mirrors share the index root, but never sweep another
-        // database's directories. The default mirror reserves their namespace.
-        if !sweep || self.external.is_some() {
+        if !sweep {
             return Ok(());
         }
         let Ok(projects) = fs::read_dir(&self.root) else {
             return Ok(());
         };
         for project in projects.flatten() {
-            if project
-                .file_name()
-                .to_string_lossy()
-                .starts_with("discovered-")
-            {
-                continue;
-            }
             let path = project.path();
             let Ok(entries) = fs::read_dir(&path) else {
                 continue;

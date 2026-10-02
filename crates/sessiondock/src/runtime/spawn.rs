@@ -140,23 +140,7 @@ pub fn spawn_parents(
         if found.contains_key(&child.uid) {
             continue;
         }
-        let recovered =
-            std::fs::read_to_string(std::path::Path::new(&child.path).join("summary.json"))
-                .ok()
-                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-                .and_then(|summary| {
-                    let parent = &summary["launch_parent"];
-                    by_key
-                        .get(&(
-                            parent["source"].as_str()?.to_owned(),
-                            parent["sid"].as_str()?.to_ascii_lowercase(),
-                        ))
-                        .and_then(|uid| rows.get(uid.as_str()).copied())
-                })
-                .filter(|parent| !newer_than_child(parent, child));
-        if let Some(parent) =
-            recovered.or_else(|| opencode_parent(scan, child, &rows, &by_key, &pid_owner))
-        {
+        if let Some(parent) = opencode_parent(scan, child, &rows, &by_key, &pid_owner) {
             found.insert(
                 child.uid.clone(),
                 NestParent {
@@ -281,10 +265,7 @@ pub fn record(
     Ok(())
 }
 
-async fn tick(
-    state: &AppState,
-    discovery: &std::sync::Arc<std::sync::Mutex<crate::sessions::opencode::discovery::Discovery>>,
-) -> Result<(), String> {
+async fn tick(state: &AppState) -> Result<(), String> {
     let (Some(scanner), Some(metadata)) = (&state.proc_scan, &state.metadata) else {
         return Ok(());
     };
@@ -298,19 +279,8 @@ async fn tick(
         .await
         .map_err(|error| error.to_string())?;
     let metadata = metadata.clone();
-    let discovery = discovery.clone();
-    let opencode_root = state.opencode_root.clone();
     tokio::task::spawn_blocking(move || {
         let sessions = SessionRow::from_list(&document);
-        if let Some(root) = opencode_root {
-            if let Err(error) = discovery
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .sync(&root, &sessions)
-            {
-                eprintln!("OpenCode isolated discovery: {error}");
-            }
-        }
         let active = snapshot.scan.active_processes(&sessions);
         record(&metadata, &snapshot.scan, &sessions, &active.owned).map_err(|error| error.message)
     })
@@ -319,14 +289,11 @@ async fn tick(
 }
 
 pub fn spawn(state: AppState) {
-    let discovery = std::sync::Arc::new(std::sync::Mutex::new(
-        crate::sessions::opencode::discovery::Discovery::default(),
-    ));
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 _ = state.shutdown.cancelled() => return,
-                result = tick(&state, &discovery) => {
+                result = tick(&state) => {
                     if let Err(error) = result { eprintln!("nest discovery failed: {error}"); }
                 }
             }
