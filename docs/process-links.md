@@ -304,6 +304,10 @@ toggle. Enabling it widens the desktop sidebar by 176px and displays a three-row
 resource column beside each original entry. Disabling it restores the normal
 width and stops polling. While enabled and visible it polls every five seconds. It updates only the
 resource values, preserving selection, focus, expansion and list ordering.
+Resource cells are created near the visible viewport and refreshed only there;
+scrolling fills newly visible rows. Space is reserved independently of those
+cells, keeping row height and separators stable. Disabling the column hides
+existing cells for reuse. Nesting changes reuse rows whose structure is unchanged.
 The original title and metadata remain in the main column. Agent subrows
 without independent process attribution never copy the parent's usage.
 

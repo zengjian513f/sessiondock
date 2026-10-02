@@ -161,7 +161,7 @@ def main():
         assert sidebar.locator('.m').inner_text() == original_meta
         assert sidebar.evaluate("e => e.querySelector('.item-resources').getBoundingClientRect().left >= e.querySelector('.body').getBoundingClientRect().right")
         toggle.click()
-        assert sidebar.locator('.item-resources').count() == 0
+        assert not sidebar.locator('.item-resources').is_visible()
         assert page.locator('#left').bounding_box()['width'] == original_width
         toggle.click()
         page.reload(wait_until='networkidle')

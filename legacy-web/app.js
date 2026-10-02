@@ -3381,6 +3381,7 @@ function openItemMenu(uid, x, y) {
   // Keep every action in its fixed position, with the same unavailable hints as
   // other controls. The shared capture handler blocks mouse, touch and keyboard clicks.
   const unavailable = {
+    'copy-identity': !row?.sid ? '此会话尚无原生会话标识。' : '',
     stop: parent || (row?.pending ? !shellRunning : !running || !!unusedLaunch)
       ? '此会话当前没有可停止的进程。' : '',
     hide: !parent ? '仅分叉父会话可隐藏。' : '',
@@ -3540,6 +3541,20 @@ $('#item-menu').onclick = async e => {
   if (button.dataset.act === 'group') { globalThis.SessionDockGroups?.showMenu([uid], button); return; }
   closeItemMenu();
   if (!uid) return;
+  if (button.dataset.act === 'copy-identity') {
+    const row = sidebarSessions().find(session => session.uid === uid);
+    if (!row?.sid) return;
+    const machine = row.node_name || Nodes.list.find(node => node.id === row.node_id)?.name
+      || (!HUB_MODE ? serverHostname : '') || '(未知)';
+    const text = `机器：${machine}\n目录：${row.cwd || '(未知)'}\nagent：${row.source}\nUUID：${row.sid}`;
+    try {
+      await copyFileText(text);
+      showSessionStopNotice('会话标识已复制。');
+    } catch (error) {
+      await appAlert(`复制会话标识失败：${error.message || error}`);
+    }
+    return;
+  }
   if (button.dataset.act === 'clone') { await cloneSessionGroup(uid); return; }
   if (button.dataset.act === 'hide') {
     await setForkParentVisibility([uid], false);
@@ -4417,11 +4432,11 @@ function sidebarRowIdentity(r, picked, sessionSignatures) {
   }
   const signature = JSON.stringify([sessionSignatures.get(r.s.uid), r.agent, r.depth, r.kids, r.closed,
     r.agent ? agentMeta(r.s.uid, r.agent) : itemMeta(r.s),
-    S.view, S.nest, S.nestAttachUids.includes(r.s.uid), S.term, S.opts,
+    S.view, S.nestAttachUids.includes(r.s.uid), S.term, S.opts,
     S.opts.regex ? regexResultRevision : 0,
     S.sel === r.s.uid && (r.agent ? S.agent === r.agent.id : !S.agent),
     S.starBusy.has(r.s.uid), S.live.has(r.s.uid), S.liveTmux.has(r.s.uid)]);
-  const structure = JSON.stringify([!!r.agent, S.view, S.nest, !!S.term,
+  const structure = JSON.stringify([!!r.agent, S.view, !!S.term,
     r.depth, !!r.kids, !!r.s.pending, !!sidebarRowSnippet(r.s, r.agent), r.s.source]);
   return {signature, structure};
 }
@@ -4551,7 +4566,7 @@ function renderSide(suppliedList = null) {
     g._rows = rows;
     const ul = g.querySelector(':scope > .glist') || el('div', 'glist');
     const previous = new Map([...ul.children].map(node => [node.dataset.key, node]));
-    let rowPosition = 0;
+    let nextRow = ul.firstElementChild;
     for (const r of (sidebarGroupClosed(key) ? [] : rows)) {
       const {signature, structure} = sidebarRowIdentity(r, picked, sessionSignatures);
       const old = previous.get(rowKey(r));
@@ -4561,8 +4576,8 @@ function renderSide(suppliedList = null) {
         node._signature = signature;
         node._structure = structure;
         node._highlightKey = highlightKey;
-        if (ul.children[rowPosition] !== node) ul.insertBefore(node, ul.children[rowPosition] || null);
-        rowPosition++;
+        if (node === nextRow) nextRow = nextRow.nextElementSibling;
+        else ul.insertBefore(node, nextRow);
       };
       if (old?._signature === signature) {
         if (!r.agent) syncRowPickBox(old, r.s);
@@ -4574,6 +4589,7 @@ function renderSide(suppliedList = null) {
         place(old);
         continue;
       }
+      if (old === nextRow) nextRow = old.nextElementSibling;
       old?.remove();
       if (r.agent) { place(agentRow(r.s, r.agent, r.depth)); continue; }
       place(createSidebarRow(r, picked));

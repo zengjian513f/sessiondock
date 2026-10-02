@@ -13,7 +13,8 @@
   const button = document.querySelector('#sidebar-resources-toggle');
   let rows = new Map(), localNode = '', sampledAt = 0, pending = false;
   const key = s => JSON.stringify([s.node_id || localNode, s.source, s.sid]);
-  const digits = (n, places = 1) => n.toLocaleString('zh-CN', {maximumFractionDigits:places, useGrouping:false});
+  const formats = [0,1,2].map(places => new Intl.NumberFormat('zh-CN', {maximumFractionDigits:places, useGrouping:false}));
+  const digits = (n, places = 1) => formats[places].format(n);
   function compact(value, unit) {
     if (unit === 'core') return value > 0 && value < .01 ? '<0.01' : digits(value, 2);
     if (unit === 'process' || unit === 'gpu') return digits(value, 0);
@@ -22,10 +23,23 @@
     while (value >= 1024 && i < units.length - 1) {value /= 1024; i++;}
     return digits(value, value < 10 && i ? 1 : 0) + units[i] + (unit === 'rate' ? '/s' : '');
   }
+  const visibleRows = new Set(), watched = new WeakSet();
+  const observer = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (entry.isIntersecting && entry.target.isConnected) {
+        visibleRows.add(entry.target);
+        paintValues(entry.target);
+      } else visibleRows.delete(entry.target);
+    }
+  }, {root:document.querySelector('#side'), rootMargin:'160px 0px'});
   function paint(node) {
+    if (!watched.has(node)) { watched.add(node); observer.observe(node); }
+    if (visibleRows.has(node)) paintValues(node);
+  }
+  function paintValues(node) {
     const session = node._resourceSession, meta = node.querySelector('.m');
     if (!session || !meta) return;
-    if (!enabled) { node.querySelector('.item-resources')?.remove(); return; }
+    if (!enabled) return;
     let panel = node.querySelector('.item-resources');
     if (!panel) {
       panel = document.createElement('button'); panel.type = 'button'; panel.className = 'item-resources';
@@ -52,7 +66,26 @@
     panel.dataset.resourceSignature = signature;
     panel.innerHTML = cells.map(c => `<span class="item-resource" data-resource="${c.field}" aria-label="${esc(c.label)}：${esc(c.value)}">${uiIcon(c.icon)}<span class="item-resource-value">${esc(c.value)}</span></span>`).join('');
   }
-  function paintVisible() { document.querySelectorAll('#side .item').forEach(paint); }
+  function paintVisible() {
+    if (!enabled) return;
+    for (const node of visibleRows) {
+      if (node.isConnected) paintValues(node); else visibleRows.delete(node);
+    }
+  }
+  // Unwatch discarded rows, but retain observation when reconciliation moves
+  // the same element. Numeric updates do not rescan the whole sidebar.
+  new MutationObserver(records => {
+    const forget = node => {
+      if (node.isConnected) return;
+      observer.unobserve(node); watched.delete(node); visibleRows.delete(node);
+    };
+    for (const record of records) for (const node of record.removedNodes) {
+      if (node.nodeType !== 1 || node.isConnected) continue;
+      if (node.matches('.item')) forget(node);
+      else if (node.matches('.group, .glist')) node.querySelectorAll('.item').forEach(forget);
+    }
+  }).observe(document.querySelector('#side'), {childList:true, subtree:true});
+  document.querySelectorAll('#side .item').forEach(paint);
   async function refresh() {
     if (!enabled || pending || document.hidden) return;
     pending = true;

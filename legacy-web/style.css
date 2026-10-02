@@ -2433,16 +2433,17 @@ header .btn[data-session-docked] { display: none; }
 
 /* Optional three-row resource column; normal metadata keeps its full row. */
 #sidebar-resources-toggle { display:flex; align-items:center; gap:4px; }
-.item-resources { appearance:none; background:transparent; border:0; padding:0; text-align:left; font-family:inherit; cursor:pointer; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:12px; row-gap:2px; align-self:center; flex:0 0 160px; padding-left:12px; border-left:1px solid var(--border); font-size:11.5px; line-height:16px; color:var(--muted); }
+.item-resources { appearance:none; background:transparent; border:0; padding:0; text-align:left; font-family:inherit; cursor:pointer; display:none; position:absolute; right:39px; top:50%; transform:translateY(-50%); width:160px; height:52px; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:12px; row-gap:2px; padding-left:12px; border-left:1px solid var(--border); font-size:11.5px; line-height:16px; color:var(--muted); }
 .item-resource { display:flex; align-items:center; gap:3px; min-width:0; white-space:nowrap; }
 .item-resource .ui-icon { width:12px; height:12px; flex:none; }
 .item-resource-value { overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; color:var(--text); }
+.sidebar-resources .item { min-height:66px; padding-right:211px; }
+.sidebar-resources .item > .item-star { position:absolute; right:6px; top:7px; margin:-2px 0 0; }
+.sidebar-resources .item-resources { display:grid; }
 @media (max-width:600px) {
-  .item-resources { flex-basis:136px; padding-left:8px; column-gap:8px; font-size:11px; }
+  .sidebar-resources .item { padding-right:187px; }
+  .item-resources { width:136px; padding-left:8px; column-gap:8px; font-size:11px; }
 }
-
-/* Reserve the same trailing action slot for agent and pending rows. */
-.sidebar-resources .item:not(:has(> .item-star)) > .item-resources { margin-right:28px; }
 
 .item-resources:hover { background:var(--hover); }
 .item-resources:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
