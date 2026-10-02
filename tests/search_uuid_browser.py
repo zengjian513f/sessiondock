@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""UUID/UID lookup through typing, Enter, cached search and actual navigation."""
+"""Quick metadata filtering plus UUID/UID Enter search and actual navigation."""
 import argparse
 import json
 import os
@@ -28,14 +28,16 @@ def main():
             claude_row(CLAUDE_ID, 'assistant', 'a0', 'u0', 'Parent answer')], [])
         data.put(CODEX_ID, 'codex', [
             codex_row('session_meta', {'id': CODEX_ID, 'cwd': '/synthetic/uuid'}),
-            codex_message('user', 'Codex fixture title'),
+            codex_row('turn_context', {'model': 'synthetic-search-model', 'cwd': '/synthetic/uuid'}),
+            codex_message('user', 'Second fixture title'),
             codex_message('assistant', 'Codex answer')], [])
         data.put(BROKEN_ID, 'claude', [
             claude_row(BROKEN_ID, 'user', 'u0', None, 'Broken fixture title'),
             {'type': 'user', 'message': {'role': 'user', 'content': 42}}], [])
         agents = data.paths[CLAUDE_ID].with_suffix('') / 'subagents'
         agents.mkdir(parents=True)
-        (agents / f'agent-{AGENT_ID}.meta.json').write_text(json.dumps({'description': 'Worker fixture title'}))
+        (agents / f'agent-{AGENT_ID}.meta.json').write_text(json.dumps({
+            'description': 'Worker fixture title', 'agentType': 'reviewer'}))
         (agents / f'agent-{AGENT_ID}.jsonl').write_bytes(b''.join(encoded(row) for row in [
             claude_row(CLAUDE_ID, 'user', 'au0', None, 'Worker fixture title', isSidechain=True, agentId=AGENT_ID),
             claude_row(CLAUDE_ID, 'assistant', 'aa0', 'au0', 'Worker answer', isSidechain=True, agentId=AGENT_ID)]))
@@ -52,7 +54,10 @@ def main():
                                   if route.request.url.startswith(base + '/') else route.abort())
                     page = context.new_page()
                     errors = []
+                    searches = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
+                    page.on('request', lambda request: searches.append(request.url)
+                            if '/api/search?' in request.url else None)
                     page.goto(base, wait_until='networkidle')
                     # Flat mode makes the actual matches distinguishable from parent navigation rows.
                     if page.locator('#nest-toggle').get_attribute('aria-pressed') == 'true':
@@ -87,6 +92,38 @@ def main():
                         if answer:
                             expect(page.locator('#msgs')).to_contain_text(answer)
 
+                    def quick(query, sid, answer, agent=False):
+                        clear()
+                        before = len(searches)
+                        page.locator('#q').fill(query)
+                        expect(page.locator('#side-search-label')).to_have_text('筛选结果')
+                        expect(page.locator('#side-search-count')).to_have_text('1 条')
+                        row = page.locator(f'#side .item[data-agent="{sid}"]' if agent else
+                                           f'#side .item[data-uid="{data.uid(sid)}"]')
+                        expect(row).to_be_visible()
+                        row.click()
+                        expect(page.locator('#msgs')).to_contain_text(answer)
+                        assert len(searches) == before, searches
+
+                    for query in ('synthetic-search-model', 'search-model', '/synthetic/uuid',
+                                  'Codex', 'Codex uuid synthetic-search-model'):
+                        quick(query, CODEX_ID, 'Codex answer')
+                    quick('reviewer', AGENT_ID, 'Worker answer', agent=True)
+                    quick('Claude reviewer', AGENT_ID, 'Worker answer', agent=True)
+                    clear()
+                    page.locator('#opts button[data-o="case"]').click()
+                    quick('Codex', CODEX_ID, 'Codex answer')
+                    clear()
+                    page.locator('#opts button[data-o="case"]').click()
+                    page.locator('#opts button[data-o="regex"]').click()
+                    quick('synthetic-search-m.del', CODEX_ID, 'Codex answer')
+                    clear()
+                    page.locator('#opts button[data-o="regex"]').click()
+                    page.locator('#search-mode-toggle').click()
+                    quick('absent-model synthetic-search-model', CODEX_ID, 'Codex answer')
+                    clear()
+                    page.locator('#search-mode-toggle').click()
+
                     for sid, answer in ((CLAUDE_ID, 'Parent answer'), (CODEX_ID, 'Codex answer')):
                         for query in (sid, sid[:8], sid[9:18], sid[-12:], data.uid(sid), data.uid(sid)[-8:]):
                             lookup(query, sid, answer)
@@ -98,7 +135,7 @@ def main():
                     page.locator('#q').fill('uuid-that-does-not-exist')
                     expect(page.locator('#side-search-count')).to_have_text('0 条')
                     assert not errors, errors
-                    print(f'PASS UUID browser width={width}: full/partial native UUID, UID, sidecar, cold/hot search, unreadable history and navigation', flush=True)
+                    print(f'PASS quick metadata/UUID browser width={width}: model, directory, CLI name, agent type, AND/OR/case/regex, no search request; UUID/UID, sidecar, cold/hot search and navigation', flush=True)
                     context.close()
             finally:
                 browser.close()

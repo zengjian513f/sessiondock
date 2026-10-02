@@ -4098,17 +4098,24 @@ function nestStamp(s, children, memo = new Map()) {
 const sidebarGroupClosed = key => !S.term && S.closed.has(key);
 const sidebarNestClosed = uid => !S.term && S.nestClosed.has(uid);
 
+function sidebarSearchText(s, agent = null) {
+  const row = agent || s;
+  return [row.title, row.cwd || s.cwd, s.node_name, s.source, SOURCES[s.source]?.name,
+    row.model, agent ? agent.type : s.agent_type,
+    ...(agent ? [agent.id] : [s.sid, s.uid])].join('\n');
+}
+
 function sidebarMainMatches(s) {
   if (!S.term) return true;
   return S.results !== null ? s.hits > 0
-    : matchesSearch([s.title, s.cwd, s.node_name || '', s.sid || '', s.uid || ''].join('\n'));
+    : matchesSearch(sidebarSearchText(s));
 }
 
 function sidebarAgentItems(s) {
   const agents = s.agent_items || [];
   if (!S.term) return agents;
   if (S.results !== null) return agents.filter(a => a.hits > 0);
-  return agents.filter(a => matchesSearch([a.title, a.cwd || s.cwd, s.node_name || '', a.id || ''].join('\n')));
+  return agents.filter(a => matchesSearch(sidebarSearchText(s, a)));
 }
 
 function sidebarMatchCount(list) {
