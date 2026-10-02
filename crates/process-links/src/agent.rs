@@ -32,7 +32,13 @@ pub enum Request {
     Health,
     Report,
     Resources,
-    Probe { enabled: bool },
+    Probe {
+        enabled: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lease_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lease_seconds: Option<u64>,
+    },
     Catalog(Catalog),
     Publish(Published),
 }

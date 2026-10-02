@@ -11,8 +11,7 @@
   ];
   let enabled = !!store.get('sidebarResources', false);
   const button = document.querySelector('#sidebar-resources-toggle');
-  const scope = '当前会话直接归属进程，含 SSH 跨机任务，不含单独归属的子会话';
-  let rows = new Map(), localNode = '', sampledAt = 0, partial = false, pending = false;
+  let rows = new Map(), localNode = '', sampledAt = 0, pending = false;
   const key = s => JSON.stringify([s.node_id || localNode, s.source, s.sid]);
   const digits = (n, places = 1) => n.toLocaleString('zh-CN', {maximumFractionDigits:places, useGrouping:false});
   function compact(value, unit) {
@@ -29,25 +28,29 @@
     if (!enabled) { node.querySelector('.item-resources')?.remove(); return; }
     let panel = node.querySelector('.item-resources');
     if (!panel) {
-      panel = document.createElement('div'); panel.className = 'item-resources';
-      panel.setAttribute('aria-label', '会话资源');
+      panel = document.createElement('button'); panel.type = 'button'; panel.className = 'item-resources';
+      panel.setAttribute('aria-haspopup', 'dialog');
+      panel.addEventListener('click', event => {
+        event.stopPropagation();
+        globalThis.SessionDockResources?.open(node._resourceSession);
+      });
+      panel.addEventListener('mousedown', event => event.stopPropagation());
+      panel.addEventListener('keydown', event => event.stopPropagation());
       node.querySelector('.body').after(panel);
     }
+    panel.setAttribute('aria-label', node._resourceAgent ? '查看所属会话资源' : '查看会话资源');
     const age = Date.now()/1000 - sampledAt;
     const metrics = age >= -5 && age <= 15 && !node._resourceAgent ? rows.get(key(session)) : null;
     const cells = fields.map(([field, icon, label, unit]) => {
       const m = metrics?.[field];
       const valid = Number.isFinite(m?.value) && m.value >= 0 && ['ok','partial'].includes(m.status);
       const value = valid ? compact(m.value, unit) : '—';
-      const detail = valid ? (unit === 'core' ? `${digits(m.value, 3)} 核` : unit === 'process' ? `${digits(m.value, 0)} 个` : unit === 'gpu' ? `${digits(m.value, 0)} 张` : `${digits(m.value, 0)} B${unit === 'rate' ? '/s' : ''}`)
-        : node._resourceAgent ? '子代理未单独归属资源' : '暂无可归属的资源数据';
-      const explanation = unit === 'process' ? '当前采样中直接归属该会话的进程，按机器及进程身份去重' : unit === 'gpu' ? '计算进程驻留的显卡张数，同一机器上的同一显卡只计一次；不代表计算利用率' : field === 'memory_pss_bytes' ? '共享内存按比例分摊；约 30 秒更新' : unit === 'rate' ? '常驻内核存储层计数，非缓存命中的文件读取量；延迟回写可能影响归属' : '1 表示占用一个逻辑 CPU 核';
-      return {field, icon, label, value, tip:`${label}：${detail} · ${explanation} · ${scope}${partial || m?.status === 'partial' ? ' · 部分覆盖，缺失机器未计入' : ''}${node._resourceMeta ? ' · ' + node._resourceMeta : ''}`};
+      return {field, icon, label, value};
     });
-    const signature = JSON.stringify([cells, node._resourceMeta]);
+    const signature = JSON.stringify(cells);
     if (panel.dataset.resourceSignature === signature) return;
     panel.dataset.resourceSignature = signature;
-    panel.innerHTML = cells.map(c => `<span class="item-resource" data-resource="${c.field}" title="${esc(c.tip)}" role="img" aria-label="${esc(c.tip)}">${uiIcon(c.icon)}<span class="item-resource-value">${esc(c.value)}</span></span>`).join('');
+    panel.innerHTML = cells.map(c => `<span class="item-resource" data-resource="${c.field}" aria-label="${esc(c.label)}：${esc(c.value)}">${uiIcon(c.icon)}<span class="item-resource-value">${esc(c.value)}</span></span>`).join('');
   }
   function paintVisible() { document.querySelectorAll('#side .item').forEach(paint); }
   async function refresh() {
@@ -58,7 +61,7 @@
       if (!response.ok) throw new Error('resource summary unavailable');
       const data = await response.json();
       if (!Array.isArray(data.sessions) || !Number.isFinite(data.sampled_at)) throw new Error('invalid summary');
-      localNode = data.node_id || ''; sampledAt = data.sampled_at; partial = !!data.partial;
+      localNode = data.node_id || ''; sampledAt = data.sampled_at;
       rows = new Map(data.sessions.map(row => [key(row.session), row.metrics]));
     } catch (_) { rows = new Map(); sampledAt = 0; }
     finally { pending = false; paintVisible(); }

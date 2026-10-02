@@ -283,6 +283,8 @@ pub async fn probe(
     uid: &str,
     inclusive: bool,
     enabled: bool,
+    lease_id: Option<&str>,
+    lease_seconds: Option<u64>,
 ) -> Result<Value, String> {
     let view = get(related, registry, client, uid, inclusive).await?;
     let rows = view["nodes"].as_array().cloned().unwrap_or_default();
@@ -292,7 +294,7 @@ pub async fn probe(
         if row["status"] != "ok" && row["status"] != "stale" { return error("机器离线或不支持临时探测"); }
         let Some(node) = registry.get(id) else { return error("机器未注册"); };
         let Ok(target) = registry.target(&node) else { return error("机器暂时无法连接"); };
-        match client.json(&target, "POST", "/api/resources/probe", Some(&json!({"enabled":enabled})), Duration::from_secs(3)).await {
+        match client.json(&target, "POST", "/api/resources/probe", Some(&json!({"enabled":enabled,"lease_id":lease_id,"lease_seconds":lease_seconds})), Duration::from_secs(3)).await {
             Ok((200, value)) => json!({"node_id":id,"node_name":row["node_name"],"ok":true,"diagnostic":value}),
             _ => error("机器探测请求失败，请检查采集服务"),
         }

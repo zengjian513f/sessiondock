@@ -6,6 +6,7 @@ use process_links::Process;
 use serde::{Deserialize, Serialize};
 use std::{
     io::{BufRead, BufReader, Write},
+    os::fd::AsRawFd,
     process::{Child, Command, Stdio},
     sync::{
         Arc,
@@ -65,10 +66,18 @@ struct Message {
 pub fn start(uid: u32, sender: SyncSender<Event>, lost: Arc<AtomicU64>) -> std::io::Result<Child> {
     let mut child = Command::new(std::env::current_exe()?)
         .args(["--io-probe-helper", &uid.to_string()])
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    let input = child.stdin.as_ref().unwrap().as_raw_fd();
+    unsafe {
+        libc::fcntl(
+            input,
+            libc::F_SETFL,
+            libc::fcntl(input, libc::F_GETFL) | libc::O_NONBLOCK,
+        );
+    }
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
     let errors = lost.clone();
@@ -111,6 +120,18 @@ pub fn start(uid: u32, sender: SyncSender<Event>, lost: Arc<AtomicU64>) -> std::
     Ok(child)
 }
 
+pub fn renew(child: &mut Child, remaining: std::time::Duration) -> std::io::Result<()> {
+    let deadline =
+        bpf::monotonic_ns().saturating_add(remaining.as_nanos().min(60_000_000_000) as u64);
+    writeln!(
+        child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| std::io::Error::other("helper input closed"))?,
+        "{deadline}"
+    )
+}
+
 pub fn helper_main() -> std::io::Result<()> {
     // exec child owns these FDs. SIGALRM's default fatal disposition gives a
     // kernel-enforced watchdog even if stdout blocks or verifier loading stalls.
@@ -131,7 +152,20 @@ pub fn helper_main() -> std::io::Result<()> {
         .nth(2)
         .and_then(|v| v.parse().ok())
         .ok_or_else(|| std::io::Error::other("missing I/O helper UID"))?;
-    let probe = bpf::Probe::open(uid, deadline)?;
+    let mut probe = bpf::Probe::open(uid, deadline)?;
+    let (sender, renewals) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(std::io::stdin()).lines() {
+            let Ok(line) = line else {
+                break;
+            };
+            if let Ok(deadline) = line.parse::<u64>() {
+                if sender.send(deadline).is_err() {
+                    break;
+                }
+            }
+        }
+    });
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
     let mut emit = |event, lost| -> std::io::Result<()> {
@@ -146,19 +180,17 @@ pub fn helper_main() -> std::io::Result<()> {
         // A small grace period allows calls completing just before the boundary
         // to finish their bounded kernel-map update. Late generations are loss.
         let boundary = probe.start_ns + (generation + 1) * 2_000_000_000 + 100_000_000;
-        if boundary >= probe.stop_ns {
-            // Keep the helper alive for the complete lease. Ending immediately
-            // after the last full batch looks like an unexpected collector
-            // failure to the controller; its deadline normally kills us first.
-            let now = bpf::monotonic_ns();
-            if now < probe.stop_ns {
-                std::thread::sleep(std::time::Duration::from_nanos(probe.stop_ns - now));
-            }
-            break;
-        }
         let now = bpf::monotonic_ns();
-        if boundary > now {
-            std::thread::sleep(std::time::Duration::from_nanos(boundary - now));
+        let wait_until = boundary.min(probe.stop_ns);
+        match renewals.recv_timeout(std::time::Duration::from_nanos(
+            wait_until.saturating_sub(now),
+        )) {
+            Ok(deadline) => {
+                probe.renew(deadline)?;
+                continue;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
         }
         let now = bpf::monotonic_ns();
         if now >= probe.stop_ns {

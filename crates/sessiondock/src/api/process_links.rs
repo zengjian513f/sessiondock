@@ -57,12 +57,16 @@ pub async fn session_resources(
 #[derive(serde::Deserialize)]
 pub struct ProbeBody {
     pub enabled: bool,
+    pub lease_id: Option<String>,
+    pub lease_seconds: Option<u64>,
 }
 #[derive(serde::Deserialize)]
 pub struct SessionProbeBody {
     pub uid: String,
     pub scope: Option<String>,
     pub enabled: bool,
+    pub lease_id: Option<String>,
+    pub lease_seconds: Option<u64>,
 }
 
 pub async fn node_probe(
@@ -78,7 +82,13 @@ pub async fn node_probe(
         ));
     }
     Ok(Json(
-        crate::runtime::process_links::probe(&state, body.enabled).await?,
+        crate::runtime::process_links::probe(
+            &state,
+            body.enabled,
+            body.lease_id,
+            body.lease_seconds,
+        )
+        .await?,
     ))
 }
 
@@ -100,7 +110,13 @@ pub async fn session_probe(
     crate::hub::resources::session_from_list(&document, &body.uid, node_id)
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "session_not_found", "会话不存在"))?;
     Ok(Json(
-        crate::runtime::process_links::probe(&state, body.enabled).await?,
+        crate::runtime::process_links::probe(
+            &state,
+            body.enabled,
+            body.lease_id,
+            body.lease_seconds,
+        )
+        .await?,
     ))
 }
 

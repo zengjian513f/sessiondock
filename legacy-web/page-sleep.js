@@ -81,5 +81,5 @@ globalThis.SessionDockSleep = (() => {
     }
   });
   schedule();
-  return Object.freeze({get minutes() {return minutes;}, get sleeping() {return sleeping;}});
+  return Object.freeze({get lastActivity() {return lastActivity;}, get minutes() {return minutes;}, get sleeping() {return sleeping;}});
 })();
