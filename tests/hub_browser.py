@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 from hub_http_suite import REPO, FakeNode, Hub
 
@@ -73,6 +73,17 @@ def check_page(page, nodes, hub):
     assert all(name in side for name in ("NodeA", "NodeB", "Vega")), side
     assert len(set(page.evaluate("S.sessions.map(s => s.uid)"))) == 3
     page.wait_for_function('document.querySelector("#session-total").textContent === "3"')
+    # Typing a machine name filters the hub list locally, without Enter.
+    search_requests = []
+    page.on('request', lambda request: search_requests.append(request.url)
+            if '/api/search?' in request.url else None)
+    page.locator('#q').fill('NodeB')
+    expect(page.locator('#side-search-count')).to_have_text('1 条')
+    expect(page.locator('#side .item')).to_have_count(1)
+    assert page.locator('#side .item').get_attribute('data-uid').startswith('claude:' + NID['b'] + '~')
+    assert not search_requests, search_requests
+    page.locator('#q').fill('')
+    expect(page.locator('#side .item')).to_have_count(3)
     # Machine filter: right-click keeps one machine, while an ordinary click adds another.
     page.get_by_role("button", name="NodeB 1", exact=True).click(button="right")
     page.wait_for_function('visible().length === 1')
