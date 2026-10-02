@@ -137,7 +137,7 @@ def main(bind_native=False, bare_shell=False):
                             expect(page.locator(".new-session-wait")).to_be_hidden()
                             # Back from the phone width, the header returns its global buttons.
                             expect(page.locator(".dhead-actions #a-global-new-session")).to_have_count(0)
-                            assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : b.hasAttribute('data-session-resources') ? 'session-resources' : ''))"))==["a-more","a-session-action","a-term","report-bug","session-resources"]
+                            assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : b.hasAttribute('data-session-resources') ? 'session-resources' : ''))"))==["a-more","a-session-action","a-term","report-bug"]
                             expect(page.locator("#a-session-action")).to_have_attribute("aria-label","停止会话" if source == "shell" else "删除会话")
                             if bare_shell:
                                 assert receipt["source"] == "shell" and receipt["launch_kind"] == "fixed", receipt

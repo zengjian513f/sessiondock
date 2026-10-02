@@ -2433,7 +2433,7 @@ header .btn[data-session-docked] { display: none; }
 
 /* Optional three-row resource column; normal metadata keeps its full row. */
 #sidebar-resources-toggle { display:flex; align-items:center; gap:4px; }
-.item-resources { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:12px; row-gap:2px; align-self:center; flex:0 0 160px; padding-left:12px; border-left:1px solid var(--border); font-size:11.5px; line-height:16px; color:var(--muted); }
+.item-resources { appearance:none; background:transparent; border:0; padding:0; text-align:left; font-family:inherit; cursor:pointer; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:12px; row-gap:2px; align-self:center; flex:0 0 160px; padding-left:12px; border-left:1px solid var(--border); font-size:11.5px; line-height:16px; color:var(--muted); }
 .item-resource { display:flex; align-items:center; gap:3px; min-width:0; white-space:nowrap; }
 .item-resource .ui-icon { width:12px; height:12px; flex:none; }
 .item-resource-value { overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; color:var(--text); }
@@ -2443,3 +2443,6 @@ header .btn[data-session-docked] { display: none; }
 
 /* Reserve the same trailing action slot for agent and pending rows. */
 .sidebar-resources .item:not(:has(> .item-star)) > .item-resources { margin-right:28px; }
+
+.item-resources:hover { background:var(--hover); }
+.item-resources:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }

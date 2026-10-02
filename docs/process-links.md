@@ -221,21 +221,31 @@ that a short child fork and exit are observed without changing its command.
 
 ## Temporary I/O diagnostics
 
-The session resource drawer provides “探测 60 秒” and “停止探测”. The Hub sends
-`POST /api/session/resources/probe` (`uid`, `scope`, `enabled`) only to the
-session owner and verified execution participants. Each machine returns its own
-state and remaining seconds; partial failures are visible. Direct machine
-`POST /api/resources/probe` requires authenticated Hub access. Local consumers,
-including Node Status, use the same private socket request
-`{"op":"probe","data":{"enabled":true}}` (false stops).
+Opening session resource details automatically requests a named I/O lease.
+Page activity comes from the same trusted-event timestamp as page sleep (pointer,
+keyboard, wheel, touch and input); focus/visibility alone is not activity. The
+view shows “探测中” while running and “未探测” after 60 idle seconds. Interaction
+resumes probing; closing the details releases that page's lease. Renewals occur
+at most every 10 seconds, carry only the remaining idle allowance, and do not
+reset the idle timer themselves.
 
-The lease lasts at most 60 seconds from acceptance and repeated enable requests
-do not extend it. The agent owns the timer independently of page polling, Hub
-availability and the process sampler. The helper also has a 60-second watchdog,
-a parent-death signal and a kernel-side accounting deadline. Stop/expiry kills
-and reaps only the helper and closes its unpinned BPF links/maps; monitoring
-never signals workloads. Agent restart defaults back to off. Diagnostic state
-is published in `resources.diagnostic` and each session resource node.
+The Hub forwards `POST /api/session/resources/probe` (`uid`, `scope`, `enabled`,
+optional `lease_id`, `lease_seconds`) only to related execution machines. Named
+leases are independent: releasing one does not stop another page. Each accepted
+lease lasts at most 60 seconds, so a disconnected/suspended client cannot leave
+probing on indefinitely. Direct machine requests require authenticated Hub
+access. The private socket accepts the same lease fields. Legacy requests without
+a lease ID keep their fixed 60-second, non-renewable behavior; legacy stop clears
+all leases.
+
+The agent enforces lease expiry independently of page polling and sampling.
+Renewals update the existing helper's kernel-map accounting deadline and alarm
+through a private pipe, without recompilation, reattachment or resetting samples.
+The helper retains a maximum 60-second watchdog and parent-death signal. Closing
+or expiring the final lease kills/reaps the helper and detaches unpinned BPF links;
+workloads are never signalled. Restart defaults off. Diagnostic state remains in
+`resources.diagnostic` and each session execution node. Partial failures remain
+visible in the details.
 
 The I/O BPF object is compiled at build time (Clang BPF backend) and embedded in
 the executable. Targets need `libbpf.so.1`, compatible BTF and the existing BPF
@@ -296,3 +306,7 @@ width and stops polling. While enabled and visible it polls every five seconds. 
 resource values, preserving selection, focus, expansion and list ordering.
 The original title and metadata remain in the main column. Agent subrows
 without independent process attribution never copy the parent's usage.
+
+Clicking the sidebar resource area opens full metrics for that explicit session
+without changing the selected conversation. The area supports keyboard activation
+and has no hover tooltip; the detail header no longer has a resource button.

@@ -178,13 +178,17 @@ def main():
                             assert len(local_resources['nodes']) == 1
                             assert local_resources['nodes'][0]['metrics']['memory_pss_bytes']['value'] == 200 * 1024
                             page.locator(f'[data-uid="{parent}"]').first.click()
-                            page.get_by_role('button', name='查看会话资源').click()
+                            if page.get_by_role('button', name='列表资源', exact=True).get_attribute('aria-pressed') != 'true':
+                                page.get_by_role('button', name='列表资源', exact=True).click()
+                            page.locator('#side .item.sel .item-resources').click()
                             page.locator('.session-resources .sr-node').first.wait_for()
                             assert page.locator('.session-resources .sr-node').count() == 2
                             assert page.locator('.session-resources [data-scope]').count() == 2
                             page.get_by_role('button', name='关闭资源面板').click()
                             page.locator(f'[data-uid="{uid}"]').first.click()
-                            page.get_by_role('button', name='查看会话资源').click()
+                            if page.get_by_role('button', name='列表资源', exact=True).get_attribute('aria-pressed') != 'true':
+                                page.get_by_role('button', name='列表资源', exact=True).click()
+                            page.locator('#side .item.sel .item-resources').click()
                             page.wait_for_function("document.querySelectorAll('.session-resources .sr-node').length === 1")
                             assert page.locator('.session-resources .sr-node h3').inner_text() == 'b'
                             page.get_by_role('button', name='关闭资源面板').click()

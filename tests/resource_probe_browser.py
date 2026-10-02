@@ -131,8 +131,10 @@ def main():
         view = wait_for(lambda: (lambda data: data if {n['node_id'] for n in data.get('nodes', [])} == {nodes[0].nid, nodes[1].nid} else None)(context.request.get(resource_url).json()))
         assert all(row['diagnostic']['state'] == 'off' for row in view['nodes'])
         page = context.new_page()
+        page.clock.install()
         page.goto(base, wait_until='networkidle')
         sidebar = page.locator(f'#side .item[data-uid="{uid}"]')
+        assert page.evaluate("[...document.querySelector('.header-filters').children].map(e=>e.id).slice(1,5).join(',')") == 'sidebar-resource-control,nest,view,node-picker'
         toggle = page.get_by_role('button', name='列表资源', exact=True)
         assert toggle.get_attribute('aria-pressed') == 'false'
         assert sidebar.locator('.item-resources').count() == 0
@@ -154,7 +156,7 @@ def main():
         assert sidebar.locator('[data-resource="memory_pss_bytes"] .item-resource-value').inner_text() == '64M'
         assert sidebar.locator('[data-resource="proc_storage_read_bytes_per_second"] .item-resource-value').inner_text() == '2K/s'
         assert sidebar.locator('[data-resource="proc_storage_write_bytes_per_second"] .item-resource-value').inner_text() == '4K/s'
-        assert '不含单独归属的子会话' in sidebar.locator('.item-resource').first.get_attribute('title')
+        assert sidebar.locator('.item-resources [title], .item-resources[title]').count() == 0
         assert sidebar.locator('.body > :nth-child(2)').get_attribute('class') == 'm'
         assert sidebar.locator('.m').inner_text() == original_meta
         assert sidebar.evaluate("e => e.querySelector('.item-resources').getBoundingClientRect().left >= e.querySelector('.body').getBoundingClientRect().right")
@@ -207,25 +209,44 @@ def main():
         page.set_viewport_size({'width':1280,'height':960})
 
         page.screenshot(path='/tmp/sidebar-resources-desktop.png')
-        page.get_by_role('button', name='查看会话资源').click()
+        assert page.locator('#detail [data-session-resources]').count() == 0
+        other = page.locator(f'#side .item[data-uid="{scoped(nodes[2].nid, corpora[2].uid('probe'))}"]')
+        other.locator('.body').click()
+        selected_before = page.evaluate('S.sel')
+        sidebar.locator('.item-resources').click()
+        assert page.evaluate('S.sel') == selected_before
+        assert page.locator('.sr-subtitle').inner_text() == sidebar.evaluate('(e) => e._resourceSession.title')
         assert '64' in page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='内存带宽')).inner_text()
-        page.get_by_role('button', name='探测 60 秒', exact=True).click()
-        page.get_by_role('button', name='停止探测', exact=True).wait_for()
+        page.locator('.sr-probe[data-state="active"]').wait_for()
         page.locator('.sr-metric').filter(has=page.locator('dt', has_text='本地读次数')).filter(has_text='12.5').first.wait_for()
-        assert '次/s' in page.locator('.sr-metric').filter(has=page.locator('dt', has_text='本地读次数')).last.inner_text()
-        assert [c.calls for c in collectors] == [[{'enabled': True}], [{'enabled': True}], [], []]
-        view = context.request.get(resource_url).json()
-        assert all(row['diagnostic']['state'] == 'active' and row['diagnostic']['remaining_seconds'] == 60 for row in view['nodes'])
-        page.get_by_role('button', name='停止探测', exact=True).click()
-        page.get_by_role('button', name='探测 60 秒', exact=True).wait_for()
+        assert collectors[0].calls[-1]['enabled'] and collectors[1].calls[-1]['enabled']
+        assert collectors[0].calls[-1]['lease_id'] == collectors[1].calls[-1]['lease_id']
+        assert 1 <= collectors[0].calls[-1]['lease_seconds'] <= 60
+        sent_before = len(collectors[0].calls)
+        page.clock.fast_forward(20000)
+        page.mouse.move(605,300)
+        page.clock.fast_forward(11000)
+        wait_for(lambda: len(collectors[0].calls) > sent_before)
+        assert collectors[0].calls[-1]['lease_seconds'] <= 50
+        page.clock.fast_forward(48000)
+        assert collectors[0].enabled
+        page.clock.fast_forward(2000)
+        page.wait_for_function("document.querySelector('.sr-probe').textContent === '未探测'")
+        wait_for(lambda: not collectors[0].enabled and not collectors[1].enabled)
         page.wait_for_function("Array.from(document.querySelectorAll('.sr-metric')).filter(e => e.querySelector('dt').textContent === '本地读次数').every(e => e.querySelector('dd').textContent === '—')")
-        assert all(c.calls[-1] == {'enabled': False} for c in collectors[:2])
         assert '64' in page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='内存带宽')).inner_text()
+        # Focus/visibility alone must not count as activity, matching page sleep.
+        page.evaluate("dispatchEvent(new Event('focus'));document.dispatchEvent(new Event('visibilitychange'))")
+        page.clock.fast_forward(2000)
+        assert not collectors[0].enabled and not collectors[1].enabled
         collectors[1].fail = True
-        page.get_by_role('button', name='探测 60 秒', exact=True).click()
+        page.mouse.move(600,300)
+        page.clock.fast_forward(1100)
         page.get_by_text('b：机器探测请求失败，请检查采集服务', exact=True).wait_for()
-        page.get_by_role('button', name='停止探测', exact=True).wait_for()
-        assert collectors[0].enabled and not collectors[1].enabled
+        wait_for(lambda: collectors[0].enabled)
+        assert not collectors[1].enabled
+        page.get_by_role('button', name='关闭资源面板').click()
+        wait_for(lambda: not collectors[0].enabled)
         counts = [len(c.calls) for c in collectors]
         assert context.request.post(local[0][0] + '/api/resources/probe', data={'enabled': True}).status == 403
         assert context.request.post(f'http://127.0.0.1:{nodes[0].port}/api/resources/probe', data={'enabled': True}).status == 403

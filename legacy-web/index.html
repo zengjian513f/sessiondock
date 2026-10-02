@@ -161,21 +161,21 @@
         <button type="button" id="livecount" role="radio" aria-checked="false" tabindex="-1" title="只显示活跃会话"><b id="session-active">0</b></button>
         <button type="button" id="allcount" role="radio" aria-checked="true" tabindex="0" class="on" title="显示全部会话"><b id="session-total">0</b></button>
       </div>
-      <div class="node-picker" id="node-picker" hidden>
-        <div class="seg" id="node-chips" role="group" aria-label="机器筛选"></div>
+      <div class="seg" id="sidebar-resource-control">
+        <button type="button" id="sidebar-resources-toggle" aria-pressed="false" aria-label="列表资源" title="显示列表资源列：CPU、进程、内存、GPU、磁盘读写"><svg class="ui-icon" aria-hidden="true"><use href="#i-resource-cpu"/></svg><span class="mobile-label">资源</span></button>
       </div>
-      <div class="seg chips" id="chips" role="group" aria-label="Agent Type 筛选"></div>
+      <div class="seg" id="nest">
+        <button type="button" id="nest-toggle" aria-pressed="false" title="分层显示：由会话发起的会话缩进在发起者之下；子代理始终挂在会话下面" aria-label="分层显示"><svg class="ui-icon" aria-hidden="true"><use href="#i-tree"/></svg><span class="mobile-label">分层</span></button>
+      </div>
       <div class="seg" id="view" role="group" aria-label="列表视图">
         <button data-v="tree" class="on" title="项目树" aria-label="项目树">📁 <span class="mobile-label">项目树</span></button>
         <button data-v="group" title="会话分组" aria-label="会话分组">🏷 <span class="mobile-label">分组</span></button>
         <button data-v="date" title="时间轴" aria-label="时间轴">🕒 <span class="mobile-label">时间轴</span></button>
       </div>
-      <div class="seg" id="sidebar-resource-control">
-        <button type="button" id="sidebar-resources-toggle" aria-pressed="false" aria-label="列表资源" title="显示列表资源列：CPU、进程、内存、GPU、磁盘读写"><svg class="ui-icon" aria-hidden="true"><use href="#i-resource-cpu"/></svg><span>资源</span></button>
+      <div class="node-picker" id="node-picker" hidden>
+        <div class="seg" id="node-chips" role="group" aria-label="机器筛选"></div>
       </div>
-      <div class="seg" id="nest">
-        <button type="button" id="nest-toggle" aria-pressed="false" title="分层显示：由会话发起的会话缩进在发起者之下；子代理始终挂在会话下面" aria-label="分层显示"><svg class="ui-icon" aria-hidden="true"><use href="#i-tree"/></svg><span class="mobile-label">分层</span></button>
-      </div>
+      <div class="seg chips" id="chips" role="group" aria-label="Agent Type 筛选"></div>
     </div>
     <div class="header-actions">
       <button class="btn hidden" id="new-session" title="新建会话" aria-label="新建会话">
