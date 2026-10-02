@@ -64,7 +64,11 @@ def rejected_bundles(source,target,operation):
     manifest=json.loads(raw)
     wrong=copy.deepcopy(manifest);wrong['roots']['codex']+='/wrong'
     status,raw=node_call(target,'/api/session/transfer/check',wrong);assert status==409 and json.loads(raw)['code']=='move_root_mismatch',raw
-    wrong=copy.deepcopy(manifest);wrong['environment'][0]['cwd']+='/missing'
+    wrong=copy.deepcopy(manifest);previous=wrong['environment'][0]['cwd']
+    wrong['environment'][0]['cwd']+='/missing'
+    for group in (wrong['operation']['plan']['group'],wrong['operation'].get('full_group')):
+        for member in (group or {}).get('members',[]):
+            if member['cwd']==previous:member['cwd']=previous+'/missing'
     status,raw=node_call(target,'/api/session/transfer/check',wrong);assert status==409 and json.loads(raw)['code']=='move_cwd_missing',raw
     status,archive=node_call(source,'/api/session/transfer/export',{'operation_id':operation});assert status==200,archive[:200]
     try:

@@ -144,6 +144,9 @@ impl TransferService {
             return Err(invalid("此操作不能作为迁移源"));
         }
         self.recheck(op)?;
+        let mut prepared = op.clone();
+        self.prepare(&mut prepared)?;
+        let op = &prepared;
         let roots = self.bundle_roots(op)?;
         let cache = self.directory.join(&op.id).join("export-manifest.json");
         if cache.is_file() {
@@ -234,7 +237,7 @@ impl TransferService {
         destination: &Path,
     ) -> Result<Manifest, TransferError> {
         let manifest = self.bundle_manifest(op)?;
-        let publications = self.publications(op);
+        let publications = self.publications(&manifest.operation);
         let raw = serde_json::to_vec(&manifest)?;
         let mut archive = tar::Builder::new(private_file(destination)?);
         let result = (|| {

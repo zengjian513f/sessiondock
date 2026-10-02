@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Claude/Grok complex family copies through actual node/Hub Chromium controls."""
+from session_clone_browser import prepare_confirmed
 import argparse
 import json
 import os
@@ -240,16 +241,17 @@ def main():
                             page.locator('#a-clone-group').click()
                         plan=planned.value.json()
                         journal=corpus.root/'state/transfers'/plan['operation_id']/'operation.json'
+                        prepare_confirmed(page,node,plan['operation_id'])
                         pending=json.loads(journal.read_text())
                         last=Path(pending['file_publications'][-1]['staging'])
                         last.write_bytes(last.read_bytes()+b'changed')
                         with page.expect_response(lambda r:r.url.endswith('/api/session/clone') and r.request.method=='POST') as failed:
                             page.locator('#clone-group-dialog .clone-confirm').click()
                         assert not failed.value.ok
-                        assert json.loads(journal.read_text())['phase']=='failed'
+                        assert json.loads(journal.read_text())['phase']=='aborted'
                         assert all(not Path(f['target']).exists() for f in pending['file_publications'])
                         assert all(Path(p).read_bytes()==raw for p,raw in original.items())
-                        print('PASS failed file-family publication rolls back owned files and preserves source',flush=True)
+                        print('PASS failed file-family publication is cancelled, removes owned files and preserves source',flush=True)
                     else:
                         for selected,result,op in operations:
                             target=Path(op['file_publications'][0]['target']);before=target.read_bytes()

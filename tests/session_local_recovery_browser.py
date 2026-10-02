@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Recover the same local complex clone after a real failed publication and restart."""
+"""Cancel a failed local publication, then clone after restart without changing sources."""
 import argparse
 from contextlib import ExitStack
 import json
@@ -11,7 +11,7 @@ import time
 from types import SimpleNamespace
 from playwright.sync_api import sync_playwright, expect
 from history_parity import BINARY, Corpus, isolated_server
-from session_clone_browser import prepare
+from session_clone_browser import prepare_confirmed, prepare
 from session_files_browser import fixture, uid
 from session_bundle_browser import reopen_transfer
 from session_transfer_browser import ident
@@ -62,6 +62,7 @@ def main():
                             dialog=page.locator('#clone-group-dialog')
                             expect(dialog.locator('.clone-members tbody tr')).to_have_count(count)
                             journal=corpus.root/'state/transfers'/operation/'operation.json'
+                            prepare_confirmed(page,node,operation)
                             saved=json.loads(journal.read_text())
                             if provider=='codex':
                                 last=journal.parent/'staging'/saved['staged']['files'][-1]['relative']
@@ -70,16 +71,21 @@ def main():
                             with page.expect_response(lambda r:r.url.endswith('/api/session/clone'),timeout=60000) as failed:
                                 dialog.locator('.clone-confirm').click()
                             assert not failed.value.ok,failed.value.text()
-                            assert json.loads(journal.read_text())['phase']=='failed'
-                            dialog=reopen_transfer(page,hub,operation)
-                            expect(dialog.locator('.transfer-progress')).to_contain_text('复制失败')
-                            expect(dialog.locator('#transfer-target')).to_have_value(node.nid)
-                            expect(dialog.locator('.transfer-abort')).to_be_hidden()
+                            assert json.loads(journal.read_text())['phase']=='aborted'
                             assert all(p.read_bytes()==raw for p,raw in originals.items())
-                            last.write_bytes(original)
-                            print('PASS '+provider+' failed local publication is recoverable through the task list after page reload',flush=True)
+                            aborted=operation
+                            print('PASS '+provider+' failed local publication is cancelled and preserves source',flush=True)
                         else:
-                            dialog=reopen_transfer(page,hub,operation)
+                            page.locator(f'#side .item[data-uid="{selected}"]').click()
+                            page.wait_for_function('(uid)=>S.sel===uid',arg=selected)
+                            with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as response:
+                                page.locator('#a-clone-group').click()
+                            assert response.value.ok,response.value.text()
+                            plan=response.value.json();operation=plan['operation_id']
+                            assert operation!=aborted
+                            journal=corpus.root/'state/transfers'/operation/'operation.json'
+                            saved=json.loads(journal.read_text())
+                            dialog=page.locator('#clone-group-dialog')
                             expect(dialog.locator('.clone-members tbody tr')).to_have_count(count)
                             with page.expect_response(lambda r:r.url.endswith('/api/session/clone'),timeout=60000) as result:
                                 dialog.locator('.clone-confirm').click()
@@ -95,7 +101,7 @@ def main():
                             pending=context.request.get(f'http://127.0.0.1:{hub.port}/api/session/transfers')
                             assert pending.ok and not any(t['request']['operation_id']==operation for t in pending.json()['operations'])
                             assert all(p.read_bytes()==raw for p,raw in originals.items())
-                            print('PASS '+provider+' Hub/node restart and Chromium retry preserve the exact local clone identity, history and source',flush=True)
+                            print('PASS '+provider+' Hub/node restart and Chromium fresh copy preserve planned identity, history and source',flush=True)
                             if provider=='codex':
                                 # Hold the target database's writer lock after planning,
                                 # then crash the Hub while native publication is waiting.
@@ -104,6 +110,7 @@ def main():
                                     page.locator('#a-clone-group').click()
                                 interrupted_plan=prepared.value.json();interrupted=interrupted_plan['operation_id']
                                 interrupted_path=corpus.root/'state/transfers'/interrupted/'operation.json'
+                                prepare_confirmed(page,node,interrupted)
                                 with sqlite3.connect(corpus.root/'codex/state_5.sqlite') as locked:
                                     locked.execute('BEGIN IMMEDIATE')
                                     with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/progress')) as progress:
@@ -119,14 +126,16 @@ def main():
                                 unresolved=json.loads((hubroot/'transfers'/(interrupted+'.json')).read_text())
                                 assert unresolved['phase']=='publishing'
                                 hub.start()
-                                dialog=reopen_transfer(page,hub,interrupted)
-                                expect(dialog.locator('.transfer-progress')).to_contain_text('已完成')
-                                with page.expect_response(lambda r:r.url.endswith('/api/session/clone')) as acknowledged:
-                                    dialog.locator('.clone-confirm').click()
-                                assert acknowledged.value.ok,acknowledged.value.text()
-                                assert acknowledged.value.json()['target_uid']==interrupted_plan['target_uid']
+                                page.reload(wait_until='networkidle')
+                                acknowledged=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/clone',
+                                    data={'uid':selected,'operation_id':interrupted})
+                                assert acknowledged.ok,acknowledged.text()
+                                assert acknowledged.json()['target_uid']==interrupted_plan['target_uid']
+                                target_uid=acknowledged.json()['target_uid']
+                                page.locator(f'#side .item[data-uid="{target_uid}"]').click()
+                                expect(page.locator('#msgs')).to_contain_text(expected)
                                 assert all(p.read_bytes()==raw for p,raw in originals.items())
-                                print('PASS local publication outlives Hub crash; Chromium restores the completed node result with the same identity',flush=True)
+                                print('PASS local publication outlives Hub crash; Chromium opens the completed clone with the same identity',flush=True)
         finally:browser.close()
 
 

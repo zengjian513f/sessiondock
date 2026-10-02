@@ -402,7 +402,7 @@ fn rewrite(
     Ok(())
 }
 
-fn relative(file: &HistoryFile, map: &IdentityMap) -> Result<PathBuf, TransferError> {
+pub(super) fn relative(file: &HistoryFile, map: &IdentityMap) -> Result<PathBuf, TransferError> {
     let name = file
         .relative
         .file_name()
