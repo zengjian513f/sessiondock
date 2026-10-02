@@ -896,6 +896,7 @@ main { display: flex; flex: 1; min-height: 0; }
   #drag::before { content: ""; position: absolute; top: 0; bottom: 0; left: -6px; right: -6px; }
 }
 body.dragging { cursor: col-resize; user-select: none; }
+body.dragging #drag { will-change: transform; }
 
 @media (min-width: 721px) {
   body.side-collapsed #left,
@@ -2439,3 +2440,6 @@ header .btn[data-session-docked] { display: none; }
 @media (max-width:600px) {
   .item-resources { flex-basis:136px; padding-left:8px; column-gap:8px; font-size:11px; }
 }
+
+/* Reserve the same trailing action slot for agent and pending rows. */
+.sidebar-resources .item:not(:has(> .item-star)) > .item-resources { margin-right:28px; }

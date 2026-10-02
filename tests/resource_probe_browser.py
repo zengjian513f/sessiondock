@@ -154,6 +154,25 @@ def main():
         page.reload(wait_until='networkidle')
         assert toggle.get_attribute('aria-pressed') == 'true'
         assert page.locator('#left').bounding_box()['width'] == original_width + 176
+        # Rows without a star keep the same resource-column boundary.
+        star = sidebar.locator('.item-star')
+        aligned_left = sidebar.locator('.item-resources').bounding_box()['x']
+        sidebar.evaluate("e => { e._testStar=e.querySelector('.item-star'); e._testStar.remove(); }")
+        assert abs(sidebar.locator('.item-resources').bounding_box()['x']-aligned_left)<1
+        sidebar.evaluate("e => { e.append(e._testStar); delete e._testStar; }")
+        # Pointer moves change only the guide; releasing commits one new width.
+        handle = page.locator('#drag').bounding_box()
+        start_width = page.locator('#left').bounding_box()['width']
+        x, y = handle['x']+handle['width']/2, handle['y']+80
+        page.mouse.move(x,y)
+        page.mouse.down()
+        page.mouse.move(x+100,y,steps=20)
+        assert page.locator('#left').bounding_box()['width']==start_width
+        assert page.locator('#drag').bounding_box()['x']>handle['x']+90
+        page.mouse.up()
+        assert page.locator('#left').bounding_box()['width']>=start_width+99
+        page.locator('#drag').dblclick()
+        assert page.locator('#left').bounding_box()['width']==original_width+176
         sidebar.click()
         saved = sidebar.element_handle()
         collectors[0].cpu = 3
