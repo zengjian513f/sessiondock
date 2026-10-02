@@ -68,6 +68,7 @@ pub(super) fn derive_cached(
         .values()
         .map(|e| Ok((e.uid.clone(), cache.get(e)?)))
         .collect::<Result<_, TransferError>>()?;
+    cache.save();
     let grok_aliases: Vec<_> = entries
         .values()
         .filter(|e| e.source == "grok")

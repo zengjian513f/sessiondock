@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from urllib.parse import urlencode, urlsplit, parse_qs
 from playwright.sync_api import sync_playwright, expect
 from history_parity import BINARY, isolated_server, get_json
-from session_clone_browser import prepare, native_rows
+from session_clone_browser import prepare_confirmed, prepare, native_rows
 from session_files_browser import fixture, uid
 from session_transfer_browser import ident
 from hub_http_suite import Hub, free_port
@@ -65,6 +65,7 @@ def main():
                         expect(dialog.locator('.clone-members tbody tr')).to_have_count(14)
                         assert {s['source'] for s in plan['sessions']}=={'codex','claude','grok'}
                         journal=corpus.root/'state/transfers'/operation/'operation.json'
+                        prepare_confirmed(page,node,operation)
                         saved=json.loads(journal.read_text())
                         last=Path(saved['file_publications'][-1]['staging'])
                         last.write_bytes(last.read_bytes()+b'changed')
