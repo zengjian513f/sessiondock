@@ -4,6 +4,7 @@
   const fields = [
     ['cpu_cores', 'CPU', 'core'], ['gpu_count', 'GPU', 'gpu'],
     ['gpu_memory_bytes', '显存', 'bytes'], ['memory_pss_bytes', '内存 · PSS', 'bytes'],
+    ['memory_bandwidth_bytes_per_second', '内存带宽', 'rate'],
     ['proc_storage_read_bytes_per_second', '存储层读取', 'rate'], ['proc_storage_write_bytes_per_second', '存储层写入', 'rate'],
     ['disk_read_operations_per_second', '本地读次数', 'ops'], ['disk_write_operations_per_second', '本地写次数', 'ops'],
     ['nfs_read_operations_per_second', 'NFS 读次数', 'ops'], ['nfs_write_operations_per_second', 'NFS 写次数', 'ops'],
@@ -19,6 +20,7 @@
     cpu_cores: '占用的逻辑 CPU 核数；不同机器的核数不代表相同算力。',
     gpu_count: '使用到的计算设备数，同机按设备去重；不代表独占或满卡算力。约 10 秒更新。',
     gpu_memory_bytes: '计算进程的显存占用；不含纯图形任务，共享计算服务可能无法细分到工作进程。约 10 秒更新。',
+    memory_bandwidth_bytes_per_second: '常驻硬件监控，约 5 秒更新；按会话统计总内存流量，未拆分读写。子会话依标签范围汇总；不代表逐进程带宽，短命任务可能漏计。',
     memory_pss_bytes: '按比例分摊共享内存后的驻留内存，不用普通驻留内存替代缺失值。约 30 秒更新。',
     proc_storage_read_bytes_per_second: '进程在存储层引起的读取量，与缓存命中的文件读取量不同。',
     proc_storage_write_bytes_per_second: '进程在存储层引起的写入量；延迟回写可能影响归属和时间。',

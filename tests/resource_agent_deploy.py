@@ -13,7 +13,11 @@ def main():
     unit = (Path(__file__).resolve().parents[1]/'deploy/resource-agent.service').read_text()
     assert 'KillMode=control-group' in unit
     assert 'ProtectControlGroups=yes' in unit
-    assert 'CPUQuota=25%' in unit
+    assert 'CPUQuota=100%' in unit
+    assert '--memory-bandwidth on' in unit
+    assert 'Wants=sys-fs-resctrl.mount' in unit
+    assert 'CAP_DAC_OVERRIDE' in unit
+    assert '-/sys/fs/resctrl' in unit
     assert '--io-events off' in unit
     assert 'Before=ssh' not in unit and 'RequiredBy=' not in unit
     handler = object.__new__(ResourceAgentHandler)
@@ -27,7 +31,11 @@ def main():
     assert 'resource-agent.new' in joined
     assert 'restart resource-agent.service' in joined
     assert 'restart ssh' not in joined and 'restart sessiondock' not in joined
+    assert 'sys-fs-resctrl.mount' in joined
     assert 'cgroup.procs' not in joined
+    handler.before=SimpleNamespace(active=True)
+    handler.rollback('/opt/resource-agent/backup-deploy-test')
+    assert 'umount' not in '\n'.join(commands)
     print('PASS system collector deploy: opt-in, root-owned binary, bounded service, no SSH/workload dependency')
 
 

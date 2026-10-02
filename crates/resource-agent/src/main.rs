@@ -1,4 +1,6 @@
 #[cfg(target_os = "linux")]
+mod bandwidth;
+#[cfg(target_os = "linux")]
 mod events;
 #[cfg(target_os = "linux")]
 mod gpu;

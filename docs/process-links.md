@@ -250,3 +250,29 @@ it off from one view stops it for all views on that machine. Probe execution can
 still affect small-I/O throughput. CPU, PSS, GPU and proc storage accounting
 remain available while diagnostics are off; unavailable diagnostic rates are
 null, never stale values presented as live zeroes.
+
+### Resident memory bandwidth
+
+Production resource agents use `--memory-bandwidth on` and the optional
+`sys-fs-resctrl.mount` dependency. Every five seconds, a separate worker places
+threads of each active owner session into a resctrl monitor-only group and reads
+`mbm_total_bytes` across L3 domains. It never changes schemata, CPU affinity,
+cgroups or allocation limits; it respects other applications' monitor groups.
+Existing threads are enumerated and newly forked threads inherit the hardware
+monitor assignment. Attribution changes are reconciled at the next sample.
+
+`resources.session_measurements` carries session-native
+`memory_bandwidth_bytes_per_second`; it is not duplicated in process samples.
+The common aggregator counts each owning session once, including child sessions
+only in inclusive scope, and adds execution-machine totals normally. Unsupported
+hardware, missing mounts, exhausted monitor IDs and unreadable counters remain
+unknown. Counter resets and newly available domains require another baseline;
+readable domains provide partial coverage. Cached observations expire after
+15 seconds. This is total memory traffic, not separate reads/writes or per-process
+measurements; short-lived tasks and association changes can be missed.
+
+The collector removes only its own prefixed MON groups on graceful shutdown and
+recovers its orphan groups on restart. Removing a group returns its threads to
+the parent monitor without stopping them. The shared resctrl mount remains
+available to other monitoring applications. Temporary I/O probe controls have
+no effect on this resident collector. Private agent instances default to off.
