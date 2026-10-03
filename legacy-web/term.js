@@ -15,6 +15,8 @@ const TERM_CLAIM_TIMEOUT_MS = 20_000;
 // 1 s 兜底），不让一个没收尾的帧无限占住输出。
 const TERM_SYNC_HOLD_MAX = 256 * 1024;
 const TERM_SYNC_HOLD_MS = 100;
+// ConPTY can emit the sync-end marker before its final screen/cursor update.
+const TERM_SYNC_SETTLE_MS = 24;
 const TERM_LAYOUT_POLICY_VERSION = 2;
 // 每次页面加载独立生成；不写 local/sessionStorage，复制标签页也不会复制归属。
 const TERM_PAGE_ID = window.__sessiondockPageId || crypto.randomUUID?.()
@@ -2680,7 +2682,7 @@ function ensureTerm(name) {
     attachPromise: null, revoked: false,
     focusRequest: null, resumeFocus: false,
     renderer: 'dom', webgl: null, unicode11: null,
-    syncHold: null, syncHoldTimer: null,
+    syncHold: null, syncHoldTimer: null, syncSettleTimer: null,
     selectionLocked: false, selectionSnapshot: null, restoringSelection: false,
     codexSideThread: false, sideThreadScanQueued: false,
   };
@@ -2828,11 +2830,8 @@ function ensureTerm(name) {
   return view;
 }
 
-// 每个 WebSocket 包原样立即交给 xterm，页面这层不再攒 20 ms 合帧：xterm 自己
-// 的 WriteBuffer 已按帧合并解析，Claude Code / Codex 的整屏重画都包在
-// DEC 2026（synchronized output）里，由 xterm 压到一帧内绘制，不会再画出
-// “先清行后重写”的中间态。攒批只会让每次按键回显固定多等一个定时器
-// （实测 localhost p50 从 ~30 ms 降到 <1 ms，见 tests/bench_term_echo_browser.py）。
+// 普通回显直接写入；只有 DEC 2026 重绘合帧，避免把绘制中间的光标位置
+// 提交给 xterm 及它的 IME textarea。同步结束后还要收齐 ConPTY 的迟到尾包。
 function writeTermOutput(view, chunk) {
   if (!chunk) return;
   // 网格视图收到的是 JSON 行，没有转义序列，也不需要攒同步帧。
@@ -2844,22 +2843,26 @@ function writeTermOutput(view, chunk) {
   // 暗色页面与默认/ANSI 16 色仍交给 termTheme。xterm 会跨 write 保留 SGR 状态。
   chunk = terminalColorChunk(view, chunk);
   if (!chunk) return;
-  // 唯一的例外：一个 ?2026h 打开、还没 ?2026l 收尾的同步帧整帧攒住再写。xterm
-  // 的绘制虽然已按 2026 合帧，但它每 parse 一个 write 就把隐藏的输入 textarea
-  // 挪到当时的光标格；Claude 的一帧常拆成几个包，中间光标在清行时来回跳，
-  // 浏览器贴在 textarea 上的原生小部件（触屏选择把手等）就跟着满屏乱闪。
-  // 按键回显不带 2026，仍然直写。
+  // BUG-20261003-110817-4e7c32: ConPTY forwards ?2026l about one refresh
+  // before the remaining cells and cursor restore. Even a complete marker
+  // pair in one packet therefore needs a short quiet window before parsing.
   if (view.syncHold !== null) {
     view.syncHold += chunk;
-  } else if (termSyncFrameOpen(chunk)) {
+  } else if (chunk.includes('\x1b[?2026h')) {
     view.syncHold = chunk;
     view.syncHoldTimer = setTimeout(() => flushTermSyncHold(view), TERM_SYNC_HOLD_MS);
   } else {
     writeParsedTermOutput(view, chunk);
     return;
   }
-  if (termSyncFrameOpen(view.syncHold) && view.syncHold.length < TERM_SYNC_HOLD_MAX) return;
-  flushTermSyncHold(view);
+  if (view.syncSettleTimer) clearTimeout(view.syncSettleTimer);
+  view.syncSettleTimer = null;
+  if (view.syncHold.length >= TERM_SYNC_HOLD_MAX) {
+    flushTermSyncHold(view);
+  } else if (!termSyncFrameOpen(view.syncHold)) {
+    view.syncSettleTimer = setTimeout(() => flushTermSyncHold(view), TERM_SYNC_SETTLE_MS);
+  }
+  // The original total deadline is never extended by tail packets/new frames.
 }
 
 // 最后一个 ?2026h 之后没有 ?2026l 就算帧还开着。
@@ -2869,7 +2872,9 @@ function termSyncFrameOpen(s) {
 
 function flushTermSyncHold(view) {
   if (view.syncHoldTimer) clearTimeout(view.syncHoldTimer);
+  if (view.syncSettleTimer) clearTimeout(view.syncSettleTimer);
   view.syncHoldTimer = null;
+  view.syncSettleTimer = null;
   const held = view.syncHold;
   view.syncHold = null;
   if (held) writeParsedTermOutput(view, held);
@@ -2959,7 +2964,9 @@ function positionTermViewport(view) {
 
 function dropTermSyncHold(view) {
   if (view.syncHoldTimer) clearTimeout(view.syncHoldTimer);
+  if (view.syncSettleTimer) clearTimeout(view.syncSettleTimer);
   view.syncHoldTimer = null;
+  view.syncSettleTimer = null;
   view.syncHold = null;
 }
 
