@@ -4149,7 +4149,10 @@ function disposeTermView(name) {
 // 已接管的会话在消息流底部给个输入框, 不必展开整个终端就能说话。
 const COMPOSER_MAX_FILES = 12;
 const COMPOSER_MAX_FILE_BYTES = 512 * 1024 * 1024;
-const ATTACH_ACCEPT = { image: 'image/*', video: 'video/*', audio: 'audio/*', file: '' };
+// An untyped file picker can expose only media sources on Android browsers.
+// Offer PDF explicitly while keeping the general file picker unrestricted.
+const ATTACH_ACCEPT = { image: 'image/*', video: 'video/*', audio: 'audio/*',
+  pdf: '.pdf,application/pdf', file: '' };
 const composerDrafts = new Map();
 const composerDraftAliases = new Map();
 const composerInputHistoryCache = new Map();
