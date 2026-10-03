@@ -23,11 +23,19 @@ tuple and first observation time. Bindings also expose a `launch_chain` (nearest
 launch first), retaining earlier launch identities across additional SSH hops
 and after an upstream launcher exits. An established attribution stays attached to
 that process incarnation; a later connection reusing the same ports cannot
-reassign old work. A verified initiator initializes an untouched local child’s
-`nest_parent`, including the initiator’s node ID for remote launches. Both the
-compatibility collector and resource-agent path persist this relationship. Native
-creation timestamps exclude older resumed sessions: the initiator must not be
-newer than the child, and, as in local spawn discovery, a child created more
+reassign old work.
+
+A session's owning CLI process also names its `spawner`, the nearest session
+that launched it: the session of its bound parent process; when that parent is
+gone, the session of the bound process it was forked from (lifecycle events,
+resource-agent only); otherwise its SSH initiator. A parent or fork origin of
+the same session marks a helper, which names none. The first spawner observed
+stays with that process incarnation. A unanimous spawner initializes an
+untouched child's `nest_parent`, including the spawner's node ID for remote
+launches, so a CLI started by an SSH-launched session nests under that session,
+not the remote initiator. Local `/proc` spawn discovery remains as the fallback.
+Native creation timestamps exclude older resumed sessions: the spawner must not
+be newer than the child, and, as in local spawn discovery, a child created more
 than a second before its earliest launched process started was resumed rather
 than created. Explicit attachment or
 detachment always wins, including after restart. The sidebar parent never changes
@@ -38,8 +46,8 @@ process ownership.
 `GET /api/process-links` returns version 1 with:
 
 - `node_id`, `boot_id`, `sampled_at`, `supported`;
-- `bindings`: process identity, direct session, optional initiator, `launch_chain` and
-  `first_observed_at`;
+- `bindings`: process identity, direct session, optional initiator, `launch_chain`,
+  `first_observed_at`, and `spawner` on owning CLI processes;
 - `outgoing`: SSH client process, start time, full TCP tuple, owning session and inherited launch chain;
 - `incoming`: process identity/start time and inherited SSH connection tuple.
 

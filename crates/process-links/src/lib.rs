@@ -86,6 +86,11 @@ pub struct Binding {
     pub first_observed_at: f64,
     #[serde(default)]
     pub launch_chain: Vec<Launch>,
+    /// Only on a session's owning CLI process: the other session that
+    /// launched it (nearest bound parent, the process it was forked from, or
+    /// its SSH initiator). Kept for the incarnation once observed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawner: Option<Session>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

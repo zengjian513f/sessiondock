@@ -272,3 +272,67 @@ fn launcher_identity_inherited_by_child_cli_does_not_outrank_it() {
     // Detached work without an owning ancestor still uses its identity.
     assert_eq!(owner(30), Some("parent"));
 }
+
+#[test]
+fn fork_origin_names_spawner_after_launcher_exits() {
+    use crate::{
+        agent::{Catalog, CollectorStatus, Owner},
+        engine::Engine,
+        linux::{Entry, Snapshot},
+    };
+    let session = |sid: &str| Session {
+        node_id: "a".into(),
+        source: "codex".into(),
+        sid: sid.into(),
+        title: None,
+        created: Some(1.0),
+    };
+    let entry = |pid: u32, parent| Entry {
+        process: Process {
+            pid,
+            start: pid.into(),
+        },
+        parent,
+        started_at: 1.0,
+        connection: None,
+        identities: vec![],
+        sockets: vec![],
+        multiplexed: false,
+        shared_parent: false,
+    };
+    let launcher = Process { pid: 10, start: 10 };
+    let child = Process { pid: 20, start: 20 };
+    let catalog = |owners: Vec<Owner>| Catalog {
+        node_id: "a".into(),
+        boot_id: "boot".into(),
+        sessions: vec![session("parent"), session("child")],
+        owners,
+    };
+    let mut engine = Engine::new("a".into(), "boot".into(), None);
+    engine.catalog(catalog(vec![Owner {
+        process: launcher.clone(),
+        session: session("parent"),
+    }]));
+    let mut snapshot = Snapshot {
+        boot_id: "boot".into(),
+        entries: BTreeMap::from([(10, entry(10, 1))]),
+    };
+    engine.update(&snapshot, 2.0, CollectorStatus::default());
+    engine.fork(&launcher, child.clone(), 3.0);
+    engine.exit(&launcher);
+    // The dispatcher exited before the child CLI was cataloged.
+    snapshot.entries = BTreeMap::from([(20, entry(20, 1))]);
+    engine.catalog(catalog(vec![Owner {
+        process: child.clone(),
+        session: session("child"),
+    }]));
+    let report = engine.update(&snapshot, 4.0, CollectorStatus::default());
+    let owned = &report.bindings[0];
+    assert_eq!(owned.session.sid, "child");
+    assert_eq!(
+        owned.spawner.as_ref().map(|s| s.sid.as_str()),
+        Some("parent")
+    );
+    let recovered = Engine::new("a".into(), "boot".into(), Some(engine.saved()));
+    assert_eq!(recovered.forked_from.len(), 1);
+}

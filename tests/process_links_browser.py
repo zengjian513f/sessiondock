@@ -10,16 +10,20 @@ from pathlib import Path
 import shutil
 import subprocess
 import os
+import re
 import tempfile
 import time
 from types import SimpleNamespace
 from urllib.parse import urlencode
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, Corpus, codex_row, isolated_server, get_json
 from hub_http_suite import Hub, scoped
 from node_auth_suite import node_env, TOKEN, free_port
-from spawned_by_suite import proc_pid
+from spawned_by_suite import START, proc_pid
+
+WORKING = re.compile(r'\bturn-working\b')
+START.update({900: 90_000, 910: 91_000, 920: 92_000})
 
 
 def wait_for(function, timeout=20):
@@ -114,7 +118,7 @@ def main():
         corpora, nodes, procs = [], [], []
         for index, name in enumerate(('a', 'b')):
             corpus = Corpus(root / name)
-            born = {'older': '09:00', 'parent': '10:00', 'stale': '10:30', 'child': '11:00'}
+            born = {'older': '09:00', 'parent': '10:00', 'stale': '10:30', 'child': '11:00', 'grand': '12:00'}
             for sid, hour in born.items():
                 corpus.put(sid, 'codex', [
                     codex_row('session_meta', {'id': sid, 'cwd': '/synthetic/ssh',
@@ -132,7 +136,10 @@ def main():
                 proc_pid(proc, 100, 'codex', ['codex'], 1, fds={3: str(corpus.paths['parent'])})
                 proc_pid(proc, 200, 'ssh', ['ssh', 'remote', 'python'], 100, fds={4: 'socket:[900]'})
                 proc_pid(proc, 500, 'ssh', ['ssh', '-M', 'remote'], 100, fds={4: 'socket:[901]'})
-                (proc / 'net/tcp').write_text('header\n 0: 0100000A:C350 0200000A:C366 01 0 0 0 0 0 900\n 1: 0100000A:C351 0200000A:C366 01 0 0 0 0 0 901\n')
+                (proc / 'net/tcp').write_text('header\n 0: 0100000A:C350 0200000A:C366 01 0 0 0 0 0 900\n 1: 0100000A:C351 0200000A:C366 01 0 0 0 0 0 901\n 2: 0100000A:C352 0200000A:C366 01 0 0 0 0 0 902\n')
+                # 'older' starts a detached remote job; its SSH client exits later.
+                proc_pid(proc, 900, 'codex', ['codex'], 1, fds={3: str(corpus.paths['older'])})
+                proc_pid(proc, 910, 'ssh', ['ssh', 'remote', 'nohup', 'python', 'job.py'], 900, fds={4: 'socket:[902]'})
                 # A local `codex exec` and its helper inherit the launcher's
                 # thread ID; the nearer child CLI still owns the helper.
                 proc_pid(proc, 800, 'codex', ['codex', 'exec'], 100,
@@ -150,6 +157,9 @@ def main():
                 # Created after the initiator, but its CLI started much later:
                 # an SSH resume of an existing session, not a launch that created it.
                 proc_pid(proc, 701, 'codex', ['codex', 'resume'], 100, fds={3: str(corpus.paths['stale'])})
+                # A session the SSH-launched child CLI starts locally nests under it.
+                proc_pid(proc, 800, 'codex', ['codex', 'exec'], 200, fds={3: str(corpus.paths['grand'])})
+                proc_pid(proc, 920, 'python', ['python', 'job.py'], 1, env=[('SSH_CONNECTION', '10.0.0.1 50002 10.0.0.2 50022')])
                 stat = proc / '701/stat'
                 stat.write_text(stat.read_text().replace(' 70100', ' 9000000000'))
             for entry in proc.iterdir():
@@ -229,6 +239,31 @@ def main():
                         if b['process']['pid'] == 601), None))
                     assert helper['session']['sid'] == 'child', helper
                     print('PASS inherited launcher identity yields to nearer child CLI; SSH resume not nested', flush=True)
+                    if not restarted:
+                        # The owning CLI names its nearest launching session: an SSH
+                        # initiator only when no local session process explains it.
+                        links = lambda o, b: get_json(o, b, '/api/process-links')['bindings']
+                        grand = wait_for(lambda: next((b for b in links(opener, base)
+                            if b['process']['pid'] == 800 and b.get('spawner')), None))
+                        assert (grand['session']['sid'], grand['spawner']['sid'], grand['spawner']['node_id']) == ('grand', 'child', nodes[1].nid), grand
+                        launched = next(b for b in links(opener, base) if b['process']['pid'] == 200)
+                        assert (launched['spawner']['sid'], launched['spawner']['node_id']) == ('parent', nodes[0].nid), launched
+                        wait_for(lambda: next(r for r in get_json(opener, base, '/api/sessions?force=1')['sessions']
+                            if r['sid'] == 'grand').get('nest_parent') == {'source': 'codex', 'sid': 'child'})
+                        # Kept for the incarnation after its launcher exits (reparented).
+                        nested = wait_for(lambda: next((b for b in links(local_opener, local_base)
+                            if b['process']['pid'] == 800 and b.get('spawner')), None))
+                        assert nested['spawner']['sid'] == 'parent', nested
+                        stat = procs[0] / '800/stat'
+                        stat.write_text(stat.read_text().replace(' S 100 ', ' S 1 '))
+                        moved = time.time()
+                        wait_for(lambda: get_json(local_opener, local_base, '/api/process-links')['sampled_at'] > moved + 2.5)
+                        nested = next(b for b in links(local_opener, local_base) if b['process']['pid'] == 800)
+                        assert nested.get('spawner', {}).get('sid') == 'parent', nested
+                        # A detached remote job keeps its owner working after the SSH client exits.
+                        owner = {'node_id': nodes[0].nid, 'source': 'codex', 'sid': 'older'}
+                        wait_for(lambda: owner in get_json(opener, base, '/api/live?force=1').get('remote_working', []))
+                        print('PASS nearest local/SSH spawner nests, kept after reparent; remote job reported', flush=True)
                     context = browser.new_context(service_workers='block')
                     stack.callback(context.close)
                     if not restarted:
@@ -268,7 +303,7 @@ def main():
                                 for row in data['nodes']) else None)(get_json(opener, hubbase, resource_url)))
                             inclusive = get_json(opener, hubbase, resource_url.replace('scope=direct', 'scope=inclusive'))
                             remote = next(row for row in inclusive['nodes'] if row['node_id'] == nodes[1].nid)
-                            assert remote['metrics']['memory_pss_bytes']['value'] == 1701 * 1024, inclusive
+                            assert remote['metrics']['memory_pss_bytes']['value'] == 2501 * 1024, inclusive
                             assert all(row['status'] == 'ok' for row in direct['nodes']), direct
                             assert {row['node_id'] for row in direct['nodes']} == {node.nid for node in nodes}
                             assert direct['partial'] is False, 'unrelated offline node must not taint totals'
@@ -320,6 +355,18 @@ def main():
                         page.wait_for_function('([uid,node]) => S.sessions.find(s => s.uid === uid)?.nest_parent?.node_id === node',
                             arg=[uid, nodes[0].nid])
                         print('PASS stable polls skip publish, read recovery republishes and new descendant retries failed publication', flush=True)
+                        older = scoped(nodes[0].nid, corpora[0].uid('older'))
+                        older_badge = page.locator(f'#side .item[data-uid="{older}"] > .ico > .item-status')
+                        shutil.rmtree(procs[0] / '910')
+                        hub_live = lambda: get_json(opener, f'http://127.0.0.1:{hub.port}', '/api/live?force=1')
+                        wait_for(lambda: older not in hub_live()['working_uids'] and owner in hub_live()['remote_working'])
+                        page.evaluate('refreshLive(true)')
+                        expect(older_badge).to_have_class(WORKING)
+                        shutil.rmtree(procs[1] / '920')
+                        wait_for(lambda: owner not in hub_live()['remote_working'])
+                        page.evaluate('refreshLive(true)')
+                        expect(older_badge).not_to_have_class(WORKING)
+                        print('PASS remote job lights its owner through Hub after SSH client exit and clears on exit', flush=True)
                         # Persisted per-process identity survives no live SSH evidence.
                         late_stat = procs[1] / '700/stat'
                         late_stat.write_text(late_stat.read_text().replace('S 100 ', 'S 1 '))

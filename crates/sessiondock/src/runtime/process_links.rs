@@ -22,6 +22,8 @@ struct Cache {
     incoming: BTreeMap<Process, process_links::Connection>,
     report: Option<(Instant, Report)>,
     first_seen: BTreeMap<Process, f64>,
+    /// Owning CLI process → (its session, the session that launched it).
+    spawners: BTreeMap<Process, (Session, Session)>,
 }
 static CACHES: OnceLock<Mutex<HashMap<String, Cache>>> = OnceLock::new();
 fn caches() -> &'static Mutex<HashMap<String, Cache>> {
@@ -154,6 +156,12 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
                 .get(&p.pid)
                 .is_some_and(|e| e.process == *p)
         });
+        cache.spawners.retain(|p, _| {
+            snapshot
+                .entries
+                .get(&p.pid)
+                .is_some_and(|e| e.process == *p)
+        });
         let sampled_at = now();
         let resolve = |pid: u32| {
             let mut current = pid;
@@ -231,6 +239,7 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
                     initiator: remote.map(|v| v.session),
                     first_observed_at,
                     launch_chain: launch_chain.clone(),
+                    spawner: None,
                 });
                 if !entry.multiplexed && entry.sockets.len() == 1 {
                     outgoing.push(Outgoing {
@@ -241,6 +250,40 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
                         session,
                     });
                 }
+            }
+        }
+        // Same nearest-launcher rule as the collector, without fork events.
+        let by_pid: HashMap<u32, Session> = bindings
+            .iter()
+            .map(|b| (b.process.pid, b.session.clone()))
+            .collect();
+        for binding in &mut bindings {
+            if !owners.contains_key(&binding.process.pid) {
+                continue;
+            }
+            let parent = snapshot
+                .entries
+                .get(&binding.process.pid)
+                .and_then(|e| by_pid.get(&e.parent));
+            let kept = cache
+                .spawners
+                .get(&binding.process)
+                .filter(|(owned, _)| {
+                    owned.source == binding.session.source && owned.sid == binding.session.sid
+                })
+                .map(|(_, spawner)| spawner);
+            binding.spawner = process_links::engine::spawner(
+                &binding.session,
+                kept,
+                parent,
+                None,
+                binding.initiator.as_ref(),
+            );
+            if let Some(spawner) = &binding.spawner {
+                cache.spawners.insert(
+                    binding.process.clone(),
+                    (binding.session.clone(), spawner.clone()),
+                );
             }
         }
         let report = Report {
@@ -473,7 +516,7 @@ async fn remember_agent_parents(
     if !report
         .bindings
         .iter()
-        .any(|binding| binding.initiator.is_some())
+        .any(|binding| binding.spawner.is_some())
     {
         return Ok(());
     }
@@ -492,37 +535,55 @@ async fn remember_agent_parents(
         .iter()
         .map(|r| ((r.source.clone(), r.sid.clone()), r.uid.clone()))
         .collect();
-    // Like local spawn discovery: a session created before its earliest
-    // launched process started was resumed by that launch, not created.
+    // Every owning process that names a spawner must name the same one. Like
+    // local spawn discovery, a session created before its earliest launched
+    // process started was resumed by that launch, not created.
     let scan = state.proc_scan.as_ref().and_then(|scanner| scanner.last());
-    let mut started: HashMap<(&str, &str), f64> = HashMap::new();
-    for binding in report.bindings.iter().filter(|b| b.initiator.is_some()) {
-        if let Some(seconds) = scan
-            .as_ref()
-            .and_then(|scan| scan.tree.start_seconds(binding.process.start))
-        {
-            let key = (
-                binding.session.source.as_str(),
-                binding.session.sid.as_str(),
-            );
-            let earliest = started.entry(key).or_insert(seconds);
-            *earliest = earliest.min(seconds);
-        }
+    struct Launch<'a> {
+        child: &'a Session,
+        parent: &'a Session,
+        started: Option<f64>,
+        conflict: bool,
     }
-    let parents: Vec<_> = report
-        .bindings
-        .iter()
-        .filter_map(|binding| {
-            let parent = binding.initiator.as_ref()?;
-            let child = &binding.session;
-            if child.node_id != report.node_id
+    let mut launches: BTreeMap<(&str, &str), Launch> = BTreeMap::new();
+    for binding in &report.bindings {
+        let Some(parent) = binding.spawner.as_ref() else {
+            continue;
+        };
+        let child = &binding.session;
+        let started = scan
+            .as_ref()
+            .and_then(|scan| scan.tree.start_seconds(binding.process.start));
+        let launch = launches
+            .entry((child.source.as_str(), child.sid.as_str()))
+            .or_insert(Launch {
+                child,
+                parent,
+                started,
+                conflict: false,
+            });
+        launch.conflict |= launch.parent != parent;
+        launch.started = match (launch.started, started) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+    }
+    let parents: Vec<_> = launches
+        .into_values()
+        .filter_map(|launch| {
+            let Launch {
+                child,
+                parent,
+                started,
+                conflict,
+            } = launch;
+            if conflict
+                || child.node_id != report.node_id
                 || (parent.node_id == child.node_id
                     && parent.source == child.source
                     && parent.sid == child.sid)
                 || parent.created? > child.created?
-                || started
-                    .get(&(child.source.as_str(), child.sid.as_str()))
-                    .is_some_and(|started| child.created.is_some_and(|c| c + 1.0 < *started))
+                || started.is_some_and(|started| child.created.is_some_and(|c| c + 1.0 < started))
             {
                 return None;
             }
@@ -570,6 +631,34 @@ pub async fn report(state: &AppState) -> Result<Report, ApiError> {
     let report = legacy_report(state).await?;
     remember_agent_parents(state, &report, None).await?;
     Ok(report)
+}
+/// Bindings of this machine's processes owned by sessions on other machines,
+/// for live work display. Empty without a node identity or attribution.
+pub async fn remote_bindings(state: &AppState) -> Vec<Binding> {
+    let Some(node_id) = state.node.as_ref().map(|n| n.node_id.clone()) else {
+        return Vec::new();
+    };
+    let mut report = None;
+    if let Some(path) = agent_socket(state) {
+        report = tokio::task::spawn_blocking(move || process_links::agent::report(&path))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .filter(|report| report.node_id == node_id);
+    }
+    if report.is_none() {
+        report = legacy_report(state).await.ok();
+    }
+    report
+        .filter(|report| report.supported)
+        .map(|report| {
+            report
+                .bindings
+                .into_iter()
+                .filter(|binding| binding.session.node_id != node_id)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 pub async fn publish(state: &AppState, published: Published) -> Result<usize, ApiError> {
     if let Some(path) = agent_socket(state) {
