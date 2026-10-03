@@ -71,38 +71,7 @@ defineProps<{ hostname: string }>()
     <div id="drag" title="拖动调整宽度，双击复位" :style="{transform: state.dragTransform}" @pointerdown="startDrag" @lostpointercapture="finishDrag" @dblclick="setSideWidth(SIDE_DEFAULT + sideResourceExtra(), true)"></div>
       <div id="right">
       <div id="detail"><div class="empty">从左侧选择一个会话</div></div>
-      <div id="composer" class="hidden">
-        <div id="composer-question" class="hidden" aria-label="CLI 选择题"></div>
-        <div id="composer-input-status" class="hidden" role="status" aria-live="polite" aria-atomic="true"></div>
-        <div id="compose-items" aria-live="polite"></div>
-        <div class="composer-row">
-          <div class="attach-picker">
-            <button class="btn" id="cadd" type="button" title="添加附件或引用" aria-label="添加附件或引用" aria-expanded="false">
-              <svg class="ui-icon" aria-hidden="true"><use href="#i-plus"/></svg>
-            </button>
-            <div class="attach-menu hidden" id="attach-menu" role="menu">
-              <button type="button" data-attach="image" role="menuitem"><span>▧</span>图片</button>
-              <button type="button" data-attach="video" role="menuitem"><span>▶</span>视频</button>
-              <button type="button" data-attach="audio" role="menuitem"><span>♪</span>音频</button>
-              <button type="button" data-attach="file" role="menuitem"><span>⌑</span>文件</button>
-              <button type="button" data-attach="quote" role="menuitem"><span>❝</span>引用文字</button>
-            </div>
-            <input id="cfile" type="file" multiple hidden>
-          </div>
-          <div class="composer-input-wrap">
-            <div id="input-history" class="input-history hidden" role="listbox"
-              aria-label="输入历史"></div>
-            <textarea id="cinput" rows="1" enterkeyhint="enter" placeholder="输入内容"
-              aria-controls="input-history" aria-expanded="false"></textarea>
-          </div>
-          <div class="cbtns">
-            <button class="btn" id="cesc"
-              title="单击向 CLI 发送 Esc；Claude 中双击进入原生回滚选择"
-              aria-label="单击发送 Esc；Claude 中双击进入回滚选择">Esc</button>
-            <button class="btn go" id="csend">发送</button>
-          </div>
-        </div>
-      </div>
+      <div id="composer-root"></div>
       <div id="termpane" class="hidden">
         <div class="term-resizer" id="tgrip" title="拖动终端上边界调整高度"></div>
         <span id="term-ctrl-lock" role="status">Ctrl（下一键）</span>

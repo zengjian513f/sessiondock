@@ -1,4 +1,187 @@
 'use strict';
+const composerController = SessionDockComposer.createController({
+get HUB_MODE(){return typeof HUB_MODE === 'undefined' ? undefined : HUB_MODE},
+get Nodes(){return typeof Nodes === 'undefined' ? undefined : Nodes},
+get $(){return typeof $ === 'undefined' ? undefined : $},
+get BUG_REPORT_DRAFT_UID(){return typeof BUG_REPORT_DRAFT_UID === 'undefined' ? undefined : BUG_REPORT_DRAFT_UID},
+get BUILD_ID(){return typeof BUILD_ID === 'undefined' ? undefined : BUILD_ID},
+get FAST_MIN(){return typeof FAST_MIN === 'undefined' ? undefined : FAST_MIN},
+get MOBILE(){return typeof MOBILE === 'undefined' ? undefined : MOBILE},
+get S(){return typeof S === 'undefined' ? undefined : S},
+get STORAGE_PREFIX(){return typeof STORAGE_PREFIX === 'undefined' ? undefined : STORAGE_PREFIX},
+get SessionDockCapabilities(){return typeof SessionDockCapabilities === 'undefined' ? undefined : SessionDockCapabilities},
+get SessionDockNetwork(){return typeof SessionDockNetwork === 'undefined' ? undefined : SessionDockNetwork},
+get T(){return typeof T === 'undefined' ? undefined : T},
+get TERM_PAGE_ID(){return typeof TERM_PAGE_ID === 'undefined' ? undefined : TERM_PAGE_ID},
+get appAlert(){return typeof appAlert === 'undefined' ? undefined : appAlert},
+get appConfirm(){return typeof appConfirm === 'undefined' ? undefined : appConfirm},
+get appUrl(){return typeof appUrl === 'undefined' ? undefined : appUrl},
+get browserAuditEvent(){return typeof browserAuditEvent === 'undefined' ? undefined : browserAuditEvent},
+get bugReportSending(){return typeof bugReportSending === 'undefined' ? undefined : bugReportSending},
+get cache(){return typeof cache === 'undefined' ? undefined : cache},
+get el(){return typeof el === 'undefined' ? undefined : el},
+get fmtSize(){return typeof fmtSize === 'undefined' ? undefined : fmtSize},
+get fmtTime(){return typeof fmtTime === 'undefined' ? undefined : fmtTime},
+get layoutTermPane(){return typeof layoutTermPane === 'undefined' ? undefined : layoutTermPane},
+get loadTermList(){return typeof loadTermList === 'undefined' ? undefined : loadTermList},
+get nodeOf(){return typeof nodeOf === 'undefined' ? undefined : nodeOf},
+get noteBugReportDraftNode(){return typeof noteBugReportDraftNode === 'undefined' ? undefined : noteBugReportDraftNode},
+get openPendingSession(){return typeof openPendingSession === 'undefined' ? undefined : openPendingSession},
+get openTermPane(){return typeof openTermPane === 'undefined' ? undefined : openTermPane},
+get paintLive(){return typeof paintLive === 'undefined' ? undefined : paintLive},
+get paintTurn(){return typeof paintTurn === 'undefined' ? undefined : paintTurn},
+get pendingHistoryQuestion(){return typeof pendingHistoryQuestion === 'undefined' ? undefined : pendingHistoryQuestion},
+get pendingPhase(){return typeof pendingPhase === 'undefined' ? undefined : pendingPhase},
+get pendingTmuxSessions(){return typeof pendingTmuxSessions === 'undefined' ? undefined : pendingTmuxSessions},
+get pendingUid(){return typeof pendingUid === 'undefined' ? undefined : pendingUid},
+get post(){return typeof post === 'undefined' ? undefined : post},
+get questionFormDrafts(){return typeof questionFormDrafts === 'undefined' ? undefined : questionFormDrafts},
+get renderBugReportItems(){return typeof renderBugReportItems === 'undefined' ? undefined : renderBugReportItems},
+get renderQueuedSends(){return typeof renderQueuedSends === 'undefined' ? undefined : renderQueuedSends},
+get renderSide(){return typeof renderSide === 'undefined' ? undefined : renderSide},
+get renderTakeoverBtn(){return typeof renderTakeoverBtn === 'undefined' ? undefined : renderTakeoverBtn},
+get screenMenuTextDrafts(){return typeof screenMenuTextDrafts === 'undefined' ? undefined : screenMenuTextDrafts},
+get sessionInputAttention(){return typeof sessionInputAttention === 'undefined' ? undefined : sessionInputAttention},
+get sessionIsPtyOnly(){return typeof sessionIsPtyOnly === 'undefined' ? undefined : sessionIsPtyOnly},
+get sessionTerminalEnabled(){return typeof sessionTerminalEnabled === 'undefined' ? undefined : sessionTerminalEnabled},
+get sessionTerminalFirst(){return typeof sessionTerminalFirst === 'undefined' ? undefined : sessionTerminalFirst},
+get sessiondockCli(){return typeof sessiondockCli === 'undefined' ? undefined : sessiondockCli},
+get staleBuildShown(){return typeof staleBuildShown === 'undefined' ? undefined : staleBuildShown},
+get store(){return typeof store === 'undefined' ? undefined : store},
+get takenOver(){return typeof takenOver === 'undefined' ? undefined : takenOver},
+get termInputBody(){return typeof termInputBody === 'undefined' ? undefined : termInputBody},
+get termSendLease(){return typeof termSendLease === 'undefined' ? undefined : termSendLease},
+get viewKey(){return typeof viewKey === 'undefined' ? undefined : viewKey}
+});
+Object.defineProperties(globalThis,{
+"chooseAttachmentFiles":{configurable:true,get:()=>composerController.chooseAttachmentFiles,set:value=>{composerController.chooseAttachmentFiles=value}},
+"composerDraftOwner":{configurable:true,get:()=>composerController.composerDraftOwner,set:value=>{composerController.composerDraftOwner=value}},
+"restoreComposerDraftRecord":{configurable:true,get:()=>composerController.restoreComposerDraftRecord,set:value=>{composerController.restoreComposerDraftRecord=value}},
+"composerDraft":{configurable:true,get:()=>composerController.composerDraft,set:value=>{composerController.composerDraft=value}},
+"composerDraftRecord":{configurable:true,get:()=>composerController.composerDraftRecord,set:value=>{composerController.composerDraftRecord=value}},
+"priorComposerSubmission":{configurable:true,get:()=>composerController.priorComposerSubmission,set:value=>{composerController.priorComposerSubmission=value}},
+"acceptComposerServerRevision":{configurable:true,get:()=>composerController.acceptComposerServerRevision,set:value=>{composerController.acceptComposerServerRevision=value}},
+"applyCliState":{configurable:true,get:()=>composerController.applyCliState,set:value=>{composerController.applyCliState=value}},
+"dismissQueuedSend":{configurable:true,get:()=>composerController.dismissQueuedSend,set:value=>{composerController.dismissQueuedSend=value}},
+"consumeComposerSubmission":{configurable:true,get:()=>composerController.consumeComposerSubmission,set:value=>{composerController.consumeComposerSubmission=value}},
+"readServerComposerDraft":{configurable:true,get:()=>composerController.readServerComposerDraft,set:value=>{composerController.readServerComposerDraft=value}},
+"oldComposerDatabase":{configurable:true,get:()=>composerController.oldComposerDatabase,set:value=>{composerController.oldComposerDatabase=value}},
+"importLegacyComposer":{configurable:true,get:()=>composerController.importLegacyComposer,set:value=>{composerController.importLegacyComposer=value}},
+"hydrateComposerDraft":{configurable:true,get:()=>composerController.hydrateComposerDraft,set:value=>{composerController.hydrateComposerDraft=value}},
+"mergeEarlyComposerEdit":{configurable:true,get:()=>composerController.mergeEarlyComposerEdit,set:value=>{composerController.mergeEarlyComposerEdit=value}},
+"adoptServerDraft":{configurable:true,get:()=>composerController.adoptServerDraft,set:value=>{composerController.adoptServerDraft=value}},
+"followServerDraft":{configurable:true,get:()=>composerController.followServerDraft,set:value=>{composerController.followServerDraft=value}},
+"refreshComposerDraft":{configurable:true,get:()=>composerController.refreshComposerDraft,set:value=>{composerController.refreshComposerDraft=value}},
+"queueComposerSave":{configurable:true,get:()=>composerController.queueComposerSave,set:value=>{composerController.queueComposerSave=value}},
+"persistComposerDraft":{configurable:true,get:()=>composerController.persistComposerDraft,set:value=>{composerController.persistComposerDraft=value}},
+"recoverComposerDrafts":{configurable:true,get:()=>composerController.recoverComposerDrafts,set:value=>{composerController.recoverComposerDrafts=value}},
+"syncComposerUnloadProtection":{configurable:true,get:()=>composerController.syncComposerUnloadProtection,set:value=>{composerController.syncComposerUnloadProtection=value}},
+"prepareComposerReload":{configurable:true,get:()=>composerController.prepareComposerReload,set:value=>{composerController.prepareComposerReload=value}},
+"renderSavedComposerInputs":{configurable:true,get:()=>composerController.renderSavedComposerInputs,set:value=>{composerController.renderSavedComposerInputs=value}},
+"recoverServerComposerDrafts":{configurable:true,get:()=>composerController.recoverServerComposerDrafts,set:value=>{composerController.recoverServerComposerDrafts=value}},
+"recoverServerComposerNode":{configurable:true,get:()=>composerController.recoverServerComposerNode,set:value=>{composerController.recoverServerComposerNode=value}},
+"deleteComposerDraftStorage":{configurable:true,get:()=>composerController.deleteComposerDraftStorage,set:value=>{composerController.deleteComposerDraftStorage=value}},
+"pendingStartedAt":{configurable:true,get:()=>composerController.pendingStartedAt,set:value=>{composerController.pendingStartedAt=value}},
+"rememberComposerSession":{configurable:true,get:()=>composerController.rememberComposerSession,set:value=>{composerController.rememberComposerSession=value}},
+"syncComposerDraftBindings":{configurable:true,get:()=>composerController.syncComposerDraftBindings,set:value=>{composerController.syncComposerDraftBindings=value}},
+"composerHistoryStamp":{configurable:true,get:()=>composerController.composerHistoryStamp,set:value=>{composerController.composerHistoryStamp=value}},
+"nativeComposerHistory":{configurable:true,get:()=>composerController.nativeComposerHistory,set:value=>{composerController.nativeComposerHistory=value}},
+"composerHistoryItems":{configurable:true,get:()=>composerController.composerHistoryItems,set:value=>{composerController.composerHistoryItems=value}},
+"closeComposerHistory":{configurable:true,get:()=>composerController.closeComposerHistory,set:value=>{composerController.closeComposerHistory=value}},
+"setComposerHistoryIndex":{configurable:true,get:()=>composerController.setComposerHistoryIndex,set:value=>{composerController.setComposerHistoryIndex=value}},
+"renderComposerHistory":{configurable:true,get:()=>composerController.renderComposerHistory,set:value=>{composerController.renderComposerHistory=value}},
+"openComposerHistory":{configurable:true,get:()=>composerController.openComposerHistory,set:value=>{composerController.openComposerHistory=value}},
+"acceptComposerHistory":{configurable:true,get:()=>composerController.acceptComposerHistory,set:value=>{composerController.acceptComposerHistory=value}},
+"ensureComposerAttachmentNumbers":{configurable:true,get:()=>composerController.ensureComposerAttachmentNumbers,set:value=>{composerController.ensureComposerAttachmentNumbers=value}},
+"migrateComposerDraft":{configurable:true,get:()=>composerController.migrateComposerDraft,set:value=>{composerController.migrateComposerDraft=value}},
+"switchComposerDraft":{configurable:true,get:()=>composerController.switchComposerDraft,set:value=>{composerController.switchComposerDraft=value}},
+"sessionComposerEnded":{configurable:true,get:()=>composerController.sessionComposerEnded,set:value=>{composerController.sessionComposerEnded=value}},
+"renderComposer":{configurable:true,get:()=>composerController.renderComposer,set:value=>{composerController.renderComposer=value}},
+"autoGrow":{configurable:true,get:()=>composerController.autoGrow,set:value=>{composerController.autoGrow=value}},
+"syncComposerMode":{configurable:true,get:()=>composerController.syncComposerMode,set:value=>{composerController.syncComposerMode=value}},
+"sendToSession":{configurable:true,get:()=>composerController.sendToSession,set:value=>{composerController.sendToSession=value}},
+"composerFileKind":{configurable:true,get:()=>composerController.composerFileKind,set:value=>{composerController.composerFileKind=value}},
+"composerKindIcon":{configurable:true,get:()=>composerController.composerKindIcon,set:value=>{composerController.composerKindIcon=value}},
+"closeAttachMenu":{configurable:true,get:()=>composerController.closeAttachMenu,set:value=>{composerController.closeAttachMenu=value}},
+"renderAttachmentCards":{configurable:true,get:()=>composerController.renderAttachmentCards,set:value=>{composerController.renderAttachmentCards=value}},
+"composerInputStatus":{configurable:true,get:()=>composerController.composerInputStatus,set:value=>{composerController.composerInputStatus=value}},
+"composerInputAllowsSend":{configurable:true,get:()=>composerController.composerInputAllowsSend,set:value=>{composerController.composerInputAllowsSend=value}},
+"composerUsesInputStatus":{configurable:true,get:()=>composerController.composerUsesInputStatus,set:value=>{composerController.composerUsesInputStatus=value}},
+"updateComposerInputStatus":{configurable:true,get:()=>composerController.updateComposerInputStatus,set:value=>{composerController.updateComposerInputStatus=value}},
+"probeComposerInput":{configurable:true,get:()=>composerController.probeComposerInput,set:value=>{composerController.probeComposerInput=value}},
+"syncComposerSendState":{configurable:true,get:()=>composerController.syncComposerSendState,set:value=>{composerController.syncComposerSendState=value}},
+"composerInputNotice":{configurable:true,get:()=>composerController.composerInputNotice,set:value=>{composerController.composerInputNotice=value}},
+"renderComposerInputStatus":{configurable:true,get:()=>composerController.renderComposerInputStatus,set:value=>{composerController.renderComposerInputStatus=value}},
+"renderComposerQuestion":{configurable:true,get:()=>composerController.renderComposerQuestion,set:value=>{composerController.renderComposerQuestion=value}},
+"answerComposerQuestion":{configurable:true,get:()=>composerController.answerComposerQuestion,set:value=>{composerController.answerComposerQuestion=value}},
+"screenMenuRevision":{configurable:true,get:()=>composerController.screenMenuRevision,set:value=>{composerController.screenMenuRevision=value}},
+"writeComposerMenuInput":{configurable:true,get:()=>composerController.writeComposerMenuInput,set:value=>{composerController.writeComposerMenuInput=value}},
+"answerComposerScreenMenu":{configurable:true,get:()=>composerController.answerComposerScreenMenu,set:value=>{composerController.answerComposerScreenMenu=value}},
+"reconcileComposerSubmission":{configurable:true,get:()=>composerController.reconcileComposerSubmission,set:value=>{composerController.reconcileComposerSubmission=value}},
+"pollComposerInput":{configurable:true,get:()=>composerController.pollComposerInput,set:value=>{composerController.pollComposerInput=value}},
+"scheduleComposerInputChecks":{configurable:true,get:()=>composerController.scheduleComposerInputChecks,set:value=>{composerController.scheduleComposerInputChecks=value}},
+"renderComposerItems":{configurable:true,get:()=>composerController.renderComposerItems,set:value=>{composerController.renderComposerItems=value}},
+"addComposerFiles":{configurable:true,get:()=>composerController.addComposerFiles,set:value=>{composerController.addComposerFiles=value}},
+"addDraftFiles":{configurable:true,get:()=>composerController.addDraftFiles,set:value=>{composerController.addDraftFiles=value}},
+"clipboardAttachmentFiles":{configurable:true,get:()=>composerController.clipboardAttachmentFiles,set:value=>{composerController.clipboardAttachmentFiles=value}},
+"clipboardDirectoryNames":{configurable:true,get:()=>composerController.clipboardDirectoryNames,set:value=>{composerController.clipboardDirectoryNames=value}},
+"clipboardCsvFile":{configurable:true,get:()=>composerController.clipboardCsvFile,set:value=>{composerController.clipboardCsvFile=value}},
+"insertComposerReference":{configurable:true,get:()=>composerController.insertComposerReference,set:value=>{composerController.insertComposerReference=value}},
+"removeDraftAttachment":{configurable:true,get:()=>composerController.removeDraftAttachment,set:value=>{composerController.removeDraftAttachment=value}},
+"removeComposerAttachment":{configurable:true,get:()=>composerController.removeComposerAttachment,set:value=>{composerController.removeComposerAttachment=value}},
+"addComposerQuote":{configurable:true,get:()=>composerController.addComposerQuote,set:value=>{composerController.addComposerQuote=value}},
+"boxFocusLastQuote":{configurable:true,get:()=>composerController.boxFocusLastQuote,set:value=>{composerController.boxFocusLastQuote=value}},
+"removeComposerQuote":{configurable:true,get:()=>composerController.removeComposerQuote,set:value=>{composerController.removeComposerQuote=value}},
+"uploadComposerAttachment":{configurable:true,get:()=>composerController.uploadComposerAttachment,set:value=>{composerController.uploadComposerAttachment=value}},
+"stageComposerAttachment":{configurable:true,get:()=>composerController.stageComposerAttachment,set:value=>{composerController.stageComposerAttachment=value}},
+"pumpComposerUploads":{configurable:true,get:()=>composerController.pumpComposerUploads,set:value=>{composerController.pumpComposerUploads=value}},
+"loadStagedComposerPreview":{configurable:true,get:()=>composerController.loadStagedComposerPreview,set:value=>{composerController.loadStagedComposerPreview=value}},
+"discardStagedAttachment":{configurable:true,get:()=>composerController.discardStagedAttachment,set:value=>{composerController.discardStagedAttachment=value}},
+"submitComposer":{configurable:true,get:()=>composerController.submitComposer,set:value=>{composerController.submitComposer=value}},
+"revealNativeTerminal":{configurable:true,get:()=>composerController.revealNativeTerminal,set:value=>{composerController.revealNativeTerminal=value}},
+"activeCliQuestion":{configurable:true,get:()=>composerController.activeCliQuestion,set:value=>{composerController.activeCliQuestion=value}},
+"answerCliQuestion":{configurable:true,get:()=>composerController.answerCliQuestion,set:value=>{composerController.answerCliQuestion=value}},
+"answerCliQuestionForm":{configurable:true,get:()=>composerController.answerCliQuestionForm,set:value=>{composerController.answerCliQuestionForm=value}},
+"cancelCliQuestion":{configurable:true,get:()=>composerController.cancelCliQuestion,set:value=>{composerController.cancelCliQuestion=value}},
+"sendComposerEscape":{configurable:true,get:()=>composerController.sendComposerEscape,set:value=>{composerController.sendComposerEscape=value}},
+"confirmPastedFiles":{configurable:true,get:()=>composerController.confirmPastedFiles,set:value=>{composerController.confirmPastedFiles=value}},
+"whenPasteConfirmed":{configurable:true,get:()=>composerController.whenPasteConfirmed,set:value=>{composerController.whenPasteConfirmed=value}},
+"pasteAttachmentFiles":{configurable:true,get:()=>composerController.pasteAttachmentFiles,set:value=>{composerController.pasteAttachmentFiles=value}},
+"COMPOSER_MAX_FILES":{configurable:true,get:()=>composerController.COMPOSER_MAX_FILES,set:value=>{composerController.COMPOSER_MAX_FILES=value}},
+"COMPOSER_MAX_FILE_BYTES":{configurable:true,get:()=>composerController.COMPOSER_MAX_FILE_BYTES,set:value=>{composerController.COMPOSER_MAX_FILE_BYTES=value}},
+"ATTACH_ACCEPT":{configurable:true,get:()=>composerController.ATTACH_ACCEPT,set:value=>{composerController.ATTACH_ACCEPT=value}},
+"composerDrafts":{configurable:true,get:()=>composerController.composerDrafts,set:value=>{composerController.composerDrafts=value}},
+"composerDraftAliases":{configurable:true,get:()=>composerController.composerDraftAliases,set:value=>{composerController.composerDraftAliases=value}},
+"composerInputHistoryCache":{configurable:true,get:()=>composerController.composerInputHistoryCache,set:value=>{composerController.composerInputHistoryCache=value}},
+"composerHistoryPicker":{configurable:true,get:()=>composerController.composerHistoryPicker,set:value=>{composerController.composerHistoryPicker=value}},
+"composerUid":{configurable:true,get:()=>composerController.composerUid,set:value=>{composerController.composerUid=value}},
+"composerDraftSeq":{configurable:true,get:()=>composerController.composerDraftSeq,set:value=>{composerController.composerDraftSeq=value}},
+"lastMessageSelection":{configurable:true,get:()=>composerController.lastMessageSelection,set:value=>{composerController.lastMessageSelection=value}},
+"lastMessageSelectionUid":{configurable:true,get:()=>composerController.lastMessageSelectionUid,set:value=>{composerController.lastMessageSelectionUid=value}},
+"conversationSendEnabled":{configurable:true,get:()=>composerController.conversationSendEnabled,set:value=>{composerController.conversationSendEnabled=value}},
+"newComposerDraft":{configurable:true,get:()=>composerController.newComposerDraft,set:value=>{composerController.newComposerDraft=value}},
+"composerHydrations":{configurable:true,get:()=>composerController.composerHydrations,set:value=>{composerController.composerHydrations=value}},
+"composerDraftWrites":{configurable:true,get:()=>composerController.composerDraftWrites,set:value=>{composerController.composerDraftWrites=value}},
+"composerSaveQueues":{configurable:true,get:()=>composerController.composerSaveQueues,set:value=>{composerController.composerSaveQueues=value}},
+"legacyComposerDatabase":{configurable:true,get:()=>composerController.legacyComposerDatabase,set:value=>{composerController.legacyComposerDatabase=value}},
+"composerFollowBusy":{configurable:true,get:()=>composerController.composerFollowBusy,set:value=>{composerController.composerFollowBusy=value}},
+"composerFollowedAt":{configurable:true,get:()=>composerController.composerFollowedAt,set:value=>{composerController.composerFollowedAt=value}},
+"composerPendingSaves":{configurable:true,get:()=>composerController.composerPendingSaves,set:value=>{composerController.composerPendingSaves=value}},
+"composerSaving":{configurable:true,get:()=>composerController.composerSaving,set:value=>{composerController.composerSaving=value}},
+"composerRecoveryBusy":{configurable:true,get:()=>composerController.composerRecoveryBusy,set:value=>{composerController.composerRecoveryBusy=value}},
+"composerUnloadWarning":{configurable:true,get:()=>composerController.composerUnloadWarning,set:value=>{composerController.composerUnloadWarning=value}},
+"composerUnloadProtected":{configurable:true,get:()=>composerController.composerUnloadProtected,set:value=>{composerController.composerUnloadProtected=value}},
+"composerServerRecoveries":{configurable:true,get:()=>composerController.composerServerRecoveries,set:value=>{composerController.composerServerRecoveries=value}},
+"composerInputProbeBusy":{configurable:true,get:()=>composerController.composerInputProbeBusy,set:value=>{composerController.composerInputProbeBusy=value}},
+"composerDraftSyncBusy":{configurable:true,get:()=>composerController.composerDraftSyncBusy,set:value=>{composerController.composerDraftSyncBusy=value}},
+"COMPOSER_UPLOAD_LANES":{configurable:true,get:()=>composerController.COMPOSER_UPLOAD_LANES,set:value=>{composerController.COMPOSER_UPLOAD_LANES=value}},
+"composerUploadLanes":{configurable:true,get:()=>composerController.composerUploadLanes,set:value=>{composerController.composerUploadLanes=value}},
+"COMPOSER_PREVIEW_MAX_BYTES":{configurable:true,get:()=>composerController.COMPOSER_PREVIEW_MAX_BYTES,set:value=>{composerController.COMPOSER_PREVIEW_MAX_BYTES=value}},
+"composerSending":{configurable:true,get:()=>composerController.composerSending,set:value=>{composerController.composerSending=value}},
+"composerEscAt":{configurable:true,get:()=>composerController.composerEscAt,set:value=>{composerController.composerEscAt=value}},
+"PASTE_CONFIRM_FILES":{configurable:true,get:()=>composerController.PASTE_CONFIRM_FILES,set:value=>{composerController.PASTE_CONFIRM_FILES=value}},
+"PASTE_CONFIRM_BYTES":{configurable:true,get:()=>composerController.PASTE_CONFIRM_BYTES,set:value=>{composerController.PASTE_CONFIRM_BYTES=value}}
+});
 
 // 接管会话: 在服务端把它用 tmux resume 起来, 然后把终端嵌在会话详情底部。
 // SSH 例外：PTY 在输入框上方。
@@ -407,8 +590,8 @@ async function fetchTermList() {
         && !T.discarding.has(String(S.sel).slice(5))
         && !(typeof pendingTmuxSessions === 'function' && pendingTmuxSessions().some(row => row.uid === S.sel)))
       pendingSelectionGone(String(S.sel).slice(5));
-    if (typeof recoverServerComposerDrafts === 'function') void recoverServerComposerDrafts();
-    if (typeof syncComposerDraftBindings === 'function') syncComposerDraftBindings();
+    if (typeof composerController.recoverServerComposerDrafts === 'function') void composerController.recoverServerComposerDrafts();
+    if (typeof composerController.syncComposerDraftBindings === 'function') composerController.syncComposerDraftBindings();
     if (SessionDockCapabilities.config.backend === 'rust') {
       for (const [uid, ended] of T.ended) {
         const replacement = T.list.find(row => row.uid === uid && row.instance_id !== ended.instanceId);
@@ -656,7 +839,7 @@ function adoptLinkedTermSession(fromUid, linked, reason) {
   browserAuditEvent?.('terminal.session_rebound', {
     name: linked.name, from_uid: fromUid, to_uid: toUid, reason,
   }, null, { uid: toUid });
-  migrateComposerDraft(fromUid, toUid);
+  composerController.migrateComposerDraft(fromUid, toUid);
   T.uid = toUid;
   return toUid;
 }
@@ -733,7 +916,7 @@ async function takeover(uid, btn) {
   } finally {
     setBtn('接管会话', false);
     renderTakeoverBtn();
-    renderComposer();
+    composerController.renderComposer();
   }
 }
 
@@ -856,7 +1039,7 @@ function prepareBugReportNode() {
 
 // 记下正写着未发送内容的那份报告草稿在哪台机器上；清空或发出后忘掉。
 function noteBugReportDraftNode() {
-  const node = nodeOf(BUG_REPORT_DRAFT_UID), draft = composerDrafts.get(BUG_REPORT_DRAFT_UID);
+  const node = nodeOf(BUG_REPORT_DRAFT_UID), draft = composerController.composerDrafts.get(BUG_REPORT_DRAFT_UID);
   if (!node || !draft || draft.loading) return;
   if (draft.text.trim() || draft.quotes.length || draft.attachments.length) {
     store.set('bugReportDraftNode', node);
@@ -923,7 +1106,7 @@ function bindBugReportDraft() {
   BUG_REPORT_DRAFT_UID='report:' + (HUB_MODE ? node + '~' : '') + id;
 }
 let bugReportSending = false;
-const bugReportDraftObject = () => composerDraft(BUG_REPORT_DRAFT_UID);
+const bugReportDraftObject = () => composerController.composerDraft(BUG_REPORT_DRAFT_UID);
 
 /** 下拉选的是跑处理会话的机器，不是另一份报告：正在写的描述、引用和附件
  *  跟着这次选择走，切换机器不清空输入框。服务端存储仍按机器分（附件的字节
@@ -934,42 +1117,42 @@ const bugReportDraftObject = () => composerDraft(BUG_REPORT_DRAFT_UID);
  *  原机器的草稿里并在对话框上说明。返回要显示的提示文案。 */
 function carryBugReportDraft(fromUid, toUid) {
   if (!fromUid || !toUid || fromUid === toUid || bugReportSending) return '';
-  const from = composerDrafts.get(composerDraftOwner(fromUid));
+  const from = composerController.composerDrafts.get(composerController.composerDraftOwner(fromUid));
   if (!from || from.handedOffSession) return '';
   const moving = from.attachments.filter(item => item.file instanceof Blob);
   const stranded = from.attachments.length - moving.length;
   if (!from.text && !from.quotes.length && !moving.length) return '';
-  const to = composerDraft(toUid);
+  const to = composerController.composerDraft(toUid);
   if (!to) return '';
   const node = bugReportNode();
   to.text = to.text ? to.text + '\n' + from.text : from.text;
   to.quotes = [...to.quotes, ...from.quotes];
   to.attachments = [...to.attachments, ...moving];
   to.nextAttachmentNumber = Math.max(to.nextAttachmentNumber || 1, from.nextAttachmentNumber || 1);
-  ensureComposerAttachmentNumbers(to);
+  composerController.ensureComposerAttachmentNumbers(to);
   for (const field of ['requestId','requestText','report_prompt','report_text']) {
     delete to[field]; delete from[field];
   }
   from.attachments = from.attachments.filter(item => !moving.includes(item));
   from.text = ''; from.quotes = [];
   if (!from.attachments.length) from.nextAttachmentNumber = 1;
-  const saved = persistComposerDraft(fromUid);
+  const saved = composerController.persistComposerDraft(fromUid);
   for (const item of moving) {
     // 原机器上的暂存字节随清空后的草稿释放；新机器要的是一份新的上传。
     const previous = item.uploaded;
     if (item.cancelUpload) item.cancelUpload();
     item.uploaded = null; item.status = ''; item.error = '';
-    discardStagedAttachment({uploaded: previous}, saved);
+    composerController.discardStagedAttachment({uploaded: previous}, saved);
     const restage = () => {
       if (!to.attachments.includes(item)) return;
       // 被取消前已经落地的上传仍会写回 uploaded，再清一次才会重新暂存。
-      if (item.uploaded) discardStagedAttachment(item, saved);
+      if (item.uploaded) composerController.discardStagedAttachment(item, saved);
       item.uploaded = null; item.status = ''; item.error = '';
-      stageComposerAttachment(item, toUid, {node, render: renderBugReportItems});
+      composerController.stageComposerAttachment(item, toUid, {node, render: renderBugReportItems});
     };
     (item.staging || Promise.resolve()).then(restage, restage);
   }
-  persistComposerDraft(toUid);
+  composerController.persistComposerDraft(toUid);
   if (!stranded) return '';
   const where = bugReportNodeName(nodeOf(fromUid)) || '原机器';
   return `${stranded} 个附件的文件只暂存在${where}，已留在那台机器的草稿里；`
@@ -977,20 +1160,20 @@ function carryBugReportDraft(fromUid, toUid) {
 }
 
 function renderBugReportItems() {
-  renderAttachmentCards($('#bug-report-items'), bugReportDraftObject().attachments, {
+  composerController.renderAttachmentCards($('#bug-report-items'), bugReportDraftObject().attachments, {
     uid: BUG_REPORT_DRAFT_UID, render: renderBugReportItems,
     disabled: bugReportSending,
-    onInsert: number => insertComposerReference(number, $('#bug-report-description')),
-    onRetry: attachment => stageComposerAttachment(attachment, BUG_REPORT_DRAFT_UID,
+    onInsert: number => composerController.insertComposerReference(number, $('#bug-report-description')),
+    onRetry: attachment => composerController.stageComposerAttachment(attachment, BUG_REPORT_DRAFT_UID,
       {node: bugReportNode(), render: renderBugReportItems}),
     onRemove: id => {
       if (bugReportSending) return;
-      const removed = removeDraftAttachment(bugReportDraftObject(), id);
-      discardStagedAttachment(removed, persistComposerDraft(BUG_REPORT_DRAFT_UID));
+      const removed = composerController.removeDraftAttachment(bugReportDraftObject(), id);
+      composerController.discardStagedAttachment(removed, composerController.persistComposerDraft(BUG_REPORT_DRAFT_UID));
       renderBugReportItems();
     },
   });
-  renderSavedComposerInputs($('#bug-report-items'), bugReportDraftObject(), BUG_REPORT_DRAFT_UID);
+  composerController.renderSavedComposerInputs($('#bug-report-items'), bugReportDraftObject(), BUG_REPORT_DRAFT_UID);
   $('#bug-report-description').disabled = bugReportSending || !!bugReportDraftObject().loading;
   $('#bug-report-add').disabled = bugReportSending || !!bugReportDraftObject().loading;
   // 发送中换机器会把正在提交的内容搬走；锁住下拉直到这一次提交结束。
@@ -1000,11 +1183,11 @@ function renderBugReportItems() {
 function addBugReportFiles(files) {
   const draft = bugReportDraftObject();
   const before = new Set(draft.attachments);
-  addDraftFiles(draft, files);
-  persistComposerDraft(BUG_REPORT_DRAFT_UID);
+  composerController.addDraftFiles(draft, files);
+  composerController.persistComposerDraft(BUG_REPORT_DRAFT_UID);
   for (const attachment of draft.attachments) {
     if (!before.has(attachment)) {
-      stageComposerAttachment(attachment, BUG_REPORT_DRAFT_UID, {node: bugReportNode(), render: renderBugReportItems});
+      composerController.stageComposerAttachment(attachment, BUG_REPORT_DRAFT_UID, {node: bugReportNode(), render: renderBugReportItems});
     }
   }
   renderBugReportItems();
@@ -1018,8 +1201,8 @@ function clearBugReportDraft() {
   }
   draft.text='';draft.attachments=[];draft.quotes=[];draft.nextAttachmentNumber=1;
   delete draft.requestId;delete draft.requestText;
-  const saved=persistComposerDraft(BUG_REPORT_DRAFT_UID);
-  for (const attachment of dropped) discardStagedAttachment(attachment, saved);
+  const saved=composerController.persistComposerDraft(BUG_REPORT_DRAFT_UID);
+  for (const attachment of dropped) composerController.discardStagedAttachment(attachment, saved);
   renderBugReportItems();
 }
 
@@ -1091,17 +1274,17 @@ function openBugReportDialog() {
   bindBugReportDraft();
   renderBugReportItems();
   $('#bug-report-description').value = bugReportDraftObject().text;
-  hydrateComposerDraft(BUG_REPORT_DRAFT_UID).then(async () => {
+  composerController.hydrateComposerDraft(BUG_REPORT_DRAFT_UID).then(async () => {
     const handedOff=bugReportDraftObject().handedOffSession;
     if (handedOff) {
       showBugReportToast(handedOff.report_id,handedOff);
       store.set('reportDraftId.'+bugReportNode(),crypto.randomUUID());bindBugReportDraft();
-      await hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
+      await composerController.hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
     }
     if (!bugReportSending) {
       $('#bug-report-description').value = bugReportDraftObject().text;
       renderBugReportItems();
-      autoGrow($('#bug-report-description'));
+      composerController.autoGrow($('#bug-report-description'));
     }
   });
   syncBugReportSources();
@@ -1109,7 +1292,7 @@ function openBugReportDialog() {
   BugReportModels.refresh();
   dialog.showModal();
   closeBugReportAttachMenu();
-  autoGrow($('#bug-report-description'));
+  composerController.autoGrow($('#bug-report-description'));
   setTimeout(() => $('#bug-report-description').focus(), 0);
 }
 
@@ -1126,11 +1309,11 @@ $('#bug-report-node').onchange = () => {
   const notice = carryBugReportDraft(previous, BUG_REPORT_DRAFT_UID);
   $('#bug-report-description').value=bugReportDraftObject().text;
   renderBugReportItems();
-  hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
+  composerController.hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
   syncBugReportSources();
   BugReportModels.refresh();
   $('#bug-report-error').textContent = notice;
-  autoGrow($('#bug-report-description'));
+  composerController.autoGrow($('#bug-report-description'));
 };
 $('#bug-report-source').addEventListener('change', () => {
   store.set('bugReportSource', bugReportSource());
@@ -1139,8 +1322,8 @@ $('#bug-report-source').addEventListener('change', () => {
 $('#bug-report-dialog .modal-close').onclick = () => $('#bug-report-dialog').close();
 $('#bug-report-description').addEventListener('input', event => {
   bugReportDraftObject().text = event.target.value;
-  persistComposerDraft(BUG_REPORT_DRAFT_UID);
-  autoGrow(event.target);
+  composerController.persistComposerDraft(BUG_REPORT_DRAFT_UID);
+  composerController.autoGrow(event.target);
 });
 // 与 composer 一致：Enter 提交、Shift+Enter 换行；手机上 Enter 始终换行，只用按钮提交。
 $('#bug-report-description').addEventListener('keydown', e => {
@@ -1150,7 +1333,7 @@ $('#bug-report-description').addEventListener('keydown', e => {
   }
 });
 window.addEventListener('resize', () => {
-  if ($('#bug-report-dialog').open) autoGrow($('#bug-report-description'));
+  if ($('#bug-report-dialog').open) composerController.autoGrow($('#bug-report-description'));
 });
 let bugReportBackdropPressed = false;
 function bugReportBackdropHit(event) {
@@ -1188,7 +1371,7 @@ $('#bug-report-attach-menu').onclick = event => {
   const button = event.target.closest('button[data-attach]');
   if (!button) return;
   closeBugReportAttachMenu();
-  chooseAttachmentFiles(button.dataset.attach, $('#bug-report-file'), addBugReportFiles);
+  composerController.chooseAttachmentFiles(button.dataset.attach, $('#bug-report-file'), addBugReportFiles);
 };
 $('#bug-report-file').onchange = event => {
   addBugReportFiles([...event.target.files]);
@@ -1198,7 +1381,7 @@ $('#bug-report-dialog').addEventListener('click', event => {
   if (!event.target.closest('#bug-report-dialog .attach-picker')) closeBugReportAttachMenu();
 });
 // 截图通常来自系统剪贴板；粘贴落在描述框或对话框内任意位置都接收。
-$('#bug-report-form').addEventListener('paste', event => pasteAttachmentFiles(event, addBugReportFiles));
+$('#bug-report-form').addEventListener('paste', event => composerController.pasteAttachmentFiles(event, addBugReportFiles));
 bindFileDrop($('#bug-report-form'), addBugReportFiles);
 
 function setSendButtonBusy(button, label) {
@@ -1209,12 +1392,12 @@ function setSendButtonBusy(button, label) {
 }
 
 function completeBugReportSubmission(data,node) {
-  const oldUid=BUG_REPORT_DRAFT_UID,draft=composerDrafts.get(oldUid);
+  const oldUid=BUG_REPORT_DRAFT_UID,draft=composerController.composerDrafts.get(oldUid);
   if (draft) {
     for (const item of draft.attachments) if (item.preview) URL.revokeObjectURL(item.preview);
-    composerSaveQueues.delete(draft);composerPendingSaves.delete(draft);composerSaving.delete(draft);
+    composerController.composerSaveQueues.delete(draft);composerController.composerPendingSaves.delete(draft);composerController.composerSaving.delete(draft);
   }
-  composerDrafts.delete(oldUid);composerHydrations.delete(oldUid);
+  composerController.composerDrafts.delete(oldUid);composerController.composerHydrations.delete(oldUid);
   if (store.get('bugReportDraftNode', '') === node) store.set('bugReportDraftNode', '');
   store.set('reportDraftId.'+node,crypto.randomUUID());bindBugReportDraft();
   $('#bug-report-description').value='';
@@ -1260,22 +1443,22 @@ $('#bug-report-form').onsubmit = async event => {
   }, snapshot.content);
   try {
     bugReportDraftObject().text = reportText;
-    await hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
+    await composerController.hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
     const pending=bugReportDraftObject();
     const priorPayload=JSON.stringify({description,source:bugReportSource(),...BugReportModels.choice(),
       attachments:attachments.map(a=>({upload_id:a.uploaded?.upload_id,number:a.number})),origin});
     if (pending.requestId && pending.requestText===priorPayload) {
-      const previous=await priorComposerSubmission(BUG_REPORT_DRAFT_UID,pending.requestId,true);
+      const previous=await composerController.priorComposerSubmission(BUG_REPORT_DRAFT_UID,pending.requestId,true);
       if (previous?.worker) {completeBugReportSubmission(previous,node);return;}
     }
-    if (!await persistComposerDraft(BUG_REPORT_DRAFT_UID)) throw new Error(bugReportDraftObject().storageError || '报告草稿保存失败');
+    if (!await composerController.persistComposerDraft(BUG_REPORT_DRAFT_UID)) throw new Error(bugReportDraftObject().storageError || '报告草稿保存失败');
     // 与对话发送一致：同一批附件共用一个编号目录，失败的附件保留在卡片上重试。
     const uploaded = [];
     let attachmentId = null;
     for (let i = 0; i < attachments.length; i++) {
       setSendButtonBusy(button, `上传 ${i + 1}/${attachments.length}`);
       if (attachments[i].staging) await attachments[i].staging;
-      const result = await uploadComposerAttachment(
+      const result = await composerController.uploadComposerAttachment(
         attachments[i], BUG_REPORT_DRAFT_UID, attachmentId, { node, render: renderBugReportItems });
       attachmentId ||= result.attachment_id;
       uploaded.push({upload_id:result.upload_id,number:attachments[i].number});
@@ -1295,7 +1478,7 @@ $('#bug-report-form').onsubmit = async event => {
     if (reportDraft.requestText!==requestText || !reportDraft.requestId) {
       reportDraft.requestText=requestText;reportDraft.requestId=crypto.randomUUID();
     }
-    if (!await persistComposerDraft(BUG_REPORT_DRAFT_UID)) throw new Error(reportDraft.storageError || '报告草稿保存失败');
+    if (!await composerController.persistComposerDraft(BUG_REPORT_DRAFT_UID)) throw new Error(reportDraft.storageError || '报告草稿保存失败');
     // 远端抓取时会话与终端引用不再随请求下发：中央站要求 uid 与 _node 指向
     // 同一台机器，问题会话的引用改由 origin.uid 与 captured 携带。
     const d = await post('api/bug-report', {
@@ -1859,10 +2042,10 @@ function showNewSessionStage(info) {
   // create 返回后 term/list 可能还没拉完；先把服务端刚确认的新 tmux 放进本地
   // pending，详情页的终端切换、输入框和附件可以立即使用。
   const added = !T.pending.some(x => x.name === info.name);
-  if (added) T.pending.push({ ...info, started: pendingStartedAt(info) });
+  if (added) T.pending.push({ ...info, started: composerController.pendingStartedAt(info) });
   cancelSearch(true);
   S.sel = pendingUid(info.name);
-  rememberComposerSession(composerDraft(S.sel), info);
+  composerController.rememberComposerSession(composerController.composerDraft(S.sel), info);
   S.agent = null;
   store.set('sel', S.sel);
   store.set('agent', null);
@@ -1896,7 +2079,7 @@ function showNewSessionStage(info) {
   if (typeof auditDetailRendered === 'function') auditDetailRendered('new-session', {name: info.name});
   showMobileDetail();
   T.uid = S.sel;
-  renderComposer();
+  composerController.renderComposer();
   renderTakeoverBtn();
 }
 
@@ -2021,9 +2204,9 @@ function refreshPendingStage(name) {
   const wait = $('.new-session-wait');
   if (wait) wait.textContent = pendingStageMessage(current);
   renderPendingSessionAction(current);
-  if (composerUid === pendingUid(name) && current.source !== 'shell'
+  if (composerController.composerUid === pendingUid(name) && current.source !== 'shell'
       && ['exited', 'failed'].includes(current.state)
-      && !$('#compose-items [data-conversation-restart]')) renderComposerItems();
+      && !$('#compose-items [data-conversation-restart]')) composerController.renderComposerItems();
 }
 
 /** 本页观察到宿主退出后，页面立刻进入结束态（头部"删除"、副标题"已结束"），
@@ -2162,14 +2345,14 @@ function discardAbandonedNewSession(info) {
   store.set('termviews', [...T.openViews]);
   disposeTermView(info.name);
 
-  const draft = composerDrafts.get(uid);
+  const draft = composerController.composerDrafts.get(uid);
   for (const attachment of draft?.attachments || []) {
     if (attachment.preview) URL.revokeObjectURL(attachment.preview);
   }
-  composerDrafts.delete(uid);
-  deleteComposerDraftStorage(uid);
-  if (composerUid === uid) composerUid = null;
-  syncComposerUnloadProtection();
+  composerController.composerDrafts.delete(uid);
+  composerController.deleteComposerDraftStorage(uid);
+  if (composerController.composerUid === uid) composerController.composerUid = null;
+  composerController.syncComposerUnloadProtection();
 
   if (S.sel === uid) {
     const previousMode = T.pendingModes.get(info.name);
@@ -2177,7 +2360,7 @@ function discardAbandonedNewSession(info) {
     S.sel = null;
     T.uid = null;
     store.set('sel', null);
-    $('#composer').classList.add('hidden');
+    composerController.hide();
     $('#detail').innerHTML = '<div class="empty">从左侧选择一个会话</div>';
     ensureConsolePlaceholder();
     if (typeof auditDetailRendered === 'function') auditDetailRendered('discarded', {name: info.name});
@@ -2213,7 +2396,7 @@ async function resolveNewSession(info) {
         && String(row.sid) === String(current.binding.sid));
     const linked = terminalLinked || nativeLinked;
     if (linked && S.sel === pendingId && !S.agent) {
-      migrateComposerDraft(pendingId, linked.uid);
+      composerController.migrateComposerDraft(pendingId, linked.uid);
       // The pending view holds a launch-kind lease and socket; the native
       // console claims a native lease on the same host, so release ours first.
       // Reopen it on the native session when it was open (or remembered open
@@ -2258,8 +2441,8 @@ async function resolveNewSession(info) {
       // 另一浏览器可能已经先清理了同一临时记录；gone 与本页观察到
       // exited 的收尾动作完全相同，不能退化成一个关联失败的孤儿页。
       if (d.exited || d.gone) {
-        if (conversationSendEnabled()) {composerDraft(pendingId);await hydrateComposerDraft(pendingId);}
-        const draft = composerDrafts.get(pendingId);
+        if (composerController.conversationSendEnabled()) {composerController.composerDraft(pendingId);await composerController.hydrateComposerDraft(pendingId);}
+        const draft = composerController.composerDrafts.get(pendingId);
         if (draft && (draft.text || draft.attachments.length || draft.quotes.length)) {
           const wait = $('.new-session-wait');
           if (wait && S.sel === pendingId) wait.textContent = 'CLI 已退出，输入已保留';
@@ -2280,7 +2463,7 @@ async function resolveNewSession(info) {
       await loadTermList();
       if (controller.signal.aborted) return;
       if (S.sel !== pendingId) return;      // 等待刷新期间也可能切走，不能抢走右侧页面
-      migrateComposerDraft(pendingId, d.uid);
+      composerController.migrateComposerDraft(pendingId, d.uid);
       T.uid = d.uid;
       if (d.running) {
         S.live.add(d.uid);
@@ -2434,7 +2617,7 @@ function renderTakeoverBtn() {
   b.setAttribute('aria-expanded', String(terminalVisible));
   b.classList.toggle('on', !!name);
   paintConsoleAvailability(b, S.sel, S.agent);
-  renderComposer();
+  composerController.renderComposer();
   if (typeof auditConsoleButton === 'function') auditConsoleButton('takeover-btn');
 }
 
@@ -4145,140 +4328,6 @@ function disposeTermView(name) {
 
 // ---------------------------------------------------------------- 输入框
 // 已接管的会话在消息流底部给个输入框, 不必展开整个终端就能说话。
-const COMPOSER_MAX_FILES = 12;
-const COMPOSER_MAX_FILE_BYTES = 512 * 1024 * 1024;
-const ATTACH_ACCEPT = { image: 'image/*', video: 'video/*', audio: 'audio/*', file: '' };
-
-async function chooseAttachmentFiles(type, input, addFiles) {
-  input.accept = ATTACH_ACCEPT[type] ?? '';
-  input.dataset.kind = type;
-  input.removeAttribute('capture');
-  if (type === 'file' && /Android/i.test(navigator.userAgent)) {
-    // Chromium's Android chooser treats octet-stream as all openable files,
-    // without the camera/recorder intents added for an empty accept or */*.
-    input.accept = 'application/octet-stream';
-    if (typeof window.showOpenFilePicker === 'function') {
-      let handles;
-      try {
-        handles = await window.showOpenFilePicker({multiple: true, excludeAcceptAllOption: false});
-      } catch (error) {
-        if (error.name === 'AbortError') return;
-        if (error.name !== 'NotSupportedError' && error.name !== 'SecurityError') {
-          await appAlert('选择文件失败：' + (error.message || String(error)));
-          return;
-        }
-      }
-      if (handles) {
-        try {
-          const files = await Promise.all(handles.map(handle => handle.getFile()));
-          if (files.length) addFiles(files);
-        } catch (error) {
-          await appAlert('读取所选文件失败：' + (error.message || String(error)));
-        }
-        return;
-      }
-    }
-  }
-  input.click();
-}
-
-const composerDrafts = new Map();
-const composerDraftAliases = new Map();
-const composerInputHistoryCache = new Map();
-const composerHistoryPicker = {
-  open: false, uid: null, items: [], index: -1, seq: 0,
-};
-let composerUid = null;
-let composerDraftSeq = 0;
-let lastMessageSelection = '';
-let lastMessageSelectionUid = null;
-
-// Input content is owned by the server. Only unsent File objects live in RAM.
-const conversationSendEnabled = () => SessionDockCapabilities.config.conversation_send === true;
-const newComposerDraft = () => ({text:'', attachments:[], quotes:[], nextAttachmentNumber:1,
-  revision:0, editVersion:0, savedVersion:0});
-const composerHydrations = new Map();
-let composerDraftWrites = Promise.resolve();
-const composerSaveQueues = new Map();
-function composerDraftOwner(uid) {
-  const seen = new Set();
-  while (composerDraftAliases.has(uid) && !seen.has(uid)) {
-    seen.add(uid); uid = composerDraftAliases.get(uid);
-  }
-  return uid;
-}
-function restoreComposerDraftRecord(record, uid) {
-  const draft = Object.assign(newComposerDraft(), record || {});
-  delete draft.saved;
-  // Optional/nullable fields in old server records must retain editor defaults.
-  draft.text ??= '';
-  draft.attachments ??= [];
-  draft.quotes ??= [];
-  for (const attachment of draft.attachments) {
-    attachment.status = ''; attachment.preview = '';
-    // The server resolved this draft through the requested session identity.
-    // Report handoff/restart can leave an older UID in its stored metadata.
-    if (uid && attachment.uploaded?.upload_id) {
-      attachment.uploaded = {...attachment.uploaded, uid, node:nodeOf(uid) || ''};
-    }
-  }
-  return ensureComposerAttachmentNumbers(draft);
-}
-function composerDraft(uid = composerUid, create = true) {
-  uid = composerDraftOwner(uid);
-  if (!uid) return null;
-  if (!composerDrafts.has(uid) && create) composerDrafts.set(uid, newComposerDraft());
-  if (create) hydrateComposerDraft(uid);
-  return composerDrafts.get(uid) || null;
-}
-function composerDraftRecord(draft, uid) {
-  return {text:draft.text, quotes:draft.quotes.map(item => ({...item})),
-    attachments:draft.attachments.map(item => ({id:item.id, number:item.number, kind:item.kind,
-      uploaded:item.uploaded, file:{name:item.file.name, size:item.file.size,
-        type:item.file.type, lastModified:item.file.lastModified}})),
-    nextAttachmentNumber:draft.nextAttachmentNumber, requestId:draft.requestId,
-    requestText:draft.requestText, session:{...draft.session, uid},
-    ...(draft.report_prompt ? {report_prompt:draft.report_prompt,report_text:draft.report_text} : {})};
-}
-async function priorComposerSubmission(uid,id,report=false) {
-  const query=new URLSearchParams({uid,[report?'report_request_id':'request_id']:id});
-  const response=await fetch(appUrl('api/session/conversation?'+query),{cache:'no-store'});
-  const data=await response.json();
-  if (response.status===404) return null;
-  if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
-  return data;
-}
-function acceptComposerServerRevision(draft,row) {
-  if (!row || row.revision<=draft.revision) return;
-  const value=row.value;
-  const empty=!value?.text && !value?.attachments?.length && !value?.quotes?.length;
-  const same=value?.text===draft.text
-    && JSON.stringify((value?.attachments || []).map(a=>a.id))===JSON.stringify(draft.attachments.map(a=>a.id))
-    && JSON.stringify(value?.quotes || [])===JSON.stringify(draft.quotes);
-  if (empty || same) draft.revision=row.revision;
-}
-// The server owns delivery, deduplication and the per-session CLI state
-// object (docs/cli-state.md). Queued sends are read from that object, which
-// arrives in view packets (`cli`) and CHECK responses; nothing is guessed here.
-function applyCliState(uid, cli, {status = true} = {}) {
-  const draft = composerDrafts.get(composerDraftOwner(uid));
-  if (!draft || !cli || typeof cli !== 'object') return;
-  if (Number.isFinite(cli.observed_at) && Number.isFinite(draft.cli?.observed_at)
-      && cli.observed_at < draft.cli.observed_at) return;
-  const priorBusy = draft.cli?.instance?.busy;
-  draft.cli = cli;
-  if (status && cli.input && takenOver(uid)) {
-    updateComposerInputStatus(uid, {ok: cli.input.state === 'ready', input: cli.input});
-  }
-  if (composerDraftOwner(composerUid) === composerDraftOwner(uid)) renderQueuedSends(composerUid);
-  if (priorBusy !== cli.instance?.busy && composerDraftOwner(composerUid) === composerDraftOwner(uid))
-    renderComposerInputStatus();
-  paintTurn(uid);
-}
-/** Queued sends live in one `#queued-sends` block after the activity row so
- *  turn sealing, tool grouping and time dividers never treat them as history.
- *  app.js removes the block before appending records; the tail render
- *  restores it. Interrupted or lost rows can be closed. */
 function renderQueuedSends(uid = composerUid) {
   // A new session waits on its stage page until the first native record;
   // its queued text goes under the stage text instead of a message list.
@@ -4330,1297 +4379,7 @@ function renderQueuedSends(uid = composerUid) {
   if (box) box.appendChild(block);
   else stage.insertAdjacentElement('afterend', block);
 }
-async function dismissQueuedSend(uid, requestId) {
-  try {
-    await post('api/session/conversation/queued/dismiss', {uid, request_id: requestId});
-  } catch { /* The next CLI-state packet shows whether it is still queued. */ }
-  const draft = composerDrafts.get(composerDraftOwner(uid));
-  if (Array.isArray(draft?.cli?.queued)) {
-    draft.cli.queued = draft.cli.queued.filter(item => item.request_id !== requestId);
-  }
-  renderQueuedSends(uid);
-}
-async function consumeComposerSubmission(uid,text,attachments,quotes) {
-  const owner=composerDraftOwner(uid),draft=composerDrafts.get(owner);
-  if (!draft) return;
-  delete draft.requestId;delete draft.requestText;delete draft.report_prompt;delete draft.report_text;
-  if (draft.text===text) draft.text='';
-  const files=new Set(attachments.map(a=>a.id)),quoted=new Map(quotes.map(q=>[q.id,q.text]));
-  for (const item of draft.attachments.filter(a=>files.has(a.id))) {
-    if (item.preview) URL.revokeObjectURL(item.preview);
-  }
-  draft.attachments=draft.attachments.filter(a=>!files.has(a.id));
-  draft.quotes=draft.quotes.filter(q=>quoted.get(q.id)!==q.text);
-  if (!draft.text && !draft.attachments.length && !draft.quotes.length) draft.nextAttachmentNumber=1;
-  // SEND already durably consumed this revision. Save any remaining/new edits
-  // in the background; network latency here must not delay the successful UI.
-  persistComposerDraft(owner);refreshComposerDraft(owner);
-}
-async function readServerComposerDraft(uid) {
-  const url = 'api/session/conversation?' + new URLSearchParams({uid});
-  const traceId = crypto.randomUUID();
-  const fields = {uid, traceId};
-  const started = performance.now(), timeoutMs = 12000;
-  let phase = 'headers', status = null, headersMs = null;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  browserAuditEvent?.('http.request.started', {url, method:'GET'}, null, fields);
-  try {
-    const response = await fetch(appUrl(url), {cache:'no-store', signal:controller.signal,
-      headers:{'X-SessionDock-Trace':traceId, 'X-SessionDock-Page':TERM_PAGE_ID,
-        'X-SessionDock-Build':BUILD_ID}});
-    status = response.status;
-    headersMs = Math.round(performance.now() - started);
-    phase = 'body';
-    browserAuditEvent?.('http.response.headers', {url, status, headers_ms:headersMs}, null, fields);
-    const data = await response.json();
-    phase = 'response';
-    if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
-    // Record transport metadata only: draft text and attachments stay private.
-    browserAuditEvent?.('http.response.received', {url, status, ok:true,
-      headers_ms:headersMs, duration_ms:Math.round(performance.now() - started)}, null, fields);
-    return data.draft;
-  } catch (error) {
-    if (controller.signal.aborted) {
-      error = new Error('草稿读取超时，连接恢复后会自动重试');
-      error.name = 'TimeoutError';
-    }
-    browserAuditEvent?.('http.request.failed', {url, error:String(error), phase, status,
-      headers_ms:headersMs, timeout_ms:timeoutMs, online:navigator.onLine,
-      visibility:document.visibilityState, duration_ms:Math.round(performance.now() - started)},
-    null, {...fields, severity:'warning'});
-    throw error;
-  } finally { clearTimeout(timer); }
-}
-// Read old browser copies once; never write new input into browser storage.
-// Migration copies legacy File bytes to the server before removing verified originals.
-let legacyComposerDatabase;
-async function oldComposerDatabase() {
-  if (legacyComposerDatabase !== undefined) return legacyComposerDatabase;
-  legacyComposerDatabase = null;
-  if (!globalThis.indexedDB?.databases) return null;
-  const databases = await indexedDB.databases();
-  if (!databases.some(db => db.name === STORAGE_PREFIX + 'composer-drafts')) return null;
-  legacyComposerDatabase = await new Promise((resolve, reject) => {
-    const request = indexedDB.open(STORAGE_PREFIX + 'composer-drafts');
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-  return legacyComposerDatabase;
-}
-async function importLegacyComposer(uid) {
-  let record = store.get('composerDraft.' + uid, null);
-  const db = await oldComposerDatabase();
-  if (db) {
-    const indexed = await new Promise((resolve, reject) => {
-      const request = db.transaction('drafts').objectStore('drafts').get(uid);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    if (indexed && (!record || (+indexed.revision || 0) > (+record.revision || 0))) record = indexed;
-  }
-  const oldQueue=store.get('queuedMessages',[]).find(([key])=>key===uid)?.[1];
-  if (oldQueue?.length) {
-    const imported=await post('api/session/conversation/import',{uid,value:{legacy_queue:oldQueue}});
-    if (imported.error) throw new Error(imported.error);
-    const remaining=store.get('queuedMessages',[]).filter(([key])=>key!==uid);
-    if (remaining.length) store.set('queuedMessages',remaining);
-    else localStorage.removeItem(STORAGE_PREFIX+'queuedMessages');
-  }
-  if (!record || record.removed) return null;
-  const converted=structuredClone(record);
-  const attachments=[...(converted.attachments || []),
-    ...(converted.saved || []).flatMap(item=>item.attachments || [])];
-  if (db) for (const item of attachments) {
-    if (item.uploaded?.upload_id) continue;
-    const file=await new Promise((resolve,reject) => {
-      const request=db.transaction('files').objectStore('files').get(uid+'\0'+item.id);
-      request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
-    });
-    if (!(file instanceof Blob)) continue;
-    const url=new URL(appUrl('api/session/conversation/attachment'));
-    url.searchParams.set('uid',uid);url.searchParams.set('id','legacy-'+item.id);
-    url.searchParams.set('name',item.file.name);
-    const response=await fetch(url,{method:'POST',headers:{'Content-Type':item.file.type || 'application/octet-stream'},body:file});
-    const uploaded=await response.json();
-    if (!response.ok || uploaded.error) throw new Error(uploaded.error || `HTTP ${response.status}`);
-    item.uploaded={...uploaded,uid};
-  }
-  const result=await post('api/session/conversation/import',{uid,value:converted});
-  if (result.error) throw new Error(result.error);
-  // Delete browser originals only after every existing File has a durable
-  // server reference. Unknown/missing bytes keep their original recovery store.
-  if (attachments.every(item=>item.uploaded?.upload_id)) {
-    if (db) await new Promise((resolve,reject) => {
-      const transaction=db.transaction(['drafts','files'],'readwrite');
-      transaction.objectStore('drafts').delete(uid);
-      const prefix=uid+'\0';
-      const request=transaction.objectStore('files').openKeyCursor(IDBKeyRange.bound(prefix,prefix+'\uffff'));
-      request.onsuccess=()=>{const cursor=request.result;if (cursor){transaction.objectStore('files').delete(cursor.key);cursor.continue();}};
-      transaction.oncomplete=resolve;transaction.onabort=transaction.onerror=()=>reject(transaction.error);
-    });
-    localStorage.removeItem(STORAGE_PREFIX+'composerDraft.'+uid);
-    const remaining=store.get('composerDraftUids',[]).filter(key=>key!==uid);
-    if (remaining.length) store.set('composerDraftUids',remaining);
-    else localStorage.removeItem(STORAGE_PREFIX+'composerDraftUids');
-  }
-  return {record:converted,db};
-}
-function hydrateComposerDraft(uid, retry = false) {
-  uid = composerDraftOwner(uid);
-  if (composerHydrations.has(uid)) {
-    if (!retry || !composerDrafts.get(uid)?.loadFailed || composerDrafts.get(uid)?.loading)
-      return composerHydrations.get(uid);
-    composerHydrations.delete(uid);
-  }
-  if (!conversationSendEnabled()) return Promise.resolve();
-  const task = (async () => {
-    const draft = composerDrafts.get(uid);
-    if (!draft) return;
-    draft.loading = true;
-    try {
-      const legacy = await importLegacyComposer(uid);
-      const row = await readServerComposerDraft(uid);
-      // A page that has never saved adopts the server revision even when
-      // typing began before this read returned; keeping revision 0 would get
-      // every later save refused. A page that has saved keeps its CAS
-      // baseline, and the save path rebases on a conflict.
-      if (!draft.savedVersion) draft.revision = row.revision;
-      if (uid.startsWith('report:') && row.value?.session?.kind==='bug-report'
-          && row.value.session.uid && !row.value.session.uid.startsWith('report:')) {
-        draft.handedOffSession=row.value.session;return;
-      }
-      if (!draft.editVersion && row.value && !row.value.removed) {
-        for (const field of ['requestId','requestText','report_prompt','report_text']) delete draft[field];
-        Object.assign(draft, restoreComposerDraftRecord(row.value, uid), {revision:row.revision});
-        if (legacy?.db) await Promise.all(draft.attachments.map(async item => {
-          if (item.uploaded?.upload_id) return;
-          const file = await new Promise((resolve, reject) => {
-            const request = legacy.db.transaction('files').objectStore('files').get(uid + '\0' + item.id);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-          });
-          if (file) {
-            item.file = new File([file], item.file.name, {type:item.file.type,
-              lastModified:item.file.lastModified});
-            if (item.kind === 'image') item.preview = URL.createObjectURL(item.file);
-          }
-        }));
-      } else if (draft.editVersion && !draft.savedVersion && row.value && !row.value.removed) {
-        mergeEarlyComposerEdit(draft, restoreComposerDraftRecord(row.value, uid), uid);
-      }
-      draft.storageError = '';
-      draft.loadFailed = false;
-    } catch (error) {
-      draft.storageError = '服务端草稿读取失败，当前输入保留：' + (error.message || error);
-      draft.loadFailed = true;
-    } finally {
-      draft.loading = false;
-      refreshComposerDraft(composerDraftOwner(uid)); syncComposerUnloadProtection();
-    }
-  })();
-  composerHydrations.set(uid, task);
-  return task;
-}
-/** Keystrokes landed before the first server read returned. The server text,
- *  attachments and quotes come first, the early input follows, and the merge
- *  replaces the queued save so the server never loses either side. */
-function mergeEarlyComposerEdit(draft, server, uid) {
-  if (server.text && !draft.text.startsWith(server.text)) {
-    draft.text = server.text + (draft.text ? '\n' + draft.text : '');
-  }
-  draft.attachments = [...server.attachments,
-    ...draft.attachments.filter(a => !server.attachments.some(b => b.id === a.id))];
-  draft.quotes = [...server.quotes, ...draft.quotes.filter(q => !server.quotes.some(s => s.id === q.id))];
-  draft.nextAttachmentNumber = Math.max(draft.nextAttachmentNumber || 1, server.nextAttachmentNumber || 1);
-  if (!draft.session && server.session) draft.session = server.session;
-  ensureComposerAttachmentNumbers(draft);
-  queueComposerSave(draft, uid);
-}
-/** Replace the editor with a newer server row. Attachment objects this page
- *  already holds stay the same objects, so their File bytes, previews and
- *  in-flight uploads survive; only their server-side fields are refreshed. */
-function adoptServerDraft(draft, row, uid) {
-  const next = restoreComposerDraftRecord(row.value, uid);
-  next.attachments = next.attachments.map(a => {
-    const local = draft.attachments.find(b => a.id === b.id);
-    if (!local) return a;
-    local.number = a.number;
-    if (a.kind) local.kind = a.kind;
-    if (a.uploaded?.upload_id && (!local.uploaded?.upload_id
-        || local.uploaded.upload_id === a.uploaded.upload_id)) local.uploaded = a.uploaded;
-    return local;
-  });
-  for (const a of draft.attachments) if (a.preview && !next.attachments.some(b => a.id === b.id)) URL.revokeObjectURL(a.preview);
-  for (const field of ['requestId','requestText','report_prompt','report_text']) delete draft[field];
-  Object.assign(draft, next, {revision: row.revision, editVersion: draft.editVersion,
-    savedVersion: draft.editVersion, storageError: ''});
-  return draft;
-}
-let composerFollowBusy = false, composerFollowedAt = 0;
-/** An idle page follows a newer server draft: the device that is typing wins
- *  and the others catch up. Nothing is adopted over unsaved local edits.
- *  `revision` is the server revision a poll reported; null forces a read,
- *  throttled to once a second. */
-async function followServerDraft(uid, revision = null) {
-  if (SessionDockNetwork.paused) return false;
-  const owner = composerDraftOwner(uid), draft = composerDrafts.get(owner);
-  if (!draft || !conversationSendEnabled() || draft.loading || draft.loadFailed || draft.handedOffSession
-      || composerSending || composerFollowBusy || composerSaving.has(draft) || composerPendingSaves.has(draft)
-      || draft.editVersion !== draft.savedVersion) return false;
-  if (revision !== null && revision <= draft.revision) return false;
-  if (revision === null && performance.now() - composerFollowedAt < 1000) return false;
-  composerFollowBusy = true;
-  const version = draft.editVersion;
-  try {
-    const row = await readServerComposerDraft(uid);
-    composerFollowedAt = performance.now();
-    if (!row || row.revision <= draft.revision || draft.editVersion !== version
-        || composerSaving.has(draft) || composerSending) return false;
-    adoptServerDraft(draft, row, uid);
-    refreshComposerDraft(owner); syncComposerUnloadProtection();
-    return true;
-  } catch {
-    return false; // The next poll, focus or switch reads again.
-  } finally {
-    composerFollowBusy = false;
-  }
-}
-function refreshComposerDraft(uid) {
-  if (composerUid === uid) {
-    const ta = $('#cinput'),text=composerDrafts.get(uid)?.text || ''; if (ta.value!==text) ta.value=text;
-    renderComposerItems(); autoGrow(ta);
-  }
-  if (uid === BUG_REPORT_DRAFT_UID) {
-    const ta = $('#bug-report-description'),text=composerDrafts.get(uid)?.text || ''; if (ta.value!==text) ta.value=text;
-    renderBugReportItems(); autoGrow(ta); noteBugReportDraftNode();
-  }
-}
-const composerPendingSaves=new Map();
-const composerSaving=new Set();
-function queueComposerSave(draft, uid) {
-  composerPendingSaves.set(draft,{uid,version:++draft.editVersion,value:composerDraftRecord(draft,uid)});
-  syncComposerUnloadProtection();
-}
-function persistComposerDraft(uid = composerUid) {
-  uid = composerDraftOwner(uid);
-  const draft = composerDrafts.get(uid);
-  if (!draft) return Promise.resolve(false);
-  if (uid === BUG_REPORT_DRAFT_UID) noteBugReportDraftNode();
-  // Draft storage remains available across deployments; only SEND is build-gated.
-  queueComposerSave(draft, uid);
-  if (composerSaving.has(draft)) return composerSaveQueues.get(draft);
-  composerSaving.add(draft);
-  const task=(async () => {
-    await new Promise(resolve=>setTimeout(resolve,150));
-    try {
-      await hydrateComposerDraft(uid, true);
-      if (draft.loadFailed) return false; // Keep the read error; never wrap it again.
-      if (!conversationSendEnabled()) throw new Error('草稿保存未启用');
-      while (composerPendingSaves.has(draft)) {
-        const pending=composerPendingSaves.get(draft);composerPendingSaves.delete(draft);
-        let data=await post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value}, {timeoutMs:12000});
-        for (let attempt=0;data.code==='draft_revision' && attempt<2;attempt++) {
-          // Another page saved first. This page is the one still editing, so
-          // its input wins: rebase onto the server revision and save again.
-          const row=await readServerComposerDraft(pending.uid);
-          if (row.revision>draft.revision) draft.revision=row.revision;
-          data=await post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value}, {timeoutMs:12000});
-        }
-        if (data.reload) throw new Error(data.error || '页面已更新，请重新加载后再提交');
-        if (data.error) throw new Error(data.error);
-        draft.revision=data.draft.revision;draft.savedVersion=pending.version;draft.storageError='';
-      }
-      return true;
-    } catch (error) {
-      draft.storageError='服务端草稿保存失败，当前输入保留：'+(error.message || error);
-      return false;
-    } finally {
-      composerSaving.delete(draft);syncComposerUnloadProtection();
-      const owner = composerDraftOwner(uid);
-      if (owner === BUG_REPORT_DRAFT_UID) {
-        renderSavedComposerInputs($('#bug-report-items'), draft);
-      } else if (composerDraftOwner(composerUid) === owner) {
-        renderSavedComposerInputs($('#compose-items'), draft);
-      }
-    }
-  })();
-  composerSaveQueues.set(draft,task);
-  composerDraftWrites=Promise.all([...composerSaveQueues.values()]);
-  return task;
-}
-// Retry storage, never SEND: keep unsaved text/Files in memory until the
-// transport recovers, including a report dialog whose first read failed.
-let composerRecoveryBusy = false;
-async function recoverComposerDrafts() {
-  if (globalThis.SessionDockSleep?.sleeping || SessionDockNetwork.reason === 'login') return;
-  if (composerRecoveryBusy || document.hidden || !navigator.onLine || composerSending) return;
-  composerRecoveryBusy = true;
-  try {
-    for (const [uid, draft] of composerDrafts) {
-      if (!draft.storageError || draft.loading || composerSaving.has(draft)
-          || draft.handedOffSession || draft.requestId) continue;
-      if (draft.loadFailed) await hydrateComposerDraft(uid, true);
-      if (!draft.loadFailed && draft.editVersion > draft.savedVersion) await persistComposerDraft(uid);
-    }
-  } finally { composerRecoveryBusy = false; }
-}
-setInterval(recoverComposerDrafts, 3000);
-addEventListener('online', recoverComposerDrafts);
 
-const composerUnloadWarning = event => {event.preventDefault(); event.returnValue = '';};
-let composerUnloadProtected = false;
-function syncComposerUnloadProtection() {
-  const pending = [...composerDrafts.values()].some(draft => draft.storageError
-    || draft.editVersion > draft.savedVersion
-    || draft.attachments.some(item => !item.uploaded?.upload_id && item.file instanceof Blob));
-  if (pending === composerUnloadProtected) return;
-  composerUnloadProtected = pending;
-  if (pending) window.addEventListener('beforeunload', composerUnloadWarning);
-  else window.removeEventListener('beforeunload', composerUnloadWarning);
-}
-// Wait for every editor (including the report dialog), then recheck edits
-// made during the await. Never reload over unsaved text or local File bytes.
-async function prepareComposerReload() {
-  await Promise.all([...composerDrafts].map(([uid, draft]) =>
-    composerSaving.has(draft) ? composerSaveQueues.get(draft)
-      : draft.editVersion > draft.savedVersion ? persistComposerDraft(uid) : null));
-  syncComposerUnloadProtection();
-  return !composerUnloadProtected && !composerSending && !bugReportSending;
-}
-function renderSavedComposerInputs(box, draft) {
-  const existing = box.querySelector(':scope > .draft-save-error[role="alert"]');
-  if (!draft.storageError) { existing?.remove(); return; }
-  if (existing) { existing.textContent = draft.storageError; return; }
-  const error = el('div', 'draft-save-error', draft.storageError);
-  error.setAttribute('role','alert'); box.append(error);
-}
-
-// Discovery is once per node, not once per all-node batch. An unavailable
-// peer must not make every successful peer re-read its drafts on each poll.
-const composerServerRecoveries = new Map();
-function recoverServerComposerDrafts() {
-  if (!conversationSendEnabled() || document.hidden) return Promise.resolve();
-  const nodes = HUB_MODE ? Nodes.list : [{id: '', online: true}];
-  const tasks = [];
-  for (const node of nodes) {
-    let state = composerServerRecoveries.get(node.id);
-    if (!state) {
-      state = {done: false, request: null, failures: 0, retryAt: 0, online: node.online};
-      composerServerRecoveries.set(node.id, state);
-    }
-    if (state.online === false && node.online === true) state.retryAt = 0;
-    state.online = node.online;
-    if (state.request) { tasks.push(state.request); continue; }
-    if (state.done || node.online === false || Date.now() < state.retryAt) continue;
-    state.request = recoverServerComposerNode(node.id, state).finally(() => { state.request = null; });
-    tasks.push(state.request);
-  }
-  return Promise.all(tasks);
-}
-async function recoverServerComposerNode(node, state) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
-  try {
-    const url = appUrl('api/session/conversation/drafts' + (node ? '?node=' + node : ''));
-    const response = await fetch(url, {cache: 'no-store', signal: controller.signal});
-    const data = await response.json();
-    if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
-    let changed = false;
-    for (const row of data.drafts || []) {
-      if (!row.uid || row.uid.startsWith('report:') || composerDrafts.has(row.uid)) continue;
-      const draft = restoreComposerDraftRecord(row.draft.value, row.uid); draft.revision = row.draft.revision;
-      composerDrafts.set(row.uid, draft);
-      changed = true;
-    }
-    state.done = true;
-    state.failures = 0;
-    // Apply successful peers immediately, without waiting for an offline peer.
-    if (changed && S.sig && typeof renderSide === 'function') renderSide();
-  } catch {
-    state.retryAt = Date.now() + Math.min(300000, 30000 * 2 ** Math.min(state.failures++, 4));
-  } finally { clearTimeout(timer); }
-}
-
-function deleteComposerDraftStorage(uid) {
-  localStorage.removeItem(STORAGE_PREFIX + 'composerDraft.' + uid);
-  const remaining = store.get('composerDraftUids', []).filter(key => key !== uid);
-  if (remaining.length) store.set('composerDraftUids', remaining);
-  else localStorage.removeItem(STORAGE_PREFIX + 'composerDraftUids');
-}
-
-/** Epoch seconds a pending row started: the receipt's `started`, else the
- *  row's own `created`, else `fallback`. A re-render must never invent a new
- *  one, or the row keeps changing its sidebar position. */
-function pendingStartedAt(info, fallback = Date.now() / 1000) {
-  const started = Number(info?.started);
-  if (Number.isFinite(started) && started > 0) return started;
-  const created = Date.parse(info?.created || '');
-  return Number.isFinite(created) ? created / 1000 : fallback;
-}
-
-function rememberComposerSession(draft, info) {
-  const previous = draft.session?.name === info.name ? Number(draft.session.started) : 0;
-  draft.session = Object.fromEntries(['uid', 'name', 'source', 'cwd', 'node_id', 'node_name',
-    'record_id', 'launch_id', 'instance_id', 'title', 'kind', 'report_id']
-    .filter(key => info[key] != null).map(key => [key, info[key]]));
-  // Once term/list drops the exited instance, the draft-retained sidebar row is
-  // sorted by this stamp; keep the first one recorded for the same instance.
-  const started = previous > 0 ? previous : pendingStartedAt(info, 0);
-  if (started > 0) draft.session.started = started;
-}
-
-function syncComposerDraftBindings() {
-  for (const [uid, draft] of [...composerDrafts]) {
-    if (!uid.startsWith('tmux:') || !draft.session?.instance_id) continue;
-    const row = (T.list || []).find(row => row.name === draft.session.name
-      && row.instance_id === draft.session.instance_id && row.uid);
-    if (row) migrateComposerDraft(uid, row.uid);
-  }
-}
-
-function composerHistoryStamp(entry) {
-  return `${entry?.end || 0}:${entry?.version?.head || ''}:${entry?.anchor || ''}`;
-}
-
-function nativeComposerHistory(messages) {
-  return (messages || []).filter(message =>
-    ['user', 'command'].includes(message?.role)
-    && message.counted !== false && String(message.text || '').trim()
-  ).map((message, index) => ({
-    id: `native-${index}`, text: String(message.text), ts: message.ts || null,
-  }));
-}
-
-async function composerHistoryItems(uid) {
-  const entry = cache.get(viewKey(uid));
-  let items;
-  if (entry && !entry.partial) {
-    items = nativeComposerHistory(entry.msgs);
-  } else {
-    const stamp = composerHistoryStamp(entry);
-    const cached = composerInputHistoryCache.get(uid);
-    if (cached?.stamp === stamp) {
-      items = cached.items.map(item => ({ ...item }));
-    } else {
-      const query = new URLSearchParams({uid});
-      const response = await fetch(appUrl(`api/session/input-history?${query}`));
-      const data = await response.json();
-      if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
-      items = (data.history || []).map((item, index) => ({
-        id: `native-${index}`, text: String(item.text || ''), ts: item.ts || null,
-      })).filter(item => item.text.trim());
-      const resultStamp = `${data.end || 0}:${data.version?.head || ''}:${data.anchor || ''}`;
-      composerInputHistoryCache.set(uid, {
-        stamp: resultStamp, items: items.map(item => ({ ...item })),
-      });
-    }
-  }
-  return items.map(item => ({ ...item }));
-}
-
-function closeComposerHistory() {
-  const box = $('#input-history');
-  composerHistoryPicker.open = false;
-  composerHistoryPicker.uid = null;
-  composerHistoryPicker.seq++;
-  box.classList.add('hidden');
-  box.replaceChildren();
-  $('#cinput').setAttribute('aria-expanded', 'false');
-  $('#cinput').removeAttribute('aria-activedescendant');
-}
-
-function setComposerHistoryIndex(index) {
-  const picker = composerHistoryPicker;
-  if (!picker.open || !picker.items.length) return;
-  picker.index = Math.max(0, Math.min(index, picker.items.length - 1));
-  const box = $('#input-history');
-  box.querySelectorAll('.input-history-item.selected').forEach(node => {
-    node.classList.remove('selected');
-    node.setAttribute('aria-selected', 'false');
-  });
-  const selected = box.querySelector(`[data-history-index="${picker.index}"]`);
-  selected?.classList.add('selected');
-  selected?.setAttribute('aria-selected', 'true');
-  box.querySelector('.input-history-position').textContent =
-    `${picker.index + 1} / ${picker.items.length}`;
-  if (selected?.id) $('#cinput').setAttribute('aria-activedescendant', selected.id);
-  selected?.scrollIntoView({block: 'nearest'});
-}
-
-function renderComposerHistory(state = 'ready') {
-  const picker = composerHistoryPicker;
-  const box = $('#input-history');
-  box.replaceChildren();
-  box.classList.remove('hidden');
-  $('#cinput').setAttribute('aria-expanded', 'true');
-  const head = el('div', 'input-history-head');
-  head.appendChild(el('span', '', '输入历史'));
-  const position = el('span', 'input-history-position',
-    state === 'loading' ? '加载中…'
-      : `${Math.max(0, picker.index + 1)} / ${picker.items.length}`
-        + (state === 'refreshing' ? ' · 加载全部…' : ''));
-  head.appendChild(position);
-  box.appendChild(head);
-  if (state === 'loading' || !picker.items.length) {
-    box.appendChild(el('div', 'input-history-empty',
-      state === 'loading' ? '正在加载输入历史…' : '暂无输入历史'));
-    return;
-  }
-  const list = el('div', 'input-history-list');
-  picker.items.forEach((item, index) => {
-    const button = el('button', 'input-history-item');
-    button.type = 'button';
-    button.id = `input-history-option-${index}`;
-    button.dataset.historyIndex = index;
-    button.setAttribute('role', 'option');
-    button.setAttribute('aria-selected', 'false');
-    const text = el('span', 'input-history-text');
-    text.textContent = item.text.slice(0, 600);
-    const meta = document.createElement('small');
-    meta.textContent = item.ts ? fmtTime(item.ts) : `${index + 1}`;
-    button.append(text, meta);
-    button.onmouseenter = () => setComposerHistoryIndex(index);
-    button.onmousedown = event => event.preventDefault();
-    button.onclick = () => {
-      setComposerHistoryIndex(index);
-      acceptComposerHistory();
-    };
-    list.appendChild(button);
-  });
-  box.appendChild(list);
-  setComposerHistoryIndex(picker.index);
-}
-
-async function openComposerHistory() {
-  const ta = $('#cinput');
-  const uid = composerUid;
-  if (!uid || composerSending || ta.value !== '') return;
-  closeAttachMenu();
-  const seq = ++composerHistoryPicker.seq;
-  Object.assign(composerHistoryPicker, {
-    open: true, uid, items: [], index: -1,
-  });
-  const entry = cache.get(viewKey(uid));
-  const seed = nativeComposerHistory(entry?.msgs);
-  if (seed.length) {
-    composerHistoryPicker.items = seed;
-    composerHistoryPicker.index = seed.length - 1;
-    renderComposerHistory(entry?.partial ? 'refreshing' : 'ready');
-  } else {
-    renderComposerHistory('loading');
-  }
-  try {
-    const items = await composerHistoryItems(uid);
-    if (!composerHistoryPicker.open || composerHistoryPicker.uid !== uid
-        || composerHistoryPicker.seq !== seq || composerUid !== uid || ta.value !== '') return;
-    const selected = composerHistoryPicker.items[composerHistoryPicker.index];
-    composerHistoryPicker.items = items;
-    const preserved = selected ? items.findLastIndex(item =>
-      item.text === selected.text && item.ts === selected.ts) : -1;
-    composerHistoryPicker.index = preserved >= 0 ? preserved : items.length - 1;
-    renderComposerHistory();
-  } catch (error) {
-    if (!composerHistoryPicker.open || composerHistoryPicker.seq !== seq) return;
-    composerHistoryPicker.items = [];
-    composerHistoryPicker.index = -1;
-    renderComposerHistory();
-    $('#input-history .input-history-empty').textContent =
-      `读取失败：${error.message || error}`;
-  }
-}
-
-function acceptComposerHistory() {
-  const picker = composerHistoryPicker;
-  const item = picker.items[picker.index];
-  if (!picker.open || !item) return false;
-  const ta = $('#cinput');
-  closeComposerHistory();
-  ta.value = item.text;
-  ta.dispatchEvent(new Event('input', {bubbles: true}));
-  ta.focus();
-  ta.setSelectionRange(ta.value.length, ta.value.length);
-  return true;
-}
-
-function ensureComposerAttachmentNumbers(draft) {
-  draft.attachments ||= [];
-  const used = new Set();
-  let next = Number.isInteger(draft.nextAttachmentNumber) && draft.nextAttachmentNumber > 0
-    ? draft.nextAttachmentNumber : 1;
-  for (const attachment of draft.attachments) {
-    if (!Number.isInteger(attachment.number) || attachment.number < 1 || used.has(attachment.number)) {
-      while (used.has(next)) next++;
-      attachment.number = next++;
-    }
-    used.add(attachment.number);
-    next = Math.max(next, attachment.number + 1);
-  }
-  draft.nextAttachmentNumber = next;
-  return draft;
-}
-
-function migrateComposerDraft(fromUid, toUid) {
-  if (!fromUid || !toUid || fromUid === toUid) return;
-  const draft = composerDrafts.get(fromUid);
-  if (!draft) return;
-  // This is only called after the terminal instance is explicitly bound.
-  // Never concatenate an already edited destination with another draft.
-  const target = composerDrafts.get(toUid);
-  if (target?.editVersion && (target.text || target.attachments.length || target.quotes.length)) return;
-  composerDrafts.set(toUid, draft);
-  for (const [key, value] of screenMenuTextDrafts) {
-    if (!key.startsWith(`${fromUid}\0`)) continue;
-    screenMenuTextDrafts.set(`${toUid}\0${key.slice(fromUid.length + 1)}`, value);
-    screenMenuTextDrafts.delete(key);
-  }
-  composerDraftAliases.set(fromUid, toUid);
-  composerDrafts.delete(fromUid);
-  if (composerHydrations.has(fromUid)) composerHydrations.set(toUid, composerHydrations.get(fromUid));
-  for (const attachment of draft.attachments) {
-    if (attachment.uploaded?.uid === fromUid) attachment.uploaded.uid = toUid;
-  }
-  if (composerUid === fromUid) composerUid = toUid;
-}
-
-function switchComposerDraft(uid) {
-  const ta = $('#cinput');
-  if (composerUid === uid) return;
-  closeComposerHistory();
-  composerUid = uid;
-  const draft = composerDraft(uid, !!uid);
-  if (draft) {draft.inputStatus = null; draft.inputPrompt = null; draft.inputAnswer = null;
-    draft.inputProbe = (draft.inputProbe || 0) + 1;}
-  ta.value = draft?.text || '';
-  renderComposerItems();
-  autoGrow(ta);
-  if (uid) {
-    followServerDraft(uid); // Already hydrated: pick up edits saved elsewhere.
-    pollComposerInput();
-  }
-}
-
-/** Persisted agents already drop the composer once the pane leaves the list.
- *  Unpersisted launches keep a `tmux:` uid after exit, so hide it explicitly. */
-function sessionComposerEnded(uid = S.sel) {
-  if (!uid) return false;
-  if (typeof T !== 'undefined' && T.ended?.has(uid)) return true;
-  const name = String(uid).startsWith('tmux:')
-    ? String(uid).slice(5)
-    : (typeof takenOver === 'function' ? takenOver(uid) : null);
-  const view = name && typeof T !== 'undefined' ? T.views?.get(name) : null;
-  if (view?.ended || view?.retired) return true;
-  const rows = typeof T === 'undefined' ? [] : [
-    ...(typeof pendingTmuxSessions === 'function' ? pendingTmuxSessions() : []),
-    ...(T.pending || []),
-  ];
-  const row = rows.find(item => item.uid === uid
-    || (typeof pendingUid === 'function' && pendingUid(item.name) === uid));
-  return !!row && ['exited', 'failed', 'stopping'].includes(pendingPhase(row));
-}
-
-function renderComposer() {
-  const shell = typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(S.sel);
-  const enabled=conversationSendEnabled() || shell;
-  const name = enabled && sessionTerminalEnabled(S.sel) ? takenOver(S.sel) : null;
-  const pending = enabled && String(S.sel || '').startsWith('tmux:');
-  const receipt = pending && (T.pending || []).find(row => pendingUid(row.name) === S.sel);
-  const restartable = conversationSendEnabled() && !shell
-    && ['exited', 'failed'].includes(receipt?.state)
-    && receipt?.binding?.state !== 'confirmed';
-  // A subagent view shares S.sel with its parent but has no CLI of its own, so
-  // neither the parent's editor nor its input notice belongs there.
-  const show = !S.agent
-    && (restartable || (!sessionComposerEnded(S.sel) && !!(name || pending)));
-  const box = $('#composer');
-  box.classList.toggle('hidden', !show);
-  const first = typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(S.sel);
-  $('#right')?.classList.toggle('shell-session', !!shell);
-  $('#right')?.classList.toggle('terminal-first', !!first);
-  switchComposerDraft(show ? S.sel : null);
-  if (show) syncComposerMode();
-  if (first && typeof layoutTermPane === 'function') layoutTermPane();
-}
-
-function autoGrow(ta) {
-  ta.style.height = 'auto';
-  const wanted = ta.scrollHeight;
-  ta.style.height = Math.min(180, Math.max(36, wanted)) + 'px';
-  ta.style.overflowY = wanted > 180 ? 'auto' : 'hidden';
-}
-
-function syncComposerMode() {
-  const ta = $('#cinput');
-  ta.placeholder = MOBILE.matches
-    ? '输入内容'
-    : '输入内容，Enter 发送，Shift+Enter 换行';
-  $('#bug-report-description').placeholder = MOBILE.matches
-    ? '描述遇到的问题'
-    : '描述遇到的问题，Enter 发送，Shift+Enter 换行';
-  autoGrow(ta);
-}
-
-async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) {
-  const name = takenOver(uid);
-  if (!name) return false;
-  if ((text || options.requestId) && !keys && conversationSendEnabled()) {
-    try {
-      const draft = composerDraft(uid);
-      const data = await post('api/session/conversation/send', {
-        uid, name, text, request_id:options.requestId || crypto.randomUUID(),
-        draft_revision:options.draftRevision, attachments:options.attachments || [],
-        quotes:options.quotes || [], lease:termSendLease(name).lease || null,
-      });
-      if (data.error) {updateComposerInputStatus(uid, data); throw new Error(data.error);}
-      acceptComposerServerRevision(draft,data.draft);
-      S.live.add(uid); S.liveTmux.add(uid); S.lastSync = 0; S.syncGap = FAST_MIN;
-      paintLive();
-      return true;
-    } catch (error) {
-      await appAlert('发送失败，输入保留：' + (error.message || error));
-      return false;
-    }
-  }
-  // Without the conversation service (a node lacking its prerequisites, or
-  // a PTY-only shell) text is a bracketed paste, then Enter once the CLI took it.
-  let d;
-  try {
-    const rawText = !!text;
-    const body = termInputBody(name, keys ? { name, keys, uid }
-      : rawText ? { name, paste: text, uid } : { name, text });
-    if (!body) {
-      await appAlert('发送失败: 此后端未启用该会话的可靠发送；控制台键盘和快捷键仍可直接输入。');
-      return false;
-    }
-    d = await post('api/term/send', body);
-    if (rawText && !d.error) {
-      // The CLI may briefly show a paste-burst marker. Sending Enter in
-      // the same tick can be swallowed while that marker is active.
-      await new Promise(resolve => setTimeout(resolve, 600));
-      d = await post('api/term/send', termInputBody(name, { name, keys: ['Enter'], uid }));
-    }
-  } catch (e) {
-    await appAlert('发送失败: ' + (e.message || e));
-    return false;
-  }
-  if (d.error) {
-    await appAlert('发送失败: ' + d.error);
-    return false;
-  }
-  S.live.add(uid);            // 发完立刻按最快节奏拉新消息
-  S.liveTmux.add(uid);
-  paintLive();
-  S.syncGap = FAST_MIN;
-  S.lastSync = 0;
-  return true;
-}
-
-function composerFileKind(file) {
-  const prefix = String(file.type || '').split('/', 1)[0];
-  return ['image', 'video', 'audio'].includes(prefix) ? prefix : 'file';
-}
-
-function composerKindIcon(kind) {
-  return { image: '▧', video: '▶', audio: '♪', file: '⌑' }[kind] || '⌑';
-}
-
-function closeAttachMenu() {
-  $('#attach-menu').classList.add('hidden');
-  $('#cadd').classList.remove('on');
-  $('#cadd').setAttribute('aria-expanded', 'false');
-}
-
-// 附件卡片同时服务对话输入框和缺陷报告框：两者的草稿结构、编号与上传流程一致。
-function renderAttachmentCards(box, attachments,
-  { onInsert, onRemove, onRetry = null, disabled = false, uid = null, render = () => {} }) {
-  box.replaceChildren();
-  for (const attachment of attachments) {
-    const card = el('div', `draft-card ${attachment.status || ''}`);
-    card.dataset.draftId = attachment.id;
-    card.title = `点击插入 [附件${attachment.number}]`;
-    card.onclick = e => {
-      if (!e.target.closest('.draft-remove')) onInsert(attachment.number);
-    };
-    const thumb = el('span', 'draft-thumb');
-    if (attachment.kind === 'image') loadStagedComposerPreview(attachment, uid, render);
-    if (attachment.kind === 'image' && attachment.preview) {
-      const image = document.createElement('img');
-      image.src = attachment.preview;
-      image.alt = '';
-      thumb.appendChild(image);
-    } else {
-      thumb.textContent = composerKindIcon(attachment.kind);
-    }
-    const info = el('span', 'draft-info');
-    const name = document.createElement('b');
-    name.textContent = attachment.uploaded?.name || attachment.file?.name || 'attachment';
-    const meta = document.createElement('small');
-    const ref = `[附件${attachment.number}]`;
-    const kindName = attachment.kind === 'file' ? '文件'
-      : ({ image: '图片', video: '视频', audio: '音频' }[attachment.kind]);
-    const summary = `${ref} · ${kindName} · ${fmtSize(attachment.file?.size ?? attachment.uploaded?.size ?? 0)}`;
-    meta.textContent = attachment.status === 'uploading' ? `${summary} · ${attachment.progress || 0}%`
-      : attachment.status === 'queued' ? `${summary} · 等待上传`
-        : attachment.status === 'failed' ? `${summary} · ${attachment.error || '上传失败'}`
-          : summary;
-    info.append(name, meta);
-    if (attachment.status === 'failed' && onRetry && attachment.file instanceof Blob) {
-      const retry = el('button', 'draft-retry', '重试');
-      retry.type = 'button'; retry.title = '重新上传';
-      retry.disabled = disabled;
-      retry.onclick = e => { e.stopPropagation(); onRetry(attachment); };
-      info.appendChild(retry);
-    }
-    const remove = el('button', 'draft-remove', '×');
-    remove.type = 'button';
-    remove.title = remove.ariaLabel = attachment.cancelUpload ? '取消上传' : '移除附件';
-    remove.disabled = disabled && !attachment.cancelUpload;
-    remove.onclick = e => {
-      e.stopPropagation();
-      if (attachment.cancelUpload) attachment.cancelUpload();
-      else onRemove(attachment.id);
-    };
-    card.append(thumb, info, remove);
-    box.appendChild(card);
-  }
-}
-
-// Normalize both structured CHECK responses and older nodes during a rollout.
-// Only an explicit successful response can grant readiness.
-function composerInputStatus(data) {
-  const fallback = {state:'unknown', code:'input_check_pending', message:'正在检查 CLI 输入状态'};
-  if (!data || typeof data !== 'object') return fallback;
-  if (Object.prototype.hasOwnProperty.call(data, 'input')) {
-    const input = data.input;
-    if (!input || !['ready','starting','blocked','unknown'].includes(input.state)
-        || typeof input.code !== 'string' || typeof input.message !== 'string') return fallback;
-    if (input.state !== 'ready') return {state:input.state, code:input.code, message:input.message};
-    if (data.ok === true && !data.error) return {state:input.state, code:input.code, message:input.message};
-    return {state:'unknown', code:data.code || 'input_check_failed', message:data.error || '未确认 CLI 可输入，请切换终端检查'};
-  }
-  if (data.ok === true && !data.error) return {state:'ready', code:'', message:''};
-  const code = typeof data.code === 'string' ? data.code : 'input_check_failed';
-  const state = ['cli_starting','cli_catching_up','cli_pasting'].includes(code) ? 'starting'
-    : code === 'cli_question' ? 'blocked' : 'unknown';
-  return {state, code, message:typeof data.error === 'string' ? data.error : '未确认 CLI 可输入，请切换终端检查'};
-}
-
-function composerInputAllowsSend(status) {
-  return status?.state === 'ready';
-}
-
-function composerUsesInputStatus(uid = composerUid) {
-  return conversationSendEnabled()
-    && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid));
-}
-
-function updateComposerInputStatus(uid, data) {
-  const owner = composerDraftOwner(uid), draft = composerDrafts.get(owner);
-  if (!draft) return;
-  draft.inputProbe = (draft.inputProbe || 0) + 1;
-  const status = composerInputStatus(data);
-  // Watch packets carry only cli.input, whereas CHECK explicitly carries
-  // prompt (including null). A partial status must not erase a live card or
-  // cancel its pending answer before the clicked control's own fresh CHECK.
-  const prompt = status.code === 'cli_question'
-    ? Object.hasOwn(data || {}, 'prompt')
-      ? ['folder_trust','screen_menu'].includes(data?.prompt?.kind) ? data.prompt : null
-      : draft.inputPrompt || null
-    : null;
-  const changed = JSON.stringify(draft.inputStatus) !== JSON.stringify(status)
-    || JSON.stringify(draft.inputPrompt) !== JSON.stringify(prompt);
-  draft.inputStatus = status;
-  draft.inputPrompt = prompt;
-  if (draft.inputAnswer && (typeof draft.inputAnswer === 'string'
-      ? draft.inputAnswer !== prompt?.id
-      : draft.inputAnswer.id !== prompt?.id
-        || (draft.inputAnswer.sent && draft.inputAnswer.revision !== screenMenuRevision(prompt))))
-    draft.inputAnswer = null;
-  if (changed && composerDraftOwner(composerUid) === owner) renderComposerInputStatus();
-  paintTurn(uid);
-}
-
-async function probeComposerInput(uid) {
-  const draft = composerDrafts.get(composerDraftOwner(uid)), name = takenOver(uid);
-  if (!draft || !name) return {error:'会话尚未就绪，请切换终端检查'};
-  const probe = (draft.inputProbe || 0) + 1;
-  draft.inputProbe = probe;
-  let data;
-  try {
-    data = await post('api/session/conversation/check', {uid, name,
-      lease:termSendLease(name).lease || null}, {timeoutMs:5000});
-  } catch (error) {
-    data = {error:error.name === 'TimeoutError'
-      ? 'CLI 输入状态检查超时，正在重试；可切换终端检查'
-      : error.message || String(error)};
-  }
-  // An older poll cannot overwrite a newer SEND check, a switched view, or
-  // the state of a replacement terminal using the same logical draft.
-  if (draft.inputProbe === probe && takenOver(uid) === name) {
-    updateComposerInputStatus(uid, data);
-    if (data && typeof data === 'object' && data.cli) applyCliState(uid, data.cli, {status:false});
-  }
-  return data;
-}
-
-function syncComposerSendState() {
-  if (!composerSending) setSendButtonBusy($('#csend'), ''); // Preserve upload/SEND progress labels.
-  renderQueuedSends(composerUid);
-  const draft = composerDrafts.get(composerDraftOwner(composerUid));
-  const blocked = composerUsesInputStatus()
-    ? !composerInputAllowsSend(draft?.inputStatus) : !!activeCliQuestion(composerUid);
-  $('#csend').disabled = (typeof staleBuildShown !== 'undefined' && staleBuildShown)
-    || composerSending || !!draft?.loading || sessionComposerEnded(composerUid) || blocked;
-}
-
-function composerInputNotice(status) {
-  if (!status) return '';
-  const messages = {
-    input_check_pending: '正在检查终端输入状态',
-    cli_starting: '终端画面尚未就绪，正在重新检查；输入已保留',
-    cli_catching_up: '终端画面正在同步，正在重新检查；输入已保留',
-    cli_pasting: '检测到终端正在粘贴，正在重新检查；输入已保留',
-    cli_question: '检测到终端选择界面，请切换到 PTY（终端）处理；输入已保留',
-    cli_not_ready: '暂未识别到终端消息编辑区，请切换到 PTY（终端）查看；输入已保留',
-  };
-  // 终端优先的页面里终端已在上方，不再让用户"切换"过去。
-  const above = {
-    cli_question: '终端正在等待选择，请在上方终端处理；输入已保留',
-    cli_not_ready: '暂未识别到终端消息编辑区，请先在上方终端关闭菜单或对话框；输入已保留',
-    cli_input_pending: '终端输入框里已有未发送的文字，请在上方终端发送或清空；输入已保留',
-    cli_input_returned: '上一条消息已被 Esc 退回终端输入框，请在上方终端按回车重发或清空；输入已保留',
-  };
-  if (typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(composerUid)
-      && above[status.code])
-    return above[status.code];
-  return messages[status.code] || status.message;
-}
-
-function renderComposerInputStatus() {
-  const node = $('#composer-input-status');
-  const draft = composerDrafts.get(composerDraftOwner(composerUid));
-  const status = draft && composerUsesInputStatus()
-    && !composerInputAllowsSend(draft.inputStatus)
-    ? draft.inputStatus || composerInputStatus(null) : null;
-  const blocking = status && (status.state === 'blocked'
-    || (status.state === 'unknown' && status.code !== 'input_check_pending'));
-  node.classList.toggle('blocked', !!blocking);
-  const attention = status ? sessionInputAttention(composerUid) : '';
-  node.classList.toggle('input-attention', !!attention);
-  node.classList.toggle('input-question', attention === 'question');
-  node.classList.toggle('hidden', !status);
-  const notice = status?.code === 'cli_question' && draft?.inputPrompt
-    ? '等待用户回答，请在题卡中选择；输入已保留' : composerInputNotice(status);
-  node.title = notice;
-  node.replaceChildren();
-  if (status) {
-    node.append(el('span', 'composer-input-status-copy', notice));
-
-  }
-  renderComposerQuestion(draft);
-  syncComposerSendState();
-}
-
-function renderComposerQuestion(draft) {
-  const box = $('#composer-question');
-  const prompt = draft?.inputPrompt;
-  const signature = JSON.stringify([composerUid, prompt, draft?.inputAnswer]);
-  if (box.dataset.signature === signature) return;
-  box.dataset.signature = signature;
-  const focused = box.querySelector('.question-text-input');
-  const restore = focused && document.activeElement === focused
-    ? {start:focused.selectionStart, end:focused.selectionEnd} : null;
-  box.replaceChildren();
-  box.classList.toggle('hidden', !prompt);
-  if (!prompt) {
-    if (draft?.inputStatus?.state === 'ready' || sessionComposerEnded(composerUid)) {
-      const prefix = `${composerDraftOwner(composerUid)}\0`;
-      for (const key of screenMenuTextDrafts.keys()) {
-        if (key.startsWith(prefix)) screenMenuTextDrafts.delete(key);
-      }
-    }
-    return;
-  }
-  const uid = composerUid;
-  box.appendChild(questionNode({
-    ...prompt, uid, call_id: prompt.id, live: true,
-    state: draft.inputAnswer ? 'submitted' : 'waiting',
-  }, {
-    answer: (uid, index) => answerComposerQuestion(uid, prompt.id, index),
-    cancel: uid => prompt.kind === 'screen_menu'
-      ? answerComposerScreenMenu(uid, prompt.id, 'cancel') : answerComposerQuestion(uid, prompt.id, 1),
-    action: (uid, index) => answerComposerScreenMenu(uid, prompt.id, 'action', index),
-    textAnswer: (uid, value) => answerComposerScreenMenu(uid, prompt.id, 'text', value),
-  }));
-  if (restore) {
-    const input = box.querySelector('.question-text-input');
-    if (input && !input.disabled) {
-      input.focus({preventScroll:true});
-      input.setSelectionRange(restore.start, restore.end);
-    }
-  }
-}
-
-async function answerComposerQuestion(uid, id, index) {
-  if (composerDraft(uid, false)?.inputPrompt?.kind === 'screen_menu')
-    return answerComposerScreenMenu(uid, id, 'option', index);
-  const draft = composerDraft(uid, false), name = takenOver(uid);
-  if (!draft || draft.inputPrompt?.id !== id || draft.inputAnswer) return false;
-  const binding = termInputBody(name, {name, keys:[], uid});
-  if (!binding) return false;
-  draft.inputAnswer = id;
-  renderComposerQuestion(draft);
-  // Recheck the same live menu before writing, including pre-rollout launches.
-  const current = await probeComposerInput(uid);
-  if (current?.prompt?.id !== id || composerUid !== uid || takenOver(uid) !== name) {
-    if (draft.inputAnswer === id) draft.inputAnswer = null;
-    if (composerUid === uid) renderComposerQuestion(draft);
-    return false;
-  }
-  const keys = sessiondockCli(current.prompt.source)?.questionAnswerKeys(current.prompt, index);
-  let ok = false;
-  try { ok = !!keys?.length && await writeComposerMenuInput(name, uid, binding, {keys}); }
-  catch (error) { await appAlert('回答未完成，请检查终端后继续：' + (error.message || error)); }
-  if (!ok) { draft.inputAnswer = null; if (composerUid === uid) renderComposerQuestion(draft); }
-  else pollComposerInput();
-  return !!ok;
-}
-
-function screenMenuRevision(prompt) {
-  return prompt?.revision || JSON.stringify([prompt?.questions, prompt?.text, prompt?.actions]);
-}
-
-async function writeComposerMenuInput(name, uid, binding, payload) {
-  if (takenOver(uid) !== name || composerUid !== uid) return false;
-  const response = await post('api/term/send', {...binding, ...payload});
-  if (response.error) throw new Error(response.error);
-  S.live.add(uid); S.liveTmux.add(uid); S.lastSync = 0; S.syncGap = FAST_MIN;
-  paintLive();
-  return true;
-}
-
-async function answerComposerScreenMenu(uid, id, kind, value) {
-  const draft = composerDraft(uid, false), shown = draft?.inputPrompt, name = takenOver(uid);
-  if (!name || shown?.id !== id || draft.inputAnswer || composerUid !== uid) return false;
-  const binding = termInputBody(name, {name, keys:[], uid});
-  if (!binding) return false;
-  delete binding.keys;
-  const pending = {id, revision:screenMenuRevision(shown), sent:false};
-  draft.inputAnswer = pending;
-  renderComposerQuestion(draft);
-  let ok = false;
-  let refreshOnly = false;
-  try {
-    const current = await probeComposerInput(uid), prompt = current?.prompt;
-    if (prompt?.id !== id || composerUid !== uid || takenOver(uid) !== name
-        || draft.inputAnswer !== pending) return false;
-    let keys;
-    if (kind === 'option') {
-      const prior = shown.questions?.[0]?.options?.[value];
-      const option = prompt.questions?.[0]?.options?.[value];
-      if (!option || option.label !== prior?.label
-          || (option.toggle && option.selected !== prior.selected)) return false;
-      keys = option.keys;
-    } else if (kind === 'action') {
-      const item = prompt.actions?.[value];
-      if (item?.label !== shown.actions?.[value]?.label) return false;
-      keys = item?.keys;
-      const navigation = new Set(['Up','Down','Left','Right','Home','End','Tab','BTab',
-        'PageUp','PageDown','ctrl-n','ctrl-p','C-n','C-p']);
-      refreshOnly = !!keys?.length && keys.every(key => navigation.has(key));
-    } else if (kind === 'cancel') keys = prompt.cancel_keys;
-    else if (kind === 'text') {
-      if (!prompt.text || prompt.text.label !== shown.text?.label) return false;
-      refreshOnly = !prompt.text.after_keys?.length;
-      // Pin every write to the same instance. Native field text is separate
-      // from the message draft, and a partial write is never retried.
-      const write = payload => writeComposerMenuInput(name, uid, binding, payload);
-      if (prompt.text.before_keys?.length && !await write({keys:prompt.text.before_keys})) return false;
-      const payload = prompt.text.mode === 'data' ? {data:String(value)} : {paste:String(value)};
-      if (String(value) && !await write(payload)) return false;
-      if (String(value) && prompt.text.mode !== 'data') await new Promise(resolve => setTimeout(resolve, 600));
-      if (prompt.text.after_keys?.length && !await write({keys:prompt.text.after_keys})) return false;
-      ok = true;
-    }
-    if (kind !== 'text') ok = !!keys?.length && await writeComposerMenuInput(name, uid, binding, {keys});
-    if (ok) {
-      pending.sent = true;
-      pending.revision = screenMenuRevision(prompt);
-      S.lastSync = 0;
-      if (refreshOnly) {
-        // Navigation at a boundary may legitimately leave the screen unchanged.
-        // Reobserve once, then allow the next explicit operation; never resend.
-        await new Promise(resolve => setTimeout(resolve, 200));
-        await probeComposerInput(uid);
-        if (draft.inputAnswer === pending) {
-          draft.inputAnswer = null;
-          if (composerUid === uid) renderComposerQuestion(draft);
-        }
-      } else pollComposerInput();
-    }
-    return !!ok;
-  } catch (error) {
-    await appAlert('回答未完成，请检查终端后继续：' + (error.message || error));
-    return false;
-  } finally {
-    if (!ok && draft.inputAnswer === pending) {
-      draft.inputAnswer = null;
-      if (composerUid === uid) renderComposerQuestion(draft);
-    }
-  }
-}
-
-async function reconcileComposerSubmission(uid) {
-  const draft=composerDrafts.get(composerDraftOwner(uid));
-  if (!draft?.requestId || draft.loading || draft.loadFailed || composerSending
-      || composerSaving.has(draft) || draft.editVersion!==draft.savedVersion) return;
-  const version=draft.editVersion,id=draft.requestId;
-  const result=await priorComposerSubmission(uid,id);
-  if (result?.state!=='sent' || !result.draft || result.draft.revision<draft.revision
-      || draft.editVersion!==version || composerSaving.has(draft) || composerSending) return;
-  // A later attachment may be saved as metadata while its bytes still live in
-  // this page. A receipt refresh must preserve that File and its preview.
-  adoptServerDraft(draft,result.draft,uid);
-  refreshComposerDraft(composerDraftOwner(uid));syncComposerUnloadProtection();
-}
-let composerInputProbeBusy=false, composerDraftSyncBusy=false;
-async function pollComposerInput() {
-  if (SessionDockNetwork.paused) return;
-  const uid=composerUid;
-  if (!uid || !conversationSendEnabled() || document.hidden || composerSending || composerInputProbeBusy
-      || !$('#composer').getClientRects().length || !takenOver(uid)) return;
-  composerInputProbeBusy=true;
-  let data;
-  try { data = await probeComposerInput(uid); }
-  catch { /* SEND independently checks the current input surface. */ }
-  finally { composerInputProbeBusy=false; }
-  // Draft/history reads must not hold up the live input-status checks.
-  if (composerDraftSyncBusy) return;
-  composerDraftSyncBusy=true;
-  try {
-    if (Number.isInteger(data?.draft_revision)) await followServerDraft(uid,data.draft_revision);
-    await reconcileComposerSubmission(uid);
-  } catch { /* A missing/in-progress receipt keeps the editor intact. */ }
-  finally { composerDraftSyncBusy=false; }
-}
-function scheduleComposerInputChecks(poll) {
-  setInterval(poll, 1500);
-  // Parent layout can hide the composer without changing its own classes.
-  // Resume immediately on terminal/split toggles that reveal the input.
-  let wasVisible = false;
-  const visibility = new ResizeObserver(() => {
-    const visible = !!$('#composer').getClientRects().length;
-    const resumed = visible && !wasVisible;
-    wasVisible = visible;
-    if (resumed) poll();
-  });
-  visibility.observe($('#composer'));
-}
-scheduleComposerInputChecks(pollComposerInput);
-
-function renderComposerItems() {
-  const box = $('#compose-items');
-  const draft = composerDraft();
-  if (!draft) {
-    box.replaceChildren();
-    renderComposerInputStatus();
-    return;
-  }
-  renderAttachmentCards(box, draft.attachments, {
-    uid: composerUid, render: renderComposerItems,
-    disabled: composerSending,
-    onRetry: attachment => stageComposerAttachment(attachment, composerUid),
-    onInsert: insertComposerReference,
-    onRemove: removeComposerAttachment,
-  });
-  for (const quote of draft.quotes) {
-    const card = el('div', 'draft-card draft-quote');
-    card.dataset.draftId = quote.id;
-    const mark = el('span', '', '❝');
-    const text = document.createElement('textarea');
-    text.value = quote.text;
-    text.maxLength = 16000;
-    text.placeholder = '粘贴或输入要引用的文字';
-    text.setAttribute('aria-label', '引用文字');
-    text.oninput = () => { quote.text = text.value; persistComposerDraft(); };
-    const remove = el('button', 'draft-remove', '×');
-    remove.type = 'button';
-    remove.title = remove.ariaLabel = '移除引用';
-    remove.disabled = composerSending;
-    remove.onclick = () => removeComposerQuote(quote.id);
-    card.append(mark, text, remove);
-    box.appendChild(card);
-  }
-  if (composerUid?.startsWith('tmux:') && !takenOver(composerUid)
-      && ['exited','failed'].includes((T.pending || []).find(r=>pendingUid(r.name)===composerUid)?.state)
-      && !sessionIsPtyOnly(composerUid)) {
-    const restart=el('button','btn','重新启动');restart.type='button';
-    restart.dataset.conversationRestart='';
-    restart.onclick=async () => {
-      restart.disabled=true;
-      try {
-        draft.restartId ||= crypto.randomUUID();
-        const uid=composerUid;
-        if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '草稿尚未保存');
-        const data=await post('api/session/conversation/restart',{uid,request_id:draft.restartId});
-        if (data.error) throw new Error(data.error);
-        const next=pendingUid(data.name);
-        // The server has already bound both instances to the same logical draft.
-        migrateComposerDraft(uid,next);composerHydrations.delete(next);
-        // Re-enter the editor for the replacement instance; the old CLI's
-        // readiness and in-flight probes cannot authorize a send here.
-        composerUid=null;
-        await loadTermList();await openPendingSession(data);
-      } catch (error){draft.storageError=error.message || String(error);renderComposerItems();}
-    };
-    box.append(restart);
-  }
-  renderSavedComposerInputs(box, draft, composerUid);
-  $('#cinput').disabled = !!draft.loading;
-  $('#cadd').disabled = (typeof staleBuildShown !== 'undefined' && staleBuildShown)
-    || composerSending || !!draft.loading;
-  renderComposerInputStatus();
-}
-
-function addComposerFiles(files) {
-  const draft = composerDraft();
-  if (!draft) return;
-  const before = new Set(draft.attachments);
-  addDraftFiles(draft, files);
-  persistComposerDraft();
-  for (const attachment of draft.attachments) {
-    if (!before.has(attachment)) stageComposerAttachment(attachment, composerUid);
-  }
-  renderComposerItems();
-}
-
-function addDraftFiles(draft, files) {
-  for (const file of files) {
-    if (draft.attachments.length >= COMPOSER_MAX_FILES) {
-      appAlert(`一次最多添加 ${COMPOSER_MAX_FILES} 个附件`);
-      break;
-    }
-    if (!file.size || file.size > COMPOSER_MAX_FILE_BYTES) {
-      appAlert(`「${file.name || '附件'}」为空或超过 512 MB`);
-      continue;
-    }
-    const kind = composerFileKind(file);
-    draft.attachments.push({
-      id: `attachment-${globalThis.crypto?.randomUUID?.() || ++composerDraftSeq}`, number: draft.nextAttachmentNumber++, file, kind,
-      preview: kind === 'image' ? URL.createObjectURL(file) : '',
-      status: '', uploaded: null, error: '',
-    });
-  }
-}
-
-/** Console file paste (`sessiondock.consolePasteFiles`, off by default): a
- *  pasted image or file is written into the session cwd's
- *  `sessiondock_attachments/<batch>/` through the raw attachment route, then
- *  its relative path is typed into the PTY as a bracketed paste, the way a
- *  file dragged onto a local terminal lands as its path. The CLI's own
- *  clipboard read cannot see a browser clipboard (its process runs on the
- *  node), so this is the only way a console paste can deliver bytes. Text
- *  pastes never enter here. */
 function consolePasteFiles(view, name, e) {
   const files = clipboardAttachmentFiles(e.clipboardData);
   if (!files.length) return;
@@ -5643,6 +4402,7 @@ function consolePasteFiles(view, name, e) {
     consolePasteJobs.set(name, job.catch(() => {}));
   });
 }
+
 const consolePasteJobs = new Map();
 
 function consoleAttachmentPath(document) {
@@ -5697,557 +4457,6 @@ async function publishConsolePaste(view, name, uid, files) {
   }
 }
 
-function clipboardAttachmentFiles(data) {
-  const files = [];
-  const mirrored = new Map();
-  const keyOf = file => `${file.name}\0${file.type}\0${file.size}`;
-  // Chromium 通常把文件放在 files；部分浏览器/桌面剪贴板只在 items
-  // 暴露非图片文件（CSV 尤其常见）。files 作为主清单；items 中每个同名、
-  // 同类型、同大小的项只抵消一个镜像。不能比较 lastModified：同一张图片的
-  // 两个 Chromium File 对象会相差 1ms；按计数抵消又能保留真正的同名文件。
-  for (const file of [...(data?.files || [])]) {
-    if (!(file instanceof File)) continue;
-    files.push(file);
-    const key = keyOf(file);
-    mirrored.set(key, (mirrored.get(key) || 0) + 1);
-  }
-  for (const item of [...(data?.items || [])]) {
-    if (item.kind !== 'file') continue;
-    const file = item.getAsFile?.();
-    if (!(file instanceof File)) continue;
-    const key = keyOf(file);
-    const copies = mirrored.get(key) || 0;
-    if (copies) {
-      if (copies === 1) mirrored.delete(key);
-      else mirrored.set(key, copies - 1);
-    } else {
-      files.push(file);
-    }
-  }
-  return files;
-}
-
-function clipboardDirectoryNames(data) {
-  const names = [];
-  for (const item of [...(data?.items || [])]) {
-    if (item.kind !== 'file') continue;
-    const getEntry = item.getAsEntry || item.webkitGetAsEntry;
-    let entry = null;
-    try { entry = getEntry?.call(item); } catch { /* 浏览器不允许读取该项 */ }
-    if (entry?.isDirectory) names.push(entry.name || '文件夹');
-  }
-  return names;
-}
-
-function clipboardCsvFile(data, callback) {
-  const csvTypes = new Set([
-    'text/csv', 'text/comma-separated-values', 'application/csv',
-    'application/vnd.ms-excel',
-  ]);
-  const item = [...(data?.items || [])].find(x =>
-    x.kind === 'string' && csvTypes.has(String(x.type || '').toLowerCase()));
-  if (!item) return false;
-  const mime = String(item.type || 'text/csv').toLowerCase();
-  const accept = text => {
-    if (typeof text === 'string' && text.length) {
-      callback(new File([text], 'clipboard.csv', { type: mime, lastModified: Date.now() }));
-    }
-  };
-  // getData 是同步的，但有些 DataTransfer 实现只支持 getAsString。
-  const immediate = data.getData?.(item.type);
-  if (immediate) accept(immediate);
-  else item.getAsString?.(accept);
-  return true;
-}
-
-function insertComposerReference(number, ta = $('#cinput')) {
-  if (!ta) return;
-  const token = `[附件${number}]`;
-  ta.focus();
-  const start = Number.isInteger(ta.selectionStart) ? ta.selectionStart : ta.value.length;
-  const end = Number.isInteger(ta.selectionEnd) ? ta.selectionEnd : start;
-  ta.setRangeText(token, start, end, 'end');
-  ta.dispatchEvent(new Event('input', { bubbles: true }));
-}
-
-function removeDraftAttachment(draft, id) {
-  const at = draft.attachments.findIndex(x => x.id === id);
-  if (at < 0) return null;
-  const [removed] = draft.attachments.splice(at, 1);
-  if (removed.preview) URL.revokeObjectURL(removed.preview);
-  if (removed.cancelUpload) removed.cancelUpload();
-  return removed;
-}
-
-function removeComposerAttachment(id, draft = composerDraft()) {
-  if (!draft || composerSending) return;
-  const removed = removeDraftAttachment(draft, id);
-  discardStagedAttachment(removed, persistComposerDraft());
-  renderComposerItems();
-}
-
-function addComposerQuote(text = '') {
-  const draft = composerDraft();
-  if (!draft) return;
-  if (draft.quotes.length >= 4) return appAlert('一次最多添加 4 段引用');
-  draft.quotes.push({ id: `quote-${globalThis.crypto?.randomUUID?.() || ++composerDraftSeq}`, text: String(text).trim().slice(0, 16000) });
-  persistComposerDraft();
-  renderComposerItems();
-  boxFocusLastQuote();
-}
-
-function boxFocusLastQuote() {
-  requestAnimationFrame(() => {
-    const nodes = document.querySelectorAll('#compose-items .draft-quote textarea');
-    nodes[nodes.length - 1]?.focus();
-  });
-}
-
-function removeComposerQuote(id, draft = composerDraft()) {
-  if (!draft || composerSending) return;
-  const at = draft.quotes.findIndex(x => x.id === id);
-  if (at >= 0) draft.quotes.splice(at, 1);
-  persistComposerDraft();
-  renderComposerItems();
-}
-
-async function uploadComposerAttachment(attachment, uid, attachmentId = null,
-  {node = '', render = renderComposerItems} = {}) {
-  if (attachment.uploaded?.upload_id && composerDraftOwner(attachment.uploaded.uid) === composerDraftOwner(uid)
-      && (!node || attachment.uploaded.node === node || nodeOf(attachment.uploaded.uid) === node)) return attachment.uploaded;
-  if (!(attachment.file instanceof Blob)) throw new Error('请重新选择未上传的附件：' + attachment.file.name);
-  if (attachment.file.size > COMPOSER_MAX_FILE_BYTES) throw new Error('单个附件不能超过 512 MiB');
-  attachment.status = 'uploading'; attachment.error = ''; attachment.progress = 0; render();
-  const url = new URL(appUrl('api/session/conversation/attachment'));
-  url.searchParams.set('uid', uid); url.searchParams.set('id', attachment.id);
-  url.searchParams.set('name', attachment.file.name || 'attachment');
-  if (node) url.searchParams.set('node', node);
-  try {
-    const sendUpload = () => new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      attachment.cancelUpload = () => xhr.abort();
-      xhr.open('POST', url);
-      xhr.setRequestHeader('Content-Type', attachment.file.type || 'application/octet-stream');
-      xhr.upload.onprogress = event => {
-        if (event.lengthComputable) attachment.progress = Math.floor(event.loaded / event.total * 100);
-        render();
-      };
-      xhr.onload = () => {
-        let data;
-        const failure = message => Object.assign(new Error(message), {
-          retryUpload: [502, 503, 504].includes(xhr.status),
-        });
-        try {data = JSON.parse(xhr.responseText);} catch {return reject(failure(`HTTP ${xhr.status}`));}
-        if (xhr.status < 200 || xhr.status >= 300 || data.error) reject(failure(data.error || `HTTP ${xhr.status}`));
-        else resolve(data);
-      };
-      xhr.onerror = () => reject(Object.assign(new Error('上传连接中断'), {retryUpload: true}));
-      xhr.onabort = () => reject(new Error('上传已取消'));
-      xhr.send(attachment.file);
-    });
-    let data;
-    try {data = await sendUpload();}
-    catch (error) {
-      if (!error.retryUpload) throw error;
-      // Staging is idempotent by (draft uid, upload id, bytes). A lost reply
-      // can safely repeat this upload, including after the node saved it.
-      // This never retries the report launch or the conversation SEND.
-      data = await sendUpload();
-    }
-    // The request has finished. Keeping its abort handler while the draft is
-    // being saved makes the ready card's remove button abort a completed XHR.
-    delete attachment.cancelUpload;
-    attachment.uploaded = {...data, uid, node}; attachment.status = 'ready'; render();
-    // Uploaded references become durable before any publication or SEND.
-    if (!await persistComposerDraft(uid)) throw new Error('附件已上传，草稿引用保存失败');
-    return attachment.uploaded;
-  } catch (error) {
-    attachment.status = 'failed'; attachment.error = error.message || String(error); render(); throw error;
-  } finally {delete attachment.cancelUpload;}
-}
-
-const COMPOSER_UPLOAD_LANES = 2;
-const composerUploadLanes = new Map();
-/** Stage a new attachment's bytes right away, so a refresh or another device
- *  can still send it; publication into the session cwd waits for SEND. At most
- *  two uploads run per draft. A failed card keeps the File and offers a retry;
- *  SEND retries it too. */
-function stageComposerAttachment(attachment, uid, options = {}) {
-  const draft = composerDrafts.get(composerDraftOwner(uid));
-  if (!draft || !conversationSendEnabled()) return Promise.resolve(null);
-  if (attachment.staging) return attachment.staging;
-  if (attachment.uploaded?.upload_id || !(attachment.file instanceof Blob)) return Promise.resolve(attachment.uploaded);
-  const lane = composerUploadLanes.get(draft) || composerUploadLanes.set(draft, {queue: [], active: 0}).get(draft);
-  const render = options.render || renderComposerItems;
-  attachment.status = 'queued'; attachment.error = ''; render();
-  attachment.staging = new Promise(resolve => lane.queue.push(async () => {
-    try {
-      if (!draft.attachments.includes(attachment)) { attachment.status = ''; resolve(null); return; }
-      resolve(await uploadComposerAttachment(attachment, uid, null, options));
-    } catch {
-      resolve(null); // The failed card keeps the File; retry or SEND uploads again.
-    } finally {
-      delete attachment.staging;
-    }
-  }));
-  pumpComposerUploads(lane);
-  return attachment.staging;
-}
-function pumpComposerUploads(lane) {
-  while (lane.active < COMPOSER_UPLOAD_LANES && lane.queue.length) {
-    lane.active++;
-    lane.queue.shift()().finally(() => { lane.active--; pumpComposerUploads(lane); });
-  }
-}
-/** A draft read back from the server carries attachment metadata only: an
- *  image card has no local File for its thumbnail. Fetch the staged bytes once
- *  per card and keep the object URL on the attachment, so later renders reuse
- *  it and the existing removal paths revoke it. A card whose bytes are gone
- *  (published, or collected) keeps the kind icon instead of a broken image. */
-const COMPOSER_PREVIEW_MAX_BYTES = 32 * 1024 * 1024;
-function loadStagedComposerPreview(attachment, uid, render = () => {}) {
-  if (!uid || attachment.kind !== 'image' || attachment.preview || attachment.previewLoading
-    || Date.now() < (attachment.previewRetryAt || 0)) return;
-  const id = attachment.uploaded?.upload_id;
-  const size = attachment.file?.size ?? attachment.uploaded?.size ?? 0;
-  if (!id || attachment.file instanceof Blob || size > COMPOSER_PREVIEW_MAX_BYTES) return;
-  const url = new URL(appUrl('api/session/conversation/attachment'));
-  url.searchParams.set('uid', uid); url.searchParams.set('id', id);
-  attachment.previewLoading = true;
-  (async () => {
-    try {
-      const response = await fetch(url, {cache:'no-store'});
-      // Bytes that are gone stay gone; a transient failure may be retried.
-      if (response.status === 404) attachment.previewRetryAt = Infinity;
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const blob = await response.blob();
-      const live = composerDrafts.get(composerDraftOwner(uid))?.attachments.includes(attachment);
-      // The card may be gone by now: never leak the object URL of a dropped one.
-      if (live && !attachment.preview) attachment.preview = URL.createObjectURL(blob);
-    } catch {
-      attachment.previewRetryAt ||= Date.now() + 60000;
-    } finally {
-      delete attachment.previewLoading;
-      render();
-    }
-  })();
-}
-/** Staged bytes of a removed attachment are released once the draft without
- *  it is saved; the server refuses while a draft or submission still names
- *  them, and the 24 h sweep covers a failed call. */
-function discardStagedAttachment(attachment, saved = Promise.resolve(true)) {
-  const id = attachment?.uploaded?.upload_id, uid = attachment?.uploaded?.uid;
-  if (!id || !uid || !conversationSendEnabled()) return;
-  Promise.resolve(saved)
-    .then(ok => ok && post('api/session/conversation/attachment/discard', {uid, id}))
-    .catch(() => {});
-}
-
-let composerSending = false;
-async function submitComposer() {
-  if (typeof staleBuildShown !== 'undefined' && staleBuildShown) return;
-  if (!conversationSendEnabled()
-      && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(composerUid || S.sel))) {
-    await appAlert('此服务尚未启用会话发送，请更新服务后重试'); return;
-  }
-  const ta = $('#cinput'), button = $('#csend'), add = $('#cadd');
-  const uid = composerUid;
-  let draft = composerDraft(uid);
-  if (!draft || !takenOver(uid)) {
-    await appAlert('会话尚未就绪，输入已保留；可切换到终端检查启动状态'); return;
-  }
-  const text = ta.value, attachments = [...draft.attachments];
-  const quotes = draft.quotes.map(x => ({id:x.id, text:x.text})).filter(x => x.text.trim());
-  if (composerSending || (!text.trim() && !attachments.length && !quotes.length)) return;
-  // Enter obeys the same readiness gate as the Send button. The reason stays
-  // beside the editor and polling clears it when the CLI becomes ready.
-  if (composerUsesInputStatus(uid) && !composerInputAllowsSend(draft.inputStatus)) {
-    renderComposerInputStatus();
-    return;
-  }
-  if (!conversationSendEnabled() || (typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid))) {
-    closeComposerHistory(); composerSending = true;
-    button.disabled = true;
-    try {
-      const sent = await sendToSession(text, null, uid);
-      if (sent) {
-        ta.value = '';
-        draft.text = '';
-        // The typed text was saved while typing; clear the server copy too, or
-        // the exited console would come back as a "retained draft" row.
-        persistComposerDraft(uid);
-      }
-    } catch (error) {
-      await appAlert('发送失败，输入保留：' + (error.message || error));
-    } finally {
-      composerSending = false; button.disabled = false; autoGrow(ta);
-    }
-    return;
-  }
-  closeComposerHistory(); composerSending = true;
-  let sendFailed = false;
-  button.disabled = true; add.disabled = true;
-  setSendButtonBusy(button, '发送中');
-  renderComposerItems();
-  try {
-    draft.text = text;
-    const priorPayload=JSON.stringify({text,attachments:attachments.map(a=>({upload_id:a.uploaded?.upload_id,number:a.number})),quotes});
-    if (draft.requestId && (draft.requestText===priorPayload || (draft.report_prompt && draft.report_text===text))) {
-      const previous=await priorComposerSubmission(uid,draft.requestId);
-      if (previous?.state==='sent') {
-        acceptComposerServerRevision(draft,previous.draft);
-        await consumeComposerSubmission(uid,text,attachments,quotes);return;
-      }
-    }
-    // Persist the payload and its stable submission ID together below.
-    // SEND performs fresh readiness checks before publishing, pasting and Enter;
-    // an extra browser CHECK only adds another serial network/identity lookup.
-    const uploaded = [];
-    for (let i = 0; i < attachments.length; i++) {
-      setSendButtonBusy(button, `上传 ${i + 1}/${attachments.length}`);
-      if (attachments[i].staging) await attachments[i].staging; // Staged on add; only a failure uploads here.
-      uploaded.push({...await uploadComposerAttachment(attachments[i], uid), number:attachments[i].number});
-    }
-    const requestText = JSON.stringify({text, attachments:uploaded.map(a => ({upload_id:a.upload_id,number:a.number})), quotes});
-    if (!(draft.report_prompt && draft.report_text===text && draft.requestId)
-        && (draft.requestText !== requestText || !draft.requestId)) {
-      draft.requestText = requestText; draft.requestId = crypto.randomUUID();
-    }
-    if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '提交标识尚未保存');
-    const submittedRevision = draft.revision;
-    setSendButtonBusy(button, '发送中');
-    const sent = await sendToSession(text, null, uid, [], {requestId:draft.requestId,
-      draftRevision:submittedRevision, attachments:uploaded, quotes});
-    if (sent) await consumeComposerSubmission(uid,text,attachments,quotes);
-    else sendFailed = true;
-  } catch (error) {
-    sendFailed = true;
-    await appAlert('发送失败，输入保留：' + (error.message || error));
-  } finally {
-    composerSending = false; setSendButtonBusy(button, ''); add.disabled = false;
-    renderComposerItems(); autoGrow(ta);
-    // A disabled Send button (including keyboard/touch activation) can leave
-    // focus on <body> after the error dialog closes. Resume the retained draft
-    // only if the user has not focused another control meanwhile.
-    if (sendFailed && composerUid === uid && !ta.disabled
-        && (document.activeElement === button || document.activeElement === document.body)) {
-      ta.focus({preventScroll:true});
-    }
-  }
-}
-
-$('#cinput').addEventListener('input', e => {
-  const draft = composerDraft();
-  if (draft) { draft.text = e.target.value; persistComposerDraft(); }
-  if (composerHistoryPicker.open && e.target.value !== '') closeComposerHistory();
-  autoGrow(e.target);
-});
-$('#cinput').addEventListener('keydown', e => {
-  if (e.isComposing) return;
-  if (composerHistoryPicker.open) {
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setComposerHistoryIndex(composerHistoryPicker.index - 1);
-      return;
-    }
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setComposerHistoryIndex(composerHistoryPicker.index + 1);
-      return;
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      acceptComposerHistory();
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      closeComposerHistory();
-      return;
-    }
-    if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) closeComposerHistory();
-  } else if (e.key === 'ArrowUp' && e.currentTarget.value === '') {
-    e.preventDefault();
-    openComposerHistory();
-    return;
-  }
-  // 手机软键盘没有方便的 Shift+Enter：Enter 始终换行，只允许按钮发送。
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !MOBILE.matches) {
-    e.preventDefault();
-    submitComposer();
-  }
-});
-MOBILE.addEventListener('change', () => {
-  syncComposerMode();
-  renderTakeoverBtn();
-});
-syncComposerMode();
-// A mouse click submits the current draft; it must not move focus from the
-// editor to a button that is disabled while SEND is in flight.
-$('#csend').addEventListener('mousedown', event => {
-  if (document.activeElement === $('#cinput')) event.preventDefault();
-});
-$('#csend').onclick = () => {
-  submitComposer();
-};
-let composerEscAt = -Infinity;
-
-async function revealNativeTerminal(uid = S.sel) {
-  const name = takenOver(uid);
-  if (!name || S.sel !== uid) return false;
-  T.uid = uid;
-  await openTermPane(name, true, MOBILE.matches ? null : 'full');
-  return true;
-}
-
-function activeCliQuestion(uid) {
-  const entry = cache.get(viewKey(uid));
-  if (entry?.prompt?.questions?.length) return entry.prompt;
-  const question = typeof pendingHistoryQuestion === 'function'
-    ? pendingHistoryQuestion(entry) : null;
-  return question ? {id: question.call_id, questions: question.questions} : null;
-}
-
-async function answerCliQuestion(uid, optionIndex) {
-  const prompt = activeCliQuestion(uid);
-  const rows = prompt?.questions;
-  if (rows?.length !== 1 || rows[0].multiple || !rows[0].options?.[optionIndex]) return false;
-  // 不同 CLI 的菜单定位语义不同（Claude 用方向键，Codex 用数字直选），
-  // 具体按键必须由各自实现决定，不能在公共交互层猜测当前光标位置。
-  const keys = sessiondockCli(uid)?.questionAnswerKeys(prompt, optionIndex);
-  if (!keys?.length) return false;
-  return sendToSession(null, keys, uid);
-}
-
-async function answerCliQuestionForm(uid, optionIndexes) {
-  const prompt = activeCliQuestion(uid);
-  const cli = sessiondockCli(uid);
-  if (!cli?.canAnswerQuestionForm(prompt)) return false;
-  const groups = cli.questionFormAnswerKeyGroups(prompt, optionIndexes);
-  if (!groups?.length) return false;
-  for (let i = 0; i < groups.length; i++) {
-    if (!await sendToSession(null, groups[i], uid)) return false;
-    // Enter 会让 Claude 卸载当前题并渲染下一题或 Review。分开发送并留出
-    // 一个短事件循环间隔，避免后一题按键被旧题的输入处理器吞掉。
-    if (i < groups.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-  }
-  return true;
-}
-
-async function cancelCliQuestion(uid) {
-  composerEscAt = -Infinity;
-  const keys = sessiondockCli(uid)?.questionCancelKeys(activeCliQuestion(uid));
-  return keys?.length ? sendToSession(null, keys, uid) : false;
-}
-
-async function sendComposerEscape(now = performance.now()) {
-  const uid = S.sel;
-  const entry = cache.get(viewKey(uid));
-  const visibleActivity = $('#activity')?.dataset.state;
-  // activity 缓存可能来自上一个已结束的 Claude 进程；renderActivity 会把它
-  // 隐藏。Esc 必须服从用户眼前的交互态，不能被这条旧 working 永久挡住回滚。
-  const busy = !!entry?.prompt
-    || !!pendingHistoryQuestion(entry)
-    || ['working', 'waiting'].includes(visibleActivity);
-  const draft = composerDraft(uid, false);
-  const empty = !String($('#cinput')?.value || '').trim()
-    && !(draft?.attachments?.length) && !(draft?.quotes?.some(q => q.text?.trim()));
-  const escape = sessiondockCli(uid)?.repeatedEscape(now, composerEscAt, { busy, empty })
-    || { rewind: false, nextAt: -Infinity };
-  const rewind = escape.rewind;
-  composerEscAt = escape.nextAt;
-  const name = takenOver(uid);
-  const sent = await sendToSession(null, ['Escape'], uid);
-  if (!rewind || !sent || !name || S.sel !== uid) return sent;
-
-  // 回滚点、恢复代码/对话的选项都由原生 CLI 自己维护。第二次 Esc 后直接
-  // 揭示原生 TUI；确认回滚后服务端从编辑区与画面同步时间线（docs/cli-state.md）。
-  await revealNativeTerminal(uid);
-  return sent;
-}
-$('#cesc').onclick = () => sendComposerEscape();
-
-$('#cadd').onclick = e => {
-  e.stopPropagation();
-  closeComposerHistory();
-  const menu = $('#attach-menu');
-  const open = menu.classList.toggle('hidden');
-  $('#cadd').classList.toggle('on', !open);
-  $('#cadd').setAttribute('aria-expanded', String(!open));
-};
-$('#attach-menu').onclick = e => {
-  const button = e.target.closest('button[data-attach]');
-  if (!button) return;
-  const type = button.dataset.attach;
-  closeAttachMenu();
-  if (type === 'quote') {
-    addComposerQuote(lastMessageSelectionUid === composerUid ? lastMessageSelection : '');
-    lastMessageSelection = '';
-    lastMessageSelectionUid = null;
-    return;
-  }
-  chooseAttachmentFiles(type, $('#cfile'), addComposerFiles);
-};
-$('#cfile').onchange = e => {
-  addComposerFiles([...e.target.files]);
-  e.target.value = '';
-};
-document.addEventListener('click', e => {
-  if (!e.target.closest('.attach-picker')) closeAttachMenu();
-  if (!e.target.closest('.composer-input-wrap')) closeComposerHistory();
-});
-document.addEventListener('selectionchange', () => {
-  const selection = getSelection();
-  if (!selection || selection.isCollapsed || !selection.anchorNode || !selection.focusNode) return;
-  const messages = $('#msgs');
-  if (messages?.contains(selection.anchorNode) && messages.contains(selection.focusNode)) {
-    lastMessageSelection = selection.toString().trim().slice(0, 16000);
-    lastMessageSelectionUid = S.sel;
-  }
-});
-const PASTE_CONFIRM_FILES = 5;
-const PASTE_CONFIRM_BYTES = 50 * 1024 * 1024;
-/** A paste of many or large files (a folder's worth of screenshots, a video)
- *  is often a slip; every paste surface asks once before staging them. */
-function confirmPastedFiles(files) {
-  const bytes = files.reduce((sum, file) => sum + (file.size || 0), 0);
-  if (files.length <= PASTE_CONFIRM_FILES && bytes <= PASTE_CONFIRM_BYTES) return true;
-  const size = bytes >= 1024 * 1024
-    ? `${(bytes / 1048576).toFixed(bytes >= 100 * 1048576 ? 0 : 1)} MB`
-    : `${Math.ceil(bytes / 1024)} KB`;
-  return appConfirm(`粘贴了 ${files.length} 个文件，共 ${size}。继续？`);
-}
-/** 小批粘贴立即继续（同步，保持原有顺序）；大批先在页面中央确认。 */
-function whenPasteConfirmed(files, go, then = () => {}) {
-  const ok = confirmPastedFiles(files);
-  if (ok === true) { go(); then(); }
-  else ok.then(yes => { if (yes) go(); then(); });
-}
-
-function pasteAttachmentFiles(e, addFiles) {
-  const directories = clipboardDirectoryNames(e.clipboardData);
-  const files = clipboardAttachmentFiles(e.clipboardData);
-  if (directories.length) {
-    e.preventDefault();
-    const warn = () => appAlert(`暂不支持直接粘贴文件夹：${directories.join('、')}。请先压缩后再粘贴。`);
-    if (files.length) whenPasteConfirmed(files, () => addFiles(files), warn);
-    else warn();
-    return;
-  }
-  if (!files.length) {
-    // 表格软件偶尔只提供 text/csv 剪贴板项而不提供 File。此时保留其
-    // 二进制附件语义；普通 text/plain 粘贴仍完全交给浏览器。
-    if (!clipboardCsvFile(e.clipboardData, file => addFiles([file]))) return;
-    e.preventDefault();
-    return;
-  }
-  // 带附件的剪贴板常同时携带 text/plain；交给浏览器会把那份文字再粘贴一次。
-  e.preventDefault();
-  whenPasteConfirmed(files, () => addFiles(files));
-}
-
 function bindFileDrop(zone, addFiles) {
   zone.addEventListener('dragenter', e => {
     if (e.dataTransfer?.types?.includes('Files')) zone.classList.add('dragover');
@@ -6268,10 +4477,7 @@ function bindFileDrop(zone, addFiles) {
     addFiles(files);
   });
 }
-
-$('#cinput').addEventListener('paste', e => pasteAttachmentFiles(e, addComposerFiles));
-bindFileDrop($('#composer'), addComposerFiles);
-
+composerController.start();
 function setTermShiftSelection(on) {
   T.shiftSelect = !!on;
   $('#termpane').classList.toggle('term-shift-select', T.shiftSelect);
@@ -6356,7 +4562,7 @@ $('.term-keys').onclick = e => {
   }
   setTermAlt(false);
   setTermCtrl(false);
-  sendToSession(null, [key]);
+  composerController.sendToSession(null, [key]);
   T.term?.focus();
 };
 
@@ -6430,9 +4636,9 @@ function foregroundTerm(force = false) {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) backgroundTerm();
-  else { foregroundTerm(); pollComposerInput(); if (composerUid) followServerDraft(composerUid); }
+  else { foregroundTerm(); composerController.pollComposerInput(); if (composerController.composerUid) composerController.followServerDraft(composerController.composerUid); }
 });
-addEventListener('focus', () => { pollComposerInput(); if (composerUid) followServerDraft(composerUid); });
+addEventListener('focus', () => { composerController.pollComposerInput(); if (composerController.composerUid) composerController.followServerDraft(composerController.composerUid); });
 addEventListener('pagehide', backgroundTerm);
 addEventListener('pageshow', e => foregroundTerm(e.persisted));
 addEventListener('online', () => foregroundTerm(true));
@@ -6440,9 +4646,9 @@ addEventListener('sessiondock-network-paused', backgroundTerm);
 addEventListener('sessiondock-network-resumed', () => {
   foregroundTerm(true);
   void loadTermList();
-  void recoverComposerDrafts();
-  void pollComposerInput();
-  if (composerUid) void followServerDraft(composerUid);
+  void composerController.recoverComposerDrafts();
+  void composerController.pollComposerInput();
+  if (composerController.composerUid) void composerController.followServerDraft(composerController.composerUid);
 });
 
 // Native/global process discovery and managed terminal transport are independent

@@ -525,12 +525,14 @@ def main():
                     expect(page_two.locator('#cinput')).to_be_visible()
                     page_two.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'")
                     print('PASS hidden composer: 0 CHECKs over 6.2s, immediate check on return')
-                    stale = page_two.evaluate('''() => {
+                    stale = page_two.evaluate('''async () => {
                         const status=document.querySelector('#composer-input-status');
                         updateComposerInputStatus(composerUid, {ok:false,
                             input:{state:'blocked',code:'cli_not_ready',message:'请切换到 PTY'}});
+                        await Promise.resolve();
                         const before=getComputedStyle(status).display;
                         markStaleBuild('new-build');
+                        await Promise.resolve();
                         return {before, after:getComputedStyle(status).display,
                             banner:!!document.querySelector('.version-stale'),
                             sendDisabled:document.querySelector('#csend').disabled};

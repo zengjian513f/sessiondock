@@ -62,7 +62,7 @@ dialog、标签及机器面板仍由 legacy 管理。后续批次及依赖见
 `search_uuid_browser`、`hub_browser`、`groups_browser` 和 `header_fold_browser`。
 
 按 2026-10-03 最新用户指令，本重构 goal 只提交和推送代码，不部署、不重启
-生产，也不切换生产入口或资源引用。生产保持 `2552436`；完整替换及过渡
+生产，也不切换生产入口或资源引用。goal 开始时的生产基线为 `2552436`；完整替换及过渡
 脚本清理仍按根目录计划继续执行。
 
 独立构建中的 `grid.html`、`records.html`、`file.html` 与 `files.html`
@@ -72,6 +72,12 @@ Grid 模块。原辅助页的三份过渡脚本已删除，生产目录仍保留
 `build:migration` 同时构建这些辅助页并放入同一静态目录。
 `terminal_grid_browser`、`terminal_records_browser` 和 `files_browser`
 在独立构建上通过实际连接、输入、滚动、回放及文件跳转验收。
+
+独立前端的输入区由 `components/composer` 接管，草稿同步、附件 staging、
+CHECK/SEND、回执和题卡写入保留在 `services/composer` 原服务逻辑中。
+十套 Chromium 操作覆盖发送、跨页草稿、附件重试、启动选择题、Esc 和终端粘贴。
+主页面消息区、会话窗口和主终端仍在迁移；过渡调用桥接在 B8 收尾移除。
+生产引用暂不切换。
 
 host 输出由每客户端独立有界队列隔离慢读者，退出完整性与进程身份分别验证。
 

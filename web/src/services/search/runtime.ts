@@ -126,4 +126,3 @@ export async function runSearch() {
   // 全文搜索只筛左侧列表；右侧会话的内容、滚动位置和展开状态保持原样。
   status.dataset.seq = ++sequence;              // 供测试判定"这一轮搜索已结束"
 }
-

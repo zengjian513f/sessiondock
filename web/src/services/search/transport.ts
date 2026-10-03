@@ -67,4 +67,3 @@ export async function fetchSearch(params: URLSearchParams, signal: AbortSignal, 
     : result ? { ok: true, data: result }
       : { ok: false, data: { error: '搜索响应不完整' } };
 }
-

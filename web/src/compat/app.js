@@ -4006,7 +4006,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   formulaRoots.clear();
   if (typeof T !== 'undefined') {
     if (T.uid && (T.uid !== uid || selectedAgent)) closeTermPane(true);
-    if (!follow) $('#composer').classList.add('hidden');    // 先收起, 渲染完再按新会话的状态决定
+    if (!follow) SessionDockComposer.operations().hide();    // 先收起, 渲染完再按新会话的状态决定
   }
   S.sel = uid;
   S.agent = selectedAgent;
@@ -4563,7 +4563,7 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
   markMatches(box);
   updateMatchNav({jump: true});
   if (typeof renderComposer === 'function') {
-    if (S.agent) $('#composer').classList.add('hidden');
+    if (S.agent) SessionDockComposer.operations().hide();
     else renderComposer();
   }
   if (seq === renderSeq && S.sel === uid && S.agent === agent) {
