@@ -971,13 +971,11 @@ function fitTimelineDirectories(elements = null, context = null) {
     };
     const label = plan.labels.find(label => measured(label) <= width)
       || plan.labels.reduce((best, label) => measured(label) < measured(best) ? label : best);
-    return {element, color, markup: timelinePathMarkup(label, plan.leaf)};
+    return {element, color, label};
   });
-  for (const update of updates) {
-    if (!update) continue;
-    if (update.element.dataset.cwdColor !== update.color) update.element.dataset.cwdColor = update.color;
-    if (update.markup && update.element.innerHTML !== update.markup) update.element.innerHTML = update.markup;
-  }
+  if (sidebarVueMounted) SessionDockSidebar.fitPaths(updates.filter(Boolean).map(update => ({
+    key: update.element.closest('.item').dataset.key, color: update.color, label: update.label,
+  })));
 }
 
 let timelineFitFrame = 0;
@@ -1277,7 +1275,7 @@ function applyMigrationMeta(uid, agent, entry, meta) {
           const node = $('#side').querySelector(`.item:not(.agent)[data-uid="${CSS.escape(uid)}"]`);
           if (node?._nestRow) {
             node._signature = null;
-            if (!sidebarTextSelectionProtected()) patchSidebarRow(node, node._nestRow, node._highlightKey);
+            if (!sidebarTextSelectionProtected()) refreshSidebarRows(uid);
           }
         }
       } else S.sessions = S.sessions.map(row => row.uid === uid ? {...meta} : row);
@@ -1817,34 +1815,7 @@ const inputAttentionLabel = attention => attention === 'question' ? ' · 等待�
 
 /** 角标颜色只说现在：绿 = 在跑，蓝 = 在跑且在受管终端里，灰 = 已退出但还有没看的新内容。
  *  颜色不随计数固化——以前把计数时的 tmux 态存进 localStorage，会话退出后角标还是蓝的。 */
-function paintItemStatus(node) {
-  if (!node) return;
-  const badge = node.querySelector(':scope > .ico > .item-status');
-  if (!badge) return;
-  const row = unreadRow(node.dataset.uid);
-  // 临时会话没有 live 集合里的 uid，跑没跑以行上已算好的 live 类为准；已结束的行不亮点。
-  const pending = !!node.dataset.tmuxName && node.classList.contains('live');
-  const draft = typeof composerDrafts !== 'undefined'
-    ? composerDrafts.get(composerDraftOwner(node.dataset.uid)) : null;
-  const active = pending || S.live.has(node.dataset.uid)
-    || (draft?.cli?.instance?.running === true && !!takenOver(node.dataset.uid));
-  const tmux = pending || S.liveTmux.has(node.dataset.uid);
-  const frozen = sessionFrozen(node.dataset.uid);
-  const attention = !frozen && active ? sessionInputAttention(node.dataset.uid) : '';
-  paintStatusMarker(badge, frozen, row.count, attention);
-  badge.classList.toggle('visible', frozen || active || row.count > 0);
-  badge.classList.toggle('counted', row.count > 0);
-  badge.classList.toggle('tmux', tmux);
-  badge.classList.toggle('idle', !active);
-  const turn = frozen || pending ? '' : sessionTurn(node.dataset.uid);
-  badge.classList.toggle('turn-working', turn === 'working' && !attention);
-  badge.classList.toggle('turn-waiting', turn === 'waiting');
-  const running = frozen ? '会话已暂停' : (tmux ? '受管会话运行中' : '会话运行中')
-    + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
-  badge.title = badge.ariaLabel = row.count
-    ? `${row.count} 条新内容，${!active && !frozen ? '会话已退出' : running}`
-    : running;
-}
+function paintItemStatus(node) {if (node) refreshSidebarRows(node.dataset.uid);}
 
 /** 回合状态只在进程还在跑时区分：working = 正在轮转，waiting = 等你回答，idle = 停在输入框。
  *  正在看的会话用最新的对话 activity 和 CLI 画面（cli.instance.busy，docs/cli-state.md），
@@ -2000,14 +1971,12 @@ async function runLivePoll(force) {
 
 /** 只改小圆点, 不重渲染整个列表 —— 否则每几秒就会打断滚动和选中。 */
 function paintLive() {
-  for (const n of document.querySelectorAll('.item.agent')) paintAgentStatus(n);
-  for (const n of document.querySelectorAll('.item[data-uid]')) {
-    const pendingRunning = n.dataset.tmuxName
-      && typeof T !== 'undefined' && T.list?.some(t => t.name === n.dataset.tmuxName && !t.stale);
-    n.classList.toggle('live', !!pendingRunning || S.live.has(n.dataset.uid));
-    n.classList.toggle('live-tmux', !!pendingRunning || S.liveTmux.has(n.dataset.uid));
-    paintItemStatus(n);
+  for (const group of SessionDockSidebar.currentGroups()) for (const view of group.rows) {
+    const session = view.row.s;
+    if (session.tmuxName) pendingSidebarLive.set(session,
+      typeof T !== 'undefined' && !!T.list?.some(row => row.name === session.tmuxName && !row.stale));
   }
+  refreshSidebarRows();
   const h = $('#dlive');
   if (h) {
     // 临时会话（还没有 JSONL）按左栏同样的规则算运行中
@@ -2051,15 +2020,14 @@ function selectSessionScope(activeOnly) {
   renderSide();
   paintLive();
 }
-$('#livecount').onclick = () => selectSessionScope(true);
-$('#allcount').onclick = () => selectSessionScope(false);
-$('#session-scope').onkeydown = e => {
+function sidebarScopeKeydown(e) {
   if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
   e.preventDefault();
   const active = e.key === 'Home' ? true : e.key === 'End' ? false : !S.activeOnly;
   selectSessionScope(active);
   $(active ? '#livecount' : '#allcount').focus();
-};
+}
+
 
 setInterval(() => { if (!uiEventsReady) pollLive(); }, LIVE_MS);
 document.addEventListener('visibilitychange', () => {
@@ -2072,25 +2040,10 @@ document.addEventListener('visibilitychange', () => {
 
 // ---------------------------------------------------------------- 数据加载
 function renderSessionCounts() {
+  ensureSidebarVue();
   const pool = sidebarSessions().filter(s => !S.off.has(s.source) && nodeSelected(s));
   const active = pool.filter(s => s.pending || S.live.has(s.uid)).length;
-  const known = SessionDockCapabilities.allows('live');
-  $('#session-active').textContent = known ? active : '?';
-  if (!known) {
-    $('#livecount').dataset.unknown = 'true';
-    $('#livecount').title = '运行状态未知：Rust 后端尚未实现进程探测';
-  }
-  $('#session-total').textContent = pool.length;
-  for (const [id, selected, label] of [
-    ['#livecount', S.activeOnly, known ? `${active} 个活跃会话` : '运行状态未知，尚未实现进程探测'],
-    ['#allcount', !S.activeOnly, `${pool.length} 个总会话`],
-  ]) {
-    const button = $(id);
-    button.classList.toggle('on', selected);
-    button.setAttribute('aria-checked', String(selected));
-    button.setAttribute('aria-label', label);
-    button.tabIndex = selected ? 0 : -1;
-  }
+  SessionDockSidebar.updateCounts(active, pool.length, SessionDockCapabilities.allows('live'), S.activeOnly, selectSessionScope, sidebarScopeKeydown);
 }
 
 function showSessionCount() {
@@ -2468,9 +2421,7 @@ async function loadSessions(force) {
     if (run !== sessionLoadRun || SessionDockNetwork.paused) return false;
     $('#stat').textContent = ' 加载失败';
     $('#stat').classList.add('err');
-    $('#side').innerHTML = `<div class="empty load-failed">
-      <p>会话列表暂时无法加载</p><button class="btn load-retry">重试</button></div>`;
-    $('.load-retry').onclick = () => loadSessions(false);
+    ensureSidebarVue(); SessionDockSidebar.loadFailed(() => loadSessions(false));
     sessionLoadRetry = setTimeout(() => loadSessions(false), 3000);
     return false;
   } finally {
@@ -2740,87 +2691,16 @@ function syncPickedSessions() {
 
 function setPicking(on) {
   if (sessionStopBusy) return;
-  sessionStopProgress = null;
-  S.picking = !!on;
+  sessionStopProgress = null; S.picking = !!on;
   if (!S.picking) pickedSessions.clear();
-  const attaching = S.nestAttachUids.length;
-  if (S.picking) { S.nestAttach = ''; S.nestAttachUids = []; }
-  renderPickBar();
-  if (attaching) {
-    const side = $('#side'), top = side.scrollTop;
-    renderSide();
-    side.scrollTop = top;     // 进出选择模式不该把列表弹回顶部
-    return;
-  }
-  // 进出多选只多一个勾选框：原地补上或拿掉，不重建整份列表（上千行时要半秒多）。
-  const side = $('#side');
-  for (const node of side.querySelectorAll('.item[data-uid]')) {
-    if (node._nestRow && !node._nestRow.agent) syncRowPickBox(node, node._nestRow.s);
-  }
-  // 折叠的分组没有行对象，整组勾选的名单只在多选时收集，这里补上。
-  const closed = new Map([...side.querySelectorAll(':scope > .group.closed')].map(group => [group.dataset.key, group]));
-  if (S.picking && closed.size) {
-    for (const [key, , summary] of groupBy(visible(), {skipClosed: true})) {
-      if (summary && closed.has(key)) closed.get(key)._pickUids = summary.pickUids;
-    }
-  }
-  for (const group of side.querySelectorAll(':scope > .group')) syncGroupPickBox(group);
-}
-
-/** 多选模式下的行勾选框与 picked 底色；退出多选时拿掉。 */
-function syncRowPickBox(node, s) {
-  const pickable = S.picking && sessionPickable(s);
-  let box = node.querySelector(':scope > .item-pick');
-  if (pickable && !box) {
-    box = document.createElement('input');
-    box.type = 'checkbox';
-    box.className = 'item-pick';
-    box.tabIndex = -1;
-    node.insertBefore(box, node.querySelector(':scope > .ico'));
-  } else if (!pickable && box) {
-    box.remove();
-    box = null;
-  }
-  if (box) {
-    box.checked = pickedSessions.has(s.uid);
-    box.ariaLabel = `选中「${s.title}」`;
-  }
-  node.classList.toggle('picked', pickable && pickedSessions.has(s.uid));
-}
-
-/** 分组标题上的“整组勾选”框，只在多选模式下出现。 */
-function syncGroupPickBox(group) {
-  const head = group.querySelector(':scope > .ghead');
-  if (!head) return;
-  let box = head.querySelector(':scope > .ghead-pick');
-  if (S.picking && !box) {
-    box = document.createElement('input');
-    box.type = 'checkbox';
-    box.className = 'ghead-pick';
-    box.onclick = event => {
-      event.stopPropagation();      // 勾整组，不要顺手把分组折叠了
-      toggleGroupPick(group._pickUids, group);
-    };
-    head.prepend(box);
-  } else if (!S.picking && box) {
-    box.remove();
-    box = null;
-  }
-  if (box) {
-    box.ariaLabel = `选中「${head._pickLabel || ''}」下的全部会话`;
-    paintGroupPick(group);
-  }
+  if (S.picking) {S.nestAttach = ''; S.nestAttachUids = [];}
+  renderPickBar(); renderSide();
 }
 
 function toggleSessionPick(uid) {
   if (sessionStopBusy) return;
   sessionStopProgress = null;
   pickedSessions.has(uid) ? pickedSessions.delete(uid) : pickedSessions.add(uid);
-  const row = $(`#side .item[data-uid="${CSS.escape(uid)}"]`);
-  if (row) {
-    paintItemPick(row);
-    paintGroupPick(row.closest('.group'));
-  }
   renderPickBar();
 }
 
@@ -2830,8 +2710,6 @@ function toggleGroupPick(uids, group) {
   sessionStopProgress = null;
   const all = uids.length && uids.every(uid => pickedSessions.has(uid));
   for (const uid of uids) all ? pickedSessions.delete(uid) : pickedSessions.add(uid);
-  for (const row of group.querySelectorAll('.item[data-uid]')) paintItemPick(row);
-  paintGroupPick(group);
   renderPickBar();
 }
 
@@ -2857,9 +2735,6 @@ function pickDragTo(row) {
   for (let i = Math.min(from, to); i <= Math.max(from, to); i++) {
     pickDrag.on ? pickedSessions.add(rows[i].dataset.uid) : pickedSessions.delete(rows[i].dataset.uid);
   }
-  const groups = new Set();
-  for (const r of rows) { paintItemPick(r); groups.add(r.closest('.group')); }
-  groups.forEach(paintGroupPick);
   renderPickBar();
 }
 /** 指针所在高度上可见的那一行；落在组标题、间隙或列表外时取纵向最近的可见行。 */
@@ -2896,7 +2771,7 @@ function endPickDrag() {
   }
   pickDrag = null;
 }
-$('#side').addEventListener('mousedown', event => {
+function sidebarGestureMousedown1(event) {
   if (event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
   if (!S.picking || S.nestAttach || sessionStopBusy) return;
   const row = event.target.closest('.item[data-uid]');
@@ -2906,7 +2781,7 @@ $('#side').addEventListener('mousedown', event => {
   pickDrag = {anchor: row.dataset.uid, last: row.dataset.uid, on: !pickedSessions.has(row.dataset.uid),
               before: new Set(pickedSessions), moved: false, y: event.clientY};
   pickDrag.frame = requestAnimationFrame(pickDragScroll);
-});
+}
 addEventListener('mousemove', event => {
   if (!pickDrag) return;
   if (!(event.buttons & 1)) { endPickDrag(); return; }
@@ -2917,30 +2792,14 @@ addEventListener('mouseup', event => { if (event.button === 0) endPickDrag(); })
 addEventListener('blur', endPickDrag);
 // 多选时列表里不拉文字选区（含触屏长按）。不用 #side.picking 的 CSS：切换它要为
 // 上千行重算样式，进出多选会多卡一两百毫秒。
-$('#side').addEventListener('selectstart', event => {
+function sidebarGestureSelectstart1(event) {
   if (S.picking) event.preventDefault();
-});
-$('#side').addEventListener('click', event => {
+}
+function sidebarGestureClick1(event) {
   if (!pickDragSwallowClick) return;
   pickDragSwallowClick = false;
   event.stopPropagation();
   event.preventDefault();
-}, true);
-
-function paintItemPick(row) {
-  const on = pickedSessions.has(row.dataset.uid);
-  row.classList.toggle('picked', on);
-  const box = row.querySelector('.item-pick');
-  if (box) box.checked = on;
-}
-
-function paintGroupPick(group) {
-  const box = group?.querySelector('.ghead-pick');
-  if (!box) return;
-  const rows = group._pickUids || [];
-  const picked = rows.filter(uid => pickedSessions.has(uid)).length;
-  box.checked = !!rows.length && picked === rows.length;
-  box.indeterminate = picked > 0 && picked < rows.length;
 }
 
 function pickAllVisible() {
@@ -2957,51 +2816,34 @@ function pickAllVisible() {
 }
 
 function renderPickBar() {
-  const attaching = !!S.nestAttach;
-  $('#side-tools').hidden = !S.picking && !attaching;
-  $('#side').classList.toggle('picking', S.picking);
-  $('#side').classList.toggle('attaching', attaching);
-  $('#side-pick-all').hidden = attaching;
-  globalThis.SessionDockGroups?.paintPickBar(attaching);
-  $('#side-pick-delete').hidden = attaching;
-  $('#side-pick-stop').hidden = attaching;
-  $('#side-pick-attach').hidden = attaching || !SessionDockCapabilities.allows('metadata');
-  $('#side-stop-details').hidden = attaching || !S.picking || !sessionStopProgress?.details.length;
-  if (attaching) {
-    const row = sidebarSessions().find(session => session.uid === S.nestAttach);
-    $('#side-picked').textContent = S.nestAttachUids.length > 1
-      ? `点击要附属的会话（当前：${S.nestAttachUids.length} 个会话）`
-      : row ? `点击要附属的会话（当前：${row.title || S.nestAttach}）` : '点击要附属的会话';
-    return;
-  }
-  const picked = S.picking ? pickedSessions.size : 0;
-  $('#side-picked').textContent = picked ? `已选 ${picked} 项` : '点会话行勾选';
+  ensureSidebarVue();
+  const attaching = !!S.nestAttach, picked = S.picking ? pickedSessions.size : 0;
+  const row = attaching ? sidebarSessions().find(s => s.uid === S.nestAttach) : null;
   const pending = pendingTmuxSessions().filter(s => pickedSessions.has(s.uid)).length;
   const action = pending ? (pending === picked ? '丢弃' : '删除 / 丢弃') : '删除';
-  $('#side-pick-delete').textContent = picked ? `${action} (${picked})` : action;
-  $('#side-pick-delete').disabled = !picked || sessionDeleteBusy || sessionStopBusy;
   const attachable = S.picking ? pickedNestable().length : 0;
-  $('#side-pick-attach').textContent = attachable ? `附属到… (${attachable})` : '附属到…';
-  $('#side-pick-attach').disabled = !attachable || sessionDeleteBusy || sessionStopBusy;
-  const stoppable = S.picking ? pickedStopTargets().length : 0;
-  const progress = sessionStopProgress;
-  const stopButton = $('#side-pick-stop');
-  stopButton.textContent = progress ? `已停止 ${progress.stopped}/${progress.total}`
-    : stoppable ? `停止 (${stoppable})` : '停止';
-  stopButton.disabled = !stoppable || sessionDeleteBusy || sessionStopBusy;
-  stopButton.setAttribute('aria-busy', String(sessionStopBusy));
-  stopButton.title = progress ? `已返回 ${progress.settled}/${progress.total}，失败 ${progress.failed}，未确认 ${progress.uncertain}` : '停止选中的运行中会话';
-  if (progress) {
-    $('#side-stop-summary').textContent = [progress.failed ? `失败 ${progress.failed}` : '',
-      progress.uncertain ? `未确认 ${progress.uncertain}` : '', progress.refreshError ? '状态刷新失败' : '']
-      .filter(Boolean).join('，');
-    $('#side-stop-errors').textContent = progress.details.join('\n');
-  }
+  const stoppable = S.picking ? pickedStopTargets().length : 0, progress = sessionStopProgress;
   const rows = S.picking ? visible().filter(sessionPickable) : [];
-  $('#side-pick-all').disabled = !rows.length || sessionStopBusy;
-  $('#side-pick-cancel').disabled = sessionStopBusy;
-  $('#side-pick-all').textContent =
-    rows.length && rows.every(s => pickedSessions.has(s.uid)) ? '全不选' : '全选';
+  SessionDockSidebar.updatePick({hidden: !S.picking && !attaching, attaching,
+    label: attaching ? (S.nestAttachUids.length > 1 ? `点击要附属的会话（当前：${S.nestAttachUids.length} 个会话）` : row ? `点击要附属的会话（当前：${row.title || S.nestAttach}）` : '点击要附属的会话') : picked ? `已选 ${picked} 项` : '点会话行勾选',
+    groupHidden: attaching || !globalThis.SessionDockGroups?.available,
+    groupDisabled: !!globalThis.SessionDockGroups?.busy || ![...pickedSessions].some(uid => {const row = indexedSessions().byUid.get(uid); return row && !row.pending;}),
+    allDisabled: !rows.length || sessionStopBusy, allLabel: rows.length && rows.every(s => pickedSessions.has(s.uid)) ? '全不选' : '全选',
+    cancelDisabled: sessionStopBusy, deleteLabel: picked ? `${action} (${picked})` : action,
+    deleteDisabled: !picked || sessionDeleteBusy || sessionStopBusy,
+    attachHidden: attaching || !SessionDockCapabilities.allows('metadata'), attachLabel: attachable ? `附属到… (${attachable})` : '附属到…',
+    attachDisabled: !attachable || sessionDeleteBusy || sessionStopBusy,
+    stopLabel: progress ? `已停止 ${progress.stopped}/${progress.total}` : stoppable ? `停止 (${stoppable})` : '停止',
+    stopDisabled: !stoppable || sessionDeleteBusy || sessionStopBusy, stopBusy: sessionStopBusy,
+    stopTitle: progress ? `已返回 ${progress.settled}/${progress.total}，失败 ${progress.failed}，未确认 ${progress.uncertain}` : '停止选中的运行中会话',
+    detailsHidden: attaching || !S.picking || !progress?.details.length,
+    summary: progress ? [progress.failed ? `失败 ${progress.failed}` : '', progress.uncertain ? `未确认 ${progress.uncertain}` : '', progress.refreshError ? '状态刷新失败' : ''].filter(Boolean).join('，') : '',
+    errors: progress ? progress.details.join('\n') : ''});
+  refreshSidebarRows();
+  SessionDockSidebar.updateGroups(SessionDockSidebar.currentGroups().map(group => {
+    const picked = group.pickUids.filter(uid => pickedSessions.has(uid)).length;
+    return {...group, picked: !!group.pickUids.length && picked === group.pickUids.length, indeterminate: picked > 0 && picked < group.pickUids.length};
+  }));
 }
 
 async function deleteSessions(uids, button = null) {
@@ -3174,11 +3016,11 @@ async function stopPickedSessions() {
   }
 }
 
-$('#side-pick-cancel').onclick = () => S.nestAttach ? setNestAttach('') : setPicking(false);
-$('#side-pick-all').onclick = pickAllVisible;
-$('#side-pick-delete').onclick = deletePickedSessions;
-$('#side-pick-stop').onclick = stopPickedSessions;
-$('#side-pick-attach').onclick = () => setNestAttach(pickedNestable());
+
+
+
+
+
 
 /** 选中的会话里能改附属关系的：真实会话行，不是待定启动或分叉父行。 */
 function pickedNestable() {
@@ -3289,19 +3131,21 @@ document.addEventListener('selectionchange', () => {
   scheduleDeferredSidebarRender();
 });
 
-$('#side').addEventListener('pointerdown', event => {
+function sidebarGesturePointerdown1(event) {
   if (event.pointerType !== 'mouse' || event.button !== 0 || S.picking
       || !event.target.closest('.t, .m, .cwd, .snip, .gname')) return;
   sidebarTextPointer = {id: event.pointerId, x: event.clientX, y: event.clientY, moved: false};
-});
+}
 
 document.addEventListener('pointermove', event => {
+  if (longPress.timer && $('#side').contains(event.target)) sidebarGesturePointermove1(event);
   if (!sidebarTextPointer || sidebarTextPointer.id !== event.pointerId) return;
   if (Math.abs(event.clientX - sidebarTextPointer.x) > 3
       || Math.abs(event.clientY - sidebarTextPointer.y) > 3) sidebarTextPointer.moved = true;
 });
 
 document.addEventListener('pointerup', event => {
+  if (longPress.timer && $('#side').contains(event.target)) cancelLongPress();
   if (!sidebarTextPointer || sidebarTextPointer.id !== event.pointerId) return;
   const pointer = sidebarTextPointer;
   setTimeout(() => {
@@ -3312,12 +3156,13 @@ document.addEventListener('pointerup', event => {
 });
 
 document.addEventListener('pointercancel', event => {
+  if (longPress.timer && $('#side').contains(event.target)) cancelLongPress();
   if (!sidebarTextPointer || sidebarTextPointer.id !== event.pointerId) return;
   sidebarTextPointer = null;
   scheduleDeferredSidebarRender();
 });
 
-$('#side').addEventListener('click', event => {
+function sidebarGestureClick2(event) {
   const dragged = !!sidebarTextPointer?.moved;
   sidebarTextPointer = null;
   if (!dragged && !sidebarTextSelectionActive()) {
@@ -3326,16 +3171,16 @@ $('#side').addEventListener('click', event => {
   }
   event.stopPropagation();
   event.preventDefault();
-}, true);
+}
 
-$('#side').addEventListener('contextmenu', e => {
+function sidebarGestureContextmenu1(e) {
   const row = menuTarget(e);
   if (!row || S.picking || S.nestAttach) return;      // 选择/附属点选里点选就够了，不再叠一层菜单
   e.preventDefault();
   openItemMenu(row.dataset.uid, e.clientX, e.clientY);
-});
+}
 
-$('#side').addEventListener('pointerdown', e => {
+function sidebarGesturePointerdown2(e) {
   if (e.pointerType === 'mouse') return;             // 鼠标走 contextmenu
   const row = menuTarget(e);
   if (!row || S.picking || S.nestAttach) return;
@@ -3347,25 +3192,23 @@ $('#side').addEventListener('pointerdown', e => {
     navigator.vibrate?.(12);
     openItemMenu(row.dataset.uid, longPress.x, longPress.y);
   }, LONG_PRESS_MS);
-});
+}
 
-$('#side').addEventListener('pointermove', e => {
+function sidebarGesturePointermove1(e) {
   if (!longPress.timer) return;
   if (Math.abs(e.clientX - longPress.x) > LONG_PRESS_SLOP
       || Math.abs(e.clientY - longPress.y) > LONG_PRESS_SLOP) cancelLongPress();
-});
-for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
-  $('#side').addEventListener(type, cancelLongPress);
 }
-$('#side').addEventListener('scroll', () => { cancelLongPress(); closeItemMenu(); });
+
+$('#side').addEventListener('scroll', () => {cancelLongPress(); closeItemMenu();});
 
 // 长按结束时浏览器仍会补一次 click，必须在捕获阶段吃掉。
-$('#side').addEventListener('click', e => {
+function sidebarGestureClick3(e) {
   if (!suppressItemClick) return;
   suppressItemClick = false;
   e.stopPropagation();
   e.preventDefault();
-}, true);
+}
 
 $('#item-menu').onclick = async e => {
   const button = e.target.closest('button[data-act]');
@@ -3670,117 +3513,20 @@ function selectOnlyNodeFilter(id) {
 }
 
 function renderChips() {
-  const box = $('#chips');
-  const wanted = new Set(Object.keys(SOURCES));
-  for (const old of box.querySelectorAll(':scope > .chip[data-source]')) {
-    if (!wanted.has(old.dataset.source)) old.remove();
-  }
-  const counts = new Map();
+  ensureSidebarVue(); const counts = new Map();
   for (const row of sidebarSessions()) if (nodeSelected(row)) counts.set(row.source, (counts.get(row.source) || 0) + 1);
-  for (const [k, v] of Object.entries(SOURCES)) {
-    const n = counts.get(k) || 0;
-    let c = box.querySelector(`:scope > .chip[data-source="${CSS.escape(k)}"]`);
-    if (c && c.tagName !== 'BUTTON') { c.remove(); c = null; }
-    if (!c) {
-      c = el('button', 'chip', `${icon(k)}<span>${v.name}</span><b></b>`);
-      c.type = 'button';
-      c.dataset.source = k;
-      c.onclick = () => {
-        S.off.has(k) ? S.off.delete(k) : S.off.add(k);
-        applySourceFilterChange();
-      };
-      box.appendChild(c);
-    }
-    c.classList.toggle('off', S.off.has(k));
-    c.classList.toggle('on', !S.off.has(k));
-    c.setAttribute('aria-pressed', String(!S.off.has(k)));
-    c.querySelector('.ico').style.color = v.color;
-    c.querySelector(':scope > b').textContent = n;
-    c.title = `${v.name}：点击选择或取消；右键或长按只选此类型`;
-    c.setAttribute('aria-label', `${v.name}，${n} 个会话`);
-    setControlUnavailable(c, n === 0 ? `${v.name} 在当前选择的机器上没有会话。` : '');
-  }
+  SessionDockSidebar.updateSources(Object.entries(SOURCES).map(([key, value]) => ({
+    key, label: value.name, count: counts.get(key) || 0, on: !S.off.has(key), icon: value.icon, color: value.color,
+    title: `${value.name}：点击选择或取消；右键或长按只选此类型`,
+    reason: !counts.get(key) ? `${value.name} 在当前选择的机器上没有会话。` : ''})));
 }
 
 /* 机器与 Agent Type 默认是多选；右键（桌面）或长按（触屏）快速收窄到一项。 */
-let filterLongPress = null;
-let suppressFilterClick = null;
-
-function filterButton(target) {
-  return target.closest?.('#node-chips button[data-node], #chips button[data-source]') || null;
-}
-
 function selectOnlyFilter(button) {
-  if (button.dataset.unavailableReason) { return false; }
+  if (button.dataset.unavailableReason) return false;
   if (button.dataset.node) return selectOnlyNodeFilter(button.dataset.node);
   if (button.dataset.source) return selectOnlySource(button.dataset.source);
   return false;
-}
-
-function cancelFilterLongPress() {
-  if (!filterLongPress) return;
-  clearTimeout(filterLongPress.timer);
-  filterLongPress = null;
-}
-
-for (const host of [$('#node-chips'), $('#chips')]) {
-  if (host.id === 'node-chips') {
-    // nodes.js 保持与冻结页面的字节兼容；在新交互层截住它的旧双击直选回调。
-    host.addEventListener('dblclick', event => {
-      const button = filterButton(event.target);
-      if (!button?.dataset.node || !host.contains(button)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }, true);
-    const paintHints = () => {
-      for (const button of host.querySelectorAll('button[data-node]:not(.node-offline):not(.node-issue)')) {
-        const hint = '点击选择或取消；右键或长按只选这台机器';
-        if (button.title !== hint) button.title = hint;
-      }
-    };
-    new MutationObserver(paintHints).observe(host,
-      {childList: true, subtree: true, attributes: true, attributeFilter: ['title']});
-    paintHints();
-  }
-  host.addEventListener('contextmenu', event => {
-    const button = filterButton(event.target);
-    if (!button || !host.contains(button)) return;
-    event.preventDefault();
-    selectOnlyFilter(button);
-  });
-  host.addEventListener('pointerdown', event => {
-    if (event.pointerType === 'mouse' || event.button !== 0) return;
-    const button = filterButton(event.target);
-    if (!button || !host.contains(button)) return;
-    cancelFilterLongPress();
-    const press = {button, pointerId: event.pointerId, x: event.clientX, y: event.clientY, timer: 0};
-    press.timer = setTimeout(() => {
-      if (filterLongPress !== press) return;
-      filterLongPress = null;
-      if (!selectOnlyFilter(button)) return;
-      suppressFilterClick = button;
-      navigator.vibrate?.(12);
-      // 极少数容器长按后不派发 click，不能因此吞掉下一次真实点击。
-      setTimeout(() => { if (suppressFilterClick === button) suppressFilterClick = null; }, 800);
-    }, LONG_PRESS_MS);
-    filterLongPress = press;
-  });
-  host.addEventListener('pointermove', event => {
-    const press = filterLongPress;
-    if (!press || press.pointerId !== event.pointerId) return;
-    if (Math.abs(event.clientX - press.x) > LONG_PRESS_SLOP
-        || Math.abs(event.clientY - press.y) > LONG_PRESS_SLOP) cancelFilterLongPress();
-  });
-  for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
-    host.addEventListener(type, cancelFilterLongPress);
-  }
-  host.addEventListener('click', event => {
-    const button = filterButton(event.target);
-    if (!button || button !== suppressFilterClick) return;
-    suppressFilterClick = null;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-  }, true);
 }
 
 /* ---------- 分层：附属关系 ---------- */
@@ -3792,62 +3538,11 @@ function nestSpecParent(session) {
     ? {parent: session.nest_parent} : null;
 }
 
-function nestParentOf(session, byKey, allByKey = new Map(S.sessions.map(s =>
-  [spawnKey(s.node_id, s.source, s.sid), s]))) {
-  const spec = nestSpecParent(session);
-  if (!spec) return null;
-  const key = spawnKey(spec.parent.node_id || session.node_id, spec.parent.source, spec.parent.sid);
-  let row = byKey.get(key) || allByKey.get(key);
-  const seen = new Set([session.uid]);
-  while (row && !seen.has(row.uid)) {
-    seen.add(row.uid);
-    const visible = byKey.get(spawnKey(row.node_id, row.source, row.sid));
-    if (visible) return visible;
-    // 回退/续写隐藏旧父会话时，附属会话跟随它的可见后继；不改写历史发起关系。
-    // 普通筛选或删除不意味着续写，找不到可见后继仍按孤立会话处理。
-    if (sessionContinued(row)) {
-      const next = indexedSessions().byUid.get(row.continued_in);
-      row = next?.source === row.source && (next.node_id || '') === (row.node_id || '') ? next : null;
-    } else if (hiddenForkParent(row)) {
-      row = forkChildren(row)[0];
-    } else {
-      return null;
-    }
-  }
-  return null;
+function nestParentOf(session, byKey, allByKey = new Map(S.sessions.map(s => [spawnKey(s.node_id, s.source, s.sid), s]))) {
+  return SessionDockSidebar.Grouping.parentOf(session, byKey, allByKey, sidebarGroupingContext());
 }
-
-function nestEdges(list) {
-  const children = new Map(), nested = new Set();
-  const byKey = new Map(list.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
-  const allByKey = new Map(S.sessions.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
-  const parentOf = new Map();
-  for (const s of list) {
-    const spec = nestSpecParent(s);
-    if (!spec) continue;
-    const parent = nestParentOf(s, byKey, allByKey);
-    if (!parent) continue;
-    // A stored cycle must not swallow sessions from the sidebar.
-    let cur = parent, looped = false;
-    for (let i = 0; cur && i < list.length; i++) {
-      if (cur === s) { looped = true; break; }
-      cur = parentOf.get(cur.uid) || null;
-    }
-    if (looped) continue;
-    parentOf.set(s.uid, parent);
-    if (!children.has(parent.uid)) children.set(parent.uid, []);
-    children.get(parent.uid).push(s);
-    nested.add(s.uid);
-  }
-  return {children, nested};
-}
-
-/** 分层模式下的树：每条会话直接发起的会话，以及哪些会话已挂在别人下面。
- *  回退/续写隐藏的发起者沿后继解析；被筛掉或已删除且无可见后继的仍作根显示。 */
-function nestTree(list) {
-  if (!S.nest) return {children: new Map(), nested: new Set()};
-  return nestEdges(list);
-}
+function nestEdges(list) {return SessionDockSidebar.Grouping.nestEdges(list, sidebarGroupingContext());}
+function nestTree(list) {return S.nest ? nestEdges(list) : {children: new Map(), nested: new Set()};}
 
 function nestDescendantUids(uid, list = sidebarSessions()) {
   const {children} = nestEdges(list);
@@ -3927,20 +3622,7 @@ async function pickNestParent(target) {
 }
 
 /** 一条会话连同它的子代理和它发起的会话，按活动时间倒序、还在跑的在前。 */
-function nestStamp(s, children, memo = new Map()) {
-  if (memo.has(s.uid)) return memo.get(s.uid);
-  const times = memo.times ||= new Map();
-  const time = value => {
-    if (!times.has(value)) times.set(value, +new Date(value) || 0);
-    return times.get(value);
-  };
-  let stamp = time(s.updated);
-  memo.set(s.uid, stamp);   // 先占位，环再深也只算一遍
-  for (const a of s.agent_items || []) stamp = Math.max(stamp, time(a.updated));
-  for (const c of children.get(s.uid) || []) stamp = Math.max(stamp, nestStamp(c, children, memo));
-  memo.set(s.uid, stamp);
-  return stamp;
-}
+function nestStamp(s, children, memo = new Map()) {return SessionDockSidebar.Grouping.nestStamp(s, children, memo);}
 
 // Each new search starts open; its folds never read or write saved list folds.
 const sidebarGroupFolds = () => S.term ? S.searchClosed : S.closed;
@@ -3978,117 +3660,12 @@ function sidebarRowSnippet(s, agent = null) {
 
 // Count the rows a branch would expose without sorting or allocating row objects.
 // A nested closed session contributes just its own row, matching expandRows.
-function nestSize(s, children, memo = new Map()) {
-  if (memo.has(s.uid)) return memo.get(s.uid);
-  const size = {rows: 1 + sidebarAgentItems(s).length, sessions: 1};
-  memo.set(s.uid, size);
-  for (const child of children.get(s.uid) || []) {
-    const sub = sidebarNestClosed(child.uid) ? {rows: 1, sessions: 1} : nestSize(child, children, memo);
-    size.rows += sub.rows;
-    size.sessions += sub.sessions;
-  }
-  return size;
+function nestSize(s, children, memo = new Map()) {return SessionDockSidebar.Grouping.nestSize(s, children, sidebarGroupingContext(), memo);}
+function expandRows(s, depth, children, out, seen, memo = new Map(), sizes = new Map()) {
+  return SessionDockSidebar.Grouping.expandRows(s, depth, children, out, seen, sidebarGroupingContext(), memo, sizes);
 }
-
-function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
-  const row = {s, agent: null, depth, kids: 0, closed: false};
-  const showMain = sidebarMainMatches(s) || (S.nest && S.view !== 'group');
-  if (showMain) out.push(row);
-  // 子代理行与分层开关无关，平铺模式同样挂在会话下面；children 在平铺时为空，
-  // 发起的会话只在分层模式缩进。
-  if (sidebarNestClosed(s.uid)) {
-    row.kids = nestSize(s, children, sizes).rows - 1;
-    row.closed = row.kids > 0;
-    return;
-  }
-  const when = v => +new Date(v) || 0;
-  const kids = [
-    ...sidebarAgentItems(s).map(agent => ({agent, running: agentRunning(s.uid, agent),
-      when: when(agent.updated)})),
-    ...(children.get(s.uid) || []).map(c => ({session: c, running: S.live.has(c.uid),
-      when: nestStamp(c, children, memo)})),
-  ].sort((a, b) => (b.running - a.running) || (b.when - a.when));
-  row.closed = kids.length > 0 && sidebarNestClosed(s.uid);
-  const start = out.length;
-  for (const k of kids) {
-    if (k.agent) out.push({s, agent: k.agent, depth: depth + Number(showMain)});
-    else if (!seen.has(k.session.uid)) {
-      seen.add(k.session.uid);
-      expandRows(k.session, depth + Number(showMain), children, out, seen, memo, sizes);
-    }
-  }
-  // 三角上写的是收起后消失的整棵子树行数。
-  row.kids = out.length - start;
-}
-
-const rowKey = row => row.agent ? `${row.s.uid}#${row.agent.id}` : row.s.uid;
-
-/** 左栏分组：[组键, 行数组]。行 = {s, agent, depth}；子代理行在两种模式下都以 depth+1 挂在
- *  会话下面，平铺模式没有发起的会话行（children 为空）。
- *  分层模式按整棵子树的最新活动排位和归组，发起的孩子刚有动静时父亲跟着浮上来。 */
-function groupBy(list, {skipClosed = false} = {}) {
-  const {children, nested} = S.view === 'group'
-    ? {children: new Map(), nested: new Set()} : nestTree(list);
-  const memo = new Map();
-  const stamp = s => S.nest ? nestStamp(s, children, memo) : (+new Date(s.updated) || 0);
-  const m = new Map(), latest = new Map(), dates = new Map();
-  for (const s of list) {
-    if (nested.has(s.uid) || (S.view === 'group' && (!s.group || (globalThis.SessionDockGroups?.available && !globalThis.SessionDockGroups.contains(s.group))))) continue;
-    const updated = stamp(s);
-    if (S.view === 'date' && !dates.has(updated)) dates.set(updated, dayKey(updated));
-    const k = S.view === 'tree' ? (s.node_id ? JSON.stringify([s.node_id, s.cwd || '(未知)']) : (s.cwd || '(未知)'))
-      : S.view === 'group' ? `group:${s.group || ''}` : dates.get(updated);
-    if (!m.has(k)) m.set(k, []);
-    m.get(k).push(s);
-    latest.set(k, Math.max(latest.get(k) ?? -Infinity, updated));
-  }
-  if (S.view === 'group' && !S.term) for (const name of globalThis.SessionDockGroups?.names || []) {
-    const key = `group:${name}`; if (!m.has(key)) { m.set(key, []); latest.set(key, -Infinity); }
-  }
-  const keys = [...m.keys()];
-  if (S.view === 'date') keys.sort().reverse();
-  else keys.sort((a, b) => latest.get(b) - latest.get(a));
-  const compare = (a, b) =>
-    // 项目树的顺序只表达真实活动时间，点星不应让会话突然跳位。
-    // 时间轴才在同一日期内将收藏置前；收藏时间不参与排序。
-    (S.view === 'date' ? Number(!!b.starred) - Number(!!a.starred) : 0)
-    || stamp(b) - stamp(a);
-  const seen = new Set(), sizes = new Map();
-  const groups = keys.map(k => {
-    const roots = m.get(k);
-    if (!roots.length) return [k, []];
-    if (skipClosed && sidebarGroupClosed(k)) {
-      // The heading needs a count and a representative, not sorted hidden rows.
-      // Pick membership is collected only while selection mode is actually on.
-      let first = roots[0], count = 0;
-      for (const s of roots) {
-        if (compare(s, first) < 0) first = s;
-        count += !S.nest || sidebarNestClosed(s.uid) ? 1 : nestSize(s, children, sizes).sessions;
-      }
-      const pickUids = [];
-      if (S.picking) {
-        const collect = s => {
-          if (sessionPickable(s)) pickUids.push(s.uid);
-          if (S.nest && !sidebarNestClosed(s.uid)) {
-            for (const child of children.get(s.uid) || []) collect(child);
-          }
-        };
-        roots.forEach(collect);
-      }
-      return [k, [], {first, count, pickUids, roots}];
-    }
-    roots.sort(compare);
-    const rows = [];
-    for (const s of roots) {
-      if (seen.has(s.uid)) continue;
-      seen.add(s.uid);
-      expandRows(s, 0, children, rows, seen, memo, sizes);
-    }
-    return [k, rows];
-  });
-  groups.children = children;
-  return groups;
-}
+const rowKey = row => SessionDockSidebar.Grouping.rowKey(row);
+function groupBy(list, {skipClosed = false} = {}) {return SessionDockSidebar.Grouping.groupBy(list, sidebarGroupingContext(), skipClosed);}
 
 /** 列表项的元信息行。子代理数不在这里显示：它们就是挂在会话下面的缩进行，收起时计入三角数字。 */
 // Rust pending rows carry the receipt state; a finished instance says so
@@ -4123,66 +3700,16 @@ const agentMeta = (uid, a) => `子代理 · ${a.type} · ${fmtSpan(a.created, ag
 /** 每行前面的引导区：每一级祖先一根竖线，再一个放三角的槽位（叶子留空）。子代理行让
  *  平铺模式也有引导区；有子代理或发起的孩子就有三角，与分层开关无关。
  *  槽位与分组标题的三角同列，深一层的槽位正好落在上一层图标的下方。 */
-function nestLeadMarkup(r) {
-  const caret = r.kids ? `<button type="button" class="nest-caret" aria-expanded="${!r.closed}"
-      title="${r.closed ? '展开' : '收起'} ${r.kids} 项" aria-label="${r.closed ? '展开' : '收起'}「${esc(r.s.title)}」下的 ${r.kids} 项"></button>` : '';
-  return `<span class="nest-lead" aria-hidden="${r.kids ? 'false' : 'true'}">${'<i class="nest-guide"></i>'.repeat(r.depth)}<span class="nest-slot">${caret}</span></span>`;
-}
-
-function agentRow(s, a, depth) {
-  const it = el('div', 'item agent tree',
-    `${nestLeadMarkup({s, agent: a, depth, kids: 0, closed: false})}
-     <span class="ico">${icon(s.source)}<span class="item-status"></span><span class="agent-mark" title="子代理" aria-hidden="true">${uiIcon('tree')}</span></span>
-     <div class="body">
-       <div class="t" title="${esc(a.title)}">${hl(a.title)}</div>
-       <div class="m">${esc(agentMeta(s.uid, a))}</div>
-       ${a.snippet ? `<div class="snip" title="${esc(a.snippet)}">${sidebarSnippet(a.snippet)}</div>` : ''}
-     </div>`);
-  it._resourceSession = s; it._resourceAgent = true; it._resourceMeta = agentMeta(s.uid, a);
-  globalThis.SessionDockSidebarResources?.paint(it);
-  it.dataset.key = rowKey({s, agent: a});
-  it.dataset.owner = s.uid;
-  it.dataset.agent = a.id;
-  it.dataset.depth = depth;
-  it.onclick = event => {
-    if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
-    if (S.nestAttach || S.picking) return;
-    openSession(s.uid, a.id);
-  };
-  paintAgentStatus(it);
-  return it;
-}
-
-/** 子代理行的绿点和选中态：跑没跑由服务端按 transcript 判断，父进程不在则一律不算。 */
-function paintAgentStatus(node) {
-  const uid = node.dataset.owner, id = node.dataset.agent;
-  const item = (indexedSessions().byUid.get(uid)?.agent_items || []).find(a => a.id === id);
-  const running = !!item && agentRunning(uid, item);
-  node.classList.toggle('live', running);
-  node.classList.toggle('sel', S.sel === uid && S.agent === id);
-  const badge = node.querySelector(':scope > .ico > .item-status');
-  if (!badge) return;
-  badge.classList.toggle('visible', running);
-  badge.title = badge.ariaLabel = running ? '子代理运行中' : '';
-}
+function paintAgentStatus(node) {if (node) refreshSidebarRows(node.dataset.owner);}
 
 /** Move `.sel` without rebuilding `#side`. Clicking a row used to call
  *  `renderSide()`, which wipes the list and lets the scrollbar jump even when
  *  membership is unchanged — worst at the bottom of a long date/nest list. */
 function paintSidebarSelection(uid, agent = null) {
   const side = $('#side');
-  const row = !side ? null : agent
-    ? side.querySelector(`.item.agent[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`)
-    : side.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
-  if (!row) {
-    const top = side?.scrollTop || 0;
-    renderSide();
-    if (side) side.scrollTop = top;
-    return false;
-  }
-  side.querySelectorAll('.item.sel').forEach(item => item.classList.remove('sel'));
-  row.classList.add('sel');
-  return true;
+  const row = agent ? side.querySelector(`.item.agent[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`) : side.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
+  if (!row) {const top = side.scrollTop; renderSide(); side.scrollTop = top; return false;}
+  refreshSidebarRows(); return true;
 }
 
 function exitSidebarSearch() {
@@ -4195,7 +3722,6 @@ $('#side-search-exit').onclick = exitSidebarSearch;
 
 function paintSearchMode(list) {
   const searching = !!S.term;
-  $('#side').classList.toggle('search-mode', searching);
   $('#side-search-state').hidden = !searching;
   $('#side-search-label').textContent = S.results !== null ? '搜索结果' : '筛选结果';
   $('#side-search-query').textContent = S.term;
@@ -4203,243 +3729,113 @@ function paintSearchMode(list) {
 }
 
 /** Update a row without discarding selection, focus or its existing elements. */
-function patchSidebarRow(node, row, highlightKey) {
-  const s = row.s, agent = row.agent;
-  const titleText = agent ? agent.title : s.title;
-  const title = node.querySelector('.t');
-  if (title && (title.title !== titleText || node._highlightKey !== highlightKey)) {
-    title.title = titleText;
-    title.innerHTML = hl(titleText);
-  }
-  const meta = node.querySelector('.m');
-  const metaText = agent ? agentMeta(s.uid, agent) : itemMeta(s);
-  node._resourceSession = s; node._resourceAgent = !!agent; node._resourceMeta = metaText;
-  if (meta && meta.textContent !== metaText) meta.textContent = metaText;
-  globalThis.SessionDockSidebarResources?.paint(node);
-  const snippet = node.querySelector('.snip'), snippetText = sidebarRowSnippet(s, agent);
-  if (snippet && (snippet.title !== snippetText || node._highlightKey !== highlightKey)) {
-    snippet.title = snippetText;
-    snippet.innerHTML = sidebarSnippet(snippetText);
-  }
-  if (agent) {
-    paintAgentStatus(node);
-    return;
-  }
-  const pickable = S.picking && sessionPickable(s);
-  const selected = S.sel === s.uid && !S.agent;
-  const className = 'item tree' + (selected ? ' sel' : '')
-    + (row.closed ? ' nest-closed' : '')
-    + (s.pending ? (s.stale ? ' pending' : ' pending live live-tmux') : '')
-    + (!s.pending && S.live.has(s.uid) ? ' live' : '')
-    + (!s.pending && S.liveTmux.has(s.uid) ? ' live-tmux' : '')
-    + (pickable && pickedSessions.has(s.uid) ? ' picked' : '')
-    + (S.nestAttachUids.includes(s.uid) ? ' nest-source' : '');
-  if (node.className !== className) node.className = className;
-  const cwd = node.querySelector('.cwd');
-  if (cwd && (cwd.title !== (s.cwd || '') || cwd.dataset.nodeName !== (s.node_name || ''))) {
-    cwd.title = s.cwd || '';
-    cwd.dataset.nodeName = s.node_name || '';
-    cwd.innerHTML = timelineDirectoryMarkup(s);
-  }
-  globalThis.SessionDockGroups?.paintRow(node, s);
-  paintStarButton(node.querySelector('.item-star'), !!s.starred, S.starBusy.has(s.uid));
-  syncRowPickBox(node, s);
-  const caret = node.querySelector('.nest-caret');
-  if (caret) {
-    caret.setAttribute('aria-expanded', String(!row.closed));
-    caret.title = `${row.closed ? '展开' : '收起'} ${row.kids} 项`;
-    caret.ariaLabel = `${row.closed ? '展开' : '收起'}「${s.title}」下的 ${row.kids} 项`;
-  }
-  if (s.pending) node.dataset.tmuxName = s.tmuxName;
-  node.onclick = event => {
-    if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
-    if (S.nestAttach) { void pickNestParent(s); return; }
-    if (S.picking) { if (sessionPickable(s)) toggleSessionPick(s.uid); return; }
-    s.pending ? openPendingSession(s) : openSession(s.uid);
-  };
-  paintItemStatus(node);
-}
-
-function sidebarRowIdentity(r, picked, sessionSignatures) {
-  if (!sessionSignatures.has(r.s.uid)) {
-    const {agent_items, cursor, ...fields} = r.s;
-    sessionSignatures.set(r.s.uid, JSON.stringify(fields));
-  }
-  const signature = JSON.stringify([sessionSignatures.get(r.s.uid), r.agent, r.depth, r.kids, r.closed,
-    r.agent ? agentMeta(r.s.uid, r.agent) : itemMeta(r.s),
-    S.view, S.nestAttachUids.includes(r.s.uid), S.term, S.opts,
-    S.opts.regex ? regexResultRevision : 0,
-    S.sel === r.s.uid && (r.agent ? S.agent === r.agent.id : !S.agent),
-    S.starBusy.has(r.s.uid), S.live.has(r.s.uid), S.liveTmux.has(r.s.uid)]);
-  const structure = JSON.stringify([!!r.agent, S.view, !!S.term,
-    r.depth, !!r.kids, !!r.s.pending, !!sidebarRowSnippet(r.s, r.agent), r.s.source]);
-  return {signature, structure};
-}
-
-function createSidebarRow(r, picked = pickedSessions) {
-  if (r.agent) return agentRow(r.s, r.agent, r.depth);
-  const s = r.s;
-  const snippet = sidebarRowSnippet(s);
-  const meta = itemMeta(s);
-  const pickable = S.picking && sessionPickable(s);
-  // 正在看的子代理有自己那一行，主会话行不再一起亮
-  const selected = S.sel === s.uid && !S.agent;
-  const it = el('div', 'item tree' + (selected ? ' sel' : '') + (r.closed ? ' nest-closed' : '')
-                          + (s.pending ? (s.stale ? ' pending' : ' pending live live-tmux') : '')
-                          + (!s.pending && S.live.has(s.uid) ? ' live' : '')
-                          + (!s.pending && S.liveTmux.has(s.uid) ? ' live-tmux' : '')
-                          + (pickable && picked.has(s.uid) ? ' picked' : '')
-                          + (S.nestAttachUids.includes(s.uid) ? ' nest-source' : ''),
-    `${nestLeadMarkup(r)}
-     <span class="ico">${icon(s.source)}<span class="item-status"></span></span>
-     <div class="body">
-       <div class="t" title="${esc(s.title)}">${hl(s.title)}</div>
-       <div class="m">${esc(meta)}</div>
-       ${S.view === 'date'
-         ? `<div class="cwd" title="${esc(s.cwd)}" data-node-name="${esc(s.node_name || '')}">${timelineDirectoryMarkup(s)}</div>` : ''}
-       ${snippet ? `<div class="snip" title="${esc(snippet)}">${sidebarSnippet(snippet)}</div>` : ''}
-     </div>
-     ${s.pending ? '' : starButtonMarkup(s.uid, !!s.starred, 'item-star')}`);
-  it._resourceSession = s; it._resourceAgent = false; it._resourceMeta = meta;
-  globalThis.SessionDockSidebarResources?.paint(it);
-  globalThis.SessionDockGroups?.paintRow(it, s);
-  it.dataset.uid = s.uid;
-  it.dataset.key = s.uid;
-  it.dataset.depth = r.depth;
-  if (s.pending) it.dataset.tmuxName = s.tmuxName;
-  syncRowPickBox(it, s);
-  it.onclick = event => {
-    if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
-    if (S.nestAttach) { void pickNestParent(s); return; }
-    if (S.picking) { if (sessionPickable(s)) toggleSessionPick(s.uid); return; }
-    s.pending ? openPendingSession(s) : openSession(s.uid);
-  };
-  const star = it.querySelector('.item-star');
-  if (star) star.onclick = event => {
-    event.stopPropagation();
-    toggleSessionStar(s.uid);
-  };
-  const caret = it.querySelector('.nest-caret');
-  if (caret) caret.onclick = event => {
-    event.stopPropagation();
-    toggleNestFold(s.uid);
-  };
-  paintItemStatus(it);
-  return it;
-}
-
-function renderSide(suppliedList = null) {
-  if (sidebarTextSelectionProtected()) {
-    sidebarRenderDeferred = true;
-    return;
-  }
-  sidebarRenderDeferred = false;
-  renderSessionCounts();
-  const side = $('#side');
-  const top = side.scrollTop;
-  const list = suppliedList || visible();
-  side._sessionUids = new Set(list.map(row => row.uid));
-  const oldGroups = new Map([...side.querySelectorAll(':scope > .group')].map(group => [group.dataset.key, group]));
-  for (const child of [...side.children]) if (!child.classList.contains('group') && child.id !== 'session-group-create-row') child.remove();
-  paintSearchMode(list);
-  const picked = syncPickedSessions();
-  renderPickBar();
-  if (!list.length && !(S.view === 'group' && globalThis.SessionDockGroups?.available)) {
-    side._nestTree = null;
-    side.replaceChildren();
-    if (S.term) {
-      const empty = el('div', 'empty search-empty', '当前搜索无匹配会话');
-      const back = el('button', 'btn', '返回全部会话');
-      back.type = 'button';
-      back.onclick = exitSidebarSearch;
-      empty.appendChild(back);
-      side.appendChild(empty);
-      side.scrollTop = top;
-      return;
-    }
-    const text = S.activeOnly
-      ? (S.results ? '没有活动的匹配会话' : '没有活动会话')
-      : (S.results ? '没有匹配的会话' : '没有会话');
-    side.appendChild(el('div', 'empty', text));
-    side.scrollTop = top;
-    return;
-  }
-  let groupPosition = 0;
-  const sessionSignatures = new Map();
-  const highlightKey = JSON.stringify([S.term, S.opts, S.opts.regex ? regexResultRevision : 0]);
-  const groups = groupBy(list, {skipClosed: true});
-  side._nestTree = {children: groups.children, sessions: S.sessions, results: S.results,
-    context: sidebarNestContext()};
-  for (const [key, rows, summary] of groups) {
-    const items = rows.filter(r => !r.agent).map(r => r.s);
-    const first = summary ? summary.first : (items[0] || rows[0]?.s);
-    const count = summary ? summary.count : S.term
-      ? rows.filter(row => row.agent || sidebarMainMatches(row.s)).length : items.length;
-    const g = oldGroups.get(key) || el('div', 'group');
-    oldGroups.delete(key);
-    g.classList.toggle('closed', sidebarGroupClosed(key));
-    g.dataset.key = key;
-    const label = S.view === 'tree' ? nodeDirectory(first) : S.view === 'group' ? key.slice(6) : key;   // 分组标题不缩写, 只换 ~
-    const groupUids = summary ? summary.pickUids : items.filter(sessionPickable).map(x => x.uid);
-    const headSignature = JSON.stringify([label, key, count, S.view, first?.node_name]);
-    const oldHead = g.querySelector(':scope > .ghead');
-    const head = oldHead?._signature === headSignature ? oldHead : el('div', 'ghead',
-      `<span class="caret">▼</span><span class="gname" title="${esc(key)}">${S.view === 'tree' ? nodeDirectoryMarkup(first) : esc(label)}</span>
-       <span class="gcount">${count}</span>`);
-    head.onclick = event => {
+var sidebarVueMounted;
+function ensureSidebarVue() {
+  if (sidebarVueMounted) return;
+  sidebarVueMounted = true;
+  SessionDockSidebar.mount({
+    rowClick: (r, event) => {
       if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
-      const folds = sidebarGroupFolds();
-      folds.has(key) ? folds.delete(key) : folds.add(key);
-      if (!S.term) store.set('closed', [...S.closed]);
-      renderSide();
-    };
-    if (S.view === 'group') globalThis.SessionDockGroups?.paintHeading(head, label);
-    head._signature = headSignature;
-    head._pickLabel = label;
-    if (head !== oldHead) { if (oldHead) oldHead.replaceWith(head); else g.prepend(head); }
-    g._pickUids = groupUids;
-    g._rows = rows;
-    const ul = g.querySelector(':scope > .glist') || el('div', 'glist');
-    const previous = new Map([...ul.children].map(node => [node.dataset.key, node]));
-    let nextRow = ul.firstElementChild;
-    for (const r of (sidebarGroupClosed(key) ? [] : rows)) {
-      const {signature, structure} = sidebarRowIdentity(r, picked, sessionSignatures);
-      const old = previous.get(rowKey(r));
-      previous.delete(rowKey(r));
-      const place = node => {
-        node._nestRow = r;
-        node._signature = signature;
-        node._structure = structure;
-        node._highlightKey = highlightKey;
-        if (node === nextRow) nextRow = nextRow.nextElementSibling;
-        else ul.insertBefore(node, nextRow);
-      };
-      if (old?._signature === signature) {
-        if (!r.agent) syncRowPickBox(old, r.s);
-        place(old);
-        continue;
-      }
-      if (old?._structure === structure) {
-        patchSidebarRow(old, r, highlightKey);
-        place(old);
-        continue;
-      }
-      if (old === nextRow) nextRow = old.nextElementSibling;
-      old?.remove();
-      if (r.agent) { place(agentRow(r.s, r.agent, r.depth)); continue; }
-      place(createSidebarRow(r, picked));
-    }
-    for (const old of previous.values()) old.remove();
-    if (ul.parentElement !== g) g.appendChild(ul);
-    if (side.children[groupPosition] !== g) side.insertBefore(g, side.children[groupPosition] || null);
-    groupPosition++;
-    syncGroupPickBox(g);
-  }
-  for (const old of oldGroups.values()) old.remove();
-  globalThis.SessionDockGroups?.paintSidebar(side);
-  fitTimelineDirectories();
-  side.scrollTop = top;
+      if (r.agent) { if (!S.nestAttach && !S.picking) openSession(r.s.uid, r.agent.id); return; }
+      if (S.nestAttach) { void pickNestParent(r.s); return; }
+      if (S.picking) { if (sessionPickable(r.s)) toggleSessionPick(r.s.uid); return; }
+      r.s.pending ? openPendingSession(r.s) : openSession(r.s.uid);
+    },
+    star: toggleSessionStar, nestFold: toggleNestFold,
+    groupFold: (key, event) => {
+      if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
+      const folds = sidebarGroupFolds(); folds.has(key) ? folds.delete(key) : folds.add(key);
+      if (!S.term) store.set('closed', [...S.closed]); renderSide();
+    },
+    groupPick: toggleGroupPick, createGroup: input => globalThis.SessionDockGroups.create(input),
+    removeGroup: name => globalThis.SessionDockGroups.remove(name),
+    editGroup: on => globalThis.SessionDockGroups.edit(on), exitSearch: exitSidebarSearch,
+    pickAll: pickAllVisible, pickStop: stopPickedSessions,
+    pickGroup: event => globalThis.SessionDockGroups.showMenu([...pickedSessions], event.currentTarget),
+    pickAttach: () => setNestAttach(pickedNestable()), pickDelete: deletePickedSessions,
+    pickCancel: () => S.nestAttach ? setNestAttach('') : setPicking(false),
+    sourceClick: key => { S.off.has(key) ? S.off.delete(key) : S.off.add(key); applySourceFilterChange(); },
+    nodeClick: id => { const n = Nodes.list.find(n => n.id === id); if (!n || n.online === false) return;
+      Nodes.off.has(id) ? Nodes.off.delete(id) : Nodes.off.add(id); store.set('nodesOff', [...Nodes.off]);
+      renderNodes(); renderChips(); renderSide(); showSessionCount(); if (S.results !== null) void runSearch(); },
+    resourceOpen: session => globalThis.SessionDockResources?.open(session),
+    resourceCells: (session, agent) => globalThis.SessionDockSidebarResources?.cells(session, agent) || [],
+    rowMounted: SessionDockSidebar.observeRow, rowUnmounted: SessionDockSidebar.unobserveRow,
+  }, sidebarVueGestures(), {selectOnly: selectOnlyFilter, holdMs: LONG_PRESS_MS, slop: LONG_PRESS_SLOP});
 }
+function sidebarGroupingContext() {
+  return {view: S.view, nest: S.nest, term: S.term, picking: S.picking, live: S.live, sessions: S.sessions,
+    groupClosed: sidebarGroupClosed, nestClosed: sidebarNestClosed, mainMatches: sidebarMainMatches,
+    agents: sidebarAgentItems, agentRunning, pickable: sessionPickable, dayKey,
+    names: globalThis.SessionDockGroups?.names || [], available: !!globalThis.SessionDockGroups?.available,
+    contains: name => globalThis.SessionDockGroups.contains(name), continued: sessionContinued,
+    byUid: uid => indexedSessions().byUid.get(uid), expand: (...args) => expandRows(...args), hiddenForkParent, forkChildren};
+}
+function sidebarStatus(s, agent = null) {
+  if (agent) {
+    const running = sidebarAgentRunning(s.uid, agent);
+    return SessionDockSidebar.Presentation.statusView({agent: true, running});
+  }
+  const unread = unreadRow(s.uid);
+  const pending = sidebarPendingRunning(s);
+  const draft = typeof composerDrafts !== 'undefined' ? composerDrafts.get(composerDraftOwner(s.uid)) : null;
+  const active = pending || S.live.has(s.uid) || (draft?.cli?.instance?.running === true && !!takenOver(s.uid));
+  const tmux = pending || S.liveTmux.has(s.uid), frozen = sessionFrozen(s.uid);
+  const attention = !frozen && active ? sessionInputAttention(s.uid) : '';
+  const turn = frozen || pending ? '' : sessionTurn(s.uid);
+  return SessionDockSidebar.Presentation.statusView({running: active, count: unread.count, pending, tmux, frozen, attention, turn,
+    turnLabel: turnLabel(turn), attentionLabel: inputAttentionLabel(attention)});
+}
+function sidebarAgentRunning(uid, agent) {
+  const item = (indexedSessions().byUid.get(uid)?.agent_items || []).find(item => item.id === agent.id);
+  return !!item && agentRunning(uid, item);
+}
+const pendingSidebarLive = new WeakMap();
+function sidebarPendingRunning(s) {
+  // New receipt rows start live before term/list catches up. Subsequent live
+  // paints follow that list, as the original row class and status marker did.
+  return !!s.tmuxName && (pendingSidebarLive.get(s) ?? !s.stale);
+}
+function sidebarPresentationState() {
+  return {view: S.view, selected: S.sel, agent: S.agent, picking: S.picking, live: S.live, liveTmux: S.liveTmux,
+    picked: pickedSessions, starBusy: S.starBusy, nestAttachUids: S.nestAttachUids, searching: !!S.term};
+}
+function sidebarPresentationHelpers() {
+  return {pickable: sessionPickable, snippet: sidebarRowSnippet, highlight: hl, snippetHtml: sidebarSnippet,
+    itemMeta, agentMeta, agentRunning: sidebarAgentRunning, pendingRunning: sidebarPendingRunning, status: sidebarStatus, source: source => SOURCES[source], path: timelinePath,
+    nodeColor, shortCwd, nodeDirectory, groupClosed: sidebarGroupClosed, mainMatches: sidebarMainMatches,
+    groupsAvailable: !!globalThis.SessionDockGroups?.available, groupContains: name => globalThis.SessionDockGroups.contains(name)};
+}
+function sidebarRowView(row) {return SessionDockSidebar.Presentation.rowView(row, sidebarPresentationState(), sidebarPresentationHelpers());}
+function sidebarGroupView(key, rows, summary = undefined) {return SessionDockSidebar.Presentation.groupView(key, rows, summary, sidebarPresentationState(), sidebarPresentationHelpers());}
+function refreshSidebarRows(uid = null) {
+  if (!sidebarVueMounted || sidebarTextSelectionProtected()) { sidebarRenderDeferred = true; return; }
+  SessionDockSidebar.repaintRows(sidebarRowView, uid || undefined);
+}
+function stampSidebarGroups() {
+  for (const view of SessionDockSidebar.currentGroups()) {
+    const group = [...$('#side').children].find(node => node.dataset.key === view.key);
+    if (!group) continue;
+    group._rows = view.rows.map(row => row.row); group._pickUids = view.pickUids;
+    group.querySelector('.ghead')._pickLabel = view.label;
+  }
+}
+function renderSide(suppliedList = null) {
+  if (sidebarTextSelectionProtected()) {sidebarRenderDeferred = true; return;}
+  sidebarRenderDeferred = false; ensureSidebarVue(); renderSessionCounts();
+  const side = $('#side'), top = side.scrollTop, list = suppliedList || visible();
+  side._sessionUids = new Set(list.map(row => row.uid)); paintSearchMode(list); syncPickedSessions(); renderPickBar();
+  const groups = groupBy(list, {skipClosed: true});
+  const empty = !list.length && !(S.view === 'group' && globalThis.SessionDockGroups?.available);
+  side._nestTree = empty ? null : {children: groups.children, sessions: S.sessions, results: S.results, context: sidebarNestContext()};
+  SessionDockSidebar.update({groups: empty ? [] : groups.map(([key, rows, summary]) => sidebarGroupView(key, rows, summary)),
+    empty: !empty ? '' : S.term ? '当前搜索无匹配会话' : S.activeOnly ? (S.results ? '没有活动的匹配会话' : '没有活动会话') : (S.results ? '没有匹配的会话' : '没有会话'),
+    searching: !!S.term, picking: S.picking, attaching: !!S.nestAttach,
+    createGroup: S.view === 'group' && !!globalThis.SessionDockGroups?.available, groupMode: S.view === 'group',
+    groupBusy: !!globalThis.SessionDockGroups?.busy, groupEditing: !!globalThis.SessionDockGroups?.editing});
+  stampSidebarGroups(); fitTimelineDirectories(); side.scrollTop = top;
+}
+
 
 function searchTerms(text) {
   const terms = [], chars = Array.from(text);
@@ -8529,71 +7925,27 @@ function sidebarNestContext() {
 
 function patchNestFold(uid) {
   const side = $('#side'), tree = side?._nestTree;
-  if (sidebarTextSelectionProtected() || !tree
-      || tree.sessions !== S.sessions || tree.results !== S.results
-      || tree.context !== sidebarNestContext()) return false;
-  const node = side.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
-  const current = node?._nestRow, group = node?.closest('.group');
+  if (sidebarTextSelectionProtected() || !tree || tree.sessions !== S.sessions || tree.results !== S.results || tree.context !== sidebarNestContext()) return false;
+  const node = side.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`), current = node?._nestRow, group = node?.closest('.group');
   const index = group?._rows?.indexOf(current) ?? -1;
   if (!current || index < 0 || !node.querySelector('.nest-caret')) return false;
-  const top = side.scrollTop;
-  const rows = [];
+  const top = side.scrollTop, rows = [];
   if (sidebarNestClosed(uid)) rows.push({...current, closed: true});
   else expandRows(current.s, current.depth, tree.children, rows, new Set([uid]), new Map());
   let end = index + 1;
   while (end < group._rows.length && group._rows[end].depth > current.depth) end++;
-  const oldCount = end - index - 1, delta = rows.length - 1 - oldCount;
-  const highlightKey = JSON.stringify([S.term, S.opts, S.opts.regex ? regexResultRevision : 0]);
-  const signatures = new Map();
-  const stamp = (element, row) => {
-    element._nestRow = row;
-    const {signature, structure} = sidebarRowIdentity(row, pickedSessions, signatures);
-    element._signature = signature;
-    element._structure = structure;
-    element._highlightKey = highlightKey;
-  };
-  // Read the next sibling before deleting descendants; unrelated rows remain
-  // connected and keep focus, text selection and all event handlers.
-  let next = node.nextElementSibling;
-  for (let count = 0; count < oldCount; count++) {
-    const removed = next;
-    next = next.nextElementSibling;
-    removed.remove();
-  }
-  const fragment = document.createDocumentFragment();
-  for (const row of rows.slice(1)) {
-    const child = createSidebarRow(row);
-    stamp(child, row);
-    fragment.appendChild(child);
-  }
-  const paths = [...fragment.querySelectorAll('.cwd-path')];
-  node.parentElement.insertBefore(fragment, next);
-  patchSidebarRow(node, rows[0], highlightKey);
-  stamp(node, rows[0]);
-  group._rows = group._rows.slice(0, index).concat(rows, group._rows.slice(end));
-  // Ancestor carets and the group count describe currently visible descendants,
-  // including the folds nested inside the branch just opened or closed.
+  const delta = rows.length - 1 - (end - index - 1);
+  const updated = group._rows.slice(0, index).concat(rows, group._rows.slice(end));
   let depth = current.depth;
   for (let i = index - 1; depth > 0 && i >= 0; i--) {
-    const ancestor = group._rows[i];
-    if (ancestor.depth >= depth || ancestor.agent) continue;
-    depth = ancestor.depth;
-    ancestor.kids += delta;
-    const element = group.querySelector(`.item[data-uid="${CSS.escape(ancestor.s.uid)}"]`);
-    if (element) { patchSidebarRow(element, ancestor, highlightKey); stamp(element, ancestor); }
+    const ancestor = updated[i]; if (ancestor.depth >= depth || ancestor.agent) continue;
+    depth = ancestor.depth; updated[i] = {...ancestor, kids: ancestor.kids + delta};
   }
-  const sessions = group._rows.filter(row => !row.agent).map(row => row.s);
-  group._pickUids = sessions.filter(sessionPickable).map(row => row.uid);
-  const count = group.querySelector('.gcount');
-  const rowCount = S.term ? group._rows.filter(row => row.agent || sidebarMainMatches(row.s)).length : sessions.length;
-  if (count && count.textContent !== String(rowCount)) {
-    count.textContent = rowCount;
-    group.querySelector('.ghead')._signature = null;
-  }
-  paintGroupPick(group);
+  SessionDockSidebar.updateGroups(SessionDockSidebar.currentGroups().map(view => view.key === group.dataset.key ? sidebarGroupView(view.key, updated) : view));
+  stampSidebarGroups();
+  const paths = rows.slice(1).flatMap(row => [...side.querySelectorAll(`.item[data-key="${CSS.escape(rowKey(row))}"] .cwd-path`)]);
   if (paths.length) fitTimelineDirectories(paths, timelineFitContext);
-  side.scrollTop = top;
-  return true;
+  side.scrollTop = top; return true;
 }
 
 /** Change only the clicked subtree; changed data or filters use the full path. */
@@ -9595,3 +8947,22 @@ if (HUB_MODE) {
   refreshTransferTasks();
   setInterval(() => {if (!document.hidden) refreshTransferTasks();}, 5000);
 }
+
+function sidebarVueGestures() {return {mousedown: event => {sidebarGestureMousedown1(event);},
+pointerdown: event => {sidebarGesturePointerdown1(event); sidebarGesturePointerdown2(event);},
+pointermove: event => {sidebarGesturePointermove1(event);},
+pointerup: event => {cancelLongPress();},
+pointercancel: event => {cancelLongPress();},
+pointerleave: event => {if (!$('#side').contains(event.relatedTarget)) cancelLongPress();},
+contextmenu: event => {sidebarGestureContextmenu1(event);},
+clickCapture: event => {sidebarGestureClick1(event); sidebarGestureClick2(event); sidebarGestureClick3(event);},
+selectstart: event => {sidebarGestureSelectstart1(event);}};
+}
+
+// The pending-session action service still lives in term.js. Its one sidebar
+// selection hook is installed after defer scripts load, before async boot opens it.
+document.addEventListener('DOMContentLoaded', () => {
+  selectPendingSidebarRow = (uid, added) => {
+    if (added) renderSide(); else paintSidebarSelection(uid);
+  };
+});

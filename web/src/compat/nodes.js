@@ -207,72 +207,17 @@ function nodeAbbrs(nodes) {
 
 function renderNodes() {
   if (!HUB_MODE) return;
-  const host = document.querySelector('#node-chips');
-  if (!host) return;
-  const scroll = host.scrollLeft;
-  const toolbarScroll = host.parentElement.scrollLeft;
-  const picker = document.querySelector('#node-picker');
-  if (picker) picker.hidden = false;
-  else host.hidden = false;
-  const existing = new Map([...host.children].map(b => [b.dataset.node, b]));
-  let position = 0;
-  const button = (id, text, on, click, title = '') => {
-    const b = existing.get(id) || document.createElement('button');
-    b.type = 'button'; b.classList.toggle('on', on);
-    b.title = title;
-    b.setAttribute('aria-pressed', String(on)); b.onclick = click;
-    if (host.children[position] !== b) host.insertBefore(b, host.children[position] || null);
-    position++;
-    return b;
-  };
-  const change = () => {
-    store.set('nodesOff', [...Nodes.off]);
-    renderNodes(); renderChips(); renderSide();
-    showSessionCount(sidebarSessions().filter(nodeSelected).length);
-    if (S.results !== null) void runSearch();
-  };
-  const abbrs = nodeAbbrs(Nodes.list);
-  const counts = new Map();
+  const host = document.querySelector('#node-chips'); if (!host) return;
+  ensureSidebarVue(); const picker = document.querySelector('#node-picker');
+  if (picker) picker.hidden = false; else host.hidden = false;
+  const abbrs = nodeAbbrs(Nodes.list), counts = new Map();
   for (const row of S.sessions) if (!sessionHidden(row)) counts.set(row.node_id, (counts.get(row.node_id) || 0) + 1);
-  for (const n of Nodes.list) {
-    const count = counts.get(n.id) || 0;
-    const reason = nodeChipReason(n);
-    const item = button(n.id, `${n.name} ${count}`,
-      !Nodes.off.has(n.id), e => {
-        if (n.online === false) return;
-        Nodes.off.has(n.id) ? Nodes.off.delete(n.id) : Nodes.off.add(n.id);
-        change();
-      }, reason || '点击选择或取消；双击只选这台机器');
-    const abbr = abbrs.get(n.id);
-    if (item.dataset.label !== n.name || item.dataset.abbr !== abbr || item.dataset.count !== String(count)) {
-      const name = document.createElement('span');
-      name.className = 'node-name'; name.textContent = n.name;
-      const short = document.createElement('span');
-      short.className = 'node-abbr'; short.textContent = abbr;
-      const countLabel = document.createElement('b');
-      countLabel.className = 'node-count'; countLabel.textContent = count;
-      item.replaceChildren(name, short, countLabel);
-      item.dataset.label = n.name; item.dataset.abbr = abbr; item.dataset.count = count;
-    }
-    item.dataset.node = n.id;
-    item.dataset.nodeColor = n.color || '';
-    item.classList.toggle('node-offline', n.online === false);
-    setControlUnavailable(item, n.online === false ? nodeOfflineReason(n) : '');
-    item.classList.toggle('node-issue', n.online !== false && !!reason);
-    item.ariaLabel = `${n.name} ${count}` + (reason ? `，${reason}` : '');
-    item.ondblclick = () => {
-      if (n.online === false) return;
-      Nodes.off = new Set(Nodes.list.filter(x => x.id !== n.id).map(x => x.id)); change();
-    };
-  }
-  for (const [id, item] of existing) if (!Nodes.list.some(n => n.id === id)) item.remove();
-  host.scrollLeft = scroll;
-  host.parentElement.scrollLeft = toolbarScroll;
+  SessionDockSidebar.updateNodes(Nodes.list.map(n => ({key: n.id, label: n.name, count: counts.get(n.id) || 0,
+    on: !Nodes.off.has(n.id), abbr: abbrs.get(n.id), color: n.color || '', offline: n.online === false,
+    issue: n.online !== false && !!nodeChipReason(n), reason: nodeChipReason(n),
+    title: '点击选择或取消；右键或长按只选这台机器'})));
   const notice = document.querySelector('#node-notice');
-  if (notice && (!notice.hidden || notice.textContent)) {
-    notice.textContent = '';
-    notice.hidden = true;
-  }
+  if (notice && (!notice.hidden || notice.textContent)) {notice.textContent = ''; notice.hidden = true;}
 }
 
 async function loadNodes() {
