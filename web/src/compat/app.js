@@ -1,0 +1,10088 @@
+'use strict';
+
+const SOURCES = Object.freeze(Object.fromEntries(
+  [...Object.values(SESSIONDOCK_CLIS), {source: 'shell', name: 'SSH', icon: 'i-terminal', color: 'var(--muted)'}].map(cli => [cli.source, {
+    name: cli.name, icon: cli.icon, color: cli.color,
+  }])));
+
+// 页面偏好落 localStorage；输入内容由服务端会话草稿保存。
+// 读取缺失时回退到旧前缀下的同名键并一次性搬到新键；写只写新键。
+const store = {
+  get(k, d) {
+    try {
+      const v = SessionDockCapabilities.stored(k, STORAGE_PREFIX);
+      return v === null ? d : JSON.parse(v);
+    } catch { return d; }
+  },
+  set: (k, v) => localStorage.setItem(STORAGE_PREFIX + k, JSON.stringify(v)),
+};
+
+let settingsMounted = false;
+
+const FONT_CHOICES = SessionDockTypography.choices;
+const themeMedia = matchMedia('(prefers-color-scheme: dark)');
+
+function applyTheme(choice = store.get('theme', 'system'), persist = false) {
+  if (!['system', 'light', 'dark'].includes(choice)) choice = 'system';
+  if (persist) store.set('theme', choice);
+  document.documentElement.dataset.theme = choice === 'system'
+    ? (themeMedia.matches ? 'dark' : 'light') : choice;
+  if (settingsMounted) SessionDockSettings.update({theme: choice});
+  if (typeof refreshTerminalPreferences === 'function') refreshTerminalPreferences(true);
+}
+
+function applyFont(choice = store.get('font', 'ubuntu'), persist = false) {
+  if (!FONT_CHOICES[choice]) choice = 'ubuntu';
+  if (persist) store.set('font', choice);
+  document.documentElement.style.setProperty('--terminal-font', FONT_CHOICES[choice]);
+  if (settingsMounted) SessionDockSettings.update({font: choice});
+  if (typeof refreshTerminalPreferences === 'function') refreshTerminalPreferences(false);
+}
+
+function normalizedInterfaceScale(value) {
+  value = Number(value);
+  // Preserve older 30–49% preferences at the new minimum.
+  return Number.isFinite(value) && value >= 30 && value <= 150 ? Math.max(50, Math.round(value)) : 100;
+}
+function interfaceScale() {
+  const saved = store.get('interfaceScale', 100);
+  const value = normalizedInterfaceScale(saved);
+  if (value === 50 && Number(saved) < 50) store.set('interfaceScale', value);
+  return value;
+}
+function applyInterfaceScale(value = interfaceScale(), persist = false) {
+  value = normalizedInterfaceScale(value);
+  if (persist) store.set('interfaceScale', value);
+  document.documentElement.style.setProperty('--compact-scale', value / 100);
+  if (settingsMounted) SessionDockSettings.update({scale: value});
+  else {
+    // Startup applies scale to the initial markup before the pane handoff.
+    document.querySelector('#setting-scale').value = String(value);
+    document.querySelector('#setting-scale-value').value = `${value}%`;
+  }
+  if (typeof refreshTerminalScale === 'function') refreshTerminalScale(persist);
+  // Resize listeners also update terminal fitting and the visible mobile viewport.
+  if (persist) window.dispatchEvent(new Event('resize'));
+}
+applyInterfaceScale();
+
+let scaleIndicatorTimer = 0, scaleIndicatorFade = 0;
+function showScaleIndicator(value, active = false) {
+  const indicator = document.querySelector('#scale-indicator');
+  clearTimeout(scaleIndicatorTimer);
+  clearTimeout(scaleIndicatorFade);
+  indicator.textContent = `${normalizedInterfaceScale(value)}%`;
+  // A manual popover stays above the settings dialog without taking focus.
+  if (indicator.showPopover && !indicator.matches(':popover-open')) indicator.showPopover();
+  indicator.classList.add('visible');
+  if (!active) scaleIndicatorTimer = setTimeout(() => {
+    indicator.classList.remove('visible');
+    scaleIndicatorFade = setTimeout(() => indicator.hidePopover?.(), 180);
+  }, 700);
+}
+
+// A widget with its own two-finger gesture explicitly owns that surface.
+// Page pinch takes ownership until every finger lifts, cancelling child holds
+// before capture prevents the second touch from reaching those children.
+const SessionDockGestures = (() => {
+  const app = document.querySelector('#app');
+  let pinch = null, frame = 0, suppressTouchTail = false, pointerType = '';
+  const isTouchEvent = event => {
+    if (event.pointerType) return event.pointerType === 'touch';
+    if (event.sourceCapabilities) return event.sourceCapabilities.firesTouchEvents;
+    return pointerType === 'touch';
+  };
+  const distance = touches => Math.hypot(
+    touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  const consume = event => {
+    if (event.cancelable) event.preventDefault();
+    event.stopPropagation();
+  };
+  app.addEventListener('pointerdown', event => {
+    pointerType = event.pointerType;
+    if (pointerType !== 'touch') suppressTouchTail = false;
+  }, true);
+  app.addEventListener('keydown', () => { pointerType = 'keyboard'; }, true);
+  app.addEventListener('touchstart', event => {
+    pointerType = 'touch';
+    if (pinch) { consume(event); return; }
+    suppressTouchTail = false;
+    if (event.touches.length !== 2 || [...event.touches].some(touch =>
+      !app.contains(touch.target) || touch.target.closest('[data-pinch-owner], input[type="range"]'))) return;
+    const startDistance = distance(event.touches);
+    if (startDistance < 10) return;
+    pinch = {distance: startDistance, scale: interfaceScale(), value: interfaceScale(),
+      ids: [...event.touches].map(touch => touch.identifier)};
+    showScaleIndicator(pinch.value, true);
+    cancelLongPress();
+    closeItemMenu();
+    suppressItemClick = false;
+    for (const target of new Set([...event.touches].map(touch => touch.target))) {
+      target.dispatchEvent(new Event('sessiondock-pinch-start', {bubbles: true}));
+    }
+    consume(event);
+  }, {capture: true, passive: false});
+  app.addEventListener('touchmove', event => {
+    if (!pinch) return;
+    consume(event);
+    const touches = pinch.ids.map(id => [...event.touches].find(touch => touch.identifier === id));
+    if (event.touches.length !== 2 || touches.some(touch => !touch)) return;
+    pinch.value = Math.round(Math.max(50, Math.min(150, pinch.scale * distance(touches) / pinch.distance)));
+    if (!frame) frame = requestAnimationFrame(() => {
+      frame = 0;
+      if (pinch) {
+        applyInterfaceScale(pinch.value);
+        showScaleIndicator(pinch.value, true);
+      }
+    });
+  }, {capture: true, passive: false});
+  const finish = event => {
+    if (!pinch) return;
+    // Child holds were cancelled at handoff. Let renderers clean up their
+    // original touch stream, but never turn remaining fingers back into a hold.
+    if (event.cancelable) event.preventDefault();
+    suppressTouchTail = true;
+    if (event.touches.length) return;
+    cancelAnimationFrame(frame); frame = 0;
+    const value = pinch.value;
+    pinch = null;
+    applyInterfaceScale(value, true);
+    showScaleIndicator(value);
+  };
+  app.addEventListener('touchend', finish, {capture: true, passive: false});
+  app.addEventListener('touchcancel', finish, {capture: true, passive: false});
+  app.addEventListener('pointermove', event => { if (pinch && event.pointerType === 'touch') consume(event); }, true);
+  for (const type of ['click', 'contextmenu']) {
+    app.addEventListener(type, event => {
+      if ((pinch || suppressTouchTail) && isTouchEvent(event)) consume(event);
+    }, true);
+  }
+  return {isTouchEvent, get pinching() { return pinch !== null; }};
+})();
+
+themeMedia.addEventListener('change', () => {
+  if (store.get('theme', 'system') === 'system') applyTheme('system');
+});
+applyTheme();
+applyFont();
+
+const S = {
+  sessions: [],
+  view: store.get('view', 'tree'),
+  nest: store.get('nest', false),  // 左栏分层：由会话发起的会话缩进在发起者下；子代理行两种模式都挂
+  nestClosed: new Set(store.get('nestClosed', [])),  // 手动收起的发起者 uid（平铺收起子代理行，分层收起整棵子树）
+  off: new Set(store.get('off', [])),
+  closed: new Set(store.get('closed', [])),
+  searchClosed: new Set(),
+  searchNestClosed: new Set(),
+  sel: null,
+  term: '',           // 当前要高亮的词 (= 搜索框内容)
+  opts: Object.assign({ case: false, word: false, regex: false, mode: 'all' }, store.get('opts', {})),
+  cur: -1,            // 匹配跳转游标
+  autoOpen: 0,        // 本次渲染已自动展开的命中消息数
+  markCapped: false,  // 高亮是否因数量上限被截断
+  results: null,      // 全文搜索结果, null 表示未处于搜索态
+  agent: null,        // 当前查看的子代理 id；null = 主会话
+  syncGap: 350,       // 当前会话的同步间隔, 随有无新内容自适应
+  live: new Set(),    // 仍在运行的会话 uid
+  liveTmux: new Set(),// 其中运行在 tmux 里的会话 uid
+  liveWorking: new Set(),// 有明确归属的后台命令进程仍在运行
+  liveStarted: new Map(), // uid → 当前 CLI 主进程启动时间（Unix 秒）
+  activeOnly: SessionDockCapabilities.allows('live') && store.get('activeOnly', false), // 未探测时不按空集合筛选
+  compactTurns: store.get('compactTurns', true), // 已完成回合只保留过程合集与最终结论
+  unread: new Map(store.get('unread', [])),   // uid → {count, tmux}; 只计代理产生的新内容
+  cursors: new Map(), // 主会话/子代理 EOF 游标；用于后台会话的精确未读增量
+  starBusy: new Set(), // 正在持久化星标的会话，避免多个网页请求在服务端乱序
+  picking: false,     // 左栏多选模式；刻意不持久化，刷新后回到普通浏览
+  nestAttach: '',     // 附属点选：等待点击父会话的子会话 uid（多选时为第一条）；不持久化
+  nestAttachUids: [], // 附属点选的全部子会话 uid（单条或多选）
+  sig: null,          // 列表对应的磁盘签名
+  lastSync: 0,
+};
+
+const $ = s => document.querySelector(s);
+const MOBILE = matchMedia('(max-width: 720px)');
+// 顶栏和会话头按三级宽度排版：窄屏 ≤720，中屏 721–1199，宽屏 ≥1200。断点与 style.css 一致。
+const MEDIUM = matchMedia('(max-width: 1199px)');
+function layoutTier() { return MOBILE.matches ? 'narrow' : MEDIUM.matches ? 'medium' : 'wide'; }
+// 页面既可挂在站点根目录，也可由反代放到 /sessiondock/ 之类的子路径。
+const APP_BASE = new URL('.', location.href);
+// 深链：?sid=<source>:<sid> 或 ?sid=<sid>，打开指定会话（labdesk 的会话台账用它跳过来）。
+// 用 CLI 原生会话号而不是 uid —— uid 是会话文件路径的散列，换目录就变。
+const DEEP_SID = (new URLSearchParams(location.search).get('sid') || '').trim().slice(0, 128);
+const deepNode = () => new URLSearchParams(location.search).get('node') || '';
+const appUrl = path => {
+  const url = new URL(String(path).replace(/^\//, ''), APP_BASE);
+  if (HUB_MODE && !url.searchParams.has('nodes') && /\/api\/(search|trash|trash\/purge)$/.test(url.pathname)) {
+    url.searchParams.set('nodes', selectedNodeIds().join(','));
+  }
+  if (HUB_MODE && /\/api\/term\/(complete-dir|models)$/.test(url.pathname)
+      && !url.searchParams.get('node')) url.searchParams.set('node', newNodeId());
+  return url.toString();
+};
+const BUILD_ID = document.querySelector('meta[name="sessiondock-build"]')?.content || '';
+// One ephemeral page identity joins HTTP, SSE, terminal and final DOM receipts.
+// It intentionally is not persisted: duplicated/restored tabs must remain distinct.
+const AUDIT_PAGE_ID = globalThis.crypto?.randomUUID?.()
+  || [...globalThis.crypto.getRandomValues(new Uint8Array(16))]
+    .map(value => value.toString(16).padStart(2, '0')).join('');
+window.__sessiondockPageId = AUDIT_PAGE_ID;
+
+let browserAuditQueue = [];
+let browserAuditTimer = 0;
+let browserAuditDue = 0;
+let browserAuditRetryAt = 0;
+let browserAuditSending = false;
+let browserAuditFailCount = 0;
+const AUDIT_BATCH_BYTES = 48 * 1024;
+const AUDIT_BATCH_COUNT = 100;
+const AUDIT_FLUSH_MS = 5000;
+const AUDIT_CONTENT_LIMIT = 32 * 1024;
+
+// 按 UTF-8 字节算：sendBeacon 的 64 KB 配额是字节数，中文一个字占 3 字节
+const auditEncoder = new TextEncoder();
+function auditEventBytes(event) {
+  try { return auditEncoder.encode(JSON.stringify(event)).length; } catch { return AUDIT_BATCH_BYTES + 1; }
+}
+
+function spliceAuditBatch(queue, limit = AUDIT_BATCH_BYTES, count = AUDIT_BATCH_COUNT) {
+  if (!queue.length) return [];
+  if (auditEventBytes(queue[0]) > limit) return queue.splice(0, 1);
+  const batch = [];
+  let bytes = 0;
+  while (queue.length && batch.length < count) {
+    const size = auditEventBytes(queue[0]);
+    if (bytes + size > limit) break;
+    batch.push(queue.shift());
+    bytes += size;
+  }
+  return batch;
+}
+
+function capAuditQueue() {
+  if (browserAuditQueue.length > 500) browserAuditQueue.splice(0, browserAuditQueue.length - 500);
+}
+
+// Ordinary diagnostics share a batch across several polling cycles. Full
+// batches and failures flush sooner; another info event never postpones a flush.
+function scheduleBrowserAudit(delay = AUDIT_FLUSH_MS) {
+  delay = Math.max(delay, browserAuditRetryAt - performance.now());
+  const due = performance.now() + delay;
+  if (browserAuditTimer && browserAuditDue <= due) return;
+  clearTimeout(browserAuditTimer);
+  browserAuditDue = due;
+  browserAuditTimer = setTimeout(flushBrowserAudit, delay);
+}
+
+function browserAuditEvent(event, data = {}, content = null, fields = {}) {
+  if (!SessionDockCapabilities.allows('audit')) return;
+  try {
+    // Rust stores metadata only; sending message/DOM/terminal bodies here
+    // wastes bandwidth and prematurely fills the byte-limited audit batches.
+    let auditContent = SessionDockCapabilities.config.backend === 'rust' ? null : content;
+    let auditData = data;
+    try {
+      if (auditContent != null) {
+        const serialized = JSON.stringify(auditContent);
+        if (serialized.length > AUDIT_CONTENT_LIMIT) {
+          auditContent = {truncated: true, bytes: serialized.length,
+            head: serialized.slice(0, 8 * 1024)};
+          auditData = {...data, content_truncated: true};
+        }
+      }
+    } catch {
+      auditContent = null;
+    }
+    browserAuditQueue.push({
+      event, ts: new Date().toISOString(), uid: fields.uid ?? S.sel ?? '',
+      trace_id: fields.traceId || '', request_id: fields.requestId || '',
+      connection_id: fields.connectionId || '', severity: fields.severity || 'info',
+      data: auditData, content: auditContent,
+    });
+    capAuditQueue();
+    scheduleBrowserAudit(browserAuditQueue.length >= AUDIT_BATCH_COUNT ? 0
+      : fields.severity === 'error' ? 100 : AUDIT_FLUSH_MS);
+  } catch { /* diagnostics never change UI behavior */ }
+}
+
+function auditPayload(events) {
+  return JSON.stringify({
+    page_id: AUDIT_PAGE_ID, uid: S.sel || '', _build: BUILD_ID, events,
+  });
+}
+
+async function flushBrowserAudit() {
+  if (!SessionDockCapabilities.allows('audit')) return;
+  clearTimeout(browserAuditTimer);
+  browserAuditTimer = 0;
+  if (SessionDockNetwork.paused) return;
+  if (browserAuditSending || !browserAuditQueue.length) return;
+  if (performance.now() < browserAuditRetryAt) { scheduleBrowserAudit(); return; }
+  const events = spliceAuditBatch(browserAuditQueue);
+  if (!events.length) return;
+  browserAuditSending = true;
+  try {
+    const response = await fetch(appUrl('api/audit/browser'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json', 'X-SessionDock-Page': AUDIT_PAGE_ID,
+        'X-SessionDock-Build': BUILD_ID,
+      },
+      body: auditPayload(events),
+    });
+    // 必须把响应体读完：没读的 fetch 响应在渲染进程里各占着一条 2 MiB 共享内存
+    // 数据管道（一个 fd），直到 GC 才释放。这里每秒一条，渲染进程 1024 个 fd 的
+    // 上限十几分钟就满，之后 GPU 命令缓冲区拿不到共享内存，整页在原生代码里卡死。
+    await response.arrayBuffer().catch(() => {});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    browserAuditFailCount = 0;
+    browserAuditRetryAt = 0;
+  } catch (error) {
+    browserAuditRetryAt = performance.now() + AUDIT_FLUSH_MS;
+    // 断网期间只是攒着，不算失败次数；连续三次在线失败才认定这一批本身有问题
+    if (navigator.onLine) browserAuditFailCount += 1;
+    if (browserAuditFailCount >= 3) {
+      browserAuditFailCount = 0;
+      const bytes = events.reduce((n, ev) => n + auditEventBytes(ev), 0);
+      browserAuditQueue.push({
+        event: 'audit.dropped', ts: new Date().toISOString(), uid: S.sel ?? '',
+        trace_id: '', request_id: '', connection_id: '', severity: 'info',
+        data: {events: events.length, bytes,
+          reason: String(error?.message || error || '').slice(0, 200)},
+        content: null,
+      });
+      capAuditQueue();
+    } else {
+      browserAuditQueue.unshift(...events);
+      if (browserAuditQueue.length > 500) browserAuditQueue.length = 500;
+    }
+  } finally {
+    browserAuditSending = false;
+    if (browserAuditQueue.length && !browserAuditTimer) {
+      scheduleBrowserAudit(browserAuditQueue.length >= AUDIT_BATCH_COUNT ? 0 : AUDIT_FLUSH_MS);
+    }
+  }
+}
+
+// 卸载时整个页面只有 64 KB 的 beacon 配额（和 keepalive 同一个池），超出的包
+// sendBeacon 直接返回 false。所以先把各事件的 content 丢掉保住事件本身，只给
+// page.hidden 那条快照留 content；分两包发，合计不超过 60 KB。发不出去的留在
+// 队列里，页面若只是进了 bfcache 还能补发。
+function flushBrowserAuditBeacon() {
+  if (SessionDockNetwork.paused) return;
+  if (!SessionDockCapabilities.allows('audit')) return;
+  clearTimeout(browserAuditTimer);
+  browserAuditTimer = 0;
+  if (!navigator.sendBeacon || !browserAuditQueue.length) return;
+  const slim = browserAuditQueue.map(ev => ev.event === 'page.hidden' || ev.content == null ? ev
+    : {...ev, content: null, data: {...ev.data, content_dropped: true}});
+  browserAuditQueue = [];
+  for (const budget of [40 * 1024, 20 * 1024]) {
+    const events = spliceAuditBatch(slim, budget, 100);
+    if (!events.length) break;
+    const ok = navigator.sendBeacon(appUrl('api/audit/browser'),
+      new Blob([auditPayload(events)], {type: 'application/json'}));
+    if (!ok) { slim.unshift(...events); break; }
+  }
+  if (slim.length) {
+    browserAuditQueue.unshift(...slim);
+    capAuditQueue();
+  }
+}
+
+// ---- 主线程长帧归因 ----
+// 页面偶发整体卡死，事后只能从审计日志看到轮询停摆，看不到是谁在跑。卡死前
+// 通常先有几段逐步变长的长任务；long-animation-frame 由浏览器给出每段里跑了
+// 哪个函数、在哪个文件的哪个位置、由谁触发、耗时和强制布局占比。这里对 ≥1 s
+// 的帧各记一条 main_thread.long_frame，用 sendBeacon 直接交给浏览器进程发出，
+// 随后主线程再卡死也不会丢。每页最多记 60 条，免得一个坏循环刷爆日志。
+const LONG_FRAME_MIN_MS = 1000;
+const LONG_FRAME_MAX_EVENTS = 60;
+let longFrameCount = 0;
+function longFrameEvent(entry) {
+  const base = APP_BASE.href;
+  const scripts = [...(entry.scripts || [])].slice(0, 8).map(script => ({
+    invoker: String(script.invoker || '').slice(0, 200), invoker_type: script.invokerType || '',
+    function: String(script.sourceFunctionName || '').slice(0, 120),
+    url: String(script.sourceURL || '').replace(base, ''), char: script.sourceCharPosition ?? null,
+    duration_ms: Math.round(script.duration || 0),
+    forced_layout_ms: Math.round(script.forcedStyleAndLayoutDuration || 0),
+    pause_ms: Math.round(script.pauseDuration || 0),
+  }));
+  const end = entry.startTime + entry.duration;
+  const memory = performance.memory;
+  const term = typeof T === 'undefined' ? null
+    : {name: T.name, views: T.views?.size ?? 0, connected: T.ws?.readyState ?? null};
+  return {
+    event: 'main_thread.long_frame',
+    ts: new Date(performance.timeOrigin + entry.startTime).toISOString(),
+    uid: S.sel ?? '', trace_id: '', request_id: '', connection_id: '', severity: 'warning',
+    data: {
+      duration_ms: Math.round(entry.duration), blocking_ms: Math.round(entry.blockingDuration || 0),
+      render_ms: entry.renderStart ? Math.round(end - entry.renderStart) : 0,
+      style_layout_ms: entry.styleAndLayoutStart ? Math.round(end - entry.styleAndLayoutStart) : 0,
+      scripts,
+      heap_mb: memory ? [memory.usedJSHeapSize, memory.totalJSHeapSize, memory.jsHeapSizeLimit]
+        .map(bytes => Math.round(bytes / 1048576)) : null,
+      dom_nodes: document.getElementsByTagName('*').length,
+      selected: S.sel, agent: S.agent, visibility: document.visibilityState,
+      audit_queue: browserAuditQueue.length, terminal: term,
+    },
+    content: null,
+  };
+}
+function observeLongFrames() {
+  if (!SessionDockCapabilities.allows('audit')) return;
+  if (!globalThis.PerformanceObserver?.supportedEntryTypes?.includes('long-animation-frame')) return;
+  const observer = new PerformanceObserver(list => {
+    if (SessionDockNetwork.paused) return;
+    for (const entry of list.getEntries()) {
+      if (entry.duration < LONG_FRAME_MIN_MS || longFrameCount >= LONG_FRAME_MAX_EVENTS) continue;
+      longFrameCount += 1;
+      try {
+        const event = longFrameEvent(entry);
+        const sent = navigator.sendBeacon?.(appUrl('api/audit/browser'),
+          new Blob([auditPayload([event])], {type: 'application/json'}));
+        if (!sent) browserAuditEvent(event.event, event.data, null, {severity: event.severity});
+      } catch { /* 诊断不影响页面 */ }
+    }
+  });
+  observer.observe({type: 'long-animation-frame', buffered: true});
+}
+observeLongFrames();
+
+const nativeAlert = window.alert.bind(window);
+const nativeConfirm = window.confirm.bind(window);
+window.alert = message => {
+  const text = String(message ?? '').slice(0, 500);
+  browserAuditEvent('dialog.shown', {kind: 'alert', text});
+  try { return nativeAlert(message); }
+  finally { browserAuditEvent('dialog.closed', {kind: 'alert', result: null}); }
+};
+window.confirm = message => {
+  const text = String(message ?? '').slice(0, 500);
+  browserAuditEvent('dialog.shown', {kind: 'confirm', text});
+  let result = null;
+  try { return (result = nativeConfirm(message)); }
+  finally { browserAuditEvent('dialog.closed', {kind: 'confirm', result}); }
+};
+
+function browserStateSnapshot(reason = '') {
+  const box = $('#msgs');
+  const nodes = box ? [...box.querySelectorAll('.msg, #activity')].slice(-40) : [];
+  const entry = S.sel ? cache.get(viewKey(S.sel, S.agent)) : null;
+  const termState = typeof T === 'undefined' ? null : {
+    name: T.name, uid: T.uid, mode: T.mode,
+    visible: !$('#termpane')?.classList.contains('hidden'),
+    connected: T.ws?.readyState ?? null,
+    frozen: (T.list || []).find(row => row.uid === S.sel)?.frozen ?? null,
+  };
+  return {
+    data: {
+      reason, selected: S.sel, agent: S.agent, mobile: MOBILE.matches,
+      mobile_detail: document.body.classList.contains('mobile-detail'),
+      visibility: document.visibilityState, online: navigator.onLine,
+      viewport: {width: innerWidth, height: innerHeight,
+        visual_width: window.visualViewport?.width,
+        visual_height: window.visualViewport?.height},
+      cache: entry ? {messages: entry.msgs?.length || 0, end: entry.end,
+        anchor: entry.anchor, activity: entry.activity?.state || ''} : null,
+      dom_messages: nodes.length, terminal: termState,
+      header: consoleButtonState(),
+    },
+    content: {
+      composer: $('#cinput')?.value || '',
+      messages: nodes.map(node => ({
+        id: node.id || '', role: node.dataset?.role || '',
+        call_id: node.dataset?.callId || '', classes: node.className,
+        text: (node.textContent || '').slice(0, 4000),
+      })),
+    },
+  };
+}
+
+let browserSnapshotTimer = 0;
+let lastBrowserSnapshot = '';
+function scheduleBrowserSnapshot(reason = 'render') {
+  if (!SessionDockCapabilities.allows('audit')) return;
+  clearTimeout(browserSnapshotTimer);
+  browserSnapshotTimer = setTimeout(() => {
+    try {
+      const snapshot = browserStateSnapshot(reason);
+      const signature = JSON.stringify(snapshot);
+      if (signature === lastBrowserSnapshot) return;
+      lastBrowserSnapshot = signature;
+      browserAuditEvent('dom.snapshot', snapshot.data, snapshot.content);
+    } catch { /* page can be between detail teardown and rebuild */ }
+  }, 100);
+}
+
+// ---- 会话标题栏 / 控制台按钮的存在性审计 ----
+// 控制台按钮"偶尔消失"一直没抓到现场：快照只看消息，不看标题栏。这里独立记录
+// 按钮的三层状态——在不在 DOM、几何上有没有被裁掉/盖住（elementFromPoint）、
+// #right 有没有被滚走——任何一层不成立就记一条 console.button.missing，附上
+// 标题栏 HTML 和布局数据；恢复时记 console.button.restored。
+// 常规状态变化（文案、接管态、灰态、位置）按签名去重记 console.button.state。
+function consoleButtonState() {
+  const button = $('#a-term');
+  const right = $('#right');
+  const detail = $('#detail');
+  const head = detail?.querySelector(':scope > .dhead');
+  const shown = !!right && right.offsetWidth > 0;   // 手机列表页 #right 整个 display:none
+  const state = {
+    present: !!button, head: !!head, shown,
+    detail_children: detail ? [...detail.children].map(
+      node => node.id || node.className.split(' ')[0] || node.tagName.toLowerCase()).slice(0, 8) : null,
+    right_scroll: right ? [right.scrollLeft, right.scrollTop] : null,
+    right_overflow: right ? [right.scrollWidth - right.clientWidth, right.scrollHeight - right.clientHeight] : null,
+    tier: layoutTier(), mobile_detail: document.body.classList.contains('mobile-detail'),
+  };
+  if (button) {
+    const style = getComputedStyle(button);
+    state.label = button.ariaLabel || '';
+    state.on = button.classList.contains('on');
+    state.unavailable = button.dataset.unavailable === 'true';
+    state.hidden = button.hidden || style.display === 'none' || style.visibility !== 'visible'
+      || parseFloat(style.opacity) === 0;
+  }
+  if (button && shown) {
+    const r = button.getBoundingClientRect(), rr = right.getBoundingClientRect();
+    const hit = r.width && r.height && document.visibilityState === 'visible'
+      ? document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) : undefined;
+    state.rect = [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)];
+    state.in_right = r.width > 0 && r.right <= rr.right + .5 && r.left >= rr.left - .5
+      && r.top >= rr.top - .5 && r.bottom <= rr.bottom + .5;
+    // 页面不可见时 elementFromPoint 一律 null，不算被遮
+    state.hit = hit === undefined ? null : !!hit && button.contains(hit);
+    // SVG 元素的 className 是 SVGAnimatedString，只能从 classList 取
+    state.hit_target = hit ? (hit.id ? '#' + hit.id : hit.classList?.[0] ? '.' + hit.classList[0]
+      : hit.tagName.toLowerCase()) : null;
+  }
+  // 不在 DOM 一定算丢；在 DOM 但页面可见时被隐藏/裁掉/盖住也算丢
+  state.ok = state.present && (!shown || (!state.hidden && state.in_right && state.hit !== false));
+  return state;
+}
+
+let consoleButtonMissingSince = 0;
+let consoleButtonSignature = '';
+let consoleButtonTimer = 0;
+function auditConsoleButton(reason = '') {
+  let state;
+  try { state = consoleButtonState(); } catch { return; }
+  const content = () => {
+    const head = $('#detail > .dhead');
+    return {dhead: head ? head.outerHTML.slice(0, 12000) : null,
+      detail: $('#detail')?.innerHTML.slice(0, 2000) || null};
+  };
+  const term = typeof T === 'undefined' ? null : {
+    name: T.name, uid: T.uid, mode: T.mode, views: [...T.views.keys()],
+    visible: !$('#termpane')?.classList.contains('hidden'),
+  };
+  if (!state.ok) {
+    // 丢失期间最多 5 秒记一次，免得 MutationObserver/定时器把库刷爆
+    const now = Date.now();
+    if (consoleButtonMissingSince && now - consoleButtonMissingSince < 5000) return;
+    consoleButtonMissingSince = consoleButtonMissingSince || now;
+    browserAuditEvent('console.button.missing', {reason, ...state, selected: S.sel, agent: S.agent,
+      terminal: term}, content(), {severity: 'error'});
+    return;
+  }
+  if (consoleButtonMissingSince) {
+    browserAuditEvent('console.button.restored', {reason, ...state,
+      missing_ms: Date.now() - consoleButtonMissingSince, terminal: term}, null, {severity: 'warning'});
+    consoleButtonMissingSince = 0;
+  }
+  const signature = JSON.stringify([state.label, state.on, state.unavailable, state.rect, state.tier,
+    state.hit_target, state.right_scroll]);
+  if (signature === consoleButtonSignature) return;
+  consoleButtonSignature = signature;
+  browserAuditEvent('console.button.state', {reason, ...state, terminal: term});
+}
+function scheduleConsoleButtonAudit(reason = '') {
+  clearTimeout(consoleButtonTimer);
+  consoleButtonTimer = setTimeout(() => auditConsoleButton(reason), 150);
+}
+{
+  // #detail 换内容（读取中/失败/正式渲染/新会话页）时重新盯住新的标题栏；标题栏
+  // 内部的增删和 class/hidden/style 变化也触发检查。#msgs 的海量变动不在观察范围内。
+  const headObserver = new MutationObserver(() => scheduleConsoleButtonAudit('head-mutation'));
+  let observedHead = null;
+  const watchHead = () => {
+    const head = $('#detail > .dhead');
+    if (head === observedHead) return;
+    headObserver.disconnect();
+    observedHead = head;
+    if (head) headObserver.observe(head, {childList: true, subtree: true, attributes: true,
+      attributeFilter: ['class', 'hidden', 'style', 'aria-label']});
+  };
+  new MutationObserver(() => { watchHead(); scheduleConsoleButtonAudit('detail-mutation'); })
+    .observe($('#detail'), {childList: true});
+  watchHead();
+  // 裁切/滚走这类不改 DOM 的情况靠 #right 的 scroll 和低频巡检兜底
+  $('#right')?.addEventListener('scroll', () => scheduleConsoleButtonAudit('right-scroll'), {passive: true});
+  setInterval(() => { if (!document.hidden) auditConsoleButton('periodic'); }, 5000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) scheduleConsoleButtonAudit('visible');
+  });
+}
+
+/** #detail 每次换内容都记一笔：谁换的、换完有没有标题栏和控制台按钮。 */
+function auditDetailRendered(source, extra = {}) {
+  const detail = $('#detail');
+  browserAuditEvent('detail.rendered', {
+    source, selected: S.sel, agent: S.agent, ...extra,
+    has_head: !!detail?.querySelector(':scope > .dhead'), has_console_button: !!$('#a-term'),
+    children: detail ? [...detail.children].map(
+      node => node.id || node.className.split(' ')[0] || node.tagName.toLowerCase()).slice(0, 8) : null,
+  });
+}
+
+queueMicrotask(() => browserAuditEvent('page.loaded', {
+  url: location.pathname + location.search, referrer: document.referrer,
+  user_agent: navigator.userAgent, language: navigator.language,
+  viewport: {width: innerWidth, height: innerHeight}, theme: document.documentElement.dataset.theme,
+}));
+window.addEventListener('error', event => browserAuditEvent('error', {
+  message: event.message, filename: event.filename, line: event.lineno, column: event.colno,
+}, null, {severity: 'error'}));
+window.addEventListener('unhandledrejection', event => browserAuditEvent('unhandledrejection', {
+  reason: String(event.reason?.stack || event.reason || 'unknown'),
+}, null, {severity: 'error'}));
+window.addEventListener('online', () => browserAuditEvent('network.online'));
+window.addEventListener('offline', () => browserAuditEvent('network.offline', {}, null,
+  {severity: 'warning'}));
+window.addEventListener('pagehide', () => {
+  const snapshot = browserStateSnapshot('pagehide');
+  browserAuditEvent('page.hidden', snapshot.data, snapshot.content);
+  flushBrowserAuditBeacon();
+});
+document.addEventListener('visibilitychange', () => {
+  browserAuditEvent('visibility.changed', {visibility: document.visibilityState});
+  if (!document.hidden) scheduleBrowserSnapshot('visible');
+});
+document.addEventListener('click', event => {
+  const target = event.target?.closest?.(
+    'button, a, [role="button"], .item, .ghead, summary, label, input, select, textarea, [data-action], [data-term-key], [data-term-modifier], .fold-preview, .turn-toolbar');
+  if (!target) return;
+  browserAuditEvent('ui.clicked', {
+    tag: target.tagName, id: target.id || '', classes: target.className || '',
+    title: target.getAttribute('title') || '', uid: target.dataset?.uid || '',
+    action: target.dataset?.v || target.dataset?.termKey || target.dataset?.attach || '',
+    text: (target.textContent || '').trim().slice(0, 80),
+    x: Math.round(event.clientX), y: Math.round(event.clientY),
+  });
+}, true);
+let auditResizeTimer = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(auditResizeTimer);
+  auditResizeTimer = setTimeout(() => {
+    browserAuditEvent('viewport.resized', {
+      width: innerWidth, height: innerHeight,
+      visual_width: window.visualViewport?.width,
+      visual_height: window.visualViewport?.height,
+    });
+    scheduleBrowserSnapshot('resized');
+  }, 200);
+});
+const el = (tag, cls, html) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (html != null) n.innerHTML = html;
+  return n;
+};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const icon = src => `<svg class="ico source-icon" data-source="${src}" aria-hidden="true" style="color:${SOURCES[src].color}"><use href="#${SOURCES[src].icon}"/></svg>`;
+// 会话头的图标：右上角的运行点和左栏列表一致（绿=直接进程，蓝=受管终端）
+const liveStatusTitle = tmux => !SessionDockCapabilities.allows('live') ? '运行状态未知，尚未实现进程探测'
+  : tmux ? '运行于受管终端' : '运行中';
+const sessionIconMarkup = (src, live, tmux, turn = '', uid = S.sel) => {
+  const frozen = sessionFrozen(uid);
+  const label = frozen ? '会话已暂停' : liveStatusTitle(tmux) + turnLabel(turn);
+  return `<span class="ico">${icon(src)}<span
+    class="item-status${live || frozen ? ' visible' : ''}${tmux ? ' tmux' : ''}${frozen ? ' frozen' : turn ? ` turn-${turn}` : ''}" id="dlive"
+    title="${esc(label)}" aria-label="${esc(label)}">${frozen ? uiIcon('pause') : ''}</span></span>`;
+};
+const uiIcon = name => `<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+
+let staleBuildShown = false;
+function markStaleBuild(serverBuild = '') {
+  if (staleBuildShown) {
+    // “稍后”只收起提示；发送仍被禁用，回到页面时再提醒一次。
+    const shown = $('.version-stale');
+    if (shown?.hidden && !document.hidden) shown.hidden = false;
+    return;
+  }
+  staleBuildShown = true;
+  SessionDockNetwork.pause('stale');
+  document.body.classList.add('stale-build');
+  const notice = el('div', 'app-float warn version-stale');
+  notice.setAttribute('role', 'alert');
+  notice.innerHTML = '<div class="app-float-head"><strong>SessionDock 已更新</strong></div>'
+    + '<span>自动同步已暂停，仍可编辑并自动保存草稿；发送前请重新加载。</span>';
+  browserAuditEvent('build.stale', {server_build: serverBuild});
+  const reload = el('button', 'btn primary', '重新加载');
+  reload.dataset.act = 'reload';
+  reload.type = 'button';
+  reload.title = serverBuild ? `服务器版本 ${serverBuild}` : '加载新版本';
+  reload.onclick = async () => {
+    reload.disabled = true;
+    reload.textContent = '正在保存草稿…';
+    try {
+      if (typeof prepareComposerReload === 'function' && !await prepareComposerReload()) {
+        notice.querySelector('span').textContent = '草稿尚未保存或附件尚未上传完成，已取消重新加载。请等待保存成功或保留内容后重试。';
+        return;
+      }
+      location.reload();
+    } finally {
+      reload.disabled = false;
+      reload.textContent = '重新加载';
+    }
+  };
+  const later = el('button', 'btn', '稍后');
+  later.type = 'button';
+  later.onclick = () => { notice.hidden = true; };
+  const actions = el('div', 'app-float-actions');
+  actions.append(later, reload);
+  notice.appendChild(actions);
+  floatStack().appendChild(notice);
+  for (const sel of ['#csend', '#bug-report-go', '#cadd', '#bug-report-add']) {
+    const button = $(sel);
+    if (button) button.disabled = true;
+  }
+}
+
+let serverHostname = '';
+async function checkServerBuild() {
+  if (SessionDockNetwork.paused) return;
+  try {
+    const response = await fetch(appUrl('api/meta'), {cache: 'no-store'});
+    const data = await response.json();
+    if (data.hostname) serverHostname = data.hostname;
+    if (data.build && BUILD_ID && data.build !== BUILD_ID) markStaleBuild(data.build);
+  } catch { /* 网络恢复后再检查 */ }
+}
+setInterval(checkServerBuild, 30000);
+queueMicrotask(checkServerBuild);
+
+// 登录环境：后端经 zshrc 之类的包装启动，新开的 CLI 继承后端的环境。启动文件改动后，
+// 要重启后端才会进入新会话；后端比对出变化的变量名，这里按机器列成表。
+const shellEnvIgnored = new Map();    // 机器 → 本页已忽略的变化（变量名列表）
+const shellEnvRestarting = new Map(); // 机器 → {started_at: 发起重启前的启动时间, at: 发起时刻}
+const SHELL_ENV_RESTART_WAIT_MS = 120000;
+let shellEnvRun = 0;
+let shellEnvShown = [];
+function shellEnvTargets() {
+  if (!HUB_MODE) return [{key: 'local', name: serverHostname || Nodes.list[0]?.name || '本机', prefix: ''}];
+  // 正在重启的机器暂时离线也要继续问，直到它带着新的启动时间回来。
+  return Nodes.list.filter(node => node.online !== false || shellEnvRestarting.has(node.id))
+    .map(node => ({key: node.id, name: node.name || node.id, prefix: `api/nodes/${node.id}/`}));
+}
+
+async function checkShellEnv() {
+  const run = ++shellEnvRun;
+  const targets = shellEnvTargets();
+  const found = await Promise.all(targets.map(async target => {
+    let data = null;
+    try {
+      const response = await fetch(appUrl(target.prefix + 'api/shell-env'), {cache: 'no-store'});
+      if (response.ok) data = await response.json();   // 旧后端没有这个接口
+    } catch { /* 机器重启或离线 */ }
+    const restarting = shellEnvRestarting.get(target.key);
+    if (restarting) {
+      const back = data && data.started_at && data.started_at !== restarting.started_at;
+      if (!back && Date.now() - restarting.at < SHELL_ENV_RESTART_WAIT_MS) {
+        return {...target, data: data || {}, restarting: true};
+      }
+      shellEnvRestarting.delete(target.key);
+    }
+    if (!data?.configured || !data.stale) return null;
+    return shellEnvIgnored.get(target.key) === (data.changed || []).join(',') ? null : {...target, data};
+  }));
+  if (run !== shellEnvRun) return;   // 更新的一轮检查会画出更新的结果
+  renderShellEnvNotice(found.filter(Boolean));
+}
+
+const textEl = (tag, cls, text) => { const node = el(tag, cls); node.textContent = text; return node; };
+function shellEnvButton(label, aria, onclick) {
+  const button = textEl('button', 'btn', label);
+  button.type = 'button';
+  if (aria) button.setAttribute('aria-label', aria);
+  button.onclick = onclick;
+  return button;
+}
+
+function renderShellEnvNotice(items) {
+  shellEnvShown = items;
+  let notice = $('#shell-env-notice');
+  if (!items.length) { notice?.remove(); return; }
+  if (!notice) {
+    notice = el('div', 'app-float warn shell-env-stale');
+    notice.id = 'shell-env-notice';
+    notice.setAttribute('role', 'status');
+    floatStack().appendChild(notice);
+  }
+  const pending = items.filter(item => !item.restarting);
+  const head = el('div', 'app-float-head');
+  head.appendChild(textEl('strong', '', '登录环境（zshrc）已变化'));
+  if (pending.length > 1) {
+    head.appendChild(shellEnvButton(`全部重启 (${pending.length})`, '', event => restartShellEnv(pending, event.currentTarget)));
+  }
+  const close = shellEnvButton('×', '关闭', () => {
+    for (const item of pending) shellEnvIgnored.set(item.key, (item.data.changed || []).join(','));
+    renderShellEnvNotice(shellEnvShown.filter(item => item.restarting));
+  });
+  close.className = 'modal-close';
+  close.title = '忽略这些变化';
+  head.appendChild(close);
+  const note = textEl('span', '', '新开的会话仍用旧环境，重启后端后生效；正在运行的会话不受影响。');
+  const table = el('table', 'shell-env-table');
+  const header = table.createTHead().insertRow();
+  for (const title of ['机器', '变化', '', '']) header.appendChild(textEl('th', '', title));
+  const body = table.createTBody();
+  for (const item of items) {
+    const row = body.insertRow();
+    row.dataset.node = item.key;
+    row.appendChild(textEl('td', 'shell-env-node', item.name));
+    const names = item.data.changed || [];
+    row.appendChild(textEl('td', 'shell-env-changed', item.restarting ? '正在重启…' : names.join('、')));
+    const restart = row.insertCell(), ignore = row.insertCell();
+    if (item.restarting) continue;
+    restart.appendChild(shellEnvButton('重启', `重启 ${item.name} 后端`, event => restartShellEnv([item], event.currentTarget)));
+    ignore.appendChild(shellEnvButton('忽略', `忽略 ${item.name}`, () => {
+      shellEnvIgnored.set(item.key, names.join(','));
+      renderShellEnvNotice(shellEnvShown.filter(other => other.key !== item.key));
+    }));
+  }
+  notice.replaceChildren(head, note, table);
+}
+
+async function restartShellEnv(items, button) {
+  button.disabled = true;
+  const failed = [];
+  await Promise.all(items.map(async item => {
+    try {
+      const response = await fetch(appUrl(item.prefix + 'api/shell-env/restart'), {method: 'POST'});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+      shellEnvRestarting.set(item.key, {started_at: item.data.started_at, at: Date.now()});
+      browserAuditEvent('shell_env.restart', {node: item.key, changed: item.data.changed || []});
+    } catch (error) {
+      failed.push(`${item.name}: ${error.message || error}`);
+    }
+  }));
+  // 先原地把这几行换成“正在重启…”，其他机器的行保持不动。
+  renderShellEnvNotice(shellEnvShown.map(item =>
+    shellEnvRestarting.has(item.key) ? {...item, restarting: true} : item));
+  if (failed.length) appAlert(`重启后端失败:\n${failed.join('\n')}`);
+  for (let i = 0; i < 60 && items.some(item => shellEnvRestarting.has(item.key)); i++) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    await checkShellEnv();
+  }
+}
+setInterval(checkShellEnv, 60000);
+setTimeout(checkShellEnv, 3000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) checkShellEnv();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) checkServerBuild();
+});
+
+// Android 默认只缩小 visual viewport；iOS 也不会让 100dvh 可靠地避开软键盘。
+// 把应用高度钉到真正可见区域，并在 Safari 产生 viewport 偏移时跟着移动。
+// interactive-widget=resizes-content 时 innerHeight 也会跟着掉，所以不能靠
+// innerHeight vs visualViewport 判断键盘。同一宽度下相对最近的满高度掉
+// 120px 以上视为软键盘：网页让位，PTY 行列保持键盘收起时的尺寸。
+const VISUAL_KEYBOARD_INSET_MIN = 120;
+let visualLayoutWidth = 0;
+let visualLayoutHeight = 0;
+let visualKeyboardWasOpen = false;
+function browserPinchZoomed() {
+  return Math.abs((window.visualViewport?.scale || 1) - 1) > 0.01;
+}
+function visualKeyboardOpen() {
+  if (!MOBILE.matches) return false;
+  if (browserPinchZoomed()) return visualKeyboardWasOpen;
+  const viewport = window.visualViewport;
+  const width = Math.round(viewport?.width || window.innerWidth);
+  const height = Math.max(1, Math.round(viewport?.height || window.innerHeight));
+  if (width !== visualLayoutWidth) {
+    visualLayoutWidth = width;
+    visualLayoutHeight = height;
+    return visualKeyboardWasOpen = false;
+  }
+  if (height > visualLayoutHeight) {
+    visualLayoutHeight = height;
+    return visualKeyboardWasOpen = false;
+  }
+  return visualKeyboardWasOpen = visualLayoutHeight - height >= VISUAL_KEYBOARD_INSET_MIN;
+}
+// PTY 行列按键盘收起时的布局测量：界面缩放等真实布局变化照常重排，
+// 软键盘让出的高度不计入。临时写回满高度只影响这次同步测量，不会绘制。
+function measureKeyboardClosedLayout(measure) {
+  if (!visualKeyboardOpen()) return measure();
+  const root = document.documentElement.style;
+  const saved = root.getPropertyValue('--visual-viewport-height');
+  root.setProperty('--visual-viewport-height', `${visualLayoutHeight}px`);
+  try { return measure(); } finally {
+    if (saved) root.setProperty('--visual-viewport-height', saved);
+    else root.removeProperty('--visual-viewport-height');
+  }
+}
+let viewportFrame = 0;
+function syncMobileViewport() {
+  cancelAnimationFrame(viewportFrame);
+  viewportFrame = requestAnimationFrame(() => {
+    const root = document.documentElement.style;
+    if (!MOBILE.matches) {
+      visualLayoutWidth = 0;
+      visualLayoutHeight = 0;
+      visualKeyboardWasOpen = false;
+      root.removeProperty('--visual-viewport-height');
+      root.removeProperty('--visual-viewport-top');
+      return;
+    }
+    // Pinch changes the visible window onto the page, not its layout or PTY size.
+    // Retain the last unzoomed keyboard geometry until native zoom returns to 1.
+    if (browserPinchZoomed()) return;
+    const viewport = window.visualViewport;
+    const height = Math.max(1, Math.round(viewport?.height || window.innerHeight));
+    const top = Math.max(0, Math.round(viewport?.offsetTop || 0));
+    root.setProperty('--visual-viewport-height', `${height}px`);
+    root.setProperty('--visual-viewport-top', `${top}px`);
+    if (typeof layoutTermPane === 'function') {
+      layoutTermPane();
+      if (visualKeyboardOpen()) {
+        try { currentTermViewObject()?.term?.scrollToBottom(); } catch { /* no view yet */ }
+        if (typeof positionTermViewport === 'function') positionTermViewport(currentTermViewObject());
+      } else if (typeof fitTerm === 'function') {
+        fitTerm();
+      }
+    }
+  });
+}
+window.visualViewport?.addEventListener('resize', syncMobileViewport);
+window.visualViewport?.addEventListener('scroll', syncMobileViewport);
+window.addEventListener('resize', syncMobileViewport);
+syncMobileViewport();
+
+function showMobileDetail() {
+  if (MOBILE.matches) {
+    document.body.classList.add('mobile-detail');
+    store.set('mobilePage', 'detail');
+    layoutSessionHead();
+  }
+  syncSessionFreezeOverlay();
+}
+
+function showMobileList() {
+  if (typeof T !== 'undefined' && !$('#termpane').classList.contains('hidden')) closeTermPane(true);
+  document.body.classList.remove('mobile-detail');
+  if (MOBILE.matches) store.set('mobilePage', 'list');
+  layoutSessionHead();
+  layoutHeader();
+  syncSessionStopNotice();
+}
+
+function fmtSize(n) {
+  if (n < 1024) return n + 'B';
+  if (n < 1048576) return (n / 1024).toFixed(0) + 'K';
+  return (n / 1048576).toFixed(1) + 'M';
+}
+function fmtTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso), now = new Date();
+  const p = n => String(n).padStart(2, '0');
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  if (d.toDateString() === now.toDateString()) return '今天 ' + hm;
+  const y = new Date(now - 86400000);
+  if (d.toDateString() === y.toDateString()) return '昨天 ' + hm;
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}-${p(d.getDate())} ${hm}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+/** 起止时间：同一天只写一次日期前缀；没有结束时间就是还在跑。 */
+function fmtSpan(start, end) {
+  const from = fmtTime(start);
+  if (!end) return from ? `${from} → 运行中` : '运行中';
+  const to = fmtTime(end);
+  if (!from) return to;   // 旧节点的列表项还没有开始时间
+  const split = s => { const i = s.lastIndexOf(' '); return i < 0 ? [s, ''] : [s.slice(0, i), s.slice(i + 1)]; };
+  const [fromDay, fromClock] = split(from), [toDay, toClock] = split(to);
+  return fromClock && toClock && fromDay === toDay ? `${from} → ${toClock}` : `${from} → ${to}`;
+}
+/** 家目录缩成 ~; 过长的路径中间省略, 首尾都是有信息量的部分。
+ *  不能用 CSS direction:rtl 来截左边 —— bidi 会把开头的 "/" 挪到末尾。 */
+function shortCwd(p, max = 40) {
+  p = (p || '(未知)').replace(/^\/home\/[^/]+/, '~');
+  if (p.length <= max) return p;
+  const seg = p.split('/');
+  return seg.length > 3 ? `${seg[0]}/${seg[1]}/…/${seg.slice(-2).join('/')}` : p;
+}
+
+const timelinePath = cwd => (cwd || '(未知)').replace(/^\/home\/[^/]+/, '~').replace(/\/+$/, '') || '/';
+const TIMELINE_COLORS = ['blue', 'teal', 'violet', 'amber', 'rose', 'olive', 'rust', 'cyan'];
+let timelineColors = new Map();
+try {
+  for (const [path, color] of store.get('timelineDirectoryColors', [])) {
+    if (typeof path === 'string' && TIMELINE_COLORS.includes(color)
+        && ![...timelineColors.values()].includes(color)) timelineColors.set(path, color);
+  }
+} catch { /* Ignore invalid saved assignments. */ }
+
+function timelineDirectoryColors(rows) {
+  const counts = new Map(), seen = new Set();
+  for (const row of rows) {
+    if (!row.cwd || row.cwd === '(未知)' || seen.has(row.uid)) continue;
+    seen.add(row.uid); // Search results also contain sessions in the main list.
+    const path = timelinePath(row.cwd);
+    counts.set(path, (counts.get(path) || 0) + 1);
+  }
+  const common = [...counts].filter(([, count]) => count >= 2)
+    .sort(([a, ac], [b, bc]) => bc - ac || (a < b ? -1 : a > b ? 1 : 0))
+    .slice(0, TIMELINE_COLORS.length).map(([path]) => path);
+  const assigned = new Map(common.filter(path => timelineColors.has(path))
+    .map(path => [path, timelineColors.get(path)]));
+  const free = TIMELINE_COLORS.filter(color => ![...assigned.values()].includes(color));
+  for (const path of common) {
+    if (!assigned.has(path)) assigned.set(path, free.shift());
+  }
+  // Preserve slots when session counts reorder the common directories. Filters
+  // use the full pool, and reloads reuse the assignment instead of recoloring it.
+  if (assigned.size !== timelineColors.size
+      || [...assigned].some(([path, color]) => timelineColors.get(path) !== color)) {
+    timelineColors = assigned;
+    store.set('timelineDirectoryColors', [...assigned]);
+  }
+  return timelineColors;
+}
+
+/** Count directories, not sessions: a busy project must not change which parts
+ *  identify a path. Keep the full pool even while filtering the sidebar. */
+let timelinePlanCache = {paths: new Set(), plans: new Map()};
+function timelinePathPlans(rows) {
+  const pathSet = new Set(rows.map(s => timelinePath(s.cwd)));
+  if (pathSet.size === timelinePlanCache.paths.size
+      && [...pathSet].every(path => timelinePlanCache.paths.has(path))) return timelinePlanCache.plans;
+  const paths = [...pathSet];
+  const frequency = new Map(), peers = new Map();
+  for (const path of paths) {
+    const parts = path.split('/'), leaf = parts.at(-1);
+    for (const part of new Set(parts)) frequency.set(part, (frequency.get(part) || 0) + 1);
+    // Any matching abbreviation must contain every literal component. Index
+    // those components so same-basename temporary directories do not require
+    // an all-pairs regex scan (their distinguishing component is often unique).
+    if (!peers.has(leaf)) peers.set(leaf, new Map());
+    const components = peers.get(leaf);
+    for (const part of new Set(parts)) {
+      if (!components.has(part)) components.set(part, new Set());
+      components.get(part).add(path);
+    }
+  }
+  const plans = new Map(paths.map(path => {
+    const parts = path === '/' ? ['/'] : path.split('/');
+    const leaf = parts.at(-1), hidden = new Set(), labels = [path];
+    // Repeated ancestors carry less information. Ties favor keeping the deeper
+    // context. Never remove the root anchor or any part of the final directory.
+    const order = parts.map((_, i) => i).slice(1, -1).sort((a, b) =>
+      frequency.get(parts[b]) - frequency.get(parts[a]) || a - b);
+    for (const i of order) {
+      hidden.add(i);
+      const tokens = parts.flatMap((part, j) => hidden.has(j)
+        ? (hidden.has(j - 1) ? [] : [null]) : [part]);
+      // An ellipsis represents whole directories. If it could also stand for
+      // another path with the same basename, retain the distinguishing ancestor.
+      const components = peers.get(leaf);
+      const candidates = tokens.filter(token => token !== null)
+        .map(token => components.get(token)).reduce((a, b) => a.size <= b.size ? a : b);
+      const pattern = candidates.size > 1 ? new RegExp('^' + tokens.map(token => token === null
+        ? '(?:[^/]+/)*[^/]+' : token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('/') + '$') : null;
+      if (pattern && [...candidates].some(other => other !== path && pattern.test(other))) {
+        hidden.delete(i);
+        continue;
+      }
+      const label = tokens.map(token => token === null ? '…' : token).join('/');
+      labels.push(label);
+    }
+    return [path, {leaf, labels}];
+  }));
+  timelinePlanCache = {paths: pathSet, plans};
+  return plans;
+}
+
+function timelinePathMarkup(path, leaf) {
+  return esc(path.slice(0, path.length - leaf.length))
+    + `<span class="cwd-leaf">${esc(leaf)}</span>`;
+}
+
+function timelineDirectoryMarkup(row) {
+  const path = timelinePath(row.cwd), leaf = path === '/' ? '/' : path.split('/').at(-1);
+  return (row.node_name ? `<span class="cwd-machine">${nodeBadge(row.node_name)}</span>` : '')
+    + `<span class="cwd-path" data-path="${esc(path)}">${timelinePathMarkup(path, leaf)}</span>`;
+}
+
+let timelineFitContext = null;
+function fitTimelineDirectories(elements = null, context = null) {
+  if (S.view !== 'date') return;
+  elements ||= [...document.querySelectorAll('#side .cwd-path')];
+  if (!elements.length) return;
+  if (!context) {
+    const rows = [...S.sessions, ...pendingTmuxSessions(), ...(S.results || [])];
+    context = timelineFitContext = {plans: timelinePathPlans(rows), colors: timelineDirectoryColors(rows)};
+  }
+  const {plans, colors} = context;
+  const measure = document.createElement('canvas').getContext('2d');
+  const font = getComputedStyle(elements[0]);
+  measure.font = `${font.fontWeight} ${font.fontSize} ${font.fontFamily}`;
+  const widths = new Map();
+  // Batch layout reads before writes; repeated rows share measured labels.
+  const updates = elements.map(element => {
+    const plan = plans.get(element.dataset.path);
+    if (!plan) return null;
+    const color = colors.get(element.dataset.path) || '';
+    const width = element.clientWidth;
+    if (!width) return {element, color}; // Fit a closed date group when opened.
+    const measured = label => {
+      if (!widths.has(label)) {
+        widths.set(label, measure.measureText(label).width);
+      }
+      return widths.get(label);
+    };
+    const label = plan.labels.find(label => measured(label) <= width)
+      || plan.labels.reduce((best, label) => measured(label) < measured(best) ? label : best);
+    return {element, color, markup: timelinePathMarkup(label, plan.leaf)};
+  });
+  for (const update of updates) {
+    if (!update) continue;
+    if (update.element.dataset.cwdColor !== update.color) update.element.dataset.cwdColor = update.color;
+    if (update.markup && update.element.innerHTML !== update.markup) update.element.innerHTML = update.markup;
+  }
+}
+
+let timelineFitFrame = 0;
+function scheduleTimelineFit() {
+  cancelAnimationFrame(timelineFitFrame);
+  timelineFitFrame = requestAnimationFrame(() => fitTimelineDirectories());
+}
+new ResizeObserver(scheduleTimelineFit).observe($('#side'));
+document.fonts.ready.then(scheduleTimelineFit);
+
+const dayKey = iso => {
+  const d = new Date(iso), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
+// ---------------------------------------------------------------- 消息缓存
+// 一次读完整个会话, 结果按 LRU 留在内存; 会话是 append-only 的,
+// 再次打开时只向服务端要新追加的部分。
+let cacheLimitMb = Math.max(0, +store.get('cacheMb', 256) || 0);
+let CACHE_MAX_BYTES = cacheLimitMb ? cacheLimitMb * 1024 * 1024 : Infinity;
+const RENDER_BATCH = 250;
+const SYNC_MS = 10000;      // 没在运行的会话, 偶尔看一眼就行
+const LIVE_MS = 3000;       // 活跃探测(扫 /proc)的间隔
+// 正在看的活跃会话用自适应间隔: 有新内容就贴到最快, 静下来逐步退避
+const FAST_MIN = 350;
+const FAST_MAX = 3000;
+const TICK_MS = 200;
+const BACKUP_MS = 20000;    // SSE 正常时的兜底对账间隔
+const LIST_MS = 8000;       // 会话列表跟进磁盘变化的间隔
+// 主动增量读取可能因浏览器连接池、网络切换或代理半开而既不成功也不失败。
+// 只要响应头或正文仍有进展就续期；真正静止到这个时长才中止，让下一次
+// SSE/对账从同一游标重试。用 let 是为了浏览器 E2E 能把分钟级故障压缩到毫秒。
+let SYNC_STALL_MS = 12000;
+const cache = new Map();          // viewKey → {meta, msgs, version, end, bytes}
+const messageIndexes = new WeakMap();
+function messageIndex(messages) {
+  let index = messageIndexes.get(messages);
+  if (!index) {
+    index = {length: 0, questions: new Set(), turnStart: -1, tailHasFinal: false};
+    messageIndexes.set(messages, index);
+  }
+  for (let i = index.length; i < messages.length; i++) {
+    const message = messages[i];
+    if (message.role === 'question' && message.call_id) index.questions.add(message.call_id);
+    if (isTurnStart(message) && !(i > 0 && isTurnStart(messages[i - 1])
+        && sameNativeTurn(messages[i - 1], message))) {
+      index.turnStart = i;
+      index.tailHasFinal = false;
+    }
+    if (isFinalAssistant(message)) index.tailHasFinal = true;
+  }
+  index.length = messages.length;
+  return index;
+}
+// 多题题卡会被 SSE、兜底对账和完整重绘反复替换 DOM。未提交选择必须独立于
+// 节点保存，否则下一次后台刷新就会让用户刚点的答案消失。
+const questionFormDrafts = new Map(); // `${uid}\0${tool id}` → option index[]
+const viewKey = (uid, agent = null) => agent ? `${uid}::${agent}` : uid;
+const INCOMING_ROLES = new Set([
+  'assistant', 'assistant·subagent', 'thinking', 'tool', 'tool_result', 'question',
+]);
+const incomingCount = msgs => msgs.filter(m => m.counted !== false && INCOMING_ROLES.has(m.role)).length;
+const messageCount = msgs => msgs.filter(m => m.counted !== false).length;
+const entryTotal = entry => Number.isFinite(+entry?.total)
+  ? +entry.total : messageCount(entry?.msgs || []);
+
+function queuedAfterTimestamp(uid) {
+  const entry = cache.get(viewKey(uid));
+  let latest = Date.parse(entry?.activity?.ts || '');
+  for (let i = (entry?.msgs?.length || 0) - 1; i >= 0; i--) {
+    const at = Date.parse(entry.msgs[i]?.ts || '');
+    if (!Number.isFinite(at)) continue;
+    latest = Number.isFinite(latest) ? Math.max(latest, at) : at;
+    break;
+  }
+  return Number.isFinite(latest) ? new Date(latest).toISOString() : null;
+}
+
+function cacheGet(uid) {
+  const e = cache.get(uid);
+  if (e) { cache.delete(uid); cache.set(uid, e); }   // 命中即移到队尾
+  return e;
+}
+
+function cacheEntryUid(key, entry) {
+  // 子代理视图的 key 是 uid::agent，但它和主会话共用同一个 tmux 生命周期。
+  return entry?.meta?.uid || String(key).split('::', 1)[0];
+}
+
+function cacheEntryPinned(key, entry) {
+  const uid = cacheEntryUid(key, entry);
+  // 详情 DOM 直接由当前缓存生成。若容量整理把正在看的这一份删掉，页面仍
+  // 看似正常，却再也没有游标可供 SSE/outbox 补读，最终会留下永久 pending。
+  return key === viewKey(S.sel, S.agent)
+    || S.liveTmux.has(uid)
+    || (typeof T !== 'undefined' && T.list?.some(x => x.uid === uid));
+}
+
+function trimCache() {
+  // tmux 对话必须随时切回即见，因此不计入容量、也不参与淘汰。
+  // 普通历史对话单独共享用户设置的容量，并延续“至少保留最新一份”的旧行为。
+  const evictable = [...cache].filter(([key, entry]) => !cacheEntryPinned(key, entry));
+  let total = evictable.reduce((n, [, entry]) => n + (+entry.bytes || 0), 0);
+  let remaining = evictable.length;
+  for (const [key, entry] of evictable) {
+    if (total <= CACHE_MAX_BYTES || remaining <= 1) break;
+    cache.delete(key);
+    total -= +entry.bytes || 0;
+    remaining--;
+  }
+}
+
+function cachePut(uid, e) {
+  cache.delete(uid);
+  cache.set(uid, e);
+  trimCache();
+}
+
+/** 带下载进度的取消息。start/head 给定时服务端只回新增部分。 */
+async function fetchMessages(uid, opts = {}) {
+  const p = new URLSearchParams();
+  if (opts.start) {
+    p.set('start', opts.start);
+    p.set('head', opts.head);
+    p.set('anchor', opts.anchor || '');     // 没有锚点服务端会拒绝续读, 直接给整份
+  }
+  if (opts.agent) p.set('agent', opts.agent);
+  if (opts.appendOnly) p.set('append', '1');
+  if (opts.windowed) p.set('window', '1');
+  const traceId = globalThis.crypto?.randomUUID?.()
+    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const url = `api/messages/${encodeURIComponent(uid)}?${p}`;
+  const started = performance.now();
+  browserAuditEvent('http.request.started', {
+    url, method: 'GET', start: opts.start || 0, agent: opts.agent || '',
+  }, null, {uid, traceId});
+  let r;
+  try {
+    r = await fetch(appUrl(url), {
+      signal: opts.signal,
+      headers: {'X-SessionDock-Trace': traceId, 'X-SessionDock-Page': AUDIT_PAGE_ID,
+        'X-SessionDock-Build': BUILD_ID},
+    });
+  } catch (error) {
+    browserAuditEvent('http.request.failed', {
+      url, error: String(error?.name || error),
+      duration_ms: Math.round((performance.now() - started) * 1000) / 1000,
+    }, null, {uid, traceId, severity: error?.name === 'AbortError' ? 'warning' : 'error'});
+    throw error;
+  }
+  opts.onActivity?.();
+  if (!r.ok) {
+    browserAuditEvent('http.response.received', {url, status: r.status, ok: false},
+      null, {uid, traceId, severity: 'warning'});
+    const detail = SessionDockCapabilities.config.backend === 'rust'
+      ? await r.json().catch(() => null) : null;
+    const error = new Error(detail?.error || 'HTTP ' + r.status);
+    error.status = r.status;
+    error.code = detail?.code || '';
+    throw error;
+  }
+  // Fetch 自动解压 gzip：reader.read() 统计的是解压后字节，而标准
+  // Content-Length 仍可能是压缩后大小。优先用服务端给出的同口径长度；
+  // 连到旧服务端时，压缩响应改显示不定进度，也不伪造一个较小的分母。
+  const contentTotal = +r.headers.get('Content-Length') || 0;
+  const decodedTotal = +r.headers.get('X-SessionDock-Decoded-Length') || 0;
+  const encoded = !!r.headers.get('Content-Encoding');
+  const total = decodedTotal || (encoded ? 0 : contentTotal);
+  const reader = r.body.getReader();
+  const chunks = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    opts.onActivity?.();
+    if (encoded && contentTotal && decodedTotal) {
+      // Fetch 不暴露实时压缩字节数。用解压进度映射到已知的
+      // 压缩总量：中途值明确标为估算，最后一帧则精确等于响应体流量。
+      const transferred = Math.min(contentTotal,
+        Math.round(got / decodedTotal * contentTotal));
+      opts.onProgress?.(transferred, contentTotal, {
+        compressed: true, estimated: got < decodedTotal,
+      });
+    } else {
+      opts.onProgress?.(got, total);
+    }
+  }
+  const buf = new Uint8Array(got);
+  let at = 0;
+  for (const c of chunks) { buf.set(c, at); at += c.length; }
+  const data = JSON.parse(new TextDecoder().decode(buf));
+  browserAuditEvent('http.response.parsed', {
+    url, status: r.status, bytes: got, reset: !!data.reset,
+    start: data.start, end: data.end, messages: data.messages?.length || 0,
+    duration_ms: Math.round((performance.now() - started) * 1000) / 1000,
+  }, null, {uid, traceId});
+  return { data, bytes: got,
+    networkBytes: encoded && contentTotal ? contentTotal : got };
+}
+
+// ---- 进度条 ----
+function progress(done, total, label, detail = {}) {
+  const bar = $('#prog');
+  bar.classList.add('on');
+  const pct = total ? Math.min(100, done / total * 100) : 0;
+  bar.querySelector('.bar').style.width = (total ? pct : 12) + '%';
+  bar.querySelector('.bar').classList.toggle('idle', !total);
+  const estimate = detail.estimated ? '≈' : '';
+  const compressed = detail.compressed ? '（压缩）' : '';
+  bar.querySelector('.txt').textContent = total
+    ? `${label} ${label === '渲染' ? `${done}/${total}`
+      : estimate + fmtSize(done) + ' / ' + fmtSize(total) + compressed}`
+    : `${label}…`;
+}
+
+function progressDone() {
+  const bar = $('#prog');
+  bar.classList.remove('on');
+  bar.querySelector('.bar').style.width = '0%';
+}
+
+/** 把服务端给的一份 diff 应用到缓存和界面上。
+ *  两种情况: 追加(接到末尾) 或 reset(整份重来) —— 和服务端的判定一一对应。 */
+function normalizedQuestionAnswer(text) {
+  const raw = String(text || '');
+  if (/^aborted by user(?:\s|$)/i.test(raw.trim())
+      || raw.startsWith("The user doesn't want to proceed with this tool use.")) {
+    return '已取消回答';
+  }
+  try {
+    const answers = JSON.parse(raw)?.answers;
+    if (!answers || typeof answers !== 'object') return raw;
+    const rows = Object.values(answers).map(answer => {
+      const values = answer && typeof answer === 'object' ? answer.answers : answer;
+      return Array.isArray(values) ? values.join('、') : String(values || '').trim();
+    }).filter(Boolean);
+    return rows.join('\n') || raw;
+  } catch { return raw; }
+}
+
+/** 正文游标可能已经由并行 fetch 推进，但后到的 SSE 仍可能携带更新的活动态。
+ *  活动态有自己的时间线：接收较新的状态，绝不让旧 Working 覆盖已中断。 */
+function activityFollows(current, incoming) {
+  if (!current) return true;
+  if (!incoming) return ['working', 'waiting'].includes(current.state);
+  const currentAt = Date.parse(current.ts || '');
+  const incomingAt = Date.parse(incoming.ts || '');
+  if (Number.isFinite(currentAt) && Number.isFinite(incomingAt)) {
+    return incomingAt >= currentAt;
+  }
+  const currentBusy = ['working', 'waiting'].includes(current.state);
+  const incomingBusy = ['working', 'waiting'].includes(incoming.state);
+  if (currentBusy !== incomingBusy) return currentBusy && !incomingBusy;
+  return true;
+}
+
+function applyCoveredActivity(uid, agent, entry, data) {
+  if (!data.activity_changed || !activityFollows(entry.activity, data.activity)) return;
+  entry.activity = data.activity;
+  markInterruptedTurn(entry.msgs, entry.activity);
+  if (S.sel !== uid || S.agent !== agent) return;
+  const box = $('#msgs');
+  $('#activity')?.remove();
+  $('#queued-sends')?.remove();
+  if (box && entry.activity?.state !== 'working') sealTurnTail(box, entry);
+  renderConversationTail(entry.activity, uid);
+}
+
+function applyMigrationMeta(uid, agent, entry, meta) {
+  if (SessionDockCapabilities.config.backend !== 'rust' || !meta
+      || meta.uid !== uid || (meta.agent_id || null) !== agent) return;
+  const key = m => JSON.stringify([m.title, m.parent_title, m.sid, m.agent_type,
+    m.cwd, m.model, !!m.starred, m.fork_parent_visible,
+    m.nest_parent || null, m.group || null,
+    (m.agent_items || []).map(a => [a.id, a.title, a.type])]);
+  const changed = key(entry.meta) !== key(meta);
+  entry.meta = meta;
+  if (!agent) {
+    const listed = indexedSessions().byUid.get(uid);
+    // Cursor/size updates do not change membership, ordering, nesting or
+    // filters; migration_warnings 同样只出现在详情里，左栏从不展示（docs/history-pages.md）。
+    // Keep the indexed row object used by the resolved sidebar tree;
+    // replace the array normally for every other kind of metadata change.
+    if (listed && JSON.stringify(listed) !== JSON.stringify(meta)) {
+      const local = Object.keys({...listed, ...meta}).every(field =>
+        field === 'cursor' || field === 'size' || field === 'migration_warnings'
+          || JSON.stringify(listed[field]) === JSON.stringify(meta[field]));
+      if (local) {
+        const sizeChanged = listed.size !== meta.size;
+        for (const field of ['cursor', 'size', 'migration_warnings']) {
+          if (Object.hasOwn(meta, field)) listed[field] = meta[field];
+          else delete listed[field];
+        }
+        if (sizeChanged) {
+          const node = $('#side').querySelector(`.item:not(.agent)[data-uid="${CSS.escape(uid)}"]`);
+          if (node?._nestRow) {
+            node._signature = null;
+            if (!sidebarTextSelectionProtected()) patchSidebarRow(node, node._nestRow, node._highlightKey);
+          }
+        }
+      } else S.sessions = S.sessions.map(row => row.uid === uid ? {...meta} : row);
+    }
+  }
+  if (!changed) {
+    // The first native message changes an assigned launch from unused to
+    // populated even when its title and other header fields stay the same.
+    if (S.sel === uid && !S.agent) renderSessionAction(meta);
+    return;
+  }
+  if (!agent) renderSide();
+  if (S.sel !== uid || S.agent !== agent) return;
+  const oldHead = $('#detail > .dhead');
+  if (!oldHead) return;
+  const wasOpen = oldHead.querySelector('#session-view-menu')?.hidden === false;
+  const next = head(meta, entryTotal(entry));
+  if (wasOpen) {
+    const menu = next.querySelector('#session-view-menu');
+    if (menu) menu.hidden = false;
+    next.querySelector('#a-view-switch')?.setAttribute('aria-expanded', 'true');
+  }
+  oldHead.replaceWith(next);
+  layoutSessionHead();
+}
+
+async function applyDiff(uid, data, bytes = 0, agent = null) {
+  try { return await applyDiffPacket(uid, data, bytes, agent); }
+  // activity 与 CLI 画面都随数据包到达，左栏和会话头的回合状态跟着重画。
+  finally { if (!agent) paintTurn(uid); }
+}
+
+async function applyDiffPacket(uid, data, bytes = 0, agent = null) {
+  const key = viewKey(uid, agent);
+  if (migrationReadPaused(uid, agent)) return 0;
+  const e = cache.get(key);
+  if (!e) return 0;
+  if (data.prompt_only) {
+    if (!agent && Object.prototype.hasOwnProperty.call(data, 'prompt')) {
+      e.prompt = data.prompt || null;
+      globalThis.revealConversationForPrompt?.(uid, e.prompt);
+    }
+    if (S.sel === uid && !S.agent) renderConversationTail(e.activity, uid);
+    return 0;
+  }
+  if (data.cli_only) {
+    // The session's CLI state changed (input readiness, editor text, queued
+    // sends) without new records (docs/cli-state.md).
+    if (!agent && Object.prototype.hasOwnProperty.call(data, 'cli')) {
+      e.cli = data.cli || null;
+      globalThis.applyCliState?.(uid, e.cli);
+    }
+    return 0;
+  }
+  // 正文 diff 受游标约束。SSE 与兜底拉取可能同时从同一旧游标出发；
+  // 乱序包必须在修改 outbox、prompt 或乐观消息之前丢弃，否则正文没被
+  // 接收，发送占位却已先清掉。
+  if (!data.reset && data.start !== e.end) {
+    const packetStart = Number(data.start), packetEnd = Number(data.end);
+    const currentEnd = Number(e.end);
+    if (Number.isFinite(packetStart) && Number.isFinite(packetEnd)
+        && Number.isFinite(currentEnd)
+        && packetStart < currentEnd && packetEnd <= currentEnd) {
+      // SSE 与主动 fetch 从同一旧游标出发时，后到者可能是一份已被前者
+      // 完整覆盖的重复正文。活动态使用独立修订，仍须接收其中较新的
+      // aborted/failed；否则页面要等兜底拉取才会清掉 Working。
+      applyCoveredActivity(uid, agent, e, data);
+      return 0;
+    }
+    scheduleDiffRecovery(uid, agent);
+    return 0;
+  }
+  if (!agent && Object.prototype.hasOwnProperty.call(data, 'prompt')) {
+    e.prompt = data.prompt || null;
+    globalThis.revealConversationForPrompt?.(uid, e.prompt);
+  }
+  if (!agent && Object.prototype.hasOwnProperty.call(data, 'cli')) {
+    e.cli = data.cli || null;
+    globalThis.applyCliState?.(uid, e.cli);
+  }
+  const questionCalls = data.reset ? new Set() : messageIndex(e.msgs).questions;
+  for (const message of data.messages || []) {
+    if (message.role === 'question' && message.call_id) questionCalls.add(message.call_id);
+  }
+  data.messages = (data.messages || []).map(m => {
+    if (m.role !== 'tool_result' || !questionCalls.has(m.call_id)) return m;
+    return { ...m, role: 'answer', name: m.name || 'AskUserQuestion',
+      text: normalizedQuestionAnswer(m.text) };
+  });
+  if (data.reset) {                         // 回滚 / 重写过, 缓存作废
+    markInterruptedTurn(data.messages, data.activity);
+    cachePut(key, { meta: data.meta, msgs: data.messages, version: data.version,
+                    end: data.end, anchor: data.anchor, activity: data.activity, bytes,
+                    prompt: data.prompt || null, cli: data.cli ?? null,
+                    total: data.message_total, partial: data.partial || null });
+    S.cursors.set(key, { end: data.end, head: data.version.head, anchor: data.anchor });
+    if (S.sel === uid && S.agent === agent) {
+      // Rust keeps SSE live during explicit window reloads and native resets.
+      // Publish the new snapshot together with any suffix/activity accepted
+      // while this renderer yields; the existing render path is retained.
+      const options = SessionDockCapabilities.config.backend === 'rust'
+        ? {historyPageEntry: cache.get(key)} : {};
+      await renderSession(data.meta, data.messages, data.activity, options);
+    }
+    return data.messages.length;
+  }
+  e.version = data.version;
+  e.end = data.end;
+  e.anchor = data.anchor;
+  S.cursors.set(key, { end: data.end, head: data.version.head, anchor: data.anchor });
+  e.bytes += bytes;
+  applyMigrationMeta(uid, agent, e, data.meta);
+  if (data.activity_changed) {
+    e.activity = data.activity;
+    // turn_aborted 可能单独成为一个无正文的 SSE 包，也可能与末批正文一起
+    // 到达；两边都补标，不能依赖恰好落在同一次 JSONL 增量读取中。
+    markInterruptedTurn(e.msgs, e.activity);
+    markInterruptedTurn(data.messages, e.activity);
+  }
+  else if (e.activity?.state === 'waiting' && data.messages.some(
+      m => m.role === 'tool_result' || m.role === 'answer')) {
+    // 问题和回答可能分属两次增量读取，第二次已没有 call_id 映射。
+    const answerAt = data.messages.findIndex(m => m.role === 'tool_result');
+    data.messages = data.messages.map((m, i) => i === answerAt && m.role === 'tool_result'
+      ? { ...m, role: 'answer' } : m);
+    e.activity = { role: 'status', state: 'working', text: 'working', ts: new Date().toISOString() };
+  }
+  if (!data.messages.length) {
+    if (S.sel === uid && S.agent === agent) {
+      const box = $('#msgs');
+      $('#activity')?.remove();
+      $('#queued-sends')?.remove();
+      if (box && e.activity?.state !== 'working') sealTurnTail(box, e);
+      renderConversationTail(e.activity, uid);
+    }
+    return 0;
+  }
+  e.total = entryTotal(e) + messageCount(data.messages);
+  for (const message of data.messages) e.msgs.push(message);
+  const incoming = incomingCount(data.messages);
+  const detailVisible = S.sel === uid && S.agent === agent
+    && (!MOBILE.matches || document.body.classList.contains('mobile-detail'));
+  if (incoming && !detailVisible) addUnread(uid, incoming);
+  if (S.sel !== uid || S.agent !== agent) return data.messages.length;
+  const box = $('#msgs');
+  if (!box) return data.messages.length;
+  $('#activity')?.remove();
+  $('#queued-sends')?.remove();
+  const built = appendMessages(box, data.messages, null,
+    {openTail: e.activity?.state === 'working'});
+  const sealed = sealTurnTail(box, e);
+  if (!sealed) {
+    built.forEach(markMatches);
+    if (S.term) updateMatchNav();
+  }
+  renderConversationTail(e.activity, uid);
+  const c = $('#mcount-total');
+  const total = entryTotal(e);
+  if (c) c.textContent = `${total} 条消息`;
+  const mc = $('.mobile-msg-count');
+  if (mc) {
+    mc.textContent = total;
+    mc.setAttribute('aria-label', `${total} 条消息`);
+  }
+  return data.messages.length;
+}
+
+/** 兜底用的主动拉取。正常情况下更新由服务端 SSE 推过来, 这里只在
+ *  连接还没建起来或断了的时候补一手。 */
+const syncingViews = new Map();
+// Migration-only failures stop background retries for this exact view. Keep
+// the last good snapshot; only a successful explicit HTTP retry clears them.
+const migrationReadFailures = new Map();
+const migrationReadRetries = new Map();
+const migrationReadProbes = new Map();
+
+function migrationReadPaused(uid, agent = null) {
+  return SessionDockCapabilities.config.backend === 'rust'
+    && migrationReadFailures.has(viewKey(uid, agent));
+}
+
+/** 瞬时失败只影响这一次请求：网络层错误、中止、408/429、5xx（501 除外）。
+ *  它们走退避重试，不暂停视图、不弹横幅、不关 SSE。 */
+function transientReadFailure(error) {
+  if (!error) return false;
+  if (error.name === 'AbortError' || error.name === 'TypeError') return true;
+  const status = Number(error.status) || 0;
+  return status === 408 || status === 429 || (status >= 500 && status !== 501);
+}
+
+/** 只有服务端可能已修复的失败才给“重试读取”：4xx 是请求本身不成立（不存在、
+ *  超预算、格式错），重试同一读取不会有不同结果。 */
+function retryableReadFailure(failure) {
+  const status = Number(failure?.status) || 0;
+  return !status || status >= 500;
+}
+
+// 指数退避：1.5 s 起，每次翻倍，封顶 15 s；成功后归零。
+const RETRY_BASE_MS = 1500;
+const RETRY_MAX_MS = 15000;
+const retryDelay = attempt => Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.max(0, attempt));
+
+function renderMigrationReadFailure(uid, agent = null) {
+  if (SessionDockCapabilities.config.backend !== 'rust' || S.sel !== uid || S.agent !== agent) return;
+  const detail = $('#detail');
+  if (!detail) return;
+  $('#migration-read-error')?.remove();
+  const failure = migrationReadFailures.get(viewKey(uid, agent));
+  if (!failure) { delete detail.dataset.migrationStale; return; }
+  detail.dataset.migrationStale = 'true';
+  // 没有快照时正文已经写了“读取失败: …”，不再重复一条横幅。
+  if (!cache.has(viewKey(uid, agent))) return;
+  const notice = document.createElement('div');
+  notice.id = 'migration-read-error';
+  notice.setAttribute('role', 'alert');
+  notice.style.cssText = 'padding:8px 12px;flex:none;border-bottom:1px solid var(--border);font-size:13px';
+  const text = document.createElement('span');
+  text.textContent = '同步已暂停；当前保留的是先前快照，不代表最新历史。'
+    + failure.message + (failure.status ? `（HTTP ${failure.status}）` : '') + ' ';
+  const parts = [text];
+  if (retryableReadFailure(failure)) {
+    const retry = document.createElement('button');
+    retry.type = 'button'; retry.className = 'btn';
+    retry.textContent = failure.retrying ? '正在重试…' : '重试读取';
+    retry.disabled = !!failure.retrying;
+    retry.onclick = () => { void retryMigrationRead(uid, agent); };
+    parts.push(retry);
+  }
+  notice.append(...parts);
+  const heading = detail.querySelector(':scope > .dhead');
+  if (heading) heading.after(notice); else detail.prepend(notice);
+}
+
+/** 不可恢复失败的登记：暂停该视图的后台读取与 SSE，保留先前快照。 */
+function reportMigrationReadFailure(uid, agent, error) {
+  if (SessionDockCapabilities.config.backend !== 'rust') return null;
+  const failure = {message: String(error?.message || error?.error || '无法确认最新历史，请重试。'),
+    status: Number(error?.status) || 0, code: String(error?.code || '')};
+  migrationReadFailures.set(viewKey(uid, agent), failure);
+  if (S.sel === uid && S.agent === agent && _esUid === uid) closeWatch();
+  renderMigrationReadFailure(uid, agent);
+  return failure;
+}
+
+/** 请求失败的分流：瞬时失败不登记（返回 null，由调用方按退避重试），
+ *  其余交给 reportMigrationReadFailure。 */
+function reportReadFailure(uid, agent, error) {
+  if (SessionDockCapabilities.config.backend !== 'rust') return null;
+  if (transientReadFailure(error)) return null;
+  return reportMigrationReadFailure(uid, agent, error);
+}
+
+async function retryMigrationRead(uid, agent = null) {
+  if (SessionDockCapabilities.config.backend !== 'rust') return false;
+  const key = viewKey(uid, agent);
+  if (migrationReadRetries.has(key)) return migrationReadRetries.get(key);
+  const task = (async () => {
+    // Let an already-started request finish before authorizing fresh state.
+    await Promise.allSettled([syncingViews.get(key), migrationReadProbes.get(key)].filter(Boolean));
+    const failure = migrationReadFailures.get(key);
+    if (!failure) return false;
+    failure.retrying = true;
+    renderMigrationReadFailure(uid, agent);
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
+    try {
+      const {data, bytes} = await fetchMessages(uid, {agent, windowed: true, signal: ac.signal});
+      if (!data?.meta || !data.version || !Array.isArray(data.messages)
+          || !Number.isFinite(data.end)) throw new Error('服务端返回了无效的会话快照');
+      cachePut(key, {meta: data.meta, msgs: data.messages, version: data.version,
+        end: data.end, anchor: data.anchor, activity: data.activity, bytes,
+        prompt: data.prompt || null, cli: data.cli ?? null, total: data.message_total, partial: data.partial || null});
+      S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
+      migrationReadFailures.delete(key);
+      if (S.sel === uid && S.agent === agent) {
+        await renderSession(data.meta, data.messages, data.activity, {startWatch: false});
+        renderMigrationReadFailure(uid, agent);
+        if (S.sel === uid && S.agent === agent) watchSession(uid, agent);
+      }
+      return true;
+    } catch (error) {
+      reportMigrationReadFailure(uid, agent, error);
+      return false;
+    } finally { clearTimeout(timer); }
+  })().finally(() => {
+    if (migrationReadRetries.get(key) === task) migrationReadRetries.delete(key);
+  });
+  migrationReadRetries.set(key, task);
+  return task;
+}
+
+/** 服务端明确的 migration-error 事件：不可恢复时暂停并保留快照。
+ *  原生文件并发增长等情况也会以 migration-error 携带 503；它仍是瞬时失败，
+ *  留给随后到来的 es.onerror 按退避策略重开。 */
+function pauseMigrationWatch(es, uid, agent, error = null) {
+  if (SessionDockCapabilities.config.backend !== 'rust' || _es !== es
+      || _esUid !== uid || S.sel !== uid || S.agent !== agent) return false;
+  if (!error) return false;
+  if (transientReadFailure(error)) return false;
+  reportMigrationReadFailure(uid, agent, error);
+  return true;
+}
+
+/** EventSource 藏起了 HTTP 拒绝的正文。流从未打开就失败时，用一次增量读取
+ *  探明原因：不可恢复（501 等）就暂停并给出理由；瞬时失败或读取成功则说明
+ *  只是流本身没建起来，交回退避重连。探测不改快照、不重开流。 */
+function probeWatchRejection(uid, agent) {
+  if (SessionDockCapabilities.config.backend !== 'rust') return Promise.resolve(false);
+  const key = viewKey(uid, agent);
+  const current = migrationReadProbes.get(key);
+  if (current) return current;
+  const task = (async () => {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
+    try {
+      const entry = cache.get(key);
+      await fetchMessages(uid, {agent, start: entry?.end, head: entry?.version?.head,
+        anchor: entry?.anchor, signal: ac.signal});
+      return false;
+    } catch (reason) {
+      return !!reportReadFailure(uid, agent, reason);
+    } finally { clearTimeout(timer); }
+  })().finally(() => {
+    if (migrationReadProbes.get(key) === task) migrationReadProbes.delete(key);
+  });
+  migrationReadProbes.set(key, task);
+  return task;
+}
+
+function syncSession(uid, agent = S.agent) {
+  const key = viewKey(uid, agent);
+  if (migrationReadPaused(uid, agent)) return Promise.resolve(0);
+  const e = cache.get(key);
+  if (!e) return Promise.resolve(0);
+  const current = syncingViews.get(key);
+  if (current) return current;
+  const task = (async () => {
+    const ac = new AbortController();
+    let stallTimer = null;
+    const keepAlive = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
+    };
+    try {
+      keepAlive();
+      const { data, bytes } = await fetchMessages(uid, {
+        agent, start: e.end, head: e.version.head, anchor: e.anchor,
+        signal: ac.signal, onActivity: keepAlive });
+      return await applyDiff(uid, data, bytes, agent);
+    } catch (error) {
+      // 瞬时失败不登记：tickSync 会按自适应间隔再来，SSE 也照常重连。
+      reportReadFailure(uid, agent, error);
+      return 0;
+    } finally {
+      clearTimeout(stallTimer);
+    }
+  })().finally(() => {
+    if (syncingViews.get(key) === task) syncingViews.delete(key);
+  });
+  syncingViews.set(key, task);
+  return task;
+}
+
+// ---- 服务端推送 ----
+// 服务端盯着会话文件, 一变就把 diff 推过来, 不用客户端反复问。
+let _es = null, _esUid = null, _esRetry = null;
+let _esRetryAttempt = 0;   // 连续未成功打开的次数，决定重连退避
+const diffRecoveries = new Map();
+
+/** 游标冲突或队列先于正文确认时，从当前已接受游标重新取一次并重建 watch。 */
+function scheduleDiffRecovery(uid, agent = null) {
+  const key = viewKey(uid, agent);
+  if (diffRecoveries.has(key)) return;
+  const timer = setTimeout(async () => {
+    try {
+      // 若冲突发生时已有主动拉取在途，先等旧请求收尾，再保证至少发出
+      // 一次基于最新本地游标的新请求。
+      const inFlight = syncingViews.get(key);
+      if (inFlight) await inFlight;
+      if (!cache.has(key)) return;
+      await syncSession(uid, agent);
+      if (S.sel === uid && S.agent === agent) watchSession(uid, agent);
+    } finally {
+      if (diffRecoveries.get(key) === timer) diffRecoveries.delete(key);
+    }
+  }, 0);
+  diffRecoveries.set(key, timer);
+}
+
+function watchSession(uid, agent = S.agent) {
+  closeWatch();
+  if (SessionDockNetwork.paused) return;
+  if (migrationReadPaused(uid, agent)) { renderMigrationReadFailure(uid, agent); return; }
+  const e = cache.get(viewKey(uid, agent));
+  if (!e || !window.EventSource) return;
+  // watch 从当前缓存游标开始，建立过程中不需要 tickSync 立刻再发一条相同
+  // 增量请求。否则 CONNECTING 尚未变 OPEN 的几百毫秒会产生一次竞争包。
+  if (S.sel === uid && S.agent === agent) S.lastSync = Date.now();
+  const connectionId = globalThis.crypto?.randomUUID?.()
+    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const p = new URLSearchParams({ uid, start: e.end, head: e.version.head,
+    anchor: e.anchor || '', page: AUDIT_PAGE_ID, connection: connectionId });
+  if (agent) p.set('agent', agent);
+  const es = new EventSource(appUrl('api/watch?' + p));
+  _es = es;
+  _esUid = uid;
+  es.__sessiondockConnectionId = connectionId;
+  let received = 0;
+  browserAuditEvent('sse.connecting', {start: e.end, agent: agent || ''}, null,
+    {uid, connectionId});
+  let opened = false;
+  es.onopen = () => {
+    opened = true;
+    if (_es === es) _esRetryAttempt = 0;
+    browserAuditEvent('sse.opened', {ready_state: es.readyState}, null, {uid, connectionId});
+  };
+  if (SessionDockCapabilities.config.backend === 'rust') {
+    es.addEventListener('migration-error', event => {
+      let reason;
+      try { reason = JSON.parse(event.data); }
+      catch { reason = {error: '实时同步返回了无效的错误信息，请重试。'}; }
+      pauseMigrationWatch(es, uid, agent, reason);
+    });
+  }
+  es.onmessage = ev => {
+    // close() 后浏览器仍可能派发已经排队的旧事件，不能让旧 watch 改新视图。
+    if (_es !== es || _esUid !== uid || S.agent !== agent) return;
+    let data;
+    try { data = JSON.parse(ev.data); }
+    catch (error) {
+      browserAuditEvent('sse.parse_failed', {error: String(error), bytes: ev.data.length},
+        ev.data.slice(0, 4000), {uid, connectionId, severity: 'error'});
+      return;
+    }
+    received++;
+    const packetId = data._audit?.packet_id || `${connectionId}:client-${received}`;
+    browserAuditEvent('sse.received', {
+      packet_id: packetId, kind: data._audit?.kind || '', bytes: ev.data.length,
+      reset: !!data.reset, start: data.start, end: data.end,
+      messages: data.messages?.length || 0, outbox: data.outbox?.length || 0,
+    }, null, {uid, traceId: packetId, connectionId});
+    Promise.resolve(applyDiff(uid, data, 0, agent)).then(applied => {
+      const snapshot = browserStateSnapshot('sse-applied');
+      browserAuditEvent('sse.applied', {
+        packet_id: packetId, applied_messages: applied,
+        cache_end: cache.get(viewKey(uid, agent))?.end,
+      }, snapshot.content, {uid, traceId: packetId, connectionId});
+      scheduleBrowserSnapshot('sse-applied');
+    }).catch(error => browserAuditEvent('sse.apply_failed', {
+      packet_id: packetId, error: String(error?.stack || error),
+    }, null, {uid, traceId: packetId, connectionId, severity: 'error'}));
+  };
+  es.onerror = () => {
+    // EventSource 自带的重连会沿用旧 URL(旧偏移), 所以自己关掉重开, 带上新偏移
+    es.close();
+    browserAuditEvent('sse.error', {ready_state: es.readyState, received, opened}, null,
+      {uid, connectionId, severity: 'warning'});
+    if (_es !== es) return;
+    _es = null;
+    clearTimeout(_esRetry);
+    if (SessionDockCapabilities.config.backend !== 'rust') {
+      _esRetry = setTimeout(() => {
+        if (S.sel === uid && S.agent === agent) watchSession(uid, agent);
+      }, 1500);
+      return;
+    }
+    // Rust：断网、代理断开、服务重启、503 都是瞬时的——按 1.5 s 起的指数退避
+    // 重开（封顶 15 s），不暂停视图。流从未打开过时先探一次 HTTP 原因，
+    // 只有探到不可恢复的失败（如 501）才暂停。
+    const attempt = opened ? 0 : _esRetryAttempt++;
+    const delay = retryDelay(attempt);
+    const reopen = () => {
+      if (S.sel !== uid || S.agent !== agent || _es || migrationReadPaused(uid, agent)) return;
+      watchSession(uid, agent);
+    };
+    const schedule = () => { clearTimeout(_esRetry); _esRetry = setTimeout(reopen, delay); };
+    if (opened) schedule();
+    else probeWatchRejection(uid, agent).then(paused => { if (!paused) schedule(); });
+  };
+}
+
+function closeWatch() {
+  clearTimeout(_esRetry);
+  if (_es) {
+    browserAuditEvent('sse.closed_by_page', {ready_state: _es.readyState}, null,
+      {uid: _esUid, connectionId: _es.__sessiondockConnectionId || ''});
+    _es.close(); _es = null; _esUid = null;
+  }
+}
+
+function unreadRow(uid) {
+  const value = S.unread.get(uid);
+  if (typeof value === 'number') return { count: value };
+  return value && typeof value === 'object'
+    ? { count: Math.max(0, +value.count || 0) }    // 旧记录里的 tmux 标志不再使用
+    : { count: 0 };
+}
+
+function saveUnread() {
+  store.set('unread', [...S.unread].filter(([, row]) => (+row?.count || +row || 0) > 0));
+}
+
+function sessionFrozen(uid) {
+  return !!uid && typeof T !== 'undefined' && (T.list || []).some(row => !row.stale
+    && row.frozen === true && (row.uid === uid || row.current_uid === uid || `tmux:${row.name}` === uid));
+}
+
+function paintStatusMarker(badge, frozen, count = 0, attention = '') {
+  const question = !frozen && attention === 'question';
+  badge.classList.toggle('frozen', frozen);
+  badge.classList.toggle('input-attention', !frozen && !!attention);
+  badge.classList.toggle('input-question', question);
+  const marker = `${frozen}:${count}:${attention}`;
+  if (badge.dataset.marker === marker) return;
+  badge.dataset.marker = marker;
+  const text = count > 99 ? '99+' : (count || '');
+  if (frozen) badge.innerHTML = uiIcon('pause');
+  else badge.textContent = question ? '?' : text;
+}
+
+function sessionInputAttention(uid) {
+  if (!uid || (typeof sessionComposerEnded === 'function' && sessionComposerEnded(uid))) return '';
+  const draft = typeof composerDrafts !== 'undefined'
+    ? composerDrafts.get(composerDraftOwner(uid)) : null;
+  const cli = cache.get(uid)?.cli;
+  const current = typeof composerDrafts !== 'undefined'
+    && composerDraftOwner(uid) === composerDraftOwner(composerUid);
+  const input = current ? draft?.inputStatus || cli?.input : cli?.input;
+  // Normal startup/screen synchronization/paste is not a request for help.
+  if (input?.state === 'starting' || ['input_check_pending', 'cli_starting',
+      'cli_catching_up', 'cli_pasting'].includes(input?.code)) return '';
+  const turn = sessionTurn(uid);
+  if (input?.code === 'cli_question' || turn === 'waiting') return 'question';
+  return '';
+}
+const inputAttentionLabel = attention => attention === 'question' ? ' · 等待回答' : '';
+
+/** 角标颜色只说现在：绿 = 在跑，蓝 = 在跑且在受管终端里，灰 = 已退出但还有没看的新内容。
+ *  颜色不随计数固化——以前把计数时的 tmux 态存进 localStorage，会话退出后角标还是蓝的。 */
+function paintItemStatus(node) {
+  if (!node) return;
+  const badge = node.querySelector(':scope > .ico > .item-status');
+  if (!badge) return;
+  const row = unreadRow(node.dataset.uid);
+  // 临时会话没有 live 集合里的 uid，跑没跑以行上已算好的 live 类为准；已结束的行不亮点。
+  const pending = !!node.dataset.tmuxName && node.classList.contains('live');
+  const draft = typeof composerDrafts !== 'undefined'
+    ? composerDrafts.get(composerDraftOwner(node.dataset.uid)) : null;
+  const active = pending || S.live.has(node.dataset.uid)
+    || (draft?.cli?.instance?.running === true && !!takenOver(node.dataset.uid));
+  const tmux = pending || S.liveTmux.has(node.dataset.uid);
+  const frozen = sessionFrozen(node.dataset.uid);
+  const attention = !frozen && active ? sessionInputAttention(node.dataset.uid) : '';
+  paintStatusMarker(badge, frozen, row.count, attention);
+  badge.classList.toggle('visible', frozen || active || row.count > 0);
+  badge.classList.toggle('counted', row.count > 0);
+  badge.classList.toggle('tmux', tmux);
+  badge.classList.toggle('idle', !active);
+  const turn = frozen || pending ? '' : sessionTurn(node.dataset.uid);
+  badge.classList.toggle('turn-working', turn === 'working' && !attention);
+  badge.classList.toggle('turn-waiting', turn === 'waiting');
+  const running = frozen ? '会话已暂停' : (tmux ? '受管会话运行中' : '会话运行中')
+    + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
+  badge.title = badge.ariaLabel = row.count
+    ? `${row.count} 条新内容，${!active && !frozen ? '会话已退出' : running}`
+    : running;
+}
+
+/** 回合状态只在进程还在跑时区分：working = 正在轮转，waiting = 等你回答，idle = 停在输入框。
+ *  正在看的会话用最新的对话 activity 和 CLI 画面（cli.instance.busy，docs/cli-state.md），
+ *  其他行用列表的 turn（docs/read-model.md）。缺字段的旧节点返回空串，只显示运行点。 */
+function sessionTurn(uid) {
+  if (!uid || !S.live.has(uid)) return '';
+  const entry = S.sel === uid ? cache.get(viewKey(uid)) : null;
+  const row = indexedSessions().byUid.get(uid);
+  // 列表 turn 与左栏同一规则；对话 activity 只补上更早到达的"等待回答"。
+  let state = entry?.activity?.state === 'waiting' ? 'waiting' : row?.turn || '';
+  const busy = entry?.cli?.instance?.busy;
+  if (state !== 'waiting' && typeof busy === 'boolean') state = busy ? 'working' : 'idle';
+  // 主回合结束但后台子代理或后台任务（Monitor、后台命令）还在跑：会话在等它们，仍算轮转中。
+  if (state !== 'waiting' && (S.liveWorking.has(uid) || row?.background > 0 || (row?.agent_items || []).some(item => agentRunning(uid, item)))) state = 'working';
+  return ['working', 'waiting'].includes(state) ? state : (state ? 'idle' : '');
+}
+const turnLabel = turn => ({working: ' · 正在处理', waiting: ' · 等待回答', idle: ' · 空闲'})[turn] || '';
+
+function paintTurn(uid) {
+  paintItemStatus(document.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`));
+  if (uid === S.sel) paintHeaderTurn();
+}
+
+function paintHeaderTurn() {
+  syncSessionFreezeOverlay();
+  const h = $('#dlive');
+  if (!h) return;
+  const row = document.querySelector(`.item[data-uid="${CSS.escape(S.sel || '')}"]`);
+  const tmux = row ? row.classList.contains('live-tmux') : S.liveTmux.has(S.sel);
+  const frozen = sessionFrozen(S.sel);
+  const draft = typeof composerDrafts !== 'undefined'
+    ? composerDrafts.get(composerDraftOwner(S.sel)) : null;
+  const active = (row ? row.classList.contains('live') : S.live.has(S.sel))
+    || (draft?.cli?.instance?.running === true && !!takenOver(S.sel));
+  const attention = !frozen && active ? sessionInputAttention(S.sel) : '';
+  paintStatusMarker(h, frozen, 0, attention);
+  h.classList.toggle('visible', frozen || active);
+  const turn = frozen || row?.dataset.tmuxName ? '' : sessionTurn(S.sel);
+  h.classList.toggle('turn-working', turn === 'working' && !attention);
+  h.classList.toggle('turn-waiting', turn === 'waiting');
+  h.title = h.ariaLabel = frozen ? '会话已暂停' : liveStatusTitle(tmux)
+    + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
+}
+
+function addUnread(uid, count) {
+  if (!uid || count <= 0) return;
+  const row = unreadRow(uid);
+  S.unread.set(uid, { count: row.count + count });
+  saveUnread();
+  paintItemStatus(document.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`));
+}
+
+function clearUnread(uid) {
+  if (!uid || !S.unread.has(uid)) return;
+  S.unread.delete(uid);
+  saveUnread();
+  paintItemStatus(document.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`));
+}
+
+/** 兜底轮询: SSE 连着的时候只是很慢地对一下账, 断了才回到自适应的快节奏。 */
+function tickSync() {
+  if (SessionDockNetwork.paused) return;
+  if (!S.sel || document.hidden) return;
+  if (migrationReadPaused(S.sel, S.agent)) return;
+  const pushing = _es && _esUid === S.sel && _es.readyState === 1;
+  const gap = pushing ? BACKUP_MS : (S.live.has(S.sel) ? S.syncGap : SYNC_MS);
+  if (Date.now() - (S.lastSync || 0) < gap) return;
+  S.lastSync = Date.now();
+  const uid = S.sel;
+  const agent = S.agent;
+  syncSession(uid, agent).then(n => {
+    if (uid !== S.sel || agent !== S.agent || pushing) return;
+    S.syncGap = n ? FAST_MIN : Math.min(FAST_MAX, Math.round(S.syncGap * 1.5));
+  });
+}
+
+setInterval(tickSync, TICK_MS);
+
+// ---- 活跃会话 ----
+async function refreshLive(force = false) {
+  if (!SessionDockCapabilities.allows('live')) return;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  let d;
+  try {
+    const response = await fetch(appUrl('api/live' + (force ? '?force=1' : '')), {signal:controller.signal});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    d = await response.json();
+  } finally { clearTimeout(timeout); }
+  if (!Array.isArray(d.uids)) throw new Error('运行状态格式错误');
+  applyNodeState(d, 'live');
+  const next = new Set(d.uids);
+  const nextTmux = new Set((d.tmux_uids || []).filter(u => next.has(u)));
+  const nextWorking = new Set((d.working_uids || []).filter(u => next.has(u)));
+  // Work another machine runs for a session, named by native node/source/sid.
+  const remoteKey = (node, source, sid) => JSON.stringify([node || '', source, String(sid)]);
+  const remote = new Set((Array.isArray(d.remote_working) ? d.remote_working : [])
+    .map(r => remoteKey(r.node_id, r.source, r.sid)));
+  if (remote.size) for (const s of S.sessions || []) {
+    if (next.has(s.uid) && remote.has(remoteKey(s.node_id, s.source, s.sid))) nextWorking.add(s.uid);
+  }
+  const nextStarted = new Map(Object.entries(d.started_at || {}).map(([u, t]) => [u, +t]));
+  const setChanged = (a, b) => a.size !== b.size || [...a].some(u => !b.has(u));
+  const mapChanged = (a, b) => a.size !== b.size
+    || [...a].some(([u, t]) => b.get(u) !== t);
+  const changed = setChanged(next, S.live) || setChanged(nextTmux, S.liveTmux)
+    || setChanged(nextWorking, S.liveWorking)
+    || mapChanged(nextStarted, S.liveStarted);
+  S.live = next;
+  S.liveTmux = nextTmux;
+  S.liveWorking = nextWorking;
+  S.liveStarted = nextStarted;
+  trimCache();
+  if (changed) {
+    paintLive();
+  }
+}
+
+let livePollRequest = null;
+function pollLive(force = false) {
+  if (SessionDockNetwork.paused) return Promise.resolve();
+  if (!SessionDockCapabilities.allows('live')) return Promise.resolve();
+  if (document.hidden) return Promise.resolve();
+  if (livePollRequest) {
+    // Timer ticks share the current cycle; explicit refreshes still get a
+    // fresh snapshot after it, and awaiters never observe a half-finished poll.
+    return force ? livePollRequest.then(() => pollLive(true)) : livePollRequest;
+  }
+  livePollRequest = runLivePoll(force).finally(() => { livePollRequest = null; });
+  return livePollRequest;
+}
+
+async function runLivePoll(force) {
+  try {
+    await refreshLive(force);
+    if (typeof loadTermList === 'function') {   // tmux 会话可能在外部被结束
+      // 首屏：term.js 自己已经发出了列表请求，复用它；列表从"未加载"变为有内容
+      // 不算变化，否则每次打开页面都会多一轮强制 live 刷新。刚返回不到 1 秒的
+      // 列表也不重拉（首屏 live 与 term.js 的初始请求前后脚到达）；显式强刷除外。
+      const first = !T.listLoaded;
+      const before = (T.list || []).map(x => x.name).join();
+      const fresh = !force && T.listLoadedAt && performance.now() - T.listLoadedAt < 1000;
+      if (first && T.listRequest) await T.listRequest;
+      else if (!fresh) await loadTermList();
+      if (!first && (T.list || []).map(x => x.name).join() !== before) {
+        await refreshLive(true);                // 绕过 3 秒缓存，绿点立即跟着 tmux 消失
+        renderTakeoverBtn();
+        if (T.name && !T.list.some(x => x.name === T.name)) closeTermPane();
+      }
+    }
+  } catch { /* 服务端没起来就下轮再说 */ }
+}
+
+/** 只改小圆点, 不重渲染整个列表 —— 否则每几秒就会打断滚动和选中。 */
+function paintLive() {
+  for (const n of document.querySelectorAll('.item.agent')) paintAgentStatus(n);
+  for (const n of document.querySelectorAll('.item[data-uid]')) {
+    const pendingRunning = n.dataset.tmuxName
+      && typeof T !== 'undefined' && T.list?.some(t => t.name === n.dataset.tmuxName && !t.stale);
+    n.classList.toggle('live', !!pendingRunning || S.live.has(n.dataset.uid));
+    n.classList.toggle('live-tmux', !!pendingRunning || S.liveTmux.has(n.dataset.uid));
+    paintItemStatus(n);
+  }
+  const h = $('#dlive');
+  if (h) {
+    // 临时会话（还没有 JSONL）按左栏同样的规则算运行中
+    const row = document.querySelector(`.item[data-uid="${CSS.escape(S.sel || '')}"]`);
+    const live = row ? row.classList.contains('live') : S.live.has(S.sel);
+    const tmux = row ? row.classList.contains('live-tmux') : S.liveTmux.has(S.sel);
+    h.classList.toggle('visible', live);
+    h.classList.toggle('tmux', tmux);
+    paintHeaderTurn();
+  }
+  const selected = S.sessions.find(x => x.uid === S.sel);
+  if (selected) {
+    renderSessionAction(selected);
+    renderConversationTail(cache.get(viewKey(selected.uid, S.agent))?.activity, selected.uid);
+  }
+  paintTransferAvailability($('#a-clone-group'), S.sel);
+  if (menuUid) paintTransferAvailability($('#item-menu [data-act="clone"]'), menuUid);
+  renderSessionCounts();
+  syncActiveOnlyList();
+  if (S.picking) renderPickBar();
+}
+
+/** 活动筛选开启时，进程启停会改变列表成员；集合没变就不动 DOM。 */
+function syncActiveOnlyList() {
+  if (!S.activeOnly) return;
+  const wanted = new Set(visible().map(s => s.uid));
+  const shown = $('#side')?._sessionUids || new Set();
+  if (wanted.size === shown.size && [...wanted].every(uid => shown.has(uid))) return;
+  const side = $('#side'), top = side?.scrollTop || 0;
+  renderSide();
+  if (side) side.scrollTop = top;
+}
+
+function selectSessionScope(activeOnly) {
+  if (activeOnly && !SessionDockCapabilities.allows('live')) {
+    showConsoleToast('运行状态未知：Rust 后端尚未实现进程探测，不能按活跃状态筛选。');
+    return;
+  }
+  S.activeOnly = activeOnly;
+  store.set('activeOnly', S.activeOnly);
+  renderSide();
+  paintLive();
+}
+$('#livecount').onclick = () => selectSessionScope(true);
+$('#allcount').onclick = () => selectSessionScope(false);
+$('#session-scope').onkeydown = e => {
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
+  e.preventDefault();
+  const active = e.key === 'Home' ? true : e.key === 'End' ? false : !S.activeOnly;
+  selectSessionScope(active);
+  $(active ? '#livecount' : '#allcount').focus();
+};
+
+setInterval(() => { if (!uiEventsReady) pollLive(); }, LIVE_MS);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { closeWatch(); return; }
+  pollLive();
+  if (S.sel && cache.get(viewKey(S.sel, S.agent))) {
+    syncSession(S.sel, S.agent).then(() => watchSession(S.sel, S.agent));
+  }
+});
+
+// ---------------------------------------------------------------- 数据加载
+function renderSessionCounts() {
+  const pool = sidebarSessions().filter(s => !S.off.has(s.source) && nodeSelected(s));
+  const active = pool.filter(s => s.pending || S.live.has(s.uid)).length;
+  const known = SessionDockCapabilities.allows('live');
+  $('#session-active').textContent = known ? active : '?';
+  if (!known) {
+    $('#livecount').dataset.unknown = 'true';
+    $('#livecount').title = '运行状态未知：Rust 后端尚未实现进程探测';
+  }
+  $('#session-total').textContent = pool.length;
+  for (const [id, selected, label] of [
+    ['#livecount', S.activeOnly, known ? `${active} 个活跃会话` : '运行状态未知，尚未实现进程探测'],
+    ['#allcount', !S.activeOnly, `${pool.length} 个总会话`],
+  ]) {
+    const button = $(id);
+    button.classList.toggle('on', selected);
+    button.setAttribute('aria-checked', String(selected));
+    button.setAttribute('aria-label', label);
+    button.tabIndex = selected ? 0 : -1;
+  }
+}
+
+function showSessionCount() {
+  renderSessionCounts();
+  $('#stat').textContent = '';
+}
+
+const pendingUid = name => `tmux:${name}`;
+
+// A draft saved before `session.started` existed has no start time. Pin the
+// moment this page first listed it so the row does not move on every render.
+const pendingDraftFirstSeen = new Map();
+function pendingDraftStartedAt(uid, session) {
+  const started = Number(session?.started);
+  if (Number.isFinite(started) && started > 0) return started;
+  if (!pendingDraftFirstSeen.has(uid)) pendingDraftFirstSeen.set(uid, Date.now() / 1000);
+  return pendingDraftFirstSeen.get(uid);
+}
+
+/** SessionDock启动、但还没有对话文件的 tmux，也是一条可重新进入的临时会话。 */
+function pendingTmuxSessions() {
+  if (typeof T === 'undefined' || !Array.isArray(T.pending)) return [];
+  const pending = [...T.pending];
+  // A CLI may exit before creating native history (for example after updating).
+  // Keep its saved input reachable instead of removing the only recovery entry.
+  if (typeof composerDrafts !== 'undefined') {
+    const names = new Set(pending.map(row => row.name));
+    for (const [uid, draft] of composerDrafts) {
+      if (!uid.startsWith('tmux:') || !draft.session || names.has(draft.session.name)
+          || (!draft.text && !draft.attachments.length && !draft.quotes.length)) continue;
+      pending.push({ ...draft.session, stale: true, running: false,
+        state: terminalListUncertain(uid) ? 'uncertain' : 'exited',
+        started: pendingDraftStartedAt(uid, draft.session), unavailable_reason: '会话草稿已保留' });
+    }
+  }
+  return pending.flatMap(t => {
+    // A receipt whose binding the server confirmed is represented by
+    // the native row it binds, exactly like a declared Claude identity.
+    const native = pendingNativeKey(t);
+    if (!SOURCES[t.source] || (native && indexedSessions().byNative.has(native))) return [];
+    const source = t.source;
+    return [{
+      node_id: t.node_id, node_name: t.node_name, stale: t.stale,
+      uid: pendingUid(t.name), pending: true, name: t.name, tmuxName: t.name, source,
+      ...(SessionDockCapabilities.config.backend === 'rust' ? {record_id:t.record_id,launch_id:t.launch_id,
+        instance_id:t.instance_id,running:t.running,state:t.state,unavailable_reason:t.unavailable_reason,
+        native_binding:t.native_binding,binding:t.binding,recording:t.recording,grid:t.grid} : {}),
+      title: t.title || `新建 ${SOURCES[source].name} 会话`,
+      kind: t.kind || '', report_id: t.report_id || '', cwd: t.cwd || '(未知)',
+      created: new Date(pendingDraftStartedAt(pendingUid(t.name), t) * 1000).toISOString(),
+      updated: new Date(pendingDraftStartedAt(pendingUid(t.name), t) * 1000).toISOString(),
+      size: 0,
+    }];
+  });
+}
+
+function pendingNativeKey(t) {
+  const declared = t.sid || t.declared_sid || (t.binding?.state === 'confirmed' ? t.binding.sid : '');
+  return declared ? JSON.stringify([t.node_id || '', t.source, String(declared)]) : '';
+}
+
+// Deleting native rows also discards the launch receipts they hid on the
+// server. Drop those receipts here too: otherwise the stale T.pending brings
+// the session back as a pending row until the next terminal list.
+function forgetDeletedReceipts(rows) {
+  if (typeof T === 'undefined' || !Array.isArray(T.pending)) return;
+  const keys = new Set(rows.filter(row => row.sid)
+    .map(row => JSON.stringify([row.node_id || '', row.source, String(row.sid)])));
+  if (keys.size) T.pending = T.pending.filter(t => !keys.has(pendingNativeKey(t)));
+}
+
+let sessionIndexRows = null, sessionIndex = null;
+function indexedSessions() {
+  if (sessionIndexRows !== S.sessions) {
+    sessionIndexRows = S.sessions;
+    const byUid = new Map(), byNative = new Map(), forkChildren = new Map();
+    for (const row of S.sessions) {
+      byUid.set(row.uid, row);
+      const key = JSON.stringify([row.node_id || '', row.source, String(row.sid)]);
+      if (!byNative.has(key)) byNative.set(key, row);
+      if (row.sid && row.forked_from_id) {
+        const parent = JSON.stringify([row.node_id || '', row.source, String(row.forked_from_id)]);
+        if (!forkChildren.has(parent)) forkChildren.set(parent, []);
+        forkChildren.get(parent).push(row);
+      }
+    }
+    sessionIndex = {byUid, byNative, forkChildren};
+  }
+  return sessionIndex;
+}
+const sessionContinued = session =>
+  !!(session?.continued_in && indexedSessions().byUid.has(session.continued_in));
+const hiddenForkParent = session => !!session?.fork_parent && !session.fork_parent_visible;
+const sessionHidden = session => hiddenForkParent(session) || sessionContinued(session);
+// 沿 forked_from_id 往上追整条父会话链（近的在前）。只在同来源、同机器内按
+// 原生 sid 匹配；记录已不存在的一级保留占位并到此为止。
+function forkAncestors(session) {
+  const chain = [];
+  const seen = new Set();
+  let sid = String(session?.forked_from_id || '');
+  while (sid && !seen.has(sid)) {
+    seen.add(sid);
+    const row = indexedSessions().byNative.get(JSON.stringify([session.node_id || '', session.source, sid]));
+    chain.push({ sid, row: row || null });
+    sid = String(row?.forked_from_id || '');
+  }
+  return chain;
+}
+// 沿 forked_from_id 往下追到最深的回退分支：Codex 双 Esc 后进程不变，新消息只写
+// 进新分支的文件。同一级有多条分支时先取仍在运行的，再取最新创建的。
+// 一条会话的直接子分支（同来源、同机器，forked_from_id 指向它）：仍在运行的
+// 在前，其余按创建时间新的在前。
+function forkChildren(session) {
+  if (!session?.sid) return [];
+  return [...(indexedSessions().forkChildren.get(JSON.stringify([session.node_id || '', session.source, String(session.sid)])) || [])]
+    .sort((a, b) => (S.live.has(b.uid) - S.live.has(a.uid))
+      || String(b.created || '').localeCompare(String(a.created || '')));
+}
+function forkLeaf(session) {
+  const seen = new Set();
+  let cur = session;
+  while (cur && !seen.has(cur.uid)) {
+    seen.add(cur.uid);
+    const children = forkChildren(cur);
+    if (!children.length) break;
+    cur = children[0];
+  }
+  return cur;
+}
+function forkLeafUid(uid) {
+  return forkLeaf(S.sessions.find(s => s.uid === uid))?.uid || uid;
+}
+const sidebarSessions = () => [...pendingTmuxSessions(), ...S.sessions]
+  .filter(s => !sessionHidden(s));
+
+function cursorViews(sessions) {
+  const rows = [];
+  for (const session of sessions) {
+    if (session.cursor) rows.push({uid: session.uid, agent: null, cursor: session.cursor});
+    for (const item of session.agent_items || []) {
+      if (item.cursor) rows.push({uid: session.uid, agent: item.id, cursor: item.cursor});
+    }
+  }
+  return rows;
+}
+
+function cleanCursor(value) {
+  return value && Number.isFinite(+value.end) && value.head
+    ? {end: +value.end, head: String(value.head), anchor: String(value.anchor || '')}
+    : null;
+}
+
+function seedSidebarCursors(sessions) {
+  for (const row of cursorViews(sessions)) {
+    const cursor = cleanCursor(row.cursor);
+    if (cursor) S.cursors.set(viewKey(row.uid, row.agent), cursor);
+  }
+}
+
+const sidebarSyncing = new Set(), sidebarPendingCursors = new Map();
+
+// Background views only need unread counts, even when their old history is cached.
+// Message bodies are refreshed on selection. Explicit node routes carry local UIDs.
+const unreadBatches = new Map(), unreadBatchUnsupported = new Set();
+function fetchUnreadSummary(uid, opts) {
+  const node = nodeOf(uid);
+  if (!SessionDockCapabilities.config.unread_batch || unreadBatchUnsupported.has(node))
+    return Promise.resolve({data: {unsupported: true}});
+  return new Promise((resolve, reject) => {
+    let batch = unreadBatches.get(node);
+    if (!batch) {
+      batch = [];
+      unreadBatches.set(node, batch);
+      setTimeout(() => flushUnreadBatch(node, batch), 0);
+    }
+    batch.push({uid, opts, resolve, reject});
+  });
+}
+async function flushUnreadBatch(node, batch) {
+  unreadBatches.delete(node);
+  const path = node ? `api/nodes/${node}/api/sessions/unread` : 'api/sessions/unread';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SYNC_STALL_MS);
+  try {
+    const response = await fetch(appUrl(path), {method: 'POST', signal: controller.signal,
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({views: batch.map(({uid, opts}) => ({
+        uid: node ? uid.replace(`:${node}~`, ':') : uid, agent: opts.agent || '',
+        start: opts.start || 0, head: opts.head || '', anchor: opts.anchor || '',
+      }))})});
+    if ([404, 405, 501].includes(response.status)) {
+      await response.arrayBuffer();
+      unreadBatchUnsupported.add(node); // Old nodes during a rolling upgrade.
+      for (const item of batch) item.resolve({data: {unsupported: true}});
+      return;
+    }
+    const payload = await response.json();
+    if (!response.ok || !Array.isArray(payload.results) || payload.results.length !== batch.length) {
+      const error = new Error(payload.error || 'Invalid unread summary response');
+      error.status = response.ok ? 502 : response.status;
+      throw error;
+    }
+    payload.results.forEach((data, i) => {
+      if (data.error) {
+        const error = new Error(data.error); error.status = data.status;
+        batch[i].reject(error);
+      } else batch[i].resolve({data, bytes: 0});
+    });
+  } catch (error) {
+    for (const item of batch) item.reject(error);
+  } finally { clearTimeout(timer); }
+}
+
+async function syncSidebarView(row, base, latest, attempt = 0) {
+  const key = viewKey(row.uid, row.agent);
+  if (sidebarSyncing.has(key)) {
+    sidebarPendingCursors.set(key, row.agent
+      ? {uid: row.uid, agent_items: [{id: row.agent, cursor: latest}]}
+      : {uid: row.uid, cursor: latest});
+    return;
+  }
+  sidebarSyncing.add(key);
+  try {
+    const sameCheckpoint = () => {
+      const current = cleanCursor(S.cursors.get(key));
+      return current && current.end === base.end && current.head === base.head
+        && current.anchor === base.anchor;
+    };
+    if (!sameCheckpoint()) return;
+    const {data} = await fetchUnreadSummary(row.uid, {
+      agent: row.agent, start: base.end, head: base.head, anchor: base.anchor,
+      appendOnly: true,
+    });
+    // Selection or another accepted update owns the newer checkpoint. A delayed
+    // summary must neither reintroduce unread badges nor rewind that checkpoint.
+    if (!sameCheckpoint() || (S.sel === row.uid && S.agent === row.agent
+        && (!MOBILE.matches || document.body.classList.contains('mobile-detail')))) return;
+    if (data.unsupported) {
+      // Old nodes cannot give an exact count without downloading history. Show
+      // at least one unread item and defer the actual content until selection.
+      if (!unreadRow(row.uid).count) addUnread(row.uid, 1);
+      S.cursors.set(key, latest);
+      return;
+    }
+    if (data.reset) cache.delete(key);
+    else if (data.incoming) addUnread(row.uid, data.incoming);
+    S.cursors.set(key, cleanCursor({end: data.end, head: data.version.head,
+                                   anchor: data.anchor}) || latest);
+  } catch (error) {
+    // 列表签名可能不会再变化；瞬时失败（断网、503）按退避补三次（1.5/3/6 s），
+    // 仍不影响其他会话；4xx 这类请求本身不成立的失败不重试。
+    if (attempt < 3 && (SessionDockCapabilities.config.backend !== 'rust' || transientReadFailure(error))) {
+      setTimeout(() => syncSidebarView(row, base, latest, attempt + 1), retryDelay(attempt));
+    }
+  }
+  finally {
+    sidebarSyncing.delete(key);
+    const pending = sidebarPendingCursors.get(key);
+    sidebarPendingCursors.delete(key);
+    if (pending) syncSidebarUpdates([pending]);
+  }
+}
+
+/** 列表发现其他会话文件增长时，只读取追加区间并累加左栏未读数。 */
+function syncSidebarUpdates(sessions) {
+  for (const row of cursorViews(sessions)) {
+    const key = viewKey(row.uid, row.agent);
+    const latest = cleanCursor(row.cursor);
+    if (!latest) continue;
+    const entry = cache.get(key);
+    const base = cleanCursor(S.cursors.get(key)) || (entry
+      ? cleanCursor({end: entry.end, head: entry.version?.head, anchor: entry.anchor})
+      : null);
+    if (!base) { S.cursors.set(key, latest); continue; }
+    if (!S.cursors.has(key)) S.cursors.set(key, base);
+    // Rust 列表行的 cursor 只带物理部分 {end, head}；语义 anchor 只在该会话已被
+    // 打开（服务端缓存有视图）时出现。两边都有 anchor 才比较它，缺失时以
+    // 已有的 anchor 为准（docs/history-pages.md "列表 cursor"）。
+    const anchorSame = !base.anchor || !latest.anchor || base.anchor === latest.anchor;
+    if (base.end === latest.end && base.head === latest.head && anchorSame) {
+      S.cursors.set(key, latest.anchor ? latest : {...latest, anchor: base.anchor});
+      continue;
+    }
+    const detailVisible = S.sel === row.uid && S.agent === row.agent
+      && (!MOBILE.matches || document.body.classList.contains('mobile-detail'));
+    if (detailVisible) {                     // 当前正在看的新增内容直接视为已读
+      S.cursors.set(key, latest);
+      continue;
+    }
+    if (latest.end < base.end) {
+      cache.delete(key);                      // 明确回滚，不尝试整份后台下载
+      S.cursors.set(key, latest);
+      continue;
+    }
+    void syncSidebarView(row, base, latest);
+  }
+}
+
+function mergeSessionMetaEvent(entry, session) {
+  if (entry.meta.agent_id || !session.renamed_at || !session.renamed_to) return false;
+  const eventId = `rename:${session.sid}:${session.renamed_at}`;
+  if (entry.msgs.some(m => m.event_id === eventId)) return false;
+  const event = {
+    role: 'command', text: `/rename ${session.renamed_to}`, ts: session.renamed_at,
+    counted: false, inferred: true, event_id: eventId,
+  };
+  const at = entry.msgs.findIndex(m => m.ts && m.ts > event.ts);
+  entry.msgs.splice(at < 0 ? entry.msgs.length : at, 0, event);
+  messageIndexes.delete(entry.msgs);
+  return true;
+}
+
+/** 列表元数据变更后同步缓存和当前详情标题，不重绘消息正文。 */
+function refreshSessionMeta() {
+  const headerKey = m => JSON.stringify([
+    m.title, m.parent_title, m.sid, m.agent_type, !!m.starred,
+    m.nest_parent || null, m.group || null,
+    (m.agent_items || []).map(a => [a.id, a.title, a.type]),
+  ]);
+  const before = cache.get(viewKey(S.sel, S.agent));
+  const beforeKey = before ? headerKey(before.meta) : '';
+  let currentEventAdded = false;
+  for (const e of cache.values()) {
+    const s = indexedSessions().byUid.get(e.meta.uid);
+    if (s) {
+      const agent = e.meta.agent_id;
+      if (!agent) {
+        e.meta = { ...e.meta, ...s };
+        if (mergeSessionMetaEvent(e, s) && e === before) currentEventAdded = true;
+        continue;
+      }
+      const item = (s.agent_items || []).find(a => a.id === agent);
+      if (!item) continue;
+      const childPath = e.meta.path;
+      e.meta = {
+        ...e.meta, ...s, path: childPath,
+        cwd: item.cwd ?? e.meta.cwd, model: item.model ?? e.meta.model,
+        created: item.created ?? e.meta.created,
+        sid: agent, title: item.title, size: item.size, updated: item.updated,
+        agent_id: agent, agent_type: item.type, parent_title: s.title,
+      };
+    }
+  }
+  const current = cache.get(viewKey(S.sel, S.agent));
+  const oldHead = $('#detail > .dhead');
+  if (currentEventAdded && current) {
+    renderSession(current.meta, current.msgs, current.activity);
+  } else if (current && oldHead && headerKey(current.meta) !== beforeKey) {
+    oldHead.replaceWith(head(current.meta, entryTotal(current)));
+    layoutSessionHead();
+    auditDetailRendered('meta-refresh');
+  }
+}
+
+let sessionLoadRun = 0;
+let sessionLoadRetry = null;
+let sessionPollRequest = null, sessionPollController = null, sessionLoadActive = 0;
+
+async function loadSessions(force) {
+  if (SessionDockNetwork.paused) return false;
+  const run = ++sessionLoadRun;
+  sessionLoadActive = run;
+  sessionPollController?.abort();
+  clearTimeout(sessionLoadRetry);
+  $('#stat').textContent = force ? ' 重新扫描…' : ' 加载中…';
+  const ac = new AbortController();
+  const timeout = setTimeout(() => ac.abort(), 15000);
+  let d;
+  try {
+    const r = await fetch(appUrl('api/sessions' + (force ? '?force=1' : '')), { signal: ac.signal });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    d = await r.json();
+    if (!Array.isArray(d.sessions)) throw new Error('会话列表格式错误');
+  } catch (e) {
+    if (run !== sessionLoadRun || SessionDockNetwork.paused) return false;
+    $('#stat').textContent = ' 加载失败';
+    $('#stat').classList.add('err');
+    $('#side').innerHTML = `<div class="empty load-failed">
+      <p>会话列表暂时无法加载</p><button class="btn load-retry">重试</button></div>`;
+    $('.load-retry').onclick = () => loadSessions(false);
+    sessionLoadRetry = setTimeout(() => loadSessions(false), 3000);
+    return false;
+  } finally {
+    clearTimeout(timeout);
+    if (sessionLoadActive === run) sessionLoadActive = 0;
+  }
+  if (run !== sessionLoadRun) return false;
+  $('#stat').classList.remove('err');
+  const seedCursors = S.cursors.size === 0;
+  const wasListed = !hiddenForkParent(S.sessions.find(s => s.uid === S.sel));
+  S.sig = d.sig;
+  S.sessions = d.sessions;
+  applyNodeState(d, 'sessions');
+  refreshSessionMeta();
+  renderChips();
+  renderSide();
+  showSessionCount(sidebarSessions().length);
+  seedCursors ? seedSidebarCursors(d.sessions) : syncSidebarUpdates(d.sessions);
+  if (wasListed) void followSelectedFork();
+  return true;
+}
+
+/** 列表自动跟进磁盘变化。签名没变时服务端只回一个 unchanged, 成本为个位数毫秒。 */
+function pollSessions() {
+  if (SessionDockNetwork.paused) return Promise.resolve();
+  if (document.hidden) return Promise.resolve();
+  if (!S.sig || sessionLoadActive) return Promise.resolve(false);
+  if (sessionPollRequest) return sessionPollRequest;
+  sessionPollRequest = runSessionPoll().finally(() => { sessionPollRequest = null; });
+  return sessionPollRequest;
+}
+async function runSessionPoll() {
+  const run = sessionLoadRun, sig = S.sig;
+  const ac = new AbortController();
+  sessionPollController = ac;
+  const timeout = setTimeout(() => ac.abort(), 15000);
+  try {
+    const response = await fetch(appUrl('api/sessions?sig=' + encodeURIComponent(sig)), {signal: ac.signal});
+    if (!response.ok) return false;
+    const d = await response.json();
+    if (ac.signal.aborted || run !== sessionLoadRun || sig !== S.sig) return false;
+    applyNodeState(d, 'sessions');
+    if (d.unchanged || !d.sessions) return true;
+    const wasListed = !hiddenForkParent(S.sessions.find(s => s.uid === S.sel));
+    S.sig = d.sig;
+    S.sessions = d.sessions;
+    renderNodes();
+    refreshSessionMeta();
+    renderChips();
+    syncSidebarUpdates(d.sessions);
+    if (wasListed) await followSelectedFork();
+    if (S.results) {
+      // 搜索结果集合保持不变，只合入 rename 等最新元数据。
+      const fresh = new Map(S.sessions.map(s => [s.uid, s]));
+      S.results = S.results.map(r => {
+        const latest = fresh.get(r.uid);
+        if (!latest) return r;
+        const agents = new Map((latest.agent_items || []).map(a => [a.id, a]));
+        return {...r, ...latest, agent_items: (r.agent_items || []).map(a => ({
+          ...a, ...agents.get(a.id), hits: a.hits, hits_capped: a.hits_capped, snippet: a.snippet,
+        }))};
+      });
+      if (!patchSide(visible())) renderSide();
+      return true;
+    }
+    showSessionCount(sidebarSessions().length);
+    if (patchSide(visible())) return true;   // 能就地更新就不重建, 否则会一直闪
+    const side = $('#side');
+    const top = side.scrollTop;
+    renderSide();                       // 选中态由 S.sel 恢复
+    side.scrollTop = top;               // 别打断正在看的位置
+    paintLive();
+    return true;
+  } catch { return false; }
+  finally {
+    clearTimeout(timeout);
+    if (sessionPollController === ac) sessionPollController = null;
+  }
+}
+
+setInterval(() => { if (!uiEventsReady) pollSessions(); }, LIST_MS);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pollSessions(); });
+
+// A single lightweight stream invalidates list state. Only the selected
+// conversation has a separate body subscription; other views stay lazy.
+let uiEvents = null, uiEventsReady = false, uiEventsRetry = 0;
+let uiEventPending = null, uiEventApplying = false;
+function queueUiChange(change) {
+  if (!uiEventPending) uiEventPending = {live:false, term:false, sessions:false, cursors:new Map()};
+  const pending = uiEventPending;
+  for (const key of ['live', 'term', 'sessions']) pending[key] ||= !!(change.initial || change[key]);
+  for (const row of change.cursors || []) pending.cursors.set(viewKey(row.uid, row.agent), row);
+  void applyUiChanges();
+}
+async function applyUiChanges() {
+  if (uiEventApplying) return;
+  uiEventApplying = true;
+  try {
+    while (uiEventPending && !document.hidden) {
+      const change = uiEventPending; uiEventPending = null;
+      // An earlier poll may predate this invalidation. Wait for it, then
+      // reconcile once more so its old response cannot consume the event.
+      if (change.sessions && sessionPollRequest) await sessionPollRequest;
+      const results = await Promise.allSettled([
+        change.live ? refreshLive() : null,
+        change.term && typeof loadTermList === 'function'
+          ? loadTermList().then(() => !T.listError) : null,
+        change.sessions ? pollSessions() : null,
+      ]);
+      if (results.some(result => result.status === 'rejected' || result.value === false)) {
+        // A delivered event is not an acknowledgement of a successful read.
+        // Reconnect obtains a new baseline even if nothing changes afterward.
+        closeUiEvents();
+        if (!document.hidden) uiEventsRetry = setTimeout(startUiEvents, 3000);
+      }
+      // A full list read already supplied newer cursors and synchronized
+      // unread state. Do not overwrite it with the preceding event snapshot.
+      if (change.sessions) continue;
+      const rows = [];
+      const sessions = new Map(S.sessions.map(row => [row.uid, row]));
+      for (const update of change.cursors.values()) {
+        const session = sessions.get(update.uid);
+        if (!session) continue; // A later list invalidation introduces new rows.
+        if (update.agent) {
+          const agent = session.agent_items?.find(row => row.id === update.agent);
+          if (agent) agent.cursor = update.cursor;
+          rows.push({uid:update.uid, agent_items:[{id:update.agent,cursor:update.cursor}]});
+        } else {
+          session.cursor = update.cursor;
+          rows.push({uid:update.uid,cursor:update.cursor});
+        }
+      }
+      if (rows.length) syncSidebarUpdates(rows);
+    }
+  } finally { uiEventApplying = false; }
+}
+function closeUiEvents() {
+  clearTimeout(uiEventsRetry);
+  uiEvents?.close(); uiEvents = null; uiEventsReady = false;
+}
+function startUiEvents() {
+  if (SessionDockNetwork.paused) return;
+  if (!SessionDockCapabilities.config.ui_events || !window.EventSource || document.hidden || uiEvents) return;
+  clearTimeout(uiEventsRetry);
+  const stream = new EventSource(appUrl('api/events'));
+  uiEvents = stream;
+  stream.addEventListener('change', event => {
+    if (uiEvents !== stream) return;
+    try {
+      const change = JSON.parse(event.data);
+      uiEventsReady = !change.retry;
+      if (!change.retry) queueUiChange(change);
+    } catch {
+      closeUiEvents();
+      if (!document.hidden) uiEventsRetry = setTimeout(startUiEvents, 3000);
+    }
+  });
+  stream.onerror = () => {
+    if (uiEvents !== stream) return;
+    closeUiEvents();
+    // Polling is a disconnected/old-server fallback, never parallel upkeep
+    // of a healthy push connection. Reconnect sends a fresh baseline.
+    if (!document.hidden) uiEventsRetry = setTimeout(startUiEvents, 3000);
+  };
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) closeUiEvents(); else startUiEvents();
+});
+addEventListener('pagehide', closeUiEvents);
+addEventListener('pageshow', startUiEvents);
+setTimeout(startUiEvents, 0);
+
+addEventListener('sessiondock-network-paused', event => {
+  closeUiEvents();
+  closeWatch();
+  sessionPollController?.abort();
+  clearTimeout(sessionLoadRetry);
+  if (event.detail !== 'login' || $('.login-expired')) return;
+  const notice = el('div', 'app-float warn login-expired');
+  notice.setAttribute('role', 'alert');
+  notice.innerHTML = '<div class="app-float-head"><strong>登录已失效</strong></div>'
+    + '<span>自动同步已暂停。请在新窗口登录，再重新加载本页；未保存的输入仍保留在当前页面。</span>';
+  const login = el('button', 'btn primary', '打开登录页');
+  login.type = 'button'; login.onclick = () => window.open(APP_BASE, '_blank', 'noopener');
+  const actions = el('div', 'app-float-actions'); actions.append(login); notice.append(actions);
+  floatStack().append(notice);
+});
+
+addEventListener('sessiondock-network-resumed', async () => {
+  await checkServerBuild();
+  if (SessionDockNetwork.paused) return;
+  startUiEvents();
+  void loadSessions();
+  void pollLive(true);
+  void flushBrowserAudit();
+  if (S.sel) {
+    const uid = S.sel, agent = S.agent;
+    await syncSession(uid, agent);
+    if (S.sel === uid && S.agent === agent) watchSession(uid, agent);
+  }
+});
+
+function visible() {
+  const eligible = s => (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
+    && nodeSelected(s) && (globalThis.SessionDockGroups?.matches(s) ?? true);
+  let pool = (S.results || sidebarSessions()).filter(eligible);
+  if (S.activeOnly) pool = pool.filter(s => s.pending || S.live.has(s.uid));
+  if (S.term && S.results === null) pool = pool.filter(s => sidebarMainMatches(s)
+    || sidebarAgentItems(s).length > 0);
+  if (S.term && S.nest && S.view !== 'group') {
+    // Retain only the ancestors needed to place matched rows in the tree.
+    // They carry structural metadata, never a child's snippet or siblings.
+    const found = new Map(pool.map(s => [s.uid, s]));
+    const parents = new Map();
+    const {children} = nestEdges(sidebarSessions().filter(eligible));
+    for (const [uid, rows] of children) for (const row of rows) parents.set(row.uid, uid);
+    const indexed = indexedSessions().byUid;
+    for (const match of pool) {
+      const seen = new Set([match.uid]);
+      let uid = parents.get(match.uid);
+      while (uid && !seen.has(uid)) {
+        seen.add(uid);
+        if (!found.has(uid)) {
+          const parent = indexed.get(uid);
+          if (parent) found.set(uid, {...parent, hits: 0, hits_capped: false, snippet: '', agent_items: []});
+        }
+        uid = parents.get(uid);
+      }
+    }
+    pool = [...found.values()];
+  }
+  return pool;
+}
+
+// ---------------------------------------------------------------- 左栏
+const sessionStarred = uid => !!indexedSessions().byUid.get(uid)?.starred;
+
+/* ---------- 左栏多选操作 ---------- */
+// 已有记录移入回收站；未落盘的新建会话停止并丢弃，正式运行会话由服务端拒绝删除。
+const pickedSessions = new Set();
+const sessionPickable = session => !session.fork_parent;
+let sessionDeleteBusy = false;
+let sessionStopBusy = false;
+let sessionStopProgress = null;
+function sessionStopConcurrency() {
+  const value = Number(store.get('stopConcurrency', 6));
+  return [1, 2, 4, 6, 8, 12, 16].includes(value) ? value : 6;
+}
+
+function pickedStopTargets() {
+  return sidebarSessions().filter(s => pickedSessions.has(s.uid) && sessionPickable(s)
+    && (s.pending ? sessionStopCapable() && !!s.record_id && !!s.instance_id
+      && !s.stale && !['exited', 'failed'].includes(s.state) && s.running !== false
+      : sessionStoppable(s.uid)));
+}
+
+/** 列表会被 SSE/轮询整份重画，选择集合里只保留仍然存在且可删的会话。 */
+function syncPickedSessions() {
+  if (!S.picking) {
+    pickedSessions.clear();
+    return pickedSessions;
+  }
+  const alive = new Set(sidebarSessions().filter(sessionPickable).map(s => s.uid));
+  for (const uid of [...pickedSessions]) if (!alive.has(uid)) pickedSessions.delete(uid);
+  return pickedSessions;
+}
+
+function setPicking(on) {
+  if (sessionStopBusy) return;
+  sessionStopProgress = null;
+  S.picking = !!on;
+  if (!S.picking) pickedSessions.clear();
+  const attaching = S.nestAttachUids.length;
+  if (S.picking) { S.nestAttach = ''; S.nestAttachUids = []; }
+  renderPickBar();
+  if (attaching) {
+    const side = $('#side'), top = side.scrollTop;
+    renderSide();
+    side.scrollTop = top;     // 进出选择模式不该把列表弹回顶部
+    return;
+  }
+  // 进出多选只多一个勾选框：原地补上或拿掉，不重建整份列表（上千行时要半秒多）。
+  const side = $('#side');
+  for (const node of side.querySelectorAll('.item[data-uid]')) {
+    if (node._nestRow && !node._nestRow.agent) syncRowPickBox(node, node._nestRow.s);
+  }
+  // 折叠的分组没有行对象，整组勾选的名单只在多选时收集，这里补上。
+  const closed = new Map([...side.querySelectorAll(':scope > .group.closed')].map(group => [group.dataset.key, group]));
+  if (S.picking && closed.size) {
+    for (const [key, , summary] of groupBy(visible(), {skipClosed: true})) {
+      if (summary && closed.has(key)) closed.get(key)._pickUids = summary.pickUids;
+    }
+  }
+  for (const group of side.querySelectorAll(':scope > .group')) syncGroupPickBox(group);
+}
+
+/** 多选模式下的行勾选框与 picked 底色；退出多选时拿掉。 */
+function syncRowPickBox(node, s) {
+  const pickable = S.picking && sessionPickable(s);
+  let box = node.querySelector(':scope > .item-pick');
+  if (pickable && !box) {
+    box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'item-pick';
+    box.tabIndex = -1;
+    node.insertBefore(box, node.querySelector(':scope > .ico'));
+  } else if (!pickable && box) {
+    box.remove();
+    box = null;
+  }
+  if (box) {
+    box.checked = pickedSessions.has(s.uid);
+    box.ariaLabel = `选中「${s.title}」`;
+  }
+  node.classList.toggle('picked', pickable && pickedSessions.has(s.uid));
+}
+
+/** 分组标题上的“整组勾选”框，只在多选模式下出现。 */
+function syncGroupPickBox(group) {
+  const head = group.querySelector(':scope > .ghead');
+  if (!head) return;
+  let box = head.querySelector(':scope > .ghead-pick');
+  if (S.picking && !box) {
+    box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'ghead-pick';
+    box.onclick = event => {
+      event.stopPropagation();      // 勾整组，不要顺手把分组折叠了
+      toggleGroupPick(group._pickUids, group);
+    };
+    head.prepend(box);
+  } else if (!S.picking && box) {
+    box.remove();
+    box = null;
+  }
+  if (box) {
+    box.ariaLabel = `选中「${head._pickLabel || ''}」下的全部会话`;
+    paintGroupPick(group);
+  }
+}
+
+function toggleSessionPick(uid) {
+  if (sessionStopBusy) return;
+  sessionStopProgress = null;
+  pickedSessions.has(uid) ? pickedSessions.delete(uid) : pickedSessions.add(uid);
+  const row = $(`#side .item[data-uid="${CSS.escape(uid)}"]`);
+  if (row) {
+    paintItemPick(row);
+    paintGroupPick(row.closest('.group'));
+  }
+  renderPickBar();
+}
+
+/** 整组一起勾/取消：组内还有没选中的就补齐，已经全选才清空。 */
+function toggleGroupPick(uids, group) {
+  if (sessionStopBusy) return;
+  sessionStopProgress = null;
+  const all = uids.length && uids.every(uid => pickedSessions.has(uid));
+  for (const uid of uids) all ? pickedSessions.delete(uid) : pickedSessions.add(uid);
+  for (const row of group.querySelectorAll('.item[data-uid]')) paintItemPick(row);
+  paintGroupPick(group);
+  renderPickBar();
+}
+
+/** 多选模式下按住鼠标左键划过一片：按下的那条原来没选中就整片选中，原来已选中
+ *  就整片取消；划回去恢复按下前的状态，划到列表上下边缘自动滚动。只动了一条时
+ *  仍走普通点击。 */
+let pickDrag = null, pickDragSwallowClick = false;
+function pickDragRows() {
+  return [...$('#side').querySelectorAll('.item[data-uid]')]
+    .filter(row => row.querySelector('.item-pick') && row.getClientRects().length);
+}
+function pickDragTo(row) {
+  const uid = row?.dataset.uid;
+  if (!pickDrag || !uid || uid === pickDrag.last) return;
+  const rows = pickDragRows();
+  const from = rows.findIndex(r => r.dataset.uid === pickDrag.anchor), to = rows.indexOf(row);
+  if (from < 0 || to < 0) return;
+  pickDrag.last = uid;
+  pickDrag.moved = true;
+  sessionStopProgress = null;
+  pickedSessions.clear();
+  for (const kept of pickDrag.before) pickedSessions.add(kept);
+  for (let i = Math.min(from, to); i <= Math.max(from, to); i++) {
+    pickDrag.on ? pickedSessions.add(rows[i].dataset.uid) : pickedSessions.delete(rows[i].dataset.uid);
+  }
+  const groups = new Set();
+  for (const r of rows) { paintItemPick(r); groups.add(r.closest('.group')); }
+  groups.forEach(paintGroupPick);
+  renderPickBar();
+}
+/** 指针所在高度上可见的那一行；落在组标题、间隙或列表外时取纵向最近的可见行。 */
+function pickDragAt(y) {
+  const side = $('#side').getBoundingClientRect();
+  let best = null, gap = Infinity;
+  for (const row of pickDragRows()) {
+    const box = row.getBoundingClientRect();
+    if (box.bottom <= side.top || box.top >= side.bottom) continue;
+    const distance = y < box.top ? box.top - y : y > box.bottom ? y - box.bottom : 0;
+    if (distance < gap) { best = row; gap = distance; }
+    if (!distance) break;
+  }
+  return best;
+}
+function pickDragScroll() {
+  if (!pickDrag) return;
+  const side = $('#side'), box = side.getBoundingClientRect(), edge = 36;
+  const over = pickDrag.y < box.top + edge ? pickDrag.y - box.top - edge
+    : pickDrag.y > box.bottom - edge ? pickDrag.y - box.bottom + edge : 0;
+  if (over) {
+    side.scrollTop += Math.max(-24, Math.min(24, Math.round(over / 2)));
+    pickDragTo(pickDragAt(pickDrag.y));
+  }
+  pickDrag.frame = requestAnimationFrame(pickDragScroll);
+}
+function endPickDrag() {
+  if (!pickDrag) return;
+  cancelAnimationFrame(pickDrag.frame);
+  if (pickDrag.moved) {
+    // 松手处的 click 不能再把按下那条切回去。
+    pickDragSwallowClick = true;
+    setTimeout(() => { pickDragSwallowClick = false; }, 0);
+  }
+  pickDrag = null;
+}
+$('#side').addEventListener('mousedown', event => {
+  if (event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (!S.picking || S.nestAttach || sessionStopBusy) return;
+  const row = event.target.closest('.item[data-uid]');
+  if (!row?.querySelector('.item-pick') || event.target.closest('.item-star, .nest-caret')) return;
+  event.preventDefault();   // 划选不拉出文字选区
+  endPickDrag();
+  pickDrag = {anchor: row.dataset.uid, last: row.dataset.uid, on: !pickedSessions.has(row.dataset.uid),
+              before: new Set(pickedSessions), moved: false, y: event.clientY};
+  pickDrag.frame = requestAnimationFrame(pickDragScroll);
+});
+addEventListener('mousemove', event => {
+  if (!pickDrag) return;
+  if (!(event.buttons & 1)) { endPickDrag(); return; }
+  pickDrag.y = event.clientY;
+  pickDragTo(pickDragAt(event.clientY));
+});
+addEventListener('mouseup', event => { if (event.button === 0) endPickDrag(); });
+addEventListener('blur', endPickDrag);
+// 多选时列表里不拉文字选区（含触屏长按）。不用 #side.picking 的 CSS：切换它要为
+// 上千行重算样式，进出多选会多卡一两百毫秒。
+$('#side').addEventListener('selectstart', event => {
+  if (S.picking) event.preventDefault();
+});
+$('#side').addEventListener('click', event => {
+  if (!pickDragSwallowClick) return;
+  pickDragSwallowClick = false;
+  event.stopPropagation();
+  event.preventDefault();
+}, true);
+
+function paintItemPick(row) {
+  const on = pickedSessions.has(row.dataset.uid);
+  row.classList.toggle('picked', on);
+  const box = row.querySelector('.item-pick');
+  if (box) box.checked = on;
+}
+
+function paintGroupPick(group) {
+  const box = group?.querySelector('.ghead-pick');
+  if (!box) return;
+  const rows = group._pickUids || [];
+  const picked = rows.filter(uid => pickedSessions.has(uid)).length;
+  box.checked = !!rows.length && picked === rows.length;
+  box.indeterminate = picked > 0 && picked < rows.length;
+}
+
+function pickAllVisible() {
+  if (sessionStopBusy) return;
+  sessionStopProgress = null;
+  const rows = visible().filter(sessionPickable);
+  const all = rows.length && rows.every(s => pickedSessions.has(s.uid));
+  pickedSessions.clear();
+  if (!all) rows.forEach(s => pickedSessions.add(s.uid));
+  const side = $('#side'), top = side.scrollTop;
+  renderSide();
+  side.scrollTop = top;              // 全选不该把列表弹回顶部
+  renderPickBar();
+}
+
+function renderPickBar() {
+  const attaching = !!S.nestAttach;
+  $('#side-tools').hidden = !S.picking && !attaching;
+  $('#side').classList.toggle('picking', S.picking);
+  $('#side').classList.toggle('attaching', attaching);
+  $('#side-pick-all').hidden = attaching;
+  globalThis.SessionDockGroups?.paintPickBar(attaching);
+  $('#side-pick-delete').hidden = attaching;
+  $('#side-pick-stop').hidden = attaching;
+  $('#side-pick-attach').hidden = attaching || !SessionDockCapabilities.allows('metadata');
+  $('#side-stop-details').hidden = attaching || !S.picking || !sessionStopProgress?.details.length;
+  if (attaching) {
+    const row = sidebarSessions().find(session => session.uid === S.nestAttach);
+    $('#side-picked').textContent = S.nestAttachUids.length > 1
+      ? `点击要附属的会话（当前：${S.nestAttachUids.length} 个会话）`
+      : row ? `点击要附属的会话（当前：${row.title || S.nestAttach}）` : '点击要附属的会话';
+    return;
+  }
+  const picked = S.picking ? pickedSessions.size : 0;
+  $('#side-picked').textContent = picked ? `已选 ${picked} 项` : '点会话行勾选';
+  const pending = pendingTmuxSessions().filter(s => pickedSessions.has(s.uid)).length;
+  const action = pending ? (pending === picked ? '丢弃' : '删除 / 丢弃') : '删除';
+  $('#side-pick-delete').textContent = picked ? `${action} (${picked})` : action;
+  $('#side-pick-delete').disabled = !picked || sessionDeleteBusy || sessionStopBusy;
+  const attachable = S.picking ? pickedNestable().length : 0;
+  $('#side-pick-attach').textContent = attachable ? `附属到… (${attachable})` : '附属到…';
+  $('#side-pick-attach').disabled = !attachable || sessionDeleteBusy || sessionStopBusy;
+  const stoppable = S.picking ? pickedStopTargets().length : 0;
+  const progress = sessionStopProgress;
+  const stopButton = $('#side-pick-stop');
+  stopButton.textContent = progress ? `已停止 ${progress.stopped}/${progress.total}`
+    : stoppable ? `停止 (${stoppable})` : '停止';
+  stopButton.disabled = !stoppable || sessionDeleteBusy || sessionStopBusy;
+  stopButton.setAttribute('aria-busy', String(sessionStopBusy));
+  stopButton.title = progress ? `已返回 ${progress.settled}/${progress.total}，失败 ${progress.failed}，未确认 ${progress.uncertain}` : '停止选中的运行中会话';
+  if (progress) {
+    $('#side-stop-summary').textContent = [progress.failed ? `失败 ${progress.failed}` : '',
+      progress.uncertain ? `未确认 ${progress.uncertain}` : '', progress.refreshError ? '状态刷新失败' : '']
+      .filter(Boolean).join('，');
+    $('#side-stop-errors').textContent = progress.details.join('\n');
+  }
+  const rows = S.picking ? visible().filter(sessionPickable) : [];
+  $('#side-pick-all').disabled = !rows.length || sessionStopBusy;
+  $('#side-pick-cancel').disabled = sessionStopBusy;
+  $('#side-pick-all').textContent =
+    rows.length && rows.every(s => pickedSessions.has(s.uid)) ? '全不选' : '全选';
+}
+
+async function deleteSessions(uids, button = null) {
+  if (!uids.length || sessionDeleteBusy || sessionStopBusy) return null;
+  const pending = pendingTmuxSessions().filter(s => uids.includes(s.uid));
+  const pendingIds = new Set(pending.map(s => s.uid));
+  const recorded = uids.filter(uid => !pendingIds.has(uid));
+  const action = pending.length ? (recorded.length ? '删除 / 丢弃' : '丢弃') : '删除';
+  const only = uids.length === 1
+    ? (sidebarSessions().find(x => x.uid === uids[0])?.title || '') : '';
+  const running = recorded.filter(uid => S.live.has(uid)).length;
+  // OpenCode keeps sessions in its own database: they are deleted there,
+  // with their child sessions, and never reach the recycle bin.
+  const opencode = recorded.filter(uid => sidebarSessions().find(x => x.uid === uid)?.source === 'opencode');
+  // Unpersisted launches discard immediately. Recorded sessions still confirm
+  // because they move into the recycle bin.
+  if (recorded.length && !await appConfirm((uids.length === 1
+      ? `${action}会话「${only}」?\n\n` : `${action}选中的 ${uids.length} 个会话?\n\n`)
+    + (pending.length ? `${pending.length} 个新建会话将停止并丢弃，未发送的草稿也会清除；若已生成会话记录，记录会保留。\n` : '')
+    + (opencode.length < recorded.length ? trashLocationNote() : '')
+    + (opencode.length ? (opencode.length === recorded.length ? '' : '\n')
+      + (opencode.length === 1 && uids.length === 1 ? '' : `其中 ${opencode.length} 个 `) + opencodeDeleteNote() : '')
+    + (running ? `\n其中 ${running} 个还在运行，会被跳过，需要先停止。` : '')))
+    return null;
+  sessionDeleteBusy = true;
+  if (button) button.disabled = true;
+  const watched = recorded.includes(S.sel) ? S.sel : null;
+  if (watched) closeWatch();   // 文件即将移走，先停掉这条 SSE
+  const d = { deleted: [], errors: [] };
+  try {
+    for (const info of pending) {
+      try {
+        await discardPendingSession(info);
+        d.deleted.push({ uid: info.uid });
+      } catch (e) {
+        d.errors.push({ uid: info.uid, title: info.title, error: e.message });
+      }
+    }
+    if (recorded.length) {
+      try {
+        const postDelete = async (uids, force = false) => {
+          const r = await fetch(appUrl('api/sessions/delete'), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(force ? { uids, force: true } : { uids }),
+          });
+          const result = await r.json();
+          if (!r.ok || result.error) throw new Error(result.error || `HTTP ${r.status}`);
+          return result;
+        };
+        const result = await postDelete(recorded);
+        d.deleted.push(...(result.deleted || []));
+        let errors = result.errors || [];
+        // Rust 回收站：运行状态未知的会话先被跳过，用户确认后才带 force 重试。
+        const unknown = trashCapable() ? (result.skipped || []).filter(x => x.needs_force) : [];
+        if (unknown.length && await confirmForceDelete(unknown.length, unknown[0].run_state?.detail)) {
+          const forced = await postDelete(unknown.map(x => x.uid), true);
+          d.deleted.push(...(forced.deleted || []));
+          const retried = new Set(unknown.map(x => x.uid));
+          errors = errors.filter(x => !retried.has(x.uid)).concat(forced.errors || []);
+        }
+        d.errors.push(...errors);
+      } catch (e) {
+        d.errors.push(...recorded.map(uid => ({ uid, error: e.message })));
+      }
+    }
+    if (pending.length) await loadTermList();
+  } finally {
+    sessionDeleteBusy = false;
+    if (button) button.disabled = false;
+  }
+  const gone = new Set((d.deleted || []).map(x => x.uid));
+  const failed = d.errors || [];
+  if (watched && S.sel === watched && !gone.has(watched)) watchSession(watched, S.agent);
+  if (gone.size) {
+    forgetDeletedReceipts(S.sessions.filter(x => gone.has(x.uid)));
+    S.sessions = S.sessions.filter(x => !gone.has(x.uid));
+    if (S.results) S.results = S.results.filter(x => !gone.has(x.uid));
+    if (gone.has(S.sel)) {
+      S.sel = null;
+      store.set('sel', null);
+      const trashed = !opencode.includes(watched || '');
+      $('#detail').innerHTML = trashed ? '<div class="empty">已移入回收站'
+        + '<br><button type="button" class="btn" id="detail-open-trash">打开回收站</button></div>'
+        : '<div class="empty">会话已从 OpenCode 删除</div>';
+      if (trashed) $('#detail-open-trash').onclick = openTrash;
+      ensureConsolePlaceholder();
+      auditDetailRendered('trashed');
+      showMobileList();
+    }
+  }
+  renderChips();
+  renderSide();
+  if (failed.length === 1 && uids.length === 1) {
+    await appAlert(`${action}失败: ` + failed[0].error);
+  } else if (failed.length) {
+    const lines = failed.slice(0, 5).map(x => `· ${x.title || x.uid}: ${x.error}`);
+    await appAlert(`已${action} ${gone.size} 个，${failed.length} 个操作失败:\n\n`
+      + lines.join('\n') + (failed.length > 5 ? '\n…' : ''));
+  }
+  return { gone, failed };
+}
+
+async function deletePickedSessions() {
+  const result = await deleteSessions([...pickedSessions], $('#side-pick-delete'));
+  if (!result) return;
+  // 删不掉的（多半还在运行）留在选择里，用户停掉会话后可以直接再点删除。
+  pickedSessions.clear();
+  result.failed.forEach(x => pickedSessions.add(x.uid));
+  if (result.failed.length) { renderSide(); renderPickBar(); } else setPicking(false);
+}
+
+async function stopPickedSessions() {
+  if (sessionStopBusy || sessionDeleteBusy) return;
+  const targets = pickedStopTargets();
+  if (!targets.length) return;
+  // 全部停在输入框（空闲）时直接停；有在轮转、等回答或状态未知的才确认。
+  if (!targets.every(s => !s.pending && sessionTurn(s.uid) === 'idle')
+      && !await appConfirm(`停止所选的 ${targets.length} 个运行中会话?\n\n会话记录和草稿会保留，已结束的会话会跳过。`)) return;
+  sessionStopBusy = true;
+  const progress = sessionStopProgress = {total: targets.length, stopped: 0, settled: 0,
+    failed: 0, uncertain: 0, details: [], refreshError: false};
+  showSessionStopNotice('');
+  $('#side-stop-details').open = false;
+  renderPickBar();
+  let next = 0;
+  const stopNext = async () => {
+    while (next < targets.length) {
+      const target = targets[next++];
+      try {
+        if (target.pending) {
+          const result = await post('api/term/kill', { record_id: target.record_id,
+            instance_id: target.instance_id, ...(HUB_MODE ? { _node: target.node_id } : {}) });
+          if (result.error) throw new Error(result.error);
+          const current = T.pending.find(row => row.record_id === target.record_id && row.node_id === target.node_id);
+          if (current) Object.assign(current, result);
+          if (!['exited', 'failed'].includes(result.state)) {
+            progress.uncertain++;
+            progress.details.push(`「${target.title}」停止请求已发送，尚未确认退出`);
+            continue;
+          }
+        } else {
+          const result = await requestSessionStop(target);
+          if (result.stage === 'uncertain') {
+            progress.uncertain++;
+            progress.details.push(`「${target.title}」${STOP_STAGE_TEXT.uncertain}`);
+            continue;
+          }
+        }
+        progress.stopped++;
+      } catch (error) {
+        progress.failed++;
+        progress.details.push(`「${target.title}」停止失败：${error.message || error}`);
+      } finally {
+        progress.settled++;
+        renderPickBar();
+      }
+    }
+  };
+  try {
+    await Promise.all(Array.from({length: Math.min(sessionStopConcurrency(), targets.length)}, stopNext));
+    await refreshLive(true);
+    if (typeof loadTermList === 'function') await loadTermList();
+    paintLive();
+  } catch (error) {
+    progress.refreshError = true;
+    progress.details.push(`停止请求已处理，刷新状态失败：${error.message || error}`);
+  } finally {
+    sessionStopBusy = false;
+    renderPickBar();
+  }
+}
+
+$('#side-pick-cancel').onclick = () => S.nestAttach ? setNestAttach('') : setPicking(false);
+$('#side-pick-all').onclick = pickAllVisible;
+$('#side-pick-delete').onclick = deletePickedSessions;
+$('#side-pick-stop').onclick = stopPickedSessions;
+$('#side-pick-attach').onclick = () => setNestAttach(pickedNestable());
+
+/** 选中的会话里能改附属关系的：真实会话行，不是待定启动或分叉父行。 */
+function pickedNestable() {
+  if (!SessionDockCapabilities.allows('metadata')) return [];
+  const rows = new Map(sidebarSessions().map(session => [session.uid, session]));
+  return [...pickedSessions].filter(uid => {
+    const row = rows.get(uid);
+    return !!row && !row.pending && !row.fork_parent;
+  });
+}
+
+/* ---------- 会话行的右键 / 长按菜单 ---------- */
+// 删除入口不再常驻占位：右键（手机长按）某条会话，才给出删除和进入多选。
+const LONG_PRESS_MS = 480;
+const LONG_PRESS_SLOP = 12;   // 手指按住时的自然微动不该算滑动
+let menuUid = '';
+let longPress = { timer: 0, x: 0, y: 0 };
+let suppressItemClick = false;
+
+function openItemMenu(uid, x, y) {
+  const menu = $('#item-menu');
+  globalThis.SessionDockGroups?.closeMenu();
+  menuUid = uid;
+  const list = sidebarSessions();
+  const row = list.find(session => session.uid === uid);
+  const parent = !!row?.fork_parent;
+  const running = sessionStoppable(uid);
+  const unusedLaunch = !row?.pending && unusedNewAssignedLaunch(row);
+  // 运行中的 SSH 会话先停止，结束后才删除；未使用的原生启动仍可直接丢弃。
+  const shellRunning = typeof pendingShellRunning === 'function' && pendingShellRunning(row);
+  const nested = !!(row?.nest_parent?.source && row.nest_parent.sid);
+  const nestable = SessionDockCapabilities.allows('metadata') && !!row && !row.pending && !parent;
+  // Keep every action in its fixed position, with the same unavailable hints as
+  // other controls. The shared capture handler blocks mouse, touch and keyboard clicks.
+  const unavailable = {
+    'copy-identity': !row?.sid ? '此会话尚无原生会话标识。' : '',
+    stop: parent || (row?.pending ? !shellRunning : !running || !!unusedLaunch)
+      ? '此会话当前没有可停止的进程。' : '',
+    hide: !parent ? '仅分叉父会话可隐藏。' : '',
+    detach: !nestable || !nested ? '此会话当前没有附属关系。' : '',
+    attach: !nestable ? '此会话当前不能设置附属关系。' : '',
+    delete: parent ? '分叉父会话可隐藏，不能直接删除。'
+      : ((!row?.pending && running && !unusedLaunch) || shellRunning)
+        ? '请先停止会话再删除。' : '',
+    group: !SessionDockCapabilities.allows('metadata') || !row || row.pending || !globalThis.SessionDockGroups?.available
+      ? '此会话当前不能保存分组。' : '',
+    pick: parent ? '分叉父会话不能加入多选。' : '',
+  };
+  for (const button of menu.querySelectorAll('button[data-act]')) {
+    button.hidden = false;
+    if (button.dataset.act !== 'clone') setControlUnavailable(button, unavailable[button.dataset.act]);
+  }
+  menu.querySelector('[data-act="delete"]').textContent = ((row?.pending && row?.source !== 'shell') || unusedLaunch) ? '丢弃会话' : '删除会话';
+  paintTransferAvailability(menu.querySelector('[data-act="clone"]'), uid);
+  menu.hidden = false;
+  const box = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - box.width - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, innerHeight - box.height - 8))}px`;
+  menu.querySelector('button:not([aria-disabled="true"])')?.focus({ preventScroll: true });
+}
+
+function closeItemMenu() {
+  globalThis.SessionDockGroups?.closeMenu();
+  $('#item-menu').hidden = true;
+  menuUid = '';
+}
+
+function cancelLongPress() {
+  clearTimeout(longPress.timer);
+  longPress.timer = 0;
+}
+
+const menuTarget = e => e.target.closest('#side .item');
+
+// 桌面端允许从会话标题、目录和元信息里复制文字。拖选结束时浏览器仍会派发
+// click；这不是打开会话的意图，而且重画左栏会立即销毁刚建立的 Selection。
+// 自动列表更新也要等用户清掉选区后再画，否则活跃会话一刷新，蓝色选区就消失。
+let sidebarRenderDeferred = false;
+let sidebarRenderFlushTimer = 0;
+let sidebarTextPointer = null;
+
+function sidebarTextSelectionActive() {
+  const selection = getSelection();
+  const side = $('#side');
+  return !!selection && !selection.isCollapsed && !!selection.toString()
+    && !!side && side.contains(selection.anchorNode) && side.contains(selection.focusNode);
+}
+
+const sidebarTextSelectionProtected = () => !!sidebarTextPointer || sidebarTextSelectionActive();
+
+function scheduleDeferredSidebarRender() {
+  if (!sidebarRenderDeferred || sidebarTextSelectionProtected() || sidebarRenderFlushTimer) return;
+  sidebarRenderFlushTimer = setTimeout(flushDeferredSidebarRender, 0);
+}
+
+function flushDeferredSidebarRender() {
+  sidebarRenderFlushTimer = 0;
+  if (!sidebarRenderDeferred || sidebarTextSelectionProtected()) return;
+  const side = $('#side');
+  const top = side?.scrollTop || 0;
+  sidebarRenderDeferred = false;
+  renderSide();
+  if (side) side.scrollTop = top;
+  paintLive();
+}
+
+document.addEventListener('selectionchange', () => {
+  scheduleDeferredSidebarRender();
+});
+
+$('#side').addEventListener('pointerdown', event => {
+  if (event.pointerType !== 'mouse' || event.button !== 0 || S.picking
+      || !event.target.closest('.t, .m, .cwd, .snip, .gname')) return;
+  sidebarTextPointer = {id: event.pointerId, x: event.clientX, y: event.clientY, moved: false};
+});
+
+document.addEventListener('pointermove', event => {
+  if (!sidebarTextPointer || sidebarTextPointer.id !== event.pointerId) return;
+  if (Math.abs(event.clientX - sidebarTextPointer.x) > 3
+      || Math.abs(event.clientY - sidebarTextPointer.y) > 3) sidebarTextPointer.moved = true;
+});
+
+document.addEventListener('pointerup', event => {
+  if (!sidebarTextPointer || sidebarTextPointer.id !== event.pointerId) return;
+  const pointer = sidebarTextPointer;
+  setTimeout(() => {
+    if (sidebarTextPointer !== pointer) return;
+    sidebarTextPointer = null;
+    scheduleDeferredSidebarRender();
+  }, 0);
+});
+
+document.addEventListener('pointercancel', event => {
+  if (!sidebarTextPointer || sidebarTextPointer.id !== event.pointerId) return;
+  sidebarTextPointer = null;
+  scheduleDeferredSidebarRender();
+});
+
+$('#side').addEventListener('click', event => {
+  const dragged = !!sidebarTextPointer?.moved;
+  sidebarTextPointer = null;
+  if (!dragged && !sidebarTextSelectionActive()) {
+    scheduleDeferredSidebarRender();
+    return;
+  }
+  event.stopPropagation();
+  event.preventDefault();
+}, true);
+
+$('#side').addEventListener('contextmenu', e => {
+  const row = menuTarget(e);
+  if (!row || S.picking || S.nestAttach) return;      // 选择/附属点选里点选就够了，不再叠一层菜单
+  e.preventDefault();
+  openItemMenu(row.dataset.uid, e.clientX, e.clientY);
+});
+
+$('#side').addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse') return;             // 鼠标走 contextmenu
+  const row = menuTarget(e);
+  if (!row || S.picking || S.nestAttach) return;
+  cancelLongPress(); // A second finger must not leave the first hold timer alive.
+  longPress = { timer: 0, x: e.clientX, y: e.clientY };
+  longPress.timer = setTimeout(() => {
+    longPress.timer = 0;
+    suppressItemClick = true;                        // 长按不该顺手打开会话
+    navigator.vibrate?.(12);
+    openItemMenu(row.dataset.uid, longPress.x, longPress.y);
+  }, LONG_PRESS_MS);
+});
+
+$('#side').addEventListener('pointermove', e => {
+  if (!longPress.timer) return;
+  if (Math.abs(e.clientX - longPress.x) > LONG_PRESS_SLOP
+      || Math.abs(e.clientY - longPress.y) > LONG_PRESS_SLOP) cancelLongPress();
+});
+for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
+  $('#side').addEventListener(type, cancelLongPress);
+}
+$('#side').addEventListener('scroll', () => { cancelLongPress(); closeItemMenu(); });
+
+// 长按结束时浏览器仍会补一次 click，必须在捕获阶段吃掉。
+$('#side').addEventListener('click', e => {
+  if (!suppressItemClick) return;
+  suppressItemClick = false;
+  e.stopPropagation();
+  e.preventDefault();
+}, true);
+
+$('#item-menu').onclick = async e => {
+  const button = e.target.closest('button[data-act]');
+  if (!button || button.getAttribute('aria-disabled') === 'true') return;
+  const uid = menuUid;
+  if (button.dataset.act === 'group') { globalThis.SessionDockGroups?.showMenu([uid], button); return; }
+  closeItemMenu();
+  if (!uid) return;
+  if (button.dataset.act === 'copy-identity') {
+    const row = sidebarSessions().find(session => session.uid === uid);
+    if (!row?.sid) return;
+    const machine = row.node_name || Nodes.list.find(node => node.id === row.node_id)?.name
+      || (!HUB_MODE ? serverHostname : '') || '(未知)';
+    const text = `机器：${machine}\n目录：${row.cwd || '(未知)'}\nagent：${row.source}\nUUID：${row.sid}`;
+    try {
+      await copyFileText(text);
+      showSessionStopNotice('会话标识已复制。');
+    } catch (error) {
+      await appAlert(`复制会话标识失败：${error.message || error}`);
+    }
+    return;
+  }
+  if (button.dataset.act === 'clone') { await cloneSessionGroup(uid); return; }
+  if (button.dataset.act === 'hide') {
+    await setForkParentVisibility([uid], false);
+    return;
+  }
+  if (button.dataset.act === 'detach') {
+    await setSessionNest(uid, {parent_uid: null});
+    return;
+  }
+  if (button.dataset.act === 'attach') {
+    setNestAttach(uid);
+    return;
+  }
+  if (button.dataset.act === 'pick') {
+    pickedSessions.add(uid);       // 从哪条进入多选，就先勾上哪条
+    setPicking(true);
+    return;
+  }
+  if (button.dataset.act === 'stop') {
+    const row = S.sessions.find(x => x.uid === uid) || sidebarSessions().find(x => x.uid === uid);
+    if (row?.pending) { if (typeof stopPendingSession === 'function') await stopPendingSession(row); return; }
+    if (row) await stopSession(row);
+    return;
+  }
+  const row = sidebarSessions().find(session => session.uid === uid);
+  const launch = unusedNewAssignedLaunch(row);
+  if (launch && typeof deletePendingSession === 'function') {
+    await deletePendingSession(launch);
+    return;
+  }
+  await deleteSessions([uid]);
+};
+
+document.addEventListener('pointerdown', e => {
+  if (!$('#item-menu').hidden && !e.target.closest('#item-menu, #session-group-menu')) closeItemMenu();
+}, true);
+addEventListener('resize', closeItemMenu);
+
+function starButtonMarkup(uid, starred, cls = '', id = '') {
+  const label = starred ? '取消星标' : '标为星标';
+  return `<button type="button"${id ? ` id="${id}"` : ''}
+    class="star-toggle ${cls}${starred ? ' on' : ''}" data-star-uid="${esc(uid)}"
+    title="${label}" aria-label="${label}" aria-pressed="${starred}"
+    ${S.starBusy.has(uid) ? 'disabled' : ''}>${uiIcon(starred ? 'star-filled' : 'star')}</button>`;
+}
+
+function paintStarButton(button, starred, busy = false) {
+  if (!button) return;
+  const label = starred ? '取消星标' : '标为星标';
+  const changed = button.classList.contains('on') !== starred;
+  button.classList.toggle('on', starred);
+  button.title = button.ariaLabel = label;
+  button.setAttribute('aria-pressed', String(starred));
+  button.disabled = busy;
+  if (changed) button.innerHTML = uiIcon(starred ? 'star-filled' : 'star');
+  labelSessionAction(button);
+}
+
+function applySessionStar(uid, starred, starredAt = null) {
+  for (const rows of [S.sessions, S.results || []]) {
+    const row = rows.find(s => s.uid === uid);
+    if (!row) continue;
+    row.starred = starred;
+    if (starredAt) row.starred_at = starredAt;
+    else delete row.starred_at;
+  }
+  for (const entry of cache.values()) {
+    if (entry.meta?.uid !== uid) continue;
+    entry.meta.starred = starred;
+    if (starredAt) entry.meta.starred_at = starredAt;
+    else delete entry.meta.starred_at;
+  }
+}
+
+function applyForkParentVisibility(uid, visible) {
+  for (const rows of [S.sessions, S.results || []]) {
+    const row = rows.find(session => session.uid === uid);
+    if (row?.fork_parent) row.fork_parent_visible = visible;
+  }
+  for (const entry of cache.values()) {
+    if (entry.meta?.uid === uid && entry.meta.fork_parent) {
+      entry.meta.fork_parent_visible = visible;
+    }
+  }
+}
+
+async function setForkParentVisibility(uids, visible, button = null) {
+  const unique = [...new Set(uids)].filter(Boolean);
+  if (!unique.length) return {updated: [], errors: []};
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch(appUrl('api/sessions/fork-visibility'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({uids: unique, visible}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    for (const row of data.updated || []) {
+      applyForkParentVisibility(row.uid, !!row.fork_parent_visible);
+    }
+    renderNodes();
+    renderChips();
+    renderSide();
+    showSessionCount();
+    const selected = S.sessions.find(session => session.uid === S.sel);
+    if (selected) renderSessionAction(selected);
+    renderForkChainMenu();
+    if (data.errors?.length) {
+      await appAlert(`父会话显示状态有 ${data.errors.length} 项未保存：${data.errors[0].error}`);
+    }
+    return data;
+  } catch (error) {
+    await appAlert('父会话显示状态保存失败: ' + error.message);
+    return null;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function refreshStarPresentation(uid) {
+  const side = $('#side');
+  const top = side?.scrollTop || 0;
+  renderSide();
+  if (side) side.scrollTop = top;
+  if (S.sel === uid) paintStarButton($('#a-star'), sessionStarred(uid), S.starBusy.has(uid));
+}
+
+async function toggleSessionStar(uid) {
+  if (!uid || S.starBusy.has(uid)) return;
+  const before = sessionStarred(uid);
+  const wanted = !before;
+  S.starBusy.add(uid);
+  applySessionStar(uid, wanted);
+  refreshStarPresentation(uid);
+  try {
+    const response = await fetch(appUrl('api/session/star'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({uid, starred: wanted}),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    applySessionStar(uid, !!data.starred, data.starred_at || null);
+  } catch (error) {
+    applySessionStar(uid, before);
+    const stat = $('#stat');
+    if (stat) {
+      stat.textContent = ' 星标保存失败';
+      stat.classList.add('err');
+      setTimeout(() => { stat.classList.remove('err'); showSessionCount(sidebarSessions().length); }, 1800);
+    }
+    console.error('星标保存失败', error);
+  } finally {
+    S.starBusy.delete(uid);
+    refreshStarPresentation(uid);
+  }
+}
+
+/* ---------- Claude 时间线固定显示（Rust 只读迁移能力） ----------
+ * 只改 SessionDock的显示时间线；不写原生记录，也不给 CLI 发任何回滚信号。
+ * 没有这个能力声明的页面，保持原有双 Esc 原生回滚流程。 */
+function timelinePinEnabled() {
+  return SessionDockCapabilities.config.backend === 'rust'
+    && SessionDockCapabilities.config.timeline_pin === true;
+}
+
+function timelinePinFailed(message) {
+  const stat = $('#stat');
+  if (!stat) return;
+  stat.textContent = ` ${message}`;
+  stat.classList.add('err');
+  setTimeout(() => { stat.classList.remove('err'); showSessionCount(sidebarSessions().length); }, 2400);
+}
+
+const timelinePinBusy = new Set();
+async function pinTimeline(uid, target) {
+  if (!timelinePinEnabled() || !uid || timelinePinBusy.has(uid)) return false;
+  timelinePinBusy.add(uid);
+  try {
+    const response = await fetch(appUrl('api/session/rewind'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({uid, target: target ?? null}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    // 固定/取消固定改变逻辑时间线：即便 JSONL 一个字节没变，服务端也会给
+    // reset；用现有增量接口原子替换缓存和 DOM。
+    S.lastSync = 0;
+    await syncSession(uid, null);
+    return true;
+  } catch (error) {
+    timelinePinFailed(`${target ? '固定显示失败' : '取消固定失败'}: ${error.message}`);
+    console.error('时间线固定失败', error);
+    return false;
+  } finally {
+    timelinePinBusy.delete(uid);
+  }
+}
+
+function renderTimelinePinNotice(meta) {
+  $('#timeline-pin-notice')?.remove();
+  if (!timelinePinEnabled() || !meta || meta.agent_id || !meta.timeline_pin
+      || typeof meta.timeline_pin !== 'object') return;
+  const detail = $('#detail');
+  if (!detail) return;
+  const pin = meta.timeline_pin;
+  // A rewind made in the terminal: the next native input settles it, so a
+  // retired one needs no notice and an active one offers nothing to undo.
+  if (pin.cli && pin.retired) return;
+  const notice = document.createElement('div');
+  notice.id = 'timeline-pin-notice';
+  notice.setAttribute('role', 'status');
+  notice.dataset.retired = String(!!pin.retired);
+  if (pin.retired_reason) notice.dataset.retiredReason = String(pin.retired_reason);
+  notice.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;'
+    + 'padding:8px 12px;flex:none;border-bottom:1px solid var(--border);font-size:13px';
+  const text = document.createElement('span');
+  const heading = detail.querySelector(':scope > .dhead');
+  const place = () => { if (heading) heading.after(notice); else detail.prepend(notice); };
+  if (pin.cli) {
+    notice.dataset.cli = 'true';
+    text.textContent = '已同步终端里的回滚，显示到回滚点为止';
+    notice.append(text);
+    place();
+    return;
+  }
+  text.textContent = pin.retired
+    ? `固定显示已失效：${pin.retired_message || pin.retired_reason || '原生记录已变化'}。CLI 未回滚。`
+    : '已固定显示到所选输入之前，CLI 未回滚；原生记录继续后自动失效。';
+  const clear = document.createElement('button');
+  clear.type = 'button'; clear.className = 'btn';
+  clear.id = 'timeline-pin-clear';
+  clear.textContent = pin.retired ? '清除记录' : '取消固定';
+  clear.title = '只移除 SessionDock 的显示固定，不会回滚 CLI';
+  clear.onclick = () => { clear.disabled = true; void pinTimeline(meta.uid, null).finally(() => { clear.disabled = false; }); };
+  notice.append(text, clear);
+  place();
+}
+
+function timelinePinAction(n, m) {
+  if (!timelinePinEnabled() || m.role !== 'user' || m.turn_id == null || S.agent) return;
+  const session = S.sessions.find(s => s.uid === S.sel)
+    || cache.get(viewKey(S.sel, null))?.meta;
+  if (session?.source !== 'claude') return;
+  const uid = S.sel, target = String(m.turn_id);
+  const action = el('button', 'more disclosure timeline-pin-action');
+  action.type = 'button';
+  action.textContent = '回到此处';
+  action.title = action.ariaLabel = '固定显示到这条输入之前；只改网页显示，CLI 不会回滚';
+  action.dataset.pinTarget = target;
+  action.style.cssText = 'width:auto;margin:2px 8px 6px auto;padding:2px 8px;font-size:11px';
+  action.onclick = () => { action.disabled = true; void pinTimeline(uid, target).finally(() => { action.disabled = false; }); };
+  n.appendChild(action);
+}
+
+function applySourceFilterChange() {
+  store.set('off', [...S.off]);
+  renderChips(); renderSide();
+  if (HUB_MODE && S.results !== null) void runSearch();
+}
+
+function selectOnlySource(source) {
+  if (!Object.hasOwn(SOURCES, source)) return false;
+  const control = document.querySelector(`#chips button[data-source="${CSS.escape(source)}"]`);
+  if (control?.dataset.unavailableReason) { return false; }
+  S.off = new Set(Object.keys(SOURCES).filter(item => item !== source));
+  applySourceFilterChange();
+  return true;
+}
+
+function selectOnlyNodeFilter(id) {
+  const node = Nodes.list.find(item => item.id === id);
+  if (!node) return false;
+  if (node.online === false) { return false; }
+  Nodes.off = new Set(Nodes.list.filter(item => item.id !== id).map(item => item.id));
+  store.set('nodesOff', [...Nodes.off]);
+  renderNodes(); renderChips(); renderSide();
+  showSessionCount(sidebarSessions().filter(nodeSelected).length);
+  if (S.results !== null) void runSearch();
+  return true;
+}
+
+function renderChips() {
+  const box = $('#chips');
+  const wanted = new Set(Object.keys(SOURCES));
+  for (const old of box.querySelectorAll(':scope > .chip[data-source]')) {
+    if (!wanted.has(old.dataset.source)) old.remove();
+  }
+  const counts = new Map();
+  for (const row of sidebarSessions()) if (nodeSelected(row)) counts.set(row.source, (counts.get(row.source) || 0) + 1);
+  for (const [k, v] of Object.entries(SOURCES)) {
+    const n = counts.get(k) || 0;
+    let c = box.querySelector(`:scope > .chip[data-source="${CSS.escape(k)}"]`);
+    if (c && c.tagName !== 'BUTTON') { c.remove(); c = null; }
+    if (!c) {
+      c = el('button', 'chip', `${icon(k)}<span>${v.name}</span><b></b>`);
+      c.type = 'button';
+      c.dataset.source = k;
+      c.onclick = () => {
+        S.off.has(k) ? S.off.delete(k) : S.off.add(k);
+        applySourceFilterChange();
+      };
+      box.appendChild(c);
+    }
+    c.classList.toggle('off', S.off.has(k));
+    c.classList.toggle('on', !S.off.has(k));
+    c.setAttribute('aria-pressed', String(!S.off.has(k)));
+    c.querySelector('.ico').style.color = v.color;
+    c.querySelector(':scope > b').textContent = n;
+    c.title = `${v.name}：点击选择或取消；右键或长按只选此类型`;
+    c.setAttribute('aria-label', `${v.name}，${n} 个会话`);
+    setControlUnavailable(c, n === 0 ? `${v.name} 在当前选择的机器上没有会话。` : '');
+  }
+}
+
+/* 机器与 Agent Type 默认是多选；右键（桌面）或长按（触屏）快速收窄到一项。 */
+let filterLongPress = null;
+let suppressFilterClick = null;
+
+function filterButton(target) {
+  return target.closest?.('#node-chips button[data-node], #chips button[data-source]') || null;
+}
+
+function selectOnlyFilter(button) {
+  if (button.dataset.unavailableReason) { return false; }
+  if (button.dataset.node) return selectOnlyNodeFilter(button.dataset.node);
+  if (button.dataset.source) return selectOnlySource(button.dataset.source);
+  return false;
+}
+
+function cancelFilterLongPress() {
+  if (!filterLongPress) return;
+  clearTimeout(filterLongPress.timer);
+  filterLongPress = null;
+}
+
+for (const host of [$('#node-chips'), $('#chips')]) {
+  if (host.id === 'node-chips') {
+    // nodes.js 保持与冻结页面的字节兼容；在新交互层截住它的旧双击直选回调。
+    host.addEventListener('dblclick', event => {
+      const button = filterButton(event.target);
+      if (!button?.dataset.node || !host.contains(button)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, true);
+    const paintHints = () => {
+      for (const button of host.querySelectorAll('button[data-node]:not(.node-offline):not(.node-issue)')) {
+        const hint = '点击选择或取消；右键或长按只选这台机器';
+        if (button.title !== hint) button.title = hint;
+      }
+    };
+    new MutationObserver(paintHints).observe(host,
+      {childList: true, subtree: true, attributes: true, attributeFilter: ['title']});
+    paintHints();
+  }
+  host.addEventListener('contextmenu', event => {
+    const button = filterButton(event.target);
+    if (!button || !host.contains(button)) return;
+    event.preventDefault();
+    selectOnlyFilter(button);
+  });
+  host.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'mouse' || event.button !== 0) return;
+    const button = filterButton(event.target);
+    if (!button || !host.contains(button)) return;
+    cancelFilterLongPress();
+    const press = {button, pointerId: event.pointerId, x: event.clientX, y: event.clientY, timer: 0};
+    press.timer = setTimeout(() => {
+      if (filterLongPress !== press) return;
+      filterLongPress = null;
+      if (!selectOnlyFilter(button)) return;
+      suppressFilterClick = button;
+      navigator.vibrate?.(12);
+      // 极少数容器长按后不派发 click，不能因此吞掉下一次真实点击。
+      setTimeout(() => { if (suppressFilterClick === button) suppressFilterClick = null; }, 800);
+    }, LONG_PRESS_MS);
+    filterLongPress = press;
+  });
+  host.addEventListener('pointermove', event => {
+    const press = filterLongPress;
+    if (!press || press.pointerId !== event.pointerId) return;
+    if (Math.abs(event.clientX - press.x) > LONG_PRESS_SLOP
+        || Math.abs(event.clientY - press.y) > LONG_PRESS_SLOP) cancelFilterLongPress();
+  });
+  for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
+    host.addEventListener(type, cancelFilterLongPress);
+  }
+  host.addEventListener('click', event => {
+    const button = filterButton(event.target);
+    if (!button || button !== suppressFilterClick) return;
+    suppressFilterClick = null;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }, true);
+}
+
+/* ---------- 分层：附属关系 ---------- */
+const spawnKey = (nodeId, source, sid) => JSON.stringify([nodeId || '', source, String(sid)]);
+
+/** SessionDock stores only the user-selected sidebar parent. */
+function nestSpecParent(session) {
+  return session.nest_parent?.source && session.nest_parent.sid
+    ? {parent: session.nest_parent} : null;
+}
+
+function nestParentOf(session, byKey, allByKey = new Map(S.sessions.map(s =>
+  [spawnKey(s.node_id, s.source, s.sid), s]))) {
+  const spec = nestSpecParent(session);
+  if (!spec) return null;
+  const key = spawnKey(spec.parent.node_id || session.node_id, spec.parent.source, spec.parent.sid);
+  let row = byKey.get(key) || allByKey.get(key);
+  const seen = new Set([session.uid]);
+  while (row && !seen.has(row.uid)) {
+    seen.add(row.uid);
+    const visible = byKey.get(spawnKey(row.node_id, row.source, row.sid));
+    if (visible) return visible;
+    // 回退/续写隐藏旧父会话时，附属会话跟随它的可见后继；不改写历史发起关系。
+    // 普通筛选或删除不意味着续写，找不到可见后继仍按孤立会话处理。
+    if (sessionContinued(row)) {
+      const next = indexedSessions().byUid.get(row.continued_in);
+      row = next?.source === row.source && (next.node_id || '') === (row.node_id || '') ? next : null;
+    } else if (hiddenForkParent(row)) {
+      row = forkChildren(row)[0];
+    } else {
+      return null;
+    }
+  }
+  return null;
+}
+
+function nestEdges(list) {
+  const children = new Map(), nested = new Set();
+  const byKey = new Map(list.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
+  const allByKey = new Map(S.sessions.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
+  const parentOf = new Map();
+  for (const s of list) {
+    const spec = nestSpecParent(s);
+    if (!spec) continue;
+    const parent = nestParentOf(s, byKey, allByKey);
+    if (!parent) continue;
+    // A stored cycle must not swallow sessions from the sidebar.
+    let cur = parent, looped = false;
+    for (let i = 0; cur && i < list.length; i++) {
+      if (cur === s) { looped = true; break; }
+      cur = parentOf.get(cur.uid) || null;
+    }
+    if (looped) continue;
+    parentOf.set(s.uid, parent);
+    if (!children.has(parent.uid)) children.set(parent.uid, []);
+    children.get(parent.uid).push(s);
+    nested.add(s.uid);
+  }
+  return {children, nested};
+}
+
+/** 分层模式下的树：每条会话直接发起的会话，以及哪些会话已挂在别人下面。
+ *  回退/续写隐藏的发起者沿后继解析；被筛掉或已删除且无可见后继的仍作根显示。 */
+function nestTree(list) {
+  if (!S.nest) return {children: new Map(), nested: new Set()};
+  return nestEdges(list);
+}
+
+function nestDescendantUids(uid, list = sidebarSessions()) {
+  const {children} = nestEdges(list);
+  const out = new Set();
+  const walk = id => {
+    for (const child of children.get(id) || []) {
+      if (out.has(child.uid)) continue;
+      out.add(child.uid);
+      walk(child.uid);
+    }
+  };
+  walk(uid);
+  return out;
+}
+
+function applySessionNest(uid, nestParent) {
+  for (const rows of [S.sessions, S.results || []]) {
+    const row = rows.find(session => session.uid === uid);
+    if (!row) continue;
+    if (nestParent) row.nest_parent = nestParent;
+    else delete row.nest_parent;
+  }
+}
+
+function setNestAttach(value) {
+  S.nestAttachUids = (Array.isArray(value) ? value : [value]).filter(Boolean);
+  S.nestAttach = S.nestAttachUids[0] || '';
+  if (S.nestAttach && S.picking) {
+    S.picking = false;
+    pickedSessions.clear();
+  }
+  const side = $('#side'), top = side.scrollTop;
+  renderPickBar();
+  renderSide();
+  side.scrollTop = top;
+}
+
+async function setSessionNest(uid, {parent_uid = null} = {}) {
+  try {
+    const response = await fetch(appUrl('api/session/nest'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({uid, parent_uid}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    applySessionNest(uid, data.nest_parent || null);
+    if (data.nest_parent && !S.nest) {
+      S.nest = true;
+      store.set('nest', true);
+      renderView();
+    }
+    const side = $('#side'), top = side?.scrollTop || 0;
+    renderSide();
+    if (side) side.scrollTop = top;
+    return data;
+  } catch (error) {
+    await appAlert('会话附属关系保存失败: ' + error.message);
+    return null;
+  }
+}
+
+async function pickNestParent(target) {
+  const listed = new Set(sidebarSessions().map(session => session.uid));
+  const uids = S.nestAttachUids.filter(uid => listed.has(uid));
+  if (!uids.length) { setNestAttach(''); return; }
+  if (!target?.uid || uids.includes(target.uid)) return;
+  if (uids.some(uid => nestDescendantUids(uid).has(target.uid))) {
+    await appAlert('不能附属到自己的子会话下面');
+    return;
+  }
+  // 逐条保存；失败的留在点选里（setSessionNest 已提示原因），可以再点一次。
+  const failed = [];
+  for (const uid of uids) {
+    if (!await setSessionNest(uid, {parent_uid: target.uid})) failed.push(uid);
+  }
+  setNestAttach(failed);
+}
+
+/** 一条会话连同它的子代理和它发起的会话，按活动时间倒序、还在跑的在前。 */
+function nestStamp(s, children, memo = new Map()) {
+  if (memo.has(s.uid)) return memo.get(s.uid);
+  const times = memo.times ||= new Map();
+  const time = value => {
+    if (!times.has(value)) times.set(value, +new Date(value) || 0);
+    return times.get(value);
+  };
+  let stamp = time(s.updated);
+  memo.set(s.uid, stamp);   // 先占位，环再深也只算一遍
+  for (const a of s.agent_items || []) stamp = Math.max(stamp, time(a.updated));
+  for (const c of children.get(s.uid) || []) stamp = Math.max(stamp, nestStamp(c, children, memo));
+  memo.set(s.uid, stamp);
+  return stamp;
+}
+
+// Each new search starts open; its folds never read or write saved list folds.
+const sidebarGroupFolds = () => S.term ? S.searchClosed : S.closed;
+const sidebarNestFolds = () => S.term ? S.searchNestClosed : S.nestClosed;
+const sidebarGroupClosed = key => sidebarGroupFolds().has(key);
+const sidebarNestClosed = uid => sidebarNestFolds().has(uid);
+
+function sidebarSearchText(s, agent = null) {
+  const row = agent || s;
+  return [row.title, row.cwd || s.cwd, s.node_name, s.source, SOURCES[s.source]?.name,
+    row.model, agent ? agent.type : s.agent_type,
+    ...(agent ? [agent.id] : [s.sid, s.uid])].join('\n');
+}
+
+function sidebarMainMatches(s) {
+  if (!S.term) return true;
+  return S.results !== null ? s.hits > 0
+    : matchesSearch(sidebarSearchText(s));
+}
+
+function sidebarAgentItems(s) {
+  const agents = s.agent_items || [];
+  if (!S.term) return agents;
+  if (S.results !== null) return agents.filter(a => a.hits > 0);
+  return agents.filter(a => matchesSearch(sidebarSearchText(s, a)));
+}
+
+function sidebarMatchCount(list) {
+  return list.reduce((count, s) => count + Number(sidebarMainMatches(s)) + sidebarAgentItems(s).length, 0);
+}
+
+function sidebarRowSnippet(s, agent = null) {
+  return agent ? agent.snippet : sidebarMainMatches(s) ? s.snippet : '';
+}
+
+// Count the rows a branch would expose without sorting or allocating row objects.
+// A nested closed session contributes just its own row, matching expandRows.
+function nestSize(s, children, memo = new Map()) {
+  if (memo.has(s.uid)) return memo.get(s.uid);
+  const size = {rows: 1 + sidebarAgentItems(s).length, sessions: 1};
+  memo.set(s.uid, size);
+  for (const child of children.get(s.uid) || []) {
+    const sub = sidebarNestClosed(child.uid) ? {rows: 1, sessions: 1} : nestSize(child, children, memo);
+    size.rows += sub.rows;
+    size.sessions += sub.sessions;
+  }
+  return size;
+}
+
+function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
+  const row = {s, agent: null, depth, kids: 0, closed: false};
+  const showMain = sidebarMainMatches(s) || (S.nest && S.view !== 'group');
+  if (showMain) out.push(row);
+  // 子代理行与分层开关无关，平铺模式同样挂在会话下面；children 在平铺时为空，
+  // 发起的会话只在分层模式缩进。
+  if (sidebarNestClosed(s.uid)) {
+    row.kids = nestSize(s, children, sizes).rows - 1;
+    row.closed = row.kids > 0;
+    return;
+  }
+  const when = v => +new Date(v) || 0;
+  const kids = [
+    ...sidebarAgentItems(s).map(agent => ({agent, running: agentRunning(s.uid, agent),
+      when: when(agent.updated)})),
+    ...(children.get(s.uid) || []).map(c => ({session: c, running: S.live.has(c.uid),
+      when: nestStamp(c, children, memo)})),
+  ].sort((a, b) => (b.running - a.running) || (b.when - a.when));
+  row.closed = kids.length > 0 && sidebarNestClosed(s.uid);
+  const start = out.length;
+  for (const k of kids) {
+    if (k.agent) out.push({s, agent: k.agent, depth: depth + Number(showMain)});
+    else if (!seen.has(k.session.uid)) {
+      seen.add(k.session.uid);
+      expandRows(k.session, depth + Number(showMain), children, out, seen, memo, sizes);
+    }
+  }
+  // 三角上写的是收起后消失的整棵子树行数。
+  row.kids = out.length - start;
+}
+
+const rowKey = row => row.agent ? `${row.s.uid}#${row.agent.id}` : row.s.uid;
+
+/** 左栏分组：[组键, 行数组]。行 = {s, agent, depth}；子代理行在两种模式下都以 depth+1 挂在
+ *  会话下面，平铺模式没有发起的会话行（children 为空）。
+ *  分层模式按整棵子树的最新活动排位和归组，发起的孩子刚有动静时父亲跟着浮上来。 */
+function groupBy(list, {skipClosed = false} = {}) {
+  const {children, nested} = S.view === 'group'
+    ? {children: new Map(), nested: new Set()} : nestTree(list);
+  const memo = new Map();
+  const stamp = s => S.nest ? nestStamp(s, children, memo) : (+new Date(s.updated) || 0);
+  const m = new Map(), latest = new Map(), dates = new Map();
+  for (const s of list) {
+    if (nested.has(s.uid) || (S.view === 'group' && (!s.group || (globalThis.SessionDockGroups?.available && !globalThis.SessionDockGroups.contains(s.group))))) continue;
+    const updated = stamp(s);
+    if (S.view === 'date' && !dates.has(updated)) dates.set(updated, dayKey(updated));
+    const k = S.view === 'tree' ? (s.node_id ? JSON.stringify([s.node_id, s.cwd || '(未知)']) : (s.cwd || '(未知)'))
+      : S.view === 'group' ? `group:${s.group || ''}` : dates.get(updated);
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(s);
+    latest.set(k, Math.max(latest.get(k) ?? -Infinity, updated));
+  }
+  if (S.view === 'group' && !S.term) for (const name of globalThis.SessionDockGroups?.names || []) {
+    const key = `group:${name}`; if (!m.has(key)) { m.set(key, []); latest.set(key, -Infinity); }
+  }
+  const keys = [...m.keys()];
+  if (S.view === 'date') keys.sort().reverse();
+  else keys.sort((a, b) => latest.get(b) - latest.get(a));
+  const compare = (a, b) =>
+    // 项目树的顺序只表达真实活动时间，点星不应让会话突然跳位。
+    // 时间轴才在同一日期内将收藏置前；收藏时间不参与排序。
+    (S.view === 'date' ? Number(!!b.starred) - Number(!!a.starred) : 0)
+    || stamp(b) - stamp(a);
+  const seen = new Set(), sizes = new Map();
+  const groups = keys.map(k => {
+    const roots = m.get(k);
+    if (!roots.length) return [k, []];
+    if (skipClosed && sidebarGroupClosed(k)) {
+      // The heading needs a count and a representative, not sorted hidden rows.
+      // Pick membership is collected only while selection mode is actually on.
+      let first = roots[0], count = 0;
+      for (const s of roots) {
+        if (compare(s, first) < 0) first = s;
+        count += !S.nest || sidebarNestClosed(s.uid) ? 1 : nestSize(s, children, sizes).sessions;
+      }
+      const pickUids = [];
+      if (S.picking) {
+        const collect = s => {
+          if (sessionPickable(s)) pickUids.push(s.uid);
+          if (S.nest && !sidebarNestClosed(s.uid)) {
+            for (const child of children.get(s.uid) || []) collect(child);
+          }
+        };
+        roots.forEach(collect);
+      }
+      return [k, [], {first, count, pickUids, roots}];
+    }
+    roots.sort(compare);
+    const rows = [];
+    for (const s of roots) {
+      if (seen.has(s.uid)) continue;
+      seen.add(s.uid);
+      expandRows(s, 0, children, rows, seen, memo, sizes);
+    }
+    return [k, rows];
+  });
+  groups.children = children;
+  return groups;
+}
+
+/** 列表项的元信息行。子代理数不在这里显示：它们就是挂在会话下面的缩进行，收起时计入三角数字。 */
+// Rust pending rows carry the receipt state; a finished instance says so
+// instead of "waiting" (its `stale` is the receipt flag, not a hub cache).
+const pendingMeta = s => `${fmtTime(s.updated)} · ${typeof pendingStateLabel === 'function'
+  ? pendingStateLabel(s) : '等待首条消息'}`;
+const rustPendingRow = s => !!s.pending && !!s.record_id && SessionDockCapabilities.config.backend === 'rust';
+// Explicitly shown ancestors can share the leaf's title. Keep their native
+// relationship visible instead of making a fork chain look like duplicate rows.
+const forkMeta = s => {
+  if (s.agent_id) return '';
+  const branch = s.forked_from_id
+    ? (Number.isInteger(s.fork_depth) && s.fork_depth > 0 ? `分叉 ${s.fork_depth}` : '分叉会话')
+    : '';
+  return s.fork_parent ? `父会话（${branch || '原始'}）` : branch;
+};
+const itemMeta = s => (s.stale && !rustPendingRow(s) ? '离线缓存 · ' : '') + (s.pending ? pendingMeta(s)
+  : [forkMeta(s), fmtTime(s.updated), fmtSize(s.size), s.model || '',
+                       s.hits ? `命中 ${s.hits}${s.hits_capped ? '+' : ''}` : '']
+                      .filter(Boolean).join(' · '));
+
+/** Share keyed reconciliation for explicit renders and background list updates. */
+function patchSide(list) {
+  renderSide(list);
+  return true;
+}
+
+/* ---------- 子代理行 ---------- */
+const agentMeta = (uid, a) => `子代理 · ${a.type} · ${fmtSpan(a.created, agentRunning(uid, a) ? null : a.updated)}`
+  + (S.term && a.hits > 0 ? ` · 命中 ${a.hits}${a.hits_capped ? '+' : ''}` : '');
+
+/** 每行前面的引导区：每一级祖先一根竖线，再一个放三角的槽位（叶子留空）。子代理行让
+ *  平铺模式也有引导区；有子代理或发起的孩子就有三角，与分层开关无关。
+ *  槽位与分组标题的三角同列，深一层的槽位正好落在上一层图标的下方。 */
+function nestLeadMarkup(r) {
+  const caret = r.kids ? `<button type="button" class="nest-caret" aria-expanded="${!r.closed}"
+      title="${r.closed ? '展开' : '收起'} ${r.kids} 项" aria-label="${r.closed ? '展开' : '收起'}「${esc(r.s.title)}」下的 ${r.kids} 项"></button>` : '';
+  return `<span class="nest-lead" aria-hidden="${r.kids ? 'false' : 'true'}">${'<i class="nest-guide"></i>'.repeat(r.depth)}<span class="nest-slot">${caret}</span></span>`;
+}
+
+function agentRow(s, a, depth) {
+  const it = el('div', 'item agent tree',
+    `${nestLeadMarkup({s, agent: a, depth, kids: 0, closed: false})}
+     <span class="ico">${icon(s.source)}<span class="item-status"></span><span class="agent-mark" title="子代理" aria-hidden="true">${uiIcon('tree')}</span></span>
+     <div class="body">
+       <div class="t" title="${esc(a.title)}">${hl(a.title)}</div>
+       <div class="m">${esc(agentMeta(s.uid, a))}</div>
+       ${a.snippet ? `<div class="snip" title="${esc(a.snippet)}">${sidebarSnippet(a.snippet)}</div>` : ''}
+     </div>`);
+  it._resourceSession = s; it._resourceAgent = true; it._resourceMeta = agentMeta(s.uid, a);
+  globalThis.SessionDockSidebarResources?.paint(it);
+  it.dataset.key = rowKey({s, agent: a});
+  it.dataset.owner = s.uid;
+  it.dataset.agent = a.id;
+  it.dataset.depth = depth;
+  it.onclick = event => {
+    if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
+    if (S.nestAttach || S.picking) return;
+    openSession(s.uid, a.id);
+  };
+  paintAgentStatus(it);
+  return it;
+}
+
+/** 子代理行的绿点和选中态：跑没跑由服务端按 transcript 判断，父进程不在则一律不算。 */
+function paintAgentStatus(node) {
+  const uid = node.dataset.owner, id = node.dataset.agent;
+  const item = (indexedSessions().byUid.get(uid)?.agent_items || []).find(a => a.id === id);
+  const running = !!item && agentRunning(uid, item);
+  node.classList.toggle('live', running);
+  node.classList.toggle('sel', S.sel === uid && S.agent === id);
+  const badge = node.querySelector(':scope > .ico > .item-status');
+  if (!badge) return;
+  badge.classList.toggle('visible', running);
+  badge.title = badge.ariaLabel = running ? '子代理运行中' : '';
+}
+
+/** Move `.sel` without rebuilding `#side`. Clicking a row used to call
+ *  `renderSide()`, which wipes the list and lets the scrollbar jump even when
+ *  membership is unchanged — worst at the bottom of a long date/nest list. */
+function paintSidebarSelection(uid, agent = null) {
+  const side = $('#side');
+  const row = !side ? null : agent
+    ? side.querySelector(`.item.agent[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`)
+    : side.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
+  if (!row) {
+    const top = side?.scrollTop || 0;
+    renderSide();
+    if (side) side.scrollTop = top;
+    return false;
+  }
+  side.querySelectorAll('.item.sel').forEach(item => item.classList.remove('sel'));
+  row.classList.add('sel');
+  return true;
+}
+
+function exitSidebarSearch() {
+  cancelSearch(true);
+  showSessionCount();
+  renderSide();
+}
+
+$('#side-search-exit').onclick = exitSidebarSearch;
+
+function paintSearchMode(list) {
+  const searching = !!S.term;
+  $('#side').classList.toggle('search-mode', searching);
+  $('#side-search-state').hidden = !searching;
+  $('#side-search-label').textContent = S.results !== null ? '搜索结果' : '筛选结果';
+  $('#side-search-query').textContent = S.term;
+  $('#side-search-count').textContent = `${sidebarMatchCount(list)} 条`;
+}
+
+/** Update a row without discarding selection, focus or its existing elements. */
+function patchSidebarRow(node, row, highlightKey) {
+  const s = row.s, agent = row.agent;
+  const titleText = agent ? agent.title : s.title;
+  const title = node.querySelector('.t');
+  if (title && (title.title !== titleText || node._highlightKey !== highlightKey)) {
+    title.title = titleText;
+    title.innerHTML = hl(titleText);
+  }
+  const meta = node.querySelector('.m');
+  const metaText = agent ? agentMeta(s.uid, agent) : itemMeta(s);
+  node._resourceSession = s; node._resourceAgent = !!agent; node._resourceMeta = metaText;
+  if (meta && meta.textContent !== metaText) meta.textContent = metaText;
+  globalThis.SessionDockSidebarResources?.paint(node);
+  const snippet = node.querySelector('.snip'), snippetText = sidebarRowSnippet(s, agent);
+  if (snippet && (snippet.title !== snippetText || node._highlightKey !== highlightKey)) {
+    snippet.title = snippetText;
+    snippet.innerHTML = sidebarSnippet(snippetText);
+  }
+  if (agent) {
+    paintAgentStatus(node);
+    return;
+  }
+  const pickable = S.picking && sessionPickable(s);
+  const selected = S.sel === s.uid && !S.agent;
+  const className = 'item tree' + (selected ? ' sel' : '')
+    + (row.closed ? ' nest-closed' : '')
+    + (s.pending ? (s.stale ? ' pending' : ' pending live live-tmux') : '')
+    + (!s.pending && S.live.has(s.uid) ? ' live' : '')
+    + (!s.pending && S.liveTmux.has(s.uid) ? ' live-tmux' : '')
+    + (pickable && pickedSessions.has(s.uid) ? ' picked' : '')
+    + (S.nestAttachUids.includes(s.uid) ? ' nest-source' : '');
+  if (node.className !== className) node.className = className;
+  const cwd = node.querySelector('.cwd');
+  if (cwd && (cwd.title !== (s.cwd || '') || cwd.dataset.nodeName !== (s.node_name || ''))) {
+    cwd.title = s.cwd || '';
+    cwd.dataset.nodeName = s.node_name || '';
+    cwd.innerHTML = timelineDirectoryMarkup(s);
+  }
+  globalThis.SessionDockGroups?.paintRow(node, s);
+  paintStarButton(node.querySelector('.item-star'), !!s.starred, S.starBusy.has(s.uid));
+  syncRowPickBox(node, s);
+  const caret = node.querySelector('.nest-caret');
+  if (caret) {
+    caret.setAttribute('aria-expanded', String(!row.closed));
+    caret.title = `${row.closed ? '展开' : '收起'} ${row.kids} 项`;
+    caret.ariaLabel = `${row.closed ? '展开' : '收起'}「${s.title}」下的 ${row.kids} 项`;
+  }
+  if (s.pending) node.dataset.tmuxName = s.tmuxName;
+  node.onclick = event => {
+    if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
+    if (S.nestAttach) { void pickNestParent(s); return; }
+    if (S.picking) { if (sessionPickable(s)) toggleSessionPick(s.uid); return; }
+    s.pending ? openPendingSession(s) : openSession(s.uid);
+  };
+  paintItemStatus(node);
+}
+
+function sidebarRowIdentity(r, picked, sessionSignatures) {
+  if (!sessionSignatures.has(r.s.uid)) {
+    const {agent_items, cursor, ...fields} = r.s;
+    sessionSignatures.set(r.s.uid, JSON.stringify(fields));
+  }
+  const signature = JSON.stringify([sessionSignatures.get(r.s.uid), r.agent, r.depth, r.kids, r.closed,
+    r.agent ? agentMeta(r.s.uid, r.agent) : itemMeta(r.s),
+    S.view, S.nestAttachUids.includes(r.s.uid), S.term, S.opts,
+    S.opts.regex ? regexResultRevision : 0,
+    S.sel === r.s.uid && (r.agent ? S.agent === r.agent.id : !S.agent),
+    S.starBusy.has(r.s.uid), S.live.has(r.s.uid), S.liveTmux.has(r.s.uid)]);
+  const structure = JSON.stringify([!!r.agent, S.view, !!S.term,
+    r.depth, !!r.kids, !!r.s.pending, !!sidebarRowSnippet(r.s, r.agent), r.s.source]);
+  return {signature, structure};
+}
+
+function createSidebarRow(r, picked = pickedSessions) {
+  if (r.agent) return agentRow(r.s, r.agent, r.depth);
+  const s = r.s;
+  const snippet = sidebarRowSnippet(s);
+  const meta = itemMeta(s);
+  const pickable = S.picking && sessionPickable(s);
+  // 正在看的子代理有自己那一行，主会话行不再一起亮
+  const selected = S.sel === s.uid && !S.agent;
+  const it = el('div', 'item tree' + (selected ? ' sel' : '') + (r.closed ? ' nest-closed' : '')
+                          + (s.pending ? (s.stale ? ' pending' : ' pending live live-tmux') : '')
+                          + (!s.pending && S.live.has(s.uid) ? ' live' : '')
+                          + (!s.pending && S.liveTmux.has(s.uid) ? ' live-tmux' : '')
+                          + (pickable && picked.has(s.uid) ? ' picked' : '')
+                          + (S.nestAttachUids.includes(s.uid) ? ' nest-source' : ''),
+    `${nestLeadMarkup(r)}
+     <span class="ico">${icon(s.source)}<span class="item-status"></span></span>
+     <div class="body">
+       <div class="t" title="${esc(s.title)}">${hl(s.title)}</div>
+       <div class="m">${esc(meta)}</div>
+       ${S.view === 'date'
+         ? `<div class="cwd" title="${esc(s.cwd)}" data-node-name="${esc(s.node_name || '')}">${timelineDirectoryMarkup(s)}</div>` : ''}
+       ${snippet ? `<div class="snip" title="${esc(snippet)}">${sidebarSnippet(snippet)}</div>` : ''}
+     </div>
+     ${s.pending ? '' : starButtonMarkup(s.uid, !!s.starred, 'item-star')}`);
+  it._resourceSession = s; it._resourceAgent = false; it._resourceMeta = meta;
+  globalThis.SessionDockSidebarResources?.paint(it);
+  globalThis.SessionDockGroups?.paintRow(it, s);
+  it.dataset.uid = s.uid;
+  it.dataset.key = s.uid;
+  it.dataset.depth = r.depth;
+  if (s.pending) it.dataset.tmuxName = s.tmuxName;
+  syncRowPickBox(it, s);
+  it.onclick = event => {
+    if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
+    if (S.nestAttach) { void pickNestParent(s); return; }
+    if (S.picking) { if (sessionPickable(s)) toggleSessionPick(s.uid); return; }
+    s.pending ? openPendingSession(s) : openSession(s.uid);
+  };
+  const star = it.querySelector('.item-star');
+  if (star) star.onclick = event => {
+    event.stopPropagation();
+    toggleSessionStar(s.uid);
+  };
+  const caret = it.querySelector('.nest-caret');
+  if (caret) caret.onclick = event => {
+    event.stopPropagation();
+    toggleNestFold(s.uid);
+  };
+  paintItemStatus(it);
+  return it;
+}
+
+function renderSide(suppliedList = null) {
+  if (sidebarTextSelectionProtected()) {
+    sidebarRenderDeferred = true;
+    return;
+  }
+  sidebarRenderDeferred = false;
+  renderSessionCounts();
+  const side = $('#side');
+  const top = side.scrollTop;
+  const list = suppliedList || visible();
+  side._sessionUids = new Set(list.map(row => row.uid));
+  const oldGroups = new Map([...side.querySelectorAll(':scope > .group')].map(group => [group.dataset.key, group]));
+  for (const child of [...side.children]) if (!child.classList.contains('group') && child.id !== 'session-group-create-row') child.remove();
+  paintSearchMode(list);
+  const picked = syncPickedSessions();
+  renderPickBar();
+  if (!list.length && !(S.view === 'group' && globalThis.SessionDockGroups?.available)) {
+    side._nestTree = null;
+    side.replaceChildren();
+    if (S.term) {
+      const empty = el('div', 'empty search-empty', '当前搜索无匹配会话');
+      const back = el('button', 'btn', '返回全部会话');
+      back.type = 'button';
+      back.onclick = exitSidebarSearch;
+      empty.appendChild(back);
+      side.appendChild(empty);
+      side.scrollTop = top;
+      return;
+    }
+    const text = S.activeOnly
+      ? (S.results ? '没有活动的匹配会话' : '没有活动会话')
+      : (S.results ? '没有匹配的会话' : '没有会话');
+    side.appendChild(el('div', 'empty', text));
+    side.scrollTop = top;
+    return;
+  }
+  let groupPosition = 0;
+  const sessionSignatures = new Map();
+  const highlightKey = JSON.stringify([S.term, S.opts, S.opts.regex ? regexResultRevision : 0]);
+  const groups = groupBy(list, {skipClosed: true});
+  side._nestTree = {children: groups.children, sessions: S.sessions, results: S.results,
+    context: sidebarNestContext()};
+  for (const [key, rows, summary] of groups) {
+    const items = rows.filter(r => !r.agent).map(r => r.s);
+    const first = summary ? summary.first : (items[0] || rows[0]?.s);
+    const count = summary ? summary.count : S.term
+      ? rows.filter(row => row.agent || sidebarMainMatches(row.s)).length : items.length;
+    const g = oldGroups.get(key) || el('div', 'group');
+    oldGroups.delete(key);
+    g.classList.toggle('closed', sidebarGroupClosed(key));
+    g.dataset.key = key;
+    const label = S.view === 'tree' ? nodeDirectory(first) : S.view === 'group' ? key.slice(6) : key;   // 分组标题不缩写, 只换 ~
+    const groupUids = summary ? summary.pickUids : items.filter(sessionPickable).map(x => x.uid);
+    const headSignature = JSON.stringify([label, key, count, S.view, first?.node_name]);
+    const oldHead = g.querySelector(':scope > .ghead');
+    const head = oldHead?._signature === headSignature ? oldHead : el('div', 'ghead',
+      `<span class="caret">▼</span><span class="gname" title="${esc(key)}">${S.view === 'tree' ? nodeDirectoryMarkup(first) : esc(label)}</span>
+       <span class="gcount">${count}</span>`);
+    head.onclick = event => {
+      if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
+      const folds = sidebarGroupFolds();
+      folds.has(key) ? folds.delete(key) : folds.add(key);
+      if (!S.term) store.set('closed', [...S.closed]);
+      renderSide();
+    };
+    if (S.view === 'group') globalThis.SessionDockGroups?.paintHeading(head, label);
+    head._signature = headSignature;
+    head._pickLabel = label;
+    if (head !== oldHead) { if (oldHead) oldHead.replaceWith(head); else g.prepend(head); }
+    g._pickUids = groupUids;
+    g._rows = rows;
+    const ul = g.querySelector(':scope > .glist') || el('div', 'glist');
+    const previous = new Map([...ul.children].map(node => [node.dataset.key, node]));
+    let nextRow = ul.firstElementChild;
+    for (const r of (sidebarGroupClosed(key) ? [] : rows)) {
+      const {signature, structure} = sidebarRowIdentity(r, picked, sessionSignatures);
+      const old = previous.get(rowKey(r));
+      previous.delete(rowKey(r));
+      const place = node => {
+        node._nestRow = r;
+        node._signature = signature;
+        node._structure = structure;
+        node._highlightKey = highlightKey;
+        if (node === nextRow) nextRow = nextRow.nextElementSibling;
+        else ul.insertBefore(node, nextRow);
+      };
+      if (old?._signature === signature) {
+        if (!r.agent) syncRowPickBox(old, r.s);
+        place(old);
+        continue;
+      }
+      if (old?._structure === structure) {
+        patchSidebarRow(old, r, highlightKey);
+        place(old);
+        continue;
+      }
+      if (old === nextRow) nextRow = old.nextElementSibling;
+      old?.remove();
+      if (r.agent) { place(agentRow(r.s, r.agent, r.depth)); continue; }
+      place(createSidebarRow(r, picked));
+    }
+    for (const old of previous.values()) old.remove();
+    if (ul.parentElement !== g) g.appendChild(ul);
+    if (side.children[groupPosition] !== g) side.insertBefore(g, side.children[groupPosition] || null);
+    groupPosition++;
+    syncGroupPickBox(g);
+  }
+  for (const old of oldGroups.values()) old.remove();
+  globalThis.SessionDockGroups?.paintSidebar(side);
+  fitTimelineDirectories();
+  side.scrollTop = top;
+}
+
+function searchTerms(text) {
+  const terms = [], chars = Array.from(text);
+  let term = '', quoted = false;
+  for (let i = 0; i < chars.length; i++) {
+    const c = chars[i];
+    if (quoted && c === '\\' && (chars[i + 1] === '"' || chars[i + 1] === '\\')) {
+      term += chars[++i];
+    } else if (c === '"') {
+      quoted = !quoted;
+    } else if (!quoted && /[\s\u0085]/u.test(c)) {
+      if (term) { terms.push(term); term = ''; }
+    } else {
+      term += c;
+    }
+  }
+  if (term) terms.push(term);
+  return [...new Set(terms)];
+}
+
+// 与 search.rs whole_word 一致：[\p{L}\p{N}_] 邻字挡住全词，但汉字/假名/谚文
+// 与其它字母之间是边界。「无法识别的tag」能命中 tag，「猫猫」不能命中「猫」。
+function literalSource(term) {
+  const src = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!S.opts.word) return src;
+  const cjk = '\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}\\p{Script=Bopomofo}';
+  // JS has no class intersection; a letter outside those scripts is the other side.
+  const nonCjkLetter = `(?:(?![${cjk}])\\p{L})`;
+  const split = `(?<=[${cjk}])(?=${nonCjkLetter})|(?<=${nonCjkLetter})(?=[${cjk}])`;
+  const before = `(?:(?<![\\p{L}\\p{N}_])|${split})`;
+  const after = `(?:(?![\\p{L}\\p{N}_])|${split})`;
+  return `${before}(?:${src})${after}`;
+}
+
+// Individual message previews and highlighting match any term, even when
+// the session-level AND is satisfied by terms in different messages.
+function reTerm(global) {
+  let src;
+  if (S.opts.regex) {
+    src = S.term;
+    if (S.opts.word) src = `(?<!\\w)(?:${src})(?!\\w)`;
+  } else {
+    const terms = searchTerms(S.term).sort((a, b) => b.length - a.length);
+    if (!terms.length) return null;
+    src = terms.map(literalSource).join('|');
+  }
+  try {
+    return new RegExp(src, (S.opts.case ? '' : 'i') + (global ? 'g' : '') + (S.opts.regex ? '' : 'u'));
+  } catch {
+    return null;   // 正则写到一半是常态, 不该炸掉整个界面
+  }
+}
+
+let regexWorker = null, regexGeneration = '', regexRequest = 0, regexPaintTimer = null;
+let regexResultRevision = 0, searchInputTimer = null;
+const regexResults = new Map(), regexPending = new Map(), regexByText = new Map();
+function resetRegexSearch() {
+  regexWorker?.terminate();
+  regexWorker = null;
+  regexGeneration = '';
+  regexResults.clear();
+  for (const job of regexPending.values()) job.resolve([]);
+  regexPending.clear();
+  regexByText.clear();
+  clearTimeout(regexPaintTimer);
+  regexPaintTimer = null;
+}
+
+function regexMatches(text) {
+  const re = reTerm(true);
+  if (!re) return Promise.resolve([]);
+  const generation = `${re.source}\0${re.flags}`;
+  if (regexGeneration !== generation) {
+    resetRegexSearch();
+    regexGeneration = generation;
+  }
+  text = String(text ?? '');
+  if (regexResults.has(text)) return Promise.resolve(regexResults.get(text));
+  if (regexByText.has(text)) return regexByText.get(text);
+  if (!regexWorker) {
+    regexWorker = new Worker(appUrl('regex-worker.js'));
+    regexWorker.onmessage = ({data}) => {
+      const job = regexPending.get(data.id);
+      if (!job) return;
+      regexPending.delete(data.id);
+      regexByText.delete(job.text);
+      data.ranges.matched = !!data.matched;
+      regexResults.set(job.text, data.ranges);
+      job.resolve(data.ranges);
+      if (regexPaintTimer === null) regexPaintTimer = setTimeout(() => {
+        regexPaintTimer = null;
+        regexResultRevision++;
+        renderSide();
+      }, 50);
+    };
+    regexWorker.onerror = () => resetRegexSearch();
+  }
+  const id = ++regexRequest;
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  regexPending.set(id, {text, promise, resolve});
+  regexByText.set(text, promise);
+  regexWorker.postMessage({id, text, source: re.source, flags: re.flags, limit: MARK_MAX});
+  return promise;
+}
+
+function regexCached(text) {
+  if (!reTerm(true)) return [];
+  // Starting a request also invalidates results from a changed query/options.
+  regexMatches(text);
+  return regexResults.get(String(text ?? '')) || [];
+}
+
+function matchesSearch(text) {
+  if (S.opts.regex) return hasTerm(text);
+  const terms = searchTerms(S.term);
+  const test = term => new RegExp(literalSource(term), S.opts.case ? 'u' : 'iu').test(text);
+  return S.opts.mode === 'any' ? terms.some(test) : terms.every(test);
+}
+
+function hasTerm(t) {
+  if (!S.term) return false;
+  if (S.opts.regex) return !!regexCached(t).matched;
+  const re = reTerm(false);
+  return re ? re.test(t) : false;
+}
+
+function hl(text) {
+  text = String(text);
+  if (S.term && S.opts.regex) {
+    let html = '', last = 0;
+    for (const [start, end] of regexCached(text)) {
+      html += esc(text.slice(last, start)) + `<mark>${esc(text.slice(start, end))}</mark>`;
+      last = end;
+    }
+    return html + esc(text.slice(last));
+  }
+  const re = S.term && reTerm(true);
+  if (!re) return esc(text);
+  let html = '', last = 0;
+  for (const match of text.matchAll(re)) {
+    if (!match[0]) continue;
+    html += esc(text.slice(last, match.index)) + `<mark>${esc(match[0])}</mark>`;
+    last = match.index + match[0].length;
+  }
+  return html + esc(text.slice(last));
+}
+
+// The server's 40-character context can hide the hit below the sidebar's
+// two-line clamp. Keep a short Unicode-safe lead-in; the title retains the
+// full excerpt. Apply this to both newly created and reconciled rows.
+function sidebarSnippet(text) {
+  const start = S.opts.regex ? regexCached(text)[0]?.[0] : reTerm(false)?.exec(text)?.index;
+  if (start !== undefined) {
+    const before = Array.from(text.slice(0, start));
+    if (before.length > 8) text = '…' + before.slice(-8).join('') + text.slice(start);
+  }
+  return hl(text);
+}
+
+/** 在已渲染的 DOM 里给命中词套 <mark>, 走文本节点所以不会破坏标签。 */
+function markMatches(root) {
+  if (!S.term) return 0;
+  if (S.opts.regex) { markRegexMatches(root); return 0; }
+  const re = reTerm(true);
+  if (!re) return 0;
+  const messageBox = $('#msgs');
+  const existing = messageBox && root !== messageBox && messageBox.contains(root)
+    ? messageBox.querySelectorAll('mark').length : 0;
+  const budget = Math.max(0, MARK_MAX - existing);
+  // 只高亮正文: 折叠预览是正文副本, 高亮在那里会造成重复计数。
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: n => {
+      const msg = n.parentElement.closest('.msg');
+      return n.parentElement.closest('mark, .fold-preview, .katex')
+        || !msg || !SEARCH_ROLES.has(msg.dataset.role)
+        ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const targets = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    re.lastIndex = 0;                 // 带 g 的 test 会推进 lastIndex
+    if (re.test(n.nodeValue)) targets.push(n);
+  }
+  let count = 0;
+  for (const t of targets) {
+    if (count >= budget) { S.markCapped = true; break; }   // 搜 "a" 会生成上万节点, 会卡死
+    const frag = document.createDocumentFragment();
+    let last = 0, m;
+    re.lastIndex = 0;
+    while ((m = re.exec(t.nodeValue))) {
+      if (!m[0]) { re.lastIndex += re.unicode && t.nodeValue.codePointAt(re.lastIndex) > 0xffff ? 2 : 1; continue; }
+      frag.append(t.nodeValue.slice(last, m.index));
+      const mk = document.createElement('mark');
+      mk.textContent = m[0];
+      frag.appendChild(mk);
+      last = m.index + m[0].length;
+      if (++count >= budget) { S.markCapped = true; break; }
+    }
+    frag.append(t.nodeValue.slice(last));
+    t.parentNode.replaceChild(frag, t);
+  }
+  return count;
+}
+
+async function markRegexMatches(root) {
+  for (const node of [root, ...root.querySelectorAll('.msg')]) node._applyRegexMatch?.();
+  const generation = `${S.term}\0${JSON.stringify(S.opts)}`;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: n => {
+      const msg = n.parentElement?.closest('.msg');
+      return n.parentElement?.closest('mark, .fold-preview, .katex')
+        || !msg || !SEARCH_ROLES.has(msg.dataset.role)
+        ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const targets = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) targets.push(node);
+  for (const node of targets) {
+    const text = node.nodeValue;
+    const ranges = await regexMatches(text);
+    if (generation !== `${S.term}\0${JSON.stringify(S.opts)}` || !root.isConnected) return;
+    if (!node.isConnected || node.nodeValue !== text || node.parentElement.closest('mark')) continue;
+    const budget = MARK_MAX - ($('#msgs')?.querySelectorAll('mark').length || 0);
+    if (budget <= 0) { S.markCapped = true; break; }
+    if (!ranges.length) continue;
+    const fragment = document.createDocumentFragment();
+    let last = 0;
+    for (const [start, end] of ranges.slice(0, budget)) {
+      fragment.append(text.slice(last, start));
+      const mark = document.createElement('mark');
+      mark.textContent = text.slice(start, end);
+      fragment.append(mark);
+      last = end;
+    }
+    fragment.append(text.slice(last));
+    node.replaceWith(fragment);
+  }
+  updateMatchNav();
+}
+
+function jumpMark(delta) {
+  const marks = [...document.querySelectorAll('#msgs mark')].filter(
+    m => m.checkVisibility ? m.checkVisibility({ visibilityProperty: true }) : m.offsetParent);
+  if (!marks.length) return;
+  S.cur = (S.cur + delta + marks.length) % marks.length;
+  marks.forEach(m => m.classList.remove('cur'));
+  marks[S.cur].classList.add('cur');
+  marks[S.cur].scrollIntoView({ block: 'center', behavior: 'smooth' });
+  const c = $('#mcount');
+  if (c) c.textContent = `${S.cur + 1}/${marks.length}${S.markCapped ? '+' : ''} 处匹配`;
+}
+
+function updateMatchNav({jump = false} = {}) {
+  const c = $('#mcount');
+  if (!c) return 0;
+  const hits = document.querySelectorAll('#msgs mark').length;
+  c.textContent = hits ? `${hits}${S.markCapped ? '+' : ''} 处匹配` : '本页无匹配';
+  const capped = S.markCapped || S.autoOpen >= AUTO_OPEN_MAX;
+  c.classList.toggle('capped', capped);
+  if (capped) {
+    c.title = `命中过多：只标注前 ${MARK_MAX} 处、自动展开前 ${AUTO_OPEN_MAX} 条，其余标 ● 需手动展开`;
+  } else {
+    c.removeAttribute('title');
+  }
+  $('#m-prev').onclick = () => jumpMark(-1);
+  $('#m-next').onclick = () => jumpMark(1);
+  if (jump && hits) jumpMark(1);
+  return hits;
+}
+
+// ---------------------------------------------------------------- 详情
+let inflight = null;
+
+function ensureConsolePlaceholder() {
+  if ($('#a-term')) return;
+  const heading = el('div', 'dhead');
+  heading.innerHTML = `<div class="dtitle"><button class="mobile-back" type="button"
+    title="返回会话列表" aria-label="返回会话列表">←</button><h2>控制台</h2>
+    <div class="dhead-actions">${consoleButtonMarkup()}</div></div>`;
+  heading.querySelector('.mobile-back').onclick = showMobileList;
+  $('#detail').prepend(heading);
+  bindConsoleButton(heading.querySelector('#a-term'), S.sel, S.agent);
+  showConsoleToast('');
+}
+
+function followContinuedSession(uid) {
+  const seen = new Set();
+  let cur = uid;
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const next = S.sessions.find(s => s.uid === cur)?.continued_in;
+    if (!next || next === cur || !S.sessions.some(s => s.uid === next)) return cur;
+    cur = next;
+  }
+  return cur;
+}
+
+// 首次打开时的瞬时失败（503、断网）：正文保留“读取失败”，按退避自动重试
+// 三次（1.5/3/6 s），期间可手动重试；仍失败则停在可点击重试的提示上。
+const openRetries = new Map();
+function scheduleOpenRetry(uid, agent, ac) {
+  if (SessionDockCapabilities.config.backend !== 'rust') return;
+  const key = viewKey(uid, agent);
+  const attempt = (openRetries.get(key) || 0) + 1;
+  const box = $('#detail .empty');
+  const retry = () => {
+    if (S.sel !== uid || S.agent !== agent || inflight !== ac) return;
+    openRetries.set(key, attempt);
+    openSession(uid, agent);
+  };
+  if (box) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'btn';
+    button.textContent = '重试读取';
+    button.onclick = retry;
+    box.append(' ', button);
+  }
+  if (attempt <= 3) {
+    const timer = setTimeout(retry, retryDelay(attempt - 1));
+    if (box) box.append(document.createTextNode(` 正在自动重试（${attempt}/3）…`));
+    ac.signal.addEventListener('abort', () => clearTimeout(timer), {once: true});
+  } else openRetries.delete(key);
+}
+
+// 当前会话被 Codex 回退成隐藏的父会话后，对话页和控制台一起跟到最深的分支：
+// 同一个 pty 仍在写，只是原生叶子换了。用户主动打开的父会话（父会话链、
+// 显示父会话）不在此列。
+async function followSelectedFork() {
+  const current = S.sessions.find(s => s.uid === S.sel);
+  if (!current || S.agent || !hiddenForkParent(current)) return false;
+  // 手机停在列表页时不把人拽进详情；父会话已从列表消失，点开分支即可。
+  if (MOBILE.matches && store.get('mobilePage', 'list') !== 'detail') return false;
+  const leaf = forkLeaf(current);
+  if (!leaf || leaf.uid === S.sel) return false;
+  browserAuditEvent('session.fork_followed', {from_uid: S.sel}, null, {uid: leaf.uid});
+  if (typeof migrateComposerDraft === 'function') migrateComposerDraft(S.sel, leaf.uid);
+  if (typeof T !== 'undefined' && T.uid === S.sel) T.uid = leaf.uid;
+  await openSession(leaf.uid, null, {exact: true});
+  return true;
+}
+
+/** One shareable route for sidebar navigation and external research links. */
+function sessionUrl(uid, agent = null) {
+  const row = S.sessions.find(s => s.uid === uid);
+  if (!row?.sid) return null;
+  const url = new URL(location.href);
+  url.searchParams.set('sid', `${row.source}:${row.sid}${agent ? '/agent:' + agent : ''}`);
+  if (row.node_id) url.searchParams.set('node', row.node_id);
+  else url.searchParams.delete('node');
+  return url;
+}
+function updateSessionUrl(uid, agent, mode) {
+  const url = sessionUrl(uid, agent);
+  if (!url || mode === 'none' || url.href === location.href) return;
+  const method = mode === 'replace' || !new URL(location.href).searchParams.has('sid') ? 'replaceState' : 'pushState';
+  history[method](history.state, '', url);
+}
+function revealSessionInSidebar(uid, agent) {
+  const target = agent ? $('#side').querySelector(`.item[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`)
+    : $('#side').querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
+  // Selecting an existing row opens its conversation, not its descendants.
+  // In particular, do not clear a fold the user set with this row's caret.
+  if (target) {
+    target.scrollIntoView({block: 'nearest'});
+    return;
+  }
+  const row = S.sessions.find(s => s.uid === uid);
+  if (!row) return;
+  let changed = false;
+  if (!visible().some(s => s.uid === uid)) {
+    if (S.term || S.results) cancelSearch(true);
+    if (S.off.delete(row.source)) store.set('off', [...S.off]);
+    if (HUB_MODE && Nodes.off.delete(row.node_id)) store.set('nodesOff', [...Nodes.off]);
+    if (S.activeOnly) { S.activeOnly = false; store.set('activeOnly', false); }
+    changed = true;
+  }
+  // 子代理行两种模式都在，深链不再替用户打开分层开关；分层模式才需要沿发起链展开祖先。
+  const byKey = new Map(S.sessions.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
+  const seen = new Set();
+  for (let current = row; current && !seen.has(current.uid);
+       current = S.nest ? nestParentOf(current, byKey) : null) {
+    seen.add(current.uid);
+    // A hidden link target needs its ancestors, but not its own children.
+    if ((current.uid !== uid || agent) && sidebarNestFolds().delete(current.uid)) changed = true;
+  }
+  if (changed && !S.term) store.set('nestClosed', [...S.nestClosed]);
+  const groups = groupBy(visible(), {skipClosed: true});
+  const contains = session => session.uid === uid
+    || (groups.children.get(session.uid) || []).some(contains);
+  for (const [key, rows, summary] of groups) {
+    const found = summary ? summary.roots.some(contains) : rows.some(r => r.s.uid === uid);
+    if (found && sidebarGroupFolds().delete(key)) {
+      if (!S.term) store.set('closed', [...S.closed]);
+      changed = true;
+    }
+  }
+  if (changed) { renderView(); renderChips(); if (HUB_MODE) renderNodes(); renderSide(); }
+  const revealed = agent ? $('#side').querySelector(`.item[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`)
+    : $('#side').querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
+  revealed?.scrollIntoView({block: 'nearest'});
+}
+
+/** `follow` continues the page already on screen (a new launch reaching its
+ *  native history): keep the composer and its focus, and leave the launch
+ *  stage up until the conversation replaces it instead of flashing a spinner. */
+async function openSession(uid, agent = null, {exact = false, historyMode = 'push', follow = false} = {}) {
+  const selectedAgent = agent || null;
+  if (!selectedAgent) uid = followContinuedSession(uid);
+  if (!selectedAgent && !exact && hiddenForkParent(S.sessions.find(s => s.uid === uid))) {
+    uid = forkLeafUid(uid);
+  }
+  browserAuditEvent('session.opened', {agent: selectedAgent || '', cached: cache.has(viewKey(uid, selectedAgent))},
+    null, {uid});
+  showMobileDetail();
+  inflight?.abort();            // 连点列表时, 放弃上一个还没回来的请求
+  const ac = inflight = new AbortController();
+  closeWatch();
+  ++renderSeq;                 // Cancel detached render batches before the next fetch completes.
+  syntaxQueue.clear();
+  formulaRoots.clear();
+  if (typeof T !== 'undefined') {
+    if (T.uid && (T.uid !== uid || selectedAgent)) closeTermPane(true);
+    if (!follow) $('#composer').classList.add('hidden');    // 先收起, 渲染完再按新会话的状态决定
+  }
+  S.sel = uid;
+  S.agent = selectedAgent;
+  syncSessionStopNotice();
+  clearUnread(uid);
+  store.set('sel', uid);
+  store.set('agent', S.agent ? { uid, id: S.agent } : null);
+  revealSessionInSidebar(uid, selectedAgent);
+  paintSidebarSelection(uid, selectedAgent);
+  updateSessionUrl(uid, selectedAgent, historyMode);
+
+  const key = viewKey(uid, selectedAgent);
+  const hit = cacheGet(key);
+  if (hit) {
+    // 先把缓存立即画出来，但暂不占一个长期 SSE 连接。补齐缓存游标之后再
+    // 建 watch，避免 HTTP/1 连接池紧张时增量 fetch 永远排在 EventSource 后。
+    await renderSession(hit.meta, hit.msgs, hit.activity, { startWatch: false });
+    if (S.sel === uid && S.agent === selectedAgent) {
+      await syncSession(uid, selectedAgent);
+      if (S.sel === uid && S.agent === selectedAgent) watchSession(uid, selectedAgent);
+    }
+    return;
+  }
+
+  if (!follow) {
+    $('#detail').innerHTML = '<div class="spin">正在读取会话…</div>';
+    ensureConsolePlaceholder();
+    auditDetailRendered('loading');
+  }
+  progress(0, 0, '下载');
+  let res;
+  try {
+    res = await fetchMessages(uid, {
+      agent: selectedAgent, signal: ac.signal,
+      windowed: true,
+      onProgress: (a, b, detail) => progress(a, b, '下载', detail),
+    });
+  } catch (e) {
+    if (e.name === 'AbortError') return;      // 已经切到别的会话了
+    if (SessionDockCapabilities.config.backend === 'rust'
+        && (S.sel !== uid || S.agent !== selectedAgent)) return;
+    progressDone();
+    $('#detail').innerHTML = `<div class="empty">读取失败: ${esc(e.message)}</div>`;
+    ensureConsolePlaceholder();
+    if (!reportReadFailure(uid, selectedAgent, e)) scheduleOpenRetry(uid, selectedAgent, ac);
+    auditDetailRendered('load-failed', {error: String(e.message || e).slice(0, 300)});
+    return;
+  }
+  if (S.sel !== uid || S.agent !== selectedAgent) return; // 期间切了别的视图
+  const { data, bytes } = res;
+  if (SessionDockCapabilities.config.backend === 'rust') { migrationReadFailures.delete(key); openRetries.delete(key); }
+  cachePut(key, { meta: data.meta, msgs: data.messages, version: data.version,
+                  end: data.end, anchor: data.anchor, activity: data.activity, bytes,
+                  prompt: data.prompt || null, cli: data.cli ?? null,
+                  total: data.message_total, partial: data.partial || null });
+  S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
+  await renderSession(data.meta, data.messages, data.activity);
+}
+
+// ---- 保持贴底 ----
+// 只要用户没有主动往上翻, 消息区就一直停在最新一条: 新消息追加、消息展开/折叠、
+// 图片或表格撑高、窗口缩放, 都要跟着走。
+const BOTTOM_SLACK = 48;
+let _stick = true, _lastTop = 0, _lockUntil = 0, _selfScroll = false;
+
+/** 窗口缩放会让浏览器自己调整滚动位置, 那一小段时间内的滚动不算用户意图。
+ *  只在 window resize 时用 —— 别在内容变化时也锁, 否则锁会被不断续期,
+ *  用户主动往上翻都会被忽略。 */
+function lockStick(ms = 300) { _lockUntil = performance.now() + ms; }
+
+function atBottom(box) {
+  return box.scrollHeight - box.scrollTop - box.clientHeight <= BOTTOM_SLACK;
+}
+
+function stickBottom(box, force) {
+  if (force) _stick = true;
+  if (!_stick) return;
+  _selfScroll = true;
+  box.scrollTop = box.scrollHeight;
+  // 必须读回来: 浏览器会把它夹到 maxScroll, 直接记 scrollHeight 的话
+  // 下一次 scroll 事件会把这当成"用户往上翻了一大截", 跟随就断了
+  _lastTop = box.scrollTop;
+  requestAnimationFrame(() => { _selfScroll = false; });
+}
+
+/** 展开/收起大块内容时把触发控件钉在原来的视口坐标。用户点开过程是在看
+ *  这一段，不再属于“持续跟随最底部”；否则 ResizeObserver 会把按钮直接
+ *  推出屏幕。补两帧可覆盖语法高亮等紧随其后的同步布局变化。 */
+function mutateKeepingMessageAnchor(anchor, mutate) {
+  const box = $('#msgs');
+  if (!box || !box.contains(anchor)) return mutate();
+  const top = anchor.getBoundingClientRect().top;
+  _stick = false;
+  _lastTop = box.scrollTop;
+  const restore = () => {
+    if (!anchor.isConnected || box !== $('#msgs')) return;
+    const delta = anchor.getBoundingClientRect().top - top;
+    if (Math.abs(delta) < .5) return;
+    _selfScroll = true;
+    box.scrollTop += delta;
+    _lastTop = box.scrollTop;
+    requestAnimationFrame(() => { _selfScroll = false; });
+  };
+  const result = mutate();
+  restore();
+  requestAnimationFrame(() => {
+    restore();
+    requestAnimationFrame(restore);
+  });
+  return result;
+}
+
+function jumpWithinConversation(target, block = 'center') {
+  const box = $('#msgs');
+  if (!target || !box?.contains(target)) return;
+  _stick = false;
+  _lastTop = box.scrollTop;
+  target.scrollIntoView({block, behavior: 'smooth'});
+}
+
+function disposeMessageObservers(box) {
+  box?._ro?.disconnect();
+  box?._mo?.disconnect();
+}
+
+function watchBottom(box) {
+  _stick = true;
+  _lastTop = box.scrollTop;
+  // 按滚动"方向"判断意图, 而不是按当前是否贴底 —— 窗口缩小、内容展开都会让
+  // "是否贴底"瞬间变假, 那不是用户想离开底部。
+  // 直接听用户的动作来判断"想离开底部"。不能只靠 scroll 事件推方向:
+  // 布局重排、程序自身的滚动都会产生 scroll, 混在一起分不清谁是谁。
+  const leave = () => { _stick = false; };
+  box.addEventListener('wheel', e => { if (e.deltaY < 0) leave(); }, { passive: true });
+  box.addEventListener('touchmove', leave, { passive: true });
+  box.addEventListener('keydown', e => {
+    if (['PageUp', 'ArrowUp', 'Home'].includes(e.key)) leave();
+  });
+  box.addEventListener('scroll', () => {
+    const top = box.scrollTop;
+    // 拖滚动条没有 wheel 事件, 靠方向补一手 (排除程序自己滚的那些)
+    if (!_selfScroll && performance.now() >= _lockUntil && top < _lastTop - 2) _stick = false;
+    else if (atBottom(box)) {
+      _stick = true;                               // 回到底部就恢复跟随
+      if (box._turnSealPending) queueMicrotask(() => flushPendingTurnSeal(box));
+    }
+    _lastTop = top;
+  });
+  // 内容高度变化 (展开消息、渲染完成、字体加载…) 时跟随
+  if (window.ResizeObserver) {
+    disposeMessageObservers(box);
+    const ro = new ResizeObserver(() => settle(box));
+    ro.observe(box);
+    // 普通消息只盯底部 30 条，避免上万节点的观察成本；但图片、公式、表格即使
+    // 位于很早的消息里，加载或窄屏重排也会改变总高度，必须额外观察。
+    const rich = new Set(), ordinary = new Set();
+    const observeRich = root => {
+      const observe = node => { rich.add(node); ro.observe(node); };
+      if (root.matches?.('img, .katex, .tw')) observe(root);
+      root.querySelectorAll?.('img, .katex, .tw').forEach(observe);
+    };
+    const syncTail = () => {
+      const tail = new Set();
+      for (let node = box.lastElementChild; node && tail.size < 30; node = node.previousElementSibling) tail.add(node);
+      for (const node of ordinary) if (!tail.has(node)) { ordinary.delete(node); if (!rich.has(node)) ro.unobserve(node); }
+      for (const node of tail) if (!ordinary.has(node)) { ordinary.add(node); ro.observe(node); }
+      for (const node of rich) if (!box.contains(node)) { rich.delete(node); ro.unobserve(node); }
+    };
+    syncTail();
+    observeRich(box);
+    box._ro = ro;
+    const mo = new MutationObserver(ms => {
+      for (const m of ms) for (const n of m.addedNodes) {
+        if (n.nodeType === 1) observeRich(n);
+      }
+      syncTail();
+      settle(box);
+    });
+    mo.observe(box, { childList: true, subtree: true });
+    box._mo = mo;
+  }
+}
+
+/** 布局要好几帧才稳: 窗口变窄会让消息重新折行, scrollHeight 一路涨,
+ *  只修一次会差一截。补几帧, 直到不再变化。 */
+let _settleTick = 0;
+
+function settle(box) {
+  if (!_stick) return;
+  stickBottom(box);
+  if (_settleTick) return;                   // 已经有补偿在跑, 别叠加
+  let n = 0, last = -1;
+  const tick = () => {
+    _settleTick = 0;
+    // 布局稳定(高度不再变)就收手 —— 一直空转的话 _selfScroll 长期为真,
+    // 用户主动往上翻会被当成程序自己滚的而忽略掉
+    if (!_stick || n++ > 10 || box !== $('#msgs') || box.scrollHeight === last) return;
+    last = box.scrollHeight;
+    stickBottom(box);
+    _settleTick = requestAnimationFrame(tick);
+  };
+  _settleTick = requestAnimationFrame(tick);
+}
+
+addEventListener('resize', () => {
+  const box = $('#msgs');
+  if (!box) return;
+  lockStick();
+  settle(box);
+  setTimeout(() => settle(box), 160);      // 兜住 resize 之后的异步重排
+  setTimeout(() => settle(box), 400);
+});
+
+/** 整份渲染。消息可能上万条, 分批交还主线程, 否则页面会卡住不动。 */
+let renderSeq = 0;
+
+function historyGapNode(info) {
+  const gap = el('div', 'history-gap');
+  const button = el('button', 'history-gap-load',
+    `加载中间 ${Number(info.omitted || 0).toLocaleString()} 条消息`);
+  button.type = 'button';
+  button.onclick = () => historyPagesEnabled()
+    ? loadHistoryPage(info.uid, info.agent, button)
+    : loadFullHistory(info.uid, info.agent, button);
+  gap.appendChild(button);
+  return gap;
+}
+
+function historyPagesEnabled() {
+  return SessionDockCapabilities.config.backend === 'rust'
+    && SessionDockCapabilities.config.history_pages === true;
+}
+
+const historyPageRequests = new Map();
+// 点一次“加载中间 N 条”后自动连续翻页直到缺口填满（分页取但不停）。
+// 按钮显示进度，再点一次中止。用 let 是为了浏览器 E2E
+// 能关掉连续翻页，逐页检验竞争。
+let HISTORY_PAGE_CHAIN = true;
+
+function currentHistoryPage(request) {
+  return S.sel === request.uid && S.agent === request.agent
+    && inflight === request.viewRequest && cache.get(request.key) === request.entry
+    && request.entry.partial?.cursor === request.cursor;
+}
+
+const HISTORY_PAGE_MAX_EVENTS = 10000;   // 服务端 SESSIONDOCK_HISTORY_PAGE_EVENTS 的上限
+
+function validateHistoryPage(data, partial, cursor) {
+  const page = data?.page;
+  const integer = value => Number.isSafeInteger(value) && value >= 0;
+  const token = value => typeof value === 'string' && /^[0-9a-f]{32}$/.test(value);
+  if (!Array.isArray(data?.messages) || data.messages.length > HISTORY_PAGE_MAX_EVENTS || !page || !token(cursor) || page.cursor !== cursor
+      || !data.messages.every(message => message && typeof message === 'object' && !Array.isArray(message)
+        && typeof message.role === 'string' && typeof message.text === 'string'
+        && (message.media == null || (Array.isArray(message.media)
+          && message.media.every(item => item && typeof item === 'object' && !Array.isArray(item)))))
+      || !integer(partial.head) || !integer(partial.omitted)
+      || !['start', 'end', 'stop', 'remaining'].every(key => integer(page[key]))
+      || page.start !== partial.head || page.stop !== partial.head + partial.omitted
+      || page.end < page.start || page.end > page.stop
+      || page.end - page.start !== data.messages.length || !data.messages.length
+      || page.remaining !== page.stop - page.end
+      || (page.remaining === 0 ? page.next !== null : !token(page.next) || page.next === cursor)) {
+    throw new Error('历史分页响应与当前缺口不匹配；请重新载入当前历史。');
+  }
+  return page;
+}
+
+async function fetchHistoryPage(uid, agent, cursor, signal, partial) {
+  const query = new URLSearchParams({cursor});
+  if (agent) query.set('agent', agent);
+  if (partial?.resume) {
+    query.set('resume', JSON.stringify(partial.resume));
+    query.set('next', partial.head);
+  }
+  const url = `api/messages/${encodeURIComponent(uid)}/page`;
+  const traceId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  browserAuditEvent('http.request.started', {url, method: 'GET', agent: agent || '',
+    page_start: partial?.head, page_remaining: partial?.omitted, resumable: !!partial?.resume}, null, {uid, traceId});
+  let response;
+  try {
+    response = await fetch(appUrl(`${url}?${query}`), {signal, cache: 'no-store',
+      headers: {'X-SessionDock-Trace': traceId, 'X-SessionDock-Page': AUDIT_PAGE_ID,
+        'X-SessionDock-Build': BUILD_ID}});
+  } catch (error) {
+    browserAuditEvent('http.request.failed', {url, error: String(error?.name || error)},
+      null, {uid, traceId, severity: 'warning'});
+    throw error;
+  }
+  browserAuditEvent('http.response.received', {url, status: response.status, ok: response.ok},
+    null, {uid, traceId, severity: response.ok ? 'info' : 'warning'});
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    const error = new Error(detail?.error || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  const reader = response.body.getReader(), chunks = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      bytes += value.length;
+      if (bytes > 8 * 1024 * 1024) throw new Error('历史分页响应超过浏览器读取预算。');
+      chunks.push(value);
+    }
+  } catch (error) { await reader.cancel().catch(() => {}); throw error; }
+  const buffer = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.length; }
+  return {data: JSON.parse(new TextDecoder().decode(buffer)), bytes};
+}
+
+function historyPageFailure(request, button, error) {
+  if (!currentHistoryPage(request) || !button?.isConnected) return;
+  const gap = button.parentElement;
+  gap.querySelector('.history-page-error')?.remove();
+  gap.querySelector('.history-gap-reload')?.remove();
+  const notice = el('div', 'history-page-error');
+  notice.setAttribute('role', 'alert');
+  notice.textContent = `未改变当前历史快照。${error.message || '历史分页读取失败。'}`;
+  gap.appendChild(notice);
+  button.disabled = false;
+  button.textContent = '重试加载这一页';
+  const reload = el('button', 'history-gap-reload', '重新载入当前历史');
+  reload.type = 'button';
+  reload.onclick = () => reloadHistoryWindow(request.uid, request.agent, reload);
+  gap.appendChild(reload);
+}
+
+function restoreHistoryPageScroll(top, scrollTop, entry) {
+  const box = $('#msgs');
+  if (!box) return;
+  const restore = () => {
+    if (box !== $('#msgs') || cache.get(viewKey(S.sel, S.agent)) !== entry) return;
+    _stick = false;
+    _selfScroll = true;
+    const gap = box.querySelector('.history-gap');
+    box.scrollTop = gap ? box.scrollTop + gap.getBoundingClientRect().top - top : scrollTop;
+    _lastTop = box.scrollTop;
+    requestAnimationFrame(() => { _selfScroll = false; });
+  };
+  restore();
+  requestAnimationFrame(() => { restore(); requestAnimationFrame(restore); });
+}
+
+async function loadHistoryPage(uid, agent, button) {
+  agent = agent || null;
+  const key = viewKey(uid, agent), entry = cache.get(key);
+  if (!historyPagesEnabled() || !entry?.partial) return;
+  const previous = historyPageRequests.get(key);
+  if (previous && currentHistoryPage(previous)) {
+    // 连续翻页进行中再点一次 = 中止；已取到的页保留。
+    if (previous.chain && previous.ac) { previous.aborted = true; previous.ac.abort(); }
+    return;
+  }
+  if (previous) { previous.ac?.abort(); historyPageRequests.delete(key); }
+  const request = {key, uid, agent, entry, cursor: entry.partial.cursor, viewRequest: inflight,
+    chain: HISTORY_PAGE_CHAIN, aborted: false};
+  if (!currentHistoryPage(request)) return;
+  const ac = new AbortController();
+  request.ac = ac;
+  let timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
+  historyPageRequests.set(key, request);
+  const target = Number(entry.partial.omitted || 0);
+  let loaded = 0;
+  const gap = button.parentElement, box = $('#msgs');
+  const top = gap.getBoundingClientRect().top, scrollTop = box?.scrollTop || 0;
+  // 连续翻页时按钮保持可点（用于中止），并显示进度。
+  button.disabled = !request.chain;
+  button.textContent = request.chain
+    ? `正在加载历史… 0 / ${target.toLocaleString()} 条 · 点击中止`
+    : '正在读取这一页…';
+  let changed = false, failure = null;
+  try {
+    for (;;) {
+      if (!/^[0-9a-f]{32}$/.test(request.cursor || '')) throw new Error('历史分页凭据缺失，请重新载入当前历史。');
+      const {data, bytes} = await fetchHistoryPage(uid, agent, request.cursor, ac.signal, entry.partial);
+      if (!currentHistoryPage(request)) return;
+      const page = validateHistoryPage(data, entry.partial, request.cursor);
+      // Ordinary SSE appends may have advanced this same entry while HTTP was
+      // pending. Keep that tail and every live cursor field exactly as observed.
+      entry.msgs = [...entry.msgs.slice(0, page.start), ...data.messages, ...entry.msgs.slice(page.start)];
+      entry.partial = page.remaining ? {...entry.partial, head: page.end, omitted: page.remaining, cursor: page.next} : null;
+      entry.bytes = (entry.bytes || 0) + bytes;
+      changed = true;
+      loaded += data.messages.length;
+      request.cursor = entry.partial?.cursor || null;
+      if (!request.chain || !entry.partial) break;
+      if (button.isConnected) button.textContent = `正在加载历史… ${loaded.toLocaleString()} / ${target.toLocaleString()} 条 · 点击中止`;
+      clearTimeout(timer);
+      timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
+    }
+  } catch (error) {
+    // 用户中止连续翻页：已取到的页保留，按钮回到剩余数；其余失败照常提示。
+    if (!(error?.name === 'AbortError' && request.aborted)) failure = error;
+  } finally {
+    clearTimeout(timer);
+    if (historyPageRequests.get(key) === request) historyPageRequests.delete(key);
+  }
+  if (changed && currentHistoryPageEntry(request)) {
+    trimCache();
+    await renderSession(entry.meta, entry.msgs, entry.activity, {startWatch: false, historyPageEntry: entry});
+    if (S.sel === uid && S.agent === agent && cache.get(key) === entry && inflight === request.viewRequest) {
+      restoreHistoryPageScroll(top, scrollTop, entry);
+      if (failure) historyPageFailure(request, $('#msgs .history-gap-load'), failure);
+    }
+  } else if (failure) historyPageFailure(request, button, failure);
+}
+
+/** 页已取到、只等渲染：视图与缓存条目仍是发起时的那份即可（游标已推进）。 */
+function currentHistoryPageEntry(request) {
+  return S.sel === request.uid && S.agent === request.agent
+    && inflight === request.viewRequest && cache.get(request.key) === request.entry;
+}
+
+async function reloadHistoryWindow(uid, agent, button) {
+  agent = agent || null;
+  const key = viewKey(uid, agent), entry = cache.get(key), viewRequest = inflight;
+  if (!historyPagesEnabled() || !entry?.partial || S.sel !== uid || S.agent !== agent || historyPageRequests.has(key)) return;
+  const request = {key, uid, agent, entry, cursor: entry?.partial?.cursor, viewRequest};
+  // Unlike a gap page, a window reset replaces the complete cached snapshot.
+  // An SSE update accepted after this request started must never be rolled back.
+  const observed = {msgs: entry.msgs, version: entry.version, end: entry.end, anchor: entry.anchor,
+    activity: entry.activity, meta: entry.meta, prompt: entry.prompt};
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
+  request.ac = ac;
+  historyPageRequests.set(key, request);
+  button.disabled = true;
+  try {
+    const {data, bytes} = await fetchMessages(uid, {agent, windowed: true, signal: ac.signal});
+    if (!currentHistoryPage(request)) return;
+    if (entry.msgs !== observed.msgs || entry.version !== observed.version
+        || entry.end !== observed.end || entry.anchor !== observed.anchor
+        || entry.activity !== observed.activity || entry.meta !== observed.meta || entry.prompt !== observed.prompt) {
+      throw new Error('实时历史已更新；已保留新内容，请再次重新载入当前历史。');
+    }
+    if (!data?.reset || !data.meta || !data.version || !Array.isArray(data.messages)) throw new Error('服务端没有返回有效的当前历史窗口。');
+    await applyDiff(uid, data, bytes, agent);
+  } catch (error) { historyPageFailure(request, button.parentElement.querySelector('.history-gap-load'), error); }
+  finally {
+    clearTimeout(timer);
+    button.disabled = false;
+    if (historyPageRequests.get(key) === request) historyPageRequests.delete(key);
+  }
+}
+
+async function loadFullHistory(uid, agent, button) {
+  const key = viewKey(uid, agent);
+  const old = cache.get(key);
+  if (!old?.partial) return;
+  inflight?.abort();
+  const ac = inflight = new AbortController();
+  closeWatch();
+  button.disabled = true;
+  button.textContent = '正在载入完整历史…';
+  progress(0, 0, '下载完整历史');
+  try {
+    const {data, bytes} = await fetchMessages(uid, {
+      agent, signal: ac.signal,
+      onProgress: (a, b, detail) => progress(a, b, '下载完整历史', detail),
+    });
+    cachePut(key, {meta: data.meta, msgs: data.messages, version: data.version,
+                   end: data.end, anchor: data.anchor, activity: data.activity, bytes,
+                   prompt: data.prompt || null, cli: data.cli ?? null,
+                   total: data.message_total, partial: null});
+    S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
+    if (S.sel === uid && S.agent === agent) {
+      await renderSession(data.meta, data.messages, data.activity);
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      button.disabled = false;
+      button.textContent = '载入失败，点击重试';
+    }
+  } finally {
+    progressDone();
+    const current = cache.get(key);
+    if (S.sel === uid && S.agent === agent && current?.partial && !_es) {
+      watchSession(uid, agent);
+    }
+  }
+}
+
+async function renderSession(meta, msgs, activity = null, { startWatch = true, historyPageEntry = null } = {}) {
+  const seq = ++renderSeq;
+  const uid = meta.uid;
+  const agent = meta.agent_id || null;
+  if (S.sel !== uid || S.agent !== agent) return;
+  const renderedLength = msgs.length;
+  const d = $('#detail');
+  disposeMessageObservers($('#msgs'));
+  d.innerHTML = '';
+  const entry = cache.get(viewKey(uid, agent));
+  d.appendChild(head(meta, entryTotal(entry || {msgs})));
+  layoutSessionHead();
+  renderTimelinePinNotice(meta);
+  const box = el('div', 'msgs');
+  box.id = 'msgs';
+  d.appendChild(box);
+  auditDetailRendered('render', {messages: msgs.length, seq});
+  S.cur = -1; S.autoOpen = 0; S.markCapped = false;
+
+  // 关键: 建在游离的 fragment 里, 最后一次性挂上。
+  // 若逐批插入已在文档中的容器, 每批都会触发一次全量 layout, 上万条时是 O(n²) —— 实测 0.2s 变 14s。
+  // 批间让出主线程用 setTimeout 而不是 rAF: rAF 会等一次绘制, 又把 layout 成本引回来。
+  const partial = entry?.partial;
+  const split = partial ? Math.min(+partial.head || 0, msgs.length) : 0;
+  const openTail = activity?.state === 'working';
+  const tailComplete = (activity && !['working', 'waiting'].includes(activity.state))
+    || (!activity && !S.live.has(uid));
+  const plan = partial
+    ? [...planTurns(msgs.slice(0, split), {tailComplete: false, foldTail: true}),
+       {gap: {uid, agent, omitted: partial.omitted}},
+       ...planTurns(msgs.slice(split), {openTail, tailComplete})]
+    : planTurns(msgs, {openTail, tailComplete});
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < plan.length; i += RENDER_BATCH) {
+    buildPlan(frag, plan.slice(i, i + RENDER_BATCH), null);
+    if (i + RENDER_BATCH < plan.length) {
+      progress(i + RENDER_BATCH, plan.length, '渲染');
+      await new Promise(r => setTimeout(r, 0));
+      if (seq !== renderSeq || S.sel !== uid || S.agent !== agent) return;
+    }
+  }
+  if (historyPageEntry) {
+    // SSE continues while batched rendering yields. Its cache updates are
+    // authoritative; discard any transient DOM append and add the new suffix
+    // once, after publishing this page's captured prefix/tail fragment.
+    box.replaceChildren(frag);
+    const latest = cache.get(viewKey(uid, agent));
+    if (latest === historyPageEntry) {
+      if (latest.msgs !== msgs || latest.msgs.length !== renderedLength) {
+        appendMessages(box, latest.msgs.slice(renderedLength), null,
+          {openTail: latest.activity?.state === 'working'});
+      }
+      // Activity-only packets can mark the last assistant interrupted in-place;
+      // neither array identity nor an appended suffix reveals that transition.
+      if (activity !== latest.activity) {
+        const tail = lastRenderedTurnStart(box);
+        if (tail) tail._turnSealed = false;
+      }
+      activity = latest.activity;
+      if (activity?.state !== 'working') sealTurnTail(box, latest, {defer: false});
+    }
+  } else box.appendChild(frag);
+  scheduleSyntax();            // Resume jobs held while this fragment was detached.
+  renderConversationTail(activity, uid);
+  stickBottom(box, true);                // 默认停在最新的一条
+  watchBottom(box);
+  progressDone();
+
+  markMatches(box);
+  updateMatchNav({jump: true});
+  if (typeof renderComposer === 'function') {
+    if (S.agent) $('#composer').classList.add('hidden');
+    else renderComposer();
+  }
+  if (seq === renderSeq && S.sel === uid && S.agent === agent) {
+    renderMigrationReadFailure(uid, agent);
+    if (startWatch) watchSession(meta.uid, agent); // 之后的更新由服务端推过来
+    if (typeof restoreTermPane === 'function') restoreTermPane(uid, agent);
+    scheduleBrowserSnapshot('rendered');
+  }
+}
+
+function labelSessionAction(button) {
+  if (!button?.classList.contains('session-menu-action')) return;
+  let label = button.querySelector('span');
+  if (!label) button.appendChild(label = el('span'));
+  label.textContent = button.ariaLabel;
+}
+
+function sessionActionsMarkup(actions, metadata = '') {
+  return `<div class="session-actions">
+    <button class="iconbtn" id="a-more" type="button" title="更多会话操作"
+      aria-label="更多会话操作" aria-haspopup="menu" aria-expanded="false"
+      aria-controls="session-actions-menu"><span aria-hidden="true">⋯</span></button>
+    <div id="session-actions-menu" class="session-actions-menu" hidden>
+      <div role="menu" aria-label="会话操作">${actions}</div>${metadata}
+    </div>
+  </div>`;
+}
+
+function closeSessionActions(restoreFocus = false) {
+  const menu = $('#session-actions-menu');
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  const button = $('#a-more');
+  button?.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) button?.focus();
+}
+
+function bindSessionActions(heading) {
+  syncSessionStopNotice();
+  const button = heading.querySelector('#a-more');
+  const menu = heading.querySelector('#session-actions-menu');
+  if (!button || !menu) return;
+  menu.querySelectorAll('button').forEach(item => {
+    item.setAttribute('role', 'menuitem');
+    labelSessionAction(item);
+  });
+  // 记住菜单里的原始顺序，layoutSessionHead 在各级排版之间搬动后还能按它归位
+  [...menu.querySelector('[role="menu"]').children].forEach((node, i) => { node.dataset.order = i; });
+  [...menu.querySelector('.dmeta')?.children || []].forEach((item, i) => { item.dataset.order = i; });
+  const items = () => [...menu.querySelectorAll('button:not(:disabled)')];
+  const open = () => {
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    const views = heading.querySelector('#session-view-menu');
+    if (views) views.hidden = true;
+    heading.querySelector('#a-view-switch')?.setAttribute('aria-expanded', 'false');
+    closeForkChainMenu();
+  };
+  button.onclick = () => menu.hidden ? open() : closeSessionActions();
+  button.onkeydown = event => {
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    event.preventDefault();
+    open();
+    const rows = items();
+    (event.key === 'ArrowUp' ? rows.at(-1) : rows[0])?.focus();
+  };
+  menu.onclick = event => {
+    if (event.target.closest('button')) closeSessionActions(true);
+  };
+  menu.onkeydown = event => {
+    const rows = items(), index = rows.indexOf(document.activeElement);
+    const next = {ArrowDown: (index + 1) % rows.length,
+      ArrowUp: (index - 1 + rows.length) % rows.length, Home: 0, End: rows.length - 1}[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    rows[next]?.focus();
+  };
+  button.parentElement.addEventListener('focusout', event => {
+    // 在菜单的元信息上按下鼠标选字时焦点落到 body（relatedTarget 为空），不算离开菜单；
+    // 点到菜单外面由 document 的 click 兜底关闭
+    if (event.relatedTarget && !button.parentElement?.contains(event.relatedTarget)) closeSessionActions();
+  });
+  layoutSessionHead(heading);
+}
+
+// 会话头任何宽度都只占一行，且不因折叠留白。一行上的重要程度：标题 → 操作按钮（按菜单顺序：
+// 星标、折叠过程、搜索、冻结/恢复与报告、移动/复制、停止/删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
+// 模型、会话号、分支）。宽屏/中屏长标题让到标题行的 40%（不少于 8em）为止，窄屏标题不让位；
+// 标题之后先按顺序平铺操作，全放下了再把元信息按顺序跟在标题后面（.dbrief）；从放不下的那一项起
+// 后面的全部收进 ⋯ 菜单（放不下某个按钮时元信息也不放，免得次要的露着、重要的反而折了）；
+// 菜单空了 ⋯ 不显示。
+// 消息数会随新消息变宽，留一点余量免得刚好放下的一项被裁掉
+const HEAD_BRIEF_SLACK = 24;
+// Keep the original controls as the single action/capability authority. The
+// session toolbar gets lightweight entries that invoke those same controls.
+function syncSessionGlobalActions(heading, list) {
+  if (heading && !heading.isConnected) return;
+  const dock = !!list && (document.body.classList.contains('side-collapsed')
+    || (MOBILE.matches && document.body.classList.contains('mobile-detail')));
+  let changed = false;
+  for (const [index, id] of ['new-session', 'settings', 'page-reload', 'transfer-tasks'].entries()) {
+    const source = document.getElementById(id);
+    if (!source) continue;
+    const enabled = dock && !source.hidden && !source.classList.contains('hidden');
+    const proxyId = 'a-global-' + id;
+    let proxy = heading?.querySelector('#' + proxyId);
+    if (!enabled) proxy?.remove();
+    else {
+      if (!proxy) {
+        proxy = el('button', 'session-menu-action');
+        proxy.id = proxyId;
+        proxy.type = 'button';
+        proxy.dataset.order = index - 4;
+        proxy.setAttribute('role', 'menuitem');
+        proxy.appendChild(source.querySelector('svg').cloneNode(true));
+        proxy.onclick = () => source.click();
+        list.appendChild(proxy);
+      }
+      proxy.title = proxy.ariaLabel = source.ariaLabel || source.title;
+      proxy.disabled = source.disabled;
+      labelSessionAction(proxy);
+    }
+    if (source.hasAttribute('data-session-docked') !== enabled) {
+      source.toggleAttribute('data-session-docked', enabled);
+      changed = true;
+    }
+  }
+  if (changed) {
+    // Restore header order before measuring it again, including controls that
+    // had been folded into its menu before the sidebar was hidden.
+    closeHeaderMenu();
+    for (const id of HEADER_ACTIONS) {
+      const button = document.getElementById(id);
+      button.querySelector(':scope > .menu-label')?.remove();
+      button.removeAttribute('role');
+      $('#header-more').before(button);
+    }
+    $('#header-more').hidden = true;
+    layoutHeader();
+  }
+}
+
+function layoutSessionHead(heading = $('#detail .dhead')) {
+  const wrap = heading?.querySelector('.session-actions');
+  const menu = heading?.querySelector('#session-actions-menu');
+  const list = menu?.querySelector('[role="menu"]');
+  syncSessionGlobalActions(heading, list);
+  if (!wrap || !menu || !list) return;
+  const actions = wrap.parentElement;
+  const tier = layoutTier();
+  const menuButtons = node => node.matches('button') ? [node] : [...node.querySelectorAll('button')];
+  closeSessionActions();
+  // 先把平铺出去的操作和元信息都收回菜单（保持原始顺序），量过宽度再按顺序往外放
+  for (const node of actions.querySelectorAll(':scope > [data-from-menu]')) {
+    delete node.dataset.fromMenu;
+    for (const item of menuButtons(node)) {
+      item.setAttribute('role', 'menuitem');
+      labelSessionAction(item);
+    }
+    list.appendChild(node);
+  }
+  list.replaceChildren(...[...list.children].sort((a, b) => a.dataset.order - b.dataset.order));
+  const more = wrap.querySelector('#a-more');
+  if (more) more.hidden = false;   // 量宽度时按 ⋯ 在场算，免得它的显隐反过来改变放得下的项数
+  const meta = menu.querySelector('.dmeta');
+  let brief = heading.querySelector('.dbrief');
+  if (meta && !brief) {
+    brief = el('div', 'dbrief');
+    actions.before(brief);
+  }
+  const items = meta ? [...meta.children, ...brief.children]
+    .sort((a, b) => a.dataset.order - b.dataset.order) : [];
+  for (const item of items) meta.appendChild(item);
+  if (brief) brief.hidden = true;
+  let keep = 0;
+  if (heading.isConnected) {
+    const title = heading.querySelector('.dtitle');
+    const h2 = title.querySelector('h2');
+    const gap = parseFloat(getComputedStyle(title).columnGap) || 0;
+    // 宽屏/中屏长标题最多占标题行的 40%（不少于 8em），其余让给操作和元信息；短标题只占自己的宽度。
+    // 窄屏标题优先，操作和元信息只填标题右边剩下的空白
+    const titleMax = tier === 'narrow' ? Infinity
+      : Math.max(8 * parseFloat(getComputedStyle(h2).fontSize), title.clientWidth * 0.4);
+    const titleWidth = Math.min(h2.getBoundingClientRect().width, titleMax);
+    const room = actions.getBoundingClientRect().left - h2.getBoundingClientRect().left
+      - titleWidth - gap * 2 - HEAD_BRIEF_SLACK;
+    let used = 0;
+    // 操作按钮先放：按菜单顺序逐个平铺，到放不下的那一个为止，它和后面的都留在菜单里
+    const actionsGap = parseFloat(getComputedStyle(actions).columnGap) || 0;
+    for (const node of [...list.children]) {
+      node.dataset.fromMenu = '1';
+      actions.insertBefore(node, wrap);
+      const width = node.getBoundingClientRect().width + actionsGap;
+      if (used + width > room) {
+        delete node.dataset.fromMenu;
+        list.prepend(node);
+        break;
+      }
+      used += width;
+      for (const item of menuButtons(node)) item.removeAttribute('role');
+    }
+    // 操作全放下了，元信息再按固定顺序往标题后放，放不下的留在菜单里
+    if (brief && !list.children.length) {
+      brief.hidden = false;
+      for (const item of items) brief.appendChild(item);
+      const briefGap = parseFloat(getComputedStyle(brief).columnGap) || 0;
+      for (const item of items) {
+        const width = item.getBoundingClientRect().width + (keep ? briefGap : 0);
+        if (used + width > room) break;
+        used += width;
+        keep++;
+      }
+      for (const item of items.slice(keep)) meta.appendChild(item);
+    }
+  }
+  if (brief) brief.hidden = !keep;
+  heading.classList.toggle('head-flat', !list.children.length);
+  if (more) {
+    const menuEmpty = !list.children.length;
+    more.title = more.ariaLabel = menuEmpty ? '会话信息' : '更多会话操作';
+    more.hidden = menuEmpty && !meta?.children.length;
+  }
+  auditHeaderLayout(heading, tier, actions);
+}
+
+// 排版结果按签名去重记 header.layout：档位、平铺了哪些操作、标题后放了几项元信息、
+// 标题行有没有横向溢出（溢出就意味着右侧按钮会被 #right 裁掉）。
+let headerLayoutSignature = '';
+function auditHeaderLayout(heading, tier, actions) {
+  if (!heading.isConnected) return;   // head() 构建时先量一次，挂上之后才是真实排版
+  try {
+    const title = heading.querySelector('.dtitle');
+    const brief = heading.querySelector('.dbrief');
+    const data = {
+      tier,
+      inline: [...actions.querySelectorAll('button')].filter(b => !b.hidden && b.offsetWidth)
+        .map(b => b.id || (b.dataset.reportBug !== undefined ? 'report-bug' : b.className.split(' ')[0])),
+      brief: brief && !brief.hidden ? brief.children.length : 0,
+      menu_meta: heading.querySelector('#session-actions-menu .dmeta')?.children.length ?? null,
+      title_overflow: title ? title.scrollWidth - title.clientWidth : null,
+      width: title?.clientWidth ?? null, head_height: heading.offsetHeight,
+    };
+    const signature = JSON.stringify(data);
+    if (signature === headerLayoutSignature) return;
+    headerLayoutSignature = signature;
+    browserAuditEvent('header.layout', data);
+  } catch { /* 审计不能影响排版 */ }
+}
+
+document.addEventListener('click', event => {
+  if (!event.target.closest('.session-actions')) closeSessionActions();
+}, true);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && $('#session-actions-menu')?.hidden === false) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeSessionActions(true);
+  }
+}, true);
+addEventListener('resize', () => closeSessionActions());
+for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', () => layoutSessionHead());
+// 拖分割线、开合左栏、改窗口都会改变详情区宽度，元信息随之在标题后和 ⋯ 之间进出
+{
+  let detailWidth = -1;
+  new ResizeObserver(entries => {
+    const width = entries.at(-1)?.contentRect.width ?? -1;
+    if (width === detailWidth) return;
+    detailWidth = width;
+    layoutSessionHead();
+  }).observe($('#detail'));
+  new MutationObserver(() => layoutSessionHead()).observe($('#detail'), {childList: true});
+  document.fonts?.ready.then(() => layoutSessionHead());   // 字体换过之后文字宽度会变
+}
+
+// 顶栏按空间逐级收，任何一级都不因折叠留白：
+//   1. Agent / 组织方式 / 分层 的文字标签
+//   2. 主机标题（.brand-name）
+//   3. 机器 chip 缩成首字母（首字母相同则前两个字母），不显示会话数（仅中央站、机器筛选可见时）
+//   4. 右侧按钮从末尾折进 ⋯（新建、刷新页面、回收站、报告问题、设置）
+// 筛选条被挤压或整条顶栏横向溢出才进入下一级；放得下就按相反顺序展开。
+const HEADER_ACTIONS = ['new-session', 'page-reload', 'transfer-tasks', 'trash', 'report-bug', 'settings'];
+const HEADER_FOLD_LABELS = 'header-fold-labels';
+const HEADER_FOLD_BRAND = 'header-fold-brand';
+const HEADER_FOLD_NODES = 'header-fold-nodes';
+function closeHeaderMenu(restoreFocus = false) {
+  const menu = $('#header-menu');
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  const button = $('#header-more-btn');
+  button?.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) button?.focus();
+}
+function layoutHeader() {
+  const header = $('header'), filters = header?.querySelector('.header-filters');
+  const more = $('#header-more'), menu = $('#header-menu');
+  if (!filters || !more || !menu) return;
+  if (getComputedStyle(header).display === 'none') return;
+  const squeezed = () => filters.scrollWidth > filters.clientWidth
+    || header.scrollWidth > header.clientWidth;
+  const picker = $('#node-picker');
+  const canFoldNodes = !!(picker && !picker.hidden);
+  const restoreButton = button => {
+    button.querySelector(':scope > span.menu-label')?.remove();
+    button.removeAttribute('role');
+    more.before(button);
+  };
+  const foldButton = button => {
+    let label = button.querySelector(':scope > span.menu-label');
+    if (!label) button.appendChild(label = el('span', 'menu-label'));
+    label.textContent = button.ariaLabel || button.title;
+    button.setAttribute('role', 'menuitem');
+    menu.prepend(button);
+  };
+  // 隐藏的按钮（能力未声明）不能折进 ⋯ 菜单，否则会以菜单项的样子露出来。
+  const inlineButtons = () => HEADER_ACTIONS.map(id => document.getElementById(id))
+    .filter(button => button && !button.hidden && !button.hasAttribute('data-session-docked') && button.parentElement !== menu);
+  if (MOBILE.matches && canFoldNodes) header.classList.add(HEADER_FOLD_NODES);
+  if (squeezed()) {
+    closeHeaderMenu();
+    if (!header.classList.contains(HEADER_FOLD_LABELS)) {
+      header.classList.add(HEADER_FOLD_LABELS);
+      if (!squeezed()) return;
+    }
+    if (!header.classList.contains(HEADER_FOLD_BRAND)) {
+      header.classList.add(HEADER_FOLD_BRAND);
+      if (!squeezed()) return;
+    }
+    if (canFoldNodes && !header.classList.contains(HEADER_FOLD_NODES)) {
+      header.classList.add(HEADER_FOLD_NODES);
+      if (!squeezed()) return;
+    }
+    const buttons = inlineButtons();
+    // 折起第一个按钮只是把它换成 ⋯，宽度没省出来；所以真要折就至少折两个，循环自然做到
+    for (let i = buttons.length - 1; i >= 0 && squeezed(); i--) {
+      more.hidden = false;
+      foldButton(buttons[i]);
+    }
+    more.hidden = !menu.children.length;
+    return;
+  }
+  // 没被挤压：按相反顺序展开。同步试探并立刻收回放不下的那一级，避免中间态闪一下。
+  if (menu.children.length) closeHeaderMenu();
+  while (menu.children.length) {
+    const button = menu.children[0];
+    restoreButton(button);
+    more.hidden = !menu.children.length;
+    if (!squeezed()) continue;
+    foldButton(button);
+    more.hidden = false;
+    return;
+  }
+  if (MOBILE.matches) return;
+  if (header.classList.contains(HEADER_FOLD_NODES)) {
+    header.classList.remove(HEADER_FOLD_NODES);
+    if (squeezed()) {
+      header.classList.add(HEADER_FOLD_NODES);
+      return;
+    }
+  }
+  if (header.classList.contains(HEADER_FOLD_BRAND)) {
+    header.classList.remove(HEADER_FOLD_BRAND);
+    if (squeezed()) {
+      header.classList.add(HEADER_FOLD_BRAND);
+      return;
+    }
+  }
+  if (header.classList.contains(HEADER_FOLD_LABELS)) {
+    header.classList.remove(HEADER_FOLD_LABELS);
+    if (squeezed()) header.classList.add(HEADER_FOLD_LABELS);
+  }
+}
+{
+  const button = $('#header-more-btn'), menu = $('#header-menu');
+  const items = () => [...menu.querySelectorAll('button:not(:disabled):not(.hidden)')];
+  const open = () => { menu.hidden = false; button.setAttribute('aria-expanded', 'true'); };
+  button.onclick = () => menu.hidden ? open() : closeHeaderMenu();
+  button.onkeydown = event => {
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    event.preventDefault();
+    open();
+    const rows = items();
+    (event.key === 'ArrowUp' ? rows.at(-1) : rows[0])?.focus();
+  };
+  menu.addEventListener('click', event => {
+    if (event.target.closest('button')) closeHeaderMenu(true);
+  });
+  menu.onkeydown = event => {
+    const rows = items(), index = rows.indexOf(document.activeElement);
+    const next = {ArrowDown: (index + 1) % rows.length,
+      ArrowUp: (index - 1 + rows.length) % rows.length, Home: 0, End: rows.length - 1}[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    rows[next]?.focus();
+  };
+  $('#header-more').addEventListener('focusout', event => {
+    if (event.relatedTarget && !$('#header-more').contains(event.relatedTarget)) closeHeaderMenu();
+  });
+  document.addEventListener('click', event => {
+    if (!event.target.closest('#header-more')) closeHeaderMenu();
+  }, true);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && menu.hidden === false) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeHeaderMenu(true);
+    }
+  }, true);
+  addEventListener('resize', () => closeHeaderMenu());
+  for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', layoutHeader);
+  // 视口、断点换挡、机器/来源筛选增减、会话计数变宽都会改变筛选条的内容宽度。
+  // 收标签/标题会改 chips 和 brand 的宽度，observer 会再进来一次；layoutHeader
+  // 只在仍被挤压时加下一级、放得下才展开，同步试探并收回，不会收-放循环。
+  // 新建按钮随终端能力出现/消失时由 term.js 直接调 layoutHeader()。
+  const observer = new ResizeObserver(() => layoutHeader());
+  for (const node of [$('header'), $('.brand'), ...$('.header-filters').children]) observer.observe(node);
+  layoutHeader();
+}
+
+/** 子代理是否仍在跑：服务端按 transcript 与父会话的停止通知判断，父进程不在则一律不算。 */
+const agentRunning = (uid, item) => !!item.active && S.live.has(uid);
+
+/** 主会话/子代理下拉的行：主会话固定在前，子代理按结束时间倒序，还在跑的没有结束时间、排最前并带绿点。 */
+function sessionViewRows(m) {
+  const row = S.sessions.find(s => s.uid === m.uid);
+  const items = [...((row || m).agent_items || [])];
+  const running = a => agentRunning(m.uid, a);
+  const when = value => Date.parse(value || '') || 0;
+  items.sort((a, b) => (running(b) - running(a)) || (when(b.updated) - when(a.updated)));
+  const mainTitle = m.parent_title || m.title;
+  return `
+      <button type="button" data-agent="" class="${m.agent_id ? '' : 'on'}" role="menuitem">
+        <small><span class="view-kind">主会话</span></small><b>${esc(mainTitle)}</b>
+      </button>
+      ${items.map(a => `<button type="button" data-agent="${esc(a.id)}"
+        class="${m.agent_id === a.id ? 'on' : ''}${running(a) ? ' running' : ''}" role="menuitem">
+        <small><span class="view-kind">${running(a)
+          ? '<i class="view-live" title="运行中" aria-label="运行中"></i>' : ''}子代理 · ${esc(a.type)}</span>
+          <span class="view-span">${esc(fmtSpan(a.created, running(a) ? null : a.updated))}</span></small>
+        <b>${esc(a.title)}</b>
+      </button>`).join('')}`;
+}
+
+function head(m, total) {
+  const h = el('div', 'dhead');
+  const tmuxLive = S.liveTmux.has(m.uid);
+  const hasAgents = (m.agent_items || []).length > 0;
+  const titleView = hasAgents ? `
+    <button class="session-view-switch" id="a-view-switch" type="button"
+      title="切换主会话/子代理" aria-label="切换主会话/子代理" aria-expanded="false">
+      <span>${esc(m.title)}</span><i>⌄</i>
+    </button>` : `<span>${esc(m.title)}</span>`;
+  const menuView = hasAgents ? `
+    <div class="session-view-menu" id="session-view-menu" hidden role="menu">${sessionViewRows(m)}</div>` : '';
+  h.innerHTML = `
+    <div class="dtitle">
+      <button class="mobile-back" title="返回会话列表" aria-label="返回会话列表">←</button>
+      <h2 class="${hasAgents ? 'has-session-views' : ''}">${sessionIconMarkup(m.source,
+        S.live.has(m.uid), tmuxLive, sessionTurn(m.uid))}${titleView}</h2>
+      ${menuView}
+      <div class="dhead-actions" aria-label="会话操作">
+        ${forkChainButtonMarkup(m)}
+        ${consoleButtonMarkup()}
+        ${sessionActionsMarkup(`
+        ${starButtonMarkup(m.uid, !!m.starred, 'session-menu-action', 'a-star')}
+        <button class="session-menu-action turn-mode${S.compactTurns ? '' : ' on'}" id="a-turns"
+          title="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
+          aria-label="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
+          aria-pressed="${!S.compactTurns}">${uiIcon('process')}</button>
+        ${S.term ? `<div class="session-menu-search"><b id="mcount">…</b>
+          <button class="session-menu-action" id="m-prev" title="上一处" aria-label="上一处匹配">↑</button>
+          <button class="session-menu-action" id="m-next" title="下一处" aria-label="下一处匹配">↓</button></div>` : ''}
+        <div class="session-menu-diagnostics">
+          ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-freeze" hidden></button>'}
+          <button class="session-menu-action" data-report-bug title="报告当前会话问题"
+            aria-label="报告当前会话问题">${uiIcon('bug')}</button>
+        </div>
+        ${SessionDockCapabilities.config.session_clone_local_codex === true ? `<button class="session-menu-action" id="a-clone-group" type="button" title="移动 / 复制整组" aria-label="移动 / 复制整组">${uiIcon('transfer')}</button>` : ''}
+        ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action"></button>'}
+        `, `
+    <div class="dmeta">
+      <span id="mcount-total">${total} 条消息</span>
+      <span class="meta-secondary">${fmtSize(m.size)}</span>
+      <span class="meta-secondary">${esc(fmtTime(m.created))} → ${esc(fmtTime(m.updated))}</span>
+      ${m.node_name ? `<span class="meta-node node-badge" data-node-color="${nodeColor(m.node_name)}">${esc(m.node_name)}</span>` : ''}
+      <span class="meta-secondary"><code>${esc(shortCwd(m.cwd || '(未知)', 999))}</code></span>
+      <span class="meta-source">${esc(m.agent_type || SOURCES[m.source].name)}</span>
+      ${m.model ? `<span class="meta-secondary">${esc(m.model)}</span>` : ''}
+      <span class="meta-secondary session-id"><code>${esc(m.sid)}</code></span>
+    </div>`)}
+      </div>
+    </div>`;
+  h.querySelector('.mobile-back').onclick = showMobileList;
+  h.querySelector('#a-star').onclick = () => toggleSessionStar(m.uid);
+  h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
+  paintTransferAvailability(h.querySelector('#a-clone-group'), m.uid);
+  const turnMode = h.querySelector('#a-turns');
+  turnMode.onclick = () => {
+    S.compactTurns = !S.compactTurns;
+    store.set('compactTurns', S.compactTurns);
+    turnMode.classList.toggle('on', !S.compactTurns);
+    turnMode.setAttribute('aria-pressed', String(!S.compactTurns));
+    const label = S.compactTurns ? '展开所有过程' : '折叠已完成过程';
+    turnMode.title = turnMode.ariaLabel = label;
+    labelSessionAction(turnMode);
+    document.querySelectorAll('#msgs > .turn-process').forEach(
+      node => S.compactTurns ? node._fold?.() : node._open?.());
+    refreshMessageTimeDividers();
+    settle($('#msgs'));
+  };
+  const viewSwitch = h.querySelector('#a-view-switch');
+  const viewMenu = h.querySelector('#session-view-menu');
+  if (viewSwitch && viewMenu) {
+    const close = () => {
+      viewMenu.hidden = true;
+      viewSwitch.setAttribute('aria-expanded', 'false');
+    };
+    viewSwitch.onclick = e => {
+      e.stopPropagation();
+      // 起止时间和运行点按打开时的列表数据重画；列表刷新不重建标题栏，
+      // 否则正在看的菜单会被换掉。
+      if (viewMenu.hidden) viewMenu.innerHTML = sessionViewRows(m);
+      viewMenu.hidden = !viewMenu.hidden;
+      viewSwitch.setAttribute('aria-expanded', String(!viewMenu.hidden));
+      if (!viewMenu.hidden) setTimeout(() => document.addEventListener('click', close, { once: true }), 0);
+    };
+    viewMenu.onclick = e => {
+      e.stopPropagation();
+      const b = e.target.closest('button[data-agent]');
+      if (!b) return;
+      close();
+      openSession(m.uid, b.dataset.agent || null);
+    };
+  }
+  bindForkChainMenu(h, m);
+  const tb = h.querySelector('#a-term');
+  bindConsoleButton(tb, m.uid, m.agent_id);
+  showConsoleToast('');
+  if (typeof renderTakeoverBtn === 'function') setTimeout(renderTakeoverBtn, 0);
+  renderSessionAction(m, h.querySelector('#a-session-action'));
+  bindSessionActions(h);
+  return h;
+}
+
+/* ---------- 回退父会话链 ---------- */
+// Codex 回退会生成子会话，原会话默认从左栏隐藏。子会话标题栏给一个图标，
+// 下拉列出整条父会话链，每一级可单独显示到左栏或再次隐藏。父会话本身
+// 也给同一个图标，列出它的子分支：从链上进入隐藏的父会话后能原路回去。
+function forkChainButtonMarkup(m) {
+  if (m.agent_id || !(m.forked_from_id || m.fork_parent || forkChildren(m).length)) return '';
+  const label = m.forked_from_id ? '父会话链' : '子会话';
+  return `<button class="iconbtn" id="a-fork-chain" type="button" title="${label}"
+      aria-label="${label}" aria-haspopup="menu" aria-expanded="false"
+      aria-controls="fork-chain-menu">${uiIcon('fork')}</button>
+    <div class="session-view-menu fork-chain-menu" id="fork-chain-menu" hidden role="menu"
+      aria-label="${label}"></div>`;
+}
+
+function closeForkChainMenu() {
+  const menu = $('#fork-chain-menu');
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  $('#a-fork-chain')?.setAttribute('aria-expanded', 'false');
+}
+
+function renderForkChainMenu() {
+  const menu = $('#fork-chain-menu');
+  if (!menu || menu.hidden) return;
+  const current = S.sessions.find(session => session.uid === S.sel)
+    || (S.results || []).find(session => session.uid === S.sel) || menu._meta;
+  const chain = current ? forkAncestors(current) : [];
+  const children = current ? forkChildren(current) : [];
+  const chainRow = (level, row) => {
+    const shown = !row.fork_parent || !!row.fork_parent_visible;
+    const when = `${esc(fmtTime(row.created))} → ${esc(fmtTime(row.updated))}`;
+    return `<div class="chain-row${shown ? ' shown' : ''}" role="none" data-uid="${esc(row.uid)}">
+        <button type="button" class="chain-open" role="menuitem" title="打开这条会话">
+          <small>${level} · ${when}${shown ? ' · 已在左栏' : ''}</small><b>${esc(row.title || row.sid)}</b>
+        </button>
+        ${row.fork_parent ? `<button type="button" class="btn chain-toggle" role="menuitem"
+          data-visible="${shown ? 0 : 1}">${shown ? '隐藏' : '显示'}</button>` : ''}
+      </div>`;
+  };
+  const rows = chain.map(({ sid, row }, i) => {
+    const level = i === 0 ? '父会话' : `上 ${i + 1} 级父会话`;
+    if (!row) return `<div class="chain-row gone" role="none">
+        <span><small>${level} · 记录已不存在</small><b><code>${esc(sid)}</code></b></span>
+      </div>`;
+    return chainRow(level, row);
+  }).concat(children.map((row, i) => chainRow(children.length > 1 ? `子会话 ${i + 1}` : '子会话', row)));
+  menu.innerHTML = rows.join('')
+    || '<div class="chain-row gone" role="none"><span><small>没有父会话或子会话</small></span></div>';
+}
+
+function bindForkChainMenu(heading, m) {
+  const button = heading.querySelector('#a-fork-chain');
+  const menu = heading.querySelector('#fork-chain-menu');
+  if (!button || !menu) return;
+  menu._meta = m;
+  const open = () => {
+    closeSessionActions();
+    const views = heading.querySelector('#session-view-menu');
+    if (views) views.hidden = true;
+    heading.querySelector('#a-view-switch')?.setAttribute('aria-expanded', 'false');
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    renderForkChainMenu();
+  };
+  button.onclick = e => {
+    e.stopPropagation();
+    menu.hidden ? open() : closeForkChainMenu();
+  };
+  menu.onclick = async e => {
+    e.stopPropagation();
+    const row = e.target.closest('.chain-row[data-uid]');
+    if (!row) return;
+    const toggle = e.target.closest('.chain-toggle');
+    if (toggle) {
+      const visible = toggle.dataset.visible === '1';
+      await setForkParentVisibility([row.dataset.uid], visible, toggle);
+      if (visible) {
+        // 新显示的会话在左栏滚到可见处，让“显示”有个看得见的结果
+        $(`#side .item[data-uid="${CSS.escape(row.dataset.uid)}"]`)
+          ?.scrollIntoView({ block: 'nearest' });
+      }
+      return;
+    }
+    if (e.target.closest('.chain-open')) {
+      closeForkChainMenu();
+      openSession(row.dataset.uid, null, {exact: true});
+    }
+  };
+}
+document.addEventListener('click', event => {
+  if (!event.target.closest('#fork-chain-menu, #a-fork-chain')) closeForkChainMenu();
+}, true);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && $('#fork-chain-menu')?.hidden === false) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeForkChainMenu();
+    $('#a-fork-chain')?.focus();
+  }
+}, true);
+
+function newAssignedLaunchFor(session) {
+  if (typeof T === 'undefined' || !session?.sid) return null;
+  return (T.pending || []).find(row => row.launch_kind === 'new_assigned'
+    && row.source === session.source
+    && String(row.declared_sid || '') === String(session.sid)) || null;
+}
+
+function unusedNewAssignedLaunch(session) {
+  const launch = newAssignedLaunchFor(session);
+  if (!launch) return null;
+  // A catalog/header snapshot can predate the accepted conversation window.
+  // Its zero cursor cannot make an already populated launch unused again.
+  const accepted = cache.get(viewKey(session.uid, null));
+  if (Number(session.cursor?.end) > 0 || Number(accepted?.end) > 0) return null;
+  return launch;
+}
+
+function renderSessionFreeze(m, button = $('#a-session-freeze')) {
+  if (!button || m.uid !== S.sel) return;
+  const row = typeof T !== 'undefined' && (T.list || []).find(row => row.uid === m.uid);
+  const reason = typeof T === 'undefined' || !T.listLoaded
+    ? '正在读取会话运行状态，请稍后重试。'
+    : !HUB_MODE && SessionDockCapabilities.config.session_freeze !== true
+      ? '当前节点不支持冻结现场；此功能仅适用于已启用会话管理的 Linux 节点。'
+      : row?.stale ? '会话运行状态已失效，请等待所属节点恢复连接。'
+      : !row?.instance_id ? '当前会话没有可验证的运行实例，无法冻结现场。'
+      : typeof row.frozen !== 'boolean'
+        ? '当前节点不支持冻结现场；此功能仅适用于已启用会话管理的 Linux 节点。' : '';
+  const frozen = !reason && row.frozen;
+  const label = frozen ? '恢复运行' : '冻结现场';
+  button.hidden = false;
+  button.innerHTML = uiIcon(frozen ? 'play' : 'pause');
+  button.title = button.ariaLabel = label;
+  button.setAttribute('aria-pressed', String(!!frozen));
+  setControlUnavailable(button, reason);
+  labelSessionAction(button);
+  button.onclick = null;
+  if (reason) return;
+  button.onclick = async () => {
+    button.disabled = true;
+    try {
+      const result = await post('api/session/freeze', {uid:m.uid,
+        instance_id:row.instance_id, frozen:!row.frozen});
+      if (result.error || !result.ok) throw new Error(result.error || '请求失败');
+      row.frozen = result.frozen;
+      paintTurn(m.uid);
+      browserAuditEvent('session.freeze', {uid:m.uid, instance_id:row.instance_id,
+        frozen:result.frozen, process_count:result.process_count});
+      syncSessionFreezeOverlay();
+    } catch (error) {
+      showSessionStopNotice(`冻结 / 恢复失败：${error.message || error}`, true, m.uid);
+    } finally {
+      await loadTermList();
+      paintTurn(m.uid);
+      renderSessionFreeze(m);
+      button.disabled = false;
+    }
+  };
+}
+
+function renderSessionAction(m, button = $('#a-session-action')) {
+  renderSessionFreeze(m, button?.closest('.dhead')?.querySelector('#a-session-freeze'));
+  if (!button || m.uid !== S.sel) return;
+  if (m.fork_parent) {
+    const shown = !!m.fork_parent_visible;
+    const label = shown ? '隐藏父会话' : '显示父会话';
+    button.innerHTML = uiIcon('eye-off');
+    button.title = button.ariaLabel = label;
+    labelSessionAction(button);
+    button.onclick = () => setForkParentVisibility([m.uid], !shown, button);
+    return;
+  }
+  const launch = unusedNewAssignedLaunch(m);
+  if (launch && typeof deletePendingSession === 'function') {
+    const label = '删除会话';
+    button.innerHTML = uiIcon('trash');
+    button.title = button.ariaLabel = label;
+    labelSessionAction(button);
+    button.onclick = () => deletePendingSession(launch, button);
+    return;
+  }
+  const running = sessionStoppable(m.uid);
+  const label = running ? '停止会话' : '删除会话';
+  button.innerHTML = uiIcon(running ? 'power' : 'trash');
+  button.title = button.ariaLabel = label;
+  labelSessionAction(button);
+  button.onclick = () => running ? stopSession(m, button) : del(m);
+}
+
+// Rust `session_stop`: the server stops only a managed host instance (Ctrl-D,
+// then the host's guarded stop); an unmanaged/external CLI is a typed refusal.
+// Without process detection `S.live` only holds sessions this page launched or
+// took over, so a listed managed instance also makes the session stoppable.
+const sessionStopCapable = () => SessionDockCapabilities.config.backend === 'rust'
+  && SessionDockCapabilities.config.session_stop === true;
+function sessionStoppable(uid) {
+  if (S.live.has(uid)) return true;
+  return sessionStopCapable() && typeof T !== 'undefined'
+    && (T.list || []).some(row => row.uid === uid && !!row.instance_id && !row.stale);
+}
+let sessionStopNoticeTimer = 0;
+// Keep the frozen scene inside the selected session pane, never in global floats.
+function syncSessionFreezeOverlay() {
+  const right = $('#right');
+  if (!right) return;
+  let overlay = $('#session-freeze-overlay');
+  const visible = sessionFrozen(S.sel)
+    && (!MOBILE.matches || document.body.classList.contains('mobile-detail'));
+  if (!overlay && visible) {
+    overlay = el('div', 'session-freeze-overlay');
+    overlay.id = 'session-freeze-overlay';
+    overlay.innerHTML = `<div class="app-float session-freeze-line" role="status" aria-live="polite">
+      <span>会话已暂停</span>
+      <button class="btn" type="button" data-freeze-resume title="恢复运行" aria-label="恢复运行">${uiIcon('play')}</button>
+    </div>`;
+    overlay.querySelector('[data-freeze-resume]').onclick = () => $('#a-session-freeze')?.click();
+    right.appendChild(overlay);
+  }
+  if (overlay) {
+    overlay.hidden = !visible;
+    overlay.dataset.uid = visible ? S.sel : '';
+  }
+}
+function syncSessionStopNotice() {
+  syncSessionFreezeOverlay();
+  const notice = $('#session-stop-notice');
+  if (notice?.dataset.uid && (notice.dataset.uid !== S.sel
+      || (MOBILE.matches && !document.body.classList.contains('mobile-detail')))) {
+    clearTimeout(sessionStopNoticeTimer);
+    notice.hidden = true;
+  }
+}
+function showSessionStopNotice(text, sticky = false, uid = '') {
+  // Batch progress owns stop feedback, including asynchronous terminal-exit
+  // notices that arrive after an individual HTTP response.
+  if (text && (sessionStopBusy || (S.picking && sessionStopProgress))) return;
+  let notice = $('#session-stop-notice');
+  if (!notice) {
+    notice = el('div', 'app-float');
+    notice.id = 'session-stop-notice';
+    notice.setAttribute('role', 'status');
+    notice.setAttribute('aria-live', 'polite');
+    floatStack().appendChild(notice);
+  }
+  const show = visible => { notice.hidden = !visible; };
+  clearTimeout(sessionStopNoticeTimer);
+  notice.textContent = text;
+  notice.dataset.uid = uid;
+  show(!!text && (!uid || uid === S.sel));
+  if (text && !sticky) sessionStopNoticeTimer = setTimeout(() => show(false), 8000);
+}
+const STOP_STAGE_TEXT = {
+  graceful: 'CLI 已在收到 Ctrl-D 后退出',
+  stopped: 'CLI 未响应 Ctrl-D，已由宿主停止并确认退出',
+  already_exited: '该受管实例此前已退出',
+  uncertain: '已发送 Ctrl-D 与宿主停止指令，但限时内未观察到退出；结果不确定，不会自动重试',
+};
+
+async function requestSessionStop(m) {
+  const body = { uid: m.uid };
+  if (sessionStopCapable()) body.request_id = globalThis.crypto?.randomUUID?.()
+    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const response = await fetch(appUrl('api/session/stop'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const result = await response.json();
+  if (!response.ok || result.error) throw new Error(result.error || response.status);
+  if (sessionStopCapable() && result.stopped) S.live.delete(m.uid);
+  return result;
+}
+
+async function stopSession(m, button = null) {
+  // 空闲会话停止不打断任何工作，不再确认；轮转中、等回答或状态未知仍确认。
+  if (sessionTurn(m.uid) !== 'idle' && !await appConfirm(`停止会话「${m.title}」?\n\n停止后才可以删除会话记录。`)) return;
+  if (button) button.disabled = true;
+  try {
+    const d = await requestSessionStop(m);
+    if (sessionStopCapable()) {
+      showSessionStopNotice(`「${m.title}」${STOP_STAGE_TEXT[d.stage] || d.explanation || '停止请求已处理'}`);
+    }
+    await refreshLive(true);
+    if (typeof loadTermList === 'function') await loadTermList();
+    paintLive();
+  } catch (error) {
+    if (sessionStopCapable()) showSessionStopNotice(`停止失败：${error.message || error}`, true);
+    else await appAlert(`停止失败：${error.message || error}`);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+// Rust 回收站能力：文件进服务端显式配置的回收站目录。
+const trashCapable = () => SessionDockCapabilities.config.backend === 'rust'
+  && SessionDockCapabilities.config.trash === true;
+const trashLocationNote = () => '文件会移入服务端回收站，不会永久删除。';
+// 运行状态未知不等于已退出：只有用户明确确认 CLI 已退出，才带 force 重试。
+function confirmForceDelete(count, detail) {
+  return appConfirm(`${count === 1 ? '该会话' : `${count} 个会话`}的运行状态未知${detail ? `（${detail}）` : ''}，`
+    + '后端无法确认 CLI 已经退出；未知不代表已停止。\n\n'
+    + '请先确认这些会话的 CLI 都已退出。仍要删除吗?');
+}
+
+async function requestSessionDelete(uid, force = false) {
+  const response = await fetch(appUrl('api/session/' + encodeURIComponent(uid) + (force ? '?force=1' : '')),
+    { method: 'DELETE' });
+  return { response, data: await response.json().catch(() => ({})) };
+}
+
+// OpenCode 会话在它自己的数据库里：直接删除（连同子会话），不进回收站。
+const opencodeDeleteNote = () => 'OpenCode 会话会从 OpenCode 直接删除（连同子会话），不进回收站，无法恢复。';
+
+async function del(m) {
+  const opencode = m.source === 'opencode';
+  if (!await appConfirm(`删除会话「${m.title}」?\n\n${opencode ? opencodeDeleteNote() : trashLocationNote()}`)) return;
+  closeWatch();                         // 先停 SSE，避免文件移走后 EventSource 自动重连 404
+  let { response, data } = await requestSessionDelete(m.uid);
+  if (!response.ok && trashCapable() && data.code === 'run_state_unknown' && data.needs_force
+      && await confirmForceDelete(1, data.run_state?.detail)) {
+    ({ response, data } = await requestSessionDelete(m.uid, true));
+  }
+  if (!response.ok) {
+    watchSession(m.uid);                // 删除失败，会话仍在，恢复实时同步
+    return appAlert('删除失败: ' + (data.error || response.status));
+  }
+  forgetDeletedReceipts([m]);
+  S.sessions = S.sessions.filter(x => x.uid !== m.uid);
+  if (S.results) S.results = S.results.filter(x => x.uid !== m.uid);
+  S.sel = null;
+  store.set('sel', null);
+  renderChips(); renderSide();
+  if (opencode) {
+    $('#detail').innerHTML = '<div class="empty">会话已从 OpenCode 删除</div>';
+  } else {
+    $('#detail').innerHTML = `<div class="empty">已移入回收站<br><code>${esc(data.trash)}</code>`
+      + `<br><button type="button" class="btn" id="detail-open-trash">打开回收站</button></div>`;
+    $('#detail-open-trash').onclick = openTrash;
+  }
+  ensureConsolePlaceholder();
+  auditDetailRendered('trashed');
+  showMobileList();
+}
+
+// 连续工具调用/输出合并成一个可折叠的组；正在增长的时间线尾段保持展开，
+// 等后面出现普通对话或任务结束后再自动封口。
+const TOOL_ROLES = new Set(['tool', 'tool_result']);
+const SEARCH_ROLES = new Set(['user', 'assistant', 'user·subagent', 'assistant·subagent',
+                              'thinking', 'question', 'answer', 'command']);
+const TURN_START_ROLES = new Set(['user', 'user·subagent']);
+const GROUP_MIN = 2;
+const MESSAGE_TIME_GAP_MS = 5 * 60 * 1000;
+const MESSAGE_TIME_CADENCE_MS = 20 * 60 * 1000;
+
+const isGroupableTool = m => TOOL_ROLES.has(m?.role) && !m.changes?.length;
+
+/** 调用与其输出按 call_id 就近配对成一个视觉单元(对标 codex TUI 的 `$ 命令 + 输出`)。
+ *  只在本批消息内配对；增量批里落单的输出保持原样渲染，不会丢。 */
+function pairTools(msgs) {
+  const out = [], open = new Map();
+  for (const m of msgs) {
+    if (m.role === 'tool') {
+      const copy = { ...m };
+      out.push(copy);
+      if (m.call_id) open.set(m.call_id, copy);
+      continue;
+    }
+    if (m.role === 'tool_result' && m.call_id && open.has(m.call_id)) {
+      const owner = open.get(m.call_id);
+      open.delete(m.call_id);
+      owner.result = m;
+      continue;
+    }
+    out.push(m);
+  }
+  return out;
+}
+
+/** 先算分组(纯计算, 很快), 再分批建 DOM —— 分批不会把一个组切成两半。 */
+function planMessages(msgs, { openTail = false } = {}) {
+  const plan = [];
+  let run = [];
+  const flush = open => {
+    if (run.length >= GROUP_MIN) plan.push({ g: run, open: !!open });
+    else for (const m of run) plan.push({ m });
+    run = [];
+  };
+  for (const m of pairTools(msgs)) {
+    // 调用与结果跨增量批次时，空结果配不到上面的调用。它仍参与消息计数，
+    // 但不能凭空生成一块黑色空卡片。
+    if (m.role === 'tool_result' && !String(m.text || '').trim()
+        && !m.media?.length && !m.changes?.length) {
+      flush(false);
+      plan.push({ m: { ...m, silent: true } });
+      continue;
+    }
+    // 文件修改本身是用户关心的工作记录，始终作为可见卡片留在时间线；
+    // 普通工具协议继续按原规则合并折叠。
+    if (isGroupableTool(m)) { run.push(m); continue; }
+    flush(false);
+    plan.push({ m });
+  }
+  flush(openTail);
+  return plan;
+}
+
+const baseMessageRole = role => String(role || '').split('·', 1)[0];
+const isTurnStart = m => TURN_START_ROLES.has(m?.role);
+const sameNativeTurn = (a, b) => a?.turn_id != null && b?.turn_id != null
+  && String(a.turn_id) === String(b.turn_id);
+const isTurnAssistant = m => baseMessageRole(m?.role) === 'assistant';
+const isFinalAssistant = m => isTurnAssistant(m)
+  && ['final', 'final_answer', 'end_turn'].includes(m?.phase);
+// rename/compact 等不计入消息数的辅助记录可能写在 final 之后；它们继续留在
+// 时间线，但不应让前面的原生最终答复失去“结论”资格。
+const isPassiveTurnTail = m => m?.counted === false;
+
+/** 增量中断状态来自 activity 包，可能与最后一条 commentary 分批到达。 */
+function markInterruptedTurn(messages, activity) {
+  const turnId = activity?.state === 'aborted' && activity?.turn_id != null
+    ? String(activity.turn_id) : '';
+  if (!turnId) return false;
+  for (let i = (messages || []).length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (String(message?.turn_id || '') !== turnId || !isTurnAssistant(message)) continue;
+    if (!isFinalAssistant(message)) {
+      message.interrupted = true;
+      message.interrupt_reason = activity.reason || '本轮在最终答复前被中断';
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
+
+/** 找一轮中需要永久露出的结论块。原生 final 标记优先；明确中断的轮次
+ *  保留最后一条 commentary 作为末次状态。老会话只有在回合已确定结束、
+ *  且最后一个有效节点就是 assistant 时才回退到“最后一条”。 */
+function turnConclusion(body, { complete = false, interrupted = false } = {}) {
+  let meaningfulEnd = body.length;
+  while (meaningfulEnd && isPassiveTurnTail(body[meaningfulEnd - 1])) meaningfulEnd--;
+  if (!meaningfulEnd) return null;
+  // 主助手的第一条原生 final 就是它对本轮输入的答复。final 之后同一轮里还会
+  // 出现内容的只有两种情形：Claude 的后台 task-notification（时间线里转成不
+  // 打扰主线的 task 事件，后面跟一条监控短报），以及 Stop hook 拒绝收尾后被
+  // 逼出的工具调用和一条短补充。两者都不能反过来把前面的 final 降成可折叠
+  // 的“进展”——否则真正的结论被折进过程合集，页面只露出末尾几行补充。
+  // final 之后的部分标记 continued，交给调用方作为一段新的过程继续规划。
+  for (let i = 0; i < meaningfulEnd; i++) {
+    if (body[i]?.role !== 'assistant' || !isFinalAssistant(body[i])) continue;
+    let end = i + 1;
+    while (end < meaningfulEnd && isFinalAssistant(body[end])) end++;
+    return {start: i, end, continued: end < meaningfulEnd};
+  }
+  const last = body[meaningfulEnd - 1];
+  if (isFinalAssistant(last)) {
+    let start = meaningfulEnd - 1;
+    while (start > 0 && isFinalAssistant(body[start - 1])) start--;
+    return {start, end: meaningfulEnd};
+  }
+  if (complete && interrupted) {
+    for (let i = meaningfulEnd - 1; i >= 0; i--) {
+      if (!isTurnAssistant(body[i]) || !body[i]?.interrupted) continue;
+      return {start: i, end: i + 1, tailStart: meaningfulEnd,
+              inferred: true, interrupted: true};
+    }
+  }
+  if (complete && !interrupted && isTurnAssistant(last) && !last.phase) {
+    return {start: meaningfulEnd - 1, end: meaningfulEnd, inferred: true};
+  }
+  return null;
+}
+
+function visiblePlanSize(plan) {
+  return plan.reduce((n, item) => n + (item.m?.silent ? 0 : (item.m || item.g ? 1 : 0)), 0);
+}
+
+function turnKey(messages, conclusion) {
+  const values = [...messages, ...(conclusion || [])];
+  const native = values.find(m => m?.turn_id)?.turn_id;
+  if (native) return native;
+  const first = messages[0] || conclusion?.[0] || {};
+  return `${first.ts || 'turn'}:${String(first.text || '').slice(0, 80)}`;
+}
+
+/** 单轮外层折叠。用户输入和最终结论仍是普通顶层气泡，中间过程才进入合集；
+ *  合集内部继续复用 planMessages 的工具配对/分组规则。 */
+function planTurnSegment(messages, promptEnd,
+                         {complete = false, foldable = complete, openTail = false} = {}) {
+  const prompts = messages.slice(0, promptEnd);
+  const body = messages.slice(promptEnd);
+  const conclusion = turnConclusion(body, {
+    complete, interrupted: messages.some(m => m?.interrupted),
+  });
+  // 历史段可能因用户在同一次原生 turn 中追加要求，或上一轮被中断，而没有
+  // 自己的 final。它已经被后续 user 明确封口，仍应作为过程折叠；只是不能
+  // 把最后一条 commentary 猜成结论。尚在增长的尾段继续完整铺开。
+  if (!conclusion && !foldable) return planMessages(messages, {openTail});
+  // 中断时最后一条助手状态后面还可能有工具结果。它们仍属于过程；把这条
+  // 状态提升到合集后作为“末次进展”，既不丢工具，也不把工具散回顶层。
+  const process = conclusion?.interrupted
+    ? [...body.slice(0, conclusion.start),
+       ...body.slice(conclusion.end, conclusion.tailStart)]
+    : conclusion ? body.slice(0, conclusion.start) : body;
+  const processPlan = planMessages(process);
+  const finalBlock = conclusion ? body.slice(conclusion.start, conclusion.end) : [];
+  const rest = conclusion ? body.slice(conclusion.tailStart ?? conclusion.end) : [];
+  // 原生 final 之后被追加的部分（task 监控短报、Stop hook 逼出的工具调用与
+  // 补充说明）自成一段过程：够长就折成第二个合集并露出它自己的收尾，只有
+  // 一两项时平铺。中断轮与 rename/compact 之类的被动尾巴仍按原样平铺。
+  const tail = conclusion?.continued
+    ? planTurnSegment(rest, 0, {complete, foldable, openTail})
+    : planMessages(rest);
+  // 一项换成一项不会节省空间，还会徒增一次点击。
+  const processSize = visiblePlanSize(processPlan);
+  // 思考例外：它在主线上整段铺开，折进合集才只占一行摘要。OpenCode 这类
+  // 显示推理原文的 CLI 常见“一段思考 + 结论”的回合，不能让思考散在主线。
+  const loneThinking = processSize === 1
+    && processPlan.some(item => item.m?.role === 'thinking' && !item.m.silent);
+  // 中断轮已经要保留末次状态；即便只剩一个工具单元，也应进过程合集，
+  // 否则恰好较短的中断轮会再次把工具卡散在对话主线里。
+  if (!processSize || (processSize < 2 && !conclusion?.interrupted && !loneThinking)) {
+    if (!conclusion?.continued) return planMessages(messages);
+    return [...planMessages(messages.slice(0, promptEnd + conclusion.end)), ...tail];
+  }
+  return [
+    ...prompts.map((m, i) => ({m, sealedTurnHead: i === 0})),
+    {turn: {items: process, plan: processPlan,
+            key: turnKey(messages, finalBlock), hasConclusion: !!conclusion,
+            inferred: !!conclusion?.inferred,
+            interrupted: !!conclusion?.interrupted},
+     open: !S.compactTurns},
+    ...planMessages(finalBlock),
+    ...tail,
+  ];
+}
+
+function planTurn(messages, options = {}) {
+  if (!messages.length || !isTurnStart(messages[0])) {
+    return planMessages(messages, {openTail: options.openTail});
+  }
+  // Claude 会把同一次含文字/图片的 user 记录拆成多个规范化气泡。相邻且
+  // turn_id 相同的部分是一份输入，全部留在顶层，不能把图片折进“过程”。
+  let promptEnd = 1;
+  while (promptEnd < messages.length && isTurnStart(messages[promptEnd])
+         && sameNativeTurn(messages[0], messages[promptEnd])) promptEnd++;
+  return planTurnSegment(messages, promptEnd, options);
+}
+
+/** 历史缺口两侧会分别调用，绝不跨缺口猜轮次。answer 是代理提问的回答，
+ *  留在同一轮过程内；只有真正的 user/user·subagent 开新轮。 */
+function planTurns(msgs, {
+  openTail = false, tailComplete = false, foldTail = tailComplete,
+} = {}) {
+  const out = [];
+  let start = msgs.findIndex(isTurnStart);
+  // 窗口缺口可能截在一轮正中：缺口前的尾段可以折叠，但不能据此猜结论；
+  // 缺口后的前缀若被下一条 user 封口，也按无输入的历史过程片段处理。
+  if (start < 0) {
+    return planTurnSegment(msgs, 0, {
+      complete: tailComplete, foldable: foldTail, openTail,
+    });
+  }
+  out.push(...planTurnSegment(msgs.slice(0, start), 0, {
+    complete: true, foldable: true,
+  }));
+  while (start < msgs.length) {
+    let next = start + 1;
+    while (next < msgs.length && isTurnStart(msgs[next])
+           && sameNativeTurn(msgs[start], msgs[next])) next++;
+    while (next < msgs.length && !isTurnStart(msgs[next])) next++;
+    const historical = next < msgs.length;
+    out.push(...planTurn(msgs.slice(start, next), {
+      complete: historical || tailComplete,
+      foldable: historical || foldTail,
+      openTail: !historical && openTail,
+    }));
+    start = next;
+  }
+  return out;
+}
+
+/** 一个工具卡可能同时包含调用和结果，工具组又包含多张卡。
+ *  分隔线用这个视觉单元的最早/最晚时间，不会把一次长时间工具调用
+ *  误判成与下一条消息的空档。 */
+function messageTimeRange(messages) {
+  const values = [];
+  for (const message of messages || []) {
+    for (const item of [message, message?.result]) {
+      const value = Date.parse(item?.ts || '');
+      if (Number.isFinite(value)) values.push(value);
+    }
+  }
+  return values.length ? {start: Math.min(...values), end: Math.max(...values)} : null;
+}
+
+function stampMessageTime(node, messages) {
+  if (!node?.matches('.msg')) return node;
+  const range = messageTimeRange(messages);
+  if (range) {
+    node.dataset.timeStart = range.start;
+    node.dataset.timeEnd = range.end;
+  }
+  return node;
+}
+
+function formatMessageDateTime(value) {
+  const date = new Date(value);
+  const pad = number => String(number).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    + ` ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function messageTimeDivider(value) {
+  const node = el('div', 'message-time-divider');
+  const time = document.createElement('time');
+  time.dateTime = new Date(value).toISOString();
+  time.textContent = formatMessageDateTime(value);
+  node.appendChild(time);
+  return node;
+}
+
+/** 相邻气泡空档超过 5 分钟时显示时间；对连续的密集对话，也每超过
+ *  20 分钟补一条。历史缺口会重新起算；任务事件和 Working 状态行只中断
+ *  “相邻”判断，不中断 20 分钟周期；隐藏的协议消息不参与。 */
+function refreshMessageTimeDividers(box = $('#msgs')) {
+  if (!box) return;
+  const saved = box._timeDividerTail;
+  const resume = saved?.node?.parentElement === box;
+  let previousEnd = resume ? saved.previousEnd : null;
+  let lastShownAt = resume ? saved.lastShownAt : null;
+  let first = resume ? saved.node : box.firstElementChild;
+  if (resume && first.previousElementSibling?.classList.contains('message-time-divider')) {
+    first.previousElementSibling.remove();
+  }
+  if (!resume) box._timeDividerTail = null;
+  const nodes = [];
+  for (let node = first; node; node = node.nextElementSibling) nodes.push(node);
+  for (const node of nodes) {
+    if (node.matches('.message-time-divider')) { node.remove(); continue; }
+    if (node.matches('.silent-tool-result, .question-live-shadowed') || node.hidden) continue;
+    if (!node.matches('.msg')) {
+      previousEnd = null;
+      if (node.matches('.history-gap')) lastShownAt = null;
+      continue;
+    }
+    const start = Number(node.dataset.timeStart);
+    const end = Number(node.dataset.timeEnd);
+    if (!node.matches('.live-question')) {
+      box._timeDividerTail = {node, previousEnd, lastShownAt};
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end)) {
+      previousEnd = null;
+      lastShownAt = null;
+      continue;
+    }
+    if (lastShownAt === null) lastShownAt = start;
+    const afterGap = previousEnd !== null && start - previousEnd > MESSAGE_TIME_GAP_MS;
+    const afterCadence = start - lastShownAt > MESSAGE_TIME_CADENCE_MS;
+    if (afterGap || afterCadence) {
+      box.insertBefore(messageTimeDivider(start), node);
+      lastShownAt = start;
+    }
+    previousEnd = Math.max(start, end);
+  }
+}
+
+function buildPlan(box, plan, before) {
+  const built = [];
+  for (let i = 0; i < plan.length; i++) {
+    const p = plan[i];
+    const n = p.gap ? historyGapNode(p.gap)
+      : (p.turn ? turnProcessNode(p.turn, p.open)
+        : (p.g ? groupNode(p.g, p.open) : msgNode(p.m)));
+    // 整页渲染出来的已折叠回合已经封口。后续只带 activity 的 SSE 不应
+    // 再把它拆掉重建；否则搜索时刚自动展开并高亮的懒加载正文会被替换掉。
+    if (p.sealedTurnHead || (p.m && isTurnStart(p.m) && plan[i + 1]?.turn)) {
+      n._turnSealed = true;
+    }
+    if (p.m?.turn_id != null) n.dataset.turnId = String(p.m.turn_id);
+    stampMessageTime(n, p.turn?.items || p.g || (p.m ? [p.m] : []));
+    before ? box.insertBefore(n, before) : box.appendChild(n);
+    built.push(n);
+  }
+  return built;
+}
+
+function trailingToolNodes(box, before = null) {
+  const nodes = [];
+  let node = before ? before.previousElementSibling : box.lastElementChild;
+  while (node && Array.isArray(node._toolItems)) {
+    nodes.unshift(node);
+    node = node.previousElementSibling;
+  }
+  return nodes;
+}
+
+function trailingGroupOpenState(trailing) {
+  return {
+    userOpened: trailing.some(node => node._userOpened),
+    wasOpen: trailing.some(node => node.matches('.grp') && !node.classList.contains('folded')),
+  };
+}
+
+function restoreGroupOpen(nodes, {userOpened = false, keepOpen = false} = {}) {
+  for (const node of nodes) {
+    if (!node.matches?.('.grp')) continue;
+    if (userOpened) node._userOpened = true;
+    if (keepOpen || userOpened) node._open?.();
+  }
+}
+
+/** 增量批次可能把同一段工具输出切开。把现有尾段取回来一起规划，保证它们
+ *  仍是一组；一旦本批出现普通消息，这个尾段立即变成已完成的折叠组。
+ *  用户亲手展开过的组不能因为后续工具结果或封口而被拆掉重建成折叠态。 */
+function appendMessages(box, msgs, before = null, { openTail = false } = {}) {
+  let rest = [...msgs];
+  const trailing = trailingToolNodes(box, before);
+  let lead = 0;
+  while (lead < rest.length && isGroupableTool(rest[lead])) lead++;
+  const built = [];
+  if (trailing.length) {
+    const extra = rest.slice(0, lead);
+    const combined = [...trailing.flatMap(node => node._toolItems), ...extra];
+    const onlyTools = lead === rest.length;
+    const {userOpened, wasOpen} = trailingGroupOpenState(trailing);
+    const keepOpen = onlyTools && (openTail || wasOpen || userOpened);
+    const planned = planMessages(combined, {openTail: keepOpen});
+    const grp = trailing.length === 1 && trailing[0].matches('.grp') ? trailing[0] : null;
+    if (grp && planned.length === 1 && planned[0].g) {
+      syncGroupNode(grp, planned[0].g);
+      stampMessageTime(grp, planned[0].g);
+      if (keepOpen || userOpened) grp._open?.();
+      else if (!onlyTools && !userOpened) grp._fold?.();
+      if (userOpened) grp._userOpened = true;
+      built.push(grp);
+    } else {
+      const anchor = before || trailing[trailing.length - 1].nextElementSibling;
+      trailing.forEach(node => node.remove());
+      const nodes = buildPlan(box, planned, anchor);
+      restoreGroupOpen(nodes, {userOpened, keepOpen: keepOpen || userOpened});
+      built.push(...nodes);
+    }
+    rest = rest.slice(lead);
+  }
+  built.push(...buildPlan(box, planMessages(rest, {openTail}), before));
+  return built;
+}
+
+function sealToolTail(box) {
+  const trailing = trailingToolNodes(box);
+  if (!trailing.length) return [];
+  if (trailing.length === 1 && trailing[0].matches('.grp')) {
+    if (!trailing[0]._userOpened) trailing[0]._fold?.();
+    return trailing;
+  }
+  const items = trailing.flatMap(node => node._toolItems);
+  if (items.length < GROUP_MIN) return trailing;
+  const {userOpened} = trailingGroupOpenState(trailing);
+  const anchor = trailing[trailing.length - 1].nextElementSibling;
+  trailing.forEach(node => node.remove());
+  const nodes = buildPlan(box, planMessages(items), anchor);
+  restoreGroupOpen(nodes, {userOpened, keepOpen: userOpened});
+  return nodes;
+}
+
+function lastRawTurn(messages) {
+  const start = messageIndex(messages).turnStart;
+  return start < 0 ? [] : messages.slice(start);
+}
+
+function lastRenderedTurnStart(box) {
+  const children = [...box.children];
+  for (let i = children.length - 1; i >= 0; i--) {
+    const node = children[i];
+    if (!node.matches?.('.msg') || !TURN_START_ROLES.has(node.dataset.role)) continue;
+    // 同一原生 user 记录可能是相邻的“文字 + 图片”多个气泡；重建回合时
+    // 从第一块开始移除，避免把文字留在旧 DOM、图片再复制一份。
+    let head = node, j = i;
+    const turnId = node.dataset.turnId;
+    while (turnId && j > 0) {
+      let k = j - 1;
+      while (k >= 0 && children[k].classList?.contains('message-time-divider')) k--;
+      const previous = children[k];
+      if (!previous?.matches?.('.msg')
+          || !TURN_START_ROLES.has(previous.dataset.role)
+          || previous.dataset.turnId !== turnId) break;
+      head = previous;
+      j = k;
+    }
+    return head;
+  }
+  return null;
+}
+
+const isConversationTailNode = node => node?.id === 'activity'
+  || node?.classList?.contains('live-question');
+
+/** 增量期间先按现有方式铺开活动回合；final/idle 到达后只重建最后一轮。
+ *  用户正在上翻时延迟封口，避免阅读中的内容突然从脚下消失。 */
+function sealTurnTail(box, entry, {defer = true} = {}) {
+  if (!box || !entry?.msgs?.length) return false;
+  const index = messageIndex(entry.msgs);
+  if (['working', 'waiting'].includes(entry.activity?.state) && !index.tailHasFinal) return false;
+  const raw = lastRawTurn(entry.msgs);
+  if (!raw.length) {
+    if (entry.activity?.state !== 'working') sealToolTail(box);
+    return false;
+  }
+  const state = entry.activity?.state;
+  const tailComplete = (state && !['working', 'waiting'].includes(state))
+    || (!entry.activity && !S.live.has(entry.meta?.uid));
+  const plan = planTurn(raw, {complete: tailComplete, openTail: state === 'working'});
+  if (!plan.some(item => item.turn)) {
+    if (state !== 'working') sealToolTail(box);
+    return false;
+  }
+  const start = lastRenderedTurnStart(box);
+  if (!start || start._turnSealed) return false;
+  if (defer && !_stick) {
+    box._turnSealPending = true;
+    return false;
+  }
+  let anchor = start;
+  while (anchor && !isConversationTailNode(anchor)) anchor = anchor.nextElementSibling;
+  for (let node = start; node && node !== anchor;) {
+    const next = node.nextElementSibling;
+    node.remove();
+    node = next;
+  }
+  const built = buildPlan(box, plan, anchor);
+  const rebuiltStart = built.find(node => TURN_START_ROLES.has(node.dataset?.role));
+  if (rebuiltStart) rebuiltStart._turnSealed = true;
+  built.forEach(markMatches);
+  if (S.term) updateMatchNav();
+  box._turnSealPending = false;
+  refreshMessageTimeDividers(box);
+  settle(box);
+  return true;
+}
+
+function flushPendingTurnSeal(box) {
+  if (!box?._turnSealPending || box !== $('#msgs')) return;
+  box._turnSealPending = false;
+  const entry = cache.get(viewKey(S.sel, S.agent));
+  if (!entry) return;
+  // 离开底部期间可能完成了不止一轮；此时用户已经主动回到底部，整页按缓存
+  // 重新规划可一次补齐所有轮次，并仍然停在最新结论。
+  renderSession(entry.meta, entry.msgs, entry.activity, {startWatch: false});
+}
+
+// 折叠工具组只显示语义提纲，不显示角色/时间 header。
+function addFoldPreview(n, text, aria) {
+  const preview = el('div', 'fold-preview');
+  const toggle = el('button', 'fold-toggle');
+  toggle.type = 'button';
+  toggle.title = `展开${aria}`;
+  toggle.setAttribute('aria-label', toggle.title);
+  toggle.setAttribute('aria-expanded', 'false');
+  const peek = el('span', 'peek');
+  peek.textContent = text;
+  preview.append(toggle, peek);
+  n.appendChild(preview);
+  return preview;
+}
+
+function addAction(n) {
+  const action = el('button', 'more disclosure');
+  action.type = 'button';
+  action.hidden = true;
+  n.appendChild(action);
+  return (label, fn, expanded = null) => {
+    action.hidden = !label;
+    action.textContent = label || '';
+    action.onclick = fn || null;
+    if (label) {
+      action.title = label;
+      action.setAttribute('aria-label', label);
+    } else {
+      action.removeAttribute('title');
+      action.removeAttribute('aria-label');
+    }
+    if (expanded === null) action.removeAttribute('aria-expanded');
+    else action.setAttribute('aria-expanded', String(expanded));
+  };
+}
+
+// 输出预览: 前几行足够判断结果, 大段日志靠"展开全文"。
+const OUT_LINES = 8;
+const OUT_CHARS = 1600;
+function outputStats(t) {
+  const body = String(t || '').replace(/\n+$/, '');
+  return { lines: body ? body.split('\n').length : 0, chars: String(t || '').length };
+}
+
+function outPreviewInfo(t) {
+  const body = t.replace(/\n+$/, '');
+  const lines = body ? body.split('\n') : [];
+  let preview = lines.length > OUT_LINES ? lines.slice(0, OUT_LINES).join('\n') : t;
+  const lineCut = lines.length > OUT_LINES;
+  if (preview.length > OUT_CHARS) preview = preview.slice(0, OUT_CHARS);
+  const truncated = preview !== t;
+  return {
+    text: truncated ? preview.replace(/\s+$/, '') + '\n…' : t,
+    omittedLines: lineCut ? Math.max(0, outputStats(t).lines - OUT_LINES) : 0,
+    omittedChars: truncated ? Math.max(0, t.length - preview.length) : 0,
+  };
+}
+
+function toolOutputPath(m) {
+  const name = String(m?.name || '').toLowerCase();
+  if (!/(?:^|[_:./-])(?:read|read_file|notebookread|open)$/.test(name)) return '';
+  const raw = String(m?.text || '');
+  try {
+    const value = JSON.parse(raw);
+    for (const key of ['file_path', 'path', 'filename']) {
+      if (typeof value?.[key] === 'string') return value[key];
+    }
+  } catch { /* 某些适配器传的是 Python repr 或纯命令，继续用文本提取 */ }
+  const field = raw.match(/["'](?:file_path|path|filename)["']\s*[:=]\s*["']([^"']+)["']/);
+  if (field) return field[1];
+  const summary = String(m?.summary || '');
+  const match = summary.match(/(?:^|\s)([.~\w/-]+\.[A-Za-z0-9]+)(?=\s|$|[,:;)]|$)/);
+  return match?.[1] || '';
+}
+
+function clearSyntaxPaint(node) {
+  delete node.dataset.syntaxDone;
+  delete node.dataset.detected;
+  delete node.dataset.codeLanguage;
+  delete node.dataset.syntaxLanguages;
+  node.classList.remove('hljs');
+  for (const cls of [...node.classList]) if (cls.startsWith('language-')) node.classList.remove(cls);
+}
+
+function setToolOutput(pre, text) {
+  clearSyntaxPaint(pre);
+  pre.textContent = text;
+  paintToolOutputDiff(pre);
+  paintSyntax(pre);
+}
+
+function addClippedPre(entry, cls, text, codePath = '') {
+  const pre = el('pre', cls);
+  if (codePath) pre.dataset.codePath = codePath;
+  const info = outPreviewInfo(text);
+  setToolOutput(pre, info.text);
+  entry.appendChild(pre);
+  const actions = el('div', 'tool-out-actions');
+  let wrap = null;
+  if (String(text).split('\n').some(line => line.length > 160)) {
+    wrap = el('button', 'tool-wrap', '自动换行');
+    wrap.type = 'button';
+    wrap.setAttribute('aria-pressed', 'false');
+    wrap.onclick = () => {
+      const on = pre.classList.toggle('wrap');
+      wrap.classList.toggle('on', on);
+      wrap.setAttribute('aria-pressed', String(on));
+      wrap.textContent = on ? '保持原行' : '自动换行';
+    };
+    actions.appendChild(wrap);
+  }
+  if (info.text !== text) {
+    const rest = info.omittedLines > 0
+      ? `另有 ${info.omittedLines.toLocaleString()} 行`
+      : `另有 ${info.omittedChars.toLocaleString()} 字符`;
+    const expandLabel = `展开全文（${rest}）`;
+    const more = el('button', 'more', expandLabel);
+    let expanded = false;
+    more.onclick = () => {
+      expanded = !expanded;
+      setToolOutput(pre, expanded ? text : info.text);
+      more.textContent = expanded ? '收起' : expandLabel;
+      more.setAttribute('aria-expanded', String(expanded));
+    };
+    more.setAttribute('aria-expanded', 'false');
+    actions.appendChild(more);
+  }
+  if (actions.childElementCount) entry.appendChild(actions);
+  return pre;
+}
+
+function toolEntry(m) {
+  const entry = el('div', 'tool-entry');
+  entry.dataset.role = m.role;
+  if (m.counted === false) entry.dataset.counted = 'false';
+  if (m.role !== 'tool') {
+    // 落单的工具输出(没配到调用): 保持独立块
+    addClippedPre(entry, 'tool-out' + (m.error ? ' err' : ''),
+                  m.name ? `${m.name}\n${m.text}` : m.text, toolOutputPath(m));
+    if (m.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(m.media, m.media_more));
+    return entry;
+  }
+  // 摘要是可选文本；只有独立按钮切换参数，拖选/双击不触发折叠。
+  const head = el('div', 'tool-head');
+  head.innerHTML = `<code>${esc(m.summary || m.name || 'tool')}</code>`
+    + (m.name && m.summary ? `<span class="tool-meta">${esc(m.name)}</span>` : '');
+  const headCode = head.querySelector(':scope > code');
+  const toggle = el('button', 'tool-toggle');
+  toggle.type = 'button';
+  head.appendChild(toggle);
+  if (/^\s*(?:\$|❯)\s+/.test(m.summary || '')) headCode.classList.add('tool-command');
+  paintSyntax(head);
+  entry.appendChild(head);
+  if (m.changes_unavailable_reason) {
+    entry.appendChild(el('div', 'tool-change-warning tool-meta',
+      `未生成文件差异：${m.changes_unavailable_reason}；可展开原始参数查看。`));
+  }
+  const args = el('pre', 'tool-args');
+  args.hidden = !!m.summary;   // 识别不了的工具直接铺参数, 不藏
+  const closeArgs = el('button', 'tool-args-close', '收起参数');
+  closeArgs.type = 'button';
+  closeArgs.hidden = args.hidden;
+  let painted = false;
+  const paintArgs = () => { if (!painted) { args.textContent = m.text; painted = true; } };
+  const setArgsOpen = open => {
+    if (open) paintArgs();
+    args.hidden = !open;
+    closeArgs.hidden = !open;
+    entry.classList.toggle('args-open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.title = toggle.ariaLabel = open ? '收起原始参数' : '展开原始参数';
+  };
+  if (!args.hidden) paintArgs();
+  toggle.onclick = () => setArgsOpen(args.hidden);
+  closeArgs.onclick = () => setArgsOpen(false);
+  entry.appendChild(args);
+  entry.appendChild(closeArgs);
+  setArgsOpen(!args.hidden);
+  if (m.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(m.media, m.media_more));
+  appendToolResult(entry, m.result, m);
+  return entry;
+}
+
+function appendToolResult(entry, r, m) {
+  if (!entry || !r || entry.dataset.result === '1') return;
+  if (r.counted !== false) entry.dataset.result = '1'; // 吸收的结果单独补入计数
+  const status = [r.error ? '✗ 出错' : '✓ 完成'];
+  if (Number.isInteger(r.exit_code)) status.push(`exit ${r.exit_code}`);
+  if (Number.isFinite(+r.duration_s)) status.push(formatDuration(+r.duration_s * 1000));
+  const stats = outputStats(r.text || '');
+  status.push(stats.lines > 1 ? `${stats.lines.toLocaleString()} 行`
+    : `${stats.chars.toLocaleString()} 字符`);
+  entry.appendChild(el('div', 'tool-status' + (r.error ? ' err' : ''), status.join(' · ')));
+  if (String(r.text || '').trim()) {
+    addClippedPre(entry, 'tool-out' + (r.error ? ' err' : ''), r.text, toolOutputPath(m));
+  }
+  if (r.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(r.media, r.media_more));
+}
+
+const CHANGE_LABEL = {
+  add: '新建', update: '修改', delete: '删除', edit: '修改', write: '写入',
+};
+
+function diffKind(line) {
+  if (/^(diff --git |index |---|\+\+\+|\*\*\*)/.test(line)) return 'meta';
+  if (line.startsWith('@@')) return 'hunk';
+  if (line.startsWith('+')) return 'add';
+  if (line.startsWith('-')) return 'del';
+  return 'ctx';
+}
+
+function diffCodePath(lines) {
+  for (const prefix of ['+++ ', '--- ']) {
+    const header = lines.find(line => line.startsWith(prefix));
+    if (!header) continue;
+    const path = header.slice(prefix.length).split('\t', 1)[0].trim().replace(/^(?:a|b)\//, '');
+    if (path && path !== '/dev/null') return path;
+  }
+  return '';
+}
+
+function diffCodeParts(line, kind) {
+  if (kind === 'add' || kind === 'del') return {marker: line[0], source: line.slice(1)};
+  if (kind === 'ctx') return {marker: line.startsWith(' ') ? ' ' : '', source: line.startsWith(' ') ? line.slice(1) : line};
+  return null;
+}
+
+/** 给普通工具输出里夹带的 unified/git diff 上色；前置命令状态仍按原样显示。 */
+function paintToolOutputDiff(pre) {
+  if (!(pre instanceof HTMLElement) || pre.querySelector(':scope > .tool-diff-line')) return;
+  const lines = pre.textContent.split('\n');
+  const first = lines.findIndex(line => line.startsWith('diff --git '));
+  const unified = first >= 0 ? first : lines.findIndex((line, i) =>
+    line.startsWith('--- ') && lines.slice(i + 1, i + 4).some(x => x.startsWith('+++ ')));
+  if (unified < 0) return;
+  const path = diffCodePath(lines.slice(unified));
+  const fragment = document.createDocumentFragment();
+  lines.forEach((line, i) => {
+    const row = el('span', 'tool-diff-line');
+    const kind = i >= unified ? diffKind(line) : '';
+    if (kind) row.classList.add(kind);
+    const parts = path && diffCodeParts(line, kind);
+    if (parts) {
+      row.classList.add('code');
+      row.appendChild(el('i', '', parts.marker));
+      const code = el('code', '', parts.source || ' ');
+      code.dataset.codePath = path;
+      row.appendChild(code);
+    } else {
+      row.textContent = line || ' ';
+    }
+    fragment.appendChild(row);
+  });
+  pre.replaceChildren(fragment);
+}
+
+function diffRows(lines, path) {
+  return lines.map(line => {
+    const kind = diffKind(line);
+    const parts = diffCodeParts(line, kind);
+    const attr = parts && path ? ` data-code-path="${esc(path)}"` : '';
+    return `<div class="diff-line ${kind}"><i>${esc(parts?.marker ?? line[0] ?? ' ')}</i>`
+      + `<code${attr}>${esc(parts?.source ?? line)}</code></div>`;
+  }).join('');
+}
+
+function diffSides(change) {
+  const before = [], after = [];
+  for (const line of String(change.patch || '').split('\n')) {
+    if (/^(---|\+\+\+|\*\*\*)/.test(line)) continue;
+    if (line.startsWith('@@')) {
+      before.push({ text: line, kind: 'meta' });
+      after.push({ text: line, kind: 'meta' });
+    } else if (line.startsWith('+')) {
+      after.push({ text: line.slice(1), kind: 'add' });
+    } else if (line.startsWith('-')) {
+      before.push({ text: line.slice(1), kind: 'del' });
+    } else {
+      const text = line.startsWith(' ') ? line.slice(1) : line;
+      before.push({ text, kind: 'ctx' });
+      after.push({ text, kind: 'ctx' });
+    }
+  }
+  return { before, after };
+}
+
+function sideRows(rows, unavailable, path) {
+  if (unavailable) return '<div class="diff-unavailable">原内容没有记录，无法可靠还原</div>';
+  return rows.map(row => {
+    const attr = row.kind === 'meta' ? '' : ` data-code-path="${esc(path)}"`;
+    return `<div class="diff-line ${row.kind}"><code${attr}>${esc(row.text)}</code></div>`;
+  }).join('')
+    || '<div class="diff-empty">（空文件）</div>';
+}
+
+function fileDiffMarkup(change, view) {
+  const path = change.new_path || change.path || '';
+  if (view === 'unified') {
+    return `<div class="diff-unified">${diffRows(String(change.patch || '').split('\n'), path)}</div>`;
+  }
+  const sides = diffSides(change);
+  return `<div class="diff-split">
+    <section><b>修改前${change.before_complete ? '（完整）' : '（片段）'}</b>
+      <div>${sideRows(sides.before, !change.before_available, change.path || path)}</div></section>
+    <section><b>修改后${change.after_complete ? '（完整）' : '（片段）'}</b>
+      <div>${sideRows(sides.after, !change.after_available, path)}</div></section>
+  </div>`;
+}
+
+function paintInlineFileDiff(card, change, view) {
+  card.dataset.diffView = view;
+  for (const button of card.querySelectorAll('[data-diff-view]')) {
+    const on = button.dataset.diffView === view;
+    button.classList.toggle('on', on);
+    button.setAttribute('aria-pressed', String(on));
+  }
+  const body = card.querySelector('.file-change-body');
+  body.innerHTML = fileDiffMarkup(change, view);
+  paintSyntax(body);
+}
+
+function setInlineFileDiffWrap(card, on) {
+  on = !!on;
+  card.classList.toggle('diff-wrap', on);
+  card.dataset.diffWrap = String(on);
+  const button = card.querySelector('[data-diff-wrap]');
+  if (!button) return;
+  button.classList.toggle('on', on);
+  button.setAttribute('aria-pressed', String(on));
+  button.textContent = on ? '原行' : '换行';
+  button.title = on ? '保持 diff 原始行宽' : '长行自动换行';
+}
+
+function fileChangeNode(m) {
+  const n = el('div', 'msg file-change-msg');
+  n.dataset.role = 'tool';
+  if (m.result && m.result.counted !== false) n.dataset.result = '1'; // 修改确认输出并入卡片
+  if (m.counted === false) n.dataset.counted = 'false';
+  const body = el('div', 'file-change-list');
+  for (const change of m.changes) {
+    const card = el('section', 'file-change-card');
+    const path = change.new_path ? `${change.path} → ${change.new_path}` : change.path;
+    const complete = change.before_complete || change.after_complete;
+    const scope = complete ? '包含可确定的完整文件内容' : '会话只记录了修改片段';
+    card.innerHTML = `<div class="file-change-head"><b title="${esc(path)}">${esc(path)}</b>
+      <span class="file-change-meta"><em title="${esc(scope)}">${esc(CHANGE_LABEL[change.operation] || '修改')} · ${complete ? '完整' : '片段'}</em>
+      <i class="add">+${change.added || 0}</i><i class="del">−${change.removed || 0}</i>
+      <span class="file-change-toolbar" role="group" aria-label="Diff 显示选项">
+        <button type="button" data-diff-view="unified" aria-pressed="true">统一</button>
+        <button type="button" data-diff-view="split" aria-pressed="false">并排</button>
+        <button type="button" data-diff-wrap aria-pressed="false" title="长行自动换行">换行</button>
+      </span></span></div>
+      <div class="file-change-body"></div>`;
+    card.querySelector('.file-change-toolbar').onclick = e => {
+      const wrap = e.target.closest('button[data-diff-wrap]');
+      if (wrap) {
+        setInlineFileDiffWrap(card, !card.classList.contains('diff-wrap'));
+        return;
+      }
+      const button = e.target.closest('[data-diff-view]');
+      if (button) paintInlineFileDiff(card, change, button.dataset.diffView);
+    };
+    setInlineFileDiffWrap(card, false);
+    paintInlineFileDiff(card, change, 'unified');
+    body.appendChild(card);
+  }
+  n.appendChild(body);
+  return n;
+}
+
+function turnProcessSummary(items) {
+  const assistant = items.filter(isTurnAssistant).length;
+  const thinking = items.filter(m => m.role === 'thinking').length;
+  const calls = items.filter(m => m.role === 'tool').length;
+  const orphanResults = calls ? 0 : items.filter(m => m.role === 'tool_result').length;
+  const questions = items.filter(m => m.role === 'question').length;
+  const changes = items.flatMap(m => Array.isArray(m.changes) ? m.changes : []);
+  const paths = [...new Set(changes.map(change => change.path).filter(Boolean))];
+  const added = changes.reduce((n, change) => n + (+change.added || 0), 0);
+  const removed = changes.reduce((n, change) => n + (+change.removed || 0), 0);
+  const errors = items.filter(m => m.error || (Number.isFinite(+m.exit_code) && +m.exit_code !== 0)).length;
+  const times = items.flatMap(m => {
+    const value = Date.parse(m.ts || '');
+    return Number.isFinite(value) ? [value] : [];
+  });
+  const duration = times.length > 1 ? Math.max(...times) - Math.min(...times) : 0;
+  const stats = [];
+  if (assistant) stats.push(`${assistant} 条进展`);
+  if (thinking) stats.push(`${thinking} 段思考`);
+  if (calls || orphanResults) stats.push(`🔧 ${calls || orphanResults}`);
+  if (paths.length) stats.push(`修改 ${paths.length} 个文件${added || removed ? ` +${added} −${removed}` : ''}`);
+  if (questions) stats.push(`${questions} 次确认`);
+  if (errors) stats.push(`⚠ ${errors}`);
+  if (duration >= 1000) stats.push(formatDuration(duration));
+  if (!stats.length) stats.push(`${items.length} 条记录`);
+  return {stats, paths, errors};
+}
+
+/** 已完成回合的外层过程合集。折叠态只造摘要 DOM；第一次展开才渲染 Markdown、
+ *  diff 和现有工具组，大会话既减少高度，也避免为不可见过程支付首屏成本。 */
+function turnProcessNode(turn, initiallyOpen = false) {
+  const items = turn.items || [];
+  const summary = turnProcessSummary(items);
+  const n = el('div', 'msg turn-process folded');
+  n.dataset.role = 'process';
+  // 这是多个原始消息的虚拟容器，不能让 DOM 计数把容器本身再算一条。
+  n.dataset.counted = 'false';
+  if (turn.key) n.dataset.turnId = turn.key;
+  n._turnItems = items;
+  const toolbar = el('div', 'turn-toolbar');
+  n.appendChild(toolbar);
+  const preview = addFoldPreview(toolbar, '', '本轮过程');
+  preview.classList.add('turn-preview');
+  const toggle = preview.querySelector('.fold-toggle');
+  const peek = preview.querySelector('.peek');
+  peek.classList.add('turn-peek');
+  const label = el('b', 'turn-label', uiIcon('process'));
+  const stats = el('span', 'turn-stats');
+  summary.stats.forEach(value => stats.appendChild(el('span', '', value)));
+  peek.replaceChildren(label, stats);
+  const nav = el('div', 'turn-nav');
+  const toStart = el('button', 'turn-nav-btn turn-to-start', '↑ 开头');
+  const toConclusion = el('button', 'turn-nav-btn turn-to-conclusion', '结论 ↓');
+  for (const button of [toStart, toConclusion]) button.type = 'button';
+  toStart.title = toStart.ariaLabel = '回到本轮过程开头';
+  if (turn.interrupted) {
+    n.dataset.interrupted = 'true';
+    toConclusion.textContent = '末次进展 ↓';
+  }
+  toConclusion.title = toConclusion.ariaLabel = turn.interrupted
+    ? '跳到本轮中断前的末次进展' : '跳到本轮最终结论';
+  toConclusion.hidden = turn.hasConclusion === false;
+  nav.append(toStart, toConclusion);
+  nav.hidden = true;
+  toolbar.appendChild(nav);
+  const expandTitle = summary.paths.length
+    ? `展开过程\n修改文件：${summary.paths.join('\n')}` : '展开过程';
+  if (summary.errors) n.classList.add('has-error');
+  if (turn.inferred) n.dataset.inferred = 'true';
+  const body = el('div', 'turn-process-body');
+  body.hidden = true;
+  n.appendChild(body);
+  let materialized = false;
+  const materialize = () => {
+    if (materialized) return false;
+    materialized = true;
+    const plan = turn.plan || planMessages(items), generation = renderSeq;
+    let offset = 0;
+    const paint = () => {
+      if (generation !== renderSeq && !n.isConnected) return;
+      const started = performance.now(), fragment = document.createDocumentFragment();
+      while (offset < plan.length && performance.now() - started < 8) {
+        buildPlan(fragment, [plan[offset++]], null);
+      }
+      body.appendChild(fragment);
+      refreshMessageTimeDividers(body);
+      if (S.term && n.isConnected) { markMatches(body); updateMatchNav(); }
+      if (offset < plan.length) setTimeout(paint, 0);
+    };
+    paint();
+    return true;
+  };
+  const fold = () => {
+    n.classList.add('folded');
+    body.hidden = true;
+    nav.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('aria-label', '展开本轮过程');
+    toggle.title = expandTitle;
+  };
+  const open = () => {
+    const built = materialize();
+    n.classList.remove('folded');
+    body.hidden = false;
+    nav.hidden = false;
+    toggle.setAttribute('aria-expanded', 'true');
+    toggle.setAttribute('aria-label', '收起本轮过程');
+    toggle.title = '收起过程';
+    if (built && n.isConnected && S.term) {
+      markMatches(body);
+      updateMatchNav();
+    }
+  };
+  n._fold = fold;
+  n._open = open;
+  const foldAtAnchor = () => mutateKeepingMessageAnchor(toolbar, fold);
+  const openAtAnchor = () => mutateKeepingMessageAnchor(toolbar, open);
+  n._foldAtAnchor = foldAtAnchor;
+  n._openAtAnchor = openAtAnchor;
+  toggle.onclick = () => n.classList.contains('folded') ? openAtAnchor() : foldAtAnchor();
+  toStart.onclick = () => jumpWithinConversation(n, 'start');
+  toConclusion.onclick = () => {
+    let target = n.nextElementSibling;
+    while (target && !target.matches?.('.msg')) target = target.nextElementSibling;
+    jumpWithinConversation(target);
+  };
+  const found = items.some(m => SEARCH_ROLES.has(m.role) && hasTerm(m.text));
+  if (found && S.autoOpen >= AUTO_OPEN_MAX) n.classList.add('hashit');
+  if (initiallyOpen || (found && S.autoOpen < AUTO_OPEN_MAX)) open();
+  else fold();
+  if (S.term && S.opts.regex && !found) {
+    const generation = regexGeneration;
+    Promise.all(items.filter(m => SEARCH_ROLES.has(m.role)).map(m => regexMatches(m.text))).then(results => {
+      n._applyRegexMatch = () => {
+        if (!n.isConnected) return;
+        n._applyRegexMatch = null;
+        if (generation !== regexGeneration || !results.some(r => r.matched)) return;
+        if (S.autoOpen >= AUTO_OPEN_MAX) n.classList.add('hashit');
+        else open();
+      };
+      n._applyRegexMatch();
+    });
+  }
+  return n;
+}
+
+function paintGroupPreview(peek, items) {
+  const calls = items.filter(m => m.role === 'tool');
+  const visible = calls.length ? calls : items;
+  const heads = visible.slice(0, 3).map(m => m.summary || m.name || 'tool');
+  const hasErr = items.some(m => m.result?.error || (m.role === 'tool_result' && m.error));
+  const count = el('span', 'group-count', `🔧 ×${visible.length}${hasErr ? ' ⚠' : ''}`);
+  const outline = el('span', 'group-outline');
+  heads.forEach((head, i) => {
+    const row = el('span');
+    row.appendChild(el('i', 'group-index', `${i + 1}.`));
+    row.append(' ');
+    const code = el('code', /^\s*(?:\$|❯)\s+/.test(head) ? 'tool-command' : '');
+    code.textContent = head;
+    row.appendChild(code);
+    outline.appendChild(row);
+  });
+  if (visible.length > heads.length) outline.appendChild(el('span', 'group-rest',
+    `… 另有 ${visible.length - heads.length} 项`));
+  peek.replaceChildren(count, outline);
+  paintSyntax(outline);
+}
+
+/** 同一组继续增长时复用现有 DOM，避免拆掉重建把用户展开和内部“展开全文”冲掉。 */
+function syncGroupNode(n, items) {
+  if (n._toolsBuilding) { n._pendingToolItems = items; n._toolItems = items; return; }
+  if (!n._toolsMaterialized) {
+    n._toolItems = items;
+    const peek = n.querySelector(':scope > .fold-preview .group-peek');
+    if (peek) paintGroupPreview(peek, items);
+    return;
+  }
+  const old = n._renderedToolItems || n._toolItems || [];
+  const entries = [...n.querySelectorAll(':scope > .tool-entry')];
+  const byId = new Map();
+  old.forEach((m, i) => {
+    if (!entries[i]) return;
+    byId.set(m.call_id || `#${i}`, {m, entry: entries[i]});
+  });
+  const action = n.querySelector(':scope > .disclosure');
+  const next = [];
+  const reused = new Set();
+  items.forEach((m, i) => {
+    const prev = byId.get(m.call_id || `#${i}`);
+    if (prev?.entry && prev.m.role === m.role && !reused.has(prev.entry)) {
+      if (m.role === 'tool' && m.result && !prev.m.result) {
+        appendToolResult(prev.entry, m.result, m);
+      }
+      reused.add(prev.entry);
+      next.push(prev.entry);
+    } else {
+      next.push(toolEntry(m));
+    }
+  });
+  entries.forEach(entry => { if (!reused.has(entry)) entry.remove(); });
+  let anchor = action;
+  for (let i = next.length - 1; i >= 0; i--) {
+    const entry = next[i];
+    if (entry.parentElement !== n || entry.nextElementSibling !== anchor) n.insertBefore(entry, anchor);
+    anchor = entry;
+  }
+  n._toolItems = items;
+  n._renderedToolItems = items;
+  const peek = n.querySelector(':scope > .fold-preview .group-peek');
+  if (peek) paintGroupPreview(peek, items);
+}
+
+function groupNode(items, initiallyOpen = false) {
+  // 工具协议不属于对话正文搜索范围。历史段默认折叠；正在增长的尾段展开。
+  const n = el('div', 'msg grp' + (initiallyOpen ? '' : ' folded'));
+  n.dataset.role = 'toolgroup';
+  n._toolItems = items;
+  const preview = addFoldPreview(n, '', '工具调用组');
+  preview.classList.add('group-preview');
+  const toggle = preview.querySelector('.fold-toggle');
+  const peek = preview.querySelector('.peek');
+  peek.classList.add('group-peek');
+  paintGroupPreview(peek, items);
+  n._toolsMaterialized = false;
+  const setAction = addAction(n);
+  const fold = () => {
+    n.classList.add('folded');
+    toggle.setAttribute('aria-expanded', 'false');
+    setAction();
+  };
+  const open = () => {
+    if (!n._toolsMaterialized) {
+      n._toolsMaterialized = true;
+      n._toolsBuilding = true;
+      const generation = renderSeq;
+      const action = n.querySelector(':scope > .disclosure');
+      const pending = n._toolItems;
+      let offset = 0;
+      const paint = () => {
+        if (generation !== renderSeq && !n.isConnected) return;
+        const started = performance.now();
+        const fragment = document.createDocumentFragment();
+        while (offset < pending.length && performance.now() - started < 8) {
+          fragment.appendChild(toolEntry(pending[offset++]));
+        }
+        n.insertBefore(fragment, action);
+        if (offset < pending.length) setTimeout(paint, 0);
+        else {
+          n._toolsBuilding = false;
+          n._renderedToolItems = pending;
+          if (n._pendingToolItems) {
+            const latest = n._pendingToolItems;
+            n._pendingToolItems = null;
+            syncGroupNode(n, latest);
+          }
+        }
+      };
+      paint();
+    }
+    n.classList.remove('folded');
+    toggle.setAttribute('aria-expanded', 'true');
+    setAction('收起', () => {
+      n._userOpened = false;
+      fold();
+    }, true);
+  };
+  n._fold = fold;
+  n._open = open;
+  toggle.onclick = () => {
+    n._userOpened = true;
+    open();
+  };
+  initiallyOpen ? open() : fold();
+  return n;
+}
+
+function safeMediaSrc(src) {
+  src = String(src || '');
+  if (/^\/api\/media\/[0-9a-f]{32}$/.test(src)) return appUrl(src);
+  if (SessionDockCapabilities.config.backend === 'rust' && SessionDockCapabilities.config.media_lazy === true) return '';
+  if (HUB_MODE && /^\/api\/nodes\/[0-9a-f]{32}\/api\/media\/[0-9a-f]{32}$/.test(src)) return appUrl(src);
+  // Native history is untrusted: Rust's local media capability does not grant
+  // permission for the browser to contact URLs mentioned in that history.
+  if (!SessionDockCapabilities.allows('media_remote')) return '';
+  if (!/^https?:\/\//i.test(src)) return '';
+  try {
+    const u = new URL(src);
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : '';
+  } catch { return ''; }
+}
+
+function lazyMediaEnabled() {
+  return SessionDockCapabilities.config.backend === 'rust'
+    && SessionDockCapabilities.config.media_lazy === true;
+}
+
+function mediaContinuationEnabled() {
+  return SessionDockCapabilities.config.backend === 'rust'
+    && SessionDockCapabilities.config.media_continuation === true;
+}
+
+// Error-only diagnostics never materialize an image body. Completed results
+// are bounded/deduplicated; in-flight work owns its slot even across eviction.
+const mediaDiagnostics = new Map();
+let mediaDiagnosticActive = 0;
+
+async function diagnoseMedia(path) {
+  if (!lazyMediaEnabled() || !/^\/api\/media\/[0-9a-f]{32}$/.test(path)) {
+    return {status: 0, message: '图片地址不可用。'};
+  }
+  if (mediaDiagnostics.has(path)) return mediaDiagnostics.get(path);
+  if (mediaDiagnosticActive >= 4) return {status: 0, message: '图片错误诊断繁忙，请手动重试。'};
+  mediaDiagnosticActive++;
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 5000);
+  const pending = (async () => {
+    try {
+      const response = await fetch(safeMediaSrc(path), {signal: ac.signal, cache: 'no-store',
+        redirect: 'error', headers: {Accept: 'application/json'}});
+      if (response.ok) {
+        await response.body?.cancel();
+        return {status: response.status, message: '图片读取已恢复或浏览器无法解码；请手动重试图片。'};
+      }
+      const result = {status: response.status, message: '图片读取失败。'};
+      if (Number(response.headers.get('content-length')) > 4096) {
+        await response.body?.cancel();
+        return result;
+      }
+      if (!/^application\/json(?:;|$)/i.test(response.headers.get('content-type') || '')) {
+        await response.body?.cancel();
+        return result;
+      }
+      const reader = response.body?.getReader();
+      if (!reader) return result;
+      const chunks = [];
+      let bytes = 0;
+      try {
+        for (;;) {
+          const {value, done} = await reader.read();
+          if (done) break;
+          bytes += value.byteLength;
+          if (bytes > 4096) { await reader.cancel(); return result; }
+          chunks.push(value);
+        }
+        const buffer = new Uint8Array(bytes);
+        let offset = 0;
+        for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.byteLength; }
+        const detail = JSON.parse(new TextDecoder().decode(buffer));
+        if (typeof detail?.error === 'string') result.message = detail.error.slice(0, 512);
+      } finally { reader.releaseLock(); }
+      return result;
+    } catch (error) {
+      return {status: 0, message: error.name === 'AbortError' ? '图片错误诊断超时，请手动重试。' : '图片请求失败，请检查连接后手动重试。'};
+    } finally { clearTimeout(timer); mediaDiagnosticActive--; }
+  })();
+  mediaDiagnostics.set(path, pending);
+  while (mediaDiagnostics.size > 128) mediaDiagnostics.delete(mediaDiagnostics.keys().next().value);
+  return pending;
+}
+
+async function reloadMediaSession(view, button, notice) {
+  if (!view.current()) return;
+  const key = viewKey(view.uid, view.agent), entry = cache.get(key);
+  if (!entry || historyPageRequests.has(key)) {
+    notice.textContent = '当前历史请求尚未结束，请稍后手动重新载入。';
+    return;
+  }
+  const observed = Object.fromEntries(['msgs','version','end','anchor','activity','meta','prompt','partial']
+    .map(field => [field, entry[field]]));
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
+  const request = {key, entry, ac};
+  historyPageRequests.set(key, request);
+  button.disabled = true;
+  try {
+    const {data, bytes} = await fetchMessages(view.uid, {agent: view.agent, windowed: true, signal: ac.signal});
+    if (!view.current() || cache.get(key) !== entry) return;
+    if (Object.entries(observed).some(([field, value]) => entry[field] !== value)) {
+      throw new Error('实时历史已更新；已保留新内容，请再次手动重新载入。');
+    }
+    if (!data?.reset || !data.meta || !data.version || !Array.isArray(data.messages)) {
+      throw new Error('未收到有效历史窗口；当前快照保持不变。');
+    }
+    await applyDiff(view.uid, data, bytes, view.agent);
+  } catch (error) {
+    if (view.current()) notice.textContent = `重新载入失败：${error.message || '请求未完成'}。当前快照保持不变。`;
+  } finally {
+    clearTimeout(timer);
+    button.disabled = false;
+    if (historyPageRequests.get(key) === request) historyPageRequests.delete(key);
+  }
+}
+
+async function mediaImageFailed(event) {
+  const img = event.target;
+  if (!lazyMediaEnabled() || img?.tagName !== 'IMG' || img.dataset.mediaLazy !== 'true') return;
+  const path = img.dataset.mediaPath, wrapper = img.closest('.media-load');
+  if (!/^\/api\/media\/[0-9a-f]{32}$/.test(path || '') || !wrapper?.isConnected
+      || !$('#msgs')?.contains(wrapper)) return;
+  const src = safeMediaSrc(path);
+  if (img.src !== new URL(src, location.href).href) return;
+  const generation = wrapper._mediaGeneration = (wrapper._mediaGeneration || 0) + 1;
+  const view = {uid: S.sel, agent: S.agent, request: inflight};
+  view.current = () => wrapper.isConnected && $('#msgs')?.contains(wrapper)
+    && wrapper._mediaGeneration === generation && S.sel === view.uid && S.agent === view.agent
+    && inflight === view.request;
+  const link = img.closest('.media-link');
+  link.hidden = true;
+  wrapper.querySelector('.media-load-error')?.remove();
+  const panel = el('span', 'media-error media-load-error');
+  panel.setAttribute('role', 'status');
+  const notice = el('span', '', '图片加载失败；正在读取错误说明…');
+  panel.appendChild(notice);
+  wrapper.appendChild(panel);
+  const detail = await diagnoseMedia(path);
+  if (!view.current()) return;
+  notice.textContent = `图片不可用${detail.status ? `（HTTP ${detail.status}）` : ''}：${detail.message}`;
+  const retry = el('button', 'media-load-retry', '重试图片');
+  retry.type = 'button';
+  retry.onclick = () => {
+    if (!view.current()) return;
+    wrapper._mediaGeneration++;
+    mediaDiagnostics.delete(path);
+    panel.remove();
+    link.hidden = false;
+    img.src = src;
+  };
+  panel.appendChild(retry);
+  if ([404, 409].includes(detail.status)) {
+    const reason = el('span', '', '图片凭据已失效或内容已变化；可手动重新载入当前会话获取新凭据。');
+    const reload = el('button', 'media-load-reload', '重新载入当前会话');
+    reload.type = 'button';
+    reload.onclick = () => reloadMediaSession(view, reload, notice);
+    panel.append(reason, reload);
+  }
+}
+
+document.addEventListener('error', mediaImageFailed, true);
+document.addEventListener('load', event => {
+  const img = event.target;
+  if (lazyMediaEnabled() && img?.tagName === 'IMG' && img.dataset.mediaLazy === 'true'
+      && img.naturalWidth > 0) mediaDiagnostics.delete(img.dataset.mediaPath);
+}, true);
+
+function imageHtml(m, inline = false) {
+  if (m?.error) {
+    const reason = esc(String(m.error.message || '图片不可用'));
+    return `<span class="media-error${inline ? ' inline' : ''}" role="status">图片不可用：${reason}</span>`;
+  }
+  const src = safeMediaSrc(m?.src);
+  if (!src) return '';
+  const alt = esc(m.alt || '图片');
+  const w = Number.isFinite(+m.width) && +m.width > 0 ? ` width="${Math.round(+m.width)}"` : '';
+  const h = Number.isFinite(+m.height) && +m.height > 0 ? ` height="${Math.round(+m.height)}"` : '';
+  const lazy = lazyMediaEnabled() && m.lazy === true;
+  const tracking = lazy ? ` data-media-lazy="true" data-media-path="${esc(m.src)}"` : '';
+  const html = `<a class="media-link${inline ? ' inline' : ''}" href="${esc(src)}" target="_blank" rel="noopener noreferrer">
+    <img loading="lazy" decoding="async" referrerpolicy="no-referrer" src="${esc(src)}" alt="${alt}"${w}${h}${tracking}>
+    ${inline ? '' : `<span>${alt}</span>`}
+  </a>`;
+  return lazy ? `<span class="media-load${inline ? ' inline' : ''}">${html}</span>` : html;
+}
+
+// Rust-only per-message continuation: a message carries at most 16 typed
+// images plus `media_more`. When it is absent, markup is unchanged.
+function mediaMoreInfo(more) {
+  if (!more || typeof more !== 'object' || Array.isArray(more)) return null;
+  const {remaining, total, cursor} = more;
+  if (!Number.isSafeInteger(remaining) || remaining <= 0 || !Number.isSafeInteger(total) || total < remaining) return null;
+  if (cursor !== null && !(typeof cursor === 'string' && /^[0-9a-f]{32}$/.test(cursor))) return null;
+  return {remaining, total, cursor};
+}
+
+function mediaMoreHtml(more) {
+  const info = mediaContinuationEnabled() ? mediaMoreInfo(more) : null;
+  if (!info) return '';
+  const count = info.remaining.toLocaleString(), title = ` title="共 ${info.total.toLocaleString()} 张图片"`;
+  return info.cursor
+    ? `<button type="button" class="media-more" data-media-cursor="${info.cursor}"${title}>还有 ${count} 张图片，加载下一批</button>`
+    : `<button type="button" class="media-more" disabled${title}>还有 ${count} 张图片暂不可加载</button>`;
+}
+
+function mediaGallery(items, more) {
+  const html = (items || []).filter(x => x.gallery || !x.ref).map(x => imageHtml(x)).filter(Boolean);
+  const pending = mediaMoreHtml(more);
+  if (pending) html.push(pending);
+  return html.length ? `<div class="media-gallery">${html.join('')}</div>` : '';
+}
+
+const mediaPageRequests = new Map();
+
+function currentMediaPage(request) {
+  return S.sel === request.uid && S.agent === request.agent
+    && inflight === request.viewRequest && cache.get(request.key) === request.entry
+    && request.message.media_more?.cursor === request.cursor;
+}
+
+function validateMediaPage(data, more, cursor) {
+  const page = data?.page, info = mediaMoreInfo(more);
+  const integer = value => Number.isSafeInteger(value) && value >= 0;
+  const token = value => typeof value === 'string' && /^[0-9a-f]{32}$/.test(value);
+  if (!Array.isArray(data?.media) || data.media.length > 16 || !data.media.length || !page || !info
+      || !token(cursor) || page.cursor !== cursor
+      || !data.media.every(item => item && typeof item === 'object' && !Array.isArray(item))
+      || !['start', 'end', 'total', 'remaining'].every(key => integer(page[key]))
+      || page.total !== info.total || page.start !== info.total - info.remaining
+      || page.end <= page.start || page.end > page.total
+      || page.end - page.start !== data.media.length
+      || page.remaining !== page.total - page.end
+      || (page.remaining === 0 ? page.next !== null : !token(page.next) || page.next === cursor)) {
+    throw new Error('图片分页响应与当前消息不匹配；请重新载入当前会话。');
+  }
+  return page;
+}
+
+async function fetchMediaPage(uid, agent, cursor, signal) {
+  const query = new URLSearchParams({cursor});
+  if (agent) query.set('agent', agent);
+  const response = await fetch(appUrl(`api/messages/${encodeURIComponent(uid)}/media-page?${query}`),
+    {signal, cache: 'no-store'});
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    const error = new Error(detail?.error || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  const reader = response.body.getReader(), chunks = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      bytes += value.length;
+      if (bytes > 1024 * 1024) throw new Error('图片分页响应超过浏览器读取预算。');
+      chunks.push(value);
+    }
+  } catch (error) { await reader.cancel().catch(() => {}); throw error; }
+  const buffer = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.length; }
+  return {data: JSON.parse(new TextDecoder().decode(buffer)), bytes};
+}
+
+function mediaPageFailure(request, button, error) {
+  if (!currentMediaPage(request) || !button?.isConnected) return;
+  const gallery = button.parentElement;
+  gallery.querySelector('.media-page-error')?.remove();
+  const notice = el('span', 'media-page-error');
+  notice.setAttribute('role', 'alert');
+  notice.textContent = `已加载的图片保持不变${error.status ? `（HTTP ${error.status}）` : ''}：${error.message || '图片分页读取失败。'}`;
+  button.before(notice);
+  button.disabled = false;
+  button.textContent = '重试加载图片';
+}
+
+async function loadMediaContinuation(uid, agent, cursor, button) {
+  agent = agent || null;
+  const key = viewKey(uid, agent), entry = cache.get(key);
+  if (!mediaContinuationEnabled() || !entry?.msgs || !/^[0-9a-f]{32}$/.test(cursor || '')) return;
+  const message = entry.msgs.find(m => m?.media_more?.cursor === cursor);
+  if (!message || !mediaMoreInfo(message.media_more)) return;
+  const previous = mediaPageRequests.get(cursor);
+  if (previous && currentMediaPage(previous)) return;
+  if (previous) { previous.ac?.abort(); mediaPageRequests.delete(cursor); }
+  const request = {key, uid, agent, entry, message, cursor, viewRequest: inflight};
+  if (!currentMediaPage(request)) return;
+  const ac = new AbortController();
+  request.ac = ac;
+  const timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
+  mediaPageRequests.set(cursor, request);
+  button.disabled = true;
+  button.textContent = '正在读取图片…';
+  try {
+    const {data} = await fetchMediaPage(uid, agent, cursor, ac.signal);
+    if (!currentMediaPage(request)) return;
+    const page = validateMediaPage(data, message.media_more, cursor);
+    // Only this message changes. Live cursor fields, message order and any
+    // SSE tail accepted while HTTP was pending stay exactly as observed.
+    message.media = [...(message.media || []), ...data.media];
+    if (page.remaining) message.media_more = {remaining: page.remaining, total: page.total, cursor: page.next};
+    else delete message.media_more;
+    const box = $('#msgs');
+    const target = button.isConnected && box?.contains(button) ? button
+      : box?.querySelector(`.media-more[data-media-cursor="${cursor}"]`);
+    if (!target) return;
+    target.parentElement.querySelector('.media-page-error')?.remove();
+    target.insertAdjacentHTML('beforebegin', data.media.map(item => imageHtml(item)).join(''));
+    if (page.remaining) {
+      target.dataset.mediaCursor = page.next;
+      target.disabled = false;
+      target.textContent = `还有 ${page.remaining.toLocaleString()} 张图片，加载下一批`;
+    } else target.remove();
+  } catch (error) { mediaPageFailure(request, button, error); }
+  finally {
+    clearTimeout(timer);
+    if (mediaPageRequests.get(cursor) === request) mediaPageRequests.delete(cursor);
+  }
+}
+
+document.addEventListener('click', event => {
+  const button = event.target?.closest?.('.media-more');
+  if (!button || button.disabled || !mediaContinuationEnabled() || !$('#msgs')?.contains(button)) return;
+  event.preventDefault();
+  loadMediaContinuation(S.sel, S.agent, button.dataset.mediaCursor, button);
+});
+
+let formulaLoading = null;
+const formulaRoots = new Set();
+function renderFormulae(root) {
+  if (!/\$|\\[([]/.test(root.textContent || '')) return;
+  if (typeof renderMathInElement !== 'function') {
+    formulaRoots.add(root);
+    if (!formulaLoading) {
+      formulaLoading = Promise.all([
+        SessionDockAssets.style('vendor/katex/katex.min.css'),
+        SessionDockAssets.script('vendor/katex/katex.min.js'),
+      ]).then(() => SessionDockAssets.script('vendor/katex/auto-render.min.js'))
+        .then(() => {
+          const roots = [...formulaRoots];
+          formulaRoots.clear();
+          for (const pending of roots) {
+            if (pending.isConnected || pending.getRootNode().nodeType === Node.DOCUMENT_FRAGMENT_NODE)
+              renderFormulae(pending);
+          }
+        }).catch(() => { formulaRoots.clear(); })
+        .finally(() => { formulaLoading = null; });
+    }
+    return;
+  }
+  try {
+    renderMathInElement(root, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '\\[', right: '\\]', display: true },
+        { left: '\\(', right: '\\)', display: false },
+        { left: '$', right: '$', display: false },
+      ],
+      ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+      throwOnError: false,
+      strict: 'ignore',
+      trust: false,
+    });
+  } catch { /* 单个坏公式按原文保留，不能拖垮整条消息 */ }
+}
+
+function msgNode(m) {
+  if (m.silent) {
+    const n = el('span', 'silent-tool-result');
+    n.hidden = true;
+    n.dataset.role = m.role;
+    if (m.counted === false) n.dataset.counted = 'false';
+    return n;
+  }
+  if (m.role === 'event') return eventNode(m);
+  if (m.changes?.length) return fileChangeNode(m);
+  if (m.role === 'question') return questionNode(m);
+  if (TOOL_ROLES.has(m.role)) {
+    // 单发工具调用与组内同款紧凑卡片: 摘要头 + 状态 + 输出预览
+    const n = el('div', 'msg tool-msg');
+    n.dataset.role = m.role;
+    n._toolItems = [m];
+    if (m.counted === false) n.dataset.counted = 'false';
+    n.appendChild(toolEntry(m));
+    return n;
+  }
+  // 命中的消息展开且不截断, 保证高亮可见; 但设上限, 否则搜 "a" 会把整个会话全量展开
+  const found = SEARCH_ROLES.has(m.role) && hasTerm(m.text);
+  const hit = found && S.autoOpen < AUTO_OPEN_MAX;
+  if (hit) S.autoOpen++;
+  // 对话内容从不整泡折叠；长内容只在泡内提供“展开全文”。
+  const n = el('div', 'msg' + (found && !hit ? ' hashit' : ''));
+  n.dataset.role = m.role;
+  if (m.counted === false) n.dataset.counted = 'false';
+  const body = el('div', 'mb');
+  const linkContext = {uid: S.sel, agent: S.agent};
+  const render = full => md(m.text, full, m.media, linkContext) + mediaGallery(m.media, m.media_more);
+  const paint = full => {
+    body.innerHTML = render(full); renderFormulae(body); paintSyntax(body);
+  };
+  n.appendChild(body);
+  const setAction = addAction(n);
+  const long = m.text.length > CLIP;
+  const full = () => {
+    body.classList.remove('clip'); paint(true);
+    setAction(long ? '收起' : '', long ? clipped : null, long ? true : null);
+  };
+  const clipped = () => {
+    body.classList.add('clip'); paint(false);
+    setAction(`展开全文 (${m.text.length.toLocaleString()} 字符)`, full, false);
+  };
+  if (long) hit ? full() : clipped();
+  else paint(hit);
+  if (S.term && S.opts.regex && !found && SEARCH_ROLES.has(m.role)) {
+    const generation = regexGeneration;
+    regexMatches(m.text).then(ranges => {
+      n._applyRegexMatch = () => {
+        if (!n.isConnected) return;
+        n._applyRegexMatch = null;
+        if (generation !== regexGeneration || !ranges.matched) return;
+        if (S.autoOpen >= AUTO_OPEN_MAX) { n.classList.add('hashit'); return; }
+        S.autoOpen++;
+        if (long) full();
+        markMatches(n);
+      };
+      n._applyRegexMatch();
+    });
+  }
+  if (m.interrupted) {
+    n.classList.add('native-interrupted');
+    const state = el('small', 'native-message-state', '已中断');
+    if (m.interrupt_reason) state.title = m.interrupt_reason;
+    n.appendChild(state);
+  }
+  timelinePinAction(n, m);
+  return n;
+}
+
+function formatDuration(ms) {
+  let seconds = Math.max(0, Number(ms) || 0) / 1000;
+  if (seconds < 10) return `${seconds.toFixed(seconds < 1 ? 1 : 0)} 秒`;
+  seconds = Math.round(seconds);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds % 60;
+  return [hours ? `${hours} 小时` : '', minutes ? `${minutes} 分` : '',
+          rest || (!hours && !minutes) ? `${rest} 秒` : ''].filter(Boolean).join(' ');
+}
+
+function eventNode(m) {
+  const kind = m.event_kind || 'session';
+  const n = el('div', `timeline-event ${kind}${m.event_status ? ` ${m.event_status}` : ''}`);
+  n.dataset.role = 'event';
+  n.dataset.counted = 'false';
+  if (kind === 'duration') {
+    n.innerHTML = `<span>耗时 ${esc(formatDuration(m.duration_ms))}</span>`;
+    return n;
+  }
+  const label = kind === 'recap' ? '回顾'
+    : (kind === 'task' ? '任务' : (kind === 'compact' ? '上下文' : '会话'));
+  n.innerHTML = `<b>${label}</b><span>${esc(m.text || '')}</span>`;
+  if (m.details) {
+    n.classList.add('has-details');
+    const disclosure = el('details', 'event-details');
+    const stats = outputStats(m.details);
+    disclosure.appendChild(el('summary', '', `查看结果 · ${stats.lines.toLocaleString()} 行`));
+    disclosure.ontoggle = () => {
+      if (!disclosure.open || disclosure.querySelector('.event-detail-body')) return;
+      const body = el('div', 'event-detail-body');
+      body.innerHTML = md(m.details, true);
+      renderFormulae(body); paintSyntax(body);
+      disclosure.appendChild(body);
+    };
+    n.appendChild(disclosure);
+  }
+  return n;
+}
+
+const screenMenuTextDrafts = new Map();
+
+// Use the same question card as native history/hooks, while preserving each
+// screen menu's own toggle, text, and explicit Submit/Next semantics.
+function screenMenuControls(body, m, {answer, cancel, action, textAnswer}) {
+  const waiting = (m.state || 'waiting') === 'waiting';
+  const options = m.questions?.[0]?.options || [];
+  body.querySelectorAll('[data-question-option]').forEach(button => {
+    const option = options[+button.dataset.questionOption];
+    button.disabled = !waiting || !option?.keys?.length;
+    button.classList.toggle('selected', !!option?.selected);
+    button.setAttribute('aria-pressed', String(!!option?.selected));
+    button.onclick = () => answer(m.uid, +button.dataset.questionOption);
+  });
+  const actions = el('div', 'question-actions');
+  if (m.text && typeof m.text === 'object') {
+    const owner = composerDraftOwner(m.uid);
+    const key = `${owner}\0${m.id}`;
+    for (const saved of screenMenuTextDrafts.keys()) {
+      if (saved.startsWith(`${owner}\0`) && saved !== key) screenMenuTextDrafts.delete(saved);
+    }
+    const form = el('form', 'question-text-form');
+    const label = el('label', '', m.text.label || '回答');
+    const input = el(m.text.multiline ? 'textarea' : 'input', 'question-text-input');
+    if (!m.text.multiline) input.type = 'text';
+    input.setAttribute('aria-label', m.text.label || '回答');
+    input.value = screenMenuTextDrafts.get(key) ?? m.text.value ?? '';
+    input.disabled = !waiting;
+    input.oninput = () => screenMenuTextDrafts.set(key, input.value);
+    const submit = el('button', 'question-submit', m.text.submit_label || '提交文字');
+    submit.type = 'submit';
+    submit.disabled = !waiting;
+    form.onsubmit = event => {
+      event.preventDefault();
+      textAnswer?.(m.uid, input.value);
+    };
+    label.appendChild(input);
+    form.append(label, submit);
+    body.appendChild(form);
+  }
+  if (!waiting) actions.appendChild(el('small', 'question-settling', '正在处理，等待终端画面…'));
+  for (const [index, item] of (m.actions || []).entries()) {
+    const button = el('button', 'question-submit', item.label);
+    button.type = 'button';
+    button.dataset.questionAction = index;
+    button.disabled = !waiting || !item.keys?.length;
+    button.onclick = () => action?.(m.uid, index);
+    actions.appendChild(button);
+  }
+  const terminal = el('button', '', '打开终端');
+  terminal.type = 'button';
+  terminal.onclick = () => revealNativeTerminal(m.uid);
+  actions.appendChild(terminal);
+  if (m.cancel_keys?.length) {
+    const button = el('button', 'question-cancel', '取消');
+    button.type = 'button';
+    button.disabled = !waiting;
+    button.onclick = () => cancel(m.uid);
+    actions.appendChild(button);
+  }
+  body.appendChild(actions);
+}
+
+function questionNode(m, {answer = answerCliQuestion, cancel: cancelAnswer = cancelCliQuestion,
+  action, textAnswer} = {}) {
+  const n = el('div', 'msg question');
+  n.dataset.role = 'question';
+  if (m.counted === false) n.dataset.counted = 'false';
+  if (m.call_id) n.dataset.callId = m.call_id;
+  const live = !!m.live;
+  if (live) n.classList.add('live-question');
+  const promptState = m.state || 'waiting';
+  if (live && promptState !== 'waiting') n.classList.add('settling');
+  const body = el('div', 'mb question-body');
+  const rows = Array.isArray(m.questions) && m.questions.length
+    ? m.questions : [{ question: m.text, options: [] }];
+  body.innerHTML = rows.map((q, i) => `
+    <section class="question-item">
+      ${q.header ? `<div class="question-header">${esc(q.header)}</div>` : ''}
+      <div class="question-text">${esc(q.question || m.text)}</div>
+      ${q.multiple ? '<div class="question-multiple">可多选</div>' : ''}
+      ${(q.options || []).length ? `<div class="question-options">${q.options.map((o, j) => `
+        <${live ? 'button' : 'div'} ${live ? `type="button" data-question-index="${i}" data-question-option="${j}" aria-pressed="false"` : ''}
+          class="question-option"><span>${j + 1}</span><div><b>${esc(o.label)}</b>
+          ${o.description ? `<small>${esc(o.description)}</small>` : ''}</div></${live ? 'button' : 'div'}>`).join('')}</div>` : ''}
+    </section>`).join('');
+  if (live && m.kind === 'screen_menu') {
+    screenMenuControls(body, m, {answer, cancel: cancelAnswer, action, textAnswer});
+  } else if (live) {
+    const cli = sessiondockCli(m.source || m.uid);
+    const cliName = cli?.name || 'CLI';
+    const waiting = promptState === 'waiting';
+    const direct = waiting && rows.length === 1 && !rows[0].multiple
+      && !!rows[0].options?.length;
+    const formDirect = waiting && cli?.canAnswerQuestionForm({...m, questions: rows});
+    const draftKey = formDirect && m.uid && m.call_id ? `${m.uid}\0${m.call_id}` : '';
+    let selections = draftKey ? questionFormDrafts.get(draftKey) : null;
+    const validDraft = Array.isArray(selections) && selections.length === rows.length
+      && selections.every((optionIndex, questionIndex) => optionIndex === null
+        || (Number.isInteger(optionIndex) && !!rows[questionIndex]?.options?.[optionIndex]));
+    if (!validDraft) {
+      selections = Array(rows.length).fill(null);
+      if (draftKey) questionFormDrafts.set(draftKey, selections);
+    }
+    let formSubmit = null;
+    body.querySelectorAll('[data-question-option]').forEach(button => {
+      button.disabled = !direct && !formDirect;
+      const questionIndex = +button.dataset.questionIndex;
+      const optionIndex = +button.dataset.questionOption;
+      const selected = formDirect && selections[questionIndex] === optionIndex;
+      button.classList.toggle('selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+      button.onclick = async () => {
+        if (formDirect) {
+          selections[questionIndex] = optionIndex;
+          body.querySelectorAll(`[data-question-index="${questionIndex}"]`).forEach(x => {
+            const selected = +x.dataset.questionOption === optionIndex;
+            x.classList.toggle('selected', selected);
+            x.setAttribute('aria-pressed', String(selected));
+          });
+          if (formSubmit) formSubmit.disabled = selections.some(x => x === null);
+          return;
+        }
+        body.querySelectorAll('button').forEach(x => { x.disabled = true; });
+        button.classList.add('submitting');
+        const ok = await answer(m.uid, optionIndex);
+        if (!ok) body.querySelectorAll('button').forEach(x => { x.disabled = false; });
+      };
+    });
+    const actions = el('div', 'question-actions');
+    if (!waiting) {
+      actions.appendChild(el('small', 'question-settling',
+        promptState === 'cancelled' ? `正在取消，等待 ${cliName} 记录…`
+          : `答案已提交，等待 ${cliName} 记录…`));
+    } else if (formDirect) {
+      actions.appendChild(el('small', '', '请为每题选择一个答案'));
+      formSubmit = el('button', 'question-submit', '提交答案');
+      formSubmit.type = 'button';
+      formSubmit.disabled = selections.some(x => x === null);
+      formSubmit.onclick = async () => {
+        body.querySelectorAll('button').forEach(x => { x.disabled = true; });
+        formSubmit.classList.add('submitting');
+        const ok = await answerCliQuestionForm(m.uid, selections);
+        if (!ok) {
+          body.querySelectorAll('[data-question-option]').forEach(
+            x => { x.disabled = false; });
+          formSubmit.disabled = selections.some(x => x === null);
+          terminal.disabled = false;
+          cancel.disabled = false;
+        }
+      };
+      actions.appendChild(formSubmit);
+    } else if (!direct) {
+      actions.appendChild(el('small', '', '多选或多题请在原生终端回答'));
+    }
+    const terminal = el('button', '', '打开终端');
+    terminal.type = 'button';
+    terminal.onclick = () => revealNativeTerminal(m.uid);
+    const cancel = el('button', 'question-cancel', '取消');
+    cancel.type = 'button';
+    cancel.disabled = !waiting;
+    cancel.onclick = () => cancelAnswer(m.uid);
+    actions.append(terminal, cancel);
+    body.appendChild(actions);
+  }
+  n.appendChild(body);
+  return n;
+}
+
+function renderActivity(activity) {
+  const box = $('#msgs');
+  if (!box) return;
+  $('#activity')?.remove();
+  if (!activity || activity.state === 'idle') return;
+  if (activity.state === 'working') {
+    if (!S.live.has(S.sel)) return;
+    const processStart = S.liveStarted.get(S.sel);
+    const activityAt = Date.parse(activity.ts) / 1000;
+    // resume 出来的新 CLI 停在输入提示符时，旧 transcript 可能仍以一条未回答的
+    // user 消息结尾。那条 working 属于上一进程，不能带进当前进程。
+    if (Number.isFinite(processStart) && Number.isFinite(activityAt)
+        && activityAt < processStart - 2) return;
+  }
+  const labels = {
+    working: 'Working…', waiting: '等待回答',
+    aborted: '已中断', failed: '执行失败',
+  };
+  const label = labels[activity.state];
+  if (!label) return;
+  const n = el('div', `activity ${activity.state}`);
+  n.id = 'activity';
+  n.dataset.state = activity.state;
+  n.setAttribute('role', 'status');
+  n.setAttribute('aria-live', 'polite');
+  n.innerHTML = `<i></i><span>${label}</span>`;
+  if (activity.reason) n.title = activity.reason;
+  box.appendChild(n);
+}
+
+function pendingHistoryQuestion(entry) {
+  if (entry?.meta?.source !== 'codex' || entry?.activity?.state !== 'waiting') return null;
+  const answered = new Set((entry.msgs || [])
+    .filter(m => ['answer', 'tool_result'].includes(m.role) && m.call_id)
+    .map(m => m.call_id));
+  return [...(entry.msgs || [])].reverse().find(
+    m => m.role === 'question' && m.call_id && !answered.has(m.call_id)) || null;
+}
+
+function pruneQuestionFormDrafts(uid, activeId = '') {
+  const prefix = `${uid}\0`;
+  const keep = activeId ? `${prefix}${activeId}` : '';
+  for (const key of questionFormDrafts.keys()) {
+    if (key.startsWith(prefix) && key !== keep) questionFormDrafts.delete(key);
+  }
+}
+
+function renderTerminalThreadNotice(uid = S.sel) {
+  const box = $('#msgs');
+  if (!box) return;
+  box.querySelectorAll('.terminal-thread-notice').forEach(node => node.remove());
+  if (S.agent || uid !== S.sel || sessiondockCli(uid)?.source !== 'codex'
+      || !globalThis.codexSideThreadVisible?.(uid)) return;
+  const notice = el('div', 'terminal-thread-notice');
+  notice.setAttribute('role', 'status');
+  const copy = el('div', 'terminal-thread-copy');
+  copy.appendChild(el('strong', '', '终端当前位于 Codex side thread'));
+  copy.appendChild(el('span', '',
+    '此会话框仍跟随 main thread，因此不会显示 side 内容。在终端按 Ctrl+/ 可切回 main thread。'));
+  const inspect = el('button', '', '查看 side thread');
+  inspect.type = 'button';
+  inspect.onclick = () => globalThis.revealNativeTerminal?.(uid);
+  notice.append(copy, inspect);
+  box.appendChild(notice);
+}
+
+function renderConversationTail(activity, uid = S.sel) {
+  const box = $('#msgs');
+  if (!box) return;
+  const entry = cache.get(viewKey(uid));
+  $('#activity')?.remove();
+  box.querySelectorAll('.live-question').forEach(node => node.remove());
+  box.querySelectorAll('.question-live-shadowed').forEach(
+    node => node.classList.remove('question-live-shadowed'));
+  const prompt = entry?.prompt;
+  const nativeQuestion = prompt?.questions?.length ? null : pendingHistoryQuestion(entry);
+  const activeQuestion = prompt?.questions?.length ? prompt : nativeQuestion;
+  const activeDraftId = activeQuestion
+    && (activeQuestion.state || 'waiting') === 'waiting'
+    ? String(activeQuestion.id || activeQuestion.call_id || '') : '';
+  pruneQuestionFormDrafts(uid, activeDraftId);
+  if (prompt?.questions?.length) {
+    if (prompt.id) {
+      [...box.querySelectorAll('.msg[data-role="question"][data-call-id]')]
+        .find(node => node.dataset.callId === prompt.id)
+        ?.classList.add('question-live-shadowed');
+    }
+    const liveQuestion = {
+      role: 'question', call_id: prompt.id, questions: prompt.questions,
+      text: prompt.questions.map(q => q.question).join('\n\n'), live: true,
+      state: prompt.state, uid, ts: prompt.ts || prompt.created_at,
+    };
+    box.appendChild(stampMessageTime(questionNode(liveQuestion), [liveQuestion]));
+  } else if (nativeQuestion) {
+    [...box.querySelectorAll('.msg[data-role="question"][data-call-id]')]
+      .find(node => node.dataset.callId === nativeQuestion.call_id)
+      ?.classList.add('question-live-shadowed');
+    const liveQuestion = { ...nativeQuestion, live: true, uid };
+    box.appendChild(stampMessageTime(questionNode(liveQuestion), [liveQuestion]));
+  } else {
+    renderActivity(activity);
+  }
+  renderTerminalThreadNotice(uid);
+  if (typeof syncComposerSendState==='function') syncComposerSendState();
+  refreshMessageTimeDividers(box);
+  scheduleBrowserSnapshot('conversation-tail');
+}
+
+const CLIP = 4000;
+const AUTO_OPEN_MAX = 40;    // 最多自动展开这么多条命中消息, 其余只标记
+const MARK_MAX = 3000;       // 单页高亮节点上限
+const clipText = t => t.length > CLIP ? t.slice(0, CLIP) + '\n… (点下方按钮展开全文)' : t;
+
+let syntaxWorker = null, syntaxBusy = false, syntaxFrame = null;
+const syntaxQueue = new Set();
+const syntaxGenerations = new WeakMap();
+
+function scheduleSyntax() {
+  if (syntaxBusy || syntaxFrame !== null || !syntaxQueue.size) return;
+  syntaxFrame = requestAnimationFrame(() => {
+    syntaxFrame = null;
+    let code;
+    const waiting = [];
+    for (const candidate of syntaxQueue) {
+      syntaxQueue.delete(candidate);
+      if (candidate.isConnected && !candidate.dataset.syntaxDone) { code = candidate; break; }
+      // Large histories yield while their nodes still live in a fragment.
+      // Keep those jobs until publication, but discard abandoned render plans.
+      if (!candidate.dataset.syntaxDone && syntaxGenerations.get(candidate) === renderSeq
+          && candidate.getRootNode().nodeType === Node.DOCUMENT_FRAGMENT_NODE) waiting.push(candidate);
+    }
+    for (const candidate of waiting) syntaxQueue.add(candidate);
+    if (!code) return;         // Fragment publication schedules us; do not spin every frame.
+    syntaxBusy = true;
+    const source = code.textContent;
+    const language = code.dataset.codeLang || '', path = code.dataset.codePath || '';
+    const kind = code.matches('code.tool-command') ? 'command'
+      : code.matches('pre.tool-out') ? 'tool' : 'code';
+    let timer;
+    const finish = result => {
+      clearTimeout(timer);
+      // An expanded/replaced preview must never receive an older worker reply.
+      if (code.isConnected && code.textContent === source
+          && (code.dataset.codeLang || '') === language && (code.dataset.codePath || '') === path) {
+        code.dataset.syntaxDone = '1';
+        if (result?.html) {
+          code.innerHTML = result.html;
+          code.classList.add('hljs');
+          if (result.language) code.classList.add(`language-${result.language}`);
+          if (result.languages?.length) code.dataset.syntaxLanguages = result.languages.join(',');
+          if (result.detected) code.dataset.detected = result.language;
+          const host = code.tagName === 'PRE' ? code
+            : (code.classList.contains('code-block') && code.parentElement?.tagName === 'PRE'
+                ? code.parentElement : null);
+          if (result.language && host) host.dataset.codeLanguage = result.language;
+          // Syntax arrives after message search decoration now. Reapply the
+          // current query to the new text nodes instead of losing its marks.
+          if (S.term) { markMatches(code); updateMatchNav(); }
+        }
+      }
+      syntaxBusy = false;
+      scheduleSyntax();
+    };
+    const failed = () => {
+      syntaxWorker?.terminate();
+      syntaxWorker = null;
+      finish(null);
+    };
+    try {
+      syntaxWorker ||= new Worker(SessionDockAssets.url('syntax-worker.js'), {type: 'module'});
+      syntaxWorker.onmessage = event => finish(event.data);
+      syntaxWorker.onerror = failed;
+      // Optional decoration must not hold up other blocks indefinitely. The
+      // complete original text stays readable even when a grammar stalls.
+      timer = setTimeout(failed, 5000);
+      syntaxWorker.postMessage({source, kind, language, path});
+    } catch { failed(); }
+  });
+}
+
+function paintSyntax(root = document) {
+  const select = selector => [
+    ...(root.matches?.(selector) ? [root] : []),
+    ...root.querySelectorAll(selector),
+  ];
+  const blocks = select('code.code-block:not([data-syntax-done])');
+  const summaries = select('code.tool-command:not([data-syntax-done])');
+  const tools = select('pre.tool-out:not([data-syntax-done])').filter(
+    pre => !pre.querySelector(':scope > .tool-diff-line'));
+  const diffLines = select(
+    '.diff-line > code[data-code-path]:not([data-syntax-done]), '
+    + '.tool-diff-line > code[data-code-path]:not([data-syntax-done])');
+  const nodes = [...new Set([...blocks, ...summaries, ...tools, ...diffLines])];
+  if (!nodes.length) return;
+  for (const code of nodes) {
+    syntaxQueue.add(code);
+    syntaxGenerations.set(code, renderSeq);
+  }
+  scheduleSyntax();
+}
+
+// 轻量 markdown: 代码块 / 表格 / 列表 / 引用 / 标题 / 行内标记
+function md(text, full, media = [], context = {}) {
+  const source = full ? text : clipText(text);
+  const lines = source.split('\n');
+  const output = [], prose = [];
+  const flush = () => {
+    if (!prose.length) return;
+    output.push(blocks(prose.join('\n'), media, context));
+    prose.length = 0;
+  };
+  for (let i = 0; i < lines.length;) {
+    // 只有独立行上的 Markdown 围栏才是代码块。旧的 split(/```/)
+    // 会把句子里提到的 ```python 也当成开头，后半条消息全吞进 pre。
+    const open = lines[i].match(/^\s{0,3}(`{3,}|~{3,})[^\S\n]*(.*)$/);
+    if (!open || (open[1][0] === '`' && open[2].includes('`'))) {
+      prose.push(lines[i++]);
+      continue;
+    }
+    const marker = open[1][0], width = open[1].length;
+    let close = i + 1;
+    for (; close < lines.length; close++) {
+      const found = lines[close].match(/^\s{0,3}(`+|~+)\s*$/);
+      if (found && found[1][0] === marker && found[1].length >= width) break;
+    }
+    // 未闭合围栏只在“展开全文”预览恰好截断时按代码处理；
+    // 原文本本身未闭合时保留原样，不再把整条消息误判为代码。
+    if (close === lines.length && (full || text.length <= CLIP)) {
+      prose.push(lines[i++]);
+      continue;
+    }
+    flush();
+    const info = open[2].trim();
+    const language = info.match(/^[\w+.-]+/)?.[0] || '';
+    const code = lines.slice(i + 1, close).join('\n');
+    output.push(`<pre><code class="code-block" data-code-lang="${esc(language)}">${esc(code)}</code></pre>`);
+    i = close < lines.length ? close + 1 : close;
+  }
+  flush();
+  return output.join('') || '<p></p>';
+}
+
+const RE_LIST = /^\s*([-*+]|\d+[.)])\s+/;
+const RE_HEAD = /^\s*(#{1,6})\s+(.*)$/;
+const RE_QUOTE = /^\s*>\s?/;
+const RE_HR = /^\s*([-*_])\s*(\1\s*){2,}$/;
+// 表格分隔行: |---|:--:|  至少一个竖线和一串短横
+const isSep = s => /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(s) && s.includes('-');
+const cells = s => s.trim().replace(/^\||\|$/g, '').split('|').map(x => x.trim());
+const isTable = (ls, i) => ls[i].includes('|') && i + 1 < ls.length && isSep(ls[i + 1]);
+
+function blocks(src, media = [], context = {}) {
+  const ls = src.split('\n');
+  let out = '', i = 0;
+  while (i < ls.length) {
+    const line = ls[i];
+    if (!line.trim()) { i++; continue; }
+
+    if (isTable(ls, i)) {
+      const head = cells(line);
+      const align = cells(ls[i + 1]).map(c =>
+        /^:-+:$/.test(c) ? 'center' : /-+:$/.test(c) ? 'right' : 'left');
+      const at = j => `style="text-align:${align[j] || 'left'}"`;
+      i += 2;
+      const rows = [];
+      while (i < ls.length && ls[i].trim() && ls[i].includes('|')) rows.push(cells(ls[i++]));
+      out += `<div class="tw"><table><thead><tr>${head.map((c, j) => `<th ${at(j)}>${inline(c, media, context)}</th>`).join('')}</tr></thead>`
+        + `<tbody>${rows.map(r => `<tr>${r.map((c, j) => `<td ${at(j)}>${inline(c, media, context)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+      continue;
+    }
+
+    const h = line.match(RE_HEAD);
+    if (h) { out += `<h3 class="h${h[1].length}">${inline(h[2], media, context)}</h3>`; i++; continue; }
+
+    if (RE_HR.test(line)) { out += '<hr>'; i++; continue; }
+
+    if (RE_LIST.test(line)) {
+      const tag = /^\s*\d/.test(line) ? 'ol' : 'ul';
+      const items = [];
+      while (i < ls.length && RE_LIST.test(ls[i])) {
+        let item = ls[i++].replace(RE_LIST, '');
+        while (i < ls.length && ls[i].trim() && !RE_LIST.test(ls[i]) && /^\s{2,}/.test(ls[i])) {
+          item += '\n' + ls[i++].trim();     // 续行并入当前条目
+        }
+        items.push(`<li>${inline(item, media, context)}</li>`);
+      }
+      out += `<${tag}>${items.join('')}</${tag}>`;
+      continue;
+    }
+
+    if (RE_QUOTE.test(line)) {
+      const qs = [];
+      while (i < ls.length && RE_QUOTE.test(ls[i])) qs.push(ls[i++].replace(RE_QUOTE, ''));
+      out += `<blockquote>${inline(qs.join('\n'), media, context)}</blockquote>`;
+      continue;
+    }
+
+    const para = [];
+    while (i < ls.length && ls[i].trim() && !RE_LIST.test(ls[i]) && !RE_HEAD.test(ls[i])
+           && !RE_QUOTE.test(ls[i]) && !RE_HR.test(ls[i]) && !isTable(ls, i)) {
+      para.push(ls[i++]);
+    }
+    if (para.length) out += `<p>${inline(para.join('\n'), media, context)}</p>`;
+    else i++;                                 // 兜底: 保证 i 一定前进
+  }
+  return out;
+}
+
+const RE_MD_IMAGE = /!\[([^\]]*)\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+["'][^"']*["'])?\s*\)/g;
+const RE_CODE_SPAN = /(^|[^`])(`+)(?!`)([^\n]*?)(?<!`)\2(?!`)/g;
+
+const RE_REFERENCE = /(?<![A-Za-z0-9_@/:.-])(?:(?:https?:\/\/|www\.)[^\s<>"'`\u0000，。；、！？]+|(?:~\/|\.\.?\/|\/|[A-Za-z0-9_.-]+\/)[^\s<>"'`\u0000，。；、！？()[\]{}]+|[A-Za-z0-9_-][A-Za-z0-9_.-]*\.[A-Za-z][A-Za-z0-9_-]*(?::\d+(?::\d+)?|#L\d+(?:C\d+)?)?)/gi;
+
+function trimReference(raw) {
+  let ref = raw.replace(/[.,;:!?]+$/, '');
+  for (const [left, right] of [['(', ')'], ['[', ']']]) {
+    while (ref.endsWith(right) && ref.split(right).length > ref.split(left).length) ref = ref.slice(0, -1);
+  }
+  return ref;
+}
+
+function referenceLink(ref, label, context, explicit = false) {
+  let href = '';
+  if (/^(https?:\/\/|www\.)/i.test(ref)) {
+    try {
+      const url = new URL(/^www\./i.test(ref) ? 'https://' + ref : ref);
+      if (!['http:', 'https:'].includes(url.protocol)) return '';
+      href = url.href;
+    } catch { return ''; }
+  } else {
+    // Browser file:// navigation cannot reach a remote node. Resolve only
+    // references present in this session, through its authenticated API.
+    const withoutLine = ref.replace(/(?::\d+(?::\d+)?|#L\d+(?:C\d+)?)$/, '');
+    if (!context.uid || /^[a-z][a-z0-9+.-]*:/i.test(withoutLine) || ref.startsWith('//')) return '';
+    if (/^[A-Z0-9]+(?:\/[A-Z0-9]+)+$/.test(ref)) return '';
+    // Rendering is lexical only. Resolve history, existence and ambiguity on
+    // explicit navigation/menu actions, never once per render or SSE update.
+    const filename = /^[^\s/<>"'`=;|{}\[\]]+\.[a-zA-Z][\w.-]*$/.test(withoutLine);
+    const path = /^(?:~\/|\.\.?\/|\/)[^\n]+$/.test(withoutLine)
+      || (!/[\s<>"'`=;|{}\[\]]/.test(withoutLine) && withoutLine.includes('/')
+          && (withoutLine.endsWith('/') || /^[^/]+\.[a-zA-Z][\w.-]*$/.test(withoutLine.split('/').pop())))
+      || filename;
+    if (!path && !explicit) return '';
+    const query = new URLSearchParams({uid: context.uid, ref});
+    if (context.agent) query.set('agent', context.agent);
+    href = appUrl('/api/session/file') + '?' + query;
+    const open = appUrl('file.html') + '?' + query + '&open=1';
+    return `<a href="${esc(open)}" data-file-ref="${esc(ref)}" data-file-href="${esc(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  }
+  return `<a href="${esc(href)}" data-reference-kind="web" target="_blank" rel="noopener noreferrer">${label}</a>`;
+}
+
+const fileMenu = document.createElement('div');
+fileMenu.id = 'file-menu'; fileMenu.className = 'ctx-menu'; fileMenu.hidden = true;
+fileMenu.setAttribute('role', 'menu'); fileMenu.setAttribute('aria-label', '文件操作');
+const fileMenuTargetText = document.createElement('div');
+fileMenuTargetText.id = 'file-menu-target'; fileMenuTargetText.className = 'ctx-menu-target';
+fileMenuTargetText.dir = 'auto';
+fileMenu.appendChild(fileMenuTargetText);
+fileMenu.setAttribute('aria-describedby', fileMenuTargetText.id);
+for (const [action, label] of [['copy-path', '复制完整路径'],
+  ['copy-directory', '复制所在目录路径'], ['download', '下载'],
+  ['copy-url', '复制链接地址'], ['open-web', '在新标签页打开']]) {
+  const button = document.createElement('button');
+  button.type = 'button'; button.dataset.action = action; button.textContent = label;
+  button.setAttribute('role', 'menuitem'); fileMenu.appendChild(button);
+}
+document.body.appendChild(fileMenu);
+let fileMenuTarget = null;
+function closeFileMenu() { fileMenu.hidden = true; fileMenuTarget = null; }
+
+async function copyFileText(text) {
+  if (navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(text); return; } catch { /* HTTP fallback */ }
+  }
+  const input = document.createElement('textarea');
+  input.value = text; input.style.cssText = 'position:fixed;left:-10000px;top:0';
+  document.body.appendChild(input); input.select();
+  try { if (!document.execCommand('copy')) throw new Error('复制失败'); }
+  finally { input.remove(); }
+}
+
+document.addEventListener('contextmenu', async event => {
+  const link = event.target.closest('.mb a[data-file-ref], .mb a[data-local-path], .mb a[data-reference-kind="web"]');
+  if (!link) return;
+  event.preventDefault(); closeItemMenu();
+  const target = fileMenuTarget = {path: link.dataset.localPath, href: link.dataset.fileHref || link.href,
+    kind: link.dataset.referenceKind === 'web' ? 'web' : link.dataset.fileKind};
+  const place = () => {
+    fileMenu.hidden = false;
+    const box = fileMenu.getBoundingClientRect();
+    fileMenu.style.left = `${Math.max(8, Math.min(event.clientX, innerWidth - box.width - 8))}px`;
+    fileMenu.style.top = `${Math.max(8, Math.min(event.clientY, innerHeight - box.height - 8))}px`;
+  };
+  if (link.dataset.fileRef) {
+    fileMenuTargetText.textContent = '正在读取文件信息…';
+    for (const button of fileMenu.querySelectorAll('button')) button.hidden = true;
+    place();
+    try {
+      if (!SessionDockCapabilities.allows('files')) throw new Error('Rust 后端尚未实现文件解析与文件操作。');
+      const query = new URL(target.href).searchParams, ref = query.get('ref');
+      const response = await fetch(appUrl('/api/session/resolve-files'), {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({uid:query.get('uid'), agent:query.get('agent') || '', refs:[ref]}),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || '无法读取文件信息');
+      const detail = data.targets?.find(item => item.ref === ref);
+      const path = detail?.path || data.resolved?.[ref];
+      if (typeof path !== 'string' || !path.startsWith('/')) {
+        const failure = data.errors?.find(item => item.ref === ref);
+        throw new Error(failure?.error || '文件不存在或有多个同名文件，请使用完整路径。');
+      }
+      if (fileMenuTarget !== target || !link.isConnected) return;
+      target.path = path;
+      target.kind = ['file', 'directory'].includes(detail?.kind) ? detail.kind : 'unknown';
+    } catch (error) {
+      if (fileMenuTarget === target) { fileMenuTargetText.textContent = error.message || '无法读取文件信息'; place(); }
+      return;
+    }
+  }
+  fileMenuTargetText.textContent = fileMenuTarget.kind === 'web' ? fileMenuTarget.href : fileMenuTarget.path;
+  // 目录和类型未确认的目标不能下载，直接不显示该项，不留灰色菜单项。
+  const actions = fileMenuTarget.kind === 'web'
+    ? ['copy-url', 'open-web']
+    : fileMenuTarget.kind === 'file' ? ['copy-path', 'copy-directory', 'download']
+    : ['copy-path'];
+  fileMenu.setAttribute('aria-label', fileMenuTarget.kind === 'web' ? '链接操作' : '文件操作');
+  for (const button of fileMenu.querySelectorAll('button')) {
+    button.hidden = !actions.includes(button.dataset.action);
+  }
+  place();
+  fileMenu.querySelector('button:not([hidden])').focus({preventScroll: true});
+});
+document.addEventListener('pointerdown', event => {
+  if (!fileMenu.contains(event.target)) closeFileMenu();
+}, true);
+addEventListener('resize', closeFileMenu);
+document.addEventListener('scroll', event => {
+  if (!fileMenu.contains(event.target)) closeFileMenu();
+}, true);
+fileMenu.addEventListener('keydown', event => {
+  const buttons = [...fileMenu.querySelectorAll('button:not([hidden])')];
+  const index = buttons.indexOf(document.activeElement);
+  if (event.key === 'Escape') { event.preventDefault(); closeFileMenu(); }
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length].focus();
+  }
+});
+fileMenu.addEventListener('click', async event => {
+  const action = event.target.closest('button')?.dataset.action;
+  const target = fileMenuTarget;
+  if (!action || !target) return;
+  closeFileMenu();
+  try {
+    if (action === 'copy-path') await copyFileText(target.path);
+    else if (action === 'copy-directory' && target.kind === 'file') {
+      await copyFileText(target.path.slice(0, target.path.lastIndexOf('/')) || '/');
+    }
+    else if (action === 'copy-url') await copyFileText(target.href);
+    else if (action === 'open-web') window.open(target.href, '_blank', 'noopener,noreferrer');
+    else if (action === 'download') {
+      const url = new URL(target.href); url.searchParams.set('download', '1');
+      const link = document.createElement('a'); link.href = url.href;
+      link.download = ''; document.body.appendChild(link); link.click(); link.remove();
+    }
+  } catch (error) { await appAlert(error.message || '文件操作失败'); }
+});
+
+function inline(s, media = [], context = {}) {
+  s = String(s).replace(/\u0000/g, '');
+  const codeSpans = [], codeLabels = [], codeText = [];
+  s = s.replace(RE_CODE_SPAN, (_, prefix, _ticks, raw) => {
+    // Markdown 代码跨度允许内容中出现更长的反引号串，例如用单反引号
+    // 包住 ```python。先占位再处理图片/粗体，避免代码内容被二次解析。
+    const content = raw.startsWith(' ') && raw.endsWith(' ') && /\S/.test(raw)
+      ? raw.slice(1, -1) : raw;
+    const code = `<code>${esc(content)}</code>`;
+    codeText.push(content);
+    codeLabels.push(code);
+    codeSpans.push(code);
+    return `${prefix}\u0000CODE${codeSpans.length - 1}\u0000`;
+  });
+  const images = [];
+  s = s.replace(RE_MD_IMAGE, (_, alt, raw) => {
+    const ref = raw.replace(/^<|>$/g, '');
+    const found = media.find(x => x.ref === ref);
+    const src = found?.src || ref;
+    const html = imageHtml({ ...(found || {}), src, alt: alt || found?.alt || '图片' }, true);
+    if (!html) return `[图片: ${alt || ref}]`;
+    images.push(html);
+    return `\u0000IMG${images.length - 1}\u0000`;
+  });
+  const links = [];
+  const keepLink = html => {
+    links.push(html);
+    return `\u0000LINK${links.length - 1}\u0000`;
+  };
+  const emphasis = text => text
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<i>$2</i>');
+  // Standard Markdown links display their label only. Keep the destination
+  // in link metadata for navigation/menu actions, never append it to the label.
+  s = s.replace(/\[([^\]\n]+)\]\(\s*(<[^>\n]+>|(?:[^\s()]|\([^\s()]*\))+)(?:\s+["']([^"']*)["'])?\s*\)/g,
+    (_raw, label, target, title) => {
+      const content = emphasis(esc(label)).replace(/\u0000CODE(\d+)\u0000/g,
+        (_, i) => codeLabels[+i] || '');
+      const ref = target.replace(/^<|>$/g, '');
+      let html = referenceLink(ref, content, context, true) || content;
+      if (title !== undefined && html.startsWith('<a ')) html = html.replace('<a ', `<a title="${esc(title)}" `);
+      return keepLink(html);
+    });
+  const linkCandidate = (raw, offset, source) => {
+    // Do not link a suffix of a scheme, identifier or email address.
+    if (offset && /[\w@/:.-]/.test(source[offset - 1])) return raw;
+    const ref = trimReference(raw);
+    const html = referenceLink(ref, esc(ref), context);
+    return html ? keepLink(html) + raw.slice(ref.length) : raw;
+  };
+  // Parentheses opt prose into linkification. Code spans are explicit
+  // references too, including when they appear outside parentheses.
+  const parenthesized = (part, explicit) => {
+    // A complete target may itself contain balanced parentheses. Do not split
+    // a URL or a filename such as report(final).pdf into several links.
+    // Preserve every delimiter, space and optional Markdown title. Only wrap
+    // the existing target substring; never synthesize a label or new text.
+    const match = part.match(/^(\s*)(<([^<>\n]+)>|(?:[^\s()]|\([^\s()]*\))+)(\s+(?:["'][^"']*["'])\s*|\s*)$/);
+    if (match && !match[2].includes('\u0000')) {
+      const ref = match[3] || match[2];
+      const html = referenceLink(ref, esc(ref), context, explicit);
+      if (html) return match[1] + (match[3] ? '<' : '') + keepLink(html)
+        + (match[3] ? '>' : '') + match[4];
+    }
+    return part.replace(/\u0000CODE(\d+)\u0000/g, (raw, i) => {
+      const code = codeLabels[+i];
+      return keepLink(referenceLink(codeText[+i], code, context) || code);
+    }).replace(RE_REFERENCE, linkCandidate);
+  };
+  const parts = [], stack = [];
+  let start = 0, open = -1;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '(' || s[i] === '（') {
+      if (!stack.length) open = i;
+      stack.push(s[i] === '(' ? ')' : '）');
+    } else if (stack.length && s[i] === stack[stack.length - 1]) {
+      stack.pop();
+      if (!stack.length) {
+        parts.push(s.slice(start, open + 1), parenthesized(s.slice(open + 1, i), s[open - 1] === ']'), s[i]);
+        start = i + 1;
+      }
+    }
+  }
+  parts.push(s.slice(start));
+  s = parts.join('');
+  s = s.replace(/\u0000CODE(\d+)\u0000/g, (raw, i) =>
+    keepLink(referenceLink(codeText[+i], codeLabels[+i], context) || codeLabels[+i]));
+  return emphasis(esc(s))
+    .replace(/\u0000LINK(\d+)\u0000/g, (_, i) => links[+i] || '')
+    .replace(/\u0000CODE(\d+)\u0000/g, (_, i) => codeSpans[+i] || '')
+    .replace(/\u0000IMG(\d+)\u0000/g, (_, i) => images[+i] || '');
+}
+
+// ---------------------------------------------------------------- 事件
+$('#view').onclick = e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  S.view = b.dataset.v;
+  store.set('view', S.view);
+  renderView();
+  renderSide();
+};
+
+function renderView() {
+  for (const b of $('#view').children) b.classList.toggle('on', b.dataset.v === S.view);
+  const nest = $('#nest-toggle');
+  nest.classList.toggle('on', S.nest);
+  nest.setAttribute('aria-pressed', String(S.nest));
+}
+$('#nest-toggle').onclick = () => {
+  S.nest = !S.nest;
+  store.set('nest', S.nest);
+  renderView();
+  renderSide();
+};
+
+// A full render resolves filtering and hidden-parent successors. Folding only
+// changes the visible rows within that same display tree, never its membership.
+function sidebarNestContext() {
+  return JSON.stringify([S.view, S.nest, S.picking, S.nestAttachUids, S.term, S.opts,
+    S.activeOnly, [...S.off], HUB_MODE ? [...Nodes.off] : []]);
+}
+
+function patchNestFold(uid) {
+  const side = $('#side'), tree = side?._nestTree;
+  if (sidebarTextSelectionProtected() || !tree
+      || tree.sessions !== S.sessions || tree.results !== S.results
+      || tree.context !== sidebarNestContext()) return false;
+  const node = side.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
+  const current = node?._nestRow, group = node?.closest('.group');
+  const index = group?._rows?.indexOf(current) ?? -1;
+  if (!current || index < 0 || !node.querySelector('.nest-caret')) return false;
+  const top = side.scrollTop;
+  const rows = [];
+  if (sidebarNestClosed(uid)) rows.push({...current, closed: true});
+  else expandRows(current.s, current.depth, tree.children, rows, new Set([uid]), new Map());
+  let end = index + 1;
+  while (end < group._rows.length && group._rows[end].depth > current.depth) end++;
+  const oldCount = end - index - 1, delta = rows.length - 1 - oldCount;
+  const highlightKey = JSON.stringify([S.term, S.opts, S.opts.regex ? regexResultRevision : 0]);
+  const signatures = new Map();
+  const stamp = (element, row) => {
+    element._nestRow = row;
+    const {signature, structure} = sidebarRowIdentity(row, pickedSessions, signatures);
+    element._signature = signature;
+    element._structure = structure;
+    element._highlightKey = highlightKey;
+  };
+  // Read the next sibling before deleting descendants; unrelated rows remain
+  // connected and keep focus, text selection and all event handlers.
+  let next = node.nextElementSibling;
+  for (let count = 0; count < oldCount; count++) {
+    const removed = next;
+    next = next.nextElementSibling;
+    removed.remove();
+  }
+  const fragment = document.createDocumentFragment();
+  for (const row of rows.slice(1)) {
+    const child = createSidebarRow(row);
+    stamp(child, row);
+    fragment.appendChild(child);
+  }
+  const paths = [...fragment.querySelectorAll('.cwd-path')];
+  node.parentElement.insertBefore(fragment, next);
+  patchSidebarRow(node, rows[0], highlightKey);
+  stamp(node, rows[0]);
+  group._rows = group._rows.slice(0, index).concat(rows, group._rows.slice(end));
+  // Ancestor carets and the group count describe currently visible descendants,
+  // including the folds nested inside the branch just opened or closed.
+  let depth = current.depth;
+  for (let i = index - 1; depth > 0 && i >= 0; i--) {
+    const ancestor = group._rows[i];
+    if (ancestor.depth >= depth || ancestor.agent) continue;
+    depth = ancestor.depth;
+    ancestor.kids += delta;
+    const element = group.querySelector(`.item[data-uid="${CSS.escape(ancestor.s.uid)}"]`);
+    if (element) { patchSidebarRow(element, ancestor, highlightKey); stamp(element, ancestor); }
+  }
+  const sessions = group._rows.filter(row => !row.agent).map(row => row.s);
+  group._pickUids = sessions.filter(sessionPickable).map(row => row.uid);
+  const count = group.querySelector('.gcount');
+  const rowCount = S.term ? group._rows.filter(row => row.agent || sidebarMainMatches(row.s)).length : sessions.length;
+  if (count && count.textContent !== String(rowCount)) {
+    count.textContent = rowCount;
+    group.querySelector('.ghead')._signature = null;
+  }
+  paintGroupPick(group);
+  if (paths.length) fitTimelineDirectories(paths, timelineFitContext);
+  side.scrollTop = top;
+  return true;
+}
+
+/** Change only the clicked subtree; changed data or filters use the full path. */
+function toggleNestFold(uid) {
+  const folds = sidebarNestFolds();
+  folds.has(uid) ? folds.delete(uid) : folds.add(uid);
+  if (!S.term) store.set('nestClosed', [...S.nestClosed]);
+  if (!patchNestFold(uid)) renderSide();
+}
+
+// ---------------------------------------------------------------- 栏宽拖动
+const SIDE_DEFAULT = 340;
+const sideResourceExtra = () => document.body.classList.contains('sidebar-resources') ? 144 : 0;
+
+function setSideWidth(px, save) {
+  if (MOBILE.matches) {
+    $('#left').style.removeProperty('width');
+    return;
+  }
+  const w = Math.round(Math.max(200, Math.min(px, window.innerWidth - 320)));
+  $('#left').style.width = w + 'px';
+  document.documentElement.style.setProperty('--side-width',
+    document.body.classList.contains('side-collapsed') ? '0px' : w + 'px');
+  if (save) store.set('width', Math.max(200, w - sideResourceExtra()));
+}
+
+function setSideCollapsed(collapsed, save = true) {
+  collapsed = !!collapsed && !MOBILE.matches;
+  document.body.classList.toggle('side-collapsed', collapsed);
+  const button = $('#side-toggle');
+  const label = collapsed ? '展开会话列表' : '收起会话列表';
+  button.title = button.ariaLabel = label;
+  button.setAttribute('aria-expanded', String(!collapsed));
+  if (save) store.set('sideCollapsed', collapsed);
+  const width = parseInt($('#left').style.width, 10) || store.get('width', SIDE_DEFAULT);
+  document.documentElement.style.setProperty('--side-width', collapsed ? '0px' : width + 'px');
+  layoutSessionHead();
+  requestAnimationFrame(() => {
+    if (typeof fitTerm === 'function' && T?.term) fitTerm();
+  });
+}
+
+$('#side-toggle').onclick = () => setSideCollapsed(
+  !document.body.classList.contains('side-collapsed'));
+
+// 横屏手机和平板也走这套桌面分栏；手指拖动只产生 pointer/touch 事件，
+// 浏览器不会为触摸合成 mousemove，所以和 #tgrip 一样用 pointer 事件加捕获。
+let dragging = false;
+let dragPointer = null, dragWidth = 0, dragStartWidth = 0, dragFrame = 0;
+const sideDragHandle = $('#drag');
+sideDragHandle.addEventListener('pointerdown', e => {
+  if (e.button !== 0 || dragging) return;
+  dragging = true;
+  dragPointer = e.pointerId;
+  dragWidth = dragStartWidth = $('#left').getBoundingClientRect().width;
+  e.currentTarget.setPointerCapture?.(e.pointerId);
+  document.body.classList.add('dragging');
+  e.preventDefault();
+});
+document.addEventListener('pointermove', e => {
+  if (!dragging || e.pointerId !== dragPointer) return;
+  dragWidth = Math.round(Math.max(200, Math.min(e.clientX, window.innerWidth - 320)));
+  if (!dragFrame) dragFrame = requestAnimationFrame(() => {
+    dragFrame = 0;
+    // Move only the compositor-backed guide; leave thousands of rows and the
+    // terminal at their current size until the gesture finishes.
+    sideDragHandle.style.transform = `translateX(${dragWidth - dragStartWidth}px)`;
+  });
+});
+function finishSideDrag(e) {
+  if (!dragging || e.pointerId !== dragPointer) return;
+  const commit = e.type === 'pointerup';
+  dragging = false;
+  dragPointer = null;
+  cancelAnimationFrame(dragFrame);
+  dragFrame = 0;
+  sideDragHandle.style.removeProperty('transform');
+  document.body.classList.remove('dragging');
+  if (commit) setSideWidth(dragWidth, true);
+}
+document.addEventListener('pointerup', finishSideDrag);
+document.addEventListener('pointercancel', finishSideDrag);
+sideDragHandle.addEventListener('lostpointercapture', finishSideDrag);
+$('#drag').addEventListener('dblclick', () => setSideWidth(SIDE_DEFAULT + sideResourceExtra(), true));
+window.addEventListener('resize', () => setSideWidth(
+  parseInt($('#left').style.width, 10) || store.get('width', SIDE_DEFAULT)));
+MOBILE.addEventListener?.('change', e => {
+  if (e.matches) {
+    const detailVisible = !!S.sel && store.get('mobilePage', 'list') === 'detail';
+    // 桌面终端跨进手机断点、而手机上次停在列表时，右栏即将被 CSS 隐藏。
+    // 走与返回列表相同的暂存/停用流程，详情重新出现后由 restoreTermPane
+    // 按可见尺寸激活；不能把仍活跃的 xterm 留在 display:none 的祖先下面。
+    if (!detailVisible && typeof T !== 'undefined'
+        && !$('#termpane').classList.contains('hidden')) closeTermPane(true);
+    document.body.classList.toggle('mobile-detail', detailVisible);
+  } else {
+    document.body.classList.remove('mobile-detail');
+  }
+  syncSessionStopNotice();
+  syncMobileViewport();
+  setSideWidth(store.get('width', SIDE_DEFAULT) + sideResourceExtra());
+  setSideCollapsed(store.get('sideCollapsed', false), false);
+});
+
+$('#q').oninput = e => {
+  cancelSearch();
+  S.term = e.target.value.trim();
+  searchInputTimer = setTimeout(() => { searchInputTimer = null; renderSide(); }, 120);
+};
+
+$('#q').onkeydown = async e => {
+  if (e.key === 'Escape') { cancelSearch(true); showSessionCount(); renderSide(); return; }
+  if (e.key !== 'Enter') return;
+  runSearch();
+};
+
+let searchSeq = 0, searchRun = 0, searchAbort = null;
+
+function cancelSearch(clearQuery = false) {
+  clearTimeout(searchInputTimer);
+  searchInputTimer = null;
+  resetRegexSearch();
+  ++searchRun;
+  searchAbort?.abort();
+  searchAbort = null;
+  searchProgressDone();
+  S.results = null;
+  S.searchClosed.clear();
+  S.searchNestClosed.clear();
+  if (clearQuery) { S.term = ''; $('#q').value = ''; }
+  $('#stat').textContent = ''; $('#stat').classList.remove('err');
+  if (HUB_MODE) { Nodes.errors.delete('search'); renderNodes(); }
+}
+
+function searchProgress(done, total, nodes = null, totalKnown = total !== null) {
+  const box = $('#search-progress');
+  const known = totalKnown && total > 0;
+  const percent = known ? Math.min(100, Math.floor(done / total * 100)) : 0;
+  box.classList.add('on');
+  box.querySelector('b').textContent = known ? `${done} / ${total} 个会话 · ${percent}%`
+    : done ? `已扫描 ${done} 个会话` : totalKnown ? '已扫描 0 个会话' : '正在读取会话数量…';
+  const track = box.querySelector('.search-progress-track');
+  track.hidden = !known;
+  if (known) track.setAttribute('aria-valuenow', String(percent));
+  else track.removeAttribute('aria-valuenow');
+  track.setAttribute('aria-valuetext', box.querySelector('b').textContent);
+  box.querySelector('i').style.width = known ? `${Math.min(100, done / total * 100)}%` : '0%';
+  const rows = box.querySelector('.search-progress-nodes');
+  if (nodes) rows.innerHTML = nodes.map(node => {
+    const count = node.total !== null ? `${node.done} / ${node.total}` : `已扫描 ${node.done}`;
+    const status = {preparing: '准备中', offline: '离线跳过', error: '搜索失败',
+      limited: `${count} · 达到结果上限`, done: `${count} · 已完成`, scanning: `${count} 个会话`}[node.state] || count;
+    return `<div class="search-progress-node" data-state="${esc(node.state)}"><span>${esc(node.name)}</span><span>${esc(status)}</span></div>`;
+  }).join('');
+}
+
+function searchProgressDone() {
+  const box = $('#search-progress');
+  box.classList.remove('on');
+  box.querySelector('i').style.width = '0%';
+  box.querySelector('.search-progress-nodes').replaceChildren();
+}
+
+$('#search-cancel').onclick = () => { cancelSearch(true); showSessionCount(); renderSide(); };
+
+function showSearchMatches(rows) {
+  const found = new Map((S.results || []).map(row => [row.uid, row]));
+  for (const row of rows) found.set(row.uid, row);
+  S.results = [...found.values()].sort((a, b) => String(b.updated).localeCompare(String(a.updated))
+    || b.uid.localeCompare(a.uid));
+  $('#stat').textContent = ` 已找到 ${sidebarMatchCount(S.results)} 个会话，继续搜索…`;
+  renderSide();
+}
+
+async function fetchSearch(params, signal) {
+  if (!SessionDockCapabilities.allows('search')) {
+    return {ok: false, data: {error: 'Rust 后端尚未实现全文搜索；当前只能筛选标题和目录。'}};
+  }
+  params.set('progress', '1');
+  const r = await fetch(appUrl('api/search?' + params), { signal });
+  if (!r.ok || !r.headers.get('Content-Type')?.includes('application/x-ndjson')) {
+    return { ok: r.ok, data: await r.json() };
+  }
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  let buf = '', result = null, error = null;
+  let pendingRows = [], progress = null, paintTimer = null;
+  const paint = () => {
+    paintTimer = null;
+    if (signal.aborted) return;
+    if (progress) {
+      searchProgress(progress.done, progress.total, progress.nodes,
+        progress.total_known ?? Number.isFinite(progress.total));
+      progress = null;
+    }
+    if (pendingRows.length) {
+      showSearchMatches(pendingRows);
+      pendingRows = [];
+    }
+  };
+  const schedulePaint = () => {
+    // A proxy may coalesce hundreds of NDJSON records into one read. Paint
+    // the accumulated results once, not the entire sidebar for every record.
+    if (paintTimer === null) paintTimer = setTimeout(paint, 50);
+  };
+  let sliceStart = performance.now();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (signal.aborted) return { ok: false, data: {} };
+      buf += dec.decode(value || new Uint8Array(), { stream: !done });
+      const lines = buf.split('\n');
+      buf = done ? '' : lines.pop();
+      for (const line of lines) {
+        // Awaiting an already buffered read only yields to microtasks. Give
+        // keyboard input a task turn so Backspace/Escape can actually abort.
+        if (performance.now() - sliceStart >= 8) {
+          await new Promise(resolve => setTimeout(resolve, 0));
+          sliceStart = performance.now();
+        }
+        if (signal.aborted) return { ok: false, data: {} };
+        if (!line) continue;
+        const event = JSON.parse(line);
+        if (event.type === 'progress') { progress = event; schedulePaint(); }
+        else if (event.type === 'matches') {
+          for (const row of event.results || []) pendingRows.push(row);
+          schedulePaint();
+        } else if (event.type === 'result') result = event.data;
+        else if (event.type === 'error') error = event.error;
+      }
+      if (done) break;
+    }
+  } finally {
+    clearTimeout(paintTimer);
+    paint();
+    reader.releaseLock();
+  }
+  return error ? { ok: false, data: { error } }
+    : result ? { ok: true, data: result }
+      : { ok: false, data: { error: '搜索响应不完整' } };
+}
+
+async function runSearch() {
+  const q = $('#q').value.trim();
+  cancelSearch();
+  S.term = q;
+  const run = searchRun;
+  if (!q) { S.results = null; showSessionCount(); renderSide(); return; }
+  if (!SessionDockCapabilities.allows('search')) {
+    renderSide();
+    $('#stat').textContent = ' Rust 后端尚未实现全文搜索；当前只筛选标题和目录。';
+    $('#stat').classList.add('err');
+    $('#stat').dataset.seq = ++searchSeq;
+    return;
+  }
+  if (S.opts.regex && !reTerm(false)) {   // 本地先验一次, 省掉一次全盘扫描
+    S.results = [];
+    $('#stat').textContent = ' 正则无效';
+    $('#stat').classList.add('err');
+    renderSide();
+    $('#stat').dataset.seq = ++searchSeq;
+    return;
+  }
+  const p = new URLSearchParams({ q });
+  if (!S.opts.regex) p.set('mode', S.opts.mode === 'any' ? 'any' : 'all');
+  if (HUB_MODE) p.set('source', Object.keys(SOURCES).filter(x => !S.off.has(x)).join(','));
+  for (const k of ['case', 'word', 'regex']) if (S.opts[k]) p.set(k, '1');
+  const ac = searchAbort = new AbortController();
+  S.results = [];
+  $('#stat').textContent = ' 正在搜索…';
+  renderSide();
+  if (HUB_MODE) { Nodes.errors.delete('search'); renderNodes(); }
+  const searchNodes = HUB_MODE ? Nodes.list.filter(node => selectedNodeIds().includes(node.id)).map(node => ({
+    id: node.id, name: node.name, done: 0, total: node.online === false ? 0 : null,
+    state: node.online === false ? 'offline' : 'preparing',
+  })) : null;
+  searchProgress(0, null, searchNodes, false);
+  let response;
+  try {
+    response = await fetchSearch(p, ac.signal);
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    response = { ok: false, data: { error: e.message || '搜索失败' } };
+  }
+  if (run !== searchRun) return;
+  searchAbort = null;
+  searchProgressDone();
+  const { ok, data: d } = response;
+  applyNodeState(d, 'search');
+  if (!ok) {                       // 兜底: 前端漏判的非法模式或网络失败
+    $('#stat').textContent = ` 已找到 ${S.results?.length || 0} 个会话；` + (d.error || '搜索失败');
+    $('#stat').classList.add('err');
+  } else {
+    $('#stat').classList.remove('err');
+    S.results = d.results;
+    $('#stat').textContent = d.truncated
+      ? ` 命中超过 ${sidebarMatchCount(d.results)} 个会话（已截断，请细化条件）`
+      : ` 全文命中 ${sidebarMatchCount(d.results)} 个会话`;
+    if (d.partial) {
+      const offline = (d.errors || []).filter(e => d.nodes?.some(n => n.id === e.node_id && n.online === false));
+      const failed = (d.errors || []).filter(e => !offline.includes(e));
+      if (offline.length) $('#stat').textContent += `（${offline.map(e => e.name).join('、')} 离线，未搜索）`;
+      if (failed.length) $('#stat').textContent += `（${failed.map(e => e.name).join('、')} 搜索失败，结果不完整）`;
+    }
+  }
+  renderSide();
+  // 全文搜索只筛左侧列表；右侧会话的内容、滚动位置和展开状态保持原样。
+  $('#stat').dataset.seq = ++searchSeq;              // 供测试判定"这一轮搜索已结束"
+}
+
+$('#opts').onclick = e => {
+  const b = e.target.closest('button[data-o]');
+  if (!b) return;
+  const k = b.dataset.o;
+  S.opts[k] = !S.opts[k];
+  store.set('opts', S.opts);
+  renderOpts();
+  if (S.results) runSearch(); else renderSide();
+};
+
+$('#search-mode').onclick = e => {
+  const b = e.target.closest('button');
+  if (!b || b.disabled) return;
+  S.opts.mode = S.opts.mode === 'any' ? 'all' : 'any';
+  store.set('opts', S.opts);
+  renderOpts();
+  if (S.results) runSearch(); else renderSide();
+};
+
+function renderOpts() {
+  for (const b of $('#opts').querySelectorAll('button[data-o]')) {
+    b.classList.toggle('on', !!S.opts[b.dataset.o]);
+    b.setAttribute('aria-pressed', String(!!S.opts[b.dataset.o]));
+  }
+  const mode = $('#search-mode-toggle'), any = S.opts.mode === 'any';
+  mode.textContent = any ? 'OR' : 'AND';
+  mode.disabled = !!S.opts.regex;
+  mode.title = S.opts.regex ? '正则模式使用整段表达式，不使用 AND / OR'
+    : any ? '任一词（OR），点击切换为全部词（AND）'
+          : '全部词（AND），点击切换为任一词（OR）；关键词可在不同消息中';
+  mode.setAttribute('aria-label', mode.title);
+  $('#q').placeholder = S.opts.regex ? '正则搜索…  Enter 搜索对话正文'
+                                     : '搜索… Enter 搜正文';
+}
+
+const appDisplayMode = matchMedia('(display-mode: standalone)');
+function syncPageReload() {
+  const button = $('#page-reload');
+  button.hidden = !(appDisplayMode.matches || navigator.standalone === true);
+  if (button.hidden && button.parentElement === $('#header-menu')) {
+    button.querySelector('.menu-label')?.remove();
+    button.removeAttribute('role');
+    $('#header-more').before(button);
+    $('#header-more').hidden = !$('#header-menu').children.length;
+  }
+  layoutHeader();
+}
+$('#page-reload').onclick = () => location.reload();
+appDisplayMode.addEventListener('change', syncPageReload);
+for (const id of ['new-session', 'settings', 'page-reload', 'transfer-tasks']) {
+  new MutationObserver(() => layoutSessionHead()).observe(document.getElementById(id),
+    {attributes: true, attributeFilter: ['hidden', 'class', 'disabled']});
+}
+syncPageReload();
+
+/* ---------- 回收站 ---------- */
+// 删除只是把会话文件移进 ~/.local/share/sessiondock/trash/，这里是它唯一的出口：
+// 看还剩什么、放回原处、或者真的删掉。
+let trashItems = [];
+let trashBusy = false;
+let trashScope = [];
+
+function openTrash() {
+  const dlg = $('#trash-dialog');
+  if (!dlg.open) dlg.showModal();
+  loadTrash();
+}
+
+async function loadTrash({ keepNote = false } = {}) {
+  if (!keepNote) setTrashNote('');   // 刷新列表不能把刚做完那件事的回执抹掉
+  $('#trash-list').innerHTML = '<div class="trash-empty">正在读取回收站…</div>';
+  try {
+    const scope = selectedNodeIds();
+    const r = await fetch(appUrl('api/trash' + (HUB_MODE ? '?nodes=' + scope.join(',')
+      : trashCapable() ? '?limit=200' : '')));
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.status);
+    applyNodeState(d, 'trash');
+    trashScope = scope;
+    trashItems = Array.isArray(d.items) ? d.items : [];
+    renderTrash(d);
+    return true;
+  } catch (e) {
+    trashItems = [];
+    $('#trash-list').innerHTML = '<div class="trash-empty">读取失败</div>';
+    setTrashNote('读取回收站失败: ' + e.message, true);
+    return false;
+  }
+}
+
+function renderTrash(info) {
+  const dir = info?.dir || '';
+  const total = Number.isInteger(info?.count) ? info.count : trashItems.length;
+  $('#trash-sub').textContent = trashItems.length
+    ? `${total} 个已删除会话 · 共 ${fmtSize(info?.size || 0)} · ${dir}`
+      + (info?.next_cursor ? ` · 仅显示最近 ${trashItems.length} 条` : '')
+    : `回收站是空的 · ${dir}`;
+  $('#trash-purge-all').disabled = !trashItems.length;
+  $('#trash-list').innerHTML = trashItems.length
+    ? trashItems.map(trashRow).join('')
+    : '<div class="trash-empty">没有已删除的会话</div>';
+}
+
+
+function trashRow(it) {
+  const badge = SOURCES[it.source] ? icon(it.source) : '';
+  const where = it.restorable
+    ? `<div class="trash-origin" title="${esc(it.origin)}">恢复到 ${esc(shortCwd(it.origin, 200))}</div>`
+    : `<div class="trash-origin warn">${esc(it.reason || '无法恢复')}</div>`;
+  return `<div class="trash-item" data-id="${esc(it.id)}">
+    <div class="trash-main">
+      <div class="trash-title">${badge}<span>${esc(it.title)}</span></div>
+      <div class="trash-meta">
+        <span>${esc(fmtTime(it.deleted_at))} 删除</span>
+        <span>${fmtSize(it.size)}</span>
+        <span class="trash-cwd" title="${esc(it.cwd)}">${esc(nodeDirectory(it, 34))}</span>
+      </div>
+      ${where}
+    </div>
+    <div class="trash-acts">
+      <button type="button" class="btn" data-act="restore"${it.restorable ? '' : ' disabled'}>恢复</button>
+      <button type="button" class="btn danger" data-act="purge">彻底删除</button>
+    </div>
+  </div>`;
+}
+
+function setTrashNote(text, isError = false) {
+  const box = $('#trash-note');
+  box.textContent = text || '';
+  box.classList.toggle('err', !!text && isError);
+}
+
+async function trashPost(path, body, btn) {
+  trashBusy = true;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(appUrl(path), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { setTrashNote(d.error || `请求失败: ${r.status}`, true); return null; }
+    return d;
+  } catch (e) {
+    setTrashNote('请求失败: ' + e.message, true);
+    return null;
+  } finally {
+    trashBusy = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+$('#trash-list').onclick = async e => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn || trashBusy) return;
+  const id = btn.closest('.trash-item')?.dataset.id;
+  const item = trashItems.find(x => x.id === id);
+  if (!item) return;
+  if (btn.dataset.act === 'restore') {
+    const d = await trashPost('api/trash/restore', { id: item.id }, btn);
+    if (!d) return;
+    if (await loadTrash({ keepNote: true })) {
+      setTrashNote(`已恢复「${item.title}」到 ${d.path}`);
+    }
+    cancelSearch(true);
+    await loadSessions(true);       // 恢复的会话立即回到左侧列表
+    return;
+  }
+  if (!await appConfirm(`彻底删除「${item.title}」?\n\n文件将从磁盘移除, 不可恢复。`)) return;
+  const d = await trashPost('api/trash/purge', { id: item.id }, btn);
+  if (!d) return;
+  if (await loadTrash({ keepNote: true })) {
+    setTrashNote(`已彻底删除「${item.title}」, 释放 ${fmtSize(d.freed || 0)}`);
+  }
+};
+
+async function purgeAllTrash() {
+  if (!trashItems.length || trashBusy) return;
+  if (!await appConfirm(`清空回收站?\n\n将从磁盘彻底删除 ${trashItems.length} 个会话, 不可恢复。`)) return;
+  const d = await trashPost('api/trash/purge' + (HUB_MODE ? '?nodes=' + trashScope.join(',') : ''),
+    { all: true }, $('#trash-purge-all'));
+  if (!d) return;
+  const failed = (d.errors || []).length;
+  if (await loadTrash({ keepNote: true })) {
+    setTrashNote(`已彻底删除 ${d.removed || 0} 个会话, 释放 ${fmtSize(d.freed || 0)}`
+      + (failed ? `; ${failed} 个失败: ${d.errors[0]}` : ''), !!failed);
+  }
+}
+
+$('#trash').onclick = openTrash;
+$('#trash-reload').onclick = () => loadTrash();
+$('#trash-purge-all').onclick = purgeAllTrash;
+$('#trash-close').onclick = $('#trash-done').onclick = () => $('#trash-dialog').close();
+$('#trash-dialog').addEventListener('click', e => {
+  if (e.target === $('#trash-dialog')) $('#trash-dialog').close();
+});
+
+// 终端后端是每台机器的服务端设置，不进 localStorage：换个浏览器看到的必须是同一份。
+// 机器的名称、配色和控制台渲染都保存在中央服务端；接入和移除机器仍是服务器操作。
+// 非 hub 的单机没有注册表，"本机"的控制台渲染存在这个浏览器里。
+function machineTargets() {
+  if (typeof T === 'undefined' || !T.listLoaded) return [];
+  if (!HUB_MODE) {
+    return T.enabled
+      ? [{id: '', name: '本机', color: '', online: true, local: true, enabled: true,
+          renderer: localConsoleRenderer()}] : [];
+  }
+  // 按注册表顺序列全部机器，停用的原位留着（只剩勾选框能把它接回来），不往后挪
+  const machines = Nodes.machines.length ? Nodes.machines : Nodes.list;
+  return machines.map(node => {
+    const on = node.enabled !== false;
+    const cap = on ? Nodes.capabilities[node.id] || {} : {};
+    return {id: node.id, name: node.name, color: node.color || '',
+            online: on ? node.online : null, local: false, enabled: on,
+            terminal: !!cap.enabled, renderer: node.renderer === 'xterm' ? 'xterm' : 'grid'};
+  });
+}
+
+// Machine contents and state have a single Vue owner. These named hooks remain
+// available to terminal/list refresh callers and the existing settings tab shell.
+function setMachineNote(text, isError = false) {
+  SessionDockMachines.setMachineNote(text, isError);
+}
+function renderMachineSettings() {
+  SessionDockMachines.renderMachineSettings();
+}
+function renderClientMatrix() {
+  SessionDockMachines.renderClientMatrix();
+}
+
+const CONSOLE_RENDERERS = [['grid', '服务端网格（默认）'], ['xterm', 'xterm.js（浏览器解析）']];
+function localConsoleRenderer() {
+  return store.get('consoleRenderer', 'grid') === 'xterm' ? 'xterm' : 'grid';
+}
+// 控制台粘贴文件：默认关；开启后粘贴的文件存入会话目录并把路径填入终端（term.js）。
+function consolePasteFilesEnabled() {
+  return store.get('consolePasteFiles', false) === true;
+}
+
+function showSettingsTab(name) {
+  if (!['appearance', 'features', 'machines'].includes(name)) name = 'appearance';
+  for (const tab of document.querySelectorAll('.settings-tab')) {
+    const on = tab.dataset.tab === name;
+    tab.classList.toggle('on', on);
+    tab.ariaSelected = String(on);
+  }
+  $('#settings-appearance').hidden = name !== 'appearance';
+  $('#settings-features').hidden = name !== 'features';
+  $('#settings-machines').hidden = name !== 'machines';
+  $('#settings-sub').textContent = name === 'machines'
+    ? '机器设置保存在中央服务端，所有浏览器一致'
+    : name === 'features' ? '功能偏好保存在此浏览器' : '界面偏好保存在浏览器';
+  store.set('settingsTab', name);
+  if (name === 'machines') SessionDockMachines.open();
+}
+
+for (const tab of document.querySelectorAll('.settings-tab')) {
+  tab.onclick = () => showSettingsTab(tab.dataset.tab);
+}
+
+function openSettings() {
+  applyInterfaceScale();
+  SessionDockSettings.update(settingsValues());
+  setMachineNote('');
+  showSettingsTab(store.get('settingsTab', 'appearance'));
+  $('#settings-dialog').showModal();
+}
+
+$('#settings').onclick = openSettings;
+$('#settings-dialog').addEventListener('click', e => {
+  if (e.target === $('#settings-dialog')) $('#settings-dialog').close();
+});
+function settingsValues() {
+  return {
+    scale: interfaceScale(), font: store.get('font', 'ubuntu'),
+    theme: store.get('theme', 'system'), cache: cacheLimitMb,
+    sleep: SessionDockSleep.minutes, stopConcurrency: sessionStopConcurrency(),
+    pasteFiles: consolePasteFilesEnabled(),
+  };
+}
+
+// Called once by page-sleep.js after its existing service is initialized.
+function mountSettings() {
+  SessionDockMachines.mount({
+    readTargets: machineTargets,
+    appUrl,
+    sourceNames: SOURCES,
+    sources: Object.keys(SESSIONDOCK_CLIS),
+    rendererOptions: CONSOLE_RENDERERS,
+    offlineReason: target => typeof nodeOfflineReason === 'function'
+      ? nodeOfflineReason(Nodes.list.find(n => n.id === target.id) || {}) : '离线',
+    setLocalRenderer: value => store.set('consoleRenderer', value),
+    applyDisplay: (target, changed) => {
+      const node = Nodes.list.find(n => n.id === target.id);
+      if (node) Object.assign(node, {name: changed.name, color: changed.color});
+    },
+    applyRenderer: (target, renderer) => {
+      const node = [...Nodes.machines, ...Nodes.list].find(n => n.id === target.id);
+      if (node) node.renderer = renderer;
+    },
+    applyOrder: machines => { Nodes.machines = machines; },
+    loadNodes,
+    loadSessions: () => loadSessions(true),
+    refreshLive: () => refreshLive(true),
+    loadTermList: () => typeof loadTermList === 'function' ? loadTermList() : null,
+    renderNodes: () => { if (typeof renderNodes === 'function') renderNodes(); },
+  });
+
+  SessionDockSettings.mount({
+    read: settingsValues,
+    scale: applyInterfaceScale,
+    scaleIndicator: showScaleIndicator,
+    font: value => applyFont(value, true),
+    theme: value => applyTheme(value, true),
+    sleep: value => SessionDockSleep.configure(value, true),
+    cache: value => {
+      cacheLimitMb = Math.max(0, +value || 0);
+      CACHE_MAX_BYTES = cacheLimitMb ? cacheLimitMb * 1024 * 1024 : Infinity;
+      store.set('cacheMb', cacheLimitMb);
+      trimCache();
+      SessionDockSettings.update({cache: cacheLimitMb});
+    },
+    stopConcurrency: value => {
+      store.set('stopConcurrency', Number(value));
+      SessionDockSettings.update({stopConcurrency: sessionStopConcurrency()});
+    },
+    pasteFiles: value => {
+      store.set('consolePasteFiles', value === true);
+      SessionDockSettings.update({pasteFiles: consolePasteFilesEnabled()});
+    },
+    pwa: SessionDockPwaInstall,
+  });
+  settingsMounted = true;
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (globalThis.SessionDockGroups?.escapeMenu()) return;
+  if (!$('#item-menu').hidden) return closeItemMenu();
+  if (S.nestAttach) return setNestAttach('');
+  if (S.picking) return setPicking(false);
+  $('#q').blur();
+});
+
+// SessionDock 是前身服务的替代品而非开发版：没有常驻横幅。只有能力声明
+// 本身无法解析（capabilities.js 失效关闭）时才提示检查服务配置。
+const backendNotice = $('#backend-notice');
+if (backendNotice && SessionDockCapabilities.config.configuration_error) {
+  backendNotice.textContent = '能力配置无效，请检查服务配置。';
+  backendNotice.hidden = false;
+}
+setSideWidth(store.get('width', SIDE_DEFAULT) + sideResourceExtra());
+setSideCollapsed(store.get('sideCollapsed', false), false);
+renderOpts();
+renderPickBar();
+renderView();
+ensureConsolePlaceholder();
+pollLive();   // 终端面板由 term.js 自己初始化 (它在本文件之后加载)
+function uidOfDeepLink(spec) {
+  if (!spec) return null;
+  const cut = spec.indexOf(':');
+  const source = cut > 0 ? spec.slice(0, cut) : null;
+  const sid = cut > 0 ? spec.slice(cut + 1) : spec;
+  const matches = S.sessions.filter(s => s.sid === sid && (!source || s.source === source) && (!deepNode() || s.node_id === deepNode()));
+  const byUid = new Map(matches.map(row => [row.uid, row]));
+  // Verified rollout generations share one native ID. Collapse only explicit
+  // continuations within this identity and machine; independent copies remain ambiguous.
+  const current = new Set(matches.map(row => {
+    const seen = new Set();
+    while (row.continued_in) {
+      if (seen.has(row.uid)) return null;
+      seen.add(row.uid);
+      const next = byUid.get(row.continued_in);
+      if (!next || next.source !== row.source || (next.node_id || '') !== (row.node_id || '')) break;
+      row = next;
+    }
+    return row.uid;
+  }));
+  const hit = (matches.length === 1 ? matches[0]
+    : current.size === 1 ? byUid.get(current.values().next().value) : null)
+    || S.sessions.find(s => s.uid === spec);
+  return hit ? hit.uid : null;
+}
+function agentOfDeepLink(spec) {
+  if (!spec) return null;
+  const cut=spec.indexOf(':');
+  const source=cut>0 ? spec.slice(0,cut) : null;
+  const id=cut>0 ? spec.slice(cut+1) : spec;
+  const matches=S.sessions.filter(s=>(!source || s.source===source) && (!deepNode() || s.node_id===deepNode()))
+    .flatMap(s=>(s.agent_items || []).filter(a=>a.id===id).map(a=>({uid:s.uid,agent:a.id})));
+  return matches.length===1 ? matches[0] : null;
+}
+function routeSession(spec) {
+  const marker = spec.indexOf('/agent:');
+  if (marker >= 0) {
+    const uid = uidOfDeepLink(spec.slice(0, marker));
+    const id = spec.slice(marker + 7);
+    const item = S.sessions.find(s => s.uid === uid)?.agent_items?.find(a => a.id === id || a.id === 'agent-' + id);
+    return uid && item ? {uid, agent: item.id} : null;
+  }
+  const uid = uidOfDeepLink(spec);
+  return uid ? {uid, agent: null} : agentOfDeepLink(spec);
+}
+addEventListener('popstate', () => {
+  const route = routeSession(new URL(location.href).searchParams.get('sid') || '');
+  if (route) openSession(route.uid, route.agent, {exact: true, historyMode: 'none'});
+});
+// index.html 在首帧前就按上次停留的页面进了手机会话页；列表回来前先占位，
+// 恢复不了（列表失败、会话已不在）时退回列表，不写 mobilePage，下次刷新照旧恢复。
+if (document.body.classList.contains('mobile-detail') && !S.sel) {
+  $('#detail').innerHTML = '<div class="spin">正在读取会话…</div>';
+}
+function leaveBootDetail() {
+  if (S.sel || !document.body.classList.contains('mobile-detail')) return;
+  document.body.classList.remove('mobile-detail');
+  $('#detail').innerHTML = '<div class="empty">从左侧选择一个会话</div>';
+  layoutHeader();
+}
+loadSessions(false).then(async ok => {
+  if (!ok) return leaveBootDetail();
+  const route = routeSession(DEEP_SID);
+  if (route) { openSession(route.uid, route.agent, {exact: true, historyMode: 'replace'}); return; }
+  const last = store.get('sel', null);       // 恢复上次看的会话
+  const savedAgent = store.get('agent', null);
+  const restoreDetail = !MOBILE.matches || store.get('mobilePage', 'list') === 'detail';
+  if (restoreDetail && last && S.sessions.some(s => s.uid === last)) {
+    openSession(last, savedAgent?.uid === last ? savedAgent.id : null);
+  } else if (restoreDetail && last?.startsWith('tmux:')) {
+    // New launches have no native history yet. Their durable identity comes
+    // from term/list, which can arrive after the native catalog on reload.
+    // app.js can receive its catalog before the later deferred term.js runs.
+    if (typeof T === 'undefined') await new Promise(resolve =>
+      document.addEventListener('DOMContentLoaded', resolve, {once: true}));
+    let request = T.listRequest || loadTermList();
+    do {
+      await request;
+      // Live polling may supersede an earlier request before it completes.
+      request = T.listRequest;
+    } while (request);
+    // A slow list must not undo navigation performed while it was loading.
+    if (S.sel || store.get('sel', null) !== last
+        || (MOBILE.matches && store.get('mobilePage', 'list') !== 'detail')) return;
+    // Use the receipt even if its native binding just appeared: the normal
+    // pending opener follows that binding and migrates the saved draft.
+    const pending = T.pending.find(row => pendingUid(row.name) === last)
+      || pendingTmuxSessions().find(row => row.uid === last);
+    if (pending) await openPendingSession(pending);
+    else leaveBootDetail();
+  } else leaveBootDetail();
+});
+
+
+/** Whole-group transfer preview. A confirmed local clone keeps its operation ID
+ * across uncertain responses; unsupported selections never use the local API. */
+function transferUnavailableReason(uid) {
+  return uid && sessionStoppable(uid) ? '会话正在运行，请先停止后再移动或复制整组。' : '';
+}
+function paintTransferAvailability(button, uid) {
+  const row = button?.closest('#item-menu')
+    ? sidebarSessions().find(session => session.uid === uid) : null;
+  const unavailable = button?.closest('#item-menu') && (!row || row.pending
+    || SessionDockCapabilities.config.session_clone_local_codex !== true);
+  setControlUnavailable(button, unavailable ? '此会话当前不支持移动或复制整组。' : transferUnavailableReason(uid));
+}
+async function cloneSessionGroup(uid, resumed = null) {
+  const reason = resumed ? '' : transferUnavailableReason(uid);
+  if (reason) {
+    const control = $('#item-menu:not([hidden]) [data-act="clone"]') || $('#a-clone-group');
+    paintTransferAvailability(control, uid); return;
+  }
+  closeSessionActions();
+  document.querySelector('#clone-group-dialog')?.remove();
+  const sourceId = nodeOf(uid);
+  const machines = new Map();
+  for (const node of [...Nodes.machines, ...Nodes.list]) machines.set(node.id, {...machines.get(node.id), ...node});
+  const sourceName = machines.get(sourceId)?.name || (HUB_MODE ? '来源机器' : '当前机器');
+  if (!machines.has(sourceId)) machines.set(sourceId, {id:sourceId, name:sourceName});
+  const dialog = document.createElement('dialog');
+  dialog.className = 'app-dialog transfer-dialog'; dialog.id = 'clone-group-dialog';
+  dialog.setAttribute('aria-labelledby', 'transfer-title');
+  dialog.innerHTML = `
+    <div class="transfer-head">
+      <div><h2 id="transfer-title">移动或复制会话组</h2></div>
+      <button class="transfer-close" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="transfer-body">
+      <div class="transfer-controls">
+        <label class="transfer-field"><span>源机器</span><input id="transfer-source" type="text" disabled></label>
+        <label class="transfer-field"><span>目标机器</span><select id="transfer-target"></select></label>
+        <fieldset class="transfer-mode"><legend>操作</legend><div class="transfer-segments">
+          <label><input type="radio" name="transfer-mode" value="clone" checked><span>复制</span></label>
+          <label><input type="radio" name="transfer-mode" value="move"><span>移动</span></label>
+        </div></fieldset>
+      </div>
+      <div class="transfer-identity" hidden>
+        <label><input id="transfer-new-ids" type="checkbox" checked><span>生成新 UID</span></label>
+      </div>
+      <p class="transfer-notice" role="status" hidden></p>
+      <p class="transfer-environment" role="status" hidden></p>
+      <div class="transfer-section-head"><h3>整组会话</h3><span class="clone-status" role="status">正在读取清单…</span></div>
+      <div class="transfer-table-scroll" tabindex="0" role="region" aria-label="整组会话清单">
+        <table class="clone-members"><thead><tr><th scope="col">会话</th><th scope="col">来源</th><th scope="col">关联</th><th scope="col" class="transfer-number">历史文件</th><th scope="col" class="transfer-number">大小</th></tr></thead>
+          <tbody><tr><td colspan="5" class="transfer-empty">正在检查关联会话和历史依赖…</td></tr></tbody></table>
+      </div>
+      <p class="transfer-progress" role="status" hidden></p>
+      <p class="transfer-error" role="alert" hidden></p>
+    </div>
+    <div class="transfer-footer"><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn transfer-abort" hidden>撤回本次移动</button><button type="button" class="btn primary clone-confirm" disabled>复制整组</button></div>`;
+  const $d = selector => dialog.querySelector(selector);
+  const target = $d('#transfer-target'), newIds = $d('#transfer-new-ids');
+  const confirm = $d('.clone-confirm'), status = $d('.clone-status');
+  const notice = $d('.transfer-notice'), error = $d('.transfer-error');
+  const radios = [...dialog.querySelectorAll('[name="transfer-mode"]')];
+  for (const node of machines.values()) {
+    const option = document.createElement('option');
+    option.value = node.id;
+    const unavailable = node.online === false || node.enabled === false;
+    option.textContent = node.name + (unavailable ? ' · 不可用' : '');
+    option.disabled = unavailable && node.id !== sourceId;
+    target.append(option);
+  }
+  target.value = sourceId;
+  $d('#transfer-source').value = sourceName;
+  let plan = resumed?.plan || null, busy = false, planning = false, uncertain = !!resumed;
+  let operationStarted = !!resumed, progressTimer = null, progressLoading = false, aborting = false, executionSequence = 0;
+  let environmentLoading = false, environmentSequence = 0;
+  const environmentClients = new Map();
+  const identityChoices = {clone:true, move:false};
+  if (resumed) {
+    if (!machines.has(resumed.request.target_node)) {
+      const option = document.createElement('option'); option.value = resumed.request.target_node;
+      option.textContent = '目标机器不可用'; option.disabled = true; target.append(option);
+    }
+    target.value = resumed.request.target_node;
+    radios.forEach(r => r.checked = r.value === plan.mode);
+    identityChoices[plan.mode] = plan.new_ids;
+  }
+  const mode = () => radios.find(r => r.checked).value;
+  const crossMachine = () => target.value !== sourceId;
+  const blockedReason = () => {
+    const destination = machines.get(target.value);
+    if (!destination || destination.online === false || destination.enabled === false) return '目标机器当前不可用。';
+    if (machines.get(sourceId)?.online === false) return '源机器已离线。';
+    if (crossMachine()) {
+      if (SessionDockCapabilities.config[mode() === 'move' ? 'session_move_remote' : 'session_clone_remote'] !== true) return '跨机器传输尚未接入。';
+      return '';
+    }
+    if (mode() === 'move') return '移动需要选择另一台机器。';
+    return '';
+  };
+  const renderSelection = () => {
+    const cross = crossMachine(), moving = mode() === 'move';
+    $d('.transfer-identity').hidden = !cross;
+    newIds.checked = identityChoices[mode()];
+    const reason = blockedReason(); notice.textContent = reason; notice.hidden = !reason;
+    confirm.textContent = aborting ? '正在撤回…' : busy && operationStarted ? (moving ? '正在移动…' : '正在复制…') : uncertain ? (moving ? '重试同一次移动' : '重试同一次复制') : moving ? '移动整组' : '复制整组';
+    confirm.disabled = busy || planning || aborting || environmentLoading || !plan || !!reason;
+    // Keep the chosen operation fixed while its publication result is uncertain.
+    target.disabled = busy || aborting || uncertain;
+    for (const radio of radios) radio.disabled = busy || aborting || uncertain;
+    newIds.disabled = busy || aborting || uncertain;
+    $d('.transfer-abort').hidden = !uncertain && !(busy && operationStarted);
+    $d('.transfer-abort').textContent = moving ? '撤回本次移动' : '取消本次复制';
+    $d('.clone-cancel').disabled = aborting;
+    $d('.transfer-close').disabled = aborting;
+    $d('.transfer-abort').disabled = aborting;
+    dialog.setAttribute('aria-busy', String(busy));
+  };
+  target.onchange = () => {renderSelection(); refreshEnvironment();};
+  radios.forEach(r => r.onchange = renderSelection);
+  newIds.onchange = () => {identityChoices[mode()] = newIds.checked; renderSelection();};
+  const close = () => {clearInterval(progressTimer); dialog.close(); dialog.remove(); refreshTransferTasks();};
+  const cancelAndClose = () => cancelTransfer(true);
+  $d('.transfer-close').onclick = cancelAndClose; $d('.clone-cancel').onclick = cancelAndClose;
+  dialog.addEventListener('cancel', e => {e.preventDefault(); cancelAndClose();});
+  document.body.appendChild(dialog); renderSelection(); dialog.showModal(); target.focus();
+  const request = async (path, body) => {
+    const response = await fetch(appUrl(path), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const data = await response.json();
+    if (!response.ok) throw Object.assign(new Error(data.error?.message || data.error || '操作失败'), {code:data.code});
+    return data;
+  };
+  async function discardPreview(previous) {
+    if (previous) await request('api/session/clone/cancel', {uid, operation_id:previous.operation_id});
+  }
+  async function cancelTransfer(closing = false) {
+    if (aborting) return;
+    if (!plan) { if (closing) close(); return; }
+    ++executionSequence; aborting = true; busy = true; error.hidden = true; renderSelection();
+    try {
+      const result = operationStarted && HUB_MODE
+        ? await request('api/session/transfer/cancel', {uid, operation_id:plan.operation_id, target_node:target.value})
+        : await request('api/session/clone/cancel', {uid, operation_id:plan.operation_id});
+      uncertain = false; operationStarted = false; plan = null; busy = false;
+      $d('.transfer-progress').hidden = true; refreshTransferTasks();
+      if (closing || result.phase === 'complete') {close(); await loadSessions(true);}
+      else await refreshPlan();
+    } catch (failure) {
+      uncertain = operationStarted;
+      if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
+    } finally {aborting = false; busy = false; if (dialog.isConnected) renderSelection();}
+  }
+  $d('.transfer-abort').onclick = () => cancelTransfer();
+  const renderMembers = data => {
+    const members = new Map();
+    for (const member of data.sessions) {
+      const key = `${member.source}:${member.sid}`;
+      if (!members.has(key)) members.set(key, {...member, files:0, bytes:0, selected:false, relations:new Set()});
+      const row = members.get(key);
+      row.files += member.file_count ?? 1; row.bytes += member.bytes ?? 0;
+      row.selected ||= member.uid === uid;
+      if (member.uid === uid) {row.title = member.title; row.cwd = member.cwd;}
+      for (const relation of member.relations || []) row.relations.add(relation);
+    }
+    const body = $d('.clone-members tbody'); body.replaceChildren();
+    const ordered = [...members.values()].sort((a,b) => Number(b.selected)-Number(a.selected) || Number(a.agent)-Number(b.agent));
+    for (const member of ordered) {
+      const tr = document.createElement('tr'); if (member.selected) tr.className = 'transfer-selected';
+      const title = document.createElement('td');
+      const name = document.createElement('div'); name.className = 'transfer-session-name'; name.textContent = member.title || member.sid; name.title = name.textContent;
+      title.append(name);
+      const detail = document.createElement('div'); detail.className = 'transfer-session-detail'; detail.textContent = member.cwd || member.sid; detail.title = `${member.sid}${member.cwd ? '\n'+member.cwd : ''}`; title.append(detail);
+      const source = document.createElement('td'); source.textContent = {codex:'Codex',claude:'Claude',grok:'Grok'}[member.source] || member.source;
+      const relation = document.createElement('td');
+      const badge = document.createElement('span'); badge.className = 'transfer-badge';
+      badge.textContent = member.selected ? '所选会话' : member.agent ? '子代理' : member.relations.has('fork') ? '分支关联' : '关联历史';
+      relation.append(badge);
+      const files = document.createElement('td'); files.className = 'transfer-number'; files.textContent = String(member.files);
+      const bytes = document.createElement('td'); bytes.className = 'transfer-number'; bytes.textContent = fmtSize(member.bytes);
+      tr.append(title,source,relation,files,bytes); body.append(tr);
+    }
+    status.textContent = `整组 ${data.session_count} 个会话 · ${data.file_count} 份历史 · ${fmtSize(data.bytes)}`;
+  };
+  async function refreshEnvironment() {
+    const sequence = ++environmentSequence;
+    const note = $d('.transfer-environment');
+    if (!plan) {environmentLoading = false; note.hidden = true; renderSelection(); return;}
+    const destinationId = target.value, currentPlan = plan;
+    const clients = id => {
+      if (!environmentClients.has(id)) environmentClients.set(id, (async () => {
+        try {
+          const path = HUB_MODE ? `api/nodes/${id}/api/clients` : 'api/clients';
+          const response = await fetch(appUrl(path), {cache:'no-store', signal:AbortSignal.timeout(20000)});
+          const data = await response.json();
+          if (!response.ok || !Array.isArray(data.clients)) throw new Error('clients unavailable');
+          return data.clients;
+        } catch {return null;}
+      })());
+      return environmentClients.get(id);
+    };
+    environmentLoading = true; note.hidden = false; note.textContent = '正在核对目标 CLI…'; note.title = '';
+    renderSelection();
+    const [sourceClients, targetClients] = await Promise.all([clients(sourceId), clients(destinationId)]);
+    if (!dialog.isConnected || sequence !== environmentSequence) return;
+    const messages = [], cross = destinationId !== sourceId;
+    if (!targetClients) messages.push('未核验目标 CLI');
+    if (cross && !sourceClients) messages.push('未核验源 CLI 版本');
+    for (const provider of new Set(currentPlan.sessions.map(member => member.source))) {
+      const name = SOURCES[provider]?.name || provider;
+      const installed = (targetClients || []).filter(client => client.source === provider && client.installed);
+      if (targetClients && !installed.length) {messages.push(`目标未配置可用的 ${name} CLI`); continue;}
+      if (!cross || !targetClients || !sourceClients) continue;
+      const versions = rows => rows.map(client => client.version).filter(version => typeof version === 'string' && /^\d+(?:\.\d+)+/.test(version));
+      const targetVersions = versions(installed);
+      const sourceVersions = versions(sourceClients.filter(client => client.source === provider && client.installed));
+      if (!targetVersions.length || !sourceVersions.length) messages.push(`未核验 ${name} 版本差异`);
+      else if (targetVersions.some(to => sourceVersions.some(from => compareVersions(to, from) < 0))) messages.push(`目标 ${name} 存在较旧版本`);
+    }
+    const tools = Array.isArray(currentPlan.dynamic_tools) ? currentPlan.dynamic_tools : [];
+    if (!Array.isArray(currentPlan.dynamic_tools)) messages.push('未核验动态工具依赖');
+    if (tools.length) messages.push(`${tools.length} 个动态工具执行器未核验`);
+    note.textContent = messages.join('；'); note.title = tools.join('、'); note.hidden = !messages.length;
+    environmentLoading = false; renderSelection();
+  }
+  async function refreshPlan(executing = false) {
+    if ((!executing && busy) || planning || uncertain || (mode() === 'move' && !crossMachine())) return;
+    const fresh = !crossMachine() || identityChoices[mode()];
+    const selectedMode = mode();
+    if (plan && plan.new_ids === fresh && plan.mode === selectedMode) return true;
+    const previous = plan;
+    planning = true; plan = null; error.hidden = true; renderSelection();
+    status.textContent = '正在读取清单…';
+    try {
+      const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode});
+      if (!fresh && next.new_ids !== false) throw new Error('源机器版本尚不支持保留 UID，请更新节点');
+      if (selectedMode === 'move' && next.mode !== 'move') throw new Error('源机器版本尚不支持移动，请更新节点');
+      if (previous && previous.operation_id !== next.operation_id) await discardPreview(previous);
+      if (!dialog.isConnected) {await discardPreview(next); return false;}
+      plan = next;
+      if (dialog.isConnected) {renderMembers(plan); refreshEnvironment();}
+      return true;
+    } catch (failure) {
+      plan = previous;
+      if (dialog.isConnected) {
+        status.textContent = '清单读取失败';
+        error.textContent = failure.message; error.hidden = false;
+      }
+      return false;
+    } finally {planning = false; if (dialog.isConnected) renderSelection();}
+  }
+  const paintProgress = data => {
+    const progress = $d('.transfer-progress');
+    progress.hidden = false; progress.textContent = transferPhaseLabel(data);
+    progress.dataset.phase = data.phase;
+  };
+  if (resumed) {
+    renderMembers(plan); paintProgress(resumed); renderSelection();
+    refreshEnvironment();
+    if (resumed.error) {error.textContent = resumed.error; error.hidden = false;}
+  } else await refreshPlan();
+  const pollProgress = async () => {
+    if (!dialog.isConnected) {clearInterval(progressTimer); return;}
+    if (!plan || progressLoading) return;
+    const id = plan.operation_id;
+    progressLoading = true;
+    try {
+      const data = await request(operationStarted && HUB_MODE ? 'api/session/transfer/progress' : 'api/session/clone/progress', {uid, operation_id:id, target_node:target.value});
+      if (operationStarted && dialog.isConnected && plan?.operation_id === id) {
+        paintProgress(data);
+        if (!busy && !aborting && uncertain && data.phase === 'aborted') {
+          uncertain = false; operationStarted = false; plan = null;
+          await refreshPlan();
+        }
+      }
+    } catch { /* The execution response reports actionable errors. */ }
+    finally {progressLoading = false;}
+  };
+  progressTimer = setInterval(pollProgress, 1000);
+  confirm.onclick = async () => {
+    if (busy || planning || aborting || !plan || blockedReason()) return;
+    busy = true; error.hidden = true; renderSelection();
+    const prepared = uncertain || await refreshPlan(true);
+    if (!prepared || !plan || !dialog.isConnected) {busy = false; if (dialog.isConnected) renderSelection(); return;}
+    const execution = ++executionSequence;
+    operationStarted = true; error.hidden = true; renderSelection();
+    if (HUB_MODE) paintProgress({phase:'planned'});
+    try {
+      const result = await request(crossMachine() ? 'api/session/transfer/clone' : 'api/session/clone', {
+        uid, operation_id:plan.operation_id, ...(crossMachine() ? {target_node:target.value} : {}),
+      });
+      if (execution !== executionSequence) return;
+      if (result.phase !== 'complete' || !result.target_uid) throw new Error('复制未完成，请重试检查结果');
+      close(); await loadSessions(true); await openSession(result.target_uid);
+      showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
+    } catch (failure) {
+      if (execution !== executionSequence) return;
+      uncertain = failure.code !== 'move_cancelled';
+      if (!uncertain) {operationStarted = false; plan = null; busy = false; $d('.transfer-progress').hidden = true; await refreshPlan();}
+      if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
+    } finally {if (execution === executionSequence) {busy = false; if (dialog.isConnected) renderSelection();} refreshTransferTasks();}
+  };
+}
+
+
+function transferPhaseLabel(task) {
+  const labels = {planned:'准备迁移', preparing:'整理会话文件', checking:'检查目标目录与会话依赖', transferring:'传输历史', publishing:'发布历史', verifying:'验证历史与关系',
+    failed:'复制失败，可重试', rollback_required:'恢复待处理',
+    switching:'交接执行归属', releasing:'确认完成', retiring:'清理源端',
+    cleanup_pending:'源端清理待重试', aborting:'撤回待完成', aborted:'已撤回', complete:'已完成'};
+  let label = labels[task.phase] || '等待继续';
+  if (task.phase === 'transferring' && task.bytes_total > 0)
+    label += ` · ${fmtSize(task.bytes_sent)} / ${fmtSize(task.bytes_total)}`;
+  return label;
+}
+let transferTasksLoading = false;
+async function refreshTransferTasks() {
+  if (!HUB_MODE || transferTasksLoading) return;
+  transferTasksLoading = true;
+  try {
+    const response = await fetch(appUrl('api/session/transfers'));
+    if (!response.ok) return;
+    const {operations} = await response.json();
+    const button = $('#transfer-tasks');
+    button.hidden = operations.length === 0;
+    button.querySelector('.transfer-task-count').textContent = String(operations.length);
+    layoutHeader();
+    const panel = $('#transfer-tasks-dialog');
+    if (!panel) return;
+    const tbody = panel.querySelector('tbody');
+    const name = id => [...Nodes.machines, ...Nodes.list].find(n => n.id === id)?.name || '离线机器';
+    // Keep controls stable while the user is focusing or clicking a task.
+    const signature = JSON.stringify(operations);
+    if (panel._tasksSignature === signature) return;
+    panel._tasksSignature = signature;
+    tbody.replaceChildren();
+    for (const task of operations) {
+      const row = document.createElement('tr'); row.dataset.operation = task.request.operation_id;
+      const title = document.createElement('td');
+      title.textContent = task.plan?.sessions?.find(m => m.uid === task.request.uid)?.title || '会话组';
+      const nodes = document.createElement('td');
+      nodes.textContent = `${name(nodeOf(task.request.uid))} → ${name(task.request.target_node)}`;
+      const phase = document.createElement('td'); phase.textContent = transferPhaseLabel(task);
+      const action = document.createElement('td'), open = document.createElement('button');
+      open.className = 'btn'; open.textContent = '继续处理';
+      open.onclick = async () => {
+        open.disabled = true;
+        try {
+          const response = await fetch(appUrl('api/session/transfer/progress'), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(task.request)});
+          const data = await response.json();
+          if (!response.ok || !data.plan) throw new Error(data.error?.message || data.error || '清单暂不可用');
+          panel.close(); panel.remove();
+          await cloneSessionGroup(task.request.uid, data);
+        } catch (failure) {
+          const error = panel.querySelector('.transfer-error'); error.textContent = failure.message; error.hidden = false;
+        } finally {open.disabled = false;}
+      };
+      action.append(open); row.append(title,nodes,phase,action); tbody.append(row);
+    }
+    if (!operations.length) {
+      const row = document.createElement('tr'), cell = document.createElement('td');
+      cell.colSpan = 4; cell.textContent = '没有未完成的操作'; row.append(cell); tbody.append(row);
+    }
+  } catch (error) {console.warn('迁移任务读取失败', error);}
+  finally {transferTasksLoading = false;}
+}
+$('#transfer-tasks').onclick = () => {
+  $('#transfer-tasks-dialog')?.remove();
+  const panel = document.createElement('dialog'); panel.id = 'transfer-tasks-dialog'; panel.className = 'app-dialog transfer-dialog';
+  panel.setAttribute('aria-labelledby','transfer-tasks-title');
+  panel.innerHTML = `<div class="transfer-head"><h2 id="transfer-tasks-title">未完成的移动与复制</h2><button class="transfer-close" aria-label="关闭">×</button></div>
+    <div class="transfer-body"><div class="transfer-table-scroll"><table class="transfer-tasks-table"><thead><tr><th>会话</th><th>机器</th><th>阶段</th><th></th></tr></thead><tbody></tbody></table></div><p class="transfer-error" hidden></p></div>`;
+  const close = () => {panel.close(); panel.remove();};
+  panel.querySelector('.transfer-close').onclick = close;
+  panel.addEventListener('cancel', e => {e.preventDefault(); close();});
+  document.body.append(panel); panel.showModal(); refreshTransferTasks();
+};
+if (HUB_MODE) {
+  refreshTransferTasks();
+  setInterval(() => {if (!document.hidden) refreshTransferTasks();}, 5000);
+}

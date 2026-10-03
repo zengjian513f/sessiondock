@@ -26,6 +26,7 @@ from urllib.parse import urlencode
 from urllib.request import ProxyHandler, build_opener
 
 from provider_parity import MAX_RESPONSE_BYTES, NoRedirects, api, compare, load_adapters, normalized
+from frontend_paths import frontend_dir
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -507,7 +508,7 @@ def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Pat
         port = reservation.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
     environment.update({"SESSIONDOCK_BIND": f"127.0.0.1:{port}",
-                        "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web")})
+                        "SESSIONDOCK_WEB_DIR": str(frontend_dir())})
     if state_dir is not None:
         assert state_dir.resolve().is_relative_to(corpus.root.resolve())
         environment["SESSIONDOCK_STATE_DIR"] = str(state_dir)

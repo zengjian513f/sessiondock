@@ -18,6 +18,7 @@ import time
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
+from frontend_paths import frontend_dir
 from playwright.sync_api import sync_playwright, expect
 
 from history_parity import REPO, BINARY, Corpus, isolated_server
@@ -122,7 +123,7 @@ def check_browser(browser, root, config):
 
         hub = Hub(REPO / "target/debug/sessiondock-hub", root / "hub", [node])
         web = root / "hub-web"
-        shutil.copytree(REPO / "legacy-web", web)
+        shutil.copytree(frontend_dir(), web)
         hub.env["SESSIONDOCK_WEB_DIR"] = str(web)
         hub.start()
         try:

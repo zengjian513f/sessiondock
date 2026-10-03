@@ -18,6 +18,7 @@ from urllib.request import urlopen
 
 from playwright.sync_api import sync_playwright, expect
 from popups import on_popup  # noqa: E402
+from frontend_paths import frontend_dir
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -37,6 +38,7 @@ def main():
             port = reservation.getsockname()[1]
         base = f"http://127.0.0.1:{port}"
         environment.update({"SESSIONDOCK_BIND": f"127.0.0.1:{port}",
+            "SESSIONDOCK_WEB_DIR": str(frontend_dir()),
             "SESSIONDOCK_CLAUDE_ROOT": str(data / "claude"),
             "SESSIONDOCK_CODEX_ROOT": str(data / "codex"),
             "SESSIONDOCK_GROK_ROOT": str(data / "grok")})
