@@ -212,6 +212,8 @@ pub struct PageQuery {
     cursor: String,
     #[serde(default)]
     agent: String,
+    resume: Option<String>,
+    next: Option<usize>,
 }
 struct PageBody {
     bytes: Bytes,
@@ -283,7 +285,13 @@ pub async fn history_page(
     query: Result<Query<PageQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
     page_response(state, query, move |store, resources, query| {
-        let grant = resources.pages.lookup(&query.cursor, &uid, &query.agent)?;
+        let grant = resources.pages.lookup_or_resume(
+            &query.cursor,
+            &uid,
+            &query.agent,
+            query.resume.as_deref(),
+            query.next,
+        )?;
         store.snapshot(&uid, &query.agent)?.history_page_body(
             grant,
             &query.cursor,

@@ -278,6 +278,19 @@ Malformed tokens return 400, a wrong UID/agent 403, unknown/evicted tokens 404,
 and an expired token still present in the store 410. Expired tokens already
 purged return 404. Restart loses all grants.
 
+Opening windows also include `partial.resume`, a read-only descriptor carrying
+the canonical UID, exact agent, original `start/head/anchor`, `stop` and event
+`total`. The UI retains it across page loads and appends, and supplies it as JSON
+in the page request's `resume` query with `next=partial.head`. Only a missing or
+expired grant uses this fallback. The current selected view still validates the
+complete original checkpoint and event count/range before returning a bounded
+page. Wrong scope remains 403 and a changed timeline remains 409. This descriptor
+grants no additional read, file or terminal authority; normal route authentication
+and session selection apply. Cache eviction, expiration and Web restart therefore
+do not prevent filling an unchanged history gap, including a partially loaded
+gap with a newer live tail. Older clients without the descriptor retain the
+explicit reload behavior. Page requests also emit browser HTTP audit events.
+
 The UI keeps its current history on failure and offers retry or an explicit
 bounded reload. It does not silently clear history or request unbounded history
 after a stale, evicted or expired grant. Responses from an old view/reset are
