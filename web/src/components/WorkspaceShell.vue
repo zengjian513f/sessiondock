@@ -72,36 +72,7 @@ defineProps<{ hostname: string }>()
       <div id="right">
       <div id="detail"><div class="empty">从左侧选择一个会话</div></div>
       <div id="composer-root"></div>
-      <div id="termpane" class="hidden">
-        <div class="term-resizer" id="tgrip" title="拖动终端上边界调整高度"></div>
-        <span id="term-ctrl-lock" role="status">Ctrl（下一键）</span>
-        <div id="xterm"></div>
-        <div id="term-output-notice" role="status" hidden></div>
-        <div id="term-timeline" class="term-timeline" aria-label="录制回放进度">
-          <span id="tl-status" role="status">会话已结束 · 只读回放</span>
-          <button type="button" id="tl-play" title="播放" aria-label="播放">▶</button>
-          <div class="tl-track">
-            <input type="range" id="tl-seek" min="0" max="1000" value="1000" step="1" aria-label="回放进度">
-            <div id="tl-ticks" aria-hidden="true"></div>
-          </div>
-          <span id="tl-time">00:00 / 00:00</span>
-          <select id="tl-speed" aria-label="倍速"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option><option value="16">16×</option></select>
-          <button type="button" id="tl-live" title="跳到最新并跟随" aria-label="跳到最新并跟随" hidden>最新</button>
-        </div>
-        <div class="term-keys" aria-label="终端快捷键">
-          <button data-term-modifier="ctrl" title="Ctrl（下一键生效）" aria-label="Ctrl，下一键生效" aria-pressed="false">Ctrl</button>
-          <button data-term-modifier="alt" title="Alt（下一键生效）" aria-label="Alt，下一键生效" aria-pressed="false">Alt</button>
-          <button data-term-modifier="shift" title="Shift 选字：开启后拖动选择文字，绕过 CLI 鼠标捕获；再次点击关闭" aria-label="Shift，锁定本地选字" aria-pressed="false">Shift</button>
-          <button data-term-key="Escape" title="Escape" aria-label="Escape">Esc</button>
-          <button data-term-key="Tab" title="Tab" aria-label="Tab">Tab</button>
-          <button data-term-key="Left" title="方向键左" aria-label="方向键左">←</button>
-          <button data-term-key="Up" title="方向键上" aria-label="方向键上">↑</button>
-          <button data-term-key="Down" title="方向键下" aria-label="方向键下">↓</button>
-          <button data-term-key="Right" title="方向键右" aria-label="方向键右">→</button>
-          <button data-term-key="PPage" title="Page Up" aria-label="Page Up">Pg↑</button>
-          <button data-term-key="NPage" title="Page Down" aria-label="Page Down">Pg↓</button>
-        </div>
-      </div>
+      <div id="terminal-root"></div>
     </div>
   </main>
 </template>
