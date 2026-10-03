@@ -41,20 +41,8 @@ def import_oracle_module(source: Path, leaf: str):
 
 
 def discover_source(workspace: Path) -> Path:
-    """Find the unique sibling checkout that exposes the comparison adapters."""
-    workspace = Path(workspace).resolve()
+    """Use an explicitly configured backup; never scan sibling projects."""
     configured = os.environ.get("SESSIONDOCK_PYTHON_SOURCE")
     if configured:
         return Path(configured).expanduser().resolve()
-    candidates = []
-    for child in workspace.parent.iterdir():
-        if not child.is_dir() or child.resolve() == workspace:
-            continue
-        try:
-            package_dir(child, ("adapters.py", "media.py", "federation.py"))
-        except (OSError, RuntimeError):
-            continue
-        candidates.append(child.resolve())
-    if len(candidates) == 1:
-        return candidates[0]
-    return workspace.parent / "python-oracle"
+    return Path(workspace).resolve().parent / "python-oracle"

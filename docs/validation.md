@@ -74,9 +74,9 @@ checks; no unit test is added or enabled by this migration.
 - Python with `playwright` installed; child suites use the runner's interpreter
 - Playwright Chromium installed under `~/.cache/ms-playwright/chromium-*` via
   `PLAYWRIGHT_CHROMIUM_EXECUTABLE` (unset: highest `chromium-*` under that cache)
-- One sibling Python oracle checkout containing an adapter package, or an
-  explicit `SESSIONDOCK_PYTHON_SOURCE`/`--python-source PATH`; when none can be
-  resolved, oracle-dependent suites are skipped instead of failing
+- An explicitly supplied backup oracle checkout via
+  `SESSIONDOCK_PYTHON_SOURCE`/`--python-source PATH`; sibling projects are not
+  searched. Without a checkout, oracle-dependent suites are skipped
 
 Rules that never change: synthetic fixtures copied into temporary directories;
 loopback listeners only; suites that drive a real CLI as the system under test
@@ -339,7 +339,7 @@ Frontend performance regressions also run as ordinary browser suites:
    except `run_validation.py`, `provider_parity.py`, and `*_benchmark.py`.
 3. `*_parity.py` and suites taking `--python-source` are oracle suites, outside
    the default plan. When selected they get `--python-source` from the explicit
-   setting or the unique structurally discovered sibling oracle checkout;
+   setting or `SESSIONDOCK_PYTHON_SOURCE`; no sibling checkout is discovered;
    otherwise the suite is SKIP.
 4. If argparse text contains `--browser`, `--browser` is appended.
 5. If argparse text contains `--binary`, `--binary target/release/sessiondock`
@@ -364,9 +364,9 @@ into the repo, native homes, or production paths.
 | real_roots_bench | `python3 tests/real_roots_bench.py --claude-root … --codex-root … --grok-root … --binary target/release/sessiondock --open 20 --i-understand-this-reads-real-histories` | Operator-only read-only benchmark on a separate loopback server; checks latency, RSS, and unchanged roots. | binary, real roots | n/a |
 | bench_polls_real | `python3 tests/bench_polls_real.py --claude-root … --codex-root … --grok-root … [--codex-index …] --binary … --ptyhost target/release/ptyhost --hosts 26 --label after --i-understand-this-reads-real-histories` | Operator-only, read-only roots, scratch state/host/lifecycle: medians of 5 for `/api/sessions`, `?sig=`, `/api/live`, `/api/term/list`, eight concurrent lists, the `force=1` paths and the browser cadence, plus VmRSS, with `--hosts` free-shell ptyhost instances it creates and kills; run once per binary to compare ([performance.md](performance.md#轮询路径最终响应缓存2026-09-15)) | binary, ptyhost, real roots | n/a |
 | agent_active_real_check | `python3 tests/agent_active_real_check.py --rust http://127.0.0.1:8741 --python-source PATH --i-understand-this-reads-real-histories` | Operator, read-only: `agent_items[].active/created/updated` and `continued_in` of every real owner row vs the Python adapters in-process (`# run_validation: skip`; grok-4.6 headless draft, reviewed) | running server, python-source | n/a |
-| live_shadow_compare | `python3 tests/live_shadow_compare.py --rust http://127.0.0.1:8741 --python http://127.0.0.1:8710` | Operator, GET-only: `/api/live` uids/tmux_uids/started_at of the Rust service vs the deployed Python service (`# run_validation: skip`; grok-4.6 headless draft, reviewed) | both services | 0s |
+| live_shadow_compare | `python3 tests/live_shadow_compare.py --rust http://127.0.0.1:8741 --python COMPARISON_URL` | Operator, GET-only: `/api/live` uids/tmux_uids/started_at of the Rust service vs a separately started comparison service (`# run_validation: skip`; grok-4.6 headless draft, reviewed) | both services | 0s |
 | spawn_real | `python3 tests/spawn_real.py --binary target/release/sessiondock` | Real CLI (`claude-haiku-4-5-20251001 --effort low` running `grok-4.6` low): a session spawned by another session is listed without an inferred sidebar parent by a Rust instance reading the real roots with the scan on; deletes exactly what it created (`# run_validation: skip` — operator run per batch: whether the haiku session actually executes the grok command is up to the model, so it is not a sweep gate; `--dry-run` prints the commands; grok-4.6 headless draft, reviewed) | claude, grok, binary | n/a |
-| cutover_drill | `python3 tests/cutover_drill.py --binary target/release/sessiondock --ptyhost target/debug/ptyhost` | Operator-only cutover rehearsal in a temporary directory; checks PTY survival and untouched fake Python data. | binary, ptyhost | n/a |
+| cutover_drill | `python3 tests/cutover_drill.py --binary target/release/sessiondock --ptyhost target/debug/ptyhost` | Operator-only cutover rehearsal in a temporary directory; checks PTY survival and untouched synthetic legacy data. | binary, ptyhost | n/a |
 | unsupported_rows_report | `python3 tests/unsupported_rows_report.py --base http://127.0.0.1:8741` | Operator report over a running server's `/api/sessions`: `supported:false` rows grouped by fatal reason with examples, per-source totals, top non-fatal warnings; JSON only, never reads session files (`# run_validation: skip`; grok-4.6 headless draft, reviewed) | running server | 0s |
 
 本次单一附属关系改动的回归清单及对应浏览器路径见

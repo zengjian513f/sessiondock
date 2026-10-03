@@ -2,20 +2,19 @@
 
 ## Scope and boundaries
 
-- This is an independent repository. Do not modify the sibling Python project
-  or its deployment while working here unless the user explicitly requests it.
-- AgentHub is the name of the retired predecessor project, not a SessionDock
-  compatibility surface. No code, tests, configuration, static assets, or
-  frozen source references may contain `agent*hub` identifiers or branding.
-  Markdown may use the old name only where it is necessary for an accurate
-  historical description.
+- This is an independent repository. The predecessor Python project and its
+  deployment are retired; never require or restore them for ordinary development.
+- The retired predecessor is not a SessionDock compatibility surface. No code,
+  tests, configuration, static assets, or frozen source references may contain
+  its identifiers or branding. Historical Markdown and recorded benchmark
+  queries retain their original wording with an explicit historical context.
 - Production runs as user unit `sessiondock.service` under `/srv/sessiondock`,
   behind the authenticated `/sessiondock/` proxy. Its writable directories are
   private. Ordinary reads do not modify CLI roots; explicitly confirmed clone,
   move and trash operations may publish, move or clean native files under their
   contracts, preserving clone sources and minimum-change identity rewriting.
-  Do not stop Python or change proxy traffic
-  without an explicit request. See `docs/replacement-checklist.md`.
+  Ordinary releases preserve proxy routing; retirement maintenance requires an
+  explicit request. See `docs/replacement-checklist.md`.
 - Tests use loopback listeners and private runtime directories. This applies to
   test data, not source or deployment. Imported ptyhost retains
   its original default directory: always pass an explicit `--dir` when invoking
@@ -93,9 +92,10 @@
   authorization, native semantics or ptyhost protocol. See `docs/delegation.md`.
 - Delegated packages may use isolated worktrees. This never applies to ordinary
   fixes or deployments.
-- Target parity, not more: the backend should match the existing Python
-  backend or exceed it only slightly. The goal is replacing Python soon; do not
-  introduce extra rejection policies absent from Python.
+- Target parity with the frozen Python behavioral baseline, not more. The
+  production replacement is complete; do not introduce extra rejection policies
+  absent from that baseline. Oracle comparisons use an explicitly supplied
+  backup checkout and do not require a running predecessor service.
 
 ## Validation
 
