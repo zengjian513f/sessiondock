@@ -23,6 +23,8 @@ struct Document {
     /// Sent text the CLI has not echoed as a native record yet, per identity
     /// key, in send order (docs/cli-state.md).
     queued: BTreeMap<String, Vec<QueuedSend>>,
+    /// Native merged echoes already used to settle sends, surviving restarts.
+    merged_echoes: BTreeMap<String, HashSet<String>>,
 }
 /// One SEND the terminal accepted whose native user/command record has not
 /// been seen yet. `state` is `queued`, `interrupted` or `lost`.
@@ -420,8 +422,26 @@ impl Store {
             Ok(())
         })
     }
+    pub fn merged_echoes(&self, key: &str) -> HashSet<String> {
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .merged_echoes
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
+    }
     /// Removes the named sends; nothing is written when none of them is queued.
     pub fn retire_queued(&self, key: &str, request_ids: &[String]) -> Result<bool> {
+        self.retire_echoes(key, request_ids, &[])
+    }
+    /// Persist merged-echo consumption in the same write as queue retirement.
+    pub fn retire_echoes(
+        &self,
+        key: &str,
+        request_ids: &[String],
+        merged_echoes: &[String],
+    ) -> Result<bool> {
         let present = self
             .state
             .lock()
@@ -438,6 +458,12 @@ impl Store {
                 if rows.is_empty() {
                     doc.queued.remove(key);
                 }
+            }
+            if !merged_echoes.is_empty() {
+                doc.merged_echoes
+                    .entry(key.into())
+                    .or_default()
+                    .extend(merged_echoes.iter().cloned());
             }
             Ok(true)
         })

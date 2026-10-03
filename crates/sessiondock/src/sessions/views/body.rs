@@ -71,6 +71,7 @@ impl MessageBody {
                 .map(|at| at.timestamp_millis() as f64 / 1000.0);
             found.push(crate::conversation::cli_state::Echo {
                 hash: crate::conversation::cli_state::echo_hash(text),
+                text: text.to_owned(),
                 ts,
                 enqueue,
             });

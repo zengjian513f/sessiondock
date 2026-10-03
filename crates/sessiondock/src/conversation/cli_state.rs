@@ -425,6 +425,7 @@ impl super::Conversations {
                     } else if matches!(message["role"].as_str(), Some("user" | "command")) {
                         echoes.push(Echo {
                             hash: echo_hash(message["text"].as_str().unwrap_or("")),
+                            text: message["text"].as_str().unwrap_or("").to_owned(),
                             ts,
                             enqueue: false,
                         });
@@ -524,6 +525,7 @@ impl super::Conversations {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Echo {
     pub hash: String,
+    pub text: String,
     pub ts: Option<f64>,
     pub enqueue: bool,
 }

@@ -312,12 +312,82 @@ def main():
                 expect(bubble).to_have_count(0, timeout=15000)
                 queue_file.unlink()
                 expect(new_bubble).to_have_count(0, timeout=15000)
+                # BUG-20261003-231725-8dad6b: two sends become one native
+                # user message after Esc, including multiline Unicode input.
+                parts = ['第一条排队输入\n保留段落', '第二条排队输入']
+                combined = '\n'.join(parts)
+                queue_file.write_text('merge-first-two')
+                submissions = []
+                for text in parts * 2:
+                    page.locator('#cinput').fill(text)
+                    with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
+                        page.locator('#csend').click()
+                    assert sent.value.status == 200, sent.value.text()
+                    submissions.append(sent.value.request.post_data_json)
+                expect(bubbles).to_have_count(4)
+                # None of these are evidence for the complete ordered batch.
+                for role, text, stamp in [
+                        ('user', combined, '2020-01-01T00:00:00Z'),
+                        ('assistant', combined, None),
+                        ('user', '\n'.join(reversed(parts * 2)), None),
+                        ('user', combined + '\nextra native text', None)]:
+                    row = codex_message(role, text)
+                    row['timestamp'] = stamp or time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                    with rollout.open('a') as stream:
+                        stream.write(json.dumps(row) + '\n')
+                page.reload(wait_until='domcontentloaded')
+                page.locator(f'#side .item[data-uid="{uid}"]').click()
+                expect(bubbles).to_have_count(4, timeout=15000)
+                page.locator('#cesc').click()
+                expect(bubbles).to_have_count(2, timeout=15000)
+                # Re-reading the same echo must not acknowledge the second
+                # identical pair, even inside the timestamp tolerance window.
+                for _ in range(2):
+                    page.reload(wait_until='domcontentloaded')
+                    page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    expect(bubbles).to_have_count(2, timeout=15000)
+                    context.request.get(base + '/api/messages/' + uid)
+                persisted = json.loads(ledger.read_text())
+                assert sum(len(rows) for rows in persisted['merged_echoes'].values()) == 1, persisted
+                remaining = [r for rows in persisted['queued'].values() for r in rows]
+                assert [r['request_id'] for r in remaining] == [r['request_id'] for r in submissions[2:]], remaining
+                recovery_ledger = ledger.read_bytes()
+                recovery_rollout = rollout.read_bytes()
+                page.locator('#cesc').click()
+                expect(bubbles).to_have_count(0, timeout=15000)
+                assert [r['content'][0]['text'] for r in user_records(rollout)].count(combined) == 3  # old + two live echoes
+                replay = context.request.post(base + '/api/session/conversation/send', data=submissions[0])
+                assert replay.status == 200, replay.text()
+                page.reload(wait_until='domcontentloaded')
+                page.locator(f'#side .item[data-uid="{uid}"]').click()
+                expect(bubbles).to_have_count(0, timeout=15000)
+                persisted = json.loads(ledger.read_text())
+                assert all(not rows for rows in persisted['queued'].values()), persisted['queued']
+                assert sum(len(rows) for rows in persisted['merged_echoes'].values()) == 2
                 assert not errors, errors
                 context.close()
                 browser.close()
+            # Reopen a captured private fixture with a fresh server: the first
+            # merged echo was consumed but the identical second pair was not.
+            ledger.write_bytes(recovery_ledger)
+            rollout.write_bytes(recovery_rollout)
+            with isolated_server(corpus, BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
+                    launcher_config=launcher, state_dir=root / 'state',
+                    file_roots=(root / 'work',), file_write_roots=(root / 'work',)) as (base, _), sync_playwright() as pw:
+                browser = pw.chromium.launch(**options)
+                page = browser.new_page()
+                page.goto(base, wait_until='domcontentloaded')
+                page.locator(f'#side .item[data-uid="{uid}"]').click()
+                expect(page.locator('#queued-sends .queued-send')).to_have_count(2, timeout=15000)
+                fresh_echo = codex_message('user', combined)
+                fresh_echo['timestamp'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                with rollout.open('a') as stream:
+                    stream.write(json.dumps(fresh_echo) + '\n')
+                expect(page.locator('#queued-sends .queued-send')).to_have_count(0, timeout=15000)
+                browser.close()
         finally:
             cleanup_hosts(root)
-    print('PASS native Codex browser: built-in commands, resumed identity, TUI queues, duplicate/wrapped sends, native retirement, interrupted steer without echo, idle/old-abort negatives, persisted status, replay without resend, late echo')
+    print('PASS native Codex browser: built-in commands, resumed identity, TUI queues, duplicate/wrapped sends, native retirement, interrupted steer without echo, idle/old-abort negatives, persisted status, replay without resend, late echo, merged Esc echoes and replay isolation')
 
 
 if __name__ == '__main__':

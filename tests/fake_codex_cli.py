@@ -32,6 +32,7 @@ Options:
 """
 import json
 import os
+from pathlib import Path
 import select
 import sys
 import termios
@@ -435,6 +436,13 @@ class Fake:
                     if byte == b"\x1b":
                         if self.model_menu:
                             self.model_menu = False
+                            self.render()
+                        elif (self.queued and (queue_file := os.environ.get('SESSIONDOCK_TEST_QUEUE_FILE'))
+                              and Path(queue_file).read_text() == 'merge-first-two'):
+                            # Codex Esc flushes pending steers into one native user
+                            # record. Leave later input queued to check exact scope.
+                            self.record('\n'.join(self.queued[:2]))
+                            del self.queued[:2]
                             self.render()
                         elif os.environ.get('SESSIONDOCK_TEST_QUEUE_INTERRUPT') and (self.queued or getattr(self, 'steer_turn', None)):
                             # First Esc consumes the queue as a steer; second
