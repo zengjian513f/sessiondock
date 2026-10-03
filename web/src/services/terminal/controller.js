@@ -8,10 +8,11 @@ import { GridTerm } from '../../../../legacy-web/grid/facade.js';
  * @param {() => void} publish */
 export function createTerminalController(bridge, ui, publish) {
 const {APP_BASE, HUB_MODE, MOBILE, Nodes, SessionDockCapabilities, SessionDockNetwork, store, SOURCES, appUrl, applyNodeState, nodeOf, newNodeId, sessionTerminalEnabled, sessiondockCli} = bridge.environment;
-const {S, ConsoleUI, cache, forkAncestors, forkLeafUid, loadSessions, openSession, paintLive, pendingTmuxSessions, pendingUid, pollLive, sidebarSessions, trimCache, viewKey, deleteSessions} = bridge.sessions;
+const {state: sessionState, ConsoleUI, cache, forkAncestors, forkLeafUid, loadSessions, openSession, paintLive, pendingTmuxSessions, pendingUid, pollLive, sidebarSessions, trimCache, viewKey, deleteSessions} = bridge.sessions;
 const {composerDraft, consolePasteFiles, conversationSendEnabled, deleteComposerDraftStorage, followServerDraft, hydrateComposerDraft, migrateComposerDraft, pollComposerInput, recoverComposerDrafts, recoverServerComposerDrafts, renderComposer, renderComposerItems, sendToSession, syncComposerDraftBindings, syncComposerUnloadProtection} = bridge.composer;
-const {appAlert, appConfirm, auditDetailRendered, browserAuditEvent, ensureConsolePlaceholder, layoutHeader, renderChips, renderConversationTail, renderMachineSettings, renderPendingSessionAction, renderSide, renderTakeoverBtn, showConsoleToast, showMobileList, showNewSessionStage, showSessionCount, showSessionStopNotice} = bridge.presentation;
+const {appAlert, appConfirm, auditDetailRendered, browserAuditEvent, ensureConsolePlaceholder, layoutHeader, renderChips, renderConversationTail, renderMachineSettings, renderPendingSessionAction, renderSide, renderTakeoverBtn, showConsoleToast, showMobileList, showNewSessionStage, setPendingStage, showDetailState, showSessionCount, showSessionStopNotice} = bridge.presentation;
 const post = bridge.post;
+const fetch = bridge.fetch;
 const $ = selector => document.querySelector(selector);
 const el = (tag, cls = '', text = '') => { const node = document.createElement(tag); node.className = cls; node.textContent = text; return node; };
 'use strict';
@@ -416,13 +417,13 @@ async function fetchTermList() {
     T.sources = data.sources || {};
     T.resume_sources = data.resume_sources || {};
     T.home = data.home || '';
-    const hadSelected = String(S.sel || '').startsWith('tmux:')
-      && (T.pending || []).some(row => pendingUid(row.name) === S.sel);
+    const hadSelected = String(sessionState.selection.sel || '').startsWith('tmux:')
+      && (T.pending || []).some(row => pendingUid(row.name) === sessionState.selection.sel);
     T.pending = mergeUnavailableTermRows(data.pending || [], T.pending, data.errors);
-    if (hadSelected && !T.pending.some(row => pendingUid(row.name) === S.sel)
-        && !T.discarding.has(String(S.sel).slice(5))
-        && !(typeof pendingTmuxSessions === 'function' && pendingTmuxSessions().some(row => row.uid === S.sel)))
-      pendingSelectionGone(String(S.sel).slice(5));
+    if (hadSelected && !T.pending.some(row => pendingUid(row.name) === sessionState.selection.sel)
+        && !T.discarding.has(String(sessionState.selection.sel).slice(5))
+        && !(typeof pendingTmuxSessions === 'function' && pendingTmuxSessions().some(row => row.uid === sessionState.selection.sel)))
+      pendingSelectionGone(String(sessionState.selection.sel).slice(5));
     if (typeof recoverServerComposerDrafts === 'function') void recoverServerComposerDrafts();
     if (typeof syncComposerDraftBindings === 'function') syncComposerDraftBindings();
     if (SessionDockCapabilities.config.backend === 'rust') {
@@ -470,7 +471,7 @@ async function fetchTermList() {
       const view = T.views.get(name);
       const keepFinalOutput = (view?.ended || view?.retired)
         && ((T.name === name && !!ui.visible)
-          || (view?.keepOutput && termBindingServes(view.bindingUid, S.sel)));
+          || (view?.keepOutput && termBindingServes(view.bindingUid, sessionState.selection.sel)));
       if (replaced || (!valid.has(name) && !keepFinalOutput)) disposeTermView(name);
     }
     // tmux 结束后，对应的消息缓存才重新回到普通 LRU 容量池。
@@ -494,10 +495,10 @@ async function fetchTermList() {
   }
   renderTakeoverBtn();
   const after = fingerprint();
-  if (after !== before && S.sig && typeof renderSide === 'function') {
+  if (after !== before && sessionState.catalog.sig && typeof renderSide === 'function') {
     const side = $('#side'), top = side?.scrollTop || 0;
     renderChips();
-    if (!S.results) showSessionCount(sidebarSessions().length);
+    if (!sessionState.search.results) showSessionCount(sidebarSessions().length);
     renderSide();
     if (side) side.scrollTop = top;
     paintLive();
@@ -508,12 +509,12 @@ async function fetchTermList() {
   // the selected pending page still has to follow that association.
   if (SessionDockCapabilities.config.backend === 'rust')
     for (const row of T.pending) if (row.declared_sid || row.binding?.state === 'confirmed') resolveNewSession(row);
-  restoreTermPane(S.sel, S.agent);
-  if (String(S.sel || '').startsWith('tmux:')) refreshPendingStage(String(S.sel).slice(5));
+  restoreTermPane(sessionState.selection.sel, sessionState.selection.agent);
+  if (String(sessionState.selection.sel || '').startsWith('tmux:')) refreshPendingStage(String(sessionState.selection.sel).slice(5));
 }
 
 function sessionTermMeta(uid) {
-  return S.sessions.find(x => x.uid === uid)
+  return sessionState.catalog.sessions.find(x => x.uid === uid)
     || (typeof cache !== 'undefined' ? cache.get(viewKey(uid))?.meta : null)
     || null;
 }
@@ -687,7 +688,7 @@ function adoptLinkedTermSession(fromUid, linked, reason) {
 /** tmux 列表已指向新分支时，原子跟进当前详情与输入状态。 */
 async function rebindSelectedTermSession() {
   const fromUid = T.uid;
-  if (!fromUid || S.sel !== fromUid || S.agent
+  if (!fromUid || sessionState.selection.sel !== fromUid || sessionState.selection.agent
       || String(fromUid).startsWith('tmux:')) return false;
   const linked = linkedTermSession(fromUid, { followReplacement: true });
   if (!linked?.uid || linked.uid === fromUid) return false;
@@ -701,10 +702,10 @@ async function toggleLinkedTermSession(uid) {
   const linked = linkedTermSession(uid, { followReplacement: true });
   if (!linked) return false;
   const toUid = adoptLinkedTermSession(uid, linked, 'user-toggle');
-  if (toUid !== uid && S.sel === uid && !S.agent) {
+  if (toUid !== uid && sessionState.selection.sel === uid && !sessionState.selection.agent) {
     await openSession(toUid);
     // 读取新分支期间用户可能已经切到别处，不再抢回终端。
-    if (S.sel !== toUid || S.agent) return true;
+    if (sessionState.selection.sel !== toUid || sessionState.selection.agent) return true;
   } else {
     T.uid = toUid;
   }
@@ -748,8 +749,8 @@ async function takeover(uid, btn) {
       await loadTermList();
     }
     T.uid = uid;
-    S.live.add(uid);
-    S.liveTmux.add(uid);
+    sessionState.live.live.add(uid);
+    sessionState.live.liveTmux.add(uid);
     paintLive();
     ConsoleUI.errors.delete(uid);
     await openTermPane(d.name);
@@ -859,14 +860,14 @@ function pendingTitle(info) {
 }
 
 function refreshPendingStage(name) {
-  if (S.sel !== pendingUid(name)) return;
+  if (sessionState.selection.sel !== pendingUid(name)) return;
   const current = pendingSessionRow(name);
   if (!current) {
     renderPendingSessionAction({ name, source: 'shell' });
     return;
   }
   const wait = $('.new-session-wait');
-  if (wait) wait.textContent = pendingStageMessage(current);
+  if (wait) setPendingStage(pendingStageMessage(current));
   renderPendingSessionAction(current);
   if (bridge.composer.uid === pendingUid(name) && current.source !== 'shell'
       && ['exited', 'failed'].includes(current.state)
@@ -889,7 +890,7 @@ function pendingSelectionGone(name) {
   const info = T.pending.find(row => row.name === name) || { name };
   discardAbandonedNewSession(info);
   const detail = $('#detail');
-  if (detail && !S.sel) detail.innerHTML = '<div class="empty">该会话已被删除。</div>';
+  if (detail && !sessionState.selection.sel) showDetailState('empty','该会话已被删除。');
 }
 
 async function stopPendingSession(info, button, pending) {
@@ -902,9 +903,9 @@ async function stopPendingSession(info, button, pending) {
       if (result.error) throw new Error(result.error);
       const current = T.pending.find(row => row.record_id === info.record_id);
       if (current) Object.assign(current, result);
-      if (S.sel === pendingUid(info.name)) {
+      if (sessionState.selection.sel === pendingUid(info.name)) {
         const wait = $('.new-session-wait');
-        if (wait) wait.textContent = '正在停止…';
+        if (wait) setPendingStage('正在停止…');
       }
       await loadTermList();
     } catch (error) { await appAlert(error.message || '停止失败，请重试。'); }
@@ -955,7 +956,7 @@ async function discardPendingSession(info) {
 }
 
 /** SSH/shell receipts have no conversation archive; the PTY is the session. */
-function sessionIsPtyOnly(uid = S.sel) {
+function sessionIsPtyOnly(uid = sessionState.selection.sel) {
   if (!uid) return false;
   const row = [...(T.pending || []), ...(T.list || [])]
     .find(item => item.uid === uid || pendingUid(item.name) === uid);
@@ -966,7 +967,7 @@ function sessionIsPtyOnly(uid = S.sel) {
 /** A CLI whose conversation SessionDock cannot read yet (OpenCode) shows its
  *  replies only in the PTY: the console leads the page like SSH, while the
  *  composer keeps the CLI's own send path and input checks. */
-function sessionTerminalFirst(uid = S.sel) {
+function sessionTerminalFirst(uid = sessionState.selection.sel) {
   if (sessionIsPtyOnly(uid)) return true;
   if (!uid) return false;
   const row = [...(T.pending || []), ...(T.list || [])]
@@ -1002,8 +1003,8 @@ function discardAbandonedNewSession(info) {
   T.pending = (T.pending || []).filter(x => x.name !== info.name);
   T.list = (T.list || []).filter(x => x.name !== info.name);
   const sid = info.declared_sid;
-  if (sid && Array.isArray(S.sessions)) {
-    S.sessions = S.sessions.filter(session => String(session.sid) !== String(sid));
+  if (sid && Array.isArray(sessionState.catalog.sessions)) {
+    sessionState.catalog.sessions = sessionState.catalog.sessions.filter(session => String(session.sid) !== String(sid));
   }
   T.openViews.delete(info.name);
   store.set('termviews', [...T.openViews]);
@@ -1018,10 +1019,10 @@ function discardAbandonedNewSession(info) {
   if (bridge.composer.uid === uid) bridge.composer.uid = null;
   syncComposerUnloadProtection();
 
-  if (S.sel === uid) {
+  if (sessionState.selection.sel === uid) {
     const previousMode = T.pendingModes.get(info.name);
     if (['normal', 'collapsed', 'full'].includes(previousMode)) T.mode = previousMode;
-    S.sel = null;
+    sessionState.selection.sel = null;
     T.uid = null;
     store.set('sel', null);
     $('#composer').classList.add('hidden');
@@ -1055,11 +1056,11 @@ async function resolveNewSession(info) {
     // binding still names the exact native row, so follow that history even
     // when there is no terminal left to reopen.
     const nativeLinked = current?.binding?.state === 'confirmed'
-      && S.sessions.find(row => row.uid === current.binding.uid
+      && sessionState.catalog.sessions.find(row => row.uid === current.binding.uid
         && row.source === current.binding.source
         && String(row.sid) === String(current.binding.sid));
     const linked = terminalLinked || nativeLinked;
-    if (linked && S.sel === pendingId && !S.agent) {
+    if (linked && sessionState.selection.sel === pendingId && !sessionState.selection.agent) {
       migrateComposerDraft(pendingId, linked.uid);
       // The pending view holds a launch-kind lease and socket; the native
       // console claims a native lease on the same host, so release ours first.
@@ -1074,12 +1075,12 @@ async function resolveNewSession(info) {
       }
       T.uid = linked.uid;
       await openSession(linked.uid, null, {follow: true, historyMode: 'replace'});
-      if (S.sel === linked.uid && !S.agent && reopen && terminalLinked) await openTermPane(current.name);
+      if (sessionState.selection.sel === linked.uid && !sessionState.selection.agent && reopen && terminalLinked) await openTermPane(current.name);
       T.pendingModes.delete(info.name);
       paintLive();
       return;
     }
-    if (current && S.sel === pendingId && typeof refreshPendingStage === 'function')
+    if (current && sessionState.selection.sel === pendingId && typeof refreshPendingStage === 'function')
       refreshPendingStage(info.name);
     return;
   }
@@ -1109,32 +1110,32 @@ async function resolveNewSession(info) {
         const draft = bridge.composer.drafts.get(pendingId);
         if (draft && (draft.text || draft.attachments.length || draft.quotes.length)) {
           const wait = $('.new-session-wait');
-          if (wait && S.sel === pendingId) wait.textContent = 'CLI 已退出，输入已保留';
+          if (wait && sessionState.selection.sel === pendingId) setPendingStage('CLI 已退出，输入已保留');
         } else discardAbandonedNewSession(info);
         return;
       }
       if (d.error) {
         const wait = $('.new-session-wait');
-        if (wait && S.sel === pendingId) wait.textContent = `会话关联失败：${d.error}`;
+        if (wait && sessionState.selection.sel === pendingId) setPendingStage(`会话关联失败：${d.error}`);
         return;
       }
       if (d.waiting) {
         const wait = $('.new-session-wait');
-        if (wait && S.sel === pendingId && !d.running) wait.textContent = 'CLI 已退出，尚未生成会话记录';
+        if (wait && sessionState.selection.sel === pendingId && !d.running) setPendingStage('CLI 已退出，尚未生成会话记录');
         continue;
       }
       await loadSessions(true);
       await loadTermList();
       if (controller.signal.aborted) return;
-      if (S.sel !== pendingId) return;      // 等待刷新期间也可能切走，不能抢走右侧页面
+      if (sessionState.selection.sel !== pendingId) return;      // 等待刷新期间也可能切走，不能抢走右侧页面
       migrateComposerDraft(pendingId, d.uid);
       T.uid = d.uid;
       if (d.running) {
-        S.live.add(d.uid);
-        S.liveTmux.add(d.uid);
+        sessionState.live.live.add(d.uid);
+        sessionState.live.liveTmux.add(d.uid);
       }
       await openSession(d.uid);
-      if (S.sel !== d.uid || S.agent) return;
+      if (sessionState.selection.sel !== d.uid || sessionState.selection.agent) return;
       if (d.running && T.openViews.has(d.name)) await openTermPane(d.name);
       else closeTermPane();
       T.pendingModes.delete(info.name);
@@ -1142,7 +1143,7 @@ async function resolveNewSession(info) {
       return;
     }
     const wait = $('.new-session-wait');
-    if (wait && S.sel === pendingId) wait.textContent = '会话仍在终端中运行；产生首条记录后会出现在列表里';
+    if (wait && sessionState.selection.sel === pendingId) setPendingStage('会话仍在终端中运行；产生首条记录后会出现在列表里');
   } finally {
     T.resolving.delete(info.name);
     if (T.resolveControllers.get(info.name) === controller) T.resolveControllers.delete(info.name);
@@ -1161,7 +1162,7 @@ function auditTermPane(action, extra = {}) {
     action, name: T.name, uid: T.uid, mode: T.mode, mobile: MOBILE.matches,
     visible: !!pane && !!ui.visible,
     views: [...T.views.keys()], open_views: [...T.openViews.keys()], ...extra,
-  }, null, {uid: T.uid || S.sel || ''});
+  }, null, {uid: T.uid || sessionState.selection.sel || ''});
 }
 
 // ---------------------------------------------------------------- 终端面板
@@ -1612,7 +1613,7 @@ function terminalViewportHasCodexSideThread(term) {
   return text.includes('Side from main thread');
 }
 
-function codexSideThreadVisible(uid = S.sel) {
+function codexSideThreadVisible(uid = sessionState.selection.sel) {
   return [...T.views.values()].some(view => termBindingServes(view.bindingUid, uid)
     && view.codexSideThread && !view.ended && !view.retired);
 }
@@ -1621,8 +1622,8 @@ function setCodexSideThreadState(view, active) {
   active = !!active;
   if (view.codexSideThread === active) return;
   view.codexSideThread = active;
-  const uid = S.sel || '';
-  if (uid && termBindingServes(view.bindingUid, uid) && !S.agent
+  const uid = sessionState.selection.sel || '';
+  if (uid && termBindingServes(view.bindingUid, uid) && !sessionState.selection.agent
       && typeof renderConversationTail === 'function') {
     renderConversationTail(cache.get(viewKey(uid))?.activity || null, uid);
   }
@@ -1845,7 +1846,7 @@ function rememberTermOpen(name, open) {
 
 function restoreTermPane(uid, agent = null) {
   if (SessionDockCapabilities.config.backend === 'rust' && T.ended.has(uid)) return;
-  if (!uid || agent || S.sel !== uid || !sessionTerminalEnabled(uid) || !$('#a-term')) return;
+  if (!uid || agent || sessionState.selection.sel !== uid || !sessionTerminalEnabled(uid) || !$('#a-term')) return;
   const name = takenOver(uid);
   if (!name || !T.openViews.has(name)) return;
   T.uid = uid;
@@ -1884,11 +1885,11 @@ async function loadTerminalRenderer(name) {
     return true;
   } catch (error) {
     const uid = T.views.get(name)?.bindingUid
-      || T.list?.find(row => row.name === name)?.uid || T.uid || S.sel;
+      || T.list?.find(row => row.name === name)?.uid || T.uid || sessionState.selection.sel;
     const message = '控制台组件加载失败，请再次打开终端重试：' + (error.message || error);
     ConsoleUI.errors.set(uid, message);
     renderTakeoverBtn();
-    if (typeof showConsoleToast === 'function' && uid === S.sel) showConsoleToast(message);
+    if (typeof showConsoleToast === 'function' && uid === sessionState.selection.sel) showConsoleToast(message);
     return false;
   }
 }
@@ -1897,7 +1898,7 @@ async function openTermPane(name, autoFocus = true, requestedMode = null, auto =
   // An explicit switch to the terminal acknowledges the question already on
   // the conversation page. A later list refresh must not reveal it again and
   // undo that choice; a newly arriving question ID can still reveal itself.
-  if (!auto && T.uid === S.sel && !S.agent) {
+  if (!auto && T.uid === sessionState.selection.sel && !sessionState.selection.agent) {
     const prompt = cache.get(viewKey(T.uid))?.prompt;
     if (prompt?.id && prompt.questions?.length && (prompt.state || 'waiting') === 'waiting') {
       revealedTermPrompts.set(T.uid, String(prompt.id));
@@ -1999,7 +2000,7 @@ function revealConversationForPrompt(uid, prompt) {
     revealedTermPrompts.delete(uid);
     return false;
   }
-  if (S.sel !== uid || S.agent) return false;
+  if (sessionState.selection.sel !== uid || sessionState.selection.agent) return false;
   if (typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid)) return false;
   const pane = $('#termpane');
   if (!pane || !ui.visible) return false;
@@ -2177,7 +2178,7 @@ function recordHostExit(view, uid, event) {
       }
     }
     const stopNotice = document.querySelector('#session-stop-notice');
-    if (!shell && uid === S.sel && typeof showSessionStopNotice === 'function'
+    if (!shell && uid === sessionState.selection.sel && typeof showSessionStopNotice === 'function'
         && (!stopNotice || stopNotice.hidden)) showSessionStopNotice(reason);
   }
   renderTakeoverBtn();
@@ -2362,7 +2363,7 @@ function attachRecordingReplay(view, row, uid) {
       renderTimeline(view);
       return;
     }
-    writeTermOutput(view, dec.decode(e.data, {stream: true}));
+    controller.writeTermOutput(view, dec.decode(e.data, {stream: true}));
   };
   ws.onclose = () => {
     if (view.ws !== ws) return;
@@ -2549,7 +2550,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
       }, null, {uid: uid || '', connectionId});
     }
     if (!outputTimer) outputTimer = setTimeout(flushOutputAudit, 750);
-    writeTermOutput(view, s);
+    controller.writeTermOutput(view, s);
   };
   ws.onopen = () => {
     if (view.ws !== ws) return;
@@ -2571,7 +2572,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
     ConsoleUI.errors.set(uid,
       `控制台连接已关闭（WebSocket ${event.code}）${event.reason ? '：' + event.reason : '，服务器未提供详细原因。'}`);
     renderTakeoverBtn();
-    writeTermOutput(view, dec.decode());
+    controller.writeTermOutput(view, dec.decode());
     flushTermSyncHold(view);
     flushOutputAudit();
     browserAuditEvent('terminal.closed', {
@@ -2604,10 +2605,10 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
         || (typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(uid));
       if (T.name === name && !view.keepOutput) closeTermPane();
       const stopNotice = document.querySelector('#session-stop-notice');
-      if (uid === S.sel && typeof showSessionStopNotice === 'function'
+      if (uid === sessionState.selection.sel && typeof showSessionStopNotice === 'function'
           && (!stopNotice || stopNotice.hidden)) showSessionStopNotice(reason);
       const wait = document.querySelector('.new-session-wait');
-      if (wait && pending && S.sel === pendingUid(name)) wait.textContent = reason;
+      if (wait && pending && sessionState.selection.sel === pendingUid(name)) setPendingStage(reason);
       renderTakeoverBtn();
       void loadTermList();
       return;
@@ -3002,5 +3003,6 @@ function start() {
     setTimeout(pollRustTermList, 3000);
 }
 
-return { T, TERM_PAGE_ID, termRows, termTheme, configuredTermFont, termFont, termFontSize, terminalFontGridRatio, prepareTerminalFont, hexToRgb, hslLightness, reflectedLightRgb, indexedTerminalRgb, adaptRgbForLight, adaptColonRgb, adaptSgrBody, stripOscColorSets, stripOscColorReports, lightTerminalAnsi, terminalColorChunk, refreshTerminalPreferences, terminalListUncertain, mergeUnavailableTermRows, loadTermList, fetchTermList, sessionTermMeta, termBindingServes, linkedTermSession, takenOver, termSendLease, termRowBinding, termInputBody, adoptLinkedTermSession, rebindSelectedTermSession, toggleLinkedTermSession, takeover, workerStatusMessage, pendingPhase, pendingStateLabel, pendingStageMessage, pendingRecordMissing, notePendingInput, pendingSessionRow, pendingShellRunning, pendingTitle, refreshPendingStage, notePendingEnded, pendingSelectionGone, stopPendingSession, deletePendingSession, discardPendingSession, sessionIsPtyOnly, sessionTerminalFirst, openPendingSession, discardAbandonedNewSession, resolveNewSession, auditTermPane, currentTermViewObject, syncTermAliases, activateTermView, requestTermFocus, focusTermIfRequested, legacyCopyText, copyTermSelection, decodeOsc52Clipboard, handleOsc52Clipboard, rememberTermSelection, restoreTermSelection, termSelectionMouseDown, shouldUseTermWebgl, consoleRendererFor, consoleRendererIsGrid, ensureTerm, writeTermOutput, termSyncFrameOpen, flushTermSyncHold, terminalViewportHasCodexSideThread, codexSideThreadVisible, setCodexSideThreadState, scheduleCodexSideThreadScan, writeParsedTermOutput, positionTermViewport, dropTermSyncHold, termPaneRenderable, repaintTermView, performTermFit, refreshTerminalScale, fitTerm, settleActivatedTermView, currentTermView, rememberTermLayout, rememberTermOpen, restoreTermPane, loadTerminalRenderer, openTermPane, toggleTermPane, revealConversationForPrompt, closeTermPane, layoutTermPane, claimTermOwnership, describeTermTaker, handleTermRevoked, renderTermOutputNotice, recordHostExit, startShellRecordingReplay, sessionRecordingReplayable, replayTimeElapsed, renderTimeline, timelineSend, timelineSeekTo, timelinePointerDown, timelineInput, timelineChange, timelinePointerUp, timelinePointerCancel, timelinePlay, timelineSpeed, timelineLive, attachRecordingReplay, attachTerm, attachOwnedTerm, wheelBy, abortWheel, setScrollPos, cancelTermReconnect, cancelTermConnectTimeout, armTermConnectTimeout, dropTermSocket, cancelTermHeartbeat, startTermHeartbeat, scheduleTermReconnect, reconnectTerm, suspendTerm, deactivateTermView, disposeTermView, setTermShiftSelection, setTermAlt, applyTermAlt, setTermCtrl, applyTermCtrl, shortcutClick, startTermDrag, finishTermDrag, backgroundTerm, foregroundTerm, pollRustTermList, start };
+const controller = { state: T, TERM_PAGE_ID, termRows, termTheme, configuredTermFont, termFont, termFontSize, terminalFontGridRatio, prepareTerminalFont, hexToRgb, hslLightness, reflectedLightRgb, indexedTerminalRgb, adaptRgbForLight, adaptColonRgb, adaptSgrBody, stripOscColorSets, stripOscColorReports, lightTerminalAnsi, terminalColorChunk, refreshTerminalPreferences, terminalListUncertain, mergeUnavailableTermRows, loadTermList, fetchTermList, sessionTermMeta, termBindingServes, linkedTermSession, takenOver, termSendLease, termRowBinding, termInputBody, adoptLinkedTermSession, rebindSelectedTermSession, toggleLinkedTermSession, takeover, workerStatusMessage, pendingPhase, pendingStateLabel, pendingStageMessage, pendingRecordMissing, notePendingInput, pendingSessionRow, pendingShellRunning, pendingTitle, refreshPendingStage, notePendingEnded, pendingSelectionGone, stopPendingSession, deletePendingSession, discardPendingSession, sessionIsPtyOnly, sessionTerminalFirst, openPendingSession, discardAbandonedNewSession, resolveNewSession, auditTermPane, currentTermViewObject, syncTermAliases, activateTermView, requestTermFocus, focusTermIfRequested, legacyCopyText, copyTermSelection, decodeOsc52Clipboard, handleOsc52Clipboard, rememberTermSelection, restoreTermSelection, termSelectionMouseDown, shouldUseTermWebgl, consoleRendererFor, consoleRendererIsGrid, ensureTerm, writeTermOutput, termSyncFrameOpen, flushTermSyncHold, terminalViewportHasCodexSideThread, codexSideThreadVisible, setCodexSideThreadState, scheduleCodexSideThreadScan, writeParsedTermOutput, positionTermViewport, dropTermSyncHold, termPaneRenderable, repaintTermView, performTermFit, refreshTerminalScale, fitTerm, settleActivatedTermView, currentTermView, rememberTermLayout, rememberTermOpen, restoreTermPane, loadTerminalRenderer, openTermPane, toggleTermPane, revealConversationForPrompt, closeTermPane, layoutTermPane, claimTermOwnership, describeTermTaker, handleTermRevoked, renderTermOutputNotice, recordHostExit, startShellRecordingReplay, sessionRecordingReplayable, replayTimeElapsed, renderTimeline, timelineSend, timelineSeekTo, timelinePointerDown, timelineInput, timelineChange, timelinePointerUp, timelinePointerCancel, timelinePlay, timelineSpeed, timelineLive, attachRecordingReplay, attachTerm, attachOwnedTerm, wheelBy, abortWheel, setScrollPos, cancelTermReconnect, cancelTermConnectTimeout, armTermConnectTimeout, dropTermSocket, cancelTermHeartbeat, startTermHeartbeat, scheduleTermReconnect, reconnectTerm, suspendTerm, deactivateTermView, disposeTermView, setTermShiftSelection, setTermAlt, applyTermAlt, setTermCtrl, applyTermCtrl, shortcutClick, startTermDrag, finishTermDrag, backgroundTerm, foregroundTerm, pollRustTermList, start };
+return controller;
 }

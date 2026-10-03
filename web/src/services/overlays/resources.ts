@@ -1,6 +1,6 @@
 import type { ResourceData, ResourceSession, ResourceScope } from '../../domain/overlays/resources'
 import type { useOverlaysStore } from '../../stores/overlays'
-export interface ResourceDependencies {appUrl(path: string): string; selection(): ResourceSession | null; sleep: {readonly lastActivity: number; readonly sleeping: boolean}}
+export interface ResourceDependencies {fetch: typeof fetch; appUrl(path: string): string; selection(): ResourceSession | null; sleep: {readonly lastActivity: number; readonly sleeping: boolean}}
 export function createResources(state: ReturnType<typeof useOverlaysStore>, deps: ResourceDependencies) {
   let probeSupported = false, observedProbeState = 'off';
   function updateProbe(data: ResourceData) {
@@ -14,7 +14,7 @@ export function createResources(state: ReturnType<typeof useOverlaysStore>, deps
   let dialog: HTMLDialogElement, currentUid = '', scope: ResourceScope = 'inclusive', generation = 0, pending = false, probePending = false;
   let loader = async (uid: string, selectedScope: ResourceScope): Promise<ResourceData> => {
     const path = `api/session/resources?${new URLSearchParams({uid, scope: selectedScope})}`;
-    const response = await fetch(deps.appUrl(path));
+    const response = await deps.fetch(deps.appUrl(path));
     if (!response.ok) throw new Error(response.status === 404 ? '此服务尚未提供资源统计，请更新服务端。' : `资源统计暂不可用（${response.status}）`);
     return response.json();
   };
@@ -51,7 +51,7 @@ export function createResources(state: ReturnType<typeof useOverlaysStore>, deps
     paintProbeStatus();
     try {
       const path = 'api/session/resources/probe';
-      const response = await fetch(deps.appUrl(path), {
+      const response = await deps.fetch(deps.appUrl(path), {
         method:'POST', headers:{'Content-Type':'application/json'}, keepalive:true, signal:AbortSignal.timeout(8000),
         body:JSON.stringify({...target, enabled, lease_seconds:Math.max(1, Math.min(60, Math.ceil((activity+60000-now)/1000)))})
       });

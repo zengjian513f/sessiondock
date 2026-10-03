@@ -1,6 +1,8 @@
+import { defineStore } from 'pinia'
+import { runtimePinia } from './runtime/pinia'
 import { reactive } from 'vue'
 import type { SearchNode, SearchOptions } from '../domain/search/types'
-export const state = reactive({
+export const useSearchStore = defineStore('ui-search', () => {const state = reactive({
  query: '', term: '', opts: {case: false, word: false, regex: false, mode: 'all'} as SearchOptions,
  status: '加载中…', error: false, sequence: undefined as number | undefined,
  progress: {active: false, done: 0, total: null as number | null, totalKnown: false, nodes: [] as SearchNode[]},
@@ -8,6 +10,9 @@ export const state = reactive({
  navigation: {text: '…', capped: false, title: undefined as string | undefined},
  revision: 0,
 })
+return {state}
+})
+export const state = useSearchStore(runtimePinia).state
 // Temporary narrow adapter for status writers owned by list/load/action services.
 // Vue alone renders #stat; this exposes no DOM mutation API beyond those writers.
 export const status = {

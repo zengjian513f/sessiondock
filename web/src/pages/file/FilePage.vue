@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import {defineStore} from 'pinia'
+import {runtimePinia} from '../../stores/runtime/pinia'
 import { onMounted, reactive } from 'vue'
 import { openFile } from './service'
-const state = reactive({ failed: false, message: '正在打开文件…' })
+const usePageStore=defineStore('page-file',()=>{const state=reactive({ failed: false, message: '正在打开文件…' });return {state}})
+const state=usePageStore(runtimePinia).state
 onMounted(() => { void openFile(state) })
 const retry = () => location.reload()
 </script>

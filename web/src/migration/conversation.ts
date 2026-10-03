@@ -1,4 +1,6 @@
-import { h, render, shallowReactive } from 'vue'
+import {useConversationMediaStore} from '../stores/runtime/conversation-media'
+import {runtimePinia} from '../stores/runtime/pinia'
+import { h, render } from 'vue'
 import ConversationBody from '../components/conversation/ConversationBody.vue'
 import QuestionCard from '../components/conversation/QuestionCard.vue'
 import ReadFailure from '../components/conversation/ReadFailure.vue'
@@ -15,7 +17,7 @@ import * as Requests from '../services/conversation/requests'
 interface Scope {store:ConversationStore;box:HTMLElement;host:HTMLElement | DocumentFragment;root:boolean;revision:number;detached?:boolean;pending?:{store:ConversationStore;host:DocumentFragment;revision:number}}
 const scopes=new WeakMap<HTMLElement,Scope>()
 const stores=new WeakMap<ConversationStore,Scope>()
-const mediaStates=shallowReactive(new Map<string,{busy:boolean;error:string}>())
+const mediaStates=useConversationMediaStore(runtimePinia).states
 let active:Scope | undefined
 let readFailureHost:DocumentFragment | undefined
 let queueHost:DocumentFragment | undefined, queueStage:HTMLElement | undefined
@@ -69,7 +71,7 @@ export function configure(bridge:ConversationBridge) {
   })
 }
 export function mount(detail:HTMLElement) {
-  if(active) { active.store.state.generation++; render(null,active.host as HTMLElement);if(active.pending){active.pending.store.state.generation++;render(null,active.pending.host as unknown as HTMLElement)} }
+  if(active) { active.store.state.generation++; render(null,active.host as HTMLElement);disposeStore(active.store);if(active.pending){active.pending.store.state.generation++;render(null,active.pending.host as unknown as HTMLElement);disposeStore(active.pending.store)} }
   const shellHost=document.createDocumentFragment()
   render(h('div',{id:'msgs',class:'msgs'}),shellHost as unknown as HTMLElement)
   const host=document.createDocumentFragment()
@@ -88,7 +90,7 @@ export function mountHeader(detail:HTMLElement,meta:any,total:number) {
 export function prepare(box:HTMLElement,plans:ConversationPlan[],first:boolean,context:{uid:string;agent:string|null}) {
   const scope=scopeFor(box)
   if(first){
-    if(scope.pending){scope.pending.store.state.generation++;render(null,scope.pending.host as unknown as HTMLElement)}
+    if(scope.pending){scope.pending.store.state.generation++;render(null,scope.pending.host as unknown as HTMLElement);disposeStore(scope.pending.store)}
     const store=createConversationStore()
     store.state.uid=context.uid;store.state.agent=context.agent
     scope.pending={store,host:document.createDocumentFragment(),revision:0}
@@ -103,7 +105,7 @@ export function publishPrepared(box:HTMLElement) {
   if(!pending)return
   scope.store.state.generation++
   render(null,scope.host as HTMLElement)
-  stores.delete(scope.store)
+  disposeStore(scope.store);stores.delete(scope.store)
   scope.store=pending.store;scope.host=pending.host;scope.revision=pending.revision;scope.pending=undefined
   stores.set(scope.store,scope)
   while(pending.host.firstChild)box.appendChild(pending.host.firstChild)
@@ -145,3 +147,5 @@ export const planning=Planning
 export const index=Index
 export const pages=Pages
 export const requests=Requests
+
+function disposeStore(store:ConversationStore){store.$dispose();delete runtimePinia.state.value[store.$id]}

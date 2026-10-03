@@ -1,3 +1,5 @@
+import { defineStore } from 'pinia'
+import { runtimePinia } from '.././runtime/pinia'
 import { reactive } from 'vue'
 import type { ShellBridge } from '../../services/shell/bridge'
 export const actionDefinitions = [
@@ -9,7 +11,7 @@ export const actionDefinitions = [
   {id: 'settings', label: '设置', icon: 'i-settings'},
 ] as const
 export type ActionId = typeof actionDefinitions[number]['id']
-export const state = reactive({
+export const useShellStore = defineStore('ui-shell', () => {const state = reactive({
   view: 'tree', nest: false, resources: false,
   collapsed: false, mobileDetail: document.body.classList.contains('mobile-detail'),
   width: '', dragging: false, dragTransform: '', menuOpen: false,
@@ -19,6 +21,9 @@ export const state = reactive({
     capabilityHidden: id === 'new-session', disabled: false, docked: false, count: '',
   }])) as Record<ActionId, {hidden: boolean; capabilityHidden: boolean; disabled: boolean; docked: boolean; count: string}>,
 })
+return {state}
+})
+export const state = useShellStore(runtimePinia).state
 let bridge: ShellBridge
 export const mobile = matchMedia('(max-width: 720px)')
 export const medium = matchMedia('(max-width: 1199px)')

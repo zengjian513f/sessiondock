@@ -179,14 +179,26 @@ def browser_check(corpus, base):
             context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
             context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
             page = context.new_page()
+            def expand_tool_process():
+                # Both frontends lazily create the nested tool group only after
+                # the outer completed-turn process has been opened.
+                outer = page.locator('#msgs > .turn-process.folded > .turn-toolbar .fold-toggle')
+                while count := outer.count():
+                    outer.first.click()
+                    expect(outer).to_have_count(count - 1)
+                expect(page.locator('#msgs .turn-process-body > .grp').first).to_be_visible()
+                inner = page.locator('#msgs .grp.folded > .group-preview > .fold-toggle')
+                while count := inner.count():
+                    inner.first.click()
+                    expect(inner).to_have_count(count - 1)
+
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(base, wait_until="networkidle")
             for source in ("claude", "codex", "grok"):
                 page.locator(f'#side .item[data-uid="{uid(corpus, source)}"]').click()
                 expect(page.locator("#msgs")).to_contain_text("Synthetic tools complete")
-                for toggle in page.locator('#msgs .turn-process.folded .fold-toggle').all():
-                    toggle.click()
+                expand_tool_process()
                 expect(page.locator("#msgs")).to_contain_text("z=first a=False r=4 b=last")
                 expect(page.locator("#msgs .file-change-card").first).to_be_visible()
                 expect(page.locator("#msgs")).to_contain_text("old.rs → moved.rs")
@@ -203,8 +215,7 @@ def browser_check(corpus, base):
             # Crossing the breakpoint intentionally opens the mobile list;
             # enter detail using its normal visible session navigation.
             page.locator(f'#side .item[data-uid="{uid(corpus, "grok")}"]').click()
-            for toggle in page.locator('#msgs .turn-process.folded .fold-toggle').all():
-                toggle.click()
+            expand_tool_process()
             expect(page.locator("#msgs .file-change-card").first).to_be_visible()
             expect(page.locator("#a-term")).to_be_visible()
             assert not errors, errors

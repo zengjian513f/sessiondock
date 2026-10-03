@@ -12,7 +12,7 @@ export interface MachineClient {
 export interface MachineNode {
   id: string; name: string; color?: string; enabled?: boolean; renderer?: string; online?: boolean
 }
-export interface MachinesBridge {
+export interface MachinesBridge {fetch: typeof fetch;
   readTargets(): MachineTarget[];
   appUrl(path: string): string;
   sourceNames: Record<string, {name: string}>;
@@ -34,7 +34,7 @@ export function machineApi(target: MachineTarget, path: string): string {
 }
 export function createMachinesService(bridge: MachinesBridge) {
   async function request(path: string, body?: unknown) {
-    const response = await fetch(bridge.appUrl(path), body === undefined
+    const response = await bridge.fetch(bridge.appUrl(path), body === undefined
       ? {cache: 'no-store'}
       : {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
     const data = await response.json().catch(() => ({}));

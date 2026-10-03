@@ -1,7 +1,14 @@
-import { composerHistoryStamp, nativeComposerHistory, ensureComposerAttachmentNumbers, composerFileKind, composerKindIcon, composerInputStatus, composerInputAllowsSend, screenMenuRevision, clipboardAttachmentFiles, clipboardDirectoryNames, clipboardCsvFile } from '../../domain/composer/input.js'
 
-import { nextTick } from 'vue'
-// Composer extraction from compat/term.js. The bridge keeps the existing native
+import * as SessionUi from '../../migration/session-ui'
+
+import {sessiondockCli} from '../../domain/runtime/cli.js'
+import {viewKey} from '../../domain/runtime/messages.js'
+import {pendingUid} from '../../domain/runtime/pending'
+import {fmtSize,fmtTime} from '../../domain/runtime/format.js'
+import {composerHistoryStamp,nativeComposerHistory,ensureComposerAttachmentNumbers,composerFileKind,composerKindIcon,composerInputStatus,composerInputAllowsSend,screenMenuRevision,clipboardAttachmentFiles,clipboardDirectoryNames,clipboardCsvFile} from '../../domain/composer/input.js'
+
+import {nextTick} from 'vue'
+// Scoped composer service. Explicit dependencies keep the existing native
 // controllers, identities and request contracts; Vue owns the composer projection.
 export function createComposerController(bridge, ui) {
 const COMPOSER_MAX_FILES = 12;
@@ -25,7 +32,7 @@ async function chooseAttachmentFiles(type, input, addFiles) {
       } catch (error) {
         if (error.name === 'AbortError') return;
         if (error.name !== 'NotSupportedError' && error.name !== 'SecurityError') {
-          await bridge.appAlert('选择文件失败：' + (error.message || String(error)));
+          await SessionUi.appAlert('选择文件失败：' + (error.message || String(error)));
           return;
         }
       }
@@ -34,7 +41,7 @@ async function chooseAttachmentFiles(type, input, addFiles) {
           const files = await Promise.all(handles.map(handle => handle.getFile()));
           if (files.length) addFiles(files);
         } catch (error) {
-          await bridge.appAlert('读取所选文件失败：' + (error.message || String(error)));
+          await SessionUi.appAlert('读取所选文件失败：' + (error.message || String(error)));
         }
         return;
       }
@@ -61,7 +68,7 @@ let lastMessageSelection = '';
 
 let lastMessageSelectionUid = null;
 
-const conversationSendEnabled = () => bridge.SessionDockCapabilities.config.conversation_send === true;
+const conversationSendEnabled = () => bridge.capabilities.config.conversation_send === true;
 
 const newComposerDraft = () => ({text:'', attachments:[], quotes:[], nextAttachmentNumber:1,
   revision:0, editVersion:0, savedVersion:0});
@@ -92,7 +99,7 @@ function restoreComposerDraftRecord(record, uid) {
     // The server resolved this draft through the requested session identity.
     // Report handoff/restart can leave an older UID in its stored metadata.
     if (uid && attachment.uploaded?.upload_id) {
-      attachment.uploaded = {...attachment.uploaded, uid, node:bridge.nodeOf(uid) || ''};
+      attachment.uploaded = {...attachment.uploaded, uid, node:bridge.runtime().nodes.nodeOf(uid) || ''};
     }
   }
   return ensureComposerAttachmentNumbers(draft);
@@ -118,7 +125,7 @@ function composerDraftRecord(draft, uid) {
 
 async function priorComposerSubmission(uid,id,report=false) {
   const query=new URLSearchParams({uid,[report?'report_request_id':'request_id']:id});
-  const response=await fetch(bridge.appUrl('api/session/conversation?'+query),{cache:'no-store'});
+  const response=await bridge.runtime().network.fetch(bridge.environment.appUrl('api/session/conversation?'+query),{cache:'no-store'});
   const data=await response.json();
   if (response.status===404) return null;
   if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
@@ -142,24 +149,24 @@ function applyCliState(uid, cli, {status = true} = {}) {
       && cli.observed_at < draft.cli.observed_at) return;
   const priorBusy = draft.cli?.instance?.busy;
   draft.cli = cli;
-  if (status && cli.input && bridge.takenOver(uid)) {
+  if (status && cli.input && bridge.terminal().takenOver(uid)) {
     updateComposerInputStatus(uid, {ok: cli.input.state === 'ready', input: cli.input});
   }
-  if (composerDraftOwner(composerUid) === composerDraftOwner(uid)) bridge.renderQueuedSends(composerUid);
+  if (composerDraftOwner(composerUid) === composerDraftOwner(uid)) bridge.pendingStage().renderQueuedSends(composerUid);
   if (priorBusy !== cli.instance?.busy && composerDraftOwner(composerUid) === composerDraftOwner(uid))
     renderComposerInputStatus();
-  bridge.paintTurn(uid);
+  bridge.status().paintTurn(uid);
 }
 
 async function dismissQueuedSend(uid, requestId) {
   try {
-    await bridge.post('api/session/conversation/queued/dismiss', {uid, request_id: requestId});
+    await bridge.post().post('api/session/conversation/queued/dismiss', {uid, request_id: requestId});
   } catch { /* The next CLI-state packet shows whether it is still queued. */ }
   const draft = composerDrafts.get(composerDraftOwner(uid));
   if (Array.isArray(draft?.cli?.queued)) {
     draft.cli.queued = draft.cli.queued.filter(item => item.request_id !== requestId);
   }
-  bridge.renderQueuedSends(uid);
+  bridge.pendingStage().renderQueuedSends(uid);
 }
 
 async function consumeComposerSubmission(uid,text,attachments,quotes) {
@@ -187,20 +194,20 @@ async function readServerComposerDraft(uid) {
   let phase = 'headers', status = null, headersMs = null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  bridge.browserAuditEvent?.('http.request.started', {url, method:'GET'}, null, fields);
+  bridge.runtime().audit.browserAuditEvent?.('http.request.started', {url, method:'GET'}, null, fields);
   try {
-    const response = await fetch(bridge.appUrl(url), {cache:'no-store', signal:controller.signal,
-      headers:{'X-SessionDock-Trace':traceId, 'X-SessionDock-Page':bridge.TERM_PAGE_ID,
-        'X-SessionDock-Build':bridge.BUILD_ID}});
+    const response = await bridge.runtime().network.fetch(bridge.environment.appUrl(url), {cache:'no-store', signal:controller.signal,
+      headers:{'X-SessionDock-Trace':traceId, 'X-SessionDock-Page':bridge.environment.AUDIT_PAGE_ID,
+        'X-SessionDock-Build':bridge.environment.BUILD_ID}});
     status = response.status;
     headersMs = Math.round(performance.now() - started);
     phase = 'body';
-    bridge.browserAuditEvent?.('http.response.headers', {url, status, headers_ms:headersMs}, null, fields);
+    bridge.runtime().audit.browserAuditEvent?.('http.response.headers', {url, status, headers_ms:headersMs}, null, fields);
     const data = await response.json();
     phase = 'response';
     if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
     // Record transport metadata only: draft text and attachments stay private.
-    bridge.browserAuditEvent?.('http.response.received', {url, status, ok:true,
+    bridge.runtime().audit.browserAuditEvent?.('http.response.received', {url, status, ok:true,
       headers_ms:headersMs, duration_ms:Math.round(performance.now() - started)}, null, fields);
     return data.draft;
   } catch (error) {
@@ -208,7 +215,7 @@ async function readServerComposerDraft(uid) {
       error = new Error('草稿读取超时，连接恢复后会自动重试');
       error.name = 'TimeoutError';
     }
-    bridge.browserAuditEvent?.('http.request.failed', {url, error:String(error), phase, status,
+    bridge.runtime().audit.browserAuditEvent?.('http.request.failed', {url, error:String(error), phase, status,
       headers_ms:headersMs, timeout_ms:timeoutMs, online:navigator.onLine,
       visibility:document.visibilityState, duration_ms:Math.round(performance.now() - started)},
     null, {...fields, severity:'warning'});
@@ -223,9 +230,9 @@ async function oldComposerDatabase() {
   legacyComposerDatabase = null;
   if (!globalThis.indexedDB?.databases) return null;
   const databases = await indexedDB.databases();
-  if (!databases.some(db => db.name === bridge.STORAGE_PREFIX + 'composer-drafts')) return null;
+  if (!databases.some(db => db.name === bridge.environment.STORAGE_PREFIX + 'composer-drafts')) return null;
   legacyComposerDatabase = await new Promise((resolve, reject) => {
-    const request = indexedDB.open(bridge.STORAGE_PREFIX + 'composer-drafts');
+    const request = indexedDB.open(bridge.environment.STORAGE_PREFIX + 'composer-drafts');
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
@@ -233,7 +240,7 @@ async function oldComposerDatabase() {
 }
 
 async function importLegacyComposer(uid) {
-  let record = bridge.store.get('composerDraft.' + uid, null);
+  let record = bridge.preferences.get('composerDraft.' + uid, null);
   const db = await oldComposerDatabase();
   if (db) {
     const indexed = await new Promise((resolve, reject) => {
@@ -243,13 +250,13 @@ async function importLegacyComposer(uid) {
     });
     if (indexed && (!record || (+indexed.revision || 0) > (+record.revision || 0))) record = indexed;
   }
-  const oldQueue=bridge.store.get('queuedMessages',[]).find(([key])=>key===uid)?.[1];
+  const oldQueue=bridge.preferences.get('queuedMessages',[]).find(([key])=>key===uid)?.[1];
   if (oldQueue?.length) {
-    const imported=await bridge.post('api/session/conversation/import',{uid,value:{legacy_queue:oldQueue}});
+    const imported=await bridge.post().post('api/session/conversation/import',{uid,value:{legacy_queue:oldQueue}});
     if (imported.error) throw new Error(imported.error);
-    const remaining=bridge.store.get('queuedMessages',[]).filter(([key])=>key!==uid);
-    if (remaining.length) bridge.store.set('queuedMessages',remaining);
-    else localStorage.removeItem(bridge.STORAGE_PREFIX+'queuedMessages');
+    const remaining=bridge.preferences.get('queuedMessages',[]).filter(([key])=>key!==uid);
+    if (remaining.length) bridge.preferences.set('queuedMessages',remaining);
+    else localStorage.removeItem(bridge.environment.STORAGE_PREFIX+'queuedMessages');
   }
   if (!record || record.removed) return null;
   const converted=structuredClone(record);
@@ -262,15 +269,15 @@ async function importLegacyComposer(uid) {
       request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
     });
     if (!(file instanceof Blob)) continue;
-    const url=new URL(bridge.appUrl('api/session/conversation/attachment'));
+    const url=new URL(bridge.environment.appUrl('api/session/conversation/attachment'));
     url.searchParams.set('uid',uid);url.searchParams.set('id','legacy-'+item.id);
     url.searchParams.set('name',item.file.name);
-    const response=await fetch(url,{method:'POST',headers:{'Content-Type':item.file.type || 'application/octet-stream'},body:file});
+    const response=await bridge.runtime().network.fetch(url,{method:'POST',headers:{'Content-Type':item.file.type || 'application/octet-stream'},body:file});
     const uploaded=await response.json();
     if (!response.ok || uploaded.error) throw new Error(uploaded.error || `HTTP ${response.status}`);
     item.uploaded={...uploaded,uid};
   }
-  const result=await bridge.post('api/session/conversation/import',{uid,value:converted});
+  const result=await bridge.post().post('api/session/conversation/import',{uid,value:converted});
   if (result.error) throw new Error(result.error);
   // Delete browser originals only after every existing File has a durable
   // server reference. Unknown/missing bytes keep their original recovery store.
@@ -283,10 +290,10 @@ async function importLegacyComposer(uid) {
       request.onsuccess=()=>{const cursor=request.result;if (cursor){transaction.objectStore('files').delete(cursor.key);cursor.continue();}};
       transaction.oncomplete=resolve;transaction.onabort=transaction.onerror=()=>reject(transaction.error);
     });
-    localStorage.removeItem(bridge.STORAGE_PREFIX+'composerDraft.'+uid);
-    const remaining=bridge.store.get('composerDraftUids',[]).filter(key=>key!==uid);
-    if (remaining.length) bridge.store.set('composerDraftUids',remaining);
-    else localStorage.removeItem(bridge.STORAGE_PREFIX+'composerDraftUids');
+    localStorage.removeItem(bridge.environment.STORAGE_PREFIX+'composerDraft.'+uid);
+    const remaining=bridge.preferences.get('composerDraftUids',[]).filter(key=>key!==uid);
+    if (remaining.length) bridge.preferences.set('composerDraftUids',remaining);
+    else localStorage.removeItem(bridge.environment.STORAGE_PREFIX+'composerDraftUids');
   }
   return {record:converted,db};
 }
@@ -382,7 +389,7 @@ function adoptServerDraft(draft, row, uid) {
 let composerFollowBusy = false, composerFollowedAt = 0;
 
 async function followServerDraft(uid, revision = null) {
-  if (bridge.SessionDockNetwork.paused) return false;
+  if (bridge.runtime().network.paused) return false;
   const owner = composerDraftOwner(uid), draft = composerDrafts.get(owner);
   if (!draft || !conversationSendEnabled() || draft.loading || draft.loadFailed || draft.handedOffSession
       || composerSending || composerFollowBusy || composerSaving.has(draft) || composerPendingSaves.has(draft)
@@ -411,8 +418,8 @@ function refreshComposerDraft(uid) {
     ui.text=composerDrafts.get(uid)?.text || '';
     renderComposerItems(); nextTick(()=>autoGrow($('#cinput')));
   }
-  if (uid === bridge.BUG_REPORT_DRAFT_UID) {
-    bridge.renderBugReportItems(); bridge.noteBugReportDraftNode();
+  if (uid === bridge.launch().BUG_REPORT_DRAFT_UID) {
+    bridge.launch().renderBugReportItems(); bridge.launch().noteBugReportDraftNode();
   }
 }
 
@@ -429,7 +436,7 @@ function persistComposerDraft(uid = composerUid) {
   uid = composerDraftOwner(uid);
   const draft = composerDrafts.get(uid);
   if (!draft) return Promise.resolve(false);
-  if (uid === bridge.BUG_REPORT_DRAFT_UID) bridge.noteBugReportDraftNode();
+  if (uid === bridge.launch().BUG_REPORT_DRAFT_UID) bridge.launch().noteBugReportDraftNode();
   // Draft storage remains available across deployments; only SEND is build-gated.
   queueComposerSave(draft, uid);
   if (composerSaving.has(draft)) return composerSaveQueues.get(draft);
@@ -442,13 +449,13 @@ function persistComposerDraft(uid = composerUid) {
       if (!conversationSendEnabled()) throw new Error('草稿保存未启用');
       while (composerPendingSaves.has(draft)) {
         const pending=composerPendingSaves.get(draft);composerPendingSaves.delete(draft);
-        let data=await bridge.post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value}, {timeoutMs:12000});
+        let data=await bridge.post().post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value}, {timeoutMs:12000});
         for (let attempt=0;data.code==='draft_revision' && attempt<2;attempt++) {
           // Another page saved first. This page is the one still editing, so
           // its input wins: rebase onto the server revision and save again.
           const row=await readServerComposerDraft(pending.uid);
           if (row.revision>draft.revision) draft.revision=row.revision;
-          data=await bridge.post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value}, {timeoutMs:12000});
+          data=await bridge.post().post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value}, {timeoutMs:12000});
         }
         if (data.reload) throw new Error(data.error || '页面已更新，请重新加载后再提交');
         if (data.error) throw new Error(data.error);
@@ -461,7 +468,7 @@ function persistComposerDraft(uid = composerUid) {
     } finally {
       composerSaving.delete(draft);syncComposerUnloadProtection();
       const owner = composerDraftOwner(uid);
-      if (owner === bridge.BUG_REPORT_DRAFT_UID) {
+      if (owner === bridge.launch().BUG_REPORT_DRAFT_UID) {
         renderSavedComposerInputs($('#bug-report-items'), draft);
       } else if (composerDraftOwner(composerUid) === owner) {
         renderSavedComposerInputs($('#compose-items'), draft);
@@ -476,7 +483,7 @@ function persistComposerDraft(uid = composerUid) {
 let composerRecoveryBusy = false;
 
 async function recoverComposerDrafts() {
-  if (globalThis.SessionDockSleep?.sleeping || bridge.SessionDockNetwork.reason === 'login') return;
+  if (bridge.sleep().sleeping || bridge.runtime().network.reason === 'login') return;
   if (composerRecoveryBusy || document.hidden || !navigator.onLine || composerSending) return;
   composerRecoveryBusy = true;
   try {
@@ -508,7 +515,7 @@ async function prepareComposerReload() {
     composerSaving.has(draft) ? composerSaveQueues.get(draft)
       : draft.editVersion > draft.savedVersion ? persistComposerDraft(uid) : null));
   syncComposerUnloadProtection();
-  return !composerUnloadProtected && !composerSending && !bridge.bugReportSending;
+  return !composerUnloadProtected && !composerSending && !bridge.launch().bugReportSending;
 }
 
 function renderSavedComposerInputs(box, draft) {
@@ -516,7 +523,7 @@ function renderSavedComposerInputs(box, draft) {
   const existing = box.querySelector(':scope > .draft-save-error[role="alert"]');
   if (!draft.storageError) { existing?.remove(); return; }
   if (existing) { existing.textContent = draft.storageError; return; }
-  const error = bridge.el('div', 'draft-save-error', draft.storageError);
+  const error = bridge.dom().el('div', 'draft-save-error', draft.storageError);
   error.setAttribute('role','alert'); box.append(error);
 }
 
@@ -524,7 +531,7 @@ const composerServerRecoveries = new Map();
 
 function recoverServerComposerDrafts() {
   if (!conversationSendEnabled() || document.hidden) return Promise.resolve();
-  const nodes = bridge.HUB_MODE ? bridge.Nodes.list : [{id: '', online: true}];
+  const nodes = bridge.environment.HUB_MODE ? bridge.runtime().state.nodes.list : [{id: '', online: true}];
   const tasks = [];
   for (const node of nodes) {
     let state = composerServerRecoveries.get(node.id);
@@ -546,8 +553,8 @@ async function recoverServerComposerNode(node, state) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12000);
   try {
-    const url = bridge.appUrl('api/session/conversation/drafts' + (node ? '?node=' + node : ''));
-    const response = await fetch(url, {cache: 'no-store', signal: controller.signal});
+    const url = bridge.environment.appUrl('api/session/conversation/drafts' + (node ? '?node=' + node : ''));
+    const response = await bridge.runtime().network.fetch(url, {cache: 'no-store', signal: controller.signal});
     const data = await response.json();
     if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
     let changed = false;
@@ -560,17 +567,17 @@ async function recoverServerComposerNode(node, state) {
     state.done = true;
     state.failures = 0;
     // Apply successful peers immediately, without waiting for an offline peer.
-    if (changed && bridge.S.sig && typeof bridge.renderSide === 'function') bridge.renderSide();
+    if (changed && bridge.runtime().state.catalog.sig && typeof bridge.sidebarView().renderSide === 'function') bridge.sidebarView().renderSide();
   } catch {
     state.retryAt = Date.now() + Math.min(300000, 30000 * 2 ** Math.min(state.failures++, 4));
   } finally { clearTimeout(timer); }
 }
 
 function deleteComposerDraftStorage(uid) {
-  localStorage.removeItem(bridge.STORAGE_PREFIX + 'composerDraft.' + uid);
-  const remaining = bridge.store.get('composerDraftUids', []).filter(key => key !== uid);
-  if (remaining.length) bridge.store.set('composerDraftUids', remaining);
-  else localStorage.removeItem(bridge.STORAGE_PREFIX + 'composerDraftUids');
+  localStorage.removeItem(bridge.environment.STORAGE_PREFIX + 'composerDraft.' + uid);
+  const remaining = bridge.preferences.get('composerDraftUids', []).filter(key => key !== uid);
+  if (remaining.length) bridge.preferences.set('composerDraftUids', remaining);
+  else localStorage.removeItem(bridge.environment.STORAGE_PREFIX + 'composerDraftUids');
 }
 
 function pendingStartedAt(info, fallback = Date.now() / 1000) {
@@ -594,18 +601,14 @@ function rememberComposerSession(draft, info) {
 function syncComposerDraftBindings() {
   for (const [uid, draft] of [...composerDrafts]) {
     if (!uid.startsWith('tmux:') || !draft.session?.instance_id) continue;
-    const row = (bridge.T.list || []).find(row => row.name === draft.session.name
+    const row = (bridge.terminal().state.list || []).find(row => row.name === draft.session.name
       && row.instance_id === draft.session.instance_id && row.uid);
     if (row) migrateComposerDraft(uid, row.uid);
   }
 }
 
-
-
-
-
 async function composerHistoryItems(uid) {
-  const entry = bridge.cache.get(bridge.viewKey(uid));
+  const entry = bridge.runtime().cache.cache.get(viewKey(uid));
   let items;
   if (entry && !entry.partial) {
     items = nativeComposerHistory(entry.msgs);
@@ -616,7 +619,7 @@ async function composerHistoryItems(uid) {
       items = cached.items.map(item => ({ ...item }));
     } else {
       const query = new URLSearchParams({uid});
-      const response = await fetch(bridge.appUrl(`api/session/input-history?${query}`));
+      const response = await bridge.runtime().network.fetch(bridge.environment.appUrl(`api/session/input-history?${query}`));
       const data = await response.json();
       if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
       items = (data.history || []).map((item, index) => ({
@@ -658,7 +661,7 @@ async function openComposerHistory() {
   Object.assign(composerHistoryPicker, {
     open: true, uid, items: [], index: -1,
   });
-  const entry = bridge.cache.get(bridge.viewKey(uid));
+  const entry = bridge.runtime().cache.cache.get(viewKey(uid));
   const seed = nativeComposerHistory(entry?.msgs);
   if (seed.length) {
     composerHistoryPicker.items = seed;
@@ -700,8 +703,6 @@ function acceptComposerHistory() {
   return true;
 }
 
-
-
 function migrateComposerDraft(fromUid, toUid) {
   if (!fromUid || !toUid || fromUid === toUid) return;
   const draft = composerDrafts.get(fromUid);
@@ -711,10 +712,10 @@ function migrateComposerDraft(fromUid, toUid) {
   const target = composerDrafts.get(toUid);
   if (target?.editVersion && (target.text || target.attachments.length || target.quotes.length)) return;
   composerDrafts.set(toUid, draft);
-  for (const [key, value] of bridge.screenMenuTextDrafts) {
+  for (const [key, value] of bridge.questionRuntime().screenMenuTextDrafts) {
     if (!key.startsWith(`${fromUid}\0`)) continue;
-    bridge.screenMenuTextDrafts.set(`${toUid}\0${key.slice(fromUid.length + 1)}`, value);
-    bridge.screenMenuTextDrafts.delete(key);
+    bridge.questionRuntime().screenMenuTextDrafts.set(`${toUid}\0${key.slice(fromUid.length + 1)}`, value);
+    bridge.questionRuntime().screenMenuTextDrafts.delete(key);
   }
   composerDraftAliases.set(fromUid, toUid);
   composerDrafts.delete(fromUid);
@@ -743,43 +744,43 @@ function switchComposerDraft(uid) {
   }
 }
 
-function sessionComposerEnded(uid = bridge.S.sel) {
+function sessionComposerEnded(uid = bridge.runtime().state.selection.sel) {
   if (!uid) return false;
-  if (typeof bridge.T !== 'undefined' && bridge.T.ended?.has(uid)) return true;
+  if (typeof bridge.terminal().state !== 'undefined' && bridge.terminal().state.ended?.has(uid)) return true;
   const name = String(uid).startsWith('tmux:')
     ? String(uid).slice(5)
-    : (typeof bridge.takenOver === 'function' ? bridge.takenOver(uid) : null);
-  const view = name && typeof bridge.T !== 'undefined' ? bridge.T.views?.get(name) : null;
+    : (typeof bridge.terminal().takenOver === 'function' ? bridge.terminal().takenOver(uid) : null);
+  const view = name && typeof bridge.terminal().state !== 'undefined' ? bridge.terminal().state.views?.get(name) : null;
   if (view?.ended || view?.retired) return true;
-  const rows = typeof bridge.T === 'undefined' ? [] : [
-    ...(typeof bridge.pendingTmuxSessions === 'function' ? bridge.pendingTmuxSessions() : []),
-    ...(bridge.T.pending || []),
+  const rows = typeof bridge.terminal().state === 'undefined' ? [] : [
+    ...(typeof bridge.runtime().pending.pendingTmuxSessions === 'function' ? bridge.runtime().pending.pendingTmuxSessions() : []),
+    ...(bridge.terminal().state.pending || []),
   ];
   const row = rows.find(item => item.uid === uid
-    || (typeof bridge.pendingUid === 'function' && bridge.pendingUid(item.name) === uid));
-  return !!row && ['exited', 'failed', 'stopping'].includes(bridge.pendingPhase(row));
+    || (typeof pendingUid === 'function' && pendingUid(item.name) === uid));
+  return !!row && ['exited', 'failed', 'stopping'].includes(bridge.terminal().pendingPhase(row));
 }
 
 function renderComposer() {
-  const shell = typeof bridge.sessionIsPtyOnly === 'function' && bridge.sessionIsPtyOnly(bridge.S.sel);
+  const shell = typeof bridge.terminal().sessionIsPtyOnly === 'function' && bridge.terminal().sessionIsPtyOnly(bridge.runtime().state.selection.sel);
   const enabled=conversationSendEnabled() || shell;
-  const name = enabled && bridge.sessionTerminalEnabled(bridge.S.sel) ? bridge.takenOver(bridge.S.sel) : null;
-  const pending = enabled && String(bridge.S.sel || '').startsWith('tmux:');
-  const receipt = pending && (bridge.T.pending || []).find(row => bridge.pendingUid(row.name) === bridge.S.sel);
+  const name = enabled && bridge.runtime().nodes.sessionTerminalEnabled(bridge.runtime().state.selection.sel) ? bridge.terminal().takenOver(bridge.runtime().state.selection.sel) : null;
+  const pending = enabled && String(bridge.runtime().state.selection.sel || '').startsWith('tmux:');
+  const receipt = pending && (bridge.terminal().state.pending || []).find(row => pendingUid(row.name) === bridge.runtime().state.selection.sel);
   const restartable = conversationSendEnabled() && !shell
     && ['exited', 'failed'].includes(receipt?.state)
     && receipt?.binding?.state !== 'confirmed';
   // A subagent view shares S.sel with its parent but has no CLI of its own, so
   // neither the parent's editor nor its input notice belongs there.
-  const show = !bridge.S.agent
-    && (restartable || (!sessionComposerEnded(bridge.S.sel) && !!(name || pending)));
+  const show = !bridge.runtime().state.selection.agent
+    && (restartable || (!sessionComposerEnded(bridge.runtime().state.selection.sel) && !!(name || pending)));
   ui.visible=show;
-  const first = typeof bridge.sessionTerminalFirst === 'function' && bridge.sessionTerminalFirst(bridge.S.sel);
+  const first = typeof bridge.terminal().sessionTerminalFirst === 'function' && bridge.terminal().sessionTerminalFirst(bridge.runtime().state.selection.sel);
   $('#right')?.classList.toggle('shell-session', !!shell);
   $('#right')?.classList.toggle('terminal-first', !!first);
-  switchComposerDraft(show ? bridge.S.sel : null);
+  switchComposerDraft(show ? bridge.runtime().state.selection.sel : null);
   if (show) syncComposerMode();
-  if (first && typeof bridge.layoutTermPane === 'function') bridge.layoutTermPane();
+  if (first && typeof bridge.terminal().layoutTermPane === 'function') bridge.terminal().layoutTermPane();
 }
 
 function autoGrow(ta) {
@@ -790,29 +791,29 @@ function autoGrow(ta) {
 }
 
 function syncComposerMode() {
-  ui.placeholder=bridge.MOBILE.matches ? '输入内容' : '输入内容，Enter 发送，Shift+Enter 换行';
-  $('#bug-report-description').placeholder=bridge.MOBILE.matches ? '描述遇到的问题' : '描述遇到的问题，Enter 发送，Shift+Enter 换行';
+  ui.placeholder=bridge.environment.MOBILE.matches ? '输入内容' : '输入内容，Enter 发送，Shift+Enter 换行';
+  $('#bug-report-description').placeholder=bridge.environment.MOBILE.matches ? '描述遇到的问题' : '描述遇到的问题，Enter 发送，Shift+Enter 换行';
   autoGrow($('#cinput'));
 }
 
-async function sendToSession(text, keys, uid = bridge.S.sel, media = [], options = {}) {
-  const name = bridge.takenOver(uid);
+async function sendToSession(text, keys, uid = bridge.runtime().state.selection.sel, media = [], options = {}) {
+  const name = bridge.terminal().takenOver(uid);
   if (!name) return false;
   if ((text || options.requestId) && !keys && conversationSendEnabled()) {
     try {
       const draft = composerDraft(uid);
-      const data = await bridge.post('api/session/conversation/send', {
+      const data = await bridge.post().post('api/session/conversation/send', {
         uid, name, text, request_id:options.requestId || crypto.randomUUID(),
         draft_revision:options.draftRevision, attachments:options.attachments || [],
-        quotes:options.quotes || [], lease:bridge.termSendLease(name).lease || null,
+        quotes:options.quotes || [], lease:bridge.terminal().termSendLease(name).lease || null,
       });
       if (data.error) {updateComposerInputStatus(uid, data); throw new Error(data.error);}
       acceptComposerServerRevision(draft,data.draft);
-      bridge.S.live.add(uid); bridge.S.liveTmux.add(uid); bridge.S.lastSync = 0; bridge.S.syncGap = bridge.FAST_MIN;
-      bridge.paintLive();
+      bridge.runtime().state.live.live.add(uid); bridge.runtime().state.live.liveTmux.add(uid); bridge.runtime().state.selection.lastSync = 0; bridge.runtime().state.selection.syncGap = 350;
+      bridge.status().paintLive();
       return true;
     } catch (error) {
-      await bridge.appAlert('发送失败，输入保留：' + (error.message || error));
+      await SessionUi.appAlert('发送失败，输入保留：' + (error.message || error));
       return false;
     }
   }
@@ -821,38 +822,34 @@ async function sendToSession(text, keys, uid = bridge.S.sel, media = [], options
   let d;
   try {
     const rawText = !!text;
-    const body = bridge.termInputBody(name, keys ? { name, keys, uid }
+    const body = bridge.terminal().termInputBody(name, keys ? { name, keys, uid }
       : rawText ? { name, paste: text, uid } : { name, text });
     if (!body) {
-      await bridge.appAlert('发送失败: 此后端未启用该会话的可靠发送；控制台键盘和快捷键仍可直接输入。');
+      await SessionUi.appAlert('发送失败: 此后端未启用该会话的可靠发送；控制台键盘和快捷键仍可直接输入。');
       return false;
     }
-    d = await bridge.post('api/term/send', body);
+    d = await bridge.post().post('api/term/send', body);
     if (rawText && !d.error) {
       // The CLI may briefly show a paste-burst marker. Sending Enter in
       // the same tick can be swallowed while that marker is active.
       await new Promise(resolve => setTimeout(resolve, 600));
-      d = await bridge.post('api/term/send', bridge.termInputBody(name, { name, keys: ['Enter'], uid }));
+      d = await bridge.post().post('api/term/send', bridge.terminal().termInputBody(name, { name, keys: ['Enter'], uid }));
     }
   } catch (e) {
-    await bridge.appAlert('发送失败: ' + (e.message || e));
+    await SessionUi.appAlert('发送失败: ' + (e.message || e));
     return false;
   }
   if (d.error) {
-    await bridge.appAlert('发送失败: ' + d.error);
+    await SessionUi.appAlert('发送失败: ' + d.error);
     return false;
   }
-  bridge.S.live.add(uid);            // 发完立刻按最快节奏拉新消息
-  bridge.S.liveTmux.add(uid);
-  bridge.paintLive();
-  bridge.S.syncGap = bridge.FAST_MIN;
-  bridge.S.lastSync = 0;
+  bridge.runtime().state.live.live.add(uid);            // 发完立刻按最快节奏拉新消息
+  bridge.runtime().state.live.liveTmux.add(uid);
+  bridge.status().paintLive();
+  bridge.runtime().state.selection.syncGap = 350;
+  bridge.runtime().state.selection.lastSync = 0;
   return true;
 }
-
-
-
-
 
 function closeAttachMenu() { ui.menu=false; }
 
@@ -860,13 +857,13 @@ function renderAttachmentCards(box, attachments,
   { onInsert, onRemove, onRetry = null, disabled = false, uid = null, render = () => {} }) {
   box.replaceChildren();
   for (const attachment of attachments) {
-    const card = bridge.el('div', `draft-card ${attachment.status || ''}`);
+    const card = bridge.dom().el('div', `draft-card ${attachment.status || ''}`);
     card.dataset.draftId = attachment.id;
     card.title = `点击插入 [附件${attachment.number}]`;
     card.onclick = e => {
       if (!e.target.closest('.draft-remove')) onInsert(attachment.number);
     };
-    const thumb = bridge.el('span', 'draft-thumb');
+    const thumb = bridge.dom().el('span', 'draft-thumb');
     if (attachment.kind === 'image') loadStagedComposerPreview(attachment, uid, render);
     if (attachment.kind === 'image' && attachment.preview) {
       const image = document.createElement('img');
@@ -876,27 +873,27 @@ function renderAttachmentCards(box, attachments,
     } else {
       thumb.textContent = composerKindIcon(attachment.kind);
     }
-    const info = bridge.el('span', 'draft-info');
+    const info = bridge.dom().el('span', 'draft-info');
     const name = document.createElement('b');
     name.textContent = attachment.uploaded?.name || attachment.file?.name || 'attachment';
     const meta = document.createElement('small');
     const ref = `[附件${attachment.number}]`;
     const kindName = attachment.kind === 'file' ? '文件'
       : ({ image: '图片', video: '视频', audio: '音频' }[attachment.kind]);
-    const summary = `${ref} · ${kindName} · ${bridge.fmtSize(attachment.file?.size ?? attachment.uploaded?.size ?? 0)}`;
+    const summary = `${ref} · ${kindName} · ${fmtSize(attachment.file?.size ?? attachment.uploaded?.size ?? 0)}`;
     meta.textContent = attachment.status === 'uploading' ? `${summary} · ${attachment.progress || 0}%`
       : attachment.status === 'queued' ? `${summary} · 等待上传`
         : attachment.status === 'failed' ? `${summary} · ${attachment.error || '上传失败'}`
           : summary;
     info.append(name, meta);
     if (attachment.status === 'failed' && onRetry && attachment.file instanceof Blob) {
-      const retry = bridge.el('button', 'draft-retry', '重试');
+      const retry = bridge.dom().el('button', 'draft-retry', '重试');
       retry.type = 'button'; retry.title = '重新上传';
       retry.disabled = disabled;
       retry.onclick = e => { e.stopPropagation(); onRetry(attachment); };
       info.appendChild(retry);
     }
-    const remove = bridge.el('button', 'draft-remove', '×');
+    const remove = bridge.dom().el('button', 'draft-remove', '×');
     remove.type = 'button';
     remove.title = remove.ariaLabel = attachment.cancelUpload ? '取消上传' : '移除附件';
     remove.disabled = disabled && !attachment.cancelUpload;
@@ -910,13 +907,9 @@ function renderAttachmentCards(box, attachments,
   }
 }
 
-
-
-
-
 function composerUsesInputStatus(uid = composerUid) {
   return conversationSendEnabled()
-    && !(typeof bridge.sessionIsPtyOnly === 'function' && bridge.sessionIsPtyOnly(uid));
+    && !(typeof bridge.terminal().sessionIsPtyOnly === 'function' && bridge.terminal().sessionIsPtyOnly(uid));
 }
 
 function updateComposerInputStatus(uid, data) {
@@ -942,18 +935,18 @@ function updateComposerInputStatus(uid, data) {
         || (draft.inputAnswer.sent && draft.inputAnswer.revision !== screenMenuRevision(prompt))))
     draft.inputAnswer = null;
   if (changed && composerDraftOwner(composerUid) === owner) renderComposerInputStatus();
-  bridge.paintTurn(uid);
+  bridge.status().paintTurn(uid);
 }
 
 async function probeComposerInput(uid) {
-  const draft = composerDrafts.get(composerDraftOwner(uid)), name = bridge.takenOver(uid);
+  const draft = composerDrafts.get(composerDraftOwner(uid)), name = bridge.terminal().takenOver(uid);
   if (!draft || !name) return {error:'会话尚未就绪，请切换终端检查'};
   const probe = (draft.inputProbe || 0) + 1;
   draft.inputProbe = probe;
   let data;
   try {
-    data = await bridge.post('api/session/conversation/check', {uid, name,
-      lease:bridge.termSendLease(name).lease || null}, {timeoutMs:5000});
+    data = await bridge.post().post('api/session/conversation/check', {uid, name,
+      lease:bridge.terminal().termSendLease(name).lease || null}, {timeoutMs:5000});
   } catch (error) {
     data = {error:error.name === 'TimeoutError'
       ? 'CLI 输入状态检查超时，正在重试；可切换终端检查'
@@ -961,19 +954,19 @@ async function probeComposerInput(uid) {
   }
   // An older poll cannot overwrite a newer SEND check, a switched view, or
   // the state of a replacement terminal using the same logical draft.
-  if (draft.inputProbe === probe && bridge.takenOver(uid) === name) {
+  if (draft.inputProbe === probe && bridge.terminal().takenOver(uid) === name) {
     updateComposerInputStatus(uid, data);
-    if (data && typeof data === 'object' && data.cli) applyCliState(uid, data.cli, {status:false});
+    if (data && typeof data === 'object' && data.cli) controller.applyCliState(uid, data.cli, {status:false});
   }
   return data;
 }
 
 function syncComposerSendState() {
   if(!composerSending) ui.busy='';
-  bridge.renderQueuedSends(composerUid);
+  bridge.pendingStage().renderQueuedSends(composerUid);
   const draft=composerDrafts.get(composerDraftOwner(composerUid));
   const blocked=composerUsesInputStatus() ? !composerInputAllowsSend(draft?.inputStatus) : !!activeCliQuestion(composerUid);
-  ui.sendDisabled=!!bridge.staleBuildShown || composerSending || !!draft?.loading || sessionComposerEnded(composerUid) || blocked;
+  ui.sendDisabled=!!bridge.build().state.stale || composerSending || !!draft?.loading || sessionComposerEnded(composerUid) || blocked;
 }
 
 function composerInputNotice(status) {
@@ -993,7 +986,7 @@ function composerInputNotice(status) {
     cli_input_pending: '终端输入框里已有未发送的文字，请在上方终端发送或清空；输入已保留',
     cli_input_returned: '上一条消息已被 Esc 退回终端输入框，请在上方终端按回车重发或清空；输入已保留',
   };
-  if (typeof bridge.sessionTerminalFirst === 'function' && bridge.sessionTerminalFirst(composerUid)
+  if (typeof bridge.terminal().sessionTerminalFirst === 'function' && bridge.terminal().sessionTerminalFirst(composerUid)
       && above[status.code])
     return above[status.code];
   return messages[status.code] || status.message;
@@ -1004,7 +997,7 @@ function renderComposerInputStatus() {
   const status=draft && composerUsesInputStatus() && !composerInputAllowsSend(draft.inputStatus)
     ? draft.inputStatus || composerInputStatus(null) : null;
   ui.blocked=!!(status && (status.state==='blocked' || (status.state==='unknown' && status.code!=='input_check_pending')));
-  ui.attention=status ? bridge.sessionInputAttention(composerUid) : '';
+  ui.attention=status ? bridge.status().sessionInputAttention(composerUid) : '';
   ui.notice=status?.code==='cli_question' && draft?.inputPrompt
     ? '等待用户回答，请在题卡中选择；输入已保留' : composerInputNotice(status);
   renderComposerQuestion(draft); syncComposerSendState();
@@ -1019,68 +1012,66 @@ function renderComposerQuestion(draft) {
     ui.question=null;
     if(draft?.inputStatus?.state==='ready' || sessionComposerEnded(composerUid)) {
       const prefix=`${composerDraftOwner(composerUid)}\0`;
-      for(const key of bridge.screenMenuTextDrafts.keys()) if(key.startsWith(prefix)) bridge.screenMenuTextDrafts.delete(key);
+      for(const key of bridge.questionRuntime().screenMenuTextDrafts.keys()) if(key.startsWith(prefix)) bridge.questionRuntime().screenMenuTextDrafts.delete(key);
     }
     return;
   }
   const m={...prompt,uid:composerUid,call_id:prompt.id,live:true,state:draft.inputAnswer ? 'submitted' : 'waiting'};
   const rows=Array.isArray(m.questions) && m.questions.length ? m.questions : [{question:m.text,options:[]}];
-  const form=bridge.sessiondockCli(m.source || m.uid)?.canAnswerQuestionForm({...m,questions:rows});
+  const form=sessiondockCli(m.source || m.uid)?.canAnswerQuestionForm({...m,questions:rows});
   const draftKey=form && m.uid && m.call_id ? `${m.uid}\0${m.call_id}` : '';
-  let selected=draftKey ? bridge.questionFormDrafts.get(draftKey) : null;
+  let selected=draftKey ? bridge.questionRuntime().questionFormDrafts.get(draftKey) : null;
   if(!Array.isArray(selected) || selected.length!==rows.length || !selected.every((index,i)=>index===null || (Number.isInteger(index)&&!!rows[i]?.options?.[index]))) {
-    selected=Array(rows.length).fill(null); if(draftKey) bridge.questionFormDrafts.set(draftKey,selected);
+    selected=Array(rows.length).fill(null); if(draftKey) bridge.questionRuntime().questionFormDrafts.set(draftKey,selected);
   }
   const key=`${composerDraftOwner(m.uid)}\0${m.id}`;
   if(m.text && typeof m.text==='object') {
     const prefix=`${composerDraftOwner(m.uid)}\0`;
-    for(const saved of bridge.screenMenuTextDrafts.keys()) if(saved.startsWith(prefix)&&saved!==key) bridge.screenMenuTextDrafts.delete(saved);
+    for(const saved of bridge.questionRuntime().screenMenuTextDrafts.keys()) if(saved.startsWith(prefix)&&saved!==key) bridge.questionRuntime().screenMenuTextDrafts.delete(saved);
   }
   ui.questionUi={selected,submitting:null,
-    text:bridge.screenMenuTextDrafts.get(key) ?? m.text?.value ?? ''};
+    text:bridge.questionRuntime().screenMenuTextDrafts.get(key) ?? m.text?.value ?? ''};
   ui.question=m;
 }
 
 async function answerComposerQuestion(uid, id, index) {
   if (composerDraft(uid, false)?.inputPrompt?.kind === 'screen_menu')
     return answerComposerScreenMenu(uid, id, 'option', index);
-  const draft = composerDraft(uid, false), name = bridge.takenOver(uid);
+  const draft = composerDraft(uid, false), name = bridge.terminal().takenOver(uid);
   if (!draft || draft.inputPrompt?.id !== id || draft.inputAnswer) return false;
-  const binding = bridge.termInputBody(name, {name, keys:[], uid});
+  const binding = bridge.terminal().termInputBody(name, {name, keys:[], uid});
   if (!binding) return false;
   draft.inputAnswer = id;
   renderComposerQuestion(draft);
   // Recheck the same live menu before writing, including pre-rollout launches.
-  const current = await probeComposerInput(uid);
-  if (current?.prompt?.id !== id || composerUid !== uid || bridge.takenOver(uid) !== name) {
+  const current = await controller.probeComposerInput(uid);
+  if (current?.prompt?.id !== id || composerUid !== uid || bridge.terminal().takenOver(uid) !== name) {
     if (draft.inputAnswer === id) draft.inputAnswer = null;
     if (composerUid === uid) renderComposerQuestion(draft);
     return false;
   }
-  const keys = bridge.sessiondockCli(current.prompt.source)?.questionAnswerKeys(current.prompt, index);
+  const keys = sessiondockCli(current.prompt.source)?.questionAnswerKeys(current.prompt, index);
   let ok = false;
   try { ok = !!keys?.length && await writeComposerMenuInput(name, uid, binding, {keys}); }
-  catch (error) { await bridge.appAlert('回答未完成，请检查终端后继续：' + (error.message || error)); }
+  catch (error) { await SessionUi.appAlert('回答未完成，请检查终端后继续：' + (error.message || error)); }
   if (!ok) { draft.inputAnswer = null; if (composerUid === uid) renderComposerQuestion(draft); }
   else pollComposerInput();
   return !!ok;
 }
 
-
-
 async function writeComposerMenuInput(name, uid, binding, payload) {
-  if (bridge.takenOver(uid) !== name || composerUid !== uid) return false;
-  const response = await bridge.post('api/term/send', {...binding, ...payload});
+  if (bridge.terminal().takenOver(uid) !== name || composerUid !== uid) return false;
+  const response = await bridge.post().post('api/term/send', {...binding, ...payload});
   if (response.error) throw new Error(response.error);
-  bridge.S.live.add(uid); bridge.S.liveTmux.add(uid); bridge.S.lastSync = 0; bridge.S.syncGap = bridge.FAST_MIN;
-  bridge.paintLive();
+  bridge.runtime().state.live.live.add(uid); bridge.runtime().state.live.liveTmux.add(uid); bridge.runtime().state.selection.lastSync = 0; bridge.runtime().state.selection.syncGap = 350;
+  bridge.status().paintLive();
   return true;
 }
 
 async function answerComposerScreenMenu(uid, id, kind, value) {
-  const draft = composerDraft(uid, false), shown = draft?.inputPrompt, name = bridge.takenOver(uid);
+  const draft = composerDraft(uid, false), shown = draft?.inputPrompt, name = bridge.terminal().takenOver(uid);
   if (!name || shown?.id !== id || draft.inputAnswer || composerUid !== uid) return false;
-  const binding = bridge.termInputBody(name, {name, keys:[], uid});
+  const binding = bridge.terminal().termInputBody(name, {name, keys:[], uid});
   if (!binding) return false;
   delete binding.keys;
   const pending = {id, revision:screenMenuRevision(shown), sent:false};
@@ -1089,8 +1080,8 @@ async function answerComposerScreenMenu(uid, id, kind, value) {
   let ok = false;
   let refreshOnly = false;
   try {
-    const current = await probeComposerInput(uid), prompt = current?.prompt;
-    if (prompt?.id !== id || composerUid !== uid || bridge.takenOver(uid) !== name
+    const current = await controller.probeComposerInput(uid), prompt = current?.prompt;
+    if (prompt?.id !== id || composerUid !== uid || bridge.terminal().takenOver(uid) !== name
         || draft.inputAnswer !== pending) return false;
     let keys;
     if (kind === 'option') {
@@ -1124,12 +1115,12 @@ async function answerComposerScreenMenu(uid, id, kind, value) {
     if (ok) {
       pending.sent = true;
       pending.revision = screenMenuRevision(prompt);
-      bridge.S.lastSync = 0;
+      bridge.runtime().state.selection.lastSync = 0;
       if (refreshOnly) {
         // Navigation at a boundary may legitimately leave the screen unchanged.
         // Reobserve once, then allow the next explicit operation; never resend.
         await new Promise(resolve => setTimeout(resolve, 200));
-        await probeComposerInput(uid);
+        await controller.probeComposerInput(uid);
         if (draft.inputAnswer === pending) {
           draft.inputAnswer = null;
           if (composerUid === uid) renderComposerQuestion(draft);
@@ -1138,7 +1129,7 @@ async function answerComposerScreenMenu(uid, id, kind, value) {
     }
     return !!ok;
   } catch (error) {
-    await bridge.appAlert('回答未完成，请检查终端后继续：' + (error.message || error));
+    await SessionUi.appAlert('回答未完成，请检查终端后继续：' + (error.message || error));
     return false;
   } finally {
     if (!ok && draft.inputAnswer === pending) {
@@ -1165,13 +1156,13 @@ async function reconcileComposerSubmission(uid) {
 let composerInputProbeBusy=false, composerDraftSyncBusy=false;
 
 async function pollComposerInput() {
-  if (bridge.SessionDockNetwork.paused) return;
+  if (bridge.runtime().network.paused) return;
   const uid=composerUid;
   if (!uid || !conversationSendEnabled() || document.hidden || composerSending || composerInputProbeBusy
-      || !$('#composer').getClientRects().length || !bridge.takenOver(uid)) return;
+      || !$('#composer').getClientRects().length || !bridge.terminal().takenOver(uid)) return;
   composerInputProbeBusy=true;
   let data;
-  try { data = await probeComposerInput(uid); }
+  try { data = await controller.probeComposerInput(uid); }
   catch { /* SEND independently checks the current input surface. */ }
   finally { composerInputProbeBusy=false; }
   // Draft/history reads must not hold up the live input-status checks.
@@ -1201,12 +1192,12 @@ function scheduleComposerInputChecks(poll) {
 function renderComposerItems() {
   const draft=composerDraft();
   ui.uid=composerUid; ui.text=draft?.text || ''; ui.loading=!!draft?.loading;
-  ui.sending=composerSending; ui.addDisabled=!!bridge.staleBuildShown || composerSending || !!draft?.loading;
+  ui.sending=composerSending; ui.addDisabled=!!bridge.build().state.stale || composerSending || !!draft?.loading;
   ui.attachments=(draft?.attachments || []).map(a=>({...a})); ui.quotes=(draft?.quotes || []).map(q=>({...q}));
   ui.storageError=draft?.storageError || '';
-  ui.restartable=!!(composerUid?.startsWith('tmux:') && !bridge.takenOver(composerUid)
-    && ['exited','failed'].includes((bridge.T.pending || []).find(r=>bridge.pendingUid(r.name)===composerUid)?.state)
-    && !bridge.sessionIsPtyOnly(composerUid));
+  ui.restartable=!!(composerUid?.startsWith('tmux:') && !bridge.terminal().takenOver(composerUid)
+    && ['exited','failed'].includes((bridge.terminal().state.pending || []).find(r=>pendingUid(r.name)===composerUid)?.state)
+    && !bridge.terminal().sessionIsPtyOnly(composerUid));
   for(const attachment of draft?.attachments || []) if(attachment.kind==='image') loadStagedComposerPreview(attachment,composerUid,renderComposerItems);
   renderComposerInputStatus();
 }
@@ -1226,11 +1217,11 @@ function addComposerFiles(files) {
 function addDraftFiles(draft, files) {
   for (const file of files) {
     if (draft.attachments.length >= COMPOSER_MAX_FILES) {
-      bridge.appAlert(`一次最多添加 ${COMPOSER_MAX_FILES} 个附件`);
+      SessionUi.appAlert(`一次最多添加 ${COMPOSER_MAX_FILES} 个附件`);
       break;
     }
     if (!file.size || file.size > COMPOSER_MAX_FILE_BYTES) {
-      bridge.appAlert(`「${file.name || '附件'}」为空或超过 512 MB`);
+      SessionUi.appAlert(`「${file.name || '附件'}」为空或超过 512 MB`);
       continue;
     }
     const kind = composerFileKind(file);
@@ -1241,12 +1232,6 @@ function addDraftFiles(draft, files) {
     });
   }
 }
-
-
-
-
-
-
 
 function insertComposerReference(number, ta = $('#cinput')) {
   if (!ta) return;
@@ -1277,7 +1262,7 @@ function removeComposerAttachment(id, draft = composerDraft()) {
 function addComposerQuote(text = '') {
   const draft = composerDraft();
   if (!draft) return;
-  if (draft.quotes.length >= 4) return bridge.appAlert('一次最多添加 4 段引用');
+  if (draft.quotes.length >= 4) return SessionUi.appAlert('一次最多添加 4 段引用');
   draft.quotes.push({ id: `quote-${globalThis.crypto?.randomUUID?.() || ++composerDraftSeq}`, text: String(text).trim().slice(0, 16000) });
   persistComposerDraft();
   renderComposerItems();
@@ -1302,11 +1287,11 @@ function removeComposerQuote(id, draft = composerDraft()) {
 async function uploadComposerAttachment(attachment, uid, attachmentId = null,
   {node = '', render = renderComposerItems} = {}) {
   if (attachment.uploaded?.upload_id && composerDraftOwner(attachment.uploaded.uid) === composerDraftOwner(uid)
-      && (!node || attachment.uploaded.node === node || bridge.nodeOf(attachment.uploaded.uid) === node)) return attachment.uploaded;
+      && (!node || attachment.uploaded.node === node || bridge.runtime().nodes.nodeOf(attachment.uploaded.uid) === node)) return attachment.uploaded;
   if (!(attachment.file instanceof Blob)) throw new Error('请重新选择未上传的附件：' + attachment.file.name);
   if (attachment.file.size > COMPOSER_MAX_FILE_BYTES) throw new Error('单个附件不能超过 512 MiB');
   attachment.status = 'uploading'; attachment.error = ''; attachment.progress = 0; render();
-  const url = new URL(bridge.appUrl('api/session/conversation/attachment'));
+  const url = new URL(bridge.environment.appUrl('api/session/conversation/attachment'));
   url.searchParams.set('uid', uid); url.searchParams.set('id', attachment.id);
   url.searchParams.set('name', attachment.file.name || 'attachment');
   if (node) url.searchParams.set('node', node);
@@ -1395,12 +1380,12 @@ function loadStagedComposerPreview(attachment, uid, render = () => {}) {
   const id = attachment.uploaded?.upload_id;
   const size = attachment.file?.size ?? attachment.uploaded?.size ?? 0;
   if (!id || attachment.file instanceof Blob || size > COMPOSER_PREVIEW_MAX_BYTES) return;
-  const url = new URL(bridge.appUrl('api/session/conversation/attachment'));
+  const url = new URL(bridge.environment.appUrl('api/session/conversation/attachment'));
   url.searchParams.set('uid', uid); url.searchParams.set('id', id);
   attachment.previewLoading = true;
   (async () => {
     try {
-      const response = await fetch(url, {cache:'no-store'});
+      const response = await bridge.runtime().network.fetch(url, {cache:'no-store'});
       // Bytes that are gone stay gone; a transient failure may be retried.
       if (response.status === 404) attachment.previewRetryAt = Infinity;
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -1421,23 +1406,23 @@ function discardStagedAttachment(attachment, saved = Promise.resolve(true)) {
   const id = attachment?.uploaded?.upload_id, uid = attachment?.uploaded?.uid;
   if (!id || !uid || !conversationSendEnabled()) return;
   Promise.resolve(saved)
-    .then(ok => ok && bridge.post('api/session/conversation/attachment/discard', {uid, id}))
+    .then(ok => ok && bridge.post().post('api/session/conversation/attachment/discard', {uid, id}))
     .catch(() => {});
 }
 
 let composerSending = false;
 
 async function submitComposer() {
-  if (typeof bridge.staleBuildShown !== 'undefined' && bridge.staleBuildShown) return;
+  if (typeof bridge.build().state.stale !== 'undefined' && bridge.build().state.stale) return;
   if (!conversationSendEnabled()
-      && !(typeof bridge.sessionIsPtyOnly === 'function' && bridge.sessionIsPtyOnly(composerUid || bridge.S.sel))) {
-    await bridge.appAlert('此服务尚未启用会话发送，请更新服务后重试'); return;
+      && !(typeof bridge.terminal().sessionIsPtyOnly === 'function' && bridge.terminal().sessionIsPtyOnly(composerUid || bridge.runtime().state.selection.sel))) {
+    await SessionUi.appAlert('此服务尚未启用会话发送，请更新服务后重试'); return;
   }
   const ta = $('#cinput'), button = $('#csend');
   const uid = composerUid;
   let draft = composerDraft(uid);
-  if (!draft || !bridge.takenOver(uid)) {
-    await bridge.appAlert('会话尚未就绪，输入已保留；可切换到终端检查启动状态'); return;
+  if (!draft || !bridge.terminal().takenOver(uid)) {
+    await SessionUi.appAlert('会话尚未就绪，输入已保留；可切换到终端检查启动状态'); return;
   }
   const text = ta.value, attachments = [...draft.attachments];
   const quotes = draft.quotes.map(x => ({id:x.id, text:x.text})).filter(x => x.text.trim());
@@ -1448,7 +1433,7 @@ async function submitComposer() {
     renderComposerInputStatus();
     return;
   }
-  if (!conversationSendEnabled() || (typeof bridge.sessionIsPtyOnly === 'function' && bridge.sessionIsPtyOnly(uid))) {
+  if (!conversationSendEnabled() || (typeof bridge.terminal().sessionIsPtyOnly === 'function' && bridge.terminal().sessionIsPtyOnly(uid))) {
     closeComposerHistory(); composerSending = true;
     ui.sendDisabled=true;
     try {
@@ -1461,7 +1446,7 @@ async function submitComposer() {
         persistComposerDraft(uid);
       }
     } catch (error) {
-      await bridge.appAlert('发送失败，输入保留：' + (error.message || error));
+      await SessionUi.appAlert('发送失败，输入保留：' + (error.message || error));
     } finally {
       composerSending = false; ui.sendDisabled=false;renderComposerItems(); autoGrow(ta);
     }
@@ -1505,7 +1490,7 @@ async function submitComposer() {
     else sendFailed = true;
   } catch (error) {
     sendFailed = true;
-    await bridge.appAlert('发送失败，输入保留：' + (error.message || error));
+    await SessionUi.appAlert('发送失败，输入保留：' + (error.message || error));
   } finally {
     composerSending = false; setComposerBusy( ''); ui.addDisabled=false;
     renderComposerItems(); autoGrow(ta);
@@ -1521,19 +1506,19 @@ async function submitComposer() {
 
 let composerEscAt = -Infinity;
 
-async function revealNativeTerminal(uid = bridge.S.sel) {
-  const name = bridge.takenOver(uid);
-  if (!name || bridge.S.sel !== uid) return false;
-  bridge.T.uid = uid;
-  await bridge.openTermPane(name, true, bridge.MOBILE.matches ? null : 'full');
+async function revealNativeTerminal(uid = bridge.runtime().state.selection.sel) {
+  const name = bridge.terminal().takenOver(uid);
+  if (!name || bridge.runtime().state.selection.sel !== uid) return false;
+  bridge.terminal().state.uid = uid;
+  await bridge.terminal().openTermPane(name, true, bridge.environment.MOBILE.matches ? null : 'full');
   return true;
 }
 
 function activeCliQuestion(uid) {
-  const entry = bridge.cache.get(bridge.viewKey(uid));
+  const entry = bridge.runtime().cache.cache.get(viewKey(uid));
   if (entry?.prompt?.questions?.length) return entry.prompt;
-  const question = typeof bridge.pendingHistoryQuestion === 'function'
-    ? bridge.pendingHistoryQuestion(entry) : null;
+  const question = typeof bridge.questionRuntime().pendingHistoryQuestion === 'function'
+    ? bridge.questionRuntime().pendingHistoryQuestion(entry) : null;
   return question ? {id: question.call_id, questions: question.questions} : null;
 }
 
@@ -1543,14 +1528,14 @@ async function answerCliQuestion(uid, optionIndex) {
   if (rows?.length !== 1 || rows[0].multiple || !rows[0].options?.[optionIndex]) return false;
   // 不同 CLI 的菜单定位语义不同（Claude 用方向键，Codex 用数字直选），
   // 具体按键必须由各自实现决定，不能在公共交互层猜测当前光标位置。
-  const keys = bridge.sessiondockCli(uid)?.questionAnswerKeys(prompt, optionIndex);
+  const keys = sessiondockCli(uid)?.questionAnswerKeys(prompt, optionIndex);
   if (!keys?.length) return false;
   return sendToSession(null, keys, uid);
 }
 
 async function answerCliQuestionForm(uid, optionIndexes) {
   const prompt = activeCliQuestion(uid);
-  const cli = bridge.sessiondockCli(uid);
+  const cli = sessiondockCli(uid);
   if (!cli?.canAnswerQuestionForm(prompt)) return false;
   const groups = cli.questionFormAnswerKeyGroups(prompt, optionIndexes);
   if (!groups?.length) return false;
@@ -1567,29 +1552,29 @@ async function answerCliQuestionForm(uid, optionIndexes) {
 
 async function cancelCliQuestion(uid) {
   composerEscAt = -Infinity;
-  const keys = bridge.sessiondockCli(uid)?.questionCancelKeys(activeCliQuestion(uid));
+  const keys = sessiondockCli(uid)?.questionCancelKeys(activeCliQuestion(uid));
   return keys?.length ? sendToSession(null, keys, uid) : false;
 }
 
 async function sendComposerEscape(now = performance.now()) {
-  const uid = bridge.S.sel;
-  const entry = bridge.cache.get(bridge.viewKey(uid));
+  const uid = bridge.runtime().state.selection.sel;
+  const entry = bridge.runtime().cache.cache.get(viewKey(uid));
   const visibleActivity = $('#activity')?.dataset.state;
   // activity 缓存可能来自上一个已结束的 Claude 进程；renderActivity 会把它
   // 隐藏。Esc 必须服从用户眼前的交互态，不能被这条旧 working 永久挡住回滚。
   const busy = !!entry?.prompt
-    || !!bridge.pendingHistoryQuestion(entry)
+    || !!bridge.questionRuntime().pendingHistoryQuestion(entry)
     || ['working', 'waiting'].includes(visibleActivity);
   const draft = composerDraft(uid, false);
   const empty = !String($('#cinput')?.value || '').trim()
     && !(draft?.attachments?.length) && !(draft?.quotes?.some(q => q.text?.trim()));
-  const escape = bridge.sessiondockCli(uid)?.repeatedEscape(now, composerEscAt, { busy, empty })
+  const escape = sessiondockCli(uid)?.repeatedEscape(now, composerEscAt, { busy, empty })
     || { rewind: false, nextAt: -Infinity };
   const rewind = escape.rewind;
   composerEscAt = escape.nextAt;
-  const name = bridge.takenOver(uid);
+  const name = bridge.terminal().takenOver(uid);
   const sent = await sendToSession(null, ['Escape'], uid);
-  if (!rewind || !sent || !name || bridge.S.sel !== uid) return sent;
+  if (!rewind || !sent || !name || bridge.runtime().state.selection.sel !== uid) return sent;
 
   // 回滚点、恢复代码/对话的选项都由原生 CLI 自己维护。第二次 Esc 后直接
   // 揭示原生 TUI；确认回滚后服务端从编辑区与画面同步时间线（docs/cli-state.md）。
@@ -1607,7 +1592,7 @@ function confirmPastedFiles(files) {
   const size = bytes >= 1024 * 1024
     ? `${(bytes / 1048576).toFixed(bytes >= 100 * 1048576 ? 0 : 1)} MB`
     : `${Math.ceil(bytes / 1024)} KB`;
-  return bridge.appConfirm(`粘贴了 ${files.length} 个文件，共 ${size}。继续？`);
+  return SessionUi.appConfirm(`粘贴了 ${files.length} 个文件，共 ${size}。继续？`);
 }
 
 function whenPasteConfirmed(files, go, then = () => {}) {
@@ -1621,7 +1606,7 @@ function pasteAttachmentFiles(e, addFiles) {
   const files = clipboardAttachmentFiles(e.clipboardData);
   if (directories.length) {
     e.preventDefault();
-    const warn = () => bridge.appAlert(`暂不支持直接粘贴文件夹：${directories.join('、')}。请先压缩后再粘贴。`);
+    const warn = () => SessionUi.appAlert(`暂不支持直接粘贴文件夹：${directories.join('、')}。请先压缩后再粘贴。`);
     if (files.length) whenPasteConfirmed(files, () => addFiles(files), warn);
     else warn();
     return;
@@ -1638,12 +1623,12 @@ function pasteAttachmentFiles(e, addFiles) {
   whenPasteConfirmed(files, () => addFiles(files));
 }
 
-const $=(selector)=>bridge.$(selector);
+const $=(selector)=>document.querySelector(selector);
 function setComposerBusy(label) {ui.busy=label;}
 function hide() {ui.visible=false;}
 function measureEditor() {
   autoGrow($('#cinput'));
-  if(bridge.sessionTerminalFirst(composerUid) && typeof bridge.layoutTermPane==='function') bridge.layoutTermPane();
+  if(bridge.terminal().sessionTerminalFirst(composerUid) && typeof bridge.terminal().layoutTermPane==='function') bridge.terminal().layoutTermPane();
 }
 function input(e) {
   const draft = composerDraft();
@@ -1682,7 +1667,7 @@ function keydown(e) {
     return;
   }
   // 手机软键盘没有方便的 Shift+Enter：Enter 始终换行，只允许按钮发送。
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !bridge.MOBILE.matches) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !bridge.environment.MOBILE.matches) {
     e.preventDefault();
     submitComposer();
   }
@@ -1700,19 +1685,26 @@ function dragenter(e) {if(e.dataTransfer?.types?.includes('Files')) ui.dragover=
 function dragover(e) {if(!e.dataTransfer?.types?.includes('Files')) return;e.preventDefault();e.dataTransfer.dropEffect='copy';}
 function dragleave(e) {if(!e.currentTarget.contains(e.relatedTarget)) ui.dragover=false;}
 function drop(e) {ui.dragover=false;const files=[...(e.dataTransfer?.files || [])];if(!files.length)return;e.preventDefault();addComposerFiles(files);}
-function quoteInput(id,e) {const q=composerDraft()?.quotes.find(q=>q.id===id);if(q){q.text=e.target.value;persistComposerDraft();}}
+function quoteInput(id,e) {
+  const q=composerDraft()?.quotes.find(q=>q.id===id);
+  if(q){
+    q.text=e.target.value;
+    ui.quotes.find(quote=>quote.id===id).text=q.text;
+    persistComposerDraft();
+  }
+}
 function attachmentInsert(number) {insertComposerReference(number);}
 function attachmentRemove(id) {const a=composerDraft()?.attachments.find(a=>a.id===id);if(a?.cancelUpload)a.cancelUpload();else removeComposerAttachment(id);}
 function attachmentRetry(id) {const a=composerDraft()?.attachments.find(a=>a.id===id);if(a)stageComposerAttachment(a,composerUid);}
 function questionText(e) {
   ui.questionUi={...ui.questionUi,text:e.target.value};
-  bridge.screenMenuTextDrafts.set(`${composerDraftOwner(composerUid)}\0${ui.question.id}`,e.target.value);
+  bridge.questionRuntime().screenMenuTextDrafts.set(`${composerDraftOwner(composerUid)}\0${ui.question.id}`,e.target.value);
 }
 async function questionOption(i,j) {
   const m=ui.question;
   if(m.kind==='screen_menu') return answerComposerQuestion(m.uid,m.id,j);
   const rows=Array.isArray(m.questions) && m.questions.length ? m.questions : [{question:m.text,options:[]}];
-  const form=(m.state || 'waiting')==='waiting' && bridge.sessiondockCli(m.source || m.uid)?.canAnswerQuestionForm({...m,questions:rows});
+  const form=(m.state || 'waiting')==='waiting' && sessiondockCli(m.source || m.uid)?.canAnswerQuestionForm({...m,questions:rows});
   if(form) {ui.questionUi.selected[i]=j;ui.questionUi={...ui.questionUi};return;}
   const pending={...ui.questionUi,submitting:j};ui.questionUi=pending;
   const ok=await answerComposerQuestion(m.uid,m.id,j);
@@ -1727,20 +1719,20 @@ function questionCancel() {const m=ui.question;return m.kind==='screen_menu' ? a
 function questionAction(index) {const m=ui.question;return answerComposerScreenMenu(m.uid,m.id,'action',index);}
 function questionTextSubmit() {const m=ui.question;return answerComposerScreenMenu(m.uid,m.id,'text',ui.questionUi.text);}
 function questionTerminal() {return revealNativeTerminal(ui.question.uid);}
-function cliInfo(m) {return bridge.sessiondockCli(m.source || m.uid);}
+function cliInfo(m) {return sessiondockCli(m.source || m.uid);}
 function attachmentCanRetry(a) {return a.file instanceof Blob;}
-function attachmentMeta(a) {return bridge.fmtSize(a.file?.size ?? a.uploaded?.size ?? 0);}
-function historyTime(ts,index) {return ts ? bridge.fmtTime(ts) : `${index+1}`;}
+function attachmentMeta(a) {return fmtSize(a.file?.size ?? a.uploaded?.size ?? 0);}
+function historyTime(ts,index) {return ts ? fmtTime(ts) : `${index+1}`;}
 function start() {
   setInterval(recoverComposerDrafts,3000);addEventListener('online',recoverComposerDrafts);
   scheduleComposerInputChecks(pollComposerInput);
-  bridge.MOBILE.addEventListener('change',()=>{syncComposerMode();bridge.renderTakeoverBtn();});
+  bridge.environment.MOBILE.addEventListener('change',()=>{syncComposerMode();bridge.takeover().renderTakeoverBtn();});
   syncComposerMode();
   document.addEventListener('click',e=>{if(!e.target.closest('.attach-picker'))closeAttachMenu();if(!e.target.closest('.composer-input-wrap'))closeComposerHistory();});
   document.addEventListener('selectionchange',()=>{
     const selection=getSelection();if(!selection||selection.isCollapsed||!selection.anchorNode||!selection.focusNode)return;
     const messages=$('#msgs');if(messages?.contains(selection.anchorNode)&&messages.contains(selection.focusNode)) {
-      lastMessageSelection=selection.toString().trim().slice(0,16000);lastMessageSelectionUid=bridge.S.sel;
+      lastMessageSelection=selection.toString().trim().slice(0,16000);lastMessageSelectionUid=bridge.runtime().state.selection.sel;
     }
   });
 }
@@ -1752,20 +1744,20 @@ async function restartComposer() {
         draft.restartId ||= crypto.randomUUID();
         const uid=composerUid;
         if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '草稿尚未保存');
-        const data=await bridge.post('api/session/conversation/restart',{uid,request_id:draft.restartId});
+        const data=await bridge.post().post('api/session/conversation/restart',{uid,request_id:draft.restartId});
         if (data.error) throw new Error(data.error);
-        const next=bridge.pendingUid(data.name);
+        const next=pendingUid(data.name);
         // The server has already bound both instances to the same logical draft.
         migrateComposerDraft(uid,next);composerHydrations.delete(next);
         // Re-enter the editor for the replacement instance; the old CLI's
         // readiness and in-flight probes cannot authorize a send here.
         composerUid=null;
-        await bridge.loadTermList();await bridge.openPendingSession(data);
+        await bridge.terminal().loadTermList();await bridge.terminal().openPendingSession(data);
       } catch (error){draft.storageError=error.message || String(error);renderComposerItems();}
   ui.restarting=false;
 }
 
-return {
+const controller = {
 measureEditor,
 attachmentCanRetry,
 hide,
@@ -1924,4 +1916,5 @@ get composerEscAt(){return composerEscAt}, set composerEscAt(value){composerEscA
 get PASTE_CONFIRM_FILES(){return PASTE_CONFIRM_FILES},
 get PASTE_CONFIRM_BYTES(){return PASTE_CONFIRM_BYTES}
 };
+return controller;
 }

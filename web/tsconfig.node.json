@@ -1,14 +1,23 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["vite.config.ts", "vite.migration.config.ts", "vite.pages.config.ts"]
+  "include": [
+    "vite.config.ts",
+    "vite.migration.config.ts",
+    "vite.pages.config.ts",
+    "vite.workers.config.ts"
+  ]
 }

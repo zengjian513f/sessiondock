@@ -1,11 +1,14 @@
 <script setup lang="ts">
+import {defineStore} from 'pinia'
+import {runtimePinia} from '../../stores/runtime/pinia'
 import { computed, onMounted, reactive, useTemplateRef } from 'vue'
 import { createRecordsController } from './controller'
 const params = new URLSearchParams(location.search)
 const nodes = (params.get('nodes') || '').split(',').filter(Boolean)
 if (!nodes.length) nodes.push(params.get('node') || '')
 const embedded = params.get('embedded') === '1' || window.self !== window.top
-const ui = reactive({ machine: '', state: { id: '', key: '', node: '', status: '', live: false, ended: false, gaps: 0, bytes: 0 }, error: false, size: '', fitOn: false, empty: false, liveOnly: false, records: [] as any[], nodeNames: {} as Record<string, string> })
+const usePageStore=defineStore('page-records',()=>{const ui=reactive({ machine: '', state: { id: '', key: '', node: '', status: '', live: false, ended: false, gaps: 0, bytes: 0 }, error: false, size: '', fitOn: false, empty: false, liveOnly: false, records: [] as any[], nodeNames: {} as Record<string, string> });return {ui}})
+const ui=usePageStore(runtimePinia).ui
 const visible = computed(() => ui.records.filter(row => !ui.liveOnly || row.live))
 const selected = (row: any) => row.id === ui.state.id && (row.node || '') === (ui.state.node || '')
 const activeDescendant = computed(() => visible.value.find(selected) ? 'rec-' + ui.state.id : undefined)

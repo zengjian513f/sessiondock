@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Legacy console routed by native UID and instance, using only a synthetic shell."""
+from browser_runtime import js
 import os
 from pathlib import Path
 import tempfile
@@ -58,13 +59,13 @@ def live_rotation(browser, hub_mode):
                 page.goto(base, wait_until="networkidle")
                 page.locator(f'#side .item[data-uid="{view_uid(guard_uid)}"]').click()
                 page.locator("#a-term").click()
-                page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+                page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
                 expect(page.locator("#a-term")).to_have_attribute("aria-label", "切换到对话")
-                original = page.evaluate("({name:T.name, instance:T.views.get(T.name).instanceId})")
+                original = page.evaluate(js("({name:T.name, instance:T.views.get(T.name).instanceId})", '({name:runtime.terminal.state.name, instance:runtime.terminal.state.views.get(runtime.terminal.state.name).instanceId})'))
                 initial_controls = list(controls)
                 # Retain object identities only for assertions; all view changes
                 # below use the real header button and native fixture updates.
-                page.evaluate("window.rotationSocket = T.ws; window.rotationView = T.views.get(T.name)")
+                page.evaluate(js("window.rotationSocket = T.ws; window.rotationView = T.views.get(T.name)", 'window.rotationSocket = runtime.terminal.state.ws; window.rotationView = runtime.terminal.state.views.get(runtime.terminal.state.name)', body=True))
                 for generation in [1, 2]:
                     key = f"rotation-{generation}"
                     corpus.put(key, "codex", [codex_row("session_meta", {
@@ -76,8 +77,8 @@ def live_rotation(browser, hub_mode):
                     uid = view_uid(corpus.uid(key))
                     # Fetch both real catalogs; no injected frontend state or
                     # mock terminal response can establish the new association.
-                    page.evaluate("async () => { await loadSessions(true); await loadTermList(); }")
-                    page.wait_for_function("uid => S.sel === uid && T.uid === uid", arg=uid)
+                    page.evaluate(js("async () => { await loadSessions(true); await loadTermList(); }", 'async () => { await runtime.core.list.loadSessions(true); await runtime.terminal.loadTermList(); }'))
+                    page.wait_for_function(js("uid => S.sel === uid && T.uid === uid", 'uid => runtime.core.state.selection.sel === uid && runtime.terminal.state.uid === uid'), arg=uid)
                     expect(page.locator("#a-term")).to_have_attribute("aria-label", "切换到对话")
                     page.locator("#a-term").click()
                     expect(page.locator("#msgs")).to_be_visible()
@@ -85,12 +86,12 @@ def live_rotation(browser, hub_mode):
                     expect(page.locator("#a-term")).to_have_attribute("aria-label", "切换到终端")
                     page.locator("#a-term").click()
                     expect(page.locator("#a-term")).to_have_attribute("aria-label", "切换到对话")
-                    assert page.evaluate("T.ws === window.rotationSocket && T.views.get(T.name) === window.rotationView")
-                    assert page.evaluate("({name:T.name, instance:T.views.get(T.name).instanceId})") == original
+                    assert page.evaluate(js("T.ws === window.rotationSocket && T.views.get(T.name) === window.rotationView", 'runtime.terminal.state.ws === window.rotationSocket && runtime.terminal.state.views.get(runtime.terminal.state.name) === window.rotationView'))
+                    assert page.evaluate(js("({name:T.name, instance:T.views.get(T.name).instanceId})", '({name:runtime.terminal.state.name, instance:runtime.terminal.state.views.get(runtime.terminal.state.name).instanceId})')) == original
                     assert controls == initial_controls, controls
                 page.locator("#termpane .xterm-helper-textarea").press_sequentially("ping")
                 page.locator("#termpane .xterm-helper-textarea").press("Enter")
-                page.wait_for_function("Array.from({length:T.term.buffer.active.length}, (_,i)=>T.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_PING_OK')")
+                page.wait_for_function(js("Array.from({length:T.term.buffer.active.length}, (_,i)=>T.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_PING_OK')", "Array.from({length:runtime.terminal.state.term.buffer.active.length}, (_,i)=>runtime.terminal.state.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_PING_OK')"))
                 assert process.poll() is None
                 assert corpus.paths["original"].read_bytes() == native
                 assert not errors, errors
@@ -149,15 +150,15 @@ def main():
                         assert len(listed["sessions"])==2, listed
                         page.locator("#a-term").click()
                         expect(page.locator("#termpane")).to_be_visible()
-                        page.wait_for_function("T.name === 'synthetic-identity-host'")
-                        page.wait_for_function("T.ws && T.ws.readyState === WebSocket.OPEN")
+                        page.wait_for_function(js("T.name === 'synthetic-identity-host'", "runtime.terminal.state.name === 'synthetic-identity-host'"))
+                        page.wait_for_function(js("T.ws && T.ws.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws && runtime.terminal.state.ws.readyState === WebSocket.OPEN'))
                         # Read the actual imported xterm buffer only to assert
                         # rendered output; all controls use normal user events.
-                        page.wait_for_function("[...T.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_SHELL_READY'))")
+                        page.wait_for_function(js("[...T.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_SHELL_READY'))", "[...runtime.terminal.state.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_SHELL_READY'))"))
                         page.locator("#termpane .xterm-helper-textarea").press_sequentially("next" if restart else "ping")
                         page.locator("#termpane .xterm-helper-textarea").press("Enter")
                         expected="RS_AFTER_RESTART" if restart else "RS_PING_OK"
-                        page.wait_for_function("expected=>[...T.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes(expected))",arg=expected)
+                        page.wait_for_function(js("expected=>[...T.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes(expected))", "expected=>[...runtime.terminal.state.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes(expected))"),arg=expected)
                         page.set_viewport_size({"width":390,"height":844})
                         # The responsive layout returns to the sidebar; open
                         # the same session with the normal mobile navigation.
@@ -178,14 +179,14 @@ def main():
                             second.locator(f'#side .item[data-uid="{uid}"]').click()
                             expect(second.locator("#a-term")).to_have_attribute("data-unavailable","false")
                             second.locator("#a-term").click()
-                            second.wait_for_function("T.ws && T.ws.readyState === WebSocket.OPEN")
+                            second.wait_for_function(js("T.ws && T.ws.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws && runtime.terminal.state.ws.readyState === WebSocket.OPEN'))
                             expect(page.locator("#termpane")).to_be_hidden()
                             assert any("抢占" in message and "本页面的终端已关闭" in message for message in revoked),revoked
-                            second.wait_for_function("[...T.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_SHELL_READY'))")
+                            second.wait_for_function(js("[...T.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_SHELL_READY'))", "[...runtime.terminal.state.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_SHELL_READY'))"))
                             second.bring_to_front()
                             second.locator("#termpane .xterm-helper-textarea").press_sequentially("next")
                             second.locator("#termpane .xterm-helper-textarea").press("Enter")
-                            second.wait_for_function("[...T.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_AFTER_RESTART'))")
+                            second.wait_for_function(js("[...T.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_AFTER_RESTART'))", "[...runtime.terminal.state.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_AFTER_RESTART'))"))
                             second_context.close()
                         assert not errors,errors
                         context.close()

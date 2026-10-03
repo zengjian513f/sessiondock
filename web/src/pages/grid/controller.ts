@@ -1,4 +1,5 @@
 // @ts-nocheck
+import {capabilities as SessionDockCapabilities} from '../../services/overlays/capabilities'
 // Terminal handles and protocol state stay outside Vue reactivity.
 import {LineDecoder, encodeResize} from '../../../../legacy-web/grid/wire.js';
 import {GridModel} from '../../../../legacy-web/grid/model.js';

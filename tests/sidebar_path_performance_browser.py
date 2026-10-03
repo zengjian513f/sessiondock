@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Click folded branches/groups and filters with many same-basename directories."""
+from browser_runtime import js
 import argparse
 from pathlib import Path
 import tempfile
@@ -24,18 +25,23 @@ def main():
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.route('**/api/sessions?*', lambda r: r.fulfill(json={'unchanged': True}))
             page.goto(base, wait_until='networkidle')
-            page.wait_for_function('S.sessions.length > 0 && T.listLoaded')
-            page.evaluate('''() => {
+            page.wait_for_function(js('S.sessions.length > 0 && T.listLoaded', 'runtime.core.state.catalog.sessions.length > 0 && runtime.terminal.state.listLoaded'))
+            page.evaluate(js('''() => {
               window.__regexCalls=0; const test=RegExp.prototype.test;
               RegExp.prototype.test=function(...args){__regexCalls++;return test.apply(this,args)};
               window.__fits=0;const fit=fitTimelineDirectories;
               fitTimelineDirectories=function(...args){__fits++;return fit(...args)};
-            }''')
+            }''', """() => {
+              window.__regexCalls=0; const test=RegExp.prototype.test;
+              RegExp.prototype.test=function(...args){__regexCalls++;return test.apply(this,args)};
+              window.__fits=0;const fit=runtime.timeline.fitTimelineDirectories;
+              runtime.timeline.fitTimelineDirectories=function(...args){__fits++;return fit(...args)};
+            }"""))
             seed(page, rows, 'date')
             assert page.evaluate('__regexCalls') < 50000, page.evaluate('__regexCalls')
             # Verify abbreviation semantics against all peers, independently of
             # the candidate index. Every label must match only its source path.
-            assert page.evaluate(r'''() => {
+            assert page.evaluate(js(r'''() => {
               const plans=timelinePlanCache.plans;
               for(const [path,plan] of plans) for(const label of plan.labels){
                 const pattern=new RegExp('^'+label.split('/').map(p=>p==='…'
@@ -44,13 +50,24 @@ def main():
                 for(const peer of plans.keys()) if(peer!==path && pattern.test(peer)) return false;
               }
               window.__plans=plans;return true;
-            }''')
+            }''', """() => {
+              const plans=runtime.timeline.timelinePlanCache.plans;
+              for(const [path,plan] of plans) for(const label of plan.labels){
+                const pattern=new RegExp('^'+label.split('/').map(p=>p==='…'
+                  ? '(?:[^/]+/)*[^/]+' : p.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')).join('/')+'$');
+                if(!pattern.test(path)) return false;
+                for(const peer of plans.keys()) if(peer!==path && pattern.test(peer)) return false;
+              }
+              window.__plans=plans;return true;
+            }"""))
             caret=page.locator('.item[data-uid="claude:fold-0"] .nest-caret')
-            page.evaluate('''() => {window.__full=0;const render=renderSide;
-              renderSide=function(...args){__full++;return render(...args)}}''')
+            page.evaluate(js('''() => {window.__full=0;const render=renderSide;
+              renderSide=function(...args){__full++;return render(...args)}}''', """() => {window.__full=0;const render=runtime.sidebarView.renderSide;
+              runtime.sidebarView.renderSide=function(...args){__full++;return render(...args)}}"""))
             for i in range(4):
-                page.evaluate('''i=>{const row=indexedSessions().byUid.get('claude:fold-0');
-                  applyMigrationMeta(row.uid,null,{meta:row},{...row,size:4096+i,cursor:{end:i,head:'test'}})}''', i)
+                page.evaluate(js('''i=>{const row=indexedSessions().byUid.get('claude:fold-0');
+                  applyMigrationMeta(row.uid,null,{meta:row},{...row,size:4096+i,cursor:{end:i,head:'test'}})}''', """i=>{const row=runtime.core.index.indexedSessions().byUid.get('claude:fold-0');
+                  runtime.core.diff.applyMigrationMeta(row.uid,null,{meta:row},{...row,size:4096+i,cursor:{end:i,head:'test'}})}"""), i)
                 caret.click()
             assert page.evaluate('__full') == 0
             assert '4K' in page.locator('.item[data-uid="claude:fold-0"] .m').text_content()
@@ -66,11 +83,12 @@ def main():
             page.locator('#chips .chip[data-source="claude"]').click()
             page.set_viewport_size({'width': 1250, 'height': 900})
             page.wait_for_timeout(150)
-            assert page.evaluate('timelinePathPlans([...S.sessions].reverse())===__plans')
+            assert page.evaluate(js('timelinePathPlans([...S.sessions].reverse())===__plans', 'runtime.timeline.timelinePathPlans([...runtime.core.state.catalog.sessions].reverse())===__plans'))
             # A new colliding directory invalidates the plan and remains distinct.
-            page.evaluate('''()=>{S.sessions=[...S.sessions,{...S.sessions[0],uid:'claude:extra',sid:'extra',
-              cwd:'/synthetic/other/run-0/checkout/workspace'}];renderSide()}''')
-            assert page.evaluate('timelinePlanCache.plans!==__plans')
+            page.evaluate(js('''()=>{S.sessions=[...S.sessions,{...S.sessions[0],uid:'claude:extra',sid:'extra',
+              cwd:'/synthetic/other/run-0/checkout/workspace'}];renderSide()}''', """()=>{runtime.core.state.catalog.sessions=[...runtime.core.state.catalog.sessions,{...runtime.core.state.catalog.sessions[0],uid:'claude:extra',sid:'extra',
+              cwd:'/synthetic/other/run-0/checkout/workspace'}];runtime.sidebarView.renderSide()}"""))
+            assert page.evaluate(js('timelinePlanCache.plans!==__plans', 'runtime.timeline.timelinePlanCache.plans!==__plans'))
             assert page.locator('.item[data-uid="claude:extra"]').count() == 1
             assert not errors, errors
             browser.close()

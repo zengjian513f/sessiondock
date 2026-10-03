@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Three-state /api/live with the legacy UI: a managed instance is running, then
 exited; unrelated sessions stay explicitly unknown. Only a synthetic free shell."""
+from browser_runtime import js
 import argparse
 import json
 import os
@@ -106,9 +107,9 @@ def main():
                         page.locator("#livecount").click()
                         for other in others:
                             expect(page.locator(f'#side .item[data-uid="{other}"]')).to_have_count(0)
-                        assert page.evaluate("S.activeOnly") is True
+                        assert page.evaluate(js("S.activeOnly", 'runtime.core.state.sidebar.activeOnly')) is True
                         page.locator("#allcount").click()
-                        assert page.evaluate("S.activeOnly") is False
+                        assert page.evaluate(js("S.activeOnly", 'runtime.core.state.sidebar.activeOnly')) is False
                         for other in others:
                             expect(page.locator(f'#side .item[data-uid="{other}"]')).to_have_count(1)
 
@@ -123,11 +124,11 @@ def main():
                     expect(page.locator("#msgs")).to_contain_text("Synthetic live managed console")
                     expect(page.locator("#a-term")).to_be_visible()
                     expect(page.locator("#a-term")).to_have_attribute("data-unavailable", "false")
-                    page.wait_for_function("instance => (T.list || []).some(row => row.instance_id === instance)", arg=instance)
+                    page.wait_for_function(js("instance => (T.list || []).some(row => row.instance_id === instance)", 'instance => (runtime.terminal.state.list || []).some(row => row.instance_id === instance)'), arg=instance)
                     page.locator("#a-term").click()
                     expect(page.locator("#termpane")).to_be_visible()
-                    page.wait_for_function("T.ws && T.ws.readyState === WebSocket.OPEN")
-                    page.wait_for_function("[...T.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_SHELL_READY'))")
+                    page.wait_for_function(js("T.ws && T.ws.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws && runtime.terminal.state.ws.readyState === WebSocket.OPEN'))
+                    page.wait_for_function(js("[...T.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_SHELL_READY'))", "[...runtime.terminal.state.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_SHELL_READY'))"))
 
                     # Exit through the console; the host reaps the shell and
                     # removes its record. The UI retires the instance and the
@@ -138,8 +139,8 @@ def main():
                     expect(page.locator("#a-term")).to_have_attribute("data-unavailable", "true", timeout=15000)
                     assert process.wait(timeout=10) == 0
                     assert not (root / "host" / (record["name"] + ".json")).exists()
-                    page.wait_for_function("instance => !(T.list || []).some(row => row.instance_id === instance)", arg=instance)
-                    assert page.evaluate("uid => T.ended.has(uid)", uid)
+                    page.wait_for_function(js("instance => !(T.list || []).some(row => row.instance_id === instance)", 'instance => !(runtime.terminal.state.list || []).some(row => row.instance_id === instance)'), arg=instance)
+                    assert page.evaluate(js("uid => T.ended.has(uid)", 'uid => runtime.terminal.state.ended.has(uid)'), uid)
                     ended = wait_live(opener, base, lambda d: d["managed"]["sessions"].get(uid, {}).get("state") == "exited")
                     assert ended["uids"] == [] and ended["started_at"] == {} and ended["known"] is True, ended
                     session = ended["managed"]["sessions"][uid]

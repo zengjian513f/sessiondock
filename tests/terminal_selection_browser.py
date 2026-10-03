@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Real mouse selection/copy with and without CLI mouse capture, in isolated PTYs."""
+from browser_runtime import js, wait_for_async
 import os
 from pathlib import Path
 import shlex
@@ -98,7 +99,7 @@ def check_surface(pw, surface, mobile=False):
                     assert page.locator('#a-term').get_attribute('data-unavailable') == 'false'
                     page.unroute('**/vendor/xterm.js*')
                 fixture.open_console(page, uid)
-                page.evaluate('window.selectionTerm = [...T.views.values()][0].term')
+                page.evaluate(js('window.selectionTerm = [...T.views.values()][0].term', 'window.selectionTerm = [...runtime.terminal.state.views.values()][0].term'))
                 keyboard = page.locator('#termpane .xterm-helper-textarea')
             if mobile:
                 check_touch(page, context, root, keyboard, surface)
@@ -144,7 +145,7 @@ def check_surface(pw, surface, mobile=False):
                 page.mouse.up()
                 if mode != 'none': page.keyboard.up('Shift')
                 page.wait_for_function("selectionTerm.getSelection() === ''")
-                page.wait_for_function("navigator.clipboard.readText().then(t => t.trim() === 'SELECT_FIRST')")
+                wait_for_async(page, "navigator.clipboard.readText().then(t => t.trim() === 'SELECT_FIRST')")
                 assert not page.evaluate('selectionBytes'), (surface, mode, page.evaluate('selectionBytes'))
                 assert (root / 'work/input.bin').read_bytes() == before, (surface, mode, 'selection reached CLI')
                 page.keyboard.press('Control+c')
@@ -271,7 +272,7 @@ def check_surface(pw, surface, mobile=False):
                 while time.monotonic() < deadline and (root / 'work/input.bin').read_bytes() == before:
                     page.wait_for_timeout(50)
                 assert (root / 'work/input.bin').read_bytes()[len(before):] == b'\x1b[200~PASTE_MENU_SENTINEL\x1b[201~'
-                page.evaluate("[...T.views.values()][0].replay = true")
+                page.evaluate(js("[...T.views.values()][0].replay = true", '[...runtime.terminal.state.views.values()][0].replay = true'))
                 menu()
                 assert page.get_by_role('menuitem', name='粘贴', exact=True).is_disabled()
                 assert page.get_by_role('menuitem', name='查找', exact=True).evaluate('e => e === document.activeElement')
@@ -316,7 +317,7 @@ def check_touch(page, context, root, keyboard, surface):
         assert not page.locator('.term-context-menu').is_visible()
         assert page.evaluate('navigator.clipboard.readText()') == 'touch-sentinel'
         touch('touchEnd')
-        page.wait_for_function("navigator.clipboard.readText().then(t => t === 'SELECT_FIRST')")
+        wait_for_async(page, "navigator.clipboard.readText().then(t => t === 'SELECT_FIRST')")
         page.wait_for_function("selectionTerm.getSelection() === ''")
         assert (root / 'work/input.bin').read_bytes() == before
         assert not page.evaluate('selectionBytes')
@@ -356,7 +357,7 @@ def check_touch_coexistence(page, context, root, keyboard, surface):
         }""")
     for mode in ('none', '1003'):
         for delay in (100, 550):
-            page.evaluate('applyInterfaceScale(100, true)')
+            page.evaluate(js('applyInterfaceScale(100, true)', 'runtime.shell.applyInterfaceScale(100, true)'))
             keyboard.focus()
             page.keyboard.type('mode:' + mode)
             page.keyboard.press('Enter')
@@ -385,7 +386,7 @@ def check_touch_coexistence(page, context, root, keyboard, surface):
             assert page.evaluate('selectionTerm.getSelection()') == ''
             send('touchEnd')
             page.wait_for_timeout(100)
-            assert page.evaluate('interfaceScale()') == 140
+            assert page.evaluate(js('interfaceScale()', 'runtime.shell.interfaceScale()')) == 140
             assert abs(page.evaluate('visualViewport.scale') - 1) < .01
             assert page.evaluate('navigator.clipboard.readText()') == 'coexist-sentinel'
             assert not page.locator('.term-context-menu').is_visible()
@@ -397,7 +398,7 @@ def check_touch_coexistence(page, context, root, keyboard, surface):
             send('touchStart', [point(b['x'], b['y'], 1)])
             page.wait_for_function("selectionTerm.getSelection() === 'S'")
             send('touchEnd')
-            page.wait_for_function("navigator.clipboard.readText().then(t => t === 'S')")
+            wait_for_async(page, "navigator.clipboard.readText().then(t => t === 'S')")
             screen = page.locator('.grid-canvas' if surface == 'grid' else '.xterm-screen')
             screen.click(button='right', position={'x': 30, 'y': 12})
             page.locator('.term-context-menu:visible').wait_for()
@@ -408,7 +409,7 @@ def check_touch_coexistence(page, context, root, keyboard, surface):
 def check_scaled_rows(page, root, keyboard, surface):
     # Interface scale is CSS zoom: pointer rows must stay under the pointer on
     # every row, for both CLI mouse reports and Shift local selection.
-    page.evaluate('applyInterfaceScale(125, true)')
+    page.evaluate(js('applyInterfaceScale(125, true)', 'runtime.shell.applyInterfaceScale(125, true)'))
     page.wait_for_timeout(300)
     keyboard.focus()
     page.keyboard.type('mode:rows')
@@ -440,7 +441,7 @@ def check_scaled_rows(page, root, keyboard, surface):
         page.mouse.up()
         page.keyboard.up('Shift')
         assert selected.strip() == 'ROW_%03d' % row, (surface, row, selected)
-    page.evaluate('applyInterfaceScale(100, true)')
+    page.evaluate(js('applyInterfaceScale(100, true)', 'runtime.shell.applyInterfaceScale(100, true)'))
     page.wait_for_timeout(300)
     keyboard.focus()
     page.keyboard.type('mode:none')
@@ -460,7 +461,7 @@ def check_shift_selection(page, context, root, keyboard, surface):
           return {x:b.x, y:b.y, cw:b.width/t.cols, ch:b.height/t.rows};
         }""")
     for mode in ('none', '1003'):
-        page.evaluate('applyInterfaceScale(100, true)')
+        page.evaluate(js('applyInterfaceScale(100, true)', 'runtime.shell.applyInterfaceScale(100, true)'))
         keyboard.focus()
         page.keyboard.type('mode:' + mode)
         page.keyboard.press('Enter')
@@ -479,7 +480,7 @@ def check_shift_selection(page, context, root, keyboard, surface):
         send('touchMove', [{'id':1,'x':b['x']+11.5*b['cw'],'y':first['y']}])
         assert page.evaluate('selectionTerm.getSelection()') == 'SELECT_FIRST'
         send('touchEnd')
-        page.wait_for_function("navigator.clipboard.readText().then(t => t === 'SELECT_FIRST')")
+        wait_for_async(page, "navigator.clipboard.readText().then(t => t === 'SELECT_FIRST')")
         assert shift.get_attribute('aria-pressed') == 'true'
         page.evaluate("navigator.clipboard.writeText('shift-pinch-sentinel')")
         send('touchStart', [first])
@@ -494,7 +495,7 @@ def check_shift_selection(page, context, root, keyboard, surface):
         assert page.evaluate('selectionTerm.getSelection()') == ''
         send('touchEnd')
         page.wait_for_timeout(150)
-        assert page.evaluate('interfaceScale()') == 140
+        assert page.evaluate(js('interfaceScale()', 'runtime.shell.interfaceScale()')) == 140
         assert shift.get_attribute('aria-pressed') == 'true'
         assert page.evaluate('navigator.clipboard.readText()') == 'shift-pinch-sentinel'
         assert not page.evaluate('selectionBytes'), page.evaluate('selectionBytes')

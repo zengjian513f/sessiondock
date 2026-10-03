@@ -18,7 +18,7 @@ export interface HeaderAction {
 export interface HeaderMetadata {id?:string;class?:string;color?:string;code?:boolean;text:string}
 export interface SessionView {id:string;on:boolean;running:boolean;main:boolean;type?:string;span?:string;title:string}
 export interface HeaderPresentation {
- meta:SessionRow;pending:unknown;title:string;total:number;hasAgents:boolean;icon:string;menuOpen:boolean;
+ meta:SessionRow;pending:unknown;title:string;total:number;hasAgents:boolean;menuOpen:boolean;
  viewsOpen:boolean;chainOpen:boolean;views:SessionView[];chain:{sid?:string;row?:SessionRow;level:string}[];
  inline:number;brief:number;moreHidden:boolean;moreLabel:string;items:HeaderAction[];metadata:HeaderMetadata[];
  freeze:HeaderAction;action:HeaderAction;chainPending:string[]

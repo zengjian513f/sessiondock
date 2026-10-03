@@ -1,3 +1,6 @@
+import { defineStore } from 'pinia'
+import { runtimePinia } from './runtime/pinia'
+let conversationStoreId = 0
 import { shallowReactive, reactive, markRaw } from 'vue'
 import { planMessages, planTurn, isGroupableTool, messageTimeRange, MESSAGE_TIME_GAP_MS, MESSAGE_TIME_CADENCE_MS } from '../domain/conversation/planning'
 import { messageIndex } from '../domain/conversation/index'
@@ -9,6 +12,7 @@ export interface DisclosureState {
   selected: (number | null)[]; text: string; submitting: number | null; details: boolean
 }
 export function createConversationStore() {
+ const useViewStore = defineStore(`conversation-view-${++conversationStoreId}`, () => {
   const ids = new WeakMap<object, string>(); let nextId = 0
   const state = shallowReactive({
     plans: [] as ConversationPlan[], generation: 0, revision: 0, sealPending: false,
@@ -120,5 +124,7 @@ export function createConversationStore() {
   // Raw messages belong to the cache service. Vue observes plans and scoped UI
   // state; transport packets do not turn the shared cache into deep proxies.
   return markRaw({state, disclosure, key, messageKey, identify, replace, append, seal, sealTools, timed})
+ })
+ return useViewStore(runtimePinia)
 }
 export type ConversationStore = ReturnType<typeof createConversationStore>

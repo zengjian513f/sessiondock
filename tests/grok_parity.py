@@ -6,6 +6,7 @@ No CLI, production state, native home discovery or recorded commands are run.
 """
 from __future__ import annotations
 
+from browser_runtime import js
 import argparse
 import hashlib
 import json
@@ -227,7 +228,7 @@ def browser_check(corpus, cases, base):
             expect(page.locator(".dtitle h2")).to_contain_text("Grok browser initial")
             expect(page.locator("#a-term")).to_be_visible()
             expect(page.locator("#a-term")).to_be_enabled()
-            page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+            page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
             page.evaluate("window.__grokPackets = []")
             chat.write_bytes(b"")
             # Same byte cursor and fixed summary timestamps: existence alone
@@ -253,7 +254,7 @@ def browser_check(corpus, cases, base):
             expect(page.locator("#msgs")).to_contain_text("Browser Grok appended body")
             expect(page.locator("#a-term")).to_be_visible()
             summary.write_text(json.dumps(updated), encoding="utf-8")
-            page.wait_for_function("_es && _es.readyState === EventSource.OPEN", timeout=10000)
+            page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'), timeout=10000)
             page.evaluate("window.__grokPackets = []")
             chat.unlink()  # Exact temporary fixture created above.
             page.wait_for_function("window.__grokPackets.some(p => p.meta?.chat_exists === false && p.version?.mtime === null && p.end === 0)")

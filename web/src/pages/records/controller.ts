@@ -1,4 +1,5 @@
 // @ts-nocheck
+import {capabilities as SessionDockCapabilities} from '../../services/overlays/capabilities'
 import { nextTick } from 'vue';
 // Nonreactive xterm and WebSocket handles retain the original playback semantics.
 export function createRecordsController(ui, elements) {

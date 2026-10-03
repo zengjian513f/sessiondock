@@ -1,5 +1,5 @@
 // Conversation references are resolved here; browsing and preview belong to FileDock.
-declare const SessionDockCapabilities: { config: { filedock_url?: string } };
+import {capabilities as SessionDockCapabilities} from '../../services/overlays/capabilities'
 
 export async function openFile(state: { failed: boolean; message: string }) {
   const base=new URL('.',location.href), context=new URLSearchParams(location.search);
@@ -25,7 +25,7 @@ export async function openFile(state: { failed: boolean; message: string }) {
       path=result.targets?.find((item: { ref: string; path?: string; error?: string })=>item.ref===ref)?.path || result.resolved?.[ref];
       if(!path) throw new Error(result.errors?.find((item: { ref: string; path?: string; error?: string })=>item.ref===ref)?.error || '无法确定文件的完整路径');
     }
-    const service=new URL(SessionDockCapabilities.config.filedock_url || '/files/',location.href);
+    const service=new URL((SessionDockCapabilities.config.filedock_url as string) || '/files/',location.href);
     if(!service.pathname.endsWith('/')) service.pathname+='/';
     const destination=new URL('./',service);
     destination.search=new URLSearchParams({node,path}).toString();destination.hash=location.hash;

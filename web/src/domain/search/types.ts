@@ -3,7 +3,7 @@ export interface SearchRow {uid: string; updated?: string; [key: string]: unknow
 export interface SearchNode {id: string; name: string; done: number; total: number | null; state: string; online?: boolean}
 export interface SearchData {results?: SearchRow[]; error?: string; truncated?: boolean; partial?: boolean; errors?: {node_id?: string; name: string}[]; nodes?: {id: string; online?: boolean}[]; [key: string]: unknown}
 export interface SearchState {term: string; opts: SearchOptions; results: SearchRow[] | null; off: Set<string>; cur: number; markCapped: boolean; autoOpen: number}
-export interface SearchBridge {
+export interface SearchBridge {fetch: typeof fetch;
  query(): string
  read(): SearchState
  write(patch: Partial<Pick<SearchState, 'term' | 'opts' | 'results' | 'cur' | 'markCapped'>>): void

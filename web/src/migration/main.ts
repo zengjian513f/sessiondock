@@ -1,50 +1,18 @@
-import * as SessionUi from './session-ui'
-import * as Overlays from './overlays'
-import { createApp } from 'vue'
-import { createPinia } from 'pinia'
+import {createApp} from 'vue'
+import {runtimePinia} from '../stores/runtime/pinia'
 import WorkspaceShell from '../components/WorkspaceShell.vue'
-import * as Settings from './settings'
-import * as Shell from './shell'
-import * as Composer from './composer'
 import SettingsDialog from '../components/SettingsDialog.vue'
-import * as Machines from './machines'
-import * as Search from './search'
-import * as Sidebar from './sidebar'
-import * as Conversation from './conversation'
-import * as Terminal from './terminal'
-// The unchanged JavaScript grid facade is shared with the standalone grid page.
-// @ts-expect-error The existing grid implementation has no TypeScript declarations.
-import { GridTerm } from '../../../legacy-web/grid/facade.js'
+import * as Overlays from './overlays'
+import * as Composer from './composer'
+import * as SessionUi from './session-ui'
+import {createRuntimeApplication} from '../services/runtime/application.js'
 
-// This IIFE runs as a classic defer script before all scripts that query the
-// workspace. Protocols and engines live in scoped services.
-const workspacePinia = createPinia()
-Overlays.initialize(workspacePinia)
-createApp(WorkspaceShell, {
-  hostname: document.title.replace(/ · 会话管理$/, ''),
-}).use(workspacePinia).mount('#app')
-
+Overlays.initialize(runtimePinia)
+createApp(WorkspaceShell,{hostname:document.title.replace(/ · 会话管理$/,'')}).use(runtimePinia).mount('#app')
 Composer.mount(document.querySelector('#composer-root') as HTMLElement)
-
-createApp(SettingsDialog).mount('#settings-root')
-
-Object.assign(globalThis, {
-  SessionDockOverlays: Overlays,
-  SessionDockCapabilities: Overlays.capabilities,
-  SessionDockAssets: Overlays.assets,
-  SessionDockTypography: Overlays.typography,
-  SessionDockPwaInstall: Overlays.pwa,
-  ensureTerminalAssets: Overlays.ensureTerminalAssets,
-  SessionDockComposer: Composer,
-  SessionDockShell: Shell,
-  SessionDockSettings: Settings,
-  SessionDockMachines: Machines,
-  SessionDockSearch: Search,
-  SessionDockSidebar: Sidebar,
-  SessionDockConversation: Conversation,
-  SessionDockTerminal: Terminal,
-  GridTerm,
-  SessionDockSessionUi:SessionUi,
-})
-
+createApp(SettingsDialog).use(runtimePinia).mount('#settings-root')
 SessionUi.mount()
+const application=createRuntimeApplication()
+declare global {interface Window {SessionDockRuntime:ReturnType<typeof createRuntimeApplication>}}
+window.SessionDockRuntime=application
+application.start()

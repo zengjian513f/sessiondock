@@ -1,7 +1,7 @@
 import { h, render } from 'vue'
 import Composer from '../components/composer/Composer.vue'
 import { composerState, bindComposerController } from '../stores/composer'
-// @ts-expect-error Extracted compatibility controller retains its JavaScript contracts.
+// @ts-expect-error Scoped JavaScript service retains the existing contracts.
 import { createComposerController } from '../services/composer/controller.js'
 let controller:any
 export function createController(bridge:any) {
@@ -18,3 +18,5 @@ export function mount(host:HTMLElement) {
 }
 export function operations():any {return controller}
 export function setSendBusy(label:string) {composerState.busy=label}
+
+export function disableSending(){composerState.sendDisabled=true;composerState.addDisabled=true}

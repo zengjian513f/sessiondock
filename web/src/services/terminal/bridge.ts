@@ -2,6 +2,7 @@
 // This interface names every cross-owner dependency; it never looks up globals.
 export interface CompatibilityRecord { [field: string]: any }
 export interface TerminalBridge {
+  fetch: typeof fetch
   pageId: string
   gestures: {pinching: boolean; isTouchEvent(event: Event): boolean}
   vendors: {
@@ -29,7 +30,7 @@ export interface TerminalBridge {
     sessiondockCli(source: string): CompatibilityRecord | undefined
   }
   sessions: {
-    S: CompatibilityRecord
+    state: import('../runtime/workspace').WorkspaceState
     ConsoleUI: {errors: Map<string, string>; busy: Set<string>}
     cache: Map<string, CompatibilityRecord>
     forkAncestors(session: CompatibilityRecord): CompatibilityRecord[]
@@ -79,6 +80,8 @@ export interface TerminalBridge {
     renderTakeoverBtn(): void
     showConsoleToast(message: string): void
     showMobileList(): void
+    setPendingStage(text: string): void
+    showDetailState(kind: string, text: string): void
     showNewSessionStage(info: CompatibilityRecord): void
     showSessionCount(count: number): void
     showSessionStopNotice(uid: string, message: string): void
@@ -86,7 +89,7 @@ export interface TerminalBridge {
 }
 
 export interface TerminalController {
-  T: CompatibilityRecord
+  state: CompatibilityRecord
   TERM_PAGE_ID: string
   termRows(): number
   termTheme(): any

@@ -146,17 +146,7 @@
 
 <div id="app"></div>
 
-<div id="item-menu" class="ctx-menu" hidden role="menu" aria-label="会话操作">
-  <button type="button" role="menuitem" data-act="copy-identity">复制会话标识</button>
-  <button type="button" role="menuitem" data-act="stop" hidden>停止会话</button>
-  <button type="button" role="menuitem" data-act="hide" hidden>隐藏父会话</button>
-  <button type="button" role="menuitem" data-act="detach" hidden>解除附属</button>
-  <button type="button" role="menuitem" data-act="attach" hidden>附属到…</button>
-  <button type="button" role="menuitem" data-act="delete">删除会话</button>
-  <button type="button" role="menuitem" data-act="clone" hidden>移动 / 复制整组…</button>
-  <button type="button" role="menuitem" data-act="group" aria-controls="session-group-menu" aria-haspopup="menu" aria-expanded="false">分组 <span aria-hidden="true">›</span></button>
-  <button type="button" role="menuitem" data-act="pick">多选…</button>
-</div>
+<div id="item-menu-root"></div>
 <div id="session-group-menu" class="ctx-menu" hidden role="menu" aria-label="会话分组"></div>
 <div id="session-ui-root"></div>
 <div id="popup-root"></div>
@@ -164,20 +154,7 @@
 <div id="float-stack">
 </div>
 <div id="scale-indicator" popover="manual" aria-hidden="true"></div>
-<!-- 列表是首屏核心，必须先执行；终端和公式库较大，延后加载且不能阻塞扫描。 -->
-<script defer src="migration-shell.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-<script defer src="pwa-install.js?v=__SESSIONDOCK_ASSET_VERSION__"
-  data-app-name="SessionDock" data-storage-key="sessiondock.pwa-install-dismissed"></script>
-<script defer src="popup.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-<script defer src="cli.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-<script defer src="nodes.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-<script defer src="list-sync.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-<script defer src="app.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-<script defer src="sidebar-resources.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-<script defer src="session-resources.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-<script defer src="groups.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-<script defer src="term.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-<script defer src="page-sleep.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<script type="module" src="migration-shell.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script>
   // 不再注册 Service Worker：同源新标签页的导航要先经过它，而浏览器把它安排在已有的
   // 同站点进程里启动——旧页面主线程卡死时，新标签页跟着挂到 60 s 启动超时。离线壳

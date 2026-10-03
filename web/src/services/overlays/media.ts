@@ -3,7 +3,7 @@ export interface MediaDiagnostic {status: number; message: string}
 export interface MediaContext {uid: string; agent: string | null; request: unknown}
 export interface MediaView extends MediaContext {current(): boolean}
 export interface MediaEntry { [field: string]: unknown }
-export interface MediaDependencies {
+export interface MediaDependencies {fetch: typeof fetch;
  getView(): MediaContext
  contains(element: Node): boolean
  appUrl(path: string): string
@@ -66,7 +66,7 @@ async function diagnoseMedia(path: string): Promise<MediaDiagnostic> {
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 5000);
   const pending = (async () => {
     try {
-      const response = await fetch(safeMediaSrc(path), {signal: ac.signal, cache: 'no-store',
+      const response = await deps.fetch(safeMediaSrc(path), {signal: ac.signal, cache: 'no-store',
         redirect: 'error', headers: {Accept: 'application/json'}});
       if (response.ok) {
         await response.body?.cancel();

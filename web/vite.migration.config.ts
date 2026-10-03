@@ -6,7 +6,6 @@ import { build, defineConfig } from 'vite'
 
 const webRoot = fileURLToPath(new URL('.', import.meta.url))
 const legacyRoot = resolve(webRoot, '../legacy-web')
-const compatRoot = resolve(webRoot, 'src/compat')
 const outputRoot = resolve(webRoot, 'dist-migration')
 
 export default defineConfig({
@@ -23,9 +22,8 @@ export default defineConfig({
           if (name === 'index.html' || name === 'framework' || name.endsWith('.js')) continue
           cpSync(resolve(legacyRoot, name), resolve(outputRoot, name), { recursive: true })
         }
-        for (const name of readdirSync(compatRoot)) {
-          if (name.endsWith('.js')) cpSync(resolve(compatRoot, name), resolve(outputRoot, name))
-        }
+        cpSync(resolve(webRoot, 'src/workers/regex-worker.js'), resolve(outputRoot, 'regex-worker.js'))
+        await build({ configFile: resolve(webRoot, 'vite.workers.config.ts') })
         cpSync(resolve(webRoot, 'migration/index.html'), resolve(outputRoot, 'index.html'))
         await build({ configFile: resolve(webRoot, 'vite.pages.config.ts') })
         for (const name of readdirSync(resolve(webRoot, 'dist-pages'))) {
@@ -40,8 +38,7 @@ export default defineConfig({
     emptyOutDir: true,
     lib: {
       entry: resolve(webRoot, 'src/migration/main.ts'),
-      name: 'SessionDockMigration',
-      formats: ['iife'],
+      formats: ['es'],
       fileName: () => 'migration-shell.js',
     },
   },

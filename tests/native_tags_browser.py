@@ -4,6 +4,7 @@
 Synthetic histories only, no model CLI. Every positive has a literal/malformed
 control; image delimiters must never become file-read authority.
 """
+from browser_runtime import js
 import argparse
 import hashlib
 import json
@@ -214,7 +215,7 @@ def main():
                 skill_case = cases['skill']
                 page.locator(f'#side .item[data-uid="{skill_case["uid"]}"]').click()
                 expect(page.locator('#msgs')).to_contain_text('ActualSkillQuestion')
-                page.wait_for_function('_es && _es.readyState === EventSource.OPEN')
+                page.wait_for_function(js('_es && _es.readyState === EventSource.OPEN', 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
                 skill_path = corpus.paths['skill'] / 'chat_history.jsonl'
                 with skill_path.open('ab') as stream:
                     stream.write(encoded({'type': 'user', 'content': '<user_query>\nLiveSkillQuestion\n</user_query>\n' + SKILL}))

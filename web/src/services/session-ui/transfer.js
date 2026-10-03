@@ -1,32 +1,37 @@
+
+import * as Shell from '../../migration/shell'
+
+import {SOURCES} from '../../domain/runtime/sources'
+
+import {fmtSize} from '../../domain/runtime/format.js'
 import {reactive,markRaw,nextTick} from 'vue'
 import {compareVersions} from '../../domain/client-versions'
 /** @param {import('../../domain/session-ui/types').SessionUiPresentation} ui */
 export function createTransferController(bridge,ui){
 function transferUnavailableReason(uid) {
-  return uid && bridge.sessionStoppable(uid) ? '会话正在运行，请先停止后再移动或复制整组。' : '';
+  return uid && bridge.sessionUi().sessionStoppable(uid) ? '会话正在运行，请先停止后再移动或复制整组。' : '';
 }
-function paintTransferAvailability(button, uid) {
-  const row = button?.closest('#item-menu')
-    ? bridge.sidebarSessions().find(session => session.uid === uid) : null;
-  const unavailable = button?.closest('#item-menu') && (!row || row.pending
-    || bridge.SessionDockCapabilities.config.session_clone_local_codex !== true);
-  const reason=unavailable ? '此会话当前不支持移动或复制整组。' : transferUnavailableReason(uid);
-  const spec=button?.closest('.dhead') && ui.header?.items.find(item=>item.id==='a-clone-group');
-  if(spec)spec.reason=reason;
-  if(!spec)bridge.setControlUnavailable(button,reason);
+function itemTransferUnavailableReason(uid){
+ const row=bridge.runtime().index.sidebarSessions().find(session=>session.uid===uid);
+ return !row || row.pending || bridge.capabilities.config.session_clone_local_codex!==true ? '此会话当前不支持移动或复制整组。' : transferUnavailableReason(uid);
+}
+function paintTransferAvailability(button,uid){
+ if(button?.closest('#item-menu')){bridge.sidebarGestures().setCloneReason(itemTransferUnavailableReason(uid));return;}
+ const spec=button?.closest('.dhead') && ui.header?.items.find(item=>item.id==='a-clone-group');
+ if(spec)spec.reason=transferUnavailableReason(uid);
 }
 async function cloneSessionGroup(uid, resumed = null) {
   const reason = resumed ? '' : transferUnavailableReason(uid);
   if (reason) {
-    const control = bridge.$('#item-menu:not([hidden]) [data-act="clone"]') || bridge.$('#a-clone-group');
+    const control = document.querySelector('#item-menu:not([hidden]) [data-act="clone"]') || document.querySelector('#a-clone-group');
     paintTransferAvailability(control, uid); return;
   }
-  bridge.closeSessionActions();
+  bridge.sessionUi().closeSessionActions();
   bridge.unmountTransfer();
-  const sourceId = bridge.nodeOf(uid);
+  const sourceId = bridge.runtime().nodes.nodeOf(uid);
   const machines = new Map();
-  for (const node of [...bridge.Nodes.machines, ...bridge.Nodes.list]) machines.set(node.id, {...machines.get(node.id), ...node});
-  const sourceName = machines.get(sourceId)?.name || (bridge.HUB_MODE ? '来源机器' : '当前机器');
+  for (const node of [...bridge.runtime().state.nodes.machines, ...bridge.runtime().state.nodes.list]) machines.set(node.id, {...machines.get(node.id), ...node});
+  const sourceName = machines.get(sourceId)?.name || (bridge.environment.HUB_MODE ? '来源机器' : '当前机器');
   if (!machines.has(sourceId)) machines.set(sourceId, {id:sourceId, name:sourceName});
   const view = reactive({members:[],options:[], actions:markRaw({}), sourceName, targetNode:sourceId, mode:'clone',newIds:true,identityVisible:false,notice:'',confirmLabel:'复制整组',confirmDisabled:true,controlsDisabled:false,abortVisible:false,abortLabel:'撤回本次移动',aborting:false,busy:false,status:'正在读取清单…',environmentVisible:false,environmentText:'',environmentTitle:'',progressVisible:false,progressText:'',progressPhase:'',errorVisible:false,errorText:''});
   ui.transfer = view;
@@ -57,7 +62,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     if (!destination || destination.online === false || destination.enabled === false) return '目标机器当前不可用。';
     if (machines.get(sourceId)?.online === false) return '源机器已离线。';
     if (crossMachine()) {
-      if (bridge.SessionDockCapabilities.config[mode() === 'move' ? 'session_move_remote' : 'session_clone_remote'] !== true) return '跨机器传输尚未接入。';
+      if (bridge.capabilities.config[mode() === 'move' ? 'session_move_remote' : 'session_clone_remote'] !== true) return '跨机器传输尚未接入。';
       return '';
     }
     if (mode() === 'move') return '移动需要选择另一台机器。';
@@ -86,7 +91,7 @@ async function cloneSessionGroup(uid, resumed = null) {
   view.actions.cancel=e=>{e.preventDefault();cancelAndClose();};
   renderSelection(); await nextTick(); dialog.showModal(); target.focus();
   const request = async (path, body) => {
-    const response = await fetch(bridge.appUrl(path), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const response = await bridge.runtime().network.fetch(bridge.environment.appUrl(path), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
     const data = await response.json();
     if (!response.ok) throw Object.assign(new Error(data.error?.message || data.error || '操作失败'), {code:data.code});
     return data;
@@ -99,12 +104,12 @@ async function cloneSessionGroup(uid, resumed = null) {
     if (!plan) { if (closing) close(); return; }
     ++executionSequence; aborting = true; busy = true; view.errorVisible = false; renderSelection();
     try {
-      const result = operationStarted && bridge.HUB_MODE
+      const result = operationStarted && bridge.environment.HUB_MODE
         ? await request('api/session/transfer/cancel', {uid, operation_id:plan.operation_id, target_node:view.targetNode})
         : await request('api/session/clone/cancel', {uid, operation_id:plan.operation_id});
       uncertain = false; operationStarted = false; plan = null; busy = false;
       view.progressVisible = false; refreshTransferTasks();
-      if (closing || result.phase === 'complete') {close(); await bridge.loadSessions(true);}
+      if (closing || result.phase === 'complete') {close(); await bridge.runtime().list.loadSessions(true);}
       else await refreshPlan();
     } catch (failure) {
       uncertain = operationStarted;
@@ -124,8 +129,8 @@ async function cloneSessionGroup(uid, resumed = null) {
       for (const relation of member.relations || []) row.relations.add(relation);
     }
     const ordered = [...members.values()].sort((a,b)=>Number(b.selected)-Number(a.selected)||Number(a.agent)-Number(b.agent));
-    view.members = ordered.map(member=>({source:member.source,sid:member.sid,selected:member.selected,files:member.files, name:member.title || member.sid, detail:member.cwd || member.sid, detailTitle:`${member.sid}${member.cwd?'\n'+member.cwd:''}`, sourceName:{codex:'Codex',claude:'Claude',grok:'Grok'}[member.source]||member.source, badge:member.selected?'所选会话':member.agent?'子代理':member.relations.has('fork')?'分支关联':'关联历史', sizeLabel:bridge.fmtSize(member.bytes)}));
-    view.status = `整组 ${data.session_count} 个会话 · ${data.file_count} 份历史 · ${bridge.fmtSize(data.bytes)}`;
+    view.members = ordered.map(member=>({source:member.source,sid:member.sid,selected:member.selected,files:member.files, name:member.title || member.sid, detail:member.cwd || member.sid, detailTitle:`${member.sid}${member.cwd?'\n'+member.cwd:''}`, sourceName:{codex:'Codex',claude:'Claude',grok:'Grok'}[member.source]||member.source, badge:member.selected?'所选会话':member.agent?'子代理':member.relations.has('fork')?'分支关联':'关联历史', sizeLabel:fmtSize(member.bytes)}));
+    view.status = `整组 ${data.session_count} 个会话 · ${data.file_count} 份历史 · ${fmtSize(data.bytes)}`;
   };
   async function refreshEnvironment() {
     const sequence = ++environmentSequence;
@@ -134,8 +139,8 @@ async function cloneSessionGroup(uid, resumed = null) {
     const clients = id => {
       if (!environmentClients.has(id)) environmentClients.set(id, (async () => {
         try {
-          const path = bridge.HUB_MODE ? `api/nodes/${id}/api/clients` : 'api/clients';
-          const response = await fetch(bridge.appUrl(path), {cache:'no-store', signal:AbortSignal.timeout(20000)});
+          const path = bridge.environment.HUB_MODE ? `api/nodes/${id}/api/clients` : 'api/clients';
+          const response = await bridge.runtime().network.fetch(bridge.environment.appUrl(path), {cache:'no-store', signal:AbortSignal.timeout(20000)});
           const data = await response.json();
           if (!response.ok || !Array.isArray(data.clients)) throw new Error('clients unavailable');
           return data.clients;
@@ -151,7 +156,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     if (!targetClients) messages.push('未核验目标 CLI');
     if (cross && !sourceClients) messages.push('未核验源 CLI 版本');
     for (const provider of new Set(currentPlan.sessions.map(member => member.source))) {
-      const name = bridge.SOURCES[provider]?.name || provider;
+      const name = SOURCES[provider]?.name || provider;
       const installed = (targetClients || []).filter(client => client.source === provider && client.installed);
       if (targetClients && !installed.length) {messages.push(`目标未配置可用的 ${name} CLI`); continue;}
       if (!cross || !targetClients || !sourceClients) continue;
@@ -208,7 +213,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     const id = plan.operation_id;
     progressLoading = true;
     try {
-      const data = await request(operationStarted && bridge.HUB_MODE ? 'api/session/transfer/progress' : 'api/session/clone/progress', {uid, operation_id:id, target_node:view.targetNode});
+      const data = await request(operationStarted && bridge.environment.HUB_MODE ? 'api/session/transfer/progress' : 'api/session/clone/progress', {uid, operation_id:id, target_node:view.targetNode});
       if (operationStarted && dialog.isConnected && plan?.operation_id === id) {
         paintProgress(data);
         if (!busy && !aborting && uncertain && data.phase === 'aborted') {
@@ -227,15 +232,15 @@ async function cloneSessionGroup(uid, resumed = null) {
     if (!prepared || !plan || !dialog.isConnected) {busy = false; if (dialog.isConnected) renderSelection(); return;}
     const execution = ++executionSequence;
     operationStarted = true; view.errorVisible = false; renderSelection();
-    if (bridge.HUB_MODE) paintProgress({phase:'planned'});
+    if (bridge.environment.HUB_MODE) paintProgress({phase:'planned'});
     try {
       const result = await request(crossMachine() ? 'api/session/transfer/clone' : 'api/session/clone', {
         uid, operation_id:plan.operation_id, ...(crossMachine() ? {target_node:view.targetNode} : {}),
       });
       if (execution !== executionSequence) return;
       if (result.phase !== 'complete' || !result.target_uid) throw new Error('复制未完成，请重试检查结果');
-      close(); await bridge.loadSessions(true); await bridge.openSession(result.target_uid);
-      bridge.showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
+      close(); await bridge.runtime().list.loadSessions(true); await bridge.runtime().open.openSession(result.target_uid);
+      bridge.sessionUi().showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
     } catch (failure) {
       if (execution !== executionSequence) return;
       uncertain = failure.code !== 'move_cancelled';
@@ -245,7 +250,6 @@ async function cloneSessionGroup(uid, resumed = null) {
   };
 }
 
-
 function transferPhaseLabel(task) {
   const labels = {planned:'准备迁移', preparing:'整理会话文件', checking:'检查目标目录与会话依赖', transferring:'传输历史', publishing:'发布历史', verifying:'验证历史与关系',
     failed:'复制失败，可重试', rollback_required:'恢复待处理',
@@ -253,41 +257,41 @@ function transferPhaseLabel(task) {
     cleanup_pending:'源端清理待重试', aborting:'撤回待完成', aborted:'已撤回', complete:'已完成'};
   let label = labels[task.phase] || '等待继续';
   if (task.phase === 'transferring' && task.bytes_total > 0)
-    label += ` · ${bridge.fmtSize(task.bytes_sent)} / ${bridge.fmtSize(task.bytes_total)}`;
+    label += ` · ${fmtSize(task.bytes_sent)} / ${fmtSize(task.bytes_total)}`;
   return label;
 }
 let transferTasksLoading = false, tasksSignature = '';
 async function refreshTransferTasks() {
-  if (!bridge.HUB_MODE || transferTasksLoading) return;
+  if (!bridge.environment.HUB_MODE || transferTasksLoading) return;
   transferTasksLoading = true;
   try {
-    const response = await fetch(bridge.appUrl('api/session/transfers'));
+    const response = await bridge.runtime().network.fetch(bridge.environment.appUrl('api/session/transfers'));
     if (!response.ok) return;
     const {operations} = await response.json();
-    bridge.SessionDockShell.setTransfers(operations.length);
-    const panel = bridge.$('#transfer-tasks-dialog');
+    Shell.setTransfers(operations.length);
+    const panel = document.querySelector('#transfer-tasks-dialog');
     if (!panel) return;
-    const name=id=>[...bridge.Nodes.machines,...bridge.Nodes.list].find(n=>n.id===id)?.name||'离线机器';
+    const name=id=>[...bridge.runtime().state.nodes.machines,...bridge.runtime().state.nodes.list].find(n=>n.id===id)?.name||'离线机器';
     const signature=JSON.stringify(operations);
     if (tasksSignature===signature) return;
     tasksSignature=signature;
-    ui.tasks.rows=operations.map(task=>({task:markRaw(task),id:task.request.operation_id,title:task.plan?.sessions?.find(m=>m.uid===task.request.uid)?.title||'会话组',nodes:`${name(bridge.nodeOf(task.request.uid))} → ${name(task.request.target_node)}`,phase:transferPhaseLabel(task)}));
+    ui.tasks.rows=operations.map(task=>({task:markRaw(task),id:task.request.operation_id,title:task.plan?.sessions?.find(m=>m.uid===task.request.uid)?.title||'会话组',nodes:`${name(bridge.runtime().nodes.nodeOf(task.request.uid))} → ${name(task.request.target_node)}`,phase:transferPhaseLabel(task)}));
   } catch (error) {console.warn('迁移任务读取失败', error);}
   finally {transferTasksLoading = false;}
 }
 async function continueTransferTask(task) {
  const presentation=ui.tasks;presentation.pending.push(task.request.operation_id);
  try {
-  const response=await fetch(bridge.appUrl('api/session/transfer/progress'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(task.request)});
+  const response=await bridge.runtime().network.fetch(bridge.environment.appUrl('api/session/transfer/progress'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(task.request)});
   const data=await response.json();
   if(!response.ok || !data.plan)throw new Error(data.error?.message || data.error || '清单暂不可用');
   closeTransferTasks();await cloneSessionGroup(task.request.uid,data);
  }catch(failure){presentation.errorText=failure.message;}
  finally{presentation.pending=presentation.pending.filter(id=>id!==task.request.operation_id);}
 }
-function closeTransferTasks(){const panel=bridge.$('#transfer-tasks-dialog');panel?.close();ui.tasks=null;bridge.unmountTasks();}
+function closeTransferTasks(){const panel=document.querySelector('#transfer-tasks-dialog');panel?.close();ui.tasks=null;bridge.unmountTasks();}
 async function openTransferTasks(){closeTransferTasks();tasksSignature='';ui.tasks=reactive({rows:[],pending:[],errorText:''});const panel=await bridge.mountTasks();panel.showModal();refreshTransferTasks();}
-function initialize(){if(bridge.HUB_MODE){refreshTransferTasks();setInterval(()=>{if(!document.hidden)refreshTransferTasks();},5000);}}
+function initialize(){if(bridge.environment.HUB_MODE){refreshTransferTasks();setInterval(()=>{if(!document.hidden)refreshTransferTasks();},5000);}}
 
-return {initialize,transferUnavailableReason,paintTransferAvailability,cloneSessionGroup,transferPhaseLabel,refreshTransferTasks,openTransferTasks,closeTransferTasks,continueTransferTask};
+return {initialize,itemTransferUnavailableReason,transferUnavailableReason,paintTransferAvailability,cloneSessionGroup,transferPhaseLabel,refreshTransferTasks,openTransferTasks,closeTransferTasks,continueTransferTask};
 }

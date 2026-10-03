@@ -7,7 +7,7 @@ import { build, defineConfig } from 'vite'
 const webRoot = fileURLToPath(new URL('.', import.meta.url))
 const outputRoot = resolve(webRoot, 'dist-pages')
 const pages = ['grid', 'records', 'file'] as const
-// Rollup IIFE output has one entry. Build the remaining classic scripts with
+// Build the independent ESM entries with
 // the same production Vue compiler, then publish all four HTML entry pages.
 export default defineConfig({
   base: './',
@@ -27,7 +27,7 @@ export default defineConfig({
             build: {
               outDir: outputRoot,
               emptyOutDir: false,
-              lib: { entry: resolve(webRoot, `src/pages/${page}/entry.ts`), name: `SessionDock_${page}`, formats: ['iife'], fileName: () => `${page}.js` },
+              lib: { entry: resolve(webRoot, `src/pages/${page}/entry.ts`), formats: ['es'], fileName: () => `${page}.js` },
             },
           })
         }
@@ -41,6 +41,6 @@ export default defineConfig({
   build: {
     outDir: outputRoot,
     emptyOutDir: true,
-    lib: { entry: resolve(webRoot, 'src/pages/grid/entry.ts'), name: 'SessionDock_grid', formats: ['iife'], fileName: () => 'grid.js' },
+    lib: { entry: resolve(webRoot, 'src/pages/grid/entry.ts'), formats: ['es'], fileName: () => 'grid.js' },
   },
 })

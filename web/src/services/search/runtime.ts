@@ -42,7 +42,7 @@ export function showSearchMatches(rows: SearchRow[]) {
  bridge.renderSide()
 }
 export function fetchSearch(params: URLSearchParams, signal: AbortSignal) {
- return requestSearch(params, signal, {allowsSearch: bridge.allowsSearch, appUrl: bridge.appUrl, progress: searchProgress, matches: rows => bridge.showMatches(rows)})
+ return requestSearch(params, signal, {fetch: bridge.fetch, allowsSearch: bridge.allowsSearch, appUrl: bridge.appUrl, progress: searchProgress, matches: rows => bridge.showMatches(rows)})
 }
 export function paintSearchMode(rows: SearchRow[]) {
  state.term = read().term

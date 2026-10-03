@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import {defineStore} from 'pinia'
+import {runtimePinia} from '../../stores/runtime/pinia'
 import { onMounted, reactive, useTemplateRef } from 'vue'
 import { createGridController } from './controller'
-const ui = reactive({ machine: '', state: { status: '' }, error: false, size: '', selected: '', sessions: [] as any[], takeover: false, readOnly: false, back: false })
+const usePageStore=defineStore('page-grid',()=>{const ui=reactive({ machine: '', state: { status: '' }, error: false, size: '', selected: '', sessions: [] as any[], takeover: false, readOnly: false, back: false });return {ui}})
+const ui=usePageStore(runtimePinia).ui
 let handlers: any = {}
 const term = useTemplateRef('term'), grid = useTemplateRef('grid'), keys = useTemplateRef('keys')
 onMounted(() => { handlers = createGridController(ui, { term: term.value, grid: grid.value, keys: keys.value }) })

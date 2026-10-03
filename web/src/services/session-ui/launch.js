@@ -1,11 +1,18 @@
-import { markRaw, nextTick } from 'vue'
-import { createModelService } from './models.js'
+
+import * as SessionUi from '../../migration/session-ui'
+import * as Composer from '../../migration/composer'
+
+import {SOURCES} from '../../domain/runtime/sources'
+
+import {fmtSize} from '../../domain/runtime/format.js'
+import {markRaw,nextTick} from 'vue'
+import {createModelService} from './models.js'
 /** @param {import('../../domain/session-ui/types').SessionUiPresentation} ui */
 export function createLaunchController(bridge, ui) {
 const {createModelPicker,modelCatalogs}=createModelService(bridge,ui);
-const newNodeId = () => bridge.HUB_MODE ? ui.newNode : '';
-const newNodeCapabilities = () => bridge.HUB_MODE ? bridge.Nodes.capabilities[newNodeId()] || {} : bridge.T;
-const newDirsKey = () => bridge.HUB_MODE ? 'newDirs.' + newNodeId() : 'newDirs';
+const newNodeId = () => bridge.environment.HUB_MODE ? ui.newNode : '';
+const newNodeCapabilities = () => bridge.environment.HUB_MODE ? bridge.runtime().state.nodes.capabilities[newNodeId()] || {} : bridge.terminal().state;
+const newDirsKey = () => bridge.environment.HUB_MODE ? 'newDirs.' + newNodeId() : 'newDirs';
 let bugReportToastTimer = 0;
 
 const BUG_REPORT_SOURCES = { claude: 'Claude', codex: 'Codex', grok: 'Grok', opencode: 'OpenCode' };
@@ -17,8 +24,8 @@ function bugReportSource() {
 // 与新建会话一样，四种 AI CLI 都可以做处理会话；记住上次的选择，处理机器上
 // 缺少的命令置灰（中央站下按所选机器的能力表，单机按本机）。
 function syncBugReportSources() {
-  const remembered = bridge.store.get('bugReportSource', 'codex');
-  const sources = bridge.HUB_MODE ? bridge.Nodes.capabilities[bugReportNode()]?.sources : bridge.T.sources;
+  const remembered = bridge.preferences.get('bugReportSource', 'codex');
+  const sources = bridge.environment.HUB_MODE ? bridge.runtime().state.nodes.capabilities[bugReportNode()]?.sources : bridge.terminal().state.sources;
   const known = sources && Object.keys(sources).length;
   ui.bugSources = Object.keys(BUG_REPORT_SOURCES).map(value => {
     const missing = known && !sources[value];
@@ -33,18 +40,18 @@ function syncBugReportSources() {
 // 的草稿时回到草稿所在的机器；否则默认选问题所在的机器（当前会话的机器），
 // 其次上次的选择，再次唯一筛选中的机器。
 async function prepareBugReportNode() {
-  if (!bridge.HUB_MODE) return;
+  if (!bridge.environment.HUB_MODE) return;
   const origin = bugReportOriginNode();
-  const selected = bridge.selectedNodeIds();
-  const drafted = bridge.store.get('bugReportDraftNode', '');
-  const preferred = [drafted, origin, bridge.store.get('bugReportNode', ''),
+  const selected = bridge.runtime().nodes.selectedNodeIds();
+  const drafted = bridge.preferences.get('bugReportDraftNode', '');
+  const preferred = [drafted, origin, bridge.preferences.get('bugReportNode', ''),
     selected.length === 1 ? selected[0] : ''].filter(Boolean);
-  ui.bugNodes = bridge.Nodes.list.map(n=>({id:n.id,label:n.name + (bridge.Nodes.capabilities[n.id]?.enabled ? '' : '（离线）'),disabled:!bridge.Nodes.capabilities[n.id]?.enabled}));
+  ui.bugNodes = bridge.runtime().state.nodes.list.map(n=>({id:n.id,label:n.name + (bridge.runtime().state.nodes.capabilities[n.id]?.enabled ? '' : '（离线）'),disabled:!bridge.runtime().state.nodes.capabilities[n.id]?.enabled}));
   await nextTick();
   const usable = id => ui.bugNodes.some(o => o.id === id && !o.disabled);
   ui.bugNode = preferred.find(usable) || ui.bugNodes.find(o => !o.disabled)?.id || '';
   ui.bugNodeVisible = true;
-  if (drafted && ui.bugNode !== drafted && bridge.Nodes.list.some(n => n.id === drafted)) {
+  if (drafted && ui.bugNode !== drafted && bridge.runtime().state.nodes.list.some(n => n.id === drafted)) {
     ui.bugError =
       `${bugReportNodeName(drafted)} 离线，上面没发出的报告草稿要等它恢复后才能打开`;
   }
@@ -52,17 +59,17 @@ async function prepareBugReportNode() {
 
 // 记下正写着未发送内容的那份报告草稿在哪台机器上；清空或发出后忘掉。
 function noteBugReportDraftNode() {
-  const node = bridge.nodeOf(BUG_REPORT_DRAFT_UID), draft = bridge.composerDrafts.get(BUG_REPORT_DRAFT_UID);
+  const node = bridge.runtime().nodes.nodeOf(BUG_REPORT_DRAFT_UID), draft = bridge.composer().composerDrafts.get(BUG_REPORT_DRAFT_UID);
   if (!node || !draft || draft.loading) return;
   if (draft.text.trim() || draft.quotes.length || draft.attachments.length) {
-    bridge.store.set('bugReportDraftNode', node);
-  } else if (bridge.store.get('bugReportDraftNode', '') === node) {
-    bridge.store.set('bugReportDraftNode', '');
+    bridge.preferences.set('bugReportDraftNode', node);
+  } else if (bridge.preferences.get('bugReportDraftNode', '') === node) {
+    bridge.preferences.set('bugReportDraftNode', '');
   }
 }
 
 function bugReportNodeName(id = bugReportNode()) {
-  return bridge.HUB_MODE ? bridge.Nodes.list.find(n => n.id === id)?.name || '' : '';
+  return bridge.environment.HUB_MODE ? bridge.runtime().state.nodes.list.find(n => n.id === id)?.name || '' : '';
 }
 
 function showBugReportToast(report, worker) {
@@ -73,7 +80,7 @@ function showBugReportToast(report, worker) {
   bugReportToastTimer = setTimeout(dismissBugToast,20000);
 }
 function dismissBugToast() {clearTimeout(bugReportToastTimer);ui.bugToast=null;}
-async function openBugToast() {const worker=ui.bugToast.worker;dismissBugToast();await bridge.loadTermList();const pending=(bridge.T.pending || []).find(item=>item.name===worker.name)||worker;await bridge.openPendingSession(pending);}
+async function openBugToast() {const worker=ui.bugToast.worker;dismissBugToast();await bridge.terminal().loadTermList();const pending=(bridge.terminal().state.pending || []).find(item=>item.name===worker.name)||worker;await bridge.terminal().openPendingSession(pending);}
 
 // 报告框的附件复用对话输入框那一套：同样的选择菜单、粘贴/拖放、[附件N]
 // 引用，以及同一个上传接口。处理会话的 cwd 固定为仓库根目录，因此上传
@@ -83,12 +90,12 @@ let BUG_REPORT_DRAFT_UID = '';
 function bindBugReportDraft() {
   const node=bugReportNode();
   const key='reportDraftId.' + node;
-  let id=bridge.store.get(key,'');
-  if (!id) {id=crypto.randomUUID(); bridge.store.set(key,id);}
-  BUG_REPORT_DRAFT_UID='report:' + (bridge.HUB_MODE ? node + '~' : '') + id;
+  let id=bridge.preferences.get(key,'');
+  if (!id) {id=crypto.randomUUID(); bridge.preferences.set(key,id);}
+  BUG_REPORT_DRAFT_UID='report:' + (bridge.environment.HUB_MODE ? node + '~' : '') + id;
 }
 let bugReportSending = false;
-const bugReportDraftObject = () => bridge.composerDraft(BUG_REPORT_DRAFT_UID);
+const bugReportDraftObject = () => bridge.composer().composerDraft(BUG_REPORT_DRAFT_UID);
 
 /** 下拉选的是跑处理会话的机器，不是另一份报告：正在写的描述、引用和附件
  *  跟着这次选择走，切换机器不清空输入框。服务端存储仍按机器分（附件的字节
@@ -99,44 +106,44 @@ const bugReportDraftObject = () => bridge.composerDraft(BUG_REPORT_DRAFT_UID);
  *  原机器的草稿里并在对话框上说明。返回要显示的提示文案。 */
 function carryBugReportDraft(fromUid, toUid) {
   if (!fromUid || !toUid || fromUid === toUid || bugReportSending) return '';
-  const from = bridge.composerDrafts.get(bridge.composerDraftOwner(fromUid));
+  const from = bridge.composer().composerDrafts.get(bridge.composer().composerDraftOwner(fromUid));
   if (!from || from.handedOffSession) return '';
   const moving = from.attachments.filter(item => item.file instanceof Blob);
   const stranded = from.attachments.length - moving.length;
   if (!from.text && !from.quotes.length && !moving.length) return '';
-  const to = bridge.composerDraft(toUid);
+  const to = bridge.composer().composerDraft(toUid);
   if (!to) return '';
   const node = bugReportNode();
   to.text = to.text ? to.text + '\n' + from.text : from.text;
   to.quotes = [...to.quotes, ...from.quotes];
   to.attachments = [...to.attachments, ...moving];
   to.nextAttachmentNumber = Math.max(to.nextAttachmentNumber || 1, from.nextAttachmentNumber || 1);
-  bridge.ensureComposerAttachmentNumbers(to);
+  bridge.composer().ensureComposerAttachmentNumbers(to);
   for (const field of ['requestId','requestText','report_prompt','report_text']) {
     delete to[field]; delete from[field];
   }
   from.attachments = from.attachments.filter(item => !moving.includes(item));
   from.text = ''; from.quotes = [];
   if (!from.attachments.length) from.nextAttachmentNumber = 1;
-  const saved = bridge.persistComposerDraft(fromUid);
+  const saved = bridge.composer().persistComposerDraft(fromUid);
   for (const item of moving) {
     // 原机器上的暂存字节随清空后的草稿释放；新机器要的是一份新的上传。
     const previous = item.uploaded;
     if (item.cancelUpload) item.cancelUpload();
     item.uploaded = null; item.status = ''; item.error = '';
-    bridge.discardStagedAttachment({uploaded: previous}, saved);
+    bridge.composer().discardStagedAttachment({uploaded: previous}, saved);
     const restage = () => {
       if (!to.attachments.includes(item)) return;
       // 被取消前已经落地的上传仍会写回 uploaded，再清一次才会重新暂存。
-      if (item.uploaded) bridge.discardStagedAttachment(item, saved);
+      if (item.uploaded) bridge.composer().discardStagedAttachment(item, saved);
       item.uploaded = null; item.status = ''; item.error = '';
-      bridge.stageComposerAttachment(item, toUid, {node, render: renderBugReportItems});
+      bridge.composer().stageComposerAttachment(item, toUid, {node, render: renderBugReportItems});
     };
     (item.staging || Promise.resolve()).then(restage, restage);
   }
-  bridge.persistComposerDraft(toUid);
+  bridge.composer().persistComposerDraft(toUid);
   if (!stranded) return '';
-  const where = bugReportNodeName(bridge.nodeOf(fromUid)) || '原机器';
+  const where = bugReportNodeName(bridge.runtime().nodes.nodeOf(fromUid)) || '原机器';
   return `${stranded} 个附件的文件只暂存在${where}，已留在那台机器的草稿里；`
     + '要随这份报告一起提交，请重新选择文件。';
 }
@@ -144,7 +151,7 @@ function carryBugReportDraft(fromUid, toUid) {
 function renderBugReportItems() {
   const draft=bugReportDraftObject();
   ui.bugText = draft.text;
-  for (const attachment of draft.attachments) if (attachment.kind==='image') bridge.loadStagedComposerPreview(attachment,BUG_REPORT_DRAFT_UID,renderBugReportItems);
+  for (const attachment of draft.attachments) if (attachment.kind==='image') bridge.composer().loadStagedComposerPreview(attachment,BUG_REPORT_DRAFT_UID,renderBugReportItems);
   ui.bugAttachments = draft.attachments.map(attachment=>markRaw({...attachment, raw:markRaw(attachment)}));
   ui.bugSending = bugReportSending;
   ui.bugStorageError = draft.storageError || '';
@@ -152,17 +159,17 @@ function renderBugReportItems() {
   ui.bugAddDisabled = bugReportSending || !!bugReportDraftObject().loading;
   // 发送中换机器会把正在提交的内容搬走；锁住下拉直到这一次提交结束。
   ui.bugNodeDisabled = bugReportSending;
-  nextTick(()=>bridge.autoGrow(bridge.$('#bug-report-description')));
+  nextTick(()=>bridge.composer().autoGrow(document.querySelector('#bug-report-description')));
 }
 
 function addBugReportFiles(files) {
   const draft = bugReportDraftObject();
   const before = new Set(draft.attachments);
-  bridge.addDraftFiles(draft, files);
-  bridge.persistComposerDraft(BUG_REPORT_DRAFT_UID);
+  bridge.composer().addDraftFiles(draft, files);
+  bridge.composer().persistComposerDraft(BUG_REPORT_DRAFT_UID);
   for (const attachment of draft.attachments) {
     if (!before.has(attachment)) {
-      bridge.stageComposerAttachment(attachment, BUG_REPORT_DRAFT_UID, {node: bugReportNode(), render: renderBugReportItems});
+      bridge.composer().stageComposerAttachment(attachment, BUG_REPORT_DRAFT_UID, {node: bugReportNode(), render: renderBugReportItems});
     }
   }
   renderBugReportItems();
@@ -176,42 +183,42 @@ function clearBugReportDraft() {
   }
   draft.text='';draft.attachments=[];draft.quotes=[];draft.nextAttachmentNumber=1;
   delete draft.requestId;delete draft.requestText;
-  const saved=bridge.persistComposerDraft(BUG_REPORT_DRAFT_UID);
-  for (const attachment of dropped) bridge.discardStagedAttachment(attachment, saved);
+  const saved=bridge.composer().persistComposerDraft(BUG_REPORT_DRAFT_UID);
+  for (const attachment of dropped) bridge.composer().discardStagedAttachment(attachment, saved);
   renderBugReportItems();
 }
 
 // 处理会话（以及报告、附件）落在下拉里选中的机器上。
 function bugReportNode() {
-  return bridge.HUB_MODE ? ui.bugNode || '' : '';
+  return bridge.environment.HUB_MODE ? ui.bugNode || '' : '';
 }
 
 // 问题所在的机器：当前会话的机器；没有会话时取唯一筛选中的机器；筛选着
 // 多台机器又没选会话时说不清是哪台，按处理机器本身算。
 function bugReportOriginNode() {
-  if (!bridge.HUB_MODE) return '';
-  const fromSession = bridge.nodeOf(bridge.S.sel);
+  if (!bridge.environment.HUB_MODE) return '';
+  const fromSession = bridge.runtime().nodes.nodeOf(bridge.runtime().state.selection.sel);
   if (fromSession) return fromSession;
-  const candidates = bridge.selectedNodeIds();
+  const candidates = bridge.runtime().nodes.selectedNodeIds();
   return candidates.length === 1 ? candidates[0] : '';
 }
 
 // 报告里注明的问题机器；单机模式由服务端填主机名。
 function bugReportOrigin(workerNode) {
-  const uid = bridge.S.sel || '';
-  if (!bridge.HUB_MODE) return {uid};
+  const uid = bridge.runtime().state.selection.sel || '';
+  if (!bridge.environment.HUB_MODE) return {uid};
   const nodeId = bugReportOriginNode() || workerNode;
   return {node_id: nodeId, node_name: bugReportNodeName(nodeId), uid};
 }
 
 function bugReportNodeError(node) {
-  if (!bridge.HUB_MODE) return '';
+  if (!bridge.environment.HUB_MODE) return '';
   if (!node) return '没有可用的机器：请先在顶部选择一台在线机器或打开一个会话';
-  const info = bridge.Nodes.list.find(n => n.id === node);
+  const info = bridge.runtime().state.nodes.list.find(n => n.id === node);
   if (info?.online === false) {
     return `${info.name || '所选机器'} 离线，无法在该机器上保存报告；请换一台在线机器`;
   }
-  if (!bridge.Nodes.capabilities[node]?.enabled) {
+  if (!bridge.runtime().state.nodes.capabilities[node]?.enabled) {
     return `${info?.name || '所选机器'} 未启用终端，无法启动处理会话；请换一台机器`;
   }
   return '';
@@ -222,8 +229,8 @@ function bugReportNodeError(node) {
 // 报告，只把原因写进诊断包。
 async function captureBugReportContext(originNode, uid, terminalName) {
   try {
-    const d = await bridge.post('api/bug-report/capture', {
-      _node: originNode, uid, terminal_name: terminalName, page_id: bridge.TERM_PAGE_ID,
+    const d = await bridge.post().post('api/bug-report/capture', {
+      _node: originNode, uid, terminal_name: terminalName, page_id: bridge.environment.AUDIT_PAGE_ID,
     });
     if (d.error) return {error: d.error};
     return d;
@@ -238,27 +245,27 @@ function closeBugReportAttachMenu() {
 }
 
 async function openBugReportDialog() {
-  const dialog = bridge.$('#bug-report-dialog');
+  const dialog = document.querySelector('#bug-report-dialog');
   ui.bugError = '';
-  ui.bugSubmitDisabled = typeof bridge.staleBuildShown !== 'undefined' && bridge.staleBuildShown;
+  ui.bugSubmitDisabled = typeof bridge.build().state.stale !== 'undefined' && bridge.build().state.stale;
   ui.bugSubmitLabel = '发送';
-  setSendButtonBusy(bridge.$('#bug-report-go'), '');
+  setSendButtonBusy(document.querySelector('#bug-report-go'), '');
   await prepareBugReportNode();
   bindBugReportDraft();
   renderBugReportItems();
   ui.bugText = bugReportDraftObject().text;
-  bridge.hydrateComposerDraft(BUG_REPORT_DRAFT_UID).then(async () => {
+  bridge.composer().hydrateComposerDraft(BUG_REPORT_DRAFT_UID).then(async () => {
     const handedOff=bugReportDraftObject().handedOffSession;
     if (handedOff) {
       showBugReportToast(handedOff.report_id,handedOff);
-      bridge.store.set('reportDraftId.'+bugReportNode(),crypto.randomUUID());bindBugReportDraft();
-      await bridge.hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
+      bridge.preferences.set('reportDraftId.'+bugReportNode(),crypto.randomUUID());bindBugReportDraft();
+      await bridge.composer().hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
     }
     if (!bugReportSending) {
       ui.bugText = bugReportDraftObject().text;
       renderBugReportItems();
       await nextTick();
-      bridge.autoGrow(bridge.$('#bug-report-description'));
+      bridge.composer().autoGrow(document.querySelector('#bug-report-description'));
     }
   });
   syncBugReportSources();
@@ -268,23 +275,23 @@ async function openBugReportDialog() {
   dialog.showModal();
   closeBugReportAttachMenu();
   await nextTick();
-  bridge.autoGrow(bridge.$('#bug-report-description'));
-  setTimeout(() => bridge.$('#bug-report-description').focus(), 0);
+  bridge.composer().autoGrow(document.querySelector('#bug-report-description'));
+  setTimeout(() => document.querySelector('#bug-report-description').focus(), 0);
 }
 
 function bugNodeChanged(event) {
   if(event)ui.bugNode=event.target.value;
   const previous = BUG_REPORT_DRAFT_UID;
-  bridge.store.set('bugReportNode', bugReportNode());
+  bridge.preferences.set('bugReportNode', bugReportNode());
   bindBugReportDraft();
   const notice = carryBugReportDraft(previous, BUG_REPORT_DRAFT_UID);
   ui.bugText=bugReportDraftObject().text;
   renderBugReportItems();
-  bridge.hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
+  bridge.composer().hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
   syncBugReportSources();
   BugReportModels.refresh();
   ui.bugError = notice;
-  nextTick(()=>bridge.autoGrow(bridge.$('#bug-report-description')));
+  nextTick(()=>bridge.composer().autoGrow(document.querySelector('#bug-report-description')));
 }
 async function bugAttachToggle(event) {
   event.stopPropagation();
@@ -292,51 +299,51 @@ async function bugAttachToggle(event) {
   if (!ui.bugAttachOpen) ui.bugAttachPadding = '';
   else {
     await nextTick();
-    ui.bugAttachPadding = `${bridge.$('#bug-report-attach-menu').offsetHeight + 7}px`;
+    ui.bugAttachPadding = `${document.querySelector('#bug-report-attach-menu').offsetHeight + 7}px`;
     await nextTick();
-    bridge.$('#bug-report-add').scrollIntoView({block: 'nearest'});
+    document.querySelector('#bug-report-add').scrollIntoView({block: 'nearest'});
   }
 }
 
 let bugReportBackdropPressed = false;
 function bugReportBackdropHit(event) {
-  const dialog = bridge.$('#bug-report-dialog');
+  const dialog = document.querySelector('#bug-report-dialog');
   const rect = dialog.getBoundingClientRect();
   return event.target === dialog && (event.clientX < rect.left || event.clientX >= rect.right
     || event.clientY < rect.top || event.clientY >= rect.bottom);
 }
 
-function bugSourceChanged(event) {ui.bugSource=event.target.value;bridge.store.set('bugReportSource',bugReportSource());BugReportModels.refresh();}
-function bugInput(event) {ui.bugText=event.target.value;bugReportDraftObject().text=ui.bugText;bridge.persistComposerDraft(BUG_REPORT_DRAFT_UID);bridge.autoGrow(event.target);}
-function bugKeydown(e) {if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!bridge.MOBILE.matches){e.preventDefault();bridge.$('#bug-report-form').requestSubmit();}}
+function bugSourceChanged(event) {ui.bugSource=event.target.value;bridge.preferences.set('bugReportSource',bugReportSource());BugReportModels.refresh();}
+function bugInput(event) {ui.bugText=event.target.value;bugReportDraftObject().text=ui.bugText;bridge.composer().persistComposerDraft(BUG_REPORT_DRAFT_UID);bridge.composer().autoGrow(event.target);}
+function bugKeydown(e) {if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!bridge.environment.MOBILE.matches){e.preventDefault();document.querySelector('#bug-report-form').requestSubmit();}}
 function bugPointerdown(event) {bugReportBackdropPressed=event.button===0&&bugReportBackdropHit(event);NewModels.outside(event);BugReportModels.outside(event);}
 function bugPointercancel() {bugReportBackdropPressed=false;}
 function bugClosed() {bugPointercancel();BugReportModels.close();}
-function bugClick(event) {const dismiss=bugReportBackdropPressed&&bugReportBackdropHit(event);bugReportBackdropPressed=false;if(dismiss)bridge.$('#bug-report-dialog').close();if(!event.target.closest('#bug-report-dialog .attach-picker'))closeBugReportAttachMenu();}
-function bugChooseFile(type) {closeBugReportAttachMenu();bridge.chooseAttachmentFiles(type,bridge.$('#bug-report-file'),addBugReportFiles);}
+function bugClick(event) {const dismiss=bugReportBackdropPressed&&bugReportBackdropHit(event);bugReportBackdropPressed=false;if(dismiss)document.querySelector('#bug-report-dialog').close();if(!event.target.closest('#bug-report-dialog .attach-picker'))closeBugReportAttachMenu();}
+function bugChooseFile(type) {closeBugReportAttachMenu();bridge.composer().chooseAttachmentFiles(type,document.querySelector('#bug-report-file'),addBugReportFiles);}
 function bugFileChanged(event) {addBugReportFiles([...event.target.files]);event.target.value='';}
-function bugPaste(event) {bridge.pasteAttachmentFiles(event,addBugReportFiles);}
-function bugInsert(number) {bridge.insertComposerReference(number,bridge.$('#bug-report-description'));ui.bugText=bridge.$('#bug-report-description').value;}
-function bugRetry(attachment) {bridge.stageComposerAttachment(attachment,BUG_REPORT_DRAFT_UID,{node:bugReportNode(),render:renderBugReportItems});}
-function bugRemove(attachment) {if(attachment.cancelUpload){attachment.cancelUpload();return;}if(bugReportSending)return;const removed=bridge.removeDraftAttachment(bugReportDraftObject(),attachment.id);bridge.discardStagedAttachment(removed,bridge.persistComposerDraft(BUG_REPORT_DRAFT_UID));renderBugReportItems();}
+function bugPaste(event) {bridge.composer().pasteAttachmentFiles(event,addBugReportFiles);}
+function bugInsert(number) {bridge.composer().insertComposerReference(number,document.querySelector('#bug-report-description'));ui.bugText=document.querySelector('#bug-report-description').value;}
+function bugRetry(attachment) {bridge.composer().stageComposerAttachment(attachment,BUG_REPORT_DRAFT_UID,{node:bugReportNode(),render:renderBugReportItems});}
+function bugRemove(attachment) {if(attachment.cancelUpload){attachment.cancelUpload();return;}if(bugReportSending)return;const removed=bridge.composer().removeDraftAttachment(bugReportDraftObject(),attachment.id);bridge.composer().discardStagedAttachment(removed,bridge.composer().persistComposerDraft(BUG_REPORT_DRAFT_UID));renderBugReportItems();}
 function setSendButtonBusy(button, label) {
   if (!button) return;
   if(button.id==='bug-report-go'){ui.bugBusyLabel = label;return;}
-  bridge.setComposerSendBusy(label);
+  Composer.setSendBusy(label);
 }
 
 function completeBugReportSubmission(data,node) {
-  const oldUid=BUG_REPORT_DRAFT_UID,draft=bridge.composerDrafts.get(oldUid);
+  const oldUid=BUG_REPORT_DRAFT_UID,draft=bridge.composer().composerDrafts.get(oldUid);
   if (draft) {
     for (const item of draft.attachments) if (item.preview) URL.revokeObjectURL(item.preview);
-    bridge.composerSaveQueues.delete(draft);bridge.composerPendingSaves.delete(draft);bridge.composerSaving.delete(draft);
+    bridge.composer().composerSaveQueues.delete(draft);bridge.composer().composerPendingSaves.delete(draft);bridge.composer().composerSaving.delete(draft);
   }
-  bridge.composerDrafts.delete(oldUid);bridge.composerHydrations.delete(oldUid);
-  if (bridge.store.get('bugReportDraftNode', '') === node) bridge.store.set('bugReportDraftNode', '');
-  bridge.store.set('reportDraftId.'+node,crypto.randomUUID());bindBugReportDraft();
+  bridge.composer().composerDrafts.delete(oldUid);bridge.composer().composerHydrations.delete(oldUid);
+  if (bridge.preferences.get('bugReportDraftNode', '') === node) bridge.preferences.set('bugReportDraftNode', '');
+  bridge.preferences.set('reportDraftId.'+node,crypto.randomUUID());bindBugReportDraft();
   ui.bugText='';
-  showBugReportToast(data.report_id,data.worker);bridge.$('#bug-report-dialog').close();
-  void bridge.loadTermList();
+  showBugReportToast(data.report_id,data.worker);document.querySelector('#bug-report-dialog').close();
+  void bridge.terminal().loadTermList();
 }
 
 async function submitBugReport(event) {
@@ -346,10 +353,10 @@ async function submitBugReport(event) {
   const description = reportText.trim();
   if (!description) {
     ui.bugError = '请先描述遇到的问题';
-    bridge.$('#bug-report-description').focus();
+    document.querySelector('#bug-report-description').focus();
     return;
   }
-  const button = bridge.$('#bug-report-go');
+  const button = document.querySelector('#bug-report-go');
   const attachments = [...bugReportDraftObject().attachments];
   const node = bugReportNode();
   const nodeError = bugReportNodeError(node);
@@ -358,8 +365,8 @@ async function submitBugReport(event) {
     return;
   }
   const origin = bugReportOrigin(node);
-  const remote = bridge.HUB_MODE && !!origin.node_id && origin.node_id !== node;
-  if (typeof bridge.staleBuildShown !== 'undefined' && bridge.staleBuildShown) {
+  const remote = bridge.environment.HUB_MODE && !!origin.node_id && origin.node_id !== node;
+  if (typeof bridge.build().state.stale !== 'undefined' && bridge.build().state.stale) {
     ui.bugError = '页面已更新，请重新加载后再提交';
     return;
   }
@@ -369,58 +376,58 @@ async function submitBugReport(event) {
   ui.bugAddDisabled = true;
   ui.bugError = '';
   renderBugReportItems();
-  const snapshot = bridge.browserStateSnapshot('bug-report');
-  bridge.browserAuditEvent('bug_report.requested', {
+  const snapshot = bridge.runtime().diagnostics.browserStateSnapshot('bug-report');
+  bridge.runtime().audit.browserAuditEvent('bug_report.requested', {
     ...snapshot.data, attachments: attachments.length,
     worker_node: node, origin_node: origin.node_id || '', remote,
   }, snapshot.content);
   try {
     bugReportDraftObject().text = reportText;
-    await bridge.hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
+    await bridge.composer().hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
     const pending=bugReportDraftObject();
     const priorPayload=JSON.stringify({description,source:bugReportSource(),...BugReportModels.choice(),
       attachments:attachments.map(a=>({upload_id:a.uploaded?.upload_id,number:a.number})),origin});
     if (pending.requestId && pending.requestText===priorPayload) {
-      const previous=await bridge.priorComposerSubmission(BUG_REPORT_DRAFT_UID,pending.requestId,true);
+      const previous=await bridge.composer().priorComposerSubmission(BUG_REPORT_DRAFT_UID,pending.requestId,true);
       if (previous?.worker) {completeBugReportSubmission(previous,node);return;}
     }
-    if (!await bridge.persistComposerDraft(BUG_REPORT_DRAFT_UID)) throw new Error(bugReportDraftObject().storageError || '报告草稿保存失败');
+    if (!await bridge.composer().persistComposerDraft(BUG_REPORT_DRAFT_UID)) throw new Error(bugReportDraftObject().storageError || '报告草稿保存失败');
     // 与对话发送一致：同一批附件共用一个编号目录，失败的附件保留在卡片上重试。
     const uploaded = [];
     let attachmentId = null;
     for (let i = 0; i < attachments.length; i++) {
       setSendButtonBusy(button, `上传 ${i + 1}/${attachments.length}`);
       if (attachments[i].staging) await attachments[i].staging;
-      const result = await bridge.uploadComposerAttachment(
+      const result = await bridge.composer().uploadComposerAttachment(
         attachments[i], BUG_REPORT_DRAFT_UID, attachmentId, { node, render: renderBugReportItems });
       attachmentId ||= result.attachment_id;
       uploaded.push({upload_id:result.upload_id,number:attachments[i].number});
     }
-    const terminalName = bridge.takenOver(bridge.S.sel) || (bridge.T.uid === bridge.S.sel ? bridge.T.name : '') || '';
+    const terminalName = bridge.terminal().takenOver(bridge.runtime().state.selection.sel) || (bridge.terminal().state.uid === bridge.runtime().state.selection.sel ? bridge.terminal().state.name : '') || '';
     let captured = null;
     if (remote) {
       setSendButtonBusy(button, '抓取中');
-      captured = await captureBugReportContext(origin.node_id, bridge.S.sel || '', terminalName);
+      captured = await captureBugReportContext(origin.node_id, bridge.runtime().state.selection.sel || '', terminalName);
     }
     setSendButtonBusy(button, '提交中');
     const source = bugReportSource();
-    bridge.store.set('bugReportSource', source);
+    bridge.preferences.set('bugReportSource', source);
     const reportDraft=bugReportDraftObject();
     const choice = BugReportModels.choice();
     const requestText=JSON.stringify({description,source,...choice,attachments:uploaded,origin});
     if (reportDraft.requestText!==requestText || !reportDraft.requestId) {
       reportDraft.requestText=requestText;reportDraft.requestId=crypto.randomUUID();
     }
-    if (!await bridge.persistComposerDraft(BUG_REPORT_DRAFT_UID)) throw new Error(reportDraft.storageError || '报告草稿保存失败');
+    if (!await bridge.composer().persistComposerDraft(BUG_REPORT_DRAFT_UID)) throw new Error(reportDraft.storageError || '报告草稿保存失败');
     // 远端抓取时会话与终端引用不再随请求下发：中央站要求 uid 与 _node 指向
     // 同一台机器，问题会话的引用改由 origin.uid 与 captured 携带。
-    const d = await bridge.post('api/bug-report', {
-      ...(bridge.HUB_MODE ? {_node: node} : {}),
+    const d = await bridge.post().post('api/bug-report', {
+      ...(bridge.environment.HUB_MODE ? {_node: node} : {}),
       draft_uid:BUG_REPORT_DRAFT_UID,draft_revision:reportDraft.revision,request_id:reportDraft.requestId,
-      description, uid: remote ? '' : (bridge.S.sel || ''), page_id: bridge.TERM_PAGE_ID, source, ...choice,
+      description, uid: remote ? '' : (bridge.runtime().state.selection.sel || ''), page_id: bridge.environment.AUDIT_PAGE_ID, source, ...choice,
       terminal_name: remote ? '' : terminalName, snapshot, attachments: uploaded,
       origin, ...(captured ? {captured} : {}),
-      cols: Math.max(80, bridge.T.term?.cols || 120), rows: Math.max(24, bridge.T.term?.rows || 36),
+      cols: Math.max(80, bridge.terminal().state.term?.cols || 120), rows: Math.max(24, bridge.terminal().state.term?.rows || 36),
     });
     if (d.error) {
       ui.bugError = d.error;
@@ -438,12 +445,12 @@ async function submitBugReport(event) {
   }
 }
 async function prepareNewNode() {
-  if (!bridge.HUB_MODE) return;
+  if (!bridge.environment.HUB_MODE) return;
   const previous = ui.newNode;
-  const selected = bridge.selectedNodeIds();
+  const selected = bridge.runtime().nodes.selectedNodeIds();
   const preferred = selected.length === 1 ? selected[0]
-    : bridge.nodeOf(bridge.S.sel) || previous || bridge.store.get('newNode', '');
-  ui.newNodes = bridge.Nodes.list.map(n=>({id:n.id,label:n.name+(bridge.Nodes.capabilities[n.id]?.enabled?'':'（离线）'),disabled:!bridge.Nodes.capabilities[n.id]?.enabled}));
+    : bridge.runtime().nodes.nodeOf(bridge.runtime().state.selection.sel) || previous || bridge.preferences.get('newNode', '');
+  ui.newNodes = bridge.runtime().state.nodes.list.map(n=>({id:n.id,label:n.name+(bridge.runtime().state.nodes.capabilities[n.id]?.enabled?'':'（离线）'),disabled:!bridge.runtime().state.nodes.capabilities[n.id]?.enabled}));
   await nextTick();
   if (ui.newNodes.some(o => o.id === preferred && !o.disabled)) ui.newNode = preferred;
   else ui.newNode = ui.newNodes.find(o => !o.disabled)?.id || '';
@@ -459,7 +466,7 @@ async function newNodeHasDir(path) {
   if (!canCompleteCwd(value)) return false;
   try {
     const params = new URLSearchParams({ path: value, limit: '50' });
-    const response = await fetch(bridge.appUrl(`api/term/complete-dir?${params}`), { cache: 'no-store' });
+    const response = await bridge.runtime().network.fetch(bridge.environment.appUrl(`api/term/complete-dir?${params}`), { cache: 'no-store' });
     const data = await response.json();
     return response.ok && Array.isArray(data.directories) && data.directories.includes(value + '/');
   } catch { return false; }
@@ -471,7 +478,7 @@ function refreshNewNodeFields(keepCwd = '') {
   cwdCompletion.common = commonSessionDirs();
   ui.newSources = ['claude','codex','grok','opencode','shell'].map(value => {
     const disabled = !cap.sources?.[value];
-    const name = bridge.SOURCES[value]?.name || (value === 'shell' ? 'SSH' : value);
+    const name = SOURCES[value]?.name || (value === 'shell' ? 'SSH' : value);
     return {value, disabled, title:disabled ? `${name}：此机器未安装或未配置该客户端` : name};
   });
   const checked = ui.newSources.find(input => input.value === ui.newSource);
@@ -479,8 +486,8 @@ function refreshNewNodeFields(keepCwd = '') {
     const first = ui.newSources.find(input => !input.disabled);
     if (first) {ui.newSource = first.value; NewModels.refresh();}
   }
-  const selected = bridge.S.sessions.find(s => s.uid === bridge.S.sel && (!bridge.HUB_MODE || s.node_id === newNodeId()));
-  const fallback = selected?.cwd || bridge.store.get(newDirsKey(), [])[0]
+  const selected = bridge.runtime().state.catalog.sessions.find(s => s.uid === bridge.runtime().state.selection.sel && (!bridge.environment.HUB_MODE || s.node_id === newNodeId()));
+  const fallback = selected?.cwd || bridge.preferences.get(newDirsKey(), [])[0]
     || cwdCompletion.common[0]?.cwd || cap.home || '';
   const check = ++newCwdCheck;
   if (keepCwd && keepCwd !== fallback && cap.enabled) {
@@ -496,8 +503,7 @@ function refreshNewNodeFields(keepCwd = '') {
   renderCommonCwdOptions();
 }
 
-
-function newNodeChanged(event){if(event)ui.newNode=event.target.value;bridge.store.set('newNode',newNodeId());refreshNewNodeFields(ui.newCwd.trim());NewModels.refresh();}
+function newNodeChanged(event){if(event)ui.newNode=event.target.value;bridge.preferences.set('newNode',newNodeId());refreshNewNodeFields(ui.newCwd.trim());NewModels.refresh();}
 function suggestedSessionDir(cwd) {
   const path = String(cwd || '').replace(/\/+$/, '') || '/';
   // CLI/SDK 经常在这些易失根目录里生成一次性测试会话。它们仍属于会话
@@ -508,8 +514,8 @@ function suggestedSessionDir(cwd) {
 
 function commonSessionDirs() {
   const dirs = new Map();
-  for (const s of bridge.S.sessions) {
-    if (bridge.HUB_MODE && s.node_id !== newNodeId()) continue;
+  for (const s of bridge.runtime().state.catalog.sessions) {
+    if (bridge.environment.HUB_MODE && s.node_id !== newNodeId()) continue;
     const cwd = String(s.cwd || '');
     if (!suggestedSessionDir(cwd)) continue;
     const row = dirs.get(cwd) || { cwd, count: 0, updated: '' };
@@ -517,7 +523,7 @@ function commonSessionDirs() {
     if ((s.updated || '') > row.updated) row.updated = s.updated || '';
     dirs.set(cwd, row);
   }
-  for (const [i, cwd] of bridge.store.get(newDirsKey(), []).entries()) {
+  for (const [i, cwd] of bridge.preferences.get(newDirsKey(), []).entries()) {
     if (!cwd?.startsWith('/')) continue;
     const row = dirs.get(cwd) || { cwd, count: 0, updated: '' };
     row.recent = 20 - i;
@@ -648,14 +654,14 @@ function setCwdCompletionActive(step) {
     ? (step > 0 ? 0 : rows.length - 1)
     : (old + step + rows.length) % rows.length;
   cwdCompletion.active = next;
-  const options = [...bridge.$('#new-cwd-options').querySelectorAll('[data-cwd-option]')];
+  const options = [...document.querySelector('#new-cwd-options').querySelectorAll('[data-cwd-option]')];
   ui.cwdActive = next;
   const option = options[next];
   option.scrollIntoView({ block: 'nearest' });
 }
 
 function setCwdValue(value, refresh = true) {
-  const input = bridge.$('#new-cwd');
+  const input = document.querySelector('#new-cwd');
   ui.newCwd = value;
   ui.newError = '';
   input.focus();
@@ -676,7 +682,7 @@ function longestCommonPrefix(values) {
 }
 
 function applyCwdTabCompletion() {
-  const input = bridge.$('#new-cwd');
+  const input = document.querySelector('#new-cwd');
   if (!cwdCompletion.rows.length) return;
   if (cwdCompletion.active >= 0) {
     setCwdValue(cwdCompletion.rows[cwdCompletion.active]);
@@ -700,10 +706,10 @@ function applyCwdTabCompletion() {
 
 async function loadCwdCompletions(complete = false) {
   cancelCwdCompletionRequest();
-  const input = bridge.$('#new-cwd');
+  const input = document.querySelector('#new-cwd');
   const value = ui.newCwd.trim();
   const recent = matchingRecentCwdOptions(value);
-  if (bridge.SessionDockCapabilities.config.backend === 'rust' && !bridge.SessionDockCapabilities.allows('terminal_complete_dir')) {
+  if (bridge.capabilities.config.backend === 'rust' && !bridge.capabilities.allows('terminal_complete_dir')) {
     renderCwdOptions(value, recent, [], '请填写已配置白名单中的现有工作目录；不会自动创建目录。');
     return;
   }
@@ -716,7 +722,7 @@ async function loadCwdCompletions(complete = false) {
   cwdCompletion.abort = controller;
   try {
     const params = new URLSearchParams({ path: value });
-    const response = await fetch(bridge.appUrl(`api/term/complete-dir?${params}`),
+    const response = await bridge.runtime().network.fetch(bridge.environment.appUrl(`api/term/complete-dir?${params}`),
       { signal: controller.signal, cache: 'no-store' });
     const data = await response.json();
     if (sequence !== cwdCompletion.sequence || ui.newCwd.trim() !== value) return;
@@ -752,7 +758,6 @@ function scheduleCwdCompletions() {
   cwdCompletion.timer = setTimeout(() => loadCwdCompletions(false), CWD_COMPLETION_DELAY);
 }
 
-
 const NewModels = createModelPicker('new', {
   source: () => ui.newSource || '',
   node: () => newNodeId(), storeKey: 'newModel'});
@@ -760,7 +765,7 @@ const BugReportModels = createModelPicker('bug-report', {
   source: () => bugReportSource(), node: () => bugReportNode(), storeKey: 'bugReportModel'});
 
 async function openNewSessionDialog() {
-  const dialog = bridge.$('#new-session-dialog');
+  const dialog = document.querySelector('#new-session-dialog');
   closeCwdPicker();
   newCreateAttempt = null;
   modelCatalogs.clear(); // 每次打开都读一遍：CLI 升级或换配置后列表会变
@@ -770,15 +775,14 @@ async function openNewSessionDialog() {
   await nextTick();
   dialog.showModal();
   renderCommonCwdOptions();
-  setTimeout(() => { bridge.$('#new-cwd').focus(); bridge.$('#new-cwd').select(); }, 0);
+  setTimeout(() => { document.querySelector('#new-cwd').focus(); document.querySelector('#new-cwd').select(); }, 0);
 }
-
 
 let newCreateAttempt = null;
 function newSessionRequestId(source, cwd) {
   const key = JSON.stringify([newNodeId(), source, cwd, NewModels.model, NewModels.effort]);
   if (newCreateAttempt?.key !== key) newCreateAttempt = {key,
-    rows: bridge.termRows(),
+    rows: bridge.terminal().termRows(),
     id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`};
   return newCreateAttempt.id;
 }
@@ -796,25 +800,25 @@ async function createNewSession(e) {
   try {
     const requestId = newSessionRequestId(source, cwd);
     const request = { source, cwd, cols: 120, rows: newCreateAttempt.rows,
-      request_id: requestId, ...(bridge.HUB_MODE ? {_node: newNodeId()} : {}),
+      request_id: requestId, ...(bridge.environment.HUB_MODE ? {_node: newNodeId()} : {}),
       ...NewModels.choice() };
-    let d = await bridge.post('api/term/create', request);
+    let d = await bridge.post().post('api/term/create', request);
     if (d.needs_create) {
       const target = String(d.cwd || cwd);
-      if (!await bridge.appConfirm(`启动目录不存在：\n${target}\n\n是否创建该目录并继续？`)) {
-        bridge.$('#new-cwd').focus();
+      if (!await SessionUi.appConfirm(`启动目录不存在：\n${target}\n\n是否创建该目录并继续？`)) {
+        document.querySelector('#new-cwd').focus();
         return;
       }
       ui.newSubmitLabel = '创建目录中…';
-      d = await bridge.post('api/term/create', { ...request, cwd: target, create_cwd: true });
+      d = await bridge.post().post('api/term/create', { ...request, cwd: target, create_cwd: true });
     }
     if (d.error) { ui.newError = d.error; return; }
-    const recent = [d.cwd, ...bridge.store.get(dirsKey, []).filter(x => x !== d.cwd)].slice(0, 8);
-    bridge.store.set(dirsKey, recent);
-    bridge.$('#new-session-dialog').close();
-    await bridge.openPendingSession(d);
+    const recent = [d.cwd, ...bridge.preferences.get(dirsKey, []).filter(x => x !== d.cwd)].slice(0, 8);
+    bridge.preferences.set(dirsKey, recent);
+    document.querySelector('#new-session-dialog').close();
+    await bridge.terminal().openPendingSession(d);
     // The backend instance is ready; list refresh must not block the conversation.
-    void bridge.loadTermList();
+    void bridge.terminal().loadTermList();
   } catch (err) {
     ui.newError = err.message || '创建失败';
   } finally {
@@ -822,7 +826,6 @@ async function createNewSession(e) {
     ui.newSubmitLabel = '创建';
   }
 }
-
 
 function cwdKeydown(e) {
   if (e.isComposing) return;
@@ -854,7 +857,7 @@ function cwdChoose(e) {
 }
 let newSessionBackdropPressed = false;
 function newSessionBackdropHit(event) {
-  const dialog = bridge.$('#new-session-dialog');
+  const dialog = document.querySelector('#new-session-dialog');
   const rect = dialog.getBoundingClientRect();
   return event.target === dialog && (event.clientX < rect.left || event.clientX >= rect.right
     || event.clientY < rect.top || event.clientY >= rect.bottom);
@@ -862,15 +865,14 @@ function newSessionBackdropHit(event) {
 
 function newPointerdown(event) {newSessionBackdropPressed = event.button === 0 && newSessionBackdropHit(event);}
 function newPointercancel() {newSessionBackdropPressed = false;}
-function newBackdropClick(event) {const dismiss = newSessionBackdropPressed && newSessionBackdropHit(event); newSessionBackdropPressed = false; if (dismiss) bridge.$('#new-session-dialog').close();}
+function newBackdropClick(event) {const dismiss = newSessionBackdropPressed && newSessionBackdropHit(event); newSessionBackdropPressed = false; if (dismiss) document.querySelector('#new-session-dialog').close();}
 function newClosed() {newPointercancel();closeCwdPicker();NewModels.close();}
 function cwdInput(event) {ui.newCwd=event.target.value;ui.newError='';scheduleCwdCompletions();}
 function newSourceChanged(event) {ui.newSource=event.target.value;NewModels.refresh();}
 
 function initialize() {
- document.addEventListener('DOMContentLoaded',()=>{bridge.$('#new-node').onchange=null;});
- bridge.bindFileDrop(bridge.$('#bug-report-form'), addBugReportFiles);
- window.addEventListener('resize',()=>{if(bridge.$('#bug-report-dialog').open)bridge.autoGrow(bridge.$('#bug-report-description'));});
+ bridge.bindFileDrop(document.querySelector('#bug-report-form'), addBugReportFiles);
+ window.addEventListener('resize',()=>{if(document.querySelector('#bug-report-dialog').open)bridge.composer().autoGrow(document.querySelector('#bug-report-description'));});
 }
-return {prepareNewNode,refreshNewNodeFields,newSourceChanged,newNodeId,newNodeCapabilities,newDirsKey,canCompleteCwd,get cwdCompletion(){return cwdCompletion;},newNodeChanged,formatSize:bridge.fmtSize,kindIcon:bridge.composerKindIcon,initialize,NewModels,BugReportModels,openNewSessionDialog,createNewSession,cwdKeydown,cwdChoose,cwdInput,newPointerdown,newPointercancel,newBackdropClick,newClosed,commonSessionDirs,renderCommonCwdOptions,closeCwdPicker,showBugReportToast,dismissBugToast,openBugToast,openBugReportDialog,bugNodeChanged,bugSourceChanged,bugInput,bugKeydown,bugPointerdown,bugPointercancel,bugClosed,bugClick,bugAttachToggle,bugChooseFile,bugFileChanged,bugPaste,bugInsert,bugRetry,bugRemove,submitBugReport,renderBugReportItems,addBugReportFiles,clearBugReportDraft,carryBugReportDraft,noteBugReportDraftNode,bindBugReportDraft,bugReportDraftObject,bugReportNode,bugReportSource,setSendButtonBusy,get BUG_REPORT_DRAFT_UID(){return BUG_REPORT_DRAFT_UID;},get bugReportSending(){return bugReportSending;}};
+return {prepareNewNode,refreshNewNodeFields,newSourceChanged,newNodeId,newNodeCapabilities,newDirsKey,canCompleteCwd,get cwdCompletion(){return cwdCompletion;},newNodeChanged,formatSize:fmtSize,kindIcon:bridge.composer().composerKindIcon,initialize,NewModels,BugReportModels,openNewSessionDialog,createNewSession,cwdKeydown,cwdChoose,cwdInput,newPointerdown,newPointercancel,newBackdropClick,newClosed,commonSessionDirs,renderCommonCwdOptions,closeCwdPicker,showBugReportToast,dismissBugToast,openBugToast,openBugReportDialog,bugNodeChanged,bugSourceChanged,bugInput,bugKeydown,bugPointerdown,bugPointercancel,bugClosed,bugClick,bugAttachToggle,bugChooseFile,bugFileChanged,bugPaste,bugInsert,bugRetry,bugRemove,submitBugReport,renderBugReportItems,addBugReportFiles,clearBugReportDraft,carryBugReportDraft,noteBugReportDraftNode,bindBugReportDraft,bugReportDraftObject,bugReportNode,bugReportSource,setSendButtonBusy,get BUG_REPORT_DRAFT_UID(){return BUG_REPORT_DRAFT_UID;},get bugReportSending(){return bugReportSending;}};
 }

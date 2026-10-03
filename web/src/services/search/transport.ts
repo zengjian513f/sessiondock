@@ -1,12 +1,12 @@
 import type { SearchRow, SearchNode, SearchData } from '../../domain/search/types'
 interface SearchProgress {done: number; total: number | null; nodes?: SearchNode[]; total_known?: boolean}
-export interface SearchCallbacks {allowsSearch(): boolean; appUrl(path: string): string; progress(done: number, total: number | null, nodes?: SearchNode[] | null, totalKnown?: boolean): void; matches(rows: SearchRow[]): void}
+export interface SearchCallbacks {fetch: typeof fetch; allowsSearch(): boolean; appUrl(path: string): string; progress(done: number, total: number | null, nodes?: SearchNode[] | null, totalKnown?: boolean): void; matches(rows: SearchRow[]): void}
 export async function fetchSearch(params: URLSearchParams, signal: AbortSignal, callbacks: SearchCallbacks): Promise<{ok: boolean; data: SearchData}> {
   if (!callbacks.allowsSearch()) {
     return {ok: false, data: {error: 'Rust 后端尚未实现全文搜索；当前只能筛选标题和目录。'}};
   }
   params.set('progress', '1');
-  const r = await fetch(callbacks.appUrl('api/search?' + params), { signal });
+  const r = await callbacks.fetch(callbacks.appUrl('api/search?' + params), { signal });
   if (!r.ok || !r.headers.get('Content-Type')?.includes('application/x-ndjson')) {
     return { ok: r.ok, data: await r.json() };
   }

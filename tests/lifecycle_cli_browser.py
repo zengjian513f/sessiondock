@@ -15,6 +15,7 @@ then runs with a host binary from before recordings (a wrapper that rejects
 shape of 2026-09-19): an agent session must still be created through it. No
 model binary, native CLI home or production host is touched.
 """
+from browser_runtime import js
 import hashlib
 import json
 import shlex
@@ -88,7 +89,7 @@ def claude_uid(root, sid):
 
 # Long argv lines wrap at the xterm width; join wrapped rows back into logical
 # lines before matching so the exact command line can be asserted as one string.
-XTERM_LOGICAL = """() => [...T.views.values()].map(view => {
+XTERM_LOGICAL = js("""() => [...T.views.values()].map(view => {
   const buffer = view.term?.buffer?.active;
   if (!buffer) return '';
   const lines = [];
@@ -99,7 +100,18 @@ XTERM_LOGICAL = """() => [...T.views.values()].map(view => {
     if (line.isWrapped && lines.length) lines[lines.length - 1] += text; else lines.push(text);
   }
   return lines.map(line => line.trimEnd()).join('\\n').trimEnd();
-}).join('\\n')"""
+}).join('\\n')""", """() => [...runtime.terminal.state.views.values()].map(view => {
+  const buffer = view.term?.buffer?.active;
+  if (!buffer) return '';
+  const lines = [];
+  for (let i = 0; i < buffer.length; i++) {
+    const line = buffer.getLine(i);
+    if (!line) continue;
+    const text = line.translateToString(false);
+    if (line.isWrapped && lines.length) lines[lines.length - 1] += text; else lines.push(text);
+  }
+  return lines.map(line => line.trimEnd()).join('\\n').trimEnd();
+}).join('\\n')""")
 
 
 def argv_lines(label, args):
@@ -112,7 +124,7 @@ def xterm_includes(page, text):
         page.wait_for_function("text => (" + XTERM_LOGICAL + ")().includes(text)", arg=text, timeout=15000)
     except Exception:
         print("XTERM_DIAGNOSTIC", json.dumps({"expected": text, "buffer": page.evaluate(XTERM_LOGICAL),
-            "views": page.evaluate("[...T.views.keys()]"), "sel": page.evaluate("S.sel")}, ensure_ascii=False))
+            "views": page.evaluate(js("[...T.views.keys()]", '[...runtime.terminal.state.views.keys()]')), "sel": page.evaluate(js("S.sel", 'runtime.core.state.selection.sel'))}, ensure_ascii=False))
         raise
 
 
@@ -157,7 +169,7 @@ def create_claude(page, context, base, work, expect_completion, full_argv=True, 
     page.locator("#a-term").click()
     expect(page.locator("#termpane")).to_be_visible()
     expect(page.locator("#composer")).to_be_hidden()
-    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
     if full_argv:
         xterm_includes(page, argv_lines("CLAUDE", ["--settings", SETTINGS, "--session-id", receipt["declared_sid"], "--effort", "high"]))
         xterm_includes(page, "FAKE_CLAUDE_HOME [/synthetic/claude-home]")
@@ -286,9 +298,9 @@ def main():
                     page.locator("#termpane .xterm-helper-textarea").press("Enter")
                     xterm_includes(page, "RS_INPUT_OK")
                     assert (root / "claude/project-history" / (receipt["declared_sid"] + ".jsonl")).is_file()
-                    page.wait_for_function("uid => S.sel === uid", arg=uid, timeout=20000)
+                    page.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'), arg=uid, timeout=20000)
                     expect(page.locator("#termpane")).to_be_visible()
-                    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+                    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
                     xterm_includes(page, "FAKE_CLAUDE_ARGV_BEGIN\nA0 [--settings]")
                     expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_be_visible(timeout=20000)
                     expect(page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]')).to_have_count(0)
@@ -309,7 +321,7 @@ def main():
                     assert resumed["declared_sid"] == CODEX_SID and resumed["declared_uid"] == codex_uid, resumed
                     assert takeovers[-1].get("request_id") and "force" not in takeovers[-1], takeovers[-1]
                     expect(page.locator("#termpane")).to_be_visible()
-                    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+                    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
                     xterm_includes(page, argv_lines("CODEX", ["--enable", "default_mode_request_user_input", "-c",
                         "suppress_unstable_features_warning=true", "resume", CODEX_SID,
                         "-c", "check_for_update_on_startup=false"]))
@@ -360,7 +372,7 @@ def main():
                     page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
                     expect(page.locator("#a-term")).to_have_attribute("data-unavailable", "false")
                     page.locator("#a-term").click()
-                    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+                    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
                     xterm_includes(page, f"A4 [resume]\nA5 [{CODEX_SID}]\nA6 [-c]\nA7 [check_for_update_on_startup=false]\nFAKE_CODEX_ARGV_END 8")
                     assert len(takeovers) == before, "linked console must not start another resume"
                     assert len([path for path in (root / "host").glob("*.json")]) == 3
@@ -391,11 +403,11 @@ def main():
                     typed.press_sequentially("hello")
                     typed.press("Enter")
                     xterm_includes(page, "RS_INPUT_OK")
-                    page.wait_for_function("uid => S.sel === uid", arg=stale_uid, timeout=20000)
-                    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+                    page.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'), arg=stale_uid, timeout=20000)
+                    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
                     typed.press_sequentially("quit")
                     typed.press("Enter")
-                    page.wait_for_function("name => (T.pending || []).some(row => row.name === name && !row.running)",
+                    page.wait_for_function(js("name => (T.pending || []).some(row => row.name === name && !row.running)", 'name => (runtime.terminal.state.pending || []).some(row => row.name === name && !row.running)'),
                                            arg=stale["name"], timeout=15000)
                     receipt_row = f'#side .item[data-uid="tmux:{stale["name"]}"]'
                     expect(page.locator(f'#side .item[data-uid="{stale_uid}"]')).to_be_visible()
@@ -413,7 +425,7 @@ def main():
                     assert deleted.value.status == 200, deleted.value.text()
                     expect(page.locator("#detail")).to_contain_text("已移入回收站")
                     expect(page.locator(f'#side .item[data-uid="{stale_uid}"]')).to_have_count(0)
-                    page.wait_for_function("name => !(T.pending || []).some(row => row.name === name)",
+                    page.wait_for_function(js("name => !(T.pending || []).some(row => row.name === name)", 'name => !(runtime.terminal.state.pending || []).some(row => row.name === name)'),
                                            arg=stale["name"], timeout=15000)
                     assert page.evaluate("window.receiptRowSeen") is False, "deleted session came back as its launch receipt"
                     expect(page.locator(receipt_row)).to_have_count(0)

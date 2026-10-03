@@ -1,3 +1,8 @@
+import {defineComponent} from 'vue'
+import {useRuntimePresentationStore} from '../stores/runtime/presentation'
+import {runtimePinia} from '../stores/runtime/pinia'
+const runtimePresentation=useRuntimePresentationStore(runtimePinia)
+const PendingStage=defineComponent({setup:()=>()=>h('div',{class:'empty new-session-wait'},runtimePresentation.pendingText)})
 import type {HeaderAction} from '../domain/session-ui/types'
 export {STOP_STAGE_TEXT} from '../domain/session-ui/stop-status'
 import {h,render,nextTick} from 'vue'
@@ -29,21 +34,20 @@ function unmountTransfer(){if(transferHost){render(null,transferHost);transferHo
 function unmountTasks(){if(tasksHost){render(null,tasksHost);tasksHost.remove();tasksHost=null}}
 async function mountTransfer(){unmountTransfer();transferHost=document.createElement('div');document.body.append(transferHost);render(h(TransferDialog),transferHost);await nextTick();return document.getElementById('clone-group-dialog')!}
 async function mountTasks(){unmountTasks();tasksHost=document.createElement('div');document.body.append(tasksHost);render(h(TransferTasks),tasksHost);await nextTick();return document.getElementById('transfer-tasks-dialog')!}
-function mountDeleted(props:any){if(headerHost){render(null,headerHost);headerHost=null}sessionUi.header=null;if(receiptHost)render(null,receiptHost as unknown as HTMLElement);receiptHost=document.createDocumentFragment();render(h(DeletedReceipt,props),receiptHost as unknown as HTMLElement);document.getElementById('detail')!.replaceChildren(receiptHost)}
+export function mountDeleted(props:any){if(headerHost){render(null,headerHost);headerHost=null}sessionUi.header=null;if(receiptHost)render(null,receiptHost as unknown as HTMLElement);receiptHost=document.createDocumentFragment();render(h(DeletedReceipt,props),receiptHost as unknown as HTMLElement);document.getElementById('detail')!.replaceChildren(receiptHost)}
 export function mount(){const root=document.getElementById('session-ui-root')!;render(h('div',[h(NewSessionDialog),h(BugReportDialog),h(TrashDialog),h(SessionNotices)]),root);render(h(PopupStack),document.getElementById('popup-root')!)}
 export function createAppControllers(headerBridge:any,trashBridge:any,transferBridge:any){
- const header=createHeaderController(Object.defineProperties({mountHeader,mountDeleted},Object.getOwnPropertyDescriptors(headerBridge)),sessionUi)
+ const header=createHeaderController({...headerBridge,mountHeader,mountDeleted},sessionUi)
  const trash=createTrashController(trashBridge,sessionUi)
- const transfer=createTransferController(Object.defineProperties({mountTransfer,unmountTransfer,mountTasks,unmountTasks},Object.getOwnPropertyDescriptors(transferBridge)),sessionUi)
- const controller=Object.defineProperties({initialize(){header.initialize();transfer.initialize()}},{...Object.getOwnPropertyDescriptors(header),...Object.getOwnPropertyDescriptors(trash),...Object.getOwnPropertyDescriptors(transfer)})
- controller.initialize=()=>{header.initialize();transfer.initialize()}
+ const transfer=createTransferController({...transferBridge,mountTransfer,unmountTransfer,mountTasks,unmountTasks},sessionUi)
+ const controller={...header,...trash,...transfer,get forkLabel(){return header.forkLabel},initialize(){header.initialize();transfer.initialize()}}
  bindApp(controller as unknown as import('../domain/session-ui/types').AppController);controller.initialize();return controller
 }
 export function createLaunch(bridge:any){const controller=createLaunchController(bridge,sessionUi);bindLaunch(controller);controller.initialize();return controller}
 
 export function pendingAction(spec:HeaderAction){if(sessionUi.header)Object.assign(sessionUi.header.action,spec)}
 
-export function pendingStage(text:string){const fragment=document.createDocumentFragment();render(h('div',{class:'empty new-session-wait'},text),fragment as unknown as HTMLElement);return fragment.firstChild!}
+export function pendingStage(text:string){const fragment=document.createDocumentFragment();runtimePresentation.pendingText=text;render(h(PendingStage),fragment as unknown as HTMLElement);return fragment.firstChild!}
 
 export function messageCount(total:number){if(sessionUi.header){sessionUi.header.total=total;sessionUi.header.metadata[0]!.text=`${total} 条消息`}}
 
@@ -53,3 +57,7 @@ export function restoreViews(){if(sessionUi.header){sessionUi.header.views=appAc
 export function consoleToast(reason:string){sessionUi.consoleToast=reason}
 
 export function setActionPending(pending:boolean){appActions().setActionPending(pending)}
+
+export function setPendingStage(text:string){runtimePresentation.pendingText=text}
+
+export function disableBugReportSending(){sessionUi.bugSubmitDisabled=true;sessionUi.bugAddDisabled=true}

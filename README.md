@@ -22,11 +22,11 @@ crates/
   ptyhost/           独立 Rust PTY host，保留旧协议并增加可选实例校验
   ptyhost-record/    终端录像格式、存储与读取
   ptyhost-screen/    服务端终端画面模型
-legacy-web/          第一阶段工作前端，少量能力/错误处理兼容改动
+legacy-web/          当前生产前端，独立 Vue 入口尚未切换
 web/                 Vue / TypeScript / Pinia 前端和独立静态构建，生产尚未切换
 reference/
   legacy-web/        原前端的冻结快照，仅作迁移参考
-tests/               legacy 契约、临时浏览器环境和可选 Python fixture 差分
+tests/               实际浏览器操作、协议验证和可选 Python fixture 差分
 docs/                当前架构、协议、运维和验证合同
 ```
 

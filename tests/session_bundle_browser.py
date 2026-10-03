@@ -2,6 +2,7 @@
 """Real Hub/two-node Chromium cross-node clone path with shared native storage.
 Each provider uses synthetic branches and agents; runtime state is node-private.
 """
+from browser_runtime import js
 import argparse
 import base64
 import copy
@@ -21,6 +22,7 @@ from types import SimpleNamespace
 from urllib.parse import urlencode, urlsplit, parse_qs
 from playwright.sync_api import sync_playwright, expect
 from history_parity import BINARY, Corpus, isolated_server
+from frontend_paths import frontend_dir
 from session_clone_browser import prepare
 from session_files_browser import fixture, uid, claude_row, encoded
 from session_transfer_browser import ident
@@ -104,7 +106,7 @@ class Peer:
             with sqlite3.connect(path) as db:
                 schemas[str(path)]=';\n'.join(row[0] for row in db.execute("SELECT sql FROM sqlite_master WHERE type IN ('table','index') AND sql IS NOT NULL AND name NOT GLOB 'sqlite_*' AND name NOT GLOB '_sessiondock*'"))+';'
         config={'root':str(root),'roots':roots,'cwds':[{'path':str(source.root/('workspace' if source.paths else 'cwd')), 'mode':(source.root/('workspace' if source.paths else 'cwd')).stat().st_mode & 0o777}],
-            'schemas':schemas,'native_codex':native_codex,'node_id':node.nid,'token':TOKEN,'binary':str(binary.resolve()),'web':str(repo/'legacy-web')}
+            'schemas':schemas,'native_codex':native_codex,'node_id':node.nid,'token':TOKEN,'binary':str(binary.resolve()),'web':str(frontend_dir())}
         self.process.stdin.write(json.dumps(config)+'\n');self.process.stdin.flush()
         ready=json.loads(self.process.stdout.readline())
         self.native_baseline=ready.get('native_baseline')
@@ -535,7 +537,7 @@ def main():
                         pending=context.request.get(f'http://127.0.0.1:{hub.port}/api/session/transfers')
                         assert pending.ok and all(t['request']['operation_id']!=completed['operation_id'] for t in pending.json()['operations']),pending.text()
                         assert completed['phase']=='complete' and b.nid in completed['target_uid']
-                        page.wait_for_function('(uid)=>S.sel===uid',arg=completed['target_uid'],timeout=30000)
+                        page.wait_for_function(js('(uid)=>S.sel===uid', '(uid)=>runtime.core.state.selection.sel===uid'),arg=completed['target_uid'],timeout=30000)
                         expect(page.locator('#msgs')).to_contain_text({'codex':'Branch A current','claude':'Branch A final','grok':'Grok answer 10'}[provider])
                         source_op=json.loads((source.root/'state/transfers'/completed['operation_id']/'operation.json').read_text())
                         target_op=json.loads(read_target(destination.root/'state/transfers'/completed['operation_id']/'operation.json'))
@@ -578,7 +580,7 @@ def main():
                                 pending=context.request.get(f'http://127.0.0.1:{hub.port}/api/term/list',params={'node':a.nid})
                                 assert pending.ok,pending.text()
                                 assert not any(str(row.get('record_id','')).endswith(rid) for row in pending.json()['pending'] for rid in receipt_ids[:4]),pending.text()
-                                page.wait_for_function('uid=>S.sel===uid',arg=completed['target_uid'])
+                                page.wait_for_function(js('uid=>S.sel===uid', 'uid=>runtime.core.state.selection.sel===uid'),arg=completed['target_uid'])
                                 print('PASS '+provider+' move clears bound/aliased/old-rollout and already-discarded receipts; preserves unrelated and other-provider identities',flush=True)
                             for database in source_op['native']['databases']:
                                 with sqlite3.connect(database['path']) as db:

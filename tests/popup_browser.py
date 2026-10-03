@@ -7,6 +7,7 @@ session, the confirm button deletes), and floating notices such as the stale
 build card sit in the centered `#float-stack` with the same panel look.
 Real clicks at desktop and 390px against an isolated server; synthetic corpus.
 """
+from browser_runtime import js
 import argparse
 import os
 from pathlib import Path
@@ -56,7 +57,7 @@ def main():
                 # 取消 keeps the session.
                 click_delete(page, narrow)
                 expect(popup).to_be_visible()
-                expect(popup.locator("h2")).to_have_text(f"删除会话「{page.evaluate('uid => S.sessions.find(s => s.uid === uid).title', uid)}」?")
+                expect(popup.locator("h2")).to_have_text(f"删除会话「{page.evaluate(js('uid => S.sessions.find(s => s.uid === uid).title', 'uid => runtime.core.state.catalog.sessions.find(s => s.uid === uid).title'), uid)}」?")
                 expect(popup.locator(".app-popup-message")).to_contain_text("回收站")
                 centered(page, popup, width, height)
                 look = popup.evaluate("""d => { const s = getComputedStyle(d), t = getComputedStyle(document.querySelector('#trash-dialog'));
@@ -80,7 +81,7 @@ def main():
                 page.route("**/api/meta", lambda route: route.fulfill(
                     status=200, content_type="application/json",
                     body='{"build":"popup-test-newer","hostname":"popup","capabilities":{}}'))
-                page.evaluate("checkServerBuild()")
+                page.evaluate(js("checkServerBuild()", 'runtime.build.checkServerBuild()'))
                 card = page.locator("#float-stack .version-stale")
                 expect(card).to_be_visible()
                 expect(card.locator("strong")).to_have_text("SessionDock 已更新")
@@ -92,10 +93,10 @@ def main():
                     return [s.width, s.borderRadius, s.backgroundColor, s.boxShadow,
                             s.padding, s.fontSize, s.flexDirection]; }""")
                 for selector, trigger, clear in (
-                    ('#bug-report-toast', "showBugReportToast('BUG-' + '1234567890'.repeat(8), {source:'codex', name:'fixture'})",
+                    ('#bug-report-toast', js("showBugReportToast('BUG-' + '1234567890'.repeat(8), {source:'codex', name:'fixture'})", "runtime.launch.showBugReportToast('BUG-' + '1234567890'.repeat(8), {source:'codex', name:'fixture'})"),
                      None),
-                    ('#console-toast', "showConsoleToast('合成控制台通知')", "showConsoleToast('')"),
-                    ('#session-stop-notice', "showSessionStopNotice('合成会话停止通知', true)", "showSessionStopNotice('')"),
+                    ('#console-toast', js("showConsoleToast('合成控制台通知')", "runtime.core.nodes.showConsoleToast('合成控制台通知')"), js("showConsoleToast('')", "runtime.core.nodes.showConsoleToast('')")),
+                    ('#session-stop-notice', js("showSessionStopNotice('合成会话停止通知', true)", "runtime.sessionUi.showSessionStopNotice('合成会话停止通知', true)"), js("showSessionStopNotice('')", "runtime.sessionUi.showSessionStopNotice('')")),
                 ):
                     page.evaluate(trigger)
                     notice = page.locator(selector)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Large sidebar: resource viewport rendering, reuse on nesting, and scroll hydration."""
+from browser_runtime import js
 import argparse
 import os
 from pathlib import Path
@@ -23,12 +24,12 @@ def main():
                 errors=[]
                 page.on('pageerror',lambda e:errors.append(str(e)))
                 page.goto(base,wait_until='networkidle')
-                page.wait_for_function('S.sessions.length > 0 && T.listLoaded')
+                page.wait_for_function(js('S.sessions.length > 0 && T.listLoaded', 'runtime.core.state.catalog.sessions.length > 0 && runtime.terminal.state.listLoaded'))
                 rows=[dict(uid=f'claude:toggle-{i}',sid=f'toggle-{i}',source='claude',title=f'Row {i}',
                            cwd='/synthetic/toggle',created='2026-10-01T00:00:00Z',updated='2026-10-01T00:00:00Z',size=100,
                            **({'nest_parent':{'source':'claude','sid':f'toggle-{i-1}'}} if i%20==1 else {})) for i in range(1200)]
                 page.route('**/api/sessions?*',lambda route:route.fulfill(json={'sessions':rows,'sig':'toggle-fixture'}))
-                page.evaluate('''rows=>{S.sessions=rows;S.results=null;S.term='';S.closed.clear();S.nestClosed.clear();S.off.clear();S.view='tree';S.nest=false;renderView();renderSide();}''',rows)
+                page.evaluate(js('''rows=>{S.sessions=rows;S.results=null;S.term='';S.closed.clear();S.nestClosed.clear();S.off.clear();S.view='tree';S.nest=false;renderView();renderSide();}''', "rows=>{runtime.core.state.catalog.sessions=rows;runtime.core.state.search.results=null;runtime.core.state.search.term='';runtime.core.state.sidebar.closed.clear();runtime.core.state.sidebar.nestClosed.clear();runtime.core.state.sidebar.off.clear();runtime.core.state.sidebar.view='tree';runtime.core.state.sidebar.nest=false;runtime.sidebarView.renderView();runtime.sidebarView.renderSide();}"),rows)
                 assert page.locator('#side .item').count()==1200
                 unchanged=page.locator('.item[data-uid="claude:toggle-1199"]')
                 handle=unchanged.element_handle()

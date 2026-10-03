@@ -1,16 +1,18 @@
-import { reactive, markRaw, nextTick } from 'vue'
+
+
+import {reactive,markRaw,nextTick} from 'vue'
 /** @param {import('../../domain/session-ui/types').SessionUiPresentation} ui */
 export function createModelService(bridge, ui) {
 const MODEL_SEARCH_MIN = 10;
 const modelCatalogs = new Map();
 
 function fetchModelCatalog(node, source) {
-  const key = (bridge.HUB_MODE ? node + '|' : '') + source;
+  const key = (bridge.environment.HUB_MODE ? node + '|' : '') + source;
   if (!modelCatalogs.has(key)) {
     modelCatalogs.set(key, (async () => {
       try {
-        const params = new URLSearchParams({source, ...(bridge.HUB_MODE ? {node} : {})});
-        const response = await fetch(bridge.appUrl(`api/term/models?${params}`), {cache: 'no-store'});
+        const params = new URLSearchParams({source, ...(bridge.environment.HUB_MODE ? {node} : {})});
+        const response = await bridge.runtime().network.fetch(bridge.environment.appUrl(`api/term/models?${params}`), {cache: 'no-store'});
         const data = response.ok ? await response.json() : null;
         return Array.isArray(data?.models) ? data : null;
       } catch { return null; }
@@ -39,7 +41,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     picker.model = shown?.id || '';
     const efforts = shown?.efforts || catalog?.efforts || [];
     const effortKey = `modelEffort.${source()}|${picker.model}`;
-    const remembered = bridge.store.get(effortKey, '');
+    const remembered = bridge.preferences.get(effortKey, '');
     picker.effort = efforts.includes(effort) ? effort : efforts.includes(remembered) ? remembered
       : efforts.includes('high') ? 'high'
       : efforts.includes(shown?.default_effort) ? shown.default_effort : efforts[0] || '';
@@ -48,13 +50,13 @@ function createModelPicker(prefix, {source, node, storeKey}) {
       !!catalog?.models.length);
     view.model=picker.model; view.effort=picker.effort; view.efforts=[...efforts];
     view.effortTitle = efforts.length ? '推理强度' : '该 CLI 不支持选择推理强度';
-    if (persist) bridge.store.set(`${storeKey}.${picker.key}`, {model: picker.model});
-    if (persist && effort && picker.model && efforts.includes(effort)) bridge.store.set(effortKey, effort);
+    if (persist) bridge.preferences.set(`${storeKey}.${picker.key}`, {model: picker.model});
+    if (persist && effort && picker.model && efforts.includes(effort)) bridge.preferences.set(effortKey, effort);
   };
   picker.refresh = async () => {
     const current = source(), where = node(), seq = ++picker.seq;
     picker.close();
-    picker.key = (bridge.HUB_MODE ? where + '|' : '') + current;
+    picker.key = (bridge.environment.HUB_MODE ? where + '|' : '') + current;
     picker.catalog = null;
     picker.model = picker.effort = '';
     picker.apply('', '');
@@ -66,7 +68,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     const catalog = await fetchModelCatalog(where, current);
     if (seq !== picker.seq) return;
     picker.catalog = catalog && markRaw(catalog);
-    const saved = bridge.store.get(`${storeKey}.${picker.key}`, {}) || {};
+    const saved = bridge.preferences.get(`${storeKey}.${picker.key}`, {}) || {};
     picker.apply(saved.model || '', '');
     if (!catalog) controls('模型不可用', '该机器没有返回模型列表，将使用 CLI 默认模型', false);
   };
@@ -144,7 +146,6 @@ function createModelPicker(prefix, {source, node, storeKey}) {
   picker.outside = e => {if (!button.parentElement.contains(e.target)) picker.close();};
   return picker;
 }
-
 
 return {createModelPicker, modelCatalogs, fetchModelCatalog};
 }

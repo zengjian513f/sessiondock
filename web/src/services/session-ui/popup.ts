@@ -1,6 +1,8 @@
-import {shallowReactive,markRaw,h,render} from 'vue'
+import {runtimePinia} from '../../stores/runtime/pinia'
+import {usePopupStore} from '../../stores/runtime/popups'
+import {markRaw,h,render} from 'vue'
 import {splitMessage} from '../../domain/session-ui/popup'
-export const popups=shallowReactive<any[]>([])
+export const popups=usePopupStore(runtimePinia).popups
 function popup(type:string,message:unknown,buttons:any[]){const {title,body}=splitMessage(message,type==='confirm'?'请确认':'提示');return new Promise(resolve=>{const spec=markRaw({type,message:String(message??''),title,body,buttons,id:`app-popup-${Math.random().toString(36).slice(2)}`,answered:false,resolve});popups.push(spec)})}
 export function appAlert(message:unknown){return popup('alert',message,[{label:'知道了',action:'ok',value:undefined,primary:true,className:'btn primary'}])}
 export function appConfirm(message:unknown,{ok='确定',cancel='取消',danger=false}={}){return popup('confirm',message,[{label:cancel,action:'cancel',value:false},{label:ok,action:'ok',value:true,primary:true,className:danger?'btn danger':'btn primary'}])}

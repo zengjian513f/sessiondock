@@ -1,15 +1,24 @@
+import {useMachinesProjectionStore} from '../stores/runtime/machines'
+import {defineStore,storeToRefs} from 'pinia'
+import {runtimePinia} from '../stores/runtime/pinia'
 import { reactive, shallowRef } from 'vue'
 import type { SettingsBridge, SettingsState, SettingsValues } from '../legacy/settings-bridge'
 import { createMachinesStore } from '../stores/machines'
 import type { MachinesBridge } from '../services/machines'
-import type { MachinesStore, MachinesState } from '../stores/machines'
+import type { MachinesStore } from '../stores/machines'
 
-export const state = reactive<SettingsState>({scale: 100, font: 'ubuntu', theme: 'system', sleep: 60,
+export const useSettingsStore=defineStore('ui-settings',()=>{
+const state = reactive<SettingsState>({scale: 100, font: 'ubuntu', theme: 'system', sleep: 60,
   cache: 256, stopConcurrency: 6, pasteFiles: false,
   pwa: {text: '安装到桌面', disabled: false, title: ''}})
-export const tab = shallowRef('appearance')
-export const machines = shallowRef<MachinesStore>()
-export const machineState = shallowRef<MachinesState>()
+const tab = shallowRef('appearance')
+const machines = shallowRef<MachinesStore>()
+return {state,tab,machines}
+})
+const settingsStore=useSettingsStore(runtimePinia)
+export const state=settingsStore.state
+export const {tab,machines}=storeToRefs(settingsStore)
+export const {current:machineState}=storeToRefs(useMachinesProjectionStore(runtimePinia))
 let preferences: SettingsBridge
 let readTab: () => string
 let saveTab: (value: string) => void
@@ -33,8 +42,6 @@ export function mount(value: SettingsBridge, tabs: {read(): string; save(value: 
 export function mountMachines(value: MachinesBridge): void {
   if (machines.value) return
   const controller = createMachinesStore(value)
-  machineState.value = controller.state
-  controller.subscribe(value => { machineState.value = value })
   machines.value = controller
   controller.refresh()
 }

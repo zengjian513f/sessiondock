@@ -1,6 +1,6 @@
 import { nextTick } from 'vue'
 import type { useOverlaysStore } from '../../stores/overlays'
-export interface FileDependencies {appUrl(path: string): string; allows(name: string): boolean; closeItemMenu(): void; alert(message: string): Promise<unknown>}
+export interface FileDependencies {fetch: typeof fetch; appUrl(path: string): string; allows(name: string): boolean; closeItemMenu(): void; alert(message: string): Promise<unknown>}
 interface FileTarget {path?: string; href: string; kind?: string}
 const isWindowsDrivePath = (path: string) => /^[A-Za-z]:[/\\]/.test(path)
 function fileParentDirectory(path: string) {
@@ -36,7 +36,7 @@ export function createFileMenu(state: ReturnType<typeof useOverlaysStore>, deps:
    try {
     if (!deps.allows('files')) throw new Error('Rust 后端尚未实现文件解析与文件操作。')
     const query = new URL(current.href).searchParams, ref = query.get('ref')
-    const response = await fetch(deps.appUrl('/api/session/resolve-files'), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({uid:query.get('uid'),agent:query.get('agent') || '',refs:[ref]})})
+    const response = await deps.fetch(deps.appUrl('/api/session/resolve-files'), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({uid:query.get('uid'),agent:query.get('agent') || '',refs:[ref]})})
     const data = await response.json()
     if (!response.ok) throw new Error(data.error || '无法读取文件信息')
     const detail = data.targets?.find((item: {ref: string}) => item.ref === ref)

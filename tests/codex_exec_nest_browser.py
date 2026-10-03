@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Detached Codex exec fan-out initializes nest_parent; user choices survive scans/restart."""
+from browser_runtime import js
 import argparse
 from datetime import datetime, timezone
 import json
@@ -93,8 +94,8 @@ def main():
                 context = browser.new_context(viewport={'width': 1280, 'height': 900})
                 page = context.new_page()
                 page.goto(base)
-                page.wait_for_function('S.sessions.length >= 10')
-                if not page.evaluate('S.nest'):
+                page.wait_for_function(js('S.sessions.length >= 10', 'runtime.core.state.catalog.sessions.length >= 10'))
+                if not page.evaluate(js('S.nest', 'runtime.core.state.sidebar.nest')):
                     page.locator('#nest-toggle').click()
                 def item(sid):
                     return page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]')
@@ -113,9 +114,9 @@ def main():
                     item(children[1]).click(button='right')
                     page.locator('#item-menu [data-act="attach"]').click()
                     item('other').click()
-                    page.wait_for_function('uid => S.sessions.find(s => s.uid === uid).nest_parent?.sid === "other"', arg=corpus.uid(children[1]))
+                    page.wait_for_function(js('uid => S.sessions.find(s => s.uid === uid).nest_parent?.sid === "other"', 'uid => runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent?.sid === "other"'), arg=corpus.uid(children[1]))
                 get_json(opener, base, '/api/live?force=1')
-                page.evaluate('pollSessions()')
+                page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
                 expect(item(children[0])).to_have_attribute('data-depth', '0')
                 rows = {r['sid']: r for r in get_json(opener, base, '/api/sessions?force=1')['sessions']}
                 assert 'nest_parent' not in rows[children[0]]

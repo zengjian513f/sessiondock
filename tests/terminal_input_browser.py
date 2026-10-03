@@ -12,6 +12,7 @@ while the 设置 › 功能 switch is off; enabled, a clipboard image and a two-
 paste land in `<cwd>/sessiondock_attachments/<batch>/` and their relative
 paths are typed into the shell as one bracketed paste.
 """
+from browser_runtime import js, wait_for_async
 from contextlib import contextmanager
 import base64
 import json
@@ -31,11 +32,15 @@ from host_identity import request as host_request
 from terminal_browser import stop
 from popups import on_popup  # noqa: E402
 
-XTERM_TEXT = """() => [...T.views.values()].map(view => {
+XTERM_TEXT = js("""() => [...T.views.values()].map(view => {
   const buffer = view.term?.buffer?.active;
   return buffer ? Array.from({length:buffer.length}, (_,i) =>
     buffer.getLine(i)?.translateToString(true) || '').join('\\n').trimEnd() : '';
-}).join('\\n')"""
+}).join('\\n')""", """() => [...runtime.terminal.state.views.values()].map(view => {
+  const buffer = view.term?.buffer?.active;
+  return buffer ? Array.from({length:buffer.length}, (_,i) =>
+    buffer.getLine(i)?.translateToString(true) || '').join('\\n').trimEnd() : '';
+}).join('\\n')""")
 
 PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 
@@ -100,7 +105,7 @@ def open_console(page, uid):
     if not page.locator("#termpane").is_visible():
         page.locator("#a-term").click()
     expect(page.locator("#termpane")).to_be_visible()
-    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
     xterm_contains(page, "RS_SHELL_READY")
 
 
@@ -145,10 +150,10 @@ def main():
                 on_popup(page, lambda dialog: (dialogs.append(dialog.message),
                                                   dialog.accept() if dialog_action["accept"] else dialog.dismiss()))
                 page.goto(base, wait_until="networkidle")
-                capabilities = page.evaluate("SessionDockCapabilities.config")
+                capabilities = page.evaluate(js("SessionDockCapabilities.config", 'runtime.capabilities.config'))
                 assert capabilities["terminal_input"] is True and capabilities["outbox"] is False, capabilities
                 open_console(page, uid)
-                assert page.evaluate("[...T.views.values()].every(view => !view.grid)")
+                assert page.evaluate(js("[...T.views.values()].every(view => !view.grid)", '[...runtime.terminal.state.views.values()].every(view => !view.grid)'))
                 expect(page.locator("#composer")).to_be_hidden()
 
                 # ---- Remote OSC 52 copy: Claude emits this after a mouse
@@ -157,15 +162,16 @@ def main():
                 origin = f"{urlsplit(base).scheme}://{urlsplit(base).netloc}"
                 context.grant_permissions(["clipboard-read", "clipboard-write"], origin=origin)
                 page.evaluate("navigator.clipboard.writeText('sentinel')")
-                write_terminal = """payload => new Promise(resolve =>
-                  [...T.views.values()][0].term.write(payload, resolve))"""
+                write_terminal = js("""payload => new Promise(resolve =>
+                  [...T.views.values()][0].term.write(payload, resolve))""", """payload => new Promise(resolve =>
+                  [...runtime.terminal.state.views.values()][0].term.write(payload, resolve))""")
                 page.evaluate(write_terminal, "\x1b]52;c;?\x07")
                 page.evaluate(write_terminal, "\x1b]52;c;not-base64!\x1b\\")
                 assert page.evaluate("navigator.clipboard.readText()") == "sentinel"
                 copied = "osc52"
                 encoded = base64.b64encode(copied.encode()).decode()
                 page.evaluate(write_terminal, f"\x1b]52;c;{encoded}\x1b\\")
-                page.wait_for_function("expected => navigator.clipboard.readText().then(text => text === expected)", arg=copied)
+                wait_for_async(page, "expected => navigator.clipboard.readText().then(text => text === expected)", arg=copied)
                 keyboard = page.locator("#termpane .xterm-helper-textarea")
                 # Edge's inline Compose button and text prediction stay off the IME textarea.
                 assert keyboard.get_attribute("writingsuggestions") == "false"
@@ -175,7 +181,7 @@ def main():
 
                 # A remote color query makes xterm emit an OSC reply through
                 # onData. It must be consumed before either input transport.
-                page.evaluate("""() => {
+                page.evaluate(js("""() => {
                   const view = [...T.views.values()][0];
                   window.oscReplies = [];
                   window.oscSocketWrites = [];
@@ -187,7 +193,19 @@ def main():
                     window.oscSocketWrites.push(data);
                     return send(data);
                   };
-                }""")
+                }""", """() => {
+                  const view = [...runtime.terminal.state.views.values()][0];
+                  window.oscReplies = [];
+                  window.oscSocketWrites = [];
+                  view.term.onData(data => {
+                    if (data.startsWith('\\x1b]')) window.oscReplies.push(data);
+                  });
+                  const send = view.ws.send.bind(view.ws);
+                  view.ws.send = data => {
+                    window.oscSocketWrites.push(data);
+                    return send(data);
+                  };
+                }"""))
                 before_osc_sends = len(sends)
                 for query in ("\x1b]10;?\x07", "\x1b]11;?\x07", "\x1b]12;?\x07", "\x1b]4;1;?\x07"):
                     page.evaluate(write_terminal, query)
@@ -208,7 +226,7 @@ def main():
                 assert not scrolls, scrolls
                 assert not sends, sends
                 assert not dialogs, dialogs
-                assert page.evaluate("[...T.views.values()][0].scrollPos") == 0
+                assert page.evaluate(js("[...T.views.values()][0].scrollPos", '[...runtime.terminal.state.views.values()][0].scrollPos')) == 0
 
                 # ---- Console file paste. Off by default: a pasted image is
                 # ignored with a hint and no upload. Enabled from 设置 › 功能,
@@ -349,24 +367,31 @@ def main():
                 claims = []
                 context.on("request", lambda request: claims.append(request.url)
                            if urlsplit(request.url).path == "/api/term/claim" else None)
-                page.evaluate("""() => {
+                page.evaluate(js("""() => {
                     window.inputExitText = '';
                     const decoder = new TextDecoder();
                     T.ws.addEventListener('message', event => {
                         if (event.data instanceof ArrayBuffer)
                             inputExitText += decoder.decode(event.data, {stream:true});
                     });
-                }""")
+                }""", """() => {
+                    window.inputExitText = '';
+                    const decoder = new TextDecoder();
+                    runtime.terminal.state.ws.addEventListener('message', event => {
+                        if (event.data instanceof ArrayBuffer)
+                            inputExitText += decoder.decode(event.data, {stream:true});
+                    });
+                }"""))
                 keyboard.press_sequentially("quit")
                 keyboard.press("Enter")
                 page.wait_for_function("inputExitText.includes('RS_SHELL_DONE')")
-                page.wait_for_function("uid => T.ended.has(uid) && T.views.size === 0", arg=uid, timeout=10000)
+                page.wait_for_function(js("uid => T.ended.has(uid) && T.views.size === 0", 'uid => runtime.terminal.state.ended.has(uid) && runtime.terminal.state.views.size === 0'), arg=uid, timeout=10000)
                 for _ in range(100):
                     if process.poll() is not None:
                         break
                     time.sleep(.05)
                 assert process.poll() == 0, process.poll()
-                page.wait_for_function("instance => !(T.list || []).some(row => row.instance_id === instance)",
+                page.wait_for_function(js("instance => !(T.list || []).some(row => row.instance_id === instance)", 'instance => !(runtime.terminal.state.list || []).some(row => row.instance_id === instance)'),
                                        arg=instance, timeout=10000)
                 # A full exit closes the pane;
                 # the key bar is gone with it, so nothing can type, reclaim or
@@ -376,9 +401,9 @@ def main():
                 page.wait_for_timeout(600)
                 assert len(sends) == before and not dialogs, (sends[before:], dialogs)
                 assert not claims, claims
-                assert page.evaluate("uid => T.ended.has(uid)", uid)
-                assert page.evaluate("T.views.size") == 0
-                assert page.evaluate("T.ws") is None or page.evaluate("T.ws.readyState") != 1
+                assert page.evaluate(js("uid => T.ended.has(uid)", 'uid => runtime.terminal.state.ended.has(uid)'), uid)
+                assert page.evaluate(js("T.views.size", 'runtime.terminal.state.views.size')) == 0
+                assert page.evaluate(js("T.ws", 'runtime.terminal.state.ws')) is None or page.evaluate(js("T.ws.readyState", 'runtime.terminal.state.ws.readyState')) != 1
                 assert not errors, errors
                 context.close()
                 assert corpus.paths[sid].read_bytes() == native

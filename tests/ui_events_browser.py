@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Idle pages use UI events; inactive conversation bodies load only on selection."""
+from browser_runtime import js
 import argparse
 from contextlib import ExitStack
 from pathlib import Path
@@ -56,19 +57,19 @@ def main():
                               e=>window.uiEventPackets.push(JSON.parse(e.data)));}
                         };''')
                     page.goto(base, wait_until='domcontentloaded')
-                    page.wait_for_function('uiEventsReady && S.sessions.length===2 && T.listLoaded && !uiEventApplying', timeout=30000)
+                    page.wait_for_function(js('uiEventsReady && S.sessions.length===2 && T.listLoaded && !uiEventApplying', 'runtime.core.events.ready && runtime.core.state.catalog.sessions.length===2 && runtime.terminal.state.listLoaded && !runtime.core.events.applying'), timeout=30000)
                     def uid_for(sid):
                         uid = data.uid(sid)
                         return uid.replace(':', f':{nid}~', 1) if hub_mode else uid
                     inactive = uid_for('events-0'); selected = uid_for('events-1')
                     # Real user navigation populates one cached but inactive history.
                     page.locator(f'#side .item[data-uid="{inactive}"] .t').click()
-                    page.wait_for_function('uid=>S.sel===uid && cache.has(uid)', arg=inactive)
+                    page.wait_for_function(js('uid=>S.sel===uid && cache.has(uid)', 'uid=>runtime.core.state.selection.sel===uid && runtime.core.cache.cache.has(uid)'), arg=inactive)
                     page.locator(f'#side .item[data-uid="{selected}"] .t').click()
-                    page.wait_for_function('uid=>S.sel===uid && cache.has(uid)', arg=selected)
+                    page.wait_for_function(js('uid=>S.sel===uid && cache.has(uid)', 'uid=>runtime.core.state.selection.sel===uid && runtime.core.cache.cache.has(uid)'), arg=selected)
                     page.wait_for_timeout(3000)
                     requests.clear(); page.evaluate('window.uiEventPackets=[]')
-                    old_end = page.evaluate('uid=>cache.get(uid).end', inactive)
+                    old_end = page.evaluate(js('uid=>cache.get(uid).end', 'uid=>runtime.core.cache.cache.get(uid).end'), inactive)
                     page.wait_for_timeout(10000)
                     periodic_paths = {'/api/live', '/api/term/list', '/api/sessions'}
                     periodic = [(m, p) for m, p in requests if m == 'GET' and p in periodic_paths]
@@ -79,9 +80,9 @@ def main():
                     for n in (1, 2):
                         with data.paths['events-0'].open('ab') as stream:
                             stream.write(encoded(claude_row('events-0', 'assistant', f'a{n}', f'a{n-1}', f'Event-driven reply {n}')))
-                        page.wait_for_function('arg=>S.unread.get(arg.uid)?.count===arg.n',
+                        page.wait_for_function(js('arg=>S.unread.get(arg.uid)?.count===arg.n', 'arg=>runtime.core.state.unread.unread.get(arg.uid)?.count===arg.n'),
                             arg={'uid': inactive, 'n': n}, timeout=30000)
-                        assert page.evaluate('uid=>cache.get(uid).end', inactive) == old_end
+                        assert page.evaluate(js('uid=>cache.get(uid).end', 'uid=>runtime.core.cache.cache.get(uid).end'), inactive) == old_end
                     assert not any('/api/messages/' + inactive in path for _, path in requests), requests
                     assert not any(method == 'GET' and path == '/api/sessions' for method, path in requests), (
                         requests, page.evaluate('window.uiEventPackets'))
@@ -90,7 +91,7 @@ def main():
                     page.locator(f'#side .item[data-uid="{inactive}"] .t').click()
                     page.wait_for_function("document.querySelector('#msgs')?.innerText.includes('Event-driven reply 2')", timeout=15000)
                     assert any('/api/messages/' + inactive in path for _, path in requests), requests
-                    assert page.evaluate('uid=>!S.unread.has(uid)', inactive)
+                    assert page.evaluate(js('uid=>!S.unread.has(uid)', 'uid=>!runtime.core.state.unread.unread.has(uid)'), inactive)
                     # A genuine list change must invalidate membership, unlike appends.
                     requests.clear()
                     failed_lists = []
@@ -102,7 +103,7 @@ def main():
                             route.continue_()
                     page.route('**/api/sessions*', fail_one_list)
                     data.put('events-new', 'claude', [claude_row('events-new', 'user', 'new-u', None, 'New event-discovered session')], [])
-                    page.wait_for_function('uid=>S.sessions.some(s=>s.uid===uid)', arg=uid_for('events-new'), timeout=30000)
+                    page.wait_for_function(js('uid=>S.sessions.some(s=>s.uid===uid)', 'uid=>runtime.core.state.catalog.sessions.some(s=>s.uid===uid)'), arg=uid_for('events-new'), timeout=30000)
                     assert len(failed_lists) == 1, failed_lists
                     assert sum(method == 'GET' and path == '/api/sessions' for method, path in requests) >= 2, requests
                     page.unroute('**/api/sessions*', fail_one_list)
@@ -121,11 +122,11 @@ def main():
                     page.route('**/api/events', eof_once)
                     requests.clear()
                     page.reload(wait_until='domcontentloaded')
-                    page.wait_for_function('S.sessions.length===3 && !uiEventsReady && uiEventsRetry!==0')
+                    page.wait_for_function(js('S.sessions.length===3 && !uiEventsReady && uiEventsRetry!==0', 'runtime.core.state.catalog.sessions.length===3 && !runtime.core.events.ready && runtime.core.events.retry!==0'))
                     assert disconnected
                     data.put('events-reconnect', 'claude', [claude_row('events-reconnect', 'user', 'reconnect-u', None, 'Created while disconnected')], [])
-                    page.wait_for_function('uiEventsReady && !uiEventApplying', timeout=30000)
-                    page.wait_for_function('uid=>S.sessions.some(s=>s.uid===uid)', arg=uid_for('events-reconnect'), timeout=30000)
+                    page.wait_for_function(js('uiEventsReady && !uiEventApplying', 'runtime.core.events.ready && !runtime.core.events.applying'), timeout=30000)
+                    page.wait_for_function(js('uid=>S.sessions.some(s=>s.uid===uid)', 'uid=>runtime.core.state.catalog.sessions.some(s=>s.uid===uid)'), arg=uid_for('events-reconnect'), timeout=30000)
                     assert sum(path == '/api/events' for _, path in requests) >= 2, requests
                     page.unroute('**/api/events', eof_once)
                     assert not errors, errors

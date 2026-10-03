@@ -1,3 +1,5 @@
+import {useMachinesProjectionStore} from './runtime/machines'
+import {runtimePinia} from './runtime/pinia'
 import { createMachinesService } from '../services/machines'
 import type { MachineClient, MachineTarget, MachinesBridge } from '../services/machines'
 import { compareVersions, clientCell, clientUpdateSummary } from '../domain/client-versions'
@@ -19,9 +21,10 @@ export interface MachinesState {
   dragging: string | null;
   rowRevision: number;
 }
-// The store owns state and timers, independent of Vue and DOM. The migration
-// entry subscribes to immutable UI snapshots; callbacks only measure or focus.
+// Raw canonical request records and timers live in this controller. Published UI
+// snapshots belong to the shared explicit Pinia machines store.
 export function createMachinesStore(bridge: MachinesBridge) {
+  const projection=useMachinesProjectionStore(runtimePinia);
   const service = createMachinesService(bridge);
   const state: MachinesState = {targets: [], clients: new Map(), busy: new Set(), controls: new Map(), note: '', error: false,
     palette: null, editing: false, dragging: null, rowRevision: 0};
@@ -32,6 +35,7 @@ export function createMachinesStore(bridge: MachinesBridge) {
   const emit = () => {
     const snapshot = {...state, targets: state.targets.map(t => ({...t})), busy: new Set(state.busy), controls: new Map(state.controls),
       clients: new Map([...state.clients].map(([id, e]) => [id, {...e, clients: e.clients?.map(c => ({...c, update: c.update && {...c.update}})) || null}]))};
+    projection.current=snapshot;
     for (const listener of listeners) listener(snapshot);
   };
   const note = (text: string, error = false) => { state.note = text || ''; state.error = error; emit(); };
@@ -187,7 +191,7 @@ export function createMachinesStore(bridge: MachinesBridge) {
       })};
     })};
   }
-  return {state, bridge, refresh, renderMatrix: emit, note, loadClients, updateClient, save, chooseRenderer, move, dragOver, matrix,
+  return {state, projection, bridge, refresh, renderMatrix: emit, note, loadClients, updateClient, save, chooseRenderer, move, dragOver, matrix,
     subscribe(fn: (value: MachinesState) => void) { listeners.add(fn); emit(); return () => { listeners.delete(fn); }; },
     open() { refresh(); for (const target of bridge.readTargets()) if (target.enabled !== false && target.online !== false && !polls.has(target.id)) void loadClients(target); },
     palette(id: string | null) { state.palette = id; emit(); },

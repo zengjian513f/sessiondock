@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import {runtimePinia} from '../stores/runtime/pinia'
+import {useRuntimePresentationStore} from '../stores/runtime/presentation'
+const runtimeUi=useRuntimePresentationStore(runtimePinia)
+import {useGroupsStore} from '../stores/runtime/groups'
+import {useNodeStore} from '../stores/runtime/nodes'
+const runtimeGroups=useGroupsStore(runtimePinia),runtimeNodes=useNodeStore(runtimePinia)
 import SearchControls from './search/SearchControls.vue'
 import SearchStatus from './search/SearchStatus.vue'
 import SearchProgress from './search/SearchProgress.vue'
@@ -31,24 +37,24 @@ defineProps<{ hostname: string }>()
       </div>
       <div class="seg" id="view" role="group" aria-label="列表视图">
         <button data-v="tree" :class="{on: state.view === 'tree'}" @click="operations().selectView('tree')" title="项目树" aria-label="项目树">📁 <span class="mobile-label">项目树</span></button>
-        <button data-v="group" :class="{on: state.view === 'group'}" @click="operations().selectView('group')" title="会话分组" aria-label="会话分组">🏷 <span class="mobile-label">分组</span></button>
+        <button data-v="group" :hidden="!runtimeGroups.enabled" :class="{on: state.view === 'group'}" @click="operations().selectView('group')" title="会话分组" aria-label="会话分组">🏷 <span class="mobile-label">分组</span></button>
         <button data-v="date" :class="{on: state.view === 'date'}" @click="operations().selectView('date')" title="时间轴" aria-label="时间轴">🕒 <span class="mobile-label">时间轴</span></button>
       </div>
-      <div class="node-picker" id="node-picker" hidden>
+      <div class="node-picker" id="node-picker" :hidden="!runtimeNodes.visible">
         <div class="seg" id="node-chips" role="group" aria-label="机器筛选"></div>
       </div>
       <div class="seg chips" id="chips" role="group" aria-label="Agent Type 筛选"></div>
     </div>
     <HeaderActions />
   </header>
-  <div id="backend-notice" hidden role="status"></div>
-  <div id="node-notice" hidden role="status"></div>
-  <div id="prog"><div class="bar"></div><span class="txt"></span></div>
+  <div id="backend-notice" :hidden="!runtimeUi.backendNotice" role="status">{{runtimeUi.backendNotice}}</div>
+  <div id="node-notice" :hidden="!runtimeUi.nodeNotice" role="status">{{runtimeUi.nodeNotice}}</div>
+  <div id="prog" :class="{on:runtimeUi.progress.active}"><div class="bar" :class="{idle:runtimeUi.progress.idle}" :style="{width:runtimeUi.progress.width}"></div><span class="txt">{{runtimeUi.progress.text}}</span></div>
   <main>
     <div id="left" :style="{width: state.width}">
       <div class="side-search">
         <SearchControls />
-        <div id="session-group-status" role="status" aria-live="polite"></div>
+        <div id="session-group-status" role="status" aria-live="polite">{{runtimeGroups.message}}</div>
         <SearchStatus />
         <div class="side-tools" id="side-tools" hidden>
           <span id="side-picked"></span>
