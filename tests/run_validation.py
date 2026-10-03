@@ -3,7 +3,8 @@
 
 Replaces ad-hoc shell scripts. Discovers Node contract files and Python
 HTTP/browser suites at runtime after the fixed Rust checks. Unit suites
-are excluded unless ``--include-unit`` or explicitly selected with ``--only``. Never runs
+and suites compared against the frozen Python oracle are excluded unless
+``--include-unit`` / ``--include-oracle`` or explicitly selected with ``--only``. Never runs
 paid CLIs or touches production data; the underlying tests use synthetic
 fixtures and loopback listeners only.
 
@@ -118,7 +119,8 @@ def suites(binary, python_source):
         # routine sweep unless --include-real (they cost money and are timing
         # sensitive; the bench_*_real ones already opt out with SKIP_MARK).
         real = path.stem.endswith("_real")
-        if path.name.endswith("_parity.py") or has_flag(text, "--python-source"):
+        oracle = path.name.endswith("_parity.py") or has_flag(text, "--python-source")
+        if oracle:
             if py_ok:
                 argv += ["--python-source", python_source]
             else:
@@ -129,7 +131,8 @@ def suites(binary, python_source):
             argv += ["--binary", binary]
         items.append({"name": path.stem, "argv": argv, "kind": "python", "timeout": 900,
                       "tags": ("python",), "skip": skip, "serial": serial, "browser": browser,
-                      "real": real, "unit": bool(re.search(r"\bunittest\.main\(", text))})
+                      "real": real, "oracle": oracle,
+                      "unit": bool(re.search(r"\bunittest\.main\(", text))})
         if path.name == "lifecycle_browser.py":
             items.append({"name": "lifecycle_browser_native_binding",
                           "argv": [sys.executable, rel, "--native-binding"],
@@ -221,6 +224,8 @@ def main(argv=None):
                         help="also run the *_real paid-CLI operator suites (excluded by default)")
     parser.add_argument("--include-unit", action="store_true",
                         help="also run unit suites (Cargo, Node contracts and Python unittest; excluded by default)")
+    parser.add_argument("--include-oracle", action="store_true",
+                        help="also run suites compared against the frozen Python oracle (excluded by default)")
     args = parser.parse_args(argv)
 
     wanted = set(csv(args.tags))
@@ -237,6 +242,9 @@ def main(argv=None):
         if suite.get("real") and not args.include_real:
             continue
         if suite.get("unit") and not args.include_unit:
+            if only is None or suite["name"] not in only:
+                continue
+        if suite.get("oracle") and not args.include_oracle:
             if only is None or suite["name"] not in only:
                 continue
         plan.append(suite)
