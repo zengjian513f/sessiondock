@@ -194,7 +194,9 @@ def check_report_scroll(page):
             page.locator('#bug-report-attach-menu [data-attach=image]').click()
         # Keep the tall input for the reachability check, but submit an empty
         # draft so no report or CLI is created by the layout scenarios.
-        page.evaluate("document.querySelector('#bug-report-description').value = '';bugReportDraftObject().text='';persistComposerDraft(BUG_REPORT_DRAFT_UID)")
+        input_height = textarea.evaluate("element => element.style.height")
+        textarea.fill('')
+        textarea.evaluate("(element, height) => element.style.height = height", input_height)
         wait_drafts(page)
         bounds = page.locator("#bug-report-dialog").bounding_box()
         page.mouse.move(bounds["x"] + bounds["width"] / 2, bounds["y"] + bounds["height"] / 2)
@@ -209,7 +211,7 @@ def check_report_scroll(page):
         }""", timeout=5000)
         button = page.locator("#bug-report-go").bounding_box()
         page.mouse.click(button["x"] + button["width"] / 2, button["y"] + button["height"] / 2)
-        assert page.locator("#bug-report-error").inner_text() == "请先描述遇到的问题"
+        expect(page.locator("#bug-report-error")).to_have_text("请先描述遇到的问题")
         page.evaluate("""() => {
             document.querySelector('#bug-report-dialog').close();
             document.querySelector('#bug-report-description').style.height = '';

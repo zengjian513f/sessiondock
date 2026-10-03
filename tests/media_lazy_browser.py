@@ -8,6 +8,7 @@ Only private generated native records and a loopback Rust server are used.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 from pathlib import Path
@@ -35,6 +36,13 @@ def build(root):
         codex_row("response_item",{"type":"message","role":"user","content":[{"type":"input_text","text":"OTHER VIEW ONLY"}]})],[])
     corpus.put("codex-short","codex",[codex_row("session_meta",{"id":"codex-short","cwd":"/synthetic/short"}),
         codex_row("response_item",{"type":"message","role":"user","content":[{"type":"input_text","text":"SHORT IMAGE"},image("codex",PNG)]})],[])
+    inline_dir = root / 'inline'
+    inline_dir.mkdir(mode=0o700)
+    (inline_dir / 'inline.png').write_bytes(base64.b64decode(PNG))
+    corpus.put('codex-inline','codex',[
+        codex_row('session_meta',{'id':'codex-inline','cwd':str(inline_dir)}),
+        codex_row('response_item',{'type':'message','role':'user','content':[
+            {'type':'input_text','text':'INLINE IMAGE ![inline](inline.png)'}]})],[])
     return corpus
 
 
@@ -46,7 +54,8 @@ def main():
     args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="sessiondock-media-lazy-") as temporary:
         corpus=build(Path(temporary));before=native_bytes(corpus.root)
-        with isolated_server(corpus,args.binary,extra_env={"SESSIONDOCK_HISTORY_PAGE_EVENTS":"200"}) as (base,_),sync_playwright() as playwright:
+        with isolated_server(corpus,args.binary,extra_env={"SESSIONDOCK_HISTORY_PAGE_EVENTS":"200",
+                "SESSIONDOCK_FILE_ROOTS":str(corpus.root / 'inline')}) as (base,_),sync_playwright() as playwright:
             options={"headless":True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
                 options["executable_path"]=os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
@@ -196,12 +205,12 @@ def main():
                 # it after selection changes must not paint errors in the new UI.
                 mode["status"]=503;mode["hold_diagnostic"]=True
                 images.nth(1).evaluate("img=>{const src=img.src;img.removeAttribute('src');setTimeout(()=>{img.src=src},30)}")
-                page.wait_for_function("mediaDiagnosticActive===1")
+                page.wait_for_function("(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===1")
                 page.locator(f'#side .item[data-uid="{uid(corpus,"codex-other")}"]').click()
                 expect(page.locator("#msgs")).to_contain_text("OTHER VIEW ONLY")
                 assert len(held)==1
                 held.pop().fulfill(status=503,json={"error":"STALE DIAGNOSTIC MUST NOT APPEAR"})
-                page.wait_for_function("mediaDiagnosticActive===0")
+                page.wait_for_function("(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===0")
                 expect(page.locator(".media-load-error")).to_have_count(0)
                 expect(page.locator("#detail")).not_to_contain_text("STALE DIAGNOSTIC")
 
@@ -229,6 +238,44 @@ def main():
                 expect(page.locator('.media-load-error')).to_have_count(0)
                 page.wait_for_function("document.querySelector('#msgs img').naturalWidth===2")
                 expect(page.locator('#msgs')).to_contain_text('SHORT IMAGE')
+
+                # Markdown uses the established inner HTML fragment rather than
+                # gallery components; its recovery controls must work too.
+                mode['status']=503
+                page.locator(f'#side .item[data-uid="{uid(corpus,"codex-inline")}"]').click()
+                inline_image=page.locator('#msgs img')
+                expect(inline_image).to_have_count(1)
+                assert inline_image.get_attribute('data-vue-media') is None
+                expect(page.locator('.media-load-error')).to_contain_text('HTTP 503')
+                inline_snapshot=state()
+                mode['status']=None
+                page.locator('.media-load-retry').click()
+                page.wait_for_function("document.querySelector('#msgs img').naturalWidth===2")
+                expect(page.locator('.media-load-error')).to_have_count(0)
+                assert state()==inline_snapshot
+                mode['status']=404
+                inline_image.evaluate("img=>{const src=img.src;img.removeAttribute('src');setTimeout(()=>img.src=src,30)}")
+                expect(page.locator('.media-load-error')).to_contain_text('HTTP 404')
+                mode['status']=None
+                for attempt in range(3):
+                    page.locator('.media-load-reload').click()
+                    page.wait_for_function('historyPageRequests.size===0')
+                    panel=page.locator('.media-load-error')
+                    if not panel.count():
+                        break
+                    expect(panel).to_contain_text('实时历史已更新；已保留新内容，请再次手动重新载入')
+                    page.wait_for_function('_es?.readyState === EventSource.OPEN')
+                expect(page.locator('.media-load-error')).to_have_count(0)
+                page.wait_for_function("document.querySelector('#msgs img').naturalWidth===2")
+                mode['status']=503;mode['hold_diagnostic']=True
+                inline_image.evaluate("img=>{const src=img.src;img.removeAttribute('src');setTimeout(()=>img.src=src,30)}")
+                page.wait_for_function('(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===1')
+                page.locator(f'#side .item[data-uid="{uid(corpus,"codex-other")}"]').click()
+                expect(page.locator('#msgs')).to_contain_text('OTHER VIEW ONLY')
+                held.pop().fulfill(status=503,json={'error':'STALE INLINE DIAGNOSTIC'})
+                page.wait_for_function('(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===0')
+                expect(page.locator('.media-load-error')).to_have_count(0)
+                expect(page.locator('#detail')).not_to_contain_text('STALE INLINE DIAGNOSTIC')
 
                 mode["status"]=None
                 page.set_viewport_size({"width":390,"height":844})

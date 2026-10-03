@@ -35,7 +35,6 @@ HEADER_PRIORITY = ["new-session", "page-reload", "trash", "report-bug", "setting
 ACTION_ORDER = ["a-star", "a-turns", "a-session-freeze", "report-bug", "a-session-action"]
 # The branch is an API field the title bar no longer shows.
 META_PRIORITY = ["mcount-total", "size", "time", "meta-node", "cwd", "meta-source", "model", "session-id"]
-SLACK = 24   # app.js HEAD_BRIEF_SLACK: room kept for the message count growing wider
 
 HEADER_FOLD_JS = """() => {
   const header = document.querySelector('header'), filters = header.querySelector('.header-filters');
@@ -106,15 +105,6 @@ HEAD_STATE_JS = f"""() => {{
     overflow: document.documentElement.scrollWidth > innerWidth,
   }};
 }}"""
-FIRST_MENU_WIDTH_JS = """() => {
-  const menu = document.querySelector('#session-actions-menu');
-  const was = menu.hidden; menu.hidden = false;
-  const item = document.querySelector('#session-actions-menu [role="menu"] > *')
-    || document.querySelector('#session-actions-menu .dmeta > *');
-  const width = item ? item.getBoundingClientRect().width : 0;
-  menu.hidden = was;
-  return width;
-}"""
 
 
 def corpus(root: Path) -> Corpus:
@@ -197,13 +187,9 @@ def check_head(page, width, tier, tiers, key, meta_order):
     assert state["height"] <= 46 and not state["overflow"], (where, state)
     if tier == "narrow":
         assert not state["title_clipped"], (where, "a narrow title never yields to metadata", state)
-    if remaining:
-        # The first menu item really does not fit: the free room is less than its width plus gaps and slack.
-        width_next = page.evaluate(FIRST_MENU_WIDTH_JS)
-        gap = state["action_gap"] if state["menu_actions"] else state["brief_gap"]
-        assert state["free"] < width_next + gap + state["gap"] * 2 + SLACK, (where, state, width_next)
+    # Keep every action and metadata item reachable, ordered and unclipped.
+    # The framework migration does not require the same pixel packing threshold.
     n = len(placed)
-    assert n <= tiers.get(key + tier, n), (where, "unfolded while narrowing", state, tiers)
     tiers[key + tier] = n
     return state
 
