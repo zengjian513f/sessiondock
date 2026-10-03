@@ -10,6 +10,7 @@ import sys
 import tempfile
 from urllib.parse import urlsplit
 
+from browser_runtime import js, wait_for_async
 from playwright.sync_api import expect, sync_playwright
 from history_parity import REPO, BINARY, Corpus, isolated_server
 from send_browser import initialize, xterm_includes
@@ -64,36 +65,48 @@ def main():
                     return context.request.post(base + '/api/session/conversation/' + route, data={'uid': uid, '_build': build, **fields})
 
                 def wait_code(code):
-                    page.wait_for_function('''async ({uid, code, build}) => {
+                    wait_for_async(page, js(r"""async ({uid, code, build}) => {
                         const r=await fetch('api/session/conversation/check', {method:'POST',
                             headers:{'Content-Type':'application/json'},body:JSON.stringify({uid,_build:build})});
                         const d=await r.json(); return code ? d.code===code : d.ok===true;
-                    }''', arg={'uid': uid, 'code': code, 'build': build}, timeout=10000)
+                    }""", r"""async ({uid, code, build}) => {
+                        const r=await runtime.core.network.fetch('api/session/conversation/check', {method:'POST',
+                            headers:{'Content-Type':'application/json'},body:JSON.stringify({uid,_build:build})});
+                        const d=await r.json(); return code ? d.code===code : d.ok===true;
+                    }"""), arg={'uid': uid, 'code': code, 'build': build}, timeout=10000)
 
                 wait_code('cli_not_ready')
                 status = post('check').json()
                 assert status['input']['state'] == 'unknown' and status['input']['code'] == 'cli_not_ready', status
                 assert isinstance(status['draft_revision'], int), status
                 page.locator('#cinput').fill('keep this message')
-                page.evaluate('async () => await composerDraftWrites')
-                page.wait_for_function("composerDraft()?.inputStatus?.state === 'unknown'")
+                page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'unknown'", "runtime.composer.composerDraft()?.inputStatus?.state === 'unknown'"))
                 expect(page.locator('#csend')).to_be_disabled()
                 expect(page.locator('#composer-input-status')).to_contain_text('PTY')
                 expect(page.locator('#composer-input-status')).to_be_visible()
                 expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\binput-attention\b'))
-                page.evaluate('''() => {
+                page.evaluate(js(r"""() => {
                     const item = document.querySelector('#side .item.sel');
                     S.unread.set(item.dataset.uid, {count:2});
                     paintItemStatus(item);
-                }''')
+                }""", r"""() => {
+                    const item = document.querySelector('#side .item.sel');
+                    runtime.core.state.unread.unread.set(item.dataset.uid, {count:2});
+                    runtime.status.paintItemStatus(item);
+                }"""))
                 marker = page.locator('#side .item.sel > .ico > .item-status')
                 expect(marker).to_have_text('2')
                 expect(marker).to_have_attribute('title', re.compile('2 条新内容'))
-                page.evaluate('''() => {
+                page.evaluate(js(r"""() => {
                     const item = document.querySelector('#side .item.sel');
                     S.unread.delete(item.dataset.uid);
                     paintItemStatus(item);
-                }''')
+                }""", r"""() => {
+                    const item = document.querySelector('#side .item.sel');
+                    runtime.core.state.unread.unread.delete(item.dataset.uid);
+                    runtime.status.paintItemStatus(item);
+                }"""))
                 expect(page.locator('#composer-input-status')).not_to_have_class(re.compile(r'\binput-attention\b'))
                 # No submission is needed to show or retain the reason. Enter
                 # follows the disabled button and leaves the draft editable.
@@ -114,7 +127,7 @@ def main():
                 expect(page.locator('#composer-input-status')).to_have_text('暂未识别到终端消息编辑区，请切换到 PTY（终端）查看；输入已保留', timeout=10000)
                 # A stalled CHECK must time out and let later polls recover,
                 # without the user submitting or reloading the conversation.
-                page.evaluate('''() => {
+                page.evaluate(js(r"""() => {
                     const original=window.fetch;
                     window.restoreInputChecks=() => {window.fetch=original;};
                     window.fetch=(url, options) => {
@@ -125,14 +138,25 @@ def main():
                                 reject(new DOMException('Aborted', 'AbortError')), {once:true});
                         });
                     };
-                }''')
+                }""", r"""() => {
+                    const original=runtime.core.network.fetch;
+                    window.restoreInputChecks=() => {runtime.core.network.fetch=original;};
+                    runtime.core.network.fetch=(url, options) => {
+                        if (!String(url).endsWith('/api/session/conversation/check'))
+                            return original(url, options);
+                        return new Promise((resolve, reject) => {
+                            options?.signal?.addEventListener('abort', () =>
+                                reject(new DOMException('Aborted', 'AbortError')), {once:true});
+                        });
+                    };
+                }"""))
                 expect(page.locator('#composer-input-status')).to_contain_text('检查超时', timeout=12000)
                 expect(page.locator('#csend')).to_be_disabled()
                 page.evaluate('restoreInputChecks()')
                 expect(page.locator('#composer-input-status')).to_contain_text('PTY', timeout=10000)
                 # Temporary non-ready states and a genuinely busy process are
                 # normal progress, not a yellow exclamation mark.
-                transitions = page.evaluate('''() => {
+                transitions = page.evaluate(js(r"""() => {
                     const draft=composerDraft(), previous=draft.cli;
                     const results=[];
                     for (const code of ['input_check_pending','cli_starting','cli_catching_up','cli_pasting']) {
@@ -147,9 +171,27 @@ def main():
                         document.querySelector('#composer-input-status').classList.contains('input-attention')]);
                     applyCliState(composerUid, previous);
                     return results;
-                }''')
+                }""", r"""async () => {
+                    const draft=runtime.composer.composerDraft(), previous=draft.cli;
+                    const results=[];
+                    for (const code of ['input_check_pending','cli_starting','cli_catching_up','cli_pasting']) {
+                        runtime.composer.updateComposerInputStatus(runtime.composer.composerUid, {input:{state:code === 'input_check_pending'
+                            ? 'unknown' : 'starting',code,message:'progress'}});
+                        await Promise.resolve();
+                        results.push([code,document.querySelector('#dlive').classList.contains('input-attention'),
+                            document.querySelector('#composer-input-status').classList.contains('input-attention')]);
+                    }
+                    runtime.composer.applyCliState(runtime.composer.composerUid, {...previous,instance:{running:true,busy:true},
+                        input:{state:'unknown',code:'cli_not_ready',message:'processing'}});
+                    await Promise.resolve();
+                    results.push(['working',document.querySelector('#dlive').classList.contains('input-attention'),
+                        document.querySelector('#composer-input-status').classList.contains('input-attention')]);
+                    runtime.composer.applyCliState(runtime.composer.composerUid, previous);
+                    await Promise.resolve();
+                    return results;
+                }"""))
                 assert all(not header and not composer for _, header, composer in transitions), transitions
-                ordinary_states = page.evaluate('''() => {
+                ordinary_states = page.evaluate(js(r"""() => {
                     const draft=composerDraft(), previous=draft.cli, results=[];
                     for (const [state,code,running,expected] of [
                         ['blocked','cli_input_pending',true,''],
@@ -168,29 +210,50 @@ def main():
                     }
                     applyCliState(composerUid, previous);
                     return results;
-                }''')
+                }""", r"""async () => {
+                    const draft=runtime.composer.composerDraft(), previous=draft.cli, results=[];
+                    for (const [state,code,running,expected] of [
+                        ['blocked','cli_input_pending',true,''],
+                        ['blocked','cli_input_returned',true,''],
+                        ['unknown','cli_not_ready',true,''],
+                        ['unknown','input_check_failed',true,''],
+                        ['blocked','new_unknown_block',true,''],
+                        ['blocked','cli_not_ready',true,''],
+                        ['unknown','cli_input_pending',true,''],
+                        ['blocked','cli_input_pending',false,'']]) {
+                        runtime.composer.applyCliState(runtime.composer.composerUid, {...previous,instance:{running,busy:false},
+                            input:{state,code,message:'synthetic native state'}});
+                        await Promise.resolve();
+                        const attention=runtime.status.sessionInputAttention(runtime.composer.composerUid);
+                        const shown=document.querySelector('#composer-input-status').classList.contains('input-attention');
+                        results.push({state,code,running,expected,attention,shown});
+                    }
+                    runtime.composer.applyCliState(runtime.composer.composerUid, previous);
+                    await Promise.resolve();
+                    return results;
+                }"""))
                 assert all(row['attention'] == row['expected'] and row['shown'] == bool(row['expected'])
                            for row in ordinary_states), ordinary_states
                 assert not dialogs, dialogs
                 # Exercise focus through actual CHECK polling and keyboard
                 # input, not only synchronous DOM changes in one JS turn.
                 screen.write_text('custom')
-                page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'")
+                page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"))
                 expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\binput-attention\b'))
                 page.locator('#cinput').click()
                 screen.write_text('login')
-                page.wait_for_function("composerDraft()?.inputStatus?.state === 'unknown'")
+                page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'unknown'", "runtime.composer.composerDraft()?.inputStatus?.state === 'unknown'"))
                 assert page.evaluate("document.activeElement?.id === 'cinput'"), 'polling stole composer focus'
                 page.keyboard.type('!')
                 expect(page.locator('#cinput')).to_have_value('keep this message!')
                 page.locator('#cinput').fill('keep this message')
-                page.evaluate("addComposerQuote('quoted words')")
+                page.evaluate(js("addComposerQuote('quoted words')", "runtime.composer.addComposerQuote('quoted words')"))
                 page.wait_for_function("document.activeElement?.matches('#compose-items .draft-quote textarea')")
                 page.wait_for_timeout(350)
                 assert page.evaluate("document.activeElement?.matches('#compose-items .draft-quote textarea')"), 'quote lost focus during draft save'
                 page.keyboard.type('!')
-                assert page.evaluate("composerDraft().quotes[0].text") == 'quoted words!'
-                stable = page.evaluate('''() => {
+                assert page.evaluate(js('composerDraft().quotes[0].text', 'runtime.composer.composerDraft().quotes[0].text')) == 'quoted words!'
+                stable = page.evaluate(js(r"""() => {
                     const quote=document.activeElement, input=document.querySelector('#cinput');
                     const composer=document.querySelector('#composer');
                     const status=document.querySelector('#composer-input-status');
@@ -217,7 +280,37 @@ def main():
                         bubbleHeight:bubble.height, border:style.borderTopWidth,
                         radius:style.borderTopLeftRadius, background:style.backgroundColor,
                         before, shown, hidden, bubbleBottom:bubble.bottom};
-                }''')
+                }""", r"""async () => {
+                    const quote=document.activeElement, input=document.querySelector('#cinput');
+                    const composer=document.querySelector('#composer');
+                    const status=document.querySelector('#composer-input-status');
+                    quote.setSelectionRange(3, 3);
+                    runtime.composer.updateComposerInputStatus(runtime.composer.composerUid, {ok:true,
+                        input:{state:'ready',code:'',message:''}});
+                    await Promise.resolve();
+                    const before=[composer.getBoundingClientRect().top,
+                        input.getBoundingClientRect().top];
+                    const quoteRetained=document.activeElement===quote && quote.isConnected
+                        && quote.selectionStart===3;
+                    input.focus(); input.setSelectionRange(4, 4);
+                    runtime.composer.updateComposerInputStatus(runtime.composer.composerUid, {ok:false,
+                        input:{state:'unknown',code:'cli_not_ready',message:'PTY '+ '长提示'.repeat(90)}});
+                    await Promise.resolve();
+                    const bubble=status.getBoundingClientRect();
+                    const style=getComputedStyle(status);
+                    const shown=[composer.getBoundingClientRect().top,
+                        input.getBoundingClientRect().top];
+                    runtime.composer.updateComposerInputStatus(runtime.composer.composerUid, {ok:true,
+                        input:{state:'ready',code:'',message:''}});
+                    await Promise.resolve();
+                    const hidden=[composer.getBoundingClientRect().top,
+                        input.getBoundingClientRect().top];
+                    return {quoteRetained, inputFocused:document.activeElement===input,
+                        selection:input.selectionStart, inside:status.parentElement===composer,
+                        bubbleHeight:bubble.height, border:style.borderTopWidth,
+                        radius:style.borderTopLeftRadius, background:style.backgroundColor,
+                        before, shown, hidden, bubbleBottom:bubble.bottom};
+                }"""))
                 assert stable['quoteRetained'] and stable['inputFocused'] and stable['selection'] == 4, stable
                 assert stable['inside'] and stable['bubbleHeight'] > 18, stable
                 assert stable['before'] == stable['shown'] == stable['hidden'], stable
@@ -235,9 +328,9 @@ def main():
                         page.keyboard.press('Escape')
                         page.set_viewport_size({'width': width, 'height': height})
                         if width < 600:
-                            page.evaluate('showMobileDetail()')
+                            page.evaluate(js('showMobileDetail()', 'runtime.shell.showMobileDetail()'))
                         page.locator('#cinput').fill('keep this message')
-                        page.wait_for_function("composerDraft()?.inputStatus?.state === 'unknown'")
+                        page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'unknown'", "runtime.composer.composerDraft()?.inputStatus?.state === 'unknown'"))
                         expect(page.locator('#composer-input-status')).to_be_visible()
                         expect(page.locator('#composer-input-status')).to_have_css('background-color', background)
                         bounds = page.locator('#composer-input-status').bounding_box()
@@ -253,11 +346,11 @@ def main():
                         expect(page.locator('#cinput')).to_have_value('keep this message!')
                         page.locator('#cinput').fill('keep this message')
                 page.set_viewport_size({'width': 390, 'height': 844})
-                page.evaluate('showMobileDetail()')
+                page.evaluate(js('showMobileDetail()', 'runtime.shell.showMobileDetail()'))
                 if page.locator('#termpane').is_visible():
                     page.locator('#a-term').click()
                 expect(page.locator('#cinput')).to_be_visible()
-                mobile = page.evaluate('''() => {
+                mobile = page.evaluate(js(r"""() => {
                     const input=document.querySelector('#cinput');
                     const composer=document.querySelector('#composer');
                     input.focus(); input.setSelectionRange(2, 2);
@@ -279,19 +372,44 @@ def main():
                         visible:input.getClientRects().length>0,
                         inside:bubble.height>0 && composer.contains(document.querySelector('#composer-input-status')),
                         before, shown, hidden, bubbleBottom:bubble.bottom};
-                }''')
+                }""", r"""async () => {
+                    const input=document.querySelector('#cinput');
+                    const composer=document.querySelector('#composer');
+                    input.focus(); input.setSelectionRange(2, 2);
+                    runtime.composer.updateComposerInputStatus(runtime.composer.composerUid, {ok:true,
+                        input:{state:'ready',code:'',message:''}});
+                    await Promise.resolve();
+                    const before=[composer.getBoundingClientRect().top,
+                        input.getBoundingClientRect().top];
+                    runtime.composer.updateComposerInputStatus(runtime.composer.composerUid, {ok:false,
+                        input:{state:'unknown',code:'cli_not_ready',message:'PTY '+ '长提示'.repeat(90)}});
+                    await Promise.resolve();
+                    const bubble=document.querySelector('#composer-input-status').getBoundingClientRect();
+                    const shown=[composer.getBoundingClientRect().top,
+                        input.getBoundingClientRect().top];
+                    runtime.composer.updateComposerInputStatus(runtime.composer.composerUid, {ok:true,
+                        input:{state:'ready',code:'',message:''}});
+                    await Promise.resolve();
+                    const hidden=[composer.getBoundingClientRect().top,
+                        input.getBoundingClientRect().top];
+                    return {focused:document.activeElement===input, selection:input.selectionStart,
+                        active:document.activeElement?.id, disabled:input.disabled,
+                        visible:input.getClientRects().length>0,
+                        inside:bubble.height>0 && composer.contains(document.querySelector('#composer-input-status')),
+                        before, shown, hidden, bubbleBottom:bubble.bottom};
+                }"""))
                 assert mobile['focused'] and mobile['selection'] == 2, mobile
                 assert mobile['inside'], mobile
                 assert mobile['before'] == mobile['shown'] == mobile['hidden'], mobile
                 assert mobile['bubbleBottom'] <= mobile['shown'][0], mobile
                 page.set_viewport_size({'width': 1280, 'height': 720})
-                page.evaluate("removeComposerQuote(composerDraft().quotes[0].id)")
-                page.evaluate('async () => await composerDraftWrites')
+                page.evaluate(js('removeComposerQuote(composerDraft().quotes[0].id)', 'runtime.composer.removeComposerQuote(runtime.composer.composerDraft().quotes[0].id)'))
+                page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
                 # Repeated keyboard attempts keep the inline reason, without
                 # a modal or terminal writes.
-                page.wait_for_function("composerDraft()?.inputStatus?.state === 'unknown'")
+                page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'unknown'", "runtime.composer.composerDraft()?.inputStatus?.state === 'unknown'"))
                 page.locator('#cinput').press('Enter')
-                page.wait_for_function('() => !composerSending')
+                page.wait_for_function(js('() => !composerSending', '() => !runtime.composer.composerSending'))
                 assert not dialogs, dialogs
                 expect(page.locator('#composer-input-status')).to_be_visible()
                 assert page.evaluate("document.activeElement?.id === 'cinput'"), 'failed SEND stole composer focus'
@@ -312,13 +430,17 @@ def main():
                 # Recovery permits exactly one paste and Enter and clears the draft.
                 screen.write_text('custom')
                 wait_code(None)
-                page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'")
+                page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"))
                 # A stale question card remains display data; PTY readiness wins.
-                page.evaluate('''() => {
+                page.evaluate(js(r"""() => {
                     const key=viewKey(composerUid), entry=cache.get(key) || {};
                     entry.prompt={id:'stale-question',questions:[{question:'Old question',options:['Yes','No']}]};
                     cache.set(key,entry); syncComposerSendState();
-                }''')
+                }""", r"""() => {
+                    const key=runtime.composer.composerUid, entry=runtime.core.cache.cache.get(key) || {};
+                    entry.prompt={id:'stale-question',questions:[{question:'Old question',options:['Yes','No']}]};
+                    runtime.core.cache.cache.set(key,entry); runtime.composer.syncComposerSendState();
+                }"""))
                 expect(page.locator('#csend')).to_be_enabled()
                 with page.expect_response(lambda r: urlsplit(r.url).path.endswith('/conversation/send')) as sent:
                     page.locator('#csend').click()
@@ -332,31 +454,38 @@ def main():
                 screen.write_text('custom')
                 wait_code(None)
                 page.set_viewport_size({'width': 608, 'height': 788})
-                page.evaluate('showMobileDetail()')
+                page.evaluate(js('showMobileDetail()', 'runtime.shell.showMobileDetail()'))
                 page.locator('#a-term').click()
                 expect(page.locator('#termpane')).to_be_visible()
                 name = receipt['name']
                 # A list refresh must not let the old question above undo the
                 # user's explicit switch to the terminal. Force the poll here
                 # instead of depending on its timer racing this assertion.
-                page.evaluate('async () => await loadTermList()')
+                page.evaluate(js('async () => await loadTermList()', 'async () => await runtime.terminal.loadTermList()'))
                 expect(page.locator('#termpane')).to_be_visible()
                 # A genuinely new question still reveals the conversation;
                 # switching back acknowledges that ID, not all future prompts.
-                page.evaluate('''async () => {
+                page.evaluate(js(r"""async () => {
                     const entry=cache.get(viewKey(composerUid));
                     entry.prompt={id:'new-question',questions:[{question:'New question',options:['Yes','No']}]};
                     await loadTermList();
-                }''')
+                }""", r"""async () => {
+                    const entry=runtime.core.cache.cache.get(runtime.composer.composerUid);
+                    entry.prompt={id:'new-question',questions:[{question:'New question',options:['Yes','No']}]};
+                    await runtime.terminal.loadTermList();
+                }"""))
                 expect(page.locator('#termpane')).to_be_hidden()
                 page.locator('#a-term').click()
-                page.evaluate('async () => await loadTermList()')
+                page.evaluate(js('async () => await loadTermList()', 'async () => await runtime.terminal.loadTermList()'))
                 expect(page.locator('#termpane')).to_be_visible()
-                page.wait_for_function('''name => {
+                page.wait_for_function(js(r"""name => {
                     const v = T.views.get(name);
                     return !!(v && v.term && v.lastResizeKey && v.ws && v.ws.readyState === 1);
-                }''', arg=name)
-                before = page.evaluate('''name => {
+                }""", r"""name => {
+                    const v = runtime.terminal.state.views.get(name);
+                    return !!(v && v.term && v.lastResizeKey && v.ws && v.ws.readyState === 1);
+                }"""), arg=name)
+                before = page.evaluate(js(r"""name => {
                     T.name = name;
                     const v = T.views.get(name);
                     syncTermAliases(v);
@@ -370,38 +499,69 @@ def main():
                         return orig(data);
                     };
                     return {cols: v.term.cols, rows: v.term.rows, key: v.lastResizeKey, name};
-                }''', name)
+                }""", r"""name => {
+                    runtime.terminal.state.name = name;
+                    const v = runtime.terminal.state.views.get(name);
+                    runtime.terminal.syncTermAliases(v);
+                    v.ws._resizeSpy = [];
+                    const orig = v.ws.send.bind(v.ws);
+                    v.ws.send = function(data) {
+                        try {
+                            const msg = typeof data === 'string' ? JSON.parse(data) : null;
+                            if (msg && msg.t === 'resize') v.ws._resizeSpy.push(msg);
+                        } catch {}
+                        return orig(data);
+                    };
+                    return {cols: v.term.cols, rows: v.term.rows, key: v.lastResizeKey, name};
+                }"""), name)
                 assert before['cols'] >= 60 and before['rows'] > 10, before
-                full = page.evaluate('''async () => {
+                full = page.evaluate(js(r"""async () => {
                     const data = await probeComposerInput(composerUid);
                     return {data, input: composerDraft()?.inputStatus || null};
-                }''')
+                }""", r"""async () => {
+                    const data = await runtime.composer.probeComposerInput(runtime.composer.composerUid);
+                    return {data, input: runtime.composer.composerDraft()?.inputStatus || null};
+                }"""))
                 assert full['input']['state'] == 'ready', full
                 page.set_viewport_size({'width': 608, 'height': 484})
-                page.wait_for_function('''before => {
+                page.wait_for_function(js(r"""before => {
                     const v = T.views.get(before.name);
                     return visualKeyboardOpen()
                         && v && v.term.cols === before.cols
                         && v.term.rows === before.rows
                         && v.lastResizeKey === before.key
                         && v.ws._resizeSpy.length === 0;
-                }''', arg=before)
+                }""", r"""before => {
+                    const v = runtime.terminal.state.views.get(before.name);
+                    return runtime.shell.visualKeyboardOpen()
+                        && v && v.term.cols === before.cols
+                        && v.term.rows === before.rows
+                        && v.lastResizeKey === before.key
+                        && v.ws._resizeSpy.length === 0;
+                }"""), arg=before)
                 page.locator('#a-term').click()
                 expect(page.locator('#composer')).to_be_visible()
                 expect(page.locator('#cinput')).to_be_visible()
-                probed = page.evaluate('''async () => {
+                probed = page.evaluate(js(r"""async () => {
                     const data = await probeComposerInput(composerUid);
                     return {data, input: composerDraft()?.inputStatus || null};
-                }''')
+                }""", r"""async () => {
+                    const data = await runtime.composer.probeComposerInput(runtime.composer.composerUid);
+                    return {data, input: runtime.composer.composerDraft()?.inputStatus || null};
+                }"""))
                 assert probed['input']['state'] == 'ready', probed
                 page.set_viewport_size({'width': 608, 'height': 788})
-                page.wait_for_function('() => !visualKeyboardOpen()')
+                page.wait_for_function(js('() => !visualKeyboardOpen()', '() => !runtime.shell.visualKeyboardOpen()'))
                 page.set_viewport_size({'width': 1280, 'height': 720})
-                page.evaluate('''() => {
+                page.evaluate(js(r"""() => {
                     showMobileList();
                     if (typeof suspendTerm === 'function') suspendTerm();
                     for (const view of T.views.values()) view.inputLease = null;
-                }''')
+                }""", r"""() => {
+                    runtime.shell.showMobileList();
+                    if (typeof runtime.terminal.suspendTerm === 'function') runtime.terminal.suspendTerm();
+                    for (const view of runtime.terminal.state.views.values()) view.inputLease = null;
+                }"""))
                 wait_code(None)
                 expect(page.locator('#csend')).to_be_enabled()
 
@@ -418,30 +578,34 @@ def main():
                 trace.unlink()
                 screen.with_suffix('.block').touch()
                 page.locator('#cinput').fill('blocked from the send button')
-                page.evaluate('async () => await composerDraftWrites')
+                page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
                 with page.expect_response(lambda r: urlsplit(r.url).path.endswith('/conversation/send')) as blocked_click:
                     page.locator('#csend').click()
                 assert blocked_click.value.status == 409, blocked_click.value.text()
-                page.wait_for_function('() => !composerSending')
+                page.wait_for_function(js('() => !composerSending', '() => !runtime.composer.composerSending'))
                 assert page.evaluate("document.activeElement?.id === 'cinput'"), 'failed button SEND stole composer focus'
                 page.keyboard.type('!')
                 expect(page.locator('#cinput')).to_have_value('blocked from the send button!')
                 assert trace.read_bytes() == b'\x1b[200~blocked from the send button\x1b[201~', trace.read_bytes()
                 trace.unlink()
                 screen.write_text('custom')
-                page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'")
+                page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"))
                 page.locator('#cinput').fill('blocked from keyboard button')
-                page.evaluate('async () => await composerDraftWrites')
+                page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
                 page.locator('#csend').focus()
                 with page.expect_response(lambda r: urlsplit(r.url).path.endswith('/conversation/send')) as blocked_key:
                     page.locator('#csend').press('Enter')
                 assert blocked_key.value.status == 409, blocked_key.value.text()
-                page.wait_for_function('() => !composerSending')
-                assert page.evaluate("document.activeElement?.id === 'cinput'"), page.evaluate('''() => ({
+                page.wait_for_function(js('() => !composerSending', '() => !runtime.composer.composerSending'))
+                assert page.evaluate("document.activeElement?.id === 'cinput'"), page.evaluate(js(r"""() => ({
                     active:document.activeElement?.id, tag:document.activeElement?.tagName,
                     disabled:document.querySelector('#cinput').disabled,
                     composerUid, selected:S.sel, shown:!document.querySelector('#composer').classList.contains('hidden')
-                })''')
+                })""", r"""() => ({
+                    active:document.activeElement?.id, tag:document.activeElement?.tagName,
+                    disabled:document.querySelector('#cinput').disabled,
+                    composerUid: runtime.composer.composerUid, selected:runtime.core.state.selection.sel, shown:!document.querySelector('#composer').classList.contains('hidden')
+                })"""))
                 page.keyboard.type('!')
                 expect(page.locator('#cinput')).to_have_value('blocked from keyboard button!')
                 assert trace.read_bytes() == b'\x1b[200~blocked from keyboard button\x1b[201~', trace.read_bytes()
@@ -459,7 +623,7 @@ def main():
                 trace.unlink()
                 screen.write_text('')
                 wait_code('cli_starting')
-                page.wait_for_function("composerDraft()?.inputStatus?.state === 'starting'")
+                page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'starting'", "runtime.composer.composerDraft()?.inputStatus?.state === 'starting'"))
                 expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\binput-attention\b'))
                 expect(page.locator('#composer-input-status')).not_to_have_class(re.compile(r'\binput-attention\b'))
                 response = post('send', text='still starting', request_id='startup-timeout')
@@ -481,41 +645,41 @@ def main():
                 on_popup(page_two, lambda dialog: (other_dialogs.append(dialog.message), dialog.accept()))
                 try:
                     page_two.goto(base, wait_until='networkidle')
-                    page_two.evaluate('async receipt => {await loadTermList();await openPendingSession(receipt)}', receipt)
-                    page_two.wait_for_function('uid => composerUid === uid', arg=uid)
+                    page_two.evaluate(js('async receipt => {await loadTermList();await openPendingSession(receipt)}', 'async receipt => {await runtime.terminal.loadTermList();await runtime.terminal.openPendingSession(receipt)}'), receipt)
+                    page_two.wait_for_function(js('uid => composerUid === uid', 'uid => runtime.composer.composerUid === uid'), arg=uid)
                     page_two.locator('#cinput').fill('message without takeover')
-                    page_two.wait_for_function("composerDraft()?.inputStatus?.code === 'cli_not_ready'", timeout=10000)
+                    page_two.wait_for_function(js("composerDraft()?.inputStatus?.code === 'cli_not_ready'", "runtime.composer.composerDraft()?.inputStatus?.code === 'cli_not_ready'"), timeout=10000)
                     expect(page_two.locator('#composer-input-status .btn')).to_have_count(0)
                     assert not other_dialogs, other_dialogs
-                    owner_token = page.evaluate('name => T.views.get(name)?.inputLease?.token', receipt['name'])
+                    owner_token = page.evaluate(js('name => T.views.get(name)?.inputLease?.token', 'name => runtime.terminal.state.views.get(name)?.inputLease?.token'), receipt['name'])
                     assert owner_token
                     screen.write_text('custom')
-                    page_two.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=10000)
+                    page_two.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"), timeout=10000)
                     with page_two.expect_response(lambda r: urlsplit(r.url).path.endswith('/conversation/send')) as sent:
                         page_two.locator('#csend').click()
                     assert sent.value.status == 200, sent.value.text()
                     expect(page_two.locator('#cinput')).to_have_value('')
                     assert trace.read_bytes() == b'\x1b[200~message without takeover\x1b[201~\r', trace.read_bytes()
                     assert not other_dialogs and not any(c.get('force') for c in claims), (other_dialogs, claims)
-                    assert page.evaluate('name => T.views.get(name)?.inputLease?.token', receipt['name']) == owner_token
-                    assert page.evaluate('T.ws?.readyState === WebSocket.OPEN')
+                    assert page.evaluate(js('name => T.views.get(name)?.inputLease?.token', 'name => runtime.terminal.state.views.get(name)?.inputLease?.token'), receipt['name']) == owner_token
+                    assert page.evaluate(js('T.ws?.readyState === WebSocket.OPEN', 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
                     page_two.locator('#cinput').fill('draft after takeover')
                     page_two.locator('#a-term').click()
-                    page_two.wait_for_function('name => T.views.get(name)?.inputLease?.token && T.ws?.readyState === WebSocket.OPEN',
+                    page_two.wait_for_function(js('name => T.views.get(name)?.inputLease?.token && T.ws?.readyState === WebSocket.OPEN', 'name => runtime.terminal.state.views.get(name)?.inputLease?.token && runtime.terminal.state.ws?.readyState === WebSocket.OPEN'),
                         arg=receipt['name'], timeout=15000)
                     force_claims = [claim for claim in claims if claim.get('force') is True]
                     assert len(force_claims) == 1 and force_claims[0]['instance_id'] == receipt['instance_id'], claims
                     assert len(other_dialogs) == 1 and '抢占' in other_dialogs[0], other_dialogs
                     expect(page_two.locator('#cinput')).to_have_value('draft after takeover')
                     page_two.locator('#a-term').click()
-                    page_two.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=10000)
+                    page_two.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"), timeout=10000)
                     # Pure terminal CSS hides the composer via its parent.
                     checks=[]
                     page_two.on('request', lambda request: checks.append(request.url)
                         if urlsplit(request.url).path == '/api/session/conversation/check' else None)
                     page_two.locator('#a-term').click()
                     expect(page_two.locator('#cinput')).not_to_be_visible()
-                    page_two.wait_for_function('!composerInputProbeBusy')
+                    page_two.wait_for_function(js('!composerInputProbeBusy', '!runtime.composer.composerInputProbeBusy'))
                     before=len(checks)
                     page_two.wait_for_timeout(6200)
                     assert len(checks)==before, f'hidden composer sent {len(checks)-before} CHECKs'
@@ -523,9 +687,9 @@ def main():
                             urlsplit(request.url).path == '/api/session/conversation/check', timeout=1400):
                         page_two.locator('#a-term').click()
                     expect(page_two.locator('#cinput')).to_be_visible()
-                    page_two.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'")
+                    page_two.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"))
                     print('PASS hidden composer: 0 CHECKs over 6.2s, immediate check on return')
-                    stale = page_two.evaluate('''async () => {
+                    stale = page_two.evaluate(js(r"""async () => {
                         const status=document.querySelector('#composer-input-status');
                         updateComposerInputStatus(composerUid, {ok:false,
                             input:{state:'blocked',code:'cli_not_ready',message:'请切换到 PTY'}});
@@ -536,7 +700,19 @@ def main():
                         return {before, after:getComputedStyle(status).display,
                             banner:!!document.querySelector('.version-stale'),
                             sendDisabled:document.querySelector('#csend').disabled};
-                    }''')
+                    }""", r"""async () => {
+                        const status=document.querySelector('#composer-input-status');
+                        runtime.composer.updateComposerInputStatus(runtime.composer.composerUid, {ok:false,
+                            input:{state:'blocked',code:'cli_not_ready',message:'请切换到 PTY'}});
+                        await Promise.resolve();
+                        await Promise.resolve();
+                        const before=getComputedStyle(status).display;
+                        runtime.build.markStaleBuild('new-build');
+                        await Promise.resolve();
+                        return {before, after:getComputedStyle(status).display,
+                            banner:!!document.querySelector('.version-stale'),
+                            sendDisabled:document.querySelector('#csend').disabled};
+                    }"""))
                     assert stale['before'] != 'none' and stale['after'] == 'none', stale
                     assert stale['banner'] and stale['sendDisabled'], stale
                 finally:

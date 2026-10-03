@@ -20,6 +20,7 @@ is touched.
 """
 from __future__ import annotations
 
+from browser_runtime import js
 import json
 import os
 import re
@@ -139,18 +140,25 @@ def check_machine(page, base, state, machine):
 
 def api_contract(page, base):
     """Unknown profile → 404; a second update while one runs → 409."""
-    result = page.evaluate("""async base => {
+    result = page.evaluate(js("""async base => {
       const post = body => fetch(base + '/api/clients/update', {method: 'POST',
         headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
         .then(async r => [r.status, (await r.json()).code || '']);
       return [await post({id: 'no-such-profile'}), await post({id: 'shell'}),
               await post({id: 'codex-cli-v1'}), await post({id: 'codex-cli-v1'})];
-    }""", base)
+    }""", """async base => {
+      const post = body => runtime.core.network.fetch(base + '/api/clients/update', {method: 'POST',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+        .then(async r => [r.status, (await r.json()).code || '']);
+      return [await post({id: 'no-such-profile'}), await post({id: 'shell'}),
+              await post({id: 'codex-cli-v1'}), await post({id: 'codex-cli-v1'})];
+    }"""), base)
     assert result == [[404, "unknown_client"], [404, "unknown_client"], [200, ""], [409, "client_update_running"]], result
     # The accepted update must finish before the next pass resets the fake version.
     deadline = time.monotonic() + 20
-    while page.evaluate("""base => fetch(base + '/api/clients').then(r => r.json())
-      .then(d => d.clients.some(c => c.update && c.update.running))""", base):
+    while page.evaluate(js("""base => fetch(base + '/api/clients').then(r => r.json())
+      .then(d => d.clients.some(c => c.update && c.update.running))""", """base => runtime.core.network.fetch(base + '/api/clients').then(r => r.json())
+      .then(d => d.clients.some(c => c.update && c.update.running))"""), base):
         assert time.monotonic() < deadline, "the contract's update did not finish"
         time.sleep(0.2)
 

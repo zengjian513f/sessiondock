@@ -11,6 +11,7 @@ SEND with its native echo, input checks, stop and resume, portrait/dark
 icons, the report dialog and irreversible delete. Private fake CLI,
 loopback server, temporary directories only.
 """
+from browser_runtime import js
 import base64
 import argparse
 import json
@@ -119,9 +120,11 @@ def picker_rows(page):
 
 def wait_screen(page, text):
     """Wait for text on the live console screen (the renderer paints a canvas)."""
-    page.wait_for_function("""text => { const b = T.term?.buffer?.active; if (!b) return false;
+    page.wait_for_function(js("""text => { const b = T.term?.buffer?.active; if (!b) return false;
         for (let i = 0; i < b.length; i++) if ((b.getLine(i)?.translateToString(true) || '').includes(text)) return true;
-        return false; }""", arg=text, timeout=15000)
+        return false; }""", """text => { const b = runtime.terminal.state.term?.buffer?.active; if (!b) return false;
+        for (let i = 0; i < b.length; i++) if ((b.getLine(i)?.translateToString(true) || '').includes(text)) return true;
+        return false; }"""), arg=text, timeout=15000)
 
 
 def rows_of(page, base):
@@ -180,7 +183,7 @@ def main():
             try:
                 page.goto(base, wait_until='networkidle')
                 # ---- The mirrored seed session: listed, rendered, searchable.
-                page.wait_for_function("() => S.sessions.some(row => row.source === 'opencode')", timeout=20000)
+                page.wait_for_function(js("() => S.sessions.some(row => row.source === 'opencode')", "() => runtime.core.state.catalog.sessions.some(row => row.source === 'opencode')"), timeout=20000)
                 seeded = next(row for row in rows_of(page, base) if row['sid'] == SEEDED)
                 assert seeded['title'] == '已有的 OpenCode 会话' and seeded['model'] == 'fake-model', seeded
                 assert seeded['cwd'] == str(root / 'work') and seeded['supported'], seeded
@@ -247,12 +250,12 @@ def main():
 
                 # ---- The session exists in OpenCode before its TUI: the page
                 # moves to the native row at once.
-                page.wait_for_function('sid => S.sessions.some(row => row.sid === sid)', arg=sid, timeout=20000)
+                page.wait_for_function(js('sid => S.sessions.some(row => row.sid === sid)', 'sid => runtime.core.state.catalog.sessions.some(row => row.sid === sid)'), arg=sid, timeout=20000)
                 uid = next(row['uid'] for row in rows_of(page, base) if row['sid'] == sid)
-                page.wait_for_function('uid => S.sel === uid', arg=uid, timeout=20000)
+                page.wait_for_function(js('uid => S.sel === uid', 'uid => runtime.core.state.selection.sel === uid'), arg=uid, timeout=20000)
                 expect(page.locator('#detail .meta-source')).to_have_text('OpenCode')
                 expect(page.locator('#composer')).to_be_visible()
-                page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'", timeout=20000)
+                page.wait_for_function(js("() => composerDraft()?.inputStatus?.state === 'ready'", "() => runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"), timeout=20000)
 
                 def send(text, echo, reply):
                     page.locator('#cinput').fill(text)
@@ -276,31 +279,39 @@ def main():
                 # ---- The server refuses SEND while a palette covers the prompt.
                 screen.write_text('palette')
                 page.locator('#cinput').fill('blocked while the palette is open')
-                page.wait_for_function("() => composerDraft()?.inputStatus?.code === 'cli_not_ready'", timeout=15000)
+                page.wait_for_function(js("() => composerDraft()?.inputStatus?.code === 'cli_not_ready'", "() => runtime.composer.composerDraft()?.inputStatus?.code === 'cli_not_ready'"), timeout=15000)
                 expect(page.locator('#csend')).to_be_disabled()
-                refused = page.evaluate("""async () => { const name = takenOver(S.sel);
+                refused = page.evaluate(js("""async () => { const name = takenOver(S.sel);
                     try { return await post('api/session/conversation/send', {uid: S.sel, name,
                         text: 'blocked while the palette is open', request_id: crypto.randomUUID(),
                         lease: termSendLease(name).lease || null}); }
-                    catch (error) { return {thrown: String(error)}; } }""")
+                    catch (error) { return {thrown: String(error)}; } }""", """async () => { const name = runtime.terminal.takenOver(runtime.core.state.selection.sel);
+                    try { return await runtime.post.post('api/session/conversation/send', {uid: runtime.core.state.selection.sel, name,
+                        text: 'blocked while the palette is open', request_id: crypto.randomUUID(),
+                        lease: runtime.terminal.termSendLease(name).lease || null}); }
+                    catch (error) { return {thrown: String(error)}; } }"""))
                 assert '未识别到 CLI 可输入的消息编辑区' in str(refused), refused
                 assert b'blocked while' not in trace.read_bytes()
                 # ---- OpenCode's question form and permission prompt are CLI questions.
                 for dialog in ('question', 'permission'):
                     screen.write_text(dialog)
-                    page.wait_for_function("() => composerDraft()?.inputStatus?.code === 'cli_question'", timeout=15000)
+                    page.wait_for_function(js("() => composerDraft()?.inputStatus?.code === 'cli_question'", "() => runtime.composer.composerDraft()?.inputStatus?.code === 'cli_question'"), timeout=15000)
                     expect(page.locator('#csend')).to_be_disabled()
                     expect(page.locator('#composer-input-status')).to_contain_text('检测到终端选择界面')
                     shot(dialog)
-                    refused = page.evaluate("""async () => { const name = takenOver(S.sel);
+                    refused = page.evaluate(js("""async () => { const name = takenOver(S.sel);
                         try { return await post('api/session/conversation/send', {uid: S.sel, name,
                             text: 'blocked while the palette is open', request_id: crypto.randomUUID(),
                             lease: termSendLease(name).lease || null}); }
-                        catch (error) { return {thrown: String(error)}; } }""")
+                        catch (error) { return {thrown: String(error)}; } }""", """async () => { const name = runtime.terminal.takenOver(runtime.core.state.selection.sel);
+                        try { return await runtime.post.post('api/session/conversation/send', {uid: runtime.core.state.selection.sel, name,
+                            text: 'blocked while the palette is open', request_id: crypto.randomUUID(),
+                            lease: runtime.terminal.termSendLease(name).lease || null}); }
+                        catch (error) { return {thrown: String(error)}; } }"""))
                     assert 'CLI 正在等待选择' in str(refused), refused
                     assert b'blocked while' not in trace.read_bytes()
                 screen.write_text('composer')
-                page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
+                page.wait_for_function(js("() => composerDraft()?.inputStatus?.state === 'ready'", "() => runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"), timeout=15000)
                 expect(page.locator('#csend')).to_be_enabled()
                 page.locator('#cinput').fill('')
 
@@ -336,11 +347,11 @@ def main():
                 page.route('**/api/messages/**', old_cursor)
                 page.route('**/api/watch?*', disconnected_watch)
                 page.reload(wait_until='domcontentloaded')
-                page.wait_for_function('T.listLoaded')
+                page.wait_for_function(js('T.listLoaded', 'runtime.terminal.state.listLoaded'))
                 page.locator(f'#side .item[data-uid="{uid}"]').click()
-                page.wait_for_function('uid => S.sel === uid && cache.get(viewKey(uid,null))?.end > 0 && takenOver(uid)', arg=uid)
+                page.wait_for_function(js('uid => S.sel === uid && cache.get(viewKey(uid,null))?.end > 0 && takenOver(uid)', 'uid => runtime.core.state.selection.sel === uid && runtime.core.cache.cache.get(runtime.viewKey(uid,null))?.end > 0 && runtime.terminal.takenOver(uid)'), arg=uid)
                 expect(page.locator('#msgs')).to_contain_text('echo: hello opencode')
-                assert page.evaluate('uid => cache.get(viewKey(uid,null)).meta.cursor.end', uid) == 0
+                assert page.evaluate(js('uid => cache.get(viewKey(uid,null)).meta.cursor.end', 'uid => runtime.core.cache.cache.get(runtime.viewKey(uid,null)).meta.cursor.end'), uid) == 0
 
                 # ---- Stop, then resume from the native row with --session.
                 action = page.locator('#a-session-action')
@@ -352,13 +363,13 @@ def main():
                 page.unroute('**/api/watch?*', disconnected_watch)
                 action.click()
                 page.wait_for_function("() => document.querySelector('#a-session-action')?.getAttribute('aria-label') === '删除会话'", timeout=30000)
-                page.wait_for_function('uid => !S.live.has(uid) && !takenOver(uid)', arg=uid, timeout=30000)
+                page.wait_for_function(js('uid => !S.live.has(uid) && !takenOver(uid)', 'uid => !runtime.core.state.live.live.has(uid) && !runtime.terminal.takenOver(uid)'), arg=uid, timeout=30000)
                 shot('stopped')
                 with page.expect_response(lambda response: urlsplit(response.url).path == '/api/term/takeover', timeout=30000) as resumed:
                     page.locator('#a-term').click()
                 assert resumed.value.json()['launch_kind'] == 'resume', resumed.value.text()
                 assert resumed.value.json()['declared_sid'] == sid, resumed.value.text()
-                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN', timeout=20000)
+                page.wait_for_function(js('T.ws?.readyState === WebSocket.OPEN', 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'), timeout=20000)
                 wait_screen(page, 'sent: hello opencode')
                 shot('resumed')
 

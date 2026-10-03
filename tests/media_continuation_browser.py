@@ -8,6 +8,7 @@ fixture rewrites keep size and mtime so only content verification can notice.
 """
 from __future__ import annotations
 
+from browser_runtime import js
 import argparse
 import base64
 import hashlib
@@ -241,7 +242,7 @@ def browser(corpus, base, expected_native):
                     route.continue_()
             page.route("**/api/watch?*", watch_route)
             assert page.goto(base, wait_until="networkidle").status == 200
-            assert page.evaluate("SessionDockCapabilities.config.media_continuation===true"), "real backend must declare media_continuation"
+            assert page.evaluate(js("SessionDockCapabilities.config.media_continuation===true", 'runtime.capabilities.config.media_continuation===true')), "real backend must declare media_continuation"
 
             def select(name, marker):
                 if page.viewport_size["width"] < 700 and page.locator(".mobile-back").is_visible():
@@ -268,10 +269,13 @@ def browser(corpus, base, expected_native):
                 expect(page.locator("#migration-read-error")).to_have_count(0)
 
             def state():
-                return page.evaluate("""(() => {const key=viewKey(S.sel,S.agent),e=cache.get(key);
+                return page.evaluate(js("""(() => {const key=viewKey(S.sel,S.agent),e=cache.get(key);
                   const many=e.msgs.find(m=>m.media_more||m.media?.length>=16);
                   return {text:e.msgs.map(m=>m.text),end:e.end,anchor:e.anchor,version:e.version,
-                    cursor:S.cursors.get(key),media:many?many.media.length:0,more:many?.media_more||null};})()""")
+                    cursor:S.cursors.get(key),media:many?many.media.length:0,more:many?.media_more||null};})()""", """(() => {const key=runtime.viewKey(runtime.core.state.selection.sel,runtime.core.state.selection.agent),e=runtime.core.cache.cache.get(key);
+                  const many=e.msgs.find(m=>m.media_more||m.media?.length>=16);
+                  return {text:e.msgs.map(m=>m.text),end:e.end,anchor:e.anchor,version:e.version,
+                    cursor:runtime.core.state.unread.cursors.get(key),media:many?many.media.length:0,more:many?.media_more||null};})()"""))
 
             def load_more(expected_text, count, remaining):
                 unfold()
@@ -281,7 +285,7 @@ def browser(corpus, base, expected_native):
                 expect(button).to_be_enabled()
                 button.scroll_into_view_if_needed()
                 button.click()
-                page.wait_for_function("mediaPageRequests.size===0")
+                page.wait_for_function(js("mediaPageRequests.size===0", 'runtime.mediaRuntime.mediaPageRequests.size===0'))
                 decoded(count)
                 expect(page.locator(".media-page-error")).to_have_count(0)
                 if remaining:
@@ -304,13 +308,13 @@ def browser(corpus, base, expected_native):
                 assert after["text"] == before["text"], "message order changed"
                 assert (after["end"], after["anchor"], after["version"], after["cursor"]) == (
                     before["end"], before["anchor"], before["version"], before["cursor"]), "media page touched the live cursor"
-                assert page.evaluate("_es && _es.readyState===EventSource.OPEN")
+                assert page.evaluate(js("_es && _es.readyState===EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState===EventSource.OPEN'))
 
             continuation("codex-many", "APPENDED AFTER GRANT", 40)
             start = len(requests)
             append(corpus.paths["codex-many"], codex_message("assistant", "AFTER MANY IMAGES"), expected_native, corpus.root)
             expect(page.locator("#msgs")).to_contain_text("AFTER MANY IMAGES", timeout=10000)
-            page.wait_for_function("cache.get(viewKey(S.sel,S.agent)).msgs.at(-1).text==='AFTER MANY IMAGES'")
+            page.wait_for_function(js("cache.get(viewKey(S.sel,S.agent)).msgs.at(-1).text==='AFTER MANY IMAGES'", "runtime.core.cache.cache.get(runtime.viewKey(runtime.core.state.selection.sel,runtime.core.state.selection.agent)).msgs.at(-1).text==='AFTER MANY IMAGES'"))
             decoded(40)
             assert state()["media"] == 40 and state()["more"] is None
             assert not any("window=1" in url for url in requests[start:] if "/api/messages/" in url), "ordinary append reset the window"
@@ -338,13 +342,13 @@ def browser(corpus, base, expected_native):
                 page.wait_for_timeout(100)
             assert len(held) == 1, "watch for the rewrite view was not held"
             before = state()
-            page.evaluate("S.lastSync=Date.now()")  # Keep the periodic fallback sync out of this short window.
+            page.evaluate(js("S.lastSync=Date.now()", 'runtime.core.state.selection.lastSync=Date.now()'))  # Keep the periodic fallback sync out of this short window.
             rewrite(corpus.paths["codex-rewrite"], b"REWRITE IMAGEZ", b"REWRITE IMAGEY", expected_native, corpus.root)
             unfold()
             button = page.locator("#msgs .media-more")
             expect(button).to_have_text("还有 24 张图片，加载下一批")
             button.click()
-            page.wait_for_function("mediaPageRequests.size===0")
+            page.wait_for_function(js("mediaPageRequests.size===0", 'runtime.mediaRuntime.mediaPageRequests.size===0'))
             notice = page.locator("#msgs .media-page-error")
             expect(notice).to_be_visible()
             expect(notice).to_have_attribute("role", "alert")
@@ -355,7 +359,7 @@ def browser(corpus, base, expected_native):
             expect(page.locator("#msgs img")).to_have_count(16)
             assert state() == before, "failed page changed the snapshot"
             button.click()
-            page.wait_for_function("mediaPageRequests.size===0")
+            page.wait_for_function(js("mediaPageRequests.size===0", 'runtime.mediaRuntime.mediaPageRequests.size===0'))
             expect(page.locator("#msgs .media-page-error")).to_have_count(1)
             expect(page.locator("#msgs img")).to_have_count(16)
             expect(button).to_be_enabled()

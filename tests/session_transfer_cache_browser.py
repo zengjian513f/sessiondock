@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Chromium cloning discovers relationships on demand, caches them and sees new edges."""
+from browser_runtime import js
 import argparse
 from contextlib import ExitStack
 import ctypes
@@ -87,7 +88,7 @@ def main():
         page=browser.new_page();page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
         selected=scoped(node.nid,uid('claude',claude[2]))
         page.locator(f'#side .item[data-uid="{selected}"]').click()
-        page.wait_for_function('(uid)=>S.sel===uid',arg=selected)
+        page.wait_for_function(js('(uid)=>S.sel===uid', '(uid)=>runtime.core.state.selection.sel===uid'),arg=selected)
         assert not idle_watch.take(),'ordinary browsing scanned unrelated compacted history'
         assert not cache.exists(),'ordinary browsing built relationship summaries'
         watch=Opens(unrelated);stack.callback(watch.close)
@@ -119,7 +120,7 @@ def main():
         with unrelated[0].open('ab') as stream:
             stream.write(encoded({'type':'fork-context-ref','sessionId':ident(1000),'parentSessionId':ident(2)}))
         page.locator(f'#side .item[data-uid="{selected}"]').click()
-        page.wait_for_function('(uid)=>S.sel===uid',arg=selected)
+        page.wait_for_function(js('(uid)=>S.sel===uid', '(uid)=>runtime.core.state.selection.sel===uid'),arg=selected)
         watch.take()
         dialog,plan,_=preview();assert plan['session_count']==5,plan
         assert watch.take()=={unrelated[0].name},'must reread only changed unrelated history'
@@ -128,7 +129,7 @@ def main():
         servers.close();start()
         page.reload(wait_until='networkidle')
         page.locator(f'#side .item[data-uid="{selected}"]').click()
-        page.wait_for_function('(uid)=>S.sel===uid',arg=selected)
+        page.wait_for_function(js('(uid)=>S.sel===uid', '(uid)=>runtime.core.state.selection.sel===uid'),arg=selected)
         watch.take() # List discovery reads native headers on process startup.
         idle_watch.take()
         stamp=cache.stat().st_mtime_ns
@@ -149,7 +150,7 @@ def main():
         dialog.locator('.clone-cancel').click()
         grok_selected=scoped(node.nid,uid('grok',corpus.root/'grok/project'/ident(10)))
         page.locator(f'#side .item[data-uid="{grok_selected}"]').click()
-        page.wait_for_function('(uid)=>S.sel===uid',arg=grok_selected)
+        page.wait_for_function(js('(uid)=>S.sel===uid', '(uid)=>runtime.core.state.selection.sel===uid'),arg=grok_selected)
         dialog,plan,_=preview();assert plan['session_count']==5,plan
         dialog.locator('.clone-cancel').click()
         print('PASS Chromium idle startup leaves compacted history unread; on-demand preview includes checkpoint-only agent',flush=True)

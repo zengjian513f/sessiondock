@@ -4,6 +4,7 @@
 Run directly after building target/debug/sessiondock. No CLI is launched.
 The 65-second idle observation crosses the former full-history polling period.
 """
+from browser_runtime import js
 import argparse
 from contextlib import closing
 import json
@@ -55,8 +56,8 @@ def main():
 
         def open_session(page, base, sid=SEEDED):
             page.goto(base, wait_until='domcontentloaded')
-            page.wait_for_function('sid => S.sessions.some(r => r.sid === sid)', arg=sid, timeout=20000)
-            uid = page.evaluate('sid => S.sessions.find(r => r.sid === sid).uid', sid)
+            page.wait_for_function(js('sid => S.sessions.some(r => r.sid === sid)', 'sid => runtime.core.state.catalog.sessions.some(r => r.sid === sid)'), arg=sid, timeout=20000)
+            uid = page.evaluate(js('sid => S.sessions.find(r => r.sid === sid).uid', 'sid => runtime.core.state.catalog.sessions.find(r => r.sid === sid).uid'), sid)
             page.locator(f'#side .item[data-uid="{uid}"]').click()
             return page.locator('#msgs')
 
@@ -89,7 +90,7 @@ def main():
                         main_stamp = db.stat().st_mtime_ns
                         writer.execute("UPDATE session_v2 SET title='mirror updated' WHERE id=?", (SEEDED,))
                         writer.commit()
-                        page.wait_for_function("() => S.sessions.some(r => r.title === 'mirror updated')", timeout=20000)
+                        page.wait_for_function(js("() => S.sessions.some(r => r.title === 'mirror updated')", "() => runtime.core.state.catalog.sessions.some(r => r.title === 'mirror updated')"), timeout=20000)
                         assert db.stat().st_mtime_ns == main_stamp
 
                         # Message changes need no session timestamp change, and an
@@ -164,7 +165,7 @@ def main():
                     with closing(sqlite3.connect(db)) as connection, connection:
                         connection.execute('ALTER TABLE temporarily_unavailable RENAME TO session_message')
                         connection.execute("UPDATE session_v2 SET title='reconnected' WHERE id=?", (SEEDED,))
-                    page.wait_for_function("() => S.sessions.some(r => r.title === 'reconnected')", timeout=20000)
+                    page.wait_for_function(js("() => S.sessions.some(r => r.title === 'reconnected')", "() => runtime.core.state.catalog.sessions.some(r => r.title === 'reconnected')"), timeout=20000)
 
                     # A burst of commits ends without any further native activity;
                     # the very last update must converge (snapshot/version race).
@@ -181,7 +182,7 @@ def main():
                             failures.append(error)
                     worker = threading.Thread(target=burst)
                     worker.start()
-                    page.wait_for_function("() => S.sessions.some(r => r.title === 'burst 99')", timeout=20000)
+                    page.wait_for_function(js("() => S.sessions.some(r => r.title === 'burst 99')", "() => runtime.core.state.catalog.sessions.some(r => r.title === 'burst 99')"), timeout=20000)
                     worker.join(timeout=10)
                     assert not worker.is_alive() and not failures, failures
 
@@ -194,7 +195,7 @@ def main():
                     with closing(sqlite3.connect(db)) as connection, connection:
                         connection.execute('PRAGMA wal_checkpoint(TRUNCATE)')
                     os.replace(replacement, db)
-                    page.wait_for_function("() => S.sessions.some(r => r.title === 'replacement')", timeout=20000)
+                    page.wait_for_function(js("() => S.sessions.some(r => r.title === 'replacement')", "() => runtime.core.state.catalog.sessions.some(r => r.title === 'replacement')"), timeout=20000)
                     msgs = open_session(page, base)
                     expect(msgs).to_contain_text('看看这张图', timeout=20000)
                     expect(msgs).not_to_contain_text('older row changed')
@@ -222,7 +223,7 @@ def main():
                     with closing(sqlite3.connect(db)) as connection, connection:
                         connection.execute('DELETE FROM session_message WHERE session_id=?', (SEEDED,))
                         connection.execute('DELETE FROM session_v2 WHERE id=?', (SEEDED,))
-                    page.wait_for_function('sid => !S.sessions.some(r => r.sid === sid)', arg=SEEDED, timeout=20000)
+                    page.wait_for_function(js('sid => !S.sessions.some(r => r.sid === sid)', 'sid => !runtime.core.state.catalog.sessions.some(r => r.sid === sid)'), arg=SEEDED, timeout=20000)
                     assert not directory.exists()
                 assert not errors, errors
             finally:

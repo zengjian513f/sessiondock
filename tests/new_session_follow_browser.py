@@ -8,6 +8,7 @@ happens must not be interrupted: no loading interstitial replaces the page,
 the composer never hides, it keeps focus and the draft, and the automatic
 switch does not add a browser history entry. Desktop and 390 px, fake CLI.
 """
+from browser_runtime import js
 import json
 import os
 import subprocess
@@ -40,15 +41,15 @@ WATCH = """() => {
 def follow(page, root, base, work, draft):
     receipt = create_claude(page, base, work, open_terminal=False)
     pending = "tmux:" + receipt["name"]
-    assert page.evaluate("S.sel") == pending
+    assert page.evaluate(js("S.sel", 'runtime.core.state.selection.sel')) == pending
     page.locator("#cinput").click()
     page.locator("#cinput").press_sequentially(draft)
     page.evaluate(WATCH)
     # Still on the launch page: the native history does not exist yet.
-    assert page.evaluate("S.sel") == pending
+    assert page.evaluate(js("S.sel", 'runtime.core.state.selection.sel')) == pending
     (root / "notice").write_text(NOTICE)
     native = claude_uid(root, receipt["declared_sid"])
-    page.wait_for_function("uid => S.sel === uid", arg=native, timeout=20000)
+    page.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'), arg=native, timeout=20000)
     page.wait_for_function("text => document.querySelector('#msgs')?.textContent.includes(text)",
                            arg=NOTICE, timeout=15000)
     state = page.evaluate("""() => ({events: followEvents, active: document.activeElement?.id,

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Mobile Alt reaches the PTY with physical-key bytes in both renderers."""
+from browser_runtime import js
 import json
 import shlex
 import sys
@@ -41,7 +42,7 @@ def run(browser, renderer):
             page.on('pageerror', lambda e: errors.append(str(e)))
             page.goto(base, wait_until='networkidle')
             fixture.open_console(page, uid)
-            assert page.evaluate('!!currentTermViewObject().grid') == (renderer == 'grid')
+            assert page.evaluate(js('!!currentTermViewObject().grid', '!!runtime.terminal.currentTermViewObject().grid')) == (renderer == 'grid')
             alt = page.locator('[data-term-modifier="alt"]')
             ctrl = page.locator('[data-term-modifier="ctrl"]')
             up = page.locator('[data-term-key="Up"]')

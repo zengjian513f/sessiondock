@@ -15,6 +15,7 @@ bodies the page builds can be asserted. No CLI, no session root.
 """
 from __future__ import annotations
 
+from browser_runtime import js
 import argparse
 import json
 import re
@@ -148,7 +149,7 @@ def check_report_drag_selection(page):
     open_report(page)
     page.keyboard.press('Escape')
     assert not dialog.is_visible()
-    page.evaluate('clearBugReportDraft()')
+    page.evaluate(js('clearBugReportDraft()', 'runtime.launch.clearBugReportDraft()'))
     wait_drafts(page)
 
 
@@ -160,7 +161,7 @@ def check_report_scroll(page):
             (608, 788, 1), (390, 640, 1),
             (390, 360, 1), (1280, 500, 12)]:
         page.set_viewport_size({"width": width, "height": height})
-        page.evaluate("openBugReportDialog()")
+        page.evaluate(js("openBugReportDialog()", 'runtime.launch.openBugReportDialog()'))
         page.wait_for_selector("#bug-report-dialog[open]")
         page.locator("#bug-report-file").set_input_files([
             {"name": f"screen-{i}.png", "mimeType": "image/png", "buffer": PNG}
@@ -212,16 +213,20 @@ def check_report_scroll(page):
         button = page.locator("#bug-report-go").bounding_box()
         page.mouse.click(button["x"] + button["width"] / 2, button["y"] + button["height"] / 2)
         expect(page.locator("#bug-report-error")).to_have_text("请先描述遇到的问题")
-        page.evaluate("""() => {
+        page.evaluate(js("""() => {
             document.querySelector('#bug-report-dialog').close();
             document.querySelector('#bug-report-description').style.height = '';
             clearBugReportDraft();
-        }""")
+        }""", """() => {
+            document.querySelector('#bug-report-dialog').close();
+            document.querySelector('#bug-report-description').style.height = '';
+            runtime.launch.clearBugReportDraft();
+        }"""))
     page.set_viewport_size({"width": 1280, "height": 900})
 
 
 def check_send_busy_width(page, boundary):
-    page.evaluate("openBugReportDialog()")
+    page.evaluate(js("openBugReportDialog()", 'runtime.launch.openBugReportDialog()'))
     page.wait_for_selector("#bug-report-dialog[open]")
     page.fill("#bug-report-description", "发送按钮不要变宽")
     idle = page.locator("#bug-report-go").evaluate("el => el.getBoundingClientRect().width")
@@ -247,17 +252,20 @@ def check_send_busy_width(page, boundary):
                       body='{"error":"synthetic hold"}')
     boundary.pending.clear()
     boundary.defer = False
-    page.wait_for_function("!bugReportSending")
-    page.evaluate("""() => {
+    page.wait_for_function(js("!bugReportSending", '!runtime.launch.bugReportSending'))
+    page.evaluate(js("""() => {
       document.querySelector('#bug-report-dialog').close();
       clearBugReportDraft();
-    }""")
+    }""", """() => {
+      document.querySelector('#bug-report-dialog').close();
+      runtime.launch.clearBugReportDraft();
+    }"""))
     wait_drafts(page)
     boundary.calls.clear()
 
 
 def wait_drafts(page):
-    page.evaluate("async () => { for (;;) { const pending = composerDraftWrites; await pending; if (pending === composerDraftWrites) break; } }")
+    page.evaluate(js("async () => { for (;;) { const pending = composerDraftWrites; await pending; if (pending === composerDraftWrites) break; } }", 'async () => { for (;;) { const pending = runtime.composer.composerDraftWrites; await pending; if (pending === runtime.composer.composerDraftWrites) break; } }'))
 
 
 def check_report_layout(page):
@@ -265,7 +273,7 @@ def check_report_layout(page):
     # picker, the joined agent icons (names on hover), the model and effort
     # pickers ending flush with the send button.
     page.set_viewport_size({"width": 1280, "height": 900})
-    page.evaluate("openBugReportDialog()")
+    page.evaluate(js("openBugReportDialog()", 'runtime.launch.openBugReportDialog()'))
     page.wait_for_selector("#bug-report-dialog[open]")
     page.wait_for_function("!document.querySelector('#bug-report-node-label').hidden")
     # The picker still says what the machine is for, now as its accessible name and tooltip.
@@ -306,7 +314,7 @@ def check_report_layout(page):
 
     # Phone: two attachments share one row instead of stacking at 100% width.
     page.set_viewport_size({"width": 390, "height": 844})
-    page.evaluate("openBugReportDialog()")
+    page.evaluate(js("openBugReportDialog()", 'runtime.launch.openBugReportDialog()'))
     page.wait_for_selector("#bug-report-dialog[open]")
     page.locator("#bug-report-file").set_input_files([
         {"name": f"screen-{i}.png", "mimeType": "image/png", "buffer": PNG}
@@ -324,41 +332,44 @@ def check_report_layout(page):
       };
     }""")
     assert phone["same_row"] and phone["gap"] >= 0 and not phone["overflow"] and phone["frac"] <= 0.55, phone
-    page.evaluate("""() => {
+    page.evaluate(js("""() => {
       document.querySelector('#bug-report-dialog').close();
       clearBugReportDraft();
-    }""")
+    }""", """() => {
+      document.querySelector('#bug-report-dialog').close();
+      runtime.launch.clearBugReportDraft();
+    }"""))
     wait_drafts(page)
     page.set_viewport_size({"width": 1280, "height": 900})
 
 
 def check_shared_draft_recovery(page, boundary):
-    page.evaluate("openBugReportDialog()")
-    page.wait_for_function("!bugReportDraftObject().loading")
+    page.evaluate(js("openBugReportDialog()", 'runtime.launch.openBugReportDialog()'))
+    page.wait_for_function(js("!bugReportDraftObject().loading", '!runtime.launch.bugReportDraftObject().loading'))
     page.fill('#bug-report-description','服务端保存 [附件1]')
     page.locator('#bug-report-file').set_input_files([
         {'name':'recover.png','mimeType':'image/png','buffer':PNG}])
     wait_drafts(page)
-    uid=page.evaluate('BUG_REPORT_DRAFT_UID')
+    uid=page.evaluate(js('BUG_REPORT_DRAFT_UID', 'runtime.launch.BUG_REPORT_DRAFT_UID'))
     assert boundary.drafts[uid]['value']['text']=='服务端保存 [附件1]'
     assert len(boundary.drafts[uid]['value']['attachments'])==1
     # Selection stages the bytes on the chosen machine at once; nothing is left only in RAM.
-    page.wait_for_function("bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging")
+    page.wait_for_function(js("bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging", 'runtime.launch.bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !runtime.launch.bugReportDraftObject().attachments[0].staging'))
     wait_drafts(page)
     assert boundary.uploads==[uid], boundary.uploads
     assert boundary.drafts[uid]['value']['attachments'][0]['uploaded']['upload_id']
-    assert not page.evaluate('composerUnloadProtected')
-    assert not page.evaluate("store.get('composerDraft.'+BUG_REPORT_DRAFT_UID,null)")
+    assert not page.evaluate(js('composerUnloadProtected', 'runtime.composer.composerUnloadProtected'))
+    assert not page.evaluate(js("store.get('composerDraft.'+BUG_REPORT_DRAFT_UID,null)", "runtime.core.preferences.get('composerDraft.'+runtime.launch.BUG_REPORT_DRAFT_UID,null)"))
     assert not page.evaluate("async () => (await indexedDB.databases()).some(d=>d.name.endsWith('composer-drafts'))")
     page.locator('#bug-report-dialog .modal-close').click()
     page.reload(wait_until='networkidle')
-    page.wait_for_function('Nodes.list.length===3')
-    page.evaluate('openBugReportDialog()')
-    page.wait_for_function('!bugReportDraftObject().loading')
+    page.wait_for_function(js('Nodes.list.length===3', 'runtime.core.state.nodes.list.length===3'))
+    page.evaluate(js('openBugReportDialog()', 'runtime.launch.openBugReportDialog()'))
+    page.wait_for_function(js('!bugReportDraftObject().loading', '!runtime.launch.bugReportDraftObject().loading'))
     assert page.locator('#bug-report-description').input_value()=='服务端保存 [附件1]'
-    assert not page.evaluate('bugReportDraftObject().attachments[0].file instanceof Blob')
+    assert not page.evaluate(js('bugReportDraftObject().attachments[0].file instanceof Blob', 'runtime.launch.bugReportDraftObject().attachments[0].file instanceof Blob'))
     # That card still shows a thumbnail: the bytes come back from staging.
-    staged_id=page.evaluate('bugReportDraftObject().attachments[0].uploaded.upload_id')
+    staged_id=page.evaluate(js('bugReportDraftObject().attachments[0].uploaded.upload_id', 'runtime.launch.bugReportDraftObject().attachments[0].uploaded.upload_id'))
     page.wait_for_function("document.querySelector('#bug-report-items .draft-card .draft-thumb img')?.src.startsWith('blob:') || false", timeout=5000)
     assert boundary.previews==[(uid,staged_id)], boundary.previews
     # Removing a staged attachment needs one click and no confirmation; the
@@ -372,9 +383,9 @@ def check_shared_draft_recovery(page, boundary):
     # 换处理机器只是换跑处理会话的机器，不是另开一份报告：已经写好的描述跟着
     # 这次选择搬到新机器的草稿上，原机器那份随即清空（BUG-20260919-080848）。
     page.select_option('#bug-report-node',NID['b'])
-    page.wait_for_function('!bugReportDraftObject().loading')
+    page.wait_for_function(js('!bugReportDraftObject().loading', '!runtime.launch.bugReportDraftObject().loading'))
     assert page.locator('#bug-report-description').input_value()=='服务端保存 [附件1]'
-    other=page.evaluate('BUG_REPORT_DRAFT_UID')
+    other=page.evaluate(js('BUG_REPORT_DRAFT_UID', 'runtime.launch.BUG_REPORT_DRAFT_UID'))
     assert other!=uid
     wait_drafts(page)
     assert boundary.drafts[other]['value']['text']=='服务端保存 [附件1]', boundary.drafts[other]
@@ -382,11 +393,11 @@ def check_shared_draft_recovery(page, boundary):
     # 空着的输入框不搬任何东西：切回去看到的仍是那台机器自己的草稿。
     page.fill('#bug-report-description','');wait_drafts(page)
     page.select_option('#bug-report-node',NID['a'])
-    page.wait_for_function('!bugReportDraftObject().loading')
-    assert page.evaluate('BUG_REPORT_DRAFT_UID')==uid
+    page.wait_for_function(js('!bugReportDraftObject().loading', '!runtime.launch.bugReportDraftObject().loading'))
+    assert page.evaluate(js('BUG_REPORT_DRAFT_UID', 'runtime.launch.BUG_REPORT_DRAFT_UID'))==uid
     assert page.locator('#bug-report-description').input_value()==''
     assert not page.locator('.draft-saved').count()
-    page.evaluate("async () => {for (const [uid,draft] of composerDrafts) {draft.text='';draft.attachments=[];draft.quotes=[];await persistComposerDraft(uid);}}");wait_drafts(page)
+    page.evaluate(js("async () => {for (const [uid,draft] of composerDrafts) {draft.text='';draft.attachments=[];draft.quotes=[];await persistComposerDraft(uid);}}", "async () => {for (const [uid,draft] of runtime.composer.composerDrafts) {draft.text='';draft.attachments=[];draft.quotes=[];await runtime.composer.persistComposerDraft(uid);}}"));wait_drafts(page)
     page.locator('#bug-report-dialog .modal-close').click()
     boundary.calls.clear()
 
@@ -396,23 +407,23 @@ def check_draft_follows_machine(page, boundary):
     # emptied the box. Description, quotes and the attachments this page still
     # holds follow the selection; the previous machine keeps nothing.
     boundary.uploads.clear();boundary.discards.clear()
-    page.evaluate("openBugReportDialog()")
-    page.wait_for_function("!bugReportDraftObject().loading")
+    page.evaluate(js("openBugReportDialog()", 'runtime.launch.openBugReportDialog()'))
+    page.wait_for_function(js("!bugReportDraftObject().loading", '!runtime.launch.bugReportDraftObject().loading'))
     page.fill('#bug-report-description','切换机器也别清空 [附件1]')
     page.locator('#bug-report-file').set_input_files([
         {'name':'switch.png','mimeType':'image/png','buffer':PNG}])
-    page.wait_for_function("bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging")
+    page.wait_for_function(js("bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging", 'runtime.launch.bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !runtime.launch.bugReportDraftObject().attachments[0].staging'))
     wait_drafts(page)
-    first=page.evaluate('BUG_REPORT_DRAFT_UID')
+    first=page.evaluate(js('BUG_REPORT_DRAFT_UID', 'runtime.launch.BUG_REPORT_DRAFT_UID'))
     assert boundary.uploads==[first], boundary.uploads
     page.select_option('#bug-report-node',NID['c'])
-    page.wait_for_function('!bugReportDraftObject().loading')
-    second=page.evaluate('BUG_REPORT_DRAFT_UID')
+    page.wait_for_function(js('!bugReportDraftObject().loading', '!runtime.launch.bugReportDraftObject().loading'))
+    second=page.evaluate(js('BUG_REPORT_DRAFT_UID', 'runtime.launch.BUG_REPORT_DRAFT_UID'))
     assert second!=first
     assert page.locator('#bug-report-description').input_value()=='切换机器也别清空 [附件1]'
     assert not page.locator('#bug-report-error').inner_text()
     # The card's bytes are staged again on the machine that will handle it.
-    page.wait_for_function("bugReportDraftObject().attachments.length===1 && bugReportDraftObject().attachments[0].uploaded?.uid===BUG_REPORT_DRAFT_UID && !bugReportDraftObject().attachments[0].staging")
+    page.wait_for_function(js("bugReportDraftObject().attachments.length===1 && bugReportDraftObject().attachments[0].uploaded?.uid===BUG_REPORT_DRAFT_UID && !bugReportDraftObject().attachments[0].staging", 'runtime.launch.bugReportDraftObject().attachments.length===1 && runtime.launch.bugReportDraftObject().attachments[0].uploaded?.uid===runtime.launch.BUG_REPORT_DRAFT_UID && !runtime.launch.bugReportDraftObject().attachments[0].staging'))
     wait_drafts(page)
     assert boundary.uploads==[first,second], boundary.uploads
     assert boundary.drafts[second]['value']['text']=='切换机器也别清空 [附件1]'
@@ -425,11 +436,11 @@ def check_draft_follows_machine(page, boundary):
     deadline=time.time()+5
     while not boundary.discards and time.time()<deadline: page.wait_for_timeout(100)
     assert boundary.discards and boundary.discards[0][0]==first, boundary.discards
-    page.evaluate("async () => {for (const [uid,draft] of composerDrafts) {draft.text='';draft.attachments=[];draft.quotes=[];await persistComposerDraft(uid);}}");wait_drafts(page)
+    page.evaluate(js("async () => {for (const [uid,draft] of composerDrafts) {draft.text='';draft.attachments=[];draft.quotes=[];await persistComposerDraft(uid);}}", "async () => {for (const [uid,draft] of runtime.composer.composerDrafts) {draft.text='';draft.attachments=[];draft.quotes=[];await runtime.composer.persistComposerDraft(uid);}}"));wait_drafts(page)
     # An empty box carries nothing; leave the remembered machine as the suite found it.
     page.fill('#bug-report-description','')
     page.select_option('#bug-report-node',NID['a'])
-    page.wait_for_function('!bugReportDraftObject().loading')
+    page.wait_for_function(js('!bugReportDraftObject().loading', '!runtime.launch.bugReportDraftObject().loading'))
     assert page.locator('#bug-report-description').input_value()==''
     wait_drafts(page)
     page.locator('#bug-report-dialog .modal-close').click()
@@ -443,7 +454,7 @@ def check_model_menu_floats(page):
     for width, height, scale in ((1280, 900, 1), (390, 844, 1), (1280, 700, 0.8)):
         page.set_viewport_size({"width": width, "height": height})
         page.evaluate(f"document.documentElement.style.setProperty('--compact-scale', '{scale}')")
-        page.evaluate("openBugReportDialog()")
+        page.evaluate(js("openBugReportDialog()", 'runtime.launch.openBugReportDialog()'))
         page.wait_for_selector("#bug-report-dialog[open]")
         page.wait_for_function("!document.querySelector('#bug-report-model').disabled")
         measure = """() => {
@@ -480,7 +491,7 @@ def check_model_menu_floats(page):
 def check_enter_keys(page):
     # Enter and Shift+Enter match the composer: on a phone Enter is a newline too.
     page.set_viewport_size({"width": 390, "height": 844})
-    page.evaluate("openBugReportDialog()")
+    page.evaluate(js("openBugReportDialog()", 'runtime.launch.openBugReportDialog()'))
     page.wait_for_selector("#bug-report-dialog[open]")
     textarea = page.locator("#bug-report-description")
     textarea.fill("手机上")
@@ -520,7 +531,7 @@ def main():
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
                     page.wait_for_function(
-                        'S.sessions.length === 3 && Nodes.list.length === 3 && !!Nodes.capabilities["' + NID["b"] + '"]')
+                        js('S.sessions.length === 3 && Nodes.list.length === 3 && !!Nodes.capabilities["' + NID["b"] + '"]', 'runtime.core.state.catalog.sessions.length === 3 && runtime.core.state.nodes.list.length === 3 && !!runtime.core.state.nodes.capabilities["' + NID['b'] + '"]'))
 
                     check_shared_draft_recovery(page, boundary)
                     check_draft_follows_machine(page, boundary)
@@ -539,7 +550,7 @@ def main():
                     opts = options(page)
                     assert [o["text"] for o in opts] == ["NodeA", "NodeB", "Vega"], opts
                     assert not any(o["disabled"] for o in opts), opts
-                    assert page.evaluate("bugReportNode()") == NID["a"]
+                    assert page.evaluate(js("bugReportNode()", 'runtime.launch.bugReportNode()')) == NID["a"]
                     if args.screenshot:
                         page.locator("#bug-report-dialog .report-form").screenshot(path=args.screenshot)
                     # Pick NodeB: no session → origin is the worker machine, single request.
@@ -564,10 +575,10 @@ def main():
                     toast = page.locator("#bug-report-toast").inner_text()
                     assert "已保存到 NodeB" in toast, toast
                     # Dismissing the receipt leaves the worker and current selection alone.
-                    receipt_state = page.evaluate("({selected: S.sel, pending: T.pending})")
+                    receipt_state = page.evaluate(js("({selected: S.sel, pending: T.pending})", '({selected: runtime.core.state.selection.sel, pending: runtime.terminal.state.pending})'))
                     page.locator('#bug-report-toast').get_by_role('button', name='忽略', exact=True).click()
                     expect(page.locator('#bug-report-toast')).to_be_hidden()
-                    assert page.evaluate("({selected: S.sel, pending: T.pending})") == receipt_state
+                    assert page.evaluate(js("({selected: S.sel, pending: T.pending})", '({selected: runtime.core.state.selection.sel, pending: runtime.terminal.state.pending})')) == receipt_state
                     assert [p for p, _ in boundary.calls] == ['bug-report']
                     assert page.evaluate("localStorage.getItem('sessiondock.hub./.bugReportNode')") == json.dumps(NID["b"])
                     boundary.calls.clear()
@@ -576,11 +587,11 @@ def main():
                     #    machine) even though NodeB was remembered; choosing Vega goes two-step.
                     row = page.locator("#side .item[data-uid^='claude:" + NID["a"] + "~']").first
                     row.click()
-                    page.wait_for_function("S.sel && S.sel.includes('" + NID["a"] + "~')")
-                    sel = page.evaluate("S.sel")
+                    page.wait_for_function(js("S.sel && S.sel.includes('" + NID["a"] + "~')", "runtime.core.state.selection.sel && runtime.core.state.selection.sel.includes('" + NID['a'] + "~')"))
+                    sel = page.evaluate(js("S.sel", 'runtime.core.state.selection.sel'))
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
-                    assert page.evaluate("bugReportNode()") == NID["a"]
+                    assert page.evaluate(js("bugReportNode()", 'runtime.launch.bugReportNode()')) == NID["a"]
                     page.select_option("#bug-report-node", NID["c"])
                     page.fill("#bug-report-description", "NodeA 上的会话消息不刷新")
                     page.locator("#bug-report-go").click()
@@ -613,11 +624,11 @@ def main():
                     expect(receipt.get_by_role('button', name='打开', exact=True)).to_be_in_viewport()
                     ignore = receipt.get_by_role('button', name='忽略', exact=True)
                     expect(ignore).to_be_in_viewport()
-                    receipt_state = page.evaluate("({selected: S.sel, pending: T.pending})")
+                    receipt_state = page.evaluate(js("({selected: S.sel, pending: T.pending})", '({selected: runtime.core.state.selection.sel, pending: runtime.terminal.state.pending})'))
                     ignore.focus()
                     ignore.press('Enter')
                     expect(receipt).to_be_hidden()
-                    assert page.evaluate("({selected: S.sel, pending: T.pending})") == receipt_state
+                    assert page.evaluate(js("({selected: S.sel, pending: T.pending})", '({selected: runtime.core.state.selection.sel, pending: runtime.terminal.state.pending})')) == receipt_state
                     assert [p for p, _ in boundary.calls] == ['bug-report/capture', 'bug-report']
                     page.set_viewport_size({"width": 1280, "height": 900})
                     page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
@@ -628,42 +639,42 @@ def main():
                     #     session is open; once emptied, the picker follows the session again.
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
-                    assert page.evaluate("bugReportNode()") == NID["a"]
+                    assert page.evaluate(js("bugReportNode()", 'runtime.launch.bugReportNode()')) == NID["a"]
                     page.select_option("#bug-report-node", NID["b"])
-                    page.wait_for_function("!bugReportDraftObject().loading")
+                    page.wait_for_function(js("!bugReportDraftObject().loading", '!runtime.launch.bugReportDraftObject().loading'))
                     page.fill("#bug-report-description", "写了一半的报告")
                     wait_drafts(page)
                     page.locator("#bug-report-dialog .modal-close").click()
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
-                    page.wait_for_function("!bugReportDraftObject().loading")
-                    assert page.evaluate("bugReportNode()") == NID["b"]
+                    page.wait_for_function(js("!bugReportDraftObject().loading", '!runtime.launch.bugReportDraftObject().loading'))
+                    assert page.evaluate(js("bugReportNode()", 'runtime.launch.bugReportNode()')) == NID["b"]
                     assert page.locator("#bug-report-description").input_value() == "写了一半的报告"
                     assert not page.locator("#bug-report-error").inner_text()
                     page.locator("#bug-report-dialog .modal-close").click()
                     # Its machine going offline says where the draft is instead of hiding it.
                     nodes[1].set(term_enabled=False)
-                    page.evaluate("loadTermList()")
-                    page.wait_for_function('Nodes.capabilities["' + NID["b"] + '"]?.enabled === false')
+                    page.evaluate(js("loadTermList()", 'runtime.terminal.loadTermList()'))
+                    page.wait_for_function(js('Nodes.capabilities["' + NID["b"] + '"]?.enabled === false', 'runtime.core.state.nodes.capabilities["' + NID['b'] + '"]?.enabled === false'))
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
-                    assert page.evaluate("bugReportNode()") == NID["a"]
+                    assert page.evaluate(js("bugReportNode()", 'runtime.launch.bugReportNode()')) == NID["a"]
                     assert page.locator("#bug-report-error").inner_text() \
                         == "NodeB 离线，上面没发出的报告草稿要等它恢复后才能打开"
                     page.locator("#bug-report-dialog .modal-close").click()
                     nodes[1].set(term_enabled=True)
-                    page.evaluate("loadTermList()")
-                    page.wait_for_function('Nodes.capabilities["' + NID["b"] + '"]?.enabled === true')
+                    page.evaluate(js("loadTermList()", 'runtime.terminal.loadTermList()'))
+                    page.wait_for_function(js('Nodes.capabilities["' + NID["b"] + '"]?.enabled === true', 'runtime.core.state.nodes.capabilities["' + NID['b'] + '"]?.enabled === true'))
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
-                    page.wait_for_function("!bugReportDraftObject().loading")
-                    assert page.evaluate("bugReportNode()") == NID["b"]
+                    page.wait_for_function(js("!bugReportDraftObject().loading", '!runtime.launch.bugReportDraftObject().loading'))
+                    assert page.evaluate(js("bugReportNode()", 'runtime.launch.bugReportNode()')) == NID["b"]
                     page.fill("#bug-report-description", "")
                     wait_drafts(page)
                     page.locator("#bug-report-dialog .modal-close").click()
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
-                    assert page.evaluate("bugReportNode()") == NID["a"]
+                    assert page.evaluate(js("bugReportNode()", 'runtime.launch.bugReportNode()')) == NID["a"]
                     page.locator("#bug-report-dialog .modal-close").click()
                     boundary.calls.clear()
 
@@ -672,7 +683,7 @@ def main():
                     boundary.capture_status = 503
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
-                    assert page.evaluate("bugReportNode()") == NID["a"]
+                    assert page.evaluate(js("bugReportNode()", 'runtime.launch.bugReportNode()')) == NID["a"]
                     page.select_option("#bug-report-node", NID["b"])
                     page.fill("#bug-report-description", "抓取失败也要能报")
                     page.locator("#bug-report-go").click()
@@ -686,9 +697,9 @@ def main():
 
                     # 4. A source the chosen machine lacks is greyed out.
                     nodes[1].set(term_sources={"claude": True, "codex": False})
-                    page.evaluate("loadTermList()")
+                    page.evaluate(js("loadTermList()", 'runtime.terminal.loadTermList()'))
                     page.wait_for_function(
-                        'Nodes.capabilities["' + NID["b"] + '"].sources.codex === false')
+                        js('Nodes.capabilities["' + NID["b"] + '"].sources.codex === false', 'runtime.core.state.nodes.capabilities["' + NID['b'] + '"].sources.codex === false'))
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
                     page.select_option("#bug-report-node", NID["b"])
@@ -702,8 +713,8 @@ def main():
 
                     # 5. A machine without a usable terminal is just "（离线）" in both pickers.
                     nodes[2].set(term_enabled=False)
-                    page.evaluate("loadTermList()")
-                    page.wait_for_function('Nodes.capabilities["' + NID["c"] + '"]?.enabled === false')
+                    page.evaluate(js("loadTermList()", 'runtime.terminal.loadTermList()'))
+                    page.wait_for_function(js('Nodes.capabilities["' + NID["c"] + '"]?.enabled === false', 'runtime.core.state.nodes.capabilities["' + NID['c'] + '"]?.enabled === false'))
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
                     vega = next(o for o in options(page) if o["text"].startswith("Vega"))
@@ -715,12 +726,12 @@ def main():
                         .filter(o => o.value === '%s').map(o => [o.textContent, o.disabled])""" % NID["c"]) == [["Vega（离线）", True]]
                     page.locator("#new-session-dialog .modal-cancel").click()
                     nodes[2].set(term_enabled=True)
-                    page.evaluate("loadTermList()")
-                    page.wait_for_function('Nodes.capabilities["' + NID["c"] + '"]?.enabled === true')
+                    page.evaluate(js("loadTermList()", 'runtime.terminal.loadTermList()'))
+                    page.wait_for_function(js('Nodes.capabilities["' + NID["c"] + '"]?.enabled === true', 'runtime.core.state.nodes.capabilities["' + NID['c'] + '"]?.enabled === true'))
 
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
-                    page.evaluate("markStaleBuild('test-build')")
+                    page.evaluate(js("markStaleBuild('test-build')", "runtime.build.markStaleBuild('test-build')"))
                     assert page.locator("#bug-report-go").is_disabled()
                     assert page.locator("#bug-report-add").is_disabled()
                     page.fill("#bug-report-description", "过期页不能再提交")

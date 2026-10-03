@@ -9,6 +9,7 @@ finishing and resuming are edits to its transcript that reach the menu through a
 """
 from __future__ import annotations
 
+from browser_runtime import js
 import argparse
 from datetime import datetime
 import json
@@ -119,12 +120,12 @@ def assert_geometry(page):
 
 
 def reload_rows(page, predicate):
-    page.evaluate("loadSessions(true)")   # ?force=1: the index rescans the corpus before answering
+    page.evaluate(js("loadSessions(true)", 'runtime.core.list.loadSessions(true)'))   # ?force=1: the index rescans the corpus before answering
     page.wait_for_function(predicate)
 
 
 def check_page(page, uid, data):
-    page.evaluate("uid => openSession(uid)", uid)
+    page.evaluate(js("uid => openSession(uid)", 'uid => runtime.core.open.openSession(uid)'), uid)
     page.locator("#a-view-switch").wait_for()
     page.wait_for_function('document.querySelector("#msgs .msg")')
     page.evaluate(STICKY_TOOLBAR)
@@ -142,7 +143,7 @@ def check_page(page, uid, data):
     # Owner live and worker active: the running one leads with a dot and no end time; the head is
     # not rebuilt for that.
     probe = page.evaluate('document.querySelector(".dhead").__probe = Math.random()')
-    page.evaluate("uid => { S.live.add(uid); paintLive(); }", uid)
+    page.evaluate(js("uid => { S.live.add(uid); paintLive(); }", 'uid => { runtime.core.state.live.live.add(uid); runtime.status.paintLive(); }'), uid)
     menu = open_menu(page)
     assert page.evaluate('document.querySelector(".dhead").__probe') == probe
     assert [r["agent"] for r in menu] == ["", "worker", "late", "early"], menu
@@ -159,18 +160,18 @@ def check_page(page, uid, data):
 
     # A list refresh reaches the next open: the worker's transcript closes with an end_turn at 10:05.
     worker(data, finished=(10, 5))
-    reload_rows(page, "S.sessions[0].agent_items.every(a => !a.active)")
+    reload_rows(page, js("S.sessions[0].agent_items.every(a => !a.active)", "runtime.core.state.catalog.sessions[0].agent_items.every(a => !a.active)"))
     menu = open_menu(page)
     assert [r["agent"] for r in menu] == ["", "worker", "late", "early"], menu
     assert [r["dot"] for r in menu] == [0, 0, 0, 0], menu
     assert menu[1]["span"] == "今天 09:20 → 10:05", menu
     worker(data)
-    reload_rows(page, "S.sessions[0].agent_items.some(a => a.active)")
+    reload_rows(page, js("S.sessions[0].agent_items.some(a => a.active)", "runtime.core.state.catalog.sessions[0].agent_items.some(a => a.active)"))
 
     # Switching into a subagent view moves the mark; the order stays.
     page.locator('#session-view-menu button[data-agent="late"]').click()
     page.wait_for_function('document.querySelector(".dhead h2")?.textContent.includes("Late finished")')
-    page.wait_for_function("uid => _es && _esUid === uid && S.agent === 'late'", arg=uid)
+    page.wait_for_function(js("uid => _es && _esUid === uid && S.agent === 'late'", "uid => runtime.core.sync.watching && runtime.core.sync.watchedUid === uid && runtime.core.state.selection.agent === 'late'"), arg=uid)
     menu = open_menu(page)
     assert [r["agent"] for r in menu] == ["", "worker", "late", "early"], menu
     assert [r["on"] for r in menu] == [False, False, True, False], menu
@@ -206,7 +207,7 @@ def main():
                     page.on("requestfailed", lambda request: failed.append((request.url, request.failure))
                             if "/api/watch?" not in request.url and "ERR_ABORTED" not in str(request.failure) else None)
                     page.goto(base, wait_until="networkidle")
-                    page.wait_for_function("S.sessions.length > 0")
+                    page.wait_for_function(js("S.sessions.length > 0", 'runtime.core.state.catalog.sessions.length > 0'))
                     check_page(page, row["uid"], data)
                     assert not errors, errors
                     assert not failed, failed

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Cross-node manual nesting through Chromium, a real hub and two real isolated nodes."""
+from browser_runtime import js
 import argparse
 from contextlib import ExitStack
 import json
@@ -64,8 +65,8 @@ def main():
                     stack.callback(context.close)
                     page = context.new_page()
                     page.goto(f'http://127.0.0.1:{hub.port}', wait_until='networkidle')
-                    page.wait_for_function('S.sessions.length === 4')
-                    if not page.evaluate('S.nest'):
+                    page.wait_for_function(js('S.sessions.length === 4', 'runtime.core.state.catalog.sessions.length === 4'))
+                    if not page.evaluate(js('S.nest', 'runtime.core.state.sidebar.nest')):
                         page.locator('#nest-toggle').click()
                     def depth(uid, value):
                         page.wait_for_function('([uid, depth]) => document.querySelector(`#side .item[data-uid="${uid}"]`)?.dataset.depth === String(depth)', arg=[uid, value])
@@ -77,8 +78,8 @@ def main():
                         page.locator(f'#side .item[data-uid="{parent}"]').click()
                     depth(child, 1)
                     depth(twin, 0)
-                    page.wait_for_function('([uid, node]) => S.sessions.find(s => s.uid === uid).nest_parent?.node_id === node', arg=[child, nodes[0].nid])
-                    assert page.evaluate('uid => S.sessions.find(s => s.uid === uid).nest_parent', child) == expected
+                    page.wait_for_function(js('([uid, node]) => S.sessions.find(s => s.uid === uid).nest_parent?.node_id === node', '([uid, node]) => runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent?.node_id === node'), arg=[child, nodes[0].nid])
+                    assert page.evaluate(js('uid => S.sessions.find(s => s.uid === uid).nest_parent', 'uid => runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent'), child) == expected
                     saved = json.loads((corpora[1].root / 'state/session-metadata.json').read_text())
                     assert saved['sessions'][corpora[1].uid('child')]['nest_parent'] == expected
                     status, _, raw = hub.request('POST', '/api/session/nest', {'uid': parent, 'parent_uid': child})
@@ -91,13 +92,13 @@ def main():
                         depth(child, 0)
                         action(child, 'attach')
                         page.locator(f'#side .item[data-uid="{parent}"]').click()
-                        page.wait_for_function('uid => !!S.sessions.find(s => s.uid === uid).nest_parent', arg=child)
+                        page.wait_for_function(js('uid => !!S.sessions.find(s => s.uid === uid).nest_parent', 'uid => !!runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent'), arg=child)
                         depth(child, 1)
                         action(child, 'attach')
                         page.locator(f'#side .item[data-uid="{twin}"]').click()
                         depth(child, 1)
-                        page.wait_for_function('uid => S.sessions.find(s => s.uid === uid).nest_parent?.sid === "same" && !S.sessions.find(s => s.uid === uid).nest_parent?.node_id', arg=child)
-                        assert 'node_id' not in page.evaluate('uid => S.sessions.find(s => s.uid === uid).nest_parent', child)
+                        page.wait_for_function(js('uid => S.sessions.find(s => s.uid === uid).nest_parent?.sid === "same" && !S.sessions.find(s => s.uid === uid).nest_parent?.node_id', 'uid => runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent?.sid === "same" && !runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent?.node_id'), arg=child)
+                        assert 'node_id' not in page.evaluate(js('uid => S.sessions.find(s => s.uid === uid).nest_parent', 'uid => runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent'), child)
                     print('PASS cross-node nest: ' + ('node/hub restart, detach, restore, local reattach' if restart else 'click attach, same-SID isolation, cycle, trusted descriptor'), flush=True)
         finally:
             browser.close()

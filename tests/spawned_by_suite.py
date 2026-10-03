@@ -28,6 +28,7 @@ import sys
 import argparse, hashlib, json, os, shutil, socket, subprocess, tempfile, time
 from contextlib import contextmanager
 from pathlib import Path
+from frontend_paths import frontend_dir
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, build_opener
 
@@ -74,7 +75,7 @@ def server_with_env(corpus, extra_env, executable):
         port = reservation.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
     environment.update({"SESSIONDOCK_BIND": f"127.0.0.1:{port}",
-                        "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web")})
+                        "SESSIONDOCK_WEB_DIR": str(frontend_dir())})
     for source in ("claude", "codex", "grok"):
         environment["SESSIONDOCK_" + source.upper() + "_ROOT"] = str(corpus.root / source)
     environment.update({key: str(value) for key, value in extra_env.items()})

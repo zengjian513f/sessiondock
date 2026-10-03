@@ -59,6 +59,20 @@ and Vitest dependency have been removed. During the frontend refactor goal,
 the user's instruction holds production references: commit and push validated
 source without deploying or restarting production.
 
+For example, run the prefixed entry and a selected conversation path against
+the independent build:
+
+```sh
+SESSIONDOCK_TEST_WEB_DIR="$PWD/web/dist-migration" \
+  python3 tests/run_validation.py --only frontend_entry_browser,history_browser
+```
+
+Browser fixtures select explicit legacy or scoped scripts through
+[`browser_runtime.py`](../tests/browser_runtime.py). Scoped scripts access the
+actual `SessionDockRuntime` owners; they do not install compatibility globals.
+Asynchronous polling awaits the resolved condition within the original deadline.
+The original UI, identity, checkpoint and race assertions remain in place.
+
 - **Small change / one bug fix** — run the affected headless browser suite
   (`--only <name>`); a full sweep is not required for every edit. Once the change
   is complete and validated, commit, push and deploy the current workspace to
