@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Owned background processes drive breathing dots on a node and through Hub.
 
-Private native records and a synthetic /proc reproduce a completed Codex turn
-with detached training, a quiet code-mode host, MCP transport and zombies.
+Private native records and a synthetic /proc reproduce completed Claude/Codex
+turns with detached training, quiet code-mode/MCP/OpenCode services and zombies.
 Chromium opens sessions, reloads and observes task completion without changing
 the native transcript. No real CLI or production data is touched.
 """
@@ -17,7 +17,7 @@ import tempfile
 from types import SimpleNamespace
 
 from playwright.sync_api import sync_playwright, expect
-from history_parity import BINARY, Corpus, codex_row, codex_message, isolated_server, get_json
+from history_parity import BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server, get_json
 from hub_http_suite import Hub, scoped
 from node_auth_suite import node_env, TOKEN, free_port
 from spawned_by_suite import proc_pid
@@ -34,6 +34,10 @@ def main(binary):
                 codex_row("session_meta", {"id": sid, "cwd": "/synthetic/work"}),
                 codex_message("user", "Synthetic process activity " + sid),
                 codex_row("event_msg", {"type": "task_complete", "turn_id": sid})], [])
+        claude_sid = "0aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        corpus.put(claude_sid, "claude", [
+            claude_row(claude_sid, "user", "u0", None, "Synthetic idle Claude"),
+            claude_row(claude_sid, "assistant", "a0", "u0", "Synthetic completed Claude answer")], [])
         proc = corpus.root / "proc"
         proc.mkdir()
         (proc / "stat").write_text("btime 1700000000\n")
@@ -53,7 +57,15 @@ def main(binary):
         proc_pid(proc, 600, "zombie", [], 100, env=[("CODEX_SESSION_ID", "busy")])
         stat = proc / "600/stat"
         stat.write_text(stat.read_text().replace(") S ", ") Z "))
-        proc_pid(proc, 700, "python", ["python", "unrelated.py"], 1)
+        proc_pid(proc, 601, "claude", ["claude", "--resume", claude_sid], 1,
+                 fds={3: str(corpus.paths[claude_sid])})
+        # BUG-20261003-060744-e01ddb: a detached OpenCode service inherited
+        # an idle Claude's identity during installation. Neither the service
+        # nor its children are evidence that the old session is working.
+        proc_pid(proc, 700, "opencode", ["/synthetic/opencode", "serve", "--service"], 1,
+                 env=[("CLAUDE_CODE_SESSION_ID", claude_sid)])
+        proc_pid(proc, 701, "python", ["python", "transport.py"], 700,
+                 env=[("CLAUDE_CODE_SESSION_ID", claude_sid)])
         (proc / "200/environ").write_bytes(b"CODEX_SESSION_ID=busy\0")
         node = SimpleNamespace(name="synthetic", nid=nid, port=free_port(), token=TOKEN)
         env = node_env(corpus.root, node.port, "127.0.0.0/8")
@@ -74,18 +86,41 @@ def main(binary):
                     url = f"http://127.0.0.1:{hub.port}" if through_hub else base
                     uid = scoped(nid, corpus.uid("busy")) if through_hub else corpus.uid("busy")
                     quiet = scoped(nid, corpus.uid("quiet")) if through_hub else corpus.uid("quiet")
+                    claude = scoped(nid, corpus.uid(claude_sid)) if through_hub else corpus.uid(claude_sid)
                     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
                     context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(url + "/") else route.abort())
                     page = context.new_page()
                     page.goto(url, wait_until="networkidle")
                     badge = page.locator(f'#side .item[data-uid="{uid}"] > .ico > .item-status')
                     quiet_badge = page.locator(f'#side .item[data-uid="{quiet}"] > .ico > .item-status')
+                    claude_badge = page.locator(f'#side .item[data-uid="{claude}"] > .ico > .item-status')
+                    page.locator(f'#side .item[data-uid="{claude}"]').click()
+                    expect(page.locator("#msgs")).to_contain_text("Synthetic completed Claude answer")
+                    page.wait_for_function("uid => S.live.has(uid)", arg=claude)
+                    expect(page.locator("#dlive")).not_to_have_class(WORKING)
+                    expect(claude_badge).not_to_have_class(WORKING)
+                    assert get_json(opener, base, "/api/live?force=1")["working_uids"] == []
+                    # The same service still stays quiet under a live CLI.
+                    stat = proc / "700/stat"
+                    stat.write_text(stat.read_text().replace(") S 1 ", ") S 601 "))
+                    page.evaluate("refreshLive(true)")
+                    expect(claude_badge).not_to_have_class(WORKING)
+                    assert get_json(opener, base, "/api/live?force=1")["working_uids"] == []
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic process activity busy")
                     page.wait_for_function("uid => S.live.has(uid)", arg=uid)
                     header = page.locator("#dlive")
                     expect(header).not_to_have_class(WORKING)
                     expect(badge).not_to_have_class(WORKING)
+                    # OpenCode one-shot commands still count as actual work.
+                    proc_pid(proc, 800, "opencode", ["opencode", "run", "Synthetic task"], 601)
+                    page.evaluate("refreshLive(true)")
+                    expect(claude_badge).to_have_class(WORKING)
+                    expect(header).not_to_have_class(WORKING)
+                    assert get_json(opener, base, "/api/live?force=1")["working_uids"] == [corpus.uid(claude_sid)]
+                    shutil.rmtree(proc / "800")
+                    page.evaluate("refreshLive(true)")
+                    expect(claude_badge).not_to_have_class(WORKING)
                     # Same-parent commands, including ones under code-mode,
                     # and detached commands with native identity all count.
                     for parent, identity in [(100, []), (300, []), (1, [("CODEX_SESSION_ID", "busy"), ("CODEX_THREAD_ID", "busy")])]:

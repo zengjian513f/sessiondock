@@ -9,6 +9,7 @@ fn infrastructure(cmd: &str) -> bool {
     let args: Vec<_> = cmd.split_ascii_whitespace().collect();
     name == "codex-code-mode-host"
         || (name == "codex" && args.get(1) == Some(&"app-server"))
+        || (name == "opencode" && args.get(1) == Some(&"serve"))
         || args.windows(2).any(|pair| pair == ["mcp", "serve"])
         || name.starts_with("mcp-server-")
 }
