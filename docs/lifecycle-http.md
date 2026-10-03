@@ -93,6 +93,15 @@ leaves the source available. An absent CLI turns that source's `sources` and
 `resume_sources` false, so the new-session picker, console takeover and the
 bug-report dialog disable it with a reason instead of failing at launch.
 
+Reading native history does not configure a CLI for activation. In
+`BUG-20261003-103542-d86b9f`, a Windows node could read a Codex Desktop
+rollout but its launcher contained only Claude and Grok profiles. The first
+console state already lacked Codex creation/resume capability; no takeover
+request or lifecycle receipt followed. The installed standalone Codex executable
+was added as an explicit profile after a version and configuration check, with
+the previous launcher backed up. Missing source capability now explains the
+CLI/launcher prerequisite before the generic unlinked-terminal message.
+
 ### Model and effort
 
 A new CLI session may carry the picker's `model` and `effort`; empty or absent
