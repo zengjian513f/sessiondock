@@ -567,6 +567,26 @@ fn visible_text(content: &Value) -> String {
     }
 }
 
+/// Native API-error/synthetic replies carry no actual model identity.
+pub(crate) fn valid_native_model(model: &Value) -> bool {
+    model
+        .as_str()
+        .is_some_and(|id| !id.is_empty() && id != "<synthetic>")
+}
+
+pub(crate) fn native_model(source: &str, record: &Value, sidecar: bool) -> Option<Value> {
+    let model = match source {
+        "codex" if record["type"] == "turn_context" => &record["payload"]["model"],
+        "claude"
+            if record["type"] == "assistant" && (sidecar || !truthy(&record["isSidechain"])) =>
+        {
+            &record["message"]["model"]
+        }
+        _ => return None,
+    };
+    valid_native_model(model).then(|| model.clone())
+}
+
 fn metadata(
     source: &str,
     path: &Path,
@@ -598,6 +618,15 @@ fn metadata(
     let mut codex_meta = None;
     let mut claude_sid_seen = false;
     for (record, _) in records {
+        if let Some(seen) = native_model(
+            source,
+            record,
+            path.parent()
+                .and_then(|p| p.file_name())
+                .is_some_and(|p| p == "subagents"),
+        ) {
+            model = seen;
+        }
         let ts = normalized(&record["timestamp"]);
         if !ts.is_null() {
             if created.is_null() {
@@ -660,9 +689,6 @@ fn metadata(
                         created = native_created
                     }
                     fork = payload["forked_from_id"].clone();
-                }
-                if record["type"] == "turn_context" && model.is_null() {
-                    model = payload["model"].clone()
                 }
                 if record["type"] == "response_item"
                     && payload["role"] == "user"
