@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Browser send of text plus two PNG attachments to an isolated fake Codex PTY."""
+"""Browser send of images, text files and PDFs to an isolated fake Codex PTY."""
 import argparse
 import base64
 import json
@@ -213,6 +213,53 @@ def main():
                 assert len(note_paths) == 1 and note_paths[0].read_bytes() == b'text attachment bytes', note_paths
                 page.locator('#a-term').click()
                 xterm_includes(page, '> Please read the text file')
+                page.locator('#a-term').click()
+                pdf = b'%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n'
+                for width in (1280, 390):
+                    page.set_viewport_size({'width': width, 'height': 900})
+                    if width == 390:
+                        page.locator('#side .item.sel').click()
+                        if page.locator('#termpane').is_visible():
+                            page.locator('#a-term').click()
+                    expect(page.locator('#termpane')).to_be_hidden()
+                    page.locator('#cadd').click()
+                    with page.expect_file_chooser() as chooser:
+                        page.locator('#attach-menu [data-attach="pdf"]').click()
+                    assert chooser.value.element.get_attribute('accept') == '.pdf,application/pdf'
+                    assert chooser.value.is_multiple()
+                    name = f'paper-{width}.pdf'
+                    chooser.value.set_files({'name': name, 'mimeType': 'application/pdf', 'buffer': pdf})
+                    expect(page.locator('#compose-items .draft-card')).to_contain_text(name)
+                    page.wait_for_function("composerDraft().attachments.length === 1 && composerDraft().attachments[0].uploaded?.upload_id && !composerDraft().attachments[0].staging")
+                    if width == 390:
+                        # The existing fake CLI's status footer assumes a wide PTY.
+                        # Exercise phone selection/staging, then submit at its supported size.
+                        page.set_viewport_size({'width': 1280, 'height': 900})
+                        page.locator('#a-term').click()
+                        xterm_includes(page, 'Ask Codex to do anything')
+                        page.locator('#a-term').click()
+                    # PDF picker hints must not turn the general file entry into a filter.
+                    page.locator('#cadd').click()
+                    with page.expect_file_chooser() as general:
+                        page.locator('#attach-menu [data-attach="file"]').click()
+                    assert general.value.element.get_attribute('accept') == ''
+                    general.value.set_files([])
+                    page.locator('#cinput').fill(f'Please read PDF {width}')
+                    page.evaluate('async () => await composerDraftWrites')
+                    with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=30000) as pdf_sent:
+                        page.locator('#csend').click()
+                    assert pdf_sent.value.status == 200 and pdf_sent.value.json()['state'] == 'sent', pdf_sent.value.text()
+                    assert len(pdf_sent.value.request.post_data_json['attachments']) == 1
+                    page.wait_for_function('() => !composerSending')
+                    paths = list((root / 'work/sessiondock_attachments').glob('*/' + name))
+                    assert len(paths) == 1 and paths[0].read_bytes() == pdf, paths
+                    page.locator('#a-term').click()
+                    xterm_includes(page, f'> Please read PDF {width}')
+                    page.locator('#a-term').click()
+                    print(f'PASS PDF menu/staging at {width}px, wide-PTY native send; exact published bytes', flush=True)
+                page.set_viewport_size({'width': 1280, 'height': 900})
+                page.locator('#a-term').click()
+                submissions_before_reports = len((root / 'submissions.jsonl').read_text().splitlines())
                 (root / 'footer-paste').touch()
                 for index, description in enumerate(['没回车\n' * 8, '多段落任务没有提交\n' + '这是用于覆盖长文本折叠占位符的诊断描述。' * 20, '更新退出后保留报告', 'trust 后发送图片报告', '恢复已改名但未确认的报告']):
                     # Submit an actual report through the dialog. The worker must
@@ -230,6 +277,12 @@ def main():
                         page.locator('#bug-report-file').set_input_files(
                             {'name': 'trust.png', 'mimeType': 'image/png', 'buffer': png})
                         page.wait_for_function('bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging')
+                        page.locator('#bug-report-add').click()
+                        with page.expect_file_chooser() as chooser:
+                            page.locator('#bug-report-attach-menu [data-attach="pdf"]').click()
+                        assert chooser.value.element.get_attribute('accept') == '.pdf,application/pdf'
+                        chooser.value.set_files({'name': 'report.pdf', 'mimeType': 'application/pdf', 'buffer': pdf})
+                        page.wait_for_function('bugReportDraftObject().attachments.length === 2 && bugReportDraftObject().attachments.every(a => a.uploaded?.upload_id && !a.staging)')
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/bug-report') as report:
                         page.locator('#bug-report-go').click()
                     assert report.value.status == 202, report.value.text()
@@ -260,6 +313,9 @@ def main():
                         print('PASS trust report: terminal answer, reload, retained image sent without re-upload', flush=True)
                         images = list((root / 'work/sessiondock_attachments').glob('*/trust.png'))
                         assert len(images) == 1 and images[0].read_bytes() == png, images
+                        pdfs = list((root / 'work/sessiondock_attachments').glob('*/report.pdf'))
+                        assert len(pdfs) == 1 and pdfs[0].read_bytes() == pdf, pdfs
+                        print('PASS report PDF picker and retained PDF sent after trust/reload without re-upload', flush=True)
                     if index == 2:
                         stopped = context.request.post(base + '/api/term/kill', data={
                             'record_id': worker['record_id'], 'instance_id': worker['instance_id']})
@@ -309,7 +365,7 @@ def main():
                     if index == 0:
                         assert (root / 'footer-paste.scrolled').exists(), 'exercise a genuinely clipped prompt marker'
                     submissions = [json.loads(line)['text'] for line in (root / 'submissions.jsonl').read_text().splitlines()]
-                    assert len(submissions) == 5 + index, submissions
+                    assert len(submissions) == submissions_before_reports + 1 + index, submissions
                     worker_prompt = (bundle / 'worker-prompt.md').read_text()
                     assert (len(worker_prompt) > 1000) == (index == 1), 'cover expanded and collapsed reports'
                     assert worker_prompt.splitlines()[0] == expected_title
