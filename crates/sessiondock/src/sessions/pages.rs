@@ -1,6 +1,7 @@
 //! Finite history pages. Grants hold checkpoints, never retained native views.
 use super::{Event, MessageQuery, Selected, SessionError, ViewSnapshot, media_projection};
 use crate::{files::FileService, media::MediaStore};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -19,11 +20,11 @@ pub const DEFAULT_PAGE_EVENTS: usize = 2000;
 const MAX_IMAGES: usize = 128;
 const MAX_IMAGE_BYTES: usize = 24 * 1024 * 1024;
 const MAX_JSON_BYTES: usize = 8 * 1024 * 1024;
-// Opening a view should be cheap even when its history contains long tool output.
+// Keep more of a recent tool-heavy turn visible while bounding the opening work.
 // Explicit history pages retain their larger grouping targets.
 const WINDOW_HEAD_EVENTS: usize = 5;
-const WINDOW_TAIL_EVENTS: usize = 20;
-const WINDOW_JSON_BYTES: usize = 256 * 1024;
+const WINDOW_TAIL_EVENTS: usize = 200;
+const WINDOW_JSON_BYTES: usize = 2 * 1024 * 1024;
 /// Typed images shown inline per message; the rest continue through media pages.
 pub(super) const DISPLAY_LIMIT: usize = media_projection::DISPLAY_LIMIT;
 
@@ -36,6 +37,18 @@ pub(crate) struct PageGrant {
     stop: usize,
     total: usize,
     issued: Instant,
+}
+/// Read-only recovery descriptor. This is a checkpoint, not terminal or file
+/// authority; the selected view must validate it before returning any events.
+#[derive(Deserialize, Serialize)]
+struct PageResume {
+    uid: String,
+    agent: String,
+    start: u64,
+    head: String,
+    anchor: String,
+    stop: usize,
+    total: usize,
 }
 /// Continuation of one message's typed images. Binds the exact event by its
 /// non-status index, checkpoint and content identity; holds no payloads.
@@ -218,6 +231,39 @@ impl PageStore {
             Grant::Page(_) => Err(SessionError::new(404, MEDIA_KIND.missing)),
         }
     }
+    pub(crate) fn lookup_or_resume(
+        &self,
+        token: &str,
+        uid: &str,
+        agent: &str,
+        resume: Option<&str>,
+        next: Option<usize>,
+    ) -> Result<PageGrant, SessionError> {
+        match self.lookup(token, uid, agent) {
+            Err(error) if matches!(error.status, 404 | 410) && resume.is_some() => {
+                let resume: PageResume = serde_json::from_str(resume.unwrap())
+                    .map_err(|_| SessionError::new(400, "历史分页恢复检查点无效"))?;
+                if resume.uid != uid || resume.agent != agent {
+                    return Err(SessionError::new(403, PAGE_KIND.foreign));
+                }
+                Ok(PageGrant {
+                    uid: resume.uid,
+                    agent: resume.agent,
+                    checkpoint: MessageQuery {
+                        start: resume.start,
+                        head: resume.head,
+                        anchor: resume.anchor,
+                        ..Default::default()
+                    },
+                    next: next.ok_or_else(|| SessionError::new(400, "历史分页恢复范围缺失"))?,
+                    stop: resume.stop,
+                    total: resume.total,
+                    issued: Instant::now(),
+                })
+            }
+            result => result,
+        }
+    }
     #[cfg(test)]
     fn len(&self) -> usize {
         self.grants.lock().unwrap().len()
@@ -379,9 +425,18 @@ pub(super) fn window(
         total,
         issued: Instant::now(),
     };
+    let resume = PageResume {
+        uid: grant.uid.clone(),
+        agent: grant.agent.clone(),
+        start: grant.checkpoint.start,
+        head: grant.checkpoint.head.clone(),
+        anchor: grant.checkpoint.anchor.clone(),
+        stop,
+        total,
+    };
     let token = pages.issue_page(grant)?;
     selected.drain(start..stop);
-    Ok(json!({"head":start,"tail":total-stop,"omitted":stop-start,"cursor":token}))
+    Ok(json!({"head":start,"tail":total-stop,"omitted":stop-start,"cursor":token,"resume":resume}))
 }
 
 /// Content identity of one projected message, independent of media fields

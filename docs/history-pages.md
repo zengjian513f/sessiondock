@@ -229,8 +229,8 @@ No frontend framework is introduced.
 
 `GET /api/messages/{uid}?window=1&agent=...` keeps the existing live checkpoint
 fields. When history is omitted, `partial` contains `head`, `tail`, `omitted`
-and an opaque `cursor`. Initial windows prioritize up to 20 latest events, then
-up to 5 earliest events within a separate 256 KiB estimated JSON target
+and an opaque `cursor`. Initial windows prioritize up to 200 latest events, then
+up to 5 earliest events within a separate 2 MiB estimated JSON target
 (including the 64 KiB metadata reserve). Large text or media can reduce either
 segment. The latest event is always included intact, even above that soft target;
 all omitted events remain available through history pages. This intentionally
@@ -278,6 +278,19 @@ Malformed tokens return 400, a wrong UID/agent 403, unknown/evicted tokens 404,
 and an expired token still present in the store 410. Expired tokens already
 purged return 404. Restart loses all grants.
 
+Opening windows also include `partial.resume`, a read-only descriptor carrying
+the canonical UID, exact agent, original `start/head/anchor`, `stop` and event
+`total`. The UI retains it across page loads and appends, and supplies it as JSON
+in the page request's `resume` query with `next=partial.head`. Only a missing or
+expired grant uses this fallback. The current selected view still validates the
+complete original checkpoint and event count/range before returning a bounded
+page. Wrong scope remains 403 and a changed timeline remains 409. This descriptor
+grants no additional read, file or terminal authority; normal route authentication
+and session selection apply. Cache eviction, expiration and Web restart therefore
+do not prevent filling an unchanged history gap, including a partially loaded
+gap with a newer live tail. Older clients without the descriptor retain the
+explicit reload behavior. Page requests also emit browser HTTP audit events.
+
 The UI keeps its current history on failure and offers retry or an explicit
 bounded reload. It does not silently clear history or request unbounded history
 after a stale, evicted or expired grant. Responses from an old view/reset are
@@ -290,8 +303,8 @@ discarded. Explicit reload must also avoid overwriting concurrent live updates.
   references and 24 MiB estimated embedded compressed-image bytes — so a
   page normally groups as much as fits in 8 MiB, and the 51 MB / 7,426-message real
   Claude session fills its gap in a handful of pages. Initial head/tail
-  windows use the same media budgets, a separate 256 KiB JSON target and at
-  most 25 events. Explicit pages retain their larger grouping targets.
+  windows use the same media budgets, a separate 2 MiB JSON target and at
+  most 205 events. Explicit pages retain their larger grouping targets.
 - The legacy gap button chains pages: one click keeps requesting the next
   grant until the gap is filled (progress on the button, a second click
   aborts and keeps the pages already read), then renders once. Every page

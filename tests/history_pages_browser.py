@@ -52,11 +52,22 @@ def build(root):
     # Fewer than the old 600-event window, yet several MiB of tool-like text.
     corpus.put("codex-heavy-window","codex",[
         codex_row("session_meta",{"id":"codex-heavy-window","cwd":"/synthetic/heavy"}),
-        *[row(f"HEAVY ROW {index:04d} " + "x" * 8192) for index in range(449)]],[])
+        *[row(f"HEAVY ROW {index:04d} " + "x" * 12288) for index in range(449)]],[])
     corpus.put("codex-oversized-window","codex",[
         codex_row("session_meta",{"id":"codex-oversized-window","cwd":"/synthetic/oversized"}),
         *[row(f"OLDER ROW {index:04d}") for index in range(30)],
-        row("OVERSIZED LATEST " + "y" * (300 * 1024))],[])
+        row("OVERSIZED LATEST " + "y" * (3 * 1024 * 1024))],[])
+    latest = [codex_row("session_meta",{"id":"codex-latest-turn","cwd":"/synthetic/latest-turn"}),
+        *[row(f"OLDER TURN {index:04d}") for index in range(300)],row("LATEST TURN QUESTION")]
+    for index in range(60):
+        latest.extend([
+            codex_row("response_item",{"type":"function_call","name":"shell_command",
+                "call_id":f"latest-{index}","arguments":json.dumps({"command":f"echo latest-{index}"})}),
+            codex_row("response_item",{"type":"function_call_output","call_id":f"latest-{index}",
+                "output":f"LATEST TURN RESULT {index:04d} " + "z" * 8192})])
+    latest.append(codex_row("response_item",{"type":"message","role":"assistant","phase":"final",
+        "content":[{"type":"output_text","text":"LATEST TURN ANSWER"}]}))
+    corpus.put("codex-latest-turn","codex",latest,[])
     return corpus
 
 
@@ -175,9 +186,27 @@ def main():
                       return !!document.querySelector(e?.partial ? '#msgs .history-gap' : '#msgs .msg');
                     })()""")
 
+                # Open a recent tool-heavy turn without requesting older pages.
+                start=len(requests)
+                select("codex-latest-turn","LATEST TURN ANSWER")
+                expect(page.locator("#msgs")).to_contain_text("LATEST TURN QUESTION")
+                latest=snapshot()
+                assert len(latest["text"])==205 and latest["partial"]["tail"]==200
+                assert sum(text.startswith("LATEST TURN RESULT") for text in latest["text"])==60
+                process=page.locator("#msgs .turn-process.folded .fold-toggle")
+                if process.count():
+                    process.first.click()
+                group=page.locator("#msgs .grp").last
+                group.locator(":scope > .fold-preview .fold-toggle").click()
+                expect(group.locator(":scope > .tool-entry")).to_have_count(60)
+                expect(group).to_contain_text("LATEST TURN RESULT 0000")
+                expect(group).to_contain_text("LATEST TURN RESULT 0059")
+                assert not any("/page?" in url for url in requests[start:])
+                print("PASS latest turn: question, all 60 tool calls/results and answer available on opening",flush=True)
+
                 select("codex-pages","PAGE ROW 1399")
                 first=snapshot()
-                assert len(first["text"])==25 and first["partial"]["omitted"]==1375
+                assert len(first["text"])==205 and first["partial"]["omitted"]==1195
                 page.wait_for_function("_es && _es.readyState===EventSource.OPEN")
                 page.evaluate("window.__watchBefore=_es")
 
@@ -190,7 +219,7 @@ def main():
                 live=snapshot()
                 release();settled()
                 after=snapshot()
-                assert after["partial"]["head"]==205 and len(after["text"])==226
+                assert after["partial"]["head"]==205 and len(after["text"])==406
                 assert after["text"][-1]=="APPEND DURING PAGE HTTP" and after["text"].count("APPEND DURING PAGE HTTP")==1
                 assert after["cursor"]==live["cursor"] and after["end"]==live["end"] and after["anchor"]==live["anchor"]
                 assert page.evaluate("_es===window.__watchBefore")
@@ -227,7 +256,7 @@ def main():
                 page.evaluate("window.__heldPageRender();window.__heldPageRender=null")
                 settled()
                 after=snapshot()
-                assert after["partial"]["head"]==605 and len(after["text"])==627
+                assert after["partial"]["head"]==605 and len(after["text"])==807
                 assert after["cursor"]==live["cursor"]
                 assert page.locator("#msgs").inner_text().count("APPEND DURING PAGE RENDER")==1
                 assert page.locator("#msgs").inner_text().count("APPEND DURING PAGE HTTP")==1, page.locator("#msgs").inner_text()[-2000:]
@@ -251,7 +280,7 @@ def main():
                 expected_native[str(path.relative_to(corpus.root))]=hashlib.sha256(changed).hexdigest()
                 page.wait_for_function("cache.get(viewKey(S.sel,S.agent)).msgs[0].text==='EDIT ROW 0000'")
                 reset=snapshot()
-                assert reset["partial"] and len(reset["text"])<=25
+                assert reset["partial"] and len(reset["text"])<=205
                 release();settled()
                 assert snapshot()["text"]==reset["text"] and snapshot()["partial"]==reset["partial"]
 
@@ -360,18 +389,18 @@ def main():
                     assert recent["partial"] and recent["text"]==[m["text"] for m in wire["messages"]]
                     assert not any("/page?" in url for url in requests[start:])
                     if name=="codex-heavy-window":
-                        assert 0<len(wire["messages"])<25
-                        assert len(opening[0])<256*1024
-                        assert wire["partial"]["tail"]==20
-                        assert recent["text"][-20:]==[f"HEAVY ROW {i:04d} "+"x"*8192 for i in range(429,449)]
+                        tail=wire["partial"]["tail"]
+                        assert 100<=tail<200 and len(wire["messages"])<205
+                        assert len(opening[0])<2*1024*1024
+                        assert recent["text"][-tail:]==[f"HEAVY ROW {i:04d} "+"x"*12288 for i in range(449-tail,449)]
                     else:
                         assert len(wire["messages"])==1
-                        assert recent["text"]==["OVERSIZED LATEST "+"y"*(300*1024)]
+                        assert recent["text"]==["OVERSIZED LATEST "+"y"*(3*1024*1024)]
                     live=recent["cursor"]
                     while snapshot()["partial"]:
                         click_page();settled()
                     restored=snapshot()
-                    expected=([f"HEAVY ROW {i:04d} "+"x"*8192 for i in range(449)]
+                    expected=([f"HEAVY ROW {i:04d} "+"x"*12288 for i in range(449)]
                               if name=="codex-heavy-window" else
                               [*[f"OLDER ROW {i:04d}" for i in range(30)],recent["text"][-1]])
                     assert restored["text"]==expected and restored["cursor"]==live

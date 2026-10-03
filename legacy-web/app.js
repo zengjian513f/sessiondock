@@ -5302,11 +5302,29 @@ function validateHistoryPage(data, partial, cursor) {
   return page;
 }
 
-async function fetchHistoryPage(uid, agent, cursor, signal) {
+async function fetchHistoryPage(uid, agent, cursor, signal, partial) {
   const query = new URLSearchParams({cursor});
   if (agent) query.set('agent', agent);
-  const response = await fetch(appUrl(`api/messages/${encodeURIComponent(uid)}/page?${query}`),
-    {signal, cache: 'no-store'});
+  if (partial?.resume) {
+    query.set('resume', JSON.stringify(partial.resume));
+    query.set('next', partial.head);
+  }
+  const url = `api/messages/${encodeURIComponent(uid)}/page`;
+  const traceId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  browserAuditEvent('http.request.started', {url, method: 'GET', agent: agent || '',
+    page_start: partial?.head, page_remaining: partial?.omitted, resumable: !!partial?.resume}, null, {uid, traceId});
+  let response;
+  try {
+    response = await fetch(appUrl(`${url}?${query}`), {signal, cache: 'no-store',
+      headers: {'X-SessionDock-Trace': traceId, 'X-SessionDock-Page': AUDIT_PAGE_ID,
+        'X-SessionDock-Build': BUILD_ID}});
+  } catch (error) {
+    browserAuditEvent('http.request.failed', {url, error: String(error?.name || error)},
+      null, {uid, traceId, severity: 'warning'});
+    throw error;
+  }
+  browserAuditEvent('http.response.received', {url, status: response.status, ok: response.ok},
+    null, {uid, traceId, severity: response.ok ? 'info' : 'warning'});
   if (!response.ok) {
     const detail = await response.json().catch(() => null);
     const error = new Error(detail?.error || `HTTP ${response.status}`);
@@ -5394,7 +5412,7 @@ async function loadHistoryPage(uid, agent, button) {
   try {
     for (;;) {
       if (!/^[0-9a-f]{32}$/.test(request.cursor || '')) throw new Error('历史分页凭据缺失，请重新载入当前历史。');
-      const {data, bytes} = await fetchHistoryPage(uid, agent, request.cursor, ac.signal);
+      const {data, bytes} = await fetchHistoryPage(uid, agent, request.cursor, ac.signal, entry.partial);
       if (!currentHistoryPage(request)) return;
       const page = validateHistoryPage(data, entry.partial, request.cursor);
       // Ordinary SSE appends may have advanced this same entry while HTTP was
