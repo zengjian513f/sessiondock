@@ -1188,9 +1188,7 @@ $('#bug-report-attach-menu').onclick = event => {
   const button = event.target.closest('button[data-attach]');
   if (!button) return;
   closeBugReportAttachMenu();
-  const input = $('#bug-report-file');
-  input.accept = ATTACH_ACCEPT[button.dataset.attach] ?? '';
-  input.click();
+  chooseAttachmentFiles(button.dataset.attach, $('#bug-report-file'), addBugReportFiles);
 };
 $('#bug-report-file').onchange = event => {
   addBugReportFiles([...event.target.files]);
@@ -4149,10 +4147,41 @@ function disposeTermView(name) {
 // 已接管的会话在消息流底部给个输入框, 不必展开整个终端就能说话。
 const COMPOSER_MAX_FILES = 12;
 const COMPOSER_MAX_FILE_BYTES = 512 * 1024 * 1024;
-// An untyped file picker can expose only media sources on Android browsers.
-// Offer PDF explicitly while keeping the general file picker unrestricted.
-const ATTACH_ACCEPT = { image: 'image/*', video: 'video/*', audio: 'audio/*',
-  pdf: '.pdf,application/pdf', file: '' };
+const ATTACH_ACCEPT = { image: 'image/*', video: 'video/*', audio: 'audio/*', file: '' };
+
+async function chooseAttachmentFiles(type, input, addFiles) {
+  input.accept = ATTACH_ACCEPT[type] ?? '';
+  input.dataset.kind = type;
+  input.removeAttribute('capture');
+  if (type === 'file' && /Android/i.test(navigator.userAgent)) {
+    // Chromium's Android chooser treats octet-stream as all openable files,
+    // without the camera/recorder intents added for an empty accept or */*.
+    input.accept = 'application/octet-stream';
+    if (typeof window.showOpenFilePicker === 'function') {
+      let handles;
+      try {
+        handles = await window.showOpenFilePicker({multiple: true, excludeAcceptAllOption: false});
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+        if (error.name !== 'NotSupportedError' && error.name !== 'SecurityError') {
+          await appAlert('选择文件失败：' + (error.message || String(error)));
+          return;
+        }
+      }
+      if (handles) {
+        try {
+          const files = await Promise.all(handles.map(handle => handle.getFile()));
+          if (files.length) addFiles(files);
+        } catch (error) {
+          await appAlert('读取所选文件失败：' + (error.message || String(error)));
+        }
+        return;
+      }
+    }
+  }
+  input.click();
+}
+
 const composerDrafts = new Map();
 const composerDraftAliases = new Map();
 const composerInputHistoryCache = new Map();
@@ -6159,10 +6188,7 @@ $('#attach-menu').onclick = e => {
     lastMessageSelectionUid = null;
     return;
   }
-  const input = $('#cfile');
-  input.accept = ATTACH_ACCEPT[type];
-  input.dataset.kind = type;
-  input.click();
+  chooseAttachmentFiles(type, $('#cfile'), addComposerFiles);
 };
 $('#cfile').onchange = e => {
   addComposerFiles([...e.target.files]);

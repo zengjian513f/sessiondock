@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Browser send of images, text files and PDFs to an isolated fake Codex PTY."""
+"""Browser send of text, images and arbitrary files to an isolated fake Codex PTY."""
 import argparse
 import base64
 import json
@@ -214,6 +214,16 @@ def main():
                 page.locator('#a-term').click()
                 xterm_includes(page, '> Please read the text file')
                 page.locator('#a-term').click()
+                expect(page.locator('[data-attach="pdf"]')).to_have_count(0)
+                # Android without the document API: the generic file input must
+                # request all openable files without enabling media capture intents.
+                android_picker = '''() => {
+                    Object.defineProperty(navigator, 'userAgent', {configurable: true,
+                        value: 'Mozilla/5.0 (Linux; Android 14) Chrome/154 Mobile EdgA/154'});
+                    window.showOpenFilePicker = undefined;
+                }'''
+                page.add_init_script(f'({android_picker})();')
+                page.evaluate(android_picker)
                 pdf = b'%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n'
                 for width in (1280, 390):
                     page.set_viewport_size({'width': width, 'height': 900})
@@ -221,43 +231,84 @@ def main():
                         page.locator('#side .item.sel').click()
                         if page.locator('#termpane').is_visible():
                             page.locator('#a-term').click()
-                    expect(page.locator('#termpane')).to_be_hidden()
+                    files = [
+                        {'name': f'paper-{width}.pdf', 'mimeType': 'application/pdf', 'buffer': pdf},
+                        {'name': f'notes-{width}.txt', 'mimeType': 'text/plain', 'buffer': b'notes'},
+                        {'name': f'raw-{width}', 'mimeType': '', 'buffer': b'\x00\xffarbitrary file'},
+                        {'name': f'photo-{width}.png', 'mimeType': 'image/png', 'buffer': png},
+                    ]
                     page.locator('#cadd').click()
                     with page.expect_file_chooser() as chooser:
-                        page.locator('#attach-menu [data-attach="pdf"]').click()
-                    assert chooser.value.element.get_attribute('accept') == '.pdf,application/pdf'
+                        page.locator('#attach-menu [data-attach="file"]').click()
                     assert chooser.value.is_multiple()
-                    name = f'paper-{width}.pdf'
-                    chooser.value.set_files({'name': name, 'mimeType': 'application/pdf', 'buffer': pdf})
-                    expect(page.locator('#compose-items .draft-card')).to_contain_text(name)
-                    page.wait_for_function("composerDraft().attachments.length === 1 && composerDraft().attachments[0].uploaded?.upload_id && !composerDraft().attachments[0].staging")
+                    assert chooser.value.element.get_attribute('accept') == 'application/octet-stream'
+                    assert chooser.value.element.get_attribute('capture') is None
+                    chooser.value.set_files(files)
+                    expect(page.locator('#compose-items .draft-card')).to_have_count(len(files))
+                    page.wait_for_function("composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)")
                     if width == 390:
-                        # The existing fake CLI's status footer assumes a wide PTY.
-                        # Exercise phone selection/staging, then submit at its supported size.
+                        # This fake CLI's footer assumes a wide PTY. Selection and
+                        # staging exercise the phone UI; submit at its supported size.
                         page.set_viewport_size({'width': 1280, 'height': 900})
                         page.locator('#a-term').click()
                         xterm_includes(page, 'Ask Codex to do anything')
                         page.locator('#a-term').click()
-                    # PDF picker hints must not turn the general file entry into a filter.
-                    page.locator('#cadd').click()
-                    with page.expect_file_chooser() as general:
-                        page.locator('#attach-menu [data-attach="file"]').click()
-                    assert general.value.element.get_attribute('accept') == ''
-                    general.value.set_files([])
-                    page.locator('#cinput').fill(f'Please read PDF {width}')
+                    page.locator('#cinput').fill(f'Read the files selected at {width}px')
                     page.evaluate('async () => await composerDraftWrites')
-                    with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=30000) as pdf_sent:
+                    with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=30000) as generic_sent:
                         page.locator('#csend').click()
-                    assert pdf_sent.value.status == 200 and pdf_sent.value.json()['state'] == 'sent', pdf_sent.value.text()
-                    assert len(pdf_sent.value.request.post_data_json['attachments']) == 1
+                    assert generic_sent.value.status == 200, generic_sent.value.text()
                     page.wait_for_function('() => !composerSending')
-                    paths = list((root / 'work/sessiondock_attachments').glob('*/' + name))
-                    assert len(paths) == 1 and paths[0].read_bytes() == pdf, paths
+                    for file in files:
+                        paths = list((root / 'work/sessiondock_attachments').glob('*/' + file['name']))
+                        assert len(paths) == 1 and paths[0].read_bytes() == file['buffer'], paths
                     page.locator('#a-term').click()
-                    xterm_includes(page, f'> Please read PDF {width}')
+                    xterm_includes(page, f'> Read the files selected at {width}px')
                     page.locator('#a-term').click()
-                    print(f'PASS PDF menu/staging at {width}px, wide-PTY native send; exact published bytes', flush=True)
-                page.set_viewport_size({'width': 1280, 'height': 900})
+                    print(f'PASS generic file menu/staging at {width}px: PDF, text, extensionless bytes and PNG; native send and exact bytes', flush=True)
+
+                # Stub only the OS picker boundary. Actual clicks, File objects,
+                # uploads, draft saves and SEND still run through the real app.
+                chooser_events = []
+                page.on('filechooser', lambda chooser: chooser_events.append(chooser))
+                page.evaluate('''() => {
+                    window.pickerMode = 'cancel'; window.pickerCalls = [];
+                    window.showOpenFilePicker = async options => {
+                        pickerCalls.push({options, active: navigator.userActivation.isActive});
+                        if (pickerMode === 'cancel') throw new DOMException('Cancelled', 'AbortError');
+                        if (pickerMode === 'unsupported') throw new DOMException('Unavailable', 'NotSupportedError');
+                        return [{getFile: async () => new File(['picker file bytes'], 'picker.data',
+                            {type: 'application/octet-stream'})}];
+                    };
+                }''')
+                page.locator('#cadd').click()
+                page.locator('#attach-menu [data-attach="file"]').click()
+                page.wait_for_function('pickerCalls.length === 1')
+                expect(page.locator('#compose-items .draft-card')).to_have_count(0)
+                assert not chooser_events, 'cancellation must not open another picker'
+                page.evaluate("pickerMode = 'success'")
+                page.locator('#cadd').click()
+                page.locator('#attach-menu [data-attach="file"]').click()
+                page.wait_for_function("composerDraft().attachments.length === 1 && composerDraft().attachments[0].uploaded?.upload_id && !composerDraft().attachments[0].staging")
+                calls = page.evaluate('pickerCalls')
+                assert all(c['active'] and c['options'] == {'multiple': True, 'excludeAcceptAllOption': False} for c in calls), calls
+                assert not chooser_events
+                page.locator('#cinput').fill('Read the document picker file')
+                page.evaluate('async () => await composerDraftWrites')
+                with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=30000) as picker_sent:
+                    page.locator('#csend').click()
+                assert picker_sent.value.status == 200, picker_sent.value.text()
+                page.wait_for_function('() => !composerSending')
+                paths = list((root / 'work/sessiondock_attachments').glob('*/picker.data'))
+                assert len(paths) == 1 and paths[0].read_bytes() == b'picker file bytes', paths
+                page.evaluate("pickerMode = 'unsupported'")
+                page.locator('#cadd').click()
+                with page.expect_file_chooser() as fallback:
+                    page.locator('#attach-menu [data-attach="file"]').click()
+                assert fallback.value.element.get_attribute('accept') == 'application/octet-stream'
+                fallback.value.set_files([])
+                page.evaluate('window.showOpenFilePicker = undefined')
+                print('PASS document API: user activation, all types, cancellation without fallback, uploaded bytes and unsupported-API fallback', flush=True)
                 page.locator('#a-term').click()
                 submissions_before_reports = len((root / 'submissions.jsonl').read_text().splitlines())
                 (root / 'footer-paste').touch()
@@ -279,8 +330,8 @@ def main():
                         page.wait_for_function('bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging')
                         page.locator('#bug-report-add').click()
                         with page.expect_file_chooser() as chooser:
-                            page.locator('#bug-report-attach-menu [data-attach="pdf"]').click()
-                        assert chooser.value.element.get_attribute('accept') == '.pdf,application/pdf'
+                            page.locator('#bug-report-attach-menu [data-attach="file"]').click()
+                        assert chooser.value.element.get_attribute('accept') == 'application/octet-stream'
                         chooser.value.set_files({'name': 'report.pdf', 'mimeType': 'application/pdf', 'buffer': pdf})
                         page.wait_for_function('bugReportDraftObject().attachments.length === 2 && bugReportDraftObject().attachments.every(a => a.uploaded?.upload_id && !a.staging)')
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/bug-report') as report:
@@ -315,7 +366,7 @@ def main():
                         assert len(images) == 1 and images[0].read_bytes() == png, images
                         pdfs = list((root / 'work/sessiondock_attachments').glob('*/report.pdf'))
                         assert len(pdfs) == 1 and pdfs[0].read_bytes() == pdf, pdfs
-                        print('PASS report PDF picker and retained PDF sent after trust/reload without re-upload', flush=True)
+                        print('PASS report generic file entry and retained PDF sent after trust/reload without re-upload', flush=True)
                     if index == 2:
                         stopped = context.request.post(base + '/api/term/kill', data={
                             'record_id': worker['record_id'], 'instance_id': worker['instance_id']})
