@@ -40,6 +40,14 @@ dialog、标签及机器面板仍由 legacy 管理。后续批次及依赖见
 生产，也不切换生产入口或资源引用。生产保持 `2552436`；完整替换及过渡
 脚本清理仍按根目录计划继续执行。
 
+独立构建中的 `grid.html`、`records.html`、`file.html` 与 `files.html`
+已分别使用 `web/src/pages/` 下的 Vue 页面。Vue 管理工具条、列表和可见状态；
+Grid/xterm 实例、连接、字节解析及回放仍由页面 controller 管理，复用既有
+Grid 模块。原辅助页的三份过渡脚本已删除，生产目录仍保留原页面。
+`build:migration` 同时构建这些辅助页并放入同一静态目录。
+`terminal_grid_browser`、`terminal_records_browser` 和 `files_browser`
+在独立构建上通过实际连接、输入、滚动、回放及文件跳转验收。
+
 host 输出由每客户端独立有界队列隔离慢读者，退出完整性与进程身份分别验证。
 
 独立的 `LaunchTarget`/host launch guard 与同步 `lifecycle` 回执库：
