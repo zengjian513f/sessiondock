@@ -4,10 +4,101 @@ import os
 from pathlib import Path
 import tempfile
 import uuid
+from types import SimpleNamespace
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, codex_row, codex_message, isolated_server
+from history_parity import REPO, BINARY, Corpus, codex_row, codex_message, isolated_server
 from host_identity import host
+from hub_http_suite import Hub, free_port, scoped
 from popups import on_popup  # noqa: E402
+
+
+def live_rotation(browser, hub_mode):
+    """A live Codex rewind changes rollout UID, never the console instance."""
+    with tempfile.TemporaryDirectory(prefix="sessiondock-rotation-ui-") as temporary:
+        root = Path(temporary)
+        for name in ["host", "work", "claude", "codex", "grok", "hub"]:
+            (root / name).mkdir(mode=0o700)
+        corpus = Corpus(root)
+        sid = "synthetic-native-sid"
+        corpus.put("original", "codex", [codex_row("session_meta", {
+            "id": sid, "cwd": str(root / "work"), "timestamp": "2026-09-11T08:00:00Z"}, 0),
+            codex_message("user", "Original managed conversation", 1)], [])
+        guard_uid = corpus.uid("original")
+        native = corpus.paths["original"].read_bytes()
+        node = SimpleNamespace(nid="a" * 32, name="RotationNode", port=free_port(), token="f" * 64)
+        extra = {}
+        if hub_mode:
+            for name, value in [("node-token", node.token), ("node-id", node.nid)]:
+                path = root / name
+                path.touch(mode=0o600)
+                path.write_text(value)
+            extra = {"SESSIONDOCK_NODE_BIND": f"127.0.0.1:{node.port}",
+                     "SESSIONDOCK_NODE_TOKEN_FILE": str(root / "node-token"),
+                     "SESSIONDOCK_NODE_ID_FILE": str(root / "node-id"),
+                     "SESSIONDOCK_NODE_PEERS": "127.0.0.0/8"}
+        view_uid = lambda uid: scoped(node.nid, uid) if hub_mode else uid
+        instance = "rotation-" + uuid.uuid4().hex
+        with host(root, instance, uid=guard_uid) as (process, _), \
+             isolated_server(corpus, BINARY, host_dir=root / "host", extra_env=extra) as (base, _):
+            hub = Hub(REPO / "target/debug/sessiondock-hub", root / "hub", [node]) if hub_mode else None
+            if hub:
+                hub.start()
+                base = f"http://127.0.0.1:{hub.port}"
+            context = browser.new_context(viewport={"width":1280,"height":900}, service_workers="block")
+            try:
+                context.add_init_script("localStorage.setItem('sessiondock.consoleRenderer', JSON.stringify('%s'))"
+                                        % ("grid" if hub_mode else "xterm"))
+                context.route("**/*", lambda route: route.continue_()
+                              if route.request.url.startswith(base + "/") else route.abort())
+                page = context.new_page()
+                errors, controls = [], []
+                page.on("pageerror", lambda error: errors.append(str(error)))
+                page.on("request", lambda request: controls.append(request.url)
+                        if "/api/term/takeover" in request.url or "/api/term/claim" in request.url else None)
+                page.goto(base, wait_until="networkidle")
+                page.locator(f'#side .item[data-uid="{view_uid(guard_uid)}"]').click()
+                page.locator("#a-term").click()
+                page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+                expect(page.locator("#a-term")).to_have_attribute("aria-label", "切换到对话")
+                original = page.evaluate("({name:T.name, instance:T.views.get(T.name).instanceId})")
+                initial_controls = list(controls)
+                # Retain object identities only for assertions; all view changes
+                # below use the real header button and native fixture updates.
+                page.evaluate("window.rotationSocket = T.ws; window.rotationView = T.views.get(T.name)")
+                for generation in [1, 2]:
+                    key = f"rotation-{generation}"
+                    corpus.put(key, "codex", [codex_row("session_meta", {
+                        "id": sid, "cwd": str(root / "work"),
+                        "timestamp": f"2026-09-11T{8 + generation:02}:00:00Z",
+                        "history_base": {"thread_id": sid, "end_byte_offset": len(native),
+                                         "end_ordinal_exclusive": 2}}, 2),
+                        codex_message("user", f"Rotated conversation {generation}", 3)], [])
+                    uid = view_uid(corpus.uid(key))
+                    # Fetch both real catalogs; no injected frontend state or
+                    # mock terminal response can establish the new association.
+                    page.evaluate("async () => { await loadSessions(true); await loadTermList(); }")
+                    page.wait_for_function("uid => S.sel === uid && T.uid === uid", arg=uid)
+                    expect(page.locator("#a-term")).to_have_attribute("aria-label", "切换到对话")
+                    page.locator("#a-term").click()
+                    expect(page.locator("#msgs")).to_be_visible()
+                    expect(page.locator("#msgs")).to_contain_text(f"Rotated conversation {generation}")
+                    expect(page.locator("#a-term")).to_have_attribute("aria-label", "切换到终端")
+                    page.locator("#a-term").click()
+                    expect(page.locator("#a-term")).to_have_attribute("aria-label", "切换到对话")
+                    assert page.evaluate("T.ws === window.rotationSocket && T.views.get(T.name) === window.rotationView")
+                    assert page.evaluate("({name:T.name, instance:T.views.get(T.name).instanceId})") == original
+                    assert controls == initial_controls, controls
+                page.locator("#termpane .xterm-helper-textarea").press_sequentially("ping")
+                page.locator("#termpane .xterm-helper-textarea").press("Enter")
+                page.wait_for_function("Array.from({length:T.term.buffer.active.length}, (_,i)=>T.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_PING_OK')")
+                assert process.poll() is None
+                assert corpus.paths["original"].read_bytes() == native
+                assert not errors, errors
+                print(f"PASS live rollout rotation ({'Hub' if hub else 'node'}): two generations, chat/terminal clicks, same socket/instance, no takeover or claim", flush=True)
+            finally:
+                context.close()
+                if hub:
+                    hub.stop()
 
 
 def main():
@@ -36,6 +127,8 @@ def main():
                 launch["executable_path"]=os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
             browser=playwright.chromium.launch(**launch)
             try:
+                live_rotation(browser, False)
+                live_rotation(browser, True)
                 for restart in [False,True]:
                     with isolated_server(corpus,BINARY,host_dir=root/"host") as (base,_):
                         context=browser.new_context(viewport={"width":1280,"height":900},service_workers="block")
