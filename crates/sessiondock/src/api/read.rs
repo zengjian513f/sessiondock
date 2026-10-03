@@ -1,7 +1,6 @@
 //! Read-only session list, messages, grant pages, input history, and SSE watch.
 //! Page queries use opaque cursors. The publisher owns file checks and each
-//! subscriber renders its own checkpoint. `debug_run`
-//! selects the list view (`SessionStore::list_view`).
+//! subscriber renders its own checkpoint.
 //! Main-session packets carry the live `prompt` (`bridge::live`: Claude
 //! question-card file, Codex approval screen),
 //! and the watch loop emits `prompt_only` packets when only that changes.
@@ -34,7 +33,6 @@ use crate::{
 pub struct ListQuery {
     force: String,
     sig: String,
-    debug_run: String,
 }
 
 /// Responses above this many bytes schedule a coalesced `malloc_trim` once
@@ -50,13 +48,10 @@ pub async fn list(
     query: Result<Query<ListQuery>, QueryRejection>,
 ) -> Result<JsonBytes, ApiError> {
     let Query(query) = query.map_err(query_error)?;
-    // The first 64 characters; an id the registry does
-    // not know (or a malformed one) is an empty view, never an error.
-    let debug_run: String = query.debug_run.chars().take(64).collect();
     state
         .reader
         .run(move |store| {
-            let bytes = store.list_view_bytes(query.force == "1", &debug_run, &query.sig)?;
+            let bytes = store.list_view_bytes(query.force == "1", &query.sig)?;
             Ok(JsonBytes(bytes))
         })
         .await
@@ -217,11 +212,6 @@ pub struct PageQuery {
     cursor: String,
     #[serde(default)]
     agent: String,
-    /// `debug_run`: the page's view selector, appended to every `/api/`
-    /// URL by the frontend; accepted and ignored here.
-    #[serde(default)]
-    #[allow(dead_code)]
-    debug_run: String,
 }
 struct PageBody {
     bytes: Bytes,

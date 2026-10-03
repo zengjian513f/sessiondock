@@ -782,23 +782,14 @@ impl Default for SearchCache {
     }
 }
 
-/// Who is asking for a parse slot: a search request, or the warm-up that
-/// yields whenever a search is waiting.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Priority {
-    Foreground,
-    Background,
-}
-
 struct Slots {
     available: usize,
-    foreground_waiting: usize,
 }
 
-/// The parse budget: `total` slots shared by every search and the warm-up.
+/// The parse budget: `total` slots shared by every search.
 /// A parse of `bytes` takes `ceil(bytes / SLOT_BYTES)` slots (capped at
 /// `total`), so cold parses in flight stay bounded in bytes, not only in
-/// count. Background acquisition waits while any foreground request waits.
+/// count.
 pub struct ParseSlots {
     total: usize,
     unit: u64,
@@ -831,10 +822,7 @@ impl ParseSlots {
         Self {
             total,
             unit: unit.max(1),
-            state: Mutex::new(Slots {
-                available: total,
-                foreground_waiting: 0,
-            }),
+            state: Mutex::new(Slots { available: total }),
             changed: Condvar::new(),
         }
     }
@@ -848,20 +836,11 @@ impl ParseSlots {
     }
 
     /// Wait for `weight` slots; `None` once `cancelled` is set while waiting.
-    pub fn acquire(
-        &self,
-        weight: usize,
-        priority: Priority,
-        cancelled: &AtomicBool,
-    ) -> Option<SlotGuard<'_>> {
+    pub fn acquire(&self, weight: usize, cancelled: &AtomicBool) -> Option<SlotGuard<'_>> {
         let weight = weight.clamp(1, self.total);
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if priority == Priority::Foreground {
-            state.foreground_waiting += 1;
-        }
         let admitted = loop {
-            let ready = state.available >= weight
-                && (priority == Priority::Foreground || state.foreground_waiting == 0);
+            let ready = state.available >= weight;
             if ready {
                 state.available -= weight;
                 break true;
@@ -875,9 +854,6 @@ impl ParseSlots {
                 .unwrap_or_else(|e| e.into_inner())
                 .0;
         };
-        if priority == Priority::Foreground {
-            state.foreground_waiting -= 1;
-        }
         drop(state);
         self.changed.notify_all();
         // `then`, not `then_some`: a guard built eagerly would release on drop.
@@ -1184,7 +1160,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_slots_weight_and_background_priority() {
+    fn parse_slots_weight_and_waiting() {
         let slots = ParseSlots::new(4);
         assert_eq!(slots.weight(0), 1);
         assert_eq!(slots.weight(SLOT_BYTES), 1);
@@ -1192,31 +1168,27 @@ mod tests {
         assert_eq!(slots.weight(100 * SLOT_BYTES), 4);
         let never = AtomicBool::new(false);
         let now = AtomicBool::new(true);
-        let big = slots.acquire(3, Priority::Background, &never).unwrap();
-        assert!(
-            slots.acquire(2, Priority::Foreground, &now).is_none(),
-            "cancelled while waiting"
-        );
+        let big = slots.acquire(3, &never).unwrap();
+        assert!(slots.acquire(2, &now).is_none(), "cancelled while waiting");
         assert_eq!(
             slots.state.lock().unwrap().available,
             1,
             "a refused acquisition releases nothing"
         );
-        let small = slots.acquire(1, Priority::Foreground, &never).unwrap();
+        let small = slots.acquire(1, &never).unwrap();
         drop(small);
         drop(big);
-        let all = slots.acquire(9, Priority::Foreground, &never).unwrap();
+        let all = slots.acquire(9, &never).unwrap();
         assert_eq!(all.weight, 4);
         drop(all);
-        // The background yields to a waiting foreground request.
-        let held = slots.acquire(4, Priority::Background, &never).unwrap();
+        // A waiting search proceeds once the held slots are released.
+        let held = slots.acquire(4, &never).unwrap();
         let cancelled = std::sync::Arc::new(AtomicBool::new(false));
         std::thread::scope(|scope| {
             let (flag, slots) = (&cancelled, &slots);
-            let waiter =
-                scope.spawn(move || slots.acquire(1, Priority::Foreground, flag).is_some());
+            let waiter = scope.spawn(move || slots.acquire(1, flag).is_some());
             std::thread::sleep(Duration::from_millis(50));
-            assert!(slots.acquire(1, Priority::Background, &now).is_none());
+            assert!(slots.acquire(1, &now).is_none());
             drop(held);
             assert!(waiter.join().unwrap());
         });

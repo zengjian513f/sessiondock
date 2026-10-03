@@ -273,15 +273,6 @@ fn print_effective_config(config: &Config) {
     println!("codex_index={}", path(&config.codex_index));
     println!("ptyhost_dir={}", path(&config.ptyhost_dir));
     println!("state_dir={}", path(&config.state_dir));
-    println!(
-        "debug_runs={}",
-        path(
-            &config
-                .state_dir
-                .as_ref()
-                .map(|dir| dir.join(sessiondock::sessions::DEBUG_RUNS_FILENAME))
-        )
-    );
     println!("lifecycle_dir={}", path(&config.lifecycle_dir));
     println!("launcher_config={}", path(&config.launcher_config));
     println!("file_roots={}", list(&config.file_roots));
@@ -335,5 +326,4 @@ fn print_effective_config(config: &Config) {
     println!("search_cache_bytes={}", config.search_cache_bytes);
     println!("search_fold_bytes={}", config.search_fold_bytes);
     println!("search_workers={}", config.search_workers);
-    println!("search_warmup={}", config.search_warmup_secs);
 }

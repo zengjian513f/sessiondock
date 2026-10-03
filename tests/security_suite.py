@@ -158,8 +158,7 @@ def run(host, port):
     if status != 501:
         fail("terminal body policy", f"HTTP {status} (want disabled terminal 501)", raw)
     passed("terminal body policy")
-    # `debug_run` is the list-view selector, not a
-    # policy gate: an id no registry knows is an empty view, HTTP 200.
+    # Unknown query parameters do not affect the ordinary empty fixture list.
     status, raw = call(host, port, "GET", "/api/sessions?debug_run=abc")
     try:
         view = json.loads(raw) if raw else {}

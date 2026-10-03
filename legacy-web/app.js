@@ -199,18 +199,12 @@ const MEDIUM = matchMedia('(max-width: 1199px)');
 function layoutTier() { return MOBILE.matches ? 'narrow' : MEDIUM.matches ? 'medium' : 'wide'; }
 // 页面既可挂在站点根目录，也可由反代放到 /sessiondock/ 之类的子路径。
 const APP_BASE = new URL('.', location.href);
-const DEBUG_RUN = /^[A-Za-z0-9_-]{1,64}$/.test(
-  new URLSearchParams(location.search).get('debug_run') || '')
-  ? new URLSearchParams(location.search).get('debug_run') : '';
 // 深链：?sid=<source>:<sid> 或 ?sid=<sid>，打开指定会话（labdesk 的会话台账用它跳过来）。
 // 用 CLI 原生会话号而不是 uid —— uid 是会话文件路径的散列，换目录就变。
 const DEEP_SID = (new URLSearchParams(location.search).get('sid') || '').trim().slice(0, 128);
 const deepNode = () => new URLSearchParams(location.search).get('node') || '';
 const appUrl = path => {
   const url = new URL(String(path).replace(/^\//, ''), APP_BASE);
-  if (DEBUG_RUN && url.pathname.includes('/api/')) {
-    url.searchParams.set('debug_run', DEBUG_RUN);
-  }
   if (HUB_MODE && !url.searchParams.has('nodes') && /\/api\/(search|trash|trash\/purge)$/.test(url.pathname)) {
     url.searchParams.set('nodes', selectedNodeIds().join(','));
   }

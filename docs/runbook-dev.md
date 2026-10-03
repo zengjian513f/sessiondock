@@ -54,7 +54,8 @@ Missing, damaged or unsupported data behaves as empty; external edits are
 allowed. See [metadata.md](metadata.md).
 
 **Search text — `SESSIONDOCK_SEARCH_CACHE_DIR`.** Optional persistent cache;
-cache size, workers and warmup affect performance and eviction, not which valid
+bodies are built on search requests, with no startup or periodic scan. Cache
+size and workers affect performance and eviction, not which valid
 search input is accepted. See [read-model.md](read-model.md#搜索).
 
 **Ptyhost and launcher.** Configure `SESSIONDOCK_PTYHOST_DIR`, lifecycle storage

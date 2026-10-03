@@ -450,13 +450,12 @@ def builders():
             system = Path("/proc/sys/kernel/hostname").read_text(encoding="utf-8").strip()
         except OSError:
             pass
-        return base(), 0, None, [f"hostname={system or socket.gethostname() or 'SessionDock'}",
-                                 "debug_runs=(unset)"]
+        return base(), 0, None, [f"hostname={system or socket.gethostname() or 'SessionDock'}"]
 
     def hostname_override(tmp):
         state = mkdir(os.path.join(tmp, "state"), 0o700)
         return (base(SESSIONDOCK_HOSTNAME=" lab-node ", SESSIONDOCK_STATE_DIR=state), 0, None,
-                ["hostname=lab-node", f"debug_runs={real(state)}/debug-runs.json"])
+                ["hostname=lab-node"])
 
     def hostname_empty(_tmp):
         return base(SESSIONDOCK_HOSTNAME="   "), 1, "SESSIONDOCK_HOSTNAME", []

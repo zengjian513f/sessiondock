@@ -225,15 +225,14 @@ async fn node_router_requires_peer_protocol_and_token_each() {
     .await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     assert_eq!(body(response).await["code"], "cross_site");
-    // `debug_run` is the list-view selector here too: an unknown run is
-    // an empty view, never a refusal.
+    // Unknown parameters leave the ordinary fixture list unchanged.
     let response = send(
         &node,
         request("/api/sessions?debug_run=x", Some("10.100.100.2"), &good()),
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(body(response).await["sessions"], serde_json::json!([]));
+    assert_eq!(body(response).await["sessions"], through_node["sessions"]);
 
     // The loopback listener keeps refusing hub headers, right token included.
     for headers in [

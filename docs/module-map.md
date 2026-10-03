@@ -209,7 +209,6 @@ python3 tests/module_map.py --write
   - `service.rs` — Search-text production: where the body of one candidate comes from, in (514 lines, 0 tests)
 - `security.rs` — Loopback Host gate and same-origin API policy. Not authentication. (130 lines, 0 tests)
 - `sessions/`
-  - `debug_runs.rs` — Debug-run registry: paid monkey/test (451 lines, 6 tests)
   - `grok_tests.rs` — (no module doc) (303 lines, 7 tests)
   - `history.rs` — View identity helpers shared by `views` (`native_identity`, `history_link`, (1550 lines, 16 tests)
   - `index/`
@@ -238,7 +237,7 @@ python3 tests/module_map.py --write
   - `media_projection.rs` — Window selection precedes file opens; authority uses the complete branch. (216 lines, 0 tests)
   - `media_tests.rs` — Synthetic native inputs only; projection and cursor boundaries for media. (257 lines, 6 tests)
   - `mod.rs` — Session read model: the lazy index (`index/`) is the only inventory, and (1521 lines, 0 tests)
-    - mods: `debug_runs`, `history`, `index`, `native_input`, `native_media`, `opencode`, `pages`, `views`, `providers`, `records`, `scope`, `grok_tests`, `media_projection`, `media_tests`, `native_scope_tests`, `native_catalog_tests`, `tests`
+    - mods: `history`, `index`, `native_input`, `native_media`, `opencode`, `pages`, `views`, `providers`, `records`, `scope`, `grok_tests`, `media_projection`, `media_tests`, `native_scope_tests`, `native_catalog_tests`, `tests`
   - `native_catalog_tests.rs` — (no module doc) (240 lines, 5 tests)
   - `native_input.rs` — Checked, chunked native input and a disposable raw-prefix index. (339 lines, 0 tests)
     - mods: `tests`

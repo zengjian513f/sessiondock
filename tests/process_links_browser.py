@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Shared SSH attribution: isolated node pair/Hub, process consumers and Chromium."""
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import json
+from http.client import HTTPConnection
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 from pathlib import Path
 import shutil
 import subprocess
@@ -27,6 +30,78 @@ def wait_for(function, timeout=20):
             return value
         time.sleep(.15)
     raise AssertionError('SSH attribution timed out')
+
+
+@contextmanager
+def counted_node(node):
+    """Private forwarding fixture: observe Hub polls and fail one publication."""
+    counts = SimpleNamespace(gets=0, posts=0, delivered=0, fail_posts=0, fail_gets=0)
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def forward(self):
+            body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+            tracked = self.path == '/api/process-links'
+            if tracked and self.command == 'GET' and counts.fail_gets:
+                counts.fail_gets -= 1
+                self.send_response(503)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
+            if tracked and self.command == 'POST':
+                counts.posts += 1
+                if counts.fail_posts:
+                    counts.fail_posts -= 1
+                    self.send_response(503)
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                    return
+            upstream = HTTPConnection('127.0.0.1', node.port, timeout=5)
+            try:
+                upstream.request(self.command, self.path, body=body,
+                    headers={key: value for key, value in self.headers.items()
+                        if key.lower() not in ('host', 'connection')})
+                response = upstream.getresponse()
+                streaming = 'text/event-stream' in response.getheader('Content-Type', '')
+                payload = None if streaming else response.read()
+                self.send_response(response.status)
+                for key, value in response.getheaders():
+                    if key.lower() not in ('connection', 'transfer-encoding', 'content-length'):
+                        self.send_header(key, value)
+                if payload is not None:
+                    self.send_header('Content-Length', str(len(payload)))
+                self.end_headers()
+                if streaming:
+                    while chunk := response.read1(65536):
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                else:
+                    self.wfile.write(payload)
+                if tracked and response.status == 200:
+                    if self.command == 'GET':
+                        counts.gets += 1
+                    else:
+                        counts.delivered += 1
+            except OSError:
+                # Browser streams may close when the selected session changes.
+                self.close_connection = True
+            finally:
+                upstream.close()
+
+        do_GET = forward
+        do_POST = forward
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    worker = Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        yield SimpleNamespace(**{**vars(node), 'port': server.server_port}), counts
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
 
 
 def main():
@@ -104,8 +179,11 @@ def main():
                         ghost_env = node_env(ghost_corpus.root, ghost.port, '127.0.0.0/8')
                         ghost_env['SESSIONDOCK_PROC_ROOT'] = str(procs[0])
                         # Register a real private node, then take only that fixture offline.
+                        forwarded = [stack.enter_context(counted_node(node)) for node in nodes]
+                        hub_nodes = [node for node, _ in forwarded]
+                        counts = forwarded[1][1]
                         with isolated_server(ghost_corpus, args.binary, extra_env=ghost_env):
-                            hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hubroot, [*nodes, ghost])
+                            hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hubroot, [*hub_nodes, ghost])
                         hub.start()
                         stack.callback(hub.stop)
                     base, opener = local[1]
@@ -194,11 +272,41 @@ def main():
                             page.get_by_role('button', name='关闭资源面板').click()
                             print('PASS unrelated online/offline machines hidden, SSH target retained, totals filtered', flush=True)
                             print('PASS real session resources API, opaque UID resolution, remote direct/inclusive PSS, browser resource panel', flush=True)
+                        # Once destination reports acknowledge the successful publication,
+                        # unchanged Hub polls must not cause another POST (including empty ones).
+                        start_gets = counts.gets
+                        wait_for(lambda: counts.gets >= start_gets + 3)
+                        stable_posts = [counter.posts for _, counter in forwarded]
+                        start_gets = counts.gets
+                        wait_for(lambda: counts.gets >= start_gets + 3)
+                        assert [counter.posts for _, counter in forwarded] == stable_posts
+                        # A failed read must discard the successful-send cache, then
+                        # republish on recovery even though process identities are unchanged.
+                        delivered = counts.delivered
+                        counts.fail_gets = 1
+                        wait_for(lambda: counts.delivered > delivered)
+                        delivered = counts.delivered
+                        # A new descendant may inherit its parent's binding immediately;
+                        # it still needs its own durable link, and a failed POST must retry.
+                        counts.fail_posts = 1
+                        proc_pid(procs[1], 700, 'python', ['python', 'late.py'], 100)
+                        wait_for(lambda: counts.delivered > delivered and counts.fail_posts == 0)
+                        wait_for(lambda: any(b['process']['pid'] == 700 for b in
+                            get_json(opener, base, '/api/process-links')['bindings']))
+                        page.locator(f'[data-uid="{uid}"]').first.click()
+                        page.evaluate('pollSessions()')
+                        page.wait_for_function('([uid,node]) => S.sessions.find(s => s.uid === uid)?.nest_parent?.node_id === node',
+                            arg=[uid, nodes[0].nid])
+                        print('PASS stable polls skip publish, read recovery republishes and new descendant retries failed publication', flush=True)
                         # Persisted per-process identity survives no live SSH evidence.
+                        late_stat = procs[1] / '700/stat'
+                        late_stat.write_text(late_stat.read_text().replace('S 100 ', 'S 1 '))
                         shutil.rmtree(procs[0] / '200')
                         (procs[1] / '100/environ').write_bytes(b'')
                         print('PASS remote CLI attribution and automatic nesting, chronology and browser gates', flush=True)
                     else:
+                        assert any(b['process']['pid'] == 700 and b['session']['sid'] == 'parent'
+                            for b in bindings), 'late descendant must retain its own persisted link'
                         # Reusing PID 300 must not inherit its predecessor's saved link.
                         stat = procs[1] / '300/stat'
                         stat.write_text(stat.read_text().replace('30000', '30001').replace('S 100 ', 'S 1 '))

@@ -31,6 +31,10 @@ struct Journal {
 pub struct Transfers {
     directory: PathBuf,
     gates: crate::transfer::coordination::Locks,
+    unfinished: Arc<std::sync::Mutex<std::collections::BTreeMap<String, Journal>>>,
+    // Move the guard into the blocking write: cancelling its async waiter must
+    // not let a later save overtake it or reuse its temporary file.
+    saves: crate::transfer::coordination::Locks,
     heartbeats: std::sync::Mutex<std::collections::BTreeMap<String, std::time::Instant>>,
     cancellations:
         std::sync::Mutex<std::collections::BTreeMap<String, tokio_util::sync::CancellationToken>>,
@@ -43,8 +47,32 @@ impl Transfers {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
         }
+        let mut unfinished = std::collections::BTreeMap::new();
+        for entry in fs::read_dir(&directory)? {
+            let path = entry?.path();
+            if path.extension().is_none_or(|ext| ext != "json") {
+                continue;
+            }
+            let journal: Journal = match fs::read(&path).and_then(|raw| {
+                serde_json::from_slice(&raw)
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+            }) {
+                Ok(journal) => journal,
+                Err(error) => {
+                    // A damaged transfer must not prevent the Hub from serving
+                    // other sessions. Preserve its journal for repair.
+                    eprintln!("transfer recovery: cannot read {}: {error}", path.display());
+                    continue;
+                }
+            };
+            if !matches!(journal.phase.as_str(), "complete" | "aborted") {
+                unfinished.insert(journal.request.operation_id.clone(), journal);
+            }
+        }
         Ok(Self {
             directory,
+            unfinished: Arc::new(std::sync::Mutex::new(unfinished)),
+            saves: Default::default(),
             gates: Default::default(),
             cancellations: Default::default(),
             heartbeats: Default::default(),
@@ -69,9 +97,9 @@ impl Transfers {
                         if let Ok(id) = done { recovering.remove(&id); }
                     }
                     _ = interval.tick() => {
-                        let Ok(pending) = self.pending() else { continue };
-                        for value in pending["operations"].as_array().into_iter().flatten() {
-                            let Ok(request) = serde_json::from_value::<Request>(value["request"].clone()) else { continue };
+                        let requests: Vec<_> = self.unfinished.lock().unwrap_or_else(|e| e.into_inner())
+                            .values().map(|journal| journal.request.clone()).collect();
+                        for request in requests {
                             let id = request.operation_id.clone();
                             let active = self.heartbeats.lock().unwrap_or_else(|e| e.into_inner())
                                 .get(&id).is_some_and(|seen| seen.elapsed() < FOREGROUND_LEASE);
@@ -80,7 +108,7 @@ impl Transfers {
                             workers.spawn(async move {
                                 // Cancellation first fences late preparation/publication; after
                                 // ownership switch reconciliation completes the same transaction.
-                                let _ = transfers.cancel(registry, client, request).await;
+                                let _ = transfers.cancel_inner(registry, client, request, true).await;
                                 id
                             });
                         }
@@ -95,10 +123,23 @@ impl Transfers {
         }
         Ok(self.directory.join(format!("{id}.json")))
     }
+    async fn load(&self, id: &str) -> Result<Journal, TransferError> {
+        // A cancelled save may still be running in the blocking pool. Mutating
+        // callers must observe it before deriving their next journal state.
+        let _guard = self.saves.acquire(vec![id.to_owned()]).await;
+        Ok(serde_json::from_slice(&fs::read(self.path(id)?)?)?)
+    }
     async fn save(&self, journal: &Journal) -> Result<(), TransferError> {
         let path = self.path(&journal.request.operation_id)?;
         let raw = serde_json::to_vec(journal)?;
+        let journal = journal.clone();
+        let unfinished = self.unfinished.clone();
+        let save_guard = self
+            .saves
+            .acquire(vec![journal.request.operation_id.clone()])
+            .await;
         tokio::task::spawn_blocking(move || {
+            let _save_guard = save_guard;
             let temp = path.with_extension("tmp");
             let mut options = fs::OpenOptions::new();
             options.create(true).truncate(true).write(true);
@@ -110,7 +151,18 @@ impl Transfers {
             let mut out = options.open(&temp)?;
             out.write_all(&raw)?;
             out.sync_all()?;
-            fs::rename(temp, &path)?;
+            {
+                // Publish disk and memory together, even if the async caller was
+                // cancelled. After rename, update memory even if directory fsync
+                // fails: readers already see the new journal on disk.
+                let mut pending = unfinished.lock().unwrap_or_else(|e| e.into_inner());
+                fs::rename(temp, &path)?;
+                if matches!(journal.phase.as_str(), "complete" | "aborted") {
+                    pending.remove(&journal.request.operation_id);
+                } else {
+                    pending.insert(journal.request.operation_id.clone(), journal);
+                }
+            }
             fs::File::open(path.parent().unwrap())?.sync_all()?;
             Ok::<_, TransferError>(())
         })
@@ -122,19 +174,11 @@ impl Transfers {
             "bytes_sent":journal.bytes_sent,"bytes_total":journal.bytes_total,
             "error":journal.error,"result":journal.result})
     }
-    /// Atomic journals are readable while execution owns the mutation gate.
+    /// Startup recovery and successful saves keep this view current without
+    /// reopening completed journals or waiting for the operation's mutation gate.
     pub fn pending(&self) -> Result<Value, TransferError> {
-        let mut pending = Vec::new();
-        for entry in fs::read_dir(&self.directory)? {
-            let path = entry?.path();
-            if path.extension().is_none_or(|ext| ext != "json") {
-                continue;
-            }
-            let journal: Journal = serde_json::from_slice(&fs::read(path)?)?;
-            if !matches!(journal.phase.as_str(), "complete" | "aborted") {
-                pending.push(Self::public(&journal));
-            }
-        }
+        let unfinished = self.unfinished.lock().unwrap_or_else(|e| e.into_inner());
+        let pending: Vec<_> = unfinished.values().map(Self::public).collect();
         Ok(json!({"operations":pending}))
     }
     pub async fn progress(
@@ -213,9 +257,7 @@ impl Transfers {
         Ok(Self::public(&journal))
     }
     async fn record_error(&self, request: &Request, error: &TransferError) {
-        if let Ok(path) = self.path(&request.operation_id)
-            && let Ok(raw) = fs::read(path)
-            && let Ok(mut journal) = serde_json::from_slice::<Journal>(&raw)
+        if let Ok(mut journal) = self.load(&request.operation_id).await
             && journal.request == *request
         {
             journal.error = Some(error.message.clone());
@@ -228,23 +270,47 @@ impl Transfers {
         client: Arc<Client>,
         request: Request,
     ) -> Result<Value, TransferError> {
-        let mut journal: Journal =
-            serde_json::from_slice(&fs::read(self.path(&request.operation_id)?)?)?;
+        self.cancel_inner(registry, client, request, false).await
+    }
+    async fn cancel_inner(
+        &self,
+        registry: Arc<Registry>,
+        client: Arc<Client>,
+        request: Request,
+        recovery: bool,
+    ) -> Result<Value, TransferError> {
+        let mut journal = self.load(&request.operation_id).await?;
         if journal.request != request {
             return Err(TransferError::new(
                 "move_conflict",
                 "操作已绑定其他迁移目标",
             ));
         }
+        if matches!(journal.phase.as_str(), "complete" | "aborted") {
+            return Ok(journal.result.unwrap_or_else(|| json!({"phase":"aborted"})));
+        }
         // Validate binding above, then interrupt preparation before taking the
         // operation lock. Never wait behind an unrelated transfer.
-        if let Some(token) = self
-            .cancellations
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&request.operation_id)
         {
-            token.cancel();
+            // Recheck the lease after loading the journal, not just when the
+            // worker took its snapshot. Registering execution uses this same
+            // lock so a fresh foreground lease cannot lose its token to recovery.
+            let heartbeats = self.heartbeats.lock().unwrap_or_else(|e| e.into_inner());
+            if recovery
+                && heartbeats
+                    .get(&request.operation_id)
+                    .is_some_and(|seen| seen.elapsed() < FOREGROUND_LEASE)
+            {
+                return Ok(Self::public(&journal));
+            }
+            if let Some(token) = self
+                .cancellations
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&request.operation_id)
+            {
+                token.cancel();
+            }
         }
         let (source_id, _) = namespace::split(&request.uid, true)
             .map_err(|e| TransferError::new("move_plan_stale", e.to_string()))?;
@@ -266,7 +332,7 @@ impl Transfers {
             }
         }
         let _guard = self.gates.acquire(vec![request.operation_id.clone()]).await;
-        journal = serde_json::from_slice(&fs::read(self.path(&request.operation_id)?)?)?;
+        journal = self.load(&request.operation_id).await?;
         let result = self.reconcile(registry, client, &mut journal).await;
         if let Err(error) = &result {
             self.record_error(&request, error).await;
@@ -456,15 +522,15 @@ impl Transfers {
         request: Request,
     ) -> Result<Value, TransferError> {
         let _guard = self.gates.acquire(vec![request.operation_id.clone()]).await;
-        self.heartbeats
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(request.operation_id.clone(), std::time::Instant::now());
         let cancellation = tokio_util::sync::CancellationToken::new();
-        self.cancellations
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(request.operation_id.clone(), cancellation.clone());
+        {
+            let mut heartbeats = self.heartbeats.lock().unwrap_or_else(|e| e.into_inner());
+            heartbeats.insert(request.operation_id.clone(), std::time::Instant::now());
+            self.cancellations
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(request.operation_id.clone(), cancellation.clone());
+        }
         let result = tokio::select! {
             result = self.run(registry.clone(), client.clone(), request.clone()) => result,
             _ = cancellation.cancelled() => Err(TransferError::new("move_cancelled", "正在取消操作")),
@@ -498,7 +564,7 @@ impl Transfers {
     ) -> Result<Value, TransferError> {
         let path = self.path(&request.operation_id)?;
         let mut journal = if path.exists() {
-            let previous: Journal = serde_json::from_slice(&fs::read(&path)?)?;
+            let previous = self.load(&request.operation_id).await?;
             if previous.request != request {
                 return Err(TransferError::new(
                     "move_conflict",

@@ -68,7 +68,7 @@ def main():
             corpus.uid('imported-attached'): {'spawned_by': {'source': 'codex', 'sid': 'parent'}, 'nest_parent': {'source': 'codex', 'sid': 'other'}},
         }}))
         subprocess.run(['python3', str(Path(__file__).with_name('meta_import.py')),
-                        '--python-meta', str(legacy), '--out-dir', str(state), '--no-debug-runs'],
+                        '--python-meta', str(legacy), '--out-dir', str(state)],
                        check=True, capture_output=True, timeout=20)
         env = {'SESSIONDOCK_PROC_ROOT': proc, 'SESSIONDOCK_STATE_DIR': state,
                'SESSIONDOCK_GROK_ACTIVE': root / 'absent'}

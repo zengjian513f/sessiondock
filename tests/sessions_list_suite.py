@@ -355,12 +355,11 @@ def run(opener, base, corpus):
     if now["size"] <= claude["size"] or now["updated"] <= claude["updated"]:
         fail("append", "row updated/size must grow", araw)
     passed("append changes sig updated size")
-    # No registry in this state directory: every debug view is empty and
-    # the ordinary view hides nothing (docs/read-model.md "debug_run").
+    # An obsolete test-view parameter must not alter the list or signature.
     view, vraw = fetch(opener, base, "/api/sessions?debug_run=x")
-    if view.get("sessions") != [] or not view.get("sig"):
-        fail("debug_run", "expected an empty signed view for an unknown run", vraw)
-    passed("debug_run unknown run → empty view")
+    if view.get("sig") != after["sig"] or {r["uid"] for r in view["sessions"]} != {r["uid"] for r in after["sessions"]}:
+        fail("debug_run", "expected the ordinary signed list", vraw)
+    passed("obsolete debug_run leaves the list unchanged")
     seq = after["sessions"]
     for left, right in zip(seq, seq[1:]):
         if left["updated"] < right["updated"] or (

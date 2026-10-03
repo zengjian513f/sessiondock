@@ -268,9 +268,7 @@ async fn native_input_is_parsed_and_bad_queries_are_json_errors() {
             .status(),
         StatusCode::NOT_FOUND
     );
-    // `debug_run` is a list-view selector, not a
-    // gate: the detail routes ignore it, and the list answers an empty
-    // view for an id no registry knows.
+    // Obsolete test-view parameters do not affect list or detail reads.
     assert_eq!(
         get(&app, &format!("/api/messages/{uid}?debug_run=unknown"))
             .await
@@ -280,7 +278,10 @@ async fn native_input_is_parsed_and_bad_queries_are_json_errors() {
     let response = get(&app, "/api/sessions?debug_run=unknown").await;
     assert_eq!(response.status(), StatusCode::OK);
     let listed = json_body(response).await;
-    assert_eq!(listed["sessions"], json!([]));
+    assert_eq!(
+        listed["sessions"],
+        json_body(get(&app, "/api/sessions").await).await["sessions"]
+    );
     assert!(listed["sig"].is_string());
 }
 

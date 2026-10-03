@@ -9,8 +9,6 @@
 //! opened, and one file's change never fails the list. Native files are
 //! never modified.
 
-mod debug_runs;
-pub use debug_runs::{DEBUG_RUNS_FILENAME, RunIndex, debug_run_of};
 mod history;
 mod index;
 pub(crate) use index::codex_rollout_id;
@@ -373,12 +371,10 @@ impl SearchPool {
 }
 
 /// The candidate rows of the last search pool, reused while the published
-/// list, the registry and the run id are the same (a search that parsed
+/// list is the same (a search that parsed
 /// nothing then allocates no rows).
 struct SearchRows {
     published: Arc<Published>,
-    runs: Arc<RunIndex>,
-    run_id: String,
     rows: Arc<Vec<Value>>,
 }
 
@@ -416,20 +412,8 @@ impl SessionSnapshot {
     }
 }
 
-/// One debug-run view of a published list,
-/// kept while the list and the registry are the same so the polling
-/// default view costs no re-filtering (one per run id, so a monkey's view
-/// and the ordinary view alternating keep both documents).
-struct Filtered {
-    published: Arc<Published>,
-    runs: Arc<RunIndex>,
-    document: Arc<Value>,
-}
-
 struct ListState {
     published: Option<Arc<Published>>,
-    /// By run id (`""` = the ordinary view); at most [`SERIALIZED_VIEWS`].
-    filtered: BTreeMap<String, Filtered>,
     /// Owner uids that vanished from the index since the views were last
     /// touched; applied before the next use of the view cache.
     evictions: Vec<String>,
@@ -448,10 +432,6 @@ struct SerializedList {
     revision: u64,
     bytes: Bytes,
 }
-
-/// At most this many debug-run views keep serialized bytes (the ordinary
-/// view plus a few monkeys); more evict everything, like the predecessor.
-const SERIALIZED_VIEWS: usize = 8;
 
 /// Dependency resolution over one index snapshot: Codex `history_base`
 /// parents by native thread id, with the graph's 501/409 codes. Paths are
@@ -487,17 +467,14 @@ struct Prepared {
 pub struct SessionStore {
     index: index::Index,
     metadata: Option<Arc<MetadataStore>>,
-    /// `debug-runs.json` beside the metadata (docs/read-model.md "debug_run");
-    /// `None` without a state directory: nothing is ever hidden.
-    debug_runs: Option<debug_runs::DebugRuns>,
     list: Mutex<ListState>,
     views: Mutex<Views>,
     /// `Views::revision`, readable while an open holds the view lock.
     views_revision: Arc<AtomicU64>,
-    /// Serialized list bodies by debug-run id; its lock also makes
+    /// Serialized list body; its lock also makes
     /// concurrent renders of one view single-flight (the second waits and
     /// then hits). Never held while waiting for the list or view lock.
-    serialized: Mutex<BTreeMap<String, SerializedList>>,
+    serialized: Mutex<Option<SerializedList>>,
 }
 
 impl SessionStore {
@@ -518,24 +495,19 @@ impl SessionStore {
         metadata: Option<Arc<MetadataStore>>,
         index_path: Option<PathBuf>,
     ) -> Self {
-        let debug_runs = metadata.as_ref().map(|metadata| {
-            debug_runs::DebugRuns::new(metadata.directory().join(DEBUG_RUNS_FILENAME))
-        });
         let views = Views::new();
         let views_revision = views.revision_handle();
         Self {
             index: index::Index::new(roots, index_path),
             metadata,
-            debug_runs,
             list: Mutex::new(ListState {
                 published: None,
-                filtered: BTreeMap::new(),
                 evictions: Vec::new(),
                 search_rows: None,
             }),
             views: Mutex::new(views),
             views_revision,
-            serialized: Mutex::new(BTreeMap::new()),
+            serialized: Mutex::new(None),
         }
     }
 
@@ -543,21 +515,6 @@ impl SessionStore {
     #[cfg(test)]
     pub(crate) fn views_revision(&self) -> u64 {
         self.views_revision.load(Ordering::Acquire)
-    }
-
-    /// The debug-run registry as it is now (reloaded when the file changed);
-    /// an empty index without a state directory. Callers filter their own
-    /// rows with it (`/api/live`, `/api/term/list`, search pools).
-    pub fn debug_runs(&self) -> Arc<RunIndex> {
-        match &self.debug_runs {
-            Some(runs) => runs.current(),
-            None => Arc::new(RunIndex::default()),
-        }
-    }
-
-    /// The registry file this store reads (`--check-config` / diagnostics).
-    pub fn debug_runs_path(&self) -> Option<&Path> {
-        self.debug_runs.as_ref().map(debug_runs::DebugRuns::path)
     }
 
     #[cfg(test)]
@@ -710,15 +667,9 @@ impl SessionStore {
         Ok(self.publish_within(false, OPEN_TTL)?.document.clone())
     }
 
-    /// `/api/sessions` for one view: the published list with the debug-run
-    /// registry applied (the ordinary view
-    /// hides every registered run, `debug_run` shows only that run), fork
-    /// parents re-derived among the visible rows and the document re-signed
-    /// over the visible rows plus the run id (`_view_signature`). Rows carry
-    /// no `migration_warnings` unless unsupported; the
-    /// detail `meta` keeps them all.
-    pub fn list_view(&self, force: bool, debug_run: &str) -> Result<Value, SessionError> {
-        self.list_view_unless(force, debug_run, "")
+    /// The published list with cached cursor decorations and wire warnings.
+    pub fn list_view(&self, force: bool) -> Result<Value, SessionError> {
+        self.list_view_unless(force, "")
     }
 
     /// `list_view`, except that when the view's signature equals `sig` the
@@ -726,20 +677,16 @@ impl SessionStore {
     /// cloned, decorated or serialized (the legacy page polls
     /// `/api/sessions?sig=` every 8 s from every tab; the signature covers
     /// rows and metadata only, never view decorations).
-    pub fn list_view_unless(
-        &self,
-        force: bool,
-        debug_run: &str,
-        sig: &str,
-    ) -> Result<Value, SessionError> {
-        let (published, document) = self.view_document(force, debug_run)?;
+    pub fn list_view_unless(&self, force: bool, sig: &str) -> Result<Value, SessionError> {
+        let published = self.publish(force)?;
+        let document = published.document.clone();
         if !force && !sig.is_empty() && document["sig"].as_str() == Some(sig) {
             return Ok(json!({"unchanged": true, "sig": sig}));
         }
         Ok(self.render_view(&published, &document).0)
     }
 
-    /// `list_view_unless` as the response bytes, served from the per-view
+    /// `list_view_unless` as the response bytes, served from the shared
     /// byte cache: a hot request whose `sig` differs (or is absent) is a
     /// lookup, not clone-decorate-serialize. An entry is reused while the
     /// view document is the same `Arc` (so `sig` and `built_at` are
@@ -747,13 +694,9 @@ impl SessionStore {
     /// (`Views::revision`, which is what the decorations depend on).
     /// `force=1` rescans and re-renders like the predecessor; a render
     /// while an open holds the view lock is undecorated and not kept.
-    pub fn list_view_bytes(
-        &self,
-        force: bool,
-        debug_run: &str,
-        sig: &str,
-    ) -> Result<Bytes, SessionError> {
-        let (published, document) = self.view_document(force, debug_run)?;
+    pub fn list_view_bytes(&self, force: bool, sig: &str) -> Result<Bytes, SessionError> {
+        let published = self.publish(force)?;
+        let document = published.document.clone();
         if !force && !sig.is_empty() && document["sig"].as_str() == Some(sig) {
             let unchanged = json!({"unchanged": true, "sig": sig});
             return Ok(Bytes::from(
@@ -765,7 +708,7 @@ impl SessionStore {
             .lock()
             .map_err(|_| SessionError::new(500, "会话列表缓存锁不可用"))?;
         if !force
-            && let Some(entry) = cache.get(debug_run)
+            && let Some(entry) = cache.as_ref()
             && Arc::ptr_eq(&entry.document, &document)
             && entry.revision == self.views_revision.load(Ordering::Acquire)
         {
@@ -774,17 +717,11 @@ impl SessionStore {
         let (value, revision) = self.render_view(&published, &document);
         let bytes = Bytes::from(serde_json::to_vec(&value).expect("serde_json::Value serializes"));
         if let Some(revision) = revision {
-            if cache.len() >= SERIALIZED_VIEWS && !cache.contains_key(debug_run) {
-                cache.clear();
-            }
-            cache.insert(
-                debug_run.to_owned(),
-                SerializedList {
-                    document,
-                    revision,
-                    bytes: bytes.clone(),
-                },
-            );
+            *cache = Some(SerializedList {
+                document,
+                revision,
+                bytes: bytes.clone(),
+            });
         }
         Ok(bytes)
     }
@@ -806,61 +743,6 @@ impl SessionStore {
         (value, revision)
     }
 
-    /// The signed document of one view: the published list itself for the
-    /// ordinary view without registered runs, else the debug-run filtered
-    /// document cached per (published list, registry, run id).
-    fn view_document(
-        &self,
-        force: bool,
-        debug_run: &str,
-    ) -> Result<(Arc<Published>, Arc<Value>), SessionError> {
-        let published = self.publish(force)?;
-        let runs = self.debug_runs();
-        let document: Arc<Value> = if debug_run.is_empty() && runs.is_empty() {
-            published.document.clone()
-        } else {
-            let mut state = self.list_state()?;
-            let cached = state.filtered.get(debug_run).filter(|filtered| {
-                Arc::ptr_eq(&filtered.published, &published) && Arc::ptr_eq(&filtered.runs, &runs)
-            });
-            match cached {
-                Some(filtered) => filtered.document.clone(),
-                None => {
-                    let mut rows = runs.filter_rows(published.rows().to_vec(), debug_run);
-                    if let Some(metadata) = &published.metadata {
-                        // Fork parents are computed over the filtered
-                        // topology: a parent whose only fork is hidden is
-                        // an ordinary row in this view.
-                        metadata.enrich(&mut rows);
-                    }
-                    let sig = hash(
-                        &serde_json::to_vec(&json!({"debug_run": debug_run, "sessions": rows}))
-                            .expect("rows serialize"),
-                    );
-                    let document = Arc::new(json!({
-                        "sessions": rows, "sig": sig,
-                        "built_at": published.document["built_at"],
-                    }));
-                    if state.filtered.len() >= SERIALIZED_VIEWS
-                        && !state.filtered.contains_key(debug_run)
-                    {
-                        state.filtered.clear();
-                    }
-                    state.filtered.insert(
-                        debug_run.to_owned(),
-                        Filtered {
-                            published: published.clone(),
-                            runs: runs.clone(),
-                            document: document.clone(),
-                        },
-                    );
-                    document
-                }
-            }
-        };
-        Ok((published, document))
-    }
-
     pub fn messages(&self, uid: &str, query: &MessageQuery) -> Result<Value, SessionError> {
         validate_message_query(query)?;
         self.snapshot(uid, &query.agent)?.messages(query)
@@ -878,25 +760,16 @@ impl SessionStore {
 
     /// Freeze the candidate list for one search. Run on the blocking reader.
     pub fn search_pool(&self) -> Result<SearchPool, SessionError> {
-        self.search_pool_view("")
-    }
-
-    /// `search_pool` for one debug-run view: only the rows that view lists
-    /// are candidates (the results and `total_pool` alike).
-    pub fn search_pool_view(&self, debug_run: &str) -> Result<SearchPool, SessionError> {
         let published = self.publish(false)?;
-        let runs = self.debug_runs();
         if let Some(cached) = &self.list_state()?.search_rows
             && Arc::ptr_eq(&cached.published, &published)
-            && (Arc::ptr_eq(&cached.runs, &runs) || (cached.runs.is_empty() && runs.is_empty()))
-            && cached.run_id == debug_run
         {
             return Ok(SearchPool {
                 rows: cached.rows.clone(),
                 published,
             });
         }
-        let rows = runs.filter_rows(published.rows().to_vec(), debug_run);
+        let rows = published.rows().to_vec();
         let mut document = json!({"sessions": rows});
         strip_row_warnings(&mut document);
         let Value::Array(rows) = document["sessions"].take() else {
@@ -905,8 +778,6 @@ impl SessionStore {
         let rows = Arc::new(rows);
         self.list_state()?.search_rows = Some(SearchRows {
             published: published.clone(),
-            runs,
-            run_id: debug_run.to_owned(),
             rows: rows.clone(),
         });
         Ok(SearchPool { rows, published })

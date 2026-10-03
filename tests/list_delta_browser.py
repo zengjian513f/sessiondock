@@ -164,7 +164,8 @@ def main():
                 assert len(unknown['sessions']) == count and 'list_delta' not in unknown
                 scoped = context.request.get(base + '/api/sessions?debug_run=unknown',
                     headers={'X-SessionDock-List': unknown['list_version']}).json()
-                assert scoped['sessions'] == [] and 'list_delta' not in scoped
+                assert len(scoped['sessions']) == count and 'list_delta' not in scoped
+                assert scoped['sig'] == unknown['sig']
                 if hub_mode:
                     upstream = [(size, data) for path, size, data in tap.reads if path == '/api/sessions' and 'list_delta' in data]
                     assert upstream and min(size for size, _ in upstream) < initial / 100, upstream[-1:]
@@ -172,7 +173,7 @@ def main():
                     page.evaluate('pollSessions()')
                     assert page.evaluate('S.sessions.length') == count
                 print(f'PASS {"hub" if hub_mode else "node"}: {count} rows, full={initial} B, one-row delta={max(changes)} B; '
-                    'delete/reorder, unchanged terminal, missing revision and debug scope', flush=True)
+                    'delete/reorder, unchanged terminal, missing revision and ignored obsolete query', flush=True)
                 # New build freezes background HTTP/SSE, while draft saves remain possible.
                 page.route('**/api/meta', lambda route: route.fulfill(json={'build':'new-fixture-build'}))
                 page.evaluate('checkServerBuild()')

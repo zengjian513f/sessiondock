@@ -52,6 +52,15 @@ the destination's authenticated node listener. Browser forwarding of
 `POST /api/process-links` is refused. Node Status needs only the local read API;
 it neither holds fleet credentials nor duplicates the connection matcher.
 
+The Hub still polls every two seconds. It skips an empty publication, and skips
+an unchanged publication only after a successful send and a current destination
+report confirming every process's initiator and launch chain. Observation time
+alone is not a change. A new process, boot or launch-chain hop triggers a publish;
+a failed read/send drops that round's send cache, so the next healthy round
+retries. The cache is memory-only and a Hub restart starts it empty. Inherited
+bindings alone never suppress the first publication of a child's own durable
+link. Publications are additive; an empty publication never revoked saved links.
+
 The Linux adapter reads the monitored user's processes, selected identity variables,
 SSH connection variables and socket descriptors. It excludes detected SSH master
 connections, ambiguous matches and receiver processes predating a new connection
@@ -114,6 +123,10 @@ counts describe occupancy, not equal performance across models.
 uses private synthetic process trees, two isolated nodes, a real Hub and Chromium.
 It exercises remote CLI nesting, a plain remote Python process, creation-order
 checks, browser write rejection, restart recovery and process identity reuse.
+Counted private node proxies also check unchanged polls produce no publications,
+read failure recovers by republishing, and a new descendant's failed publication
+retries and survives detachment/restart. Run again with `--with-agent` to exercise
+the independent collector path and browser resource panels.
 The Node Status resolver has a separate consumer regression for start-time checks.
 
 Related contracts: [liveness](liveness.md#spawned_by),
@@ -154,6 +167,15 @@ SSH links), encoded as `{ "op": "report" }` or `{ "op": "catalog", "data": ... }
 Responses are `{ "ok": true, "result": ... }` or an explicit error. SessionDock
 refreshes its catalog in the background, while the service retains confirmed
 process bindings through application outages and service restarts within a boot.
+The node reuses the catalog's session rows when initializing remote parents,
+avoiding a second native list read in that request. The collector compares each
+catalog with its current catalog and reuses attribution when unchanged; a changed
+catalog immediately recomputes attribution against the current process snapshot.
+Catalog delivery still occurs on every existing refresh, including after collector
+restart. Resource sampling remains every two seconds, background catalog refresh
+every five seconds and independent local parent discovery every ten seconds.
+Resource responses aggregate sessions once, after applying current probe
+availability. None of these reuse decisions cache CPU or I/O measurements.
 Catalog and link identities are local-node/boot/process scoped. A missing remote
 collector creates a gap in visibility, never a zero-resource observation or an
 SSH failure. Legacy nodes can still provide polling attribution.
