@@ -8,6 +8,21 @@ use std::{
     path::{Path, PathBuf},
 };
 
+// Claude's background-task output is process scratch data, not a transcript
+// dependency. Keep historical pointers as text even after the task log expires.
+fn claude_task_output(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| ext == "output")
+        && path
+            .parent()
+            .is_some_and(|dir| dir.file_name().is_some_and(|name| name == "tasks"))
+        && path.components().any(|part| {
+            part.as_os_str().to_str().is_some_and(|name| {
+                name.strip_prefix("claude-")
+                    .is_some_and(|uid| !uid.is_empty() && uid.bytes().all(|b| b.is_ascii_digit()))
+            })
+        })
+}
+
 fn image(value: &Value, paths: &mut BTreeSet<String>) {
     let typed = matches!(
         value["type"].as_str(),
@@ -175,12 +190,13 @@ pub(super) fn collect(
             if crate::transfer::environment::workspace_upload(&path) {
                 continue;
             }
+            if member.source == "claude" && claude_task_output(&path) {
+                continue;
+            }
             let bundled_directory = owned_directories.iter().any(|root| path.starts_with(root))
                 && bundled.iter().any(|file| file.starts_with(&path));
             if !bundled.contains(&path) && !bundled_directory {
                 dependencies.entry(cwd.clone()).or_default().insert(path);
             }
         }
-    }
-    Ok(dependencies)
-}
+   
