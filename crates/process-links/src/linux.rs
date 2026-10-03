@@ -37,11 +37,11 @@ pub struct Snapshot {
 /// Identities the nearest owned ancestor (inclusive) inherited from its own
 /// launcher. Below that owner they name the launcher, so they must not win
 /// over the nearer owner; identities the owner's CLI set itself still count.
-pub fn launcher_identities<'a>(
-    snapshot: &'a Snapshot,
+pub fn launcher_identities(
+    snapshot: &Snapshot,
     pid: u32,
     owned: impl Fn(&Entry) -> bool,
-) -> &'a [(String, String)] {
+) -> &[(String, String)] {
     let mut current = pid;
     let mut seen = BTreeSet::new();
     while current > 1 && seen.insert(current) {
