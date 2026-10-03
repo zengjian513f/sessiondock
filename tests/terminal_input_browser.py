@@ -4,8 +4,8 @@
 One isolated ptyhost runs a fixed free shell with synthetic native metadata.
 Desktop: ptyhost wheel input stays in xterm and subsequent keystrokes use
 the WebSocket; the shell reply renders in the same xterm. Mobile 390px: the on-screen key bar sends
-named keys over HTTP. After the shell exits, the rendered tail stays, the key
-bar issues no request for the vanished instance and nothing reclaims it (HTTP
+named keys over HTTP. After the shell exits, its final output arrives and the
+pane closes; no input or reclaim reaches the vanished instance (HTTP
 403/409/410 refusals are covered by the Rust `terminal_input` suite). The
 reliable-send composer stays hidden. Console file paste: ignored with a hint
 while the 设置 › 功能 switch is off; enabled, a clipboard image and a two-file
@@ -343,14 +343,23 @@ def main():
                 assert all(body["uid"] == uid and body["instance_id"] == instance for body in sends), sends
                 assert not dialogs, dialogs
 
-                # ---- After exit: the rendered tail stays, the key bar cannot type
-                # into a vanished instance, and nothing reclaims or relaunches.
+                # A complete AI-console exit disposes the view. Observe the
+                # final bytes before sending quit, instead of racing that
+                # disposal with a poll of an already-removed xterm buffer.
                 claims = []
                 context.on("request", lambda request: claims.append(request.url)
                            if urlsplit(request.url).path == "/api/term/claim" else None)
+                page.evaluate("""() => {
+                    window.inputExitText = '';
+                    const decoder = new TextDecoder();
+                    T.ws.addEventListener('message', event => {
+                        if (event.data instanceof ArrayBuffer)
+                            inputExitText += decoder.decode(event.data, {stream:true});
+                    });
+                }""")
                 keyboard.press_sequentially("quit")
                 keyboard.press("Enter")
-                xterm_contains(page, "RS_SHELL_DONE")
+                page.wait_for_function("inputExitText.includes('RS_SHELL_DONE')")
                 page.wait_for_function("uid => T.ended.has(uid) && T.views.size === 0", arg=uid, timeout=10000)
                 for _ in range(100):
                     if process.poll() is not None:
