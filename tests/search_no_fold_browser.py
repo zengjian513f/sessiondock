@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Search exposes only matching descendants and subagents through saved folds."""
+"""Search starts expanded and supports folds isolated from saved list folds."""
 import argparse
 import json
 import os
@@ -64,8 +64,8 @@ def main():
                 launch['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
             browser = pw.chromium.launch(**launch)
             try:
-                for view in ('date', 'tree'):
-                    context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
+                for view, width in [('date', 1280), ('tree', 1280), ('date', 390), ('tree', 390)]:
+                    context = browser.new_context(viewport={'width': width, 'height': 900}, service_workers='block')
                     context.route('**/api/sessions?**', lambda route: route.fulfill(json=sessions))
                     context.route('**/api/sessions', lambda route: route.fulfill(json=sessions))
                     def messages(route):
@@ -102,6 +102,18 @@ def main():
                     group.locator('.ghead').click()
                     expect(parent).to_have_count(0)
                     saved = page.evaluate('JSON.stringify([[...S.closed], [...S.nestClosed]])')
+                    stored = page.evaluate('JSON.stringify([localStorage.getItem("sessiondock.closed"), localStorage.getItem("sessiondock.nestClosed")])')
+
+                    # Flat mode also folds matching sidecars under a matched owner.
+                    page.locator('#nest-toggle').click()
+                    page.locator('#q').fill('Synthetic')
+                    expect(parent).to_be_visible()
+                    expect(worker).to_be_visible()
+                    parent.locator('.nest-caret').click()
+                    expect(worker).to_have_count(0)
+                    parent.locator('.nest-caret').click()
+                    expect(worker).to_be_visible()
+                    page.locator('#nest-toggle').click()
 
                     # Typing filters titles and must already expose saved folds.
                     page.locator('#q').fill('"Synthetic worker"')
@@ -111,7 +123,13 @@ def main():
                     expect(only).to_have_count(0)
                     expect(child).to_have_count(0)
                     expect(page.locator('#side .group.closed')).to_have_count(0)
-                    expect(page.locator('#side .nest-caret')).to_have_count(0)
+                    expect(parent.locator('.nest-caret')).to_have_attribute('aria-expanded', 'true')
+                    parent.locator('.nest-caret').click()
+                    expect(worker).to_have_count(0)
+                    parent.locator('.nest-caret').click()
+                    expect(worker).to_be_visible()
+                    group.locator('.ghead').click()
+                    expect(parent).to_have_count(0)
                     group.locator('.ghead').click()
                     expect(parent).to_be_visible()
 
@@ -130,14 +148,41 @@ def main():
                     expect(only).to_have_count(0)
                     expect(missed).to_have_count(0)
                     expect(grand).to_have_count(0)
-                    expect(page.locator('#side .nest-caret')).to_have_count(0)
-                    expect(group.locator('.caret')).to_be_hidden()
+                    expect(parent.locator('.nest-caret')).to_have_attribute('aria-expanded', 'true')
+                    expect(group.locator('.caret')).to_be_visible()
+                    parent.locator('.nest-caret').click()
+                    expect(child).to_have_count(0)
+                    expect(worker).to_have_count(0)
+                    # Polling and rerendering preserve this search's folds.
+                    sessions['sig'] += '-fold-refresh'
+                    page.evaluate('async () => await runSessionPoll()')
+                    expect(child).to_have_count(0)
+                    expect(parent.locator('.nest-caret')).to_have_attribute('aria-expanded', 'false')
                     group.locator('.ghead').click()
+                    expect(parent).to_have_count(0)
+                    page.evaluate('renderSide()')
+                    expect(parent).to_have_count(0)
+                    group.locator('.ghead').click()
+                    expect(parent).to_be_visible()
+                    expect(child).to_have_count(0)
+                    parent.locator('.nest-caret').click()
                     expect(child).to_be_visible()
                     child.click()
                     expect(page.locator('#msgs')).to_contain_text('Needle from another provider')
+                    if width == 390:
+                        page.locator('.mobile-back').click()
                     worker.click()
                     expect(page.locator('#msgs')).to_contain_text('Needle worker body')
+                    if width == 390:
+                        page.locator('.mobile-back').click()
+                    # Browser history reveals a target hidden by search folds.
+                    parent.locator('.nest-caret').click()
+                    group.locator('.ghead').click()
+                    page.go_back()
+                    expect(page.locator('#msgs')).to_contain_text('Needle from another provider')
+                    if width == 390:
+                        page.locator('.mobile-back').click()
+                    expect(child).to_be_visible()
                     # A changed sessions response must not replace the matched
                     # sidecar subset with the full metadata list.
                     sessions['sig'] += '-refresh'
@@ -154,6 +199,16 @@ def main():
                         page.locator('#q').press('Enter')
                         page.wait_for_function("old => (document.querySelector('#stat').dataset.seq || '') !== old", arg=old)
 
+                    # A new Enter run of the same query also starts expanded.
+                    parent.locator('.nest-caret').click()
+                    group.locator('.ghead').click()
+                    old = page.locator('#stat').get_attribute('data-seq') or ''
+                    page.locator('#q').press('Enter')
+                    page.wait_for_function("old => (document.querySelector('#stat').dataset.seq || '') !== old", arg=old)
+                    expect(child).to_be_visible()
+                    expect(worker).to_be_visible()
+                    parent.locator('.nest-caret').click()
+                    group.locator('.ghead').click()
                     search('SidecarOnly')
                     expect(parent).to_be_visible()
                     expect(parent.locator('.snip')).to_have_count(0)
@@ -178,6 +233,8 @@ def main():
                     expect(child).to_have_count(0)
                     only.click()
                     expect(page.locator('#msgs')).to_contain_text('SidecarOnly body')
+                    if width == 390:
+                        page.locator('.mobile-back').click()
                     search('Needle SidecarOnly')
                     expect(page.locator('#side .item')).to_have_count(0)
                     search('CodexWorkerOnly')
@@ -191,6 +248,8 @@ def main():
                     expect(page.locator('#side .item')).to_have_count(3)
                     codex_worker.click()
                     expect(page.locator('#msgs')).to_contain_text('CodexWorkerOnly body')
+                    if width == 390:
+                        page.locator('.mobile-back').click()
                     search('IndependentOnly')
                     expect(grand).to_be_visible()
                     expect(parent).to_be_visible()
@@ -201,6 +260,8 @@ def main():
                     expect(page.locator('#side .item.agent')).to_have_count(0)
                     grand.click()
                     expect(page.locator('#msgs')).to_contain_text('IndependentOnly child')
+                    if width == 390:
+                        page.locator('.mobile-back').click()
                     # Flat mode keeps only independently matched sessions too.
                     page.locator('#nest-toggle').click()
                     expect(grand).to_be_visible()
@@ -221,6 +282,8 @@ def main():
                     expect(only).to_have_count(0)
                     other.click()
                     expect(page.locator('#msgs')).to_contain_text('FreshSidecar body')
+                    if width == 390:
+                        page.locator('.mobile-back').click()
                     # A sidecar read failure is reported, never silently treated
                     # as a complete search with no matches.
                     (agent_dir / 'agent-other.jsonl').write_bytes(encoded({
@@ -230,6 +293,8 @@ def main():
                     expect(page.locator('#stat')).to_contain_text('结果不完整')
                     (agent_dir / 'agent-other.jsonl').write_bytes(encoded(claude_row('search-main', 'user',
                         'restored', None, 'Other worker', isSidechain=True, agentId='other')))
+                    assert page.evaluate('JSON.stringify([[...S.closed], [...S.nestClosed]])') == saved
+                    assert page.evaluate('JSON.stringify([localStorage.getItem("sessiondock.closed"), localStorage.getItem("sessiondock.nestClosed")])') == stored
                     page.locator('#side-search-exit').click()
                     expect(group).to_have_class('group closed')
                     expect(parent).to_have_count(0)
@@ -246,7 +311,7 @@ def main():
                     expect(grand).to_be_visible()
                     assert not errors, errors
                     context.close()
-                    print(f'PASS search no folding: {view}; only matched sidecars/independent children, AND isolation, refresh, clicks, flat mode, exit restores folds', flush=True)
+                    print(f'PASS isolated search folds: {view} at {width}px; only matched sidecars/independent children, AND isolation, refresh, clicks, flat mode, exit restores folds', flush=True)
             finally:
                 browser.close()
 

@@ -915,8 +915,6 @@ body.dragging #drag { will-change: transform; }
 .caret { transition: transform .12s; font-size: 10px; color: var(--muted); }
 .group.closed .caret { transform: rotate(-90deg); }
 .group.closed .glist { display: none; }
-#side.search-mode .ghead { cursor: default; }
-#side.search-mode .ghead > .caret { visibility: hidden; }
 
 .item {
   position: relative;
