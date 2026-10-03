@@ -199,4 +199,6 @@ pub(super) fn collect(
                 dependencies.entry(cwd.clone()).or_default().insert(path);
             }
         }
-   
+    }
+    Ok(dependencies)
+}
