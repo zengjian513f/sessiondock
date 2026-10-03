@@ -106,7 +106,8 @@ def parse_queries(raw):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rust", default="http://127.0.0.1:8741")
-    parser.add_argument("--python", default="http://127.0.0.1:8710")
+    parser.add_argument("--python", required=True,
+                        help="explicit URL of a separately started comparison service")
     parser.add_argument("--limit-s", type=float, default=10.0)
     parser.add_argument("--rounds", type=int, default=2)
     parser.add_argument("--queries", action="append", default=[])

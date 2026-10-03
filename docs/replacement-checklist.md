@@ -1,73 +1,39 @@
-# 单机切流清单：Python 节点 → Rust
+# 替换完成后的运行与回退清单
 
-本清单用于已授权的 SessionDock 切流。以当前二进制、`/api/meta` 和
-[capabilities.md](capabilities.md) 为准，不沿用早期迁移批次的禁用清单。
+生产替换已完成，旧 Python 项目与部署已退休。当前服务与能力以
+`/api/meta`、[capabilities.md](capabilities.md) 和 [environment.md](environment.md)
+为准。日常发布不恢复旧源码、服务、端口或代理入口。
 
-## 1. 前置条件
+## 1. 发布前
 
-1. 按 [runbook-dev.md](runbook-dev.md#1-build) 构建 `sessiondock`、`ptyhost`；使用 Hub
-   时同时构建 `sessiondock-hub`。Windows 实机必须遵循
-   [原生构建与滚动部署流程](deploy-windows.md)，不得在 OpenSSH 会话中调用 rustup shim。
-2. 显式配置原生读取根、loopback bind、ptyhost/launcher 和需要持久化的服务目录。
-   配置路径可以按 Python 部署的实际布局重叠；cwd 不是文件访问授权。
-3. 运行 `sessiondock --check-config`，核对普通监听、节点监听、Hub、终端、
-   lifecycle、metadata、trash、audit 与 bug-report 的有效配置；SEND 的服务依赖
-   见 [conversation.md](conversation.md)。旧 delivery 账本不再派发。
-4. 文件读取始终可用；文件写入随终端操作能力开启。正常附件上传走文件 API，不需要
-   单独的迁移 stub 或 Rust 专属容量规则。
-5. Metadata 使用 Python 兼容的每次重载语义。缺失、损坏或未知 schema 按空数据处理；
-   不要求空目录、0700、独占锁或离线导入后才能启动。
+1. 按 [deployment.md](deployment.md) 核对舰队清单、工具链和测试环境。
+2. 原生 CLI 根与 SessionDock 的 state、host、lifecycle、audit、trash 等目录
+   保持当前配置；普通读取不修改原生历史。
+3. 用临时 fixture 和回环监听验证改动，页面行为必须经过 Chromium 的真实操作。
+4. 可选 Python 差分只能使用显式提供的备份源码（`--python-source PATH` 或
+   `SESSIONDOCK_PYTHON_SOURCE`），不自动搜索邻接项目，不依赖旧生产服务。
 
-Python 与 Rust 的变量名称不同，Rust 配置表见 [environment.md](environment.md)。普通读取
-不修改原生 CLI 历史；ptyhost 子进程可以在核对协议和实例元数据后由两端观察。
+## 2. 发布与验收
 
-## 2. 仍未迁移或有意不同
+1. 使用 `python3 deploy/deploy.py deploy --all` 构建、验证、发布、重启并健康检查。
+2. 保留 SessionDock 的状态、原生历史和所有现存 ptyhost；只重启 Web 服务。
+3. 通过 `python3 deploy/fleet_status.py` 核对可达节点的版本、运行状态与部署标记。
+4. 反向代理继续使用认证后的 `/sessiondock/`，不恢复退休入口。
+5. 功能验收与套件选择见 [validation.md](validation.md)。
 
-- 普通 SessionDock 监听仍为 loopback，由反向代理提供公开认证和 TLS。
-- Hub 使用独立 `sessiondock-hub`；节点注册仍限允许网络内的字面 IP，支持 HTTP 和
-  系统证书验证的 HTTPS/WSS。见 [hub.md](hub.md)。
-- 普通读取不改写原生历史。用户确认的整组复制、移动与回收站按各自合同发布、移动
-  或清理原生文件；克隆保护源组并只改目标必需字节。SessionDock 自己的 metadata、
-  conversation、lifecycle、trash、audit 和 bug-report 数据按各自格式持久化。
-- 搜索已使用 Python 兼容正则，包括 lookaround 和 backreference。未知 source 是空筛选；
-  flags 仅在值等于 `1` 时启用。没有 Rust 专属查询、编译或结果总量拒绝。
-- 外部与受管实例都支持发现、确认、stop、force takeover 和随后 resume。真实执行仍以
-  当前实例身份和 ptyhost 确认为准。
-- 未配置其必需后端的独立功能可以返回 501；conversation SEND、终端输入、附件、
-  文件、trash、stop 和 takeover 已有实现。旧发送 retry/discard 路由已退休。
+## 3. 回退
 
-## 3. 影子比对步骤
+1. 使用部署工具的 `rollback` 恢复先前 SessionDock 的 bin/web，再重启 Web 服务。
+2. 确认 `/api/meta`、原生会话与同一批 ptyhost 可用；不恢复旧 Python 入口。
+3. 保留现行配置与持久数据，不手工改写 conversation/lifecycle 状态。
+4. 发布备份、自动回退和健康检查的合同见 [deployment.md](deployment.md)。
 
-1. 对操作者授权的原生只读根分别运行 Python 与 Rust。
-2. 比较 `/api/sessions`、消息分页、搜索、媒体、终端列表和 metadata 行为；随机 token
-   只比较其指向的内容，不比较字面值。
-3. 使用 [validation.md](validation.md) 中的 parity 套件记录差异。差异必须能由当前
-   Python 源码或真实协议边界解释。
-4. 对 HTTP 输入补测 Unicode/falsy 标识、未知字段、长文本、正则、附件、外部实例和
-   Hub HTTPS 路径，确认没有旧 Rust-only 拒绝。
+## 4. 退休清理的范围
 
-## 4. 切流步骤
+删除旧源码 checkout、旧 Web/tmux 服务与重启/兼容清理脚本，移除旧代理路由，
+将现行链接和运维指令改为 SessionDock。共用的 ptyhost 和原生 CLI 数据独立于
+旧 Web 部署，不能随旧服务清理。运行中的会话工作目录按用户选择单独处理。
 
-1. 影子比对通过并保存结果。
-2. 记录在途发送与创建操作，避免两个入口为同一请求重复入队。
-3. 启动 Rust 服务并核对 `/api/meta`、`/api/nodes` 与页面 capabilities。
-4. 验证已有外部/受管会话可发现，force takeover 会撤销旧页面，stop 会等待真实确认，
-   resume 会绑定新的实例。
-5. 验证文件读取、写入、普通附件上传以及 metadata 外部修改重载。
-6. 仅在用户已授权本次切流时修改反向代理入口；日常发布遵循 AGENTS 的既有授权，
-   不把发布工具或文档维护误作新的切流审批。
-
-## 5. 回退步骤
-
-1. SIGINT/SIGTERM 停止 Web 服务；不要杀独立 ptyhost 子进程。
-2. 恢复 Python 入口并核对原会话仍可观察。
-3. 保留 SessionDock 自己的持久数据及旧迁移证据，避免手工编辑 conversation/lifecycle
-   状态造成重复动作；旧 delivery 账本不恢复派发。
-4. 核对 Host/Origin、节点凭据和 Hub 路由后再恢复流量。
-
-## 6. 每一步的验收命令
-
-完整命令和并发构建规则见 [validation.md](validation.md)。常用入口包括
-`tests/check_docs_links.py`、`tests/route_ledger.py`、各 `*_parity.py`、HTTP/terminal/
-lifecycle/Hub 浏览器套件和 `sessiondock --check-config`。生产路径只在明确授权的影子或
-切流步骤中使用。
+全局引用审计仅检查源码、文档、脚本和服务/代理配置，排除数据、原生会话、日志、
+缓存、备份及凭据。登记证据与历史摘录保留原文；数据库历史列名不是旧服务依赖，
+不能为了消除字符串而改写数据库或破坏已登记的会话关系。
