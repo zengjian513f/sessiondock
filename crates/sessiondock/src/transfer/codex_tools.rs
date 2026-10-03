@@ -53,19 +53,13 @@ pub(super) fn rewrite(row: &mut Value, map: &IdentityMap) -> Result<(), Transfer
 
 /// Native function outputs are either text or typed content items. Keep the
 /// wire envelope and non-text items intact; only parsed agent identity slots
-/// may change. Plain error/status text without identity references is opaque.
+/// may change. Plain error/status text is opaque, including quoted UUIDs.
 fn output(value: &mut Value, tool: &str, map: &IdentityMap) -> Result<(), TransferError> {
     match value {
         Value::String(text) => {
             let mut parsed = match serde_json::from_str::<Value>(text) {
                 Ok(v) => v,
-                Err(_) if !map.threads.keys().any(|id| text.contains(id)) => return Ok(()),
-                Err(_) => {
-                    return Err(TransferError::new(
-                        "move_reference_unsupported",
-                        "子代理工具文本包含无法结构化解析的会话引用",
-                    ));
-                }
+                Err(_) => return Ok(()),
             };
             rewrite_value(&mut parsed, tool, false, map)?;
             *text = serde_json::to_string(&parsed)?;
@@ -150,33 +144,9 @@ pub(super) fn audit(row: &Value, map: &IdentityMap) -> Option<String> {
             .err()
             .map(|e| e.message);
     }
-    let tool = p["call_id"].as_str().and_then(|id| map.tool_calls.get(id));
-    if tool.is_some_and(|name| {
-        matches!(
-            name.as_str(),
-            "spawn_agent" | "send_input" | "wait" | "close_agent" | "resume_agent"
-        )
-    }) {
-        return None;
-    }
-    if matches!(
-        p["type"].as_str(),
-        Some(
-            "function_call"
-                | "function_call_output"
-                | "custom_tool_call"
-                | "custom_tool_call_output"
-        )
-    ) {
-        for key in ["arguments", "input", "output"] {
-            if let Some(value) = p.get(key) {
-                let text = value.to_string();
-                if map.threads.keys().any(|id| text.contains(id)) {
-                    return Some(format!("未适配的工具 {key} 含组内身份引用"));
-                }
-            }
-        }
-    }
+    // Shell commands, MCP payloads and other tool prose may quote a UUID.
+    // Only typed native identity slots are relationships; do not reject or
+    // rewrite an unrelated tool's text because it happens to contain one.
     None
 }
 

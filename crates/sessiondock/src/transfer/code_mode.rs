@@ -1,6 +1,6 @@
-//! Conservative lexical adapter for native code-mode agent calls. Only literal
-//! identity arguments of recognized tools are rewritten; arbitrary JS is never
-//! evaluated, and unsupported computed references remain a planning blocker.
+//! Patch literal identity arguments of known agent calls. Executed code and
+//! ordinary output are historical text, not executable state to migrate.
+//! A UUID appearing elsewhere in that text is not evidence of a relationship.
 use super::{TransferError, codex::IdentityMap};
 use serde_json::Value;
 #[derive(Debug)]
@@ -81,13 +81,18 @@ fn failure() -> TransferError {
         "code-mode 中存在无法静态解析的会话引用",
     )
 }
+fn agent_tool(name: &str) -> bool {
+    matches!(
+        name.strip_prefix("multi_agent_v1__").unwrap_or(name),
+        "wait_agent" | "wait" | "send_input" | "close_agent" | "resume_agent" | "spawn_agent"
+    )
+}
 pub(super) fn script(code: &str, map: &IdentityMap) -> Result<String, TransferError> {
     if !map.threads.keys().any(|id| code.contains(id)) {
         return Ok(code.into());
     }
     let ts = tokens(code);
     let mut edits = Vec::new();
-    let mut accepted = Vec::new();
     for i in 2..ts.len().saturating_sub(2) {
         if ts[i].string
             || ts[i - 1].text != "."
@@ -97,14 +102,7 @@ pub(super) fn script(code: &str, map: &IdentityMap) -> Result<String, TransferEr
         {
             continue;
         }
-        if !matches!(
-            ts[i].text.as_str(),
-            "multi_agent_v1__wait_agent"
-                | "multi_agent_v1__send_input"
-                | "multi_agent_v1__close_agent"
-                | "multi_agent_v1__resume_agent"
-                | "multi_agent_v1__spawn_agent"
-        ) {
+        if !agent_tool(&ts[i].text) {
             continue;
         }
         let mut depth = 1i32;
@@ -125,34 +123,31 @@ pub(super) fn script(code: &str, map: &IdentityMap) -> Result<String, TransferEr
                         k += 1;
                     }
                     while k < ts.len() {
+                        if array && ts[k].text == "]" {
+                            break;
+                        }
                         if ts[k].string {
+                            if code.as_bytes()[ts[k].start] == b'`' && ts[k].text.contains("${") {
+                                return Err(failure());
+                            }
                             if let Some(new) = map.threads.get(&ts[k].text) {
                                 edits.push((ts[k].start, ts[k].end, serde_json::to_string(new)?));
-                                accepted.push((ts[k].start, ts[k].end));
+                            }
+                            let next = ts.get(k + 1).map(|t| t.text.as_str());
+                            if !matches!(next, Some("," | "]" | "}")) {
+                                return Err(failure());
                             }
                             if !array {
                                 break;
                             }
-                        } else if !array || matches!(ts[k].text.as_str(), "]" | "}") {
-                            break;
+                        } else if !array || ts[k].text != "," {
+                            return Err(failure());
                         }
                         k += 1;
                     }
-                } else if matches!(key.as_str(), "message" | "prompt") && ts[j + 2].string {
-                    accepted.push((ts[j + 2].start, ts[j + 2].end));
                 }
             }
             j += 1;
-        }
-    }
-    for id in map.threads.keys() {
-        for (start, _) in code.match_indices(id) {
-            if !accepted
-                .iter()
-                .any(|(a, b)| start >= *a && start + id.len() <= *b)
-            {
-                return Err(failure());
-            }
         }
     }
     edits.sort_by_key(|(s, _, _)| *s);
@@ -197,9 +192,11 @@ pub(super) fn output(value: &mut Value, map: &IdentityMap) -> Result<(), Transfe
             if !map.threads.keys().any(|id| text.contains(id)) {
                 return Ok(());
             }
-            let mut v: Value = serde_json::from_str(text).map_err(|_| failure())?;
+            let Ok(mut v) = serde_json::from_str::<Value>(text) else {
+                return Ok(());
+            };
             if !result(&mut v, map)? {
-                return Err(failure());
+                return Ok(());
             }
             *text = serde_json::to_string(&v)?;
         }
@@ -246,13 +243,7 @@ pub(super) fn references(code: &str) -> Vec<String> {
         {
             continue;
         }
-        if !matches!(
-            ts[i].text.as_str(),
-            "multi_agent_v1__wait_agent"
-                | "multi_agent_v1__send_input"
-                | "multi_agent_v1__close_agent"
-                | "multi_agent_v1__resume_agent"
-        ) {
+        if !agent_tool(&ts[i].text) {
             continue;
         }
         let mut depth = 1i32;
@@ -335,13 +326,6 @@ pub(super) fn agent_call(code: &str) -> bool {
             && ts[i - 1].text == "."
             && ts[i - 2].text == "tools"
             && ts[i + 1].text == "("
-            && matches!(
-                ts[i].text.as_str(),
-                "multi_agent_v1__wait_agent"
-                    | "multi_agent_v1__send_input"
-                    | "multi_agent_v1__close_agent"
-                    | "multi_agent_v1__resume_agent"
-                    | "multi_agent_v1__spawn_agent"
-            )
+            && agent_tool(&ts[i].text)
     })
 }
