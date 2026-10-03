@@ -40,7 +40,9 @@ def fixture(root):
     (output.parent/'result-link.txt').symlink_to(output)
     with main[2].open('ab') as stream:
         stream.write(encoded(claude_row(ident(2),'assistant',ident(150),ident(122),[{'type':'tool_use','id':'toolu_fixture','name':'Bash','input':{'command':'synthetic'}}],cwd=str(root/'cwd'))))
-        stream.write(encoded(claude_row(ident(2),'user',ident(151),ident(150),[{'type':'tool_result','tool_use_id':'toolu_fixture','content':'<persisted-output>\nFull output saved to: '+str(output)+'\n</persisted-output>'}],toolUseResult={'outputFile':str(output)},cwd=str(root/'cwd'))))
+        # Expired native background-task logs must not block a cross-node copy.
+        task_log=Path(tempfile.gettempdir())/'claude-1234'/'workspace'/ident(2)/'tasks'/'bexpired.output'
+        stream.write(encoded(claude_row(ident(2),'user',ident(151),ident(150),[{'type':'tool_result','tool_use_id':'toolu_fixture','content':'<persisted-output>\nFull output saved to: '+str(output)+'\n</persisted-output>'}],toolUseResult={'outputFile':str(output),'output_file':str(task_log)},cwd=str(root/'cwd'))))
         stream.write(encoded(claude_row(ident(2),'assistant',ident(152),ident(151),'Branch A final',cwd=str(root/'cwd'))))
         stream.write(encoded(claude_row(ident(2),'assistant',ident(153),ident(152),[{'type':'tool_use','id':'toolu_resume','name':'SendMessage','input':{'to':agent,'message':'Review literal '+agent}}],cwd=str(root/'cwd'))))
         resumed={'success':True,'message':'Resuming agent '+agent[:7],'resumedAgentId':agent,'pin':{'id':agent,'name':agent,'ref':'opaque'}}
