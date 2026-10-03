@@ -447,7 +447,7 @@ test('console output: plain chunks go straight to xterm, a DEC 2026 frame is wri
     setTimeout: (callback, ms) => { timers.push({callback, ms}); return timers.length; },
     clearTimeout: id => { if (timers[id - 1]) timers[id - 1].cleared = true; },
   });
-  for (const name of ['TERM_SYNC_HOLD_MAX', 'TERM_SYNC_HOLD_MS', 'stripOscColorSets', 'terminalColorChunk',
+  for (const name of ['TERM_SYNC_HOLD_MAX', 'TERM_SYNC_HOLD_MS', 'TERM_SYNC_SETTLE_MS', 'stripOscColorSets', 'terminalColorChunk',
     'termSyncFrameOpen', 'writeParsedTermOutput', 'flushTermSyncHold', 'dropTermSyncHold',
     'writeTermOutput']) {
     load(context, name, term);
@@ -473,19 +473,27 @@ test('console output: plain chunks go straight to xterm, a DEC 2026 frame is wri
   same(v.writes, []);
   assert.equal(timers.length, 1);
   writeTermOutput(v, ' tail' + L + 'after');
+  same(v.writes, []);
+  timers.at(-1).callback();
   same(v.writes, [H + '\x1b[2K\x1b[1A\x1b[2K\x1b[0Gredrawn tail' + L + 'after']);
   assert.equal(timers[0].cleared, true);
   writeTermOutput(v, 'x');
   same(v.writes.slice(1), ['x']);
 
-  // A complete frame inside one packet is not held; a packet that closes one
-  // frame and opens the next is held from that point.
+  // Complete marker pairs also wait for ConPTY's late cursor restore. A new
+  // open frame cancels the quiet timer but never extends the total deadline.
   v = view();
   writeTermOutput(v, H + 'whole' + L);
-  same(v.writes, [H + 'whole' + L]);
+  same(v.writes, []);
+  const quiet = timers.at(-1);
+  writeTermOutput(v, '\x1b[11;3H');
+  assert.equal(quiet.cleared, true);
+  timers.at(-1).callback();
+  same(v.writes, [H + 'whole' + L + '\x1b[11;3H']);
   writeTermOutput(v, H + 'first' + L + H + 'second');
   same(v.writes.slice(1), []);
   writeTermOutput(v, L);
+  timers.at(-1).callback();
   same(v.writes.slice(1), [H + 'first' + L + H + 'second' + L]);
 
   // ?2026h split across packets is completed by terminalColorChunk's tail
@@ -496,6 +504,7 @@ test('console output: plain chunks go straight to xterm, a DEC 2026 frame is wri
   writeTermOutput(v, '26h\x1b[2Kq');
   same(v.writes, ['p']);
   writeTermOutput(v, L);
+  timers.at(-1).callback();
   same(v.writes, ['p', H + '\x1b[2Kq' + L]);
 
   // Fallback: the hold timer or the size cap flushes an unterminated frame.
