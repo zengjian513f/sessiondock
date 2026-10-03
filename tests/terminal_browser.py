@@ -17,6 +17,7 @@ import time
 import uuid
 from urllib.request import urlopen
 
+from frontend_paths import frontend_dir
 from playwright.sync_api import expect, sync_playwright
 
 
@@ -141,7 +142,7 @@ def main():
                 port = reservation.getsockname()[1]
             base = f"http://127.0.0.1:{port}"
             server_environment = {**environment, "SESSIONDOCK_BIND": f"127.0.0.1:{port}",
-                "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web"), "SESSIONDOCK_PTYHOST_DIR": str(host_dir)}
+                "SESSIONDOCK_WEB_DIR": str(frontend_dir()), "SESSIONDOCK_PTYHOST_DIR": str(host_dir)}
 
             def start_web():
                 process = subprocess.Popen([str(server_exe)], cwd=work, env=server_environment,

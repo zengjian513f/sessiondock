@@ -22,6 +22,24 @@ dialog、标签及机器面板仍由 legacy 管理。后续批次及依赖见
 生产部署从与页面相同来源的 `web/` 源码快照构建到 stage 的 `web/framework/`，
 不依赖开发目录里残留的生成文件。现有 `web/` 独立演示入口暂不参与生产。
 
+完整重构使用独立的 `web/migration/index.html` 入口：
+`npm --prefix web run build:migration` 生成 `web/dist-migration/` 静态目录，
+由临时 Rust 服务的 `SESSIONDOCK_WEB_DIR` 指向该目录。`WorkspaceShell` 提供
+原页面结构，机器设置及客户端矩阵由 Vue 组件、独立状态和请求 service 管理。
+原机器 DOM 渲染与监听已退出新入口；其它尚未迁移区域暂由
+`web/src/compat/` 独占。构建复用现有 CSS、字体、vendor 和 Grid 资产。
+
+浏览器夹具通过 `SESSIONDOCK_TEST_WEB_DIR` 选择这个目录，验证运行器相应
+构建新入口；未设置时仍验证现有生产前端。第一批独立入口的设置、客户端
+更新、顶栏折叠、深链、身份复制、资源列、Hub 机器操作及原生会话/SSE/手机
+恢复共十套 Chromium
+验收通过，未运行 unit test。实际操作范围见
+[迁移行为基线](frontend-migration-surfaces.md)。
+
+按 2026-10-03 最新用户指令，本重构 goal 只提交和推送代码，不部署、不重启
+生产，也不切换生产入口或资源引用。生产保持 `2552436`；完整替换及过渡
+脚本清理仍按根目录计划继续执行。
+
 host 输出由每客户端独立有界队列隔离慢读者，退出完整性与进程身份分别验证。
 
 独立的 `LaunchTarget`/host launch guard 与同步 `lifecycle` 回执库：
