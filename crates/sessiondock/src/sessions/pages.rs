@@ -19,11 +19,11 @@ pub const DEFAULT_PAGE_EVENTS: usize = 2000;
 const MAX_IMAGES: usize = 128;
 const MAX_IMAGE_BYTES: usize = 24 * 1024 * 1024;
 const MAX_JSON_BYTES: usize = 8 * 1024 * 1024;
-// Opening a view should be cheap even when its history contains long tool output.
+// Keep more of a recent tool-heavy turn visible while bounding the opening work.
 // Explicit history pages retain their larger grouping targets.
 const WINDOW_HEAD_EVENTS: usize = 5;
-const WINDOW_TAIL_EVENTS: usize = 20;
-const WINDOW_JSON_BYTES: usize = 256 * 1024;
+const WINDOW_TAIL_EVENTS: usize = 200;
+const WINDOW_JSON_BYTES: usize = 2 * 1024 * 1024;
 /// Typed images shown inline per message; the rest continue through media pages.
 pub(super) const DISPLAY_LIMIT: usize = media_projection::DISPLAY_LIMIT;
 

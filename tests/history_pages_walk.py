@@ -72,7 +72,7 @@ def walk(opener, base, uid):
     head, tail, omitted, cursor = (partial[k] for k in ("head", "tail", "omitted", "cursor"))
     msgs = window["messages"]
     assert len(msgs) == head + tail and omitted > 0, (len(msgs), partial)
-    assert len(msgs) <= 25 and n_images(msgs) <= 128
+    assert len(msgs) <= 205 and n_images(msgs) <= 128
     restored = list(msgs[:head])
     pos, stop, first, pages = head, head + omitted, None, 0
     while cursor:
