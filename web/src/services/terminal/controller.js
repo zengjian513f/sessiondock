@@ -31,6 +31,8 @@ const TERM_CLAIM_TIMEOUT_MS = 20_000;
 // 1 s 兜底），不让一个没收尾的帧无限占住输出。
 const TERM_SYNC_HOLD_MAX = 256 * 1024;
 const TERM_SYNC_HOLD_MS = 100;
+// ConPTY can emit the sync-end marker before its final screen/cursor update.
+const TERM_SYNC_SETTLE_MS = 50;
 const TERM_LAYOUT_POLICY_VERSION = 2;
 // 每次页面加载独立生成；不写 local/sessionStorage，复制标签页也不会复制归属。
 const TERM_PAGE_ID = bridge.pageId;
@@ -1386,7 +1388,7 @@ function ensureTerm(name) {
     attachPromise: null, revoked: false,
     focusRequest: null, resumeFocus: false,
     renderer: 'dom', webgl: null, unicode11: null,
-    syncHold: null, syncHoldTimer: null,
+    syncHold: null, syncHoldTimer: null, syncSettleTimer: null,
     selectionLocked: false, selectionSnapshot: null, restoringSelection: false,
     codexSideThread: false, sideThreadScanQueued: false,
   };
@@ -1550,22 +1552,26 @@ function writeTermOutput(view, chunk) {
   // 暗色页面与默认/ANSI 16 色仍交给 termTheme。xterm 会跨 write 保留 SGR 状态。
   chunk = terminalColorChunk(view, chunk);
   if (!chunk) return;
-  // 唯一的例外：一个 ?2026h 打开、还没 ?2026l 收尾的同步帧整帧攒住再写。xterm
-  // 的绘制虽然已按 2026 合帧，但它每 parse 一个 write 就把隐藏的输入 textarea
-  // 挪到当时的光标格；Claude 的一帧常拆成几个包，中间光标在清行时来回跳，
-  // 浏览器贴在 textarea 上的原生小部件（触屏选择把手等）就跟着满屏乱闪。
-  // 按键回显不带 2026，仍然直写。
+  // BUG-20261003-110817-4e7c32: ConPTY forwards ?2026l about one refresh
+  // before the remaining cells and cursor restore. Even a complete marker
+  // pair in one packet therefore needs a short quiet window before parsing.
   if (view.syncHold !== null) {
     view.syncHold += chunk;
-  } else if (termSyncFrameOpen(chunk)) {
+  } else if (chunk.includes('\x1b[?2026h')) {
     view.syncHold = chunk;
     view.syncHoldTimer = setTimeout(() => flushTermSyncHold(view), TERM_SYNC_HOLD_MS);
   } else {
     writeParsedTermOutput(view, chunk);
     return;
   }
-  if (termSyncFrameOpen(view.syncHold) && view.syncHold.length < TERM_SYNC_HOLD_MAX) return;
-  flushTermSyncHold(view);
+  if (view.syncSettleTimer) clearTimeout(view.syncSettleTimer);
+  view.syncSettleTimer = null;
+  if (view.syncHold.length >= TERM_SYNC_HOLD_MAX) {
+    flushTermSyncHold(view);
+  } else if (!termSyncFrameOpen(view.syncHold)) {
+    view.syncSettleTimer = setTimeout(() => flushTermSyncHold(view), TERM_SYNC_SETTLE_MS);
+  }
+  // The original total deadline is never extended by tail packets/new frames.
 }
 
 // 最后一个 ?2026h 之后没有 ?2026l 就算帧还开着。
@@ -1575,7 +1581,9 @@ function termSyncFrameOpen(s) {
 
 function flushTermSyncHold(view) {
   if (view.syncHoldTimer) clearTimeout(view.syncHoldTimer);
+  if (view.syncSettleTimer) clearTimeout(view.syncSettleTimer);
   view.syncHoldTimer = null;
+  view.syncSettleTimer = null;
   const held = view.syncHold;
   view.syncHold = null;
   if (held) writeParsedTermOutput(view, held);
@@ -1665,7 +1673,9 @@ function positionTermViewport(view) {
 
 function dropTermSyncHold(view) {
   if (view.syncHoldTimer) clearTimeout(view.syncHoldTimer);
+  if (view.syncSettleTimer) clearTimeout(view.syncSettleTimer);
   view.syncHoldTimer = null;
+  view.syncSettleTimer = null;
   view.syncHold = null;
 }
 
