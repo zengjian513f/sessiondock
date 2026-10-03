@@ -14,7 +14,9 @@ python3 tests/run_validation.py --only legacy_browser
 
 `--tags` defaults to `rust,node,python`. Unit suites (Cargo, Node contracts and
 Python unittest) are opt-in via `--include-unit` or an explicit `--only NAME`;
-default sweeps and deployment gates exclude them. `--only NAME[,NAME…]` and `--skip`
+default sweeps and deployment gates exclude them. Suites compared against the
+frozen Python oracle (`*_parity.py` and any suite taking `--python-source`) are
+likewise opt-in via `--include-oracle` or an explicit `--only NAME`. `--only NAME[,NAME…]` and `--skip`
 filter by suite name. `--keep-going` continues after a failure. Per-suite logs
 go under `target/validation/<stamp>/`. Rust runs first as parallel lanes that
 share no cargo build directory (`cargo_clippy` with optional `cargo_test`;
@@ -324,8 +326,10 @@ Frontend performance regressions also run as ordinary browser suites:
    `node_contracts`.
 2. Every `tests/*.py` with `if __name__ == "__main__"` becomes a Python suite,
    except `run_validation.py`, `provider_parity.py`, and `*_benchmark.py`.
-3. `*_parity.py` gets `--python-source` from the explicit setting or the unique
-   structurally discovered sibling oracle checkout; otherwise the suite is SKIP.
+3. `*_parity.py` and suites taking `--python-source` are oracle suites, outside
+   the default plan. When selected they get `--python-source` from the explicit
+   setting or the unique structurally discovered sibling oracle checkout;
+   otherwise the suite is SKIP.
 4. If argparse text contains `--browser`, `--browser` is appended.
 5. If argparse text contains `--binary`, `--binary target/release/sessiondock`
    is appended (override with the runner's `--binary`).
