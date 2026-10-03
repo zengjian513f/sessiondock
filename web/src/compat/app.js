@@ -2048,7 +2048,7 @@ function renderSessionCounts() {
 
 function showSessionCount() {
   renderSessionCounts();
-  $('#stat').textContent = '';
+  SessionDockSearch.status.textContent = '';
 }
 
 const pendingUid = name => `tmux:${name}`;
@@ -2408,7 +2408,7 @@ async function loadSessions(force) {
   sessionLoadActive = run;
   sessionPollController?.abort();
   clearTimeout(sessionLoadRetry);
-  $('#stat').textContent = force ? ' 重新扫描…' : ' 加载中…';
+  SessionDockSearch.status.textContent = force ? ' 重新扫描…' : ' 加载中…';
   const ac = new AbortController();
   const timeout = setTimeout(() => ac.abort(), 15000);
   let d;
@@ -2419,8 +2419,8 @@ async function loadSessions(force) {
     if (!Array.isArray(d.sessions)) throw new Error('会话列表格式错误');
   } catch (e) {
     if (run !== sessionLoadRun || SessionDockNetwork.paused) return false;
-    $('#stat').textContent = ' 加载失败';
-    $('#stat').classList.add('err');
+    SessionDockSearch.status.textContent = ' 加载失败';
+    SessionDockSearch.status.classList.add('err');
     ensureSidebarVue(); SessionDockSidebar.loadFailed(() => loadSessions(false));
     sessionLoadRetry = setTimeout(() => loadSessions(false), 3000);
     return false;
@@ -2429,7 +2429,7 @@ async function loadSessions(force) {
     if (sessionLoadActive === run) sessionLoadActive = 0;
   }
   if (run !== sessionLoadRun) return false;
-  $('#stat').classList.remove('err');
+  SessionDockSearch.status.classList.remove('err');
   const seedCursors = S.cursors.size === 0;
   const wasListed = !hiddenForkParent(S.sessions.find(s => s.uid === S.sel));
   S.sig = d.sig;
@@ -3375,7 +3375,7 @@ async function toggleSessionStar(uid) {
     applySessionStar(uid, !!data.starred, data.starred_at || null);
   } catch (error) {
     applySessionStar(uid, before);
-    const stat = $('#stat');
+    const stat = SessionDockSearch.status;
     if (stat) {
       stat.textContent = ' 星标保存失败';
       stat.classList.add('err');
@@ -3397,7 +3397,7 @@ function timelinePinEnabled() {
 }
 
 function timelinePinFailed(message) {
-  const stat = $('#stat');
+  const stat = SessionDockSearch.status;
   if (!stat) return;
   stat.textContent = ` ${message}`;
   stat.classList.add('err');
@@ -3712,21 +3712,8 @@ function paintSidebarSelection(uid, agent = null) {
   refreshSidebarRows(); return true;
 }
 
-function exitSidebarSearch() {
-  cancelSearch(true);
-  showSessionCount();
-  renderSide();
-}
-
-$('#side-search-exit').onclick = exitSidebarSearch;
-
-function paintSearchMode(list) {
-  const searching = !!S.term;
-  $('#side-search-state').hidden = !searching;
-  $('#side-search-label').textContent = S.results !== null ? '搜索结果' : '筛选结果';
-  $('#side-search-query').textContent = S.term;
-  $('#side-search-count').textContent = `${sidebarMatchCount(list)} 条`;
-}
+function exitSidebarSearch() { return SessionDockSearch.exitSearch(); }
+function paintSearchMode(list) { return SessionDockSearch.paintSearchMode(list); }
 
 /** Update a row without discarding selection, focus or its existing elements. */
 var sidebarVueMounted;
@@ -3837,275 +3824,35 @@ function renderSide(suppliedList = null) {
 }
 
 
-function searchTerms(text) {
-  const terms = [], chars = Array.from(text);
-  let term = '', quoted = false;
-  for (let i = 0; i < chars.length; i++) {
-    const c = chars[i];
-    if (quoted && c === '\\' && (chars[i + 1] === '"' || chars[i + 1] === '\\')) {
-      term += chars[++i];
-    } else if (c === '"') {
-      quoted = !quoted;
-    } else if (!quoted && /[\s\u0085]/u.test(c)) {
-      if (term) { terms.push(term); term = ''; }
-    } else {
-      term += c;
-    }
-  }
-  if (term) terms.push(term);
-  return [...new Set(terms)];
-}
-
-// 与 search.rs whole_word 一致：[\p{L}\p{N}_] 邻字挡住全词，但汉字/假名/谚文
-// 与其它字母之间是边界。「无法识别的tag」能命中 tag，「猫猫」不能命中「猫」。
-function literalSource(term) {
-  const src = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  if (!S.opts.word) return src;
-  const cjk = '\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}\\p{Script=Bopomofo}';
-  // JS has no class intersection; a letter outside those scripts is the other side.
-  const nonCjkLetter = `(?:(?![${cjk}])\\p{L})`;
-  const split = `(?<=[${cjk}])(?=${nonCjkLetter})|(?<=${nonCjkLetter})(?=[${cjk}])`;
-  const before = `(?:(?<![\\p{L}\\p{N}_])|${split})`;
-  const after = `(?:(?![\\p{L}\\p{N}_])|${split})`;
-  return `${before}(?:${src})${after}`;
-}
-
-// Individual message previews and highlighting match any term, even when
-// the session-level AND is satisfied by terms in different messages.
-function reTerm(global) {
-  let src;
-  if (S.opts.regex) {
-    src = S.term;
-    if (S.opts.word) src = `(?<!\\w)(?:${src})(?!\\w)`;
-  } else {
-    const terms = searchTerms(S.term).sort((a, b) => b.length - a.length);
-    if (!terms.length) return null;
-    src = terms.map(literalSource).join('|');
-  }
-  try {
-    return new RegExp(src, (S.opts.case ? '' : 'i') + (global ? 'g' : '') + (S.opts.regex ? '' : 'u'));
-  } catch {
-    return null;   // 正则写到一半是常态, 不该炸掉整个界面
-  }
-}
-
-let regexWorker = null, regexGeneration = '', regexRequest = 0, regexPaintTimer = null;
-let regexResultRevision = 0, searchInputTimer = null;
-const regexResults = new Map(), regexPending = new Map(), regexByText = new Map();
-function resetRegexSearch() {
-  regexWorker?.terminate();
-  regexWorker = null;
-  regexGeneration = '';
-  regexResults.clear();
-  for (const job of regexPending.values()) job.resolve([]);
-  regexPending.clear();
-  regexByText.clear();
-  clearTimeout(regexPaintTimer);
-  regexPaintTimer = null;
-}
-
-function regexMatches(text) {
-  const re = reTerm(true);
-  if (!re) return Promise.resolve([]);
-  const generation = `${re.source}\0${re.flags}`;
-  if (regexGeneration !== generation) {
-    resetRegexSearch();
-    regexGeneration = generation;
-  }
-  text = String(text ?? '');
-  if (regexResults.has(text)) return Promise.resolve(regexResults.get(text));
-  if (regexByText.has(text)) return regexByText.get(text);
-  if (!regexWorker) {
-    regexWorker = new Worker(appUrl('regex-worker.js'));
-    regexWorker.onmessage = ({data}) => {
-      const job = regexPending.get(data.id);
-      if (!job) return;
-      regexPending.delete(data.id);
-      regexByText.delete(job.text);
-      data.ranges.matched = !!data.matched;
-      regexResults.set(job.text, data.ranges);
-      job.resolve(data.ranges);
-      if (regexPaintTimer === null) regexPaintTimer = setTimeout(() => {
-        regexPaintTimer = null;
-        regexResultRevision++;
-        renderSide();
-      }, 50);
-    };
-    regexWorker.onerror = () => resetRegexSearch();
-  }
-  const id = ++regexRequest;
-  let resolve;
-  const promise = new Promise(done => { resolve = done; });
-  regexPending.set(id, {text, promise, resolve});
-  regexByText.set(text, promise);
-  regexWorker.postMessage({id, text, source: re.source, flags: re.flags, limit: MARK_MAX});
-  return promise;
-}
-
-function regexCached(text) {
-  if (!reTerm(true)) return [];
-  // Starting a request also invalidates results from a changed query/options.
-  regexMatches(text);
-  return regexResults.get(String(text ?? '')) || [];
-}
-
-function matchesSearch(text) {
-  if (S.opts.regex) return hasTerm(text);
-  const terms = searchTerms(S.term);
-  const test = term => new RegExp(literalSource(term), S.opts.case ? 'u' : 'iu').test(text);
-  return S.opts.mode === 'any' ? terms.some(test) : terms.every(test);
-}
-
-function hasTerm(t) {
-  if (!S.term) return false;
-  if (S.opts.regex) return !!regexCached(t).matched;
-  const re = reTerm(false);
-  return re ? re.test(t) : false;
-}
-
-function hl(text) {
-  text = String(text);
-  if (S.term && S.opts.regex) {
-    let html = '', last = 0;
-    for (const [start, end] of regexCached(text)) {
-      html += esc(text.slice(last, start)) + `<mark>${esc(text.slice(start, end))}</mark>`;
-      last = end;
-    }
-    return html + esc(text.slice(last));
-  }
-  const re = S.term && reTerm(true);
-  if (!re) return esc(text);
-  let html = '', last = 0;
-  for (const match of text.matchAll(re)) {
-    if (!match[0]) continue;
-    html += esc(text.slice(last, match.index)) + `<mark>${esc(match[0])}</mark>`;
-    last = match.index + match[0].length;
-  }
-  return html + esc(text.slice(last));
-}
-
-// The server's 40-character context can hide the hit below the sidebar's
-// two-line clamp. Keep a short Unicode-safe lead-in; the title retains the
-// full excerpt. Apply this to both newly created and reconciled rows.
-function sidebarSnippet(text) {
-  const start = S.opts.regex ? regexCached(text)[0]?.[0] : reTerm(false)?.exec(text)?.index;
-  if (start !== undefined) {
-    const before = Array.from(text.slice(0, start));
-    if (before.length > 8) text = '…' + before.slice(-8).join('') + text.slice(start);
-  }
-  return hl(text);
-}
-
-/** 在已渲染的 DOM 里给命中词套 <mark>, 走文本节点所以不会破坏标签。 */
-function markMatches(root) {
-  if (!S.term) return 0;
-  if (S.opts.regex) { markRegexMatches(root); return 0; }
-  const re = reTerm(true);
-  if (!re) return 0;
-  const messageBox = $('#msgs');
-  const existing = messageBox && root !== messageBox && messageBox.contains(root)
-    ? messageBox.querySelectorAll('mark').length : 0;
-  const budget = Math.max(0, MARK_MAX - existing);
-  // 只高亮正文: 折叠预览是正文副本, 高亮在那里会造成重复计数。
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: n => {
-      const msg = n.parentElement.closest('.msg');
-      return n.parentElement.closest('mark, .fold-preview, .katex')
-        || !msg || !SEARCH_ROLES.has(msg.dataset.role)
-        ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  const targets = [];
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    re.lastIndex = 0;                 // 带 g 的 test 会推进 lastIndex
-    if (re.test(n.nodeValue)) targets.push(n);
-  }
-  let count = 0;
-  for (const t of targets) {
-    if (count >= budget) { S.markCapped = true; break; }   // 搜 "a" 会生成上万节点, 会卡死
-    const frag = document.createDocumentFragment();
-    let last = 0, m;
-    re.lastIndex = 0;
-    while ((m = re.exec(t.nodeValue))) {
-      if (!m[0]) { re.lastIndex += re.unicode && t.nodeValue.codePointAt(re.lastIndex) > 0xffff ? 2 : 1; continue; }
-      frag.append(t.nodeValue.slice(last, m.index));
-      const mk = document.createElement('mark');
-      mk.textContent = m[0];
-      frag.appendChild(mk);
-      last = m.index + m[0].length;
-      if (++count >= budget) { S.markCapped = true; break; }
-    }
-    frag.append(t.nodeValue.slice(last));
-    t.parentNode.replaceChild(frag, t);
-  }
-  return count;
-}
-
-async function markRegexMatches(root) {
-  for (const node of [root, ...root.querySelectorAll('.msg')]) node._applyRegexMatch?.();
-  const generation = `${S.term}\0${JSON.stringify(S.opts)}`;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: n => {
-      const msg = n.parentElement?.closest('.msg');
-      return n.parentElement?.closest('mark, .fold-preview, .katex')
-        || !msg || !SEARCH_ROLES.has(msg.dataset.role)
-        ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  const targets = [];
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) targets.push(node);
-  for (const node of targets) {
-    const text = node.nodeValue;
-    const ranges = await regexMatches(text);
-    if (generation !== `${S.term}\0${JSON.stringify(S.opts)}` || !root.isConnected) return;
-    if (!node.isConnected || node.nodeValue !== text || node.parentElement.closest('mark')) continue;
-    const budget = MARK_MAX - ($('#msgs')?.querySelectorAll('mark').length || 0);
-    if (budget <= 0) { S.markCapped = true; break; }
-    if (!ranges.length) continue;
-    const fragment = document.createDocumentFragment();
-    let last = 0;
-    for (const [start, end] of ranges.slice(0, budget)) {
-      fragment.append(text.slice(last, start));
-      const mark = document.createElement('mark');
-      mark.textContent = text.slice(start, end);
-      fragment.append(mark);
-      last = end;
-    }
-    fragment.append(text.slice(last));
-    node.replaceWith(fragment);
-  }
-  updateMatchNav();
-}
-
-function jumpMark(delta) {
-  const marks = [...document.querySelectorAll('#msgs mark')].filter(
-    m => m.checkVisibility ? m.checkVisibility({ visibilityProperty: true }) : m.offsetParent);
-  if (!marks.length) return;
-  S.cur = (S.cur + delta + marks.length) % marks.length;
-  marks.forEach(m => m.classList.remove('cur'));
-  marks[S.cur].classList.add('cur');
-  marks[S.cur].scrollIntoView({ block: 'center', behavior: 'smooth' });
-  const c = $('#mcount');
-  if (c) c.textContent = `${S.cur + 1}/${marks.length}${S.markCapped ? '+' : ''} 处匹配`;
-}
-
-function updateMatchNav({jump = false} = {}) {
-  const c = $('#mcount');
-  if (!c) return 0;
-  const hits = document.querySelectorAll('#msgs mark').length;
-  c.textContent = hits ? `${hits}${S.markCapped ? '+' : ''} 处匹配` : '本页无匹配';
-  const capped = S.markCapped || S.autoOpen >= AUTO_OPEN_MAX;
-  c.classList.toggle('capped', capped);
-  if (capped) {
-    c.title = `命中过多：只标注前 ${MARK_MAX} 处、自动展开前 ${AUTO_OPEN_MAX} 条，其余标 ● 需手动展开`;
-  } else {
-    c.removeAttribute('title');
-  }
-  $('#m-prev').onclick = () => jumpMark(-1);
-  $('#m-next').onclick = () => jumpMark(1);
-  if (jump && hits) jumpMark(1);
-  return hits;
-}
+SessionDockSearch.configure({
+  query: () => $('#q').value,
+  read: () => ({term: S.term, opts: S.opts, results: S.results, off: S.off,
+    cur: S.cur, markCapped: S.markCapped, autoOpen: S.autoOpen}),
+  write: patch => Object.assign(S, patch),
+  clearFolds: () => { S.searchClosed.clear(); S.searchNestClosed.clear(); },
+  renderSide: () => renderSide(), showSessionCount: () => showSessionCount(),
+  persistOptions: opts => store.set('opts', opts),
+  allowsSearch: () => SessionDockCapabilities.allows('search'), appUrl,
+  hub: HUB_MODE, sources: Object.keys(SOURCES), nodes: () => Nodes.list,
+  selectedNodeIds, clearNodeErrors: () => { Nodes.errors.delete('search'); renderNodes(); },
+  applyNodeState: data => applyNodeState(data, 'search'),
+  count: rows => sidebarMatchCount(rows), escape: esc,
+  showMatches: rows => showSearchMatches(rows),
+});
+function searchTerms(...args) { return SessionDockSearch.searchTerms(...args); }
+function literalSource(...args) { return SessionDockSearch.literalSource(...args); }
+function reTerm(...args) { return SessionDockSearch.reTerm(...args); }
+function resetRegexSearch(...args) { return SessionDockSearch.resetRegexSearch(...args); }
+function regexMatches(...args) { return SessionDockSearch.regexMatches(...args); }
+function regexCached(...args) { return SessionDockSearch.regexCached(...args); }
+function matchesSearch(...args) { return SessionDockSearch.matchesSearch(...args); }
+function hasTerm(...args) { return SessionDockSearch.hasTerm(...args); }
+function hl(...args) { return SessionDockSearch.hl(...args); }
+function sidebarSnippet(...args) { return SessionDockSearch.sidebarSnippet(...args); }
+function markMatches(...args) { return SessionDockSearch.markMatches(...args); }
+function markRegexMatches(...args) { return SessionDockSearch.markRegexMatches(...args); }
+function jumpMark(...args) { return SessionDockSearch.jumpMark(...args); }
+function updateMatchNav(...args) { return SessionDockSearch.updateMatchNav(...args); }
 
 // ---------------------------------------------------------------- 详情
 let inflight = null;
@@ -5130,9 +4877,7 @@ function head(m, total) {
           title="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
           aria-label="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
           aria-pressed="${!S.compactTurns}">${uiIcon('process')}</button>
-        ${S.term ? `<div class="session-menu-search"><b id="mcount">…</b>
-          <button class="session-menu-action" id="m-prev" title="上一处" aria-label="上一处匹配">↑</button>
-          <button class="session-menu-action" id="m-next" title="下一处" aria-label="下一处匹配">↓</button></div>` : ''}
+        ${S.term ? '<div class="session-menu-search" data-search-navigator></div>' : ''}
         <div class="session-menu-diagnostics">
           ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-freeze" hidden></button>'}
           <button class="session-menu-action" data-report-bug title="报告当前会话问题"
@@ -5153,6 +4898,8 @@ function head(m, total) {
     </div>`)}
       </div>
     </div>`;
+  const searchTarget = h.querySelector('[data-search-navigator]');
+  SessionDockSearch.mountNavigator(searchTarget);
   h.querySelector('.mobile-back').onclick = showMobileList;
   h.querySelector('#a-star').onclick = () => toggleSessionStar(m.uid);
   h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
@@ -6557,12 +6304,12 @@ function turnProcessNode(turn, initiallyOpen = false) {
   if (initiallyOpen || (found && S.autoOpen < AUTO_OPEN_MAX)) open();
   else fold();
   if (S.term && S.opts.regex && !found) {
-    const generation = regexGeneration;
+    const generation = SessionDockSearch.generation();
     Promise.all(items.filter(m => SEARCH_ROLES.has(m.role)).map(m => regexMatches(m.text))).then(results => {
       n._applyRegexMatch = () => {
         if (!n.isConnected) return;
         n._applyRegexMatch = null;
-        if (generation !== regexGeneration || !results.some(r => r.matched)) return;
+        if (generation !== SessionDockSearch.generation() || !results.some(r => r.matched)) return;
         if (S.autoOpen >= AUTO_OPEN_MAX) n.classList.add('hashit');
         else open();
       };
@@ -7117,12 +6864,12 @@ function msgNode(m) {
   if (long) hit ? full() : clipped();
   else paint(hit);
   if (S.term && S.opts.regex && !found && SEARCH_ROLES.has(m.role)) {
-    const generation = regexGeneration;
+    const generation = SessionDockSearch.generation();
     regexMatches(m.text).then(ranges => {
       n._applyRegexMatch = () => {
         if (!n.isConnected) return;
         n._applyRegexMatch = null;
-        if (generation !== regexGeneration || !ranges.matched) return;
+        if (generation !== SessionDockSearch.generation() || !ranges.matched) return;
         if (S.autoOpen >= AUTO_OPEN_MAX) { n.classList.add('hashit'); return; }
         S.autoOpen++;
         if (long) full();
@@ -7961,245 +7708,13 @@ const sideResourceExtra = SessionDockShell.sideResourceExtra;
 function setSideWidth(px, save) { SessionDockShell.setSideWidth(px, save); }
 function setSideCollapsed(collapsed, save = true) { SessionDockShell.setSideCollapsed(collapsed, save); }
 
-$('#q').oninput = e => {
-  cancelSearch();
-  S.term = e.target.value.trim();
-  searchInputTimer = setTimeout(() => { searchInputTimer = null; renderSide(); }, 120);
-};
-
-$('#q').onkeydown = async e => {
-  if (e.key === 'Escape') { cancelSearch(true); showSessionCount(); renderSide(); return; }
-  if (e.key !== 'Enter') return;
-  runSearch();
-};
-
-let searchSeq = 0, searchRun = 0, searchAbort = null;
-
-function cancelSearch(clearQuery = false) {
-  clearTimeout(searchInputTimer);
-  searchInputTimer = null;
-  resetRegexSearch();
-  ++searchRun;
-  searchAbort?.abort();
-  searchAbort = null;
-  searchProgressDone();
-  S.results = null;
-  S.searchClosed.clear();
-  S.searchNestClosed.clear();
-  if (clearQuery) { S.term = ''; $('#q').value = ''; }
-  $('#stat').textContent = ''; $('#stat').classList.remove('err');
-  if (HUB_MODE) { Nodes.errors.delete('search'); renderNodes(); }
-}
-
-function searchProgress(done, total, nodes = null, totalKnown = total !== null) {
-  const box = $('#search-progress');
-  const known = totalKnown && total > 0;
-  const percent = known ? Math.min(100, Math.floor(done / total * 100)) : 0;
-  box.classList.add('on');
-  box.querySelector('b').textContent = known ? `${done} / ${total} 个会话 · ${percent}%`
-    : done ? `已扫描 ${done} 个会话` : totalKnown ? '已扫描 0 个会话' : '正在读取会话数量…';
-  const track = box.querySelector('.search-progress-track');
-  track.hidden = !known;
-  if (known) track.setAttribute('aria-valuenow', String(percent));
-  else track.removeAttribute('aria-valuenow');
-  track.setAttribute('aria-valuetext', box.querySelector('b').textContent);
-  box.querySelector('i').style.width = known ? `${Math.min(100, done / total * 100)}%` : '0%';
-  const rows = box.querySelector('.search-progress-nodes');
-  if (nodes) rows.innerHTML = nodes.map(node => {
-    const count = node.total !== null ? `${node.done} / ${node.total}` : `已扫描 ${node.done}`;
-    const status = {preparing: '准备中', offline: '离线跳过', error: '搜索失败',
-      limited: `${count} · 达到结果上限`, done: `${count} · 已完成`, scanning: `${count} 个会话`}[node.state] || count;
-    return `<div class="search-progress-node" data-state="${esc(node.state)}"><span>${esc(node.name)}</span><span>${esc(status)}</span></div>`;
-  }).join('');
-}
-
-function searchProgressDone() {
-  const box = $('#search-progress');
-  box.classList.remove('on');
-  box.querySelector('i').style.width = '0%';
-  box.querySelector('.search-progress-nodes').replaceChildren();
-}
-
-$('#search-cancel').onclick = () => { cancelSearch(true); showSessionCount(); renderSide(); };
-
-function showSearchMatches(rows) {
-  const found = new Map((S.results || []).map(row => [row.uid, row]));
-  for (const row of rows) found.set(row.uid, row);
-  S.results = [...found.values()].sort((a, b) => String(b.updated).localeCompare(String(a.updated))
-    || b.uid.localeCompare(a.uid));
-  $('#stat').textContent = ` 已找到 ${sidebarMatchCount(S.results)} 个会话，继续搜索…`;
-  renderSide();
-}
-
-async function fetchSearch(params, signal) {
-  if (!SessionDockCapabilities.allows('search')) {
-    return {ok: false, data: {error: 'Rust 后端尚未实现全文搜索；当前只能筛选标题和目录。'}};
-  }
-  params.set('progress', '1');
-  const r = await fetch(appUrl('api/search?' + params), { signal });
-  if (!r.ok || !r.headers.get('Content-Type')?.includes('application/x-ndjson')) {
-    return { ok: r.ok, data: await r.json() };
-  }
-  const reader = r.body.getReader(), dec = new TextDecoder();
-  let buf = '', result = null, error = null;
-  let pendingRows = [], progress = null, paintTimer = null;
-  const paint = () => {
-    paintTimer = null;
-    if (signal.aborted) return;
-    if (progress) {
-      searchProgress(progress.done, progress.total, progress.nodes,
-        progress.total_known ?? Number.isFinite(progress.total));
-      progress = null;
-    }
-    if (pendingRows.length) {
-      showSearchMatches(pendingRows);
-      pendingRows = [];
-    }
-  };
-  const schedulePaint = () => {
-    // A proxy may coalesce hundreds of NDJSON records into one read. Paint
-    // the accumulated results once, not the entire sidebar for every record.
-    if (paintTimer === null) paintTimer = setTimeout(paint, 50);
-  };
-  let sliceStart = performance.now();
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (signal.aborted) return { ok: false, data: {} };
-      buf += dec.decode(value || new Uint8Array(), { stream: !done });
-      const lines = buf.split('\n');
-      buf = done ? '' : lines.pop();
-      for (const line of lines) {
-        // Awaiting an already buffered read only yields to microtasks. Give
-        // keyboard input a task turn so Backspace/Escape can actually abort.
-        if (performance.now() - sliceStart >= 8) {
-          await new Promise(resolve => setTimeout(resolve, 0));
-          sliceStart = performance.now();
-        }
-        if (signal.aborted) return { ok: false, data: {} };
-        if (!line) continue;
-        const event = JSON.parse(line);
-        if (event.type === 'progress') { progress = event; schedulePaint(); }
-        else if (event.type === 'matches') {
-          for (const row of event.results || []) pendingRows.push(row);
-          schedulePaint();
-        } else if (event.type === 'result') result = event.data;
-        else if (event.type === 'error') error = event.error;
-      }
-      if (done) break;
-    }
-  } finally {
-    clearTimeout(paintTimer);
-    paint();
-    reader.releaseLock();
-  }
-  return error ? { ok: false, data: { error } }
-    : result ? { ok: true, data: result }
-      : { ok: false, data: { error: '搜索响应不完整' } };
-}
-
-async function runSearch() {
-  const q = $('#q').value.trim();
-  cancelSearch();
-  S.term = q;
-  const run = searchRun;
-  if (!q) { S.results = null; showSessionCount(); renderSide(); return; }
-  if (!SessionDockCapabilities.allows('search')) {
-    renderSide();
-    $('#stat').textContent = ' Rust 后端尚未实现全文搜索；当前只筛选标题和目录。';
-    $('#stat').classList.add('err');
-    $('#stat').dataset.seq = ++searchSeq;
-    return;
-  }
-  if (S.opts.regex && !reTerm(false)) {   // 本地先验一次, 省掉一次全盘扫描
-    S.results = [];
-    $('#stat').textContent = ' 正则无效';
-    $('#stat').classList.add('err');
-    renderSide();
-    $('#stat').dataset.seq = ++searchSeq;
-    return;
-  }
-  const p = new URLSearchParams({ q });
-  if (!S.opts.regex) p.set('mode', S.opts.mode === 'any' ? 'any' : 'all');
-  if (HUB_MODE) p.set('source', Object.keys(SOURCES).filter(x => !S.off.has(x)).join(','));
-  for (const k of ['case', 'word', 'regex']) if (S.opts[k]) p.set(k, '1');
-  const ac = searchAbort = new AbortController();
-  S.results = [];
-  $('#stat').textContent = ' 正在搜索…';
-  renderSide();
-  if (HUB_MODE) { Nodes.errors.delete('search'); renderNodes(); }
-  const searchNodes = HUB_MODE ? Nodes.list.filter(node => selectedNodeIds().includes(node.id)).map(node => ({
-    id: node.id, name: node.name, done: 0, total: node.online === false ? 0 : null,
-    state: node.online === false ? 'offline' : 'preparing',
-  })) : null;
-  searchProgress(0, null, searchNodes, false);
-  let response;
-  try {
-    response = await fetchSearch(p, ac.signal);
-  } catch (e) {
-    if (e.name === 'AbortError') return;
-    response = { ok: false, data: { error: e.message || '搜索失败' } };
-  }
-  if (run !== searchRun) return;
-  searchAbort = null;
-  searchProgressDone();
-  const { ok, data: d } = response;
-  applyNodeState(d, 'search');
-  if (!ok) {                       // 兜底: 前端漏判的非法模式或网络失败
-    $('#stat').textContent = ` 已找到 ${S.results?.length || 0} 个会话；` + (d.error || '搜索失败');
-    $('#stat').classList.add('err');
-  } else {
-    $('#stat').classList.remove('err');
-    S.results = d.results;
-    $('#stat').textContent = d.truncated
-      ? ` 命中超过 ${sidebarMatchCount(d.results)} 个会话（已截断，请细化条件）`
-      : ` 全文命中 ${sidebarMatchCount(d.results)} 个会话`;
-    if (d.partial) {
-      const offline = (d.errors || []).filter(e => d.nodes?.some(n => n.id === e.node_id && n.online === false));
-      const failed = (d.errors || []).filter(e => !offline.includes(e));
-      if (offline.length) $('#stat').textContent += `（${offline.map(e => e.name).join('、')} 离线，未搜索）`;
-      if (failed.length) $('#stat').textContent += `（${failed.map(e => e.name).join('、')} 搜索失败，结果不完整）`;
-    }
-  }
-  renderSide();
-  // 全文搜索只筛左侧列表；右侧会话的内容、滚动位置和展开状态保持原样。
-  $('#stat').dataset.seq = ++searchSeq;              // 供测试判定"这一轮搜索已结束"
-}
-
-$('#opts').onclick = e => {
-  const b = e.target.closest('button[data-o]');
-  if (!b) return;
-  const k = b.dataset.o;
-  S.opts[k] = !S.opts[k];
-  store.set('opts', S.opts);
-  renderOpts();
-  if (S.results) runSearch(); else renderSide();
-};
-
-$('#search-mode').onclick = e => {
-  const b = e.target.closest('button');
-  if (!b || b.disabled) return;
-  S.opts.mode = S.opts.mode === 'any' ? 'all' : 'any';
-  store.set('opts', S.opts);
-  renderOpts();
-  if (S.results) runSearch(); else renderSide();
-};
-
-function renderOpts() {
-  for (const b of $('#opts').querySelectorAll('button[data-o]')) {
-    b.classList.toggle('on', !!S.opts[b.dataset.o]);
-    b.setAttribute('aria-pressed', String(!!S.opts[b.dataset.o]));
-  }
-  const mode = $('#search-mode-toggle'), any = S.opts.mode === 'any';
-  mode.textContent = any ? 'OR' : 'AND';
-  mode.disabled = !!S.opts.regex;
-  mode.title = S.opts.regex ? '正则模式使用整段表达式，不使用 AND / OR'
-    : any ? '任一词（OR），点击切换为全部词（AND）'
-          : '全部词（AND），点击切换为任一词（OR）；关键词可在不同消息中';
-  mode.setAttribute('aria-label', mode.title);
-  $('#q').placeholder = S.opts.regex ? '正则搜索…  Enter 搜索对话正文'
-                                     : '搜索… Enter 搜正文';
-}
+function cancelSearch(...args) { return SessionDockSearch.cancelSearch(...args); }
+function searchProgress(...args) { return SessionDockSearch.searchProgress(...args); }
+function searchProgressDone(...args) { return SessionDockSearch.searchProgressDone(...args); }
+function showSearchMatches(...args) { return SessionDockSearch.showSearchMatches(...args); }
+function fetchSearch(...args) { return SessionDockSearch.fetchSearch(...args); }
+function runSearch(...args) { return SessionDockSearch.runSearch(...args); }
+function renderOpts(...args) { return SessionDockSearch.renderOpts(...args); }
 
 const appDisplayMode = SessionDockShell.displayMode;
 function syncPageReload() { SessionDockShell.syncPageReload(); }

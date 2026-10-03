@@ -54,6 +54,13 @@ dialog、标签及机器面板仍由 legacy 管理。后续批次及依赖见
 验收脚本修正了已存在的复制标识菜单项、Vue 片段标记选择器、无查询参数列表请求
 夹具，以及 Hub 乐观星标先于目录增量返回的等待时序；后三类原行为均已对照旧入口。
 
+独立入口的快速筛选/全文搜索控件、选项、AND/OR、进度和机器进度、结果摘要、退出及
+会话内命中导航已由 Vue 管理。词法/全词计算在 search domain，NDJSON 请求、取消、
+批次绘制和正则 Worker 在 search service，保持原默认值、请求、提示与偏好键。
+全文搜索仍只筛左栏，保留右侧正文、折叠和阅读位置；旧实现与相应事件绑定已移除。
+六套 Chromium 操作通过：`search_browser`、`search_no_fold_browser`、
+`search_uuid_browser`、`hub_browser`、`groups_browser` 和 `header_fold_browser`。
+
 按 2026-10-03 最新用户指令，本重构 goal 只提交和推送代码，不部署、不重启
 生产，也不切换生产入口或资源引用。生产保持 `2552436`；完整替换及过渡
 脚本清理仍按根目录计划继续执行。

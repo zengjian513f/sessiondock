@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import SearchControls from './search/SearchControls.vue'
+import SearchStatus from './search/SearchStatus.vue'
+import SearchProgress from './search/SearchProgress.vue'
+import SearchSummary from './search/SearchSummary.vue'
 import { toggleResources } from '../services/shell/resources'
 import HeaderActions from './shell/HeaderActions.vue'
 import { state, operations } from '../stores/shell'
@@ -43,19 +47,9 @@ defineProps<{ hostname: string }>()
   <main>
     <div id="left" :style="{width: state.width}">
       <div class="side-search">
-        <div class="qbox">
-          <input id="q" autocomplete="off" aria-label="搜索会话" placeholder="快速筛选… Enter 搜正文" title="无需回车：筛选标题、UUID / UID、目录、机器名、Agent 名和模型名；空格分词，双引号搜索短语；Enter 搜索对话正文">
-          <div class="opts" id="search-mode" role="group" aria-label="关键词匹配方式">
-            <button type="button" id="search-mode-toggle" class="on" title="全部词（AND），点击切换为任一词（OR）" aria-label="全部词（AND），点击切换为任一词（OR）">AND</button>
-          </div>
-          <div class="opts" id="opts">
-            <button type="button" data-o="case" title="大小写敏感" aria-label="大小写敏感" aria-pressed="false">Aa</button>
-            <button type="button" data-o="word" title="全词匹配" aria-label="全词匹配" aria-pressed="false">ab|</button>
-            <button type="button" data-o="regex" title="正则表达式：整段输入作为正则，不拆词" aria-label="正则表达式" aria-pressed="false">.*</button>
-          </div>
-        </div>
+        <SearchControls />
         <div id="session-group-status" role="status" aria-live="polite"></div>
-        <div id="stat" role="status">加载中…</div>
+        <SearchStatus />
         <div class="side-tools" id="side-tools" hidden>
           <span id="side-picked"></span>
           <button type="button" class="btn" id="side-pick-all">全选</button>
@@ -69,16 +63,9 @@ defineProps<{ hostname: string }>()
             <div id="side-stop-errors"></div>
           </details>
         </div>
-        <div id="search-progress" role="status" aria-live="polite">
-          <div class="search-progress-head"><span>全文搜索</span><b>准备中…</b><button type="button" class="btn" id="search-cancel">取消</button></div>
-          <div class="search-progress-track" role="progressbar" aria-label="会话扫描进度" aria-valuemin="0" aria-valuemax="100"><i></i></div>
-          <div class="search-progress-nodes"></div>
-        </div>
+        <SearchProgress />
       </div>
-      <div id="side-search-state" hidden>
-        <div class="side-search-summary"><strong>⌕ <span id="side-search-label">搜索结果</span></strong><span id="side-search-query"></span><span id="side-search-count"></span></div>
-        <button type="button" class="btn" id="side-search-exit">退出搜索 ×</button>
-      </div>
+      <SearchSummary />
       <div id="side"><div class="spin">正在扫描会话…</div></div>
     </div>
     <div id="drag" title="拖动调整宽度，双击复位" :style="{transform: state.dragTransform}" @pointerdown="startDrag" @lostpointercapture="finishDrag" @dblclick="setSideWidth(SIDE_DEFAULT + sideResourceExtra(), true)"></div>

@@ -5,6 +5,7 @@ import * as Settings from './settings'
 import * as Shell from './shell'
 import SettingsDialog from '../components/SettingsDialog.vue'
 import * as Machines from './machines'
+import * as Search from './search'
 import * as Sidebar from './sidebar'
 // The unchanged JavaScript grid facade is shared with the standalone grid page.
 // @ts-expect-error The existing grid implementation has no TypeScript declarations.
@@ -23,6 +24,7 @@ Object.assign(globalThis, {
   SessionDockShell: Shell,
   SessionDockSettings: Settings,
   SessionDockMachines: Machines,
+  SessionDockSearch: Search,
   SessionDockSidebar: Sidebar,
   GridTerm,
 })
