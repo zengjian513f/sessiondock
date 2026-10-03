@@ -13,6 +13,7 @@ export interface RuntimeApplicationService {
   core: import('./core').RuntimeCore
   terminal: import('../terminal/bridge').TerminalController
   composer: any
+  conversation: typeof import('../../migration/conversation')
   sessionUi: any
   launch: any
   metadata: any
