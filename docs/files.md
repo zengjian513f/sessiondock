@@ -35,6 +35,12 @@ Conversation-specific responsibilities remain here:
   ([terminal-input.md](terminal-input.md#console-file-paste)).
 - Serving existing file API consumers during the node/client migration.
 
+Conversation links recognize absolute Windows drive paths (`X:\project\file.md`
+and `X:/project`) in code spans, Markdown links and parenthesized prose. Drive
+letters are file references rather than URL schemes. Resolution remains scoped
+to the selected session and happens on its node; copying a file's parent preserves
+the drive-root separator (`X:\` or `X:/`).
+
 FileDock does not load session history, establish conversation grants, or attach
 uploads to a conversation. Its filesystem worker retains checked handles, OS
 permission checks, bounded previews and streaming. Directory and file-manager

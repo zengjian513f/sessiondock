@@ -24,6 +24,19 @@ def main():
    codex_row('session_meta',{'id':regression,'cwd':str(directory),'source':'cli'}),
    codex_message('user',refs),
    codex_message('assistant','Read `SCREENING.md`, `fallback.md`, and `ambiguous.md`.')],[])
+  windows='claude-windows-files'
+  windows_targets={
+   r'X:\workspace':('X:/workspace','directory'),
+   'Y:/workspace':('Y:/workspace','directory'),
+   'Z:\\':('Z:/','directory'),
+   r'x:\项目 with spaces\report.md:12:3':('x:/项目 with spaces/report.md','file'),
+   r'Q:\report.md':('Q:\\report.md','file'),
+   'R:/report.md':('R:/report.md','file'),
+  }
+  text='Windows directories (X:\\workspace, Y:/workspace, Z:\\). '
+  text+=r'Unicode `x:\项目 with spaces\report.md:12:3`; [drive file](Q:\report.md); `R:/report.md`. '
+  text+='Reject `X:relative.md` and [unsafe](javascript:alert(1)).'
+  corpus.put(windows,'claude',[claude_row(windows,'user','u0',None,text,cwd=str(directory))],[])
   before={p:p.read_bytes() for p in corpus.paths.values()}
   with isolated_server(corpus,args.binary,file_roots=(directory,)) as (base,_),sync_playwright() as pw:
    browser=pw.chromium.launch(**({'executable_path':os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') else {}))
@@ -36,6 +49,21 @@ def main():
     def destination(route):
      destinations.append(parse_qs(urlsplit(route.request.url).query));route.fulfill(content_type='text/html',body='<h1>FileDock destination</h1>')
     context.route('**/files/?*',destination)
+    checked_windows=set()
+    def windows_resolution(route):
+     ref=route.request.post_data_json['refs'][0]
+     if ref not in windows_targets:route.continue_();return
+     # Exercise the real semantic-reference index first. Linux cannot open
+     # Windows drives, so supply Windows-node filesystem results only after
+     # verifying that the backend recognized the complete original reference.
+     response=route.fetch();value=response.json()
+     assert response.ok and value['errors'][0]['code']=='file_not_found',value
+     checked_windows.add(ref)
+     path,kind=windows_targets[ref]
+     route.fulfill(response=response,json={'targets':[{'ref':ref,'path':path,'kind':kind}],
+      'resolved':{ref:path},'errors':[]})
+    context.route('**/api/session/resolve-files',windows_resolution)
+    context.add_init_script("window.copiedPaths=[]; Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>window.copiedPaths.push(text)}})")
     page=context.new_page();page.goto(base);page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]').click()
     with context.expect_page() as opened:page.locator(f'#msgs a[data-file-ref={json.dumps(str(file),ensure_ascii=False)}]').click()
     preview=opened.value;expect(preview.locator('h1')).to_have_text('FileDock destination')
@@ -52,8 +80,35 @@ def main():
     with context.expect_page() as opened:page.locator('#msgs a[data-file-ref="ambiguous.md"]').click()
     expect(opened.value.locator('#file-content')).to_contain_text('多个同名文件')
     expect(opened.value.locator('#file-retry')).to_be_visible()
+    if width<600:page.locator('.mobile-back').click()
+    page.locator(f'#side .item[data-uid="{corpus.uid(windows)}"]').click()
+    expect(page.locator('#msgs a[data-file-ref="X:relative.md"]')).to_have_count(0)
+    expect(page.locator('#msgs a[href^="javascript:"]')).to_have_count(0)
+    for ref,(target,kind) in windows_targets.items():
+     link=page.locator(f'#msgs a[data-file-ref={json.dumps(ref,ensure_ascii=False)}]')
+     expect(link).to_have_count(1)
+     with context.expect_page() as opened:link.click()
+     expect(opened.value.locator('h1')).to_have_text('FileDock destination')
+     assert destinations[-1]=={'node':[NODE],'path':[target]},destinations
+     opened.value.close()
+     link.click(button='right')
+     expect(page.locator('#file-menu-target')).to_have_text(target)
+     expect(page.locator('#file-menu [data-action="copy-path"]')).to_be_visible()
+     page.locator('#file-menu [data-action="copy-path"]').click()
+     page.wait_for_function('path=>window.copiedPaths.at(-1)===path',arg=target)
+     link.click(button='right')
+     expect(page.locator('#file-menu-target')).to_have_text(target)
+     if kind=='file':
+      expect(page.locator('#file-menu [data-action="download"]')).to_be_visible()
+      page.locator('#file-menu [data-action="copy-directory"]').click()
+      parent=target[:3] if ref in [r'Q:\report.md','R:/report.md'] else 'x:/项目 with spaces'
+      page.wait_for_function('path=>window.copiedPaths.at(-1)===path',arg=parent)
+     else:
+      expect(page.locator('#file-menu [data-action="download"]')).to_be_hidden()
+      page.locator('#file-menu').press('Escape')
+    assert checked_windows==set(windows_targets),checked_windows
     assert not errors,errors;context.close()
    browser.close()
   assert all(p.read_bytes()==v for p,v in before.items())
- print('PASS SessionDock file-reference click, exact node/Unicode path, cwd precedence, explicit sibling path, unique fallback, ambiguous/missing errors, independent directory entry; desktop/mobile')
+ print('PASS SessionDock file-reference click, Windows drive recognition/backend grants/routing/copy/drive roots, exact node/Unicode path, cwd precedence, explicit sibling path, unique fallback, ambiguous/missing errors, independent directory entry; desktop/mobile')
 if __name__=='__main__':main()

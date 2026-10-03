@@ -15,7 +15,7 @@ static QUOTED: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 static TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)(?:https?://[^\s<>`"']+|(?:~/|\.\.?/|/|[a-z0-9_.-]+/)[^\s<>`"'，。；、！？()\[\]{}]+|[a-z0-9_.-]+\.[a-zA-Z][\w.-]*(?::[0-9]+(?::[0-9]+)?|#L[0-9]+(?:C[0-9]+)?)?)"#).unwrap()
+    Regex::new(r#"(?i)(?:https?://[^\s<>`"']+|[a-z]:[/\\][^\s<>`"'，。；、！？()\[\]{}]*|(?:~/|\.\.?/|/|[a-z0-9_.-]+/)[^\s<>`"'，。；、！？()\[\]{}]+|[a-z0-9_.-]+\.[a-zA-Z][\w.-]*(?::[0-9]+(?::[0-9]+)?|#L[0-9]+(?:C[0-9]+)?)?)"#).unwrap()
 });
 // Media discovery accepts Unicode names and drive paths. Scan the entire
 // selected branch here, rather than reusing discovery's 16-item display cap:
@@ -251,7 +251,7 @@ impl ReferenceIndex {
         let tokens = if self.media { &*MEDIA_TOKEN } else { &*TOKEN };
         for capture in tokens.find_iter(value) {
             let preceding = value[..capture.start()].chars().next_back();
-            if preceding.is_some_and(|c| c.is_ascii_alphanumeric() || "_@/:.-".contains(c)) {
+            if preceding.is_some_and(|c| c.is_ascii_alphanumeric() || "_@/\\:.-".contains(c)) {
                 continue;
             }
             self.insert(

@@ -8598,7 +8598,14 @@ function blocks(src, media = [], context = {}) {
 const RE_MD_IMAGE = /!\[([^\]]*)\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+["'][^"']*["'])?\s*\)/g;
 const RE_CODE_SPAN = /(^|[^`])(`+)(?!`)([^\n]*?)(?<!`)\2(?!`)/g;
 
-const RE_REFERENCE = /(?<![A-Za-z0-9_@/:.-])(?:(?:https?:\/\/|www\.)[^\s<>"'`\u0000，。；、！？]+|(?:~\/|\.\.?\/|\/|[A-Za-z0-9_.-]+\/)[^\s<>"'`\u0000，。；、！？()[\]{}]+|[A-Za-z0-9_-][A-Za-z0-9_.-]*\.[A-Za-z][A-Za-z0-9_-]*(?::\d+(?::\d+)?|#L\d+(?:C\d+)?)?)/gi;
+const RE_REFERENCE = /(?<![A-Za-z0-9_@/\\:.-])(?:(?:https?:\/\/|www\.)[^\s<>"'`\u0000，。；、！？]+|[A-Za-z]:[/\\][^\s<>"'`\u0000，。；、！？()[\]{}]*|(?:~\/|\.\.?\/|\/|[A-Za-z0-9_.-]+\/)[^\s<>"'`\u0000，。；、！？()[\]{}]+|[A-Za-z0-9_-][A-Za-z0-9_.-]*\.[A-Za-z][A-Za-z0-9_-]*(?::\d+(?::\d+)?|#L\d+(?:C\d+)?)?)/gi;
+
+const isWindowsDrivePath = path => /^[A-Za-z]:[/\\]/.test(path);
+function fileParentDirectory(path) {
+  const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  // A drive root includes its separator: X: alone is drive-relative.
+  return isWindowsDrivePath(path) && slash === 2 ? path.slice(0, 3) : path.slice(0, slash) || '/';
+}
 
 function trimReference(raw) {
   let ref = raw.replace(/[.,;:!?]+$/, '');
@@ -8620,12 +8627,13 @@ function referenceLink(ref, label, context, explicit = false) {
     // Browser file:// navigation cannot reach a remote node. Resolve only
     // references present in this session, through its authenticated API.
     const withoutLine = ref.replace(/(?::\d+(?::\d+)?|#L\d+(?:C\d+)?)$/, '');
-    if (!context.uid || /^[a-z][a-z0-9+.-]*:/i.test(withoutLine) || ref.startsWith('//')) return '';
+    const windowsDrive = isWindowsDrivePath(withoutLine);
+    if (!context.uid || (!windowsDrive && /^[a-z][a-z0-9+.-]*:/i.test(withoutLine)) || ref.startsWith('//')) return '';
     if (/^[A-Z0-9]+(?:\/[A-Z0-9]+)+$/.test(ref)) return '';
     // Rendering is lexical only. Resolve history, existence and ambiguity on
     // explicit navigation/menu actions, never once per render or SSE update.
     const filename = /^[^\s/<>"'`=;|{}\[\]]+\.[a-zA-Z][\w.-]*$/.test(withoutLine);
-    const path = /^(?:~\/|\.\.?\/|\/)[^\n]+$/.test(withoutLine)
+    const path = windowsDrive || /^(?:~\/|\.\.?\/|\/)[^\n]+$/.test(withoutLine)
       || (!/[\s<>"'`=;|{}\[\]]/.test(withoutLine) && withoutLine.includes('/')
           && (withoutLine.endsWith('/') || /^[^/]+\.[a-zA-Z][\w.-]*$/.test(withoutLine.split('/').pop())))
       || filename;
@@ -8696,7 +8704,7 @@ document.addEventListener('contextmenu', async event => {
       if (!response.ok) throw new Error(data.error || '无法读取文件信息');
       const detail = data.targets?.find(item => item.ref === ref);
       const path = detail?.path || data.resolved?.[ref];
-      if (typeof path !== 'string' || !path.startsWith('/')) {
+      if (typeof path !== 'string' || !(path.startsWith('/') || path.startsWith('\\\\') || isWindowsDrivePath(path))) {
         const failure = data.errors?.find(item => item.ref === ref);
         throw new Error(failure?.error || '文件不存在或有多个同名文件，请使用完整路径。');
       }
@@ -8745,7 +8753,7 @@ fileMenu.addEventListener('click', async event => {
   try {
     if (action === 'copy-path') await copyFileText(target.path);
     else if (action === 'copy-directory' && target.kind === 'file') {
-      await copyFileText(target.path.slice(0, target.path.lastIndexOf('/')) || '/');
+      await copyFileText(fileParentDirectory(target.path));
     }
     else if (action === 'copy-url') await copyFileText(target.href);
     else if (action === 'open-web') window.open(target.href, '_blank', 'noopener,noreferrer');
@@ -8802,7 +8810,7 @@ function inline(s, media = [], context = {}) {
     });
   const linkCandidate = (raw, offset, source) => {
     // Do not link a suffix of a scheme, identifier or email address.
-    if (offset && /[\w@/:.-]/.test(source[offset - 1])) return raw;
+    if (offset && /[\w@/\\:.-]/.test(source[offset - 1])) return raw;
     const ref = trimReference(raw);
     const html = referenceLink(ref, esc(ref), context);
     return html ? keepLink(html) + raw.slice(ref.length) : raw;
