@@ -127,7 +127,7 @@ Hub 顶栏另有机器 chip，见第 2 节。节点离线、列表/运行状态/
 
 来源 chip：点击切换，右键或长按「只选此类型」（`selectOnlySource`）。当前机器上数量为 0 时 `aria-disabled`，原因是「在当前选择的机器上没有会话」，仍可聚焦，点击不改变筛选。不弹自定义 toast。
 
-Hub 机器 chip：点击切换，双击或长按「只选这台」。离线不可选，原因来自 `nodeOfflineReason`。`nodesOff` 持久。筛选变化后若正在全文搜索，会重跑 `runSearch`。
+Hub 机器 chip：点击切换，右键或长按「只选这台」。`app.js` 的新交互层拦截旧双击直选回调。离线不可选，原因来自 `nodeOfflineReason`。`nodesOff` 持久。筛选变化后若正在全文搜索，会重跑 `runSearch`。
 
 活跃/全部是单选分段，不是 chip。
 
