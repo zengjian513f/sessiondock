@@ -263,6 +263,12 @@ impl ProcTree {
 
     /// Unix seconds the process started, the
     /// raw `btime + ticks / CLK_TCK` value without rounding.
+    /// Unix seconds of a start tick already recorded for a process of this tree.
+    pub fn start_seconds(&self, ticks: u64) -> Option<f64> {
+        self.clock
+            .map(|clock| clock.boot_time as f64 + ticks as f64 / clock.ticks_per_second as f64)
+    }
+
     pub fn started_at(&self, pid: u32) -> Option<f64> {
         if let Some(known) = lock(&self.memo).starts.get(&pid) {
             return *known;

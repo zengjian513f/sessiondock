@@ -114,10 +114,11 @@ def main():
         corpora, nodes, procs = [], [], []
         for index, name in enumerate(('a', 'b')):
             corpus = Corpus(root / name)
-            for sid in ('parent', 'child', 'older'):
+            born = {'older': '09:00', 'parent': '10:00', 'stale': '10:30', 'child': '11:00'}
+            for sid, hour in born.items():
                 corpus.put(sid, 'codex', [
                     codex_row('session_meta', {'id': sid, 'cwd': '/synthetic/ssh',
-                        'timestamp': '2026-09-11T' + ('09' if sid == 'older' else '10' if sid == 'parent' else '11') + ':00:00Z'}),
+                        'timestamp': '2026-09-11T' + hour + ':00Z'}),
                     codex_row('response_item', {'type': 'message', 'role': 'user', 'content': name + ' ' + sid})], [])
             (corpus.root / 'ids').mkdir()
             (corpus.root / 'ids/node-id').write_text(name * 32)
@@ -132,6 +133,12 @@ def main():
                 proc_pid(proc, 200, 'ssh', ['ssh', 'remote', 'python'], 100, fds={4: 'socket:[900]'})
                 proc_pid(proc, 500, 'ssh', ['ssh', '-M', 'remote'], 100, fds={4: 'socket:[901]'})
                 (proc / 'net/tcp').write_text('header\n 0: 0100000A:C350 0200000A:C366 01 0 0 0 0 0 900\n 1: 0100000A:C351 0200000A:C366 01 0 0 0 0 0 901\n')
+                # A local `codex exec` and its helper inherit the launcher's
+                # thread ID; the nearer child CLI still owns the helper.
+                proc_pid(proc, 800, 'codex', ['codex', 'exec'], 100,
+                         env=[('CODEX_THREAD_ID', 'parent')], fds={3: str(corpus.paths['child'])})
+                proc_pid(proc, 601, 'codex-code-mode-host', ['codex-code-mode-host'], 800,
+                         env=[('CODEX_THREAD_ID', 'parent')])
             else:
                 proc_pid(proc, 100, 'sh', ['sh'], 1, env=[('SSH_CONNECTION', '10.0.0.1 50000 10.0.0.2 50022')])
                 stat = proc / '100/stat'
@@ -140,6 +147,11 @@ def main():
                 proc_pid(proc, 300, 'python', ['python', 'train.py'], 100)
                 proc_pid(proc, 400, 'codex', ['codex', 'resume'], 100, fds={3: str(corpus.paths['older'])})
                 proc_pid(proc, 600, 'python', ['python', 'ambiguous.py'], 1, env=[('SSH_CONNECTION', '10.0.0.1 50001 10.0.0.2 50022')])
+                # Created after the initiator, but its CLI started much later:
+                # an SSH resume of an existing session, not a launch that created it.
+                proc_pid(proc, 701, 'codex', ['codex', 'resume'], 100, fds={3: str(corpus.paths['stale'])})
+                stat = proc / '701/stat'
+                stat.write_text(stat.read_text().replace(' 70100', ' 9000000000'))
             for entry in proc.iterdir():
                 if entry.name.isdigit():
                     stat = entry / 'stat'
@@ -207,6 +219,16 @@ def main():
                     expected = {'source': 'codex', 'sid': 'parent', 'node_id': nodes[0].nid}
                     assert 'spawned_by' not in child and child.get('nest_parent') == expected, child
                     assert 'nest_parent' not in next(r for r in rows if r['sid'] == 'older')
+                    stale = next(b for b in bindings if b['process']['pid'] == 701)
+                    assert stale['session']['sid'] == 'stale' and stale['initiator']['sid'] == 'parent', stale
+                    get_json(opener, base, '/api/process-links')
+                    rows = get_json(opener, base, '/api/sessions?force=1')['sessions']
+                    assert 'nest_parent' not in next(r for r in rows if r['sid'] == 'stale'), 'SSH resume must not nest'
+                    local_base, local_opener = local[0]
+                    helper = wait_for(lambda: next((b for b in get_json(local_opener, local_base, '/api/process-links')['bindings']
+                        if b['process']['pid'] == 601), None))
+                    assert helper['session']['sid'] == 'child', helper
+                    print('PASS inherited launcher identity yields to nearer child CLI; SSH resume not nested', flush=True)
                     context = browser.new_context(service_workers='block')
                     stack.callback(context.close)
                     if not restarted:
@@ -246,7 +268,7 @@ def main():
                                 for row in data['nodes']) else None)(get_json(opener, hubbase, resource_url)))
                             inclusive = get_json(opener, hubbase, resource_url.replace('scope=direct', 'scope=inclusive'))
                             remote = next(row for row in inclusive['nodes'] if row['node_id'] == nodes[1].nid)
-                            assert remote['metrics']['memory_pss_bytes']['value'] == 1000 * 1024, inclusive
+                            assert remote['metrics']['memory_pss_bytes']['value'] == 1701 * 1024, inclusive
                             assert all(row['status'] == 'ok' for row in direct['nodes']), direct
                             assert {row['node_id'] for row in direct['nodes']} == {node.nid for node in nodes}
                             assert direct['partial'] is False, 'unrelated offline node must not taint totals'
