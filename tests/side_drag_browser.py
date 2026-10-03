@@ -95,20 +95,22 @@ def check_touch(browser, base, uid):
         assert abs(page.evaluate(PROBE)["left"] - 380) < 3, page.evaluate(PROBE)
         page.evaluate("setSideWidth(460, true)")
 
-    # A cancelled touch (the OS taking over the gesture) must not leave the page stuck in the
-    # dragging state with the divider following nothing.
+    # Cancellation discards the moving guide and keeps the last committed width.
+    # The OS taking over must not leave the page stuck in the dragging state.
     touch_drag(page, cx + 120, cy, cx + 60, cy, end=False)
     page.wait_for_timeout(150)
     cancelled = page.evaluate(PROBE)
     assert not cancelled["dragging"], cancelled
-    assert abs(cancelled["left"] - 400) < 3, cancelled
+    assert abs(cancelled["left"] - 460) < 3 and cancelled["stored"] == '460', cancelled
     touch_drag(page, cx + 200, cy + 20, cx + 200, cy - 20)
     page.wait_for_timeout(100)
-    assert abs(page.evaluate(PROBE)["left"] - 400) < 3, page.evaluate(PROBE)
+    assert abs(page.evaluate(PROBE)["left"] - 460) < 3, page.evaluate(PROBE)
 
     # Dragging must not scroll the session list underneath.
     page.evaluate('$("#side").scrollTop = 0')
-    touch_drag(page, cx + 60, cy + 60, cx + 60, cy - 60)
+    current = page.evaluate(PROBE)['drag']
+    handle_x = current['x'] + current['w'] / 2
+    touch_drag(page, handle_x, cy + 60, handle_x, cy - 60)
     page.wait_for_timeout(100)
     assert page.evaluate('$("#side").scrollTop') == 0
     assert not errors, errors
@@ -126,8 +128,10 @@ def check_mouse(browser, base, uid):
     page.mouse.down()
     page.mouse.move(cx + 130, cy, steps=6)
     mid = page.evaluate(PROBE)
-    assert mid["dragging"] and abs(mid["left"] - 470) < 3, mid
+    assert mid["dragging"] and abs(mid["left"] - 340) < 3, mid
+    assert page.locator('#drag').evaluate('el => el.style.transform')
     page.mouse.up()
+    page.wait_for_function('Math.abs(document.querySelector("#left").getBoundingClientRect().width - 470) < 3')
     after = page.evaluate(PROBE)
     assert not after["dragging"] and abs(after["left"] - 470) < 3, after
     assert after["stored"] == str(round(after["left"])), after
