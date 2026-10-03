@@ -20,7 +20,7 @@ dialog、标签及机器面板仍由 legacy 管理。后续批次及依赖见
 `npm --prefix web run build:legacy` 将 Vue 和组件打包为
 `legacy-web/framework/settings.js`，供本地浏览器验证使用，生成目录不提交。
 生产部署从与页面相同来源的 `web/` 源码快照构建到 stage 的 `web/framework/`，
-不依赖开发目录里残留的生成文件。现有 `web/` 独立演示入口暂不参与生产。
+不依赖开发目录里残留的生成文件。独立 Vue 入口暂不参与生产。
 
 完整重构使用独立的 `web/migration/index.html` 入口：
 `npm --prefix web run build:migration` 生成 `web/dist-migration/` 静态目录，
@@ -31,6 +31,11 @@ dialog、标签及机器面板仍由 legacy 管理。后续批次及依赖见
 保持原断点、测量和偏好键；业务对话框暂通过具名操作打开。
 相应旧渲染和事件绑定已退出新入口；其它尚未迁移区域暂由
 `web/src/compat/` 独占。构建复用现有 CSS、字体、vendor 和 Grid 资产。
+
+`npm --prefix web run build` 同样构建该独立入口；已移除未使用的演示页面、
+演示健康状态和 Vitest 依赖。`npm --prefix web run dev` 监听并重建静态资源，
+HTML 能力注入仍由 Rust 负责，开发服务需重新加载其启动时的资源快照。
+生产构建的 `build:legacy` 及部署引用保持原接线。
 
 浏览器夹具通过 `SESSIONDOCK_TEST_WEB_DIR` 选择这个目录，验证运行器相应
 构建新入口；未设置时仍验证现有生产前端。第一批独立入口的设置、客户端
