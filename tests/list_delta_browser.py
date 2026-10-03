@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+import time
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
@@ -117,10 +118,15 @@ def main():
                 # A real user action changes one row among a batch-sized list.
                 page.locator(f'#side .star-toggle[data-star-uid="{uid}"]').click()
                 page.wait_for_function('uid=>S.sessions.find(s=>s.uid===uid)?.starred', arg=uid)
-                page.evaluate('pollSessions()')
-                page.wait_for_timeout(500)
-                changes = [size for path, size, data in records if path == '/api/sessions'
-                    and data.get('list_delta', {}).get('collections', {}).get('sessions', {}).get('upsert')]
+                # The local optimistic star precedes the Hub's next catalog
+                # snapshot. Wait for that actual wire delta before measuring it.
+                deadline = time.monotonic() + 15
+                changes = []
+                while not changes and time.monotonic() < deadline:
+                    page.evaluate('pollSessions()')
+                    page.wait_for_timeout(250)
+                    changes = [size for path, size, data in records if path == '/api/sessions'
+                        and data.get('list_delta', {}).get('collections', {}).get('sessions', {}).get('upsert')]
                 assert changes and max(changes) < initial / 20, (initial, changes)
                 assert page.evaluate('uid=>S.sessions.find(s=>s.uid===uid).agent_items.length', uid) == 200
                 (agents / 'agent-worker-000.meta.json').write_text(json.dumps({'description':'Changed worker title', 'agentType':'reviewer'}))

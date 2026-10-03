@@ -265,7 +265,7 @@ def check_settings(page, nodes, hub):
     rows = page.locator("#machine-rows .machine-row")
     assert rows.count() == 3
     names = lambda: page.locator("#machine-rows .machine-row input[type='text']").evaluate_all("e => e.map(i => i.value)")  # noqa: E731
-    chips = lambda: page.locator("#node-chips button").evaluate_all("e => e.map(b => b.firstChild.textContent.trim())")  # noqa: E731
+    chips = lambda: page.locator("#node-chips button .node-name").all_text_contents()  # noqa: E731
     vega_row = rows.filter(has=page.locator('input[aria-label="Vega 的名称"]'))
     probes = lambda: len([p for p, _ in vega.state()["gets"] if p.startswith("/api/")])  # noqa: E731
     vega_row.locator(".machine-enabled").uncheck()
