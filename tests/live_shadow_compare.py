@@ -196,7 +196,8 @@ def load_sessions(opener, base, timeout):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rust", default="http://127.0.0.1:8741")
-    parser.add_argument("--python", default="http://127.0.0.1:8710")
+    parser.add_argument("--python", required=True,
+                        help="explicit URL of a separately started comparison service")
     parser.add_argument("--timeout", type=float, default=10)
     parser.add_argument("--json", metavar="PATH")
     parser.add_argument("--tolerance-s", type=float, default=2.0, dest="tolerance")
