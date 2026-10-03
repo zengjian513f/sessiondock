@@ -229,8 +229,8 @@ No frontend framework is introduced.
 
 `GET /api/messages/{uid}?window=1&agent=...` keeps the existing live checkpoint
 fields. When history is omitted, `partial` contains `head`, `tail`, `omitted`
-and an opaque `cursor`. Initial windows prioritize up to 20 latest events, then
-up to 5 earliest events within a separate 256 KiB estimated JSON target
+and an opaque `cursor`. Initial windows prioritize up to 200 latest events, then
+up to 5 earliest events within a separate 2 MiB estimated JSON target
 (including the 64 KiB metadata reserve). Large text or media can reduce either
 segment. The latest event is always included intact, even above that soft target;
 all omitted events remain available through history pages. This intentionally
@@ -290,8 +290,8 @@ discarded. Explicit reload must also avoid overwriting concurrent live updates.
   references and 24 MiB estimated embedded compressed-image bytes — so a
   page normally groups as much as fits in 8 MiB, and the 51 MB / 7,426-message real
   Claude session fills its gap in a handful of pages. Initial head/tail
-  windows use the same media budgets, a separate 256 KiB JSON target and at
-  most 25 events. Explicit pages retain their larger grouping targets.
+  windows use the same media budgets, a separate 2 MiB JSON target and at
+  most 205 events. Explicit pages retain their larger grouping targets.
 - The legacy gap button chains pages: one click keeps requesting the next
   grant until the gap is filled (progress on the button, a second click
   aborts and keeps the pages already read), then renders once. Every page
