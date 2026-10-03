@@ -34,6 +34,31 @@ pub struct Snapshot {
     pub entries: BTreeMap<u32, Entry>,
 }
 
+/// Identities the nearest owned ancestor (inclusive) inherited from its own
+/// launcher. Below that owner they name the launcher, so they must not win
+/// over the nearer owner; identities the owner's CLI set itself still count.
+pub fn launcher_identities<'a>(
+    snapshot: &'a Snapshot,
+    pid: u32,
+    owned: impl Fn(&Entry) -> bool,
+) -> &'a [(String, String)] {
+    let mut current = pid;
+    let mut seen = BTreeSet::new();
+    while current > 1 && seen.insert(current) {
+        let Some(entry) = snapshot.entries.get(&current) else {
+            break;
+        };
+        if entry.shared_parent {
+            break;
+        }
+        if owned(entry) {
+            return &entry.identities;
+        }
+        current = entry.parent;
+    }
+    &[]
+}
+
 pub fn identity(root: &Path, pid: u32) -> Option<(Process, u32)> {
     let stat = fs::read_to_string(root.join(pid.to_string()).join("stat")).ok()?;
     let fields: Vec<_> = stat[stat.rfind(')')? + 1..].split_whitespace().collect();

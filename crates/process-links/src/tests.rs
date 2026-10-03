@@ -202,3 +202,73 @@ fn event_fork_preserves_orphan_attribution_without_application() {
             .is_empty()
     );
 }
+
+#[test]
+fn launcher_identity_inherited_by_child_cli_does_not_outrank_it() {
+    use crate::{
+        agent::{Catalog, CollectorStatus, Owner},
+        engine::Engine,
+        linux::{Entry, Snapshot},
+    };
+    let session = |sid: &str| Session {
+        node_id: "a".into(),
+        source: "codex".into(),
+        sid: sid.into(),
+        title: None,
+        created: Some(1.0),
+    };
+    let launched = |sid: &str| vec![("codex".to_string(), sid.to_string())];
+    let entry = |pid, parent, identities| Entry {
+        process: Process {
+            pid,
+            start: pid.into(),
+        },
+        parent,
+        started_at: 1.0,
+        connection: None,
+        identities,
+        sockets: vec![],
+        multiplexed: false,
+        shared_parent: false,
+    };
+    // A `codex exec` child (20) and its helper (21) inherit the launcher's
+    // thread ID; a tool command (22) carries the child's own thread ID.
+    let snapshot = Snapshot {
+        boot_id: "boot".into(),
+        entries: BTreeMap::from([
+            (10, entry(10, 1, vec![])),
+            (20, entry(20, 10, launched("parent"))),
+            (21, entry(21, 20, launched("parent"))),
+            (22, entry(22, 21, launched("child"))),
+            (30, entry(30, 1, launched("parent"))),
+        ]),
+    };
+    let mut engine = Engine::new("a".into(), "boot".into(), None);
+    assert!(engine.catalog(Catalog {
+        node_id: "a".into(),
+        boot_id: "boot".into(),
+        sessions: vec![session("parent"), session("child")],
+        owners: vec![
+            Owner {
+                process: Process { pid: 10, start: 10 },
+                session: session("parent")
+            },
+            Owner {
+                process: Process { pid: 20, start: 20 },
+                session: session("child")
+            },
+        ],
+    }));
+    let report = engine.update(&snapshot, 2.0, CollectorStatus::default());
+    let owner = |pid| {
+        report
+            .bindings
+            .iter()
+            .find(|b| b.process.pid == pid)
+            .map(|b| b.session.sid.as_str())
+    };
+    assert_eq!(owner(21), Some("child"));
+    assert_eq!(owner(22), Some("child"));
+    // Detached work without an owning ancestor still uses its identity.
+    assert_eq!(owner(30), Some("parent"));
+}

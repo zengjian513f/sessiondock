@@ -26,7 +26,10 @@ that process incarnation; a later connection reusing the same ports cannot
 reassign old work. A verified initiator initializes an untouched local child’s
 `nest_parent`, including the initiator’s node ID for remote launches. Both the
 compatibility collector and resource-agent path persist this relationship. Native
-creation timestamps exclude older resumed sessions. Explicit attachment or
+creation timestamps exclude older resumed sessions: the initiator must not be
+newer than the child, and, as in local spawn discovery, a child created more
+than a second before its earliest launched process started was resumed rather
+than created. Explicit attachment or
 detachment always wins, including after restart. The sidebar parent never changes
 process ownership.
 
@@ -65,7 +68,9 @@ The Linux adapter reads the monitored user's processes, selected identity variab
 SSH connection variables and socket descriptors. It excludes detected SSH master
 connections, ambiguous matches and receiver processes predating a new connection
 (with two seconds of clock skew tolerance). Shared tmux ancestors do not establish
-ownership. No shell command changes or environment forwarding are required.
+ownership. The nearest owning ancestor's own inherited session variables name
+its launcher, so below that CLI they never outrank it; variables its CLI set
+itself, and those of detached work without an owning ancestor, still count. No shell command changes or environment forwarding are required.
 
 Verified remote process links are saved in the private state directory as
 `process-links.json`. Restart recovery requires the same boot and live process
