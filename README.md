@@ -1,8 +1,8 @@
 # SessionDock
 
 独立演进的 Rust 会话服务，包含本地节点、多机 Hub、受管终端、可靠发送、文件与
-媒体能力。当前生产前端位于 `legacy-web/`；`web/` 中保留的 Vue 3 / TypeScript
-骨架是否继续迁移，作为独立产品决策记录在 `TODO.md`。
+媒体能力。当前生产前端位于 `legacy-web/`；Vue 3 / TypeScript / Pinia 前端
+使用 `web/migration/` 独立入口。重构不切换生产引用，当前接线见架构合同。
 
 未完成工作见 [TODO.md](TODO.md)；全部当前合同文档索引见
 [docs/README.md](docs/README.md)，路由清单见
@@ -23,7 +23,7 @@ crates/
   ptyhost-record/    终端录像格式、存储与读取
   ptyhost-screen/    服务端终端画面模型
 legacy-web/          第一阶段工作前端，少量能力/错误处理兼容改动
-web/                 第二阶段 Vue / TypeScript 骨架，当前非默认
+web/                 Vue / TypeScript / Pinia 前端和独立静态构建，生产尚未切换
 reference/
   legacy-web/        原前端的冻结快照，仅作迁移参考
 tests/               legacy 契约、临时浏览器环境和可选 Python fixture 差分
@@ -145,9 +145,11 @@ Rust 运行依赖，也不是所有历史格式已兼容的证明**。
 - 整组操作见 [移动](docs/session-move.md) 与 [克隆](docs/session-clone.md)；
   独立 Linux 资源采集及会话计量见 [process-links](docs/process-links.md)。
 
-第二阶段 Vue 骨架仍可在 `web/` 执行 `npm ci && npm run build`。
-Cargo、Node 和 Vue 单元测试仅在用户明确要求时运行。
-当前不做前端框架重构。平台限制见对应合同。
+在 `web/` 执行 `npm ci && npm run build`，生成完整独立前端 `dist-migration/`。
+`npm run dev` 监听源码并重建静态资源；HTML 能力注入和资源快照仍由 Rust 服务提供，
+修改构建后重启自己的开发服务。生产部署继续显式使用 `build:legacy`。
+已移除未使用的演示页面及 Vue 单元测试依赖；验证采用 Chromium 用户操作。
+平台限制见对应合同。
 
 架构见 [docs/architecture.md](docs/architecture.md)，冻结前端参考见
 [reference/README.md](reference/README.md)。

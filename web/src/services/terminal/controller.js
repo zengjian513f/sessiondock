@@ -543,13 +543,21 @@ function linkedTermSession(uid, { followReplacement = false } = {}) {
     const current = panes.filter(pane => pane.instance_id && pane.current_uid === uid);
     if (current.length === 1) return {name: current[0].name, uid};
     if (current.length > 1) return null;
-    const moved = panes.filter(pane => pane.instance_id && pane.uid === uid
+    const session = sessionTermMeta(uid);
+    // Codex rewind can rotate the rollout while keeping the native thread ID.
+    // These generations have no forked_from_id; the host's guard UID stays put.
+    const sameThread = next => session?.source === 'codex' && session.sid
+      && next?.source === session.source && next.sid === session.sid
+      && nodeOf(next.uid) === nodeOf(uid);
+    const moved = panes.filter(pane => pane.instance_id
+      && (pane.uid === uid || sameThread(sessionTermMeta(pane.current_uid)))
       && pane.current_uid && pane.current_uid !== uid);
-    // Only a proven fork may carry the old draft along; /new is unrelated.
+    // Only the same thread or a proven fork carries a draft; /new is unrelated.
     if (moved.length) {
       const next = moved.length === 1 ? sessionTermMeta(moved[0].current_uid) : null;
-      return followReplacement && next && typeof forkAncestors === 'function'
-        && forkAncestors(next).some(({row}) => row?.uid === uid)
+      return followReplacement && next && (sameThread(next)
+        || (typeof forkAncestors === 'function'
+          && forkAncestors(next).some(({row}) => row?.uid === uid)))
         ? {name: moved[0].name, uid: moved[0].current_uid} : null;
     }
     const exactFor = target => panes.filter(pane => pane.instance_id && (pane.uid === target
@@ -563,7 +571,6 @@ function linkedTermSession(uid, { followReplacement = false } = {}) {
     if (exact.length || typeof forkAncestors !== 'function') return null;
     // 回退分支没有自己的 pane：最近一个仍有 pane 的祖先就是它的控制台，前提是
     // 这条分支正是那个 pane 当前写入的叶子。
-    const session = sessionTermMeta(uid);
     for (const {row} of session ? forkAncestors(session) : []) {
       if (!row) break;
       const inherited = exactFor(row.uid);
