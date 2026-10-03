@@ -943,6 +943,8 @@ body.dragging #drag { will-change: transform; }
 .item.nest-closed .nest-caret::before { transform: rotate(-90deg); }
 .nest-caret:hover { color: var(--text); }
 .nest-caret:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+#side.search-mode .group.closed > .ghead > .caret,
+#side.search-mode .item.nest-closed .nest-caret { color: var(--syntax-keyword); }
 /* 子代理行：来源图标照常，右下角叠一个小分叉标记，与顶栏分层开关同一个图形 */
 .agent-mark {
   position: absolute; z-index: 1; right: -6px; bottom: -4px; width: 13px; height: 13px;

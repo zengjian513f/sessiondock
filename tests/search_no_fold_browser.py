@@ -99,6 +99,46 @@ def main():
                     parent.locator('.nest-caret').click()
                     expect(child).to_have_count(0)
                     group = page.locator('#side > .group').first
+
+                    def check_red_themes(caret):
+                        colors = []
+                        for theme in ('light', 'dark'):
+                            if not page.locator('#settings').is_visible():
+                                page.locator('#header-more-btn').click()
+                            page.locator('#settings').click()
+                            page.locator('#setting-theme').select_option(theme)
+                            page.locator('#settings-dialog .modal-close').click()
+                            expect(page.locator('html')).to_have_attribute('data-theme', theme)
+                            caret.hover()
+                            if caret.evaluate("node => node.tagName === 'BUTTON'"):
+                                caret.focus()
+                            paint = caret.evaluate('''node => {
+                                let background = node;
+                                while (background && getComputedStyle(background).backgroundColor === 'rgba(0, 0, 0, 0)')
+                                    background = background.parentElement;
+                                return {color: getComputedStyle(node).color,
+                                    glyph: getComputedStyle(node, '::before').color,
+                                    background: getComputedStyle(background).backgroundColor};
+                            }''')
+
+                            def channels(color):
+                                return [int(value.strip()) for value in color[4:-1].split(',')]
+
+                            def luminance(rgb):
+                                linear = [v / 255 / 12.92 if v / 255 <= .04045
+                                          else ((v / 255 + .055) / 1.055) ** 2.4 for v in rgb]
+                                return sum(v * weight for v, weight in zip(linear, [.2126, .7152, .0722]))
+
+                            red, green, blue = channels(paint['color'])
+                            assert red > green * 1.4 and red > blue * 1.4, (theme, paint)
+                            assert paint['glyph'] == paint['color'], (theme, paint)
+                            fg, bg = luminance([red, green, blue]), luminance(channels(paint['background']))
+                            contrast = (max(fg, bg) + .05) / (min(fg, bg) + .05)
+                            assert contrast >= 4.5, (theme, paint, contrast)
+                            colors.append(paint['color'])
+                        assert colors[0] != colors[1], colors
+                        return colors[-1]
+
                     group.locator('.ghead').click()
                     expect(parent).to_have_count(0)
                     saved = page.evaluate('JSON.stringify([[...S.closed], [...S.nestClosed]])')
@@ -158,8 +198,10 @@ def main():
                     page.evaluate('async () => await runSessionPoll()')
                     expect(child).to_have_count(0)
                     expect(parent.locator('.nest-caret')).to_have_attribute('aria-expanded', 'false')
+                    folded_color = check_red_themes(parent.locator('.nest-caret'))
                     group.locator('.ghead').click()
                     expect(parent).to_have_count(0)
+                    check_red_themes(group.locator('.caret'))
                     page.evaluate('renderSide()')
                     expect(parent).to_have_count(0)
                     group.locator('.ghead').click()
@@ -167,6 +209,8 @@ def main():
                     expect(child).to_have_count(0)
                     parent.locator('.nest-caret').click()
                     expect(child).to_be_visible()
+                    assert parent.locator('.nest-caret').evaluate('node => getComputedStyle(node).color') != folded_color
+                    assert group.locator('.caret').evaluate('node => getComputedStyle(node).color') != folded_color
                     child.click()
                     expect(page.locator('#msgs')).to_contain_text('Needle from another provider')
                     if width == 390:
@@ -297,11 +341,13 @@ def main():
                     assert page.evaluate('JSON.stringify([localStorage.getItem("sessiondock.closed"), localStorage.getItem("sessiondock.nestClosed")])') == stored
                     page.locator('#side-search-exit').click()
                     expect(group).to_have_class('group closed')
+                    assert group.locator('.caret').evaluate('node => getComputedStyle(node).color') != folded_color
                     expect(parent).to_have_count(0)
                     group.locator('.ghead').click()
                     expect(parent).to_be_visible()
                     expect(child).to_have_count(0)
                     expect(worker).to_have_count(0)
+                    assert parent.locator('.nest-caret').evaluate('node => getComputedStyle(node).color') != folded_color
                     parent.locator('.nest-caret').click()
                     expect(child).to_be_visible()
                     expect(worker).to_be_visible()
