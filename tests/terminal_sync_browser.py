@@ -38,7 +38,8 @@ while True:
         else:
             emit(begin)
         emit('\x1b[0 q\x1b[?2026l')
-        time.sleep(.015)
+        # Include the extra scheduling/transport gap seen under browser load.
+        time.sleep(.035)
         emit('\x1b[?25l\x1b[6;1HRS_TAIL_' + key.decode() + '\x1b[11;3H\x1b[?25h')
     elif key == b'h':
         emit('\x1b[?2026h\x1b[7;1HRS_UNTERMINATED')
