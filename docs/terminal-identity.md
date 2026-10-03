@@ -117,6 +117,15 @@ is waiting in another host. No process is stopped or host metadata rewritten.
 `tests/managed_terminal_browser.py` exercises both hosts together, original
 console input/output, second-page takeover and Web restart using synthetic shells.
 
+The selected conversation also follows `current_uid` when Codex rewinds into a
+new rollout of the same native thread on the same node. Such generations need
+no `forked_from_id`: the browser keeps the existing console view, socket and
+immutable guard, while switching its displayed UID. BUG-20261003-122322-60fcb2
+exposed the missing same-thread case: the live pane remained visible but the
+button reverted to takeover after list refresh. The browser suite rotates twice
+while the console is open, through both the node and Hub, then clicks between
+conversation and terminal without another claim or takeover.
+
 ## Output completion is separate from identity
 
 An exact instance guard identifies a stream but does not guarantee complete PTY
