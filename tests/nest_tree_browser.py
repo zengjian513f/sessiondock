@@ -131,7 +131,7 @@ def open_item_menu(page, uid):
       disabled: b.getAttribute('aria-disabled') === 'true',
       color: getComputedStyle(b).color,
     }))""")
-    assert [a['act'] for a in actions] == ['stop', 'hide', 'detach', 'attach', 'delete', 'clone', 'group', 'pick'], actions
+    assert [a['act'] for a in actions] == ['copy-identity', 'stop', 'hide', 'detach', 'attach', 'delete', 'clone', 'group', 'pick'], actions
     assert all(a['visible'] for a in actions), actions
     muted = page.locator('#item-menu').evaluate("m => getComputedStyle(m).getPropertyValue('--muted').trim()")
     expected_color = page.evaluate("color => { const b = document.createElement('b'); b.style.color = color; document.body.append(b); const result = getComputedStyle(b).color; b.remove(); return result; }", muted)

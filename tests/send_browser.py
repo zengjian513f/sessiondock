@@ -463,7 +463,7 @@ def main():
                     page.evaluate(paste_files,six)
                     page.wait_for_function("composerDraft().attachments.length===6 && composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)")
                     page.evaluate(paste_files,six[:5])
-                    page.wait_for_function('composerDraft().attachments.length===11')
+                    page.wait_for_function('composerDraft().attachments.length===11 && composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)')
                     assert dialogs[-1][1].startswith('粘贴了 6 个文件'),dialogs[-1]   # five files asked nothing
                     for remaining in range(10,-1,-1):
                         page.locator('#compose-items .draft-card').first.locator('.draft-remove').click()

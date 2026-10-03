@@ -81,7 +81,7 @@ def main():
                 instrument(page)
                 rows = fixture()
                 response = dict(sessions=rows, sig='fold-0')
-                page.route('**/api/sessions?*', lambda route: route.fulfill(json=response))
+                page.route('**/api/sessions*', lambda route: route.fulfill(json=response))
                 seed(page, rows)
                 assert page.locator('#side .item').count() == 95
                 assert page.locator('#side .item.agent').count() == 0
