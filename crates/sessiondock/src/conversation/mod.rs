@@ -188,48 +188,82 @@ impl Conversations {
         if queued.is_empty() {
             return false;
         }
-        let mut used = vec![false; echoes.len()];
+        let consumed = self.store.merged_echoes(&key);
+        let echo_ids: Vec<_> = echoes
+            .iter()
+            .map(|echo| format!("{}:{:?}", echo.hash, echo.ts))
+            .collect();
+        let mut used: Vec<_> = echo_ids.iter().map(|id| consumed.contains(id)).collect();
+        let mut merged = Vec::new();
         let mut retired = Vec::new();
+        let mut retired_text = None;
         let mut enqueued = Vec::new();
-        for row in &queued {
-            let mut take = |enqueue: bool| {
-                let hit = echoes.iter().enumerate().position(|(index, echo)| {
-                    !used[index]
-                        && echo.enqueue == enqueue
-                        && echo.hash == row.echo_hash
-                        && echo.ts.is_none_or(|at| at >= row.sent_at - 5.0)
-                });
-                hit.map(|index| {
-                    used[index] = true;
-                    echoes[index].ts
-                })
-            };
-            if take(false).is_some() {
-                retired.push(row.request_id.clone());
+        for (start, row) in queued.iter().enumerate() {
+            if retired.contains(&row.request_id) {
+                continue;
+            }
+            let hit = echoes.iter().enumerate().find_map(|(index, echo)| {
+                if used[index] || echo.enqueue || echo.ts.is_some_and(|at| at < row.sent_at - 5.0) {
+                    return None;
+                }
+                if echo.hash == row.echo_hash {
+                    return Some((index, start + 1));
+                }
+                // Codex flushes pending steers as one newline-joined user
+                // message after Esc. Match the complete ordered batch, never
+                // a substring, and check every send's time boundary.
+                if !uid.starts_with("codex:") {
+                    return None;
+                }
+                let at = echo.ts?;
+                let mut rest = echo.text.trim();
+                for (offset, candidate) in queued[start..].iter().enumerate() {
+                    if retired.contains(&candidate.request_id) || at < candidate.sent_at - 5.0 {
+                        break;
+                    }
+                    rest = rest.strip_prefix(candidate.text.trim())?;
+                    if rest.is_empty() {
+                        return (offset > 0).then_some((index, start + offset + 1));
+                    }
+                    rest = rest.strip_prefix('\n')?;
+                }
+                None
+            });
+            if let Some((index, end)) = hit {
+                used[index] = true;
+                retired_text = Some(echoes[index].text.as_str());
+                if end > start + 1 {
+                    merged.push(echo_ids[index].clone());
+                }
+                retired.extend(queued[start..end].iter().map(|row| row.request_id.clone()));
                 continue;
             }
             // An already marked send still consumes its enqueue record, so a
             // replayed record cannot mark a later send with the same text.
-            if let Some(at) = take(true)
-                && row.cli_queued_at.is_none()
-            {
-                enqueued.push((
-                    row.request_id.clone(),
-                    at.unwrap_or_else(cli_state::unix_now),
-                ));
+            if let Some((index, echo)) = echoes.iter().enumerate().find(|(index, echo)| {
+                !used[*index]
+                    && echo.enqueue
+                    && echo.hash == row.echo_hash
+                    && echo.ts.is_none_or(|at| at >= row.sent_at - 5.0)
+            }) {
+                used[index] = true;
+                if row.cli_queued_at.is_none() {
+                    enqueued.push((
+                        row.request_id.clone(),
+                        echo.ts.unwrap_or_else(cli_state::unix_now),
+                    ));
+                }
             }
         }
         let marked =
             !enqueued.is_empty() && self.store.mark_cli_queued(&key, &enqueued).unwrap_or(false);
-        let removed =
-            !retired.is_empty() && self.store.retire_queued(&key, &retired).unwrap_or(false);
-        if removed
-            && let Some(row) = queued
-                .iter()
-                .rev()
-                .find(|row| retired.contains(&row.request_id))
-        {
-            self.cli.retired(&key, &row.text);
+        let removed = !retired.is_empty()
+            && self
+                .store
+                .retire_echoes(&key, &retired, &merged)
+                .unwrap_or(false);
+        if removed && let Some(text) = retired_text {
+            self.cli.retired(&key, text);
         }
         marked || removed
     }
