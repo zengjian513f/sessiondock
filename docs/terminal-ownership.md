@@ -116,7 +116,7 @@ wrap their redraws in, so a redraw split across PTY packets still paints once.
 The former 20 ms merge cost every keystroke echo a full timer wait
 (`tests/bench_term_echo_browser.py`: localhost p50 ≈ 30 ms → < 1 ms). The one
 exception is a `?2026h` frame: its packets are held and handed to xterm
-as a single write after `?2026l` and 24 ms without another output packet
+as a single write after `?2026l` and 50 ms without another output packet
 (100 ms total / 256 KiB fallback), because
 xterm moves its hidden IME textarea to the cursor cell after every parsed
 write regardless of 2026, and browser widgets anchored to that textarea (touch
@@ -124,7 +124,8 @@ selection handles) would otherwise chase the cursor through each packet of a
 redraw. The quiet window also covers complete marker pairs in one packet:
 on Cetus, ConPTY emitted `?2026l` with a visible cursor still at an animation
 cell, then emitted the remaining cells and final cursor restore about 15 ms
-later (BUG-20261003-110817-4e7c32). Flushing at the marker exposed that
+later (BUG-20261003-110817-4e7c32); scheduling/transport can widen that gap.
+Flushing at the marker exposed that
 intermediate cursor. Tail packets restart only the quiet timer; they never
 extend the total deadline. Reconnect/disposal cancels both timers, and close
 flushes retained bytes. Ordinary echo outside a redraw still writes directly.
