@@ -78,15 +78,15 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
   }
   if (!cap?.enabled) return `${node ? node.name + '：' : ''}${cap?.unavailable_reason || '服务报告控制台不可用，但未返回具体原因。'}`;
   const linked = linkedTermSession(uid, {followReplacement: true});
+  const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];
+  if (!linked && !cap.sources?.[source])
+    return `${node ? node.name + '：' : ''}未配置可用的 ${SOURCES[source]?.name || source} 启动命令。请检查该机器的 CLI 安装和启动器配置，再重启服务。`;
   // Rust: an unlinked session can only be resumed through an explicitly
   // configured resume-capable CLI profile; otherwise no name-based guessing.
   if (SessionDockCapabilities.config.backend === 'rust' && !linked
       && !(SessionDockCapabilities.allows('terminal_takeover')
         && cap?.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))
     return '该会话没有通过完整 UID 和实例校验的运行中终端；不能按名称猜测关联。';
-  const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];
-  if (!linked && !cap.sources?.[source])
-    return `此机器未找到可用的 ${SOURCES[source]?.name || source} 命令，无法启动该会话的控制台。`;
   return lastError ? ConsoleUI.errors.get(uid) || '' : '';
 }
 

@@ -32,20 +32,21 @@ def main():
         try:
             page = browser.new_page()
             page.set_content('<button id="a-term">接管会话</button>')
+            page.add_script_tag(path=str(ROOT / 'legacy-web/popup.js'))
             page.add_script_tag(content='''
                 const HUB_MODE = true, nid = 'a'.repeat(32), uid = `claude:${nid}~synthetic`;
-                const nid2 = 'b'.repeat(32), uid2 = `claude:${nid2}~synthetic`;
+                const nid2 = 'b'.repeat(32), uid2 = `codex:${nid2}~synthetic`;
                 const SessionDockCapabilities = {config:{backend:'rust'}, allows:()=>true};
                 const T = {enabled:true,listLoaded:true,listError:'',resume_sources:{},ended:new Map(),pending:[]};
                 const Nodes = {list:[{id:nid,name:'Lyra fixture'},{id:nid2,name:'Other fixture'}],errors:new Map(),capabilities:{}};
-                const ConsoleUI = {errors:new Map(),busy:new Set()}, SOURCES = {claude:{name:'Claude'}};
+                const ConsoleUI = {errors:new Map(),busy:new Set()}, SOURCES = {claude:{name:'Claude'},codex:{name:'Codex'}};
                 const TERM_PAGE_ID='fixture-page', TERM_CLAIM_TIMEOUT_MS=5000;
                 let rejectClaim, claimCount=0, opened=false, toast='';
                 async function post(){claimCount++; return new Promise((_resolve,reject)=>{rejectClaim=reject})}
                 async function takeover(){opened=!!await claimTermOwnership('fixture-pane',uid)}
                 function Terminal(){} function FitAddon(){}
                 function renderTakeoverBtn(){paintConsoleAvailability(document.querySelector('#a-term'),uid)}
-                function sessionTermMeta(){return {source:'claude'}}
+                function sessionTermMeta(uid){return {source:uid.split(':')[0]}}
                 function linkedTermSession(){return null} function showConsoleToast(reason){toast=reason}
             ''' + FUNCTIONS)
             button = page.locator('#a-term')
@@ -83,6 +84,17 @@ def main():
             apply(ready)
             dialogs = []
             on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
+            # BUG-20261003-103542-d86b9f: the node reads Desktop history but
+            # has no Codex launcher profile. Explain that first, before the
+            # generic unlinked-instance message; never send a takeover.
+            page.evaluate("Nodes.capabilities[nid2]={enabled:true,sources:{codex:false},resume_sources:{codex:false}}; bindConsoleButton(document.querySelector('#a-term'),uid2)")
+            expect(button).to_have_attribute('data-unavailable', 'true')
+            expect(button).to_have_attribute('aria-label', re.compile('Other fixture：未配置可用的 Codex 启动命令'))
+            button.click()
+            expect(page.locator('dialog.app-popup[open]')).to_have_count(0)
+            assert len(dialogs) == 1 and 'CLI 安装和启动器配置' in dialogs[0], dialogs
+            assert page.evaluate('claimCount') == 0
+            dialogs.clear()
             page.evaluate("bindConsoleButton(document.querySelector('#a-term'),uid)")
             button.click()
             page.wait_for_function('ConsoleUI.busy.has(uid) && claimCount===1')
