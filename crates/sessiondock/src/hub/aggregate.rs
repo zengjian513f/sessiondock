@@ -288,7 +288,8 @@ pub async fn live(
 
 fn live_body(registry: &Registry, answers: &[Answer]) -> Value {
     let mut result = envelope(registry, answers);
-    for key in ["uids", "tmux_uids", "working_uids"] {
+    // `remote_working` names sessions by native node/source/sid, unscoped.
+    for key in ["uids", "tmux_uids", "working_uids", "remote_working"] {
         let rows: Vec<Value> = answers
             .iter()
             .filter(|answer| answer.ok())

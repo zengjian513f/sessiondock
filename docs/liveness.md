@@ -147,6 +147,13 @@ precedence over inherited identity. Permanent code-mode and recognized MCP
 transport processes are excluded, while sleeping or I/O-bound commands count.
 See [CLI state](cli-state.md) for the display precedence and exclusions.
 
+`remote_working` lists `{node_id, source, sid}` of sessions on other machines
+that own live command processes here through verified SSH attribution, with
+the same exclusions; the process must still be the bound incarnation. The Hub
+concatenates these entries unscoped, and the page marks a live row matching its
+native node/source/SID as working. A detached remote job therefore keeps its
+initiating session working after the local SSH client exits.
+
 ```json
 {
   "enabled": true, "known": true, "partial": false,

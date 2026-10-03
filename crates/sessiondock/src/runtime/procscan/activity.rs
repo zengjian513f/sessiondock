@@ -15,6 +15,56 @@ fn infrastructure(cmd: &str) -> bool {
 }
 
 impl ProcTree {
+    /// Sessions on other machines with live work here: the bound process is
+    /// still the same incarnation, has a command line, and is neither a
+    /// persistent service nor launched by one (code-mode stays transparent).
+    pub fn remote_working(
+        &self,
+        bindings: &[process_links::Binding],
+    ) -> BTreeSet<(String, String, String)> {
+        bindings
+            .iter()
+            .filter(|binding| {
+                let pid = binding.process.pid;
+                process_links::linux::identity(self.root(), pid).map(|(p, _)| p)
+                    == Some(binding.process.clone())
+                    && self.served_work(pid)
+            })
+            .map(|binding| {
+                let session = &binding.session;
+                (
+                    session.node_id.clone(),
+                    session.source.clone(),
+                    session.sid.clone(),
+                )
+            })
+            .collect()
+    }
+
+    fn served_work(&self, pid: u32) -> bool {
+        let Some(cmd) = self.cmdline(pid).filter(|cmd| !cmd.trim().is_empty()) else {
+            return false;
+        };
+        if infrastructure(&cmd) {
+            return false;
+        }
+        let mut current = pid;
+        let mut seen = HashSet::from([pid]);
+        // `parent(pid)` names `pid` itself and its parent pid.
+        while let Some(info) = self.parent(current) {
+            if info.name.starts_with("tmux") || info.ppid <= 1 || !seen.insert(info.ppid) {
+                return true;
+            }
+            current = info.ppid;
+            if self.cmdline(current).is_some_and(|cmd| {
+                infrastructure(&cmd) && cli_name(argv0_of(&cmd)) != "codex-code-mode-host"
+            }) {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn working_uids(
         &self,
         sessions: &[SessionRow],
