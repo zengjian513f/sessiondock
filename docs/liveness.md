@@ -225,14 +225,13 @@ Resuming never clears a newer-build or expired-login pause.
 The shared observer and fallback browser polls read `/api/live` and
 `/api/term/list`; their answers are pure functions of source snapshots that have
 freshness windows of their own. Since 2026-09-15 both routes keep the
-assembled answer per debug-run view (`polls::PollCache`, at most eight views;
-the predecessor's `_live_views` / `_panes`) and a hot request only checks
+one assembled answer (`polls::PollCache`) and a hot request only checks
 that the sources are the ones the entry was built from:
 
 | route | key | expiry |
 | --- | --- | --- |
-| `/api/live` | the completed scan (`Arc` identity; 3 s TTL above), the shared managed observation (`Arc` identity; 2 s TTL, `None` without a host directory), the lifecycle generation, and the view's topology — the `SessionRow` fields of the visible rows in list order plus the uids the registry hides — so a session file that only grew keeps the entry | none of its own: the sources' TTLs bound it |
-| `/api/term/list` | the lifecycle generation and the debug-run registry (`Arc` identity) | `TERM_LIST_TTL` = 2 s: host discovery and the receipt list carry no version |
+| `/api/live` | the completed scan (`Arc` identity; 3 s TTL above), the shared managed observation (`Arc` identity; 2 s TTL, `None` without a host directory), the lifecycle generation, and the list topology — the `SessionRow` fields in list order — so a session file that only grew keeps the entry | none of its own: the sources' TTLs bound it |
+| `/api/term/list` | the lifecycle generation | `TERM_LIST_TTL` = 2 s: host discovery and the receipt list carry no version |
 
 The **lifecycle generation** (`LifecycleService::generation`, `0` without the
 service) is a counter the coordinator advances after every mutating command

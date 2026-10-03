@@ -138,24 +138,20 @@ impl Snapshot {
 
 #[derive(Default)]
 pub struct EventBus {
-    views: Mutex<BTreeMap<String, broadcast::Sender<Value>>>,
+    sender: Mutex<Option<broadcast::Sender<Value>>>,
 }
 impl EventBus {
-    pub fn subscribe<F, Fut>(
-        self: &Arc<Self>,
-        view: String,
-        observe: F,
-    ) -> broadcast::Receiver<Value>
+    pub fn subscribe<F, Fut>(self: &Arc<Self>, observe: F) -> broadcast::Receiver<Value>
     where
         F: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Option<Snapshot>> + Send + 'static,
     {
-        let mut views = self.views.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(sender) = views.get(&view) {
+        let mut sender_slot = self.sender.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(sender) = sender_slot.as_ref() {
             return sender.subscribe();
         }
         let (sender, receiver) = broadcast::channel(32);
-        views.insert(view.clone(), sender.clone());
+        *sender_slot = Some(sender.clone());
         let bus = self.clone();
         tokio::spawn(async move {
             let mut previous = None;
@@ -163,9 +159,9 @@ impl EventBus {
                 // Check and remove under the subscribe lock so a new subscriber
                 // cannot attach between the last-receiver check and removal.
                 {
-                    let mut views = bus.views.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut sender_slot = bus.sender.lock().unwrap_or_else(|e| e.into_inner());
                     if sender.receiver_count() == 0 {
-                        views.remove(&view);
+                        *sender_slot = None;
                         break;
                     }
                 }

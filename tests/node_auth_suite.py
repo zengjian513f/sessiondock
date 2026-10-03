@@ -246,8 +246,9 @@ def run(binary: Path, root: Path):
         passed("node-cross-site")
 
         view = expect("node-debug-run", node_port, "/api/sessions?debug_run=x", 200, headers=GOOD)
-        if view.get("sessions") != []:
-            fail("node-debug-run", f"unknown run must be an empty view: {view!r}", b"")
+        ordinary = expect("node-ordinary-list", node_port, "/api/sessions", 200, headers=GOOD)
+        if view.get("sessions") != ordinary.get("sessions"):
+            fail("node-debug-run", f"unknown query parameter must not change the fixture list: {view!r}", b"")
         passed("node-debug-run")
     finally:
         server.stop()

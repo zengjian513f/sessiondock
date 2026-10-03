@@ -29,7 +29,7 @@
 | `sessions/index` | 目录遍历、`stat`、并行头/尾摘要、按 stamp 缓存、行推导、归属图、`sig`/`built_at` | 三个读根 | `/api/sessions` 行、候选文件表（uid → 路径/来源/stamp/原生 id/归属）、运行时原生目录 |
 | `sessions/index/summary` | 三家来源的有界摘要：头 96 KiB（≤ 40 条记录）+ 尾 512 KiB | 单个文件 | `RowSummary` |
 | `sessions/views` | 单会话视图：经既有 `RecordCache`/`RawIndex`/provider 投影流式解析**这一个**文件，增量续读，重写重建；LRU（条数 + 字节） | 候选文件 + 可选时间线 pin | `ViewSnapshot`（消息、分页、媒体、检查点、原生输入证据） |
-| `search` + `search/cache` + `search/service` | 搜索文本缓存（按会话、按文件版本持久化的语义正文）、解析预算、后台预热；未缓存的会话借用已缓存视图或流式投影后丢弃；有界准入与 `partial` | 查询 + 候选表 + 缓存目录 | NDJSON 命中流 |
+| `search` + `search/cache` + `search/service` | 搜索文本缓存（按会话、按文件版本持久化的语义正文）、解析预算、按需构建；未缓存的会话借用已缓存视图或流式投影后丢弃；有界准入与 `partial` | 查询 + 候选表 + 缓存目录 | NDJSON 命中流 |
 | `observe`（SSE） | 每会话 `stat` 轮询 + 视图增量扩展；列表 SSE 用索引 `sig` | 索引 + 视图 | 事件流 |
 | 运行时 / lifecycle / trash / delivery | 从候选表取原生 id、路径、stamp、归属；发送确认边界与原生尾部来自打开的视图 | 索引、视图 | — |
 
@@ -228,10 +228,10 @@ HTTP/SSE 的响应（`views/body.rs`）按字节拼接：
   行 / 图 / 签名。`/api/sessions?sig=` 命中时不克隆、不装饰、不序列化文档。
 - **列表响应字节缓存**（`SessionStore::list_view_bytes`，2026-09-15）：`sig` 短路之后、
   `sig` 变了或没带 `sig` 的热请求也不再"克隆文档 → 借视图装饰 → 去警告 → 序列化"
-  （真实根 480 行 / 438 KB 一次约 10 ms），而是按 `debug_run` 视图各留一份最终响应
-  字节（`Bytes`，最多 8 个视图，超出整体清空），键是 **视图文档的 `Arc` 身份**
+  （真实根 480 行 / 438 KB 一次约 10 ms），而是留一份最终响应
+  字节（`Bytes`），键是 **已发布文档的 `Arc` 身份**
   （`publish` 在 `sig` 不变时复用同一份 `Arc<Value>`，所以键变化 ⇔ 当前 `sig`
-  会变；`debug_run` 过滤文档也按 run id 各自缓存，两个视图交替轮询互不驱逐）
+  会变）
   加 **视图缓存修订号** `Views::revision`（缓存的 `(uid, agent)` 视图被插入、
   换成新快照或淘汰时递增——列表从视图缓存借来的只有 `cursor.anchor` 与
   `timeline_pin`，修订号不变即装饰不变；同一文件未变的重复打开返回同一快照，
@@ -240,21 +240,13 @@ HTTP/SSE 的响应（`views/body.rs`）按字节拼接：
   渲染时视图锁被正在进行的打开占住则照旧无装饰返回且不缓存。缓存与非缓存
   路径字节相同（`sessions::tests::list_bytes_*` 断言）。
 
-## debug_run 视图
+## 测试数据隔离
 
-- 注册表 `<SESSIONDOCK_STATE_DIR>/debug-runs.json`
-  （`{"version":1,"runs":{<run_id>:{"root":…,"created":…,"sessions":[{source,cwd,sid,uid,name}]}}}`），
-  由测试工具（monkey）写入、本服务只读，`stat` 变化即重载；缺失/损坏 = 空注册表。
-  `tests/meta_import.py` 把 `debug-runs.json` 注册表一并搬运。
-- 匹配（`sessions/debug_runs.rs`）：行的 `uid`/`sid`/`name` 命中某 run
-  的 sessions，或 `cwd`（`normpath`）等于/位于某 run 的 `root` 之下；多个 run 命中时取
-  注册表顺序最靠前者。
-- 视图（`SessionStore::list_view`）：默认视图剔除全部登记会话；
-  `?debug_run=<id>` 只显示该 run（未登记或不合法的 id → 空列表，不是错误）。视图对
-  可见行重新推导 `fork_parent`，并以可见行 + run id 重签 `sig`（`_view_signature`），
-  按 run id 各缓存一份（已发布列表与注册表未变即复用，最多 8 个视图）。`/api/live`、`/api/term/list`（sessions 与
-  pending）、`/api/search`（候选与 `total_pool`）用同一注册表筛；`/api/messages` 等
-  详情路由忽略该参数。`security.rs` 不再对 `debug_run` 返回 501。
+测试使用临时独立数据根，不通过生产显示过滤隐藏会话。旧
+`debug-runs.json` 不再读取、导入或修改；`debug_run` URL 参数作为未知参数忽略。
+列表、搜索、live、term 与 Hub 始终使用正常会话集合，共享普通缓存与 SSE 观察器。
+独立测试节点通过 `SESSIONDOCK_CLAUDE_ROOT`、`SESSIONDOCK_CODEX_ROOT`、
+`SESSIONDOCK_GROK_ROOT` 指定各来源的临时目录；OpenCode 使用临时数据库和镜像根。
 
 ## 搜索
 
@@ -313,7 +305,7 @@ Enter 匹配正文，正文未命中或不可读时也按同一查询匹配该�
   字节数），其后是未压缩正文（真实根 816 会话共 18 MB，读页缓存比解压快，见
   [performance.md](performance.md)）。确定性的打开失败也按版本缓存，不再每次
   搜索重新流式解析。未配置目录时缓存只在
-  内存（≤ 64 MiB）且不预热。
+  内存（≤ 64 MiB）。
 - **版本键**（`SessionStore::search_version`，只 `stat` + 索引，不读正文）：数据
   文件 `size/mtime_ns/dev:ino:ctime`、Claude 显示 pin（`tip`/`stale_end`）、
   Codex 声明的固定前缀链（每个父文件的路径、`cut` 与版本）或使链不可读的图错误；
@@ -341,8 +333,8 @@ Enter 匹配正文，正文未命中或不可读时也按同一查询匹配该�
   字符类、`.`、反向引用、负向 lookaround、`*`/`?` 不要求任何东西；至多 8 个子句、
   每子句 32 个字面量，超出即不预筛）。预筛不通过的候选不打开缓存文件；通过的才
   按下文流式匹配。无命中的查询因此除版本 `stat` 外只读内存。启动后第一次为某
-  版本提供正文时整体读一次以生成折叠副本（预热会替全部候选做完）。
-- **正文来源顺序**（`SearchService::source`）：① 缓存命中（版本相等）→ 流式读；
+  版本提供正文时整体读一次以生成折叠副本。
+- **正文来源顺序**（`SearchService::source_at`）：① 缓存命中（版本相等）→ 流式读；
   ② 视图 LRU 里仍是当前版本的视图（用户正打开着、SSE 增量续读的那些）→ 借用并
   写入缓存；③ 解析：同一 uid 只允许一个生产者（其余等待后重读缓存），先按数据
   文件大小取解析槽（`SESSIONDOCK_SEARCH_WORKERS` 个槽，每 8 MiB 一槽，大文件
@@ -352,8 +344,8 @@ Enter 匹配正文，正文未命中或不可读时也按同一查询匹配该�
   增量解码要把该会话的解码记录常驻（约文件的数倍，每个活跃会话几十到几百 MB），
   违反本文的常驻内存原则；实测活跃的 20 MB 会话重解析
   ≈ 0.3 s，并行后热搜索仍 < 1 s。搜索不占普通读池的任何名额。
-- **匹配**：候选来自索引（按 `updated` 倒序，`?debug_run=` 视图筛过；同一
-  已发布列表 + 注册表 + run id 的候选行只构造一次、各次搜索共享），`workers` 个
+- **匹配**：候选来自索引（按 `updated` 倒序；同一
+  已发布列表的候选行只构造一次、各次搜索共享），`workers` 个
   线程并行取正文并匹配，但命中/进度
   严格按候选顺序发出，`limit` 停止点与顺序扫描相同。缓存正文按行对齐的 1 MiB
   块流式匹配（块只在 `\n` 处切，不含换行的模式命中不跨块，首个命中的上下文
@@ -372,10 +364,10 @@ Enter 匹配正文，正文未命中或不可读时也按同一查询匹配该�
   用改前的单一 `fancy-regex` 模式作参照，对每种查询形状、整体与分块逐一断言
   命中数、上限与片段相同。未知 `source` 是
   空筛选，`flags` 只有数值等于 `1` 时启用。
-- **预热**：有持久化目录时启动 2 s 后一趟后台预热（`workers/2` 个线程，
-  解析槽按"前台无人等待才取"的低优先级），之后每 `SESSIONDOCK_SEARCH_WARMUP`
-  秒（默认 300，0 关闭）复查一遍版本、只补解析变了的会话；预热不占读池、
-  不阻塞索引（与列表共用索引 TTL）。
+- **按需构建**：仅搜索请求为候选检查版本并构建或复用正文缓存；启动和空闲期间
+  不遍历会话预热，也不定时刷新历史。旧 `SESSIONDOCK_SEARCH_WARMUP` 环境变量
+  不再读取（与其它未识别变量一样忽略），任何值都不能开启后台扫描。已有持久条目
+  重启后仍复用；追加或改写由下一次搜索的版本检查发现。
 - **容量**：`SESSIONDOCK_SEARCH_CACHE_BYTES`（默认 1 GiB）按最近使用淘汰磁盘
   条目；`SESSIONDOCK_SEARCH_FOLD_BYTES`（默认 128 MiB）单独按最近使用淘汰常驻
   折叠副本（`CacheStats.folded_*` 记账 = 折叠字节 + 每条 256 B），被淘汰的

@@ -3,7 +3,7 @@
 
 Explicit directory and cache entries, cold/hot result identity,
 append/rewrite invalidation, cached unsupported sessions, restart reuse, LRU
-eviction, ordinary path aliases and permissions, warm-up without a search,
+eviction, ordinary path aliases and permissions, idle startup without a search,
 concurrent searches and a list during a search, NDJSON order, memory-only
 mode with a pure state dir, `--check-config`.
 """
@@ -63,8 +63,7 @@ def run_persistent(tmp, data):
     state.mkdir(mode=0o700)
     cache_dir = data.root / "search-text"
     cache_dir.mkdir(mode=0o700)
-    with isolated_server(data, BINARY, state_dir=state, extra_env={"SESSIONDOCK_SEARCH_WARMUP": "0",
-                                                                    "SESSIONDOCK_SEARCH_CACHE_DIR": str(cache_dir)}) as (base, opener):
+    with isolated_server(data, BINARY, state_dir=state, extra_env={"SESSIONDOCK_SEARCH_CACHE_DIR": str(cache_dir)}) as (base, opener):
         if entries(cache_dir):
             fail("cache dir", "entries before any search")
         route, cold, raw = expect_ok(opener, base, "zxneedle")
@@ -167,8 +166,7 @@ def run_persistent(tmp, data):
         passed("NDJSON progress and matches in pool order")
     # A restart with the same directories takes stock of the entries and
     # answers from them (the metadata store must still accept its own dir).
-    with isolated_server(data, BINARY, state_dir=state, extra_env={"SESSIONDOCK_SEARCH_WARMUP": "0",
-                                                                    "SESSIONDOCK_SEARCH_CACHE_DIR": str(cache_dir)}) as (base, opener):
+    with isolated_server(data, BINARY, state_dir=state, extra_env={"SESSIONDOCK_SEARCH_CACHE_DIR": str(cache_dir)}) as (base, opener):
         before = {p.name: p.stat().st_mtime_ns for p in entries(cache_dir)}
         route, payload, raw = expect_ok(opener, base, "zxrewrite")
         if len(uids(payload)) != 1:
@@ -188,7 +186,7 @@ def run_cap(tmp, data):
         sid = f"claude-big{index}"
         rows = [claude_row(sid, "user", "u0", None, f"zxbig{index} " + ("填充" * 200_000))]
         (big_root / f"{sid}.jsonl").write_bytes(b"".join(encoded(row) for row in rows))
-    with isolated_server(data, BINARY, extra_env={"SESSIONDOCK_SEARCH_WARMUP": "0", "SESSIONDOCK_SEARCH_CACHE_DIR": str(cache_dir),
+    with isolated_server(data, BINARY, extra_env={"SESSIONDOCK_SEARCH_CACHE_DIR": str(cache_dir),
                                                   "SESSIONDOCK_SEARCH_CACHE_BYTES": str(2 * 1024 * 1024)}) as (base, opener):
         route, payload, raw = expect_ok(opener, base, "zxbig")
         if len(uids(payload)) != 4:
@@ -207,8 +205,7 @@ def run_cap(tmp, data):
 def run_explicit_paths_and_values(tmp, data):
     explicit = tmp / "explicit-cache"
     explicit.mkdir(mode=0o700)
-    with isolated_server(data, BINARY, extra_env={"SESSIONDOCK_SEARCH_CACHE_DIR": str(explicit),
-                                                  "SESSIONDOCK_SEARCH_WARMUP": "0"}) as (base, opener):
+    with isolated_server(data, BINARY, extra_env={"SESSIONDOCK_SEARCH_CACHE_DIR": str(explicit)}) as (base, opener):
         expect_ok(opener, base, "zxneedle")
         if len(entries(explicit)) != 12:
             fail("explicit dir", f"{len(entries(explicit))} entries")
@@ -227,8 +224,7 @@ def run_explicit_paths_and_values(tmp, data):
         fail("state child cache", out)
     wide = data.root / "wide-cache"
     wide.mkdir(mode=0o750)
-    with isolated_server(data, BINARY, extra_env={"SESSIONDOCK_SEARCH_CACHE_DIR": str(wide),
-                                                   "SESSIONDOCK_SEARCH_WARMUP": "0"}):
+    with isolated_server(data, BINARY, extra_env={"SESSIONDOCK_SEARCH_CACHE_DIR": str(wide)}):
         pass
     code, out = check_config({"SESSIONDOCK_SEARCH_WORKERS": "0"}, data.root)
     if code != 0:
@@ -237,9 +233,9 @@ def run_explicit_paths_and_values(tmp, data):
     if code != 0:
         fail("small cache", out)
     code, out = check_config({"SESSIONDOCK_SEARCH_CACHE_DIR": str(explicit), "SESSIONDOCK_SEARCH_WORKERS": "3",
-                              "SESSIONDOCK_SEARCH_WARMUP": "7", "SESSIONDOCK_SEARCH_FOLD_BYTES": "4096"}, data.root)
+                              "SESSIONDOCK_SEARCH_FOLD_BYTES": "4096"}, data.root)
     if (code != 0 or f"search_cache_dir={explicit}" not in out or "search_workers=3" not in out
-            or "search_warmup=7" not in out or "search_fold_bytes=4096" not in out):
+            or "search_fold_bytes=4096" not in out):
         fail("check-config", out)
     code, out = check_config({"SESSIONDOCK_SEARCH_FOLD_BYTES": "lots"}, data.root)
     if code == 0:
@@ -247,29 +243,28 @@ def run_explicit_paths_and_values(tmp, data):
     passed("--check-config accepts cache aliases and values and echoes search settings")
 
 
-def run_warmup(tmp, data):
-    cache_dir = data.root / "search-text-warm"
+def run_on_demand(tmp, data):
+    cache_dir = data.root / "search-text-demand"
     cache_dir.mkdir(mode=0o700)
+    # A leftover positive value from an old deployment cannot restore scanning.
     with isolated_server(data, BINARY, extra_env={"SESSIONDOCK_SEARCH_WARMUP": "1",
                                                   "SESSIONDOCK_SEARCH_CACHE_DIR": str(cache_dir)}) as (base, opener):
-        deadline = time.time() + 15
-        while time.time() < deadline and len(entries(cache_dir)) < 12:
-            time.sleep(0.2)
-        if len(entries(cache_dir)) < 12:
-            fail("warm-up", f"{len(entries(cache_dir))} entries after 15 s without a search")
+        time.sleep(3.5)  # Beyond the removed startup delay and legacy interval.
         with opener.open(base + "/api/sessions", timeout=10) as resp:
             if resp.status != 200:
-                fail("warm-up", "list failed during warm-up")
+                fail("on-demand", "list failed before any search")
+        if entries(cache_dir):
+            fail("on-demand", "cache populated without a search")
         route, payload, raw = expect_ok(opener, base, "zxneedle")
-        if len(uids(payload)) != 3:
-            fail(route, "warm cache answers the first search", raw)
-    passed("warm-up fills the cache before any search")
+        if len(uids(payload)) != 3 or len(entries(cache_dir)) != 12:
+            fail(route, "first search must build its cache and return all matches", raw)
+    passed("idle startup leaves cache empty; legacy warmup setting ignored; first search builds cache")
 
 
 def run_memory_only(tmp, data):
     state = data.root / "state-memory"
     state.mkdir(mode=0o700)
-    with isolated_server(data, BINARY, state_dir=state, extra_env={"SESSIONDOCK_SEARCH_WARMUP": "0"}) as (base, opener):
+    with isolated_server(data, BINARY, state_dir=state) as (base, opener):
         route, first, raw = expect_ok(opener, base, "zxneedle")
         route, second, raw = expect_ok(opener, base, "zxneedle")
         if first.get("results") != second.get("results") or len(uids(first)) != 3:
@@ -292,7 +287,7 @@ def main():
         corpus_root.mkdir()
         data = build(corpus_root)
         run_memory_only(tmp, data)
-        run_warmup(tmp, data)
+        run_on_demand(tmp, data)
         run_explicit_paths_and_values(tmp, data)
         # Mutates the fixtures (append, rewrite): keep it after the others.
         run_persistent(tmp, data)

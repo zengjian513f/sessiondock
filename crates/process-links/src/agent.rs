@@ -14,12 +14,12 @@ pub struct CollectorStatus {
     pub events: String,
     pub lost_events: u64,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Owner {
     pub process: Process,
     pub session: Session,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Catalog {
     pub node_id: String,
     pub boot_id: String,

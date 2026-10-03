@@ -31,9 +31,8 @@ pub const SUMMARY_FILE: &str = "summary.json";
 pub const MESSAGES_FILE: &str = "messages.jsonl";
 /// How often the database is polled for changed sessions.
 pub const POLL: Duration = Duration::from_secs(1);
-/// Every this many polls every session's message rows are re-checked even
-/// when its `time_updated` did not move.
-const FULL_CHECK_EVERY: u32 = 60;
+/// Cheap missing-mirror recovery; never queries unchanged native history.
+const RECOVERY_EVERY: u32 = 60;
 
 /// OpenCode identifiers (`ses_…`, project hashes) as path components.
 pub fn safe_id(id: &str) -> bool {
@@ -68,9 +67,6 @@ pub fn new_session_id() -> io::Result<String> {
 struct Exported {
     /// `(message id, time_updated)` of every line in `messages.jsonl`.
     rows: Vec<(String, i64)>,
-    /// `(count, max seq, max time_updated)` once every row is exported;
-    /// `None` while a row is still streaming, so the next poll looks again.
-    signature: Option<(i64, i64, i64)>,
     /// The file on disk was reconciled at least once by this process.
     initialized: bool,
 }
@@ -78,7 +74,6 @@ struct Exported {
 struct Mirrored {
     dir: PathBuf,
     summary: String,
-    session_updated: i64,
     exported: Exported,
 }
 
@@ -86,6 +81,8 @@ pub struct Mirror {
     database: PathBuf,
     root: PathBuf,
     connection: Option<Connection>,
+    database_identity: Option<String>,
+    data_version: Option<i64>,
     sessions: HashMap<String, Mirrored>,
     polls: u32,
     last_error: Option<String>,
@@ -97,6 +94,8 @@ impl Mirror {
             database,
             root,
             connection: None,
+            database_identity: None,
+            data_version: None,
             sessions: HashMap::new(),
             polls: 0,
             last_error: None,
@@ -130,11 +129,36 @@ impl Mirror {
             .map(drop)
     }
 
-    fn connect(&mut self) -> io::Result<Option<&Connection>> {
-        if self.connection.is_none() {
-            if !self.database.is_file() {
-                return Ok(None);
+    fn connect(&mut self) -> io::Result<bool> {
+        let metadata = match fs::metadata(&self.database) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.connection = None;
+                self.database_identity = None;
+                self.data_version = None;
+                return Ok(false);
             }
+            Err(error) => return Err(error),
+        };
+        // Do not open/close an extra Unix fd: closing any fd for a SQLite
+        // file can release that process's POSIX locks on the database.
+        #[cfg(not(windows))]
+        let identity = {
+            use std::os::unix::fs::MetadataExt;
+            format!("{}:{}", metadata.dev(), metadata.ino())
+        };
+        #[cfg(windows)]
+        let identity = {
+            let _ = metadata;
+            let file = fs::File::open(&self.database)?;
+            super::file_stamp(&file)
+                .map_err(|_| io::Error::other("cannot stat OpenCode database"))?
+                .file_identity
+        };
+        if self.database_identity.as_ref() != Some(&identity) {
+            self.connection = None;
+        }
+        if self.connection.is_none() {
             let connection = Connection::open_with_flags(
                 &self.database,
                 OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -144,19 +168,64 @@ impl Mirror {
                 .busy_timeout(Duration::from_millis(1500))
                 .map_err(sql)?;
             self.connection = Some(connection);
+            self.database_identity = Some(identity);
+            // data_version values are comparable only on the same connection.
+            // Reconcile disk bytes too: a replacement may reuse ids/timestamps.
+            self.data_version = None;
+            self.sessions.clear();
         }
-        Ok(self.connection.as_ref())
+        Ok(true)
     }
 
     /// One pass: mirror new and changed sessions, remove deleted ones.
     pub fn sync(&mut self) -> io::Result<()> {
         fs::create_dir_all(&self.root)?;
         self.polls = self.polls.wrapping_add(1);
-        let full = self.polls % FULL_CHECK_EVERY == 1;
-        let Some(connection) = self.connect()? else {
-            // No database yet (OpenCode never ran): nothing to mirror.
+        if !self.connect()? {
             return self.retain(&HashSet::new(), true);
-        };
+        }
+        let connection = self.connection.take().expect("connected");
+        let result = self.sync_connected(&connection);
+        if result.is_ok() {
+            self.connection = Some(connection);
+        }
+        // On failure discard the connection and its version baseline; the next
+        // pass reconciles any files already written before the error.
+        result
+    }
+
+    fn sync_connected(&mut self, connection: &Connection) -> io::Result<()> {
+        // Sample BEFORE opening the read snapshot. A concurrent commit after
+        // this sample must trigger another pass, even if this snapshot missed it.
+        let version: i64 = connection
+            .query_row("PRAGMA data_version", [], |row| row.get(0))
+            .map_err(sql)?;
+        if self.data_version == Some(version) {
+            if !self.polls.is_multiple_of(RECOVERY_EVERY) {
+                return Ok(());
+            }
+            let mut missing = false;
+            for known in self.sessions.values_mut() {
+                if !known.dir.join(SUMMARY_FILE).is_file()
+                    || !known.dir.join(MESSAGES_FILE).is_file()
+                {
+                    known.summary.clear();
+                    known.exported = Exported::default();
+                    missing = true;
+                }
+            }
+            if !missing {
+                return Ok(());
+            }
+        }
+        let transaction = connection.unchecked_transaction().map_err(sql)?;
+        self.sync_snapshot(&transaction)?;
+        transaction.commit().map_err(sql)?;
+        self.data_version = Some(version);
+        Ok(())
+    }
+
+    fn sync_snapshot(&mut self, connection: &Connection) -> io::Result<()> {
         let has_v2: bool = connection
             .query_row(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_v2'",
@@ -172,7 +241,6 @@ impl Mirror {
         let projects = read_projects(connection)?;
         let rows = read_sessions(connection)?;
         let mut seen = HashSet::new();
-        let mut work = Vec::new();
         for row in rows {
             let id = row.id.clone();
             if !safe_id(&id) || !safe_id(&row.project) {
@@ -181,37 +249,21 @@ impl Mirror {
             seen.insert(id.clone());
             let dir = self.root.join(&row.project).join(&id);
             let summary = summary_json(&row, projects.get(&row.project));
-            let changed = match self.sessions.get(&id) {
-                Some(known) => {
-                    known.dir != dir
-                        || known.summary != summary
-                        || known.session_updated != row.updated
-                        || known.exported.signature.is_none()
-                        || full
-                }
-                None => true,
-            };
-            if changed {
-                work.push((id, dir, summary, row.updated));
-            }
+            self.mirror_session(connection, &id, dir, summary)?;
         }
-        for (id, dir, summary, updated) in work {
-            self.mirror_session(&id, dir, summary, updated)?;
-        }
-        self.retain(&seen, full)
+        self.retain(&seen, self.data_version.is_none())
     }
 
     fn mirror_session(
         &mut self,
+        connection: &Connection,
         id: &str,
         dir: PathBuf,
         summary: String,
-        updated: i64,
     ) -> io::Result<()> {
         let mut known = self.sessions.remove(id).unwrap_or_else(|| Mirrored {
             dir: dir.clone(),
             summary: String::new(),
-            session_updated: 0,
             exported: Exported::default(),
         });
         if known.dir != dir {
@@ -222,16 +274,11 @@ impl Mirror {
             known.exported = Exported::default();
         }
         fs::create_dir_all(&dir)?;
-        let connection = self
-            .connection
-            .as_ref()
-            .ok_or_else(|| io::Error::other("database closed"))?;
         sync_messages(connection, id, &dir, &mut known.exported)?;
         if known.summary != summary {
             write_if_changed(&dir.join(SUMMARY_FILE), summary.as_bytes())?;
             known.summary = summary;
         }
-        known.session_updated = updated;
         self.sessions.insert(id.to_owned(), known);
         Ok(())
     }
@@ -285,7 +332,6 @@ fn sql(error: rusqlite::Error) -> io::Error {
 struct SessionRow {
     id: String,
     project: String,
-    updated: i64,
     fields: Value,
 }
 
@@ -388,7 +434,7 @@ fn read_sessions(connection: &Connection) -> io::Result<Vec<SessionRow>> {
     let mut sessions = Vec::new();
     for fields in rows {
         let fields = fields.map_err(sql)?;
-        let (Some(id), Some(project), Some(updated)) = (
+        let (Some(id), Some(project), Some(_updated)) = (
             fields.get("id").and_then(Value::as_str).map(str::to_owned),
             fields
                 .get("project_id")
@@ -401,7 +447,6 @@ fn read_sessions(connection: &Connection) -> io::Result<Vec<SessionRow>> {
         sessions.push(SessionRow {
             id,
             project,
-            updated,
             fields: Value::Object(fields),
         });
     }
@@ -434,18 +479,7 @@ fn sync_messages(
     dir: &Path,
     exported: &mut Exported,
 ) -> io::Result<()> {
-    let signature: (i64, i64, i64) = connection
-        .query_row(
-            "SELECT count(*), coalesce(max(seq), -1), coalesce(max(time_updated), -1) \
-             FROM session_message WHERE session_id = ?1",
-            [session],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .map_err(sql)?;
     let path = dir.join(MESSAGES_FILE);
-    if exported.signature == Some(signature) && path.is_file() {
-        return Ok(());
-    }
     let mut statement = connection
         .prepare(
             "SELECT id, type, seq, time_created, time_updated FROM session_message \
@@ -517,8 +551,8 @@ fn sync_messages(
         exported.rows.extend(rows);
     }
     exported.initialized = true;
-    // Keep polling while a row is still streaming.
-    exported.signature = (exported.rows.len() == metas.len()).then_some(signature);
+    // A streaming row is reconsidered on the next database commit, including
+    // a later non-assistant row that makes it settled without changing it.
     Ok(())
 }
 

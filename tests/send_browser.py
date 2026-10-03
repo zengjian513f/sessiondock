@@ -43,11 +43,11 @@ def xterm_includes(page, text, timeout=15000):
     page.wait_for_function("text => (" + XTERM_TEXT + ")().includes(text)", arg=text, timeout=timeout)
 
 
-def initialize(flag, directory):
+def initialize(flag, directory, binary=BINARY):
     with socket.socket() as occupied:
         occupied.bind(("127.0.0.1", 0))
         env = {"PATH": "/usr/bin:/bin", "SESSIONDOCK_BIND": "127.0.0.1:%d" % occupied.getsockname()[1]}
-        done = subprocess.run([str(BINARY), flag, str(directory)], cwd=REPO, env=env, capture_output=True, timeout=20)
+        done = subprocess.run([str(binary), flag, str(directory)], cwd=REPO, env=env, capture_output=True, timeout=20)
     assert done.returncode == 0, done.stderr.decode()
 
 

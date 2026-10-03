@@ -31,7 +31,19 @@ calls `opencode api` to create and delete sessions.
 ## Mirror
 
 `sessions::opencode::Mirror` polls the database once a second on its own
-thread. Each session becomes `<root>/<project id>/<session id>/`:
+thread, on a persistent read-only connection to the configured database only.
+`PRAGMA data_version` skips project, session and message queries when no other
+connection has committed (including WAL commits). Startup, connection recovery
+and a changed database file identity always reconcile the mirror. The version
+is sampled before a single read transaction, and acknowledged only after a
+successful pass: a commit racing the snapshot remains eligible for the next
+poll. A database change checks message metadata even when session timestamps
+are unchanged; older-row updates, deletions and newly settled streaming tails
+therefore need no periodic full-history scan. With no database changes, every
+60 polls only the known mirror file paths are checked for missing files; a
+missing file triggers reconciliation. No other homes or databases are searched.
+
+Each session becomes `<root>/<project id>/<session id>/`:
 
 - `summary.json`: `{"format": "sessiondock-opencode-mirror", "version": 1,
   "session": <session_v2 row>, "project": {"id", "worktree"}}`, rewritten
@@ -88,3 +100,9 @@ OpenCode has no recycle bin. Deleting an OpenCode row calls
 `<profile> api session.remove` (which also removes its child sessions) and
 drops the mirror directory at once. There is no trash entry and no undo; the
 confirmation says so. A running session is refused like any other.
+
+The standalone synthetic regression `python3 tests/opencode_mirror_browser.py`
+drives the page through database creation, WAL updates, streaming settlement,
+revert, connection recovery, replacement, restart and deletion. Its 65-second
+idle check uses SQLite views with changing read results to detect accidental
+project/message re-queries without production tracing hooks.

@@ -79,7 +79,8 @@ SHA-1/SHA-256、64 KiB 以上字符串一律 span、小记录先走 serde_json�
 
 ## 全文搜索：搜索文本缓存（2026-09-13）
 
-设计见 [read-model.md](read-model.md#搜索)。独立实例（只配三个真实读根 + scratch
+以下是当时启用后台预热的历史测量；当前已删除启动和定时预热，缓存仅在搜索时
+构建，首次冷搜索承担解析成本。设计见 [read-model.md](read-model.md#搜索)。独立实例（只配三个真实读根 + scratch
 下的 `SESSIONDOCK_SEARCH_CACHE_DIR`，816 行、3.6 GB），对照 Python 8710（只 GET），机器
 负载 load average 120–160（其它 WP 并行验收），release 构建。`rss` 为
 `/proc/<pid>/status` 的 VmRSS，每 100 ms 采样，"后"为搜索结束 1 s 后。
@@ -114,7 +115,7 @@ LRU 视图），预热期间 RSS 峰 732 MB、结束后 98 MB；启动后 3 s �
 解析槽粒度是峰值内存与冷搜索耗时的取舍（`ParseSlots`，`SLOT_BYTES`）：
 64 MiB/槽时冷搜索 10.0 s 但 RSS 峰 3.2 GB（8 个 arena 各保留其最大投影）；
 16 MiB/槽 18.9 s / 3.1 GB（无 trim）；8 MiB/槽 + 逐大文件 `malloc_trim` 25.3 s /
-0.82 GB。默认取后者：冷搜索只在空缓存或换二进制后的头半分钟出现，由预热承担。
+0.82 GB。当时默认取后者，并由预热承担空缓存或换二进制后的首次解析；当前改为搜索时按需解析。
 真实读根 5597 个文件的 size/mtime 在全部验收前后逐一相同。
 
 ## 全文搜索：折叠副本预筛与全词匹配（2026-09-15）
@@ -360,14 +361,14 @@ VmRSS，MB：
 （设计见 [read-model.md](read-model.md#列表索引与摘要) "列表响应字节缓存" 与
 [liveness.md](liveness.md#response-caches)）：
 
-- `/api/sessions`：`sig` 短路之后，按 `debug_run` 视图缓存最终响应字节，键是视图文档
+- `/api/sessions`：`sig` 短路之后，缓存一份最终响应字节，键是已发布文档
   的 `Arc` 身份（⇔ 当前 `sig`）+ 视图缓存修订号（列表借的 `cursor.anchor` /
   `timeline_pin` 只依赖它）；并发全列表请求排队后依次命中同一块缓冲。
-- `/api/live`：按视图缓存装配好的文档，键是 `/proc` 扫描身份、共享受控观察身份、
-  生命周期修订号、视图拓扑（行的判活字段 + 被注册表隐藏的 uid）；每请求只补
+- `/api/live`：缓存装配好的文档，键是 `/proc` 扫描身份、共享受控观察身份、
+  生命周期修订号、列表拓扑（行的判活字段）；每请求只补
   `managed.cache` / `scan.cache` / `spawned_recorded` 三个字段。
 - `/api/term/list`：改读共享受控观察（不再每次新鲜探测：列表不授权任何东西），
-  装配结果按视图缓存 2 s；受控观察与 pending 用的回执列表也按生命周期修订号 + 2 s
+  装配结果缓存 2 s；受控观察与 pending 用的回执列表也按生命周期修订号 + 2 s
   共享一份（`LifecycleService::list` 对 26 个存活回执要 52 次 socket 往返）。
 - 生命周期协调器每完成一条变更命令（create / kill / takeover / bind / stop /
   discard，不论结果）推进 `generation`；三层缓存和共享受控观察都以它为键，API 变更
@@ -379,9 +380,12 @@ VmRSS，MB：
 `/api/term/create` 起的 free-shell ptyhost 实例，loopback，urllib + `perf_counter`
 5 次取中位数；"修改前"是同一台机器上从 `main` 构建的二进制，同一配置先后运行）：
 
+以上数字保留当时的注册表过滤基线；生产过滤现已删除，当前工具不再接受
+`--registry`。下面命令读取全部根，行数可能与历史测量不同。
+
 ```sh
 python3 tests/bench_polls_real.py --claude-root ~/.claude/projects --codex-root ~/.codex/sessions \
-  --grok-root ~/.grok/sessions --codex-index ~/.codex/session_index.jsonl --registry <debug-runs.json> \
+  --grok-root ~/.grok/sessions --codex-index ~/.codex/session_index.jsonl \
   --binary <二进制> --ptyhost target/release/ptyhost --hosts 26 --label after \
   --i-understand-this-reads-real-histories
 ```

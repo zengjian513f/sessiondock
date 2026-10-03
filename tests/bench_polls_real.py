@@ -84,8 +84,6 @@ def main(argv=None):
     for src in SOURCES:
         ap.add_argument(f"--{src}-root", type=Path)
     ap.add_argument("--codex-index", type=Path, help="Codex session_index.jsonl (read-only)")
-    ap.add_argument("--registry", type=Path,
-                    help="a debug-runs.json whose read-only copy hides registered runs like the deployment")
     ap.add_argument("--binary", type=Path, default=REPO / "target/release/sessiondock")
     ap.add_argument("--ptyhost", type=Path, default=REPO / "target/release/ptyhost")
     ap.add_argument("--hosts", type=int, default=26)
@@ -108,9 +106,6 @@ def main(argv=None):
         root = Path(tmp)
         for name in ("host", "work", "ledger", "state"):
             (root / name).mkdir(mode=0o700)
-        if a.registry:
-            target = root / "state" / "debug-runs.json"
-            target.write_bytes(a.registry.read_bytes()); target.chmod(0o600)
         cfg = root / "launcher.json"
         cfg.touch(mode=0o600)
         cfg.write_text(json.dumps({
