@@ -141,7 +141,7 @@ def main():
         original_width = page.locator('#left').bounding_box()['width']
         original_meta = sidebar.locator('.m').inner_text()
         toggle.click()
-        assert page.locator('#left').bounding_box()['width'] == original_width + 176
+        assert page.locator('#left').bounding_box()['width'] == original_width + 144
         wait_for(lambda: sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '4')
         assert sidebar.locator('.item-resources .ui-icon').count() == 6
         assert sidebar.locator('[data-resource="process_count"] .item-resource-value').inner_text() == '2'
@@ -166,7 +166,7 @@ def main():
         toggle.click()
         page.reload(wait_until='networkidle')
         assert toggle.get_attribute('aria-pressed') == 'true'
-        assert page.locator('#left').bounding_box()['width'] == original_width + 176
+        assert page.locator('#left').bounding_box()['width'] == original_width + 144
         # Rows without a star keep the same resource-column boundary.
         star = sidebar.locator('.item-star')
         aligned_left = sidebar.locator('.item-resources').bounding_box()['x']
@@ -185,7 +185,7 @@ def main():
         page.mouse.up()
         assert page.locator('#left').bounding_box()['width']>=start_width+99
         page.locator('#drag').dblclick()
-        assert page.locator('#left').bounding_box()['width']==original_width+176
+        assert page.locator('#left').bounding_box()['width']==original_width+144
         sidebar.click()
         saved = sidebar.element_handle()
         collectors[0].cpu = 3

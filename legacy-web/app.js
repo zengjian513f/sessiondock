@@ -8932,7 +8932,7 @@ function toggleNestFold(uid) {
 
 // ---------------------------------------------------------------- 栏宽拖动
 const SIDE_DEFAULT = 340;
-const sideResourceExtra = () => document.body.classList.contains('sidebar-resources') ? 176 : 0;
+const sideResourceExtra = () => document.body.classList.contains('sidebar-resources') ? 144 : 0;
 
 function setSideWidth(px, save) {
   if (MOBILE.matches) {
