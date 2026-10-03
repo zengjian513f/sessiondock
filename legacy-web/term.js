@@ -16,7 +16,7 @@ const TERM_CLAIM_TIMEOUT_MS = 20_000;
 const TERM_SYNC_HOLD_MAX = 256 * 1024;
 const TERM_SYNC_HOLD_MS = 100;
 // ConPTY can emit the sync-end marker before its final screen/cursor update.
-const TERM_SYNC_SETTLE_MS = 24;
+const TERM_SYNC_SETTLE_MS = 50;
 const TERM_LAYOUT_POLICY_VERSION = 2;
 // 每次页面加载独立生成；不写 local/sessionStorage，复制标签页也不会复制归属。
 const TERM_PAGE_ID = window.__sessiondockPageId || crypto.randomUUID?.()
