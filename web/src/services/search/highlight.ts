@@ -128,7 +128,7 @@ export function markMatches(root: HTMLElement) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: n => {
       const msg = n.parentElement!.closest('.msg');
-      return n.parentElement!.closest('mark, .fold-preview, .katex')
+      return !n.parentElement!.closest('[data-conversation-inner]') || n.parentElement!.closest('mark, .fold-preview, .katex')
         || !msg || !SEARCH_ROLES.has((msg as HTMLElement).dataset.role!)
         ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     },
@@ -165,7 +165,7 @@ export async function markRegexMatches(root: HTMLElement) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: n => {
       const msg = n.parentElement?.closest('.msg');
-      return n.parentElement?.closest('mark, .fold-preview, .katex')
+      return !n.parentElement?.closest('[data-conversation-inner]') || n.parentElement?.closest('mark, .fold-preview, .katex')
         || !msg || !SEARCH_ROLES.has((msg as HTMLElement).dataset.role!)
         ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     },

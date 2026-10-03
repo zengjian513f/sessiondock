@@ -1010,26 +1010,7 @@ const LIST_MS = 8000;       // 会话列表跟进磁盘变化的间隔
 // SSE/对账从同一游标重试。用 let 是为了浏览器 E2E 能把分钟级故障压缩到毫秒。
 let SYNC_STALL_MS = 12000;
 const cache = new Map();          // viewKey → {meta, msgs, version, end, bytes}
-const messageIndexes = new WeakMap();
-function messageIndex(messages) {
-  let index = messageIndexes.get(messages);
-  if (!index) {
-    index = {length: 0, questions: new Set(), turnStart: -1, tailHasFinal: false};
-    messageIndexes.set(messages, index);
-  }
-  for (let i = index.length; i < messages.length; i++) {
-    const message = messages[i];
-    if (message.role === 'question' && message.call_id) index.questions.add(message.call_id);
-    if (isTurnStart(message) && !(i > 0 && isTurnStart(messages[i - 1])
-        && sameNativeTurn(messages[i - 1], message))) {
-      index.turnStart = i;
-      index.tailHasFinal = false;
-    }
-    if (isFinalAssistant(message)) index.tailHasFinal = true;
-  }
-  index.length = messages.length;
-  return index;
-}
+const {messageIndexes,messageIndex}=SessionDockConversation.index;
 // 多题题卡会被 SSE、兜底对账和完整重绘反复替换 DOM。未提交选择必须独立于
 // 节点保存，否则下一次后台刷新就会让用户刚点的答案消失。
 const questionFormDrafts = new Map(); // `${uid}\0${tool id}` → option index[]
@@ -1240,8 +1221,6 @@ function applyCoveredActivity(uid, agent, entry, data) {
   markInterruptedTurn(entry.msgs, entry.activity);
   if (S.sel !== uid || S.agent !== agent) return;
   const box = $('#msgs');
-  $('#activity')?.remove();
-  $('#queued-sends')?.remove();
   if (box && entry.activity?.state !== 'working') sealTurnTail(box, entry);
   renderConversationTail(entry.activity, uid);
 }
@@ -1406,8 +1385,6 @@ async function applyDiffPacket(uid, data, bytes = 0, agent = null) {
   if (!data.messages.length) {
     if (S.sel === uid && S.agent === agent) {
       const box = $('#msgs');
-      $('#activity')?.remove();
-      $('#queued-sends')?.remove();
       if (box && e.activity?.state !== 'working') sealTurnTail(box, e);
       renderConversationTail(e.activity, uid);
     }
@@ -1422,8 +1399,6 @@ async function applyDiffPacket(uid, data, bytes = 0, agent = null) {
   if (S.sel !== uid || S.agent !== agent) return data.messages.length;
   const box = $('#msgs');
   if (!box) return data.messages.length;
-  $('#activity')?.remove();
-  $('#queued-sends')?.remove();
   const built = appendMessages(box, data.messages, null,
     {openTail: e.activity?.state === 'working'});
   const sealed = sealTurnTail(box, e);
@@ -1480,33 +1455,11 @@ const retryDelay = attempt => Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.m
 
 function renderMigrationReadFailure(uid, agent = null) {
   if (SessionDockCapabilities.config.backend !== 'rust' || S.sel !== uid || S.agent !== agent) return;
-  const detail = $('#detail');
-  if (!detail) return;
-  $('#migration-read-error')?.remove();
-  const failure = migrationReadFailures.get(viewKey(uid, agent));
-  if (!failure) { delete detail.dataset.migrationStale; return; }
-  detail.dataset.migrationStale = 'true';
-  // 没有快照时正文已经写了“读取失败: …”，不再重复一条横幅。
-  if (!cache.has(viewKey(uid, agent))) return;
-  const notice = document.createElement('div');
-  notice.id = 'migration-read-error';
-  notice.setAttribute('role', 'alert');
-  notice.style.cssText = 'padding:8px 12px;flex:none;border-bottom:1px solid var(--border);font-size:13px';
-  const text = document.createElement('span');
-  text.textContent = '同步已暂停；当前保留的是先前快照，不代表最新历史。'
-    + failure.message + (failure.status ? `（HTTP ${failure.status}）` : '') + ' ';
-  const parts = [text];
-  if (retryableReadFailure(failure)) {
-    const retry = document.createElement('button');
-    retry.type = 'button'; retry.className = 'btn';
-    retry.textContent = failure.retrying ? '正在重试…' : '重试读取';
-    retry.disabled = !!failure.retrying;
-    retry.onclick = () => { void retryMigrationRead(uid, agent); };
-    parts.push(retry);
-  }
-  notice.append(...parts);
-  const heading = detail.querySelector(':scope > .dhead');
-  if (heading) heading.after(notice); else detail.prepend(notice);
+  const detail = $('#detail'); if (!detail) return;
+  const failure = migrationReadFailures.get(viewKey(uid,agent));
+  if (!failure) delete detail.dataset.migrationStale;
+  else detail.dataset.migrationStale = 'true';
+  SessionDockConversation.readFailure(detail,uid,agent,cache.has(viewKey(uid,agent)) ? failure : null);
 }
 
 /** 不可恢复失败的登记：暂停该视图的后台读取与 SSE，保留先前快照。 */
@@ -2359,7 +2312,7 @@ function mergeSessionMetaEvent(entry, session) {
 /** 列表元数据变更后同步缓存和当前详情标题，不重绘消息正文。 */
 function refreshSessionMeta() {
   const headerKey = m => JSON.stringify([
-    m.title, m.parent_title, m.sid, m.agent_type, !!m.starred,
+    m.title, m.parent_title, m.sid, m.agent_type, m.model, !!m.starred,
     m.nest_parent || null, m.group || null,
     (m.agent_items || []).map(a => [a.id, a.title, a.type]),
   ]);
@@ -3469,21 +3422,7 @@ function renderTimelinePinNotice(meta) {
   place();
 }
 
-function timelinePinAction(n, m) {
-  if (!timelinePinEnabled() || m.role !== 'user' || m.turn_id == null || S.agent) return;
-  const session = S.sessions.find(s => s.uid === S.sel)
-    || cache.get(viewKey(S.sel, null))?.meta;
-  if (session?.source !== 'claude') return;
-  const uid = S.sel, target = String(m.turn_id);
-  const action = el('button', 'more disclosure timeline-pin-action');
-  action.type = 'button';
-  action.textContent = '回到此处';
-  action.title = action.ariaLabel = '固定显示到这条输入之前；只改网页显示，CLI 不会回滚';
-  action.dataset.pinTarget = target;
-  action.style.cssText = 'width:auto;margin:2px 8px 6px auto;padding:2px 8px;font-size:11px';
-  action.onclick = () => { action.disabled = true; void pinTimeline(uid, target).finally(() => { action.disabled = false; }); };
-  n.appendChild(action);
-}
+
 
 function applySourceFilterChange() {
   store.set('off', [...S.off]);
@@ -4223,24 +4162,14 @@ addEventListener('resize', () => {
 /** 整份渲染。消息可能上万条, 分批交还主线程, 否则页面会卡住不动。 */
 let renderSeq = 0;
 
-function historyGapNode(info) {
-  const gap = el('div', 'history-gap');
-  const button = el('button', 'history-gap-load',
-    `加载中间 ${Number(info.omitted || 0).toLocaleString()} 条消息`);
-  button.type = 'button';
-  button.onclick = () => historyPagesEnabled()
-    ? loadHistoryPage(info.uid, info.agent, button)
-    : loadFullHistory(info.uid, info.agent, button);
-  gap.appendChild(button);
-  return gap;
-}
+
 
 function historyPagesEnabled() {
   return SessionDockCapabilities.config.backend === 'rust'
     && SessionDockCapabilities.config.history_pages === true;
 }
 
-const historyPageRequests = new Map();
+const historyPageRequests = SessionDockConversation.requests.historyPageRequests;
 // 点一次“加载中间 N 条”后自动连续翻页直到缺口填满（分页取但不停）。
 // 按钮显示进度，再点一次中止。用 let 是为了浏览器 E2E
 // 能关掉连续翻页，逐页检验竞争。
@@ -4254,26 +4183,7 @@ function currentHistoryPage(request) {
 
 const HISTORY_PAGE_MAX_EVENTS = 10000;   // 服务端 SESSIONDOCK_HISTORY_PAGE_EVENTS 的上限
 
-function validateHistoryPage(data, partial, cursor) {
-  const page = data?.page;
-  const integer = value => Number.isSafeInteger(value) && value >= 0;
-  const token = value => typeof value === 'string' && /^[0-9a-f]{32}$/.test(value);
-  if (!Array.isArray(data?.messages) || data.messages.length > HISTORY_PAGE_MAX_EVENTS || !page || !token(cursor) || page.cursor !== cursor
-      || !data.messages.every(message => message && typeof message === 'object' && !Array.isArray(message)
-        && typeof message.role === 'string' && typeof message.text === 'string'
-        && (message.media == null || (Array.isArray(message.media)
-          && message.media.every(item => item && typeof item === 'object' && !Array.isArray(item)))))
-      || !integer(partial.head) || !integer(partial.omitted)
-      || !['start', 'end', 'stop', 'remaining'].every(key => integer(page[key]))
-      || page.start !== partial.head || page.stop !== partial.head + partial.omitted
-      || page.end < page.start || page.end > page.stop
-      || page.end - page.start !== data.messages.length || !data.messages.length
-      || page.remaining !== page.stop - page.end
-      || (page.remaining === 0 ? page.next !== null : !token(page.next) || page.next === cursor)) {
-    throw new Error('历史分页响应与当前缺口不匹配；请重新载入当前历史。');
-  }
-  return page;
-}
+const validateHistoryPage = SessionDockConversation.pages.validateHistoryPage;
 
 async function fetchHistoryPage(uid, agent, cursor, signal, partial) {
   const query = new URLSearchParams({cursor});
@@ -4322,20 +4232,8 @@ async function fetchHistoryPage(uid, agent, cursor, signal, partial) {
 }
 
 function historyPageFailure(request, button, error) {
-  if (!currentHistoryPage(request) || !button?.isConnected) return;
-  const gap = button.parentElement;
-  gap.querySelector('.history-page-error')?.remove();
-  gap.querySelector('.history-gap-reload')?.remove();
-  const notice = el('div', 'history-page-error');
-  notice.setAttribute('role', 'alert');
-  notice.textContent = `未改变当前历史快照。${error.message || '历史分页读取失败。'}`;
-  gap.appendChild(notice);
-  button.disabled = false;
-  button.textContent = '重试加载这一页';
-  const reload = el('button', 'history-gap-reload', '重新载入当前历史');
-  reload.type = 'button';
-  reload.onclick = () => reloadHistoryWindow(request.uid, request.agent, reload);
-  gap.appendChild(reload);
+  if (!currentHistoryPage(request)) return;
+  SessionDockConversation.gapState({gapError:`未改变当前历史快照。${error.message || '历史分页读取失败。'}`,gapDisabled:false,gapLabel:'重试加载这一页',gapReloadBusy:false});
 }
 
 function restoreHistoryPageScroll(top, scrollTop, entry) {
@@ -4377,10 +4275,7 @@ async function loadHistoryPage(uid, agent, button) {
   const gap = button.parentElement, box = $('#msgs');
   const top = gap.getBoundingClientRect().top, scrollTop = box?.scrollTop || 0;
   // 连续翻页时按钮保持可点（用于中止），并显示进度。
-  button.disabled = !request.chain;
-  button.textContent = request.chain
-    ? `正在加载历史… 0 / ${target.toLocaleString()} 条 · 点击中止`
-    : '正在读取这一页…';
+  SessionDockConversation.gapState({gapDisabled:!request.chain,gapError:'',gapLabel:request.chain ? `正在加载历史… 0 / ${target.toLocaleString()} 条 · 点击中止` : '正在读取这一页…'});
   let changed = false, failure = null;
   try {
     for (;;) {
@@ -4390,14 +4285,12 @@ async function loadHistoryPage(uid, agent, button) {
       const page = validateHistoryPage(data, entry.partial, request.cursor);
       // Ordinary SSE appends may have advanced this same entry while HTTP was
       // pending. Keep that tail and every live cursor field exactly as observed.
-      entry.msgs = [...entry.msgs.slice(0, page.start), ...data.messages, ...entry.msgs.slice(page.start)];
-      entry.partial = page.remaining ? {...entry.partial, head: page.end, omitted: page.remaining, cursor: page.next} : null;
-      entry.bytes = (entry.bytes || 0) + bytes;
+      SessionDockConversation.pages.insertHistoryPage(entry,data,page,bytes);
       changed = true;
       loaded += data.messages.length;
       request.cursor = entry.partial?.cursor || null;
       if (!request.chain || !entry.partial) break;
-      if (button.isConnected) button.textContent = `正在加载历史… ${loaded.toLocaleString()} / ${target.toLocaleString()} 条 · 点击中止`;
+      if (button.isConnected) SessionDockConversation.gapState({gapLabel:`正在加载历史… ${loaded.toLocaleString()} / ${target.toLocaleString()} 条 · 点击中止`});
       clearTimeout(timer);
       timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
     }
@@ -4436,7 +4329,7 @@ async function reloadHistoryWindow(uid, agent, button) {
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
   request.ac = ac;
   historyPageRequests.set(key, request);
-  button.disabled = true;
+  SessionDockConversation.gapState({gapReloadBusy:true});
   try {
     const {data, bytes} = await fetchMessages(uid, {agent, windowed: true, signal: ac.signal});
     if (!currentHistoryPage(request)) return;
@@ -4450,7 +4343,7 @@ async function reloadHistoryWindow(uid, agent, button) {
   } catch (error) { historyPageFailure(request, button.parentElement.querySelector('.history-gap-load'), error); }
   finally {
     clearTimeout(timer);
-    button.disabled = false;
+    if (currentHistoryPageEntry(request)) SessionDockConversation.gapState({gapReloadBusy:false});
     if (historyPageRequests.get(key) === request) historyPageRequests.delete(key);
   }
 }
@@ -4462,8 +4355,7 @@ async function loadFullHistory(uid, agent, button) {
   inflight?.abort();
   const ac = inflight = new AbortController();
   closeWatch();
-  button.disabled = true;
-  button.textContent = '正在载入完整历史…';
+  SessionDockConversation.gapState({gapDisabled:true,gapLabel:'正在载入完整历史…'});
   progress(0, 0, '下载完整历史');
   try {
     const {data, bytes} = await fetchMessages(uid, {
@@ -4480,8 +4372,7 @@ async function loadFullHistory(uid, agent, button) {
     }
   } catch (e) {
     if (e.name !== 'AbortError') {
-      button.disabled = false;
-      button.textContent = '载入失败，点击重试';
+      if (S.sel === uid && S.agent === agent) SessionDockConversation.gapState({gapDisabled:false,gapLabel:'载入失败，点击重试'});
     }
   } finally {
     progressDone();
@@ -4492,84 +4383,52 @@ async function loadFullHistory(uid, agent, button) {
   }
 }
 
-async function renderSession(meta, msgs, activity = null, { startWatch = true, historyPageEntry = null } = {}) {
-  const seq = ++renderSeq;
-  const uid = meta.uid;
-  const agent = meta.agent_id || null;
+async function renderSession(meta, msgs, activity = null, {startWatch = true, historyPageEntry = null} = {}) {
+  const seq = ++renderSeq, uid = meta.uid, agent = meta.agent_id || null;
   if (S.sel !== uid || S.agent !== agent) return;
-  const renderedLength = msgs.length;
-  const d = $('#detail');
+  const renderedLength = msgs.length, d = $('#detail');
   disposeMessageObservers($('#msgs'));
   d.innerHTML = '';
   const entry = cache.get(viewKey(uid, agent));
-  d.appendChild(head(meta, entryTotal(entry || {msgs})));
-  layoutSessionHead();
-  renderTimelinePinNotice(meta);
-  const box = el('div', 'msgs');
-  box.id = 'msgs';
-  d.appendChild(box);
-  auditDetailRendered('render', {messages: msgs.length, seq});
+  // Explicit legacy header host; B6 replaces this builder independently.
+  SessionDockConversation.mountHeader(d,meta,entryTotal(entry || {msgs}));
+  layoutSessionHead(); renderTimelinePinNotice(meta);
+  const box = SessionDockConversation.mount(d);
+  auditDetailRendered('render', {messages:msgs.length,seq});
   S.cur = -1; S.autoOpen = 0; S.markCapped = false;
-
-  // 关键: 建在游离的 fragment 里, 最后一次性挂上。
-  // 若逐批插入已在文档中的容器, 每批都会触发一次全量 layout, 上万条时是 O(n²) —— 实测 0.2s 变 14s。
-  // 批间让出主线程用 setTimeout 而不是 rAF: rAF 会等一次绘制, 又把 layout 成本引回来。
-  const partial = entry?.partial;
-  const split = partial ? Math.min(+partial.head || 0, msgs.length) : 0;
+  SessionDockConversation.planning.configurePlanning(S.compactTurns);
+  const partial = entry?.partial, split = partial ? Math.min(+partial.head || 0, msgs.length) : 0;
   const openTail = activity?.state === 'working';
-  const tailComplete = (activity && !['working', 'waiting'].includes(activity.state))
-    || (!activity && !S.live.has(uid));
-  const plan = partial
-    ? [...planTurns(msgs.slice(0, split), {tailComplete: false, foldTail: true}),
-       {gap: {uid, agent, omitted: partial.omitted}},
-       ...planTurns(msgs.slice(split), {openTail, tailComplete})]
-    : planTurns(msgs, {openTail, tailComplete});
-  const frag = document.createDocumentFragment();
+  const tailComplete = (activity && !['working','waiting'].includes(activity.state)) || (!activity && !S.live.has(uid));
+  const plan = partial ? [...planTurns(msgs.slice(0,split),{tailComplete:false,foldTail:true}),
+    {gap:{uid,agent,omitted:partial.omitted}}, ...planTurns(msgs.slice(split),{openTail,tailComplete})]
+    : planTurns(msgs,{openTail,tailComplete});
+  // Preserve the renderer's cancellable batch yields before publication.
   for (let i = 0; i < plan.length; i += RENDER_BATCH) {
-    buildPlan(frag, plan.slice(i, i + RENDER_BATCH), null);
+    SessionDockConversation.prepare(box,plan.slice(i,i + RENDER_BATCH),i === 0,{uid,agent});
     if (i + RENDER_BATCH < plan.length) {
-      progress(i + RENDER_BATCH, plan.length, '渲染');
-      await new Promise(r => setTimeout(r, 0));
+      progress(i + RENDER_BATCH,plan.length,'渲染');
+      await new Promise(r => setTimeout(r,0));
       if (seq !== renderSeq || S.sel !== uid || S.agent !== agent) return;
     }
   }
-  if (historyPageEntry) {
-    // SSE continues while batched rendering yields. Its cache updates are
-    // authoritative; discard any transient DOM append and add the new suffix
-    // once, after publishing this page's captured prefix/tail fragment.
-    box.replaceChildren(frag);
-    const latest = cache.get(viewKey(uid, agent));
-    if (latest === historyPageEntry) {
-      if (latest.msgs !== msgs || latest.msgs.length !== renderedLength) {
-        appendMessages(box, latest.msgs.slice(renderedLength), null,
-          {openTail: latest.activity?.state === 'working'});
-      }
-      // Activity-only packets can mark the last assistant interrupted in-place;
-      // neither array identity nor an appended suffix reveals that transition.
-      if (activity !== latest.activity) {
-        const tail = lastRenderedTurnStart(box);
-        if (tail) tail._turnSealed = false;
-      }
-      activity = latest.activity;
-      if (activity?.state !== 'working') sealTurnTail(box, latest, {defer: false});
-    }
-  } else box.appendChild(frag);
-  scheduleSyntax();            // Resume jobs held while this fragment was detached.
-  renderConversationTail(activity, uid);
-  stickBottom(box, true);                // 默认停在最新的一条
-  watchBottom(box);
-  progressDone();
-
-  markMatches(box);
-  updateMatchNav({jump: true});
-  if (typeof renderComposer === 'function') {
-    if (S.agent) SessionDockComposer.operations().hide();
-    else renderComposer();
+  SessionDockConversation.publishPrepared(box);
+  const latest = cache.get(viewKey(uid,agent));
+  // The authoritative cache may grow while either page or reset render yields.
+  if (latest && (!historyPageEntry || latest === historyPageEntry)) {
+    if (latest.msgs !== msgs || latest.msgs.length !== renderedLength)
+      appendMessages(box,latest.msgs.slice(renderedLength),null,{openTail:latest.activity?.state === 'working'});
+    activity = latest.activity;
+    if (activity?.state !== 'working') sealTurnTail(box,latest,{defer:false});
   }
+  scheduleSyntax(); renderConversationTail(activity,uid);
+  stickBottom(box,true); watchBottom(box); progressDone();
+  markMatches(box); updateMatchNav({jump:true});
+  if (typeof renderComposer === 'function') {if (S.agent) SessionDockComposer.operations().hide();else renderComposer();}
   if (seq === renderSeq && S.sel === uid && S.agent === agent) {
-    renderMigrationReadFailure(uid, agent);
-    if (startWatch) watchSession(meta.uid, agent); // 之后的更新由服务端推过来
-    if (typeof restoreTermPane === 'function') restoreTermPane(uid, agent);
+    renderMigrationReadFailure(uid,agent);
+    if (startWatch) watchSession(uid,agent);
+    if (typeof restoreTermPane === 'function') restoreTermPane(uid,agent);
     scheduleBrowserSnapshot('rendered');
   }
 }
@@ -5298,584 +5157,30 @@ async function del(m) {
 
 // 连续工具调用/输出合并成一个可折叠的组；正在增长的时间线尾段保持展开，
 // 等后面出现普通对话或任务结束后再自动封口。
-const TOOL_ROLES = new Set(['tool', 'tool_result']);
-const SEARCH_ROLES = new Set(['user', 'assistant', 'user·subagent', 'assistant·subagent',
-                              'thinking', 'question', 'answer', 'command']);
-const TURN_START_ROLES = new Set(['user', 'user·subagent']);
-const GROUP_MIN = 2;
-const MESSAGE_TIME_GAP_MS = 5 * 60 * 1000;
-const MESSAGE_TIME_CADENCE_MS = 20 * 60 * 1000;
+const {TOOL_ROLES, SEARCH_ROLES, TURN_START_ROLES, GROUP_MIN, MESSAGE_TIME_GAP_MS,
+  MESSAGE_TIME_CADENCE_MS, isGroupableTool, pairTools, planMessages, baseMessageRole,
+  isTurnStart, sameNativeTurn, isTurnAssistant, isFinalAssistant, isPassiveTurnTail,
+  markInterruptedTurn, turnConclusion, visiblePlanSize, turnKey, planTurnSegment,
+  planTurn, planTurns, messageTimeRange, OUT_LINES, OUT_CHARS, outputStats,
+  outPreviewInfo, toolOutputPath, CHANGE_LABEL, diffKind, diffCodePath, diffCodeParts,
+  diffSides, turnProcessSummary, formatDuration} = SessionDockConversation.planning;
 
-const isGroupableTool = m => TOOL_ROLES.has(m?.role) && !m.changes?.length;
-
-/** 调用与其输出按 call_id 就近配对成一个视觉单元(对标 codex TUI 的 `$ 命令 + 输出`)。
- *  只在本批消息内配对；增量批里落单的输出保持原样渲染，不会丢。 */
-function pairTools(msgs) {
-  const out = [], open = new Map();
-  for (const m of msgs) {
-    if (m.role === 'tool') {
-      const copy = { ...m };
-      out.push(copy);
-      if (m.call_id) open.set(m.call_id, copy);
-      continue;
-    }
-    if (m.role === 'tool_result' && m.call_id && open.has(m.call_id)) {
-      const owner = open.get(m.call_id);
-      open.delete(m.call_id);
-      owner.result = m;
-      continue;
-    }
-    out.push(m);
-  }
-  return out;
-}
-
-/** 先算分组(纯计算, 很快), 再分批建 DOM —— 分批不会把一个组切成两半。 */
-function planMessages(msgs, { openTail = false } = {}) {
-  const plan = [];
-  let run = [];
-  const flush = open => {
-    if (run.length >= GROUP_MIN) plan.push({ g: run, open: !!open });
-    else for (const m of run) plan.push({ m });
-    run = [];
-  };
-  for (const m of pairTools(msgs)) {
-    // 调用与结果跨增量批次时，空结果配不到上面的调用。它仍参与消息计数，
-    // 但不能凭空生成一块黑色空卡片。
-    if (m.role === 'tool_result' && !String(m.text || '').trim()
-        && !m.media?.length && !m.changes?.length) {
-      flush(false);
-      plan.push({ m: { ...m, silent: true } });
-      continue;
-    }
-    // 文件修改本身是用户关心的工作记录，始终作为可见卡片留在时间线；
-    // 普通工具协议继续按原规则合并折叠。
-    if (isGroupableTool(m)) { run.push(m); continue; }
-    flush(false);
-    plan.push({ m });
-  }
-  flush(openTail);
-  return plan;
-}
-
-const baseMessageRole = role => String(role || '').split('·', 1)[0];
-const isTurnStart = m => TURN_START_ROLES.has(m?.role);
-const sameNativeTurn = (a, b) => a?.turn_id != null && b?.turn_id != null
-  && String(a.turn_id) === String(b.turn_id);
-const isTurnAssistant = m => baseMessageRole(m?.role) === 'assistant';
-const isFinalAssistant = m => isTurnAssistant(m)
-  && ['final', 'final_answer', 'end_turn'].includes(m?.phase);
-// rename/compact 等不计入消息数的辅助记录可能写在 final 之后；它们继续留在
-// 时间线，但不应让前面的原生最终答复失去“结论”资格。
-const isPassiveTurnTail = m => m?.counted === false;
-
-/** 增量中断状态来自 activity 包，可能与最后一条 commentary 分批到达。 */
-function markInterruptedTurn(messages, activity) {
-  const turnId = activity?.state === 'aborted' && activity?.turn_id != null
-    ? String(activity.turn_id) : '';
-  if (!turnId) return false;
-  for (let i = (messages || []).length - 1; i >= 0; i--) {
-    const message = messages[i];
-    if (String(message?.turn_id || '') !== turnId || !isTurnAssistant(message)) continue;
-    if (!isFinalAssistant(message)) {
-      message.interrupted = true;
-      message.interrupt_reason = activity.reason || '本轮在最终答复前被中断';
-      return true;
-    }
-    return false;
-  }
-  return false;
-}
-
-/** 找一轮中需要永久露出的结论块。原生 final 标记优先；明确中断的轮次
- *  保留最后一条 commentary 作为末次状态。老会话只有在回合已确定结束、
- *  且最后一个有效节点就是 assistant 时才回退到“最后一条”。 */
-function turnConclusion(body, { complete = false, interrupted = false } = {}) {
-  let meaningfulEnd = body.length;
-  while (meaningfulEnd && isPassiveTurnTail(body[meaningfulEnd - 1])) meaningfulEnd--;
-  if (!meaningfulEnd) return null;
-  // 主助手的第一条原生 final 就是它对本轮输入的答复。final 之后同一轮里还会
-  // 出现内容的只有两种情形：Claude 的后台 task-notification（时间线里转成不
-  // 打扰主线的 task 事件，后面跟一条监控短报），以及 Stop hook 拒绝收尾后被
-  // 逼出的工具调用和一条短补充。两者都不能反过来把前面的 final 降成可折叠
-  // 的“进展”——否则真正的结论被折进过程合集，页面只露出末尾几行补充。
-  // final 之后的部分标记 continued，交给调用方作为一段新的过程继续规划。
-  for (let i = 0; i < meaningfulEnd; i++) {
-    if (body[i]?.role !== 'assistant' || !isFinalAssistant(body[i])) continue;
-    let end = i + 1;
-    while (end < meaningfulEnd && isFinalAssistant(body[end])) end++;
-    return {start: i, end, continued: end < meaningfulEnd};
-  }
-  const last = body[meaningfulEnd - 1];
-  if (isFinalAssistant(last)) {
-    let start = meaningfulEnd - 1;
-    while (start > 0 && isFinalAssistant(body[start - 1])) start--;
-    return {start, end: meaningfulEnd};
-  }
-  if (complete && interrupted) {
-    for (let i = meaningfulEnd - 1; i >= 0; i--) {
-      if (!isTurnAssistant(body[i]) || !body[i]?.interrupted) continue;
-      return {start: i, end: i + 1, tailStart: meaningfulEnd,
-              inferred: true, interrupted: true};
-    }
-  }
-  if (complete && !interrupted && isTurnAssistant(last) && !last.phase) {
-    return {start: meaningfulEnd - 1, end: meaningfulEnd, inferred: true};
-  }
-  return null;
-}
-
-function visiblePlanSize(plan) {
-  return plan.reduce((n, item) => n + (item.m?.silent ? 0 : (item.m || item.g ? 1 : 0)), 0);
-}
-
-function turnKey(messages, conclusion) {
-  const values = [...messages, ...(conclusion || [])];
-  const native = values.find(m => m?.turn_id)?.turn_id;
-  if (native) return native;
-  const first = messages[0] || conclusion?.[0] || {};
-  return `${first.ts || 'turn'}:${String(first.text || '').slice(0, 80)}`;
-}
-
-/** 单轮外层折叠。用户输入和最终结论仍是普通顶层气泡，中间过程才进入合集；
- *  合集内部继续复用 planMessages 的工具配对/分组规则。 */
-function planTurnSegment(messages, promptEnd,
-                         {complete = false, foldable = complete, openTail = false} = {}) {
-  const prompts = messages.slice(0, promptEnd);
-  const body = messages.slice(promptEnd);
-  const conclusion = turnConclusion(body, {
-    complete, interrupted: messages.some(m => m?.interrupted),
-  });
-  // 历史段可能因用户在同一次原生 turn 中追加要求，或上一轮被中断，而没有
-  // 自己的 final。它已经被后续 user 明确封口，仍应作为过程折叠；只是不能
-  // 把最后一条 commentary 猜成结论。尚在增长的尾段继续完整铺开。
-  if (!conclusion && !foldable) return planMessages(messages, {openTail});
-  // 中断时最后一条助手状态后面还可能有工具结果。它们仍属于过程；把这条
-  // 状态提升到合集后作为“末次进展”，既不丢工具，也不把工具散回顶层。
-  const process = conclusion?.interrupted
-    ? [...body.slice(0, conclusion.start),
-       ...body.slice(conclusion.end, conclusion.tailStart)]
-    : conclusion ? body.slice(0, conclusion.start) : body;
-  const processPlan = planMessages(process);
-  const finalBlock = conclusion ? body.slice(conclusion.start, conclusion.end) : [];
-  const rest = conclusion ? body.slice(conclusion.tailStart ?? conclusion.end) : [];
-  // 原生 final 之后被追加的部分（task 监控短报、Stop hook 逼出的工具调用与
-  // 补充说明）自成一段过程：够长就折成第二个合集并露出它自己的收尾，只有
-  // 一两项时平铺。中断轮与 rename/compact 之类的被动尾巴仍按原样平铺。
-  const tail = conclusion?.continued
-    ? planTurnSegment(rest, 0, {complete, foldable, openTail})
-    : planMessages(rest);
-  // 一项换成一项不会节省空间，还会徒增一次点击。
-  const processSize = visiblePlanSize(processPlan);
-  // 思考例外：它在主线上整段铺开，折进合集才只占一行摘要。OpenCode 这类
-  // 显示推理原文的 CLI 常见“一段思考 + 结论”的回合，不能让思考散在主线。
-  const loneThinking = processSize === 1
-    && processPlan.some(item => item.m?.role === 'thinking' && !item.m.silent);
-  // 中断轮已经要保留末次状态；即便只剩一个工具单元，也应进过程合集，
-  // 否则恰好较短的中断轮会再次把工具卡散在对话主线里。
-  if (!processSize || (processSize < 2 && !conclusion?.interrupted && !loneThinking)) {
-    if (!conclusion?.continued) return planMessages(messages);
-    return [...planMessages(messages.slice(0, promptEnd + conclusion.end)), ...tail];
-  }
-  return [
-    ...prompts.map((m, i) => ({m, sealedTurnHead: i === 0})),
-    {turn: {items: process, plan: processPlan,
-            key: turnKey(messages, finalBlock), hasConclusion: !!conclusion,
-            inferred: !!conclusion?.inferred,
-            interrupted: !!conclusion?.interrupted},
-     open: !S.compactTurns},
-    ...planMessages(finalBlock),
-    ...tail,
-  ];
-}
-
-function planTurn(messages, options = {}) {
-  if (!messages.length || !isTurnStart(messages[0])) {
-    return planMessages(messages, {openTail: options.openTail});
-  }
-  // Claude 会把同一次含文字/图片的 user 记录拆成多个规范化气泡。相邻且
-  // turn_id 相同的部分是一份输入，全部留在顶层，不能把图片折进“过程”。
-  let promptEnd = 1;
-  while (promptEnd < messages.length && isTurnStart(messages[promptEnd])
-         && sameNativeTurn(messages[0], messages[promptEnd])) promptEnd++;
-  return planTurnSegment(messages, promptEnd, options);
-}
-
-/** 历史缺口两侧会分别调用，绝不跨缺口猜轮次。answer 是代理提问的回答，
- *  留在同一轮过程内；只有真正的 user/user·subagent 开新轮。 */
-function planTurns(msgs, {
-  openTail = false, tailComplete = false, foldTail = tailComplete,
-} = {}) {
-  const out = [];
-  let start = msgs.findIndex(isTurnStart);
-  // 窗口缺口可能截在一轮正中：缺口前的尾段可以折叠，但不能据此猜结论；
-  // 缺口后的前缀若被下一条 user 封口，也按无输入的历史过程片段处理。
-  if (start < 0) {
-    return planTurnSegment(msgs, 0, {
-      complete: tailComplete, foldable: foldTail, openTail,
-    });
-  }
-  out.push(...planTurnSegment(msgs.slice(0, start), 0, {
-    complete: true, foldable: true,
-  }));
-  while (start < msgs.length) {
-    let next = start + 1;
-    while (next < msgs.length && isTurnStart(msgs[next])
-           && sameNativeTurn(msgs[start], msgs[next])) next++;
-    while (next < msgs.length && !isTurnStart(msgs[next])) next++;
-    const historical = next < msgs.length;
-    out.push(...planTurn(msgs.slice(start, next), {
-      complete: historical || tailComplete,
-      foldable: historical || foldTail,
-      openTail: !historical && openTail,
-    }));
-    start = next;
-  }
-  return out;
-}
-
-/** 一个工具卡可能同时包含调用和结果，工具组又包含多张卡。
- *  分隔线用这个视觉单元的最早/最晚时间，不会把一次长时间工具调用
- *  误判成与下一条消息的空档。 */
-function messageTimeRange(messages) {
-  const values = [];
-  for (const message of messages || []) {
-    for (const item of [message, message?.result]) {
-      const value = Date.parse(item?.ts || '');
-      if (Number.isFinite(value)) values.push(value);
-    }
-  }
-  return values.length ? {start: Math.min(...values), end: Math.max(...values)} : null;
-}
-
-function stampMessageTime(node, messages) {
-  if (!node?.matches('.msg')) return node;
-  const range = messageTimeRange(messages);
-  if (range) {
-    node.dataset.timeStart = range.start;
-    node.dataset.timeEnd = range.end;
-  }
-  return node;
-}
-
-function formatMessageDateTime(value) {
-  const date = new Date(value);
-  const pad = number => String(number).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-    + ` ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function messageTimeDivider(value) {
-  const node = el('div', 'message-time-divider');
-  const time = document.createElement('time');
-  time.dateTime = new Date(value).toISOString();
-  time.textContent = formatMessageDateTime(value);
-  node.appendChild(time);
-  return node;
-}
-
-/** 相邻气泡空档超过 5 分钟时显示时间；对连续的密集对话，也每超过
- *  20 分钟补一条。历史缺口会重新起算；任务事件和 Working 状态行只中断
- *  “相邻”判断，不中断 20 分钟周期；隐藏的协议消息不参与。 */
 function refreshMessageTimeDividers(box = $('#msgs')) {
-  if (!box) return;
-  const saved = box._timeDividerTail;
-  const resume = saved?.node?.parentElement === box;
-  let previousEnd = resume ? saved.previousEnd : null;
-  let lastShownAt = resume ? saved.lastShownAt : null;
-  let first = resume ? saved.node : box.firstElementChild;
-  if (resume && first.previousElementSibling?.classList.contains('message-time-divider')) {
-    first.previousElementSibling.remove();
-  }
-  if (!resume) box._timeDividerTail = null;
-  const nodes = [];
-  for (let node = first; node; node = node.nextElementSibling) nodes.push(node);
-  for (const node of nodes) {
-    if (node.matches('.message-time-divider')) { node.remove(); continue; }
-    if (node.matches('.silent-tool-result, .question-live-shadowed') || node.hidden) continue;
-    if (!node.matches('.msg')) {
-      previousEnd = null;
-      if (node.matches('.history-gap')) lastShownAt = null;
-      continue;
-    }
-    const start = Number(node.dataset.timeStart);
-    const end = Number(node.dataset.timeEnd);
-    if (!node.matches('.live-question')) {
-      box._timeDividerTail = {node, previousEnd, lastShownAt};
-    }
-    if (!Number.isFinite(start) || !Number.isFinite(end)) {
-      previousEnd = null;
-      lastShownAt = null;
-      continue;
-    }
-    if (lastShownAt === null) lastShownAt = start;
-    const afterGap = previousEnd !== null && start - previousEnd > MESSAGE_TIME_GAP_MS;
-    const afterCadence = start - lastShownAt > MESSAGE_TIME_CADENCE_MS;
-    if (afterGap || afterCadence) {
-      box.insertBefore(messageTimeDivider(start), node);
-      lastShownAt = start;
-    }
-    previousEnd = Math.max(start, end);
-  }
+  if (box) SessionDockConversation.refresh(box);
 }
-
-function buildPlan(box, plan, before) {
-  const built = [];
-  for (let i = 0; i < plan.length; i++) {
-    const p = plan[i];
-    const n = p.gap ? historyGapNode(p.gap)
-      : (p.turn ? turnProcessNode(p.turn, p.open)
-        : (p.g ? groupNode(p.g, p.open) : msgNode(p.m)));
-    // 整页渲染出来的已折叠回合已经封口。后续只带 activity 的 SSE 不应
-    // 再把它拆掉重建；否则搜索时刚自动展开并高亮的懒加载正文会被替换掉。
-    if (p.sealedTurnHead || (p.m && isTurnStart(p.m) && plan[i + 1]?.turn)) {
-      n._turnSealed = true;
-    }
-    if (p.m?.turn_id != null) n.dataset.turnId = String(p.m.turn_id);
-    stampMessageTime(n, p.turn?.items || p.g || (p.m ? [p.m] : []));
-    before ? box.insertBefore(n, before) : box.appendChild(n);
-    built.push(n);
-  }
-  return built;
+function appendMessages(box, msgs, before = null, options = {}) {
+  return SessionDockConversation.append(box, msgs, before, options);
 }
-
-function trailingToolNodes(box, before = null) {
-  const nodes = [];
-  let node = before ? before.previousElementSibling : box.lastElementChild;
-  while (node && Array.isArray(node._toolItems)) {
-    nodes.unshift(node);
-    node = node.previousElementSibling;
-  }
-  return nodes;
+function sealToolTail(box) { return SessionDockConversation.sealTools(box); }
+function sealTurnTail(box, entry, options = {}) {
+  SessionDockConversation.planning.configurePlanning(S.compactTurns);
+  return SessionDockConversation.seal(box, entry, options);
 }
-
-function trailingGroupOpenState(trailing) {
-  return {
-    userOpened: trailing.some(node => node._userOpened),
-    wasOpen: trailing.some(node => node.matches('.grp') && !node.classList.contains('folded')),
-  };
-}
-
-function restoreGroupOpen(nodes, {userOpened = false, keepOpen = false} = {}) {
-  for (const node of nodes) {
-    if (!node.matches?.('.grp')) continue;
-    if (userOpened) node._userOpened = true;
-    if (keepOpen || userOpened) node._open?.();
-  }
-}
-
-/** 增量批次可能把同一段工具输出切开。把现有尾段取回来一起规划，保证它们
- *  仍是一组；一旦本批出现普通消息，这个尾段立即变成已完成的折叠组。
- *  用户亲手展开过的组不能因为后续工具结果或封口而被拆掉重建成折叠态。 */
-function appendMessages(box, msgs, before = null, { openTail = false } = {}) {
-  let rest = [...msgs];
-  const trailing = trailingToolNodes(box, before);
-  let lead = 0;
-  while (lead < rest.length && isGroupableTool(rest[lead])) lead++;
-  const built = [];
-  if (trailing.length) {
-    const extra = rest.slice(0, lead);
-    const combined = [...trailing.flatMap(node => node._toolItems), ...extra];
-    const onlyTools = lead === rest.length;
-    const {userOpened, wasOpen} = trailingGroupOpenState(trailing);
-    const keepOpen = onlyTools && (openTail || wasOpen || userOpened);
-    const planned = planMessages(combined, {openTail: keepOpen});
-    const grp = trailing.length === 1 && trailing[0].matches('.grp') ? trailing[0] : null;
-    if (grp && planned.length === 1 && planned[0].g) {
-      syncGroupNode(grp, planned[0].g);
-      stampMessageTime(grp, planned[0].g);
-      if (keepOpen || userOpened) grp._open?.();
-      else if (!onlyTools && !userOpened) grp._fold?.();
-      if (userOpened) grp._userOpened = true;
-      built.push(grp);
-    } else {
-      const anchor = before || trailing[trailing.length - 1].nextElementSibling;
-      trailing.forEach(node => node.remove());
-      const nodes = buildPlan(box, planned, anchor);
-      restoreGroupOpen(nodes, {userOpened, keepOpen: keepOpen || userOpened});
-      built.push(...nodes);
-    }
-    rest = rest.slice(lead);
-  }
-  built.push(...buildPlan(box, planMessages(rest, {openTail}), before));
-  return built;
-}
-
-function sealToolTail(box) {
-  const trailing = trailingToolNodes(box);
-  if (!trailing.length) return [];
-  if (trailing.length === 1 && trailing[0].matches('.grp')) {
-    if (!trailing[0]._userOpened) trailing[0]._fold?.();
-    return trailing;
-  }
-  const items = trailing.flatMap(node => node._toolItems);
-  if (items.length < GROUP_MIN) return trailing;
-  const {userOpened} = trailingGroupOpenState(trailing);
-  const anchor = trailing[trailing.length - 1].nextElementSibling;
-  trailing.forEach(node => node.remove());
-  const nodes = buildPlan(box, planMessages(items), anchor);
-  restoreGroupOpen(nodes, {userOpened, keepOpen: userOpened});
-  return nodes;
-}
-
-function lastRawTurn(messages) {
-  const start = messageIndex(messages).turnStart;
-  return start < 0 ? [] : messages.slice(start);
-}
-
-function lastRenderedTurnStart(box) {
-  const children = [...box.children];
-  for (let i = children.length - 1; i >= 0; i--) {
-    const node = children[i];
-    if (!node.matches?.('.msg') || !TURN_START_ROLES.has(node.dataset.role)) continue;
-    // 同一原生 user 记录可能是相邻的“文字 + 图片”多个气泡；重建回合时
-    // 从第一块开始移除，避免把文字留在旧 DOM、图片再复制一份。
-    let head = node, j = i;
-    const turnId = node.dataset.turnId;
-    while (turnId && j > 0) {
-      let k = j - 1;
-      while (k >= 0 && children[k].classList?.contains('message-time-divider')) k--;
-      const previous = children[k];
-      if (!previous?.matches?.('.msg')
-          || !TURN_START_ROLES.has(previous.dataset.role)
-          || previous.dataset.turnId !== turnId) break;
-      head = previous;
-      j = k;
-    }
-    return head;
-  }
-  return null;
-}
-
-const isConversationTailNode = node => node?.id === 'activity'
-  || node?.classList?.contains('live-question');
-
-/** 增量期间先按现有方式铺开活动回合；final/idle 到达后只重建最后一轮。
- *  用户正在上翻时延迟封口，避免阅读中的内容突然从脚下消失。 */
-function sealTurnTail(box, entry, {defer = true} = {}) {
-  if (!box || !entry?.msgs?.length) return false;
-  const index = messageIndex(entry.msgs);
-  if (['working', 'waiting'].includes(entry.activity?.state) && !index.tailHasFinal) return false;
-  const raw = lastRawTurn(entry.msgs);
-  if (!raw.length) {
-    if (entry.activity?.state !== 'working') sealToolTail(box);
-    return false;
-  }
-  const state = entry.activity?.state;
-  const tailComplete = (state && !['working', 'waiting'].includes(state))
-    || (!entry.activity && !S.live.has(entry.meta?.uid));
-  const plan = planTurn(raw, {complete: tailComplete, openTail: state === 'working'});
-  if (!plan.some(item => item.turn)) {
-    if (state !== 'working') sealToolTail(box);
-    return false;
-  }
-  const start = lastRenderedTurnStart(box);
-  if (!start || start._turnSealed) return false;
-  if (defer && !_stick) {
-    box._turnSealPending = true;
-    return false;
-  }
-  let anchor = start;
-  while (anchor && !isConversationTailNode(anchor)) anchor = anchor.nextElementSibling;
-  for (let node = start; node && node !== anchor;) {
-    const next = node.nextElementSibling;
-    node.remove();
-    node = next;
-  }
-  const built = buildPlan(box, plan, anchor);
-  const rebuiltStart = built.find(node => TURN_START_ROLES.has(node.dataset?.role));
-  if (rebuiltStart) rebuiltStart._turnSealed = true;
-  built.forEach(markMatches);
-  if (S.term) updateMatchNav();
-  box._turnSealPending = false;
-  refreshMessageTimeDividers(box);
-  settle(box);
-  return true;
-}
-
 function flushPendingTurnSeal(box) {
   if (!box?._turnSealPending || box !== $('#msgs')) return;
   box._turnSealPending = false;
   const entry = cache.get(viewKey(S.sel, S.agent));
-  if (!entry) return;
-  // 离开底部期间可能完成了不止一轮；此时用户已经主动回到底部，整页按缓存
-  // 重新规划可一次补齐所有轮次，并仍然停在最新结论。
-  renderSession(entry.meta, entry.msgs, entry.activity, {startWatch: false});
-}
-
-// 折叠工具组只显示语义提纲，不显示角色/时间 header。
-function addFoldPreview(n, text, aria) {
-  const preview = el('div', 'fold-preview');
-  const toggle = el('button', 'fold-toggle');
-  toggle.type = 'button';
-  toggle.title = `展开${aria}`;
-  toggle.setAttribute('aria-label', toggle.title);
-  toggle.setAttribute('aria-expanded', 'false');
-  const peek = el('span', 'peek');
-  peek.textContent = text;
-  preview.append(toggle, peek);
-  n.appendChild(preview);
-  return preview;
-}
-
-function addAction(n) {
-  const action = el('button', 'more disclosure');
-  action.type = 'button';
-  action.hidden = true;
-  n.appendChild(action);
-  return (label, fn, expanded = null) => {
-    action.hidden = !label;
-    action.textContent = label || '';
-    action.onclick = fn || null;
-    if (label) {
-      action.title = label;
-      action.setAttribute('aria-label', label);
-    } else {
-      action.removeAttribute('title');
-      action.removeAttribute('aria-label');
-    }
-    if (expanded === null) action.removeAttribute('aria-expanded');
-    else action.setAttribute('aria-expanded', String(expanded));
-  };
-}
-
-// 输出预览: 前几行足够判断结果, 大段日志靠"展开全文"。
-const OUT_LINES = 8;
-const OUT_CHARS = 1600;
-function outputStats(t) {
-  const body = String(t || '').replace(/\n+$/, '');
-  return { lines: body ? body.split('\n').length : 0, chars: String(t || '').length };
-}
-
-function outPreviewInfo(t) {
-  const body = t.replace(/\n+$/, '');
-  const lines = body ? body.split('\n') : [];
-  let preview = lines.length > OUT_LINES ? lines.slice(0, OUT_LINES).join('\n') : t;
-  const lineCut = lines.length > OUT_LINES;
-  if (preview.length > OUT_CHARS) preview = preview.slice(0, OUT_CHARS);
-  const truncated = preview !== t;
-  return {
-    text: truncated ? preview.replace(/\s+$/, '') + '\n…' : t,
-    omittedLines: lineCut ? Math.max(0, outputStats(t).lines - OUT_LINES) : 0,
-    omittedChars: truncated ? Math.max(0, t.length - preview.length) : 0,
-  };
-}
-
-function toolOutputPath(m) {
-  const name = String(m?.name || '').toLowerCase();
-  if (!/(?:^|[_:./-])(?:read|read_file|notebookread|open)$/.test(name)) return '';
-  const raw = String(m?.text || '');
-  try {
-    const value = JSON.parse(raw);
-    for (const key of ['file_path', 'path', 'filename']) {
-      if (typeof value?.[key] === 'string') return value[key];
-    }
-  } catch { /* 某些适配器传的是 Python repr 或纯命令，继续用文本提取 */ }
-  const field = raw.match(/["'](?:file_path|path|filename)["']\s*[:=]\s*["']([^"']+)["']/);
-  if (field) return field[1];
-  const summary = String(m?.summary || '');
-  const match = summary.match(/(?:^|\s)([.~\w/-]+\.[A-Za-z0-9]+)(?=\s|$|[,:;)]|$)/);
-  return match?.[1] || '';
+  if (entry) renderSession(entry.meta, entry.msgs, entry.activity, {startWatch:false});
 }
 
 function clearSyntaxPaint(node) {
@@ -5887,150 +5192,6 @@ function clearSyntaxPaint(node) {
   for (const cls of [...node.classList]) if (cls.startsWith('language-')) node.classList.remove(cls);
 }
 
-function setToolOutput(pre, text) {
-  clearSyntaxPaint(pre);
-  pre.textContent = text;
-  paintToolOutputDiff(pre);
-  paintSyntax(pre);
-}
-
-function addClippedPre(entry, cls, text, codePath = '') {
-  const pre = el('pre', cls);
-  if (codePath) pre.dataset.codePath = codePath;
-  const info = outPreviewInfo(text);
-  setToolOutput(pre, info.text);
-  entry.appendChild(pre);
-  const actions = el('div', 'tool-out-actions');
-  let wrap = null;
-  if (String(text).split('\n').some(line => line.length > 160)) {
-    wrap = el('button', 'tool-wrap', '自动换行');
-    wrap.type = 'button';
-    wrap.setAttribute('aria-pressed', 'false');
-    wrap.onclick = () => {
-      const on = pre.classList.toggle('wrap');
-      wrap.classList.toggle('on', on);
-      wrap.setAttribute('aria-pressed', String(on));
-      wrap.textContent = on ? '保持原行' : '自动换行';
-    };
-    actions.appendChild(wrap);
-  }
-  if (info.text !== text) {
-    const rest = info.omittedLines > 0
-      ? `另有 ${info.omittedLines.toLocaleString()} 行`
-      : `另有 ${info.omittedChars.toLocaleString()} 字符`;
-    const expandLabel = `展开全文（${rest}）`;
-    const more = el('button', 'more', expandLabel);
-    let expanded = false;
-    more.onclick = () => {
-      expanded = !expanded;
-      setToolOutput(pre, expanded ? text : info.text);
-      more.textContent = expanded ? '收起' : expandLabel;
-      more.setAttribute('aria-expanded', String(expanded));
-    };
-    more.setAttribute('aria-expanded', 'false');
-    actions.appendChild(more);
-  }
-  if (actions.childElementCount) entry.appendChild(actions);
-  return pre;
-}
-
-function toolEntry(m) {
-  const entry = el('div', 'tool-entry');
-  entry.dataset.role = m.role;
-  if (m.counted === false) entry.dataset.counted = 'false';
-  if (m.role !== 'tool') {
-    // 落单的工具输出(没配到调用): 保持独立块
-    addClippedPre(entry, 'tool-out' + (m.error ? ' err' : ''),
-                  m.name ? `${m.name}\n${m.text}` : m.text, toolOutputPath(m));
-    if (m.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(m.media, m.media_more));
-    return entry;
-  }
-  // 摘要是可选文本；只有独立按钮切换参数，拖选/双击不触发折叠。
-  const head = el('div', 'tool-head');
-  head.innerHTML = `<code>${esc(m.summary || m.name || 'tool')}</code>`
-    + (m.name && m.summary ? `<span class="tool-meta">${esc(m.name)}</span>` : '');
-  const headCode = head.querySelector(':scope > code');
-  const toggle = el('button', 'tool-toggle');
-  toggle.type = 'button';
-  head.appendChild(toggle);
-  if (/^\s*(?:\$|❯)\s+/.test(m.summary || '')) headCode.classList.add('tool-command');
-  paintSyntax(head);
-  entry.appendChild(head);
-  if (m.changes_unavailable_reason) {
-    entry.appendChild(el('div', 'tool-change-warning tool-meta',
-      `未生成文件差异：${m.changes_unavailable_reason}；可展开原始参数查看。`));
-  }
-  const args = el('pre', 'tool-args');
-  args.hidden = !!m.summary;   // 识别不了的工具直接铺参数, 不藏
-  const closeArgs = el('button', 'tool-args-close', '收起参数');
-  closeArgs.type = 'button';
-  closeArgs.hidden = args.hidden;
-  let painted = false;
-  const paintArgs = () => { if (!painted) { args.textContent = m.text; painted = true; } };
-  const setArgsOpen = open => {
-    if (open) paintArgs();
-    args.hidden = !open;
-    closeArgs.hidden = !open;
-    entry.classList.toggle('args-open', open);
-    toggle.setAttribute('aria-expanded', String(open));
-    toggle.title = toggle.ariaLabel = open ? '收起原始参数' : '展开原始参数';
-  };
-  if (!args.hidden) paintArgs();
-  toggle.onclick = () => setArgsOpen(args.hidden);
-  closeArgs.onclick = () => setArgsOpen(false);
-  entry.appendChild(args);
-  entry.appendChild(closeArgs);
-  setArgsOpen(!args.hidden);
-  if (m.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(m.media, m.media_more));
-  appendToolResult(entry, m.result, m);
-  return entry;
-}
-
-function appendToolResult(entry, r, m) {
-  if (!entry || !r || entry.dataset.result === '1') return;
-  if (r.counted !== false) entry.dataset.result = '1'; // 吸收的结果单独补入计数
-  const status = [r.error ? '✗ 出错' : '✓ 完成'];
-  if (Number.isInteger(r.exit_code)) status.push(`exit ${r.exit_code}`);
-  if (Number.isFinite(+r.duration_s)) status.push(formatDuration(+r.duration_s * 1000));
-  const stats = outputStats(r.text || '');
-  status.push(stats.lines > 1 ? `${stats.lines.toLocaleString()} 行`
-    : `${stats.chars.toLocaleString()} 字符`);
-  entry.appendChild(el('div', 'tool-status' + (r.error ? ' err' : ''), status.join(' · ')));
-  if (String(r.text || '').trim()) {
-    addClippedPre(entry, 'tool-out' + (r.error ? ' err' : ''), r.text, toolOutputPath(m));
-  }
-  if (r.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(r.media, r.media_more));
-}
-
-const CHANGE_LABEL = {
-  add: '新建', update: '修改', delete: '删除', edit: '修改', write: '写入',
-};
-
-function diffKind(line) {
-  if (/^(diff --git |index |---|\+\+\+|\*\*\*)/.test(line)) return 'meta';
-  if (line.startsWith('@@')) return 'hunk';
-  if (line.startsWith('+')) return 'add';
-  if (line.startsWith('-')) return 'del';
-  return 'ctx';
-}
-
-function diffCodePath(lines) {
-  for (const prefix of ['+++ ', '--- ']) {
-    const header = lines.find(line => line.startsWith(prefix));
-    if (!header) continue;
-    const path = header.slice(prefix.length).split('\t', 1)[0].trim().replace(/^(?:a|b)\//, '');
-    if (path && path !== '/dev/null') return path;
-  }
-  return '';
-}
-
-function diffCodeParts(line, kind) {
-  if (kind === 'add' || kind === 'del') return {marker: line[0], source: line.slice(1)};
-  if (kind === 'ctx') return {marker: line.startsWith(' ') ? ' ' : '', source: line.startsWith(' ') ? line.slice(1) : line};
-  return null;
-}
-
-/** 给普通工具输出里夹带的 unified/git diff 上色；前置命令状态仍按原样显示。 */
 function paintToolOutputDiff(pre) {
   if (!(pre instanceof HTMLElement) || pre.querySelector(':scope > .tool-diff-line')) return;
   const lines = pre.textContent.split('\n');
@@ -6059,395 +5220,7 @@ function paintToolOutputDiff(pre) {
   pre.replaceChildren(fragment);
 }
 
-function diffRows(lines, path) {
-  return lines.map(line => {
-    const kind = diffKind(line);
-    const parts = diffCodeParts(line, kind);
-    const attr = parts && path ? ` data-code-path="${esc(path)}"` : '';
-    return `<div class="diff-line ${kind}"><i>${esc(parts?.marker ?? line[0] ?? ' ')}</i>`
-      + `<code${attr}>${esc(parts?.source ?? line)}</code></div>`;
-  }).join('');
-}
 
-function diffSides(change) {
-  const before = [], after = [];
-  for (const line of String(change.patch || '').split('\n')) {
-    if (/^(---|\+\+\+|\*\*\*)/.test(line)) continue;
-    if (line.startsWith('@@')) {
-      before.push({ text: line, kind: 'meta' });
-      after.push({ text: line, kind: 'meta' });
-    } else if (line.startsWith('+')) {
-      after.push({ text: line.slice(1), kind: 'add' });
-    } else if (line.startsWith('-')) {
-      before.push({ text: line.slice(1), kind: 'del' });
-    } else {
-      const text = line.startsWith(' ') ? line.slice(1) : line;
-      before.push({ text, kind: 'ctx' });
-      after.push({ text, kind: 'ctx' });
-    }
-  }
-  return { before, after };
-}
-
-function sideRows(rows, unavailable, path) {
-  if (unavailable) return '<div class="diff-unavailable">原内容没有记录，无法可靠还原</div>';
-  return rows.map(row => {
-    const attr = row.kind === 'meta' ? '' : ` data-code-path="${esc(path)}"`;
-    return `<div class="diff-line ${row.kind}"><code${attr}>${esc(row.text)}</code></div>`;
-  }).join('')
-    || '<div class="diff-empty">（空文件）</div>';
-}
-
-function fileDiffMarkup(change, view) {
-  const path = change.new_path || change.path || '';
-  if (view === 'unified') {
-    return `<div class="diff-unified">${diffRows(String(change.patch || '').split('\n'), path)}</div>`;
-  }
-  const sides = diffSides(change);
-  return `<div class="diff-split">
-    <section><b>修改前${change.before_complete ? '（完整）' : '（片段）'}</b>
-      <div>${sideRows(sides.before, !change.before_available, change.path || path)}</div></section>
-    <section><b>修改后${change.after_complete ? '（完整）' : '（片段）'}</b>
-      <div>${sideRows(sides.after, !change.after_available, path)}</div></section>
-  </div>`;
-}
-
-function paintInlineFileDiff(card, change, view) {
-  card.dataset.diffView = view;
-  for (const button of card.querySelectorAll('[data-diff-view]')) {
-    const on = button.dataset.diffView === view;
-    button.classList.toggle('on', on);
-    button.setAttribute('aria-pressed', String(on));
-  }
-  const body = card.querySelector('.file-change-body');
-  body.innerHTML = fileDiffMarkup(change, view);
-  paintSyntax(body);
-}
-
-function setInlineFileDiffWrap(card, on) {
-  on = !!on;
-  card.classList.toggle('diff-wrap', on);
-  card.dataset.diffWrap = String(on);
-  const button = card.querySelector('[data-diff-wrap]');
-  if (!button) return;
-  button.classList.toggle('on', on);
-  button.setAttribute('aria-pressed', String(on));
-  button.textContent = on ? '原行' : '换行';
-  button.title = on ? '保持 diff 原始行宽' : '长行自动换行';
-}
-
-function fileChangeNode(m) {
-  const n = el('div', 'msg file-change-msg');
-  n.dataset.role = 'tool';
-  if (m.result && m.result.counted !== false) n.dataset.result = '1'; // 修改确认输出并入卡片
-  if (m.counted === false) n.dataset.counted = 'false';
-  const body = el('div', 'file-change-list');
-  for (const change of m.changes) {
-    const card = el('section', 'file-change-card');
-    const path = change.new_path ? `${change.path} → ${change.new_path}` : change.path;
-    const complete = change.before_complete || change.after_complete;
-    const scope = complete ? '包含可确定的完整文件内容' : '会话只记录了修改片段';
-    card.innerHTML = `<div class="file-change-head"><b title="${esc(path)}">${esc(path)}</b>
-      <span class="file-change-meta"><em title="${esc(scope)}">${esc(CHANGE_LABEL[change.operation] || '修改')} · ${complete ? '完整' : '片段'}</em>
-      <i class="add">+${change.added || 0}</i><i class="del">−${change.removed || 0}</i>
-      <span class="file-change-toolbar" role="group" aria-label="Diff 显示选项">
-        <button type="button" data-diff-view="unified" aria-pressed="true">统一</button>
-        <button type="button" data-diff-view="split" aria-pressed="false">并排</button>
-        <button type="button" data-diff-wrap aria-pressed="false" title="长行自动换行">换行</button>
-      </span></span></div>
-      <div class="file-change-body"></div>`;
-    card.querySelector('.file-change-toolbar').onclick = e => {
-      const wrap = e.target.closest('button[data-diff-wrap]');
-      if (wrap) {
-        setInlineFileDiffWrap(card, !card.classList.contains('diff-wrap'));
-        return;
-      }
-      const button = e.target.closest('[data-diff-view]');
-      if (button) paintInlineFileDiff(card, change, button.dataset.diffView);
-    };
-    setInlineFileDiffWrap(card, false);
-    paintInlineFileDiff(card, change, 'unified');
-    body.appendChild(card);
-  }
-  n.appendChild(body);
-  return n;
-}
-
-function turnProcessSummary(items) {
-  const assistant = items.filter(isTurnAssistant).length;
-  const thinking = items.filter(m => m.role === 'thinking').length;
-  const calls = items.filter(m => m.role === 'tool').length;
-  const orphanResults = calls ? 0 : items.filter(m => m.role === 'tool_result').length;
-  const questions = items.filter(m => m.role === 'question').length;
-  const changes = items.flatMap(m => Array.isArray(m.changes) ? m.changes : []);
-  const paths = [...new Set(changes.map(change => change.path).filter(Boolean))];
-  const added = changes.reduce((n, change) => n + (+change.added || 0), 0);
-  const removed = changes.reduce((n, change) => n + (+change.removed || 0), 0);
-  const errors = items.filter(m => m.error || (Number.isFinite(+m.exit_code) && +m.exit_code !== 0)).length;
-  const times = items.flatMap(m => {
-    const value = Date.parse(m.ts || '');
-    return Number.isFinite(value) ? [value] : [];
-  });
-  const duration = times.length > 1 ? Math.max(...times) - Math.min(...times) : 0;
-  const stats = [];
-  if (assistant) stats.push(`${assistant} 条进展`);
-  if (thinking) stats.push(`${thinking} 段思考`);
-  if (calls || orphanResults) stats.push(`🔧 ${calls || orphanResults}`);
-  if (paths.length) stats.push(`修改 ${paths.length} 个文件${added || removed ? ` +${added} −${removed}` : ''}`);
-  if (questions) stats.push(`${questions} 次确认`);
-  if (errors) stats.push(`⚠ ${errors}`);
-  if (duration >= 1000) stats.push(formatDuration(duration));
-  if (!stats.length) stats.push(`${items.length} 条记录`);
-  return {stats, paths, errors};
-}
-
-/** 已完成回合的外层过程合集。折叠态只造摘要 DOM；第一次展开才渲染 Markdown、
- *  diff 和现有工具组，大会话既减少高度，也避免为不可见过程支付首屏成本。 */
-function turnProcessNode(turn, initiallyOpen = false) {
-  const items = turn.items || [];
-  const summary = turnProcessSummary(items);
-  const n = el('div', 'msg turn-process folded');
-  n.dataset.role = 'process';
-  // 这是多个原始消息的虚拟容器，不能让 DOM 计数把容器本身再算一条。
-  n.dataset.counted = 'false';
-  if (turn.key) n.dataset.turnId = turn.key;
-  n._turnItems = items;
-  const toolbar = el('div', 'turn-toolbar');
-  n.appendChild(toolbar);
-  const preview = addFoldPreview(toolbar, '', '本轮过程');
-  preview.classList.add('turn-preview');
-  const toggle = preview.querySelector('.fold-toggle');
-  const peek = preview.querySelector('.peek');
-  peek.classList.add('turn-peek');
-  const label = el('b', 'turn-label', uiIcon('process'));
-  const stats = el('span', 'turn-stats');
-  summary.stats.forEach(value => stats.appendChild(el('span', '', value)));
-  peek.replaceChildren(label, stats);
-  const nav = el('div', 'turn-nav');
-  const toStart = el('button', 'turn-nav-btn turn-to-start', '↑ 开头');
-  const toConclusion = el('button', 'turn-nav-btn turn-to-conclusion', '结论 ↓');
-  for (const button of [toStart, toConclusion]) button.type = 'button';
-  toStart.title = toStart.ariaLabel = '回到本轮过程开头';
-  if (turn.interrupted) {
-    n.dataset.interrupted = 'true';
-    toConclusion.textContent = '末次进展 ↓';
-  }
-  toConclusion.title = toConclusion.ariaLabel = turn.interrupted
-    ? '跳到本轮中断前的末次进展' : '跳到本轮最终结论';
-  toConclusion.hidden = turn.hasConclusion === false;
-  nav.append(toStart, toConclusion);
-  nav.hidden = true;
-  toolbar.appendChild(nav);
-  const expandTitle = summary.paths.length
-    ? `展开过程\n修改文件：${summary.paths.join('\n')}` : '展开过程';
-  if (summary.errors) n.classList.add('has-error');
-  if (turn.inferred) n.dataset.inferred = 'true';
-  const body = el('div', 'turn-process-body');
-  body.hidden = true;
-  n.appendChild(body);
-  let materialized = false;
-  const materialize = () => {
-    if (materialized) return false;
-    materialized = true;
-    const plan = turn.plan || planMessages(items), generation = renderSeq;
-    let offset = 0;
-    const paint = () => {
-      if (generation !== renderSeq && !n.isConnected) return;
-      const started = performance.now(), fragment = document.createDocumentFragment();
-      while (offset < plan.length && performance.now() - started < 8) {
-        buildPlan(fragment, [plan[offset++]], null);
-      }
-      body.appendChild(fragment);
-      refreshMessageTimeDividers(body);
-      if (S.term && n.isConnected) { markMatches(body); updateMatchNav(); }
-      if (offset < plan.length) setTimeout(paint, 0);
-    };
-    paint();
-    return true;
-  };
-  const fold = () => {
-    n.classList.add('folded');
-    body.hidden = true;
-    nav.hidden = true;
-    toggle.setAttribute('aria-expanded', 'false');
-    toggle.setAttribute('aria-label', '展开本轮过程');
-    toggle.title = expandTitle;
-  };
-  const open = () => {
-    const built = materialize();
-    n.classList.remove('folded');
-    body.hidden = false;
-    nav.hidden = false;
-    toggle.setAttribute('aria-expanded', 'true');
-    toggle.setAttribute('aria-label', '收起本轮过程');
-    toggle.title = '收起过程';
-    if (built && n.isConnected && S.term) {
-      markMatches(body);
-      updateMatchNav();
-    }
-  };
-  n._fold = fold;
-  n._open = open;
-  const foldAtAnchor = () => mutateKeepingMessageAnchor(toolbar, fold);
-  const openAtAnchor = () => mutateKeepingMessageAnchor(toolbar, open);
-  n._foldAtAnchor = foldAtAnchor;
-  n._openAtAnchor = openAtAnchor;
-  toggle.onclick = () => n.classList.contains('folded') ? openAtAnchor() : foldAtAnchor();
-  toStart.onclick = () => jumpWithinConversation(n, 'start');
-  toConclusion.onclick = () => {
-    let target = n.nextElementSibling;
-    while (target && !target.matches?.('.msg')) target = target.nextElementSibling;
-    jumpWithinConversation(target);
-  };
-  const found = items.some(m => SEARCH_ROLES.has(m.role) && hasTerm(m.text));
-  if (found && S.autoOpen >= AUTO_OPEN_MAX) n.classList.add('hashit');
-  if (initiallyOpen || (found && S.autoOpen < AUTO_OPEN_MAX)) open();
-  else fold();
-  if (S.term && S.opts.regex && !found) {
-    const generation = SessionDockSearch.generation();
-    Promise.all(items.filter(m => SEARCH_ROLES.has(m.role)).map(m => regexMatches(m.text))).then(results => {
-      n._applyRegexMatch = () => {
-        if (!n.isConnected) return;
-        n._applyRegexMatch = null;
-        if (generation !== SessionDockSearch.generation() || !results.some(r => r.matched)) return;
-        if (S.autoOpen >= AUTO_OPEN_MAX) n.classList.add('hashit');
-        else open();
-      };
-      n._applyRegexMatch();
-    });
-  }
-  return n;
-}
-
-function paintGroupPreview(peek, items) {
-  const calls = items.filter(m => m.role === 'tool');
-  const visible = calls.length ? calls : items;
-  const heads = visible.slice(0, 3).map(m => m.summary || m.name || 'tool');
-  const hasErr = items.some(m => m.result?.error || (m.role === 'tool_result' && m.error));
-  const count = el('span', 'group-count', `🔧 ×${visible.length}${hasErr ? ' ⚠' : ''}`);
-  const outline = el('span', 'group-outline');
-  heads.forEach((head, i) => {
-    const row = el('span');
-    row.appendChild(el('i', 'group-index', `${i + 1}.`));
-    row.append(' ');
-    const code = el('code', /^\s*(?:\$|❯)\s+/.test(head) ? 'tool-command' : '');
-    code.textContent = head;
-    row.appendChild(code);
-    outline.appendChild(row);
-  });
-  if (visible.length > heads.length) outline.appendChild(el('span', 'group-rest',
-    `… 另有 ${visible.length - heads.length} 项`));
-  peek.replaceChildren(count, outline);
-  paintSyntax(outline);
-}
-
-/** 同一组继续增长时复用现有 DOM，避免拆掉重建把用户展开和内部“展开全文”冲掉。 */
-function syncGroupNode(n, items) {
-  if (n._toolsBuilding) { n._pendingToolItems = items; n._toolItems = items; return; }
-  if (!n._toolsMaterialized) {
-    n._toolItems = items;
-    const peek = n.querySelector(':scope > .fold-preview .group-peek');
-    if (peek) paintGroupPreview(peek, items);
-    return;
-  }
-  const old = n._renderedToolItems || n._toolItems || [];
-  const entries = [...n.querySelectorAll(':scope > .tool-entry')];
-  const byId = new Map();
-  old.forEach((m, i) => {
-    if (!entries[i]) return;
-    byId.set(m.call_id || `#${i}`, {m, entry: entries[i]});
-  });
-  const action = n.querySelector(':scope > .disclosure');
-  const next = [];
-  const reused = new Set();
-  items.forEach((m, i) => {
-    const prev = byId.get(m.call_id || `#${i}`);
-    if (prev?.entry && prev.m.role === m.role && !reused.has(prev.entry)) {
-      if (m.role === 'tool' && m.result && !prev.m.result) {
-        appendToolResult(prev.entry, m.result, m);
-      }
-      reused.add(prev.entry);
-      next.push(prev.entry);
-    } else {
-      next.push(toolEntry(m));
-    }
-  });
-  entries.forEach(entry => { if (!reused.has(entry)) entry.remove(); });
-  let anchor = action;
-  for (let i = next.length - 1; i >= 0; i--) {
-    const entry = next[i];
-    if (entry.parentElement !== n || entry.nextElementSibling !== anchor) n.insertBefore(entry, anchor);
-    anchor = entry;
-  }
-  n._toolItems = items;
-  n._renderedToolItems = items;
-  const peek = n.querySelector(':scope > .fold-preview .group-peek');
-  if (peek) paintGroupPreview(peek, items);
-}
-
-function groupNode(items, initiallyOpen = false) {
-  // 工具协议不属于对话正文搜索范围。历史段默认折叠；正在增长的尾段展开。
-  const n = el('div', 'msg grp' + (initiallyOpen ? '' : ' folded'));
-  n.dataset.role = 'toolgroup';
-  n._toolItems = items;
-  const preview = addFoldPreview(n, '', '工具调用组');
-  preview.classList.add('group-preview');
-  const toggle = preview.querySelector('.fold-toggle');
-  const peek = preview.querySelector('.peek');
-  peek.classList.add('group-peek');
-  paintGroupPreview(peek, items);
-  n._toolsMaterialized = false;
-  const setAction = addAction(n);
-  const fold = () => {
-    n.classList.add('folded');
-    toggle.setAttribute('aria-expanded', 'false');
-    setAction();
-  };
-  const open = () => {
-    if (!n._toolsMaterialized) {
-      n._toolsMaterialized = true;
-      n._toolsBuilding = true;
-      const generation = renderSeq;
-      const action = n.querySelector(':scope > .disclosure');
-      const pending = n._toolItems;
-      let offset = 0;
-      const paint = () => {
-        if (generation !== renderSeq && !n.isConnected) return;
-        const started = performance.now();
-        const fragment = document.createDocumentFragment();
-        while (offset < pending.length && performance.now() - started < 8) {
-          fragment.appendChild(toolEntry(pending[offset++]));
-        }
-        n.insertBefore(fragment, action);
-        if (offset < pending.length) setTimeout(paint, 0);
-        else {
-          n._toolsBuilding = false;
-          n._renderedToolItems = pending;
-          if (n._pendingToolItems) {
-            const latest = n._pendingToolItems;
-            n._pendingToolItems = null;
-            syncGroupNode(n, latest);
-          }
-        }
-      };
-      paint();
-    }
-    n.classList.remove('folded');
-    toggle.setAttribute('aria-expanded', 'true');
-    setAction('收起', () => {
-      n._userOpened = false;
-      fold();
-    }, true);
-  };
-  n._fold = fold;
-  n._open = open;
-  toggle.onclick = () => {
-    n._userOpened = true;
-    open();
-  };
-  initiallyOpen ? open() : fold();
-  return n;
-}
 
 function safeMediaSrc(src) {
   src = String(src || '');
@@ -6566,7 +5339,7 @@ async function reloadMediaSession(view, button, notice) {
 
 async function mediaImageFailed(event) {
   const img = event.target;
-  if (!lazyMediaEnabled() || img?.tagName !== 'IMG' || img.dataset.mediaLazy !== 'true') return;
+  if (img?.dataset.vueMedia === 'true' || !lazyMediaEnabled() || img?.tagName !== 'IMG' || img.dataset.mediaLazy !== 'true') return;
   const path = img.dataset.mediaPath, wrapper = img.closest('.media-load');
   if (!/^\/api\/media\/[0-9a-f]{32}$/.test(path || '') || !wrapper?.isConnected
       || !$('#msgs')?.contains(wrapper)) return;
@@ -6660,7 +5433,7 @@ function mediaGallery(items, more) {
   return html.length ? `<div class="media-gallery">${html.join('')}</div>` : '';
 }
 
-const mediaPageRequests = new Map();
+const mediaPageRequests = SessionDockConversation.requests.mediaPageRequests;
 
 function currentMediaPage(request) {
   return S.sel === request.uid && S.agent === request.agent
@@ -6668,23 +5441,7 @@ function currentMediaPage(request) {
     && request.message.media_more?.cursor === request.cursor;
 }
 
-function validateMediaPage(data, more, cursor) {
-  const page = data?.page, info = mediaMoreInfo(more);
-  const integer = value => Number.isSafeInteger(value) && value >= 0;
-  const token = value => typeof value === 'string' && /^[0-9a-f]{32}$/.test(value);
-  if (!Array.isArray(data?.media) || data.media.length > 16 || !data.media.length || !page || !info
-      || !token(cursor) || page.cursor !== cursor
-      || !data.media.every(item => item && typeof item === 'object' && !Array.isArray(item))
-      || !['start', 'end', 'total', 'remaining'].every(key => integer(page[key]))
-      || page.total !== info.total || page.start !== info.total - info.remaining
-      || page.end <= page.start || page.end > page.total
-      || page.end - page.start !== data.media.length
-      || page.remaining !== page.total - page.end
-      || (page.remaining === 0 ? page.next !== null : !token(page.next) || page.next === cursor)) {
-    throw new Error('图片分页响应与当前消息不匹配；请重新载入当前会话。');
-  }
-  return page;
-}
+const validateMediaPage = SessionDockConversation.pages.validateMediaPage;
 
 async function fetchMediaPage(uid, agent, cursor, signal) {
   const query = new URLSearchParams({cursor});
@@ -6715,15 +5472,8 @@ async function fetchMediaPage(uid, agent, cursor, signal) {
 }
 
 function mediaPageFailure(request, button, error) {
-  if (!currentMediaPage(request) || !button?.isConnected) return;
-  const gallery = button.parentElement;
-  gallery.querySelector('.media-page-error')?.remove();
-  const notice = el('span', 'media-page-error');
-  notice.setAttribute('role', 'alert');
-  notice.textContent = `已加载的图片保持不变${error.status ? `（HTTP ${error.status}）` : ''}：${error.message || '图片分页读取失败。'}`;
-  button.before(notice);
-  button.disabled = false;
-  button.textContent = '重试加载图片';
+  if (!currentMediaPage(request)) return;
+  SessionDockConversation.mediaState(request.cursor,{busy:false,error:`已加载的图片保持不变${error.status ? `（HTTP ${error.status}）` : ''}：${error.message || '图片分页读取失败。'}`});
 }
 
 async function loadMediaContinuation(uid, agent, cursor, button) {
@@ -6741,8 +5491,7 @@ async function loadMediaContinuation(uid, agent, cursor, button) {
   request.ac = ac;
   const timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
   mediaPageRequests.set(cursor, request);
-  button.disabled = true;
-  button.textContent = '正在读取图片…';
+  SessionDockConversation.mediaState(cursor,{busy:true,error:''});
   try {
     const {data} = await fetchMediaPage(uid, agent, cursor, ac.signal);
     if (!currentMediaPage(request)) return;
@@ -6752,17 +5501,8 @@ async function loadMediaContinuation(uid, agent, cursor, button) {
     message.media = [...(message.media || []), ...data.media];
     if (page.remaining) message.media_more = {remaining: page.remaining, total: page.total, cursor: page.next};
     else delete message.media_more;
-    const box = $('#msgs');
-    const target = button.isConnected && box?.contains(button) ? button
-      : box?.querySelector(`.media-more[data-media-cursor="${cursor}"]`);
-    if (!target) return;
-    target.parentElement.querySelector('.media-page-error')?.remove();
-    target.insertAdjacentHTML('beforebegin', data.media.map(item => imageHtml(item)).join(''));
-    if (page.remaining) {
-      target.dataset.mediaCursor = page.next;
-      target.disabled = false;
-      target.textContent = `还有 ${page.remaining.toLocaleString()} 张图片，加载下一批`;
-    } else target.remove();
+    SessionDockConversation.mediaState(cursor, {busy:false,error:''});
+    SessionDockConversation.updateMedia();
   } catch (error) { mediaPageFailure(request, button, error); }
   finally {
     clearTimeout(timer);
@@ -6772,7 +5512,7 @@ async function loadMediaContinuation(uid, agent, cursor, button) {
 
 document.addEventListener('click', event => {
   const button = event.target?.closest?.('.media-more');
-  if (!button || button.disabled || !mediaContinuationEnabled() || !$('#msgs')?.contains(button)) return;
+  if (!button || !button.closest('[data-conversation-inner]') || button.disabled || !mediaContinuationEnabled() || !$('#msgs')?.contains(button)) return;
   event.preventDefault();
   loadMediaContinuation(S.sel, S.agent, button.dataset.mediaCursor, button);
 });
@@ -6816,392 +5556,45 @@ function renderFormulae(root) {
   } catch { /* 单个坏公式按原文保留，不能拖垮整条消息 */ }
 }
 
-function msgNode(m) {
-  if (m.silent) {
-    const n = el('span', 'silent-tool-result');
-    n.hidden = true;
-    n.dataset.role = m.role;
-    if (m.counted === false) n.dataset.counted = 'false';
-    return n;
-  }
-  if (m.role === 'event') return eventNode(m);
-  if (m.changes?.length) return fileChangeNode(m);
-  if (m.role === 'question') return questionNode(m);
-  if (TOOL_ROLES.has(m.role)) {
-    // 单发工具调用与组内同款紧凑卡片: 摘要头 + 状态 + 输出预览
-    const n = el('div', 'msg tool-msg');
-    n.dataset.role = m.role;
-    n._toolItems = [m];
-    if (m.counted === false) n.dataset.counted = 'false';
-    n.appendChild(toolEntry(m));
-    return n;
-  }
-  // 命中的消息展开且不截断, 保证高亮可见; 但设上限, 否则搜 "a" 会把整个会话全量展开
-  const found = SEARCH_ROLES.has(m.role) && hasTerm(m.text);
-  const hit = found && S.autoOpen < AUTO_OPEN_MAX;
-  if (hit) S.autoOpen++;
-  // 对话内容从不整泡折叠；长内容只在泡内提供“展开全文”。
-  const n = el('div', 'msg' + (found && !hit ? ' hashit' : ''));
-  n.dataset.role = m.role;
-  if (m.counted === false) n.dataset.counted = 'false';
-  const body = el('div', 'mb');
-  const linkContext = {uid: S.sel, agent: S.agent};
-  const render = full => md(m.text, full, m.media, linkContext) + mediaGallery(m.media, m.media_more);
-  const paint = full => {
-    body.innerHTML = render(full); renderFormulae(body); paintSyntax(body);
-  };
-  n.appendChild(body);
-  const setAction = addAction(n);
-  const long = m.text.length > CLIP;
-  const full = () => {
-    body.classList.remove('clip'); paint(true);
-    setAction(long ? '收起' : '', long ? clipped : null, long ? true : null);
-  };
-  const clipped = () => {
-    body.classList.add('clip'); paint(false);
-    setAction(`展开全文 (${m.text.length.toLocaleString()} 字符)`, full, false);
-  };
-  if (long) hit ? full() : clipped();
-  else paint(hit);
-  if (S.term && S.opts.regex && !found && SEARCH_ROLES.has(m.role)) {
-    const generation = SessionDockSearch.generation();
-    regexMatches(m.text).then(ranges => {
-      n._applyRegexMatch = () => {
-        if (!n.isConnected) return;
-        n._applyRegexMatch = null;
-        if (generation !== SessionDockSearch.generation() || !ranges.matched) return;
-        if (S.autoOpen >= AUTO_OPEN_MAX) { n.classList.add('hashit'); return; }
-        S.autoOpen++;
-        if (long) full();
-        markMatches(n);
-      };
-      n._applyRegexMatch();
-    });
-  }
-  if (m.interrupted) {
-    n.classList.add('native-interrupted');
-    const state = el('small', 'native-message-state', '已中断');
-    if (m.interrupt_reason) state.title = m.interrupt_reason;
-    n.appendChild(state);
-  }
-  timelinePinAction(n, m);
-  return n;
-}
-
-function formatDuration(ms) {
-  let seconds = Math.max(0, Number(ms) || 0) / 1000;
-  if (seconds < 10) return `${seconds.toFixed(seconds < 1 ? 1 : 0)} 秒`;
-  seconds = Math.round(seconds);
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const rest = seconds % 60;
-  return [hours ? `${hours} 小时` : '', minutes ? `${minutes} 分` : '',
-          rest || (!hours && !minutes) ? `${rest} 秒` : ''].filter(Boolean).join(' ');
-}
-
-function eventNode(m) {
-  const kind = m.event_kind || 'session';
-  const n = el('div', `timeline-event ${kind}${m.event_status ? ` ${m.event_status}` : ''}`);
-  n.dataset.role = 'event';
-  n.dataset.counted = 'false';
-  if (kind === 'duration') {
-    n.innerHTML = `<span>耗时 ${esc(formatDuration(m.duration_ms))}</span>`;
-    return n;
-  }
-  const label = kind === 'recap' ? '回顾'
-    : (kind === 'task' ? '任务' : (kind === 'compact' ? '上下文' : '会话'));
-  n.innerHTML = `<b>${label}</b><span>${esc(m.text || '')}</span>`;
-  if (m.details) {
-    n.classList.add('has-details');
-    const disclosure = el('details', 'event-details');
-    const stats = outputStats(m.details);
-    disclosure.appendChild(el('summary', '', `查看结果 · ${stats.lines.toLocaleString()} 行`));
-    disclosure.ontoggle = () => {
-      if (!disclosure.open || disclosure.querySelector('.event-detail-body')) return;
-      const body = el('div', 'event-detail-body');
-      body.innerHTML = md(m.details, true);
-      renderFormulae(body); paintSyntax(body);
-      disclosure.appendChild(body);
-    };
-    n.appendChild(disclosure);
-  }
-  return n;
-}
-
 const screenMenuTextDrafts = new Map();
-
-// Use the same question card as native history/hooks, while preserving each
-// screen menu's own toggle, text, and explicit Submit/Next semantics.
-function screenMenuControls(body, m, {answer, cancel, action, textAnswer}) {
-  const waiting = (m.state || 'waiting') === 'waiting';
-  const options = m.questions?.[0]?.options || [];
-  body.querySelectorAll('[data-question-option]').forEach(button => {
-    const option = options[+button.dataset.questionOption];
-    button.disabled = !waiting || !option?.keys?.length;
-    button.classList.toggle('selected', !!option?.selected);
-    button.setAttribute('aria-pressed', String(!!option?.selected));
-    button.onclick = () => answer(m.uid, +button.dataset.questionOption);
-  });
-  const actions = el('div', 'question-actions');
-  if (m.text && typeof m.text === 'object') {
-    const owner = composerDraftOwner(m.uid);
-    const key = `${owner}\0${m.id}`;
-    for (const saved of screenMenuTextDrafts.keys()) {
-      if (saved.startsWith(`${owner}\0`) && saved !== key) screenMenuTextDrafts.delete(saved);
-    }
-    const form = el('form', 'question-text-form');
-    const label = el('label', '', m.text.label || '回答');
-    const input = el(m.text.multiline ? 'textarea' : 'input', 'question-text-input');
-    if (!m.text.multiline) input.type = 'text';
-    input.setAttribute('aria-label', m.text.label || '回答');
-    input.value = screenMenuTextDrafts.get(key) ?? m.text.value ?? '';
-    input.disabled = !waiting;
-    input.oninput = () => screenMenuTextDrafts.set(key, input.value);
-    const submit = el('button', 'question-submit', m.text.submit_label || '提交文字');
-    submit.type = 'submit';
-    submit.disabled = !waiting;
-    form.onsubmit = event => {
-      event.preventDefault();
-      textAnswer?.(m.uid, input.value);
-    };
-    label.appendChild(input);
-    form.append(label, submit);
-    body.appendChild(form);
-  }
-  if (!waiting) actions.appendChild(el('small', 'question-settling', '正在处理，等待终端画面…'));
-  for (const [index, item] of (m.actions || []).entries()) {
-    const button = el('button', 'question-submit', item.label);
-    button.type = 'button';
-    button.dataset.questionAction = index;
-    button.disabled = !waiting || !item.keys?.length;
-    button.onclick = () => action?.(m.uid, index);
-    actions.appendChild(button);
-  }
-  const terminal = el('button', '', '打开终端');
-  terminal.type = 'button';
-  terminal.onclick = () => revealNativeTerminal(m.uid);
-  actions.appendChild(terminal);
-  if (m.cancel_keys?.length) {
-    const button = el('button', 'question-cancel', '取消');
-    button.type = 'button';
-    button.disabled = !waiting;
-    button.onclick = () => cancel(m.uid);
-    actions.appendChild(button);
-  }
-  body.appendChild(actions);
-}
-
-function questionNode(m, {answer = answerCliQuestion, cancel: cancelAnswer = cancelCliQuestion,
-  action, textAnswer} = {}) {
-  const n = el('div', 'msg question');
-  n.dataset.role = 'question';
-  if (m.counted === false) n.dataset.counted = 'false';
-  if (m.call_id) n.dataset.callId = m.call_id;
-  const live = !!m.live;
-  if (live) n.classList.add('live-question');
-  const promptState = m.state || 'waiting';
-  if (live && promptState !== 'waiting') n.classList.add('settling');
-  const body = el('div', 'mb question-body');
-  const rows = Array.isArray(m.questions) && m.questions.length
-    ? m.questions : [{ question: m.text, options: [] }];
-  body.innerHTML = rows.map((q, i) => `
-    <section class="question-item">
-      ${q.header ? `<div class="question-header">${esc(q.header)}</div>` : ''}
-      <div class="question-text">${esc(q.question || m.text)}</div>
-      ${q.multiple ? '<div class="question-multiple">可多选</div>' : ''}
-      ${(q.options || []).length ? `<div class="question-options">${q.options.map((o, j) => `
-        <${live ? 'button' : 'div'} ${live ? `type="button" data-question-index="${i}" data-question-option="${j}" aria-pressed="false"` : ''}
-          class="question-option"><span>${j + 1}</span><div><b>${esc(o.label)}</b>
-          ${o.description ? `<small>${esc(o.description)}</small>` : ''}</div></${live ? 'button' : 'div'}>`).join('')}</div>` : ''}
-    </section>`).join('');
-  if (live && m.kind === 'screen_menu') {
-    screenMenuControls(body, m, {answer, cancel: cancelAnswer, action, textAnswer});
-  } else if (live) {
-    const cli = sessiondockCli(m.source || m.uid);
-    const cliName = cli?.name || 'CLI';
-    const waiting = promptState === 'waiting';
-    const direct = waiting && rows.length === 1 && !rows[0].multiple
-      && !!rows[0].options?.length;
-    const formDirect = waiting && cli?.canAnswerQuestionForm({...m, questions: rows});
-    const draftKey = formDirect && m.uid && m.call_id ? `${m.uid}\0${m.call_id}` : '';
-    let selections = draftKey ? questionFormDrafts.get(draftKey) : null;
-    const validDraft = Array.isArray(selections) && selections.length === rows.length
-      && selections.every((optionIndex, questionIndex) => optionIndex === null
-        || (Number.isInteger(optionIndex) && !!rows[questionIndex]?.options?.[optionIndex]));
-    if (!validDraft) {
-      selections = Array(rows.length).fill(null);
-      if (draftKey) questionFormDrafts.set(draftKey, selections);
-    }
-    let formSubmit = null;
-    body.querySelectorAll('[data-question-option]').forEach(button => {
-      button.disabled = !direct && !formDirect;
-      const questionIndex = +button.dataset.questionIndex;
-      const optionIndex = +button.dataset.questionOption;
-      const selected = formDirect && selections[questionIndex] === optionIndex;
-      button.classList.toggle('selected', selected);
-      button.setAttribute('aria-pressed', String(selected));
-      button.onclick = async () => {
-        if (formDirect) {
-          selections[questionIndex] = optionIndex;
-          body.querySelectorAll(`[data-question-index="${questionIndex}"]`).forEach(x => {
-            const selected = +x.dataset.questionOption === optionIndex;
-            x.classList.toggle('selected', selected);
-            x.setAttribute('aria-pressed', String(selected));
-          });
-          if (formSubmit) formSubmit.disabled = selections.some(x => x === null);
-          return;
-        }
-        body.querySelectorAll('button').forEach(x => { x.disabled = true; });
-        button.classList.add('submitting');
-        const ok = await answer(m.uid, optionIndex);
-        if (!ok) body.querySelectorAll('button').forEach(x => { x.disabled = false; });
-      };
-    });
-    const actions = el('div', 'question-actions');
-    if (!waiting) {
-      actions.appendChild(el('small', 'question-settling',
-        promptState === 'cancelled' ? `正在取消，等待 ${cliName} 记录…`
-          : `答案已提交，等待 ${cliName} 记录…`));
-    } else if (formDirect) {
-      actions.appendChild(el('small', '', '请为每题选择一个答案'));
-      formSubmit = el('button', 'question-submit', '提交答案');
-      formSubmit.type = 'button';
-      formSubmit.disabled = selections.some(x => x === null);
-      formSubmit.onclick = async () => {
-        body.querySelectorAll('button').forEach(x => { x.disabled = true; });
-        formSubmit.classList.add('submitting');
-        const ok = await answerCliQuestionForm(m.uid, selections);
-        if (!ok) {
-          body.querySelectorAll('[data-question-option]').forEach(
-            x => { x.disabled = false; });
-          formSubmit.disabled = selections.some(x => x === null);
-          terminal.disabled = false;
-          cancel.disabled = false;
-        }
-      };
-      actions.appendChild(formSubmit);
-    } else if (!direct) {
-      actions.appendChild(el('small', '', '多选或多题请在原生终端回答'));
-    }
-    const terminal = el('button', '', '打开终端');
-    terminal.type = 'button';
-    terminal.onclick = () => revealNativeTerminal(m.uid);
-    const cancel = el('button', 'question-cancel', '取消');
-    cancel.type = 'button';
-    cancel.disabled = !waiting;
-    cancel.onclick = () => cancelAnswer(m.uid);
-    actions.append(terminal, cancel);
-    body.appendChild(actions);
-  }
-  n.appendChild(body);
-  return n;
-}
-
-function renderActivity(activity) {
-  const box = $('#msgs');
-  if (!box) return;
-  $('#activity')?.remove();
-  if (!activity || activity.state === 'idle') return;
-  if (activity.state === 'working') {
-    if (!S.live.has(S.sel)) return;
-    const processStart = S.liveStarted.get(S.sel);
-    const activityAt = Date.parse(activity.ts) / 1000;
-    // resume 出来的新 CLI 停在输入提示符时，旧 transcript 可能仍以一条未回答的
-    // user 消息结尾。那条 working 属于上一进程，不能带进当前进程。
-    if (Number.isFinite(processStart) && Number.isFinite(activityAt)
-        && activityAt < processStart - 2) return;
-  }
-  const labels = {
-    working: 'Working…', waiting: '等待回答',
-    aborted: '已中断', failed: '执行失败',
-  };
-  const label = labels[activity.state];
-  if (!label) return;
-  const n = el('div', `activity ${activity.state}`);
-  n.id = 'activity';
-  n.dataset.state = activity.state;
-  n.setAttribute('role', 'status');
-  n.setAttribute('aria-live', 'polite');
-  n.innerHTML = `<i></i><span>${label}</span>`;
-  if (activity.reason) n.title = activity.reason;
-  box.appendChild(n);
-}
-
 function pendingHistoryQuestion(entry) {
   if (entry?.meta?.source !== 'codex' || entry?.activity?.state !== 'waiting') return null;
-  const answered = new Set((entry.msgs || [])
-    .filter(m => ['answer', 'tool_result'].includes(m.role) && m.call_id)
-    .map(m => m.call_id));
-  return [...(entry.msgs || [])].reverse().find(
-    m => m.role === 'question' && m.call_id && !answered.has(m.call_id)) || null;
+  const answered = new Set((entry.msgs || []).filter(m => ['answer','tool_result'].includes(m.role) && m.call_id).map(m => m.call_id));
+  return [...(entry.msgs || [])].reverse().find(m => m.role === 'question' && m.call_id && !answered.has(m.call_id)) || null;
 }
-
 function pruneQuestionFormDrafts(uid, activeId = '') {
-  const prefix = `${uid}\0`;
-  const keep = activeId ? `${prefix}${activeId}` : '';
-  for (const key of questionFormDrafts.keys()) {
-    if (key.startsWith(prefix) && key !== keep) questionFormDrafts.delete(key);
+  const prefix = `${uid}\0`, keep = activeId ? `${prefix}${activeId}` : '';
+  for (const key of questionFormDrafts.keys()) if (key.startsWith(prefix) && key !== keep) questionFormDrafts.delete(key);
+}
+function renderActivity(activity) {
+  const box = $('#msgs'); if (!box) return;
+  let visible = activity && ['working','waiting','aborted','failed'].includes(activity.state) ? activity : null;
+  if (visible?.state === 'working') {
+    const processStart = S.liveStarted.get(S.sel), at = Date.parse(visible.ts) / 1000;
+    if (!S.live.has(S.sel) || (Number.isFinite(processStart) && Number.isFinite(at) && at < processStart - 2)) visible = null;
   }
+  SessionDockConversation.tail(box, {activity:visible});
 }
-
 function renderTerminalThreadNotice(uid = S.sel) {
-  const box = $('#msgs');
-  if (!box) return;
-  box.querySelectorAll('.terminal-thread-notice').forEach(node => node.remove());
-  if (S.agent || uid !== S.sel || sessiondockCli(uid)?.source !== 'codex'
-      || !globalThis.codexSideThreadVisible?.(uid)) return;
-  const notice = el('div', 'terminal-thread-notice');
-  notice.setAttribute('role', 'status');
-  const copy = el('div', 'terminal-thread-copy');
-  copy.appendChild(el('strong', '', '终端当前位于 Codex side thread'));
-  copy.appendChild(el('span', '',
-    '此会话框仍跟随 main thread，因此不会显示 side 内容。在终端按 Ctrl+/ 可切回 main thread。'));
-  const inspect = el('button', '', '查看 side thread');
-  inspect.type = 'button';
-  inspect.onclick = () => globalThis.revealNativeTerminal?.(uid);
-  notice.append(copy, inspect);
-  box.appendChild(notice);
+  const box = $('#msgs'); if (!box) return;
+  SessionDockConversation.tail(box, {sideThread:!S.agent && uid === S.sel && sessiondockCli(uid)?.source === 'codex' && !!globalThis.codexSideThreadVisible?.(uid)});
 }
-
 function renderConversationTail(activity, uid = S.sel) {
-  const box = $('#msgs');
-  if (!box) return;
-  const entry = cache.get(viewKey(uid));
-  $('#activity')?.remove();
-  box.querySelectorAll('.live-question').forEach(node => node.remove());
-  box.querySelectorAll('.question-live-shadowed').forEach(
-    node => node.classList.remove('question-live-shadowed'));
-  const prompt = entry?.prompt;
+  const box = $('#msgs'); if (!box) return;
+  const entry = cache.get(viewKey(uid)), prompt = entry?.prompt;
   const nativeQuestion = prompt?.questions?.length ? null : pendingHistoryQuestion(entry);
   const activeQuestion = prompt?.questions?.length ? prompt : nativeQuestion;
-  const activeDraftId = activeQuestion
-    && (activeQuestion.state || 'waiting') === 'waiting'
-    ? String(activeQuestion.id || activeQuestion.call_id || '') : '';
-  pruneQuestionFormDrafts(uid, activeDraftId);
-  if (prompt?.questions?.length) {
-    if (prompt.id) {
-      [...box.querySelectorAll('.msg[data-role="question"][data-call-id]')]
-        .find(node => node.dataset.callId === prompt.id)
-        ?.classList.add('question-live-shadowed');
-    }
-    const liveQuestion = {
-      role: 'question', call_id: prompt.id, questions: prompt.questions,
-      text: prompt.questions.map(q => q.question).join('\n\n'), live: true,
-      state: prompt.state, uid, ts: prompt.ts || prompt.created_at,
-    };
-    box.appendChild(stampMessageTime(questionNode(liveQuestion), [liveQuestion]));
-  } else if (nativeQuestion) {
-    [...box.querySelectorAll('.msg[data-role="question"][data-call-id]')]
-      .find(node => node.dataset.callId === nativeQuestion.call_id)
-      ?.classList.add('question-live-shadowed');
-    const liveQuestion = { ...nativeQuestion, live: true, uid };
-    box.appendChild(stampMessageTime(questionNode(liveQuestion), [liveQuestion]));
-  } else {
-    renderActivity(activity);
-  }
+  pruneQuestionFormDrafts(uid, activeQuestion && (activeQuestion.state || 'waiting') === 'waiting' ? String(activeQuestion.id || activeQuestion.call_id || '') : '');
+  const question = prompt?.questions?.length ? {
+    role:'question', call_id:prompt.id, questions:prompt.questions,
+    text:prompt.questions.map(q => q.question).join('\n\n'), live:true,
+    state:prompt.state, uid, ts:prompt.ts || prompt.created_at,
+  } : nativeQuestion ? {...nativeQuestion, live:true, uid} : null;
+  SessionDockConversation.tail(box, {uid,agent:S.agent,question,shadow:question?.call_id || '',activity:null});
+  if (!question) renderActivity(activity);
   renderTerminalThreadNotice(uid);
-  if (typeof syncComposerSendState==='function') syncComposerSendState();
-  refreshMessageTimeDividers(box);
+  if (typeof syncComposerSendState === 'function') syncComposerSendState();
+  if (typeof renderQueuedSends === 'function') renderQueuedSends(uid);
   scheduleBrowserSnapshot('conversation-tail');
 }
 
@@ -8481,3 +6874,53 @@ document.addEventListener('DOMContentLoaded', () => {
     if (added) renderSide(); else paintSidebarSelection(uid);
   };
 });
+SessionDockConversation.configure({
+  md, head, renderFormulae, paintSyntax, clearSyntaxPaint, paintToolOutputDiff,
+  retryableReadFailure, retryMigrationRead,
+  safeMediaSrc, lazyMediaEnabled, mediaContinuationEnabled, mediaMoreInfo, diagnoseMedia,
+  forgetMediaDiagnostic: path => mediaDiagnostics.delete(path),
+  reloadMediaOwned: (view, notice) => reloadMediaSession({...view,uid:S.sel,agent:S.agent}, {}, {set textContent(value) {notice(value);}}),
+  loadMedia: (cursor, button) => loadMediaContinuation(S.sel,S.agent,cursor,button),
+  loadHistory: (info,button) => historyPagesEnabled() ? loadHistoryPage(info.uid,info.agent,button) : loadFullHistory(info.uid,info.agent,button),
+  reloadHistory: (info,button) => reloadHistoryWindow(info.uid,info.agent,button),
+  sticking: () => _stick, live: uid => S.live.has(uid), settle,
+  mutateKeepingMessageAnchor, jumpWithinConversation, uiIcon,
+  sessiondockCli, answer: (...args) => answerCliQuestion(...args),
+  cancel: (...args) => cancelCliQuestion(...args),
+  answerCliQuestionForm: (...args) => answerCliQuestionForm(...args),
+  revealNativeTerminal: uid => revealNativeTerminal(uid),
+  dismissQueuedSend: (...args) => dismissQueuedSend(...args),
+  pinTimeline, pinTarget: m => {
+    if (!timelinePinEnabled() || m.role !== 'user' || m.turn_id == null || S.agent) return null;
+    const session = S.sessions.find(s => s.uid === S.sel) || cache.get(viewKey(S.sel,null))?.meta;
+    return session?.source === 'claude' ? String(m.turn_id) : null;
+  },
+  questionDraft: (m,rows) => {
+    const key=m.uid && m.call_id ? `${m.uid}\0${m.call_id}` : '';
+    let value=key ? questionFormDrafts.get(key) : null;
+    if (!Array.isArray(value) || value.length!==rows.length || !value.every((n,i)=>n===null || (Number.isInteger(n) && !!rows[i]?.options?.[n]))) {value=Array(rows.length).fill(null);if(key)questionFormDrafts.set(key,value);}
+    return value;
+  },
+  screenText: m => screenMenuTextDrafts.get(`${composerDraftOwner(m.uid)}\0${m.id}`),
+  saveScreenText: (m,value) => {
+    const owner=composerDraftOwner(m.uid),key=`${owner}\0${m.id}`;
+    for(const saved of screenMenuTextDrafts.keys())if(saved.startsWith(`${owner}\0`) && saved!==key)screenMenuTextDrafts.delete(saved);
+    screenMenuTextDrafts.set(key,value);
+  },
+  hasTerm, searchCanOpen: () => S.autoOpen < AUTO_OPEN_MAX,
+  claimSearchOpen: () => {if (S.autoOpen >= AUTO_OPEN_MAX) return false;S.autoOpen++;return true;},
+  searchMessage: text => {const found=hasTerm(text),open=found && S.autoOpen < AUTO_OPEN_MAX;if(open)S.autoOpen++;return {found,open};},
+  searchAsync: (text,apply) => {
+    if (!S.term || !S.opts.regex || hasTerm(text)) return;
+    const generation=SessionDockSearch.generation();
+    regexMatches(text).then(ranges => {if(generation===SessionDockSearch.generation() && ranges.matched)apply();});
+  },
+  searchProcessAsync: (items,apply) => {
+    if (!S.term || !S.opts.regex || items.some(m => SEARCH_ROLES.has(m.role) && hasTerm(m.text))) return;
+    const generation=SessionDockSearch.generation();
+    Promise.all(items.filter(m => SEARCH_ROLES.has(m.role)).map(m => regexMatches(m.text))).then(results => {if(generation===SessionDockSearch.generation() && results.some(r=>r.matched))apply();});
+  },
+  markInner: root => {if(S.term){markMatches(root);updateMatchNav();}},
+});
+
+SessionDockConversation.pages.configurePages(mediaMoreInfo);

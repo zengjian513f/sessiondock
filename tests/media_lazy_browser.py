@@ -95,6 +95,13 @@ def main():
                     else:
                         route.continue_()
                 page.route("**/api/media/*",media_route)
+                # Keep the render-race choreography when the configured history
+                # window contains fewer than the normal 250 render groups.
+                def small_render_batches(route):
+                    response=route.fetch()
+                    route.fulfill(response=response,body=response.text().replace(
+                        "const RENDER_BATCH = 250;", "const RENDER_BATCH = 10;"))
+                page.route("**/app.js*",small_render_batches)
                 page.goto(base,wait_until="networkidle")
                 page.evaluate("HISTORY_PAGE_CHAIN=false")   # one page per click here
                 page.locator(f'#side .item[data-uid="{uid(corpus,"codex-lazy")}"]').click()
@@ -181,7 +188,7 @@ def main():
                     assert state()["cursor"]==live,"reset render rolled back accepted SSE cursor"
                     expect(page.locator(".media-load-error")).to_have_count(0)
                     assert any('/api/messages/' in url and 'window=1' in url for url in requests[start:])
-                    assert len(state()["text"])==(601 if status==404 else 600)
+                    assert len(state()["text"])==len(original["text"])+(1 if status==404 else 0)
                     images=page.locator("#msgs img")
                     page.wait_for_function("document.querySelectorAll('#msgs img')[1].naturalWidth===2")
 
@@ -230,9 +237,12 @@ def main():
                 page.locator(f'#side .item[data-uid="{uid(corpus,"codex-lazy")}"]').click()
                 expect(page.locator("#msgs")).to_contain_text("LAZY ROW 1399")
                 gap=page.locator('.history-gap');gap.scroll_into_view_if_needed()
+                page.wait_for_function("document.querySelector('#msgs img').naturalWidth===2")
+                gap.scroll_into_view_if_needed()
                 top=gap.bounding_box()["y"];previous=state()["cursor"]
                 page.locator('.history-gap-load').click()
                 page.wait_for_function("historyPageRequests.size===0")
+                expect(page.locator('#msgs > .msg[data-role="user"]')).to_have_count(len(state()["text"]))
                 page.wait_for_timeout(100)
                 assert abs(page.locator('.history-gap').bounding_box()["y"]-top)<12
                 assert state()["cursor"]==previous

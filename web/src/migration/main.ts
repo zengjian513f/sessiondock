@@ -8,6 +8,7 @@ import SettingsDialog from '../components/SettingsDialog.vue'
 import * as Machines from './machines'
 import * as Search from './search'
 import * as Sidebar from './sidebar'
+import * as Conversation from './conversation'
 // The unchanged JavaScript grid facade is shared with the standalone grid page.
 // @ts-expect-error The existing grid implementation has no TypeScript declarations.
 import { GridTerm } from '../../../legacy-web/grid/facade.js'
@@ -30,5 +31,6 @@ Object.assign(globalThis, {
   SessionDockMachines: Machines,
   SessionDockSearch: Search,
   SessionDockSidebar: Sidebar,
+  SessionDockConversation: Conversation,
   GridTerm,
 })
