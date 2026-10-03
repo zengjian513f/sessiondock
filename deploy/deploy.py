@@ -202,8 +202,8 @@ def resolve_build(cfg: dict, with_ptyhost: bool) -> tuple[list[str], list[str]]:
     return argv, names
 
 
-def build_legacy_web(stage: Path, worktree: bool) -> None:
-    """Compile the island from the web snapshot, using installed dependencies."""
+def build_web(stage: Path, worktree: bool, frontend: str) -> None:
+    """Compile the selected frontend from the snapshot, using installed dependencies."""
     log_path = stage / "logs" / "web-build.log"
     with tempfile.TemporaryDirectory(prefix="web-build-", dir=stage) as temporary:
         snapshot = Path(temporary)
@@ -219,14 +219,22 @@ def build_legacy_web(stage: Path, worktree: bool) -> None:
                 die("git archive HEAD web failed")
         (snapshot / "web" / "node_modules").symlink_to(ROOT / "web" / "node_modules",
                                                        target_is_directory=True)
-        print(f"web: npm run build:legacy (log {log_path.relative_to(ROOT)})", flush=True)
+        script = "build:migration" if frontend == "vue" else "build:legacy"
+        if frontend == "vue":
+            shutil.copytree(stage / "web", snapshot / "legacy-web")
+        print(f"web: npm run {script} (log {log_path.relative_to(ROOT)})", flush=True)
         with log_path.open("w", encoding="utf-8") as log:
-            result = subprocess.run(["npm", "run", "build:legacy", "--", "--outDir",
-                                     str(stage / "web" / "framework")], cwd=snapshot / "web",
+            argv = ["npm", "run", script]
+            if frontend == "legacy":
+                argv += ["--", "--outDir", str(stage / "web" / "framework")]
+            result = subprocess.run(argv, cwd=snapshot / "web",
                                     stdout=log, stderr=subprocess.STDOUT, timeout=300)
         if result.returncode != 0:
             tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-30:]
             die("web build failed (rc=%d):\n%s" % (result.returncode, "\n".join(tail)), 1)
+        if frontend == "vue":
+            shutil.rmtree(stage / "web")
+            shutil.copytree(snapshot / "web" / "dist-migration", stage / "web")
 
 
 def cmd_build(args) -> Path:
@@ -267,7 +275,7 @@ def cmd_build(args) -> Path:
         print("web: git archive HEAD legacy-web")
     if not (stage / "web" / "index.html").is_file():
         die("web snapshot has no index.html")
-    build_legacy_web(stage, web_from_worktree)
+    build_web(stage, web_from_worktree, args.frontend)
 
     binaries: dict[str, Path] = {}
     sha256: dict[str, str] = {}
@@ -308,7 +316,8 @@ def cmd_build(args) -> Path:
     doc = {"commit": art.commit, "short": art.short, "dirty": art.dirty, "built_at": art.built_at,
            "web_dir": "web", "binaries": {n: f"bin/{n}" for n in binaries}, "sha256": sha256,
            "source_archive": "source.tar", "web_only": art.web_only, "stage": str(stage),
-           "web_source": "worktree" if web_from_worktree else "HEAD", "dirty_files": dirty,
+           "web_source": "worktree" if web_from_worktree else "HEAD", "frontend": args.frontend,
+           "dirty_files": dirty,
            "cargo": cargo_argv, "with_ptyhost": args.with_ptyhost,
            "source_tree": snapshot_tree, "source_source": "worktree" if args.allow_dirty else "HEAD"}
     (stage / "artifacts.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
@@ -732,6 +741,8 @@ def main(argv: list[str] | None = None) -> int:
     build_flags.add_argument("--web-from-head", action="store_true",
                              help="with --allow-dirty: still snapshot legacy-web/ from HEAD, not the working tree")
     build_flags.add_argument("--build-timeout", type=float, default=3600, help="seconds for cargo build")
+    build_flags.add_argument("--frontend", choices=("legacy", "vue"), default="legacy",
+                             help="frontend snapshot to build (default legacy; vue for a separate preview target)")
 
     def test_flags(default: str) -> argparse.ArgumentParser:   # a fresh parent per command: its own default
         tf = argparse.ArgumentParser(add_help=False)

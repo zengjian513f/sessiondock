@@ -51,6 +51,28 @@ and `--dry-run` do not build. Before invoking a browser script directly, run
 is ignored by Git. Builds and Chromium user actions are the frontend migration
 checks; no unit test is added or enabled by this migration.
 
+The independent Vue entry uses `npm --prefix web run build:migration` (also
+`npm --prefix web run build`) and `SESSIONDOCK_TEST_WEB_DIR` pointing to
+`web/dist-migration`. The runner selects this build when that variable is set;
+without it the production legacy entry remains the target. The unused Vue demo
+and Vitest dependency have been removed. During the frontend refactor goal,
+the user's instruction holds production references: commit and push validated
+source without deploying or restarting production.
+
+For example, run the prefixed entry and a selected conversation path against
+the independent build:
+
+```sh
+SESSIONDOCK_TEST_WEB_DIR="$PWD/web/dist-migration" \
+  python3 tests/run_validation.py --only frontend_entry_browser,history_browser
+```
+
+Browser fixtures select explicit legacy or scoped scripts through
+[`browser_runtime.py`](../tests/browser_runtime.py). Scoped scripts access the
+actual `SessionDockRuntime` owners; they do not install compatibility globals.
+Asynchronous polling awaits the resolved condition within the original deadline.
+The original UI, identity, checkpoint and race assertions remain in place.
+
 - **Small change / one bug fix** — run the affected headless browser suite
   (`--only <name>`); a full sweep is not required for every edit. Once the change
   is complete and validated, commit, push and deploy the current workspace to
@@ -220,6 +242,8 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | pick_drag_browser | `python3 tests/pick_drag_browser.py` | 多选 mode: dragging with the left mouse button from an unpicked row picks the run, from a picked row unpicks it; dragging back restores rows that left the run, the release does not re-toggle the pressed row, no text is selected, holding at the bottom edge auto-scrolls and extends the run; a plain click still toggles one row, a double click selects no text; entering/leaving 多选 keeps the existing row nodes (checkboxes patched in place). | binary, Chromium | n/a |
 | prefs_migration_browser | `python3 tests/prefs_migration_browser.py --binary target/release/sessiondock` | Seeds theme/font/layout/filter/cache/unread/selection and file-manager preferences under `sessiondock.*`; verifies they apply, changes persist across reload, `files.html` uses `sessiondock.files-*`, a fresh browser keeps defaults, and PWA identity is SessionDock. | binary, Chromium | 5s |
 | frontend_framework_browser | `python3 tests/frontend_framework_browser.py --binary target/release/sessiondock` | Desktop and phone settings operated through Chromium: appearance/features controls, close/reopen, reload persistence, Escape and continued access to Machines. | binary, Chromium, built Vue assets | n/a |
+| frontend_entry_browser | `python3 tests/frontend_entry_browser.py --binary target/release/sessiondock` | Real desktop/phone operation under a loopback `/sessiondock/` proxy: session selection, theme/font/cache controls, restart of the private Rust fixture, restored conversation and preferences, browser history, and prefix-relative asset/API requests. Runs with either frontend via `SESSIONDOCK_TEST_WEB_DIR`. | binary, Chromium, built Vue assets | n/a |
+| frontend_preview_browser | `python3 tests/frontend_preview_browser.py --binary target/release/sessiondock` | Two private Hub builds behind authenticated Nginx: reproduce split assets/API causing a persistent update notice, then use the preview proxy template to load/filter/open sessions, reload repeatedly and submit with the correct build on desktop/phone while the original route retains its build. | binary, Chromium, Nginx, built Vue assets | n/a |
 | machine_controls_browser | `python3 tests/machine_controls_browser.py` | Hub machine palette, Escape/outside close, unsaved name preservation, failed name/renderer rollback and saved renderer; actual controls with synthetic nodes and temporary display failures. | binary, sessiondock-hub, Chromium | n/a |
 | session_identity_browser | `python3 tests/session_identity_browser.py --binary target/release/sessiondock` | Session identity copying through real menus and clipboard with private fixtures. | binary, Chromium | n/a |
 | sidebar_toggle_browser | `python3 tests/sidebar_toggle_browser.py --binary target/release/sessiondock` | Large sidebar resource viewport rendering, reuse when nesting changes and scroll hydration. | binary, Chromium | n/a |

@@ -6,6 +6,7 @@ turns with detached training, quiet code-mode/MCP/OpenCode services and zombies.
 Chromium opens sessions, reloads and observes task completion without changing
 the native transcript. No real CLI or production data is touched.
 """
+from browser_runtime import js
 import argparse
 from contextlib import ExitStack
 import json
@@ -96,36 +97,36 @@ def main(binary):
                     claude_badge = page.locator(f'#side .item[data-uid="{claude}"] > .ico > .item-status')
                     page.locator(f'#side .item[data-uid="{claude}"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic completed Claude answer")
-                    page.wait_for_function("uid => S.live.has(uid)", arg=claude)
+                    page.wait_for_function(js("uid => S.live.has(uid)", 'uid => runtime.core.state.live.live.has(uid)'), arg=claude)
                     expect(page.locator("#dlive")).not_to_have_class(WORKING)
                     expect(claude_badge).not_to_have_class(WORKING)
                     assert get_json(opener, base, "/api/live?force=1")["working_uids"] == []
                     # The same service still stays quiet under a live CLI.
                     stat = proc / "700/stat"
                     stat.write_text(stat.read_text().replace(") S 1 ", ") S 601 "))
-                    page.evaluate("refreshLive(true)")
+                    page.evaluate(js("refreshLive(true)", 'runtime.core.live.refreshLive(true)'))
                     expect(claude_badge).not_to_have_class(WORKING)
                     assert get_json(opener, base, "/api/live?force=1")["working_uids"] == []
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic process activity busy")
-                    page.wait_for_function("uid => S.live.has(uid)", arg=uid)
+                    page.wait_for_function(js("uid => S.live.has(uid)", 'uid => runtime.core.state.live.live.has(uid)'), arg=uid)
                     header = page.locator("#dlive")
                     expect(header).not_to_have_class(WORKING)
                     expect(badge).not_to_have_class(WORKING)
                     # OpenCode one-shot commands still count as actual work.
                     proc_pid(proc, 800, "opencode", ["opencode", "run", "Synthetic task"], 601)
-                    page.evaluate("refreshLive(true)")
+                    page.evaluate(js("refreshLive(true)", 'runtime.core.live.refreshLive(true)'))
                     expect(claude_badge).to_have_class(WORKING)
                     expect(header).not_to_have_class(WORKING)
                     assert get_json(opener, base, "/api/live?force=1")["working_uids"] == [corpus.uid(claude_sid)]
                     shutil.rmtree(proc / "800")
-                    page.evaluate("refreshLive(true)")
+                    page.evaluate(js("refreshLive(true)", 'runtime.core.live.refreshLive(true)'))
                     expect(claude_badge).not_to_have_class(WORKING)
                     # Same-parent commands, including ones under code-mode,
                     # and detached commands with native identity all count.
                     for parent, identity in [(100, []), (300, []), (1, [("CODEX_SESSION_ID", "busy"), ("CODEX_THREAD_ID", "busy")])]:
                         proc_pid(proc, 800, "python", ["python", "train.py"], parent, env=identity)
-                        page.evaluate("refreshLive(true)")
+                        page.evaluate(js("refreshLive(true)", 'runtime.core.live.refreshLive(true)'))
                         expect(header).to_have_class(WORKING)
                         expect(badge).to_have_class(WORKING)
                         expect(quiet_badge).not_to_have_class(WORKING)
@@ -134,20 +135,20 @@ def main(binary):
                         # Task completion changes no native history: only the
                         # new process snapshot must repaint both indicators.
                         shutil.rmtree(proc / "800")
-                        page.evaluate("refreshLive(true)")
+                        page.evaluate(js("refreshLive(true)", 'runtime.core.live.refreshLive(true)'))
                         expect(header).not_to_have_class(WORKING)
                         expect(badge).not_to_have_class(WORKING)
                     proc_pid(proc, 800, "sleep", ["sleep", "60"], 1, env=[("CODEX_SESSION_ID", "busy")])
-                    page.evaluate("refreshLive(true)")
+                    page.evaluate(js("refreshLive(true)", 'runtime.core.live.refreshLive(true)'))
                     page.reload(wait_until="networkidle")
-                    page.wait_for_function("uid => S.sel === uid && S.live.has(uid)", arg=uid)
+                    page.wait_for_function(js("uid => S.sel === uid && S.live.has(uid)", 'uid => runtime.core.state.selection.sel === uid && runtime.core.state.live.live.has(uid)'), arg=uid)
                     expect(header).to_have_class(WORKING)
                     page.locator(f'#side .item[data-uid="{quiet}"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic process activity quiet")
                     expect(header).not_to_have_class(WORKING)
                     expect(badge).to_have_class(WORKING)
                     shutil.rmtree(proc / "800")
-                    page.evaluate("refreshLive(true)")
+                    page.evaluate(js("refreshLive(true)", 'runtime.core.live.refreshLive(true)'))
                     expect(badge).not_to_have_class(WORKING)
                     context.close()
                     print("PASS", "Hub namespace" if through_hub else "node", "owned/detached/sleeping tasks, infrastructure isolation, reload and completion", flush=True)

@@ -6,6 +6,7 @@ receipts (fetch and pagehide sendBeacon) and the private JSONL receives bounded,
 metadata-only records. Without the directory the capability is false, the page
 sends nothing and the route stays 501. Synthetic corpus only; no CLI or model.
 """
+from browser_runtime import js
 import argparse
 import json
 import os
@@ -105,27 +106,31 @@ def main():
                         if response.url == base + AUDIT_ROUTE else None)
                     page.goto(base, wait_until="networkidle")
                     expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
-                    page_id = page.evaluate("window.__sessiondockPageId")
+                    page_id = page.evaluate(js("window.__sessiondockPageId", 'runtime.core.environment.AUDIT_PAGE_ID'))
                     assert page_id and len(page_id) <= 128, page_id
                     uid = corpus.uid("claude-branch")
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Claude selected answer")
-                    page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+                    page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
                     seen = wait_for_events(page, audit, {"browser.page.loaded", "browser.session.opened",
                                                    "browser.http.response.parsed", "browser.dom.snapshot",
                                                    "browser.sse.opened"})
                     # Continuous ordinary receipts must not cause one request
                     # per polling tick. Rust never retains these content bodies.
-                    await_idle = "() => !browserAuditSending && browserAuditQueue.length === 0"
+                    await_idle = js("() => !browserAuditSending && browserAuditQueue.length === 0", '() => !runtime.core.audit.sending && runtime.core.audit.queue.length === 0')
                     page.wait_for_function(await_idle)
                     cadence_posts = []
                     page.on("request", lambda request: cadence_posts.append(request.post_data_json)
                             if request.url == base + AUDIT_ROUTE else None)
-                    page.evaluate("""() => {
+                    page.evaluate(js("""() => {
                       window.__cadenceN=0;
                       window.__cadenceTimer=setInterval(()=>browserAuditEvent('probe.cadence',
                         {n:++__cadenceN},'x'.repeat(64000)),200);
-                    }""")
+                    }""", """() => {
+                      window.__cadenceN=0;
+                      window.__cadenceTimer=setInterval(()=>runtime.core.audit.browserAuditEvent('probe.cadence',
+                        {n:++__cadenceN},'x'.repeat(64000)),200);
+                    }"""))
                     page.wait_for_timeout(11000)
                     page.evaluate("clearInterval(__cadenceTimer)")
                     assert 1 <= len(cadence_posts) <= 3, len(cadence_posts)
@@ -133,11 +138,11 @@ def main():
                                for event in payload['events'])
                     # Error priority advances the timer even if ordinary events
                     # already scheduled a later flush.
-                    page.evaluate("browserAuditEvent('probe.urgent', {}, null, {severity:'error'})")
+                    page.evaluate(js("browserAuditEvent('probe.urgent', {}, null, {severity:'error'})", "runtime.core.audit.browserAuditEvent('probe.urgent', {}, null, {severity:'error'})"))
                     wait_for_events(page, audit, {'browser.probe.urgent'}, timeout=2)
                     page.wait_for_function(await_idle)
                     # A full batch flushes without waiting for the 5-second timer.
-                    page.evaluate("for(let i=0;i<100;i++) browserAuditEvent('probe.full',{i})")
+                    page.evaluate(js("for(let i=0;i<100;i++) browserAuditEvent('probe.full',{i})", "for(let i=0;i<100;i++) runtime.core.audit.browserAuditEvent('probe.full',{i})", body=True))
                     wait_for_events(page, audit, {'browser.probe.full'}, timeout=2)
                     page.wait_for_function(await_idle)
                     # A full queue must not bypass retry backoff on an outage.
@@ -146,9 +151,9 @@ def main():
                         failed_posts.append(route.request.url)
                         route.fulfill(status=503, json={'error': 'synthetic outage'})
                     page.route(base + AUDIT_ROUTE, fail_audit)
-                    page.evaluate("for(let i=0;i<100;i++) browserAuditEvent('probe.retry',{i})")
-                    page.wait_for_function("browserAuditFailCount === 1 && !browserAuditSending")
-                    page.evaluate("for(let i=0;i<100;i++) browserAuditEvent('probe.retry_more',{i})")
+                    page.evaluate(js("for(let i=0;i<100;i++) browserAuditEvent('probe.retry',{i})", "for(let i=0;i<100;i++) runtime.core.audit.browserAuditEvent('probe.retry',{i})", body=True))
+                    page.wait_for_function(js("browserAuditFailCount === 1 && !browserAuditSending", 'runtime.core.audit.failureCount === 1 && !runtime.core.audit.sending'))
+                    page.evaluate(js("for(let i=0;i<100;i++) browserAuditEvent('probe.retry_more',{i})", "for(let i=0;i<100;i++) runtime.core.audit.browserAuditEvent('probe.retry_more',{i})", body=True))
                     page.wait_for_timeout(600)
                     assert len(failed_posts) == 1, failed_posts
                     page.unroute(base + AUDIT_ROUTE, fail_audit)

@@ -6,6 +6,7 @@ The hub and node deliberately have different builds, and the hub is upgraded
 while a desktop tab survives. Also covers refresh, 390 px, retry/raw-input
 gates, metadata and forged hub headers on the ordinary browser listener.
 """
+from browser_runtime import entry_asset, js
 import json
 import os
 from pathlib import Path
@@ -96,10 +97,10 @@ def check_browser(browser, root, config):
         page.locator("#termpane .xterm-helper-textarea").press("Enter")
         xterm_includes(page, "> hub fixture seed")
         uid = claude_uid(root, receipt["declared_sid"])
-        page.wait_for_function("uid => S.sel === uid", arg=uid, timeout=20000)
-        name = page.evaluate("takenOver(S.sel)")
+        page.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'), arg=uid, timeout=20000)
+        name = page.evaluate(js("takenOver(S.sel)", 'runtime.terminal.takenOver(runtime.core.state.selection.sel)'))
         node_build = context.request.get(local + "/api/meta").json()["build"]
-        page.evaluate("backgroundTerm()")
+        page.evaluate(js("backgroundTerm()", 'runtime.terminal.backgroundTerm()'))
         page.close()
         # Closing the setup console releases its ownership
         # lease asynchronously; a claim that never finished binding also has
@@ -152,14 +153,14 @@ def check_browser(browser, root, config):
 
             def select(p):
                 p.locator(f'#side .item[data-uid="{hub_uid}"]').click()
-                p.wait_for_function("uid => S.sel === uid", arg=hub_uid)
+                p.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'), arg=hub_uid)
                 expect(p.locator("#composer")).to_be_visible()
 
             ctx, page = open_page(1280)
             build = ctx.request.get(base + "/api/meta").json()["build"]
             assert build != node_build
-            assert page.evaluate("BUILD_ID") == build
-            assert not page.evaluate("staleBuildShown")
+            assert page.evaluate(js("BUILD_ID", 'runtime.core.environment.BUILD_ID')) == build
+            assert not page.evaluate(js("staleBuildShown", 'runtime.build.state.stale'))
 
             # A node's marker is minted after auth, never from browser headers.
             bodies = {
@@ -186,19 +187,25 @@ def check_browser(browser, root, config):
             try:
                 response = send_from_composer(page, "desktop hub send")
             except Exception:
-                print("hub send diagnostics:", page.evaluate("""() => ({
+                print("hub send diagnostics:", page.evaluate(js("""() => ({
                     selected: S.sel, composerUid, name: takenOver(S.sel),
                     lease: termSendLease(takenOver(S.sel)),
                     input: document.querySelector('#cinput')?.value,
                     disabled: document.querySelector('#csend')?.disabled,
                     staleBuildShown,
-                })"""), "dialogs=", page._sessiondock_dialogs,
+                })""", """() => ({
+                    selected: runtime.core.state.selection.sel, composerUid: runtime.composer.composerUid, name: runtime.terminal.takenOver(runtime.core.state.selection.sel),
+                    lease: runtime.terminal.termSendLease(runtime.terminal.takenOver(runtime.core.state.selection.sel)),
+                    input: document.querySelector('#cinput')?.value,
+                    disabled: document.querySelector('#csend')?.disabled,
+                    staleBuildShown: runtime.build.state.stale,
+                })""")), "dialogs=", page._sessiondock_dialogs,
                       "responses=", page._sessiondock_responses[-20:], flush=True)
                 raise
             assert response.status == 200, response.text()
             wait_history(page, "OK: desktop hub send")
             expect(page.locator("#cinput")).to_have_value("")
-            assert not page.evaluate("staleBuildShown")
+            assert not page.evaluate(js("staleBuildShown", 'runtime.build.state.stale'))
             # A live conversation keeps SSE/polling requests open after reload.
             page.reload(wait_until="domcontentloaded")
             select(page)
@@ -213,27 +220,29 @@ def check_browser(browser, root, config):
                 # A just-reloaded fixture can leave an unbound reservation;
                 # explicitly accept takeover only while opening this console.
                 page._sessiondock_claiming = True
-                if not page.evaluate("termPaneRenderable(currentTermViewObject())"):
+                if not page.evaluate(js("termPaneRenderable(currentTermViewObject())", 'runtime.terminal.termPaneRenderable(runtime.terminal.currentTermViewObject())')):
                     page.locator("#a-term").click()
                 try:
-                    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN", timeout=10000)
+                    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'), timeout=10000)
                 except Exception:
-                    print("Esc fixture open diagnostics", page.evaluate("""() => ({name:T.name, mode:T.mode,
+                    print("Esc fixture open diagnostics", page.evaluate(js("""() => ({name:T.name, mode:T.mode,
                         views:[...T.views.values()].map(v=>({name:v.name,ws:v.ws?.readyState,revoked:v.revoked})),
-                        errors:[...ConsoleUI.errors],pane:document.querySelector('#termpane').className})"""),
+                        errors:[...ConsoleUI.errors],pane:document.querySelector('#termpane').className})""", """() => ({name:runtime.terminal.state.name, mode:runtime.terminal.state.mode,
+                        views:[...runtime.terminal.state.views.values()].map(v=>({name:v.name,ws:v.ws?.readyState,revoked:v.revoked})),
+                        errors:[...runtime.core.state.console.errors],pane:document.querySelector('#termpane').className})""")),
                         page._sessiondock_dialogs, page._sessiondock_responses[-10:], flush=True)
                     raise
-                page.wait_for_function("!!T.views.get(T.name)?.inputLease?.token")
+                page.wait_for_function(js("!!T.views.get(T.name)?.inputLease?.token", '!!runtime.terminal.state.views.get(runtime.terminal.state.name)?.inputLease?.token'))
                 page._sessiondock_claiming = False
                 before_dialogs = len(page._sessiondock_dialogs)
                 page.locator("#a-term").click()
                 expect(page.locator("#composer")).to_be_visible()
                 page.locator("#cinput").fill("keep draft while cancelling")
                 if disconnect == "background":
-                    page.evaluate("backgroundTerm(); foregroundTerm()")
+                    page.evaluate(js("backgroundTerm(); foregroundTerm()", 'runtime.terminal.backgroundTerm(); runtime.terminal.foregroundTerm()', body=True))
                 else:
-                    page.evaluate("T.ws.close()")
-                page.wait_for_function("!T.views.get(T.name)?.ws")
+                    page.evaluate(js("T.ws.close()", 'runtime.terminal.state.ws.close()'))
+                page.wait_for_function(js("!T.views.get(T.name)?.ws", '!runtime.terminal.state.views.get(runtime.terminal.state.name)?.ws'))
                 with page.expect_response(lambda r: urlsplit(r.url).path == "/api/term/send") as escaped:
                     page.locator("#cesc").click()
                 response = escaped.value
@@ -242,8 +251,8 @@ def check_browser(browser, root, config):
                 assert body["token"] == "" and body["instance_id"] == receipt["instance_id"], body
                 assert body["keys"] == ["Escape"] and body["name"].startswith(node.nid + "~"), body
                 assert response.json()["acknowledged"] and response.json()["bytes"] == 1
-                assert not page.evaluate("T.views.get(T.name).inputLease")
-                assert page.evaluate("termSendLease(T.name)") == {}
+                assert not page.evaluate(js("T.views.get(T.name).inputLease", 'runtime.terminal.state.views.get(runtime.terminal.state.name).inputLease'))
+                assert page.evaluate(js("termSendLease(T.name)", 'runtime.terminal.termSendLease(runtime.terminal.state.name)')) == {}
                 expect(page.locator("#cinput")).to_have_value("keep draft while cancelling")
                 assert len(page._sessiondock_dialogs) == before_dialogs, page._sessiondock_dialogs
                 page.locator("#cinput").fill("")
@@ -252,7 +261,7 @@ def check_browser(browser, root, config):
             # A real new hub asset snapshot must still stop the old page.
             page.locator("#cinput").fill("keep draft across upgrade")
             hub.stop()
-            with (web / "app.js").open("a") as stream:
+            with entry_asset(web).open("a") as stream:
                 stream.write("\n// synthetic upgrade fixture\n")
             hub.start()
             fresh = ctx.request.get(base + "/api/meta").json()["build"]
@@ -261,14 +270,14 @@ def check_browser(browser, root, config):
                 response = ctx.request.post(base + path, data={"uid": hub_uid, "_node": node.nid, "_build": build})
                 assert response.status == 409 and response.json().get("reload") is True
                 assert response.json()["build"] == fresh
-            page.evaluate("checkServerBuild()")
+            page.evaluate(js("checkServerBuild()", 'runtime.build.checkServerBuild()'))
             expect(page.locator(".version-stale")).to_contain_text("SessionDock 已更新")
             expect(page.locator("#csend")).to_be_disabled()
             expect(page.locator("#cinput")).to_have_value("keep draft across upgrade")
             page.locator(".version-stale button[data-act=reload]").click()
-            page.wait_for_function("expected => typeof BUILD_ID !== 'undefined' && BUILD_ID === expected", arg=fresh)
+            page.wait_for_function(js("expected => typeof BUILD_ID !== 'undefined' && BUILD_ID === expected", "expected => typeof runtime.core.environment.BUILD_ID !== 'undefined' && runtime.core.environment.BUILD_ID === expected"), arg=fresh)
             select(page)
-            assert not page.evaluate("staleBuildShown")
+            assert not page.evaluate(js("staleBuildShown", 'runtime.build.state.stale'))
             response = send_from_composer(page, "after real hub upgrade")
             assert response.status == 200, response.text()
             wait_history(page, "OK: after real hub upgrade")
@@ -282,7 +291,7 @@ def check_browser(browser, root, config):
             response = sent.value
             assert response.status == 200, response.text()
             wait_history(page, "OK: mobile hub send")
-            assert not page.evaluate("staleBuildShown")
+            assert not page.evaluate(js("staleBuildShown", 'runtime.build.state.stale'))
             bounds = page.locator("#composer").bounding_box()
             assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 391
             mobile.close()

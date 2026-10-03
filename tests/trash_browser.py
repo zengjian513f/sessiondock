@@ -7,6 +7,7 @@ confirmation, the detail pane's "已移入回收站" receipt, the trash dialog w
 restore/purge, and the visible refusal reasons (fork parent, unknown state
 declined, restore conflict). Desktop and 390px. Synthetic corpus only.
 """
+from browser_runtime import js
 import argparse
 import json
 import os
@@ -63,7 +64,7 @@ def listed_uids(opener, base):
 def open_session(page, corpus, sid, text):
     page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]').click()
     expect(page.locator("#msgs")).to_contain_text(text)
-    page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+    page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
 
 
 def click_delete(page, narrow):
@@ -150,7 +151,7 @@ def main():
                     open_session(page, corpus, "codex-parent", "Codex inherited answer")
                     dialogs.expect(("服务端回收站", True), ("删除失败: 父会话只能隐藏，不能删除", True))
                     click_delete(page, narrow=False)
-                    page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+                    page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
                     dialogs.drained()
                     expect(page.locator(f'#side .item[data-uid="{parent}"]')).to_have_count(1)
                     assert corpus.paths["codex-parent"].exists()
@@ -159,7 +160,7 @@ def main():
                     open_session(page, corpus, "claude-compact", "Claude post compact answer")
                     dialogs.expect(("服务端回收站", False))
                     click_delete(page, narrow=False)
-                    page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+                    page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
                     dialogs.drained()
                     expect(page.locator(f'#side .item[data-uid="{corpus.uid("claude-compact")}"]')).to_have_count(1)
                     assert corpus.paths["claude-compact"].exists()

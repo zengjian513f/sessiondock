@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise session resource drawer with a private node and injected fleet samples."""
+from browser_runtime import js
 import argparse
 from pathlib import Path
 import os
@@ -30,7 +31,7 @@ def main():
                 page.locator('#side .item').first.click()
                 assert page.locator('#detail [data-session-resources]').count() == 0
                 page.get_by_role('button', name='列表资源', exact=True).click()
-                page.evaluate('''() => {
+                page.evaluate(js('''() => {
                   window.resourceCalls = [];
                   window.probeState = {state:"unsupported", remaining_seconds:0};
                   SessionDockResources.setLoader(async (uid, scope) => {
@@ -41,7 +42,18 @@ def main():
                       {node_id:'a',node_name:'compute-a',status:'ok',metrics,diagnostic:{...probeState}} ,
                       {node_id:'b',node_name:'compute-b',status:'offline',reason:'机器离线',metrics:{},diagnostic:{state:'unsupported',remaining_seconds:0}}]};
                   });
-                }''')
+                }''', """() => {
+                  window.resourceCalls = [];
+                  window.probeState = {state:"unsupported", remaining_seconds:0};
+                  runtime.resources.setLoader(async (uid, scope) => {
+                    resourceCalls.push({uid, scope});
+                    const metrics = {cpu_cores: {value: scope === 'inclusive' ? 4.5 : 1.25, status:'ok'}, gpu_count:{value:1,status:'partial',reason:'NVIDIA compute-app residency only'},
+                      memory_pss_bytes:{value:1073741824,status:'ok'}, nfs_read_bytes_per_second:{value:null,status:'unsupported',reason:'NFS 探针不可用'}};
+                    return {sampled_at:1790812800, totals:metrics, nodes:[
+                      {node_id:'a',node_name:'compute-a',status:'ok',metrics,diagnostic:{...probeState}} ,
+                      {node_id:'b',node_name:'compute-b',status:'offline',reason:'机器离线',metrics:{},diagnostic:{state:'unsupported',remaining_seconds:0}}]};
+                  });
+                }"""))
                 page.locator('#side .item-resources').first.click()
                 page.get_by_role('dialog').wait_for()
                 page.wait_for_function("document.querySelector('.sr-totals').textContent.includes('4.5')")
@@ -84,7 +96,7 @@ def main():
                 if args.screenshots:
                     page.screenshot(path=str(args.screenshots / 'resources-mobile-dark.png'))
                 page.get_by_role('button', name='关闭资源面板').click()
-                page.evaluate("SessionDockResources.setLoader(async () => {throw new Error('测试采集端离线')})")
+                page.evaluate(js("SessionDockResources.setLoader(async () => {throw new Error('测试采集端离线')})", "runtime.resources.setLoader(async () => {throw new Error('测试采集端离线')})"))
                 page.locator('#side .item-resources').first.click()
                 page.get_by_text('测试采集端离线').wait_for()
                 print('PASS resource drawer: selection, inclusive totals, Chinese tooltips, compact layout, refresh, offline/unknown, mobile, close, unsupported probe and error', flush=True)

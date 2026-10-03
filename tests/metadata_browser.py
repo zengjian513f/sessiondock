@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Synthetic preferences through the real legacy UI; no original state or CLI."""
+from browser_runtime import js
 import argparse
 import json
 import os
@@ -71,7 +72,7 @@ def main():
                         expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
                         page.locator(f'#side .item[data-uid="{corpus.uid("claude-branch")}"]').click()
                         expect(page.locator("#msgs")).to_contain_text("Claude selected answer")
-                        page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+                        page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
                     first, other = pages
                     check_shown_fork_chain(first, corpus)
                     button = f'#side .star-toggle[data-star-uid="{corpus.uid("claude-branch")}"]'

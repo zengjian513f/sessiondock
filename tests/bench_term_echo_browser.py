@@ -16,6 +16,7 @@ policies compare on one server: `served` (the file as shipped), `timer`
 
 Usage: python3 tests/bench_term_echo_browser.py [--keys 200] [--burst 30000] [--rounds 2] [--modes served,none]
 """
+from browser_runtime import js
 import argparse
 import json
 import os
@@ -44,16 +45,20 @@ while IFS= read -r command; do
 done
 """
 
-XTERM_TEXT = """() => [...T.views.values()].map(view => {
+XTERM_TEXT = js("""() => [...T.views.values()].map(view => {
   const buffer = view.term?.buffer?.active;
   return buffer ? Array.from({length:buffer.length}, (_,i) =>
     buffer.getLine(i)?.translateToString(true) || '').join('\\n').trimEnd() : '';
-}).join('\\n')"""
+}).join('\\n')""", """() => [...runtime.terminal.state.views.values()].map(view => {
+  const buffer = view.term?.buffer?.active;
+  return buffer ? Array.from({length:buffer.length}, (_,i) =>
+    buffer.getLine(i)?.translateToString(true) || '').join('\\n').trimEnd() : '';
+}).join('\\n')""")
 
 # Each sample: one byte on the WebSocket, resolved when the echoed character
 # is parsed into the cursor line. Enter every 40 characters keeps the line
 # short; its completion is the cursor returning to column 0 on an empty line.
-ECHO_BENCH = """async count => {
+ECHO_BENCH = js("""async count => {
   const view = [...T.views.values()][0];
   const term = view.term, ws = view.ws, enc = new TextEncoder();
   const line = () => {
@@ -85,9 +90,41 @@ ECHO_BENCH = """async count => {
   ws.send(enc.encode('\\r'));
   await waitFor(() => term.buffer.active.cursorX === 0 && line() === '');
   return samples;
-}"""
+}""", """async count => {
+  const view = [...runtime.terminal.state.views.values()][0];
+  const term = view.term, ws = view.ws, enc = new TextEncoder();
+  const line = () => {
+    const buffer = term.buffer.active;
+    return buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true) || '';
+  };
+  const waitFor = pred => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { sub.dispose(); reject(new Error('echo timeout: ' + line())); }, 5000);
+    const sub = term.onWriteParsed(() => {
+      if (!pred()) return;
+      clearTimeout(timer); sub.dispose(); resolve();
+    });
+  });
+  const samples = [];
+  let typed = '';
+  for (let i = 0; i < count; i++) {
+    if (typed.length >= 40) {
+      ws.send(enc.encode('\\r'));
+      await waitFor(() => term.buffer.active.cursorX === 0 && line() === '');
+      typed = '';
+    }
+    const c = String.fromCharCode(97 + (i % 26));
+    typed += c;
+    const started = performance.now();
+    ws.send(enc.encode(c));
+    await waitFor(() => line().endsWith(typed));
+    samples.push(performance.now() - started);
+  }
+  ws.send(enc.encode('\\r'));
+  await waitFor(() => term.buffer.active.cursorX === 0 && line() === '');
+  return samples;
+}""")
 
-BATCH_MODE = """mode => {
+BATCH_MODE = js("""mode => {
   if (mode === 'served') return;
   const flush = view => {
     const s = view.benchBuffer || '';
@@ -107,12 +144,12 @@ BATCH_MODE = """mode => {
   };
   if (!policies[mode]) throw new Error('unknown batch mode ' + mode);
   globalThis.writeTermOutput = policies[mode];
-}"""
+}""", "mode => {\n  if (mode === 'served') return;\n  const flush = view => {\n    const s = view.benchBuffer || '';\n    view.benchBuffer = ''; view.benchTimer = null;\n    if (s) view.term.write(runtime.terminal.terminalColorChunk(view, s));\n  };\n  const queue = schedule => (view, chunk) => {\n    if (!chunk) return;\n    view.benchBuffer = (view.benchBuffer || '') + chunk;\n    if (view.benchBuffer.length >= 32 * 1024) return flush(view);\n    if (!view.benchTimer) view.benchTimer = schedule(() => flush(view));\n  };\n  const policies = {\n    none: (view, chunk) => { if (chunk) view.term.write(runtime.terminal.terminalColorChunk(view, chunk)); },\n    timer: queue(fn => setTimeout(fn, 20)),\n    frame: queue(fn => requestAnimationFrame(fn)),\n  };\n  if (!policies[mode]) throw new Error('unknown batch mode ' + mode);\n  runtime.terminal.writeTermOutput = policies[mode];\n}")
 
 # One DEC 2026 frame deliberately split into three PTY packets: how many times
 # xterm moved its cursor (and so its IME textarea) while the frame arrived.
 # The echoed command line accounts for one move of its own.
-FRAME_BENCH = """async () => {
+FRAME_BENCH = js("""async () => {
   const view = [...T.views.values()][0];
   const term = view.term, ws = view.ws, enc = new TextEncoder();
   const buffer = term.buffer.active;
@@ -131,9 +168,28 @@ FRAME_BENCH = """async () => {
   await new Promise(resolve => setTimeout(resolve, 100));
   counting.dispose();
   return moves;
-}"""
+}""", """async () => {
+  const view = [...runtime.terminal.state.views.values()][0];
+  const term = view.term, ws = view.ws, enc = new TextEncoder();
+  const buffer = term.buffer.active;
+  const text = () => Array.from({length: buffer.length}, (_, i) => buffer.getLine(i)?.translateToString(true) || '').join('\\n');
+  let moves = 0;
+  const counting = term.onCursorMove(() => moves++);
+  const done = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { sub.dispose(); reject(new Error('frame timeout')); }, 10000);
+    const sub = term.onWriteParsed(() => {
+      if (!text().includes('RS_FRAME_DONE')) return;
+      clearTimeout(timer); sub.dispose(); resolve();
+    });
+  });
+  ws.send(enc.encode('frame\\r'));
+  await done;
+  await new Promise(resolve => setTimeout(resolve, 100));
+  counting.dispose();
+  return moves;
+}""")
 
-BURST_BENCH = """async lines => {
+BURST_BENCH = js("""async lines => {
   const view = [...T.views.values()][0];
   const term = view.term, ws = view.ws, enc = new TextEncoder();
   const buffer = term.buffer.active;
@@ -149,7 +205,23 @@ BURST_BENCH = """async lines => {
   ws.send(enc.encode('burst ' + lines + '\\r'));
   await done;
   return performance.now() - started;
-}"""
+}""", """async lines => {
+  const view = [...runtime.terminal.state.views.values()][0];
+  const term = view.term, ws = view.ws, enc = new TextEncoder();
+  const buffer = term.buffer.active;
+  const tail = () => buffer.getLine(buffer.baseY + buffer.cursorY - 1)?.translateToString(true) || '';
+  const done = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { sub.dispose(); reject(new Error('burst timeout: ' + tail())); }, 60000);
+    const sub = term.onWriteParsed(() => {
+      if (!tail().startsWith('RS_BURST_DONE')) return;
+      clearTimeout(timer); sub.dispose(); resolve();
+    });
+  });
+  const started = performance.now();
+  ws.send(enc.encode('burst ' + lines + '\\r'));
+  await done;
+  return performance.now() - started;
+}""")
 
 
 def host(root, instance, uid):
@@ -184,7 +256,7 @@ def open_console(page, uid):
     if not page.locator("#termpane").is_visible():
         page.locator("#a-term").click()
     expect(page.locator("#termpane")).to_be_visible()
-    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
     page.wait_for_function("needle => (" + XTERM_TEXT + ")().includes(needle)", arg="RS_SHELL_READY")
 
 
@@ -224,7 +296,7 @@ def main():
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     page.goto(base, wait_until="networkidle")
                     open_console(page, uid)
-                    print("renderer=" + page.evaluate("[...T.views.values()][0].renderer"))
+                    print("renderer=" + page.evaluate(js("[...T.views.values()][0].renderer", '[...runtime.terminal.state.views.values()][0].renderer')))
                     for mode in args.modes.split(","):
                         page.evaluate(BATCH_MODE, mode)
                         for round_index in range(args.rounds):
@@ -237,7 +309,7 @@ def main():
                             moves = page.evaluate(FRAME_BENCH)
                             print(f"{mode:6} round {round_index + 1} burst lines={args.burst} {elapsed:.0f}ms; "
                                   f"3-packet DEC 2026 frame cursorMoves={moves}")
-                    page.evaluate("[...T.views.values()][0].ws.send(new TextEncoder().encode('quit\\r'))")
+                    page.evaluate(js("[...T.views.values()][0].ws.send(new TextEncoder().encode('quit\\r'))", "[...runtime.terminal.state.views.values()][0].ws.send(new TextEncoder().encode('quit\\r'))"))
                     assert not errors, errors
                 finally:
                     browser.close()

@@ -10,11 +10,15 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import html
+import re
 import os
 from pathlib import Path
 import tempfile
 from datetime import datetime, timezone
 
+from browser_runtime import js
+from browser_race_assets import install_small_render_batches
 from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, Corpus, codex_row, encoded, isolated_server
 from history_pages_browser import HOOK
@@ -74,6 +78,15 @@ def main():
                         response=route.fetch()
                         script=response.text()+"\n globalThis.SessionDockCapabilities=Object.freeze({...SessionDockCapabilities,config:Object.freeze({...SessionDockCapabilities.config,media_lazy:true})});"
                         route.fulfill(response=response,body=script)
+                    def capability_html(route):
+                        response = route.fetch()
+                        def enable(match):
+                            config = json.loads(html.unescape(match.group(3)))
+                            config['media_lazy'] = True
+                            return match.group(1) + match.group(2) + html.escape(json.dumps(config), quote=True) + match.group(2)
+                        script = re.sub(r"(<meta\b[^>]*name=['\"]sessiondock-capabilities['\"][^>]*content=)(['\"])(.*?)\2",
+                                        enable, response.text())
+                        route.fulfill(response=response, body=script)
                     def metadata(route):
                         data=route.fetch().json();data["capabilities"]["media_lazy"]=True
                         route.fulfill(status=200,json=data)
@@ -89,6 +102,7 @@ def main():
                                         media.pop(field,None)
                                     media["lazy"]=True
                         route.fulfill(status=200,json=data)
+                    page.route(base + "/", capability_html)
                     page.route("**/api/meta",metadata)
                     page.route("**/capabilities.js*",capability_script)
                     page.route("**/api/messages/**",descriptors)
@@ -106,13 +120,9 @@ def main():
                 page.route("**/api/media/*",media_route)
                 # Keep the render-race choreography when the configured history
                 # window contains fewer than the normal 250 render groups.
-                def small_render_batches(route):
-                    response=route.fetch()
-                    route.fulfill(response=response,body=response.text().replace(
-                        "const RENDER_BATCH = 250;", "const RENDER_BATCH = 10;"))
-                page.route("**/app.js*",small_render_batches)
+                install_small_render_batches(page, context)
                 page.goto(base,wait_until="networkidle")
-                page.evaluate("HISTORY_PAGE_CHAIN=false")   # one page per click here
+                page.evaluate(js('HISTORY_PAGE_CHAIN=false', 'runtime.core.history.timing.chain=false'))   # one page per click here
                 page.locator(f'#side .item[data-uid="{uid(corpus,"codex-lazy")}"]').click()
                 expect(page.locator("#msgs")).to_contain_text("LAZY ROW 1399")
                 page.wait_for_function("[...document.querySelectorAll('#msgs img')].some(i=>i.complete&&!i.naturalWidth)")
@@ -120,8 +130,8 @@ def main():
                     assert page.locator(".media-load-error").count()==0
                     print("REPRO: token GET503; rendered img complete=true naturalWidth=0; no visible HTTP reason or retry control")
                     return
-                assert page.evaluate("SessionDockCapabilities.config.media_lazy===true"),"real backend must declare media_lazy"
-                assert page.evaluate("cache.get(viewKey(S.sel,S.agent)).msgs.flatMap(m=>m.media||[]).every(m=>m.lazy===true&&!('mime' in m)&&!('width' in m)&&!('height' in m))")
+                assert page.evaluate(js('SessionDockCapabilities.config.media_lazy===true', 'JSON.parse(document.querySelector(\'meta[name="sessiondock-capabilities"]\').content).media_lazy===true')),"real backend must declare media_lazy"
+                assert page.evaluate(js("cache.get(viewKey(S.sel,S.agent)).msgs.flatMap(m=>m.media||[]).every(m=>m.lazy===true&&!('mime' in m)&&!('width' in m)&&!('height' in m))", 'runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel)).msgs.flatMap(m=>m.media||[]).every(m=>m.lazy===true&&!(\'mime\' in m)&&!(\'width\' in m)&&!(\'height\' in m))'))
                 expect(page.locator(".media-load-error")).to_contain_text("HTTP 503")
                 expect(page.locator(".media-load-error")).to_contain_text("Synthetic media failure 503")
                 expect(page.locator(".media-load-retry")).to_be_visible()
@@ -136,8 +146,9 @@ def main():
                 assert sum(url==tail_src for url,_ in media_requests)==2,"automatic retry loop"
 
                 def state():
-                    return page.evaluate("""(() => {const key=viewKey(S.sel,S.agent),e=cache.get(key);return {
-                      text:e.msgs.map(m=>m.text),end:e.end,anchor:e.anchor,cursor:S.cursors.get(key),partial:e.partial};})()""")
+                    return page.evaluate(js(r"""(() => {const key=viewKey(S.sel,S.agent),e=cache.get(key);return {
+                      text:e.msgs.map(m=>m.text),end:e.end,anchor:e.anchor,cursor:S.cursors.get(key),partial:e.partial};})()""", r"""(() => {const key=(runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel),e=runtime.core.cache.cache.get(key);return {
+                      text:e.msgs.map(m=>m.text),end:e.end,anchor:e.anchor,cursor:runtime.core.state.unread.cursors.get(key),partial:e.partial};})()"""))
 
                 original=state();mode["status"]=None
                 page.locator(".media-load-retry").click()
@@ -151,8 +162,9 @@ def main():
 
                 # Native JSON/Markdown paths and remote descriptors never become
                 # requests, even if a malformed descriptor sets lazy=true.
-                assert page.evaluate("""() => ['https://media.example.invalid/private.png','file:///private/x.png',
-                  '/native/private.png','data:image/png;base64,AAAA'].every(src=>imageHtml({src,lazy:true})==='')""")
+                assert page.evaluate(js(r"""() => ['https://media.example.invalid/private.png','file:///private/x.png',
+                  '/native/private.png','data:image/png;base64,AAAA'].every(src=>imageHtml({src,lazy:true})==='')""", r"""() => ['https://media.example.invalid/private.png','file:///private/x.png',
+                  '/native/private.png','data:image/png;base64,AAAA'].every(src=>runtime.mediaRuntime.imageHtml({src,lazy:true})==='')"""))
 
                 for status in (404,409):
                     mode["status"]=status
@@ -167,26 +179,26 @@ def main():
                     page.evaluate("window.__deferNextPageRender=true")
                     page.locator(".media-load-reload").click()
                     page.wait_for_function("window.__heldPageRender!==null")
-                    page.evaluate("window.__mediaResetSeq=renderSeq;window.__resetMessages=cache.get(viewKey(S.sel,S.agent)).msgs")
-                    assert page.evaluate("document.querySelectorAll('#msgs .msg').length===0 && renderSeq===window.__heldRenderSeq")
+                    page.evaluate(js('() => {window.__mediaResetSeq=renderSeq;window.__resetMessages=cache.get(viewKey(S.sel,S.agent)).msgs}', '() => {window.__mediaResetSeq=runtime.conversationRenderer.renderSeq;window.__resetMessages=runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel)).msgs}'))
+                    assert page.evaluate(js("document.querySelectorAll('#msgs .msg').length===0 && renderSeq===window.__heldRenderSeq", "document.querySelectorAll('#msgs .msg').length===0 && runtime.conversationRenderer.renderSeq===window.__heldRenderSeq"))
                     if status==404:
                         with corpus.paths["codex-lazy"].open("ab") as stream:
                             stream.write(encoded(codex_row("response_item",{"type":"message","role":"user",
                                 "content":[{"type":"input_text","text":"LAZY SSE AFTER RELOAD"}]})))
-                        page.wait_for_function("cache.get(viewKey(S.sel,S.agent)).msgs.at(-1).text==='LAZY SSE AFTER RELOAD'")
+                        page.wait_for_function(js("cache.get(viewKey(S.sel,S.agent)).msgs.at(-1).text==='LAZY SSE AFTER RELOAD'", 'runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel)).msgs.at(-1).text===\'LAZY SSE AFTER RELOAD\''))
                     activity=codex_row("event_msg",{"type":"task_complete","error":status==404,"turn_id":"lazy-reset-turn"})
                     activity["timestamp"]=datetime.now(timezone.utc).isoformat()
                     with corpus.paths["codex-lazy"].open("ab") as stream:
                         stream.write(encoded(activity))
                     before=native_bytes(corpus.root)
-                    page.wait_for_function("state=>cache.get(viewKey(S.sel,S.agent)).activity?.state===state",arg='failed' if status==404 else 'idle')
+                    page.wait_for_function(js('state=>cache.get(viewKey(S.sel,S.agent)).activity?.state===state', 'state=>runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel)).activity?.state===state'),arg='failed' if status==404 else 'idle')
                     if status==409:
-                        assert page.evaluate("cache.get(viewKey(S.sel,S.agent)).msgs===window.__resetMessages")
+                        assert page.evaluate(js('cache.get(viewKey(S.sel,S.agent)).msgs===window.__resetMessages', 'runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel)).msgs===window.__resetMessages'))
                     live=state()["cursor"]
-                    assert page.evaluate("renderSeq===window.__mediaResetSeq"),"another render superseded the held reset"
+                    assert page.evaluate(js('renderSeq===window.__mediaResetSeq', 'runtime.conversationRenderer.renderSeq===window.__mediaResetSeq')),"another render superseded the held reset"
                     assert 'LAZY ROW 1399' not in page.locator('#msgs').inner_text()
                     page.evaluate("window.__heldPageRender();window.__heldPageRender=null")
-                    page.wait_for_function("historyPageRequests.size===0")
+                    page.wait_for_function(js('historyPageRequests.size===0', 'runtime.core.history.historyPageRequests.size===0'))
                     if status==404:
                         body=page.locator('#msgs').inner_text()
                         assert body.count('LAZY SSE AFTER RELOAD')==1
@@ -205,12 +217,12 @@ def main():
                 # it after selection changes must not paint errors in the new UI.
                 mode["status"]=503;mode["hold_diagnostic"]=True
                 images.nth(1).evaluate("img=>{const src=img.src;img.removeAttribute('src');setTimeout(()=>{img.src=src},30)}")
-                page.wait_for_function("(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===1")
+                page.wait_for_function(js('(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===1', 'runtime.mediaRuntime.diagnosticActive===1'))
                 page.locator(f'#side .item[data-uid="{uid(corpus,"codex-other")}"]').click()
                 expect(page.locator("#msgs")).to_contain_text("OTHER VIEW ONLY")
                 assert len(held)==1
                 held.pop().fulfill(status=503,json={"error":"STALE DIAGNOSTIC MUST NOT APPEAR"})
-                page.wait_for_function("(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===0")
+                page.wait_for_function(js('(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===0', 'runtime.mediaRuntime.diagnosticActive===0'))
                 expect(page.locator(".media-load-error")).to_have_count(0)
                 expect(page.locator("#detail")).not_to_contain_text("STALE DIAGNOSTIC")
 
@@ -226,7 +238,7 @@ def main():
                 # manual click; only that specific refusal permits a retry.
                 for attempt in range(3):
                     page.locator('.media-load-reload').click()
-                    page.wait_for_function("historyPageRequests.size===0")
+                    page.wait_for_function(js('historyPageRequests.size===0', 'runtime.core.history.historyPageRequests.size===0'))
                     notice = page.locator('.media-load-error')
                     if not notice.count():
                         break
@@ -234,7 +246,7 @@ def main():
                     expect(page.locator('#msgs')).to_contain_text('SHORT IMAGE')
                     assert state()["text"] == ['SHORT IMAGE'], state()
                     assert state()["partial"] is None
-                    page.wait_for_function('_es?.readyState === EventSource.OPEN')
+                    page.wait_for_function(js('_es?.readyState === EventSource.OPEN', 'runtime.core.sync.watching?.readyState === EventSource.OPEN'))
                 expect(page.locator('.media-load-error')).to_have_count(0)
                 page.wait_for_function("document.querySelector('#msgs img').naturalWidth===2")
                 expect(page.locator('#msgs')).to_contain_text('SHORT IMAGE')
@@ -259,21 +271,21 @@ def main():
                 mode['status']=None
                 for attempt in range(3):
                     page.locator('.media-load-reload').click()
-                    page.wait_for_function('historyPageRequests.size===0')
+                    page.wait_for_function(js('historyPageRequests.size===0', 'runtime.core.history.historyPageRequests.size===0'))
                     panel=page.locator('.media-load-error')
                     if not panel.count():
                         break
                     expect(panel).to_contain_text('实时历史已更新；已保留新内容，请再次手动重新载入')
-                    page.wait_for_function('_es?.readyState === EventSource.OPEN')
+                    page.wait_for_function(js('_es?.readyState === EventSource.OPEN', 'runtime.core.sync.watching?.readyState === EventSource.OPEN'))
                 expect(page.locator('.media-load-error')).to_have_count(0)
                 page.wait_for_function("document.querySelector('#msgs img').naturalWidth===2")
                 mode['status']=503;mode['hold_diagnostic']=True
                 inline_image.evaluate("img=>{const src=img.src;img.removeAttribute('src');setTimeout(()=>img.src=src,30)}")
-                page.wait_for_function('(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===1')
+                page.wait_for_function(js('(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===1', 'runtime.mediaRuntime.diagnosticActive===1'))
                 page.locator(f'#side .item[data-uid="{uid(corpus,"codex-other")}"]').click()
                 expect(page.locator('#msgs')).to_contain_text('OTHER VIEW ONLY')
                 held.pop().fulfill(status=503,json={'error':'STALE INLINE DIAGNOSTIC'})
-                page.wait_for_function('(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===0')
+                page.wait_for_function(js('(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===0', 'runtime.mediaRuntime.diagnosticActive===0'))
                 expect(page.locator('.media-load-error')).to_have_count(0)
                 expect(page.locator('#detail')).not_to_contain_text('STALE INLINE DIAGNOSTIC')
 
@@ -288,7 +300,7 @@ def main():
                 gap.scroll_into_view_if_needed()
                 top=gap.bounding_box()["y"];previous=state()["cursor"]
                 page.locator('.history-gap-load').click()
-                page.wait_for_function("historyPageRequests.size===0")
+                page.wait_for_function(js('historyPageRequests.size===0', 'runtime.core.history.historyPageRequests.size===0'))
                 expect(page.locator('#msgs > .msg[data-role="user"]')).to_have_count(len(state()["text"]))
                 page.wait_for_timeout(100)
                 assert abs(page.locator('.history-gap').bounding_box()["y"]-top)<12

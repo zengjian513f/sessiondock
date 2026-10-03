@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Real Hub/node HTTP and Chromium diagnostic controls, private Unix collectors."""
+from browser_runtime import js
 import argparse
 from contextlib import ExitStack
 import json
@@ -189,15 +190,15 @@ def main():
         sidebar.click()
         saved = sidebar.element_handle()
         collectors[0].cpu = 3
-        page.evaluate('SessionDockSidebarResources.refresh()')
+        page.evaluate(js('SessionDockSidebarResources.refresh()', 'runtime.sidebarResources.refresh()'))
         assert sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '5'
         assert sidebar.evaluate('(node, old) => node === old', saved)
         assert 'sel' in sidebar.get_attribute('class')
         page.route('**/api/resources/summary', lambda route: route.fulfill(status=503, body='unavailable'))
-        page.evaluate('SessionDockSidebarResources.refresh()')
+        page.evaluate(js('SessionDockSidebarResources.refresh()', 'runtime.sidebarResources.refresh()'))
         assert sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '—'
         page.unroute('**/api/resources/summary')
-        page.evaluate('SessionDockSidebarResources.refresh()')
+        page.evaluate(js('SessionDockSidebarResources.refresh()', 'runtime.sidebarResources.refresh()'))
         assert sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '5'
         page.set_viewport_size({'width':390,'height':844})
         if not sidebar.is_visible():
@@ -212,9 +213,9 @@ def main():
         assert page.locator('#detail [data-session-resources]').count() == 0
         other = page.locator(f'#side .item[data-uid="{scoped(nodes[2].nid, corpora[2].uid('probe'))}"]')
         other.locator('.body').click()
-        selected_before = page.evaluate('S.sel')
+        selected_before = page.evaluate(js('S.sel', 'runtime.core.state.selection.sel'))
         sidebar.locator('.item-resources').click()
-        assert page.evaluate('S.sel') == selected_before
+        assert page.evaluate(js('S.sel', 'runtime.core.state.selection.sel')) == selected_before
         assert page.locator('.sr-subtitle').inner_text() == sidebar.evaluate('(e) => e._resourceSession.title')
         assert '64' in page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='内存带宽')).inner_text()
         page.locator('.sr-probe[data-state="active"]').wait_for()

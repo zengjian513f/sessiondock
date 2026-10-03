@@ -6,6 +6,7 @@ to before a chosen input, shows the explicit "CLI 未回滚" explanation, watche
 the pin retire when native records move past it, and keeps state across a
 reload and a Web restart.
 """
+from browser_runtime import js
 import argparse
 import os
 from pathlib import Path
@@ -41,7 +42,7 @@ def open_session(page, base, uid):
     expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     expect(page.locator("#msgs")).to_contain_text("Pin answer one")
-    page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+    page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
 
 
 def pin_button(page, text):
@@ -95,7 +96,7 @@ def main():
                     expect(page.locator("#msgs")).to_contain_text("Pin answer two")
                     expect(page.locator("#msgs")).not_to_contain_text("Pin answer three")
                     expect(page.locator("#timeline-pin-notice")).to_contain_text("CLI 未回滚")
-                    page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+                    page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
 
                     # The CLI never rewound: native records continue after a3 and
                     # the pin retires with a visible reason over SSE.
@@ -115,7 +116,7 @@ def main():
                     page.reload(wait_until="networkidle")
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
                     expect(page.locator("#timeline-pin-notice")).to_have_attribute("data-retired", "true")
-                    page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+                    page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
                     page.locator("#timeline-pin-clear").click()
                     expect(page.locator("#timeline-pin-notice")).to_have_count(0)
                     expect(page.locator("#msgs")).to_contain_text("Pin answer four")

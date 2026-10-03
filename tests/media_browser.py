@@ -6,6 +6,7 @@ used. No CLI, native home, external image fetch or model invocation is allowed.
 """
 from __future__ import annotations
 
+from browser_runtime import js
 import argparse
 import base64
 import hashlib
@@ -227,7 +228,7 @@ def main():
                 page.reload(wait_until="networkidle")
                 expect(page.locator("#msgs")).to_contain_text("Claude media complete")
                 images([(2, 3), (3, 2)])
-                page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+                page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
                 page.evaluate("window.__mediaPackets=[]")
                 path = corpus.paths["claude-media"]
                 with path.open("ab") as stream:

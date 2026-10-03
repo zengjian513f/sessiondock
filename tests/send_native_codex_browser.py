@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Conversation SEND against a resumed native Codex session, using a private fake CLI."""
+from browser_runtime import js
 import hashlib
 import json
 import os
@@ -20,16 +21,16 @@ CODEX_SID = "6a7b8c9d-0e1f-4a2b-9c3d-4e5f6a7b8c9d"
 
 def resume_codex(page, uid):
     page.locator(f'#side .item[data-uid="{uid}"]').click()
-    page.wait_for_function("uid => S.sel === uid", arg=uid, timeout=20000)
+    page.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'), arg=uid, timeout=20000)
     expect(page.locator("#msgs")).to_contain_text("Synthetic codex prompt")
     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover") as taken:
         page.locator("#a-term").click()
     resumed = taken.value.json()
     assert taken.value.status == 200 and resumed["launch_kind"] == "resume", resumed
     expect(page.locator("#termpane")).to_be_visible()
-    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
     xterm_includes(page, "FAKE_CODEX_TUI sid=[%s]" % CODEX_SID)
-    page.wait_for_function("uid => (T.list || []).some(row => row.uid === uid && row.instance_id)", arg=uid, timeout=15000)
+    page.wait_for_function(js("uid => (T.list || []).some(row => row.uid === uid && row.instance_id)", 'uid => (runtime.terminal.state.list || []).some(row => row.uid === uid && row.instance_id)'), arg=uid, timeout=15000)
     return resumed
 
 
@@ -114,7 +115,7 @@ def main():
                 xterm_includes(page, 'Context 32% used · Ready')
                 xterm_includes(page, 'Context 27% used · Working')
                 page.locator('#a-term').click()
-                page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
+                page.wait_for_function(js("() => composerDraft()?.inputStatus?.state === 'ready'", "() => runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"))
                 build = context.request.get(base + '/api/meta').json()['build']
                 checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': build}).json()
                 survivors = ['escaped-status', 'ordinary-model-text']
@@ -138,7 +139,7 @@ def main():
                 xterm_includes(page, 'Select Model and Effort')
                 page.reload(wait_until='domcontentloaded')
                 page.locator(f'#side .item[data-uid="{uid}"]').click()
-                page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'blocked'")
+                page.wait_for_function(js("() => composerDraft()?.inputStatus?.state === 'blocked'", "() => runtime.composer.composerDraft()?.inputStatus?.state === 'blocked'"))
                 checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': build}).json()
                 assert checked['cli']['queued'] == [] and checked['input']['state'] == 'blocked', checked
                 expect(page.locator('#queued-sends .queued-send')).to_have_count(0)
@@ -148,10 +149,10 @@ def main():
                 # Reload preserves the selected terminal/conversation mode.
                 if not page.locator('#termpane').is_visible():
                     page.locator('#a-term').click()
-                page.wait_for_function('() => T.ws?.readyState === WebSocket.OPEN')
+                page.wait_for_function(js('() => T.ws?.readyState === WebSocket.OPEN', '() => runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
                 xterm_includes(page, 'Select Model and Effort')
                 page.locator('#termpane .xterm-helper-textarea').press('Escape')
-                page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
+                page.wait_for_function(js("() => composerDraft()?.inputStatus?.state === 'ready'", "() => runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"))
                 page.locator('#a-term').click()
                 # Audit every known built-in and each opted-in argument form
                 # by typing and submitting through the real composer.
@@ -160,7 +161,7 @@ def main():
                 commands += ['/' + row['name'] + ' argument text' for row in manifest['commands'] if row['inline_args']]
                 commands += ['/fast', '/goooal Task', '/model\nAdditional text']
                 for command in commands:
-                    page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
+                    page.wait_for_function(js("() => composerDraft()?.inputStatus?.state === 'ready'", "() => runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"))
                     page.locator('#cinput').fill(command)
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
                         page.locator('#csend').click()
@@ -176,10 +177,10 @@ def main():
                 print(f'PASS Codex command sends: {len(commands) + 1} bare/inline/alias/multiline forms', flush=True)
                 native_count = len(user_records(rollout))
                 for number in range(2):
-                    page.wait_for_function("uid => composerUid === uid && composerDraft()?.inputStatus?.state === 'ready'", arg=uid)
+                    page.wait_for_function(js("uid => composerUid === uid && composerDraft()?.inputStatus?.state === 'ready'", "uid => runtime.composer.composerUid === uid && runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"), arg=uid)
                     text = f'native conversation send {number}'
                     page.locator('#cinput').fill(text)
-                    page.evaluate('async () => await composerDraftWrites')
+                    page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
                     draft = context.request.get(base + '/api/session/conversation', params={'uid': uid}).json()['draft']
                     assert draft['value']['session']['cwd'] == str(root / 'work'), draft
                     started = time.monotonic()
@@ -188,7 +189,7 @@ def main():
                     assert sent.value.status == 200, sent.value.text()
                     body = sent.value.request.post_data_json
                     assert body['uid'] == uid and sent.value.json()['state'] == 'sent', body
-                    page.wait_for_function('() => !composerSending')
+                    page.wait_for_function(js('() => !composerSending', '() => !runtime.composer.composerSending'))
                     expect(page.locator('#cinput')).to_have_value('')
                     print(f'native Codex click-to-clear: {(time.monotonic() - started)*1000:.0f} ms', flush=True)
                     page.locator('#a-term').click()
@@ -208,7 +209,7 @@ def main():
                 literal_inputs = ['/model is mentioned here', '/tmp/file', ' /model']
                 for text in literal_inputs:
                     queue_file.write_text('quoted')
-                    page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
+                    page.wait_for_function(js("() => composerDraft()?.inputStatus?.state === 'ready'", "() => runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"))
                     page.locator('#cinput').fill(text)
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
                         page.locator('#csend').click()
@@ -223,7 +224,7 @@ def main():
                 queue_file.write_text('quoted')
                 queued_text = ' /status\n第二行保留完整正文'
                 for _ in range(2):
-                    page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
+                    page.wait_for_function(js("() => composerDraft()?.inputStatus?.state === 'ready'", "() => runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"))
                     page.locator('#cinput').fill(queued_text)
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
                         page.locator('#csend').click()

@@ -31,6 +31,7 @@ Linux 节点及 Hub 可在 `extra.expected_hostname` 填写目标 `hostname` 的
 
 ```sh
 python3 deploy/deploy.py build    [--allow-dirty] [--web-from-head] [--with-ptyhost] [--web-only]
+                                  [--frontend legacy|vue]
                                   [--test none|affected|full] [--test-base REF] [--test-timeout S]
 python3 deploy/deploy.py push     [--targets a,b | --all] [--stage DIR] [--web-only | --bin-only]
                                   [--with-ptyhost] [--dry-run] [--parallel N] [--keep-backups N]
@@ -56,6 +57,15 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 - `rollback`：不给 `--backup` 时取目标机上**mtime 最新**的 `backup-deploy-*`（手工备份的时间戳是
   本地时间、本工具是 UTC，按名字排不可靠）。`--backup` 只接受匹配
   `backup-deploy-<hex>-<YYYYmmdd>-<HHMMSS>` 的目录。
+- `--frontend vue`：从同源 `web/` 和 `legacy-web/` 快照编译完整 Vue 页面，stage 的 `web/`
+  只包含 `dist-migration/` 产物；默认仍为 `legacy`。预览使用独立目标目录、用户服务和 loopback
+  端口，再在现有鉴权代理中添加预览前缀，位置模板见
+  [sessiondock-preview.nginx.conf](../deploy/sessiondock-preview.nginx.conf)。页面与全部 `api/`
+  请求必须代理到同一个预览 Hub，否则页面版本与 API 版本不同，会持续触发更新提示并暂停同步，
+  发送也会返回版本冲突。预览 Hub 的私有注册表使用现有机器节点的配置副本，会话仍来自同一批节点，
+  机器显示与顺序等 Hub 设置独立保存。不要修改原入口的代理或资源引用。
+  本地目标清单指定预览目标后，用 `deploy --targets <PREVIEW_TARGET> --web-only --frontend vue`
+  发布；首次准备目录和服务时可复用目标机现有 Hub 二进制，注册表与缓存使用预览私有目录。
 - `status` 不在本工具里：只读的舰队状态见 `deploy/fleet_status.py`。
 
 ## 并发部署锁

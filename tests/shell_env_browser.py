@@ -10,6 +10,7 @@ after a graceful shutdown; a supervisor-like restart clears the notice.
 
 A real hub and one real isolated node; no real CLI or production data.
 """
+from browser_runtime import js
 import argparse
 from contextlib import ExitStack
 import json
@@ -124,8 +125,8 @@ def main():
         errors = []
         hub_page.on("pageerror", lambda error: errors.append(str(error)))
         hub_page.goto(f"http://127.0.0.1:{hub.port}", wait_until="networkidle")
-        hub_page.wait_for_function("Nodes.list.length === 2")
-        hub_page.evaluate("checkShellEnv()")
+        hub_page.wait_for_function(js("Nodes.list.length === 2", 'runtime.core.state.nodes.list.length === 2'))
+        hub_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
         notice = hub_page.locator("#shell-env-notice")
         expect(notice).to_have_count(0)
         row = lambda nid: notice.locator(f'tr[data-node="{nid}"]')  # noqa: E731
@@ -135,7 +136,7 @@ def main():
         data, raw = shell_env(local)
         assert data["stale"] and data["changed"] == ["SD_TEST_NEW", "SD_TEST_TOKEN"], data
         assert b"secret" not in raw, raw
-        hub_page.evaluate("checkShellEnv()")
+        hub_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
         expect(notice).to_be_visible()
         expect(notice.locator("th")).to_have_text(["机器", "变化", "", ""])
         expect(row(NID).locator("td")).to_have_text(["shellnode", "SD_TEST_NEW、SD_TEST_TOKEN", "重启", "忽略"])
@@ -147,13 +148,13 @@ def main():
         # The node's own page: 忽略 hides this change for the page.
         local_page = context.new_page()
         local_page.goto(local, wait_until="networkidle")
-        local_page.evaluate("checkShellEnv()")
+        local_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
         local_notice = local_page.locator("#shell-env-notice")
         expect(local_notice.locator('tr[data-node="local"]')).to_contain_text("SD_TEST_TOKEN")
         expect(local_notice.get_by_role("button", name="全部重启")).to_have_count(0)
         local_notice.get_by_role("button", name="忽略").click()
         expect(local_notice).to_have_count(0)
-        local_page.evaluate("checkShellEnv()")
+        local_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
         expect(local_notice).to_have_count(0)
         local_page.close()
         # 全部重启: both machines shut down gracefully and exit 75; a supervisor restart clears the notice.
@@ -165,7 +166,7 @@ def main():
         expect(notice).to_have_count(0, timeout=40000)
         # Another edit, one machine at a time: the other row stays, no 全部重启 for a single one.
         rc.write_text("export SD_TEST_TOKEN=secret-three\nexport SD_TEST_NEW=1\n")
-        hub_page.evaluate("checkShellEnv()")
+        hub_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
         expect(hub_page.get_by_role("button", name="全部重启 (2)")).to_be_visible()
         hub_page.evaluate("""() => { window.__noticeGone = false;
             new MutationObserver(() => { if (!document.querySelector('#shell-env-notice')) window.__noticeGone = true; })
@@ -177,7 +178,7 @@ def main():
         restart_node("shellnode")
         for _ in range(3):   # across polls while the node is down and back, the notice never vanishes
             expect(row(NID2)).to_be_visible()
-            hub_page.evaluate("checkShellEnv()")
+            hub_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
         expect(row(NID)).to_have_count(0, timeout=40000)
         expect(row(NID2).locator("td").nth(1)).to_have_text("SD_TEST_TOKEN")
         expect(notice.get_by_role("button", name="全部重启")).to_have_count(0)

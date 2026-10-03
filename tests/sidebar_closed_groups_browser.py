@@ -4,6 +4,7 @@
 Synthetic list responses over an isolated service; Chromium clicks real group
 and branch disclosures, then receives updates through the normal list poll.
 """
+from browser_runtime import js
 import argparse
 from datetime import datetime, timedelta, timezone
 import os
@@ -37,21 +38,31 @@ def fixture():
 
 
 def seed(page, rows, view='tree'):
-    page.evaluate('''({rows, view}) => {
+    page.evaluate(js('''({rows, view}) => {
       S.sel = null; S.agent = null; S.results = null; S.term = ''; S.off.clear();
       S.activeOnly = false; S.nest = true; S.view = view; S.sessions = rows; S.sig = 'fold-0';
       S.nestClosed = new Set(rows.filter(s => s.agent_items).map(s => s.uid));
       const keys = [...new Set(rows.map(s => view === 'tree' ? s.cwd : dayKey(s.updated)))];
       S.closed = new Set(keys.slice(1)); renderView(); renderSide();
-    }''', dict(rows=rows, view=view))
+    }''', """({rows, view}) => {
+      runtime.core.state.selection.sel = null; runtime.core.state.selection.agent = null; runtime.core.state.search.results = null; runtime.core.state.search.term = ''; runtime.core.state.sidebar.off.clear();
+      runtime.core.state.sidebar.activeOnly = false; runtime.core.state.sidebar.nest = true; runtime.core.state.sidebar.view = view; runtime.core.state.catalog.sessions = rows; runtime.core.state.catalog.sig = 'fold-0';
+      runtime.core.state.sidebar.nestClosed = new Set(rows.filter(s => s.agent_items).map(s => s.uid));
+      const keys = [...new Set(rows.map(s => view === 'tree' ? s.cwd : runtime.timeline.dayKey(s.updated)))];
+      runtime.core.state.sidebar.closed = new Set(keys.slice(1)); runtime.sidebarView.renderView(); runtime.sidebarView.renderSide();
+    }"""), dict(rows=rows, view=view))
 
 
 def instrument(page):
-    page.evaluate('''() => {
+    page.evaluate(js('''() => {
       window.__foldWork = {rows: []};
       const expand = expandRows;
       expandRows = function(s, ...args) { __foldWork.rows.push(s.uid); return expand(s, ...args); };
-    }''')
+    }''', """() => {
+      window.__foldWork = {rows: []};
+      const expand = runtime.sidebarView.expandRows;
+      runtime.sidebarView.expandRows = function(s, ...args) { __foldWork.rows.push(s.uid); return expand(s, ...args); };
+    }"""))
 
 
 def reset_work(page):
@@ -77,7 +88,7 @@ def main():
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 page.goto(base, wait_until='networkidle')
-                page.wait_for_function('S.sessions.length > 0 && T.listLoaded')
+                page.wait_for_function(js('S.sessions.length > 0 && T.listLoaded', 'runtime.core.state.catalog.sessions.length > 0 && runtime.terminal.state.listLoaded'))
                 instrument(page)
                 rows = fixture()
                 response = dict(sessions=rows, sig='fold-0')
@@ -92,7 +103,7 @@ def main():
                 rows[101] = dict(rows[101], title='Hidden update sentinel', updated='2026-09-21T00:00:00Z')
                 response['sig'] = 'fold-1'
                 reset_work(page)
-                page.evaluate('pollSessions()')
+                page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
                 assert page.locator('#side > .group').first.get_attribute('data-key') == '/synthetic/project-01'
                 assert len(page.evaluate('__foldWork.rows')) == 95
                 assert page.locator('#side .item.agent').count() == 0
@@ -114,22 +125,22 @@ def main():
                 # A closed project's checkbox must still select the same
                 # exposed sessions, even though it has no session row objects.
                 hidden.locator('.ghead').click()
-                page.evaluate('setPicking(true)')
+                page.evaluate(js('setPicking(true)', 'runtime.bulk.setPicking(true)'))
                 hidden.locator('.ghead-pick').click()
-                assert page.evaluate('pickedSessions.size') == 100
-                assert page.evaluate('pickedSessions.has("claude:fold-101")')
+                assert page.evaluate(js('pickedSessions.size', 'runtime.bulk.state.picked.size')) == 100
+                assert page.evaluate(js('pickedSessions.has("claude:fold-101")', 'runtime.bulk.state.picked.has("claude:fold-101")'))
                 page.locator('#side-pick-cancel').click()
                 # Date view: a hidden updated session moves to an open day.
                 rows = fixture()
                 response['sessions'] = rows
                 seed(page, rows, 'date')
-                old_key = page.evaluate('dayKey(S.sessions[106].updated)')
-                today_key = page.evaluate('dayKey(S.sessions[6].updated)')
+                old_key = page.evaluate(js('dayKey(S.sessions[106].updated)', 'runtime.timeline.dayKey(runtime.core.state.catalog.sessions[106].updated)'))
+                today_key = page.evaluate(js('dayKey(S.sessions[6].updated)', 'runtime.timeline.dayKey(runtime.core.state.catalog.sessions[6].updated)'))
                 assert group(page, old_key).locator('.gcount').text_content() == '95'
                 rows[106] = dict(rows[106], updated=rows[6]['updated'], title='Moved day sentinel')
                 response['sig'] = 'fold-date-1'
                 reset_work(page)
-                page.evaluate('pollSessions()')
+                page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
                 assert group(page, old_key).locator('.gcount').text_content() == '94'
                 assert group(page, today_key).locator('.gcount').text_content() == '96'
                 assert group(page, today_key).locator('.item[data-uid="claude:fold-106"] .t').text_content() == 'Moved day sentinel'

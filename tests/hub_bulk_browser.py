@@ -11,6 +11,7 @@ A real hub and one real isolated node with a fake OpenCode profile whose
 `session.remove` takes 2.5 s; Chromium clicks through the pick bar at desktop
 and phone width. No real CLI or production data is used.
 """
+from browser_runtime import js
 import argparse
 from contextlib import ExitStack
 import json
@@ -111,9 +112,9 @@ def main():
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
                 page.goto(f"http://127.0.0.1:{hub.port}", wait_until="networkidle")
-                page.wait_for_function("n => S.sessions.length === n", arg=1 + len(remaining(db)))
-                rows = page.evaluate("() => Object.fromEntries(S.sessions.map(s => [s.sid, s.uid]))")
-                if not page.evaluate("S.nest"):
+                page.wait_for_function(js("n => S.sessions.length === n", 'n => runtime.core.state.catalog.sessions.length === n'), arg=1 + len(remaining(db)))
+                rows = page.evaluate(js("() => Object.fromEntries(S.sessions.map(s => [s.sid, s.uid]))", '() => Object.fromEntries(runtime.core.state.catalog.sessions.map(s => [s.sid, s.uid]))'))
+                if not page.evaluate(js("S.nest", 'runtime.core.state.sidebar.nest')):
                     page.locator("#nest-toggle").click()
                 item = lambda uid: page.locator(f'#side .item[data-uid="{uid}"]')  # noqa: E731
                 if width == 1280:
@@ -151,7 +152,7 @@ def main():
                 assert tools["x"] + tools["width"] <= width + 0.5, (tools, width)
                 page.locator("#side-pick-delete").click()
                 try:
-                    page.wait_for_function("uids => uids.every(uid => !S.sessions.some(s => s.uid === uid))",
+                    page.wait_for_function(js("uids => uids.every(uid => !S.sessions.some(s => s.uid === uid))", 'uids => uids.every(uid => !runtime.core.state.catalog.sessions.some(s => s.uid === uid))'),
                                            arg=victims, timeout=40000)
                 except Exception:
                     raise AssertionError(f"rows not removed; dialogs {dialogs}, db {sorted(remaining(db))}")

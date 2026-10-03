@@ -5,6 +5,7 @@ Hold the request before forwarding or hold its response body beyond the old
 five-second deadline. Exercise both renderers and preserve explicit-only retry
 when the full end-to-end deadline expires. No production session or real CLI.
 """
+from browser_runtime import js
 import json
 import os
 from pathlib import Path
@@ -66,7 +67,7 @@ def scenario(root, browser, renderer, phase):
             button = page.locator('#a-term')
             expect(button).to_have_attribute('data-unavailable', 'false')
             button.click()
-            page.wait_for_function('ConsoleUI.busy.has(S.sel)')
+            page.wait_for_function(js('ConsoleUI.busy.has(S.sel)', 'runtime.core.state.console.busy.has(runtime.core.state.selection.sel)'))
             # Pump Playwright until the actual network request is intercepted.
             deadline = time.monotonic() + 5
             while not held and time.monotonic() < deadline:
@@ -75,16 +76,16 @@ def scenario(root, browser, renderer, phase):
             response = held[0].fetch() if phase == 'body' else None
             # This real wait proves the production timer does not abort at 5 s.
             page.wait_for_timeout(6000)
-            assert page.evaluate('ConsoleUI.busy.has(S.sel)'), 'claim abandoned at the old deadline'
+            assert page.evaluate(js('ConsoleUI.busy.has(S.sel)', 'runtime.core.state.console.busy.has(runtime.core.state.selection.sel)')), 'claim abandoned at the old deadline'
             button.click()
             assert len(claims) == 1 and not dialogs
             assert not claims[0].get('force')
             assert claims[0]['uid'] == uid and claims[0]['instance_id'] == instance
             if phase == 'timeout':
-                page.wait_for_function('!ConsoleUI.busy.has(S.sel)', timeout=20000)
+                page.wait_for_function(js('!ConsoleUI.busy.has(S.sel)', '!runtime.core.state.console.busy.has(runtime.core.state.selection.sel)'), timeout=20000)
                 expect(page.locator('#termpane')).to_be_hidden()
                 expect(page.locator('#console-toast')).to_contain_text('服务端可能已取得控制权')
-                assert page.evaluate('uid => ConsoleUI.errors.has(uid)', selected_uid)
+                assert page.evaluate(js('uid => ConsoleUI.errors.has(uid)', 'uid => runtime.core.state.console.errors.has(uid)'), selected_uid)
                 page.wait_for_timeout(700)
                 assert len(claims) == 1, 'ambiguous claim was automatically retried'
                 held[0].abort()
@@ -97,7 +98,7 @@ def scenario(root, browser, renderer, phase):
                 held[0].fulfill(response=response)
             else:
                 held[0].continue_()
-            page.wait_for_function('T.ws?.readyState === WebSocket.OPEN', timeout=10000)
+            page.wait_for_function(js('T.ws?.readyState === WebSocket.OPEN', 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'), timeout=10000)
             expect(page.locator('#termpane')).to_be_visible()
             page.wait_for_function('(' + XTERM_TEXT + ")().includes('RS_SHELL_READY')")
             keyboard = page.locator('#termpane .xterm-helper-textarea')
@@ -106,7 +107,7 @@ def scenario(root, browser, renderer, phase):
             page.wait_for_function('(' + XTERM_TEXT + ")().includes('RS_PING_OK')")
             assert len(claims) == (2 if phase == 'timeout' else 1)
             assert all(not claim.get('force') for claim in claims)
-            assert not page.evaluate('uid => ConsoleUI.errors.has(uid)', selected_uid)
+            assert not page.evaluate(js('uid => ConsoleUI.errors.has(uid)', 'uid => runtime.core.state.console.errors.has(uid)'), selected_uid)
             # A transport disconnect followed by repeated failed lease requests
             # must keep retrying without a click, reload, dialog or forced claim.
             retries = []
@@ -117,8 +118,8 @@ def scenario(root, browser, renderer, phase):
                 else:
                     route.continue_()
             page.route('**/api/term/claim', fail_reclaims)
-            page.evaluate('T.ws.close()')
-            page.wait_for_function('T.ws?.readyState === WebSocket.OPEN', timeout=15000)
+            page.evaluate(js('T.ws.close()', 'runtime.terminal.state.ws.close()'))
+            page.wait_for_function(js('T.ws?.readyState === WebSocket.OPEN', 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'), timeout=15000)
             assert len(retries) >= 3, retries
             assert all(not item.get('force') for item in retries)
             keyboard.press_sequentially('ping')
@@ -135,7 +136,7 @@ def scenario(root, browser, renderer, phase):
                     route.fulfill(status=409, content_type='application/json', body=json.dumps({
                         'conflict': True, 'owner': {'label': 'other page'}, 'same_address': True}))
                 page.route('**/api/term/claim', held_elsewhere)
-                page.evaluate('T.ws.close()')
+                page.evaluate(js('T.ws.close()', 'runtime.terminal.state.ws.close()'))
                 expect(page.locator('#termpane')).to_be_hidden(timeout=10000)
                 page.wait_for_timeout(1500)
                 assert len(conflicts) == 1 and not conflicts[0].get('force'), conflicts

@@ -3,6 +3,7 @@
 No model turns, login material or active goals are created. Run explicitly.
 """
 # run_validation: skip
+from browser_runtime import js
 import argparse
 from contextlib import ExitStack
 import json
@@ -73,7 +74,7 @@ def main():
             assert copied.value.ok,copied.value.text()
             op=json.loads((corpus.root/'state/transfers'/copied.value.json()['operation_id']/'operation.json').read_text())
             mapping=op['plan']['identities']['threads']
-            page.wait_for_function('(id)=>S.sel===id',arg=copied.value.json()['target_uid'])
+            page.wait_for_function(js('(id)=>S.sel===id', '(id)=>runtime.core.state.selection.sel===id'),arg=copied.value.json()['target_uid'])
         with AppServer(args.codex,home,corpus.root/'cwd',root/'verify.log') as native:
             for old,goal in expected.items():
                 cloned=native.call('thread/goal/get',{'threadId':mapping[old]})['goal']

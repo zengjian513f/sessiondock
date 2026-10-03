@@ -7,6 +7,7 @@ scrollback, selection, copy, paste and exit by normal browser clicks and
 keyboard input. Terminal assertions read the grid model through
 globalThis.__grid and globalThis.__gridText().
 """
+from browser_runtime import wait_for_async
 from contextlib import ExitStack
 import os
 from pathlib import Path
@@ -212,7 +213,7 @@ def main():
                     }""", timeout=10000)
                     page.mouse.up()
                     page.wait_for_function("__grid.state.selection === null")
-                    page.wait_for_function(
+                    wait_for_async(page,
                         "expected => navigator.clipboard.readText().then(text => text.includes(expected))",
                         arg=token, timeout=10000)
                     copied = page.evaluate("navigator.clipboard.readText()")

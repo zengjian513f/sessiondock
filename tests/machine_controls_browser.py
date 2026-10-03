@@ -17,6 +17,7 @@ refresh, invoked here as an explicit simulation rather than a second launcher.
 """
 from __future__ import annotations
 
+from browser_runtime import js
 import argparse
 import json
 import os
@@ -118,7 +119,7 @@ def saved_machine(hub, nid):
 
 def check(page, hub, fault):
     page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
-    page.wait_for_function("T.listLoaded && Nodes.machines.length === 2")
+    page.wait_for_function(js("T.listLoaded && Nodes.machines.length === 2", 'runtime.terminal.state.listLoaded && runtime.core.state.nodes.machines.length === 2'))
     open_machines(page)
 
     row = machine_row(page, NAME_A)
@@ -178,7 +179,9 @@ def check(page, hub, fault):
     name.fill(DRAFT)
     expect(name).to_have_value(DRAFT)
     expect(name).to_be_focused()
-    page.evaluate("renderMachineSettings()")
+    # The ESM terminal-list refresh calls the actual Machines renderer while
+    # settings are open. Exercise that consumer without a fabricated hook.
+    page.evaluate(js("renderMachineSettings()", "runtime.terminal.loadTermList()"))
     expect(name).to_have_value(DRAFT)
     expect(name).to_be_focused()
     name.fill(NAME_A)

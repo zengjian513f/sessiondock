@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Keyboard inset keeps short prompts and bottom editors visible without SIGWINCH."""
+from browser_runtime import js
 import json
 import shlex
 import sys
@@ -31,24 +32,37 @@ while True:
     os.write(1, screen.encode())
 '''
 
-GEOMETRY = """() => {
+GEOMETRY = js("""() => {
   const v=currentTermViewObject(), t=v.term, b=t.buffer.active;
   const host=v.host.getBoundingClientRect();
   const screen=v.host.querySelector(v.grid ? 'canvas' : '.xterm-screen').getBoundingClientRect();
   const ch=screen.height/t.rows;
   return {top:screen.top-host.top, bottom:screen.bottom-host.top, height:host.height,
     cursor:screen.top-host.top+(b.cursorY+1)*ch, ch, rows:t.rows, cols:t.cols};
-}"""
+}""", """() => {
+  const v=runtime.terminal.currentTermViewObject(), t=v.term, b=t.buffer.active;
+  const host=v.host.getBoundingClientRect();
+  const screen=v.host.querySelector(v.grid ? 'canvas' : '.xterm-screen').getBoundingClientRect();
+  const ch=screen.height/t.rows;
+  return {top:screen.top-host.top, bottom:screen.bottom-host.top, height:host.height,
+    cursor:screen.top-host.top+(b.cursorY+1)*ch, ch, rows:t.rows, cols:t.cols};
+}""")
 
 
 def assert_terminal_density(page):
-    density = page.evaluate("""() => {
+    density = page.evaluate(js("""() => {
       const v = currentTermViewObject(), canvas = v.host.querySelector('canvas');
       const rect = canvas?.getBoundingClientRect();
       return {grid: v.grid, renderer: v.renderer, zoom: parseFloat(getComputedStyle(document.documentElement).zoom),
         dpr: devicePixelRatio, backing: canvas?.width, width: rect?.width,
         dom: !!v.host.querySelector('.xterm-rows')};
-    }""")
+    }""", """() => {
+      const v = runtime.terminal.currentTermViewObject(), canvas = v.host.querySelector('canvas');
+      const rect = canvas?.getBoundingClientRect();
+      return {grid: v.grid, renderer: v.renderer, zoom: parseFloat(getComputedStyle(document.documentElement).zoom),
+        dpr: devicePixelRatio, backing: canvas?.width, width: rect?.width,
+        dom: !!v.host.querySelector('.xterm-rows')};
+    }"""))
     if density['grid']:
         assert abs(density['backing'] - density['width'] * density['dpr']) <= 1.1, density
     elif abs(density['zoom'] - 1) > .001:
@@ -80,14 +94,14 @@ def run(browser, renderer, scale=100):
             # Fractional interface scale must not expose message glyphs between
             # the fixed header and the overlaid mobile terminal.
             for zoom in (85, 95, 105, 115, 125):
-                page.evaluate('(scale) => applyInterfaceScale(scale, true)', zoom)
+                page.evaluate(js('(scale) => applyInterfaceScale(scale, true)', '(scale) => runtime.shell.applyInterfaceScale(scale, true)'), zoom)
                 page.wait_for_timeout(150)
                 seam = page.evaluate('''() => ({
                   head: document.querySelector('#detail > .dhead').getBoundingClientRect().bottom,
                   pane: document.querySelector('#termpane').getBoundingClientRect().top
                 })''')
                 assert -1.1 <= seam['pane'] - seam['head'] <= .01, (zoom, seam)
-            page.evaluate('(scale) => applyInterfaceScale(scale, true)', scale)
+            page.evaluate(js('(scale) => applyInterfaceScale(scale, true)', '(scale) => runtime.shell.applyInterfaceScale(scale, true)'), scale)
             page.wait_for_timeout(200)
             pane = page.locator('#termpane').bounding_box()
             heading = page.locator('#detail > .dhead').bounding_box()
@@ -98,16 +112,23 @@ def run(browser, renderer, scale=100):
             assert_terminal_density(page)
             before = page.evaluate(GEOMETRY)
             assert before['rows'] > 16, before
-            page.evaluate("""() => {
+            page.evaluate(js("""() => {
               window.keyboardResizes=[];
               const ws=T.ws, send=ws.send.bind(ws);
               ws.send=data => {
                 if(typeof data==='string' && JSON.parse(data).t==='resize') keyboardResizes.push(data);
                 return send(data);
               };
-            }""")
+            }""", """() => {
+              window.keyboardResizes=[];
+              const ws=runtime.terminal.state.ws, send=ws.send.bind(ws);
+              ws.send=data => {
+                if(typeof data==='string' && JSON.parse(data).t==='resize') keyboardResizes.push(data);
+                return send(data);
+              };
+            }"""))
             page.set_viewport_size({'width': 608, 'height': 530})
-            page.wait_for_function('visualKeyboardOpen()')
+            page.wait_for_function(js('visualKeyboardOpen()', 'runtime.shell.visualKeyboardOpen()'))
             page.wait_for_timeout(300)
             short = page.evaluate(GEOMETRY)
             assert abs(short['top']) < 1, (renderer, 'short prompt clipped', short)
@@ -134,14 +155,14 @@ def run(browser, renderer, scale=100):
             # follows it, measured at keyboard-closed height, and zooming back
             # restores the exact pre-keyboard size.
             other = 130 if scale == 100 else 100
-            page.evaluate('(s) => applyInterfaceScale(s, true)', other)
+            page.evaluate(js('(s) => applyInterfaceScale(s, true)', '(s) => runtime.shell.applyInterfaceScale(s, true)'), other)
             page.wait_for_timeout(300)
             zoomed = page.evaluate(GEOMETRY)
-            assert page.evaluate('visualKeyboardOpen()')
+            assert page.evaluate(js('visualKeyboardOpen()', 'runtime.shell.visualKeyboardOpen()'))
             assert (zoomed['rows'], zoomed['cols']) != (before['rows'], before['cols']), (scale, zoomed, before)
             assert json.loads(page.evaluate('keyboardResizes.at(-1)')) == {
                 't': 'resize', 'cols': zoomed['cols'], 'rows': zoomed['rows']}, zoomed
-            page.evaluate('(s) => applyInterfaceScale(s, true)', scale)
+            page.evaluate(js('(s) => applyInterfaceScale(s, true)', '(s) => runtime.shell.applyInterfaceScale(s, true)'), scale)
             page.wait_for_timeout(300)
             restored = page.evaluate(GEOMETRY)
             assert (restored['rows'], restored['cols']) == (before['rows'], before['cols']), (restored, before)
@@ -158,7 +179,7 @@ def run(browser, renderer, scale=100):
             reopened = page.evaluate(GEOMETRY)
             assert abs(reopened['top']) < 1, (renderer, 'reopen', reopened)
             page.set_viewport_size({'width': 608, 'height': 761})
-            page.wait_for_function('!visualKeyboardOpen()')
+            page.wait_for_function(js('!visualKeyboardOpen()', '!runtime.shell.visualKeyboardOpen()'))
             page.wait_for_timeout(200)
             assert abs(page.evaluate(GEOMETRY)['top']) < 1
             # Safari/Android can resize only visualViewport, without window.resize.
@@ -182,10 +203,10 @@ def run(browser, renderer, scale=100):
             assert abs(page.evaluate(GEOMETRY)['top']) < 1
             # The terminal's single-finger handlers must not steal page pinch.
             page.set_viewport_size({'width': 608, 'height': 761})
-            page.evaluate('applyInterfaceScale(100, true)')
+            page.evaluate(js('applyInterfaceScale(100, true)', 'runtime.shell.applyInterfaceScale(100, true)'))
             page.wait_for_timeout(200)
             pinch(page, context.new_cdp_session(page), target='#xterm')
-            assert page.evaluate('interfaceScale()') == 140, page.evaluate('interfaceScale()')
+            assert page.evaluate(js('interfaceScale()', 'runtime.shell.interfaceScale()')) == 140, page.evaluate(js('interfaceScale()', 'runtime.shell.interfaceScale()'))
             assert_terminal_density(page)
             assert abs(page.evaluate('visualViewport.scale') - 1) < .01
             keys.press('t')

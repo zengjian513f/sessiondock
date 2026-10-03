@@ -579,9 +579,9 @@ Hub：`?nodes=` 聚合多机，单条用 `?node=`。列表 `term/records`，观�
 
 文件跳转目标默认 `/files/?node&path`，可由 `filedock_url` 换源。
 
-## 尚需逐项核对的浏览器覆盖
+## 基线盘点时的浏览器覆盖核对项
 
-以下是仅凭套件名称或文件头无法判断是否完整覆盖的用户路径，迁移该表面时对照实际点击流。这里不宣称既有套件缺少全部覆盖。
+以下记录迁移开始时仅凭套件名称或文件头无法判断覆盖的用户路径，属于基线盘点；当前实现和验收边界见文末。这里不宣称既有套件缺少全部覆盖。
 
 - 双指界面缩放的完整手势（滑块本身在设置套件里）。
 - 机器调色板、保存失败回退；改名、排序和启用操作已有 Hub 浏览器覆盖。
@@ -598,20 +598,14 @@ Hub：`?nodes=` 聚合多机，单条用 `?node=`。列表 `term/records`，观�
 
 `tests/terminal_grid_render_browser.py` 含像素断言。迁移验收沿用会点击、输入、提交的现有套件，不把截图像素当成新标准。
 
-## 不要当成已交付功能的东西
+## 入口与验收边界
 
-- `web/` 的 Vue 壳、`web/src/components/`、`web/src/migration/`。
-- 迁移中的 `web/src/compat/`。那是并发文件，本文不编辑、不把它当生产页面。
-- `framework/settings.js` 里的 Vue 运行时。它只渲染两个设置页。
-- FileDock 的目录管理 UI。
-- 服务端才有的拒绝、配额和身份规则。页面只显示服务器返回的错误和现有的不可用原因。
-- 已注销的 Service Worker 离线壳。
+`web/` 为完整 Vue 独立入口，组件和具名服务的当前接线见
+[架构合同](architecture.md#独立-vue-前端)。新入口已移除 `web/src/compat/`。
+生产仍使用 `legacy-web/` 及其 `framework/settings.js`，本重构不切换生产引用。
+`2552436` 记录目标开始时的行为基线，后续已接受的旧入口修复同步到独立入口。
 
-## 交给主代理的依赖
-
-1. 迁移计划在 [`TODO.md`](../TODO.md#vue-重构计划2026-10-03)，当前独立构建接线在 [`architecture.md`](architecture.md)。
-2. 本迁移目标不切换生产引用、`legacy-web/` 或部署源；其它并行任务的旧入口修复不受此限制。`2552436` 记录的是目标开始时的行为基线。
-3. 独立迁移前端尚未完成。按批对照时以本文的 `legacy-web` 行为为准，不以脚手架能力为准。
-4. 视觉要复用现有 `legacy-web/style.css`、`typography.css`、`grid.css`、`records.css`、`session-resources.css`。本文不引入像素补偿。
-5. 验收锚点是上面列出的现有浏览器脚本和临时 loopback。待核对项只说明覆盖尚未逐项确认，不要求新的单元测试或更严的产品检查。
-6. FileDock、ptyhost 线协议、以及克隆/移动的字节级身份改写不在本前端清单里重定义。
+视觉复用现有 `style.css`、`typography.css`、`grid.css`、`records.css`、
+`session-resources.css`；不引入像素补偿。验收锚点为本文中的浏览器操作与临时 loopback，
+不增加单元测试或产品检查。FileDock、ptyhost 线协议及克隆/移动的字节身份改写
+继续按各自合同执行；已注销的 Service Worker 离线壳不会因重构恢复。

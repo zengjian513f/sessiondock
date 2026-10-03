@@ -10,6 +10,7 @@ page is driven to flush ~75 audit batches in 30 s while the renderer's fd count
 is read from /proc (Chromium launched without its sandbox so /proc is readable;
 Linux only). Growth must stay well under one fd per batch.
 """
+from browser_runtime import js
 import argparse
 import os
 import sys
@@ -65,7 +66,7 @@ def main():
                 batches = 0
                 deadline = time.monotonic() + SECONDS
                 while time.monotonic() < deadline:
-                    page.evaluate("for (let i = 0; i < 20; i++) browserAuditEvent('probe.tick', {i}); flushBrowserAudit();")
+                    page.evaluate(js("for (let i = 0; i < 20; i++) browserAuditEvent('probe.tick', {i}); flushBrowserAudit();", "for (let i = 0; i < 20; i++) runtime.core.audit.browserAuditEvent('probe.tick', {i}); runtime.core.audit.flushBrowserAudit();", body=True))
                     batches += 1
                     page.wait_for_timeout(400)
                 page.wait_for_timeout(1500)

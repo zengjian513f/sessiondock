@@ -4,6 +4,7 @@ Build sessiondock first. Requires Python Playwright and its Chromium (or an
 explicit PLAYWRIGHT_CHROMIUM_EXECUTABLE). Never starts a CLI or reads native homes.
 """
 
+from browser_runtime import js
 import json
 import os
 import re
@@ -72,8 +73,8 @@ def main():
                 expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
                 expect(page.locator("#session-active")).to_have_text("0" if sys.platform.startswith("linux") else "?")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(3)
-                assert page.evaluate("SessionDockCapabilities.namespace") == "sessiondock."
-                assert page.evaluate("T.enabled") is False
+                assert page.evaluate(js("SessionDockCapabilities.namespace", 'runtime.capabilities.namespace')) == "sessiondock."
+                assert page.evaluate(js("T.enabled", 'runtime.terminal.state.enabled')) is False
 
                 for source, answer in [
                     ("codex", "Codex 人工样例读取正常"),
@@ -93,24 +94,33 @@ def main():
                 codex_row = page.locator('#side .item[data-uid^="codex:"]')
                 codex_uid = codex_row.get_attribute("data-uid")
                 codex_row.click()
-                page.evaluate("""uid => {
+                page.evaluate(js("""uid => {
                   T.views.set('test-side-thread', {
                     bindingUid: uid, codexSideThread: true, ended: false, retired: false,
                   });
                   renderConversationTail(cache.get(viewKey(uid))?.activity || null, uid);
-                }""", codex_uid)
+                }""", """uid => {
+                  runtime.terminal.state.views.set('test-side-thread', {
+                    bindingUid: uid, codexSideThread: true, ended: false, retired: false,
+                  });
+                  runtime.conversationRenderer.renderConversationTail(runtime.core.cache.cache.get(runtime.viewKey(uid))?.activity || null, uid);
+                }"""), codex_uid)
                 expect(page.locator(".terminal-thread-notice")).to_contain_text(
                     "终端当前位于 Codex side thread")
                 expect(page.locator(".terminal-thread-notice")).to_contain_text("Ctrl+/")
                 expect(page.locator(".terminal-thread-notice button")).to_have_text("查看 side thread")
-                page.evaluate("""uid => {
+                page.evaluate(js("""uid => {
                   T.views.get('test-side-thread').codexSideThread = false;
                   renderConversationTail(cache.get(viewKey(uid))?.activity || null, uid);
                   T.views.delete('test-side-thread');
-                }""", codex_uid)
+                }""", """uid => {
+                  runtime.terminal.state.views.get('test-side-thread').codexSideThread = false;
+                  runtime.conversationRenderer.renderConversationTail(runtime.core.cache.cache.get(runtime.viewKey(uid))?.activity || null, uid);
+                  runtime.terminal.state.views.delete('test-side-thread');
+                }"""), codex_uid)
                 expect(page.locator(".terminal-thread-notice")).to_have_count(0)
                 page.locator('#side .item[data-uid^="claude:"]').click()
-                page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+                page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
                 page.locator("#a-term").hover()
                 expect(page.locator("#console-toast")).to_contain_text("只读")
                 dialogs = []
@@ -153,7 +163,7 @@ def main():
                 path.write_bytes(original + addition)
                 page.locator("#migration-read-error button").click()
                 expect(page.locator("#migration-read-error")).to_have_count(0)
-                page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+                page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
 
                 # Truncation invalidates the byte cursor and replaces the old view.
                 path.write_bytes(original)
@@ -201,7 +211,7 @@ def main():
                     assert frames and not any(frames), (address, frames)
 
                 # A saved conversation that no longer exists falls back to the list.
-                page.evaluate("store.set('sel', 'claude:missing-session')")
+                page.evaluate(js("store.set('sel', 'claude:missing-session')", "runtime.core.preferences.set('sel', 'claude:missing-session')"))
                 page.goto(base + "/", wait_until="domcontentloaded")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(3)
                 expect(page.locator("#left")).to_be_visible()

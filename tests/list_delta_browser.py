@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Chromium: large list deltas, node/hub parity, cache recovery and paused pages."""
+from browser_runtime import js
 import argparse
 from contextlib import ExitStack
 import http.client
@@ -111,26 +112,26 @@ def main():
                             records.append((path, len(raw), json.loads(raw)))
                 page.on('requestfinished', finished)
                 page.goto(base, wait_until='domcontentloaded')
-                page.wait_for_function('n=>S.sessions.length===n && uiEventsReady && T.listLoaded && !uiEventApplying', arg=count, timeout=45000)
+                page.wait_for_function(js('n=>S.sessions.length===n && uiEventsReady && T.listLoaded && !uiEventApplying', 'n=>runtime.core.state.catalog.sessions.length===n && runtime.core.events.ready && runtime.terminal.state.listLoaded && !runtime.core.events.applying'), arg=count, timeout=45000)
                 initial = max(size for path, size, _ in records if path == '/api/sessions')
                 uid = corpus.uid('bulk-0000')
                 if hub_mode: uid = uid.replace(':', f':{nid}~', 1)
                 # A real user action changes one row among a batch-sized list.
                 page.locator(f'#side .star-toggle[data-star-uid="{uid}"]').click()
-                page.wait_for_function('uid=>S.sessions.find(s=>s.uid===uid)?.starred', arg=uid)
+                page.wait_for_function(js('uid=>S.sessions.find(s=>s.uid===uid)?.starred', 'uid=>runtime.core.state.catalog.sessions.find(s=>s.uid===uid)?.starred'), arg=uid)
                 # The local optimistic star precedes the Hub's next catalog
                 # snapshot. Wait for that actual wire delta before measuring it.
                 deadline = time.monotonic() + 15
                 changes = []
                 while not changes and time.monotonic() < deadline:
-                    page.evaluate('pollSessions()')
+                    page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
                     page.wait_for_timeout(250)
                     changes = [size for path, size, data in records if path == '/api/sessions'
                         and data.get('list_delta', {}).get('collections', {}).get('sessions', {}).get('upsert')]
                 assert changes and max(changes) < initial / 20, (initial, changes)
-                assert page.evaluate('uid=>S.sessions.find(s=>s.uid===uid).agent_items.length', uid) == 200
+                assert page.evaluate(js('uid=>S.sessions.find(s=>s.uid===uid).agent_items.length', 'uid=>runtime.core.state.catalog.sessions.find(s=>s.uid===uid).agent_items.length'), uid) == 200
                 (agents / 'agent-worker-000.meta.json').write_text(json.dumps({'description':'Changed worker title', 'agentType':'reviewer'}))
-                page.wait_for_function('uid=>S.sessions.find(s=>s.uid===uid)?.agent_items.some(a=>a.title==="Changed worker title")', arg=uid, timeout=30000)
+                page.wait_for_function(js('uid=>S.sessions.find(s=>s.uid===uid)?.agent_items.some(a=>a.title==="Changed worker title")', 'uid=>runtime.core.state.catalog.sessions.find(s=>s.uid===uid)?.agent_items.some(a=>a.title==="Changed worker title")'), arg=uid, timeout=30000)
                 child_changes = [(size, item['agents']) for path, size, data in records if path == '/api/sessions'
                     for item in data.get('list_delta', {}).get('collections', {}).get('sessions', {}).get('upsert', []) if 'agents' in item]
                 assert child_changes and child_changes[-1][0] < initial / 50, child_changes[-1:]
@@ -142,16 +143,16 @@ def main():
                         timestamp='2026-09-12T12:00:00Z')))
                 corpus.paths['bulk-0002'].unlink()
                 corpus.put('bulk-new', 'claude', [claude_row('bulk-new', 'user', 'u0', None, 'Newly discovered bulk row')], [])
-                page.wait_for_function('S.sessions.some(s=>s.title.includes("Newly discovered bulk row"))', timeout=30000)
+                page.wait_for_function(js('S.sessions.some(s=>s.title.includes("Newly discovered bulk row"))', 'runtime.core.state.catalog.sessions.some(s=>s.title.includes("Newly discovered bulk row"))'), timeout=30000)
                 removed = corpus.uid('bulk-0002')
                 if hub_mode: removed = removed.replace(':', f':{nid}~', 1)
-                assert page.evaluate('uid=>!S.sessions.some(s=>s.uid===uid)', removed)
-                assert page.evaluate('new Set(S.sessions.map(s=>s.uid)).size') == count
+                assert page.evaluate(js('uid=>!S.sessions.some(s=>s.uid===uid)', 'uid=>!runtime.core.state.catalog.sessions.some(s=>s.uid===uid)'), removed)
+                assert page.evaluate(js('new Set(S.sessions.map(s=>s.uid)).size', 'new Set(runtime.core.state.catalog.sessions.map(s=>s.uid)).size')) == count
                 actual = context.request.get(base + '/api/sessions').json()['sessions']
-                page.evaluate('pollSessions()')
-                assert page.evaluate('S.sessions.map(s=>s.uid)') == [row['uid'] for row in actual]
+                page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
+                assert page.evaluate(js('S.sessions.map(s=>s.uid)', 'runtime.core.state.catalog.sessions.map(s=>s.uid)')) == [row['uid'] for row in actual]
                 # No-change terminal reads have no sessions/pending payload.
-                page.evaluate('loadTermList()'); page.wait_for_timeout(100)
+                page.evaluate(js('loadTermList()', 'runtime.terminal.loadTermList()')); page.wait_for_timeout(100)
                 terminal = [data for path, _, data in records if path == '/api/term/list' and 'list_delta' in data]
                 assert terminal and terminal[-1]['list_unchanged'], terminal
                 assert all(not patch['upsert'] for patch in terminal[-1]['list_delta']['collections'].values())
@@ -160,8 +161,8 @@ def main():
                     term_idle = [size for path, size, data in records if path == '/api/term/list' and data.get('list_unchanged')][-1]
                     assert term_idle < term_full / 10, (term_full, term_idle)
                     tap.terminal_rows[0]['cwd'] = '/synthetic/changed-terminal'
-                    page.evaluate('loadTermList()')
-                    page.wait_for_function('T.list.some(row=>row.cwd==="/synthetic/changed-terminal")')
+                    page.evaluate(js('loadTermList()', 'runtime.terminal.loadTermList()'))
+                    page.wait_for_function(js('T.list.some(row=>row.cwd==="/synthetic/changed-terminal")', 'runtime.terminal.state.list.some(row=>row.cwd==="/synthetic/changed-terminal")'))
                     term_changes = [data for path, _, data in records if path == '/api/term/list'
                         and data.get('list_delta', {}).get('collections', {}).get('sessions', {}).get('upsert')]
                     assert len(term_changes[-1]['list_delta']['collections']['sessions']['upsert']) == 1
@@ -176,35 +177,35 @@ def main():
                     upstream = [(size, data) for path, size, data in tap.reads if path == '/api/sessions' and 'list_delta' in data]
                     assert upstream and min(size for size, _ in upstream) < initial / 100, upstream[-1:]
                     hub.stop(); hub.start()
-                    page.evaluate('pollSessions()')
-                    assert page.evaluate('S.sessions.length') == count
+                    page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
+                    assert page.evaluate(js('S.sessions.length', 'runtime.core.state.catalog.sessions.length')) == count
                 print(f'PASS {"hub" if hub_mode else "node"}: {count} rows, full={initial} B, one-row delta={max(changes)} B; '
                     'delete/reorder, unchanged terminal, missing revision and ignored obsolete query', flush=True)
                 # New build freezes background HTTP/SSE, while draft saves remain possible.
                 page.route('**/api/meta', lambda route: route.fulfill(json={'build':'new-fixture-build'}))
-                page.evaluate('checkServerBuild()')
+                page.evaluate(js('checkServerBuild()', 'runtime.build.checkServerBuild()'))
                 page.locator('.version-stale').wait_for()
                 page.wait_for_timeout(300); network.clear()
-                page.evaluate('Promise.all([pollSessions(), pollLive(), loadTermList()])')
+                page.evaluate(js('Promise.all([pollSessions(), pollLive(), loadTermList()])', 'Promise.all([runtime.core.list.pollSessions(), runtime.core.live.pollLive(), runtime.terminal.loadTermList()])'))
                 page.wait_for_timeout(8500)
                 assert not [r for r in network if r[1].startswith('/api/')], network
                 saves = []
                 def save(route):
                     saves.append(route.request.post_data_json); route.fulfill(json={'ok':True})
                 page.route('**/api/session/conversation', save)
-                assert page.evaluate("fetch(appUrl('api/session/conversation'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:{text:'unsaved draft'}})}).then(r=>r.ok)")
+                assert page.evaluate(js("fetch(appUrl('api/session/conversation'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:{text:'unsaved draft'}})}).then(r=>r.ok)", "runtime.core.network.fetch(runtime.core.environment.appUrl('api/session/conversation'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:{text:'unsaved draft'}})}).then(r=>r.ok)"))
                 assert saves[0]['value']['text'] == 'unsaved draft'
                 page.unroute('**/api/meta')
                 with page.expect_navigation(wait_until='domcontentloaded'):
                     page.locator('.version-stale [data-act="reload"]').click()
-                page.wait_for_function('!SessionDockNetwork.paused && S.sessions.length>0 && uiEventsReady', timeout=30000)
+                page.wait_for_function(js('!SessionDockNetwork.paused && S.sessions.length>0 && uiEventsReady', '!runtime.core.network.paused && runtime.core.state.catalog.sessions.length>0 && runtime.core.events.ready'), timeout=30000)
                 # Follow the same redirect an expired proxy login returns.
                 page.route('**/__auth/login', lambda route: route.fulfill(content_type='text/html', body='<p>Login</p>'))
                 page.route('**/api/meta', lambda route: route.fulfill(status=302, headers={'Location':'/__auth/login'}))
-                page.evaluate('checkServerBuild()')
+                page.evaluate(js('checkServerBuild()', 'runtime.build.checkServerBuild()'))
                 page.locator('.login-expired').wait_for()
                 page.wait_for_timeout(300); network.clear()
-                page.evaluate('Promise.all([pollSessions(), pollLive(), loadTermList()])')
+                page.evaluate(js('Promise.all([pollSessions(), pollLive(), loadTermList()])', 'Promise.all([runtime.core.list.pollSessions(), runtime.core.live.pollLive(), runtime.terminal.loadTermList()])'))
                 page.wait_for_timeout(8500)
                 assert not [r for r in network if r[1].startswith('/api/')], network
                 assert not errors, errors

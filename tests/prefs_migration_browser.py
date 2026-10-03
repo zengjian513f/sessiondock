@@ -13,6 +13,7 @@ page must:
 Synthetic corpus only; the Playwright context blocks service workers and
 every request outside the isolated server.
 """
+from browser_runtime import js
 import argparse
 import json
 import os
@@ -94,21 +95,21 @@ def check_pinch(browser, base):
         for step in range(1, 6):
             cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": x+slider_box["width"]*.04*step, "y": y, "id": 1}]})
         cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
-        assert 105 < page.evaluate("interfaceScale()") < 125
+        assert 105 < page.evaluate(js("interfaceScale()", 'runtime.shell.interfaceScale()')) < 125
         after = page.locator("#setting-scale").bounding_box()
         # Reciprocal fractional zoom can round the centered dialog by a pixel.
         assert all(abs(after[key] - slider_box[key]) < 2 for key in ("x", "y", "width", "height")), (slider_box, after)
         page.locator("#setting-scale-reset").tap()
         page.locator("#settings-dialog .modal-close").tap()
         pinch(page, cdp)
-        assert page.evaluate("interfaceScale()") == 140
+        assert page.evaluate(js("interfaceScale()", 'runtime.shell.interfaceScale()')) == 140
         page.wait_for_timeout(950)
         expect(page.locator('#scale-indicator')).to_be_hidden()
         expect(page.locator("#item-menu")).to_be_hidden()
         assert abs(page.evaluate("visualViewport.scale") - 1) < .01
         assert page.evaluate("document.querySelector('#app').getBoundingClientRect().height") >= 899
         pinch(page, cdp, start=49, end=35)
-        assert page.evaluate("interfaceScale()") == 100
+        assert page.evaluate(js("interfaceScale()", 'runtime.shell.interfaceScale()')) == 100
         # Explicit control ownership: both touches reach the child, no page zoom.
         page.evaluate("""() => {
           const widget = document.createElement('div');
@@ -119,14 +120,14 @@ def check_pinch(browser, base):
         }""")
         pinch(page, cdp, target="#pinch-widget")
         assert page.locator("#pinch-widget").get_attribute("data-moved") == "yes"
-        assert page.evaluate("interfaceScale()") == 100
+        assert page.evaluate(js("interfaceScale()", 'runtime.shell.interfaceScale()')) == 100
         page.locator("#pinch-widget").evaluate("e => e.remove()")
         pinch(page, cdp, end=42, cancel=True)
-        assert page.evaluate("interfaceScale()") == 120
+        assert page.evaluate(js("interfaceScale()", 'runtime.shell.interfaceScale()')) == 120
         pinch(page, cdp, start=90, end=15)
-        assert page.evaluate("interfaceScale()") == 50
+        assert page.evaluate(js("interfaceScale()", 'runtime.shell.interfaceScale()')) == 50
         page.reload(wait_until="networkidle")
-        assert page.evaluate("interfaceScale()") == 50
+        assert page.evaluate(js("interfaceScale()", 'runtime.shell.interfaceScale()')) == 50
         expect(page.locator('#scale-indicator')).to_be_hidden()
         assert abs(page.evaluate("visualViewport.scale") - 1) < .01
         assert not errors, errors
@@ -137,7 +138,7 @@ def check_pinch(browser, base):
 def check_compact_scale(page):
     page.evaluate("localStorage.setItem('sessiondock.interfaceScale', '30')")
     page.reload(wait_until="networkidle")
-    assert page.evaluate("interfaceScale()") == 50
+    assert page.evaluate(js("interfaceScale()", 'runtime.shell.interfaceScale()')) == 50
     expect(page.locator("#setting-scale")).to_have_value("50")
     assert page.evaluate("getComputedStyle(document.documentElement).zoom") == '0.5'
     def settings():
@@ -230,24 +231,24 @@ def main():
                 page = context.new_page()
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(base, wait_until="networkidle")
-                page.wait_for_function("typeof S !== 'undefined' && Array.isArray(S.sessions) && S.sessions.length > 0")
+                page.wait_for_function(js("typeof S !== 'undefined' && Array.isArray(S.sessions) && S.sessions.length > 0", "typeof runtime.core.state !== 'undefined' && Array.isArray(runtime.core.state.catalog.sessions) && runtime.core.state.catalog.sessions.length > 0"))
                 expect(page.locator("#backend-notice")).to_be_hidden()
                 # 1: applied.
                 assert page.evaluate("document.documentElement.dataset.theme") == "dark"
                 assert "Cascadia" in page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--terminal-font')")
-                state = page.evaluate("({nest: S.nest, view: S.view, compact: S.compactTurns, off: [...S.off], "
+                state = page.evaluate(js("({nest: S.nest, view: S.view, compact: S.compactTurns, off: [...S.off], "
                                       "unread: [...S.unread], sel: S.sel, cache: cacheLimitMb, "
                                       "width: parseInt(document.querySelector('#left').style.width, 10), "
                                       "collapsed: document.body.classList.contains('side-collapsed'), "
-                                      "prefix: STORAGE_PREFIX, nodesOff: [...Nodes.off]})")
+                                      "prefix: STORAGE_PREFIX, nodesOff: [...Nodes.off]})", "({nest: runtime.core.state.sidebar.nest, view: runtime.core.state.sidebar.view, compact: runtime.core.state.sidebar.compactTurns, off: [...runtime.core.state.sidebar.off], unread: [...runtime.core.state.unread.unread], sel: runtime.core.state.selection.sel, cache: runtime.core.cache.settings.limitMb, width: parseInt(document.querySelector('#left').style.width, 10), collapsed: document.body.classList.contains('side-collapsed'), prefix: runtime.core.environment.STORAGE_PREFIX, nodesOff: [...runtime.core.state.nodes.off]})"))
                 assert state["prefix"] == "sessiondock.", state
                 assert state["nest"] is True and state["view"] == "date" and state["compact"] is False, state
                 assert state["off"] == ["grok"] and state["cache"] == 64 and state["width"] == 420, state
                 assert state["sel"] == target and state["unread"] == [[unread, {"count": 3}]], state
                 assert state["nodesOff"] == ["stale-node"], state
-                page.wait_for_function("uid => S.sel === uid && document.querySelectorAll('#msgs .msg').length > 0", arg=target)
+                page.wait_for_function(js("uid => S.sel === uid && document.querySelectorAll('#msgs .msg').length > 0", "uid => runtime.core.state.selection.sel === uid && document.querySelectorAll('#msgs .msg').length > 0"), arg=target)
                 # The current namespace is the only preference source.
-                assert page.evaluate("store.get('mobilePage', null)") == "list"
+                assert page.evaluate(js("store.get('mobilePage', null)", "runtime.core.preferences.get('mobilePage', null)")) == "list"
                 # Every seeded preference remains under the SessionDock prefix.
                 dump = page.evaluate(LS_DUMP)
                 for key in ("theme", "font", "width", "nest", "view", "compactTurns", "off", "cacheMb",
@@ -257,7 +258,7 @@ def main():
                 assert dump["sessiondock.mobilePage"] == '"list"'
                 # Changes update the same namespace.
                 page.locator("#nest-toggle").click()
-                page.wait_for_function("S.nest === false")
+                page.wait_for_function(js("S.nest === false", 'runtime.core.state.sidebar.nest === false'))
                 after = page.evaluate(LS_DUMP)
                 assert after["sessiondock.nest"] == "false", after
                 page.locator("#settings").click()
@@ -273,11 +274,11 @@ def main():
                 expect(page.locator("#setting-cache")).to_have_value("64")
                 expect(page.locator("#setting-stop-concurrency")).to_have_value("6")
                 page.locator("#setting-cache").select_option("0")
-                assert page.evaluate("CACHE_MAX_BYTES === Infinity")
+                assert page.evaluate(js("CACHE_MAX_BYTES === Infinity", 'runtime.core.cache.settings.maxBytes === Infinity'))
                 page.locator("#setting-cache").select_option("512")
                 page.locator("#setting-stop-concurrency").select_option("4")
-                assert page.evaluate("CACHE_MAX_BYTES") == 512 * 1024 * 1024
-                assert page.evaluate("sessionStopConcurrency()") == 4
+                assert page.evaluate(js("CACHE_MAX_BYTES", 'runtime.core.cache.settings.maxBytes')) == 512 * 1024 * 1024
+                assert page.evaluate(js("sessionStopConcurrency()", 'runtime.bulk.sessionStopConcurrency()')) == 4
                 after = page.evaluate(LS_DUMP)
                 assert after["sessiondock.cacheMb"] == "512"
                 assert after["sessiondock.stopConcurrency"] == "4"
@@ -286,9 +287,9 @@ def main():
                 assert all(k == "__prefs_seeded" or k.startswith("sessiondock.") for k in after), after
                 # A reload keeps the updated values.
                 page.reload(wait_until="networkidle")
-                page.wait_for_function("typeof S !== 'undefined' && Array.isArray(S.sessions) && S.sessions.length > 0")
+                page.wait_for_function(js("typeof S !== 'undefined' && Array.isArray(S.sessions) && S.sessions.length > 0", "typeof runtime.core.state !== 'undefined' && Array.isArray(runtime.core.state.catalog.sessions) && runtime.core.state.catalog.sessions.length > 0"))
                 assert page.evaluate("document.documentElement.dataset.theme") == "light"
-                assert page.evaluate("S.nest") is False
+                assert page.evaluate(js("S.nest", 'runtime.core.state.sidebar.nest')) is False
                 page.locator("#settings").click()
                 expect(page.locator("#settings-features")).to_be_visible()
                 expect(page.locator("#setting-cache")).to_have_value("512")
@@ -299,7 +300,7 @@ def main():
                 expect(page.locator("#setting-cache")).to_be_hidden()
                 page.get_by_role("tab", name="功能", exact=True).click()
                 page.locator("#setting-stop-concurrency").select_option("1")
-                assert page.evaluate("sessionStopConcurrency()") == 1
+                assert page.evaluate(js("sessionStopConcurrency()", 'runtime.bulk.sessionStopConcurrency()')) == 1
                 for selector in ("#settings-dialog", "#setting-cache", "#setting-stop-concurrency"):
                     bounds = page.locator(selector).bounding_box()
                     assert bounds and bounds["x"] >= -1 and bounds["x"] + bounds["width"] <= 391, bounds
@@ -313,16 +314,16 @@ def main():
                 page = fresh.new_page()
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(base, wait_until="networkidle")
-                page.wait_for_function("typeof S !== 'undefined' && Array.isArray(S.sessions) && S.sessions.length > 0")
+                page.wait_for_function(js("typeof S !== 'undefined' && Array.isArray(S.sessions) && S.sessions.length > 0", "typeof runtime.core.state !== 'undefined' && Array.isArray(runtime.core.state.catalog.sessions) && runtime.core.state.catalog.sessions.length > 0"))
                 assert page.evaluate("document.documentElement.dataset.theme") == "light"
                 assert "Ubuntu Sans Mono" in page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--terminal-font')")
-                assert page.evaluate("({nest: S.nest, view: S.view, off: [...S.off], cache: cacheLimitMb})") == {"nest": False, "view": "tree", "off": [], "cache": 256}
-                assert page.evaluate("sessionStopConcurrency()") == 6
+                assert page.evaluate(js("({nest: S.nest, view: S.view, off: [...S.off], cache: cacheLimitMb})", '({nest: runtime.core.state.sidebar.nest, view: runtime.core.state.sidebar.view, off: [...runtime.core.state.sidebar.off], cache: runtime.core.cache.settings.limitMb})')) == {"nest": False, "view": "tree", "off": [], "cache": 256}
+                assert page.evaluate(js("sessionStopConcurrency()", 'runtime.bulk.sessionStopConcurrency()')) == 6
                 dump = page.evaluate(LS_DUMP)
                 assert all(k.startswith("sessiondock.") for k in dump), dump
                 # PWA identity: the shell is SessionDock and the manifest is served as such.
                 assert page.evaluate("document.querySelector('meta[name=apple-mobile-web-app-title]').content") == "SessionDock"
-                manifest = page.evaluate("fetch('manifest.webmanifest').then(r => r.json())")
+                manifest = page.evaluate(js("fetch('manifest.webmanifest').then(r => r.json())", "runtime.core.network.fetch('manifest.webmanifest').then(r => r.json())"))
                 assert manifest["name"] == "SessionDock" and manifest["short_name"] == "SessionDock", manifest
                 assert page.evaluate("navigator.serviceWorker.getRegistrations().then(list => list.length)") == 0
                 check_compact_scale(page)
