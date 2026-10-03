@@ -14,6 +14,8 @@ pub struct Saved {
     pub catalog: Catalog,
     pub links: Vec<Link>,
     pub bindings: Vec<Binding>,
+    #[serde(default)]
+    pub forked_from: Vec<(Process, Session)>,
 }
 pub struct Engine {
     pub node_id: String,
@@ -21,6 +23,9 @@ pub struct Engine {
     pub catalog: Catalog,
     pub bindings: BTreeMap<Process, Binding>,
     pub links: BTreeMap<Process, Link>,
+    /// Session of the bound process each process was forked from; lets a CLI
+    /// whose launcher already exited still name the session that started it.
+    pub forked_from: BTreeMap<Process, Session>,
     incoming: BTreeMap<Process, crate::Connection>,
 }
 impl Engine {
@@ -42,6 +47,7 @@ impl Engine {
                 .into_iter()
                 .map(|l| (l.process.clone(), l))
                 .collect(),
+            forked_from: saved.forked_from.into_iter().collect(),
             incoming: BTreeMap::new(),
         }
     }
@@ -59,18 +65,27 @@ impl Engine {
             catalog: self.catalog.clone(),
             links: self.links.values().cloned().collect(),
             bindings: self.bindings.values().cloned().collect(),
+            forked_from: self
+                .forked_from
+                .iter()
+                .map(|(p, s)| (p.clone(), s.clone()))
+                .collect(),
         }
     }
     pub fn fork(&mut self, parent: &Process, child: Process, at: f64) {
         if let Some(mut binding) = self.bindings.get(parent).cloned() {
             binding.process = child.clone();
             binding.first_observed_at = at;
+            binding.spawner = None;
+            self.forked_from
+                .insert(child.clone(), binding.session.clone());
             self.bindings.insert(child, binding);
         }
     }
     pub fn exit(&mut self, process: &Process) {
         self.bindings.remove(process);
         self.links.remove(process);
+        self.forked_from.remove(process);
     }
     pub fn publish(&mut self, published: Published, snapshot: &Snapshot) -> usize {
         if published.boot_id != self.boot_id {
@@ -112,6 +127,7 @@ impl Engine {
             self.boot_id = snapshot.boot_id.clone();
             self.bindings.clear();
             self.links.clear();
+            self.forked_from.clear();
             self.catalog = Catalog::default();
         }
         let live = |p: &Process| {
@@ -122,6 +138,7 @@ impl Engine {
         };
         self.bindings.retain(|p, _| live(p));
         self.links.retain(|p, _| live(p));
+        self.forked_from.retain(|p, _| live(p));
         let owners: BTreeMap<_, _> = self
             .catalog
             .owners
@@ -210,6 +227,7 @@ impl Engine {
                     initiator,
                     launch_chain: launch_chain.clone(),
                     first_observed_at,
+                    spawner: None,
                 };
                 bindings.insert(entry.process.clone(), binding);
                 if !entry.multiplexed && entry.sockets.len() == 1 {
@@ -221,6 +239,32 @@ impl Engine {
                         connection: entry.sockets[0].clone(),
                     });
                 }
+            }
+        }
+        for entry in snapshot.entries.values() {
+            let Some(session) = owners.get(&entry.process) else {
+                continue;
+            };
+            let previous = self.bindings.get(&entry.process);
+            let initiator = bindings
+                .get(&entry.process)
+                .and_then(|b| b.initiator.clone());
+            let parent = snapshot
+                .entries
+                .get(&entry.parent)
+                .and_then(|p| bindings.get(&p.process))
+                .map(|b| &b.session);
+            let spawner = spawner(
+                session,
+                previous
+                    .filter(|b| same(&b.session, session))
+                    .and_then(|b| b.spawner.as_ref()),
+                parent,
+                self.forked_from.get(&entry.process),
+                initiator.as_ref(),
+            );
+            if let Some(binding) = bindings.get_mut(&entry.process) {
+                binding.spawner = spawner;
             }
         }
         self.bindings = bindings;
@@ -236,4 +280,26 @@ impl Engine {
             collector: Some(status),
         }
     }
+}
+
+fn same(a: &Session, b: &Session) -> bool {
+    a.node_id == b.node_id && a.source == b.source && a.sid.eq_ignore_ascii_case(&b.sid)
+}
+
+/// The session that launched `session`'s owning process, nearest evidence
+/// first. A bound parent or fork origin belonging to the same session marks a
+/// helper process, which names no spawner; the SSH initiator is used only when
+/// no local process explains the launch.
+pub fn spawner(
+    session: &Session,
+    kept: Option<&Session>,
+    parent: Option<&Session>,
+    forked_from: Option<&Session>,
+    initiator: Option<&Session>,
+) -> Option<Session> {
+    if let Some(kept) = kept {
+        return Some(kept.clone());
+    }
+    let nearest = parent.or(forked_from).or(initiator)?;
+    (!same(nearest, session)).then(|| nearest.clone())
 }

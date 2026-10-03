@@ -90,6 +90,8 @@ struct Merged {
     uids: Vec<String>,
     tmux_uids: Vec<String>,
     working_uids: Vec<String>,
+    /// `(node_id, source, sid)` of other machines' sessions with work here.
+    remote_working: BTreeSet<(String, String, String)>,
     started: BTreeMap<String, f64>,
 }
 
@@ -290,6 +292,7 @@ async fn assemble(
             let scan = snapshot.scan.clone();
             let sessions = key.rows.clone();
             let metadata = state.metadata.clone();
+            let remote = crate::runtime::process_links::remote_bindings(state).await;
             // Pairing and ancestry walks read the process table: off the reactor.
             let merged = tokio::task::spawn_blocking(move || {
                 let active = scan.active_processes(&sessions);
@@ -348,6 +351,7 @@ async fn assemble(
                     owners.entry(uid).or_default().extend(pids);
                 }
                 merged.working_uids = scan.tree.working_uids(&sessions, &owners, &live);
+                merged.remote_working = scan.tree.remote_working(&remote);
                 merged
             })
             .await
@@ -368,6 +372,13 @@ async fn assemble(
             response["uids"] = json!(merged.uids);
             response["tmux_uids"] = json!(merged.tmux_uids);
             response["working_uids"] = json!(merged.working_uids);
+            response["remote_working"] = json!(
+                merged
+                    .remote_working
+                    .iter()
+                    .map(|(node_id, source, sid)| json!({"node_id": node_id, "source": source, "sid": sid}))
+                    .collect::<Vec<_>>()
+            );
             response["started_at"] = json!(merged.started);
             if let Some(managed) = response["managed"].as_object_mut() {
                 managed.insert("external_detection".into(), json!("proc_scan"));

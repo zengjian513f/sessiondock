@@ -2109,6 +2109,13 @@ async function refreshLive(force = false) {
   const next = new Set(d.uids);
   const nextTmux = new Set((d.tmux_uids || []).filter(u => next.has(u)));
   const nextWorking = new Set((d.working_uids || []).filter(u => next.has(u)));
+  // Work another machine runs for a session, named by native node/source/sid.
+  const remoteKey = (node, source, sid) => JSON.stringify([node || '', source, String(sid)]);
+  const remote = new Set((Array.isArray(d.remote_working) ? d.remote_working : [])
+    .map(r => remoteKey(r.node_id, r.source, r.sid)));
+  if (remote.size) for (const s of S.sessions || []) {
+    if (next.has(s.uid) && remote.has(remoteKey(s.node_id, s.source, s.sid))) nextWorking.add(s.uid);
+  }
   const nextStarted = new Map(Object.entries(d.started_at || {}).map(([u, t]) => [u, +t]));
   const setChanged = (a, b) => a.size !== b.size || [...a].some(u => !b.has(u));
   const mapChanged = (a, b) => a.size !== b.size
