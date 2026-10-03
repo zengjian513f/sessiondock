@@ -58,7 +58,7 @@ from deployment_lock import DeploymentLock, repository_lock  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_DIR = ROOT / "deploy"
 STAGE_ROOT = ROOT / "target" / "deploy"
-DIRTY_SCOPE = ["crates", "legacy-web", "Cargo.toml", "Cargo.lock"]
+DIRTY_SCOPE = ["crates", "legacy-web", "web", "Cargo.toml", "Cargo.lock"]
 WEB_EXCLUDES = ["node_modules", ".DS_Store", "*.swp"]
 GOOD = {"OK", "PLANNED", "SKIPPED"}
 COLUMNS = ("target", "kind", "result", "build", "sha256", "ptyhost", "s", "backup")
@@ -202,6 +202,33 @@ def resolve_build(cfg: dict, with_ptyhost: bool) -> tuple[list[str], list[str]]:
     return argv, names
 
 
+def build_legacy_web(stage: Path, worktree: bool) -> None:
+    """Compile the island from the web snapshot, using installed dependencies."""
+    log_path = stage / "logs" / "web-build.log"
+    with tempfile.TemporaryDirectory(prefix="web-build-", dir=stage) as temporary:
+        snapshot = Path(temporary)
+        if worktree:
+            subprocess.run(["tar", "-xf", str(stage / "source.tar"), "-C", str(snapshot), "web"],
+                           check=True, timeout=300)
+        else:
+            with subprocess.Popen(["git", "archive", "--format=tar", "HEAD", "web"], cwd=ROOT,
+                                  stdout=subprocess.PIPE) as ga:
+                subprocess.run(["tar", "-x", "-C", str(snapshot)], stdin=ga.stdout,
+                               check=True, timeout=300)
+            if ga.returncode != 0:
+                die("git archive HEAD web failed")
+        (snapshot / "web" / "node_modules").symlink_to(ROOT / "web" / "node_modules",
+                                                       target_is_directory=True)
+        print(f"web: npm run build:legacy (log {log_path.relative_to(ROOT)})", flush=True)
+        with log_path.open("w", encoding="utf-8") as log:
+            result = subprocess.run(["npm", "run", "build:legacy", "--", "--outDir",
+                                     str(stage / "web" / "framework")], cwd=snapshot / "web",
+                                    stdout=log, stderr=subprocess.STDOUT, timeout=300)
+        if result.returncode != 0:
+            tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-30:]
+            die("web build failed (rc=%d):\n%s" % (result.returncode, "\n".join(tail)), 1)
+
+
 def cmd_build(args) -> Path:
     dirty = dirty_files()
     if dirty and not args.allow_dirty:
@@ -222,9 +249,11 @@ def cmd_build(args) -> Path:
         (stage / sub).mkdir(parents=True, exist_ok=True)
     print(f"stage {stage}")
 
+    snapshot_tree = archive_source(stage / "source.tar", args.allow_dirty)
+    print(f"source: {'tracked working tree' if args.allow_dirty else 'HEAD'} ({snapshot_tree})")
     web_from_worktree = args.allow_dirty and not args.web_from_head
     if web_from_worktree:
-        argv = ["rsync", "-a", "--delete", *(f"--exclude={e}" for e in WEB_EXCLUDES),
+        argv = ["rsync", "-a", "--delete", *(f"--exclude={e}" for e in [*WEB_EXCLUDES, "/framework/"]),
                 str(ROOT / "legacy-web") + "/", str(stage / "web") + "/"]
         subprocess.run(argv, check=True, timeout=300)
         print("web: working tree legacy-web/ (dirty allowed)")
@@ -238,8 +267,7 @@ def cmd_build(args) -> Path:
         print("web: git archive HEAD legacy-web")
     if not (stage / "web" / "index.html").is_file():
         die("web snapshot has no index.html")
-    snapshot_tree = archive_source(stage / "source.tar", args.allow_dirty)
-    print(f"source: {'tracked working tree' if args.allow_dirty else 'HEAD'} ({snapshot_tree})")
+    build_legacy_web(stage, web_from_worktree)
 
     binaries: dict[str, Path] = {}
     sha256: dict[str, str] = {}
@@ -270,8 +298,8 @@ def cmd_build(args) -> Path:
     if args.allow_dirty and source_tree(True) != snapshot_tree:
         die("tracked working files changed during build; rerun to produce a consistent stage", 1)
 
-    crates_dirty = any(not line[3:].startswith("legacy-web/") for line in dirty)
-    web_dirty = any(line[3:].startswith("legacy-web/") for line in dirty)
+    crates_dirty = any(not line[3:].startswith(("legacy-web/", "web/")) for line in dirty)
+    web_dirty = any(line[3:].startswith(("legacy-web/", "web/")) for line in dirty)
     art = Artifacts(commit=commit, short=short,
                     dirty=(crates_dirty and not args.web_only) or (web_dirty and web_from_worktree),
                     built_at=started.isoformat(timespec="seconds"), web_dir=stage / "web",

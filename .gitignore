@@ -1,6 +1,7 @@
 /target/
 /web/node_modules/
 /web/dist/
+/legacy-web/framework/
 /web/coverage/
 /web/test-results/
 /web/playwright-report/

@@ -39,11 +39,13 @@ python3 deploy/deploy.py deploy   # build → test → push，标志相同；--t
 python3 deploy/deploy.py rollback --targets X [--backup DIR]
 ```
 
-- `build`：`git status --porcelain -- crates legacy-web Cargo.toml Cargo.lock` 非空即拒绝并列出文件；
+- `build`：`git status --porcelain -- crates legacy-web web Cargo.toml Cargo.lock` 非空即拒绝并列出文件；
   `--allow-dirty` 才继续（此时 web 快照来自工作树，`--web-from-head` 可改回 HEAD，用于共享
   checkout 里别人的未提交前端改动）。`--web-only` 完全不跑 cargo。默认 `--targets-file` 是
   `deploy/targets.local.json`（缺省时退回 `targets.example.json`），其中 `build` 段给出 cargo
   路径与包名；`sessiondock-hub` 是 `sessiondock` 包里的第二个 bin，工具用 `cargo metadata` 解析。
+  `web/node_modules` 需要已安装现有 lockfile 的依赖。Vue 设置组件从与页面相同来源的
+  `web/` 快照构建，`--web-only` 也执行这一步；生成文件不会从开发目录复制。
   `--test`（默认 `none`，build 常用来做 dry run）在构建完成后按[测试门](#测试门build--test--push)跑测试。
 - `push`：默认取 `target/deploy/` 下最新的 stage，默认并行 4、保留 5 份备份（`0` = 不清理）、健康
   超时 45 s。`--dry-run` 只做 probe 并打印每台的计划，什么都不上传。离线或禁用的目标记为
@@ -75,7 +77,7 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 | 产物 | 内容 | 用途 |
 | --- | --- | --- |
 | `bin/<name>` + `artifacts.json` 里的 `sha256` | `cargo build --release --locked` 的 glibc 二进制，从 `target/release/` 拷进 stage | `linux-node`、`hub` 直接上传；stage 一旦生成就不再受后续构建影响 |
-| `web/` | `git archive HEAD legacy-web` 解出的快照（或 `--allow-dirty` 的工作树，排除 `node_modules`、`.DS_Store`、`*.swp`） | 所有 kind 的 `web/` |
+| `web/` | `git archive HEAD legacy-web` 解出的快照（或 `--allow-dirty` 的工作树，排除 `node_modules`、`.DS_Store`、`*.swp`、生成的 `framework/`），加上同源 `web/` 源码用 Vite 新构建的 `framework/settings.js` | 所有 kind 的 `web/` |
 | `source.tar` | 默认 `git archive --format=tar HEAD`；`--allow-dirty` 使用所有已跟踪文件的工作区快照 | `build_on_target` 的 kind（macOS、Windows）在节点上原生构建，与本机构建使用相同源码 |
 
 `artifacts.json` 还记录 commit、`dirty`、`built_at`、web 来源和 cargo 命令，以及测试门的结果
@@ -142,6 +144,7 @@ stem 恰好是套件名则按套件跑；某条改动触发全量时这些脚本
 | `crates/sessiondock/tests/fixtures/**` | 全量（Python 套件也用这些 fixture） |
 | `crates/sessiondock/tests/**`（其它） | `cargo_*` |
 | `legacy-web/**` | 所有 `*_browser*` + `brand_names_check`（Node 单元测试不自动运行） |
+| `web/**` | 所有 `*_browser*` + `brand_names_check`（Vue 编译由构建步骤执行，不自动运行 unit test） |
 | `deploy/**` | `deploy_*`（默认只含 `deploy_native_handlers`；单元测试 `deploy_lock`、`deploy_testplan` 不自动运行） |
 | `tests/<stem>.py` | 若 `<stem>` 是套件 → 该套件及 `<stem>_*`（如 `lifecycle_browser` 带上 `lifecycle_browser_native_binding`）；否则取同前缀的套件（`hub_fake_node.py` → `hub_*`）；仍没有（`fake_claude_cli.py`、`python_oracle.py`）→ 全量；`*.mjs` → 默认列出的同前缀套件（Node 单元测试不自动运行）；`tests/fixtures/**` → 全量；`check_docs_links.py`、`check_agents_md.py` 改自己就跑自己 |
 | `Cargo.toml`、`Cargo.lock`、`.github/**`、其它任何未命中路径（`web/**`、`reference/**` …） | 全量 |

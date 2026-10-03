@@ -86,6 +86,7 @@ of the verification commands.
 
 | 日期 | 任务 | 结果 |
 | --- | --- | --- |
+| 2026-10-03 | `tests/frontend_framework_browser.py`：Vue 设置迁移的独立 Chromium 用户操作脚本 | grok-4.7 high headless 产出，人工审阅（按本次用户明确指定模型）。主审修正设置/更多按钮的双匹配选择器，桌面 1280×900 和手机 390×844 的标签、控件、关闭/重开与刷新持久化均通过。两路 Sol 6.1 medium 分别产出构建部署接线和外观/功能设置组件，主审补充生产模式构建常量；五套实际浏览器验收及部署静态快照操作通过，未运行 unit test。 |
 | 2026-09-18 | `legacy-web/grid/facade.js`（xterm.js 兼容的 `GridTerm` 外观层）与 `tests/grid_facade_contract.mjs` | grok-4.6 headless 产出，人工审阅。691 s，rc=0，11 例合同测试通过；人工补充 `onClipboard`（OSC 52 经网格协议转发）。主页面 term.js 接线、设置项、录制网格回放、分页与超链接由主审实现。 |
 | 2026-09-18 | 服务端网格（wp-record）8 本任务书：`legacy-web/grid/{wire,model,render,input}.js` 四个 ES 模块与两份 node 合同测试、`legacy-web/grid.{html,js,css}` 页面、`crates/ptyhost/tests/host_grid.rs`、`tests/terminal_grid_browser.py`、`docs/terminal-grid.md` | grok-4.6 headless 产出，人工审阅。8/8 rc=0，单任务 450–1531 s（浏览器套件因滚动区行数期望反复调试最久）；人工审阅未改动模块与页面代码；协议、宿主接线、ptyhost-client `AttachMode`、sessiondock 透传、alacritty_terminal 模型切换由主审实现。 |
 | 2026-09-18 | 终端录制（wp-record）9 本任务书：`ptyhost-record` 的 format / sanitize / store / reader 四个模块、`legacy-web/records.{html,js,css}` 回放页、`crates/ptyhost/tests/host_record.rs`、`tests/term_records_http_suite.py`、`tests/terminal_records_browser.py`、`docs/terminal-records.md` | grok-4.6 headless 产出，人工审阅。9/9 rc=0，单任务 420–900 s，最多 3 路并行；人工修正：records.css 删去抄自 files.css 的无关选择器、records.js 的节点前缀改写以免路由台账误判、ptyhost-record 按 clippy 清理 5 处风格提示；grok 自行纠正了 sanitize 任务书里一处期望值笔误（普通字节 `b` 应保留）。ptyhost 录制接线、sessiondock 路由/流式回放、主页面入口由主审实现。 |

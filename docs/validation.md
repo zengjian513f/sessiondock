@@ -44,6 +44,13 @@ substitute. Docs-only and deploy-script-only work use the doc/deploy suites.
 **Never run unit tests on your own**; validate the changed surface with the
 headless browser suite that covers it.
 
+Browser runs now use the compiled Vue settings panes. The runner builds
+`legacy-web/framework/settings.js` once before running browser suites; `--list`
+and `--dry-run` do not build. Before invoking a browser script directly, run
+`npm --prefix web run build:legacy` after the final edits. The generated directory
+is ignored by Git. Builds and Chromium user actions are the frontend migration
+checks; no unit test is added or enabled by this migration.
+
 - **Small change / one bug fix** — run the affected headless browser suite
   (`--only <name>`); a full sweep is not required for every edit. Once the change
   is complete and validated, commit, push and deploy the current workspace to
@@ -212,6 +219,9 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | popup_browser | `python3 tests/popup_browser.py` | No native alert/confirm: a delete asks in a centered `.app-popup` with the dialog look (取消/Esc keep, 确定 deletes); the stale-build card sits in the centered float stack and 稍后 folds it; desktop + 390px. Other browser suites answer popups through `tests/popups.py` `on_popup`. | binary, Chromium | n/a |
 | pick_drag_browser | `python3 tests/pick_drag_browser.py` | 多选 mode: dragging with the left mouse button from an unpicked row picks the run, from a picked row unpicks it; dragging back restores rows that left the run, the release does not re-toggle the pressed row, no text is selected, holding at the bottom edge auto-scrolls and extends the run; a plain click still toggles one row, a double click selects no text; entering/leaving 多选 keeps the existing row nodes (checkboxes patched in place). | binary, Chromium | n/a |
 | prefs_migration_browser | `python3 tests/prefs_migration_browser.py --binary target/release/sessiondock` | Seeds theme/font/layout/filter/cache/unread/selection and file-manager preferences under `sessiondock.*`; verifies they apply, changes persist across reload, `files.html` uses `sessiondock.files-*`, a fresh browser keeps defaults, and PWA identity is SessionDock. | binary, Chromium | 5s |
+| frontend_framework_browser | `python3 tests/frontend_framework_browser.py --binary target/release/sessiondock` | Desktop and phone settings operated through Chromium: appearance/features controls, close/reopen, reload persistence, Escape and continued access to Machines. | binary, Chromium, built Vue assets | n/a |
+| session_identity_browser | `python3 tests/session_identity_browser.py --binary target/release/sessiondock` | Session identity copying through real menus and clipboard with private fixtures. | binary, Chromium | n/a |
+| sidebar_toggle_browser | `python3 tests/sidebar_toggle_browser.py --binary target/release/sessiondock` | Large sidebar resource viewport rendering, reuse when nesting changes and scroll hydration. | binary, Chromium | n/a |
 | renderer_fd_browser | `python3 tests/renderer_fd_browser.py --binary target/release/sessiondock` | The real page flushes ~75 audit batches in 30 s while the renderer's fd count is read from /proc (Chromium without sandbox, Linux only); growth must stay under 0.1 fd per batch — an unread fetch response pins a 2 MiB shared-memory pipe until GC and the 1024-fd renderer limit froze the tab in GPU code | binary, Chromium, /proc | 35s |
 | reader_pool_suite | `python3 tests/reader_pool_suite.py --binary target/release/sessiondock` | Concurrent history reads wait for the shared reader pool and complete after capacity becomes available. | binary | n/a |
 | prompt_claude_real | `python3 tests/prompt_claude_real.py --browser` | Real Claude question card, cheapest configuration (`claude-haiku-4-5-20251001`, effort low, `--settings` bridge, `--tools AskUserQuestion`): hook file, `prompt` field, SSE `prompt_only`, answer by clicking the card on the real page, cleared once the native answer lands; skips like send_claude_real. | claude CLI, ptyhost, Chromium | 17s |
