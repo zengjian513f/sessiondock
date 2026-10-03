@@ -158,6 +158,8 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
         let resolve = |pid: u32| {
             let mut current = pid;
             let mut seen = HashSet::new();
+            let stale =
+                linux::launcher_identities(&snapshot, pid, |e| owners.contains_key(&e.process.pid));
             while current > 1 && seen.insert(current) {
                 if let Some(owner) = owners.get(&current) {
                     return Some(owner.clone());
@@ -166,7 +168,7 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
                 if entry.shared_parent {
                     return None;
                 }
-                for key in &entry.identities {
+                for key in entry.identities.iter().filter(|key| !stale.contains(key)) {
                     if let Some(owner) = by_sid.get(key) {
                         return Some(owner.clone());
                     }
@@ -490,6 +492,23 @@ async fn remember_agent_parents(
         .iter()
         .map(|r| ((r.source.clone(), r.sid.clone()), r.uid.clone()))
         .collect();
+    // Like local spawn discovery: a session created before its earliest
+    // launched process started was resumed by that launch, not created.
+    let scan = state.proc_scan.as_ref().and_then(|scanner| scanner.last());
+    let mut started: HashMap<(&str, &str), f64> = HashMap::new();
+    for binding in report.bindings.iter().filter(|b| b.initiator.is_some()) {
+        if let Some(seconds) = scan
+            .as_ref()
+            .and_then(|scan| scan.tree.start_seconds(binding.process.start))
+        {
+            let key = (
+                binding.session.source.as_str(),
+                binding.session.sid.as_str(),
+            );
+            let earliest = started.entry(key).or_insert(seconds);
+            *earliest = earliest.min(seconds);
+        }
+    }
     let parents: Vec<_> = report
         .bindings
         .iter()
@@ -501,6 +520,9 @@ async fn remember_agent_parents(
                     && parent.source == child.source
                     && parent.sid == child.sid)
                 || parent.created? > child.created?
+                || started
+                    .get(&(child.source.as_str(), child.sid.as_str()))
+                    .is_some_and(|started| child.created.is_some_and(|c| c + 1.0 < *started))
             {
                 return None;
             }

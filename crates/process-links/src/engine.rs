@@ -146,6 +146,9 @@ impl Engine {
             let mut inherited: Option<Binding> = None;
             let mut remote: Option<Link> = self.links.get(&entry.process).cloned();
             let mut connection = None;
+            let stale = crate::linux::launcher_identities(snapshot, entry.process.pid, |e| {
+                owners.contains_key(&e.process)
+            });
             while current > 1 && seen.insert(current) {
                 let Some(ancestor) = snapshot.entries.get(&current) else {
                     break;
@@ -158,6 +161,7 @@ impl Engine {
                         ancestor
                             .identities
                             .iter()
+                            .filter(|key| !stale.contains(key))
                             .find_map(|key| sessions.get(key).map(|s| (*s).clone()))
                     });
                     if inherited.is_none() {
