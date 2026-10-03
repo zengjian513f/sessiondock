@@ -1,4 +1,4 @@
-//! Node UI invalidations share one cached observer per debug view.
+//! Node UI invalidations share one cached observer.
 use crate::{state::AppState, ui_events::Snapshot};
 use axum::{
     extract::{RawQuery, State},
@@ -16,18 +16,15 @@ async fn document(response: Result<Response, crate::error::ApiError>) -> Option<
         .ok()?;
     serde_json::from_slice(&bytes).ok()
 }
-pub async fn events(State(state): State<AppState>, RawQuery(query): RawQuery) -> Response {
-    let view = crate::sessions::debug_run_of(query.as_deref());
+pub async fn events(State(state): State<AppState>) -> Response {
     let shutdown = state.shutdown.clone();
-    let receiver = state.ui_events.clone().subscribe(view.clone(), move || {
+    let receiver = state.ui_events.clone().subscribe(move || {
         let state = state.clone();
-        let view = view.clone();
-        let query = query.clone();
         async move {
             let (sessions, live, term) = tokio::join!(
-                state.reader.run(move |store| store.list_view(false, &view)),
-                super::runtime::live(State(state.clone()), RawQuery(query.clone())),
-                super::terminal::list(State(state.clone()), RawQuery(query)),
+                state.reader.run(move |store| store.list_view(false)),
+                super::runtime::live(State(state.clone()), RawQuery(None)),
+                super::terminal::list(State(state.clone()), RawQuery(None)),
             );
             Some(Snapshot::new(
                 sessions.ok()?,

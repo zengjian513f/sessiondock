@@ -146,10 +146,7 @@ pub async fn get(
     if !query.progress {
         let job = tokio::task::spawn_blocking(move || {
             let _permit = job_permit;
-            let pool = service
-                .store
-                .search_pool_view(&query.debug_run)
-                .map_err(SearchError::from)?;
+            let pool = service.store.search_pool().map_err(SearchError::from)?;
             let result = run(&service, &pool, &query, &cancelled, |_| Ok(()))?;
             Ok::<_, SearchError>(JsonBytes::new(&result))
         });
@@ -169,7 +166,7 @@ pub async fn get(
         };
         let result = service
             .store
-            .search_pool_view(&query.debug_run)
+            .search_pool()
             .map_err(SearchError::from)
             .and_then(|pool| run(&service, &pool, &query, &cancelled, send));
         if !cancelled.load(Ordering::Relaxed) {

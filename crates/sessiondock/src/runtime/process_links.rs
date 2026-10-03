@@ -380,7 +380,9 @@ fn agent_socket(state: &AppState) -> Option<std::path::PathBuf> {
     }
     path.exists().then_some(path)
 }
-async fn agent_catalog(state: &AppState) -> Result<process_links::agent::Catalog, ApiError> {
+async fn agent_catalog(
+    state: &AppState,
+) -> Result<(process_links::agent::Catalog, Vec<SessionRow>), ApiError> {
     use process_links::agent::{Catalog, Owner};
     let node_id = state
         .node
@@ -450,22 +452,40 @@ async fn agent_catalog(state: &AppState) -> Result<process_links::agent::Catalog
     owners.sort_by(|a, b| a.process.cmp(&b.process));
     let mut sessions: Vec<_> = sessions.into_values().collect();
     sessions.sort_by(|a, b| (&a.source, &a.sid).cmp(&(&b.source, &b.sid)));
-    Ok(Catalog {
+    let catalog = Catalog {
         node_id,
         boot_id,
         owners,
         sessions,
-    })
+    };
+    Ok((catalog, rows))
 }
-async fn remember_agent_parents(state: &AppState, report: &Report) -> Result<(), ApiError> {
+async fn remember_agent_parents(
+    state: &AppState,
+    report: &Report,
+    rows: Option<&[SessionRow]>,
+) -> Result<(), ApiError> {
     let Some(metadata) = &state.metadata else {
         return Ok(());
     };
-    let document = state
-        .reader
-        .run_wait(&state.shutdown, |store| store.list_recent())
-        .await?;
-    let rows = SessionRow::from_list(&document);
+    if !report
+        .bindings
+        .iter()
+        .any(|binding| binding.initiator.is_some())
+    {
+        return Ok(());
+    }
+    let loaded;
+    let rows = if let Some(rows) = rows {
+        rows
+    } else {
+        let document = state
+            .reader
+            .run_wait(&state.shutdown, |store| store.list_recent())
+            .await?;
+        loaded = SessionRow::from_list(&document);
+        &loaded
+    };
     let uids: BTreeMap<_, _> = rows
         .iter()
         .map(|r| ((r.source.clone(), r.sid.clone()), r.uid.clone()))
@@ -510,7 +530,7 @@ async fn remember_agent_parents(state: &AppState, report: &Report) -> Result<(),
 }
 pub async fn report(state: &AppState) -> Result<Report, ApiError> {
     if let Some(path) = agent_socket(state) {
-        let catalog = agent_catalog(state).await?;
+        let (catalog, rows) = agent_catalog(state).await?;
         let node_id = catalog.node_id.clone();
         let boot_id = catalog.boot_id.clone();
         if let Ok(Ok(value)) = tokio::task::spawn_blocking(move || {
@@ -521,12 +541,12 @@ pub async fn report(state: &AppState) -> Result<Report, ApiError> {
             && report.node_id == node_id
             && report.boot_id == boot_id
         {
-            remember_agent_parents(state, &report).await?;
+            remember_agent_parents(state, &report, Some(&rows)).await?;
             return Ok(report);
         }
     }
     let report = legacy_report(state).await?;
-    remember_agent_parents(state, &report).await?;
+    remember_agent_parents(state, &report, None).await?;
     Ok(report)
 }
 pub async fn publish(state: &AppState, published: Published) -> Result<usize, ApiError> {
@@ -539,7 +559,7 @@ pub async fn publish(state: &AppState, published: Published) -> Result<usize, Ap
             && let Ok(report) = serde_json::from_value::<Report>(value)
             && Some(report.node_id.as_str()) == state.node.as_ref().map(|n| n.node_id.as_str())
         {
-            remember_agent_parents(state, &report).await?;
+            remember_agent_parents(state, &report, None).await?;
             return Ok(report.bindings.len());
         }
     }

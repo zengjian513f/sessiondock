@@ -165,10 +165,6 @@ pub struct FileQuery {
     sort: String,
     order: String,
     hidden: String,
-    /// `debug_run`: the page's view selector, appended to every `/api/`
-    /// URL by the frontend; accepted and ignored here.
-    #[allow(dead_code)]
-    debug_run: String,
 }
 impl FileQuery {
     fn validate(&mut self, directory: bool) -> Result<(), ApiError> {
@@ -565,10 +561,6 @@ pub struct UploadQuery {
     r#ref: String,
     job: String,
     offset: String,
-    /// `debug_run`: the page's view selector, appended to every `/api/`
-    /// URL by the frontend; accepted and ignored here.
-    #[allow(dead_code)]
-    debug_run: String,
 }
 
 pub async fn upload(
@@ -653,8 +645,6 @@ struct AttachmentQuery {
     id: Option<String>,
     record_id: String,
     instance_id: String,
-    #[allow(dead_code)]
-    debug_run: String,
 }
 
 fn pending_attachment_cwd(

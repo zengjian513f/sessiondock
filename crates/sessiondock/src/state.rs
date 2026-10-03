@@ -54,7 +54,7 @@ pub struct AppState {
     pub watchers: Arc<Semaphore>,
     pub observations: Arc<crate::observe::WatchHub>,
     pub searches: Arc<Semaphore>,
-    /// Search-text cache, parse budget and warm-up; search never
+    /// Search-text cache and parse budget; search never
     /// takes a read-pool permit.
     pub search: Arc<crate::search::service::SearchService>,
     pub hostname: Arc<str>,

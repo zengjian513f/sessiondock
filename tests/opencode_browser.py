@@ -12,6 +12,7 @@ icons, the report dialog and irreversible delete. Private fake CLI,
 loopback server, temporary directories only.
 """
 import base64
+import argparse
 import json
 import os
 from pathlib import Path
@@ -129,6 +130,9 @@ def rows_of(page, base):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, default=BINARY)
+    args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='sessiondock-opencode-') as temporary:
         root = Path(temporary).resolve()
         for name in ('host', 'work', 'ledger', 'delivery', 'state', 'home', 'claude', 'codex', 'grok'):
@@ -151,9 +155,9 @@ def main():
         launcher.write_text(json.dumps({'schema': 2, 'host_binary': str(REPO / 'target/debug/ptyhost'),
                                         'host_dir': str(root / 'host'), 'adapters': [], 'profiles': profiles}))
         launcher.chmod(0o600)
-        initialize('--initialize-lifecycle', root / 'ledger')
+        initialize('--initialize-lifecycle', root / 'ledger', args.binary)
         legacy_pending_record(root / 'ledger', root / 'work')
-        with isolated_server(Corpus(root), BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
+        with isolated_server(Corpus(root), args.binary, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
                 launcher_config=launcher, state_dir=root / 'state',
                 trash_dir=root / 'trash', audit_dir=root / 'audit',
                 file_roots=(root / 'work',), file_write_roots=(root / 'work',),

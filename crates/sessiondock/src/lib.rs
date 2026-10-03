@@ -391,9 +391,6 @@ fn build_app(
     } else {
         None
     };
-    if let Some(service) = &transfer {
-        service.spawn_relationship_index(shutdown.clone());
-    }
     let reader = Reader {
         store: Arc::new(sessions::SessionStore::with_metadata_and_names(
             config.roots.clone(),
@@ -404,17 +401,14 @@ fn build_app(
     };
     let runtime_probes = Arc::new(Semaphore::new(pools.runtime_probes()));
     // The search-text cache (persistent only with the explicit
-    // directory) and its own parse budget; the warm-up thread (persistent
-    // cache only) stops with the shutdown token.
+    // directory) and its own parse budget. Bodies are built on search requests.
     let search = Arc::new(search::service::SearchService::open(
         reader.store.clone(),
         search_cache_dir,
         config.search_cache_bytes,
         config.search_fold_bytes,
         config.search_workers,
-        config.search_warmup_secs,
     )?);
-    search.spawn_warmup(shutdown.clone());
     // Every dependency of a bug-report worker must be configured —
     // the bundle directory and repository, the audit log (events.jsonl is the
     // core of a report), the terminal transport and the lifecycle service —

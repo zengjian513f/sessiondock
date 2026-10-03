@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Chromium cloning reuses unchanged relationship summaries and sees new edges."""
+"""Chromium cloning discovers relationships on demand, caches them and sees new edges."""
 import argparse
 from contextlib import ExitStack
 import ctypes
 import json
 import os
 from pathlib import Path
+import select
 import struct
 import tempfile
 import time
@@ -57,6 +58,19 @@ def main():
                 encoded(claude_row(ident(number),'assistant',ident(number*10+1),ident(number*10),'x'*(128*1024),cwd=str(corpus.root/'cwd'))))
             unrelated.append(path)
         for folder in ('state','proc','ids'):(corpus.root/folder).mkdir()
+        # Normal list discovery reads headers, but has no reason to open an
+        # unselected session's compacted history. Observe it before node startup.
+        checkpoint_agent=corpus.root/'grok/project'/ident(14);checkpoint_agent.mkdir()
+        (checkpoint_agent/'summary.json').write_bytes(encoded({'info':{'id':ident(14),'cwd':str(corpus.root/'cwd')},
+            'generated_title':'Checkpoint-only agent','agent_id':ident(14)}))
+        (checkpoint_agent/'chat_history.jsonl').write_bytes(encoded({'type':'user','content':'Checkpoint agent question'})+
+            encoded({'type':'assistant','content':'Checkpoint agent answer'}))
+        checkpoint=corpus.root/'grok/project'/ident(10)/'compaction_checkpoints'/(ident(890)+'.json')
+        checkpoint.write_bytes(encoded({'compacted_history':[
+            {'type':'assistant','tool_calls':[{'id':'checkpoint-resume','name':'send_subagent_message',
+                'arguments':json.dumps({'subagent_id':ident(14),'message':'Review'})}]}]}))
+        idle_watch=Opens([checkpoint]);stack.callback(idle_watch.close)
+        cache=corpus.root/'state/transfers/relationships-v1.json'
         node=SimpleNamespace(name='source',nid='c'*32,port=free_port(),token=TOKEN)
         (corpus.root/'ids/node-id').write_text(node.nid+'\n')
         env=node_env(corpus.root,node.port,'127.0.0.0/8');env.update(SESSIONDOCK_CLAUDE_ROOT=roots['claude'],SESSIONDOCK_PROC_ROOT=str(corpus.root/'proc'))
@@ -64,12 +78,18 @@ def main():
         def start():
             servers.enter_context(isolated_server(corpus,args.binary,state_dir=corpus.root/'state',extra_env=env))
         start()
+        # A bounded observation window catches eager background discovery without
+        # waiting for the former 60-second timer. No list/preview request yet.
+        assert not select.select([idle_watch.fd],[],[],0.5)[0],'startup scanned compacted history'
+        assert not cache.exists(),'startup built relationship summaries'
         hubroot=root/'hub';hubroot.mkdir();hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[node]);hub.start();stack.callback(hub.stop)
         browser=pw.chromium.launch(headless=True);stack.callback(browser.close)
         page=browser.new_page();page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
         selected=scoped(node.nid,uid('claude',claude[2]))
         page.locator(f'#side .item[data-uid="{selected}"]').click()
         page.wait_for_function('(uid)=>S.sel===uid',arg=selected)
+        assert not idle_watch.take(),'ordinary browsing scanned unrelated compacted history'
+        assert not cache.exists(),'ordinary browsing built relationship summaries'
         watch=Opens(unrelated);stack.callback(watch.close)
         def preview():
             started=time.monotonic()
@@ -82,8 +102,8 @@ def main():
         dialog,plan,cold=preview();assert plan['session_count']==4,plan
         operation_dir=corpus.root/'state/transfers'/plan['operation_id']
         assert {p.name for p in operation_dir.iterdir()}=={'operation.json'},'preview staged native files'
-        watch.take() # Initial discovery may already have run in the background.
-        cache=corpus.root/'state/transfers/relationships-v1.json'
+        assert watch.take()=={p.name for p in unrelated},'cold preview skipped candidate histories'
+        assert idle_watch.take()=={checkpoint.name},'cold preview skipped compacted relationships'
         saved=json.loads(cache.read_text())
         assert {str(p) for p in unrelated}.issubset({row[0] for row in saved})
         dialog.locator('.clone-cancel').click()
@@ -110,9 +130,13 @@ def main():
         page.locator(f'#side .item[data-uid="{selected}"]').click()
         page.wait_for_function('(uid)=>S.sel===uid',arg=selected)
         watch.take() # List discovery reads native headers on process startup.
+        idle_watch.take()
         stamp=cache.stat().st_mtime_ns
         dialog,plan,restarted=preview();assert plan['session_count']==5,plan
-        assert watch.take() <= {unrelated[0].name},'preview after restart reread unrelated histories'
+        # The transfer index is deliberately lazy now: its first preview reads
+        # bounded headers. Persisted relationships must avoid checkpoint bodies.
+        watch.take()
+        assert not idle_watch.take(),'preview after restart reparsed cached checkpoint relationships'
         assert cache.stat().st_mtime_ns==stamp,'unchanged preview rewrote persistent index'
         dialog.locator('.clone-cancel').click()
         print(f'PASS Chromium restart preview {restarted:.3f}s reuses persisted relationships',flush=True)
@@ -122,6 +146,13 @@ def main():
         dialog,plan,_=preview();assert plan['session_count']==4,plan
         assert watch.take()=={unrelated[0].name}
         print('PASS Chromium detects added and removed reverse fork edges without rescanning unchanged histories',flush=True)
+        dialog.locator('.clone-cancel').click()
+        grok_selected=scoped(node.nid,uid('grok',corpus.root/'grok/project'/ident(10)))
+        page.locator(f'#side .item[data-uid="{grok_selected}"]').click()
+        page.wait_for_function('(uid)=>S.sel===uid',arg=grok_selected)
+        dialog,plan,_=preview();assert plan['session_count']==5,plan
+        dialog.locator('.clone-cancel').click()
+        print('PASS Chromium idle startup leaves compacted history unread; on-demand preview includes checkpoint-only agent',flush=True)
 
 
 if __name__=='__main__':main()

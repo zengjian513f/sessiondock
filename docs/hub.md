@@ -161,7 +161,7 @@ SESSIONDOCK_NODE_PEERS must be set together (the node listener fails closed)`）
    （`NodeToken::verify`），否则 `{"error":"node authentication required","code":"node_auth_required"}`。
 
 之后仍走两端共享的 `security::api_policy`（`sec-fetch-site: cross-site` 403、Origin 必须等于
-Host、URI/正文上限、响应头；`debug_run` 是列表视图选择器，见 read-model.md），只是不做 loopback Host 检查——Hub 以私网 IP
+Host、URI/正文上限、响应头），只是不做 loopback Host 检查——Hub 以私网 IP
 访问节点。`/api/meta` 在两个监听上都报 `protocol: 1` 与文件里的 `node_id`（未配置身份时仍是
 `protocol: 0, node_id: null`）；loopback 上的 `/api/nodes` 变为
 `{mode:"local", nodes:[{id, name: hostname, online:true}]}`；`capabilities.hub` 恒为 false
@@ -238,7 +238,7 @@ Host、URI/正文上限、响应头；`debug_run` 是列表视图选择器，见
 - `GET /api/events`：由 `ui_events` 能力声明的轻量 SSE。连接和重连先发
   `change` 基线通知；随后只发语义变化的 `live/term/sessions` 标志与
   `cursors:[{uid,agent,cursor}]`，不携带消息正文或历史。内容游标变化不等于
-  整个列表的结构变化。Hub 按 `debug_run` 视图共享一个后台观察器，每两秒
+  整个列表的结构变化。Hub 共享一个后台观察器，每两秒
   比较上述三种元数据聚合结果；浏览器数量不增加上游观察请求，没有订阅者时停止。
   这是服务端共享观察加通知，不是节点原生事件流的转发。已知离线节点直接使用
   注册表缓存，观察器不请求它们；恢复探测仍由原有健康监控负责。

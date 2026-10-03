@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """One-shot M8 converter: Python session-meta.json → Rust session-metadata.json.
 
-With --python-debug-runs (Python's debug-runs.json, same directory by default)
-the debug-run registry is copied beside it as debug-runs.json: the Rust read
-model consults it in Python's format (docs/read-model.md "debug_run"), so the
-registered monkey/test sessions stay hidden after the cutover."""
+Only session metadata is imported; tests use independent temporary roots."""
 # run_validation: skip
 import argparse, json, os, re, socket, stat, subprocess, sys, tempfile, time
 from datetime import datetime
@@ -134,8 +131,6 @@ def check_safety(meta, out):
         die("out-dir is $HOME/.local/share/sessiondock or inside it")
     if (dest / "session-metadata.json").exists() or (dest / ".metadata.lock").exists():
         die("out-dir already contains session-metadata.json or .metadata.lock; remove it or choose another directory")
-    if (dest / "debug-runs.json").exists():
-        die("out-dir already contains debug-runs.json; remove it or choose another directory")
     mode = dest.stat().st_mode
     if mode & 0o022 or (mode & 0o300) != 0o300:
         die(f"out-dir permissions unsafe; chmod 700 {dest}")
@@ -156,43 +151,6 @@ def write_atomic(out, data, name="session-metadata.json"):
         raise
     os.close(fd); os.replace(tmp, dest); os.chmod(dest, 0o600)
     return dest.resolve()
-
-RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-DEBUG_RUNS_MAX = 64 * 1024 * 1024
-
-
-def convert_debug_runs(path, warns):
-    """`{"version":1,"runs":{...}}`, anything else empty.
-
-    Runs are copied verbatim (root, created, sessions[{source,cwd,sid,uid,name}]);
-    a run whose id Python would refuse, or that is not an object, is dropped with
-    a warning — the Rust reader would ignore it too, this only makes it visible.
-    """
-    if not stat.S_ISREG(lmode(path)):
-        die("--python-debug-runs is not a regular file")
-    try:
-        raw = json.loads(path.read_text())
-    except (OSError, ValueError) as err:
-        die(f"cannot read python-debug-runs: {err}")
-    runs = raw.get("runs") if isinstance(raw, dict) else None
-    if not isinstance(runs, dict):
-        die('python-debug-runs must be {"version": 1, "runs": {...}}')
-    out, sessions = {}, 0
-    for run_id, run in runs.items():
-        if not isinstance(run_id, str) or not RUN_ID_RE.fullmatch(run_id):
-            warns.append((str(run_id), "invalid debug_run id dropped")); continue
-        if not isinstance(run, dict):
-            warns.append((run_id, "debug run is not an object; dropped")); continue
-        rows = [dict(row) for row in (run.get("sessions") or []) if isinstance(row, dict)]
-        root = str(run.get("root") or "")
-        if not root or root != os.path.normpath(root) or not os.path.isabs(root):
-            warns.append((run_id, "debug run root is not a normalized absolute path (cwd matching disabled)"))
-        out[run_id] = {"root": root, "created": run.get("created"),
-                       "sessions": [{k: str(row.get(k) or "") for k in ("source", "cwd", "sid", "uid", "name")}
-                                    for row in rows]}
-        sessions += len(rows)
-    return {"version": 1, "runs": out}, sessions
-
 
 def verify(binary, out, roots, imported):
     binary = binary.resolve(strict=True)
@@ -269,9 +227,6 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--python-meta", type=Path, required=True)
     p.add_argument("--out-dir", type=Path, required=True)
-    p.add_argument("--python-debug-runs", type=Path,
-                   help="Python debug-runs.json to copy beside the metadata (default: next to --python-meta when present)")
-    p.add_argument("--no-debug-runs", action="store_true", help="do not carry the debug-run registry over")
     p.add_argument("--keep-pending", action="store_true")
     p.add_argument("--json", type=Path, dest="json_out")
     p.add_argument("--verify", action="store_true"); p.add_argument("--binary", type=Path)
@@ -303,22 +258,9 @@ def main(argv=None):
     if len(blob) > MAX_BYTES:
         die("output document larger than 4 MiB")
     dest = write_atomic(dest_dir, blob)
-    debug_lines = []
-    debug_src = args.python_debug_runs
-    if debug_src is None and not args.no_debug_runs:
-        candidate = args.python_meta.resolve().parent / "debug-runs.json"
-        debug_src = candidate if candidate.is_file() else None
-    if debug_src is not None and not args.no_debug_runs:
-        registry, count = convert_debug_runs(debug_src, warns)
-        debug_blob = (json.dumps(registry, ensure_ascii=False, indent=2) + "\n").encode()
-        if len(debug_blob) > DEBUG_RUNS_MAX:
-            die("debug-runs document larger than 64 MiB")
-        debug_dest = write_atomic(dest_dir, debug_blob, "debug-runs.json")
-        debug_lines = [f"DEBUG_RUNS runs={len(registry['runs'])} sessions={count} bytes={len(debug_blob)} out={debug_dest}"]
     lines = ([f"IMPORT {u} {n}" for u, n in imports]
              + [f"WARN {u} {t}" for u, t in warns]
              + [f"SKIP {u} {r}" for u, r in skips]
-             + debug_lines
              + [f"SUMMARY imported={len(imports)} skipped={len(skips)} warnings={len(warns)} bytes={len(blob)} out={dest}"])
     print("\n".join(lines), flush=True)
     if args.json_out:

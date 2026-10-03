@@ -1407,122 +1407,6 @@ fn persisted_timeline_pin_equals_pure_options_resets_cursors_and_retires_explici
     assert_eq!(fs::read(&file).unwrap(), expected);
 }
 
-/// Over the published list: the registry
-/// beside the metadata hides registered runs from the ordinary view, a
-/// `debug_run` view shows exactly that run, the view is re-signed and fork
-/// parents are re-derived among the visible rows. Rows carry
-/// `migration_warnings` only when unsupported; the detail keeps them.
-#[test]
-fn list_view_applies_the_debug_run_registry_beside_the_metadata() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().join("claude");
-    let session = |name: &str, cwd: &str| {
-        write_rows(
-            &root.join(format!("project/{name}.jsonl")),
-            &[
-                json!({"type": "user", "uuid": "u1", "parentUuid": null, "sessionId": name,
-                       "cwd": cwd, "timestamp": "2026-09-11T10:00:00.123Z",
-                       "message": {"role": "user", "content": format!("question in {name}")}}),
-                json!({"type": "assistant", "uuid": "a1", "parentUuid": "u1", "sessionId": name,
-                       "cwd": cwd, "timestamp": "2026-09-11T10:00:01.123Z",
-                       "message": {"role": "assistant", "content": "answer", "stop_reason": "end_turn"}}),
-                json!({"type": "future-kind", "uuid": "x1", "parentUuid": "a1", "sessionId": name,
-                       "timestamp": "2026-09-11T10:00:02.123Z"}),
-            ],
-        );
-        uid_for("claude", &root.join(format!("project/{name}.jsonl")))
-    };
-    let ordinary = session("ordinary", "/home/user/work");
-    let by_root = session("by-root", "/tmp/monkey-run-1/claude/session-01");
-    let by_sid = session("by-sid", "/home/user/elsewhere");
-    let state = temp.path().join("state");
-    fs::create_dir(&state).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    fs::write(
-        state.join(DEBUG_RUNS_FILENAME),
-        json!({"version": 1, "runs": {
-            "run-1": {"root": "/tmp/monkey-run-1", "created": 1.0, "sessions": []},
-            "run-2": {"root": "/tmp/monkey-run-2", "created": 2.0, "sessions": [
-                {"source": "claude", "cwd": "/home/user/elsewhere", "sid": "by-sid", "uid": "", "name": ""}
-            ]}
-        }})
-        .to_string(),
-    )
-    .unwrap();
-    let metadata = Arc::new(crate::metadata::MetadataStore::open(&state).unwrap());
-    let store = SessionStore::with_metadata(
-        SessionRoots {
-            claude: Some(root.clone()),
-            ..Default::default()
-        },
-        Some(metadata),
-    );
-    assert_eq!(
-        store.debug_runs_path().unwrap(),
-        state.canonicalize().unwrap().join(DEBUG_RUNS_FILENAME)
-    );
-    let uids = |document: &Value| {
-        document["sessions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|row| row["uid"].as_str().unwrap().to_owned())
-            .collect::<Vec<_>>()
-    };
-    // The internal list is unfiltered; the view hides both registered runs.
-    assert_eq!(
-        store.list(false).unwrap()["sessions"]
-            .as_array()
-            .unwrap()
-            .len(),
-        3
-    );
-    let default = store.list_view(false, "").unwrap();
-    assert_eq!(uids(&default), std::slice::from_ref(&ordinary));
-    assert!(default["sig"].is_string() && default["built_at"].is_number());
-    let again = store.list_view(false, "").unwrap();
-    assert_eq!(
-        again["sig"], default["sig"],
-        "the view is re-signed deterministically"
-    );
-    assert_ne!(
-        default["sig"],
-        store.list(false).unwrap()["sig"],
-        "a filtered view never shares the unfiltered signature"
-    );
-    let run_1 = store.list_view(false, "run-1").unwrap();
-    assert_eq!(uids(&run_1), std::slice::from_ref(&by_root));
-    let run_2 = store.list_view(false, "run-2").unwrap();
-    assert_eq!(uids(&run_2), std::slice::from_ref(&by_sid));
-    assert_ne!(run_1["sig"], run_2["sig"]);
-    assert!(uids(&store.list_view(false, "unknown").unwrap()).is_empty());
-    assert!(uids(&store.list_view(false, "bad id!").unwrap()).is_empty());
-    // Supported rows carry no `migration_warnings`; the
-    // detail `meta` keeps the non-fatal notes.
-    assert!(default["sessions"][0].get("migration_warnings").is_none());
-    assert_eq!(default["sessions"][0]["supported"], true);
-    // Stripping must not conjure `agent_items: null` on agent-less rows.
-    assert!(default["sessions"][0].get("agent_items").is_none());
-    let detail = store.messages(&ordinary, &MessageQuery::default()).unwrap();
-    assert_eq!(
-        detail["meta"]["migration_warnings"],
-        json!(["跳过未知的Claude 记录类型：future-kind ×1"])
-    );
-    let pool = store.search_pool_view("run-1").unwrap();
-    assert_eq!(pool.rows.len(), 1);
-    assert_eq!(pool.rows[0]["uid"], by_root);
-    assert!(pool.rows[0].get("migration_warnings").is_none());
-    assert_eq!(store.search_pool().unwrap().rows.len(), 1);
-    // Removing the registry (the file, not the service) shows everything.
-    fs::remove_file(state.join(DEBUG_RUNS_FILENAME)).unwrap();
-    assert_eq!(uids(&store.list_view(false, "").unwrap()).len(), 3);
-    assert!(uids(&store.list_view(false, "run-1").unwrap()).is_empty());
-}
-
 /// The serialized list body is a pure function of the view document and
 /// the cached-view set: a hot request shares the previous buffer, every
 /// change that alters the bytes turns the entry over, `force=1` re-renders
@@ -1531,12 +1415,12 @@ fn list_view_applies_the_debug_run_registry_beside_the_metadata() {
 fn list_bytes_are_cached_per_document_and_view_revision() {
     let (_temp, file, store, uid) = setup();
     let same_buffer = |a: &Bytes, b: &Bytes| a.as_ptr() == b.as_ptr() && a.len() == b.len();
-    let uncached = |force: bool, run: &str, sig: &str| {
-        serde_json::to_vec(&store.list_view_unless(force, run, sig).unwrap()).unwrap()
+    let uncached = |force: bool, sig: &str| {
+        serde_json::to_vec(&store.list_view_unless(force, sig).unwrap()).unwrap()
     };
-    let first = store.list_view_bytes(false, "", "").unwrap();
-    assert_eq!(first.as_ref(), uncached(false, "", ""));
-    let second = store.list_view_bytes(false, "", "stale-sig").unwrap();
+    let first = store.list_view_bytes(false, "").unwrap();
+    assert_eq!(first.as_ref(), uncached(false, ""));
+    let second = store.list_view_bytes(false, "stale-sig").unwrap();
     assert!(
         same_buffer(&first, &second),
         "a hot request with another sig is served from the cache"
@@ -1544,18 +1428,18 @@ fn list_bytes_are_cached_per_document_and_view_revision() {
     let document: Value = serde_json::from_slice(&second).unwrap();
     let sig = document["sig"].as_str().unwrap().to_owned();
     assert_eq!(
-        store.list_view_bytes(false, "", &sig).unwrap().as_ref(),
+        store.list_view_bytes(false, &sig).unwrap().as_ref(),
         serde_json::to_vec(&json!({"unchanged": true, "sig": sig})).unwrap(),
         "the sig short-circuit comes before the byte cache"
     );
     // `force=1` rescans and re-renders (a fresh buffer) — the same bytes
     // while nothing changed — and the entry is replaced by that render.
-    let forced = store.list_view_bytes(true, "", "").unwrap();
+    let forced = store.list_view_bytes(true, "").unwrap();
     assert!(!same_buffer(&first, &forced));
     assert_eq!(forced, first);
     assert!(same_buffer(
         &forced,
-        &store.list_view_bytes(false, "", "").unwrap()
+        &store.list_view_bytes(false, "").unwrap()
     ));
     // Opening a session changes only the decorations the list borrows
     // (`cursor.anchor`) and no sig; the entry still turns over, and the
@@ -1567,9 +1451,9 @@ fn list_bytes_are_cached_per_document_and_view_revision() {
         revision,
         "a cached view was inserted"
     );
-    let opened = store.list_view_bytes(false, "", "").unwrap();
+    let opened = store.list_view_bytes(false, "").unwrap();
     assert!(!same_buffer(&forced, &opened));
-    assert_eq!(opened.as_ref(), uncached(false, "", ""));
+    assert_eq!(opened.as_ref(), uncached(false, ""));
     let document: Value = serde_json::from_slice(&opened).unwrap();
     assert_eq!(
         document["sessions"][0]["cursor"]["anchor"],
@@ -1578,7 +1462,7 @@ fn list_bytes_are_cached_per_document_and_view_revision() {
     assert_eq!(document["sig"], sig, "opening never changes the signature");
     assert!(same_buffer(
         &opened,
-        &store.list_view_bytes(false, "", "").unwrap()
+        &store.list_view_bytes(false, "").unwrap()
     ));
     // Re-opening an unchanged session keeps the same view snapshot: the
     // revision, and so the entry, are untouched.
@@ -1587,7 +1471,7 @@ fn list_bytes_are_cached_per_document_and_view_revision() {
     assert_eq!(store.views_revision(), revision);
     assert!(same_buffer(
         &opened,
-        &store.list_view_bytes(false, "", "").unwrap()
+        &store.list_view_bytes(false, "").unwrap()
     ));
     // An append behind the server's back: the forced rescan publishes a
     // new document (new sig) and the bytes follow it.
@@ -1599,7 +1483,7 @@ fn list_bytes_are_cached_per_document_and_view_revision() {
         )
         .as_bytes(),
     );
-    let appended = store.list_view_bytes(true, "", &sig).unwrap();
+    let appended = store.list_view_bytes(true, &sig).unwrap();
     assert!(!same_buffer(&opened, &appended));
     let document: Value = serde_json::from_slice(&appended).unwrap();
     assert_ne!(document["sig"], sig);
@@ -1607,86 +1491,9 @@ fn list_bytes_are_cached_per_document_and_view_revision() {
         document["sessions"][0]["size"],
         fs::metadata(&file).unwrap().len()
     );
-    assert_eq!(appended.as_ref(), uncached(false, "", ""));
+    assert_eq!(appended.as_ref(), uncached(false, ""));
     assert!(same_buffer(
         &appended,
-        &store.list_view_bytes(false, "", "").unwrap()
-    ));
-}
-
-/// Each debug-run view keeps its own entry; the registry file changing
-/// turns every view over.
-#[test]
-fn list_bytes_keep_one_entry_per_debug_run_view() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().join("claude");
-    for (name, cwd) in [
-        ("ordinary", "/home/example/work"),
-        ("by-root", "/tmp/monkey-run-1/x"),
-    ] {
-        write_rows(
-            &root.join(format!("project/{name}.jsonl")),
-            &[
-                claude_row("u1", Value::Null, "user", "q"),
-                json!({"type": "user", "uuid": "u2", "parentUuid": "u1", "sessionId": name,
-                       "cwd": cwd, "timestamp": "2026-09-11T10:00:01.123Z",
-                       "message": {"role": "user", "content": "again"}}),
-            ],
-        );
-    }
-    let state = temp.path().join("state");
-    fs::create_dir(&state).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    let registry = json!({"version": 1, "runs": {
-        "run-1": {"root": "/tmp/monkey-run-1", "created": 1.0, "sessions": []}
-    }});
-    fs::write(state.join(DEBUG_RUNS_FILENAME), registry.to_string()).unwrap();
-    let metadata = Arc::new(crate::metadata::MetadataStore::open(&state).unwrap());
-    let store = SessionStore::with_metadata(
-        SessionRoots {
-            claude: Some(root),
-            ..Default::default()
-        },
-        Some(metadata),
-    );
-    let same_buffer = |a: &Bytes, b: &Bytes| a.as_ptr() == b.as_ptr() && a.len() == b.len();
-    let default = store.list_view_bytes(false, "", "").unwrap();
-    let run = store.list_view_bytes(false, "run-1", "").unwrap();
-    assert_ne!(default, run);
-    assert_eq!(
-        default.as_ref(),
-        serde_json::to_vec(&store.list_view_unless(false, "", "").unwrap()).unwrap()
-    );
-    assert_eq!(
-        run.as_ref(),
-        serde_json::to_vec(&store.list_view_unless(false, "run-1", "").unwrap()).unwrap()
-    );
-    // Alternating views hit their own entries.
-    assert!(same_buffer(
-        &default,
-        &store.list_view_bytes(false, "", "").unwrap()
-    ));
-    assert!(same_buffer(
-        &run,
-        &store.list_view_bytes(false, "run-1", "").unwrap()
-    ));
-    // A rewritten registry (another stamp) re-filters both views.
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    fs::write(
-        state.join(DEBUG_RUNS_FILENAME),
-        json!({"version": 1, "runs": {}}).to_string(),
-    )
-    .unwrap();
-    let cleared = store.list_view_bytes(false, "", "").unwrap();
-    assert!(!same_buffer(&default, &cleared));
-    let document: Value = serde_json::from_slice(&cleared).unwrap();
-    assert_eq!(document["sessions"].as_array().unwrap().len(), 2);
-    assert!(!same_buffer(
-        &run,
-        &store.list_view_bytes(false, "run-1", "").unwrap()
+        &store.list_view_bytes(false, "").unwrap()
     ));
 }

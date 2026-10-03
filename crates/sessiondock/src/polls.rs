@@ -17,7 +17,6 @@
 //! bypasses both caches and re-populates them.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -31,12 +30,8 @@ use crate::{
         Generation, RuntimeSnapshot,
         procscan::{Scan, SessionRow},
     },
-    sessions::RunIndex,
 };
 
-/// Debug-run views that keep an entry (the ordinary view plus a few
-/// monkeys); more evict everything, like the predecessor.
-const VIEWS: usize = 8;
 /// How long an assembled `/api/term/list` is served: the receipt list and
 /// the host discovery behind it carry no version of their own, so the
 /// entry expires like the predecessor's `PANES_TTL`.
@@ -67,8 +62,8 @@ impl ScanState {
     }
 }
 
-/// Everything a `/api/live` answer is a function of. `rows` and `hidden`
-/// are the topology of the requested view — the list-row fields the scan
+/// Everything a `/api/live` answer is a function of. `rows`
+/// are the list topology — the list-row fields the scan
 /// pairs processes with — so a session file that only grew (a new
 /// published list with the same topology) keeps the entry.
 pub struct LiveKey {
@@ -78,8 +73,6 @@ pub struct LiveKey {
     pub runtime: Option<Arc<RuntimeSnapshot>>,
     pub generation: Generation,
     pub rows: Vec<SessionRow>,
-    /// Uids the debug-run registry hides from this view.
-    pub hidden: BTreeSet<String>,
 }
 
 impl LiveKey {
@@ -91,7 +84,6 @@ impl LiveKey {
                 _ => false,
             }
             && self.generation == other.generation
-            && self.hidden == other.hidden
             && self.rows == other.rows
     }
 }
@@ -106,7 +98,6 @@ struct LiveEntry {
 struct TermEntry {
     built: Instant,
     generation: Generation,
-    runs: Arc<RunIndex>,
     bytes: Bytes,
 }
 
@@ -118,8 +109,8 @@ struct ReceiptsEntry {
 
 #[derive(Default)]
 pub struct PollCache {
-    live: Mutex<BTreeMap<String, LiveEntry>>,
-    term_list: Mutex<BTreeMap<String, TermEntry>>,
+    live: Mutex<Option<LiveEntry>>,
+    term_list: Mutex<Option<TermEntry>>,
     receipts: Mutex<Option<ReceiptsEntry>>,
     /// Single flight for the receipt list refresh: a second poll arriving
     /// during one waits for it instead of asking the coordinator again.
@@ -132,79 +123,41 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn insert<T>(map: &mut BTreeMap<String, T>, view: &str, entry: T) {
-    if map.len() >= VIEWS && !map.contains_key(view) {
-        map.clear();
-    }
-    map.insert(view.to_owned(), entry);
-}
-
 impl PollCache {
-    /// The `/api/live` body assembled for `view` from exactly these sources.
-    pub fn live(&self, view: &str, key: &LiveKey) -> Option<Arc<Value>> {
+    /// The `/api/live` body assembled from exactly these sources.
+    pub fn live(&self, key: &LiveKey) -> Option<Arc<Value>> {
         let cache = lock(&self.live);
-        let entry = cache.get(view)?;
+        let entry = cache.as_ref()?;
         entry.key.same(key).then(|| entry.response.clone())
     }
 
-    pub fn store_live(&self, view: &str, key: LiveKey, response: Arc<Value>) {
-        insert(&mut lock(&self.live), view, LiveEntry { key, response });
+    pub fn store_live(&self, key: LiveKey, response: Arc<Value>) {
+        *lock(&self.live) = Some(LiveEntry { key, response });
     }
 
-    /// The `/api/term/list` bytes assembled for `view` under `generation`
-    /// and this registry, younger than [`TERM_LIST_TTL`].
-    pub fn term_list(
-        &self,
-        view: &str,
-        generation: Generation,
-        runs: &Arc<RunIndex>,
-    ) -> Option<Bytes> {
-        self.term_list_at(view, generation, runs, Instant::now())
+    /// The `/api/term/list` bytes assembled under `generation`, younger than [`TERM_LIST_TTL`].
+    pub fn term_list(&self, generation: Generation) -> Option<Bytes> {
+        self.term_list_at(generation, Instant::now())
     }
 
-    fn term_list_at(
-        &self,
-        view: &str,
-        generation: Generation,
-        runs: &Arc<RunIndex>,
-        now: Instant,
-    ) -> Option<Bytes> {
+    fn term_list_at(&self, generation: Generation, now: Instant) -> Option<Bytes> {
         let cache = lock(&self.term_list);
-        let entry = cache.get(view)?;
+        let entry = cache.as_ref()?;
         (entry.generation == generation
-            && Arc::ptr_eq(&entry.runs, runs)
             && now.saturating_duration_since(entry.built) < TERM_LIST_TTL)
             .then(|| entry.bytes.clone())
     }
 
-    pub fn store_term_list(
-        &self,
-        view: &str,
-        generation: Generation,
-        runs: Arc<RunIndex>,
-        bytes: Bytes,
-    ) {
-        self.store_term_list_at(view, generation, runs, bytes, Instant::now());
+    pub fn store_term_list(&self, generation: Generation, bytes: Bytes) {
+        self.store_term_list_at(generation, bytes, Instant::now());
     }
 
-    fn store_term_list_at(
-        &self,
-        view: &str,
-        generation: Generation,
-        runs: Arc<RunIndex>,
-        bytes: Bytes,
-        built: Instant,
-    ) {
-        insert(
-            &mut lock(&self.term_list),
-            view,
-            TermEntry {
-                built,
-                generation,
-                runs,
-                bytes,
-            },
-        );
+    fn store_term_list_at(&self, generation: Generation, bytes: Bytes, built: Instant) {
+        *lock(&self.term_list) = Some(TermEntry {
+            built,
+            generation,
+            bytes,
+        });
     }
 }
 
@@ -236,24 +189,14 @@ impl PollCache {
     }
 }
 
-/// The topology of one debug-run view of `document`: the rows the scan
-/// pairs processes with, in list order, and the uids the registry hides
-/// (whose other evidence — a managed instance, say — must be hidden too).
-pub fn topology(
-    document: &Value,
-    runs: &RunIndex,
-    debug_run: &str,
-) -> (Vec<SessionRow>, BTreeSet<String>) {
-    let mut rows = Vec::new();
-    let mut hidden = BTreeSet::new();
-    for row in document["sessions"].as_array().into_iter().flatten() {
-        if runs.keeps(row, debug_run) {
-            rows.extend(SessionRow::from_value(row));
-        } else if let Some(uid) = row["uid"].as_str() {
-            hidden.insert(uid.to_owned());
-        }
-    }
-    (rows, hidden)
+/// The list rows paired with processes, in published order.
+pub fn topology(document: &Value) -> Vec<SessionRow> {
+    document["sessions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(SessionRow::from_value)
+        .collect()
 }
 
 #[cfg(test)]
@@ -267,7 +210,6 @@ mod tests {
             runtime: None,
             generation,
             rows,
-            hidden: BTreeSet::new(),
         }
     }
 
@@ -280,74 +222,45 @@ mod tests {
         let cache = PollCache::default();
         let body = Arc::new(json!({"uids": ["claude:a"]}));
         cache.store_live(
-            "",
             key(ScanState::Unsupported, 1, vec![row("claude:a")]),
             body.clone(),
         );
         let hit = cache
-            .live("", &key(ScanState::Unsupported, 1, vec![row("claude:a")]))
+            .live(&key(ScanState::Unsupported, 1, vec![row("claude:a")]))
             .expect("same sources hit");
         assert!(Arc::ptr_eq(&hit, &body));
         // A mutation (generation), a changed topology, another scan state
-        // and another view all miss.
+        // all miss.
         assert!(
             cache
-                .live("", &key(ScanState::Unsupported, 2, vec![row("claude:a")]))
+                .live(&key(ScanState::Unsupported, 2, vec![row("claude:a")]))
                 .is_none()
         );
         assert!(
             cache
-                .live("", &key(ScanState::Unsupported, 1, vec![row("claude:b")]))
+                .live(&key(ScanState::Unsupported, 1, vec![row("claude:b")]))
                 .is_none()
         );
         assert!(
             cache
-                .live("", &key(ScanState::Failed, 1, vec![row("claude:a")]))
+                .live(&key(ScanState::Failed, 1, vec![row("claude:a")]))
                 .is_none()
         );
-        assert!(
-            cache
-                .live(
-                    "run-1",
-                    &key(ScanState::Unsupported, 1, vec![row("claude:a")])
-                )
-                .is_none()
-        );
-        // A hidden set that differs misses even with the same visible rows.
-        let mut hidden = key(ScanState::Unsupported, 1, vec![row("claude:a")]);
-        hidden.hidden.insert("claude:x".into());
-        assert!(cache.live("", &hidden).is_none());
     }
 
     #[test]
-    fn term_list_entries_expire_and_turn_over_with_the_generation_and_registry() {
+    fn term_list_entries_expire_and_turn_over_with_the_generation() {
         let cache = PollCache::default();
-        let runs = Arc::new(RunIndex::default());
         let built = Instant::now();
-        cache.store_term_list_at("", 3, runs.clone(), Bytes::from_static(b"{}"), built);
+        cache.store_term_list_at(3, Bytes::from_static(b"{}"), built);
         assert_eq!(
-            cache.term_list_at("", 3, &runs, built + Duration::from_millis(500)),
+            cache.term_list_at(3, built + Duration::from_millis(500)),
             Some(Bytes::from_static(b"{}"))
         );
+        assert!(cache.term_list_at(4, built).is_none(), "mutation");
         assert!(
-            cache.term_list_at("", 4, &runs, built).is_none(),
-            "mutation"
-        );
-        assert!(
-            cache
-                .term_list_at("", 3, &Arc::new(RunIndex::default()), built)
-                .is_none(),
-            "another registry"
-        );
-        assert!(
-            cache
-                .term_list_at("", 3, &runs, built + TERM_LIST_TTL)
-                .is_none(),
+            cache.term_list_at(3, built + TERM_LIST_TTL).is_none(),
             "TTL turnover"
-        );
-        assert!(
-            cache.term_list_at("run-1", 3, &runs, built).is_none(),
-            "view"
         );
     }
 
@@ -371,36 +284,15 @@ mod tests {
     }
 
     #[test]
-    fn a_ninth_view_evicts_everything_like_the_predecessor() {
-        let cache = PollCache::default();
-        let runs = Arc::new(RunIndex::default());
-        for index in 0..VIEWS {
-            cache.store_term_list(&format!("run-{index}"), 1, runs.clone(), Bytes::new());
-        }
-        assert!(cache.term_list("run-0", 1, &runs).is_some());
-        cache.store_term_list("run-8", 1, runs.clone(), Bytes::new());
-        assert!(cache.term_list("run-0", 1, &runs).is_none());
-        assert!(cache.term_list("run-8", 1, &runs).is_some());
-    }
-
-    #[test]
-    fn topology_keeps_the_view_rows_in_order_and_names_the_hidden_uids() {
+    fn topology_keeps_the_rows_in_order() {
         let document = json!({"sessions": [
             {"uid": "claude:a", "source": "claude", "sid": "a"},
             {"uid": "codex:b", "source": "codex", "sid": "b"},
             {"source": "grok"},
         ]});
-        let (rows, hidden) = topology(&document, &RunIndex::default(), "");
+        let rows = topology(&document);
         assert_eq!(
             rows.iter().map(|row| row.uid.as_str()).collect::<Vec<_>>(),
-            ["claude:a", "codex:b"]
-        );
-        assert!(hidden.is_empty());
-        // An unknown run id is an empty view that hides every row.
-        let (rows, hidden) = topology(&document, &RunIndex::default(), "missing");
-        assert!(rows.is_empty());
-        assert_eq!(
-            hidden.iter().map(String::as_str).collect::<Vec<_>>(),
             ["claude:a", "codex:b"]
         );
     }

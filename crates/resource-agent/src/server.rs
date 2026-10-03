@@ -335,7 +335,6 @@ impl State {
                     .filter(|binding| processes.contains(&binding.process))
                     .cloned()
                     .collect();
-                resources.sessions = process_links::resource_summary::sessions(&resources);
                 let diagnostic = self.diagnostic.lock().unwrap_or_else(|e| e.into_inner());
                 if diagnostic.state != "active"
                     || diagnostic.deadline.is_none_or(|d| d <= Instant::now())
@@ -354,17 +353,21 @@ impl State {
                             metric(Value::Null, "unavailable", "临时探测未开启或正在启动"),
                         );
                     }
-                    resources.sessions = process_links::resource_summary::sessions(&resources);
                 }
+                resources.sessions = process_links::resource_summary::sessions(&resources);
                 let mut value = json!(resources);
                 value["diagnostic"] = diagnostic.value();
                 Ok(value)
             }
             Request::Catalog(catalog) => {
-                if !self.engine.catalog(catalog) {
+                if catalog.node_id != self.engine.node_id || catalog.boot_id != self.engine.boot_id
+                {
                     return Err("catalog belongs to another node or boot");
                 }
-                self.refresh();
+                if catalog != self.engine.catalog {
+                    self.engine.catalog(catalog);
+                    self.refresh();
+                }
                 Ok(json!(self.report))
             }
             Request::Publish(published) => {

@@ -5,8 +5,8 @@
 //! dropped (never retained: keeping decoded records resident to decode only
 //! appended bytes would cost several times the file per active session,
 //! against the read model's memory rule). One producer
-//! per uid; a second search waits and re-reads the cache. The warm-up walks
-//! the same path at background priority (docs/read-model.md "搜索").
+//! per uid; a second search waits and re-reads the cache. Bodies are built only
+//! on search requests (docs/read-model.md "搜索").
 //!
 //! The query's prefilter runs on the cache's resident folded copy first, so
 //! a body that cannot match is never opened (its version is still taken
@@ -14,17 +14,14 @@
 //! search). A body served without a folded copy yet (first search after a
 //! start) is read whole once to fold it.
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-    time::{Duration, Instant},
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use super::{
     Outcome, PreparedSearch, Scanned, Scanner, SearchError, body,
-    cache::{Cached, Hit, Lookup, ParseSlots, Priority, SearchCache, TextReader},
+    cache::{Cached, Hit, Lookup, ParseSlots, SearchCache, TextReader},
 };
 use crate::sessions::{SearchPool, SearchVersion, SessionError, SessionStore};
 use serde_json::json;
@@ -33,7 +30,6 @@ use serde_json::json;
 /// queries that cannot be matched chunk by chunk.
 pub const WHOLE_BODY_BUDGET: u64 = 64 * 1024 * 1024;
 const WHOLE_BODY_UNIT: u64 = 8 * 1024 * 1024;
-const WARMUP_DELAY: Duration = Duration::from_secs(2);
 
 /// Hand freed heap back to the OS after parses: transient projections leave
 /// glibc arenas fragmented, and a search must not raise the resident set for
@@ -83,23 +79,12 @@ impl From<Cached> for Source {
     }
 }
 
-/// One warm-up pass.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct WarmReport {
-    pub candidates: usize,
-    pub hits: usize,
-    pub produced: usize,
-    pub failed: usize,
-    pub elapsed_ms: u128,
-}
-
 pub struct SearchService {
     pub store: Arc<SessionStore>,
     pub cache: Arc<SearchCache>,
     pub slots: Arc<ParseSlots>,
     whole_reads: ParseSlots,
     pub workers: usize,
-    pub warmup_secs: u64,
     /// Bodies produced (parsed) so far; a search that moved it trims the heap.
     produced: AtomicUsize,
 }
@@ -211,7 +196,6 @@ impl SearchService {
         cache_bytes: u64,
         fold_bytes: u64,
         workers: usize,
-        warmup_secs: u64,
     ) -> std::io::Result<Self> {
         Ok(Self {
             store,
@@ -222,7 +206,6 @@ impl SearchService {
                 WHOLE_BODY_UNIT,
             ),
             workers: workers.max(1),
-            warmup_secs,
             produced: AtomicUsize::new(0),
         })
     }
@@ -230,19 +213,6 @@ impl SearchService {
     /// Number of bodies parsed so far (monotonic).
     pub fn produced(&self) -> usize {
         self.produced.load(Ordering::Relaxed)
-    }
-
-    /// The body of `uid` at its current version, and whether it had to be
-    /// produced (parsed) rather than found.
-    pub fn source(
-        &self,
-        pool: &SearchPool,
-        uid: &str,
-        priority: Priority,
-        cancelled: &AtomicBool,
-    ) -> Result<(Source, bool), SessionError> {
-        let version = self.store.search_version(pool, uid)?;
-        self.source_at(pool, uid, &version, priority, cancelled)
     }
 
     /// A cache hit as a source, folding its text first when no folded copy
@@ -270,13 +240,12 @@ impl SearchService {
         pool: &SearchPool,
         uid: &str,
         version: &SearchVersion,
-        priority: Priority,
         cancelled: &AtomicBool,
-    ) -> Result<(Source, bool), SessionError> {
+    ) -> Result<Source, SessionError> {
         if let Lookup::Hit(hit) = self.cache.get(uid, version)
             && let Some(source) = self.folded_hit(uid, version, hit)
         {
-            return Ok((source, false));
+            return Ok(source);
         }
         // A view the LRU still holds for exactly these files costs nothing.
         if let Some(view) = self.store.search_view_cached(pool, uid)? {
@@ -286,19 +255,16 @@ impl SearchService {
             if self.store.search_version(pool, uid)? == *version {
                 self.cache.put(uid, version, &cached);
             }
-            return Ok((cached.into(), false));
+            return Ok(cached.into());
         }
         let _producer = self.cache.inflight(uid);
         if let Lookup::Hit(hit) = self.cache.get(uid, version)
             && let Some(source) = self.folded_hit(uid, version, hit)
         {
-            return Ok((source, false));
+            return Ok(source);
         }
         let bytes = version.data.as_ref().map_or(0, |(_, size)| *size);
-        let Some(_slot) = self
-            .slots
-            .acquire(self.slots.weight(bytes), priority, cancelled)
-        else {
+        let Some(_slot) = self.slots.acquire(self.slots.weight(bytes), cancelled) else {
             return Err(cancelled_error());
         };
         let cached = match self.store.search_view_transient(pool, uid) {
@@ -328,7 +294,7 @@ impl SearchService {
         if bytes >= super::cache::SLOT_BYTES || produced.is_multiple_of(32) {
             release_memory();
         }
-        Ok((cached.into(), true))
+        Ok(cached.into())
     }
 
     /// Match one candidate for a search request: the prefilter over the
@@ -355,9 +321,9 @@ impl SearchService {
         {
             return Scanned::Matched(None);
         }
-        let reader = match self.source_at(pool, uid, &version, Priority::Foreground, cancelled) {
-            Ok((Source::Text(reader), _)) => reader,
-            Ok((Source::Error { status, message }, _)) => {
+        let reader = match self.source_at(pool, uid, &version, cancelled) {
+            Ok(Source::Text(reader)) => reader,
+            Ok(Source::Error { status, message }) => {
                 return Scanned::Error(SessionError { status, message });
             }
             Err(error) => return Scanned::Error(error),
@@ -401,11 +367,10 @@ impl SearchService {
             }
             return Ok(scanner.finish());
         }
-        let Some(_budget) = self.whole_reads.acquire(
-            self.whole_reads.weight(reader.len()),
-            Priority::Foreground,
-            cancelled,
-        ) else {
+        let Some(_budget) = self
+            .whole_reads
+            .acquire(self.whole_reads.weight(reader.len()), cancelled)
+        else {
             return Err(SearchError::cancelled());
         };
         let text = reader.read_all().map_err(|error| {
@@ -414,101 +379,5 @@ impl SearchService {
         })?;
         scanner.feed(&text, true, cancelled)?;
         Ok(scanner.finish())
-    }
-
-    /// One pass over every candidate at background priority: cache hits are
-    /// only stat + header checks; misses are produced under the parse
-    /// budget with `threads` producers that yield to searches.
-    pub fn warm(
-        &self,
-        shutdown: &tokio_util::sync::CancellationToken,
-        threads: usize,
-    ) -> Result<WarmReport, SessionError> {
-        let started = Instant::now();
-        let pool = self.store.search_pool()?;
-        let never = AtomicBool::new(false);
-        let next = AtomicUsize::new(0);
-        let (hits, produced, failed) = (
-            AtomicUsize::new(0),
-            AtomicUsize::new(0),
-            AtomicUsize::new(0),
-        );
-        let threads = threads.clamp(1, pool.rows.len().max(1));
-        std::thread::scope(|scope| {
-            for _ in 0..threads {
-                let (pool, next, never) = (&pool, &next, &never);
-                let (hits, produced, failed) = (&hits, &produced, &failed);
-                scope.spawn(move || {
-                    loop {
-                        let index = next.fetch_add(1, Ordering::Relaxed);
-                        if index >= pool.rows.len() || shutdown.is_cancelled() {
-                            break;
-                        }
-                        let uid = pool.rows[index]["uid"].as_str().unwrap_or("");
-                        match self.source(pool, uid, Priority::Background, never) {
-                            Ok((_, true)) => produced.fetch_add(1, Ordering::Relaxed),
-                            Ok((_, false)) => hits.fetch_add(1, Ordering::Relaxed),
-                            Err(_) => failed.fetch_add(1, Ordering::Relaxed),
-                        };
-                    }
-                });
-            }
-        });
-        let report = WarmReport {
-            candidates: pool.rows.len(),
-            hits: hits.into_inner(),
-            produced: produced.into_inner(),
-            failed: failed.into_inner(),
-            elapsed_ms: started.elapsed().as_millis(),
-        };
-        if report.produced > 0 || report.failed > 0 {
-            release_memory();
-        }
-        Ok(report)
-    }
-
-    /// The background warm-up thread: a first pass shortly after start with
-    /// every parse slot (a cold cache is the one time speed matters), then
-    /// one every `warmup_secs` with half of them. Only with a persistent
-    /// cache; nothing to warm otherwise. Stops with the shutdown token.
-    pub fn spawn_warmup(self: &Arc<Self>, shutdown: tokio_util::sync::CancellationToken) -> bool {
-        if self.warmup_secs == 0 || !self.cache.persistent() {
-            return false;
-        }
-        let service = self.clone();
-        let interval = Duration::from_secs(self.warmup_secs);
-        let spawned = std::thread::Builder::new()
-            .name("search-warmup".to_owned())
-            .spawn(move || {
-                let mut delay = WARMUP_DELAY;
-                let mut threads = service.workers;
-                loop {
-                    let deadline = Instant::now() + delay;
-                    while Instant::now() < deadline {
-                        if shutdown.is_cancelled() {
-                            return;
-                        }
-                        std::thread::sleep(Duration::from_millis(250));
-                    }
-                    if shutdown.is_cancelled() {
-                        return;
-                    }
-                    match service.warm(&shutdown, threads) {
-                        Ok(report) if report.produced > 0 || report.failed > 0 => {
-                            let stats = service.cache.stats();
-                            eprintln!(
-                                "search-text warm-up: {} candidates, {} cached, {} produced, {} failed, {} ms; cache {} entries / {} bytes",
-                                report.candidates, report.hits, report.produced, report.failed,
-                                report.elapsed_ms, stats.entries, stats.bytes
-                            );
-                        }
-                        Ok(_) => {}
-                        Err(error) => eprintln!("search-text warm-up skipped: {}", error.message),
-                    }
-                    delay = interval;
-                    threads = (service.workers / 2).max(1);
-                }
-            });
-        spawned.is_ok()
     }
 }

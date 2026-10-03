@@ -41,8 +41,9 @@ def main():
         (agents / f'agent-{AGENT_ID}.jsonl').write_bytes(b''.join(encoded(row) for row in [
             claude_row(CLAUDE_ID, 'user', 'au0', None, 'Worker fixture title', isSidechain=True, agentId=AGENT_ID),
             claude_row(CLAUDE_ID, 'assistant', 'aa0', 'au0', 'Worker answer', isSidechain=True, agentId=AGENT_ID)]))
+        cache_dir = data.root / 'search-cache'
         with isolated_server(data, args.binary, extra_env={
-                'SESSIONDOCK_SEARCH_CACHE_DIR': str(data.root / 'search-cache')}) as (base, _), sync_playwright() as pw:
+                'SESSIONDOCK_SEARCH_CACHE_DIR': str(cache_dir)}) as (base, _), sync_playwright() as pw:
             launch = {'headless': True}
             if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
                 launch['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
@@ -59,6 +60,12 @@ def main():
                     page.on('request', lambda request: searches.append(request.url)
                             if '/api/search?' in request.url else None)
                     page.goto(base, wait_until='networkidle')
+                    if width == 1280:
+                        # The page lists sessions but has not requested full-text search.
+                        # Wait beyond the former two-second startup warmup delay.
+                        page.wait_for_timeout(3500)
+                        assert not list(cache_dir.iterdir()), list(cache_dir.iterdir())
+                        assert not searches, searches
                     # Flat mode makes the actual matches distinguishable from parent navigation rows.
                     if page.locator('#nest-toggle').get_attribute('aria-pressed') == 'true':
                         page.locator('#nest-toggle').click()
@@ -131,6 +138,38 @@ def main():
                     for query in (AGENT_ID, AGENT_ID[9:18]):
                         lookup(query, AGENT_ID, 'Worker answer', agent=True)
                     lookup(BROKEN_ID[:8], BROKEN_ID, None)
+                    # Both a parent and its sidecar may grow while the cache is hot.
+                    # Submit through the page so the next request must see the new body.
+                    def body_search(query, selector):
+                        clear()
+                        old = page.locator('#stat').get_attribute('data-seq') or ''
+                        page.locator('#q').fill(query)
+                        page.locator('#q').press('Enter')
+                        page.wait_for_function("old => (document.querySelector('#stat').dataset.seq || '') !== old", arg=old)
+                        expect(page.locator('#search-progress')).not_to_be_visible()
+                        expect(page.locator('#side-search-count')).to_have_text('1 条')
+                        expect(page.locator(selector + ' .snip')).to_contain_text(query)
+
+                    for path, row, token, selector in (
+                        (data.paths[CLAUDE_ID], claude_row(CLAUDE_ID, 'user', f'append-{width}', 'a0',
+                             f'parentfresh{width}'), f'parentfresh{width}',
+                             f'#side .item[data-uid="{data.uid(CLAUDE_ID)}"]'),
+                        (agents / f'agent-{AGENT_ID}.jsonl', claude_row(CLAUDE_ID, 'user', f'agent-append-{width}',
+                             'aa0', f'agentfresh{width}', isSidechain=True, agentId=AGENT_ID),
+                             f'agentfresh{width}', f'#side .item[data-agent="{AGENT_ID}"]'),
+                    ):
+                        before = {p.name: p.stat().st_mtime_ns for p in cache_dir.iterdir()}
+                        assert before, 'search must populate the persistent cache'
+                        with path.open('ab') as stream:
+                            stream.write(encoded(row))
+                        # No idle refresh of stale entries, either.
+                        page.wait_for_timeout(1200)
+                        assert before == {p.name: p.stat().st_mtime_ns for p in cache_dir.iterdir()}
+                        body_search(token, selector)
+                        hot = {p.name: p.stat().st_mtime_ns for p in cache_dir.iterdir()}
+                        assert hot != before, 'append must refresh the cached version'
+                        body_search(token, selector)
+                        assert hot == {p.name: p.stat().st_mtime_ns for p in cache_dir.iterdir()}
                     clear()
                     page.locator('#q').fill('uuid-that-does-not-exist')
                     expect(page.locator('#side-search-count')).to_have_text('0 条')

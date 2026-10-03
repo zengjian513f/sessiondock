@@ -100,13 +100,6 @@ documented in [diagnostics.md](diagnostics.md) and [bug-report.md](bug-report.md
 Their configuration controls persistence, without changing the accepted shapes
 of unrelated APIs.
 
-## debug_run views
-
-`?debug_run=<id>` selects the test-session view. Missing or damaged
-registry data behaves as an empty registry. An unknown run produces an empty view
-rather than an authorization error. See
-[read-model.md](read-model.md#debug_run-视图).
-
 ## 501 ledger (unimplemented writes)
 
 Predecessor-only routes are not kept as migration stubs. Conversation SEND,

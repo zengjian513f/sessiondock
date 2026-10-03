@@ -139,7 +139,7 @@ def run(opener, base, claude, parent, fork, grok):
     if limited != ct or len(ct) > BUDGET:
         fail(route, f"limit/budget {limited!r} n={len(ct)}", raw)
     passed("limit ignored; count ≤ 100000")
-    # `debug_run` selects the list view only; the detail routes ignore it.
+    # Obsolete test-view parameters are ignored like other unknown parameters.
     _, raw, with_run = texts(opener, base, uid=claude, debug_run="1")
     if with_run != ct:
         fail("debug_run", f"history must ignore debug_run: {with_run!r}", raw)

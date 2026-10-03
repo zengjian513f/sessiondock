@@ -24,7 +24,7 @@ def main():
         names=corpus.root/'names.jsonl'
         names.write_bytes(encoded({'id':'named-codex','thread_name':'Named first'}))
         (corpus.root/'grok').mkdir()
-        with isolated_server(corpus,args.binary,extra_env={'SESSIONDOCK_CODEX_INDEX':str(names), 'SESSIONDOCK_SEARCH_WARMUP':'0'}) as (base,opener), sync_playwright() as pw:
+        with isolated_server(corpus,args.binary,extra_env={'SESSIONDOCK_CODEX_INDEX':str(names)}) as (base,opener), sync_playwright() as pw:
             browser=pw.chromium.launch()
             page=browser.new_page()
             page.route(base+'/',lambda route:route.fulfill(content_type='text/html',body='''

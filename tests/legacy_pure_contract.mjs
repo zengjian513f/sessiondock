@@ -56,7 +56,7 @@ const HUB = `/api/nodes/${A}/api/media/${B}`;
 const same = (actual, expected) => assert.equal(JSON.stringify(actual), JSON.stringify(expected));
 function ctx(globals = {}) {
   const context = vm.createContext({URL, URLSearchParams, SessionDockCapabilities: {config: {}, allows: () => false},
-    HUB_MODE: false, APP_BASE: new URL('http://127.0.0.1:8080/sessiondock/'), DEBUG_RUN: '',
+    HUB_MODE: false, APP_BASE: new URL('http://127.0.0.1:8080/sessiondock/'),
     terminalListUncertain:()=>false, sessionFrozen:()=>false,
     sessionInputAttention:()=>'',sessionTurn:()=>'',turnLabel:()=>'',
     selectedNodeIds: () => ['n1', 'n2'], newNodeId: () => 'nid', appUrl: x => x, el: element, ...globals});
@@ -107,15 +107,13 @@ test('fmtSize/fmtTime/shortCwd follow the current unit, calendar and ellipsis ru
   }
 });
 
-test('appUrl resolves against APP_BASE, injects debug_run on /api/, and hub node filters', () => {
+test('appUrl resolves against APP_BASE, hub node filters', () => {
   const url = (g, path) => fn('appUrl', g)(path);
   const base = {APP_BASE: new URL('http://127.0.0.1:8080/sessiondock/')};
   assert.equal(url(base, '/api/media/' + A), `http://127.0.0.1:8080/sessiondock/api/media/${A}`);
   assert.equal(url(base, 'api/sessions'), 'http://127.0.0.1:8080/sessiondock/api/sessions');
   assert.equal(url(base, ''), 'http://127.0.0.1:8080/sessiondock/');
   assert.equal(url(base, 'https://evil.example/x'), 'https://evil.example/x');
-  assert.equal(url({...base, DEBUG_RUN: 'run_1'}, 'api/sessions'), 'http://127.0.0.1:8080/sessiondock/api/sessions?debug_run=run_1');
-  assert.equal(url({...base, DEBUG_RUN: 'run_1'}, 'index.html').includes('debug_run'), false);
   assert.equal(url({...base, HUB_MODE: true}, 'api/search'), 'http://127.0.0.1:8080/sessiondock/api/search?nodes=n1%2Cn2');
   assert.equal(url({...base, HUB_MODE: true}, 'api/trash/purge'), 'http://127.0.0.1:8080/sessiondock/api/trash/purge?nodes=n1%2Cn2');
   assert.equal(url({...base, HUB_MODE: true}, 'api/search?nodes=keep'), 'http://127.0.0.1:8080/sessiondock/api/search?nodes=keep');

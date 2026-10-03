@@ -30,7 +30,7 @@ PTYHOST = RUST + ["terminal*", "term_*", "lifecycle*", "cutover*", "host*", "nat
 MODULE_SUITES = {
     "sessions": ["history_*", "sessions_*", "messages_*", "native_*", "*_parity", "codex_*",
                  "claude_*", "grok_*", "agent_*", "orphan_*", "continued_*", "fork_*",
-                 "list_rows_*", "input_history_*", "inventory_*", "debug_runs_*", "symlink_*",
+                 "list_rows_*", "input_history_*", "inventory_*", "symlink_*",
                  "unicode_*", "names_*", "budget_*", "reader_pool_*", "sse_*", "rewind_*"],
     "terminal": ["terminal_*", "term_*", "managed_*", "session_stop_*", "session_freeze_*"],
     "lifecycle": ["lifecycle_*", "send_*", "pending_*", "restart_state_*", "live_*", "session_stop_*", "session_freeze_*"],

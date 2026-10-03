@@ -125,8 +125,6 @@ pub struct SearchQuery {
     pub case: String,
     pub regex: String,
     pub progress: String,
-    /// The debug-run view the candidates come from.
-    pub debug_run: String,
 }
 
 /// How one body is matched. Every variant finds the same spans as the
@@ -204,7 +202,6 @@ pub struct PreparedSearch {
     sources: BTreeSet<String>,
     limit: usize,
     pub progress: bool,
-    pub debug_run: String,
 }
 
 impl PreparedSearch {
@@ -367,7 +364,6 @@ impl SearchQuery {
                 sources,
                 limit,
                 progress,
-                debug_run: self.debug_run.chars().take(64).collect(),
             });
         }
         let q = if regex {
@@ -400,7 +396,6 @@ impl SearchQuery {
             )
         };
         Ok(PreparedSearch {
-            debug_run: self.debug_run.chars().take(64).collect(),
             matcher,
             terms: Vec::new(),
             any,

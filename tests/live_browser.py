@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Three-state /api/live with the legacy UI: a managed instance is running, then
 exited; unrelated sessions stay explicitly unknown. Only a synthetic free shell."""
+import argparse
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -22,6 +24,9 @@ def wait_live(opener, base, predicate, seconds=10):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--binary', type=Path, default=BINARY)
+    args = parser.parse_args()
     if os.name != "posix":
         raise SystemExit("This isolated real-shell acceptance currently requires POSIX.")
     with tempfile.TemporaryDirectory(prefix="sessiondock-live-ui-") as temporary:
@@ -41,6 +46,13 @@ def main():
         uid = corpus.uid(sid)
         others = [corpus.uid("synthetic-unrelated-codex"), corpus.uid("synthetic-unrelated-claude")]
         native = {name: path.read_bytes() for name, path in corpus.paths.items()}
+        state = root / "state"; state.mkdir(mode=0o700)
+        registry = state / "debug-runs.json"
+        registry.write_text(json.dumps({"version": 1, "runs": {"old-run": {
+            "root": str(root / "work"), "sessions": [{"uid": uid}],
+        }}}))
+        registry.chmod(0o600)
+        registry_bytes = registry.read_bytes()
         instance = "synthetic-" + uuid.uuid4().hex
         with host(root, instance, uid=uid) as (process, record), sync_playwright() as playwright:
             launch = {"headless": True}
@@ -48,7 +60,7 @@ def main():
                 launch["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
             browser = playwright.chromium.launch(**launch)
             try:
-                with isolated_server(corpus, BINARY, host_dir=root / "host") as (base, opener):
+                with isolated_server(corpus, args.binary, host_dir=root / "host", state_dir=state) as (base, opener):
                     # API: the managed instance is running with a verified identity;
                     # unrelated sessions are not listed and therefore unknown.
                     live = wait_live(opener, base, lambda d: d["uids"] == [uid])
@@ -66,6 +78,11 @@ def main():
                     assert live["managed"]["hosts"][0]["process"]["host"]["pid"] == process.pid
                     cached = get_json(opener, base, "/api/live")
                     assert cached["managed"]["cache"]["hit"] is True and cached["uids"] == [uid]
+                    for suffix in ("", "?debug_run=old-run", "?debug_run=unknown"):
+                        visible = get_json(opener, base, "/api/live" + suffix)
+                        assert visible["uids"] == [uid] and visible["tmux_uids"] == [uid], visible
+                        panes = get_json(opener, base, "/api/term/list" + suffix)
+                        assert any(row.get("instance_id") == instance for row in panes["sessions"]), panes
                     encoded = str(live)
                     assert record["sock"] not in encoded and "token" not in live["managed"]["hosts"][0]["summary"]
 
@@ -77,7 +94,7 @@ def main():
                     context.on("page", lambda page: page.on("pageerror", lambda error: errors.append(str(error))))
                     page = context.new_page()
                     page.on("pageerror", lambda error: errors.append(str(error)))
-                    page.goto(base, wait_until="networkidle")
+                    page.goto(base + "/?debug_run=unknown", wait_until="networkidle")
 
                     def unrelated_stay_inactive(active):
                         expect(page.locator("#session-active")).to_have_text(str(active))
@@ -136,7 +153,7 @@ def main():
 
                     # Mobile: the same inactive state is reported numerically.
                     page.set_viewport_size({"width": 390, "height": 844})
-                    page.goto(base, wait_until="networkidle")
+                    page.goto(base + "/?debug_run=unknown", wait_until="networkidle")
                     expect(page.locator("#session-active")).to_have_text("0")
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
                     expect(page.locator("#a-term")).to_be_visible()
@@ -145,6 +162,7 @@ def main():
                     assert all(url.startswith(base + "/") for url in requests)
                     assert any("/api/live" in url for url in requests), "UI must refresh managed and scanned liveness"
                     context.close()
+                assert registry.read_bytes() == registry_bytes
                 assert {name: path.read_bytes() for name, path in corpus.paths.items()} == native
             finally:
                 browser.close()

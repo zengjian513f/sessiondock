@@ -81,7 +81,7 @@ pub struct Config {
     /// when set, else the system host name, else `SessionDock`.
     pub hostname: String,
     /// Persistent search-text cache (`docs/read-model.md` "搜索"). Unset keeps
-    /// the cache in memory only and disables the warm-up.
+    /// the cache in memory only. Bodies are built on search requests.
     pub search_cache_dir: Option<PathBuf>,
     /// Byte cap of the on-disk search-text cache, least recently used entries
     /// evicted first (`SESSIONDOCK_SEARCH_CACHE_BYTES`, default 1 GiB).
@@ -91,13 +91,9 @@ pub struct Config {
     /// (`SESSIONDOCK_SEARCH_FOLD_BYTES`, default 128 MiB).
     pub search_fold_bytes: u64,
     /// Parse slots the search-text producer may use at once, shared by all
-    /// searches and the warm-up; independent of the read worker pool
+    /// searches; independent of the read worker pool
     /// (`SESSIONDOCK_SEARCH_WORKERS`, default `clamp(cpus/2, 2, 8)`).
     pub search_workers: usize,
-    /// Seconds between low-priority background passes that refresh the
-    /// search-text cache; 0 disables warm-up (`SESSIONDOCK_SEARCH_WARMUP`,
-    /// default 300).
-    pub search_warmup_secs: u64,
     /// Pool, page, runtime and cache budgets:
     /// `SESSIONDOCK_READ_WORKERS` blocking readers (default `clamp(cores/2, 8, 32)`;
     /// probes and response permits derive from it), `SESSIONDOCK_HISTORY_PAGE_EVENTS`
@@ -285,7 +281,6 @@ impl Default for Config {
             search_cache_bytes: 1024 * 1024 * 1024,
             search_fold_bytes: crate::search::cache::FOLD_BYTES,
             search_workers: default_search_workers(),
-            search_warmup_secs: 300,
             pools: Pools::default(),
         }
     }
@@ -453,17 +448,6 @@ impl Config {
                     io::Error::new(
                         io::ErrorKind::InvalidInput,
                         "SESSIONDOCK_SEARCH_WORKERS must be an integer",
-                    )
-                })?;
-        }
-        if let Some(seconds) = env::var_os("SESSIONDOCK_SEARCH_WARMUP") {
-            config.search_warmup_secs = seconds
-                .to_str()
-                .and_then(|s| s.parse::<u64>().ok())
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "SESSIONDOCK_SEARCH_WARMUP must be an interval in seconds from 0 (off)",
                     )
                 })?;
         }

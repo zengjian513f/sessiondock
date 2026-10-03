@@ -72,8 +72,7 @@ impl MetadataStore {
         })
     }
 
-    /// The canonical state directory (`SESSIONDOCK_STATE_DIR`); the debug-run
-    /// registry the session read model consults lives beside the metadata.
+    /// The canonical state directory (`SESSIONDOCK_STATE_DIR`).
     pub fn directory(&self) -> &Path {
         self.disk.directory()
     }

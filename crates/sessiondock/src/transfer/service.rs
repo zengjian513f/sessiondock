@@ -277,46 +277,9 @@ impl TransferService {
     pub fn store(&self) -> &SessionStore {
         &self.inventory
     }
-    pub fn spawn_relationship_index(
-        self: &Arc<Self>,
-        shutdown: tokio_util::sync::CancellationToken,
-    ) {
-        let service = self.clone();
-        tokio::spawn(async move {
-            loop {
-                if shutdown.is_cancelled() {
-                    return;
-                }
-                let service = service.clone();
-                let stopping = shutdown.clone();
-                let _ = tokio::task::spawn_blocking(move || {
-                    let Ok(_guard) = service.relationship_refresh.lock() else {
-                        return;
-                    };
-                    let Ok(snapshot) = service.store().search_snapshot() else {
-                        return;
-                    };
-                    let index = snapshot.index();
-                    service
-                        .references
-                        .retain(&index.candidates().map(|e| e.data.clone()).collect());
-                    for entry in index.candidates() {
-                        if stopping.is_cancelled() {
-                            break;
-                        }
-                        let _ = service.references.get(entry);
-                    }
-                    service.references.save();
-                })
-                .await;
-                tokio::select! {
-                    _ = shutdown.cancelled() => return,
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {},
-                }
-            }
-        });
-    }
     fn group(&self, selected: &str) -> Result<group::Group, TransferError> {
+        // Discover and refresh relationships on demand, including reverse links
+        // from histories outside the selected group. No background warm-up is needed.
         // Only the relationship inventory is serialized; page, composer and
         // history readers use their own store and never wait on this lock.
         let _guard = self

@@ -518,22 +518,12 @@ async fn handle(
         );
     }
     if method == Method::GET && path == "/api/events" {
-        let view: String = aggregate::first(&pairs, "debug_run")
-            .unwrap_or_default()
-            .chars()
-            .take(64)
-            .collect();
-        let params = if view.is_empty() {
-            Vec::new()
-        } else {
-            vec![("debug_run".to_string(), view.clone())]
-        };
         let registry = state.registry.clone();
         let client = state.client.clone();
-        let receiver = state.ui_events.subscribe(view, move || {
+        let receiver = state.ui_events.subscribe(move || {
             let registry = registry.clone();
             let client = client.clone();
-            let params = params.clone();
+            let params = Vec::new();
             async move {
                 // Registry::fetch returns cached state for known-offline nodes;
                 // only the existing health monitor probes them for recovery.

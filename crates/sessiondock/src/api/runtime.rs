@@ -136,7 +136,7 @@ fn finish(mut response: Value, volatile: Volatile) -> Response {
 /// `uids` = sessions with a live CLI process (list order), `tmux_uids` those
 /// running under tmux or a managed host, `started_at[uid]` the earliest CLI
 /// main-process start. `?force=1` bypasses
-/// every cache. The assembled body is kept per view while the scan, the
+/// every cache. The assembled body is kept while the scan, the
 /// managed observation, the lifecycle generation and the list topology are
 /// the ones it was built from (`polls::PollCache`); only the two `cache`
 /// reports are per request.
@@ -147,10 +147,6 @@ pub async fn live(
     let force = query
         .as_deref()
         .is_some_and(|query| query.split('&').any(|pair| pair == "force=1"));
-    // The session list is filtered through the debug-run registry before
-    // pairing processes: a hidden session is never a live uid of this view.
-    let debug_run = crate::sessions::debug_run_of(query.as_deref());
-    let runs = state.reader.store.debug_runs();
     let generation = lifecycle_generation(&state);
     let shared = match &state.runtime {
         Some(runtime) => Some(shared(&state, runtime, force).await?),
@@ -168,19 +164,17 @@ pub async fn live(
     // not see a spurious `reader_busy` from liveness. Only the topology
     // fields leave the reader; the document itself is neither cloned nor
     // decorated.
-    let (rows, hidden) = match &scanned {
+    let rows = match &scanned {
         Ok(_) => {
-            let runs = runs.clone();
-            let debug_run = debug_run.clone();
             state
                 .reader
                 .run_wait(&state.shutdown, move |store| {
                     let document = store.recent_document()?;
-                    Ok(topology(&document, &runs, &debug_run))
+                    Ok(topology(&document))
                 })
                 .await?
         }
-        Err(_) => (Vec::new(), BTreeSet::new()),
+        Err(_) => Vec::new(),
     };
     let key = LiveKey {
         scan: match &scanned {
@@ -191,7 +185,6 @@ pub async fn live(
         runtime: shared.as_ref().map(|shared| shared.snapshot.clone()),
         generation,
         rows,
-        hidden,
     };
     let managed_report = match (&shared, &state.runtime) {
         (Some(shared), Some(runtime)) => Some(cache_report(
@@ -205,7 +198,7 @@ pub async fn live(
         .as_ref()
         .ok()
         .map(|snapshot| cache_report(snapshot.cached, snapshot.age, scanner.ttl()));
-    if !force && let Some(cached) = state.polls.live(&debug_run, &key) {
+    if !force && let Some(cached) = state.polls.live(&key) {
         return Ok(finish(
             (*cached).clone(),
             Volatile {
@@ -216,7 +209,7 @@ pub async fn live(
     }
     let response = assemble(&state, shared.as_ref(), scanned, &key).await?;
     let response = Arc::new(response);
-    state.polls.store_live(&debug_run, key, response.clone());
+    state.polls.store_live(key, response.clone());
     Ok(finish(
         (*response).clone(),
         Volatile {
@@ -294,7 +287,6 @@ async fn assemble(
     let mut scan_report = json!({"enabled": true, "root": scanner.root().to_string_lossy()});
     match scanned {
         Ok(snapshot) => {
-            managed_running.retain(|uid| !key.hidden.contains(uid));
             let scan = snapshot.scan.clone();
             let sessions = key.rows.clone();
             let metadata = state.metadata.clone();

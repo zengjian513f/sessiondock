@@ -237,10 +237,6 @@ pub struct AttachQuery {
     instance_id: Option<String>,
     record_id: Option<String>,
     launch_id: Option<String>,
-    /// `debug_run`: the page's view selector, appended to every `/api/`
-    /// URL by the frontend; accepted and ignored here.
-    #[allow(dead_code)]
-    debug_run: String,
     /// `grid` streams the server-side grid protocol instead of raw bytes.
     mode: String,
     /// Opt in to application heartbeats; older clients keep literal text input.
@@ -260,7 +256,6 @@ impl Default for AttachQuery {
             instance_id: None,
             record_id: None,
             launch_id: None,
-            debug_run: String::new(),
             mode: String::new(),
             heartbeat: String::new(),
         }
@@ -502,8 +497,6 @@ pub struct GridHistoryQuery {
     launch_id: Option<String>,
     from: usize,
     to: usize,
-    #[allow(dead_code)]
-    debug_run: String,
 }
 
 /// `GET /api/term/grid/history`: grid-protocol scrollback rows `[from, to)`
@@ -816,10 +809,10 @@ fn pending_listed(record: &crate::lifecycle::model::Record, now: u64) -> bool {
 
 /// `GET /api/term/list`: the managed panes with their verified session
 /// identity, the pending receipts and the source table. The assembled body
-/// is served for [`crate::polls::TERM_LIST_TTL`] per debug-run view
+/// is served for [`crate::polls::TERM_LIST_TTL`]
 /// (`polls::PollCache`) and dropped at once by any lifecycle mutation
-/// (create, kill, takeover, bind, stop, discard: the service generation)
-/// or a changed debug-run registry; `?force=1` bypasses it and the shared
+/// (create, kill, takeover, bind, stop, discard: the service generation).
+/// `?force=1` bypasses it and the shared
 /// managed observation. The list authorizes nothing, so it reads the
 /// shared observation (`runtime::shared`, 2 s) that `/api/live` reads;
 /// claim, attach, stop and process-evidence binding keep their fresh probes.
@@ -831,10 +824,8 @@ pub async fn list(
     let force = query
         .as_deref()
         .is_some_and(|query| query.split('&').any(|pair| pair == "force=1"));
-    let debug_run = crate::sessions::debug_run_of(query.as_deref());
-    let runs = state.reader.store.debug_runs();
     let generation = super::runtime::lifecycle_generation(&state);
-    if !force && let Some(bytes) = state.polls.term_list(&debug_run, generation, &runs) {
+    if !force && let Some(bytes) = state.polls.term_list(generation) {
         return Ok(super::lifecycle::response_bytes(bytes, permit));
     }
     // The frontend abbreviates cwd with it.
@@ -1045,26 +1036,8 @@ pub async fn list(
         sessions.retain(|row| row["origin_launch_id"].is_null());
         response["enabled"] = json!(!sessions.is_empty());
     }
-    // The pane list and the pending receipts are filtered through the
-    // debug-run registry exactly like the session list (`filter_rows`).
-    if !debug_run.is_empty() || !runs.is_empty() {
-        if let Some(sessions) = response["sessions"].as_array_mut() {
-            sessions.retain(|row| runs.keeps(row, &debug_run));
-        }
-        if let Some(pending) = response["pending"].as_array_mut() {
-            pending.retain(|row| {
-                runs.keeps(
-                    &json!({"uid": row["declared_uid"], "sid": row["declared_sid"],
-                            "name": row["name"], "cwd": row["cwd"]}),
-                    &debug_run,
-                )
-            });
-        }
-    }
     let (bytes, permit) = super::lifecycle::serialize(response, permit).await?;
-    state
-        .polls
-        .store_term_list(&debug_run, generation, runs, bytes.clone());
+    state.polls.store_term_list(generation, bytes.clone());
     Ok(super::lifecycle::response_bytes(bytes, permit))
 }
 

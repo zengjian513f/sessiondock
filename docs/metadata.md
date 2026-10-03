@@ -14,8 +14,8 @@ Files:
 
 - `session-metadata.json`: the committed document.
 - `.metadata-tmp-<random>`: one operation's same-directory temporary file.
-- `debug-runs.json` (optional, foreign): the debug-run registry, tolerated here
-  and read by `sessions::debug_runs` only.
+
+Unrelated files, including an old `debug-runs.json`, are ignored and left untouched.
 
 The independent Rust schema starts at version 1.
 
