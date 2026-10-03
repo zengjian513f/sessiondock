@@ -1,6 +1,8 @@
 /target/
 /web/node_modules/
 /web/dist/
+/web/dist-migration/
+/web/dist-pages/
 /legacy-web/framework/
 /web/coverage/
 /web/test-results/

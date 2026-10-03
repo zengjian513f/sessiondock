@@ -281,8 +281,9 @@ def main(argv=None):
     chrome = find_chromium()
 
     if not args.dry_run and any(suite.get("browser") and not suite["skip"] for suite in plan):
-        print("building legacy Vue assets before browser suites", flush=True)
-        result = subprocess.run(["npm", "run", "build:legacy"], cwd=ROOT / "web", env=env,
+        frontend_build = "build:migration" if env.get("SESSIONDOCK_TEST_WEB_DIR") else "build:legacy"
+        print(f"building Vue assets before browser suites: {frontend_build}", flush=True)
+        result = subprocess.run(["npm", "run", frontend_build], cwd=ROOT / "web", env=env,
                                 timeout=300)
         if result.returncode != 0:
             return result.returncode

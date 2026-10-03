@@ -21,6 +21,7 @@ import time
 from types import SimpleNamespace
 from urllib.request import urlopen
 
+from frontend_paths import frontend_dir
 from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, REPO, Corpus, codex_row
 from hub_http_suite import Hub, free_port
@@ -34,7 +35,7 @@ def start_node(binary, corpus, extra):
     port = free_port()
     environment = {key: value for key, value in os.environ.items() if not key.startswith("SESSIONDOCK_")}
     environment.update({"SESSIONDOCK_BIND": f"127.0.0.1:{port}",
-                        "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web")})
+                        "SESSIONDOCK_WEB_DIR": str(frontend_dir())})
     for source in ("claude", "codex", "grok"):
         environment[f"SESSIONDOCK_{source.upper()}_ROOT"] = str(corpus.root / source)
     environment.update({key: str(value) for key, value in extra.items()})

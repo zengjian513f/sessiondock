@@ -25,6 +25,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from frontend_paths import frontend_dir
 
 REPO = Path(__file__).resolve().parents[1]
 NIDS = {"a": "a" * 32, "b": "b" * 32, "c": "c" * 32}
@@ -92,7 +93,7 @@ class Hub:
             "SESSIONDOCK_HUB_NODES": str(root / "hub-nodes.json"),
             "SESSIONDOCK_HUB_CACHE_DIR": str(root / "hub-cache"),
             "SESSIONDOCK_HUB_NETWORKS": "127.0.0.0/8",
-            "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web"),
+            "SESSIONDOCK_WEB_DIR": str(frontend_dir()),
             "SESSIONDOCK_AUDIT_DIR": str(audit),
         })
         for node in nodes:

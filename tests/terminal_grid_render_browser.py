@@ -12,10 +12,11 @@ import argparse
 import sys
 from pathlib import Path
 
+from frontend_paths import frontend_dir
 from playwright.sync_api import sync_playwright
 
 REPO = Path(__file__).resolve().parent.parent
-WEB = REPO / "legacy-web"
+WEB = frontend_dir()
 BASE = ""
 def row(text, bg=-1):
     return {"s": [[text, -1, bg, 0]], "w": 24}

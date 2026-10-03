@@ -22,6 +22,40 @@ dialog、标签及机器面板仍由 legacy 管理。后续批次及依赖见
 生产部署从与页面相同来源的 `web/` 源码快照构建到 stage 的 `web/framework/`，
 不依赖开发目录里残留的生成文件。现有 `web/` 独立演示入口暂不参与生产。
 
+完整重构使用独立的 `web/migration/index.html` 入口：
+`npm --prefix web run build:migration` 生成 `web/dist-migration/` 静态目录，
+由临时 Rust 服务的 `SESSIONDOCK_WEB_DIR` 指向该目录。`WorkspaceShell` 提供
+原页面结构，机器设置及客户端矩阵由 Vue 组件、独立状态和请求 service 管理。
+独立入口的顶栏按钮/更多菜单、列表视图切换、侧栏收起和拖动、手机列表/详情切换、
+完整设置对话框及标签页已由 Vue 管理。缩放、捏合和可见视口逻辑移入 shell service，
+保持原断点、测量和偏好键；业务对话框暂通过具名操作打开。
+相应旧渲染和事件绑定已退出新入口；其它尚未迁移区域暂由
+`web/src/compat/` 独占。构建复用现有 CSS、字体、vendor 和 Grid 资产。
+
+浏览器夹具通过 `SESSIONDOCK_TEST_WEB_DIR` 选择这个目录，验证运行器相应
+构建新入口；未设置时仍验证现有生产前端。第一批独立入口的设置、客户端
+更新、顶栏折叠、深链、身份复制、资源列、Hub 机器操作及原生会话/SSE/手机
+恢复共十套 Chromium
+验收通过，未运行 unit test。实际操作范围见
+[迁移行为基线](frontend-migration-surfaces.md)。
+
+顶栏/设置交互迁移后，十套相关 Chromium 验收通过，包括顶栏逐宽折叠、收起左栏和
+手机详情页的全局操作、深链恢复、机器控件、缩放/捏合与 Grid/xterm 软键盘适配。
+拖动脚本原有的取消/中途宽度断言在旧入口也失败；按当前行为改为拖动期间只移动
+引导线、松手提交宽度、取消保留已保存宽度，并在两入口验证。
+
+按 2026-10-03 最新用户指令，本重构 goal 只提交和推送代码，不部署、不重启
+生产，也不切换生产入口或资源引用。生产保持 `2552436`；完整替换及过渡
+脚本清理仍按根目录计划继续执行。
+
+独立构建中的 `grid.html`、`records.html`、`file.html` 与 `files.html`
+已分别使用 `web/src/pages/` 下的 Vue 页面。Vue 管理工具条、列表和可见状态；
+Grid/xterm 实例、连接、字节解析及回放仍由页面 controller 管理，复用既有
+Grid 模块。原辅助页的三份过渡脚本已删除，生产目录仍保留原页面。
+`build:migration` 同时构建这些辅助页并放入同一静态目录。
+`terminal_grid_browser`、`terminal_records_browser` 和 `files_browser`
+在独立构建上通过实际连接、输入、滚动、回放及文件跳转验收。
+
 host 输出由每客户端独立有界队列隔离慢读者，退出完整性与进程身份分别验证。
 
 独立的 `LaunchTarget`/host launch guard 与同步 `lifecycle` 回执库：
