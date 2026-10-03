@@ -117,10 +117,9 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     let records = Records::parse(data, CODEX_HEAD_LINES);
     let mut hard_error: Option<String> = None;
 
-    // Head: first session_meta, first model, first
+    // Head: first session_meta, first
     // qualifying user message.
     let mut meta: Option<&Value> = None;
-    let mut model = Value::Null;
     let mut first_user: Option<String> = None;
     for record in &records.head.records {
         let value = &record.value;
@@ -128,9 +127,6 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         let kind = value["type"].as_str().unwrap_or("");
         if kind == "session_meta" && meta.is_none() && truthy(payload) {
             meta = Some(payload);
-        }
-        if kind == "turn_context" && !truthy(&model) {
-            model = payload["model"].clone();
         }
         if first_user.is_none()
             && kind == "response_item"
@@ -247,6 +243,16 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
             .unwrap_or_else(|| "subagent".to_owned()),
         open_turn: open_turn(&records),
     });
+    let model = records
+        .tail
+        .records
+        .iter()
+        .rev()
+        .chain(records.head.records.iter().rev())
+        .find_map(|record| {
+            crate::sessions::providers::native_model(input.source, &record.value, false)
+        })
+        .unwrap_or(Value::Null);
     let committed = committed_end(data);
     RowSummary {
         sid,

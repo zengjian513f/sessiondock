@@ -1,5 +1,5 @@
-//! Scalar Codex turn state, independent of the metadata head/tail window.
-//! Cold reads walk backwards only to the latest native boundary; appends
+//! Scalar Codex turn and Claude/Codex model state, independent of head/tail windows.
+//! Cold reads walk backwards to the latest model/turn boundary; appends
 //! inspect only new complete lines. No message projection is retained.
 
 use std::io;
@@ -14,16 +14,22 @@ pub(super) struct Scan {
     stamp: Stamp,
     committed: u64,
     pub turn: Option<&'static str>,
+    pub model: Value,
 }
 
 #[derive(Deserialize)]
 struct Record {
     #[serde(rename = "type")]
     kind: String,
+    #[serde(default)]
     payload: Payload,
+    #[serde(default)]
+    message: Payload,
+    #[serde(rename = "isSidechain", default)]
+    sidechain: Value,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct Payload {
     #[serde(rename = "type", default)]
     kind: String,
@@ -31,12 +37,16 @@ struct Payload {
     name: String,
     #[serde(default)]
     error: Value,
+    #[serde(default)]
+    model: Value,
 }
 
 pub(super) fn read(
     file: &mut dyn StampedSource,
     stamp: Stamp,
     previous: Option<&Scan>,
+    source: &str,
+    sidecar: bool,
 ) -> io::Result<Scan> {
     // Same-size rewrites, truncations and inode changes must not inherit state.
     let previous = previous.filter(|scan| {
@@ -50,11 +60,12 @@ pub(super) fn read(
     let mut pieces: Vec<Vec<u8>> = Vec::new();
     let mut asking = None;
     let mut boundary = None;
+    let mut model = None;
     'chunks: while position > floor {
         let start = position.saturating_sub(TAIL_BYTES).max(floor);
         let bytes = file.read_range(start, position - start)?;
         if bytes.len() as u64 != position - start {
-            return Err(io::Error::other("Codex turn scan changed during read"));
+            return Err(io::Error::other("Native state scan changed during read"));
         }
         let mut end = bytes.len();
         loop {
@@ -68,17 +79,36 @@ pub(super) fn read(
                     let raw: Vec<u8> = pieces.iter().rev().flatten().copied().collect();
                     pieces.clear();
                     if (memchr::memmem::find(&raw, b"event_msg").is_some()
-                        || memchr::memmem::find(&raw, b"response_item").is_some())
+                        || memchr::memmem::find(&raw, b"response_item").is_some()
+                        || memchr::memmem::find(&raw, b"assistant").is_some()
+                        || memchr::memmem::find(&raw, b"turn_context").is_some())
                         && let Ok(record) = serde_json::from_slice::<Record>(&raw)
                     {
-                        if record.kind == "response_item" {
+                        let seen = match source {
+                            "codex" if record.kind == "turn_context" => &record.payload.model,
+                            "claude"
+                                if record.kind == "assistant"
+                                    && (sidecar || !super::summary::truthy(&record.sidechain)) =>
+                            {
+                                &record.message.model
+                            }
+                            _ => &Value::Null,
+                        };
+                        if model.is_none() && crate::sessions::providers::valid_native_model(seen) {
+                            model = Some(seen.clone());
+                        }
+                        if source == "codex" && boundary.is_none() && record.kind == "response_item"
+                        {
                             asking.get_or_insert_with(|| {
                                 matches!(
                                     record.payload.kind.as_str(),
                                     "function_call" | "custom_tool_call"
                                 ) && crate::sessions::providers::question_tool(&record.payload.name)
                             });
-                        } else if record.kind == "event_msg" {
+                        } else if source == "codex"
+                            && boundary.is_none()
+                            && record.kind == "event_msg"
+                        {
                             boundary = match record.payload.kind.as_str() {
                                 "task_started" | "turn_started" => Some("working"),
                                 "task_complete" | "turn_complete" => {
@@ -91,9 +121,9 @@ pub(super) fn read(
                                 "turn_aborted" => Some("aborted"),
                                 _ => None,
                             };
-                            if boundary.is_some() {
-                                break 'chunks;
-                            }
+                        }
+                        if model.is_some() && (source != "codex" || boundary.is_some()) {
+                            break 'chunks;
                         }
                     }
                 }
@@ -122,11 +152,14 @@ pub(super) fn read(
         (after.dev, after.ino) == (stamp.dev, stamp.ino)
             && (after == stamp || after.size > stamp.size)
     }) {
-        return Err(io::Error::other("Codex turn scan changed during read"));
+        return Err(io::Error::other("Native state scan changed during read"));
     }
     Ok(Scan {
         stamp,
         committed,
         turn,
+        model: model
+            .or_else(|| previous.map(|scan| scan.model.clone()))
+            .unwrap_or(Value::Null),
     })
 }

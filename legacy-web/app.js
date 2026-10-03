@@ -2584,7 +2584,7 @@ function mergeSessionMetaEvent(entry, session) {
 /** 列表元数据变更后同步缓存和当前详情标题，不重绘消息正文。 */
 function refreshSessionMeta() {
   const headerKey = m => JSON.stringify([
-    m.title, m.parent_title, m.sid, m.agent_type, !!m.starred,
+    m.title, m.parent_title, m.sid, m.agent_type, m.model, !!m.starred,
     m.nest_parent || null, m.group || null,
     (m.agent_items || []).map(a => [a.id, a.title, a.type]),
   ]);

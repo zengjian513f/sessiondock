@@ -416,6 +416,16 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     if hard_error.is_some() {
         warnings.clear();
     }
+    let model = records
+        .tail
+        .records
+        .iter()
+        .rev()
+        .chain(records.head.records.iter().rev())
+        .find_map(|record| {
+            crate::sessions::providers::native_model(input.source, &record.value, agent.is_some())
+        })
+        .unwrap_or(Value::Null);
     let committed = committed_end(data);
     RowSummary {
         // A sidecar row is keyed by its agent id, like today's `_is_subagent` meta.
@@ -428,7 +438,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         created,
         updated,
         size: data.stamp.size,
-        model: Value::Null,
+        model,
         branch,
         codex: None,
         agent: agent_meta,

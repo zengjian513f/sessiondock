@@ -102,7 +102,7 @@ impl Index {
                     reads += 1;
                     let Some(outcome) = read_candidate(
                         &candidate,
-                        cached.and_then(|cached| cached.codex_turn.as_ref()),
+                        cached.and_then(|cached| cached.native_state.as_ref()),
                     ) else {
                         break;
                     };
@@ -112,7 +112,7 @@ impl Index {
                             Cached {
                                 key: outcome.key,
                                 summary: outcome.summary.clone(),
-                                codex_turn: outcome.codex_turn,
+                                native_state: outcome.native_state,
                             },
                         );
                     }

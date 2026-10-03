@@ -65,14 +65,15 @@
 //!   the project directory name.
 //! - Native ids and conflicts come from the head/tail records seen.
 //! - A Codex head is 120 pieces, a Claude head 40.
-//! - Codex turn state uses a separate scalar scan (`codex_turn`): backwards
-//!   to the latest boundary on cold reads, only new complete lines on append.
+//! - Current Claude/Codex models and Codex turn state use a scalar scan
+//!   (`native_state`): backwards to the latest model/boundary on cold reads,
+//!   only new complete lines on append.
 //!   Metadata windows cannot close a turn merely by losing its start event.
 
 pub mod agent_stops;
-mod codex_turn;
 pub mod graph;
 pub mod names;
+mod native_state;
 pub mod summary;
 mod titles;
 
@@ -436,7 +437,7 @@ struct CacheKey {
 struct Cached {
     key: CacheKey,
     summary: Arc<RowSummary>,
-    codex_turn: Option<codex_turn::Scan>,
+    native_state: Option<native_state::Scan>,
 }
 
 #[derive(Default)]
@@ -601,7 +602,7 @@ impl Index {
                         Cached {
                             key: cached.key,
                             summary: cached.summary.clone(),
-                            codex_turn: cached.codex_turn.clone(),
+                            native_state: cached.native_state.clone(),
                         },
                     );
                 }
@@ -622,7 +623,7 @@ impl Index {
                 Cached {
                     key: read.key,
                     summary: read.summary,
-                    codex_turn: read.codex_turn,
+                    native_state: read.native_state,
                 },
             );
         }
@@ -833,7 +834,7 @@ impl Index {
                 candidate,
                 cache
                     .get(&candidate.path)
-                    .and_then(|cached| cached.codex_turn.as_ref()),
+                    .and_then(|cached| cached.native_state.as_ref()),
             )
         })
     }
@@ -881,7 +882,7 @@ fn parallel_map<T: Send, R: Send>(
 struct ReadOutcome {
     key: CacheKey,
     summary: Arc<RowSummary>,
-    codex_turn: Option<codex_turn::Scan>,
+    native_state: Option<native_state::Scan>,
     /// An I/O failure (permissions, a link or directory where a file should
     /// be): published for this snapshot but not cached, so a fix that leaves
     /// the stamp unchanged (chmod) is noticed by the next refresh.
@@ -1350,7 +1351,7 @@ fn read_sidecar(root: &Path, path: &Path, label: &str) -> SidecarRead {
 /// Summarize one discovered candidate; `None` when its files vanished.
 fn read_candidate(
     candidate: &Discovered,
-    previous_turn: Option<&codex_turn::Scan>,
+    previous_turn: Option<&native_state::Scan>,
 ) -> Option<ReadOutcome> {
     let data = match candidate.stamp {
         Some(_) => match read_data(&candidate.root, &candidate.data) {
@@ -1361,7 +1362,7 @@ fn read_candidate(
                 return Some(ReadOutcome {
                     key: candidate.key(),
                     summary: Arc::new(summary),
-                    codex_turn: None,
+                    native_state: None,
                     transient: true,
                 });
             }
@@ -1425,17 +1426,27 @@ fn read_candidate(
         sidecar: sidecar_bytes,
     });
     let mut turn_scan = None;
-    if candidate.source == "codex"
+    if matches!(candidate.source, "codex" | "claude")
         && let Some((_, _, _, stamp)) = &data
     {
-        let scan = open_indexed(&candidate.root, &candidate.data)
-            .and_then(|mut file| codex_turn::read(&mut file, *stamp, previous_turn));
+        let scan = open_indexed(&candidate.root, &candidate.data).and_then(|mut file| {
+            native_state::read(
+                &mut file,
+                *stamp,
+                previous_turn,
+                candidate.source,
+                summary.agent.is_some(),
+            )
+        });
         match scan {
             Ok(scan) => {
-                if let Some(agent) = &mut summary.agent {
-                    agent.open_turn = matches!(scan.turn, Some("working" | "waiting"));
-                } else {
-                    summary.turn = scan.turn;
+                summary.model = scan.model.clone();
+                if candidate.source == "codex" {
+                    if let Some(agent) = &mut summary.agent {
+                        agent.open_turn = matches!(scan.turn, Some("working" | "waiting"));
+                    } else {
+                        summary.turn = scan.turn;
+                    }
                 }
                 turn_scan = Some(scan);
             }
@@ -1484,7 +1495,7 @@ fn read_candidate(
             summary_stamp: sidecar.as_ref().and_then(|(_, stamp, _)| *stamp),
         },
         summary: Arc::new(summary),
-        codex_turn: turn_scan,
+        native_state: turn_scan,
         transient,
     })
 }

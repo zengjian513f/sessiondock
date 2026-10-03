@@ -58,6 +58,15 @@
   `跳过重复的Codex session_meta ×N`）：公开列表行（含 `agent_items`）只在
   `supported:false` 时带 `migration_warnings`（前端不消费，
   真实根上它占了列表载荷的一半以上）。
+- **当前模型**（BUG-20261003-110654-be9964）：Claude 取最近一条有效 assistant
+  的 `message.model`，Codex 取最近一条有效 `turn_context.payload.model`。
+  主会话跳过 Claude sidechain；子代理只读自己的文件；空值和 `<synthetic>`
+  合成回复标记不覆盖已知模型。冷读以块反向查找，追加只检查上次 LF 后的完整行，
+  缓存标量模型与 Codex 回合状态；记录不受头/尾摘要窗口限制，截断、同尺寸重写及
+  inode 替换重建。列表、详情、搜索元数据使用同一索引字段，模型变更会刷新已打开
+  的标题栏。显示的是最近原生记录确认的模型：CLI 尚未写入模型记录的选择无法由
+  转录确认。相对冻结 Python 的 Claude 空值 / Codex 首个模型，这是用户要求的
+  **DELTA**。回归见 `tests/session_model_browser.py`。
 - **并发变化**：读头/尾前后各 `stat` 一次；不一致则重读（最多 3 次），仍不一致
   就按已读字节发布并带上读取时的 stamp。删除的文件在下一次刷新消失。
 - **归属图**（`index/graph`）：Claude sidecar 归属主会话（目录 + 文件名 +
