@@ -280,6 +280,13 @@ def main(argv=None):
             env["PATH"] = str(cargo_bin) + os.pathsep + env.get("PATH", "")
     chrome = find_chromium()
 
+    if not args.dry_run and any(suite.get("browser") and not suite["skip"] for suite in plan):
+        print("building legacy Vue assets before browser suites", flush=True)
+        result = subprocess.run(["npm", "run", "build:legacy"], cwd=ROOT / "web", env=env,
+                                timeout=300)
+        if result.returncode != 0:
+            return result.returncode
+
     n = len(plan)
     outcome = {}                                  # name -> (status, elapsed, reason)
     stop = threading.Event()                      # set on the first failure unless --keep-going
