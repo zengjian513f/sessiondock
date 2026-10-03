@@ -1,9 +1,14 @@
-import {LineDecoder, encodeResize} from './grid/wire.js';
-import {GridModel} from './grid/model.js';
-import {GridRenderer} from './grid/render.js';
-import {InputEncoder, KeyCapture} from './grid/input.js';
+// @ts-nocheck
+// Terminal handles and protocol state stay outside Vue reactivity.
+import {LineDecoder, encodeResize} from '../../../../legacy-web/grid/wire.js';
+import {GridModel} from '../../../../legacy-web/grid/model.js';
+import {GridRenderer} from '../../../../legacy-web/grid/render.js';
+import {InputEncoder, KeyCapture} from '../../../../legacy-web/grid/input.js';
 
-const $ = id => document.getElementById(id);
+
+export function createGridController(ui, elements) {
+const handlers = {};
+const $ = id => elements[id];
 const PAGE_ID = crypto.randomUUID();
 const encoderUtf8 = new TextEncoder();
 const base = new URL('.', location.href);
@@ -15,7 +20,7 @@ const wantedRecord = params.get('record');
 const readOnly = !!wantedRecord;
 const prefix = node ? ['api', 'nodes', encodeURIComponent(node), 'api', ''].join('/') : 'api/';
 
-const state = {
+Object.assign(ui.state, {
   name: '',
   status: '',
   connected: false,
@@ -28,7 +33,8 @@ const state = {
   record: wantedRecord || '',
   live: false,
   ended: false,
-};
+});
+const state = ui.state;
 
 const model = new GridModel();
 const renderer = new GridRenderer($('grid'), {
@@ -71,7 +77,7 @@ globalThis.__gridText = () => Array.from(
   (_, i) => model.textOf(model.rowAt(i)),
 ).join('\n');
 
-$('machine').textContent = node || location.hostname;
+ui.machine = node || location.hostname;
 
 if (SessionDockCapabilities.config.terminal === false) {
   setStatus('此机器未启用终端传输');
@@ -100,12 +106,11 @@ function apiURL(path, query) {
 
 function setStatus(message, error = false) {
   state.status = message;
-  $('status').textContent = message;
-  $('status').className = error ? 'error' : '';
+  ui.error = error;
 }
 
 function showTakeover(show) {
-  $('takeover').hidden = !show;
+  ui.takeover = show;
 }
 
 function bindingOf(row) {
@@ -127,25 +132,13 @@ function rowByName(name) {
   return sessionRows.find(row => row.name === name) || null;
 }
 
-function hasOption(select, value) {
-  for (const option of select.options) {
-    if (option.value === value) return true;
-  }
-  return false;
-}
-
 function fillSelect(rows) {
-  const select = $('session');
-  const prev = select.value;
-  select.replaceChildren();
-  for (const row of rows) {
-    const option = document.createElement('option');
-    option.value = row.name;
-    option.textContent = `${row.name} · ${row.cwd || ''}`;
-    select.append(option);
-  }
-  if (wantedName && hasOption(select, wantedName) && !state.connected) select.value = wantedName;
-  else if (hasOption(select, prev)) select.value = prev;
+  const prev = ui.selected;
+  ui.sessions = rows;
+  const has = value => rows.some(row => row.name === value);
+  if (wantedName && has(wantedName) && !state.connected) ui.selected = wantedName;
+  else if (has(prev)) ui.selected = prev;
+  else ui.selected = rows[0]?.name || '';
 }
 
 function maxTop() {
@@ -321,7 +314,7 @@ function applySize(sendIfOpen) {
   const {cols, rows} = renderer.fit(box.clientWidth, box.clientHeight);
   state.cols = cols;
   state.rows = rows;
-  $('size').textContent = `${cols}×${rows}`;
+  ui.size = `${cols}×${rows}`;
   if (readOnly) {
     scheduleRender();
     return {cols: model.cols, rows: model.rows};
@@ -415,7 +408,7 @@ async function loadList() {
     if (!state.connected && !state.status) setStatus(sessionRows.length ? '' : '没有会话');
     if (wantedName && !autoStarted && !state.connected && rowByName(wantedName)) {
       autoStarted = true;
-      $('session').value = wantedName;
+      ui.selected = wantedName;
       connect();
     }
   } catch (error) {
@@ -543,7 +536,7 @@ function openRecordSocket(id) {
         state.live = !!message.live;
         state.ended = !message.live;
         setStatus(message.live ? '录制进行中 · 实时跟随' : '录制已结束');
-        $('size').textContent = `${message.cols}×${message.rows}`;
+        ui.size = `${message.cols}×${message.rows}`;
       } else if (message.t === 'gap') {
         setStatus(state.status + '（录制有缺口，已从下一个快照继续）');
       } else if (message.t === 'exit') {
@@ -561,7 +554,7 @@ function openRecordSocket(id) {
     if (!messages.length) return;
     for (const msg of messages) {
       model.apply(msg);
-      if (msg && msg.t === 'snapshot') $('size').textContent = `${model.cols}×${model.rows}`;
+      if (msg && msg.t === 'snapshot') ui.size = `${model.cols}×${model.rows}`;
     }
     state.lastSeq = model.seq;
     stickFollow();
@@ -584,7 +577,7 @@ function openRecordSocket(id) {
 
 async function connect(force = false, fromReconnect = false) {
   if (connecting) return;
-  const row = fromReconnect && activeRow ? activeRow : rowByName($('session').value);
+  const row = fromReconnect && activeRow ? activeRow : rowByName(ui.selected);
   if (!row) {
     setStatus('请选择会话', true);
     return;
@@ -632,24 +625,24 @@ function setup() {
     onPaste: text => sendInput(encoder.paste(text)),
   });
 
-  keys.addEventListener('focus', () => {
+  handlers.keys_focus = () => {
     focused = true;
     resetBlink();
     const seq = encoder.focus(true);
     if (seq != null) send(seq);
     scheduleRender();
-  });
-  keys.addEventListener('blur', () => {
+  };
+  handlers.keys_blur = () => {
     focused = false;
     stopBlink();
     blinkOn = true;
     const seq = encoder.focus(false);
     if (seq != null) send(seq);
     scheduleRender();
-  });
+  };
 
-  $('term').addEventListener('click', () => keys.focus());
-  $('term').addEventListener('wheel', event => {
+  handlers.term_click = () => keys.focus();
+  handlers.term_wheel = event => {
     event.preventDefault();
     const modes = model.modes;
     if (!readOnly && modes.alt && modes.mouse === 'none') {
@@ -666,9 +659,9 @@ function setup() {
     stickFollow();
     scheduleRender();
     if (event.deltaY < 0) maybeLoadHistory();
-  }, {passive: false});
+  };
 
-  $('grid').addEventListener('mousedown', event => {
+  handlers.grid_mousedown = event => {
     keys.focus();
     const cell = cellFromEvent(event);
     // Ctrl/⌘ + 左键：打开该格子上的 OSC 8 超链接（新标签，noopener）。
@@ -699,7 +692,7 @@ function setup() {
     selecting = true;
     setSelection({start: selectAnchor, end: selectAnchor});
     scheduleRender();
-  });
+  };
 
   addEventListener('mousemove', event => {
     const cell = cellFromEvent(event);
@@ -741,28 +734,28 @@ function setup() {
     }
   });
 
-  $('connect').addEventListener('click', () => connect(false));
-  $('takeover').addEventListener('click', () => connect(true));
-  $('copy').addEventListener('click', () => {
+  handlers.connect_click = () => connect(false);
+  handlers.takeover_click = () => connect(true);
+  handlers.copy_click = () => {
     const range = orderedSelection();
     if (!range) return;
     const text = model.selectionText(range.start, range.end);
     if (text) navigator.clipboard.writeText(text);
-  });
-  $('paste').addEventListener('click', async () => {
+  };
+  handlers.paste_click = async () => {
     try {
       const text = await navigator.clipboard.readText();
       sendInput(encoder.paste(text));
     } catch (error) {
       setStatus(error.message || '粘贴失败', true);
     }
-  });
-  $('bottom').addEventListener('click', () => {
+  };
+  handlers.bottom_click = () => {
     following = true;
     viewportTop = maxTop();
     state.following = true;
     scheduleRender();
-  });
+  };
 
   addEventListener('resize', scheduleFit);
   addEventListener('pagehide', () => {
@@ -780,15 +773,13 @@ function setup() {
     // 从应用内的录制列表进来时给一个"返回"，PWA 里没有标签页可切。
     const embedded = params.get('embedded') === '1' || window.self !== window.top;
     if (embedded) {
-      $('back').hidden = false;
-      $('back').addEventListener('click', () => {
+      ui.back = true;
+      handlers.back_click = () => {
         if (history.length > 1) history.back();
         else location.href = new URL('records.html?embedded=1' + (node ? '&node=' + encodeURIComponent(node) : ''), base).href;
-      });
+      };
     }
-    $('session').hidden = true;
-    $('connect').hidden = true;
-    $('paste').hidden = true;
+    ui.readOnly = true;
     state.name = wantedRecord;
     setStatus('正在连接…');
     openRecordSocket(wantedRecord);
@@ -796,4 +787,7 @@ function setup() {
   }
   startListRefresh();
   loadList();
+}
+
+return handlers;
 }

@@ -1,6 +1,9 @@
-'use strict';
-(() => {
-  const $ = id => document.getElementById(id);
+// @ts-nocheck
+import { nextTick } from 'vue';
+// Nonreactive xterm and WebSocket handles retain the original playback semantics.
+export function createRecordsController(ui, elements) {
+  const handlers = {};
+  const $ = id => elements[id];
   const base = new URL('.', location.href);
   const params = new URLSearchParams(location.search);
   const node = params.get('node');
@@ -11,10 +14,9 @@
   if (!nodes.length) nodes.push(node || null);
   const nodeNames = new Map();
   const prefixFor = nid => (nid ? ['api', 'nodes', encodeURIComponent(nid), 'api', ''].join('/') : 'api/');
-  const prefix = prefixFor(nodes[0]);
   const fitKey = SessionDockCapabilities.namespace + 'records-fit';
   const GAP_NOTE = '（录制有缺口，已从下一个快照继续）';
-  const state = {id: '', key: '', node: '', status: '', live: false, ended: false, gaps: 0, bytes: 0};
+  const state = ui.state;
 
   let records = [];
   let term = null, fitAddon = null, socket = null;
@@ -24,20 +26,19 @@
 
   globalThis.__records = {term: () => term, socket: () => socket, state};
 
-  $('machine').textContent = node || location.hostname;
+  ui.machine = node || location.hostname;
   // 嵌在主页面对话框里时外层已有标题栏，省掉自己的。
   if (embedded) document.body.classList.add('embedded');
 
   if (SessionDockCapabilities.config.terminal_records === false
       || SessionDockCapabilities.config.terminal === false) {
     setStatus('此机器未启用终端录制');
-    return;
+    return handlers;
   }
 
   try { fitOn = localStorage.getItem(fitKey) === 'true'; } catch {}
-  $('fit').setAttribute('aria-pressed', String(fitOn));
-  $('xterm').classList.toggle('fit', fitOn);
-  $('empty').hidden = false;
+  ui.fitOn = fitOn;
+  ui.empty = true;
 
   function apiURL(path, query, nid = nodes[0]) {
     const url = new URL(prefixFor(nid) + path, base);
@@ -51,22 +52,10 @@
   }
   function setStatus(message, error = false) {
     state.status = message;
-    $('status').textContent = message;
-    $('status').className = error ? 'error' : '';
+    ui.error = error;
   }
   function appendStatus(note) {
     if (!state.status.includes(note)) setStatus(state.status + note);
-  }
-  function sizeText(bytes) {
-    const n = Number(bytes) || 0;
-    if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MiB';
-    return (n / 1024).toFixed(1) + ' KiB';
-  }
-  function element(tag, text, className) {
-    const node = document.createElement(tag);
-    if (text !== undefined && text !== null) node.textContent = text;
-    if (className) node.className = className;
-    return node;
   }
   function termTheme() {
     const dark = document.documentElement.dataset.theme === 'dark';
@@ -80,7 +69,7 @@
     return buf.viewportY + term.rows >= buf.length;
   }
   function visibleRecords() {
-    const liveOnly = $('live-only').checked;
+    const liveOnly = ui.liveOnly;
     return records.filter(row => !liveOnly || row.live);
   }
   function syncURL(id, nid) {
@@ -94,68 +83,9 @@
     return records.find(row => row.id === id && (row.node || null) === (nid || null))
       || records.find(row => row.id === id) || null;
   }
-  function highlight() {
-    const list = $('records');
-    let active = null;
-    for (const item of list.children) {
-      const on = item.dataset.id === state.id && (item.dataset.node || '') === (state.node || '');
-      item.setAttribute('aria-selected', String(on));
-      if (on) active = item;
-    }
-    if (active) list.setAttribute('aria-activedescendant', active.id);
-    else list.removeAttribute('aria-activedescendant');
-  }
   function renderList() {
-    const list = $('records');
-    const old = new Map([...list.children].map(item => [item.dataset.key, item]));
-    let position = 0;
-    for (const row of visibleRecords()) {
-      const key = JSON.stringify([row.node || '', row.id]);
-      const signature = JSON.stringify(row);
-      const previous = old.get(key);
-      old.delete(key);
-      const place = item => {
-        if (list.children[position] !== item) list.insertBefore(item, list.children[position] || null);
-        position++;
-      };
-      if (previous?._signature === signature) { place(previous); continue; }
-      previous?.remove();
-      const item = element('li');
-      item.dataset.key = key;
-      item._signature = signature;
-      item.role = 'option';
-      item.dataset.id = row.id;
-      item.id = 'rec-' + row.id;
-      item.setAttribute('aria-selected', 'false');
-      item.dataset.node = row.node || '';
-      const heading = element('div', undefined, 'heading');
-      heading.append(element('span', row.name || row.id, 'name'));
-      if (nodes.length > 1 || nodes[0]) {
-        heading.append(element('span', nodeNames.get(row.node) || (row.node || '').slice(0, 8), 'badge node'));
-      }
-      heading.append(element('span', row.live ? '进行中' : '已结束', 'badge ' + (row.live ? 'live' : 'ended')));
-      item.append(heading);
-      const created = row.created_ms ? new Date(row.created_ms).toLocaleString() : '';
-      const size = sizeText(row.bytes);
-      const dim = `${row.cols || 0}×${row.rows || 0}`;
-      item.append(element('div', [created, size, dim].filter(Boolean).join(' · '), 'meta'));
-      if (row.cwd) item.append(element('div', row.cwd, 'cwd'));
-      // 同一模型的网格回放：新页面打开，不影响这里的 xterm 回放。
-      const gridLink = element('a', '网格回放', 'grid-link');
-      const gridUrl = new URL('grid.html', base);
-      gridUrl.searchParams.set('record', row.id);
-      if (row.node) gridUrl.searchParams.set('node', row.node);
-      if (embedded) gridUrl.searchParams.set('embedded', '1');
-      gridLink.href = gridUrl.href;
-      // 嵌在应用内对话框时在本框架内导航（新标签在 PWA 里看不到）；网格页有"返回"。
-      gridLink.target = embedded ? '_self' : '_blank';
-      gridLink.rel = 'noopener';
-      gridLink.addEventListener('click', event => event.stopPropagation());
-      item.append(gridLink);
-      place(item);
-    }
-    for (const item of old.values()) item.remove();
-    highlight();
+    ui.records = records;
+    ui.nodeNames = Object.fromEntries(nodeNames);
   }
   async function loadList() {
     if (loading) return;
@@ -165,7 +95,7 @@
         try {
           const meta = await (await fetch(new URL('api/nodes', base))).json();
           for (const row of meta.machines || meta.nodes || []) if (row?.id) nodeNames.set(row.id, row.name || row.id);
-          $('machine').textContent = nodes.map(nid => nodeNames.get(nid) || nid).join(' · ');
+          ui.machine = nodes.map(nid => nodeNames.get(nid) || nid).join(' · ');
         } catch { /* 机器名只是装饰 */ }
       }
       // 每台机器各自请求；一台失败不影响其它机器，错误合并到状态栏。
@@ -182,7 +112,7 @@
       records = settled.flatMap(item => item.status === 'fulfilled' ? item.value : [])
         .sort((a, b) => (b.created_ms || 0) - (a.created_ms || 0));
       renderList();
-      if (!state.id && !$('status').textContent) setStatus(records.length ? '' : '没有录制');
+      if (!state.id && !state.status) setStatus(records.length ? '' : '没有录制');
     } catch (error) {
       if (!state.id) setStatus(error.message, true);
     } finally {
@@ -207,7 +137,7 @@
       fitAddon = null;
     }
     $('xterm').replaceChildren();
-    $('xterm').classList.toggle('fit', fitOn);
+    ui.fitOn = fitOn;
   }
   function createTerm() {
     destroyTerm();
@@ -247,14 +177,14 @@
       state.live = !!msg.live;
       state.ended = !state.live;
       reconnectDelay = 1000;
-      $('size').textContent = recordedCols && recordedRows ? `${recordedCols}×${recordedRows}` : '';
+      ui.size = recordedCols && recordedRows ? `${recordedCols}×${recordedRows}` : '';
       setStatus(state.live ? '进行中 · 实时跟随' : '已结束');
       return;
     }
     if (msg.t === 'resize') {
       recordedCols = msg.cols || recordedCols;
       recordedRows = msg.rows || recordedRows;
-      $('size').textContent = recordedCols && recordedRows ? `${recordedCols}×${recordedRows}` : '';
+      ui.size = recordedCols && recordedRows ? `${recordedCols}×${recordedRows}` : '';
       if (!fitOn) term.resize(recordedCols, recordedRows);
       return;
     }
@@ -338,52 +268,48 @@
       recordedCols = 0;
       recordedRows = 0;
       reconnectDelay = 1000;
-      $('size').textContent = '';
+      ui.size = '';
       setStatus('正在连接…');
       createTerm();
     }
-    $('empty').hidden = true;
+    ui.empty = false;
     syncURL(id, nid);
-    highlight();
     if (!switching && socket && socket.readyState <= WebSocket.OPEN) return;
     connect(id);
   }
 
-  $('records').addEventListener('click', event => {
-    const item = event.target.closest('[role=option]');
-    if (item) openRecord(item.dataset.id, item.dataset.node || null);
-  });
-  $('records').addEventListener('keydown', event => {
-    const items = [...$('records').children];
+  handlers.openRecord = openRecord;
+  handlers.records_keydown = event => {
+    const items = visibleRecords();
     if (!items.length) return;
-    const current = items.findIndex(item => item.dataset.id === state.id);
+    const current = items.findIndex(item => item.id === state.id);
     const go = index => {
       event.preventDefault();
       const next = items[Math.max(0, Math.min(items.length - 1, index))];
-      if (next) openRecord(next.dataset.id, next.dataset.node || null);
+      if (next) openRecord(next.id, next.node || null);
     };
     if (event.key === 'ArrowDown') go(current < 0 ? 0 : current + 1);
     else if (event.key === 'ArrowUp') go(current < 0 ? 0 : current - 1);
     else if (event.key === 'Home') go(0);
     else if (event.key === 'End') go(items.length - 1);
     else if (event.key === 'Enter' || event.key === ' ') go(current < 0 ? 0 : current);
-  });
-  $('refresh').addEventListener('click', () => loadList());
-  $('live-only').addEventListener('change', () => renderList());
-  $('fit').addEventListener('click', () => {
+  };
+  handlers.refresh_click = () => loadList();
+  handlers.fit_click = async () => {
     fitOn = !fitOn;
-    $('fit').setAttribute('aria-pressed', String(fitOn));
-    $('xterm').classList.toggle('fit', fitOn);
+    ui.fitOn = fitOn;
     try { localStorage.setItem(fitKey, String(fitOn)); } catch {}
+    // Apply the original sizing after Vue has committed the fit class.
+    await nextTick();
     applyRecordedSize();
-  });
-  $('copy').addEventListener('click', () => {
+  };
+  handlers.copy_click = () => {
     if (!term) return;
     const text = term.getSelection();
     if (!text) return;
     navigator.clipboard.writeText(text);
-  });
-  $('bottom').addEventListener('click', () => { term?.scrollToBottom(); });
+  };
+  handlers.bottom_click = () => { term?.scrollToBottom(); };
   addEventListener('resize', () => { if (fitOn) fitAddon?.fit(); });
   addEventListener('pagehide', () => {
     leaving = true;
@@ -398,4 +324,6 @@
 
   const wanted = new URLSearchParams(location.search).get('id');
   loadList().then(() => { if (wanted) openRecord(wanted, node || null); });
-})();
+
+return handlers;
+}

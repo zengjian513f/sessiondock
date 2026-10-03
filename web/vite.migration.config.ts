@@ -2,7 +2,7 @@ import { cpSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import vue from '@vitejs/plugin-vue'
-import { defineConfig } from 'vite'
+import { build, defineConfig } from 'vite'
 
 const webRoot = fileURLToPath(new URL('.', import.meta.url))
 const legacyRoot = resolve(webRoot, '../legacy-web')
@@ -16,7 +16,7 @@ export default defineConfig({
     vue({ template: { compilerOptions: { whitespace: 'preserve' } } }),
     {
       name: 'migration-static-assets',
-      writeBundle() {
+      async writeBundle() {
         // Reuse raw assets and standalone pages. The production app and settings
         // bundle are excluded: only the migration-owned sources supply those.
         for (const name of readdirSync(legacyRoot)) {
@@ -27,6 +27,10 @@ export default defineConfig({
           if (name.endsWith('.js')) cpSync(resolve(compatRoot, name), resolve(outputRoot, name))
         }
         cpSync(resolve(webRoot, 'migration/index.html'), resolve(outputRoot, 'index.html'))
+        await build({ configFile: resolve(webRoot, 'vite.pages.config.ts') })
+        for (const name of readdirSync(resolve(webRoot, 'dist-pages'))) {
+          cpSync(resolve(webRoot, 'dist-pages', name), resolve(outputRoot, name))
+        }
       },
     },
   ],
