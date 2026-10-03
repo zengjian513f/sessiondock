@@ -1,3 +1,5 @@
+import * as SessionUi from './session-ui'
+import * as Overlays from './overlays'
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import WorkspaceShell from '../components/WorkspaceShell.vue'
@@ -15,17 +17,24 @@ import * as Terminal from './terminal'
 import { GridTerm } from '../../../legacy-web/grid/facade.js'
 
 // This IIFE runs as a classic defer script before all scripts that query the
-// workspace. Vue owns shell and terminal controls; terminal protocols and engines
-// live in the scoped controller. Rust substitutes the hostname in the title.
+// workspace. Protocols and engines live in scoped services.
+const workspacePinia = createPinia()
+Overlays.initialize(workspacePinia)
 createApp(WorkspaceShell, {
   hostname: document.title.replace(/ · 会话管理$/, ''),
-}).use(createPinia()).mount('#app')
+}).use(workspacePinia).mount('#app')
 
 Composer.mount(document.querySelector('#composer-root') as HTMLElement)
 
 createApp(SettingsDialog).mount('#settings-root')
 
 Object.assign(globalThis, {
+  SessionDockOverlays: Overlays,
+  SessionDockCapabilities: Overlays.capabilities,
+  SessionDockAssets: Overlays.assets,
+  SessionDockTypography: Overlays.typography,
+  SessionDockPwaInstall: Overlays.pwa,
+  ensureTerminalAssets: Overlays.ensureTerminalAssets,
   SessionDockComposer: Composer,
   SessionDockShell: Shell,
   SessionDockSettings: Settings,
@@ -35,4 +44,7 @@ Object.assign(globalThis, {
   SessionDockConversation: Conversation,
   SessionDockTerminal: Terminal,
   GridTerm,
+  SessionDockSessionUi:SessionUi,
 })
+
+SessionUi.mount()

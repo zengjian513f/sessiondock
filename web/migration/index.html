@@ -10,8 +10,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="SessionDock">
 <title>__SESSIONDOCK_HOSTNAME__ · 会话管理</title>
-<script defer src="capabilities.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-<script defer src="assets.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script>
   // 在样式表加载前确定明暗，避免刷新时先闪出另一套颜色。
   (() => {
@@ -44,7 +42,6 @@
   })();
 </script>
 <link rel="stylesheet" href="typography.css?v=__SESSIONDOCK_ASSET_VERSION__">
-<script defer src="typography.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <link rel="preload" href="fonts/UbuntuSansMono.woff2?v=__SESSIONDOCK_ASSET_VERSION__" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css?v=__SESSIONDOCK_ASSET_VERSION__">
 <link rel="stylesheet" href="session-resources.css?v=__SESSIONDOCK_ASSET_VERSION__">
@@ -161,133 +158,10 @@
   <button type="button" role="menuitem" data-act="pick">多选…</button>
 </div>
 <div id="session-group-menu" class="ctx-menu" hidden role="menu" aria-label="会话分组"></div>
-<dialog id="new-session-dialog" aria-labelledby="new-session-title">
-  <form id="new-session-form">
-    <div class="modal-head">
-      <div><h2 id="new-session-title">新建会话</h2></div>
-      <button type="button" class="modal-close" title="关闭" aria-label="关闭">×</button>
-    </div>
-    <div class="new-row">
-      <label id="new-node-label" class="node-select" hidden title="机器"><span class="visually-hidden">机器</span><select id="new-node"></select></label>
-      <fieldset class="new-source">
-        <legend class="visually-hidden">会话类型</legend>
-        <label title="Claude"><input type="radio" name="new-source" value="claude" checked><span><svg class="ico source-icon" data-source="claude" aria-hidden="true"><use href="#i-claude"/></svg><em class="src-label">Claude</em></span></label>
-        <label title="Codex"><input type="radio" name="new-source" value="codex"><span><svg class="ico source-icon" data-source="codex" aria-hidden="true"><use href="#i-codex"/></svg><em class="src-label">Codex</em></span></label>
-        <label title="Grok"><input type="radio" name="new-source" value="grok"><span><svg class="ico source-icon" data-source="grok" aria-hidden="true"><use href="#i-grok"/></svg><em class="src-label">Grok</em></span></label>
-        <label title="OpenCode"><input type="radio" name="new-source" value="opencode"><span><svg class="ico source-icon" data-source="opencode" aria-hidden="true"><use href="#i-opencode"/></svg><em class="src-label">OpenCode</em></span></label>
-        <label title="SSH"><input type="radio" name="new-source" value="shell"><span><svg class="ico source-icon" data-source="shell" aria-hidden="true"><use href="#i-terminal"/></svg><em class="src-label">SSH</em></span></label>
-      </fieldset>
-      <div class="new-choice">
-        <div class="new-model">
-          <button type="button" id="new-model" class="new-pick" title="模型" aria-haspopup="listbox"
-            aria-expanded="false" aria-controls="new-model-menu"><span id="new-model-label">读取模型…</span><i aria-hidden="true">⌄</i></button>
-          <div id="new-model-menu" class="new-model-menu" popover="manual" hidden>
-            <input id="new-model-search" class="new-model-search" type="search" placeholder="搜索模型" aria-label="搜索模型"
-              autocomplete="off" spellcheck="false" aria-controls="new-model-options" hidden>
-            <div id="new-model-options" class="new-model-options" role="listbox" aria-label="模型" tabindex="-1"></div>
-          </div>
-        </div>
-        <label class="new-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="new-effort"></select></label>
-      </div>
-    </div>
-    <div class="new-cwd-combobox">
-      <div class="new-where">
-        <div class="new-cwd-field">
-          <label class="new-cwd-label" for="new-cwd">启动目录</label>
-          <input id="new-cwd" name="cwd" autocomplete="off" spellcheck="false"
-            role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
-            aria-controls="new-cwd-options" aria-expanded="true"
-            placeholder="/home/user/Projects/project">
-        </div>
-      </div>
-      <div id="new-cwd-picker">
-        <div class="new-cwd-picker-head">
-          <span id="new-cwd-options-title">最近使用</span>
-          <span>↑↓ 选择 · Tab 补全</span>
-        </div>
-        <div id="new-cwd-options" role="listbox" aria-labelledby="new-cwd-options-title"></div>
-      </div>
-      <div id="new-cwd-completion-status" class="visually-hidden" role="status" aria-live="polite"></div>
-    </div>
-    <div class="modal-actions">
-      <div id="new-session-error" role="alert"></div>
-      <button type="button" class="btn modal-cancel">取消</button>
-      <button type="submit" class="btn go" id="new-session-go">创建</button>
-    </div>
-  </form>
-</dialog>
-<dialog id="bug-report-dialog" class="app-dialog" aria-labelledby="bug-report-title">
-  <form id="bug-report-form" class="report-form">
-    <div class="modal-head">
-      <div><h2 id="bug-report-title">报告问题</h2></div>
-      <button type="button" class="modal-close" title="关闭" aria-label="关闭">×</button>
-    </div>
-    <div class="new-row report-row" role="group" aria-label="处理会话">
-      <label id="bug-report-node-label" class="node-select" hidden title="处理这份报告的会话运行在哪台机器"><span class="visually-hidden">处理节点</span><select id="bug-report-node"></select></label>
-      <fieldset class="new-source report-source" id="bug-report-source">
-        <legend class="visually-hidden">处理会话类型</legend>
-        <label title="Claude"><input type="radio" name="bug-report-source" value="claude"><span><svg class="ico source-icon" data-source="claude" aria-hidden="true"><use href="#i-claude"/></svg><em class="src-label">Claude</em></span></label>
-        <label title="Codex"><input type="radio" name="bug-report-source" value="codex" checked><span><svg class="ico source-icon" data-source="codex" aria-hidden="true"><use href="#i-codex"/></svg><em class="src-label">Codex</em></span></label>
-        <label title="Grok"><input type="radio" name="bug-report-source" value="grok"><span><svg class="ico source-icon" data-source="grok" aria-hidden="true"><use href="#i-grok"/></svg><em class="src-label">Grok</em></span></label>
-        <label title="OpenCode"><input type="radio" name="bug-report-source" value="opencode"><span><svg class="ico source-icon" data-source="opencode" aria-hidden="true"><use href="#i-opencode"/></svg><em class="src-label">OpenCode</em></span></label>
-      </fieldset>
-      <div class="new-choice">
-        <div class="new-model">
-          <button type="button" id="bug-report-model" class="new-pick" title="模型" aria-haspopup="listbox"
-            aria-expanded="false" aria-controls="bug-report-model-menu"><span id="bug-report-model-label">读取模型…</span><i aria-hidden="true">⌄</i></button>
-          <div id="bug-report-model-menu" class="new-model-menu" popover="manual" hidden>
-            <input id="bug-report-model-search" class="new-model-search" type="search" placeholder="搜索模型" aria-label="搜索模型"
-              autocomplete="off" spellcheck="false" aria-controls="bug-report-model-options" hidden>
-            <div id="bug-report-model-options" class="new-model-options" role="listbox" aria-label="模型" tabindex="-1"></div>
-          </div>
-        </div>
-        <label class="new-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="bug-report-effort"></select></label>
-      </div>
-    </div>
-    <div id="bug-report-items" class="report-items" aria-live="polite"></div>
-    <div class="composer-row report-composer">
-      <div class="attach-picker">
-        <button class="btn" id="bug-report-add" type="button" title="添加附件" aria-label="添加附件" aria-expanded="false">
-          <svg class="ui-icon" aria-hidden="true"><use href="#i-plus"/></svg>
-        </button>
-        <div class="attach-menu hidden" id="bug-report-attach-menu" role="menu">
-          <button type="button" data-attach="image" role="menuitem"><span>▧</span>图片</button>
-          <button type="button" data-attach="video" role="menuitem"><span>▶</span>视频</button>
-          <button type="button" data-attach="audio" role="menuitem"><span>♪</span>音频</button>
-          <button type="button" data-attach="file" role="menuitem"><span>⌑</span>文件</button>
-        </div>
-        <input id="bug-report-file" type="file" multiple hidden>
-      </div>
-      <div class="composer-input-wrap">
-        <textarea id="bug-report-description" rows="1" maxlength="50000" enterkeyhint="enter"
-          aria-label="问题描述" placeholder="描述遇到的问题"></textarea>
-      </div>
-      <div class="cbtns">
-        <button type="submit" class="btn go" id="bug-report-go" title="提交并启动处理会话">发送</button>
-      </div>
-    </div>
-    <div id="bug-report-error" role="alert"></div>
-  </form>
-</dialog>
-<dialog id="trash-dialog" class="app-dialog" aria-labelledby="trash-title">
-  <div class="trash-panel">
-    <div class="modal-head">
-      <div><h2 id="trash-title">回收站</h2><p id="trash-sub">删除的会话文件保留在磁盘上，可以恢复或彻底清除</p></div>
-      <button type="button" class="modal-close" id="trash-close" title="关闭" aria-label="关闭">×</button>
-    </div>
-    <div id="trash-note" role="status" aria-live="polite"></div>
-    <div id="trash-list" class="trash-list"><div class="trash-empty">正在读取回收站…</div></div>
-    <div class="modal-actions">
-      <button type="button" class="btn" id="trash-reload">刷新</button>
-      <button type="button" class="btn danger" id="trash-purge-all">清空回收站</button>
-      <button type="button" class="btn go" id="trash-done">完成</button>
-    </div>
-  </div>
-</dialog>
+<div id="session-ui-root"></div>
+<div id="popup-root"></div>
 <div id="settings-root"></div>
 <div id="float-stack">
-  <div id="bug-report-toast" class="app-float hidden" role="status" aria-live="polite"></div>
-  <div id="console-toast" class="app-float" hidden role="status" aria-live="polite"></div>
 </div>
 <div id="scale-indicator" popover="manual" aria-hidden="true"></div>
 <!-- 列表是首屏核心，必须先执行；终端和公式库较大，延后加载且不能阻塞扫描。 -->

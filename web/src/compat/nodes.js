@@ -227,75 +227,7 @@ async function loadNodes() {
   applyNodeState(await r.json());
 }
 
-function prepareNewNode() {
-  if (!HUB_MODE) return;
-  const select = document.querySelector('#new-node');
-  const previous = select.value;
-  const selected = selectedNodeIds();
-  const preferred = selected.length === 1 ? selected[0]
-    : nodeOf(S.sel) || previous || store.get('newNode', '');
-  select.replaceChildren();
-  for (const n of Nodes.list) {
-    const option = document.createElement('option');
-    option.value = n.id;
-    option.textContent = n.name + (Nodes.capabilities[n.id]?.enabled ? '' : '（离线）');
-    option.disabled = !Nodes.capabilities[n.id]?.enabled;
-    select.appendChild(option);
-  }
-  if ([...select.options].some(o => o.value === preferred && !o.disabled)) select.value = preferred;
-  else select.value = [...select.options].find(o => !o.disabled)?.value || '';
-  document.querySelector('#new-node-label').hidden = false;
-}
-
-// 切换机器时，输入框里的目录若在新机器上也存在就原样保留；只有不存在
-// （或无法确认）时才换成新机器的默认目录。用户在检查期间改了输入则不动。
-let newCwdCheck = 0;
-async function newNodeHasDir(path) {
-  const value = path.length > 1 ? path.replace(/\/+$/, '') : path;
-  if (value === '/' || value === '~') return true;
-  if (!canCompleteCwd(value)) return false;
-  try {
-    const params = new URLSearchParams({ path: value, limit: '50' });
-    const response = await fetch(appUrl(`api/term/complete-dir?${params}`), { cache: 'no-store' });
-    const data = await response.json();
-    return response.ok && Array.isArray(data.directories) && data.directories.includes(value + '/');
-  } catch { return false; }
-}
-
-function refreshNewNodeFields(keepCwd = '') {
-  closeCwdPicker();
-  const cap = newNodeCapabilities();
-  cwdCompletion.common = commonSessionDirs();
-  for (const input of document.querySelectorAll('input[name="new-source"]')) {
-    input.disabled = !cap.sources?.[input.value];
-    const name = SOURCES[input.value]?.name || (input.value === 'shell' ? 'SSH' : input.value);
-    input.closest('label').title = input.disabled ? `${name}：此机器未安装或未配置该客户端` : name;
-  }
-  const checked = document.querySelector('input[name="new-source"]:checked');
-  if (!checked || checked.disabled) document.querySelector('input[name="new-source"]:not(:disabled)')?.click();
-  const selected = S.sessions.find(s => s.uid === S.sel && (!HUB_MODE || s.node_id === newNodeId()));
-  const fallback = selected?.cwd || store.get(newDirsKey(), [])[0]
-    || cwdCompletion.common[0]?.cwd || cap.home || '';
-  const input = document.querySelector('#new-cwd');
-  const check = ++newCwdCheck;
-  if (keepCwd && keepCwd !== fallback && cap.enabled) {
-    input.value = keepCwd;
-    const node = newNodeId();
-    newNodeHasDir(keepCwd).then(exists => {
-      if (exists || check !== newCwdCheck || node !== newNodeId() || input.value.trim() !== keepCwd) return;
-      input.value = fallback;
-    });
-  } else input.value = fallback;
-  document.querySelector('#new-session-error').textContent = '';
-  document.querySelector('#new-session-go').disabled = !cap.enabled;
-  renderCommonCwdOptions();
-}
-
+// New-session form presentation belongs to SessionUi.launch.
 document.addEventListener('DOMContentLoaded', () => {
-  if (!HUB_MODE) return;
-  document.querySelector('#new-node').onchange = () => {
-    store.set('newNode', newNodeId());
-    refreshNewNodeFields(document.querySelector('#new-cwd').value.trim());
-  };
-  void loadNodes().catch(() => {});
+  if (HUB_MODE) void loadNodes().catch(() => {});
 });

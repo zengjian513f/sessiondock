@@ -423,130 +423,36 @@ async function post(url, body, {timeoutMs = 0} = {}) {
 }
 
 // ---------------------------------------------------------------- 缺陷报告
-let bugReportToastTimer = 0;
 
-const BUG_REPORT_SOURCES = { claude: 'Claude', codex: 'Codex', grok: 'Grok', opencode: 'OpenCode' };
 
-function bugReportSource() {
-  return $('#bug-report-source input:checked')?.value || 'codex';
-}
+
+
+function bugReportSource(...args) {return SessionUiLaunch.bugReportSource(...args);}
 
 // 与新建会话一样，四种 AI CLI 都可以做处理会话；记住上次的选择，处理机器上
 // 缺少的命令置灰（中央站下按所选机器的能力表，单机按本机）。
-function syncBugReportSources() {
-  const remembered = store.get('bugReportSource', 'codex');
-  const sources = HUB_MODE ? Nodes.capabilities[bugReportNode()]?.sources : T.sources;
-  const known = sources && Object.keys(sources).length;
-  let checked = null;
-  for (const input of $('#bug-report-source').querySelectorAll('input')) {
-    const missing = known && !sources[input.value];
-    input.disabled = !!missing;
-    input.title = missing ? `${bugReportNodeName() || '本机'}找不到 ${input.value} 命令` : '';
-    if (input.value === remembered && !missing) checked = input;
-  }
-  const fallback = checked || [...$('#bug-report-source').querySelectorAll('input')]
-    .find(input => !input.disabled);
-  if (fallback) fallback.checked = true;
-}
+
 
 // 处理会话的机器下拉与新建会话一样列出全部机器。报告只有一份：还有没发出
 // 的草稿时回到草稿所在的机器；否则默认选问题所在的机器（当前会话的机器），
 // 其次上次的选择，再次唯一筛选中的机器。
-function prepareBugReportNode() {
-  if (!HUB_MODE) return;
-  const select = $('#bug-report-node');
-  const origin = bugReportOriginNode();
-  const selected = selectedNodeIds();
-  const drafted = store.get('bugReportDraftNode', '');
-  const preferred = [drafted, origin, store.get('bugReportNode', ''),
-    selected.length === 1 ? selected[0] : ''].filter(Boolean);
-  select.replaceChildren();
-  for (const n of Nodes.list) {
-    const option = document.createElement('option');
-    option.value = n.id;
-    option.textContent = n.name + (Nodes.capabilities[n.id]?.enabled ? '' : '（离线）');
-    option.disabled = !Nodes.capabilities[n.id]?.enabled;
-    select.appendChild(option);
-  }
-  const usable = id => [...select.options].some(o => o.value === id && !o.disabled);
-  select.value = preferred.find(usable) || [...select.options].find(o => !o.disabled)?.value || '';
-  $('#bug-report-node-label').hidden = false;
-  if (drafted && select.value !== drafted && Nodes.list.some(n => n.id === drafted)) {
-    $('#bug-report-error').textContent =
-      `${bugReportNodeName(drafted)} 离线，上面没发出的报告草稿要等它恢复后才能打开`;
-  }
-}
+
 
 // 记下正写着未发送内容的那份报告草稿在哪台机器上；清空或发出后忘掉。
-function noteBugReportDraftNode() {
-  const node = nodeOf(BUG_REPORT_DRAFT_UID), draft = composerController.composerDrafts.get(BUG_REPORT_DRAFT_UID);
-  if (!node || !draft || draft.loading) return;
-  if (draft.text.trim() || draft.quotes.length || draft.attachments.length) {
-    store.set('bugReportDraftNode', node);
-  } else if (store.get('bugReportDraftNode', '') === node) {
-    store.set('bugReportDraftNode', '');
-  }
-}
+function noteBugReportDraftNode(...args) {return SessionUiLaunch.noteBugReportDraftNode(...args);}
 
-function bugReportNodeName(id = bugReportNode()) {
-  return HUB_MODE ? Nodes.list.find(n => n.id === id)?.name || '' : '';
-}
 
-function showBugReportToast(report, worker) {
-  const toast = $('#bug-report-toast');
-  clearTimeout(bugReportToastTimer);
-  toast.replaceChildren();
-  const text = document.createElement('span');
-  const label = BUG_REPORT_SOURCES[worker?.source] || '处理';
-  const where = worker?.node_name ? `到 ${worker.node_name}` : '';
-  text.textContent = `${report} 已保存${where}，${label} 处理会话正在启动`;
-  const dismiss = () => {
-    clearTimeout(bugReportToastTimer);
-    toast.classList.add('hidden');
-  };
-  const open = document.createElement('button');
-  open.type = 'button';
-  open.className = 'btn primary';
-  open.textContent = '打开';
-  open.onclick = async () => {
-    dismiss();
-    await loadTermList();
-    const pending = (T.pending || []).find(item => item.name === worker.name) || worker;
-    await openPendingSession(pending);
-  };
-  const ignore = document.createElement('button');
-  ignore.type = 'button';
-  ignore.className = 'btn';
-  ignore.textContent = '忽略';
-  ignore.title = '关闭通知，处理会话继续运行';
-  ignore.onclick = dismiss;
-  const head = document.createElement('div');
-  head.className = 'app-float-head';
-  const title = document.createElement('strong');
-  title.textContent = '缺陷报告已提交';
-  head.appendChild(title);
-  const actions = document.createElement('div');
-  actions.className = 'app-float-actions';
-  actions.append(ignore, open);
-  toast.append(head, text, actions);
-  toast.classList.remove('hidden');
-  bugReportToastTimer = setTimeout(dismiss, 20000);
-}
+
+function showBugReportToast(...args) {return SessionUiLaunch.showBugReportToast(...args);}
 
 // 报告框的附件复用对话输入框那一套：同样的选择菜单、粘贴/拖放、[附件N]
 // 引用，以及同一个上传接口。处理会话的 cwd 固定为仓库根目录，因此上传
 // 先流式暂存到服务端私有目录，点击发送后才发布到仓库 sessiondock_attachments/。
 // newComposerDraft 定义在下方的对话输入框段落，只能在运行时按需创建。
-let BUG_REPORT_DRAFT_UID = '';
-function bindBugReportDraft() {
-  const node=bugReportNode();
-  const key='reportDraftId.' + node;
-  let id=store.get(key,'');
-  if (!id) {id=crypto.randomUUID(); store.set(key,id);}
-  BUG_REPORT_DRAFT_UID='report:' + (HUB_MODE ? node + '~' : '') + id;
-}
-let bugReportSending = false;
-const bugReportDraftObject = () => composerController.composerDraft(BUG_REPORT_DRAFT_UID);
+
+function bindBugReportDraft(...args) {return SessionUiLaunch.bindBugReportDraft(...args);}
+
+
 
 /** 下拉选的是跑处理会话的机器，不是另一份报告：正在写的描述、引用和附件
  *  跟着这次选择走，切换机器不清空输入框。服务端存储仍按机器分（附件的字节
@@ -555,912 +461,167 @@ const bugReportDraftObject = () => composerController.composerDraft(BUG_REPORT_D
  *  都不丢。本页仍握着 File 的附件在新机器上重新暂存，原机器的暂存字节随
  *  清空后的草稿释放；重开页面后只剩服务端引用的卡片没有字节可重传，留在
  *  原机器的草稿里并在对话框上说明。返回要显示的提示文案。 */
-function carryBugReportDraft(fromUid, toUid) {
-  if (!fromUid || !toUid || fromUid === toUid || bugReportSending) return '';
-  const from = composerController.composerDrafts.get(composerController.composerDraftOwner(fromUid));
-  if (!from || from.handedOffSession) return '';
-  const moving = from.attachments.filter(item => item.file instanceof Blob);
-  const stranded = from.attachments.length - moving.length;
-  if (!from.text && !from.quotes.length && !moving.length) return '';
-  const to = composerController.composerDraft(toUid);
-  if (!to) return '';
-  const node = bugReportNode();
-  to.text = to.text ? to.text + '\n' + from.text : from.text;
-  to.quotes = [...to.quotes, ...from.quotes];
-  to.attachments = [...to.attachments, ...moving];
-  to.nextAttachmentNumber = Math.max(to.nextAttachmentNumber || 1, from.nextAttachmentNumber || 1);
-  composerController.ensureComposerAttachmentNumbers(to);
-  for (const field of ['requestId','requestText','report_prompt','report_text']) {
-    delete to[field]; delete from[field];
-  }
-  from.attachments = from.attachments.filter(item => !moving.includes(item));
-  from.text = ''; from.quotes = [];
-  if (!from.attachments.length) from.nextAttachmentNumber = 1;
-  const saved = composerController.persistComposerDraft(fromUid);
-  for (const item of moving) {
-    // 原机器上的暂存字节随清空后的草稿释放；新机器要的是一份新的上传。
-    const previous = item.uploaded;
-    if (item.cancelUpload) item.cancelUpload();
-    item.uploaded = null; item.status = ''; item.error = '';
-    composerController.discardStagedAttachment({uploaded: previous}, saved);
-    const restage = () => {
-      if (!to.attachments.includes(item)) return;
-      // 被取消前已经落地的上传仍会写回 uploaded，再清一次才会重新暂存。
-      if (item.uploaded) composerController.discardStagedAttachment(item, saved);
-      item.uploaded = null; item.status = ''; item.error = '';
-      composerController.stageComposerAttachment(item, toUid, {node, render: renderBugReportItems});
-    };
-    (item.staging || Promise.resolve()).then(restage, restage);
-  }
-  composerController.persistComposerDraft(toUid);
-  if (!stranded) return '';
-  const where = bugReportNodeName(nodeOf(fromUid)) || '原机器';
-  return `${stranded} 个附件的文件只暂存在${where}，已留在那台机器的草稿里；`
-    + '要随这份报告一起提交，请重新选择文件。';
-}
+function carryBugReportDraft(...args) {return SessionUiLaunch.carryBugReportDraft(...args);}
 
-function renderBugReportItems() {
-  composerController.renderAttachmentCards($('#bug-report-items'), bugReportDraftObject().attachments, {
-    uid: BUG_REPORT_DRAFT_UID, render: renderBugReportItems,
-    disabled: bugReportSending,
-    onInsert: number => composerController.insertComposerReference(number, $('#bug-report-description')),
-    onRetry: attachment => composerController.stageComposerAttachment(attachment, BUG_REPORT_DRAFT_UID,
-      {node: bugReportNode(), render: renderBugReportItems}),
-    onRemove: id => {
-      if (bugReportSending) return;
-      const removed = composerController.removeDraftAttachment(bugReportDraftObject(), id);
-      composerController.discardStagedAttachment(removed, composerController.persistComposerDraft(BUG_REPORT_DRAFT_UID));
-      renderBugReportItems();
-    },
-  });
-  composerController.renderSavedComposerInputs($('#bug-report-items'), bugReportDraftObject(), BUG_REPORT_DRAFT_UID);
-  $('#bug-report-description').disabled = bugReportSending || !!bugReportDraftObject().loading;
-  $('#bug-report-add').disabled = bugReportSending || !!bugReportDraftObject().loading;
-  // 发送中换机器会把正在提交的内容搬走；锁住下拉直到这一次提交结束。
-  $('#bug-report-node').disabled = bugReportSending;
-}
+function renderBugReportItems(...args) {return SessionUiLaunch.renderBugReportItems(...args);}
 
-function addBugReportFiles(files) {
-  const draft = bugReportDraftObject();
-  const before = new Set(draft.attachments);
-  composerController.addDraftFiles(draft, files);
-  composerController.persistComposerDraft(BUG_REPORT_DRAFT_UID);
-  for (const attachment of draft.attachments) {
-    if (!before.has(attachment)) {
-      composerController.stageComposerAttachment(attachment, BUG_REPORT_DRAFT_UID, {node: bugReportNode(), render: renderBugReportItems});
-    }
-  }
-  renderBugReportItems();
-}
+function addBugReportFiles(...args) {return SessionUiLaunch.addBugReportFiles(...args);}
 
-function clearBugReportDraft() {
-  const draft=bugReportDraftObject(), dropped=draft.attachments;
-  for (const attachment of dropped) {
-    if (attachment.preview) URL.revokeObjectURL(attachment.preview);
-    if (attachment.cancelUpload) attachment.cancelUpload();
-  }
-  draft.text='';draft.attachments=[];draft.quotes=[];draft.nextAttachmentNumber=1;
-  delete draft.requestId;delete draft.requestText;
-  const saved=composerController.persistComposerDraft(BUG_REPORT_DRAFT_UID);
-  for (const attachment of dropped) composerController.discardStagedAttachment(attachment, saved);
-  renderBugReportItems();
-}
+function clearBugReportDraft(...args) {return SessionUiLaunch.clearBugReportDraft(...args);}
 
 // 处理会话（以及报告、附件）落在下拉里选中的机器上。
-function bugReportNode() {
-  return HUB_MODE ? $('#bug-report-node').value || '' : '';
-}
+function bugReportNode(...args) {return SessionUiLaunch.bugReportNode(...args);}
 
 // 问题所在的机器：当前会话的机器；没有会话时取唯一筛选中的机器；筛选着
 // 多台机器又没选会话时说不清是哪台，按处理机器本身算。
-function bugReportOriginNode() {
-  if (!HUB_MODE) return '';
-  const fromSession = nodeOf(S.sel);
-  if (fromSession) return fromSession;
-  const candidates = selectedNodeIds();
-  return candidates.length === 1 ? candidates[0] : '';
-}
+
 
 // 报告里注明的问题机器；单机模式由服务端填主机名。
-function bugReportOrigin(workerNode) {
-  const uid = S.sel || '';
-  if (!HUB_MODE) return {uid};
-  const nodeId = bugReportOriginNode() || workerNode;
-  return {node_id: nodeId, node_name: bugReportNodeName(nodeId), uid};
-}
 
-function bugReportNodeError(node) {
-  if (!HUB_MODE) return '';
-  if (!node) return '没有可用的机器：请先在顶部选择一台在线机器或打开一个会话';
-  const info = Nodes.list.find(n => n.id === node);
-  if (info?.online === false) {
-    return `${info.name || '所选机器'} 离线，无法在该机器上保存报告；请换一台在线机器`;
-  }
-  if (!Nodes.capabilities[node]?.enabled) {
-    return `${info?.name || '所选机器'} 未启用终端，无法启动处理会话；请换一台机器`;
-  }
-  return '';
-}
+
+
 
 // 处理机器不是问题机器时，先向问题机器要一份服务端上下文（会话行、发送账本、
 // 终端画面、审计窗口），随报告交给处理机器；问题机器离线或抓取失败时不阻断
 // 报告，只把原因写进诊断包。
-async function captureBugReportContext(originNode, uid, terminalName) {
-  try {
-    const d = await post('api/bug-report/capture', {
-      _node: originNode, uid, terminal_name: terminalName, page_id: TERM_PAGE_ID,
-    });
-    if (d.error) return {error: d.error};
-    return d;
-  } catch (failure) {
-    return {error: `抓取失败：${failure.message || failure}`};
-  }
-}
 
-function closeBugReportAttachMenu() {
-  $('#bug-report-attach-menu').classList.add('hidden');
-  $('#bug-report-form .report-composer').style.removeProperty('padding-top');
-  $('#bug-report-add').classList.remove('on');
-  $('#bug-report-add').setAttribute('aria-expanded', 'false');
-}
 
-function openBugReportDialog() {
-  const dialog = $('#bug-report-dialog');
-  $('#bug-report-error').textContent = '';
-  $('#bug-report-go').disabled = typeof staleBuildShown !== 'undefined' && staleBuildShown;
-  $('#bug-report-go').textContent = '发送';
-  setSendButtonBusy($('#bug-report-go'), '');
-  prepareBugReportNode();
-  bindBugReportDraft();
-  renderBugReportItems();
-  $('#bug-report-description').value = bugReportDraftObject().text;
-  composerController.hydrateComposerDraft(BUG_REPORT_DRAFT_UID).then(async () => {
-    const handedOff=bugReportDraftObject().handedOffSession;
-    if (handedOff) {
-      showBugReportToast(handedOff.report_id,handedOff);
-      store.set('reportDraftId.'+bugReportNode(),crypto.randomUUID());bindBugReportDraft();
-      await composerController.hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
-    }
-    if (!bugReportSending) {
-      $('#bug-report-description').value = bugReportDraftObject().text;
-      renderBugReportItems();
-      composerController.autoGrow($('#bug-report-description'));
-    }
-  });
-  syncBugReportSources();
-  modelCatalogs.clear(); // 每次打开都读一遍：CLI 升级或换配置后列表会变
-  BugReportModels.refresh();
-  dialog.showModal();
-  closeBugReportAttachMenu();
-  composerController.autoGrow($('#bug-report-description'));
-  setTimeout(() => $('#bug-report-description').focus(), 0);
-}
+
+
+function openBugReportDialog(...args) {return SessionUiLaunch.openBugReportDialog(...args);}
 
 // 详情标题栏是动态生成的，使用委托让列表页、普通会话和尚未落盘的
 // 新会话共用同一个入口；手机进入详情后列表顶栏会被完整隐藏。
-document.addEventListener('click', event => {
-  if (!event.target.closest('[data-report-bug]')) return;
-  openBugReportDialog();
-});
-$('#bug-report-node').onchange = () => {
-  const previous = BUG_REPORT_DRAFT_UID;
-  store.set('bugReportNode', bugReportNode());
-  bindBugReportDraft();
-  const notice = carryBugReportDraft(previous, BUG_REPORT_DRAFT_UID);
-  $('#bug-report-description').value=bugReportDraftObject().text;
-  renderBugReportItems();
-  composerController.hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
-  syncBugReportSources();
-  BugReportModels.refresh();
-  $('#bug-report-error').textContent = notice;
-  composerController.autoGrow($('#bug-report-description'));
-};
-$('#bug-report-source').addEventListener('change', () => {
-  store.set('bugReportSource', bugReportSource());
-  BugReportModels.refresh();
-});
-$('#bug-report-dialog .modal-close').onclick = () => $('#bug-report-dialog').close();
-$('#bug-report-description').addEventListener('input', event => {
-  bugReportDraftObject().text = event.target.value;
-  composerController.persistComposerDraft(BUG_REPORT_DRAFT_UID);
-  composerController.autoGrow(event.target);
-});
+
+
+
+
+
 // 与 composer 一致：Enter 提交、Shift+Enter 换行；手机上 Enter 始终换行，只用按钮提交。
-$('#bug-report-description').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !MOBILE.matches) {
-    e.preventDefault();
-    $('#bug-report-form').requestSubmit();
-  }
-});
-window.addEventListener('resize', () => {
-  if ($('#bug-report-dialog').open) composerController.autoGrow($('#bug-report-description'));
-});
-let bugReportBackdropPressed = false;
-function bugReportBackdropHit(event) {
-  const dialog = $('#bug-report-dialog');
-  const rect = dialog.getBoundingClientRect();
-  return event.target === dialog && (event.clientX < rect.left || event.clientX >= rect.right
-    || event.clientY < rect.top || event.clientY >= rect.bottom);
-}
-$('#bug-report-dialog').addEventListener('pointerdown', event => {
-  bugReportBackdropPressed = event.button === 0 && bugReportBackdropHit(event);
-});
-$('#bug-report-dialog').addEventListener('pointercancel', () => { bugReportBackdropPressed = false; });
-$('#bug-report-dialog').addEventListener('close', () => { bugReportBackdropPressed = false; });
-$('#bug-report-dialog').addEventListener('click', event => {
-  // A selection dragged from the form to the backdrop also targets the dialog.
-  // Dismiss only when the gesture both starts and ends on the actual backdrop.
-  const dismiss = bugReportBackdropPressed && bugReportBackdropHit(event);
-  bugReportBackdropPressed = false;
-  if (dismiss) $('#bug-report-dialog').close();
-});
-$('#bug-report-add').onclick = event => {
-  event.stopPropagation();
-  const menu = $('#bug-report-attach-menu');
-  const open = menu.classList.toggle('hidden');
-  $('#bug-report-add').classList.toggle('on', !open);
-  $('#bug-report-add').setAttribute('aria-expanded', String(!open));
-  const row = $('#bug-report-form .report-composer');
-  if (open) row.style.removeProperty('padding-top');
-  else {
-    row.style.paddingTop = `${menu.offsetHeight + 7}px`;
-    $('#bug-report-add').scrollIntoView({block: 'nearest'});
-  }
-};
-$('#bug-report-attach-menu').onclick = event => {
-  const button = event.target.closest('button[data-attach]');
-  if (!button) return;
-  closeBugReportAttachMenu();
-  composerController.chooseAttachmentFiles(button.dataset.attach, $('#bug-report-file'), addBugReportFiles);
-};
-$('#bug-report-file').onchange = event => {
-  addBugReportFiles([...event.target.files]);
-  event.target.value = '';
-};
-$('#bug-report-dialog').addEventListener('click', event => {
-  if (!event.target.closest('#bug-report-dialog .attach-picker')) closeBugReportAttachMenu();
-});
+
+
+
+
+
+
+
+
+
+
+
+
 // 截图通常来自系统剪贴板；粘贴落在描述框或对话框内任意位置都接收。
-$('#bug-report-form').addEventListener('paste', event => composerController.pasteAttachmentFiles(event, addBugReportFiles));
-bindFileDrop($('#bug-report-form'), addBugReportFiles);
 
-function setSendButtonBusy(button, label) {
-  if (!button) return;
-  button.setAttribute('aria-busy', label ? 'true' : 'false');
-  if (label) button.setAttribute('aria-label', label);
-  else button.removeAttribute('aria-label');
-}
 
-function completeBugReportSubmission(data,node) {
-  const oldUid=BUG_REPORT_DRAFT_UID,draft=composerController.composerDrafts.get(oldUid);
-  if (draft) {
-    for (const item of draft.attachments) if (item.preview) URL.revokeObjectURL(item.preview);
-    composerController.composerSaveQueues.delete(draft);composerController.composerPendingSaves.delete(draft);composerController.composerSaving.delete(draft);
-  }
-  composerController.composerDrafts.delete(oldUid);composerController.composerHydrations.delete(oldUid);
-  if (store.get('bugReportDraftNode', '') === node) store.set('bugReportDraftNode', '');
-  store.set('reportDraftId.'+node,crypto.randomUUID());bindBugReportDraft();
-  $('#bug-report-description').value='';
-  showBugReportToast(data.report_id,data.worker);$('#bug-report-dialog').close();
-  void loadTermList();
-}
 
-$('#bug-report-form').onsubmit = async event => {
-  event.preventDefault();
-  if (bugReportSending) return;
-  const reportText = $('#bug-report-description').value;
-  const description = reportText.trim();
-  const error = $('#bug-report-error');
-  if (!description) {
-    error.textContent = '请先描述遇到的问题';
-    $('#bug-report-description').focus();
-    return;
-  }
-  const button = $('#bug-report-go');
-  const attachments = [...bugReportDraftObject().attachments];
-  const node = bugReportNode();
-  const nodeError = bugReportNodeError(node);
-  if (nodeError) {
-    error.textContent = nodeError;
-    return;
-  }
-  const origin = bugReportOrigin(node);
-  const remote = HUB_MODE && !!origin.node_id && origin.node_id !== node;
-  if (typeof staleBuildShown !== 'undefined' && staleBuildShown) {
-    error.textContent = '页面已更新，请重新加载后再提交';
-    return;
-  }
-  bugReportSending = true;
-  button.disabled = true;
-  setSendButtonBusy(button, '发送中');
-  $('#bug-report-add').disabled = true;
-  error.textContent = '';
-  renderBugReportItems();
-  const snapshot = browserStateSnapshot('bug-report');
-  browserAuditEvent('bug_report.requested', {
-    ...snapshot.data, attachments: attachments.length,
-    worker_node: node, origin_node: origin.node_id || '', remote,
-  }, snapshot.content);
-  try {
-    bugReportDraftObject().text = reportText;
-    await composerController.hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
-    const pending=bugReportDraftObject();
-    const priorPayload=JSON.stringify({description,source:bugReportSource(),...BugReportModels.choice(),
-      attachments:attachments.map(a=>({upload_id:a.uploaded?.upload_id,number:a.number})),origin});
-    if (pending.requestId && pending.requestText===priorPayload) {
-      const previous=await composerController.priorComposerSubmission(BUG_REPORT_DRAFT_UID,pending.requestId,true);
-      if (previous?.worker) {completeBugReportSubmission(previous,node);return;}
-    }
-    if (!await composerController.persistComposerDraft(BUG_REPORT_DRAFT_UID)) throw new Error(bugReportDraftObject().storageError || '报告草稿保存失败');
-    // 与对话发送一致：同一批附件共用一个编号目录，失败的附件保留在卡片上重试。
-    const uploaded = [];
-    let attachmentId = null;
-    for (let i = 0; i < attachments.length; i++) {
-      setSendButtonBusy(button, `上传 ${i + 1}/${attachments.length}`);
-      if (attachments[i].staging) await attachments[i].staging;
-      const result = await composerController.uploadComposerAttachment(
-        attachments[i], BUG_REPORT_DRAFT_UID, attachmentId, { node, render: renderBugReportItems });
-      attachmentId ||= result.attachment_id;
-      uploaded.push({upload_id:result.upload_id,number:attachments[i].number});
-    }
-    const terminalName = takenOver(S.sel) || (T.uid === S.sel ? T.name : '') || '';
-    let captured = null;
-    if (remote) {
-      setSendButtonBusy(button, '抓取中');
-      captured = await captureBugReportContext(origin.node_id, S.sel || '', terminalName);
-    }
-    setSendButtonBusy(button, '提交中');
-    const source = bugReportSource();
-    store.set('bugReportSource', source);
-    const reportDraft=bugReportDraftObject();
-    const choice = BugReportModels.choice();
-    const requestText=JSON.stringify({description,source,...choice,attachments:uploaded,origin});
-    if (reportDraft.requestText!==requestText || !reportDraft.requestId) {
-      reportDraft.requestText=requestText;reportDraft.requestId=crypto.randomUUID();
-    }
-    if (!await composerController.persistComposerDraft(BUG_REPORT_DRAFT_UID)) throw new Error(reportDraft.storageError || '报告草稿保存失败');
-    // 远端抓取时会话与终端引用不再随请求下发：中央站要求 uid 与 _node 指向
-    // 同一台机器，问题会话的引用改由 origin.uid 与 captured 携带。
-    const d = await post('api/bug-report', {
-      ...(HUB_MODE ? {_node: node} : {}),
-      draft_uid:BUG_REPORT_DRAFT_UID,draft_revision:reportDraft.revision,request_id:reportDraft.requestId,
-      description, uid: remote ? '' : (S.sel || ''), page_id: TERM_PAGE_ID, source, ...choice,
-      terminal_name: remote ? '' : terminalName, snapshot, attachments: uploaded,
-      origin, ...(captured ? {captured} : {}),
-      cols: Math.max(80, T.term?.cols || 120), rows: Math.max(24, T.term?.rows || 36),
-    });
-    if (d.error) {
-      error.textContent = d.error;
-      return;
-    }
-    completeBugReportSubmission(d,node);
-  } catch (failure) {
-    error.textContent = `提交失败：${failure.message || failure}`;
-  } finally {
-    bugReportSending = false;
-    button.disabled = false;
-    setSendButtonBusy(button, '');
-    $('#bug-report-add').disabled = false;
-    renderBugReportItems();
-  }
-};
+function setSendButtonBusy(...args) {return SessionUiLaunch.setSendButtonBusy(...args);}
+
+
+
+
 
 // ---------------------------------------------------------------- 新建会话
-function suggestedSessionDir(cwd) {
-  const path = String(cwd || '').replace(/\/+$/, '') || '/';
-  // CLI/SDK 经常在这些易失根目录里生成一次性测试会话。它们仍属于会话
-  // 历史，但不该因一次自动任务污染“最近使用”的新建目录建议。
-  return path.startsWith('/') && !['/tmp', '/var/tmp', '/dev/shm'].some(
-    root => path === root || path.startsWith(root + '/'));
-}
 
-function commonSessionDirs() {
-  const dirs = new Map();
-  for (const s of S.sessions) {
-    if (HUB_MODE && s.node_id !== newNodeId()) continue;
-    const cwd = String(s.cwd || '');
-    if (!suggestedSessionDir(cwd)) continue;
-    const row = dirs.get(cwd) || { cwd, count: 0, updated: '' };
-    row.count++;
-    if ((s.updated || '') > row.updated) row.updated = s.updated || '';
-    dirs.set(cwd, row);
-  }
-  for (const [i, cwd] of store.get(newDirsKey(), []).entries()) {
-    if (!cwd?.startsWith('/')) continue;
-    const row = dirs.get(cwd) || { cwd, count: 0, updated: '' };
-    row.recent = 20 - i;
-    dirs.set(cwd, row);
-  }
-  const home = newNodeCapabilities().home;
-  if (home && !dirs.has(home)) dirs.set(home, { cwd: home, count: 0, updated: '' });
-  return [...dirs.values()].sort((a, b) =>
-    (b.recent || 0) - (a.recent || 0) || b.count - a.count
-    || b.updated.localeCompare(a.updated) || a.cwd.localeCompare(b.cwd));
-}
 
-const CWD_COMPLETION_DELAY = 120;
-const cwdCompletion = {
-  timer: null, abort: null, sequence: 0,
-  rows: [], completions: [], forValue: '', active: -1, mode: 'common', common: [],
-};
+function commonSessionDirs(...args) {return SessionUiLaunch.commonSessionDirs(...args);}
 
-function canCompleteCwd(value) {
-  const path = String(value || '').trim();
-  return path.startsWith('/') || path === '~' || path.startsWith('~/');
-}
 
-function cancelCwdCompletionRequest() {
-  if (cwdCompletion.timer) clearTimeout(cwdCompletion.timer);
-  cwdCompletion.timer = null;
-  cwdCompletion.abort?.abort();
-  cwdCompletion.abort = null;
-  cwdCompletion.sequence++;
-}
 
-function closeCwdPicker() {
-  const input = $('#new-cwd'), picker = $('#new-cwd-picker');
-  cancelCwdCompletionRequest();
-  cwdCompletion.rows = [];
-  cwdCompletion.completions = [];
-  cwdCompletion.forValue = '';
-  cwdCompletion.active = -1;
-  $('#new-cwd-options').replaceChildren();
-  picker.hidden = true;
-  input.setAttribute('aria-expanded', 'false');
-  input.removeAttribute('aria-activedescendant');
-}
 
-function cwdOption(path, meta = '', kind = 'recent') {
-  return { path: String(path || ''), meta: String(meta || ''), kind };
-}
+function canCompleteCwd(...args){return SessionUiLaunch.canCompleteCwd(...args);}
 
-function cwdPathKey(path) {
-  const value = String(path || '');
-  return value === '/' ? value : value.replace(/\/+$/, '');
-}
 
-function matchingRecentCwdOptions(value = '') {
-  const query = String(value || '').trim().toLocaleLowerCase();
-  return cwdCompletion.common
-    .filter(row => !query || String(row.cwd || '').toLocaleLowerCase().includes(query))
-    .map(row => cwdOption(row.cwd, row.count ? `${row.count} 个会话` : '', 'recent'));
-}
 
-function renderCwdOptions(value, recentRows, completionRows = [], completionNote = '') {
-  const input = $('#new-cwd'), picker = $('#new-cwd-picker');
-  const box = $('#new-cwd-options');
-  const rawRecent = recentRows.map(row => typeof row === 'string'
-    ? cwdOption(row, '', 'recent') : row);
-  const rawCompletions = completionRows.map(row => typeof row === 'string'
-    ? cwdOption(row, '', 'completion') : row);
-  const completionFirst = String(value || '').startsWith('/');
-  const seen = new Set();
-  const unique = rows => rows.filter(row => {
-    const key = cwdPathKey(row.path);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  const completions = completionFirst ? unique(rawCompletions) : [];
-  const recent = unique(rawRecent);
-  if (!completionFirst) completions.push(...unique(rawCompletions));
-  const options = completionFirst
-    ? [...completions, ...recent] : [...recent, ...completions];
-  cwdCompletion.mode = value ? 'matching' : 'common';
-  cwdCompletion.rows = options.map(row => row.path);
-  // recent 与建议中的同一路径只画一次，但它仍是文件系统补全候选；
-  // Tab 计算公共前缀时不能因为视觉去重而把它漏掉。
-  cwdCompletion.completions = rawCompletions.map(row => row.path);
-  cwdCompletion.forValue = value;
-  cwdCompletion.active = -1;
-  box.replaceChildren();
-  $('#new-cwd-options-title').textContent = value ? '匹配目录' : '最近使用';
-  picker.hidden = false;
+function closeCwdPicker(...args) {return SessionUiLaunch.closeCwdPicker(...args);}
 
-  const section = label => {
-    const heading = document.createElement('div');
-    heading.className = 'new-cwd-section';
-    heading.setAttribute('role', 'presentation');
-    heading.textContent = label;
-    box.appendChild(heading);
-  };
-  const note = message => {
-    const messageNode = document.createElement('div');
-    messageNode.className = 'new-cwd-empty';
-    messageNode.textContent = message;
-    box.appendChild(messageNode);
-  };
-  const addOption = ({path, meta, kind}, index) => {
-    const option = document.createElement('button');
-    option.type = 'button';
-    option.id = `new-cwd-option-${index}`;
-    option.className = 'new-cwd-option';
-    option.dataset.cwdKind = kind;
-    option.dataset.cwdOption = String(index);
-    option.setAttribute('role', 'option');
-    option.setAttribute('aria-selected', 'false');
-    option.title = path;
-    const label = document.createElement('span');
-    label.className = 'new-cwd-option-path';
-    label.textContent = path;
-    option.appendChild(label);
-    if (meta) {
-      const detail = document.createElement('span');
-      detail.className = 'new-cwd-option-meta';
-      detail.textContent = meta;
-      option.appendChild(detail);
-    }
-    box.appendChild(option);
-  };
 
-  if (!value) {
-    recent.forEach(addOption);
-    if (!recent.length) note('还没有使用过的目录');
-  } else {
-    let offset = 0;
-    const addGroup = (label, rows, empty = '') => {
-      if (!rows.length && !empty) return;
-      section(label);
-      rows.forEach((row, index) => addOption(row, offset + index));
-      offset += rows.length;
-      if (!rows.length && empty) note(empty);
-    };
-    if (completionFirst) {
-      addGroup('补全建议', completions, completionNote);
-      addGroup('最近匹配', recent);
-    } else {
-      addGroup('最近匹配', recent);
-      addGroup('补全建议', completions, completionNote);
-    }
-    if (!recent.length && !completions.length && !completionNote) note('没有匹配的目录');
-  }
-  input.setAttribute('aria-expanded', 'true');
-  input.removeAttribute('aria-activedescendant');
-  $('#new-cwd-completion-status').textContent = options.length
-    ? (value ? `${recent.length} 个最近匹配，${completions.length} 个补全建议`
-             : `${recent.length} 个最近目录`)
-    : (completionNote || '没有匹配的目录');
-}
 
-function renderCommonCwdOptions() {
-  renderCwdOptions('', matchingRecentCwdOptions());
-}
 
-function setCwdCompletionActive(step) {
-  const rows = cwdCompletion.rows;
-  if (!rows.length) return;
-  const old = cwdCompletion.active;
-  const next = old < 0
-    ? (step > 0 ? 0 : rows.length - 1)
-    : (old + step + rows.length) % rows.length;
-  cwdCompletion.active = next;
-  const options = [...$('#new-cwd-options').querySelectorAll('[data-cwd-option]')];
-  options.forEach((option, index) => {
-    const active = index === next;
-    option.classList.toggle('active', active);
-    option.setAttribute('aria-selected', String(active));
-  });
-  const option = options[next];
-  $('#new-cwd').setAttribute('aria-activedescendant', option.id);
-  option.scrollIntoView({ block: 'nearest' });
-}
 
-function setCwdValue(value, refresh = true) {
-  const input = $('#new-cwd');
-  input.value = value;
-  $('#new-session-error').textContent = '';
-  input.focus();
-  input.setSelectionRange(value.length, value.length);
-  if (refresh) scheduleCwdCompletions();
-}
 
-function longestCommonPrefix(values) {
-  if (!values.length) return '';
-  let prefix = values[0];
-  for (const value of values.slice(1)) {
-    let i = 0;
-    while (i < prefix.length && i < value.length && prefix[i] === value[i]) i++;
-    prefix = prefix.slice(0, i);
-    if (!prefix) break;
-  }
-  return prefix;
-}
 
-function applyCwdTabCompletion() {
-  const input = $('#new-cwd');
-  if (!cwdCompletion.rows.length) return;
-  if (cwdCompletion.active >= 0) {
-    setCwdValue(cwdCompletion.rows[cwdCompletion.active]);
-    return;
-  }
-  const rows = cwdCompletion.completions;
-  if (!rows.length) return;
-  if (rows.length === 1) {
-    setCwdValue(rows[0]);
-    return;
-  }
-  const value = input.value.trim();
-  const prefix = longestCommonPrefix(rows);
-  if (prefix.length > value.length) {
-    setCwdValue(prefix, false);
-    cwdCompletion.forValue = prefix;
-    $('#new-cwd-completion-status').textContent =
-      `已补全公共前缀，仍有 ${rows.length} 个补全建议`;
-  }
-}
 
-async function loadCwdCompletions(complete = false) {
-  cancelCwdCompletionRequest();
-  const input = $('#new-cwd');
-  const value = input.value.trim();
-  const recent = matchingRecentCwdOptions(value);
-  if (SessionDockCapabilities.config.backend === 'rust' && !SessionDockCapabilities.allows('terminal_complete_dir')) {
-    renderCwdOptions(value, recent, [], '请填写已配置白名单中的现有工作目录；不会自动创建目录。');
-    return;
-  }
-  if (!canCompleteCwd(value)) {
-    renderCwdOptions(value, recent);
-    return;
-  }
-  const controller = new AbortController();
-  const sequence = ++cwdCompletion.sequence;
-  cwdCompletion.abort = controller;
-  try {
-    const params = new URLSearchParams({ path: value });
-    const response = await fetch(appUrl(`api/term/complete-dir?${params}`),
-      { signal: controller.signal, cache: 'no-store' });
-    const data = await response.json();
-    if (sequence !== cwdCompletion.sequence || input.value.trim() !== value) return;
-    const rows = response.ok && Array.isArray(data.directories)
-      ? data.directories.filter(path => typeof path === 'string' && canCompleteCwd(path)).slice(0, 24)
-      : [];
-    renderCwdOptions(value, recent, rows, response.ok
-      ? (rows.length ? '' : '没有补全建议')
-      : (data.error || '目录补全暂不可用'));
-    if (complete) applyCwdTabCompletion();
-  } catch (error) {
-    if (error.name !== 'AbortError' && sequence === cwdCompletion.sequence) {
-      renderCwdOptions(value, recent, [], '目录补全暂不可用');
-    }
-  } finally {
-    if (cwdCompletion.abort === controller) cwdCompletion.abort = null;
-  }
-}
 
-function scheduleCwdCompletions() {
-  cancelCwdCompletionRequest();
-  const value = $('#new-cwd').value.trim();
-  if (!value) {
-    renderCommonCwdOptions();
-    return;
-  }
-  const recent = matchingRecentCwdOptions(value);
-  if (!canCompleteCwd(value)) {
-    renderCwdOptions(value, recent);
-    return;
-  }
-  renderCwdOptions(value, recent, [], '正在查找目录…');
-  cwdCompletion.timer = setTimeout(() => loadCwdCompletions(false), CWD_COMPLETION_DELAY);
-}
+function renderCommonCwdOptions(...args) {return SessionUiLaunch.renderCommonCwdOptions(...args);}
+
+
+
+
+
+
+
+
+
+
+
+
 
 // ---- 模型与推理强度选择器：每台机器、每个来源的 CLI 自己的列表 ----
 // 新建会话和报告问题各用一个实例（元素 id 前缀不同）。两个控件始终在原位，
 // 读取中/不可用时只是禁用并换文字，不改布局。
-const MODEL_SEARCH_MIN = 10;
-const modelCatalogs = new Map();
 
-function fetchModelCatalog(node, source) {
-  const key = (HUB_MODE ? node + '|' : '') + source;
-  if (!modelCatalogs.has(key)) {
-    modelCatalogs.set(key, (async () => {
-      try {
-        const params = new URLSearchParams({source, ...(HUB_MODE ? {node} : {})});
-        const response = await fetch(appUrl(`api/term/models?${params}`), {cache: 'no-store'});
-        const data = response.ok ? await response.json() : null;
-        return Array.isArray(data?.models) ? data : null;
-      } catch { return null; }
-    })().then(catalog => {
-      if (!catalog) modelCatalogs.delete(key); // 下次打开再试
-      return catalog;
-    }));
-  }
-  return modelCatalogs.get(key);
-}
+
+
+
 
 /** 模型按机器和来源记住；强度按来源和模型共享，不区分机器或弹窗。 */
-function createModelPicker(prefix, {source, node, storeKey}) {
-  const el = name => document.getElementById(`${prefix}-${name}`);
-  const button = el('model'), label = el('model-label'), menu = el('model-menu');
-  const search = el('model-search'), box = el('model-options'), select = el('effort');
-  const picker = {catalog: null, key: '', model: '', effort: '', rows: [], active: -1, seq: 0};
-  const info = id => picker.catalog?.models.find(model => model.id === id) || null;
-  const controls = (text, title, enabled) => {
-    label.textContent = text;
-    label.classList.toggle('default', !enabled);
-    button.title = title;
-    button.disabled = !enabled;
-  };
-  picker.apply = (model, effort, persist = false) => {
-    const catalog = picker.catalog, chosen = info(model);
-    const shown = chosen || info(catalog?.default_model);
-    picker.model = shown?.id || '';
-    const efforts = shown?.efforts || catalog?.efforts || [];
-    const effortKey = `modelEffort.${source()}|${picker.model}`;
-    const remembered = store.get(effortKey, '');
-    picker.effort = efforts.includes(effort) ? effort : efforts.includes(remembered) ? remembered
-      : efforts.includes('high') ? 'high'
-      : efforts.includes(shown?.default_effort) ? shown.default_effort : efforts[0] || '';
-    const name = shown ? shown.name || shown.id : catalog?.models.length ? '选择模型' : '模型不可用';
-    controls(name, shown && shown.name !== shown.id ? `${shown.name}（${shown.id}）` : '模型：' + name,
-      !!catalog?.models.length);
-    select.replaceChildren(...efforts.map(value => new Option(value, value)));
-    select.value = picker.effort;
-    select.disabled = !efforts.length;
-    select.parentElement.title = efforts.length ? '推理强度' : '该 CLI 不支持选择推理强度';
-    if (persist) store.set(`${storeKey}.${picker.key}`, {model: picker.model});
-    if (persist && effort && picker.model && efforts.includes(effort)) store.set(effortKey, effort);
-  };
-  picker.refresh = async () => {
-    const current = source(), where = node(), seq = ++picker.seq;
-    picker.close();
-    picker.key = (HUB_MODE ? where + '|' : '') + current;
-    picker.catalog = null;
-    picker.model = picker.effort = '';
-    picker.apply('', '');
-    if (!current || current === 'shell') {
-      controls('模型不可用', '终端会话不选择模型', false);
-      return;
-    }
-    controls('读取模型…', '正在读取该 CLI 的模型列表', false);
-    const catalog = await fetchModelCatalog(where, current);
-    if (seq !== picker.seq) return;
-    picker.catalog = catalog;
-    const saved = store.get(`${storeKey}.${picker.key}`, {}) || {};
-    picker.apply(saved.model || '', '');
-    if (!catalog) controls('模型不可用', '该机器没有返回模型列表，将使用 CLI 默认模型', false);
-  };
-  /** 请求体里的具体选择；目录不可用时才由 CLI 自行决定。 */
-  picker.choice = () => ({...(picker.model ? {model: picker.model} : {}),
-    ...(picker.effort ? {effort: picker.effort} : {})});
-  picker.close = (focus = false) => {
-    if (menu.hidden) return;
-    if (menu.matches(':popover-open')) menu.hidePopover();
-    menu.hidden = true;
-    button.setAttribute('aria-expanded', 'false');
-    if (focus) button.focus();
-  };
-  const setActive = (index, scroll = true) => {
-    const options = [...box.querySelectorAll('[data-model-option]')];
-    picker.active = options.length ? (index + options.length) % options.length : -1;
-    options.forEach((option, i) => option.classList.toggle('active', i === picker.active));
-    const active = options[picker.active];
-    for (const target of [search, box]) {
-      if (active) target.setAttribute('aria-activedescendant', active.id);
-      else target.removeAttribute('aria-activedescendant');
-    }
-    if (active && scroll) active.scrollIntoView({block: 'nearest'});
-  };
-  const render = () => {
-    const query = search.value.trim().toLocaleLowerCase();
-    const all = picker.catalog.models;
-    picker.rows = query ? all.filter(model => model.id
-      && `${model.id} ${model.name || ''}`.toLocaleLowerCase().includes(query)) : all;
-    box.replaceChildren();
-    picker.rows.forEach((model, index) => {
-      const option = document.createElement('button');
-      option.type = 'button';
-      option.id = `${prefix}-model-option-${index}`;
-      option.className = 'new-model-option';
-      option.dataset.modelOption = String(index);
-      option.setAttribute('role', 'option');
-      option.setAttribute('aria-selected', String(model.id === picker.model));
-      option.tabIndex = -1;
-      option.title = model.id;
-      const name = document.createElement('span');
-      name.textContent = model.name || model.id;
-      option.appendChild(name);
-      if (model.id && model.name && model.name !== model.id) {
-        const id = document.createElement('small');
-        id.textContent = model.id;
-        option.appendChild(id);
-      }
-      box.appendChild(option);
-    });
-    if (!picker.rows.length) {
-      const empty = document.createElement('div');
-      empty.className = 'new-model-empty';
-      empty.textContent = '没有匹配的模型';
-      box.appendChild(empty);
-    }
-    const selected = picker.rows.findIndex(model => model.id === picker.model);
-    setActive(query ? 0 : Math.max(0, selected), !query);
-  };
-  const open = () => {
-    if (!picker.catalog?.models.length) return;
-    search.hidden = picker.catalog.models.length <= MODEL_SEARCH_MIN;
-    search.value = '';
-    menu.hidden = false;
-    menu.showPopover();
-    button.setAttribute('aria-expanded', 'true');
-    render();
-    place();
-    (search.hidden ? box : search).focus();
-  };
-  // 浮层与模型+强度这一组等宽，下方放不下时翻到上方。getBoundingClientRect 是缩放后的
-  // 像素，写回 style 前除以界面缩放。
-  const place = () => {
-    const zoom = menu.currentCSSZoom || 1, gap = 4, edge = 8;
-    const group = button.closest('.new-choice').getBoundingClientRect();
-    const pick = button.getBoundingClientRect();
-    const below = innerHeight - pick.bottom - gap - edge, above = pick.top - gap - edge;
-    const up = below < 160 && above > below;
-    menu.style.left = `${group.left / zoom}px`;
-    menu.style.width = `${group.width / zoom}px`;
-    menu.style.maxHeight = `${Math.max(0, up ? above : below) / zoom}px`;
-    const top = up ? pick.top - gap - menu.getBoundingClientRect().height : pick.bottom + gap;
-    menu.style.top = `${top / zoom}px`;
-  };
-  addEventListener('resize', () => { if (!menu.hidden) place(); });
-  addEventListener('scroll', e => { if (!menu.hidden && !menu.contains(e.target)) place(); }, true);
-  const choose = index => {
-    const model = picker.rows[index];
-    if (!model) return;
-    picker.apply(model.id, '', true);
-    picker.close(true);
-  };
-  button.onclick = () => (menu.hidden ? open() : picker.close());
-  button.onkeydown = e => {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); open(); }
-  };
-  search.oninput = render;
-  menu.onkeydown = e => {
-    if (e.isComposing) return;
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      setActive(picker.active + (e.key === 'ArrowDown' ? 1 : -1));
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      choose(picker.active);
-    } else if (e.key === 'Escape') {
-      // 只收起下拉，不关闭整个对话框。
-      e.preventDefault();
-      e.stopPropagation();
-      picker.close(true);
-    } else if (e.key === 'Tab') {
-      picker.close();
-    }
-  };
-  box.onclick = e => {
-    const option = e.target.closest('[data-model-option]');
-    if (option) choose(Number(option.dataset.modelOption));
-  };
-  select.onchange = e => picker.apply(picker.model, e.currentTarget.value, true);
-  const dialog = button.closest('dialog');
-  dialog.addEventListener('pointerdown', e => {
-    if (!button.parentElement.contains(e.target)) picker.close();
-  });
-  dialog.addEventListener('close', () => picker.close());
-  return picker;
-}
 
-const NewModels = createModelPicker('new', {
-  source: () => $('#new-session-dialog input[name="new-source"]:checked')?.value || '',
-  node: () => newNodeId(), storeKey: 'newModel'});
-const BugReportModels = createModelPicker('bug-report', {
-  source: () => bugReportSource(), node: () => bugReportNode(), storeKey: 'bugReportModel'});
 
-function openNewSessionDialog() {
-  const dialog = $('#new-session-dialog');
-  closeCwdPicker();
-  newCreateAttempt = null;
-  modelCatalogs.clear(); // 每次打开都读一遍：CLI 升级或换配置后列表会变
-  prepareNewNode();
-  refreshNewNodeFields();
-  NewModels.refresh();
-  dialog.showModal();
-  renderCommonCwdOptions();
-  setTimeout(() => { $('#new-cwd').focus(); $('#new-cwd').select(); }, 0);
-}
+const SessionUiLaunch=SessionDockSessionUi.createLaunch(
+{$: (...args) => $(...args),
+  get HUB_MODE() {return HUB_MODE;},
+  get MOBILE() {return MOBILE;},
+  get Nodes() {return Nodes;},
+  get S() {return S;},
+  get SOURCES() {return SOURCES;},
+  get SessionDockCapabilities() {return SessionDockCapabilities;},
+  get T() {return typeof T === 'undefined' ? undefined : T;},
+  get TERM_PAGE_ID() {return TERM_PAGE_ID;},
+  addDraftFiles: (...args) => addDraftFiles(...args),
+  appConfirm: (...args) => appConfirm(...args),
+  appUrl: (...args) => appUrl(...args),
+  autoGrow: (...args) => autoGrow(...args),
+  bindFileDrop: (...args) => bindFileDrop(...args),
+  browserAuditEvent: (...args) => browserAuditEvent(...args),
+  browserStateSnapshot: (...args) => browserStateSnapshot(...args),
+  chooseAttachmentFiles: (...args) => chooseAttachmentFiles(...args),
+  composerDraft: (...args) => composerDraft(...args),
+  composerDraftOwner: (...args) => composerDraftOwner(...args),
+  get composerDrafts() {return composerDrafts;},
+  get composerHydrations() {return composerHydrations;},
+  composerKindIcon: (...args) => composerKindIcon(...args),
+  get composerPendingSaves() {return composerPendingSaves;},
+  get composerSaveQueues() {return composerSaveQueues;},
+  get composerSaving() {return composerSaving;},
+  discardStagedAttachment: (...args) => discardStagedAttachment(...args),
+  ensureComposerAttachmentNumbers: (...args) => ensureComposerAttachmentNumbers(...args),
+  fmtSize: (...args) => fmtSize(...args),
+  hydrateComposerDraft: (...args) => hydrateComposerDraft(...args),
+  insertComposerReference: (...args) => insertComposerReference(...args),
+  loadStagedComposerPreview: (...args) => loadStagedComposerPreview(...args),
+  loadTermList: (...args) => loadTermList(...args),
+  newDirsKey: (...args) => newDirsKey(...args),
+  newNodeCapabilities: (...args) => newNodeCapabilities(...args),
+  newNodeId: (...args) => newNodeId(...args),
+  nodeOf: (...args) => nodeOf(...args),
+  openPendingSession: (...args) => openPendingSession(...args),
+  pasteAttachmentFiles: (...args) => pasteAttachmentFiles(...args),
+  persistComposerDraft: (...args) => persistComposerDraft(...args),
+  post: (...args) => post(...args),
+  priorComposerSubmission: (...args) => priorComposerSubmission(...args),
+  removeDraftAttachment: (...args) => removeDraftAttachment(...args),
+  selectedNodeIds: (...args) => selectedNodeIds(...args),
+  setComposerSendBusy: label => SessionDockComposer.setSendBusy(label),
+  stageComposerAttachment: (...args) => stageComposerAttachment(...args),
+  get staleBuildShown() {return typeof staleBuildShown === 'undefined' ? undefined : staleBuildShown;},
+  get store() {return store;},
+  takenOver: (...args) => takenOver(...args),
+  termRows: (...args) => termRows(...args),
+  uploadComposerAttachment: (...args) => uploadComposerAttachment(...args)});
+const NewModels=SessionUiLaunch.NewModels;
+const BugReportModels=SessionUiLaunch.BugReportModels;
+
+function openNewSessionDialog(...args) {return SessionUiLaunch.openNewSessionDialog(...args);}
 
 function selectPendingSidebarRow(uid, added) {
   const row = added ? null : document.querySelector(`#side .item[data-uid="${CSS.escape(uid)}"]`);
@@ -1482,10 +643,10 @@ function showNewSessionStage(info) {
   // create 返回后 term/list 可能还没拉完；先把服务端刚确认的新 tmux 放进本地
   // pending，详情页的终端切换、输入框和附件可以立即使用。
   const added = !T.pending.some(x => x.name === info.name);
-  if (added) T.pending.push({ ...info, started: composerController.pendingStartedAt(info) });
+  if (added) T.pending.push({ ...info, started: pendingStartedAt(info) });
   cancelSearch(true);
   S.sel = pendingUid(info.name);
-  composerController.rememberComposerSession(composerController.composerDraft(S.sel), info);
+  rememberComposerSession(composerDraft(S.sel), info);
   S.agent = null;
   store.set('sel', S.sel);
   store.set('agent', null);
@@ -1495,31 +656,13 @@ function showNewSessionStage(info) {
   showSessionCount(sidebarSessions().length);
   const src = SOURCES[info.source];
   const pendingTitle = info.title || `新建 ${src.name} 会话`;
-  $('#detail').innerHTML = `<div class="dhead"><div class="dtitle">
-    <button class="mobile-back" title="返回会话列表" aria-label="返回会话列表">←</button>
-    <h2>${sessionIconMarkup(info.source, true, true)}<span>${esc(pendingTitle)}</span></h2>
-    <div class="dhead-actions" aria-label="会话操作">
-      <button class="iconbtn" id="a-term" title="切换到终端" aria-label="切换到终端">${uiIcon('terminal')}</button>
-      ${sessionActionsMarkup(`
-      <button class="session-menu-action" data-report-bug title="报告当前会话问题"
-        aria-label="报告当前会话问题">${uiIcon('bug')}</button>
-      <button class="session-menu-action danger" id="a-session-action"></button>
-      `, `
-    <div class="dmeta"><span id="mcount-total">0 条消息</span>
-      ${info.node_name ? `<span class="meta-node node-badge" data-node-color="${nodeColor(info.node_name)}">${esc(info.node_name)}</span>` : ''}
-      <span class="meta-secondary"><code>${esc(shortCwd(info.cwd, 999))}</code></span>
-      <span class="meta-source">${esc(src.name)}</span></div>`)}
-    </div></div>
-  </div><div class="empty new-session-wait">${SessionDockCapabilities.config.backend === 'rust'
-    ? esc(pendingStageMessage(info)) : ''}</div>`;
-  $('#detail .mobile-back').onclick = showMobileList;
-  bindConsoleButton($('#a-term'), S.sel);
-  renderPendingSessionAction(info);
-  bindSessionActions($('#detail .dhead'));
+  $('#detail').replaceChildren(head({uid:S.sel,source:info.source,title:pendingTitle,node_name:info.node_name,cwd:info.cwd},0,info));
+  const waiting=SessionDockSessionUi.pendingStage(SessionDockCapabilities.config.backend==='rust'?pendingStageMessage(info):'');
+  $('#detail').appendChild(waiting);
   if (typeof auditDetailRendered === 'function') auditDetailRendered('new-session', {name: info.name});
   showMobileDetail();
   T.uid = S.sel;
-  composerController.renderComposer();
+  renderComposer();
   renderTakeoverBtn();
 }
 
@@ -1556,10 +699,8 @@ function renderPendingSessionAction(info, button = $('#a-session-action')) {
   const current = pendingSessionRow(info.name) || { ...info, running: false, stale: true, state: 'exited' };
   const stop = pendingShellRunning(current);
   const label = stop ? '停止会话' : '删除会话';
-  button.innerHTML = uiIcon(stop ? 'power' : 'trash');
-  button.title = button.ariaLabel = label;
-  if (typeof labelSessionAction === 'function') labelSessionAction(button);
-  button.onclick = () => stop ? stopPendingSession(current, button) : deletePendingSession(current, button);
+  SessionDockSessionUi.pendingAction({label,icon:stop?'power':'trash',run:(target,pending)=>stop?stopPendingSession(info,target,pending):deletePendingSession(info,target,pending)});
+
 }
 
 /** 本页观察到宿主退出后，页面立刻进入结束态（头部"删除"、副标题"已结束"），
@@ -1586,114 +727,27 @@ function sessionTerminalFirst(...args) { return terminalController.sessionTermin
 
 function openPendingSession(...args) { return terminalController.openPendingSession(...args); }
 
-let newCreateAttempt = null;
-function newSessionRequestId(source, cwd) {
-  const key = JSON.stringify([newNodeId(), source, cwd, NewModels.model, NewModels.effort]);
-  if (newCreateAttempt?.key !== key) newCreateAttempt = {key,
-    rows: termRows(),
-    id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`};
-  return newCreateAttempt.id;
-}
 
-async function createNewSession(e) {
-  e.preventDefault();
-  const source = $('#new-session-dialog input[name="new-source"]:checked')?.value;
-  const cwd = $('#new-cwd').value.trim();
-  const go = $('#new-session-go'), error = $('#new-session-error');
-  error.textContent = '';
-  if (!source) { error.textContent = '没有可用的会话类型'; return; }
-  if (!cwd) { error.textContent = '请选择启动目录'; return; }
-  go.disabled = true;
-  go.textContent = '创建中…';
-  const dirsKey = newDirsKey();
-  try {
-    const requestId = newSessionRequestId(source, cwd);
-    const request = { source, cwd, cols: 120, rows: newCreateAttempt.rows,
-      request_id: requestId, ...(HUB_MODE ? {_node: newNodeId()} : {}),
-      ...NewModels.choice() };
-    let d = await post('api/term/create', request);
-    if (d.needs_create) {
-      const target = String(d.cwd || cwd);
-      if (!await appConfirm(`启动目录不存在：\n${target}\n\n是否创建该目录并继续？`)) {
-        $('#new-cwd').focus();
-        return;
-      }
-      go.textContent = '创建目录中…';
-      d = await post('api/term/create', { ...request, cwd: target, create_cwd: true });
-    }
-    if (d.error) { error.textContent = d.error; return; }
-    const recent = [d.cwd, ...store.get(dirsKey, []).filter(x => x !== d.cwd)].slice(0, 8);
-    store.set(dirsKey, recent);
-    $('#new-session-dialog').close();
-    await openPendingSession(d);
-    // The backend instance is ready; list refresh must not block the conversation.
-    void loadTermList();
-  } catch (err) {
-    error.textContent = err.message || '创建失败';
-  } finally {
-    go.disabled = false;
-    go.textContent = '创建';
-  }
-}
 
-$('#new-session').onclick = openNewSessionDialog;
-$('#new-session-form').onsubmit = createNewSession;
-$('#new-session-dialog .modal-close').onclick = () => $('#new-session-dialog').close();
-$('#new-session-dialog .modal-cancel').onclick = () => $('#new-session-dialog').close();
-$('#new-cwd').oninput = () => {
-  $('#new-session-error').textContent = '';
-  scheduleCwdCompletions();
-};
-$('#new-cwd').onkeydown = e => {
-  if (e.isComposing) return;
-  if (e.key === 'Tab' && !e.shiftKey && canCompleteCwd(e.currentTarget.value)) {
-    e.preventDefault();
-    if (cwdCompletion.mode === 'matching' && cwdCompletion.completions.length
-        && cwdCompletion.forValue === e.currentTarget.value.trim()) {
-      applyCwdTabCompletion();
-    } else {
-      loadCwdCompletions(true);
-    }
-  } else if (e.key === 'ArrowDown' && cwdCompletion.rows.length) {
-    e.preventDefault();
-    setCwdCompletionActive(1);
-  } else if (e.key === 'ArrowUp' && cwdCompletion.rows.length) {
-    e.preventDefault();
-    setCwdCompletionActive(-1);
-  } else if (e.key === 'Enter' && cwdCompletion.active >= 0) {
-    e.preventDefault();
-    setCwdValue(cwdCompletion.rows[cwdCompletion.active]);
-  }
-};
-$('#new-cwd-options').onclick = e => {
-  const option = e.target.closest('[data-cwd-option]');
-  if (!option) return;
-  e.preventDefault();
-  const path = cwdCompletion.rows[Number(option.dataset.cwdOption)];
-  if (path) setCwdValue(path);
-};
-$('#new-session-dialog').addEventListener('close', closeCwdPicker);
-$('#new-session-form .new-source').addEventListener('change', () => NewModels.refresh());
-$('#new-node').addEventListener('change', () => NewModels.refresh());
-let newSessionBackdropPressed = false;
-function newSessionBackdropHit(event) {
-  const dialog = $('#new-session-dialog');
-  const rect = dialog.getBoundingClientRect();
-  return event.target === dialog && (event.clientX < rect.left || event.clientX >= rect.right
-    || event.clientY < rect.top || event.clientY >= rect.bottom);
-}
-$('#new-session-dialog').addEventListener('pointerdown', event => {
-  newSessionBackdropPressed = event.button === 0 && newSessionBackdropHit(event);
-});
-$('#new-session-dialog').addEventListener('pointercancel', () => { newSessionBackdropPressed = false; });
-$('#new-session-dialog').addEventListener('close', () => { newSessionBackdropPressed = false; });
-$('#new-session-dialog').addEventListener('click', event => {
-  // Like the report dialog, require both ends of the gesture on the backdrop.
-  // Selecting input text and releasing outside also targets the dialog.
-  const dismiss = newSessionBackdropPressed && newSessionBackdropHit(event);
-  newSessionBackdropPressed = false;
-  if (dismiss) $('#new-session-dialog').close();
-});
+
+function createNewSession(...args) {return SessionUiLaunch.createNewSession(...args);}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 const termRows = terminalController.termRows;
 
@@ -1829,52 +883,12 @@ function disposeTermView(...args) { return terminalController.disposeTermView(..
 
 // ---------------------------------------------------------------- 输入框
 // 已接管的会话在消息流底部给个输入框, 不必展开整个终端就能说话。
-function renderQueuedSends(uid = composerUid) {
-  // A new session waits on its stage page until the first native record;
-  // its queued text goes under the stage text instead of a message list.
+function renderQueuedSends(uid = S.sel) {
   const box = $('#msgs'), stage = box ? null : $('#detail .new-session-wait');
-  if (box) {
-    const draft = uid && uid === S.sel && !S.agent ? composerDrafts.get(composerDraftOwner(uid)) : null;
-    SessionDockConversation.tail(box,{queued:Array.isArray(draft?.cli?.queued) ? draft.cli.queued : [],returned:draft?.cli?.input?.code === 'cli_input_returned'});
-    return;
-  }
-  $('#queued-sends')?.remove();
-  if (!box && !stage) return;
   const draft = uid && uid === S.sel && !S.agent ? composerDrafts.get(composerDraftOwner(uid)) : null;
   const rows = Array.isArray(draft?.cli?.queued) ? draft.cli.queued : [];
-  if (!rows.length) return;
-  const block = el('div', 'queued-sends');
-  block.id = 'queued-sends';
-  block.setAttribute('role', 'status');
-  block.setAttribute('aria-live', 'polite');
-  for (const item of rows) {
-    const lost = item.state === 'lost';
-    const interrupted = item.state === 'interrupted';
-    const n = el('div', 'msg queued-send' + (lost ? ' lost' : ''));
-    n.dataset.role = 'user';
-    n.dataset.requestId = item.request_id;
-    n.dataset.state = item.state || 'queued';
-    const body = el('div', 'mb');
-    const text = String(item.text || '');
-    if (typeof md === 'function') body.innerHTML = md(text, true, [], {uid, agent:null});
-    else body.textContent = text;
-    n.appendChild(body);
-    // The CLI's own enqueue record means it holds the text until its current step ends.
-    const inCli = !lost && !interrupted && item.cli_queued_at != null;
-    if (inCli) n.dataset.cliQueued = '1';
-    const state = el('small', 'queued-send-state', lost ? '未送达，请到终端查看'
-      : interrupted ? 'CLI 已中断，未确认处理，请到终端查看'
-      : inCli ? '已进入 CLI 队列，当前步骤结束后处理' : '已发送，等待 CLI 处理');
-    if (lost || interrupted) {
-      const close = el('button', 'queued-send-dismiss', '关闭');
-      close.type = 'button';
-      close.onclick = () => dismissQueuedSend(uid, item.request_id);
-      state.appendChild(close);
-    }
-    n.appendChild(state);
-    block.appendChild(n);
-  }
-  stage.insertAdjacentElement('afterend', block);
+  SessionDockConversation.stageQueue(stage,uid,rows);
+  if (box) SessionDockConversation.tail(box,{queued:rows,returned:draft?.cli?.input?.code === 'cli_input_returned'});
 }
 
 function consolePasteFiles(view, name, e) {
@@ -1995,3 +1009,11 @@ function foregroundTerm(...args) { return terminalController.foregroundTerm(...a
 // lose discovery of new/replacement hosts just because Rust keeps live:false.
 
 terminalController.start();
+
+$('#new-session').onclick=openNewSessionDialog;
+
+document.addEventListener('click',event=>{if(event.target.closest('[data-report-bug]'))openBugReportDialog();});
+
+Object.defineProperties(globalThis,{BUG_REPORT_DRAFT_UID:{configurable:true,get:()=>SessionUiLaunch.BUG_REPORT_DRAFT_UID},bugReportSending:{configurable:true,get:()=>SessionUiLaunch.bugReportSending},cwdCompletion:{configurable:true,get:()=>SessionUiLaunch.cwdCompletion}});
+
+function bugReportDraftObject(...args) {return SessionUiLaunch.bugReportDraftObject(...args);}

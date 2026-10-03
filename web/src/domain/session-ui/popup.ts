@@ -1,0 +1,1 @@
+export function splitMessage(message:unknown,fallback:string){const text=String(message??'');const at=text.indexOf('\n\n');const head=at>0?text.slice(0,at).trim():'';return head&&!head.includes('\n')&&head.length<=80?{title:head,body:text.slice(at+2).trim()}:{title:fallback,body:text}}

@@ -2,7 +2,7 @@
 
 `grok-4.7 high headless 产出，人工审阅`
 
-这是迁移开始时的行为基线，只盘点当时用户能看见、能操作的行为。生产前端仍是 `legacy-web/`，生产提交在本目标期间保持 `2552436`。提议中的独立迁移前端还没有完成。`web/` 里的 Vue 脚手架，以及迁移中的 `web/src/compat/`，都不是已交付功能，本文不把它们写成产品表面。
+这是迁移开始时的行为基线，只盘点当时用户能看见、能操作的行为，当时已发布提交为 `2552436`。生产前端仍引用 `legacy-web/`，本目标不切换生产入口；其它并行任务已接受的修复也同步到迁移入口。独立迁移前端的当前实现见 [架构合同](architecture.md)，本文不把尚未验收的脚手架或过渡接线写成产品表面。
 
 `legacy-web/framework/settings.js` 只把「外观」「功能」两个设置页挂进现有对话框（`SessionDockSettings.mount`）。主会话页、侧栏、对话、终端和辅助页仍是现有 DOM。`tests/frontend_framework_browser.py` 覆盖的是这两页设置在现有页面里还能用，不是整站 Vue 替换。
 
@@ -610,7 +610,7 @@ Hub：`?nodes=` 聚合多机，单条用 `?node=`。列表 `term/records`，观�
 ## 交给主代理的依赖
 
 1. 迁移计划在 [`TODO.md`](../TODO.md#vue-重构计划2026-10-03)，当前独立构建接线在 [`architecture.md`](architecture.md)。
-2. 生产引用、`legacy-web/` 和部署源在本草稿中未改。发布仍是主代理的事。目标期间生产提交保持 `2552436`。
+2. 本迁移目标不切换生产引用、`legacy-web/` 或部署源；其它并行任务的旧入口修复不受此限制。`2552436` 记录的是目标开始时的行为基线。
 3. 独立迁移前端尚未完成。按批对照时以本文的 `legacy-web` 行为为准，不以脚手架能力为准。
 4. 视觉要复用现有 `legacy-web/style.css`、`typography.css`、`grid.css`、`records.css`、`session-resources.css`。本文不引入像素补偿。
 5. 验收锚点是上面列出的现有浏览器脚本和临时 loopback。待核对项只说明覆盖尚未逐项确认，不要求新的单元测试或更严的产品检查。

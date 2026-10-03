@@ -17,3 +17,4 @@ export function mount(host:HTMLElement) {
   host.replaceWith(...fragment.childNodes)
 }
 export function operations():any {return controller}
+export function setSendBusy(label:string) {composerState.busy=label}

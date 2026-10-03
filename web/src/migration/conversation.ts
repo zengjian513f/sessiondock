@@ -2,6 +2,7 @@ import { h, render, shallowReactive } from 'vue'
 import ConversationBody from '../components/conversation/ConversationBody.vue'
 import QuestionCard from '../components/conversation/QuestionCard.vue'
 import ReadFailure from '../components/conversation/ReadFailure.vue'
+import QueuedSends from '../components/conversation/QueuedSends.vue'
 import { createConversationStore } from '../stores/conversation'
 import type { ConversationStore } from '../stores/conversation'
 import { configureBridge, operations } from '../services/conversation/bridge'
@@ -17,6 +18,17 @@ const stores=new WeakMap<ConversationStore,Scope>()
 const mediaStates=shallowReactive(new Map<string,{busy:boolean;error:string}>())
 let active:Scope | undefined
 let readFailureHost:DocumentFragment | undefined
+let queueHost:DocumentFragment | undefined, queueStage:HTMLElement | undefined
+export function stageQueue(stage:HTMLElement|null,uid:string,items:any[]) {
+  if(queueStage!==stage || !items.length){
+    if(queueHost)render(null,queueHost as unknown as HTMLElement)
+    queueHost=undefined;queueStage=undefined
+  }
+  if(!stage || !items.length)return
+  if(!queueHost){queueHost=document.createDocumentFragment();queueStage=stage}
+  render(h(QueuedSends,{uid,items}),queueHost as unknown as HTMLElement)
+  if(queueHost.firstChild)stage.after(queueHost)
+}
 export function readFailure(detail:HTMLElement,uid:string,agent:string|null,failure:any) {
   if(readFailureHost)render(null,readFailureHost as unknown as HTMLElement)
   readFailureHost=undefined

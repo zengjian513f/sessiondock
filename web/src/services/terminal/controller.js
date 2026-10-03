@@ -885,10 +885,10 @@ function pendingSelectionGone(name) {
   if (detail && !S.sel) detail.innerHTML = '<div class="empty">该会话已被删除。</div>';
 }
 
-async function stopPendingSession(info, button) {
+async function stopPendingSession(info, button, pending) {
   if (SessionDockCapabilities.config.backend === 'rust') {
     if (!await appConfirm(`停止会话「${pendingTitle(info)}」?\n\n停止后才可以删除会话记录。`)) return;
-    if (button) button.disabled = true;
+    if (pending) pending(true); else if (button) button.disabled = true;
     try {
       const result = await post('api/term/kill', {record_id: info.record_id, instance_id: info.instance_id,
         ...(HUB_MODE ? {_node: info.node_id} : {})});
@@ -901,22 +901,22 @@ async function stopPendingSession(info, button) {
       }
       await loadTermList();
     } catch (error) { await appAlert(error.message || '停止失败，请重试。'); }
-    finally { if (button) button.disabled = false; }
+    finally { if (pending) pending(false); else if (button) button.disabled = false; }
     return;
   }
   return deleteSessions([pendingUid(info.name)], button);
 }
 
-async function deletePendingSession(info, button) {
+async function deletePendingSession(info, button, pending) {
   if (info.source === 'shell' && SessionDockCapabilities.config.backend === 'rust'
       && !await appConfirm(`删除会话「${pendingTitle(info)}」?\n\n会话记录和它的录制会一并删除，无法恢复。`)) return;
-  if (button) button.disabled = true;
+  if (pending) pending(true); else if (button) button.disabled = true;
   try {
     await discardPendingSession(info);
     await loadTermList();
     if (typeof loadSessions === 'function') await loadSessions(true);
   } catch (error) { await appAlert(error.message || '删除失败，请重试。'); }
-  finally { if (button) button.disabled = false; }
+  finally { if (pending) pending(false); else if (button) button.disabled = false; }
 }
 
 async function discardPendingSession(info) {

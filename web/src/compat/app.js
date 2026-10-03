@@ -1273,9 +1273,7 @@ function applyMigrationMeta(uid, agent, entry, meta) {
   const wasOpen = oldHead.querySelector('#session-view-menu')?.hidden === false;
   const next = head(meta, entryTotal(entry));
   if (wasOpen) {
-    const menu = next.querySelector('#session-view-menu');
-    if (menu) menu.hidden = false;
-    next.querySelector('#a-view-switch')?.setAttribute('aria-expanded', 'true');
+    SessionDockSessionUi.restoreViews();
   }
   oldHead.replaceWith(next);
   layoutSessionHead();
@@ -1409,7 +1407,7 @@ async function applyDiffPacket(uid, data, bytes = 0, agent = null) {
   renderConversationTail(e.activity, uid);
   const c = $('#mcount-total');
   const total = entryTotal(e);
-  if (c) c.textContent = `${total} 条消息`;
+  if (c) SessionDockSessionUi.messageCount(total);
   const mc = $('.mobile-msg-count');
   if (mc) {
     mc.textContent = total;
@@ -2619,6 +2617,7 @@ const sessionPickable = session => !session.fork_parent;
 let sessionDeleteBusy = false;
 let sessionStopBusy = false;
 let sessionStopProgress = null;
+const STOP_STAGE_TEXT = SessionDockSessionUi.STOP_STAGE_TEXT;
 function sessionStopConcurrency() {
   const value = Number(store.get('stopConcurrency', 6));
   return [1, 2, 4, 6, 8, 12, 16].includes(value) ? value : 6;
@@ -3222,25 +3221,9 @@ document.addEventListener('pointerdown', e => {
 }, true);
 addEventListener('resize', closeItemMenu);
 
-function starButtonMarkup(uid, starred, cls = '', id = '') {
-  const label = starred ? '取消星标' : '标为星标';
-  return `<button type="button"${id ? ` id="${id}"` : ''}
-    class="star-toggle ${cls}${starred ? ' on' : ''}" data-star-uid="${esc(uid)}"
-    title="${label}" aria-label="${label}" aria-pressed="${starred}"
-    ${S.starBusy.has(uid) ? 'disabled' : ''}>${uiIcon(starred ? 'star-filled' : 'star')}</button>`;
-}
 
-function paintStarButton(button, starred, busy = false) {
-  if (!button) return;
-  const label = starred ? '取消星标' : '标为星标';
-  const changed = button.classList.contains('on') !== starred;
-  button.classList.toggle('on', starred);
-  button.title = button.ariaLabel = label;
-  button.setAttribute('aria-pressed', String(starred));
-  button.disabled = busy;
-  if (changed) button.innerHTML = uiIcon(starred ? 'star-filled' : 'star');
-  labelSessionAction(button);
-}
+
+function paintStarButton(...args) {return SessionUiApp.paintStarButton(...args);}
 
 function applySessionStar(uid, starred, starredAt = null) {
   for (const rows of [S.sessions, S.results || []]) {
@@ -3796,17 +3779,7 @@ function updateMatchNav(...args) { return SessionDockSearch.updateMatchNav(...ar
 // ---------------------------------------------------------------- 详情
 let inflight = null;
 
-function ensureConsolePlaceholder() {
-  if ($('#a-term')) return;
-  const heading = el('div', 'dhead');
-  heading.innerHTML = `<div class="dtitle"><button class="mobile-back" type="button"
-    title="返回会话列表" aria-label="返回会话列表">←</button><h2>控制台</h2>
-    <div class="dhead-actions">${consoleButtonMarkup()}</div></div>`;
-  heading.querySelector('.mobile-back').onclick = showMobileList;
-  $('#detail').prepend(heading);
-  bindConsoleButton(heading.querySelector('#a-term'), S.sel, S.agent);
-  showConsoleToast('');
-}
+function ensureConsolePlaceholder(){if($('#a-term'))return;$('#detail').prepend(SessionDockSessionUi.consolePlaceholder());showConsoleToast('');}
 
 function followContinuedSession(uid) {
   const seen = new Set();
@@ -4433,80 +4406,12 @@ async function renderSession(meta, msgs, activity = null, {startWatch = true, hi
   }
 }
 
-function labelSessionAction(button) {
-  if (!button?.classList.contains('session-menu-action')) return;
-  let label = button.querySelector('span');
-  if (!label) button.appendChild(label = el('span'));
-  label.textContent = button.ariaLabel;
-}
 
-function sessionActionsMarkup(actions, metadata = '') {
-  return `<div class="session-actions">
-    <button class="iconbtn" id="a-more" type="button" title="更多会话操作"
-      aria-label="更多会话操作" aria-haspopup="menu" aria-expanded="false"
-      aria-controls="session-actions-menu"><span aria-hidden="true">⋯</span></button>
-    <div id="session-actions-menu" class="session-actions-menu" hidden>
-      <div role="menu" aria-label="会话操作">${actions}</div>${metadata}
-    </div>
-  </div>`;
-}
 
-function closeSessionActions(restoreFocus = false) {
-  const menu = $('#session-actions-menu');
-  if (!menu || menu.hidden) return;
-  menu.hidden = true;
-  const button = $('#a-more');
-  button?.setAttribute('aria-expanded', 'false');
-  if (restoreFocus) button?.focus();
-}
 
-function bindSessionActions(heading) {
-  syncSessionStopNotice();
-  const button = heading.querySelector('#a-more');
-  const menu = heading.querySelector('#session-actions-menu');
-  if (!button || !menu) return;
-  menu.querySelectorAll('button').forEach(item => {
-    item.setAttribute('role', 'menuitem');
-    labelSessionAction(item);
-  });
-  // 记住菜单里的原始顺序，layoutSessionHead 在各级排版之间搬动后还能按它归位
-  [...menu.querySelector('[role="menu"]').children].forEach((node, i) => { node.dataset.order = i; });
-  [...menu.querySelector('.dmeta')?.children || []].forEach((item, i) => { item.dataset.order = i; });
-  const items = () => [...menu.querySelectorAll('button:not(:disabled)')];
-  const open = () => {
-    menu.hidden = false;
-    button.setAttribute('aria-expanded', 'true');
-    const views = heading.querySelector('#session-view-menu');
-    if (views) views.hidden = true;
-    heading.querySelector('#a-view-switch')?.setAttribute('aria-expanded', 'false');
-    closeForkChainMenu();
-  };
-  button.onclick = () => menu.hidden ? open() : closeSessionActions();
-  button.onkeydown = event => {
-    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
-    event.preventDefault();
-    open();
-    const rows = items();
-    (event.key === 'ArrowUp' ? rows.at(-1) : rows[0])?.focus();
-  };
-  menu.onclick = event => {
-    if (event.target.closest('button')) closeSessionActions(true);
-  };
-  menu.onkeydown = event => {
-    const rows = items(), index = rows.indexOf(document.activeElement);
-    const next = {ArrowDown: (index + 1) % rows.length,
-      ArrowUp: (index - 1 + rows.length) % rows.length, Home: 0, End: rows.length - 1}[event.key];
-    if (next === undefined) return;
-    event.preventDefault();
-    rows[next]?.focus();
-  };
-  button.parentElement.addEventListener('focusout', event => {
-    // 在菜单的元信息上按下鼠标选字时焦点落到 body（relatedTarget 为空），不算离开菜单；
-    // 点到菜单外面由 document 的 click 兜底关闭
-    if (event.relatedTarget && !button.parentElement?.contains(event.relatedTarget)) closeSessionActions();
-  });
-  layoutSessionHead(heading);
-}
+function closeSessionActions(...args) {return SessionUiApp.closeSessionActions(...args);}
+
+
 
 // 会话头任何宽度都只占一行，且不因折叠留白。一行上的重要程度：标题 → 操作按钮（按菜单顺序：
 // 星标、折叠过程、搜索、冻结/恢复与报告、移动/复制、停止/删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
@@ -4515,124 +4420,12 @@ function bindSessionActions(heading) {
 // 后面的全部收进 ⋯ 菜单（放不下某个按钮时元信息也不放，免得次要的露着、重要的反而折了）；
 // 菜单空了 ⋯ 不显示。
 // 消息数会随新消息变宽，留一点余量免得刚好放下的一项被裁掉
-const HEAD_BRIEF_SLACK = 24;
+
 // Keep the original controls as the single action/capability authority. The
 // session toolbar gets lightweight entries that invoke those same controls.
-function syncSessionGlobalActions(heading, list) {
-  if (heading && !heading.isConnected) return;
-  const dock = !!list && (document.body.classList.contains('side-collapsed')
-    || (MOBILE.matches && document.body.classList.contains('mobile-detail')));
-  let changed = false;
-  for (const [index, id] of ['new-session', 'settings', 'page-reload', 'transfer-tasks'].entries()) {
-    const source = document.getElementById(id);
-    if (!source) continue;
-    const action = SessionDockShell.actionState(id);
-    const enabled = dock && !action.hidden && !action.capabilityHidden;
-    const proxyId = 'a-global-' + id;
-    let proxy = heading?.querySelector('#' + proxyId);
-    if (!enabled) proxy?.remove();
-    else {
-      if (!proxy) {
-        proxy = el('button', 'session-menu-action');
-        proxy.id = proxyId;
-        proxy.type = 'button';
-        proxy.dataset.order = index - 4;
-        proxy.setAttribute('role', 'menuitem');
-        proxy.appendChild(source.querySelector('svg').cloneNode(true));
-        proxy.onclick = () => document.getElementById(id)?.click();
-        list.appendChild(proxy);
-      }
-      proxy.title = proxy.ariaLabel = source.ariaLabel || source.title;
-      proxy.disabled = source.disabled;
-      labelSessionAction(proxy);
-    }
-    if (SessionDockShell.dockAction(id, enabled)) changed = true;
-  }
-  if (changed) layoutHeader();
-}
+function syncSessionGlobalActions(...args) {return SessionUiApp.syncSessionGlobalActions(...args);}
 
-function layoutSessionHead(heading = $('#detail .dhead')) {
-  const wrap = heading?.querySelector('.session-actions');
-  const menu = heading?.querySelector('#session-actions-menu');
-  const list = menu?.querySelector('[role="menu"]');
-  syncSessionGlobalActions(heading, list);
-  if (!wrap || !menu || !list) return;
-  const actions = wrap.parentElement;
-  const tier = layoutTier();
-  const menuButtons = node => node.matches('button') ? [node] : [...node.querySelectorAll('button')];
-  closeSessionActions();
-  // 先把平铺出去的操作和元信息都收回菜单（保持原始顺序），量过宽度再按顺序往外放
-  for (const node of actions.querySelectorAll(':scope > [data-from-menu]')) {
-    delete node.dataset.fromMenu;
-    for (const item of menuButtons(node)) {
-      item.setAttribute('role', 'menuitem');
-      labelSessionAction(item);
-    }
-    list.appendChild(node);
-  }
-  list.replaceChildren(...[...list.children].sort((a, b) => a.dataset.order - b.dataset.order));
-  const more = wrap.querySelector('#a-more');
-  if (more) more.hidden = false;   // 量宽度时按 ⋯ 在场算，免得它的显隐反过来改变放得下的项数
-  const meta = menu.querySelector('.dmeta');
-  let brief = heading.querySelector('.dbrief');
-  if (meta && !brief) {
-    brief = el('div', 'dbrief');
-    actions.before(brief);
-  }
-  const items = meta ? [...meta.children, ...brief.children]
-    .sort((a, b) => a.dataset.order - b.dataset.order) : [];
-  for (const item of items) meta.appendChild(item);
-  if (brief) brief.hidden = true;
-  let keep = 0;
-  if (heading.isConnected) {
-    const title = heading.querySelector('.dtitle');
-    const h2 = title.querySelector('h2');
-    const gap = parseFloat(getComputedStyle(title).columnGap) || 0;
-    // 宽屏/中屏长标题最多占标题行的 40%（不少于 8em），其余让给操作和元信息；短标题只占自己的宽度。
-    // 窄屏标题优先，操作和元信息只填标题右边剩下的空白
-    const titleMax = tier === 'narrow' ? Infinity
-      : Math.max(8 * parseFloat(getComputedStyle(h2).fontSize), title.clientWidth * 0.4);
-    const titleWidth = Math.min(h2.getBoundingClientRect().width, titleMax);
-    const room = actions.getBoundingClientRect().left - h2.getBoundingClientRect().left
-      - titleWidth - gap * 2 - HEAD_BRIEF_SLACK;
-    let used = 0;
-    // 操作按钮先放：按菜单顺序逐个平铺，到放不下的那一个为止，它和后面的都留在菜单里
-    const actionsGap = parseFloat(getComputedStyle(actions).columnGap) || 0;
-    for (const node of [...list.children]) {
-      node.dataset.fromMenu = '1';
-      actions.insertBefore(node, wrap);
-      const width = node.getBoundingClientRect().width + actionsGap;
-      if (used + width > room) {
-        delete node.dataset.fromMenu;
-        list.prepend(node);
-        break;
-      }
-      used += width;
-      for (const item of menuButtons(node)) item.removeAttribute('role');
-    }
-    // 操作全放下了，元信息再按固定顺序往标题后放，放不下的留在菜单里
-    if (brief && !list.children.length) {
-      brief.hidden = false;
-      for (const item of items) brief.appendChild(item);
-      const briefGap = parseFloat(getComputedStyle(brief).columnGap) || 0;
-      for (const item of items) {
-        const width = item.getBoundingClientRect().width + (keep ? briefGap : 0);
-        if (used + width > room) break;
-        used += width;
-        keep++;
-      }
-      for (const item of items.slice(keep)) meta.appendChild(item);
-    }
-  }
-  if (brief) brief.hidden = !keep;
-  heading.classList.toggle('head-flat', !list.children.length);
-  if (more) {
-    const menuEmpty = !list.children.length;
-    more.title = more.ariaLabel = menuEmpty ? '会话信息' : '更多会话操作';
-    more.hidden = menuEmpty && !meta?.children.length;
-  }
-  auditHeaderLayout(heading, tier, actions);
-}
+function layoutSessionHead(...args) {return SessionUiApp.layoutSessionHead(...args);}
 
 // 排版结果按签名去重记 header.layout：档位、平铺了哪些操作、标题后放了几项元信息、
 // 标题行有没有横向溢出（溢出就意味着右侧按钮会被 #right 裁掉）。
@@ -4658,30 +4451,12 @@ function auditHeaderLayout(heading, tier, actions) {
   } catch { /* 审计不能影响排版 */ }
 }
 
-document.addEventListener('click', event => {
-  if (!event.target.closest('.session-actions')) closeSessionActions();
-}, true);
-document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && $('#session-actions-menu')?.hidden === false) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    closeSessionActions(true);
-  }
-}, true);
-addEventListener('resize', () => closeSessionActions());
-for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', () => layoutSessionHead());
+
+
+
+
 // 拖分割线、开合左栏、改窗口都会改变详情区宽度，元信息随之在标题后和 ⋯ 之间进出
-{
-  let detailWidth = -1;
-  new ResizeObserver(entries => {
-    const width = entries.at(-1)?.contentRect.width ?? -1;
-    if (width === detailWidth) return;
-    detailWidth = width;
-    layoutSessionHead();
-  }).observe($('#detail'));
-  new MutationObserver(() => layoutSessionHead()).observe($('#detail'), {childList: true});
-  document.fonts?.ready.then(() => layoutSessionHead());   // 字体换过之后文字宽度会变
-}
+
 
 function closeHeaderMenu(restoreFocus = false) { SessionDockShell.closeHeaderMenu(restoreFocus); }
 function layoutHeader() { SessionDockShell.layoutHeader(); }
@@ -4690,470 +4465,61 @@ function layoutHeader() { SessionDockShell.layoutHeader(); }
 const agentRunning = (uid, item) => !!item.active && S.live.has(uid);
 
 /** 主会话/子代理下拉的行：主会话固定在前，子代理按结束时间倒序，还在跑的没有结束时间、排最前并带绿点。 */
-function sessionViewRows(m) {
-  const row = S.sessions.find(s => s.uid === m.uid);
-  const items = [...((row || m).agent_items || [])];
-  const running = a => agentRunning(m.uid, a);
-  const when = value => Date.parse(value || '') || 0;
-  items.sort((a, b) => (running(b) - running(a)) || (when(b.updated) - when(a.updated)));
-  const mainTitle = m.parent_title || m.title;
-  return `
-      <button type="button" data-agent="" class="${m.agent_id ? '' : 'on'}" role="menuitem">
-        <small><span class="view-kind">主会话</span></small><b>${esc(mainTitle)}</b>
-      </button>
-      ${items.map(a => `<button type="button" data-agent="${esc(a.id)}"
-        class="${m.agent_id === a.id ? 'on' : ''}${running(a) ? ' running' : ''}" role="menuitem">
-        <small><span class="view-kind">${running(a)
-          ? '<i class="view-live" title="运行中" aria-label="运行中"></i>' : ''}子代理 · ${esc(a.type)}</span>
-          <span class="view-span">${esc(fmtSpan(a.created, running(a) ? null : a.updated))}</span></small>
-        <b>${esc(a.title)}</b>
-      </button>`).join('')}`;
-}
+function sessionViewRows(...args) {return SessionUiApp.sessionViewRows(...args);}
 
-function head(m, total) {
-  const h = el('div', 'dhead');
-  const tmuxLive = S.liveTmux.has(m.uid);
-  const hasAgents = (m.agent_items || []).length > 0;
-  const titleView = hasAgents ? `
-    <button class="session-view-switch" id="a-view-switch" type="button"
-      title="切换主会话/子代理" aria-label="切换主会话/子代理" aria-expanded="false">
-      <span>${esc(m.title)}</span><i>⌄</i>
-    </button>` : `<span>${esc(m.title)}</span>`;
-  const menuView = hasAgents ? `
-    <div class="session-view-menu" id="session-view-menu" hidden role="menu">${sessionViewRows(m)}</div>` : '';
-  h.innerHTML = `
-    <div class="dtitle">
-      <button class="mobile-back" title="返回会话列表" aria-label="返回会话列表">←</button>
-      <h2 class="${hasAgents ? 'has-session-views' : ''}">${sessionIconMarkup(m.source,
-        S.live.has(m.uid), tmuxLive, sessionTurn(m.uid))}${titleView}</h2>
-      ${menuView}
-      <div class="dhead-actions" aria-label="会话操作">
-        ${forkChainButtonMarkup(m)}
-        ${consoleButtonMarkup()}
-        ${sessionActionsMarkup(`
-        ${starButtonMarkup(m.uid, !!m.starred, 'session-menu-action', 'a-star')}
-        <button class="session-menu-action turn-mode${S.compactTurns ? '' : ' on'}" id="a-turns"
-          title="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
-          aria-label="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
-          aria-pressed="${!S.compactTurns}">${uiIcon('process')}</button>
-        ${S.term ? '<div class="session-menu-search" data-search-navigator></div>' : ''}
-        <div class="session-menu-diagnostics">
-          ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-freeze" hidden></button>'}
-          <button class="session-menu-action" data-report-bug title="报告当前会话问题"
-            aria-label="报告当前会话问题">${uiIcon('bug')}</button>
-        </div>
-        ${SessionDockCapabilities.config.session_clone_local_codex === true ? `<button class="session-menu-action" id="a-clone-group" type="button" title="移动 / 复制整组" aria-label="移动 / 复制整组">${uiIcon('transfer')}</button>` : ''}
-        ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action"></button>'}
-        `, `
-    <div class="dmeta">
-      <span id="mcount-total">${total} 条消息</span>
-      <span class="meta-secondary">${fmtSize(m.size)}</span>
-      <span class="meta-secondary">${esc(fmtTime(m.created))} → ${esc(fmtTime(m.updated))}</span>
-      ${m.node_name ? `<span class="meta-node node-badge" data-node-color="${nodeColor(m.node_name)}">${esc(m.node_name)}</span>` : ''}
-      <span class="meta-secondary"><code>${esc(shortCwd(m.cwd || '(未知)', 999))}</code></span>
-      <span class="meta-source">${esc(m.agent_type || SOURCES[m.source].name)}</span>
-      ${m.model ? `<span class="meta-secondary">${esc(m.model)}</span>` : ''}
-      <span class="meta-secondary session-id"><code>${esc(m.sid)}</code></span>
-    </div>`)}
-      </div>
-    </div>`;
-  const searchTarget = h.querySelector('[data-search-navigator]');
-  SessionDockSearch.mountNavigator(searchTarget);
-  h.querySelector('.mobile-back').onclick = showMobileList;
-  h.querySelector('#a-star').onclick = () => toggleSessionStar(m.uid);
-  h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
-  paintTransferAvailability(h.querySelector('#a-clone-group'), m.uid);
-  const turnMode = h.querySelector('#a-turns');
-  turnMode.onclick = () => {
-    S.compactTurns = !S.compactTurns;
-    store.set('compactTurns', S.compactTurns);
-    turnMode.classList.toggle('on', !S.compactTurns);
-    turnMode.setAttribute('aria-pressed', String(!S.compactTurns));
-    const label = S.compactTurns ? '展开所有过程' : '折叠已完成过程';
-    turnMode.title = turnMode.ariaLabel = label;
-    labelSessionAction(turnMode);
-    document.querySelectorAll('#msgs > .turn-process').forEach(
-      node => S.compactTurns ? node._fold?.() : node._open?.());
-    refreshMessageTimeDividers();
-    settle($('#msgs'));
-  };
-  const viewSwitch = h.querySelector('#a-view-switch');
-  const viewMenu = h.querySelector('#session-view-menu');
-  if (viewSwitch && viewMenu) {
-    const close = () => {
-      viewMenu.hidden = true;
-      viewSwitch.setAttribute('aria-expanded', 'false');
-    };
-    viewSwitch.onclick = e => {
-      e.stopPropagation();
-      // 起止时间和运行点按打开时的列表数据重画；列表刷新不重建标题栏，
-      // 否则正在看的菜单会被换掉。
-      if (viewMenu.hidden) viewMenu.innerHTML = sessionViewRows(m);
-      viewMenu.hidden = !viewMenu.hidden;
-      viewSwitch.setAttribute('aria-expanded', String(!viewMenu.hidden));
-      if (!viewMenu.hidden) setTimeout(() => document.addEventListener('click', close, { once: true }), 0);
-    };
-    viewMenu.onclick = e => {
-      e.stopPropagation();
-      const b = e.target.closest('button[data-agent]');
-      if (!b) return;
-      close();
-      openSession(m.uid, b.dataset.agent || null);
-    };
-  }
-  bindForkChainMenu(h, m);
-  const tb = h.querySelector('#a-term');
-  bindConsoleButton(tb, m.uid, m.agent_id);
-  showConsoleToast('');
-  if (typeof renderTakeoverBtn === 'function') setTimeout(renderTakeoverBtn, 0);
-  renderSessionAction(m, h.querySelector('#a-session-action'));
-  bindSessionActions(h);
-  return h;
-}
+function head(...args) {return SessionUiApp.head(...args);}
 
 /* ---------- 回退父会话链 ---------- */
 // Codex 回退会生成子会话，原会话默认从左栏隐藏。子会话标题栏给一个图标，
 // 下拉列出整条父会话链，每一级可单独显示到左栏或再次隐藏。父会话本身
 // 也给同一个图标，列出它的子分支：从链上进入隐藏的父会话后能原路回去。
-function forkChainButtonMarkup(m) {
-  if (m.agent_id || !(m.forked_from_id || m.fork_parent || forkChildren(m).length)) return '';
-  const label = m.forked_from_id ? '父会话链' : '子会话';
-  return `<button class="iconbtn" id="a-fork-chain" type="button" title="${label}"
-      aria-label="${label}" aria-haspopup="menu" aria-expanded="false"
-      aria-controls="fork-chain-menu">${uiIcon('fork')}</button>
-    <div class="session-view-menu fork-chain-menu" id="fork-chain-menu" hidden role="menu"
-      aria-label="${label}"></div>`;
-}
 
-function closeForkChainMenu() {
-  const menu = $('#fork-chain-menu');
-  if (!menu || menu.hidden) return;
-  menu.hidden = true;
-  $('#a-fork-chain')?.setAttribute('aria-expanded', 'false');
-}
 
-function renderForkChainMenu() {
-  const menu = $('#fork-chain-menu');
-  if (!menu || menu.hidden) return;
-  const current = S.sessions.find(session => session.uid === S.sel)
-    || (S.results || []).find(session => session.uid === S.sel) || menu._meta;
-  const chain = current ? forkAncestors(current) : [];
-  const children = current ? forkChildren(current) : [];
-  const chainRow = (level, row) => {
-    const shown = !row.fork_parent || !!row.fork_parent_visible;
-    const when = `${esc(fmtTime(row.created))} → ${esc(fmtTime(row.updated))}`;
-    return `<div class="chain-row${shown ? ' shown' : ''}" role="none" data-uid="${esc(row.uid)}">
-        <button type="button" class="chain-open" role="menuitem" title="打开这条会话">
-          <small>${level} · ${when}${shown ? ' · 已在左栏' : ''}</small><b>${esc(row.title || row.sid)}</b>
-        </button>
-        ${row.fork_parent ? `<button type="button" class="btn chain-toggle" role="menuitem"
-          data-visible="${shown ? 0 : 1}">${shown ? '隐藏' : '显示'}</button>` : ''}
-      </div>`;
-  };
-  const rows = chain.map(({ sid, row }, i) => {
-    const level = i === 0 ? '父会话' : `上 ${i + 1} 级父会话`;
-    if (!row) return `<div class="chain-row gone" role="none">
-        <span><small>${level} · 记录已不存在</small><b><code>${esc(sid)}</code></b></span>
-      </div>`;
-    return chainRow(level, row);
-  }).concat(children.map((row, i) => chainRow(children.length > 1 ? `子会话 ${i + 1}` : '子会话', row)));
-  menu.innerHTML = rows.join('')
-    || '<div class="chain-row gone" role="none"><span><small>没有父会话或子会话</small></span></div>';
-}
+function closeForkChainMenu(...args) {return SessionUiApp.closeForkChainMenu(...args);}
 
-function bindForkChainMenu(heading, m) {
-  const button = heading.querySelector('#a-fork-chain');
-  const menu = heading.querySelector('#fork-chain-menu');
-  if (!button || !menu) return;
-  menu._meta = m;
-  const open = () => {
-    closeSessionActions();
-    const views = heading.querySelector('#session-view-menu');
-    if (views) views.hidden = true;
-    heading.querySelector('#a-view-switch')?.setAttribute('aria-expanded', 'false');
-    menu.hidden = false;
-    button.setAttribute('aria-expanded', 'true');
-    renderForkChainMenu();
-  };
-  button.onclick = e => {
-    e.stopPropagation();
-    menu.hidden ? open() : closeForkChainMenu();
-  };
-  menu.onclick = async e => {
-    e.stopPropagation();
-    const row = e.target.closest('.chain-row[data-uid]');
-    if (!row) return;
-    const toggle = e.target.closest('.chain-toggle');
-    if (toggle) {
-      const visible = toggle.dataset.visible === '1';
-      await setForkParentVisibility([row.dataset.uid], visible, toggle);
-      if (visible) {
-        // 新显示的会话在左栏滚到可见处，让“显示”有个看得见的结果
-        $(`#side .item[data-uid="${CSS.escape(row.dataset.uid)}"]`)
-          ?.scrollIntoView({ block: 'nearest' });
-      }
-      return;
-    }
-    if (e.target.closest('.chain-open')) {
-      closeForkChainMenu();
-      openSession(row.dataset.uid, null, {exact: true});
-    }
-  };
-}
-document.addEventListener('click', event => {
-  if (!event.target.closest('#fork-chain-menu, #a-fork-chain')) closeForkChainMenu();
-}, true);
-document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && $('#fork-chain-menu')?.hidden === false) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    closeForkChainMenu();
-    $('#a-fork-chain')?.focus();
-  }
-}, true);
+function renderForkChainMenu(...args) {return SessionUiApp.renderForkChainMenu(...args);}
 
-function newAssignedLaunchFor(session) {
-  if (typeof T === 'undefined' || !session?.sid) return null;
-  return (T.pending || []).find(row => row.launch_kind === 'new_assigned'
-    && row.source === session.source
-    && String(row.declared_sid || '') === String(session.sid)) || null;
-}
 
-function unusedNewAssignedLaunch(session) {
-  const launch = newAssignedLaunchFor(session);
-  if (!launch) return null;
-  // A catalog/header snapshot can predate the accepted conversation window.
-  // Its zero cursor cannot make an already populated launch unused again.
-  const accepted = cache.get(viewKey(session.uid, null));
-  if (Number(session.cursor?.end) > 0 || Number(accepted?.end) > 0) return null;
-  return launch;
-}
 
-function renderSessionFreeze(m, button = $('#a-session-freeze')) {
-  if (!button || m.uid !== S.sel) return;
-  const row = typeof T !== 'undefined' && (T.list || []).find(row => row.uid === m.uid);
-  const reason = typeof T === 'undefined' || !T.listLoaded
-    ? '正在读取会话运行状态，请稍后重试。'
-    : !HUB_MODE && SessionDockCapabilities.config.session_freeze !== true
-      ? '当前节点不支持冻结现场；此功能仅适用于已启用会话管理的 Linux 节点。'
-      : row?.stale ? '会话运行状态已失效，请等待所属节点恢复连接。'
-      : !row?.instance_id ? '当前会话没有可验证的运行实例，无法冻结现场。'
-      : typeof row.frozen !== 'boolean'
-        ? '当前节点不支持冻结现场；此功能仅适用于已启用会话管理的 Linux 节点。' : '';
-  const frozen = !reason && row.frozen;
-  const label = frozen ? '恢复运行' : '冻结现场';
-  button.hidden = false;
-  button.innerHTML = uiIcon(frozen ? 'play' : 'pause');
-  button.title = button.ariaLabel = label;
-  button.setAttribute('aria-pressed', String(!!frozen));
-  setControlUnavailable(button, reason);
-  labelSessionAction(button);
-  button.onclick = null;
-  if (reason) return;
-  button.onclick = async () => {
-    button.disabled = true;
-    try {
-      const result = await post('api/session/freeze', {uid:m.uid,
-        instance_id:row.instance_id, frozen:!row.frozen});
-      if (result.error || !result.ok) throw new Error(result.error || '请求失败');
-      row.frozen = result.frozen;
-      paintTurn(m.uid);
-      browserAuditEvent('session.freeze', {uid:m.uid, instance_id:row.instance_id,
-        frozen:result.frozen, process_count:result.process_count});
-      syncSessionFreezeOverlay();
-    } catch (error) {
-      showSessionStopNotice(`冻结 / 恢复失败：${error.message || error}`, true, m.uid);
-    } finally {
-      await loadTermList();
-      paintTurn(m.uid);
-      renderSessionFreeze(m);
-      button.disabled = false;
-    }
-  };
-}
 
-function renderSessionAction(m, button = $('#a-session-action')) {
-  renderSessionFreeze(m, button?.closest('.dhead')?.querySelector('#a-session-freeze'));
-  if (!button || m.uid !== S.sel) return;
-  if (m.fork_parent) {
-    const shown = !!m.fork_parent_visible;
-    const label = shown ? '隐藏父会话' : '显示父会话';
-    button.innerHTML = uiIcon('eye-off');
-    button.title = button.ariaLabel = label;
-    labelSessionAction(button);
-    button.onclick = () => setForkParentVisibility([m.uid], !shown, button);
-    return;
-  }
-  const launch = unusedNewAssignedLaunch(m);
-  if (launch && typeof deletePendingSession === 'function') {
-    const label = '删除会话';
-    button.innerHTML = uiIcon('trash');
-    button.title = button.ariaLabel = label;
-    labelSessionAction(button);
-    button.onclick = () => deletePendingSession(launch, button);
-    return;
-  }
-  const running = sessionStoppable(m.uid);
-  const label = running ? '停止会话' : '删除会话';
-  button.innerHTML = uiIcon(running ? 'power' : 'trash');
-  button.title = button.ariaLabel = label;
-  labelSessionAction(button);
-  button.onclick = () => running ? stopSession(m, button) : del(m);
-}
+
+function newAssignedLaunchFor(...args) {return SessionUiApp.newAssignedLaunchFor(...args);}
+
+function unusedNewAssignedLaunch(...args) {return SessionUiApp.unusedNewAssignedLaunch(...args);}
+
+function renderSessionFreeze(...args) {return SessionUiApp.renderSessionFreeze(...args);}
+
+function renderSessionAction(...args) {return SessionUiApp.renderSessionAction(...args);}
 
 // Rust `session_stop`: the server stops only a managed host instance (Ctrl-D,
 // then the host's guarded stop); an unmanaged/external CLI is a typed refusal.
 // Without process detection `S.live` only holds sessions this page launched or
 // took over, so a listed managed instance also makes the session stoppable.
-const sessionStopCapable = () => SessionDockCapabilities.config.backend === 'rust'
-  && SessionDockCapabilities.config.session_stop === true;
-function sessionStoppable(uid) {
-  if (S.live.has(uid)) return true;
-  return sessionStopCapable() && typeof T !== 'undefined'
-    && (T.list || []).some(row => row.uid === uid && !!row.instance_id && !row.stale);
-}
-let sessionStopNoticeTimer = 0;
+
+function sessionStoppable(...args) {return SessionUiApp.sessionStoppable(...args);}
+
 // Keep the frozen scene inside the selected session pane, never in global floats.
-function syncSessionFreezeOverlay() {
-  const right = $('#right');
-  if (!right) return;
-  let overlay = $('#session-freeze-overlay');
-  const visible = sessionFrozen(S.sel)
-    && (!MOBILE.matches || document.body.classList.contains('mobile-detail'));
-  if (!overlay && visible) {
-    overlay = el('div', 'session-freeze-overlay');
-    overlay.id = 'session-freeze-overlay';
-    overlay.innerHTML = `<div class="app-float session-freeze-line" role="status" aria-live="polite">
-      <span>会话已暂停</span>
-      <button class="btn" type="button" data-freeze-resume title="恢复运行" aria-label="恢复运行">${uiIcon('play')}</button>
-    </div>`;
-    overlay.querySelector('[data-freeze-resume]').onclick = () => $('#a-session-freeze')?.click();
-    right.appendChild(overlay);
-  }
-  if (overlay) {
-    overlay.hidden = !visible;
-    overlay.dataset.uid = visible ? S.sel : '';
-  }
-}
-function syncSessionStopNotice() {
-  syncSessionFreezeOverlay();
-  const notice = $('#session-stop-notice');
-  if (notice?.dataset.uid && (notice.dataset.uid !== S.sel
-      || (MOBILE.matches && !document.body.classList.contains('mobile-detail')))) {
-    clearTimeout(sessionStopNoticeTimer);
-    notice.hidden = true;
-  }
-}
-function showSessionStopNotice(text, sticky = false, uid = '') {
-  // Batch progress owns stop feedback, including asynchronous terminal-exit
-  // notices that arrive after an individual HTTP response.
-  if (text && (sessionStopBusy || (S.picking && sessionStopProgress))) return;
-  let notice = $('#session-stop-notice');
-  if (!notice) {
-    notice = el('div', 'app-float');
-    notice.id = 'session-stop-notice';
-    notice.setAttribute('role', 'status');
-    notice.setAttribute('aria-live', 'polite');
-    floatStack().appendChild(notice);
-  }
-  const show = visible => { notice.hidden = !visible; };
-  clearTimeout(sessionStopNoticeTimer);
-  notice.textContent = text;
-  notice.dataset.uid = uid;
-  show(!!text && (!uid || uid === S.sel));
-  if (text && !sticky) sessionStopNoticeTimer = setTimeout(() => show(false), 8000);
-}
-const STOP_STAGE_TEXT = {
-  graceful: 'CLI 已在收到 Ctrl-D 后退出',
-  stopped: 'CLI 未响应 Ctrl-D，已由宿主停止并确认退出',
-  already_exited: '该受管实例此前已退出',
-  uncertain: '已发送 Ctrl-D 与宿主停止指令，但限时内未观察到退出；结果不确定，不会自动重试',
-};
+function syncSessionFreezeOverlay(...args) {return SessionUiApp.syncSessionFreezeOverlay(...args);}
+function syncSessionStopNotice(...args) {return SessionUiApp.syncSessionStopNotice(...args);}
+function showSessionStopNotice(...args) {return SessionUiApp.showSessionStopNotice(...args);}
 
-async function requestSessionStop(m) {
-  const body = { uid: m.uid };
-  if (sessionStopCapable()) body.request_id = globalThis.crypto?.randomUUID?.()
-    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const response = await fetch(appUrl('api/session/stop'), {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const result = await response.json();
-  if (!response.ok || result.error) throw new Error(result.error || response.status);
-  if (sessionStopCapable() && result.stopped) S.live.delete(m.uid);
-  return result;
-}
 
-async function stopSession(m, button = null) {
-  // 空闲会话停止不打断任何工作，不再确认；轮转中、等回答或状态未知仍确认。
-  if (sessionTurn(m.uid) !== 'idle' && !await appConfirm(`停止会话「${m.title}」?\n\n停止后才可以删除会话记录。`)) return;
-  if (button) button.disabled = true;
-  try {
-    const d = await requestSessionStop(m);
-    if (sessionStopCapable()) {
-      showSessionStopNotice(`「${m.title}」${STOP_STAGE_TEXT[d.stage] || d.explanation || '停止请求已处理'}`);
-    }
-    await refreshLive(true);
-    if (typeof loadTermList === 'function') await loadTermList();
-    paintLive();
-  } catch (error) {
-    if (sessionStopCapable()) showSessionStopNotice(`停止失败：${error.message || error}`, true);
-    else await appAlert(`停止失败：${error.message || error}`);
-  } finally {
-    if (button) button.disabled = false;
-  }
-}
+function requestSessionStop(...args) {return SessionUiApp.requestSessionStop(...args);}
+
+function stopSession(...args) {return SessionUiApp.stopSession(...args);}
 
 // Rust 回收站能力：文件进服务端显式配置的回收站目录。
-const trashCapable = () => SessionDockCapabilities.config.backend === 'rust'
-  && SessionDockCapabilities.config.trash === true;
-const trashLocationNote = () => '文件会移入服务端回收站，不会永久删除。';
-// 运行状态未知不等于已退出：只有用户明确确认 CLI 已退出，才带 force 重试。
-function confirmForceDelete(count, detail) {
-  return appConfirm(`${count === 1 ? '该会话' : `${count} 个会话`}的运行状态未知${detail ? `（${detail}）` : ''}，`
-    + '后端无法确认 CLI 已经退出；未知不代表已停止。\n\n'
-    + '请先确认这些会话的 CLI 都已退出。仍要删除吗?');
-}
 
-async function requestSessionDelete(uid, force = false) {
-  const response = await fetch(appUrl('api/session/' + encodeURIComponent(uid) + (force ? '?force=1' : '')),
-    { method: 'DELETE' });
-  return { response, data: await response.json().catch(() => ({})) };
-}
+
+// 运行状态未知不等于已退出：只有用户明确确认 CLI 已退出，才带 force 重试。
+function confirmForceDelete(...args) {return SessionUiApp.confirmForceDelete(...args);}
+
+function requestSessionDelete(...args) {return SessionUiApp.requestSessionDelete(...args);}
 
 // OpenCode 会话在它自己的数据库里：直接删除（连同子会话），不进回收站。
-const opencodeDeleteNote = () => 'OpenCode 会话会从 OpenCode 直接删除（连同子会话），不进回收站，无法恢复。';
 
-async function del(m) {
-  const opencode = m.source === 'opencode';
-  if (!await appConfirm(`删除会话「${m.title}」?\n\n${opencode ? opencodeDeleteNote() : trashLocationNote()}`)) return;
-  closeWatch();                         // 先停 SSE，避免文件移走后 EventSource 自动重连 404
-  let { response, data } = await requestSessionDelete(m.uid);
-  if (!response.ok && trashCapable() && data.code === 'run_state_unknown' && data.needs_force
-      && await confirmForceDelete(1, data.run_state?.detail)) {
-    ({ response, data } = await requestSessionDelete(m.uid, true));
-  }
-  if (!response.ok) {
-    watchSession(m.uid);                // 删除失败，会话仍在，恢复实时同步
-    return appAlert('删除失败: ' + (data.error || response.status));
-  }
-  forgetDeletedReceipts([m]);
-  S.sessions = S.sessions.filter(x => x.uid !== m.uid);
-  if (S.results) S.results = S.results.filter(x => x.uid !== m.uid);
-  S.sel = null;
-  store.set('sel', null);
-  renderChips(); renderSide();
-  if (opencode) {
-    $('#detail').innerHTML = '<div class="empty">会话已从 OpenCode 删除</div>';
-  } else {
-    $('#detail').innerHTML = `<div class="empty">已移入回收站<br><code>${esc(data.trash)}</code>`
-      + `<br><button type="button" class="btn" id="detail-open-trash">打开回收站</button></div>`;
-    $('#detail-open-trash').onclick = openTrash;
-  }
-  ensureConsolePlaceholder();
-  auditDetailRendered('trashed');
-  showMobileList();
-}
+
+function del(...args) {return SessionUiApp.del(...args);}
 
 // 连续工具调用/输出合并成一个可折叠的组；正在增长的时间线尾段保持展开，
 // 等后面出现普通对话或任务结束后再自动封口。
@@ -5222,171 +4588,14 @@ function paintToolOutputDiff(pre) {
 
 
 
-function safeMediaSrc(src) {
-  src = String(src || '');
-  if (/^\/api\/media\/[0-9a-f]{32}$/.test(src)) return appUrl(src);
-  if (SessionDockCapabilities.config.backend === 'rust' && SessionDockCapabilities.config.media_lazy === true) return '';
-  if (HUB_MODE && /^\/api\/nodes\/[0-9a-f]{32}\/api\/media\/[0-9a-f]{32}$/.test(src)) return appUrl(src);
-  // Native history is untrusted: Rust's local media capability does not grant
-  // permission for the browser to contact URLs mentioned in that history.
-  if (!SessionDockCapabilities.allows('media_remote')) return '';
-  if (!/^https?:\/\//i.test(src)) return '';
-  try {
-    const u = new URL(src);
-    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : '';
-  } catch { return ''; }
-}
+SessionDockOverlays.mountMedia({appUrl, capabilities:SessionDockCapabilities, hub:HUB_MODE,
+  viewKey, cache, historyPageRequests, stallMs:SYNC_STALL_MS, fetchMessages, applyDiff,
+  getView: () => ({uid:S.sel, agent:S.agent, request:inflight}), contains: element => !!$('#msgs')?.contains(element)});
+const {safeMediaSrc, lazyMediaEnabled, mediaContinuationEnabled, diagnoseMedia,
+  reloadMediaSession, forgetMediaDiagnostic, captureView} = SessionDockOverlays;
 
-function lazyMediaEnabled() {
-  return SessionDockCapabilities.config.backend === 'rust'
-    && SessionDockCapabilities.config.media_lazy === true;
-}
-
-function mediaContinuationEnabled() {
-  return SessionDockCapabilities.config.backend === 'rust'
-    && SessionDockCapabilities.config.media_continuation === true;
-}
-
-// Error-only diagnostics never materialize an image body. Completed results
-// are bounded/deduplicated; in-flight work owns its slot even across eviction.
-const mediaDiagnostics = new Map();
-let mediaDiagnosticActive = 0;
-
-async function diagnoseMedia(path) {
-  if (!lazyMediaEnabled() || !/^\/api\/media\/[0-9a-f]{32}$/.test(path)) {
-    return {status: 0, message: '图片地址不可用。'};
-  }
-  if (mediaDiagnostics.has(path)) return mediaDiagnostics.get(path);
-  if (mediaDiagnosticActive >= 4) return {status: 0, message: '图片错误诊断繁忙，请手动重试。'};
-  mediaDiagnosticActive++;
-  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 5000);
-  const pending = (async () => {
-    try {
-      const response = await fetch(safeMediaSrc(path), {signal: ac.signal, cache: 'no-store',
-        redirect: 'error', headers: {Accept: 'application/json'}});
-      if (response.ok) {
-        await response.body?.cancel();
-        return {status: response.status, message: '图片读取已恢复或浏览器无法解码；请手动重试图片。'};
-      }
-      const result = {status: response.status, message: '图片读取失败。'};
-      if (Number(response.headers.get('content-length')) > 4096) {
-        await response.body?.cancel();
-        return result;
-      }
-      if (!/^application\/json(?:;|$)/i.test(response.headers.get('content-type') || '')) {
-        await response.body?.cancel();
-        return result;
-      }
-      const reader = response.body?.getReader();
-      if (!reader) return result;
-      const chunks = [];
-      let bytes = 0;
-      try {
-        for (;;) {
-          const {value, done} = await reader.read();
-          if (done) break;
-          bytes += value.byteLength;
-          if (bytes > 4096) { await reader.cancel(); return result; }
-          chunks.push(value);
-        }
-        const buffer = new Uint8Array(bytes);
-        let offset = 0;
-        for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.byteLength; }
-        const detail = JSON.parse(new TextDecoder().decode(buffer));
-        if (typeof detail?.error === 'string') result.message = detail.error.slice(0, 512);
-      } finally { reader.releaseLock(); }
-      return result;
-    } catch (error) {
-      return {status: 0, message: error.name === 'AbortError' ? '图片错误诊断超时，请手动重试。' : '图片请求失败，请检查连接后手动重试。'};
-    } finally { clearTimeout(timer); mediaDiagnosticActive--; }
-  })();
-  mediaDiagnostics.set(path, pending);
-  while (mediaDiagnostics.size > 128) mediaDiagnostics.delete(mediaDiagnostics.keys().next().value);
-  return pending;
-}
-
-async function reloadMediaSession(view, button, notice) {
-  if (!view.current()) return;
-  const key = viewKey(view.uid, view.agent), entry = cache.get(key);
-  if (!entry || historyPageRequests.has(key)) {
-    notice.textContent = '当前历史请求尚未结束，请稍后手动重新载入。';
-    return;
-  }
-  const observed = Object.fromEntries(['msgs','version','end','anchor','activity','meta','prompt','partial']
-    .map(field => [field, entry[field]]));
-  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
-  const request = {key, entry, ac};
-  historyPageRequests.set(key, request);
-  button.disabled = true;
-  try {
-    const {data, bytes} = await fetchMessages(view.uid, {agent: view.agent, windowed: true, signal: ac.signal});
-    if (!view.current() || cache.get(key) !== entry) return;
-    if (Object.entries(observed).some(([field, value]) => entry[field] !== value)) {
-      throw new Error('实时历史已更新；已保留新内容，请再次手动重新载入。');
-    }
-    if (!data?.reset || !data.meta || !data.version || !Array.isArray(data.messages)) {
-      throw new Error('未收到有效历史窗口；当前快照保持不变。');
-    }
-    await applyDiff(view.uid, data, bytes, view.agent);
-  } catch (error) {
-    if (view.current()) notice.textContent = `重新载入失败：${error.message || '请求未完成'}。当前快照保持不变。`;
-  } finally {
-    clearTimeout(timer);
-    button.disabled = false;
-    if (historyPageRequests.get(key) === request) historyPageRequests.delete(key);
-  }
-}
-
-async function mediaImageFailed(event) {
-  const img = event.target;
-  if (img?.dataset.vueMedia === 'true' || !lazyMediaEnabled() || img?.tagName !== 'IMG' || img.dataset.mediaLazy !== 'true') return;
-  const path = img.dataset.mediaPath, wrapper = img.closest('.media-load');
-  if (!/^\/api\/media\/[0-9a-f]{32}$/.test(path || '') || !wrapper?.isConnected
-      || !$('#msgs')?.contains(wrapper)) return;
-  const src = safeMediaSrc(path);
-  if (img.src !== new URL(src, location.href).href) return;
-  const generation = wrapper._mediaGeneration = (wrapper._mediaGeneration || 0) + 1;
-  const view = {uid: S.sel, agent: S.agent, request: inflight};
-  view.current = () => wrapper.isConnected && $('#msgs')?.contains(wrapper)
-    && wrapper._mediaGeneration === generation && S.sel === view.uid && S.agent === view.agent
-    && inflight === view.request;
-  const link = img.closest('.media-link');
-  link.hidden = true;
-  wrapper.querySelector('.media-load-error')?.remove();
-  const panel = el('span', 'media-error media-load-error');
-  panel.setAttribute('role', 'status');
-  const notice = el('span', '', '图片加载失败；正在读取错误说明…');
-  panel.appendChild(notice);
-  wrapper.appendChild(panel);
-  const detail = await diagnoseMedia(path);
-  if (!view.current()) return;
-  notice.textContent = `图片不可用${detail.status ? `（HTTP ${detail.status}）` : ''}：${detail.message}`;
-  const retry = el('button', 'media-load-retry', '重试图片');
-  retry.type = 'button';
-  retry.onclick = () => {
-    if (!view.current()) return;
-    wrapper._mediaGeneration++;
-    mediaDiagnostics.delete(path);
-    panel.remove();
-    link.hidden = false;
-    img.src = src;
-  };
-  panel.appendChild(retry);
-  if ([404, 409].includes(detail.status)) {
-    const reason = el('span', '', '图片凭据已失效或内容已变化；可手动重新载入当前会话获取新凭据。');
-    const reload = el('button', 'media-load-reload', '重新载入当前会话');
-    reload.type = 'button';
-    reload.onclick = () => reloadMediaSession(view, reload, notice);
-    panel.append(reason, reload);
-  }
-}
-
-document.addEventListener('error', mediaImageFailed, true);
-document.addEventListener('load', event => {
-  const img = event.target;
-  if (lazyMediaEnabled() && img?.tagName === 'IMG' && img.dataset.mediaLazy === 'true'
-      && img.naturalWidth > 0) mediaDiagnostics.delete(img.dataset.mediaPath);
-}, true);
+// Scoped inline-media adapter renders Vue MediaError controls for Markdown images.
+// Gallery images marked data-vue-media remain owned by B5 MediaImage.
 
 function imageHtml(m, inline = false) {
   if (m?.error) {
@@ -5850,123 +5059,8 @@ function referenceLink(ref, label, context, explicit = false) {
   return `<a href="${esc(href)}" data-reference-kind="web" target="_blank" rel="noopener noreferrer">${label}</a>`;
 }
 
-const fileMenu = document.createElement('div');
-fileMenu.id = 'file-menu'; fileMenu.className = 'ctx-menu'; fileMenu.hidden = true;
-fileMenu.setAttribute('role', 'menu'); fileMenu.setAttribute('aria-label', '文件操作');
-const fileMenuTargetText = document.createElement('div');
-fileMenuTargetText.id = 'file-menu-target'; fileMenuTargetText.className = 'ctx-menu-target';
-fileMenuTargetText.dir = 'auto';
-fileMenu.appendChild(fileMenuTargetText);
-fileMenu.setAttribute('aria-describedby', fileMenuTargetText.id);
-for (const [action, label] of [['copy-path', '复制完整路径'],
-  ['copy-directory', '复制所在目录路径'], ['download', '下载'],
-  ['copy-url', '复制链接地址'], ['open-web', '在新标签页打开']]) {
-  const button = document.createElement('button');
-  button.type = 'button'; button.dataset.action = action; button.textContent = label;
-  button.setAttribute('role', 'menuitem'); fileMenu.appendChild(button);
-}
-document.body.appendChild(fileMenu);
-let fileMenuTarget = null;
-function closeFileMenu() { fileMenu.hidden = true; fileMenuTarget = null; }
-
-async function copyFileText(text) {
-  if (navigator.clipboard?.writeText) {
-    try { await navigator.clipboard.writeText(text); return; } catch { /* HTTP fallback */ }
-  }
-  const input = document.createElement('textarea');
-  input.value = text; input.style.cssText = 'position:fixed;left:-10000px;top:0';
-  document.body.appendChild(input); input.select();
-  try { if (!document.execCommand('copy')) throw new Error('复制失败'); }
-  finally { input.remove(); }
-}
-
-document.addEventListener('contextmenu', async event => {
-  const link = event.target.closest('.mb a[data-file-ref], .mb a[data-local-path], .mb a[data-reference-kind="web"]');
-  if (!link) return;
-  event.preventDefault(); closeItemMenu();
-  const target = fileMenuTarget = {path: link.dataset.localPath, href: link.dataset.fileHref || link.href,
-    kind: link.dataset.referenceKind === 'web' ? 'web' : link.dataset.fileKind};
-  const place = () => {
-    fileMenu.hidden = false;
-    const box = fileMenu.getBoundingClientRect();
-    fileMenu.style.left = `${Math.max(8, Math.min(event.clientX, innerWidth - box.width - 8))}px`;
-    fileMenu.style.top = `${Math.max(8, Math.min(event.clientY, innerHeight - box.height - 8))}px`;
-  };
-  if (link.dataset.fileRef) {
-    fileMenuTargetText.textContent = '正在读取文件信息…';
-    for (const button of fileMenu.querySelectorAll('button')) button.hidden = true;
-    place();
-    try {
-      if (!SessionDockCapabilities.allows('files')) throw new Error('Rust 后端尚未实现文件解析与文件操作。');
-      const query = new URL(target.href).searchParams, ref = query.get('ref');
-      const response = await fetch(appUrl('/api/session/resolve-files'), {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({uid:query.get('uid'), agent:query.get('agent') || '', refs:[ref]}),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || '无法读取文件信息');
-      const detail = data.targets?.find(item => item.ref === ref);
-      const path = detail?.path || data.resolved?.[ref];
-      if (typeof path !== 'string' || !(path.startsWith('/') || path.startsWith('\\\\') || isWindowsDrivePath(path))) {
-        const failure = data.errors?.find(item => item.ref === ref);
-        throw new Error(failure?.error || '文件不存在或有多个同名文件，请使用完整路径。');
-      }
-      if (fileMenuTarget !== target || !link.isConnected) return;
-      target.path = path;
-      target.kind = ['file', 'directory'].includes(detail?.kind) ? detail.kind : 'unknown';
-    } catch (error) {
-      if (fileMenuTarget === target) { fileMenuTargetText.textContent = error.message || '无法读取文件信息'; place(); }
-      return;
-    }
-  }
-  fileMenuTargetText.textContent = fileMenuTarget.kind === 'web' ? fileMenuTarget.href : fileMenuTarget.path;
-  // 目录和类型未确认的目标不能下载，直接不显示该项，不留灰色菜单项。
-  const actions = fileMenuTarget.kind === 'web'
-    ? ['copy-url', 'open-web']
-    : fileMenuTarget.kind === 'file' ? ['copy-path', 'copy-directory', 'download']
-    : ['copy-path'];
-  fileMenu.setAttribute('aria-label', fileMenuTarget.kind === 'web' ? '链接操作' : '文件操作');
-  for (const button of fileMenu.querySelectorAll('button')) {
-    button.hidden = !actions.includes(button.dataset.action);
-  }
-  place();
-  fileMenu.querySelector('button:not([hidden])').focus({preventScroll: true});
-});
-document.addEventListener('pointerdown', event => {
-  if (!fileMenu.contains(event.target)) closeFileMenu();
-}, true);
-addEventListener('resize', closeFileMenu);
-document.addEventListener('scroll', event => {
-  if (!fileMenu.contains(event.target)) closeFileMenu();
-}, true);
-fileMenu.addEventListener('keydown', event => {
-  const buttons = [...fileMenu.querySelectorAll('button:not([hidden])')];
-  const index = buttons.indexOf(document.activeElement);
-  if (event.key === 'Escape') { event.preventDefault(); closeFileMenu(); }
-  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-    event.preventDefault();
-    buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length].focus();
-  }
-});
-fileMenu.addEventListener('click', async event => {
-  const action = event.target.closest('button')?.dataset.action;
-  const target = fileMenuTarget;
-  if (!action || !target) return;
-  closeFileMenu();
-  try {
-    if (action === 'copy-path') await copyFileText(target.path);
-    else if (action === 'copy-directory' && target.kind === 'file') {
-      await copyFileText(fileParentDirectory(target.path));
-    }
-    else if (action === 'copy-url') await copyFileText(target.href);
-    else if (action === 'open-web') window.open(target.href, '_blank', 'noopener,noreferrer');
-    else if (action === 'download') {
-      const url = new URL(target.href); url.searchParams.set('download', '1');
-      const link = document.createElement('a'); link.href = url.href;
-      link.download = ''; document.body.appendChild(link); link.click(); link.remove();
-    }
-  } catch (error) { await appAlert(error.message || '文件操作失败'); }
-});
+SessionDockOverlays.mountFiles({appUrl, allows:SessionDockCapabilities.allows,
+  closeItemMenu, alert:appAlert});
 
 function inline(s, media = [], context = {}) {
   s = String(s).replace(/\u0000/g, '');
@@ -6124,144 +5218,32 @@ syncPageReload();
 /* ---------- 回收站 ---------- */
 // 删除只是把会话文件移进 ~/.local/share/sessiondock/trash/，这里是它唯一的出口：
 // 看还剩什么、放回原处、或者真的删掉。
-let trashItems = [];
-let trashBusy = false;
-let trashScope = [];
-
-function openTrash() {
-  const dlg = $('#trash-dialog');
-  if (!dlg.open) dlg.showModal();
-  loadTrash();
-}
-
-async function loadTrash({ keepNote = false } = {}) {
-  if (!keepNote) setTrashNote('');   // 刷新列表不能把刚做完那件事的回执抹掉
-  $('#trash-list').innerHTML = '<div class="trash-empty">正在读取回收站…</div>';
-  try {
-    const scope = selectedNodeIds();
-    const r = await fetch(appUrl('api/trash' + (HUB_MODE ? '?nodes=' + scope.join(',')
-      : trashCapable() ? '?limit=200' : '')));
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || r.status);
-    applyNodeState(d, 'trash');
-    trashScope = scope;
-    trashItems = Array.isArray(d.items) ? d.items : [];
-    renderTrash(d);
-    return true;
-  } catch (e) {
-    trashItems = [];
-    $('#trash-list').innerHTML = '<div class="trash-empty">读取失败</div>';
-    setTrashNote('读取回收站失败: ' + e.message, true);
-    return false;
-  }
-}
-
-function renderTrash(info) {
-  const dir = info?.dir || '';
-  const total = Number.isInteger(info?.count) ? info.count : trashItems.length;
-  $('#trash-sub').textContent = trashItems.length
-    ? `${total} 个已删除会话 · 共 ${fmtSize(info?.size || 0)} · ${dir}`
-      + (info?.next_cursor ? ` · 仅显示最近 ${trashItems.length} 条` : '')
-    : `回收站是空的 · ${dir}`;
-  $('#trash-purge-all').disabled = !trashItems.length;
-  $('#trash-list').innerHTML = trashItems.length
-    ? trashItems.map(trashRow).join('')
-    : '<div class="trash-empty">没有已删除的会话</div>';
-}
 
 
-function trashRow(it) {
-  const badge = SOURCES[it.source] ? icon(it.source) : '';
-  const where = it.restorable
-    ? `<div class="trash-origin" title="${esc(it.origin)}">恢复到 ${esc(shortCwd(it.origin, 200))}</div>`
-    : `<div class="trash-origin warn">${esc(it.reason || '无法恢复')}</div>`;
-  return `<div class="trash-item" data-id="${esc(it.id)}">
-    <div class="trash-main">
-      <div class="trash-title">${badge}<span>${esc(it.title)}</span></div>
-      <div class="trash-meta">
-        <span>${esc(fmtTime(it.deleted_at))} 删除</span>
-        <span>${fmtSize(it.size)}</span>
-        <span class="trash-cwd" title="${esc(it.cwd)}">${esc(nodeDirectory(it, 34))}</span>
-      </div>
-      ${where}
-    </div>
-    <div class="trash-acts">
-      <button type="button" class="btn" data-act="restore"${it.restorable ? '' : ' disabled'}>恢复</button>
-      <button type="button" class="btn danger" data-act="purge">彻底删除</button>
-    </div>
-  </div>`;
-}
-
-function setTrashNote(text, isError = false) {
-  const box = $('#trash-note');
-  box.textContent = text || '';
-  box.classList.toggle('err', !!text && isError);
-}
-
-async function trashPost(path, body, btn) {
-  trashBusy = true;
-  if (btn) btn.disabled = true;
-  try {
-    const r = await fetch(appUrl(path), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) { setTrashNote(d.error || `请求失败: ${r.status}`, true); return null; }
-    return d;
-  } catch (e) {
-    setTrashNote('请求失败: ' + e.message, true);
-    return null;
-  } finally {
-    trashBusy = false;
-    if (btn) btn.disabled = false;
-  }
-}
-
-$('#trash-list').onclick = async e => {
-  const btn = e.target.closest('button[data-act]');
-  if (!btn || trashBusy) return;
-  const id = btn.closest('.trash-item')?.dataset.id;
-  const item = trashItems.find(x => x.id === id);
-  if (!item) return;
-  if (btn.dataset.act === 'restore') {
-    const d = await trashPost('api/trash/restore', { id: item.id }, btn);
-    if (!d) return;
-    if (await loadTrash({ keepNote: true })) {
-      setTrashNote(`已恢复「${item.title}」到 ${d.path}`);
-    }
-    cancelSearch(true);
-    await loadSessions(true);       // 恢复的会话立即回到左侧列表
-    return;
-  }
-  if (!await appConfirm(`彻底删除「${item.title}」?\n\n文件将从磁盘移除, 不可恢复。`)) return;
-  const d = await trashPost('api/trash/purge', { id: item.id }, btn);
-  if (!d) return;
-  if (await loadTrash({ keepNote: true })) {
-    setTrashNote(`已彻底删除「${item.title}」, 释放 ${fmtSize(d.freed || 0)}`);
-  }
-};
-
-async function purgeAllTrash() {
-  if (!trashItems.length || trashBusy) return;
-  if (!await appConfirm(`清空回收站?\n\n将从磁盘彻底删除 ${trashItems.length} 个会话, 不可恢复。`)) return;
-  const d = await trashPost('api/trash/purge' + (HUB_MODE ? '?nodes=' + trashScope.join(',') : ''),
-    { all: true }, $('#trash-purge-all'));
-  if (!d) return;
-  const failed = (d.errors || []).length;
-  if (await loadTrash({ keepNote: true })) {
-    setTrashNote(`已彻底删除 ${d.removed || 0} 个会话, 释放 ${fmtSize(d.freed || 0)}`
-      + (failed ? `; ${failed} 个失败: ${d.errors[0]}` : ''), !!failed);
-  }
-}
 
 
-$('#trash-reload').onclick = () => loadTrash();
-$('#trash-purge-all').onclick = purgeAllTrash;
-$('#trash-close').onclick = $('#trash-done').onclick = () => $('#trash-dialog').close();
-$('#trash-dialog').addEventListener('click', e => {
-  if (e.target === $('#trash-dialog')) $('#trash-dialog').close();
-});
+function openTrash(...args) {return SessionUiApp.openTrash(...args);}
+
+function loadTrash(...args) {return SessionUiApp.loadTrash(...args);}
+
+
+
+
+
+
+
+
+
+
+
+
+function purgeAllTrash(...args) {return SessionUiApp.purgeAllTrash(...args);}
+
+
+
+
+
+
 
 // 终端后端是每台机器的服务端设置，不进 localStorage：换个浏览器看到的必须是同一份。
 // 机器的名称、配色和控制台渲染都保存在中央服务端；接入和移除机器仍是服务器操作。
@@ -6388,6 +5370,99 @@ if (backendNotice && SessionDockCapabilities.config.configuration_error) {
   backendNotice.textContent = '能力配置无效，请检查服务配置。';
   backendNotice.hidden = false;
 }
+const SessionUiApp = SessionDockSessionUi.createAppControllers(
+{$: (...args) => $(...args),
+  get ConsoleUI() {return ConsoleUI;},
+  get HUB_MODE() {return HUB_MODE;},
+  get MEDIUM() {return MEDIUM;},
+  get MOBILE() {return MOBILE;},
+  get S() {return S;},
+  get SOURCES() {return SOURCES;},
+  get SessionDockCapabilities() {return SessionDockCapabilities;},
+  get SessionDockShell() {return SessionDockShell;},
+  get T() {return typeof T === 'undefined' ? undefined : T;},
+  appAlert: (...args) => appAlert(...args),
+  appConfirm: (...args) => appConfirm(...args),
+  appUrl: (...args) => appUrl(...args),
+  auditDetailRendered: (...args) => auditDetailRendered(...args),
+  browserAuditEvent: (...args) => browserAuditEvent(...args),
+  get cache() {return cache;},
+  cloneSessionGroup: (...args) => cloneSessionGroup(...args),
+  closeWatch: (...args) => closeWatch(...args),
+  consoleUnavailableReason: (...args) => consoleUnavailableReason(...args),
+  deletePendingSession: (...args) => deletePendingSession(...args),
+  ensureConsolePlaceholder: (...args) => ensureConsolePlaceholder(...args),
+  fmtSize: (...args) => fmtSize(...args),
+  fmtSpan: (...args) => fmtSpan(...args),
+  fmtTime: (...args) => fmtTime(...args),
+  forgetDeletedReceipts: (...args) => forgetDeletedReceipts(...args),
+  forkAncestors: (...args) => forkAncestors(...args),
+  forkChildren: (...args) => forkChildren(...args),
+  layoutHeader: (...args) => layoutHeader(...args),
+  layoutTier: (...args) => layoutTier(...args),
+  linkedTermSession: (...args) => linkedTermSession(...args),
+  loadTermList: (...args) => loadTermList(...args),
+  nodeColor: (...args) => nodeColor(...args),
+  openSession: (...args) => openSession(...args),
+  paintConsoleAvailability: (...args) => paintConsoleAvailability(...args),
+  paintLive: (...args) => paintLive(...args),
+  paintTransferAvailability: (...args) => paintTransferAvailability(...args),
+  paintTurn: (...args) => paintTurn(...args),
+  post: (...args) => post(...args),
+  refreshLive: (...args) => refreshLive(...args),
+  refreshMessageTimeDividers: (...args) => refreshMessageTimeDividers(...args),
+  renderChips: (...args) => renderChips(...args),
+  renderSide: (...args) => renderSide(...args),
+  renderTakeoverBtn: (...args) => renderTakeoverBtn(...args),
+  sessionFrozen: (...args) => sessionFrozen(...args),
+  sessionIconMarkup: (...args) => sessionIconMarkup(...args),
+  get sessionStopBusy() {return sessionStopBusy;},
+  get sessionStopProgress() {return sessionStopProgress;},
+  sessionTurn: (...args) => sessionTurn(...args),
+  setForkParentVisibility: (...args) => setForkParentVisibility(...args),
+  settle: (...args) => settle(...args),
+  shortCwd: (...args) => shortCwd(...args),
+  showConsoleToast: (...args) => showConsoleToast(...args),
+  showMobileList: (...args) => showMobileList(...args),
+  get store() {return store;},
+  takeover: (...args) => takeover(...args),
+  toggleLinkedTermSession: (...args) => toggleLinkedTermSession(...args),
+  toggleSessionStar: (...args) => toggleSessionStar(...args),
+  viewKey: (...args) => viewKey(...args),
+  watchSession: (...args) => watchSession(...args),
+  auditHeaderLayout: (...args) => auditHeaderLayout(...args),
+  renderPendingSessionAction: (...args) => renderPendingSessionAction(...args)},
+{$: (...args) => $(...args),
+  get HUB_MODE() {return HUB_MODE;},
+  get SOURCES() {return SOURCES;},
+  appConfirm: (...args) => appConfirm(...args),
+  appUrl: (...args) => appUrl(...args),
+  applyNodeState: (...args) => applyNodeState(...args),
+  cancelSearch: (...args) => cancelSearch(...args),
+  fmtSize: (...args) => fmtSize(...args),
+  fmtTime: (...args) => fmtTime(...args),
+  icon: (...args) => icon(...args),
+  loadSessions: (...args) => loadSessions(...args),
+  nodeDirectory: (...args) => nodeDirectory(...args),
+  selectedNodeIds: (...args) => selectedNodeIds(...args),
+  shortCwd: (...args) => shortCwd(...args),
+  trashCapable: (...args) => trashCapable(...args)},
+{$: (...args) => $(...args),
+  get HUB_MODE() {return HUB_MODE;},
+  get Nodes() {return Nodes;},
+  get SOURCES() {return SOURCES;},
+  get SessionDockCapabilities() {return SessionDockCapabilities;},
+  get SessionDockShell() {return SessionDockShell;},
+  appUrl: (...args) => appUrl(...args),
+  closeSessionActions: (...args) => closeSessionActions(...args),
+  fmtSize: (...args) => fmtSize(...args),
+  loadSessions: (...args) => loadSessions(...args),
+  nodeOf: (...args) => nodeOf(...args),
+  openSession: (...args) => openSession(...args),
+  sessionStoppable: (...args) => sessionStoppable(...args),
+  setControlUnavailable: (...args) => setControlUnavailable(...args),
+  showSessionStopNotice: (...args) => showSessionStopNotice(...args),
+  sidebarSessions: (...args) => sidebarSessions(...args)});
 SessionDockShell.mount(shellBridge);
 renderOpts();
 renderPickBar();
@@ -6490,379 +5565,16 @@ loadSessions(false).then(async ok => {
 
 /** Whole-group transfer preview. A confirmed local clone keeps its operation ID
  * across uncertain responses; unsupported selections never use the local API. */
-function transferUnavailableReason(uid) {
-  return uid && sessionStoppable(uid) ? '会话正在运行，请先停止后再移动或复制整组。' : '';
-}
-function paintTransferAvailability(button, uid) {
-  const row = button?.closest('#item-menu')
-    ? sidebarSessions().find(session => session.uid === uid) : null;
-  const unavailable = button?.closest('#item-menu') && (!row || row.pending
-    || SessionDockCapabilities.config.session_clone_local_codex !== true);
-  setControlUnavailable(button, unavailable ? '此会话当前不支持移动或复制整组。' : transferUnavailableReason(uid));
-}
-async function cloneSessionGroup(uid, resumed = null) {
-  const reason = resumed ? '' : transferUnavailableReason(uid);
-  if (reason) {
-    const control = $('#item-menu:not([hidden]) [data-act="clone"]') || $('#a-clone-group');
-    paintTransferAvailability(control, uid); return;
-  }
-  closeSessionActions();
-  document.querySelector('#clone-group-dialog')?.remove();
-  const sourceId = nodeOf(uid);
-  const machines = new Map();
-  for (const node of [...Nodes.machines, ...Nodes.list]) machines.set(node.id, {...machines.get(node.id), ...node});
-  const sourceName = machines.get(sourceId)?.name || (HUB_MODE ? '来源机器' : '当前机器');
-  if (!machines.has(sourceId)) machines.set(sourceId, {id:sourceId, name:sourceName});
-  const dialog = document.createElement('dialog');
-  dialog.className = 'app-dialog transfer-dialog'; dialog.id = 'clone-group-dialog';
-  dialog.setAttribute('aria-labelledby', 'transfer-title');
-  dialog.innerHTML = `
-    <div class="transfer-head">
-      <div><h2 id="transfer-title">移动或复制会话组</h2></div>
-      <button class="transfer-close" type="button" aria-label="关闭">×</button>
-    </div>
-    <div class="transfer-body">
-      <div class="transfer-controls">
-        <label class="transfer-field"><span>源机器</span><input id="transfer-source" type="text" disabled></label>
-        <label class="transfer-field"><span>目标机器</span><select id="transfer-target"></select></label>
-        <fieldset class="transfer-mode"><legend>操作</legend><div class="transfer-segments">
-          <label><input type="radio" name="transfer-mode" value="clone" checked><span>复制</span></label>
-          <label><input type="radio" name="transfer-mode" value="move"><span>移动</span></label>
-        </div></fieldset>
-      </div>
-      <div class="transfer-identity" hidden>
-        <label><input id="transfer-new-ids" type="checkbox" checked><span>生成新 UID</span></label>
-      </div>
-      <p class="transfer-notice" role="status" hidden></p>
-      <p class="transfer-environment" role="status" hidden></p>
-      <div class="transfer-section-head"><h3>整组会话</h3><span class="clone-status" role="status">正在读取清单…</span></div>
-      <div class="transfer-table-scroll" tabindex="0" role="region" aria-label="整组会话清单">
-        <table class="clone-members"><thead><tr><th scope="col">会话</th><th scope="col">来源</th><th scope="col">关联</th><th scope="col" class="transfer-number">历史文件</th><th scope="col" class="transfer-number">大小</th></tr></thead>
-          <tbody><tr><td colspan="5" class="transfer-empty">正在检查关联会话和历史依赖…</td></tr></tbody></table>
-      </div>
-      <p class="transfer-progress" role="status" hidden></p>
-      <p class="transfer-error" role="alert" hidden></p>
-    </div>
-    <div class="transfer-footer"><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn transfer-abort" hidden>撤回本次移动</button><button type="button" class="btn primary clone-confirm" disabled>复制整组</button></div>`;
-  const $d = selector => dialog.querySelector(selector);
-  const target = $d('#transfer-target'), newIds = $d('#transfer-new-ids');
-  const confirm = $d('.clone-confirm'), status = $d('.clone-status');
-  const notice = $d('.transfer-notice'), error = $d('.transfer-error');
-  const radios = [...dialog.querySelectorAll('[name="transfer-mode"]')];
-  for (const node of machines.values()) {
-    const option = document.createElement('option');
-    option.value = node.id;
-    const unavailable = node.online === false || node.enabled === false;
-    option.textContent = node.name + (unavailable ? ' · 不可用' : '');
-    option.disabled = unavailable && node.id !== sourceId;
-    target.append(option);
-  }
-  target.value = sourceId;
-  $d('#transfer-source').value = sourceName;
-  let plan = resumed?.plan || null, busy = false, planning = false, uncertain = !!resumed;
-  let operationStarted = !!resumed, progressTimer = null, progressLoading = false, aborting = false, executionSequence = 0;
-  let environmentLoading = false, environmentSequence = 0;
-  const environmentClients = new Map();
-  const identityChoices = {clone:true, move:false};
-  if (resumed) {
-    if (!machines.has(resumed.request.target_node)) {
-      const option = document.createElement('option'); option.value = resumed.request.target_node;
-      option.textContent = '目标机器不可用'; option.disabled = true; target.append(option);
-    }
-    target.value = resumed.request.target_node;
-    radios.forEach(r => r.checked = r.value === plan.mode);
-    identityChoices[plan.mode] = plan.new_ids;
-  }
-  const mode = () => radios.find(r => r.checked).value;
-  const crossMachine = () => target.value !== sourceId;
-  const blockedReason = () => {
-    const destination = machines.get(target.value);
-    if (!destination || destination.online === false || destination.enabled === false) return '目标机器当前不可用。';
-    if (machines.get(sourceId)?.online === false) return '源机器已离线。';
-    if (crossMachine()) {
-      if (SessionDockCapabilities.config[mode() === 'move' ? 'session_move_remote' : 'session_clone_remote'] !== true) return '跨机器传输尚未接入。';
-      return '';
-    }
-    if (mode() === 'move') return '移动需要选择另一台机器。';
-    return '';
-  };
-  const renderSelection = () => {
-    const cross = crossMachine(), moving = mode() === 'move';
-    $d('.transfer-identity').hidden = !cross;
-    newIds.checked = identityChoices[mode()];
-    const reason = blockedReason(); notice.textContent = reason; notice.hidden = !reason;
-    confirm.textContent = aborting ? '正在撤回…' : busy && operationStarted ? (moving ? '正在移动…' : '正在复制…') : uncertain ? (moving ? '重试同一次移动' : '重试同一次复制') : moving ? '移动整组' : '复制整组';
-    confirm.disabled = busy || planning || aborting || environmentLoading || !plan || !!reason;
-    // Keep the chosen operation fixed while its publication result is uncertain.
-    target.disabled = busy || aborting || uncertain;
-    for (const radio of radios) radio.disabled = busy || aborting || uncertain;
-    newIds.disabled = busy || aborting || uncertain;
-    $d('.transfer-abort').hidden = !uncertain && !(busy && operationStarted);
-    $d('.transfer-abort').textContent = moving ? '撤回本次移动' : '取消本次复制';
-    $d('.clone-cancel').disabled = aborting;
-    $d('.transfer-close').disabled = aborting;
-    $d('.transfer-abort').disabled = aborting;
-    dialog.setAttribute('aria-busy', String(busy));
-  };
-  target.onchange = () => {renderSelection(); refreshEnvironment();};
-  radios.forEach(r => r.onchange = renderSelection);
-  newIds.onchange = () => {identityChoices[mode()] = newIds.checked; renderSelection();};
-  const close = () => {clearInterval(progressTimer); dialog.close(); dialog.remove(); refreshTransferTasks();};
-  const cancelAndClose = () => cancelTransfer(true);
-  $d('.transfer-close').onclick = cancelAndClose; $d('.clone-cancel').onclick = cancelAndClose;
-  dialog.addEventListener('cancel', e => {e.preventDefault(); cancelAndClose();});
-  document.body.appendChild(dialog); renderSelection(); dialog.showModal(); target.focus();
-  const request = async (path, body) => {
-    const response = await fetch(appUrl(path), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-    const data = await response.json();
-    if (!response.ok) throw Object.assign(new Error(data.error?.message || data.error || '操作失败'), {code:data.code});
-    return data;
-  };
-  async function discardPreview(previous) {
-    if (previous) await request('api/session/clone/cancel', {uid, operation_id:previous.operation_id});
-  }
-  async function cancelTransfer(closing = false) {
-    if (aborting) return;
-    if (!plan) { if (closing) close(); return; }
-    ++executionSequence; aborting = true; busy = true; error.hidden = true; renderSelection();
-    try {
-      const result = operationStarted && HUB_MODE
-        ? await request('api/session/transfer/cancel', {uid, operation_id:plan.operation_id, target_node:target.value})
-        : await request('api/session/clone/cancel', {uid, operation_id:plan.operation_id});
-      uncertain = false; operationStarted = false; plan = null; busy = false;
-      $d('.transfer-progress').hidden = true; refreshTransferTasks();
-      if (closing || result.phase === 'complete') {close(); await loadSessions(true);}
-      else await refreshPlan();
-    } catch (failure) {
-      uncertain = operationStarted;
-      if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
-    } finally {aborting = false; busy = false; if (dialog.isConnected) renderSelection();}
-  }
-  $d('.transfer-abort').onclick = () => cancelTransfer();
-  const renderMembers = data => {
-    const members = new Map();
-    for (const member of data.sessions) {
-      const key = `${member.source}:${member.sid}`;
-      if (!members.has(key)) members.set(key, {...member, files:0, bytes:0, selected:false, relations:new Set()});
-      const row = members.get(key);
-      row.files += member.file_count ?? 1; row.bytes += member.bytes ?? 0;
-      row.selected ||= member.uid === uid;
-      if (member.uid === uid) {row.title = member.title; row.cwd = member.cwd;}
-      for (const relation of member.relations || []) row.relations.add(relation);
-    }
-    const body = $d('.clone-members tbody'); body.replaceChildren();
-    const ordered = [...members.values()].sort((a,b) => Number(b.selected)-Number(a.selected) || Number(a.agent)-Number(b.agent));
-    for (const member of ordered) {
-      const tr = document.createElement('tr'); if (member.selected) tr.className = 'transfer-selected';
-      const title = document.createElement('td');
-      const name = document.createElement('div'); name.className = 'transfer-session-name'; name.textContent = member.title || member.sid; name.title = name.textContent;
-      title.append(name);
-      const detail = document.createElement('div'); detail.className = 'transfer-session-detail'; detail.textContent = member.cwd || member.sid; detail.title = `${member.sid}${member.cwd ? '\n'+member.cwd : ''}`; title.append(detail);
-      const source = document.createElement('td'); source.textContent = {codex:'Codex',claude:'Claude',grok:'Grok'}[member.source] || member.source;
-      const relation = document.createElement('td');
-      const badge = document.createElement('span'); badge.className = 'transfer-badge';
-      badge.textContent = member.selected ? '所选会话' : member.agent ? '子代理' : member.relations.has('fork') ? '分支关联' : '关联历史';
-      relation.append(badge);
-      const files = document.createElement('td'); files.className = 'transfer-number'; files.textContent = String(member.files);
-      const bytes = document.createElement('td'); bytes.className = 'transfer-number'; bytes.textContent = fmtSize(member.bytes);
-      tr.append(title,source,relation,files,bytes); body.append(tr);
-    }
-    status.textContent = `整组 ${data.session_count} 个会话 · ${data.file_count} 份历史 · ${fmtSize(data.bytes)}`;
-  };
-  async function refreshEnvironment() {
-    const sequence = ++environmentSequence;
-    const note = $d('.transfer-environment');
-    if (!plan) {environmentLoading = false; note.hidden = true; renderSelection(); return;}
-    const destinationId = target.value, currentPlan = plan;
-    const clients = id => {
-      if (!environmentClients.has(id)) environmentClients.set(id, (async () => {
-        try {
-          const path = HUB_MODE ? `api/nodes/${id}/api/clients` : 'api/clients';
-          const response = await fetch(appUrl(path), {cache:'no-store', signal:AbortSignal.timeout(20000)});
-          const data = await response.json();
-          if (!response.ok || !Array.isArray(data.clients)) throw new Error('clients unavailable');
-          return data.clients;
-        } catch {return null;}
-      })());
-      return environmentClients.get(id);
-    };
-    environmentLoading = true; note.hidden = false; note.textContent = '正在核对目标 CLI…'; note.title = '';
-    renderSelection();
-    const [sourceClients, targetClients] = await Promise.all([clients(sourceId), clients(destinationId)]);
-    if (!dialog.isConnected || sequence !== environmentSequence) return;
-    const messages = [], cross = destinationId !== sourceId;
-    if (!targetClients) messages.push('未核验目标 CLI');
-    if (cross && !sourceClients) messages.push('未核验源 CLI 版本');
-    for (const provider of new Set(currentPlan.sessions.map(member => member.source))) {
-      const name = SOURCES[provider]?.name || provider;
-      const installed = (targetClients || []).filter(client => client.source === provider && client.installed);
-      if (targetClients && !installed.length) {messages.push(`目标未配置可用的 ${name} CLI`); continue;}
-      if (!cross || !targetClients || !sourceClients) continue;
-      const versions = rows => rows.map(client => client.version).filter(version => typeof version === 'string' && /^\d+(?:\.\d+)+/.test(version));
-      const targetVersions = versions(installed);
-      const sourceVersions = versions(sourceClients.filter(client => client.source === provider && client.installed));
-      if (!targetVersions.length || !sourceVersions.length) messages.push(`未核验 ${name} 版本差异`);
-      else if (targetVersions.some(to => sourceVersions.some(from => compareVersions(to, from) < 0))) messages.push(`目标 ${name} 存在较旧版本`);
-    }
-    const tools = Array.isArray(currentPlan.dynamic_tools) ? currentPlan.dynamic_tools : [];
-    if (!Array.isArray(currentPlan.dynamic_tools)) messages.push('未核验动态工具依赖');
-    if (tools.length) messages.push(`${tools.length} 个动态工具执行器未核验`);
-    note.textContent = messages.join('；'); note.title = tools.join('、'); note.hidden = !messages.length;
-    environmentLoading = false; renderSelection();
-  }
-  async function refreshPlan(executing = false) {
-    if ((!executing && busy) || planning || uncertain || (mode() === 'move' && !crossMachine())) return;
-    const fresh = !crossMachine() || identityChoices[mode()];
-    const selectedMode = mode();
-    if (plan && plan.new_ids === fresh && plan.mode === selectedMode) return true;
-    const previous = plan;
-    planning = true; plan = null; error.hidden = true; renderSelection();
-    status.textContent = '正在读取清单…';
-    try {
-      const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode});
-      if (!fresh && next.new_ids !== false) throw new Error('源机器版本尚不支持保留 UID，请更新节点');
-      if (selectedMode === 'move' && next.mode !== 'move') throw new Error('源机器版本尚不支持移动，请更新节点');
-      if (previous && previous.operation_id !== next.operation_id) await discardPreview(previous);
-      if (!dialog.isConnected) {await discardPreview(next); return false;}
-      plan = next;
-      if (dialog.isConnected) {renderMembers(plan); refreshEnvironment();}
-      return true;
-    } catch (failure) {
-      plan = previous;
-      if (dialog.isConnected) {
-        status.textContent = '清单读取失败';
-        error.textContent = failure.message; error.hidden = false;
-      }
-      return false;
-    } finally {planning = false; if (dialog.isConnected) renderSelection();}
-  }
-  const paintProgress = data => {
-    const progress = $d('.transfer-progress');
-    progress.hidden = false; progress.textContent = transferPhaseLabel(data);
-    progress.dataset.phase = data.phase;
-  };
-  if (resumed) {
-    renderMembers(plan); paintProgress(resumed); renderSelection();
-    refreshEnvironment();
-    if (resumed.error) {error.textContent = resumed.error; error.hidden = false;}
-  } else await refreshPlan();
-  const pollProgress = async () => {
-    if (!dialog.isConnected) {clearInterval(progressTimer); return;}
-    if (!plan || progressLoading) return;
-    const id = plan.operation_id;
-    progressLoading = true;
-    try {
-      const data = await request(operationStarted && HUB_MODE ? 'api/session/transfer/progress' : 'api/session/clone/progress', {uid, operation_id:id, target_node:target.value});
-      if (operationStarted && dialog.isConnected && plan?.operation_id === id) {
-        paintProgress(data);
-        if (!busy && !aborting && uncertain && data.phase === 'aborted') {
-          uncertain = false; operationStarted = false; plan = null;
-          await refreshPlan();
-        }
-      }
-    } catch { /* The execution response reports actionable errors. */ }
-    finally {progressLoading = false;}
-  };
-  progressTimer = setInterval(pollProgress, 1000);
-  confirm.onclick = async () => {
-    if (busy || planning || aborting || !plan || blockedReason()) return;
-    busy = true; error.hidden = true; renderSelection();
-    const prepared = uncertain || await refreshPlan(true);
-    if (!prepared || !plan || !dialog.isConnected) {busy = false; if (dialog.isConnected) renderSelection(); return;}
-    const execution = ++executionSequence;
-    operationStarted = true; error.hidden = true; renderSelection();
-    if (HUB_MODE) paintProgress({phase:'planned'});
-    try {
-      const result = await request(crossMachine() ? 'api/session/transfer/clone' : 'api/session/clone', {
-        uid, operation_id:plan.operation_id, ...(crossMachine() ? {target_node:target.value} : {}),
-      });
-      if (execution !== executionSequence) return;
-      if (result.phase !== 'complete' || !result.target_uid) throw new Error('复制未完成，请重试检查结果');
-      close(); await loadSessions(true); await openSession(result.target_uid);
-      showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
-    } catch (failure) {
-      if (execution !== executionSequence) return;
-      uncertain = failure.code !== 'move_cancelled';
-      if (!uncertain) {operationStarted = false; plan = null; busy = false; $d('.transfer-progress').hidden = true; await refreshPlan();}
-      if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
-    } finally {if (execution === executionSequence) {busy = false; if (dialog.isConnected) renderSelection();} refreshTransferTasks();}
-  };
-}
+function transferUnavailableReason(...args) {return SessionUiApp.transferUnavailableReason(...args);}
+function paintTransferAvailability(...args) {return SessionUiApp.paintTransferAvailability(...args);}
+function cloneSessionGroup(...args) {return SessionUiApp.cloneSessionGroup(...args);}
 
 
-function transferPhaseLabel(task) {
-  const labels = {planned:'准备迁移', preparing:'整理会话文件', checking:'检查目标目录与会话依赖', transferring:'传输历史', publishing:'发布历史', verifying:'验证历史与关系',
-    failed:'复制失败，可重试', rollback_required:'恢复待处理',
-    switching:'交接执行归属', releasing:'确认完成', retiring:'清理源端',
-    cleanup_pending:'源端清理待重试', aborting:'撤回待完成', aborted:'已撤回', complete:'已完成'};
-  let label = labels[task.phase] || '等待继续';
-  if (task.phase === 'transferring' && task.bytes_total > 0)
-    label += ` · ${fmtSize(task.bytes_sent)} / ${fmtSize(task.bytes_total)}`;
-  return label;
-}
-let transferTasksLoading = false;
-async function refreshTransferTasks() {
-  if (!HUB_MODE || transferTasksLoading) return;
-  transferTasksLoading = true;
-  try {
-    const response = await fetch(appUrl('api/session/transfers'));
-    if (!response.ok) return;
-    const {operations} = await response.json();
-    SessionDockShell.setTransfers(operations.length);
-    const panel = $('#transfer-tasks-dialog');
-    if (!panel) return;
-    const tbody = panel.querySelector('tbody');
-    const name = id => [...Nodes.machines, ...Nodes.list].find(n => n.id === id)?.name || '离线机器';
-    // Keep controls stable while the user is focusing or clicking a task.
-    const signature = JSON.stringify(operations);
-    if (panel._tasksSignature === signature) return;
-    panel._tasksSignature = signature;
-    tbody.replaceChildren();
-    for (const task of operations) {
-      const row = document.createElement('tr'); row.dataset.operation = task.request.operation_id;
-      const title = document.createElement('td');
-      title.textContent = task.plan?.sessions?.find(m => m.uid === task.request.uid)?.title || '会话组';
-      const nodes = document.createElement('td');
-      nodes.textContent = `${name(nodeOf(task.request.uid))} → ${name(task.request.target_node)}`;
-      const phase = document.createElement('td'); phase.textContent = transferPhaseLabel(task);
-      const action = document.createElement('td'), open = document.createElement('button');
-      open.className = 'btn'; open.textContent = '继续处理';
-      open.onclick = async () => {
-        open.disabled = true;
-        try {
-          const response = await fetch(appUrl('api/session/transfer/progress'), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(task.request)});
-          const data = await response.json();
-          if (!response.ok || !data.plan) throw new Error(data.error?.message || data.error || '清单暂不可用');
-          panel.close(); panel.remove();
-          await cloneSessionGroup(task.request.uid, data);
-        } catch (failure) {
-          const error = panel.querySelector('.transfer-error'); error.textContent = failure.message; error.hidden = false;
-        } finally {open.disabled = false;}
-      };
-      action.append(open); row.append(title,nodes,phase,action); tbody.append(row);
-    }
-    if (!operations.length) {
-      const row = document.createElement('tr'), cell = document.createElement('td');
-      cell.colSpan = 4; cell.textContent = '没有未完成的操作'; row.append(cell); tbody.append(row);
-    }
-  } catch (error) {console.warn('迁移任务读取失败', error);}
-  finally {transferTasksLoading = false;}
-}
-function openTransferTasks() {
-  $('#transfer-tasks-dialog')?.remove();
-  const panel = document.createElement('dialog'); panel.id = 'transfer-tasks-dialog'; panel.className = 'app-dialog transfer-dialog';
-  panel.setAttribute('aria-labelledby','transfer-tasks-title');
-  panel.innerHTML = `<div class="transfer-head"><h2 id="transfer-tasks-title">未完成的移动与复制</h2><button class="transfer-close" aria-label="关闭">×</button></div>
-    <div class="transfer-body"><div class="transfer-table-scroll"><table class="transfer-tasks-table"><thead><tr><th>会话</th><th>机器</th><th>阶段</th><th></th></tr></thead><tbody></tbody></table></div><p class="transfer-error" hidden></p></div>`;
-  const close = () => {panel.close(); panel.remove();};
-  panel.querySelector('.transfer-close').onclick = close;
-  panel.addEventListener('cancel', e => {e.preventDefault(); close();});
-  document.body.append(panel); panel.showModal(); refreshTransferTasks();
-}
-if (HUB_MODE) {
-  refreshTransferTasks();
-  setInterval(() => {if (!document.hidden) refreshTransferTasks();}, 5000);
-}
+function transferPhaseLabel(...args) {return SessionUiApp.transferPhaseLabel(...args);}
+
+function refreshTransferTasks(...args) {return SessionUiApp.refreshTransferTasks(...args);}
+function openTransferTasks(...args) {return SessionUiApp.openTransferTasks(...args);}
+
 
 function sidebarVueGestures() {return {mousedown: event => {sidebarGestureMousedown1(event);},
 pointerdown: event => {sidebarGesturePointerdown1(event); sidebarGesturePointerdown2(event);},
@@ -6886,8 +5598,9 @@ SessionDockConversation.configure({
   md, head, renderFormulae, paintSyntax, clearSyntaxPaint, paintToolOutputDiff,
   retryableReadFailure, retryMigrationRead,
   safeMediaSrc, lazyMediaEnabled, mediaContinuationEnabled, mediaMoreInfo, diagnoseMedia,
-  forgetMediaDiagnostic: path => mediaDiagnostics.delete(path),
-  reloadMediaOwned: (view, notice) => reloadMediaSession({...view,uid:S.sel,agent:S.agent}, {}, {set textContent(value) {notice(value);}}),
+  createView: captureView,
+  forgetMediaDiagnostic,
+  reloadMediaOwned: (view, notice) => reloadMediaSession(view, {}, {set textContent(value) {notice(value);}}),
   loadMedia: (cursor, button) => loadMediaContinuation(S.sel,S.agent,cursor,button),
   loadHistory: (info,button) => historyPagesEnabled() ? loadHistoryPage(info.uid,info.agent,button) : loadFullHistory(info.uid,info.agent,button),
   reloadHistory: (info,button) => reloadHistoryWindow(info.uid,info.agent,button),
@@ -6932,3 +5645,15 @@ SessionDockConversation.configure({
 });
 
 SessionDockConversation.pages.configurePages(mediaMoreInfo);
+
+function opencodeDeleteNote(...args) {return SessionUiApp.opencodeDeleteNote(...args);}
+
+function trashLocationNote(...args) {return SessionUiApp.trashLocationNote(...args);}
+
+function trashCapable(...args) {return SessionUiApp.trashCapable(...args);}
+
+function sessionStopCapable(...args) {return SessionUiApp.sessionStopCapable(...args);}
+
+
+
+globalThis.showConsoleToast = reason => SessionDockSessionUi.consoleToast(reason);

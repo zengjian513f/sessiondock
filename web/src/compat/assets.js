@@ -1,3 +1,4 @@
+// Standalone-page transitional entry; main workspace imports the scoped overlays module.
 'use strict';
 
 // Load optional renderers only when their surface is opened. Failed loads can

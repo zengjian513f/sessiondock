@@ -1,0 +1,1 @@
+<script setup lang="ts">import {popups} from '../../services/session-ui/popup';import AppPopup from './AppPopup.vue'</script><template><AppPopup v-for="spec in popups" :key="spec?.id" :spec="spec"/></template>

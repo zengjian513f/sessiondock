@@ -1,5 +1,6 @@
 import { composerHistoryStamp, nativeComposerHistory, ensureComposerAttachmentNumbers, composerFileKind, composerKindIcon, composerInputStatus, composerInputAllowsSend, screenMenuRevision, clipboardAttachmentFiles, clipboardDirectoryNames, clipboardCsvFile } from '../../domain/composer/input.js'
 
+import { nextTick } from 'vue'
 // Composer extraction from compat/term.js. The bridge keeps the existing native
 // controllers, identities and request contracts; Vue owns the composer projection.
 export function createComposerController(bridge, ui) {
@@ -407,12 +408,11 @@ async function followServerDraft(uid, revision = null) {
 
 function refreshComposerDraft(uid) {
   if (composerUid === uid) {
-    const ta = $('#cinput'),text=composerDrafts.get(uid)?.text || ''; if (ta.value!==text) ta.value=text;
-    renderComposerItems(); autoGrow(ta);
+    ui.text=composerDrafts.get(uid)?.text || '';
+    renderComposerItems(); nextTick(()=>autoGrow($('#cinput')));
   }
   if (uid === bridge.BUG_REPORT_DRAFT_UID) {
-    const ta = $('#bug-report-description'),text=composerDrafts.get(uid)?.text || ''; if (ta.value!==text) ta.value=text;
-    bridge.renderBugReportItems(); autoGrow(ta); bridge.noteBugReportDraftNode();
+    bridge.renderBugReportItems(); bridge.noteBugReportDraftNode();
   }
 }
 

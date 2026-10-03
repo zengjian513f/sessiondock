@@ -1,3 +1,4 @@
+// Standalone-page transitional entry; main workspace imports the scoped overlays module.
 'use strict';
 
 // Optional development-backend contract. An ordinary page has

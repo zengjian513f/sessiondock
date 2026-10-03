@@ -1,7 +1,9 @@
+import type { MediaView } from '../overlays/media'
 // Named boundary to native CLI, cache and established Markdown services.
 export type ConversationMessage = { role: string; text: any; [field: string]: any }
 export type ConversationPlan = { m?: ConversationMessage; g?: ConversationMessage[]; turn?: any; gap?: any; open?: boolean; sealedTurnHead?: boolean; key?: string }
 export interface ConversationBridge {
+  createView(element: HTMLElement, currentGeneration: () => number): MediaView
   answer: (...args: any[]) => any
   answerCliQuestionForm: (...args: any[]) => any
   cancel: (...args: any[]) => any
@@ -28,7 +30,7 @@ export interface ConversationBridge {
   pinTimeline: (...args: any[]) => any
   questionDraft: (...args: any[]) => any
   reloadHistory: (...args: any[]) => any
-  reloadMediaOwned: (...args: any[]) => any
+  reloadMediaOwned(view: MediaView, notice: (text: string) => void): Promise<void>
   renderFormulae: (...args: any[]) => any
   retryMigrationRead: (...args: any[]) => any
   retryableReadFailure: (...args: any[]) => any

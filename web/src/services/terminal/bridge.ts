@@ -134,8 +134,8 @@ export interface TerminalController {
   refreshPendingStage(name: any): any
   notePendingEnded(name: any): any
   pendingSelectionGone(name: any): any
-  stopPendingSession(info: any, button: any): any
-  deletePendingSession(info: any, button: any): any
+  stopPendingSession(info: any, button: any, pending?: (value: boolean) => void): any
+  deletePendingSession(info: any, button: any, pending?: (value: boolean) => void): any
   discardPendingSession(info: any): any
   sessionIsPtyOnly(uid?: any): any
   sessionTerminalFirst(uid?: any): any

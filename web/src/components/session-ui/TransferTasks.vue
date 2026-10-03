@@ -1,0 +1,7 @@
+<script setup lang="ts">
+import {computed} from 'vue'
+import type {TransferTask} from '../../domain/session-ui/types'
+import {sessionUi as ui, appController as c} from '../../stores/session-ui'
+const t=computed(()=>ui.tasks!)
+function resume(task:TransferTask){c.value!.continueTransferTask(task)}
+</script><template><dialog id="transfer-tasks-dialog" class="app-dialog transfer-dialog" aria-labelledby="transfer-tasks-title" @cancel.prevent="c?.closeTransferTasks()"><div class="transfer-head"><h2 id="transfer-tasks-title">未完成的移动与复制</h2><button class="transfer-close" aria-label="关闭" @click="c?.closeTransferTasks()">×</button></div><div class="transfer-body"><div class="transfer-table-scroll"><table class="transfer-tasks-table"><thead><tr><th>会话</th><th>机器</th><th>阶段</th><th></th></tr></thead><tbody><tr v-for="row in t.rows" :key="row.id" :data-operation="row.id"><td>{{row.title}}</td><td>{{row.nodes}}</td><td>{{row.phase}}</td><td><button class="btn" :disabled="t.pending.includes(row.id)" @click="resume(row.task)">继续处理</button></td></tr><tr v-if="!t.rows.length"><td colspan="4">没有未完成的操作</td></tr></tbody></table></div><p class="transfer-error" :hidden="!t.errorText">{{t.errorText}}</p></div></dialog></template>
