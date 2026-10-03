@@ -18,6 +18,11 @@ SEND 和 `check` 使用同一 PTY 编辑区分类器，返回 `ready / starting 
 
 ## HTTP
 
+普通会话与问题报告的附件菜单提供独立的 PDF 入口（`accept=".pdf,application/pdf"`），
+让只把通用文件选择显示成拍照/媒体来源的 Android 浏览器请求文档类型。
+PDF 仍经共用暂存与 SEND 路径发布；原有“文件”入口不限制类型。
+选择器的系统界面由浏览器和设备提供，无头 Chromium 只验证入口类型、上传、发送与文件字节。
+
 | 接口 | 行为 |
 | --- | --- |
 | GET/POST /api/session/conversation | 读取草稿 / `{uid, revision, value}` CAS 保存 |
