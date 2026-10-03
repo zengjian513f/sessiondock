@@ -291,7 +291,7 @@ def main():
         with source.paths['a-agent'].open('a') as stream:
             stream.write(json.dumps({'type': 'response_item', 'ordinal': 11, 'payload': {
                 'type': 'custom_tool_call', 'call_id': 'call_exec', 'name': 'exec',
-                'input': 'await tools.send_input({target: "' + ident(6) + '"})'}}) + '\n')
+                'input': 'const target = "' + ident(6) + '"; await tools.send_input({target: target})'}}) + '\n')
         audited = command(transfer, {'operation': 'plan_codex', 'mode': 'clone',
             'uid': source.uid('a'), 'roots': roots})
         assert len(audited['reference_issues']) == 1

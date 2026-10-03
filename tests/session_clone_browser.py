@@ -138,7 +138,9 @@ def prepare(root):
     with corpus.paths['a-agent'].open('a') as stream:
         for ordinal, payload in enumerate((
             {'type':'custom_tool_call','id':'ctc-probe','call_id':'call-code','name':'exec',
-             'input':'const r = await tools.multi_agent_v1__wait_agent({targets: ["'+ident(6)+'"]}); text(r);'},
+             'input':'// Historical command mentions '+ident(6)+'\n'
+                     'await tools.exec_command({cmd: "echo '+ident(6)+'"}); '
+                     'const r = await tools.wait_agent({targets: ["'+ident(6)+'"]}); text(r);'},
             {'type':'custom_tool_call_output','call_id':'call-code','output':[{'type':'input_text',
              'text':json.dumps({'status':{ident(6):{'completed':ident(6)}},'timed_out':False})}]}), 11):
             stream.write(json.dumps({'type':'response_item','ordinal':ordinal,'payload':payload})+'\n')
@@ -147,7 +149,7 @@ def prepare(root):
         for payload in (
             {'type':'custom_tool_call','call_id':'external-agent','name':'external_service','input':'lookup'},
             {'type':'custom_tool_call_output','call_id':'external-agent',
-             'output':json.dumps({'agent_id':ident(999)})}):
+             'output':json.dumps({'agent_id':ident(999),'text':'Historical UUID '+ident(6)})}):
             stream.write(json.dumps({'type':'response_item','payload':payload})+'\n')
     state = root / 'state'
     state.mkdir()
@@ -424,7 +426,9 @@ def main():
                         records=[json.loads(l)['payload'] for l in (corpus.root/'codex'/cloned_file['relative']).read_text().splitlines()]
                         code=next(r for r in records if r.get('type')=='custom_tool_call')
                         output=next(r for r in records if r.get('type')=='custom_tool_call_output')
-                        assert ids[ident(6)] in code['input'] and ident(6) not in code['input']
+                        assert 'targets: ["'+ids[ident(6)]+'"]' in code['input']
+                        assert '// Historical command mentions '+ident(6) in code['input']
+                        assert 'cmd: "echo '+ident(6)+'"' in code['input']
                         assert json.loads(output['output'][0]['text'])['status']=={ids[ident(6)]:{'completed':ident(6)}}
                         native_outputs=[r['output'] for r in records if r.get('type')=='function_call_output']
                         assert len(native_outputs)==2
