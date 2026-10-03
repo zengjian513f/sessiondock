@@ -48,8 +48,9 @@
 本节只登记未完成的工作；完成批次从这里移除，当前实现和审阅结果写入相应合同。
 
 2026-10-03 最新指令：设立持续 goal，完成全部重构；生产环境暂不切换引用。
-以已发布的 `2552436` 为生产基线，后续使用独立 Vue 入口和构建目录，在临时
+以开始迁移时已发布的 `2552436` 为行为基线，后续使用独立 Vue 入口和构建目录，在临时
 服务上验证。完成后的源码提交、推送，但不部署或修改生产资源/入口引用。
+并行任务已接受的修复同步到迁移入口；本目标不冻结其它任务对旧生产入口的发布。
 保留生产所需的 `legacy-web/`；B8 清理的是新入口中的旧业务渲染与过渡接线，
 生产入口目录的最终删除/切换留待用户另行明确要求。
 
@@ -93,18 +94,13 @@
 
 #### 批次和依赖
 
-B0 构建接线和 B1 外观/功能设置试点已实现并通过 Chromium 验收，
-当前接线见 [架构合同](docs/architecture.md)。以下保留待完成的批次。
+页面框架、机器、侧栏、搜索、消息、输入、会话操作与终端各批已接入 Vue，
+并通过对应 Chromium 用户路径。当前接线见 [架构合同](docs/architecture.md)。
+以下只保留最终收尾；同步、缓存和过渡全局接线的拆分仍属于 B8。
 逐项功能与现有操作锚点见 [迁移行为基线](docs/frontend-migration-surfaces.md)。
 
 | 批次 | 工作包与交付 | 执行/难度 | 依赖 | Chromium 用户路径与完成标准 |
 | --- | --- | --- | --- | --- |
-| B2 页面框架与机器 | 顶栏、手机列表/详情切换、更多菜单、弹窗外壳；迁移机器设置、排序、客户端矩阵和既有更新操作；删除 B1 相应接线 | Sol / 中高；Grok 独立操作脚本 | B1 | `tests/header_fold_browser.py`、`tests/session_deep_link_browser.py`、`tests/client_update_browser.py`、`tests/hub_browser.py`；原入口、操作、文案和断点一致 |
-| B3 列表和导航 | 提取列表增量、树/平铺分组、机器/客户端筛选、星标、多选、未读、排序、附属关系和主/子会话深链；Vue 接管侧栏 | Sol / 高；Grok 独立夹具/操作脚本 | B2 | `tests/nest_tree_browser.py`、`tests/session_titles_browser.py`、`tests/session_resources_browser.py` 及对应现有多选/未读/分组套件；刷新、跳转、增量后选中和展开状态不变 |
-| B4 搜索 | 搬运字面/正则、大小写、全词、AND/OR、命中跳转和原错误说明；列表过滤与完整搜索保持现行区别 | Sol / 中高 | B3 | `tests/search_no_fold_browser.py`、`tests/search_browser.py` 及现有搜索套件；输入、切换选项、打开结果、上下命中跳转 |
-| B5 历史与消息 | 提取 SSE/增量/缓存/分页状态；组件化文本、Markdown、公式、语法、工具组、差异、媒体、耗时、压缩/回退/子代理；保留锚点和滚动位置 | Sol / 高；Grok 独立媒体/工具操作脚本 | B3、B4 | `tests/history_browser.py`、`tests/tool_group_fold_browser.py`、`tests/media_continuation_browser.py`、`tests/conversation_performance_browser.py` 等；补历史不移动实时 checkpoint，增量不重置折叠/选择/阅读位置 |
-| B6 输入与会话操作 | 搬运草稿、输入历史、CHECK/SEND 展示、问题/审批卡片、新建、停止、重命名、移动/复制/回收站和反馈入口；服务端逻辑不变 | Sol / 高；主审负责语义裁决 | B5 | `tests/draft_sync_browser.py`、`tests/send_browser.py`、`tests/question_browser.py`、`tests/new_session_model_browser.py`、`tests/session_transfer_environment_browser.py` 及对应现有套件；实际输入/提交/取消/重开，对应请求和可见结果不变 |
-| B7 终端和辅助页 | 提取终端管理模块；Vue 只管理容器和工具栏，复用 Grid 与 xterm；保持视图切换、连接、租约、恢复、键鼠/触摸/粘贴、录制回放；迁移现有 Grid/录制/兼容文件页面 | Sol / 高；Grok 仅独立页面走查 | B6 | `tests/terminal_input_browser.py`、`tests/terminal_grid_browser.py`、`tests/terminal_records_browser.py` 等；切会话不误断连接，关闭/重连和既有抢占提示保持原行为 |
 | B8 完成替换准备 | 独立 Vue 构建可作为完整入口；新入口删除旧业务渲染、全局状态和过渡接线，保留继续使用的 Grid/vendor/font/PWA 静态资产；更新当前合同 | Sol / 高；主审集成 | B7 | 对全部迁移表面做浏览器验收、子路径访问和临时服务重启后恢复；完整产物已构建、提交和推送；生产仍引用当前版本 |
 
 表中的套件是工作包定位依据；每批开工前核对当前存在的文件和覆盖范围。
