@@ -1,12 +1,16 @@
 <script setup lang="ts">
+import { toggleResources } from '../services/shell/resources'
+import HeaderActions from './shell/HeaderActions.vue'
+import { state, operations } from '../stores/shell'
+import { setSideCollapsed, startDrag, finishDrag, setSideWidth, SIDE_DEFAULT, sideResourceExtra } from '../services/shell/workspace'
 defineProps<{ hostname: string }>()
 </script>
 
 <template>
-  <header>
+  <header :class="{'header-fold-labels': state.labels, 'header-fold-brand': state.brand, 'header-fold-nodes': state.nodes}">
     <div class="brand">
       <span class="brand-name" :title="hostname">{{ hostname }}</span>
-      <button class="btn" id="side-toggle" title="收起会话列表" aria-label="收起会话列表" aria-expanded="true">
+      <button class="btn" id="side-toggle" :title="state.collapsed ? '展开会话列表' : '收起会话列表'" :aria-label="state.collapsed ? '展开会话列表' : '收起会话列表'" :aria-expanded="state.collapsed ? 'false' : 'true'" @click="setSideCollapsed(!state.collapsed)">
         <svg class="ui-icon" aria-hidden="true"><use href="#i-sidebar"/></svg>
       </button>
     </div>
@@ -16,53 +20,28 @@ defineProps<{ hostname: string }>()
         <button type="button" id="allcount" role="radio" aria-checked="true" tabindex="0" class="on" title="显示全部会话"><b id="session-total">0</b></button>
       </div>
       <div class="seg" id="sidebar-resource-control">
-        <button type="button" id="sidebar-resources-toggle" aria-pressed="false" aria-label="列表资源" title="显示列表资源列：CPU、进程、内存、GPU、磁盘读写"><svg class="ui-icon" aria-hidden="true"><use href="#i-resource-cpu"/></svg><span class="mobile-label">资源</span></button>
+        <button type="button" id="sidebar-resources-toggle" :class="{on: state.resources}" :aria-pressed="state.resources ? 'true' : 'false'" aria-label="列表资源" :title="state.resources ? '隐藏列表资源列' : '显示列表资源列：CPU、进程、内存、GPU、磁盘读写'" @click.capture="toggleResources"><svg class="ui-icon" aria-hidden="true"><use href="#i-resource-cpu"/></svg><span class="mobile-label">资源</span></button>
       </div>
       <div class="seg" id="nest">
-        <button type="button" id="nest-toggle" aria-pressed="false" title="分层显示：由会话发起的会话缩进在发起者之下；子代理始终挂在会话下面" aria-label="分层显示"><svg class="ui-icon" aria-hidden="true"><use href="#i-tree"/></svg><span class="mobile-label">分层</span></button>
+        <button type="button" id="nest-toggle" :class="{on: state.nest}" :aria-pressed="state.nest ? 'true' : 'false'" @click="operations().toggleNest()" title="分层显示：由会话发起的会话缩进在发起者之下；子代理始终挂在会话下面" aria-label="分层显示"><svg class="ui-icon" aria-hidden="true"><use href="#i-tree"/></svg><span class="mobile-label">分层</span></button>
       </div>
       <div class="seg" id="view" role="group" aria-label="列表视图">
-        <button data-v="tree" class="on" title="项目树" aria-label="项目树">📁 <span class="mobile-label">项目树</span></button>
-        <button data-v="group" title="会话分组" aria-label="会话分组">🏷 <span class="mobile-label">分组</span></button>
-        <button data-v="date" title="时间轴" aria-label="时间轴">🕒 <span class="mobile-label">时间轴</span></button>
+        <button data-v="tree" :class="{on: state.view === 'tree'}" @click="operations().selectView('tree')" title="项目树" aria-label="项目树">📁 <span class="mobile-label">项目树</span></button>
+        <button data-v="group" :class="{on: state.view === 'group'}" @click="operations().selectView('group')" title="会话分组" aria-label="会话分组">🏷 <span class="mobile-label">分组</span></button>
+        <button data-v="date" :class="{on: state.view === 'date'}" @click="operations().selectView('date')" title="时间轴" aria-label="时间轴">🕒 <span class="mobile-label">时间轴</span></button>
       </div>
       <div class="node-picker" id="node-picker" hidden>
         <div class="seg" id="node-chips" role="group" aria-label="机器筛选"></div>
       </div>
       <div class="seg chips" id="chips" role="group" aria-label="Agent Type 筛选"></div>
     </div>
-    <div class="header-actions">
-      <button class="btn hidden" id="new-session" title="新建会话" aria-label="新建会话">
-        <svg class="ui-icon" aria-hidden="true"><use href="#i-plus"/></svg>
-      </button>
-      <button type="button" class="btn" id="page-reload" hidden title="刷新页面" aria-label="刷新页面">
-        <svg class="ui-icon" aria-hidden="true"><use href="#i-refresh"/></svg>
-      </button>
-      <button class="btn" id="transfer-tasks" hidden title="未完成的移动与复制" aria-label="未完成的移动与复制">
-        <svg class="ui-icon" aria-hidden="true"><use href="#i-transfer"/></svg><span class="transfer-task-count"></span>
-      </button>
-      <button class="btn" id="trash" title="回收站" aria-label="回收站">
-        <svg class="ui-icon" aria-hidden="true"><use href="#i-trash"/></svg>
-      </button>
-      <button class="btn" id="report-bug" data-report-bug
-        title="报告问题" aria-label="报告问题">
-        <svg class="ui-icon" aria-hidden="true"><use href="#i-bug"/></svg>
-      </button>
-      <button class="btn" id="settings" title="设置" aria-label="设置">
-        <svg class="ui-icon" aria-hidden="true"><use href="#i-settings"/></svg>
-      </button>
-      <div class="header-more" id="header-more" hidden>
-        <button type="button" class="btn" id="header-more-btn" title="更多操作" aria-label="更多操作"
-                aria-haspopup="menu" aria-expanded="false" aria-controls="header-menu"><span aria-hidden="true">⋯</span></button>
-        <div id="header-menu" class="header-menu" hidden role="menu" aria-label="更多操作"></div>
-      </div>
-    </div>
+    <HeaderActions />
   </header>
   <div id="backend-notice" hidden role="status"></div>
   <div id="node-notice" hidden role="status"></div>
   <div id="prog"><div class="bar"></div><span class="txt"></span></div>
   <main>
-    <div id="left">
+    <div id="left" :style="{width: state.width}">
       <div class="side-search">
         <div class="qbox">
           <input id="q" autocomplete="off" aria-label="搜索会话" placeholder="快速筛选… Enter 搜正文" title="无需回车：筛选标题、UUID / UID、目录、机器名、Agent 名和模型名；空格分词，双引号搜索短语；Enter 搜索对话正文">
@@ -102,7 +81,7 @@ defineProps<{ hostname: string }>()
       </div>
       <div id="side"><div class="spin">正在扫描会话…</div></div>
     </div>
-    <div id="drag" title="拖动调整宽度，双击复位"></div>
+    <div id="drag" title="拖动调整宽度，双击复位" :style="{transform: state.dragTransform}" @pointerdown="startDrag" @lostpointercapture="finishDrag" @dblclick="setSideWidth(SIDE_DEFAULT + sideResourceExtra(), true)"></div>
       <div id="right">
       <div id="detail"><div class="empty">从左侧选择一个会话</div></div>
       <div id="composer" class="hidden">

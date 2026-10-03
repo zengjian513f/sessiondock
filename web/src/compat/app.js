@@ -17,6 +17,30 @@ const store = {
   set: (k, v) => localStorage.setItem(STORAGE_PREFIX + k, JSON.stringify(v)),
 };
 
+const shellBridge = {
+  get: (key, fallback) => store.get(key, fallback),
+  set: (key, value) => store.set(key, value),
+  openNewSession: () => openNewSessionDialog(), openSettings: () => openSettings(),
+  openTrash: () => openTrash(),
+  openTransfers: () => openTransferTasks(),
+  selectView: value => { S.view = value; store.set('view', S.view); renderView(); renderSide(); },
+  toggleNest: () => { S.nest = !S.nest; store.set('nest', S.nest); renderView(); renderSide(); },
+  layoutSessionHead: () => layoutSessionHead(),
+  fitTerminal: () => { if (typeof fitTerm === 'function' && T?.term) fitTerm(); },
+  fitViewportTerminal: () => { if (typeof fitTerm === 'function') fitTerm(); },
+  closeTerminal: () => { if (typeof T !== 'undefined' && !$('#termpane').classList.contains('hidden')) closeTermPane(true); },
+  selected: () => !!S.sel,
+  freezeOverlay: () => syncSessionFreezeOverlay(), stopNotice: () => syncSessionStopNotice(),
+  layoutTerminal: () => { if (typeof layoutTermPane !== 'function') return false; layoutTermPane(); return true; },
+  scrollTerminal: () => { try { currentTermViewObject()?.term?.scrollToBottom(); } catch { /* no view yet */ } },
+  positionTerminal: () => { if (typeof positionTermViewport === 'function') positionTermViewport(currentTermViewObject()); },
+  cancelLongPress: () => cancelLongPress(), closeItemMenu: () => closeItemMenu(),
+  resetItemClick: () => { suppressItemClick = false; },
+  refreshTerminalScale: persist => { if (typeof refreshTerminalScale === 'function') refreshTerminalScale(persist); },
+  updateScale: scale => SessionDockSettings.update({scale}),
+};
+SessionDockShell.configure(shellBridge);
+
 let settingsMounted = false;
 
 const FONT_CHOICES = SessionDockTypography.choices;
@@ -39,126 +63,13 @@ function applyFont(choice = store.get('font', 'ubuntu'), persist = false) {
   if (typeof refreshTerminalPreferences === 'function') refreshTerminalPreferences(false);
 }
 
-function normalizedInterfaceScale(value) {
-  value = Number(value);
-  // Preserve older 30–49% preferences at the new minimum.
-  return Number.isFinite(value) && value >= 30 && value <= 150 ? Math.max(50, Math.round(value)) : 100;
-}
-function interfaceScale() {
-  const saved = store.get('interfaceScale', 100);
-  const value = normalizedInterfaceScale(saved);
-  if (value === 50 && Number(saved) < 50) store.set('interfaceScale', value);
-  return value;
-}
-function applyInterfaceScale(value = interfaceScale(), persist = false) {
-  value = normalizedInterfaceScale(value);
-  if (persist) store.set('interfaceScale', value);
-  document.documentElement.style.setProperty('--compact-scale', value / 100);
-  if (settingsMounted) SessionDockSettings.update({scale: value});
-  else {
-    // Startup applies scale to the initial markup before the pane handoff.
-    document.querySelector('#setting-scale').value = String(value);
-    document.querySelector('#setting-scale-value').value = `${value}%`;
-  }
-  if (typeof refreshTerminalScale === 'function') refreshTerminalScale(persist);
-  // Resize listeners also update terminal fitting and the visible mobile viewport.
-  if (persist) window.dispatchEvent(new Event('resize'));
-}
+// Named compatibility callbacks; implementations and gesture lifetime belong to the shell.
+function normalizedInterfaceScale(value) { return SessionDockShell.normalizedInterfaceScale(value); }
+function interfaceScale() { return SessionDockShell.interfaceScale(); }
+function applyInterfaceScale(value = interfaceScale(), persist = false) { SessionDockShell.applyInterfaceScale(value, persist); }
+function showScaleIndicator(value, active = false) { SessionDockShell.showScaleIndicator(value, active); }
+const SessionDockGestures = SessionDockShell.gestures;
 applyInterfaceScale();
-
-let scaleIndicatorTimer = 0, scaleIndicatorFade = 0;
-function showScaleIndicator(value, active = false) {
-  const indicator = document.querySelector('#scale-indicator');
-  clearTimeout(scaleIndicatorTimer);
-  clearTimeout(scaleIndicatorFade);
-  indicator.textContent = `${normalizedInterfaceScale(value)}%`;
-  // A manual popover stays above the settings dialog without taking focus.
-  if (indicator.showPopover && !indicator.matches(':popover-open')) indicator.showPopover();
-  indicator.classList.add('visible');
-  if (!active) scaleIndicatorTimer = setTimeout(() => {
-    indicator.classList.remove('visible');
-    scaleIndicatorFade = setTimeout(() => indicator.hidePopover?.(), 180);
-  }, 700);
-}
-
-// A widget with its own two-finger gesture explicitly owns that surface.
-// Page pinch takes ownership until every finger lifts, cancelling child holds
-// before capture prevents the second touch from reaching those children.
-const SessionDockGestures = (() => {
-  const app = document.querySelector('#app');
-  let pinch = null, frame = 0, suppressTouchTail = false, pointerType = '';
-  const isTouchEvent = event => {
-    if (event.pointerType) return event.pointerType === 'touch';
-    if (event.sourceCapabilities) return event.sourceCapabilities.firesTouchEvents;
-    return pointerType === 'touch';
-  };
-  const distance = touches => Math.hypot(
-    touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
-  const consume = event => {
-    if (event.cancelable) event.preventDefault();
-    event.stopPropagation();
-  };
-  app.addEventListener('pointerdown', event => {
-    pointerType = event.pointerType;
-    if (pointerType !== 'touch') suppressTouchTail = false;
-  }, true);
-  app.addEventListener('keydown', () => { pointerType = 'keyboard'; }, true);
-  app.addEventListener('touchstart', event => {
-    pointerType = 'touch';
-    if (pinch) { consume(event); return; }
-    suppressTouchTail = false;
-    if (event.touches.length !== 2 || [...event.touches].some(touch =>
-      !app.contains(touch.target) || touch.target.closest('[data-pinch-owner], input[type="range"]'))) return;
-    const startDistance = distance(event.touches);
-    if (startDistance < 10) return;
-    pinch = {distance: startDistance, scale: interfaceScale(), value: interfaceScale(),
-      ids: [...event.touches].map(touch => touch.identifier)};
-    showScaleIndicator(pinch.value, true);
-    cancelLongPress();
-    closeItemMenu();
-    suppressItemClick = false;
-    for (const target of new Set([...event.touches].map(touch => touch.target))) {
-      target.dispatchEvent(new Event('sessiondock-pinch-start', {bubbles: true}));
-    }
-    consume(event);
-  }, {capture: true, passive: false});
-  app.addEventListener('touchmove', event => {
-    if (!pinch) return;
-    consume(event);
-    const touches = pinch.ids.map(id => [...event.touches].find(touch => touch.identifier === id));
-    if (event.touches.length !== 2 || touches.some(touch => !touch)) return;
-    pinch.value = Math.round(Math.max(50, Math.min(150, pinch.scale * distance(touches) / pinch.distance)));
-    if (!frame) frame = requestAnimationFrame(() => {
-      frame = 0;
-      if (pinch) {
-        applyInterfaceScale(pinch.value);
-        showScaleIndicator(pinch.value, true);
-      }
-    });
-  }, {capture: true, passive: false});
-  const finish = event => {
-    if (!pinch) return;
-    // Child holds were cancelled at handoff. Let renderers clean up their
-    // original touch stream, but never turn remaining fingers back into a hold.
-    if (event.cancelable) event.preventDefault();
-    suppressTouchTail = true;
-    if (event.touches.length) return;
-    cancelAnimationFrame(frame); frame = 0;
-    const value = pinch.value;
-    pinch = null;
-    applyInterfaceScale(value, true);
-    showScaleIndicator(value);
-  };
-  app.addEventListener('touchend', finish, {capture: true, passive: false});
-  app.addEventListener('touchcancel', finish, {capture: true, passive: false});
-  app.addEventListener('pointermove', event => { if (pinch && event.pointerType === 'touch') consume(event); }, true);
-  for (const type of ['click', 'contextmenu']) {
-    app.addEventListener(type, event => {
-      if ((pinch || suppressTouchTail) && isTouchEvent(event)) consume(event);
-    }, true);
-  }
-  return {isTouchEvent, get pinching() { return pinch !== null; }};
-})();
 
 themeMedia.addEventListener('change', () => {
   if (store.get('theme', 'system') === 'system') applyTheme('system');
@@ -888,101 +799,12 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) checkServerBuild();
 });
 
-// Android 默认只缩小 visual viewport；iOS 也不会让 100dvh 可靠地避开软键盘。
-// 把应用高度钉到真正可见区域，并在 Safari 产生 viewport 偏移时跟着移动。
-// interactive-widget=resizes-content 时 innerHeight 也会跟着掉，所以不能靠
-// innerHeight vs visualViewport 判断键盘。同一宽度下相对最近的满高度掉
-// 120px 以上视为软键盘：网页让位，PTY 行列保持键盘收起时的尺寸。
-const VISUAL_KEYBOARD_INSET_MIN = 120;
-let visualLayoutWidth = 0;
-let visualLayoutHeight = 0;
-let visualKeyboardWasOpen = false;
-function browserPinchZoomed() {
-  return Math.abs((window.visualViewport?.scale || 1) - 1) > 0.01;
-}
-function visualKeyboardOpen() {
-  if (!MOBILE.matches) return false;
-  if (browserPinchZoomed()) return visualKeyboardWasOpen;
-  const viewport = window.visualViewport;
-  const width = Math.round(viewport?.width || window.innerWidth);
-  const height = Math.max(1, Math.round(viewport?.height || window.innerHeight));
-  if (width !== visualLayoutWidth) {
-    visualLayoutWidth = width;
-    visualLayoutHeight = height;
-    return visualKeyboardWasOpen = false;
-  }
-  if (height > visualLayoutHeight) {
-    visualLayoutHeight = height;
-    return visualKeyboardWasOpen = false;
-  }
-  return visualKeyboardWasOpen = visualLayoutHeight - height >= VISUAL_KEYBOARD_INSET_MIN;
-}
-// PTY 行列按键盘收起时的布局测量：界面缩放等真实布局变化照常重排，
-// 软键盘让出的高度不计入。临时写回满高度只影响这次同步测量，不会绘制。
-function measureKeyboardClosedLayout(measure) {
-  if (!visualKeyboardOpen()) return measure();
-  const root = document.documentElement.style;
-  const saved = root.getPropertyValue('--visual-viewport-height');
-  root.setProperty('--visual-viewport-height', `${visualLayoutHeight}px`);
-  try { return measure(); } finally {
-    if (saved) root.setProperty('--visual-viewport-height', saved);
-    else root.removeProperty('--visual-viewport-height');
-  }
-}
-let viewportFrame = 0;
-function syncMobileViewport() {
-  cancelAnimationFrame(viewportFrame);
-  viewportFrame = requestAnimationFrame(() => {
-    const root = document.documentElement.style;
-    if (!MOBILE.matches) {
-      visualLayoutWidth = 0;
-      visualLayoutHeight = 0;
-      visualKeyboardWasOpen = false;
-      root.removeProperty('--visual-viewport-height');
-      root.removeProperty('--visual-viewport-top');
-      return;
-    }
-    // Pinch changes the visible window onto the page, not its layout or PTY size.
-    // Retain the last unzoomed keyboard geometry until native zoom returns to 1.
-    if (browserPinchZoomed()) return;
-    const viewport = window.visualViewport;
-    const height = Math.max(1, Math.round(viewport?.height || window.innerHeight));
-    const top = Math.max(0, Math.round(viewport?.offsetTop || 0));
-    root.setProperty('--visual-viewport-height', `${height}px`);
-    root.setProperty('--visual-viewport-top', `${top}px`);
-    if (typeof layoutTermPane === 'function') {
-      layoutTermPane();
-      if (visualKeyboardOpen()) {
-        try { currentTermViewObject()?.term?.scrollToBottom(); } catch { /* no view yet */ }
-        if (typeof positionTermViewport === 'function') positionTermViewport(currentTermViewObject());
-      } else if (typeof fitTerm === 'function') {
-        fitTerm();
-      }
-    }
-  });
-}
-window.visualViewport?.addEventListener('resize', syncMobileViewport);
-window.visualViewport?.addEventListener('scroll', syncMobileViewport);
-window.addEventListener('resize', syncMobileViewport);
-syncMobileViewport();
-
-function showMobileDetail() {
-  if (MOBILE.matches) {
-    document.body.classList.add('mobile-detail');
-    store.set('mobilePage', 'detail');
-    layoutSessionHead();
-  }
-  syncSessionFreezeOverlay();
-}
-
-function showMobileList() {
-  if (typeof T !== 'undefined' && !$('#termpane').classList.contains('hidden')) closeTermPane(true);
-  document.body.classList.remove('mobile-detail');
-  if (MOBILE.matches) store.set('mobilePage', 'list');
-  layoutSessionHead();
-  layoutHeader();
-  syncSessionStopNotice();
-}
+function browserPinchZoomed() { return SessionDockShell.browserPinchZoomed(); }
+function visualKeyboardOpen() { return SessionDockShell.visualKeyboardOpen(); }
+function measureKeyboardClosedLayout(measure) { return SessionDockShell.measureKeyboardClosedLayout(measure); }
+function syncMobileViewport() { SessionDockShell.syncMobileViewport(); }
+function showMobileDetail() { SessionDockShell.showMobileDetail(); }
+function showMobileList() { SessionDockShell.showMobileList(); }
 
 function fmtSize(n) {
   if (n < 1024) return n + 'B';
@@ -5702,7 +5524,8 @@ function syncSessionGlobalActions(heading, list) {
   for (const [index, id] of ['new-session', 'settings', 'page-reload', 'transfer-tasks'].entries()) {
     const source = document.getElementById(id);
     if (!source) continue;
-    const enabled = dock && !source.hidden && !source.classList.contains('hidden');
+    const action = SessionDockShell.actionState(id);
+    const enabled = dock && !action.hidden && !action.capabilityHidden;
     const proxyId = 'a-global-' + id;
     let proxy = heading?.querySelector('#' + proxyId);
     if (!enabled) proxy?.remove();
@@ -5714,31 +5537,16 @@ function syncSessionGlobalActions(heading, list) {
         proxy.dataset.order = index - 4;
         proxy.setAttribute('role', 'menuitem');
         proxy.appendChild(source.querySelector('svg').cloneNode(true));
-        proxy.onclick = () => source.click();
+        proxy.onclick = () => document.getElementById(id)?.click();
         list.appendChild(proxy);
       }
       proxy.title = proxy.ariaLabel = source.ariaLabel || source.title;
       proxy.disabled = source.disabled;
       labelSessionAction(proxy);
     }
-    if (source.hasAttribute('data-session-docked') !== enabled) {
-      source.toggleAttribute('data-session-docked', enabled);
-      changed = true;
-    }
+    if (SessionDockShell.dockAction(id, enabled)) changed = true;
   }
-  if (changed) {
-    // Restore header order before measuring it again, including controls that
-    // had been folded into its menu before the sidebar was hidden.
-    closeHeaderMenu();
-    for (const id of HEADER_ACTIONS) {
-      const button = document.getElementById(id);
-      button.querySelector(':scope > .menu-label')?.remove();
-      button.removeAttribute('role');
-      $('#header-more').before(button);
-    }
-    $('#header-more').hidden = true;
-    layoutHeader();
-  }
+  if (changed) layoutHeader();
 }
 
 function layoutSessionHead(heading = $('#detail .dhead')) {
@@ -5873,149 +5681,8 @@ for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', () => lay
   document.fonts?.ready.then(() => layoutSessionHead());   // 字体换过之后文字宽度会变
 }
 
-// 顶栏按空间逐级收，任何一级都不因折叠留白：
-//   1. Agent / 组织方式 / 分层 的文字标签
-//   2. 主机标题（.brand-name）
-//   3. 机器 chip 缩成首字母（首字母相同则前两个字母），不显示会话数（仅中央站、机器筛选可见时）
-//   4. 右侧按钮从末尾折进 ⋯（新建、刷新页面、回收站、报告问题、设置）
-// 筛选条被挤压或整条顶栏横向溢出才进入下一级；放得下就按相反顺序展开。
-const HEADER_ACTIONS = ['new-session', 'page-reload', 'transfer-tasks', 'trash', 'report-bug', 'settings'];
-const HEADER_FOLD_LABELS = 'header-fold-labels';
-const HEADER_FOLD_BRAND = 'header-fold-brand';
-const HEADER_FOLD_NODES = 'header-fold-nodes';
-function closeHeaderMenu(restoreFocus = false) {
-  const menu = $('#header-menu');
-  if (!menu || menu.hidden) return;
-  menu.hidden = true;
-  const button = $('#header-more-btn');
-  button?.setAttribute('aria-expanded', 'false');
-  if (restoreFocus) button?.focus();
-}
-function layoutHeader() {
-  const header = $('header'), filters = header?.querySelector('.header-filters');
-  const more = $('#header-more'), menu = $('#header-menu');
-  if (!filters || !more || !menu) return;
-  if (getComputedStyle(header).display === 'none') return;
-  const squeezed = () => filters.scrollWidth > filters.clientWidth
-    || header.scrollWidth > header.clientWidth;
-  const picker = $('#node-picker');
-  const canFoldNodes = !!(picker && !picker.hidden);
-  const restoreButton = button => {
-    button.querySelector(':scope > span.menu-label')?.remove();
-    button.removeAttribute('role');
-    more.before(button);
-  };
-  const foldButton = button => {
-    let label = button.querySelector(':scope > span.menu-label');
-    if (!label) button.appendChild(label = el('span', 'menu-label'));
-    label.textContent = button.ariaLabel || button.title;
-    button.setAttribute('role', 'menuitem');
-    menu.prepend(button);
-  };
-  // 隐藏的按钮（能力未声明）不能折进 ⋯ 菜单，否则会以菜单项的样子露出来。
-  const inlineButtons = () => HEADER_ACTIONS.map(id => document.getElementById(id))
-    .filter(button => button && !button.hidden && !button.hasAttribute('data-session-docked') && button.parentElement !== menu);
-  if (MOBILE.matches && canFoldNodes) header.classList.add(HEADER_FOLD_NODES);
-  if (squeezed()) {
-    closeHeaderMenu();
-    if (!header.classList.contains(HEADER_FOLD_LABELS)) {
-      header.classList.add(HEADER_FOLD_LABELS);
-      if (!squeezed()) return;
-    }
-    if (!header.classList.contains(HEADER_FOLD_BRAND)) {
-      header.classList.add(HEADER_FOLD_BRAND);
-      if (!squeezed()) return;
-    }
-    if (canFoldNodes && !header.classList.contains(HEADER_FOLD_NODES)) {
-      header.classList.add(HEADER_FOLD_NODES);
-      if (!squeezed()) return;
-    }
-    const buttons = inlineButtons();
-    // 折起第一个按钮只是把它换成 ⋯，宽度没省出来；所以真要折就至少折两个，循环自然做到
-    for (let i = buttons.length - 1; i >= 0 && squeezed(); i--) {
-      more.hidden = false;
-      foldButton(buttons[i]);
-    }
-    more.hidden = !menu.children.length;
-    return;
-  }
-  // 没被挤压：按相反顺序展开。同步试探并立刻收回放不下的那一级，避免中间态闪一下。
-  if (menu.children.length) closeHeaderMenu();
-  while (menu.children.length) {
-    const button = menu.children[0];
-    restoreButton(button);
-    more.hidden = !menu.children.length;
-    if (!squeezed()) continue;
-    foldButton(button);
-    more.hidden = false;
-    return;
-  }
-  if (MOBILE.matches) return;
-  if (header.classList.contains(HEADER_FOLD_NODES)) {
-    header.classList.remove(HEADER_FOLD_NODES);
-    if (squeezed()) {
-      header.classList.add(HEADER_FOLD_NODES);
-      return;
-    }
-  }
-  if (header.classList.contains(HEADER_FOLD_BRAND)) {
-    header.classList.remove(HEADER_FOLD_BRAND);
-    if (squeezed()) {
-      header.classList.add(HEADER_FOLD_BRAND);
-      return;
-    }
-  }
-  if (header.classList.contains(HEADER_FOLD_LABELS)) {
-    header.classList.remove(HEADER_FOLD_LABELS);
-    if (squeezed()) header.classList.add(HEADER_FOLD_LABELS);
-  }
-}
-{
-  const button = $('#header-more-btn'), menu = $('#header-menu');
-  const items = () => [...menu.querySelectorAll('button:not(:disabled):not(.hidden)')];
-  const open = () => { menu.hidden = false; button.setAttribute('aria-expanded', 'true'); };
-  button.onclick = () => menu.hidden ? open() : closeHeaderMenu();
-  button.onkeydown = event => {
-    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
-    event.preventDefault();
-    open();
-    const rows = items();
-    (event.key === 'ArrowUp' ? rows.at(-1) : rows[0])?.focus();
-  };
-  menu.addEventListener('click', event => {
-    if (event.target.closest('button')) closeHeaderMenu(true);
-  });
-  menu.onkeydown = event => {
-    const rows = items(), index = rows.indexOf(document.activeElement);
-    const next = {ArrowDown: (index + 1) % rows.length,
-      ArrowUp: (index - 1 + rows.length) % rows.length, Home: 0, End: rows.length - 1}[event.key];
-    if (next === undefined) return;
-    event.preventDefault();
-    rows[next]?.focus();
-  };
-  $('#header-more').addEventListener('focusout', event => {
-    if (event.relatedTarget && !$('#header-more').contains(event.relatedTarget)) closeHeaderMenu();
-  });
-  document.addEventListener('click', event => {
-    if (!event.target.closest('#header-more')) closeHeaderMenu();
-  }, true);
-  document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && menu.hidden === false) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      closeHeaderMenu(true);
-    }
-  }, true);
-  addEventListener('resize', () => closeHeaderMenu());
-  for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', layoutHeader);
-  // 视口、断点换挡、机器/来源筛选增减、会话计数变宽都会改变筛选条的内容宽度。
-  // 收标签/标题会改 chips 和 brand 的宽度，observer 会再进来一次；layoutHeader
-  // 只在仍被挤压时加下一级、放得下才展开，同步试探并收回，不会收-放循环。
-  // 新建按钮随终端能力出现/消失时由 term.js 直接调 layoutHeader()。
-  const observer = new ResizeObserver(() => layoutHeader());
-  for (const node of [$('header'), $('.brand'), ...$('.header-filters').children]) observer.observe(node);
-  layoutHeader();
-}
+function closeHeaderMenu(restoreFocus = false) { SessionDockShell.closeHeaderMenu(restoreFocus); }
+function layoutHeader() { SessionDockShell.layoutHeader(); }
 
 /** 子代理是否仍在跑：服务端按 transcript 与父会话的停止通知判断，父进程不在则一律不算。 */
 const agentRunning = (uid, item) => !!item.active && S.live.has(uid);
@@ -8851,27 +8518,7 @@ function inline(s, media = [], context = {}) {
 }
 
 // ---------------------------------------------------------------- 事件
-$('#view').onclick = e => {
-  const b = e.target.closest('button');
-  if (!b) return;
-  S.view = b.dataset.v;
-  store.set('view', S.view);
-  renderView();
-  renderSide();
-};
-
-function renderView() {
-  for (const b of $('#view').children) b.classList.toggle('on', b.dataset.v === S.view);
-  const nest = $('#nest-toggle');
-  nest.classList.toggle('on', S.nest);
-  nest.setAttribute('aria-pressed', String(S.nest));
-}
-$('#nest-toggle').onclick = () => {
-  S.nest = !S.nest;
-  store.set('nest', S.nest);
-  renderView();
-  renderSide();
-};
+function renderView() { SessionDockShell.updateView(S.view, S.nest); }
 
 // A full render resolves filtering and hidden-parent successors. Folding only
 // changes the visible rows within that same display tree, never its membership.
@@ -8957,99 +8604,10 @@ function toggleNestFold(uid) {
   if (!patchNestFold(uid)) renderSide();
 }
 
-// ---------------------------------------------------------------- 栏宽拖动
-const SIDE_DEFAULT = 340;
-const sideResourceExtra = () => document.body.classList.contains('sidebar-resources') ? 144 : 0;
-
-function setSideWidth(px, save) {
-  if (MOBILE.matches) {
-    $('#left').style.removeProperty('width');
-    return;
-  }
-  const w = Math.round(Math.max(200, Math.min(px, window.innerWidth - 320)));
-  $('#left').style.width = w + 'px';
-  document.documentElement.style.setProperty('--side-width',
-    document.body.classList.contains('side-collapsed') ? '0px' : w + 'px');
-  if (save) store.set('width', Math.max(200, w - sideResourceExtra()));
-}
-
-function setSideCollapsed(collapsed, save = true) {
-  collapsed = !!collapsed && !MOBILE.matches;
-  document.body.classList.toggle('side-collapsed', collapsed);
-  const button = $('#side-toggle');
-  const label = collapsed ? '展开会话列表' : '收起会话列表';
-  button.title = button.ariaLabel = label;
-  button.setAttribute('aria-expanded', String(!collapsed));
-  if (save) store.set('sideCollapsed', collapsed);
-  const width = parseInt($('#left').style.width, 10) || store.get('width', SIDE_DEFAULT);
-  document.documentElement.style.setProperty('--side-width', collapsed ? '0px' : width + 'px');
-  layoutSessionHead();
-  requestAnimationFrame(() => {
-    if (typeof fitTerm === 'function' && T?.term) fitTerm();
-  });
-}
-
-$('#side-toggle').onclick = () => setSideCollapsed(
-  !document.body.classList.contains('side-collapsed'));
-
-// 横屏手机和平板也走这套桌面分栏；手指拖动只产生 pointer/touch 事件，
-// 浏览器不会为触摸合成 mousemove，所以和 #tgrip 一样用 pointer 事件加捕获。
-let dragging = false;
-let dragPointer = null, dragWidth = 0, dragStartWidth = 0, dragFrame = 0;
-const sideDragHandle = $('#drag');
-sideDragHandle.addEventListener('pointerdown', e => {
-  if (e.button !== 0 || dragging) return;
-  dragging = true;
-  dragPointer = e.pointerId;
-  dragWidth = dragStartWidth = $('#left').getBoundingClientRect().width;
-  e.currentTarget.setPointerCapture?.(e.pointerId);
-  document.body.classList.add('dragging');
-  e.preventDefault();
-});
-document.addEventListener('pointermove', e => {
-  if (!dragging || e.pointerId !== dragPointer) return;
-  dragWidth = Math.round(Math.max(200, Math.min(e.clientX, window.innerWidth - 320)));
-  if (!dragFrame) dragFrame = requestAnimationFrame(() => {
-    dragFrame = 0;
-    // Move only the compositor-backed guide; leave thousands of rows and the
-    // terminal at their current size until the gesture finishes.
-    sideDragHandle.style.transform = `translateX(${dragWidth - dragStartWidth}px)`;
-  });
-});
-function finishSideDrag(e) {
-  if (!dragging || e.pointerId !== dragPointer) return;
-  const commit = e.type === 'pointerup';
-  dragging = false;
-  dragPointer = null;
-  cancelAnimationFrame(dragFrame);
-  dragFrame = 0;
-  sideDragHandle.style.removeProperty('transform');
-  document.body.classList.remove('dragging');
-  if (commit) setSideWidth(dragWidth, true);
-}
-document.addEventListener('pointerup', finishSideDrag);
-document.addEventListener('pointercancel', finishSideDrag);
-sideDragHandle.addEventListener('lostpointercapture', finishSideDrag);
-$('#drag').addEventListener('dblclick', () => setSideWidth(SIDE_DEFAULT + sideResourceExtra(), true));
-window.addEventListener('resize', () => setSideWidth(
-  parseInt($('#left').style.width, 10) || store.get('width', SIDE_DEFAULT)));
-MOBILE.addEventListener?.('change', e => {
-  if (e.matches) {
-    const detailVisible = !!S.sel && store.get('mobilePage', 'list') === 'detail';
-    // 桌面终端跨进手机断点、而手机上次停在列表时，右栏即将被 CSS 隐藏。
-    // 走与返回列表相同的暂存/停用流程，详情重新出现后由 restoreTermPane
-    // 按可见尺寸激活；不能把仍活跃的 xterm 留在 display:none 的祖先下面。
-    if (!detailVisible && typeof T !== 'undefined'
-        && !$('#termpane').classList.contains('hidden')) closeTermPane(true);
-    document.body.classList.toggle('mobile-detail', detailVisible);
-  } else {
-    document.body.classList.remove('mobile-detail');
-  }
-  syncSessionStopNotice();
-  syncMobileViewport();
-  setSideWidth(store.get('width', SIDE_DEFAULT) + sideResourceExtra());
-  setSideCollapsed(store.get('sideCollapsed', false), false);
-});
+const SIDE_DEFAULT = SessionDockShell.SIDE_DEFAULT;
+const sideResourceExtra = SessionDockShell.sideResourceExtra;
+function setSideWidth(px, save) { SessionDockShell.setSideWidth(px, save); }
+function setSideCollapsed(collapsed, save = true) { SessionDockShell.setSideCollapsed(collapsed, save); }
 
 $('#q').oninput = e => {
   cancelSearch();
@@ -9291,24 +8849,8 @@ function renderOpts() {
                                      : '搜索… Enter 搜正文';
 }
 
-const appDisplayMode = matchMedia('(display-mode: standalone)');
-function syncPageReload() {
-  const button = $('#page-reload');
-  button.hidden = !(appDisplayMode.matches || navigator.standalone === true);
-  if (button.hidden && button.parentElement === $('#header-menu')) {
-    button.querySelector('.menu-label')?.remove();
-    button.removeAttribute('role');
-    $('#header-more').before(button);
-    $('#header-more').hidden = !$('#header-menu').children.length;
-  }
-  layoutHeader();
-}
-$('#page-reload').onclick = () => location.reload();
-appDisplayMode.addEventListener('change', syncPageReload);
-for (const id of ['new-session', 'settings', 'page-reload', 'transfer-tasks']) {
-  new MutationObserver(() => layoutSessionHead()).observe(document.getElementById(id),
-    {attributes: true, attributeFilter: ['hidden', 'class', 'disabled']});
-}
+const appDisplayMode = SessionDockShell.displayMode;
+function syncPageReload() { SessionDockShell.syncPageReload(); }
 syncPageReload();
 
 /* ---------- 回收站 ---------- */
@@ -9445,7 +8987,7 @@ async function purgeAllTrash() {
   }
 }
 
-$('#trash').onclick = openTrash;
+
 $('#trash-reload').onclick = () => loadTrash();
 $('#trash-purge-all').onclick = purgeAllTrash;
 $('#trash-close').onclick = $('#trash-done').onclick = () => $('#trash-dialog').close();
@@ -9495,39 +9037,8 @@ function consolePasteFilesEnabled() {
   return store.get('consolePasteFiles', false) === true;
 }
 
-function showSettingsTab(name) {
-  if (!['appearance', 'features', 'machines'].includes(name)) name = 'appearance';
-  for (const tab of document.querySelectorAll('.settings-tab')) {
-    const on = tab.dataset.tab === name;
-    tab.classList.toggle('on', on);
-    tab.ariaSelected = String(on);
-  }
-  $('#settings-appearance').hidden = name !== 'appearance';
-  $('#settings-features').hidden = name !== 'features';
-  $('#settings-machines').hidden = name !== 'machines';
-  $('#settings-sub').textContent = name === 'machines'
-    ? '机器设置保存在中央服务端，所有浏览器一致'
-    : name === 'features' ? '功能偏好保存在此浏览器' : '界面偏好保存在浏览器';
-  store.set('settingsTab', name);
-  if (name === 'machines') SessionDockMachines.open();
-}
+function openSettings() { SessionDockSettings.open(); }
 
-for (const tab of document.querySelectorAll('.settings-tab')) {
-  tab.onclick = () => showSettingsTab(tab.dataset.tab);
-}
-
-function openSettings() {
-  applyInterfaceScale();
-  SessionDockSettings.update(settingsValues());
-  setMachineNote('');
-  showSettingsTab(store.get('settingsTab', 'appearance'));
-  $('#settings-dialog').showModal();
-}
-
-$('#settings').onclick = openSettings;
-$('#settings-dialog').addEventListener('click', e => {
-  if (e.target === $('#settings-dialog')) $('#settings-dialog').close();
-});
 function settingsValues() {
   return {
     scale: interfaceScale(), font: store.get('font', 'ubuntu'),
@@ -9539,6 +9050,8 @@ function settingsValues() {
 
 // Called once by page-sleep.js after its existing service is initialized.
 function mountSettings() {
+  SessionDockShell.takeOverResourceToggle($('#sidebar-resources-toggle').onclick);
+  $('#sidebar-resources-toggle').onclick = null;
   SessionDockMachines.mount({
     readTargets: machineTargets,
     appUrl,
@@ -9587,7 +9100,7 @@ function mountSettings() {
       SessionDockSettings.update({pasteFiles: consolePasteFilesEnabled()});
     },
     pwa: SessionDockPwaInstall,
-  });
+  }, {read: () => store.get('settingsTab', 'appearance'), save: value => store.set('settingsTab', value)});
   settingsMounted = true;
 }
 
@@ -9607,8 +9120,7 @@ if (backendNotice && SessionDockCapabilities.config.configuration_error) {
   backendNotice.textContent = '能力配置无效，请检查服务配置。';
   backendNotice.hidden = false;
 }
-setSideWidth(store.get('width', SIDE_DEFAULT) + sideResourceExtra());
-setSideCollapsed(store.get('sideCollapsed', false), false);
+SessionDockShell.mount(shellBridge);
 renderOpts();
 renderPickBar();
 renderView();
@@ -9670,7 +9182,7 @@ if (document.body.classList.contains('mobile-detail') && !S.sel) {
 }
 function leaveBootDetail() {
   if (S.sel || !document.body.classList.contains('mobile-detail')) return;
-  document.body.classList.remove('mobile-detail');
+  SessionDockShell.leaveBootDetail();
   $('#detail').innerHTML = '<div class="empty">从左侧选择一个会话</div>';
   layoutHeader();
 }
@@ -10028,10 +9540,7 @@ async function refreshTransferTasks() {
     const response = await fetch(appUrl('api/session/transfers'));
     if (!response.ok) return;
     const {operations} = await response.json();
-    const button = $('#transfer-tasks');
-    button.hidden = operations.length === 0;
-    button.querySelector('.transfer-task-count').textContent = String(operations.length);
-    layoutHeader();
+    SessionDockShell.setTransfers(operations.length);
     const panel = $('#transfer-tasks-dialog');
     if (!panel) return;
     const tbody = panel.querySelector('tbody');
@@ -10071,7 +9580,7 @@ async function refreshTransferTasks() {
   } catch (error) {console.warn('迁移任务读取失败', error);}
   finally {transferTasksLoading = false;}
 }
-$('#transfer-tasks').onclick = () => {
+function openTransferTasks() {
   $('#transfer-tasks-dialog')?.remove();
   const panel = document.createElement('dialog'); panel.id = 'transfer-tasks-dialog'; panel.className = 'app-dialog transfer-dialog';
   panel.setAttribute('aria-labelledby','transfer-tasks-title');
@@ -10081,7 +9590,7 @@ $('#transfer-tasks').onclick = () => {
   panel.querySelector('.transfer-close').onclick = close;
   panel.addEventListener('cancel', e => {e.preventDefault(); close();});
   document.body.append(panel); panel.showModal(); refreshTransferTasks();
-};
+}
 if (HUB_MODE) {
   refreshTransferTasks();
   setInterval(() => {if (!document.hidden) refreshTransferTasks();}, 5000);
