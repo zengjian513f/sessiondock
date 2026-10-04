@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -15,19 +17,39 @@ from playwright.sync_api import expect, sync_playwright
 from history_pages_browser import build, row
 from history_parity import BINARY, encoded, get_json, isolated_server
 from media_browser import uid
+from hub_http_suite import Hub, free_port, scoped
+from node_auth_suite import node_env, TOKEN
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, default=BINARY)
-    args = parser.parse_args()
+def run(binary, through_hub):
     with tempfile.TemporaryDirectory(prefix="sessiondock-page-resume-") as temporary:
         corpus = build(Path(temporary))
         before = {path: path.read_bytes() for path in corpus.root.rglob("*.jsonl")}
         env = {"SESSIONDOCK_HISTORY_PAGE_EVENTS": "200"}
-        with isolated_server(corpus, args.binary, extra_env=env) as (base, opener), \
-                isolated_server(corpus, args.binary, extra_env=env) as (fresh, fresh_opener), \
-                sync_playwright() as playwright:
+        with ExitStack() as stack, sync_playwright() as playwright:
+            nodes = []
+            if through_hub:
+                ids = corpus.root / "ids"
+                ids.mkdir()
+                (ids / "node-id").write_text("a" * 32 + "\n")
+                nodes = [SimpleNamespace(name="fixture", nid="a" * 32, port=free_port(), token=TOKEN)
+                         for _ in range(2)]
+            servers = []
+            for index in range(2):
+                extra = node_env(corpus.root, nodes[index].port, "127.0.0.0/8") if through_hub else {}
+                servers.append(stack.enter_context(isolated_server(corpus, binary, extra_env={**env, **extra})))
+            (base, opener), (fresh, fresh_opener) = servers
+            if through_hub:
+                hubs = []
+                for index, node in enumerate(nodes):
+                    root = corpus.root / f"hub-{index}"
+                    root.mkdir()
+                    hub = Hub(binary.resolve().with_name("sessiondock-hub"), root, [node])
+                    hub.start()
+                    stack.callback(hub.stop)
+                    hubs.append(f"http://127.0.0.1:{hub.port}")
+                base, fresh = hubs
+            selected_uid = lambda name: scoped(nodes[0].nid, uid(corpus, name)) if through_hub else uid(corpus, name)
             options = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
                 options["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
@@ -38,9 +60,13 @@ def main():
                 errors, requests, held, recovered = [], [], [], []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.on("request", lambda request: requests.append(request.url))
-                mode = {"hold": True, "fresh": True}
+                mode = {"hold": True, "fresh": True, "warm": through_hub}
 
                 def route(request):
+                    if mode["warm"]:
+                        mode["warm"] = False
+                        request.continue_()
+                        return
                     query = parse_qs(urlsplit(request.request.url).query)
                     destination = fresh if mode["fresh"] else base
                     mode["fresh"] = not mode["fresh"]
@@ -62,7 +88,7 @@ def main():
                 page.route("**/api/messages/*/page?*", route)
                 page.goto(base, wait_until="networkidle")
                 page.evaluate(js('HISTORY_PAGE_CHAIN=false', 'runtime.core.history.timing.chain=false'))
-                selected = uid(corpus, "codex-pages")
+                selected = selected_uid("codex-pages")
                 page.locator(f'#side .item[data-uid="{selected}"]').click()
                 expect(page.locator("#msgs")).to_contain_text("PAGE ROW 1399")
                 page.wait_for_function(js('_es && _es.readyState===EventSource.OPEN', 'runtime.core.sync.watching && runtime.core.sync.watching.readyState===EventSource.OPEN'))
@@ -83,6 +109,16 @@ def main():
 
                 initial = snapshot()
                 assert initial["partial"]["resume"]["uid"] == selected
+                if through_hub:
+                    # Valid grants work first; then use the other real node
+                    # process to simulate a restart/expiry losing the grant.
+                    click()
+                    settled()
+                    warm = snapshot()
+                    assert warm["partial"]["head"] == initial["partial"]["head"] + 200
+                    assert warm["cursor"] == initial["cursor"]
+                    initial = warm
+                    print("PASS hub valid grant before recovery", flush=True)
                 click()
                 page.wait_for_function(js('historyPageRequests.size===1', 'runtime.core.history.historyPageRequests.size===1'))
                 path = corpus.paths["codex-pages"]
@@ -125,7 +161,9 @@ def main():
                     else:
                         raise AssertionError("invalid recovery returned history")
 
-                rejected({**resume, "uid": uid(corpus, "codex-other")}, 403)
+                rejected({**resume, "uid": selected_uid("codex-other")}, 403)
+                if through_hub:
+                    rejected({**resume, "uid": scoped("b" * 32, uid(corpus, "codex-pages"))}, 400)
                 rejected(resume, 403, agent="codex-page-agent")
                 rejected({**resume, "anchor": "invalid-checkpoint"}, 409)
                 rejected({**resume, "total": resume["total"] + 1}, 409)
@@ -153,8 +191,17 @@ def main():
                 assert all("/page?" in url or "window=1" in url or "start=" in url
                            for url in requests if "/api/messages/" in url), "unbounded read"
                 assert all(path.read_bytes() == data for path, data in before.items())
+                print(f"PASS {'Hub' if through_hub else 'direct node'} history recovery", flush=True)
             finally:
                 browser.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, default=BINARY)
+    args = parser.parse_args()
+    for through_hub in (False, True):
+        run(args.binary, through_hub)
 
 
 if __name__ == "__main__":

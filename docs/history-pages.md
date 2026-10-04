@@ -291,6 +291,13 @@ do not prevent filling an unchanged history gap, including a partially loaded
 gap with a newer live tail. Older clients without the descriptor retain the
 explicit reload behavior. Page requests also emit browser HTTP audit events.
 
+Through the Hub, `partial.resume.uid` is scoped to the owning node on window
+and watch responses, then restored to its local UID together with the page URL
+when the descriptor is returned. A descriptor naming another node fails the
+existing single-machine routing check; a different session or agent on the same
+node still fails the node's 403 scope check. The resume browser suite covers
+both direct reads and real Hub forwarding after a grant is lost.
+
 The UI keeps its current history on failure and offers retry or an explicit
 bounded reload. It does not silently clear history or request unbounded history
 after a stale, evicted or expired grant. Responses from an old view/reset are

@@ -294,6 +294,22 @@ pub fn resolve(
                 path = format!("{prefix}{}{tail}", quote(&local, ":"));
             }
         }
+        // Window/SSE answers scope partial.resume.uid like every other UID.
+        // Restore that reference too when the browser returns the descriptor;
+        // otherwise a lost/expired grant compares a global UID to the local path.
+        // Leave malformed descriptors to the node's fallback validation.
+        if path.starts_with("/api/messages/")
+            && path.ends_with("/page")
+            && let Some(value) = query
+                .get_mut("resume")
+                .and_then(|values| values.first_mut())
+            && let Ok(Value::Object(mut resume)) = serde_json::from_str(value)
+            && let Some(Value::String(uid)) = resume.get("uid")
+        {
+            let local = decode(uid, true)?;
+            resume.insert("uid".to_string(), Value::String(local));
+            *value = Value::Object(resume).to_string();
+        }
         for key in ["uid", "name"] {
             // Bug-report uploads have no session yet; the browser names the
             // machine with ?node= instead of a scoped uid.
