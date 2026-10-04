@@ -27,18 +27,21 @@
   costlier model. See `~/.claude/cli-model-isolation.md`.
 - Never commit deployment addresses, personal absolute paths, credentials,
   runtime data, build outputs, or local environment files.
-- `origin` is `zengjian513f/sessiondock`. Validate, commit and push completed
-  changes without another confirmation. Stage only this task's changes and
-  preserve concurrent edits. Report validation or push failures accurately.
+- `origin` is `zengjian513f/sessiondock`. Every completed change must be
+  validated, committed, pushed and deployed immediately, without another
+  confirmation. Do not stop at a local commit. Stage only this task's changes;
+  preserve concurrent edits. Report validation, push and deployment failures
+  accurately, including which targets remain incomplete.
 - Hub SSH: `ecs-user@driftnode.cn`.
-- Deployment is a delivery step, not a prerequisite for continuing engineering.
-  Publish validated runtime changes to reachable targets without another
-  confirmation; documentation and rule changes do not require deployment or
-  service restarts. Record offline targets for later delivery and continue the
-  engineering task. Offline targets alone do not block engineering completion
-  or its goal. Report actual deployment failures separately.
-  Deploy the current workspace unless the user names another source. Preserve
-  sessions, state and concurrent changes; keep a rollback.
+- Every change includes build as applicable, validation, push, deployment,
+  restart and health check. Deployment is sufficient when at least one
+  SessionDock node AND the Hub have successfully deployed, restarted and
+  passed health checks. Other offline or unsuccessful targets are recorded
+  for later delivery; they do not block engineering completion or its goal.
+  Do not require every machine to succeed or keep polling remaining targets.
+  If the minimum is not yet met, continue other actionable engineering work.
+  Deploy the current workspace unless the user names another source.
+  Preserve sessions, state and concurrent changes; keep a rollback.
   Use `python3 deploy/deploy.py deploy --all` (build once, push every target,
   verify, auto-rollback; `docs/deployment.md`) and `deploy/fleet_status.py`
   for the read-only fleet table; do not hand-roll scp/restart sequences.
