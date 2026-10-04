@@ -179,10 +179,11 @@ def exercise(browser, base, root, mobile=False):
     on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
     try:
         page.goto(base, wait_until='domcontentloaded')
-        expect(page.locator('#new-session:visible, #header-more-btn:visible').first).to_be_visible()
-        if not page.locator('#new-session').is_visible():
-            page.locator('#header-more-btn').click()
-        page.locator('#new-session').click()
+        # Header folding can replace the inline button during actionability
+        # checks. Let the live locator resolve whichever entry is visible.
+        page.locator('#new-session:visible, #header-more-btn:visible').first.click()
+        if not page.locator('#new-session-dialog').is_visible():
+            page.locator('#new-session').click()
         page.locator('input[name="new-source"][value="claude"]').check()
         page.locator('#new-cwd').fill(str(root / 'work/claude-area'))
         # Capture only the cleanup identity; assertions below are UI assertions.

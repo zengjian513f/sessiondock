@@ -66,6 +66,28 @@ def live_rotation(browser, hub_mode):
                 # Retain object identities only for assertions; all view changes
                 # below use the real header button and native fixture updates.
                 page.evaluate(js("window.rotationSocket = T.ws; window.rotationView = T.views.get(T.name)", 'window.rotationSocket = runtime.terminal.state.ws; window.rotationView = runtime.terminal.state.views.get(runtime.terminal.state.name)', body=True))
+                page.evaluate("window.rotationNode = document.querySelector('#xterm'); window.rotationHost = rotationView.host")
+                def preserved(selected_uid):
+                    assert page.evaluate("""() => document.querySelector('#xterm') === rotationNode
+                      && rotationHost.isConnected && rotationHost.parentElement === rotationNode
+                      && document.querySelector('#xterm > .xterm-view:not([hidden])') === rotationHost""")
+                    assert page.evaluate(js("uid => S.sel === uid && T.uid === uid", 'uid => runtime.core.state.selection.sel === uid && runtime.terminal.state.uid === uid'), selected_uid)
+                    expect(page.locator("#termpane")).to_be_visible()
+                # Real sidebar/header updates must retain the mounted terminal,
+                # even when the selected conversation is filtered out of the list.
+                page.locator("#q").fill("absent-migration-filter")
+                expect(page.locator("#side .item")).to_have_count(0)
+                preserved(view_uid(guard_uid))
+                page.locator("#q").press("Escape")
+                expect(page.locator(f'#side .item.sel[data-uid="{view_uid(guard_uid)}"]')).to_be_visible()
+                preserved(view_uid(guard_uid))
+                page.locator('#view button[data-v="date"]').click()
+                expect(page.locator('#view button[data-v="date"]')).to_have_class("on")
+                preserved(view_uid(guard_uid))
+                nested = page.locator("#nest-toggle").get_attribute("aria-pressed")
+                page.locator("#nest-toggle").click()
+                expect(page.locator("#nest-toggle")).to_have_attribute("aria-pressed", "false" if nested == "true" else "true")
+                preserved(view_uid(guard_uid))
                 for generation in [1, 2]:
                     key = f"rotation-{generation}"
                     corpus.put(key, "codex", [codex_row("session_meta", {
@@ -89,6 +111,7 @@ def live_rotation(browser, hub_mode):
                     assert page.evaluate(js("T.ws === window.rotationSocket && T.views.get(T.name) === window.rotationView", 'runtime.terminal.state.ws === window.rotationSocket && runtime.terminal.state.views.get(runtime.terminal.state.name) === window.rotationView'))
                     assert page.evaluate(js("({name:T.name, instance:T.views.get(T.name).instanceId})", '({name:runtime.terminal.state.name, instance:runtime.terminal.state.views.get(runtime.terminal.state.name).instanceId})')) == original
                     assert controls == initial_controls, controls
+                    preserved(uid)
                 page.locator("#termpane .xterm-helper-textarea").press_sequentially("ping")
                 page.locator("#termpane .xterm-helper-textarea").press("Enter")
                 page.wait_for_function(js("Array.from({length:T.term.buffer.active.length}, (_,i)=>T.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_PING_OK')", "Array.from({length:runtime.terminal.state.term.buffer.active.length}, (_,i)=>runtime.terminal.state.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_PING_OK')"))

@@ -172,11 +172,24 @@ def check_surface(pw, surface, mobile=False):
                 page.keyboard.press('Enter')
                 page.wait_for_function("selectionTerm.modes.mouseTrackingMode === 'none'")
                 screen = page.locator('.grid-canvas' if surface == 'grid' else '.xterm-screen')
-                def menu():
-                    screen.click(button='right', position={'x': 30, 'y': 12})
+                def menu(edge=False):
+                    box = screen.bounding_box()
+                    screen.click(button='right', position={'x': box['width'] - 2, 'y': box['height'] - 2}
+                                 if edge else {'x': 30, 'y': 12})
                     page.locator('.term-context-menu:visible').wait_for()
+                    assert page.locator('.term-context-menu:visible').evaluate("""menu => {
+                      const box = menu.getBoundingClientRect();
+                      const host = menu.closest('.xterm-view').getBoundingClientRect();
+                      return box.left >= Math.max(0, host.left) - 1
+                        && box.top >= Math.max(0, host.top) - 1
+                        && box.right <= Math.min(innerWidth, host.right) + 1
+                        && box.bottom <= Math.min(innerHeight, host.bottom) + 1;
+                    }"""), (surface, edge, 'menu outside terminal host')
                 menu()
                 assert page.locator('.term-context-menu:visible button').all_text_contents() == ['粘贴', '查找']
+                # Reposition with a real right-click beside the viewport's lower
+                # terminal edge, where an unclamped menu would be clipped.
+                menu(edge=True)
                 # Reuse the existing menu surface, with menu rows rather than
                 # individually bordered form buttons, in both themes.
                 for theme in ['dark', 'light']:
@@ -194,7 +207,10 @@ def check_surface(pw, surface, mobile=False):
                 page.get_by_role('menuitem', name='粘贴', exact=True).press('ArrowDown')
                 assert page.get_by_role('menuitem', name='查找', exact=True).evaluate('e => e === document.activeElement')
                 page.get_by_role('menuitem', name='查找', exact=True).click()
-                page.get_by_role('searchbox', name='查找终端输出').fill('second_word')
+                searchbox = page.get_by_role('searchbox', name='查找终端输出')
+                assert searchbox.evaluate('e => e === document.activeElement')
+                page.keyboard.type('second_word')
+                assert searchbox.input_value() == 'second_word'
                 page.wait_for_function("selectionTerm.getSelection() === 'second_word'")
                 page.get_by_role('searchbox', name='查找终端输出').fill('中文查找')
                 page.wait_for_function("selectionTerm.getSelection() === '中文查找'")
@@ -337,7 +353,10 @@ def check_touch(page, context, root, keyboard, surface):
     page.locator('.term-context-menu:visible').wait_for()
     assert page.locator('.term-context-menu:visible button').all_text_contents() == ['粘贴', '查找']
     page.get_by_role('menuitem', name='查找', exact=True).tap()
-    page.get_by_role('searchbox', name='查找终端输出').fill('second_word')
+    searchbox = page.get_by_role('searchbox', name='查找终端输出')
+    assert searchbox.evaluate('e => e === document.activeElement')
+    page.keyboard.type('second_word')
+    assert searchbox.input_value() == 'second_word'
     page.wait_for_function("selectionTerm.getSelection() === 'second_word'")
     page.get_by_role('button', name='关闭查找', exact=True).tap()
     print('PASS', surface, 'mobile menu and find via touch', flush=True)
