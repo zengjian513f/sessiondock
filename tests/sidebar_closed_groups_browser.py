@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from header_fold_browser import corpus
 from history_parity import BINARY, isolated_server
 
@@ -48,12 +48,24 @@ def seed(page, rows, view='tree'):
       const keys = [...new Set(rows.map(s => view === 'tree' ? s.cwd : dayKey(s.updated)))];
       S.closed = new Set(keys.slice(1)); renderView(); renderSide();
     }''', """({rows, view}) => {
-      runtime.core.state.selection.sel = null; runtime.core.state.selection.agent = null; runtime.core.state.search.results = null; runtime.core.state.search.query = ''; runtime.core.state.sidebar.off.clear();
+      runtime.core.state.selection.sel = null; runtime.core.state.selection.agent = null; runtime.core.state.search.results = null; runtime.search.input(''); runtime.core.state.sidebar.off.clear();
       runtime.core.state.sidebar.activeOnly = false; runtime.core.state.sidebar.nest = true; runtime.core.state.sidebar.view = view; runtime.core.state.catalog.sessions = rows; runtime.core.state.catalog.sig = 'fold-0';
       runtime.core.state.sidebar.nestClosed = new Set(rows.filter(s => s.agent_items && s.uid !== 'claude:fold-101').map(s => s.uid));
       const keys = [...new Set(rows.map(s => view === 'tree' ? s.cwd : runtime.timeline.dayKey(s.updated)))];
-      runtime.core.state.sidebar.closed = new Set(keys.slice(1));  runtime.sidebarView.renderSide();
+      runtime.core.state.sidebar.closed = new Set(keys.slice(1));
     }"""), dict(rows=rows, view=view))
+    if scoped_frontend():
+        page.wait_for_function("""view => {
+          const runtime = window.SessionDockRuntime;
+          const groups = [...document.querySelectorAll('#side > .group')];
+          return !runtime.core.state.search.filterPending && runtime.core.state.search.filterTerm === ''
+            && document.querySelector('#view [data-v="' + view + '"]').classList.contains('on')
+            && groups.length === new Set(runtime.core.state.catalog.sessions.map(row => view === 'tree'
+              ? row.cwd : runtime.timeline.dayKey(row.updated))).size
+            && groups[0]?.dataset.key === (view === 'tree' ? runtime.core.state.catalog.sessions[0].cwd
+              : runtime.timeline.dayKey(runtime.core.state.catalog.sessions[0].updated))
+            && document.querySelectorAll('#side .item').length === 95;
+        }""", arg=view)
 
 
 def instrument(page):
@@ -107,6 +119,7 @@ def main():
                 response['sig'] = 'fold-1'
                 reset_work(page)
                 page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
+                page.wait_for_function("document.querySelector('#side > .group')?.dataset.key === '/synthetic/project-01'")
                 assert page.locator('#side > .group').first.get_attribute('data-key') == '/synthetic/project-01'
                 assert len(page.evaluate('__foldWork.rows')) == 95
                 assert page.locator('#side .item.agent').count() == 0
@@ -114,10 +127,10 @@ def main():
                 # that branch creates its children in current activity order.
                 hidden = group(page, '/synthetic/project-01')
                 hidden.locator('.ghead').click()
-                assert hidden.locator('.item').count() == 95
+                expect(hidden.locator('.item')).to_have_count(95)
                 reset_work(page)
                 hidden.locator('.item[data-uid="claude:fold-100"] .nest-caret').click()
-                assert hidden.locator('.item').count() == 121
+                expect(hidden.locator('.item')).to_have_count(121)
                 assert hidden.locator('.gcount').text_content() == '100'
                 assert hidden.locator('.item[data-uid="claude:fold-101"] .t').text_content() == 'Hidden update sentinel'
                 assert len(page.evaluate('__foldWork.rows')) == 6
@@ -156,7 +169,7 @@ def main():
                     page.wait_for_function('''() => document.querySelector(
                       '.item[data-uid="claude:fold-100"] .nest-caret').getAttribute('aria-expanded') === 'false' ''')
                     assert '25 项' in parent.get_attribute('title')
-                    assert hidden.locator('.item').count() == 95
+                    expect(hidden.locator('.item')).to_have_count(95)
                     reset_work(page)
                     parent.click()
                     assert hidden.locator('.item').count() == 120
@@ -164,27 +177,30 @@ def main():
                     assert hidden.locator('.item[data-uid="claude:fold-101"] .m').text_content() == expected_meta
                     assert len(page.evaluate('__foldWork.rows')) == 6
                     child.click()
-                    assert hidden.locator('.item').count() == 121
+                    expect(hidden.locator('.item')).to_have_count(121)
                     assert '26 项' in parent.get_attribute('title')
                     assert page.evaluate('''() => {
                       const runtime = window.SessionDockRuntime;
                       return __foldCatalog === runtime.core.state.catalog.sessions
                         && __foldSession === runtime.core.index.indexedSessions().byUid.get(__foldSession.uid)
                         && __foldUnrelated.isConnected
-                        && runtime.sidebarView.shownSessionsMatch(new Set(__foldCatalog.map(row => row.uid)));
+                        && runtime.core.index.sidebarSessions().length === __foldCatalog.length
+                        && [...document.querySelectorAll('#side .item[data-uid]')]
+                          .every(node => __foldCatalog.some(row => row.uid === node.dataset.uid));
                     }''')
                 # A closed project's checkbox must still select the same
                 # exposed sessions, even though it has no session row objects.
                 hidden.locator('.ghead').click()
                 page.evaluate(js('setPicking(true)', 'runtime.bulk.setPicking(true)'))
+                page.wait_for_function("!document.querySelector('#side-tools').hidden && !!document.querySelector('#side .ghead-pick')")
                 if scoped_frontend():
                     page.evaluate('''() => {
                       const runtime = window.SessionDockRuntime;
                       window.__pickGroups = document.querySelectorAll('#side .group');
                       window.__pickProjected = 0;
                       // Catch a selection-driven full row reprojection, not DOM identity alone.
-                      const old = runtime.sidebarView.refreshSidebarRows;
-                      runtime.sidebarView.refreshSidebarRows = (...args) => {
+                      const old = runtime.sidebarView.groupBy;
+                      runtime.sidebarView.groupBy = (...args) => {
                         __pickProjected++; return old(...args);
                       };
                     }''')
@@ -214,7 +230,7 @@ def main():
                 assert len(page.evaluate('__foldWork.rows')) == 96
                 assert page.locator('#side .item.agent').count() == 0
                 group(page, old_key).locator('.ghead').click()
-                assert group(page, old_key).locator('.item').count() == 94
+                expect(group(page, old_key).locator('.item')).to_have_count(94)
                 if scoped_frontend():
                     # Source availability follows current selected-machine
                     # counts even when an old chip's DOM reason disagrees.
@@ -244,12 +260,14 @@ def main():
                     page.route('**/api/live*', lambda route: route.fulfill(json=live_response))
                     page.evaluate('window.SessionDockRuntime.core.live.refreshLive()')
                     page.locator('#livecount').click()
+                    page.wait_for_function("document.querySelectorAll('#side .item').length === 0")
                     assert page.locator('#side .item').count() == 0
                     live_response['uids'] = ['claude:fold-106']
                     page.evaluate('window.SessionDockRuntime.core.live.refreshLive()')
                     page.locator('#side .item[data-uid="claude:fold-106"]').wait_for()
                     reset_work(page)
                     page.evaluate('window.SessionDockRuntime.status.paintLive()')
+                    page.wait_for_function("document.querySelectorAll('#side .item').length === 1 && document.querySelector('#side .item')?.dataset.uid === 'claude:fold-106'")
                     assert page.evaluate('__foldWork.rows') == []
                     page.locator('#allcount').click()
                 assert not errors, errors
@@ -271,6 +289,8 @@ def main():
                 page.evaluate('new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))')
                 assert page.locator('#side-picked').text_content() == '已选 95 项'
                 reset_work(page)
+                if scoped_frontend():
+                    page.evaluate('__pickProjected = 0')
                 selected_row.locator('.body').click()
                 page.wait_for_function('''() => document.querySelector('#side-picked').textContent.includes('94')''', timeout=5000)
                 assert not selected_row.locator('.item-pick').is_checked()

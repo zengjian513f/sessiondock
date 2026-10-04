@@ -154,7 +154,7 @@ def main():
             local[0].locator('#session-group-add').click()
             local[0].locator('#session-group-name').fill('取消创建')
             # A refresh must not discard the inline draft/focus.
-            local[0].evaluate(js('renderSide()', 'runtime.sidebarView.renderSide()'))
+            local[0].evaluate(js('renderSide()', 'async () => {runtime.core.state.catalog.notifyChanges(); await new Promise(requestAnimationFrame)}'))
             expect(local[0].locator('#session-group-name')).to_have_value('取消创建')
             expect(local[0].locator('#session-group-name')).to_be_focused()
             local[0].locator('#session-group-name').press('Escape')

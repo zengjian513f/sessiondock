@@ -168,11 +168,17 @@ def check_mouse(browser, base, uid):
       document.querySelector('#side').addEventListener('pointerdown', () => {
         window.__sidebarSelectionRenderRace = setInterval(() => renderSide(), 1);
       }, {once: true});
-    }""", """() => {
+    }""", """uid => {
+      const catalog = runtime.core.state.catalog;
+      const row = catalog.sessions.find(row => row.uid === uid);
+      if (!row) throw new Error('selection fixture row missing');
       document.querySelector('#side').addEventListener('pointerdown', () => {
-        window.__sidebarSelectionRenderRace = setInterval(() => runtime.sidebarView.renderSide(), 1);
+        window.__sidebarSelectionRenderRace = setInterval(() => {
+          row.size += 1;
+          catalog.notifyRow(row);
+        }, 1);
       }, {once: true});
-    }"""))
+    }"""), other_uid)
     page.mouse.move(box["x"] + 3, box["y"] + box["height"] / 2)
     page.mouse.down()
     page.mouse.move(box["x"] + min(box["width"] - 3, 90), box["y"] + box["height"] / 2, steps=8)
@@ -188,8 +194,9 @@ def check_mouse(browser, base, uid):
       S.sessions = S.sessions.map(row => row.uid === otherUid ? {...row, title: updatedTitle} : row);
       renderSide();
     }""", """([otherUid, updatedTitle]) => {
-      runtime.core.state.catalog.sessions = runtime.core.state.catalog.sessions.map(row => row.uid === otherUid ? {...row, title: updatedTitle} : row);
-      runtime.sidebarView.renderSide();
+      const row = runtime.core.state.catalog.sessions.find(row => row.uid === otherUid);
+      row.title = updatedTitle;
+      runtime.core.state.catalog.notifyChanges();
     }"""), [other_uid, updated_title])
     assert page.evaluate("getSelection().toString()") == selected
     assert title.text_content() == old_title

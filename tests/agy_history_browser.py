@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Agy read-only native history through the legacy UI in real Chromium.
+"""Agy read-only native history through the selected UI in real Chromium.
 
 Build target/debug/sessiondock first, then run this script with --binary PATH.
 Only synthetic conversation_summaries.db and transcript_full.jsonl are used;
@@ -29,7 +29,9 @@ sys.dont_write_bytecode = True
 
 from playwright.sync_api import expect, sync_playwright
 
-from history_parity import BINARY, REPO, Corpus, codex_row, codex_message, encoded, get_json, isolated_server
+from browser_runtime import js, scoped_frontend
+from frontend_paths import frontend_dir
+from history_parity import BINARY, Corpus, codex_row, codex_message, encoded, get_json, isolated_server
 
 
 SEEDED = 'a6000000-0000-4000-8000-000000000001'
@@ -134,10 +136,10 @@ def private_temp(root):
 @contextmanager
 def private_environment(root):
     # isolated_server intentionally accepts only SESSIONDOCK_* extra_env.
-    # Scope HOME here so all inherited defaults are private too. Force legacy.
+    # Scope HOME here so all inherited defaults are private too. Keep the selected frontend.
     values = {'HOME': str(root / 'home'), 'XDG_CONFIG_HOME': str(root / 'home/config'),
               'XDG_DATA_HOME': str(root / 'home/data'), 'XDG_CACHE_HOME': str(root / 'home/cache'),
-              'PATH': '/usr/bin:/bin', 'SESSIONDOCK_TEST_WEB_DIR': str(REPO / 'legacy-web')}
+              'PATH': '/usr/bin:/bin', 'SESSIONDOCK_TEST_WEB_DIR': str(frontend_dir())}
     previous = {key: os.environ.get(key) for key in values}
     os.environ.update(values)
     try:
@@ -164,6 +166,8 @@ def progress(text):
 
 
 def run(binary):
+    print('Frontend: ' + ('scoped/Vue' if scoped_frontend() else 'legacy')
+          + ' (' + str(frontend_dir()) + ')', flush=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-agy-history-', dir='/tmp') as temporary:
         root = Path(temporary).resolve()
         for name in ('home', 'work/中文 工作目录', 'host', 'state', 'claude', 'codex', 'grok', 'native', 'proc', 'trash'):
@@ -225,9 +229,13 @@ def run(binary):
             page.on('pageerror', lambda error: errors.append(str(error)))
 
             def row(sid):
-                page.wait_for_function('sid => S.sessions.some(r => r.sid === sid && r.source === "agy")',
-                                       arg=sid)
-                uid = page.evaluate('sid => S.sessions.find(r => r.sid === sid && r.source === "agy").uid', sid)
+                page.wait_for_function(js(
+                    'sid => S.sessions.some(r => r.sid === sid && r.source === "agy")',
+                    'sid => runtime.core.state.catalog.sessions.some(r => r.sid === sid && r.source === "agy")'),
+                    arg=sid)
+                uid = page.evaluate(js(
+                    'sid => S.sessions.find(r => r.sid === sid && r.source === "agy").uid',
+                    'sid => runtime.core.state.catalog.sessions.find(r => r.sid === sid && r.source === "agy").uid'), sid)
                 return uid, page.locator(f'#side .item[data-uid="{uid}"]')
 
             def open_row(sid, marker):
@@ -434,8 +442,10 @@ def run(binary):
                         seed_catalog(replacement, work, title='替换数据库后的 Agy 标题')
                         os.replace(replacement, db)
                         expected_native = native_snapshot(native)
-                        page.wait_for_function('title => S.sessions.some(r => r.source === "agy" && r.title === title)',
-                                               arg='替换数据库后的 Agy 标题')
+                        page.wait_for_function(js(
+                            'title => S.sessions.some(r => r.source === "agy" && r.title === title)',
+                            'title => runtime.core.state.catalog.sessions.some(r => r.source === "agy" && r.title === title)'),
+                            arg='替换数据库后的 Agy 标题')
                         open_row(SEEDED, ANSWER)
                         expect(page.locator('#side .item').filter(has_text='替换数据库后的 Agy 标题')).to_be_visible()
                         assert_native(native, expected_native, 'DB replacement')
@@ -500,7 +510,10 @@ def run(binary):
                         open_row(DECOY, '另一个回答')
                         execute(db, 'DELETE FROM conversation_summaries WHERE conversation_id=?', (SEEDED,))
                         expected_native = native_snapshot(native)
-                        page.wait_for_function('sid => !S.sessions.some(r => r.source === "agy" && r.sid === sid)', arg=SEEDED)
+                        page.wait_for_function(js(
+                            'sid => !S.sessions.some(r => r.source === "agy" && r.sid === sid)',
+                            'sid => !runtime.core.state.catalog.sessions.some(r => r.source === "agy" && r.sid === sid)'),
+                            arg=SEEDED)
                         expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_have_count(0)
                         wait_for(lambda: not directory.exists(), 'deleted catalog row mirror cleanup')
                         assert path.exists(), 'ordinary read deleted native transcript'

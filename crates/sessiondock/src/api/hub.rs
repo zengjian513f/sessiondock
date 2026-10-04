@@ -506,6 +506,10 @@ async fn handle(
             serde_json::from_value(Value::Object(body))
                 .map_err(|_| Reply::Invalid("需要有效的分组集合".into()))?;
         let value = state.groups.sync(registry, client, Some(catalog)).await;
+        // A partial fleet write still changed metadata on confirmed nodes.
+        if value["synced_nodes"].as_u64().is_some_and(|count| count > 0) {
+            state.ui_events.publish_sessions();
+        }
         return if value["ok"] == true {
             ok(&value)
         } else {
@@ -673,7 +677,13 @@ async fn handle(
         }
         if path == "/api/sessions/fork-visibility" {
             let value = Value::Object(body.unwrap_or_default());
-            return ok(&aggregate::fork_visibility(registry, client, &value).await?);
+            let value = aggregate::fork_visibility(registry, client, &value).await?;
+            // `ok:true` also covers all-failed batches; only confirmed rows
+            // justify an invalidation, including batches with some errors.
+            if value["updated"].as_array().is_some_and(|rows| !rows.is_empty()) {
+                state.ui_events.publish_sessions();
+            }
+            return ok(&value);
         }
         if path == "/api/trash/purge"
             && body
@@ -739,6 +749,40 @@ async fn handle(
         },
     )
     .await?;
+    if method == Method::POST
+        && response.status().is_success()
+        && matches!(
+            resolved.path.as_str(),
+            "/api/session/star"
+                | "/api/session/group"
+                | "/api/session/nest"
+                | "/api/session/rewind"
+                | "/api/sessions/fork-visibility"
+                | "/api/groups"
+        )
+    {
+        // The proxy already buffered these JSON replies. Preserve their bytes
+        // and headers while checking the node's confirmed write result; the
+        // Hub's independent snapshot observer can miss the same intermediate
+        // metadata state as the node's observer.
+        let (parts, body) = response.into_parts();
+        let bytes = axum::body::to_bytes(body, usize::MAX)
+            .await
+            .map_err(|_| Reply::Upstream)?;
+        if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+            let written = match resolved.path.as_str() {
+                "/api/sessions/fork-visibility" => value["updated"]
+                    .as_array()
+                    .is_some_and(|rows| !rows.is_empty()),
+                "/api/groups" => value["groups"].is_array(),
+                _ => value["ok"] == true,
+            };
+            if written {
+                state.ui_events.publish_sessions();
+            }
+        }
+        return Ok(Response::from_parts(parts, Body::from(bytes)));
+    }
     Ok(response)
 }
 
