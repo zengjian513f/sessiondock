@@ -10,6 +10,10 @@ Chromium 覆盖真实 Hub 页面确认、打开克隆组及子代理。离线入
 Hub 已提供 `session_clone_remote` / `session_move_remote`，进行跨节点复制、移动及可选身份重写。
 离线工具本身仍只负责计划与暂存，不能代替服务的发布与恢复事务。
 
+Agy 的显式镜像根已纳入离线索引 roots，但当前不支持原生移动/克隆，镜像可读
+不代表能够暂存为可恢复会话；整组含 Agy 时必须报告阻碍，不能部分迁移或将 mirror
+当原生发布包。见 [Agy](agy.md)。
+
 设计见 [session-move.md](session-move.md)、[session-clone.md](session-clone.md)。
 
 ## 构建和输入

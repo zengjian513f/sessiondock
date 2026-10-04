@@ -107,6 +107,7 @@ impl Harness {
                     codex: Some(native),
                     grok: None,
                     opencode: None,
+                    agy: None,
                 },
                 ptyhost_dir: Some(hosts.clone()),
                 ..Default::default()
@@ -755,6 +756,7 @@ async fn transport_off_keeps_send_and_scroll_unimplemented() {
                 codex: Some(directory.path().to_owned()),
                 grok: None,
                 opencode: None,
+                agy: None,
             },
             ..Default::default()
         },

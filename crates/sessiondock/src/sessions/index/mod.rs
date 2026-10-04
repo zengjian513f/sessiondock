@@ -495,6 +495,7 @@ impl Index {
             codex: freeze(roots.codex),
             grok: freeze(roots.grok),
             opencode: freeze(roots.opencode),
+            agy: freeze(roots.agy),
         };
         Self {
             roots,
@@ -796,6 +797,7 @@ impl Index {
             ("codex", &self.roots.codex),
             ("grok", &self.roots.grok),
             ("opencode", &self.roots.opencode),
+            ("agy", &self.roots.agy),
         ] {
             let Some(root) = configured else { continue };
             let dir = match Dir::open_ambient_dir(root, ambient_authority()) {
@@ -817,7 +819,7 @@ impl Index {
             match source {
                 "claude" => walk.claude(&dir)?,
                 "codex" => walk.codex(&dir, PathBuf::new())?,
-                "opencode" => walk.opencode(&dir)?,
+                "opencode" | "agy" => walk.database_mirror(&dir, source)?,
                 _ => walk.grok(&dir)?,
             }
         }
@@ -1111,7 +1113,7 @@ impl Walk<'_> {
     /// `<mirror>/<project>/<session>/` with `summary.json` and an optional
     /// `messages.jsonl` (`sessions::opencode`). A session whose summary is
     /// not there yet is not listed; a missing message file is an empty history.
-    fn opencode(&mut self, root: &Dir) -> Result<(), SessionError> {
+    fn database_mirror(&mut self, root: &Dir, source: &'static str) -> Result<(), SessionError> {
         for project in subdirectories(root, self.root) {
             let Ok(project_dir) = root.open_dir_nofollow(&project) else {
                 continue;
@@ -1131,7 +1133,7 @@ impl Walk<'_> {
                     .filter(|meta| meta.is_file())
                     .map(|meta| Stamp::of(&meta));
                 self.found.push(Discovered {
-                    source: "opencode",
+                    source,
                     root: self.root.to_path_buf(),
                     summary_path: Some(path.join(super::opencode::SUMMARY_FILE)),
                     data,
@@ -1355,7 +1357,7 @@ fn read_candidate(
 ) -> Option<ReadOutcome> {
     let data = match candidate.stamp {
         Some(_) => match read_data(&candidate.root, &candidate.data) {
-            FileRead::Vanished if matches!(candidate.source, "grok" | "opencode") => None,
+            FileRead::Vanished if matches!(candidate.source, "grok" | "opencode" | "agy") => None,
             FileRead::Vanished => return None,
             FileRead::Unreadable => {
                 let summary = unreadable(candidate);
@@ -1382,11 +1384,15 @@ fn read_candidate(
                 "Grok summary.json "
             } else if candidate.source == "opencode" {
                 "OpenCode summary.json "
+            } else if candidate.source == "agy" {
+                "Agy summary.json "
             } else {
                 "子代理元数据 (meta.json) "
             };
             match read_sidecar(&candidate.root, path, label) {
-                SidecarRead::Vanished if matches!(candidate.source, "grok" | "opencode") => {
+                SidecarRead::Vanished
+                    if matches!(candidate.source, "grok" | "opencode" | "agy") =>
+                {
                     return None;
                 }
                 SidecarRead::Vanished => None,

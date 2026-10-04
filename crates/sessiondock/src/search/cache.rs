@@ -289,7 +289,7 @@ impl Drop for InflightGuard<'_> {
 
 fn uid_file_name(uid: &str) -> Option<String> {
     let (source, hex) = uid.split_once(':')?;
-    if !matches!(source, "claude" | "codex" | "grok" | "opencode")
+    if !matches!(source, "claude" | "codex" | "grok" | "opencode" | "agy")
         || hex.len() != 16
         || !hex.bytes().all(|byte| byte.is_ascii_hexdigit())
     {

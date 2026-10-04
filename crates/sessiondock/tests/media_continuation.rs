@@ -54,6 +54,7 @@ impl Fixture {
                 codex: Some(self.root.join("codex")),
                 grok: None,
                 opencode: None,
+                agy: None,
             },
             // Keep the original worker sizing while exercising queued reads.
             pools: sessiondock::config::Pools {

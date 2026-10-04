@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Agy phase one: real picker, pending PTY, reload, discard and phone geometry.
+"""Agy launcher: real picker, pending PTY, reload, discard and phone geometry.
 
 Uses only a private fake CLI and loopback service. No native history, model
 discovery or composer SEND is assumed. The unavailable-CLI case explicitly
@@ -43,9 +43,11 @@ for line in sys.stdin:
 
 
 def open_picker(page):
-    if not page.locator('#new-session').is_visible():
-        page.locator('#header-more-btn').click()
-    page.locator('#new-session').click()
+    # Resolve the visible control at click time: responsive header relayout
+    # can move New between this check and Playwright's click retry.
+    page.locator('#new-session:visible, #header-more-btn:visible').first.click()
+    if not page.locator('#new-session-dialog').is_visible():
+        page.locator('#new-session').click()
     expect(page.locator('#new-session-dialog')).to_be_visible()
 
 
@@ -77,6 +79,9 @@ def process_alive(pid):
 
 def check_phone(page):
     page.set_viewport_size({'width': 390, 'height': 844})
+    back = page.locator('#detail .mobile-back:visible')
+    if back.count():
+        back.click()
     for theme in ('light', 'dark'):
         page.emulate_media(color_scheme=theme)
         open_picker(page)
@@ -163,7 +168,7 @@ def run(browser, base, root):
         catalog = page.request.get(base + '/api/term/models?source=agy')
         assert catalog.status == 200, catalog.text()
         assert catalog.json()['models'] == [], catalog.json()
-        expect(page.locator('#new-effort option')).to_have_text(['low', 'medium', 'high', 'xhigh', 'max'])
+        expect(page.locator('#new-effort option')).to_have_text(['CLI 默认', 'low', 'medium', 'high', 'xhigh', 'max'])
         page.locator('#new-effort').select_option('low')
         page.locator('#new-cwd').fill(str(root / 'work'))
         with page.expect_response(lambda r: urlsplit(r.url).path == '/api/term/create') as created:
@@ -183,6 +188,8 @@ def run(browser, base, root):
         expect(item.locator('use[href="#i-agy"]')).to_have_count(1)
         rows = pending(page, base, receipt['record_id'])
         assert len(rows) == 1 and rows[0]['source'] == 'agy' and rows[0]['running'], rows
+        expect(page.locator('#composer')).to_be_visible()
+        page.locator('#a-term').click()
         expect(page.locator('#termpane')).to_be_visible()
         wait_screen(page, 'AGY_PTY_READY')
         launches = [json.loads(line) for line in (root / 'argv.jsonl').read_text().splitlines()]
@@ -195,6 +202,8 @@ def run(browser, base, root):
                 page.reload(wait_until='networkidle')
                 expect(item).to_be_visible()
                 item.click()
+                if not page.locator('#termpane').is_visible():
+                    page.locator('#a-term').click()
                 expect(page.locator('#termpane')).to_be_visible()
                 rows = pending(page, base, receipt['record_id'])
                 assert len(rows) == 1 and rows[0]['name'] == receipt['name'] and rows[0]['running'], rows

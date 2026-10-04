@@ -148,14 +148,10 @@ class OpencodeCli extends SessionDockCli {
   }
 }
 
-// Agy 一期尚未接入原生历史，沿用普通终端输入并优先显示控制台。
+// Agy 的原生完整 transcript 由服务端只读投影，交互按键沿用基类。
 class AgyCli extends SessionDockCli {
   constructor() {
     super('agy', 'Agy', 'i-agy', 'var(--agy)');
-  }
-
-  get nativeHistory() {
-    return false;
   }
 }
 

@@ -36,6 +36,7 @@ fn fixture_store() -> (TempDir, SessionStore) {
         codex: Some(temp.path().join("codex")),
         grok: Some(temp.path().join("grok")),
         opencode: None,
+        agy: None,
     });
     (temp, store)
 }

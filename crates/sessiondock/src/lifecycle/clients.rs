@@ -291,7 +291,8 @@ pub fn version_number(line: &str) -> Option<String> {
 
 /// The newest version on the channel each CLI's own updater follows:
 /// Claude's npm dist-tag named by `autoUpdatesChannel` (default `latest`),
-/// Codex's npm `latest`, OpenCode's own release API, Grok's `update --check`.
+/// Codex's npm `latest`, OpenCode's own release API, Grok's `update --check`,
+/// Agy's platform manifest from its official installer/updater.
 fn latest(profile: &CliProfile) -> Option<String> {
     match profile.source {
         Source::Claude => {
@@ -325,8 +326,28 @@ fn latest(profile: &CliProfile) -> Option<String> {
                 .find(|line| line.trim_start().starts_with('{'))?;
             text(&serde_json::from_str(answer).ok()?, "latestVersion")
         }
-        // No verified read-only latest-version endpoint for Agy yet.
-        Source::Agy | Source::Shell => None,
+        Source::Agy => {
+            let os = match std::env::consts::OS {
+                "linux" | "macos" | "windows" | "android" => std::env::consts::OS,
+                _ => return None,
+            };
+            let os = if os == "macos" { "darwin" } else { os };
+            let arch = match std::env::consts::ARCH {
+                "x86_64" => "amd64",
+                "aarch64" => "arm64",
+                _ => return None,
+            };
+            let suffix = if os == "linux" && cfg!(target_env = "musl") {
+                "_musl"
+            } else {
+                ""
+            };
+            let url = format!(
+                "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/{os}_{arch}{suffix}.json"
+            );
+            text(&fetch(profile, &url)?, "version")
+        }
+        Source::Shell => None,
     }
 }
 

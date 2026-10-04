@@ -6,9 +6,11 @@ resume, external CLI takeover, stop and native association; default startup
 launches nothing. Conversation SEND has its own [contract](conversation.md),
 and public authentication belongs to the reverse proxy.
 
-[Agy](agy.md) uses `new_pending` and opens its native console first. Its initial
-integration supports terminal input and reconnecting the running host; it does
-not infer a native conversation ID from the working directory.
+[Agy](agy.md) uses `new_pending`. The service reads its explicit
+native catalog/transcript into a private mirror and associates native rows by
+CLI conversation DB fd evidence under the host child process, never cwd alone.
+Composer and selected native menus use the same CHECK/SEND path; stopped-session
+`--conversation <sid>` continuation is covered by the real CLI browser test.
 
 New sessions open the conversation page. The configured CLI and ptyhost still
 start on the backend; the browser does not claim or attach a console until the
@@ -113,7 +115,7 @@ means the CLI's own default, and a resume or takeover keeps the session's own
 setting. They are persisted in the receipt's spec (omitted when absent, so older
 receipts and binaries are unaffected) and passed as single argument values:
 Claude `--model X --effort Y`, Codex `-m X -c model_reasoning_effort="Y"`, Grok
-`-m X --reasoning-effort Y`. OpenCode's TUI has no model option, so the model
+`-m X --reasoning-effort Y`, Agy `--model X` with optional `--effort Y`. OpenCode's TUI has no model option, so the model
 (`provider/model`, split at the first `/`) goes into the pre-created session's
 `session.create` body; OpenCode takes no effort, and a shell neither. A value
 that is empty, longer than 200 bytes, contains whitespace or control characters,
@@ -136,6 +138,9 @@ if it does not support `high`, the picker uses its supported catalog default or
 first supported level. Switching models restores that model's effort rather
 than carrying the previous model's level. There is no effort placeholder option;
 CLIs without effort support keep the control disabled and omit the override.
+Agy is an exception to the effort default rule above: it offers an empty
+“CLI 默认” option, omitting `--effort` unless the user selects a level. Its
+catalog reports no per-model support/default effort; the CLI decides compatibility.
 An unknown default model stays unselected and its override is omitted, letting
 the CLI use its own setting. Model
 menus have no separate default entry. Claude reads the profile's
@@ -149,12 +154,17 @@ Grok `$GROK_HOME/models_cache.json`
 (non-hidden, `reasoning_efforts`), OpenCode `opencode models` (bounded to 15 s;
 one `provider/model` per line), Claude its fixed aliases `fable`, `opus`,
 `sonnet`, `haiku` with `low`…`max`. The page asks again every time the dialog
-opens; the model menu gains a search box above ten models.
+opens; the model menu gains a search box above ten models. Agy runs `agy models`
+in the profile environment with a 15 s bound, requires successful exit and
+parses stdout `id\tdisplay name` TSV. It reports no default model; supported
+flag choices are low, medium, high, xhigh, max. The CLI may independently use
+a different synthetic catalog model for its background title generator; that
+request is separate from the interactive model selected by `--model`.
 
 Source selects exactly one interactive configured CLI or the `shell` terminal.
 The legacy source picker advertises only this unambiguous subset and labels
 `shell` as SSH. `term/list.sources.shell` advertises shell creation; resume
-sources are the AI CLIs (Claude, Codex, Grok, OpenCode). Shell receipts use fixed argv, stay in the
+sources are the AI CLIs (Claude, Codex, Grok, OpenCode, Agy). Shell receipts use fixed argv, stay in the
 terminal list while running, and support the same guarded attach, reconnect,
 kill and discard as other launch receipts without native binding.
 Shell receipts stay in the sidebar after exit or launch failure until explicitly
@@ -198,14 +208,16 @@ file name — in `lifecycle::autobind`, a background task that runs while a
    main processes; a session counts when one of them is, or descends from,
    that child with no other CLI main process in between;
    Codex keeps its rollout open, a Grok TUI
-   keeps `events.jsonl` of its session directory open;
+   keeps `events.jsonl` of its session directory open; Agy holds
+   `<SESSIONDOCK_AGY_HOME>/conversations/<sid>.db`, and the scan keeps its
+   identity under an `agy:` namespace;
 3. a session whose native `created` is more than 2 s before the receipt's
    `created_at` existed before the launch and is never a candidate: a CLI
    may hold another session's record open briefly (Codex reads old rollouts
    for its resume picker) without owning it;
 4. exactly one such session, whose native scope the index verifies
    (Claude `sessionId`, Codex `session_meta.payload.id`, Grok
-   `summary.json` `info.id`), is bound through the ordinary durable bind
+   `summary.json` `info.id`, Agy mirror `summary.json` `session.id`), is bound through the ordinary durable bind
    path with `method: "process"`; the evidence note (`cli_pids=[…] under
    host child pid … ; native record …`) and `bound_at` are persisted on the
    receipt's binding and audited as `lifecycle.autobind`; zero or several
@@ -238,6 +250,9 @@ restarts reuse the same `--session-id`) and passes `--meta {source, launch_id,
 instance_id, sid}` so the runtime catalog can match the native record as soon
 as it appears. Grok new sessions are also `new_assigned`; Codex new sessions
 are `new_pending` (`--meta` without an identity) and still use native binding;
+Agy new sessions are also `new_pending`, with resume argv `--conversation <sid>`.
+Its native binding and stopped-session continuation are covered by the real CLI
+browser test ([Agy](agy.md));
 `POST /api/term/bind` on a
 launch with a declared identity is 409 `launch_identity_declared`. Resume
 (`resume_uid` or takeover) resolves the full native SID from the frozen

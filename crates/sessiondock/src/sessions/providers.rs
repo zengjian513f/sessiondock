@@ -1,6 +1,7 @@
 //! Pure native-record projection. File discovery, inheritance cutoffs and
 //! persistent timeline overrides are owned by the session/history layer.
 
+mod agy;
 mod claude;
 pub(super) mod envelopes;
 mod grok;
@@ -307,6 +308,11 @@ fn parse_context<'a>(
         ..Default::default()
     };
     parser.skipped.invalid_lines(options.invalid_lines);
+    if source == "agy" && summary.is_some_and(|value| value["transcript_missing"] == true) {
+        parser
+            .skipped
+            .warn(crate::sessions::agy::TRANSCRIPT_UNAVAILABLE.to_owned());
+    }
     for note in lineage.iter().flat_map(|lineage| &lineage.warnings) {
         parser.skipped.warn(note.clone());
     }
@@ -337,6 +343,7 @@ fn parse_context<'a>(
             "codex" => parser.codex(record, *end),
             "grok" => parser.grok(record, *end),
             "opencode" => parser.opencode(record, *end),
+            "agy" => parser.agy(record, *end),
             _ => Err("未知原生数据源".to_owned()),
         };
         if let Err(reason) = result {
@@ -599,6 +606,9 @@ fn metadata(
     }
     if source == "opencode" {
         return opencode::metadata(path, summary.unwrap_or(&Value::Null), records, fallback);
+    }
+    if source == "agy" {
+        return agy::metadata(summary.unwrap_or(&Value::Null), records, fallback);
     }
     let filename = path
         .file_stem()

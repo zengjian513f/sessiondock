@@ -863,6 +863,7 @@ fn fixture_sources_parse_tools_turns_and_native_status() {
         codex: Some(fixtures.join("codex")),
         grok: Some(fixtures.join("grok")),
         opencode: None,
+        agy: None,
     });
     let list = store.list(false).unwrap();
     let rows = list["sessions"].as_array().unwrap();

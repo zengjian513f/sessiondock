@@ -92,6 +92,7 @@ impl Fixture {
                 codex: Some(self.root.join("codex")),
                 grok: Some(self.root.join("grok")),
                 opencode: None,
+                agy: None,
             },
             file_roots: if authorized {
                 vec![self.file("")]

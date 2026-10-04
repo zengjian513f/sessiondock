@@ -77,6 +77,7 @@ const SESSION_FILE_MARKERS: [&str; 3] = ["/.codex/sessions/", "/.claude/projects
 #[derive(Clone, Debug, Default)]
 pub struct SessionRoots {
     prefixes: Vec<String>,
+    agy_home: Option<PathBuf>,
 }
 
 impl SessionRoots {
@@ -89,7 +90,31 @@ impl SessionRoots {
                 .map(|root| format!("{}/", root.to_string_lossy().trim_end_matches('/')))
                 .filter(|prefix| prefix.len() > 1)
                 .collect(),
+            agy_home: None,
         }
+    }
+
+    /// Agy holds the native conversation SQLite file, not its text projection.
+    pub fn with_agy_home(mut self, home: Option<PathBuf>) -> Self {
+        self.agy_home = home;
+        self
+    }
+
+    fn agy_sid(&self, target: &Path) -> Option<String> {
+        let directory = self
+            .agy_home
+            .as_ref()?
+            .canonicalize()
+            .ok()?
+            .join("conversations");
+        if target.parent()? != directory || target.extension()? != "db" {
+            return None;
+        }
+        target
+            .file_stem()?
+            .to_str()
+            .filter(|sid| !sid.is_empty())
+            .map(str::to_owned)
     }
 
     fn holds(&self, target: &str) -> bool {
@@ -583,6 +608,14 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
             let Ok(target) = std::fs::read_link(entry.path()) else {
                 continue;
             };
+            if main
+                && cli_family(argv0) == Some("agy")
+                && let Some(sid) = roots.agy_sid(&target)
+            {
+                sids.entry(format!("agy:{}", sid.to_ascii_lowercase()))
+                    .or_default()
+                    .insert(i64::from(pid));
+            }
             let target = target.to_string_lossy();
             if roots.holds(&target) {
                 let holder = if main {
@@ -722,7 +755,7 @@ impl Scan {
     /// Positive pids are CLI main processes, negative related helpers.
     pub fn pids_of(&self, session: &SessionRow) -> BTreeSet<i64> {
         let mut found = BTreeSet::new();
-        let sid = session.sid.to_ascii_lowercase();
+        let sid = Self::identity_key(session);
         if !sid.is_empty()
             && let Some(pids) = self.sids.get(&sid)
         {
@@ -735,10 +768,19 @@ impl Scan {
 
     /// A listed Grok session id counts even without a pid.
     pub fn is_live(&self, session: &SessionRow) -> bool {
-        let sid = session.sid.to_ascii_lowercase();
+        let sid = Self::identity_key(session);
         (!sid.is_empty() && self.sids.contains_key(&sid))
             || !self.session_path_pids(session).is_empty()
             || !self.bare_claude_pids(session).is_empty()
+    }
+
+    fn identity_key(session: &SessionRow) -> String {
+        let sid = session.sid.to_ascii_lowercase();
+        if session.source == "agy" && !sid.is_empty() {
+            format!("agy:{sid}")
+        } else {
+            sid
+        }
     }
 
     /// The earliest CLI main process start among `pids`.

@@ -213,6 +213,7 @@ impl Tree {
             codex: Some(temp.path().join("codex").canonicalize().unwrap()),
             grok: Some(temp.path().join("grok").canonicalize().unwrap()),
             opencode: None,
+            agy: None,
         };
         Self { temp, roots }
     }

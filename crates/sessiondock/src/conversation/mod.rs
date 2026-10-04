@@ -842,7 +842,7 @@ impl Conversations {
                 .paste(lease, &prompt)
                 .await
                 .map_err(driver_error)?;
-            if matches!(identity.source.as_str(), "claude" | "codex") {
+            if matches!(identity.source.as_str(), "claude" | "codex" | "agy") {
                 input::wait_for_pasted_editor(&identity.source, &prompt, &before_paste, || async {
                     self.driver.capture(lease).await.map_err(driver_error)
                 })

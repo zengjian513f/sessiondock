@@ -12,6 +12,7 @@
 mod history;
 mod index;
 pub(crate) use index::codex_rollout_id;
+pub mod agy;
 mod native_input;
 mod native_media;
 pub mod opencode;
@@ -172,6 +173,8 @@ pub struct SessionRoots {
     /// SessionDock's OpenCode mirror (`sessions::opencode`), not OpenCode's
     /// own data directory.
     pub opencode: Option<PathBuf>,
+    /// Private mirror of Agy's native summary database and complete transcripts.
+    pub agy: Option<PathBuf>,
 }
 
 /// Identity proven by native records and inventory ownership, independent of
@@ -258,7 +261,7 @@ impl Candidate {
     /// [summary] represents that absence, while [chat, summary] represents a
     /// present chat (including a zero-byte file). Other providers keep [data].
     pub(crate) fn data_stamp(&self) -> Option<&FileStamp> {
-        if matches!(self.source, "grok" | "opencode")
+        if matches!(self.source, "grok" | "opencode" | "agy")
             && self.summary.is_some()
             && self.stamps.len() == 1
         {
@@ -1150,7 +1153,7 @@ fn index_cursor(entry: &CandidateRef) -> Option<Value> {
     match (entry.committed(), entry.cursor_head()) {
         (Some(end), Some(head)) => Some(json!({"end": end, "head": head})),
         // A Grok session without a chat file projects to an empty history.
-        _ if matches!(entry.source, "grok" | "opencode") && entry.stamp.is_none() => {
+        _ if matches!(entry.source, "grok" | "opencode" | "agy") && entry.stamp.is_none() => {
             Some(json!({"end": 0, "head": views::head(&[], 0)}))
         }
         _ => None,
@@ -1386,7 +1389,7 @@ pub(crate) fn trusted_path(root: &Path, path: &Path) -> Result<(), SessionError>
 pub(crate) fn restamp(candidate: &Candidate) -> Result<Candidate, SessionError> {
     let mut next = candidate.clone();
     next.stamps.clear();
-    let has_data = if matches!(candidate.source, "grok" | "opencode") {
+    let has_data = if matches!(candidate.source, "grok" | "opencode" | "agy") {
         trusted_path(&candidate.root, &candidate.path)?;
         fs::metadata(&candidate.data).is_ok_and(|metadata| metadata.is_file())
     } else {

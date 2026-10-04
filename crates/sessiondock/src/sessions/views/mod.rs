@@ -771,7 +771,7 @@ pub(crate) fn parse_candidate_retaining(
     )?;
     let (native_id, _declared) = if candidate.source == "grok" {
         scope::grok_native_identity(summary.as_ref())
-    } else if candidate.source == "opencode" {
+    } else if matches!(candidate.source, "opencode" | "agy") {
         scope::summary_native_identity(summary.as_ref().map(|summary| &summary["session"]["id"]))
     } else {
         scope::native_identity(candidate.source, records)
@@ -1919,7 +1919,7 @@ fn native_scope(
 ) -> Result<NativeScope, SessionError> {
     let source = owner.candidate.source;
     if source != selected.candidate.source
-        || !matches!(source, "claude" | "codex" | "grok" | "opencode")
+        || !matches!(source, "claude" | "codex" | "grok" | "opencode" | "agy")
     {
         return Err(SessionError::new(501, "此数据源尚不支持原生操作范围"));
     }

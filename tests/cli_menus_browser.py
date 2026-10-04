@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Source-derived CLI menus through real Chromium, CHECK and private PTYs.
+"""Source-audited or captured CLI menus through Chromium, CHECK and private PTYs.
 
 Fixtures retain native key expectations. The fake CLI accepts exactly those
 bytes and records the semantic outcome; it never starts a model request.
@@ -11,12 +11,15 @@ import os
 from pathlib import Path
 import re
 import select
+import subprocess
 import sys
 import tempfile
 import termios
 import time
 import tty
+import uuid
 from urllib.parse import urlsplit
+from unittest.mock import patch
 
 
 def key_bytes(keys):
@@ -58,7 +61,10 @@ def fake():
                 screen.with_suffix('.trace').write_bytes(b'')
                 screen.with_suffix('.outcome').write_text('')
                 text = record['screen'].replace('\n', '\r\n')
-                sys.stdout.write('\x1b[?1l\x1b[?2004h\x1b[0m\x1b[2J\x1b[H' + text)
+                alternate = '\x1b[?1049h' if record.get('alt') else '\x1b[?1049l'
+                cursor = record.get('cursor')
+                position = f'\x1b[{cursor[1] + 1};{cursor[0] + 1}H' if cursor else ''
+                sys.stdout.write(alternate + '\x1b[?1l\x1b[?2004h\x1b[0m\x1b[2J\x1b[H' + text + position)
                 sys.stdout.flush()
                 screen.with_suffix('.shown').write_text(str(record['sequence']))
                 previous = state
@@ -97,26 +103,30 @@ def main():
     from popups import on_popup
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, default=BINARY)
-    parser.add_argument('--sources', nargs='+', default=['claude', 'codex', 'grok', 'opencode'])
+    parser.add_argument('--sources', nargs='+', default=['claude', 'codex', 'grok', 'opencode', 'agy'])
     parser.add_argument('--cases', nargs='+')
     args = parser.parse_args()
     send_browser.BINARY = args.binary.resolve()
     cases, exercised = 0, 0
     with tempfile.TemporaryDirectory(prefix='sessiondock-cli-menus-') as temporary:
         root = Path(temporary).resolve()
-        for name in ['host', 'work', 'ledger', 'state', 'home', 'claude', 'codex', 'grok', 'opencode']:
+        for name in ['host', 'work', 'ledger', 'state', 'home', 'claude', 'codex', 'grok', 'opencode', 'agy']:
             (root / name).mkdir(mode=0o700)
         screens = {source: root / (source + '-screen') for source in args.sources}
         sequence = 0
 
-        def frame(source, text, expected=b'', outcome='choice'):
+        def frame(source, text, expected=b'', outcome='choice', *, cursor=None, alt=False):
             nonlocal sequence
             sequence += 1
             pending = screens[source].with_suffix('.pending')
             pending.write_text(json.dumps({'sequence': sequence, 'screen': text,
-                'expected_bytes': expected.hex(), 'outcome': outcome}))
+                'expected_bytes': expected.hex(), 'outcome': outcome, 'cursor': cursor, 'alt': alt}))
             pending.replace(screens[source])
             return sequence
+
+        def fixture_frame(source, fixture, expected=b'', outcome='choice'):
+            return frame(source, fixture['screen'], expected, outcome,
+                         cursor=fixture.get('cursor'), alt=fixture.get('alt', False))
 
         for source in args.sources:
             frame(source, 'Private CLI menu test. No provider configured.')
@@ -126,7 +136,7 @@ def main():
             'adapters': [], 'profiles': [{'id': source + '-cli-v1', 'source': source,
                 'executable': str(Path(sys.executable).resolve()),
                 'args': [str(Path(__file__).resolve()), '--fake'],
-                'new_args': [] if source == 'codex' else ['--session-id', '{session_id}'],
+                'new_args': [] if source in ('codex', 'agy') else ['--session-id', '{session_id}'],
                 'resume_args': ['--resume', '{sid}'],
                 'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'),
                         'TERM': 'xterm-256color', 'LANG': 'C.UTF-8',
@@ -134,12 +144,19 @@ def main():
                         'SESSIONDOCK_TEST_OPENCODE_DB': str(root / 'opencode/opencode.db')}}
                 for source in args.sources]}))
         launcher.chmod(0o600)
-        send_browser.initialize('--initialize-lifecycle', root / 'ledger')
-        with isolated_server(Corpus(root), args.binary.resolve(), host_dir=root / 'host',
+        private_env = {'HOME': str(root / 'home'), 'XDG_CONFIG_HOME': str(root / 'home/config'),
+                       'XDG_DATA_HOME': str(root / 'home/data'), 'XDG_CACHE_HOME': str(root / 'home/cache'),
+                       'PLAYWRIGHT_BROWSERS_PATH': os.environ.get('PLAYWRIGHT_BROWSERS_PATH',
+                           str(Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'ms-playwright'))}
+        with patch.dict(os.environ, private_env):
+            send_browser.initialize('--initialize-lifecycle', root / 'ledger')
+        with patch.dict(os.environ, private_env), isolated_server(Corpus(root), args.binary.resolve(), host_dir=root / 'host',
                 lifecycle_dir=root / 'ledger', launcher_config=launcher, state_dir=root / 'state',
                 file_roots=(root / 'work',), file_write_roots=(root / 'work',),
                 extra_env={'SESSIONDOCK_OPENCODE_DB': str(root / 'opencode/opencode.db'),
-                           'SESSIONDOCK_OPENCODE_ROOT': str(root / 'opencode/mirror')}) as (base, _), sync_playwright() as pw:
+                           'SESSIONDOCK_OPENCODE_ROOT': str(root / 'opencode/mirror'),
+                           'SESSIONDOCK_AGY_ROOT': str(root / 'agy'),
+                           'SESSIONDOCK_AGY_HOME': str(root / 'home/.gemini/antigravity-cli')}) as (base, _), sync_playwright() as pw:
             options = {'headless': True}
             if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
                 options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
@@ -235,6 +252,8 @@ def main():
                         page.locator('#new-session-go').click()
                     assert created.value.status == 200, created.value.text()
                     receipt = created.value.json()
+                    if source in ('codex', 'agy'):
+                        assert receipt['launch_kind'] == 'new_pending' and not receipt.get('declared_sid'), receipt
                     private_host = json.loads((root / 'host' / (receipt['name'] + '.json')).read_text())
                     assert host_request(private_host, {'op':'resize', 'cols':160, 'rows':100})['ok']
                     expect(page.locator('#composer')).to_be_visible()
@@ -243,11 +262,16 @@ def main():
                     for fixture in fixtures:
                         cases += 1
                         clear(source)
-                        result = loaded(source, frame(source, fixture['screen']))
+                        result = loaded(source, fixture_frame(source, fixture))
                         expected = fixture['expected']
                         if expected is None:
                             assert not result.get('prompt'), (source, fixture['name'], result)
                             expect(card).to_be_hidden()
+                            if fixture.get('input'):
+                                subset(result['cli']['input'], fixture['input'], 'cli.input')
+                            expect(page.locator('#cinput')).to_have_value('Keep this message draft')
+                            assert not screens[source].with_suffix('.trace').read_bytes(), 'Fallback must not write keys'
+                            print(f"PASS {source}: {fixture['name']} (native fallback)", flush=True)
                             continue
                         try:
                             subset(result['prompt'], expected)
@@ -347,7 +371,7 @@ def main():
                                 key_bytes(field.get('before_keys', [])) + typed + key_bytes(field.get('after_keys', [])), 'text'))
                         for selector, native, outcome in actions:
                             clear(source)
-                            loaded(source, frame(source, fixture['screen'], native, outcome))
+                            loaded(source, fixture_frame(source, fixture, native, outcome))
                             if outcome == 'text':
                                 page.locator('#composer-question .question-text-input').fill('browser answer')
                                 page.evaluate(js('async () => await probeComposerInput(composerUid)', 'async () => await runtime.composer.probeComposerInput(runtime.composer.composerUid)'))
@@ -374,10 +398,11 @@ def main():
                             exercised += 1
                         print(f"PASS {source}: {fixture['name']} ({len(actions)} native actions)", flush=True)
                     positive = next((fixture for fixture in fixtures if fixture['expected']
-                        and fixture['expected'].get('kind') != 'folder_trust'), None)
+                        and fixture['expected'].get('kind') != 'folder_trust'
+                        and fixture['expected'].get('menu_type') != 'folder_trust'), None)
                     if positive:
                         clear(source)
-                        loaded(source, frame(source, positive['screen']))
+                        loaded(source, fixture_frame(source, positive))
                         buttons = card.locator('.question-option:enabled')
                         if buttons.count():
                             page.set_viewport_size({'width':390, 'height':844})
@@ -393,6 +418,8 @@ def main():
                                 expect(card).to_be_hidden(timeout=5000)
                                 assert len(writes) == count, 'A stale card must not write keys'
                                 expect(page.locator('#cinput')).to_have_value('Keep this message draft')
+                                assert not screens[source].with_suffix('.trace').read_bytes()
+                                print(f'PASS {source}: stale screen refused without PTY input', flush=True)
                             finally:
                                 page.evaluate(js('composerInputProbeBusy = false; __pauseMenuWatch = false', 'runtime.composer.composerInputProbeBusy = false; __pauseMenuWatch = false', body=True))
                                 page.set_viewport_size({'width':1280, 'height':720})
@@ -401,30 +428,123 @@ def main():
                         'codex': ('approval_command', 'echo hello world', 'echo changed world'),
                         'grok': ('approval_bash', 'git status', 'git status --short'),
                         'opencode': ('permission_shell', 'printf inspect-only', 'printf changed-only'),
+                        'agy': ('folder_trust', '/workspace/example', '/workspace/changed'),
                     }
                     scope_name, before, after = scopes[source]
                     scope = next((fixture for fixture in fixtures if fixture['name'] == scope_name), None)
                     if scope:
                         clear(source)
-                        original = loaded(source, frame(source, scope['screen']))['prompt']['id']
+                        original = loaded(source, fixture_frame(source, scope))['prompt']['id']
                         pause_background()
                         try:
                             count = len(writes)
                             changed = scope['screen'].replace(before, after, 1)
                             assert changed != scope['screen']
-                            shown(source, frame(source, changed))
+                            shown(source, frame(source, changed, cursor=scope.get('cursor'), alt=scope.get('alt', False)))
                             card.locator('.question-option:enabled').first.click()
                             page.wait_for_function(js('id => composerDraft()?.inputPrompt?.id !== id', 'id => runtime.composer.composerDraft()?.inputPrompt?.id !== id'), arg=original)
                             assert page.evaluate(js('composerDraft()?.inputPrompt?.id', 'runtime.composer.composerDraft()?.inputPrompt?.id')), 'Changed approval still needs a card'
                             assert len(writes) == count, 'Changed command must invalidate the shown approval'
+                            assert not screens[source].with_suffix('.trace').read_bytes()
+                            print(f'PASS {source}: changed approval scope refused without PTY input', flush=True)
                         finally:
                             page.evaluate(js('composerInputProbeBusy = false; __pauseMenuWatch = false', 'runtime.composer.composerInputProbeBusy = false; __pauseMenuWatch = false', body=True))
-                    clear(source)
+                    if source == 'agy' and positive:
+                        clear(source)
+                        loaded(source, fixture_frame(source, positive))
+                        pause_background()
+                        # Hold the real click's completed CHECK. Replace only this
+                        # test's host before allowing the bound answer to continue.
+                        page.evaluate(js('''() => {
+                            window.__heldMenuCheck = null;
+                            const probe = probeComposerInput;
+                            window.__resumeMenuCheck = null;
+                            probeComposerInput = async uid => {
+                                const result = await probe(uid);
+                                __heldMenuCheck = result;
+                                await new Promise(resolve => { __resumeMenuCheck = resolve; });
+                                return result;
+                            };
+                            window.__restoreMenuProbe = () => { probeComposerInput = probe; };
+                        }''', """() => {
+                            window.__heldMenuCheck = null;
+                            const probe = runtime.composer.probeComposerInput;
+                            window.__resumeMenuCheck = null;
+                            runtime.composer.probeComposerInput = async uid => {
+                                const result = await probe(uid);
+                                __heldMenuCheck = result;
+                                await new Promise(resolve => { __resumeMenuCheck = resolve; });
+                                return result;
+                            };
+                            window.__restoreMenuProbe = () => { runtime.composer.probeComposerInput = probe; };
+                        }"""))
+                        replacement = None
+                        host_binary = REPO / 'target/debug/ptyhost'
+                        kill = [str(host_binary), '--dir', str(root / 'host'), 'kill', receipt['name'], '--force']
+                        count, dialog_count = len(writes), len(dialogs)
+                        try:
+                            card.locator('.question-option:enabled').first.click()
+                            page.wait_for_function('!!__resumeMenuCheck && !!__heldMenuCheck?.prompt')
+                            held = page.evaluate('__heldMenuCheck.prompt.id')
+                            assert held == page.evaluate(js('composerDraft().inputPrompt.id',
+                                'runtime.composer.composerDraft().inputPrompt.id'))
+                            subprocess.run(kill, check=True, capture_output=True, timeout=5)
+                            record_path = root / 'host' / (receipt['name'] + '.json')
+                            deadline = time.monotonic() + 5
+                            while record_path.exists():
+                                assert time.monotonic() < deadline, 'Original test PTY did not retire its record'
+                                page.wait_for_timeout(20)
+                            replacement_id = 'synthetic-' + uuid.uuid4().hex
+                            meta = {**private_host['meta'], 'instance_id': replacement_id}
+                            replacement = subprocess.Popen([str(host_binary), '--dir', str(root / 'host'),
+                                'run', '--name', receipt['name'], '--cwd', str(root / 'work'),
+                                '--cols', '160', '--rows', '100', '--meta', json.dumps(meta), '--',
+                                str(Path(sys.executable).resolve()), str(Path(__file__).resolve()), '--fake'],
+                                env={**os.environ, 'SESSIONDOCK_TEST_SCREEN': str(screens[source]),
+                                     'TERM': 'xterm-256color', 'LANG': 'C.UTF-8'},
+                                cwd=root / 'work', stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            deadline = time.monotonic() + 5
+                            while True:
+                                assert replacement.poll() is None, 'Replacement test PTY exited early'
+                                assert time.monotonic() < deadline, 'Replacement test PTY startup timeout'
+                                if record_path.exists():
+                                    current = json.loads(record_path.read_text())
+                                    if current['host_pid'] == replacement.pid:
+                                        if 'Switch Model' in host_request(current, {'op':'capture', 'styled':False}).get('text', ''):
+                                            break
+                                page.wait_for_timeout(20)
+                            assert current['meta']['instance_id'] == replacement_id
+                            with page.expect_response(lambda response: urlsplit(response.url).path == '/api/term/send') as refused:
+                                page.evaluate('__resumeMenuCheck()')
+                            response = refused.value
+                            assert response.status >= 400 and response.json().get('error'), (response.status, response.json())
+                            page.wait_for_function(js('!composerDraft()?.inputAnswer',
+                                '!runtime.composer.composerDraft()?.inputAnswer'))
+                            assert len(writes) == count + 1, 'A rejected answer must never automatically retry'
+                            assert writes[-1]['instance_id'] == receipt['instance_id'] != replacement_id
+                            assert not screens[source].with_suffix('.trace').read_bytes(), 'Replacement PTY received stale menu keys'
+                            expect(page.locator('#cinput')).to_have_value('Keep this message draft')
+                            assert len(dialogs) == dialog_count + 1 and '回答未完成' in dialogs[-1], dialogs[dialog_count:]
+                            del dialogs[dialog_count:]
+                            print('PASS agy: same-name instance replacement refused; no PTY keys or retry', flush=True)
+                        finally:
+                            page.evaluate(js('__restoreMenuProbe(); __resumeMenuCheck?.(); composerInputProbeBusy = false; __pauseMenuWatch = false',
+                                '__restoreMenuProbe(); __resumeMenuCheck?.(); runtime.composer.composerInputProbeBusy = false; __pauseMenuWatch = false', body=True))
+                            if replacement is not None:
+                                subprocess.run(kill, check=True, capture_output=True, timeout=5)
+                                try:
+                                    replacement.wait(timeout=5)
+                                finally:
+                                    if replacement.poll() is None:
+                                        replacement.kill()
+                                        replacement.wait(timeout=5)
+                    else:
+                        clear(source)
                     assert not errors and not dialogs, (errors, dialogs)
                 assert exercised, 'No menu interaction exercised'
             finally:
                 browser.close()
-    print(f'PASS cli_menus_browser: {cases} source-derived screens, {exercised} native actions, all drafts retained')
+    print(f'PASS cli_menus_browser: {cases} audited screens, {exercised} native actions, all drafts retained')
 
 
 if __name__ == '__main__':

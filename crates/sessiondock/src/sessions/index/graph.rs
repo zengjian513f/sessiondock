@@ -668,7 +668,10 @@ impl<'a> Graph<'a> {
 
     fn native_scope(&self, uid: &str) -> Result<NativeScope, SessionError> {
         let entry = &self.entries[uid];
-        if !matches!(entry.source, "claude" | "codex" | "grok" | "opencode") {
+        if !matches!(
+            entry.source,
+            "claude" | "codex" | "grok" | "opencode" | "agy"
+        ) {
             return Err(unsupported("此数据源尚不支持原生操作范围"));
         }
         if let Some(error) = &entry.summary.unsupported {

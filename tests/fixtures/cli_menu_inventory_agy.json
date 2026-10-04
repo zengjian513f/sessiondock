@@ -1,0 +1,103 @@
+{
+  "source": "agy",
+  "installed_version": "1.2.16",
+  "audit_method": "Read-only audit of the current agy recognizer and real isolated PTY captures. Closed-source CLI; no exhaustive source-menu audit or installed-binary menu completeness claim.",
+  "recognizer": "crates/sessiondock/src/bridge/menus/agy.rs",
+  "capture_contract": {
+    "cwd": "/workspace/example",
+    "model": "sessiondock-fake",
+    "current_model_label": "sessiondock-fake (current)",
+    "dimensions": {
+      "cols": 110,
+      "rows": 42
+    },
+    "main_captures": [
+      "trust.screen.txt",
+      "model.screen.txt",
+      "resume.screen.txt",
+      "idle.screen.txt",
+      "draft.screen.txt"
+    ],
+    "cursor_evidence": "Matching *.cursor.txt files from the same real ptyhost captures; coordinates are zero-based.",
+    "permissions_evidence": "07-permissions-menu.screen.txt and screen.raw identified by sessiondock-agy-evidence-report.md; limited emulator has old-frame residues, so only confirmed menu layout is reconstructed."
+  },
+  "fixture_method": "Main captures preserve ANSI styles and cursor coordinates after replacing temporary cwd. Trust No focus is a labelled synthetic variation of captured rows. Negative mutations are labelled synthetic; permissions scope uses confirmed captured text with stale fragments removed.",
+  "audit_coverage": "Trust yes/no, the single current model select/cancel, permissions config-scope select/close; captured idle/draft and empty /resume. Fake PTY Chromium validates exact native bytes, retained message drafts, fresh CHECK, stale screen, changed trust target and same-name instance replacement refusal. Fake replay is not further real CLI validation.",
+  "key_semantics": {
+    "folder_trust": "Up/Down/Enter; no invented Escape cancel.",
+    "model": "Captured single sessiondock-fake (current): Enter selects, Escape goes back. No manufactured model navigation/search keys.",
+    "permission_scope": "Up/Down/Enter relative to captured Project focus; Escape closes. No deep rule edit, save or permission grant claimed."
+  },
+  "categories": [
+    {
+      "category": "folder_trust",
+      "status": "supported",
+      "fixtures": [
+        "folder_trust",
+        "folder_trust_no_focus"
+      ]
+    },
+    {
+      "category": "model",
+      "status": "supported",
+      "fixtures": [
+        "model_picker"
+      ]
+    },
+    {
+      "category": "permission_scope",
+      "status": "supported",
+      "fixtures": [
+        "permission_scope"
+      ]
+    },
+    {
+      "category": "resume",
+      "status": "native_fallback",
+      "fixtures": [
+        "fallback_resume"
+      ],
+      "reason": "Real empty /resume footer/layout is not recognized; populated lists not audited."
+    },
+    {
+      "category": "permissions_deep_editor",
+      "status": "native_fallback",
+      "fixtures": [
+        "fallback_permission_editor_unverified"
+      ],
+      "reason": "No real deep editor capture. Synthetic boundary mutation only verifies that the scope prompt is required; editor semantics/keys are not inferred."
+    },
+    {
+      "category": "permission_request",
+      "status": "native_fallback",
+      "fixtures": [],
+      "reason": "No real permission-request popup captured; config-scope menu does not prove request or grant semantics."
+    },
+    {
+      "category": "idle_and_draft",
+      "status": "editor_only",
+      "fixtures": [
+        "idle",
+        "draft"
+      ]
+    },
+    {
+      "category": "unknown_or_incomplete",
+      "status": "native_fallback",
+      "fixtures": [
+        "negative_model_missing_focus",
+        "negative_model_unknown_footer",
+        "negative_model_missing_footer",
+        "fallback_permission_editor_unverified",
+        "negative_model_stale_tail"
+      ]
+    }
+  ],
+  "unknown_fallback": "Other menu families, undisclosed rows, multi-select, text/search editing, paging, secrets and authorization forms are unaudited and remain native unless the existing recognizer matches a complete verified shape. No assertion that these families exist in this version.",
+  "limitations": [
+    "Permissions scope emulator cursor position is not trusted or replayed.",
+    "A footer/action replay proves harness transport, not actual changes to CLI configuration.",
+    "Real main browser model select/cancel and unknown refusal were validated separately by the main session; no new real CLI run in this task."
+  ],
+  "fixtures_count": 12
+}

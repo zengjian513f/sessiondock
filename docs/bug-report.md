@@ -25,6 +25,11 @@ otherwise the capability stays `false` and the route `501`.
 
 ### Which CLI the worker runs
 
+Agy is accepted by the current backend and legacy report-source picker. It
+reuses ordinary model selection, `new_pending`, native binding and composer
+SEND. The real CLI browser test verifies the complete report prompt and native
+reply using a private HOME and loopback synthetic gateway ([Agy](agy.md)).
+
 The worker is the source's one
 configured CLI, selected exactly as `POST /api/term/create` selects it
 (`LifecycleService::entry_for`). The dialog has the new-session picker's
@@ -48,7 +53,7 @@ leftover `bug_report_profiles` key in `launcher.json` is ignored.)
 ## Route contract (`POST /api/bug-report`)
 
 Body: `{description (required, ≤ 50000 chars), uid, page_id|_page_id,
-_trace_id, _build, source ∈ claude|codex|grok|opencode (default codex), model, effort, terminal_name,
+_trace_id, _build, source ∈ claude|codex|grok|opencode|agy (default codex), model, effort, terminal_name,
 snapshot (object), attachments: [{path, number, name, kind, mime, size,
 attachment_id}], cols (40–300), rows (12–120), origin ({node_id, node_name,
 uid}, optional), captured (object, optional)}`; unknown fields are ignored,
@@ -106,7 +111,7 @@ tells it that the session's native JSONL and ledgers are not on its machine.
 
 `worker.sid` is the declared session id of a Claude, Grok or OpenCode worker
 (OpenCode's is pre-created with the repository as its directory; `null` for
-Codex, whose identity stays pending like any other launch); `token` is that sid or the
+Codex and Agy, whose identities stay pending like any other launch); `token` is that sid or the
 launch id. The extra identity fields let the legacy page
 open the pending console exactly as after `term/create`.
 

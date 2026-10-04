@@ -13,6 +13,7 @@
 //! Nothing here opens files: `summarize` is a pure function of the bytes the
 //! index read, so each derivation is unit-testable without I/O.
 
+pub(crate) mod agy;
 pub(super) mod claude;
 pub(super) mod codex;
 pub(super) mod grok;
@@ -200,6 +201,7 @@ pub fn summarize(input: &Input<'_>) -> RowSummary {
         "claude" => claude::summarize(input),
         "codex" => codex::summarize(input),
         "opencode" => opencode::summarize(input),
+        "agy" => agy::summarize(input),
         _ => grok::summarize(input),
     }
 }
@@ -846,6 +848,16 @@ pub fn skipped_warnings(source: &str, records: &Records) -> Vec<String> {
                     other => skipped.note("Codex response_item", other),
                 },
                 other => skipped.note("Codex 记录类型", other),
+            },
+            "agy" => match kind {
+                "USER_INPUT" | "PLANNER_RESPONSE" | "ERROR_MESSAGE" => {}
+                _ if value["content"]
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty())
+                    || value["media"]
+                        .as_array()
+                        .is_some_and(|media| !media.is_empty()) => {}
+                other => skipped.note("Agy 记录类型", other),
             },
             "opencode" => match kind {
                 "user" | "assistant" | "synthetic" | "idle" | "model-switched"

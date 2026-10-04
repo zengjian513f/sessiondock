@@ -117,6 +117,7 @@ impl Corpus {
             codex: Some(self.root.join("codex")),
             grok: Some(self.root.join("grok")),
             opencode: None,
+            agy: None,
         }
     }
 }
@@ -1100,6 +1101,7 @@ fn discovery_follows_python_file_and_project_aliases_and_skips_unrelated_files()
             codex: Some(codex.clone()),
             grok: Some(grok.clone()),
             opencode: None,
+            agy: None,
         },
         None,
     );
@@ -2000,6 +2002,7 @@ fn benchmark_cold_and_warm_list_of_2000_sessions() {
         codex: Some(root.join("codex")),
         grok: Some(root.join("grok")),
         opencode: None,
+        agy: None,
     };
     let index = Index::new(roots, None);
     let cold = Instant::now();
@@ -2203,6 +2206,7 @@ print(json.dumps(rows, ensure_ascii=False, default=str))
             codex: Some(root.join("codex")),
             grok: Some(root.join("grok")),
             opencode: None,
+            agy: None,
         },
         None,
     );
@@ -2307,6 +2311,7 @@ impl AgentCorpus {
             codex: Some(self.root.join("codex")),
             grok: Some(self.root.join("grok")),
             opencode: None,
+            agy: None,
         }
     }
 
@@ -2825,6 +2830,7 @@ fn codex_subagent_items_carry_turn_state_and_last_record_time() {
             codex: Some(root.join("codex")),
             grok: Some(root.join("grok")),
             opencode: None,
+            agy: None,
         },
         None,
     );
@@ -2943,6 +2949,7 @@ fn claude_continued_in_resolves_to_the_uid_of_the_indexed_continuation() {
             codex: Some(root.join("codex")),
             grok: Some(root.join("grok")),
             opencode: None,
+            agy: None,
         },
         None,
     );
@@ -2973,6 +2980,7 @@ fn claude_continued_in_resolves_to_the_uid_of_the_indexed_continuation() {
         codex: Some(root.join("codex")),
         grok: Some(root.join("grok")),
         opencode: None,
+        agy: None,
     });
     let listed = store.list(true).unwrap();
     let published = by_uid(listed["sessions"].as_array().unwrap());

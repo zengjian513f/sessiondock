@@ -54,8 +54,10 @@ missing identity templates no longer disable a source:
 - Claude new: `--session-id <generated UUID>`; resume: `--resume <sid>`.
 - Codex new: no assigned SID; resume: `resume <sid>`.
 - Agy new: no assigned SID; default resume argv: `--conversation <sid>`.
-  The initial integration offers pending consoles; native catalog/resume and
-  composer support follow the explicit scope in [Agy](agy.md).
+  Its read-only native mirror and conversation DB fd evidence provide the
+  pending-to-native identity path. Model choice uses `--model`; optional effort
+  uses `--effort`. The real CLI browser test covers composer input, menus and
+  stopped-session continuation. See [Agy](agy.md).
 - Grok new: `--session-id <generated UUID>`; resume: `--resume <sid>`.
 - OpenCode new: `--session <assigned ses_… id>`, after creating that session
   through `opencode api session.create` ([OpenCode](opencode.md)); resume:
@@ -107,7 +109,13 @@ channel the CLI's own updater follows, looked up with `curl` in the profile's
 environment (so its proxy applies): Claude's npm dist-tag named by
 `autoUpdatesChannel` in its `settings.json` (default `latest`), Codex's npm
 `latest`, OpenCode's `opencode.ai/update/api/latest/cli/npm`, and Grok's own
-`update --check --json`. The lookup crosses the network, so it runs on its own
+`update --check --json`. Agy reads `version` from its official updater's
+platform manifest (`manifests/{os}_{arch}{suffix}.json`; macOS uses `darwin`,
+x86_64 uses `amd64`, aarch64 uses `arm64`, and Linux musl adds `_musl`) at
+`antigravity-cli-auto-updater-974169037036.us-central1.run.app`. This is a
+read-only lookup; Agy manual updates use `agy update`. These paths are
+implemented; local and Hub browser tests cover update success/failure using synthetic CLIs ([Agy](agy.md)).
+The lookup crosses the network, so it runs on its own
 thread and the answer never waits for it: `latest` is the last answer that
 arrived (a failed lookup never erases it), and `latest_state` is `pending`
 while a lookup runs or `failed` when the last one failed. A lookup starts when

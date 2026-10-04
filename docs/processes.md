@@ -35,7 +35,7 @@ can supply only the reviewed association fields, for example:
 }
 ```
 
-`source` must be exactly `claude`, `codex`, `grok`, or `opencode`; at least one of full `sid`
+`source` must be exactly `claude`, `codex`, `grok`, `opencode`, or `agy`; at least one of full `sid`
 or full `uid` is required. IDs are case-sensitive, at most 256 ASCII identifier
 characters (`A-Z a-z 0-9 _ - . :`), without whitespace or path separators. A UID
 must start with the declared source and a colon. There is no trimming, prefix
@@ -49,6 +49,11 @@ source/IDs, or malformed instance IDs yield `invalid_metadata`, not partial
 acceptance of the remaining fields. They do not make a valid host transport
 record disappear. Tokens, endpoints, full argv, and arbitrary metadata never
 appear in observation DTOs or error text.
+
+Agy starts with a pending launch identity; its native catalog comes from an
+explicit read-only mirror, and native association uses CLI conversation DB fd
+evidence through the separate scan. Host metadata alone does not invent its
+SID. See [Agy](agy.md) for the current implementation and acceptance boundary.
 
 ## Exact native catalog boundary
 

@@ -250,6 +250,7 @@ pub fn editor_text(
     match source {
         "claude" => driver::inspect(capture).text,
         "codex" => driver::inspect_codex(capture).text,
+        "agy" => super::input::agy_editor(capture),
         _ => None,
     }
 }

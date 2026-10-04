@@ -325,7 +325,7 @@ def main():
                 page.locator('.dhead-actions [data-report-bug]').click()
                 expect(page.locator('#bug-report-dialog')).to_be_visible()
                 assert page.evaluate("[...document.querySelectorAll('#bug-report-source input')].map(i => i.value)") \
-                    == ['claude', 'codex', 'grok', 'opencode']
+                    == ['claude', 'codex', 'grok', 'opencode', 'agy']
                 page.keyboard.press('Escape')
                 expect(page.locator('#bug-report-dialog')).to_be_hidden()
 
@@ -333,7 +333,10 @@ def main():
                 # populated conversation as an unused pre-created launch. Keep
                 # watch disconnected for this snapshot; HTTP and host evidence
                 # still come from the private running server.
+                stale_cursor = {'enabled': True}
                 def old_cursor(route):
+                    if not stale_cursor['enabled']:
+                        return route.continue_()
                     response = route.fetch()
                     data = response.json()
                     rows = data.get('sessions', []) if 'sessions' in data else [data.get('meta', {})]
@@ -342,7 +345,7 @@ def main():
                             row['cursor'] = {**row.get('cursor', {}), 'end': 0}
                     route.fulfill(response=response, json=data)
                 def disconnected_watch(route):
-                    route.abort()
+                    route.abort() if stale_cursor['enabled'] else route.continue_()
                 page.route('**/api/sessions?*', old_cursor)
                 page.route('**/api/messages/**', old_cursor)
                 page.route('**/api/watch?*', disconnected_watch)
@@ -358,9 +361,9 @@ def main():
                 if not action.is_visible():
                     page.locator('#a-more').click()
                 expect(action).to_have_attribute('aria-label', '停止会话')
-                page.unroute('**/api/sessions?*', old_cursor)
-                page.unroute('**/api/messages/**', old_cursor)
-                page.unroute('**/api/watch?*', disconnected_watch)
+                # A route.fetch may still be in flight. Disabling the fixture
+                # avoids unroute handing that same route a second time.
+                stale_cursor['enabled'] = False
                 action.click()
                 page.wait_for_function("() => document.querySelector('#a-session-action')?.getAttribute('aria-label') === '删除会话'", timeout=30000)
                 page.wait_for_function(js('uid => !S.live.has(uid) && !takenOver(uid)', 'uid => !runtime.core.state.live.live.has(uid) && !runtime.terminal.takenOver(uid)'), arg=uid, timeout=30000)

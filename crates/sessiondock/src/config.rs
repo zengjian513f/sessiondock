@@ -43,6 +43,8 @@ pub struct Config {
     /// OpenCode's session database (`opencode.db`), opened read-only and
     /// mirrored into `roots.opencode` (`sessions::opencode`).
     pub opencode_db: Option<PathBuf>,
+    /// Agy native data directory, read-only; paired with the private agy mirror root.
+    pub agy_home: Option<PathBuf>,
     /// Login-shell wrapper the service itself was started through
     /// (`SESSIONDOCK_SHELL_ENV_COMMAND`); enables `/api/shell-env`.
     pub shell_env_command: Option<PathBuf>,
@@ -252,6 +254,7 @@ impl Default for Config {
                 codex: None,
                 grok: None,
                 opencode: None,
+                agy: None,
             },
             codex_index: None,
             ptyhost_dir: None,
@@ -267,6 +270,7 @@ impl Default for Config {
             proc_root: "/proc".into(),
             grok_active: None,
             opencode_db: None,
+            agy_home: None,
             shell_env_command: None,
             shell_env_watch: Vec::new(),
             node_bind: None,
@@ -366,6 +370,7 @@ impl Config {
             codex: root("SESSIONDOCK_CODEX_ROOT", true)?,
             grok: root("SESSIONDOCK_GROK_ROOT", true)?,
             opencode: root("SESSIONDOCK_OPENCODE_ROOT", true)?,
+            agy: root("SESSIONDOCK_AGY_ROOT", true)?,
         };
         config.ptyhost_dir = root("SESSIONDOCK_PTYHOST_DIR", false)?;
         config.state_dir = root("SESSIONDOCK_STATE_DIR", false)?;
@@ -390,6 +395,13 @@ impl Config {
         }
         config.grok_active = env::var_os("SESSIONDOCK_GROK_ACTIVE").map(PathBuf::from);
         config.opencode_db = env::var_os("SESSIONDOCK_OPENCODE_DB").map(PathBuf::from);
+        config.agy_home = env::var_os("SESSIONDOCK_AGY_HOME").map(PathBuf::from);
+        if config.agy_home.is_some() != config.roots.agy.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "SESSIONDOCK_AGY_HOME and SESSIONDOCK_AGY_ROOT are set together",
+            ));
+        }
         if config.opencode_db.is_some() != config.roots.opencode.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -809,6 +821,7 @@ mod tests {
                 codex: Some(temp.path().join("codex")),
                 grok: Some(temp.path().join("grok")),
                 opencode: None,
+                agy: None,
             },
             codex_index: Some(index),
             ptyhost_dir: Some(temp.path().join("host")),
