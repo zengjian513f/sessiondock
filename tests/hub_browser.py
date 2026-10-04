@@ -139,7 +139,7 @@ def check_page(page, nodes, hub):
     }""", """() => {
       const types = ['claude', 'codex', 'grok'];
       runtime.core.state.catalog.sessions.forEach((row, index) => { row.source = types[index]; });
-      runtime.sidebarView.renderChips(); runtime.sidebarView.renderSide();
+      runtime.sidebarView.renderSide();
     }"""))
     page.locator('#chips button[data-source="codex"]').click(button="right")
     assert page.evaluate(js("[...S.off].sort()", '[...runtime.core.state.sidebar.off].sort()')) == ["claude", "grok", "opencode", "shell"]

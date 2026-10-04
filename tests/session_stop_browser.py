@@ -13,6 +13,7 @@ model binary, native CLI home or production host is touched.
 from browser_runtime import js
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -349,8 +350,8 @@ def main():
                     expect(bulk).to_have_attribute("aria-busy", "true")
                     expect(page.locator("#side-pick-cancel")).to_be_disabled()
                     expect(notice).to_be_hidden()
-                    page.wait_for_function(js("sessionStopProgress.stopped > 0 && sessionStopProgress.stopped < 8", 'runtime.bulk.state.stopProgress.stopped > 0 && runtime.bulk.state.stopProgress.stopped < 8'), timeout=15000)
-                    assert bulk.text_content() in [f"已停止 {count}/8" for count in range(1, 8)]
+                    # Observe the committed UI, not the state mutation before Vue flushes.
+                    expect(bulk).to_have_text(re.compile(r"已停止 [1-7]/8"), timeout=15000)
                     expect(bulk).to_have_text("已停止 8/8", timeout=15000)
                     page.wait_for_function(js("!sessionStopBusy", '!runtime.bulk.state.stopBusy'))
                     elapsed = time.monotonic() - started

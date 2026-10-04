@@ -7,7 +7,7 @@ image staged on one page is previewed on the other from the server's staged
 bytes, and a console command sent from the composer clears the server draft. Runs the real
 legacy composer against the fake Claude CLI plus a synthetic shell.
 """
-from browser_runtime import js, wait_for_async
+from browser_runtime import js, wait_for_async, scoped_frontend
 import base64
 import json
 import os
@@ -328,6 +328,65 @@ def main():
                     expect(a.locator(f'#side .item[data-uid="{shell_uid}"]')).to_have_count(1)
                     listed = context.request.get(base + '/api/session/conversation/drafts').json()['drafts']
                     assert not any(row['uid'] == shell_uid for row in listed), listed
+                    if scoped_frontend():
+                        saving = open_page(context)
+                        # Earlier SEND has bound this launch to native history;
+                        # navigate the row now shown by the real terminal list.
+                        current_uid = saving.evaluate("""name => {
+                          const row=window.SessionDockRuntime.terminal.state.list.find(row=>row.name===name);
+                          return row?.current_uid || row?.uid || 'tmux:'+name;
+                        }""", receipt['name'])
+                        open_session(saving, current_uid)
+                        saving.evaluate("""() => {
+                          const r=window.SessionDockRuntime, fetch=r.core.network.fetch;
+                          window.__lateSave={fetch,draft:r.composer.composerDraft()};
+                          r.core.network.fetch=async (url,options) => {
+                            const response=await fetch(url,options);
+                            if (!String(url).endsWith('api/session/conversation') || options?.method!=='POST') return response;
+                            return new Promise(done=>{__lateSave.release=()=>done(response)});
+                          };
+                        }""")
+                        saving.locator('#cinput').fill('accepted save survives root disposal')
+                        saving.wait_for_function('!!__lateSave.release')
+                        saving.evaluate("""() => {
+                          document.querySelector('#app').__vue_app__.unmount();
+                          __lateSave.release();
+                        }""")
+                        saving.wait_for_function('__lateSave.draft.savedVersion === __lateSave.draft.editVersion')
+                        expect(saving.locator('#composer')).to_have_count(0)
+                        wait_server_text(context, base, uid, 'accepted save survives root disposal')
+                        saving.close()
+                        late_context = browser.new_context(service_workers='block')
+                        try:
+                            reading = open_page(late_context)
+                            reading.evaluate("""() => {
+                              const r=window.SessionDockRuntime, fetch=r.core.network.fetch;
+                              window.__lateDraft={fetch,reads:0,sends:0};
+                              r.core.network.fetch=async (url,options) => {
+                                const path=new URL(url,location.href).pathname;
+                                if (path.endsWith('/send')) __lateDraft.sends++;
+                                if (!path.endsWith('/api/session/conversation') || options?.method==='POST') return fetch(url,options);
+                                __lateDraft.reads++;
+                                const response=await fetch(url,{...options,signal:undefined});
+                                return new Promise(done=>{__lateDraft.release=()=>done(response)});
+                              };
+                            }""")
+                            reading.locator(f'#side .item[data-uid="{current_uid}"]').first.click()
+                            reading.wait_for_function('!!__lateDraft.release')
+                            reading.evaluate("""() => {
+                              const r=window.SessionDockRuntime,draft=r.composer.composerDraft();
+                              __lateDraft.draft=draft;__lateDraft.text=draft.text;__lateDraft.revision=draft.revision;
+                              document.querySelector('#app').__vue_app__.unmount();
+                              __lateDraft.release();
+                            }""")
+                            reading.wait_for_function('!__lateDraft.draft.loading')
+                            assert reading.evaluate("""() => __lateDraft.draft.text===__lateDraft.text
+                              && __lateDraft.draft.revision===__lateDraft.revision
+                              && __lateDraft.reads===1 && __lateDraft.sends===0
+                              && !document.querySelector('#composer')""")
+                        finally:
+                            late_context.close()
+                        print('PASS Vue composer disposal preserves accepted save and ignores late draft hydration', flush=True)
                     assert not errors, errors
                     context.request.post(base + '/api/term/kill', data={'record_id': receipt['record_id'], 'instance_id': receipt['instance_id']})
                     context.close()

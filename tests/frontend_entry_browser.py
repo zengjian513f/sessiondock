@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, quote, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
+from browser_runtime import scoped_frontend
 from frontend_framework_browser import launch_chromium, open_settings, select_tab
 from history_parity import BINARY, build_corpus, codex_message, codex_row, isolated_server
 
@@ -231,6 +232,59 @@ def verify_restored(page, base, corpus, width):
     assert page.url.startswith(base)
 
 
+def verify_root_disposal(browser, base, corpus, errors):
+    if not scoped_frontend():
+        return
+    context = browser.new_context(service_workers='block')
+    context.add_init_script('window.EventSource = undefined')
+    page = context.new_page()
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.clock.install()
+    try:
+        page.goto(base, wait_until='networkidle')
+        item = page.locator(f'#side .item[data-uid="{corpus.uid(MAIN_SID)}"]')
+        expect(item).to_be_visible()
+        page.evaluate("""() => {
+          const r=window.SessionDockRuntime, fetch=r.core.network.fetch;
+          window.__rootLifetime={fetch, held:[], urls:[], catalog:r.core.state.catalog.sessions};
+          r.core.network.fetch=async (url, options) => {
+            const path=new URL(url, location.href).pathname;
+            if (!/api\/(sessions|messages\/)/.test(path)) return fetch(url, options);
+            __rootLifetime.urls.push(path);
+            const response=await fetch(url, {...options, signal:undefined});
+            return new Promise(done=>__rootLifetime.held.push(()=>done(response)));
+          };
+          void r.core.list.loadSessions(true);
+        }""")
+        item.click()
+        expect(page.locator('#detail .spin')).to_contain_text('正在读取会话')
+        page.wait_for_function('__rootLifetime.held.length >= 2')
+        page.evaluate("""() => {
+          const r=window.SessionDockRuntime;
+          __rootLifetime.count=__rootLifetime.urls.length;
+          document.querySelector('#app').__vue_app__.unmount();
+          __rootLifetime.held.splice(0).forEach(release=>release());
+        }""")
+        page.clock.fast_forward(30000)
+        page.evaluate("""async () => {
+          await new Promise(done=>setTimeout(done,0));
+          dispatchEvent(new Event('online'));
+          dispatchEvent(new Event('pageshow'));
+          document.dispatchEvent(new Event('visibilitychange'));
+        }""")
+        expect(page.locator('#msgs, #side, .dhead')).to_have_count(0)
+        assert page.evaluate("""() => {
+          const r=window.SessionDockRuntime;
+          return __rootLifetime.urls.length===__rootLifetime.count
+            && r.core.state.catalog.sessions===__rootLifetime.catalog
+            && !r.core.sync.watching && !r.core.events.connection;
+        }""")
+        page.evaluate('window.SessionDockRuntime.core.network.fetch=__rootLifetime.fetch')
+        print('PASS Vue root disposal aborts initial/list reads and prevents late render or restart', flush=True)
+    finally:
+        context.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
@@ -275,6 +329,7 @@ def main():
                     for _, page, width in pages:
                         verify_restored(page, base, corpus, width)
                         print(f"PASS prefix/restart {width}px: session, history navigation, theme/font/cache", flush=True)
+                    verify_root_disposal(browser, base, corpus, errors)
                 assert not errors, errors
                 assert requests and all(url.startswith(base) for url in requests), requests
             finally:

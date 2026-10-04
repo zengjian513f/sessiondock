@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Chromium cloning discovers relationships on demand, caches them and sees new edges."""
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 from contextlib import ExitStack
 import ctypes
@@ -154,6 +154,30 @@ def main():
         dialog,plan,_=preview();assert plan['session_count']==5,plan
         dialog.locator('.clone-cancel').click()
         print('PASS Chromium idle startup leaves compacted history unread; on-demand preview includes checkpoint-only agent',flush=True)
+        if scoped_frontend():
+            page.evaluate("""() => {
+              const r=window.SessionDockRuntime, fetch=r.core.network.fetch;
+              window.__lateTransfer={fetch};
+              r.core.network.fetch=async (url, options) => {
+                if (!String(url).endsWith('api/session/clone/plan')) return fetch(url, options);
+                const response=await fetch(url, options);
+                return new Promise(done => {__lateTransfer.release=()=>done(response)});
+              };
+            }""")
+            page.locator('#a-clone-group').click()
+            page.wait_for_function('!!__lateTransfer.release')
+            assert page.evaluate("""async () => {
+              const r=window.SessionDockRuntime, selected=r.core.state.selection.sel;
+              document.querySelector('#app').__vue_app__.unmount();
+              r.sessionUi.dispose();
+              __lateTransfer.release();
+              await new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done)));
+              r.core.network.fetch=__lateTransfer.fetch;
+              return !document.querySelector('#clone-group-dialog')
+                && r.core.state.selection.sel===selected;
+            }""")
+            print('PASS Vue root disposal ignores a late transfer preview',flush=True)
+
 
 
 if __name__=='__main__':main()
