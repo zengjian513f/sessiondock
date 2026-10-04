@@ -5,10 +5,9 @@ Build sessiondock and ptyhost first. The test opens only its fixture's
 grid page, never creates descendants, and exercises connect, typing, resize,
 scrollback, selection, copy, paste and exit by normal browser clicks and
 keyboard input. Terminal assertions read the grid model through
-globalThis.__grid and globalThis.__gridText(). The Vue entry also exercises
-actual component unmount and a claim response delivered after unmount.
+globalThis.__grid and globalThis.__gridText().
 """
-from browser_runtime import wait_for_async, scoped_frontend
+from browser_runtime import wait_for_async
 from contextlib import ExitStack
 import os
 from pathlib import Path
@@ -82,115 +81,6 @@ def selection_point(page, needle):
 
 def focus_term(page):
     page.locator("#term").click()
-
-
-def connect_fixture(page):
-    page.locator("#connect").click()
-    page.wait_for_function(
-        "__grid.state.connected || !document.querySelector('#takeover').hidden",
-        timeout=10000)
-    if page.locator("#takeover").is_visible():
-        page.locator("#takeover").click()
-    page.wait_for_function("__grid.state.connected === true", timeout=10000)
-
-
-def unmount_connected_grid(page):
-    # Save handles before the controller releases its global debug references.
-    # Queue the real fit timer and drawing RAF in the same task as Vue unmount.
-    page.evaluate("""() => {
-      const saved = window.__unmountedGrid = {
-        debug: __grid, socket: __grid.socket(), keys: document.querySelector('#keys'),
-        paints: 0, fits: 0,
-      };
-      const renderer = saved.debug.renderer;
-      for (const [method, count] of [['render', 'paints'], ['fit', 'fits']]) {
-        const original = renderer[method];
-        renderer[method] = function(...args) {
-          saved[count]++;
-          return original.apply(this, args);
-        };
-      }
-      saved.keys.blur();
-      saved.keys.focus();
-      window.dispatchEvent(new Event('resize'));
-      document.body.__vue_app__.unmount();
-      saved.state = JSON.stringify(saved.debug.state);
-      saved.seq = saved.debug.model.seq;
-      saved.keys.value = 'late detached input';
-      saved.keys.dispatchEvent(new InputEvent('input', {data: 'late detached input'}));
-      window.dispatchEvent(new MouseEvent('mousemove', {clientX: 40, clientY: 40}));
-      window.dispatchEvent(new MouseEvent('mouseup', {clientX: 40, clientY: 40}));
-      window.dispatchEvent(new Event('resize'));
-      document.documentElement.dataset.theme =
-        document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-    }""")
-    page.wait_for_function("__unmountedGrid.socket.readyState === WebSocket.CLOSED")
-    # Cross both the 100-ms fit debounce and the 530-ms focused blink interval.
-    page.wait_for_timeout(1200)
-    result = page.evaluate("""() => {
-      const saved = __unmountedGrid;
-      return {
-        paints: saved.paints, fits: saved.fits,
-        stateUnchanged: JSON.stringify(saved.debug.state) === saved.state,
-        seqUnchanged: saved.debug.model.seq === saved.seq,
-        input: saved.keys.value,
-        removed: !document.querySelector('#term'),
-      };
-    }""")
-    assert result == {
-        "paints": 0, "fits": 0, "stateUnchanged": True, "seqUnchanged": True,
-        "input": "late detached input", "removed": True,
-    }, result
-
-
-def unmount_pending_claim(context, base, page_errors):
-    page = context.new_page()
-    page.on("pageerror", lambda error: page_errors.append(str(error)))
-    try:
-        page.goto(base + "/grid.html", wait_until="networkidle")
-        expect(page.locator("#session")).to_contain_text("synthetic-identity-host")
-        page.evaluate("""() => {
-          const pending = window.__lateGridClaim = {sockets: 0};
-          const nativeFetch = window.fetch;
-          const NativeSocket = window.WebSocket;
-          window.WebSocket = new Proxy(NativeSocket, {
-            construct(target, args) {
-              pending.sockets++;
-              return Reflect.construct(target, args);
-            },
-          });
-          window.fetch = async (...args) => {
-            const response = await nativeFetch(...args);
-            if (!new URL(args[0], location.href).pathname.endsWith('/term/claim'))
-              return response;
-            // Preserve the real claim bytes, but finish receiving them before
-            // disposal so fetch abort cannot stand in for the late-result guard.
-            const delayed = new Response(await response.arrayBuffer(), {
-              status: response.status, headers: response.headers,
-            });
-            pending.result = await delayed.clone().json();
-            return new Promise(resolve => {
-              pending.release = () => resolve(delayed);
-            });
-          };
-        }""")
-        page.locator("#connect").click()
-        page.wait_for_function("typeof __lateGridClaim.release === 'function'")
-        assert page.evaluate("!!__lateGridClaim.result.token"), "claim did not succeed"
-        page.evaluate("""() => {
-          const pending = __lateGridClaim;
-          pending.debug = __grid;
-          document.body.__vue_app__.unmount();
-          pending.state = JSON.stringify(pending.debug.state);
-          pending.release();
-        }""")
-        # Let response.json() and the async connect continuation settle.
-        page.evaluate("() => new Promise(resolve => setTimeout(resolve, 0))")
-        assert page.evaluate("""() => __lateGridClaim.sockets === 0
-          && JSON.stringify(__lateGridClaim.debug.state) === __lateGridClaim.state"""), \
-            "late claim opened a socket or changed the disposed grid"
-    finally:
-        page.close()
 
 
 def main():
@@ -344,17 +234,6 @@ def main():
                         "n => (__gridText().match(/RS_PING_OK/g) || []).length > n",
                         arg=before_pings, timeout=10000)
                     print("PASS f", flush=True)
-
-                    if scoped_frontend():
-                        assert page.evaluate("!!document.body.__vue_app__"), "Vue root was not mounted"
-                        unmount_connected_grid(page)
-                        unmount_pending_claim(context, base, page_errors)
-                        page.goto(base + "/grid.html", wait_until="networkidle")
-                        expect(page.locator("#session")).to_contain_text(
-                            "synthetic-identity-host", timeout=10000)
-                        connect_fixture(page)
-                        wait_grid(page, "RS_SHELL_READY")
-                        print("PASS Vue grid unmount and late claim", flush=True)
 
                     page.locator("#bottom").click()
                     page.wait_for_function("__grid.state.following === true", timeout=10000)

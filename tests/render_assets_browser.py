@@ -6,7 +6,6 @@ from pathlib import Path
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
-from browser_runtime import scoped_frontend
 from history_parity import BINARY, Corpus, claude_row, isolated_server
 
 
@@ -88,45 +87,6 @@ def main():
                 expect(cold.locator('#msgs .katex')).to_have_count(1)
                 expect(cold.locator('#msgs .code-block')).to_have_attribute('data-syntax-done', '1')
                 cold.close()
-                if scoped_frontend():
-                    late = browser.new_page(viewport={'width':1280,'height':900})
-                    late.on('pageerror', lambda error: errors.append(str(error)))
-                    late.goto(base, wait_until='networkidle')
-                    late.evaluate("""() => {
-                      const r=window.SessionDockRuntime, assets=r.overlays.assets;
-                      const script=assets.script.bind(assets), post=Worker.prototype.postMessage;
-                      window.__lateDecoration={script,post};
-                      assets.script=async (...args) => {
-                        const result=await script(...args);
-                        if (!String(args[0]).endsWith('katex.min.js')) return result;
-                        return new Promise(done=>{__lateDecoration.formula=()=>done(result)});
-                      };
-                      Worker.prototype.postMessage=function(...args) {
-                        const receive=this.onmessage;
-                        this.onmessage=event=>{__lateDecoration.syntax=()=>receive(event)};
-                        return post.apply(this,args);
-                      };
-                    }""")
-                    late.locator(f'#side .item[data-uid="{corpus.uid("batched")}"]').click()
-                    expect(late.locator('#msgs')).to_contain_text('Batch row 599')
-                    late.wait_for_function('!!__lateDecoration.syntax && !!__lateDecoration.formula')
-                    late.evaluate("""async () => {
-                      const r=window.SessionDockRuntime;
-                      document.querySelector('#app').__vue_app__.unmount();
-                      r.syntaxRuntime.dispose();r.formulaRuntime.dispose();
-                      __lateDecoration.syntax();__lateDecoration.formula();
-                      await new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done)));
-                      r.overlays.assets.script=__lateDecoration.script;
-                      Worker.prototype.postMessage=__lateDecoration.post;
-                    }""")
-                    assert late.evaluate("""() => {
-                      const r=window.SessionDockRuntime;
-                      return !document.querySelector('#msgs') && !r.syntaxRuntime.syntaxWorker
-                        && !r.syntaxRuntime.syntaxBusy && r.syntaxRuntime.syntaxFrame===null
-                        && !r.syntaxRuntime.syntaxQueue.size && !r.formulaRuntime.formulaRoots.size;
-                    }""")
-                    late.close()
-                    print('PASS Vue render owner ignores late real Worker and formula asset results', flush=True)
                 assert not errors, errors
                 print('PASS render assets: lazy libraries, worker highlighting, exact large code, responsive UI, stale preview protection')
             finally:

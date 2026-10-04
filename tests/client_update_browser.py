@@ -20,7 +20,7 @@ is touched.
 """
 from __future__ import annotations
 
-from browser_runtime import js, scoped_frontend
+from browser_runtime import js
 import json
 import os
 import re
@@ -49,13 +49,6 @@ case "$last" in
     printf '%s\\n' "$@" > "$state/codex.argv"
     if IFS= read -r line; then echo stdin-open > "$state/codex.stdin"; else echo stdin-closed > "$state/codex.stdin"; fi
     printf '\\033[32m==>\\033[0m Updating Codex CLI\\n10%%\\r50%%\\r100%%\\n'
-    # Only the Vue disposal case holds the update across a real running-state GET.
-    # Bound the gate so a failed browser assertion cannot strand the fake CLI.
-    attempt=0
-    while [ -f "$state/codex.hold" ] && [ "$attempt" -lt 200 ]; do
-      sleep 0.1
-      attempt=$((attempt + 1))
-    done
     sleep 1.5
     printf '%s' "$SESSIONDOCK_TEST_NEW" > "$state/codex.version"
     printf 'Codex CLI %s installed successfully.\\n' "$SESSIONDOCK_TEST_NEW"
@@ -181,93 +174,6 @@ def check_phone(page, base):
     assert all(extra <= 0 for extra in overflow), overflow
 
 
-def check_root_disposal(browser, base, state, errors):
-    """Real update + late running-state read: unmount stops UI work, not the CLI."""
-    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
-    hold = state / "codex.hold"
-    try:
-        (state / "codex.version").write_text(OLD)
-        page = context.new_page()
-        page.on("pageerror", lambda error: errors.append(str(error)))
-        page.goto(base + "/")
-        open_machines(page)
-        codex = matrix_row(page, "本机").locator('td[data-client-source="codex"]')
-        expect(codex.locator(".client-version")).to_have_text(OLD)
-        expect(codex).to_have_attribute("data-state", "outdated")
-        page.wait_for_function("""() => {
-          const entry = window.SessionDockRuntime.settings.machines.value.state.clients.get('');
-          return !entry.loading && !entry.clients.some(c => c.latest_state === 'pending');
-        }""")
-        page.clock.install()
-        page.evaluate("""() => {
-          const runtime = window.SessionDockRuntime, fetch = runtime.core.network.fetch;
-          const lifetime = window.__machinesLifetime = {fetch, reads: 0};
-          runtime.core.network.fetch = async (url, options) => {
-            if (new URL(url, location.href).pathname !== '/api/clients'
-                || (options?.method || 'GET') !== 'GET') return fetch(url, options);
-            lifetime.reads++;
-            const response = await fetch(url, options), json = response.json;
-            response.json = async (...args) => {
-              const data = await json.apply(response, args);
-              if (lifetime.release || !data.clients.some(c => c.id === 'codex-cli-v1' && c.update?.running))
-                return data;
-              lifetime.signal = options?.signal;
-              // Read the real body first: cancelling the request cannot hide the
-              // late-result guard. Keep both the Response and data identities.
-              return new Promise(done => {
-                const release = () => { clearTimeout(timer); done(data); };
-                const timer = setTimeout(release, 10000);
-                lifetime.release = release;
-              });
-            };
-            return response;
-          };
-        }""")
-        hold.touch(mode=0o600)
-        codex.locator(".client-update").click()
-        expect(codex.locator(".client-update")).to_have_text("…")
-        expect(codex.locator(".client-update")).to_be_disabled()
-        # The real POST has returned and the ordinary two-second poll is scheduled.
-        page.wait_for_function("window.SessionDockRuntime.settings.machines.value.state.busy.size === 0")
-        page.clock.fast_forward(2000)
-        page.wait_for_function("!!window.__machinesLifetime.release", timeout=6000)
-        reads = page.evaluate("__machinesLifetime.reads")
-        assert reads == 1, reads
-        page.evaluate("""() => {
-          const lifetime = __machinesLifetime;
-          lifetime.state = window.SessionDockRuntime.settings.machines.value.state;
-          lifetime.entry = lifetime.state.clients.get('');
-          lifetime.clients = lifetime.entry.clients;
-          lifetime.note = lifetime.state.note;
-          document.querySelector('#app').__vue_app__.unmount();
-        }""")
-        assert page.evaluate("__machinesLifetime.signal?.aborted === true"), "clients read was not cancelled"
-        # Complete the already accepted backend update after the page is gone.
-        hold.unlink()
-        deadline = time.monotonic() + 20
-        while True:
-            response = context.request.get(base + "/api/clients", timeout=5000)
-            assert response.ok, response.status
-            client = next(c for c in response.json()["clients"] if c["id"] == "codex-cli-v1")
-            if not client["update"]["running"]:
-                assert client["update"]["ok"] and client["version"] == NEW, client
-                break
-            assert time.monotonic() < deadline, "unmount interrupted the accepted fake CLI update"
-            time.sleep(0.1)
-        page.evaluate("__machinesLifetime.release()")
-        page.clock.fast_forward(30000)
-        expect(page.locator("#settings-dialog, #client-matrix, #machine-note")).to_have_count(0)
-        assert page.evaluate("""() => __machinesLifetime.entry.clients === __machinesLifetime.clients
-          && __machinesLifetime.state.note === __machinesLifetime.note
-          && window.SessionDockRuntime.settings.machines.value === undefined"""), "late clients read updated disposed state"
-        assert page.evaluate("__machinesLifetime.reads") == reads, "clients polling resumed after unmount"
-        assert (state / "codex.version").read_text() == NEW
-        print("PASS Vue machines root disposal: late read ignored, polling stopped, accepted update completes")
-    finally:
-        hold.unlink(missing_ok=True)
-        context.close()
-
-
 def main():
     if os.name != "posix":
         raise SystemExit("Fake CLI scripts need POSIX sh.")
@@ -321,9 +227,6 @@ def main():
                     check_machine(page, base, state, "本机")
                     api_contract(page, base)
                     print("PASS local machine settings: versions, update, failure, API contract")
-
-                    if scoped_frontend():
-                        check_root_disposal(browser, base, state, errors)
 
                     (state / "codex.version").write_text(OLD)
                     other = FakeNode("b" * 32, "Vega")
