@@ -212,6 +212,8 @@ def main(argv=None):
     parser.add_argument("--timeout-scale", type=float, default=1.0)
     parser.add_argument("--keep-going", action="store_true")
     parser.add_argument("--binary", default="target/release/sessiondock")
+    parser.add_argument("--web-dir", type=Path,
+                        help="validate this already-built frontend without rebuilding workspace assets")
     parser.add_argument("--python-source", default=str(discover_source(ROOT)))
     parser.add_argument("--json", type=Path, metavar="PATH")
     parser.add_argument("--rerun-failed", type=Path, metavar="PATH")
@@ -274,13 +276,15 @@ def main(argv=None):
     started = datetime.now().astimezone().isoformat()
 
     env = os.environ.copy()
+    if args.web_dir:
+        env["SESSIONDOCK_TEST_WEB_DIR"] = str(args.web_dir.resolve())
     if not shutil.which("cargo", path=env.get("PATH", "")):
         cargo_bin = Path.home() / ".cargo/bin"
         if cargo_bin.is_dir():
             env["PATH"] = str(cargo_bin) + os.pathsep + env.get("PATH", "")
     chrome = find_chromium()
 
-    if not args.dry_run and any(suite.get("browser") and not suite["skip"] for suite in plan):
+    if not args.dry_run and not args.web_dir and any(suite.get("browser") and not suite["skip"] for suite in plan):
         frontend_build = "build:migration" if env.get("SESSIONDOCK_TEST_WEB_DIR") else "build:legacy"
         print(f"building Vue assets before browser suites: {frontend_build}", flush=True)
         result = subprocess.run(["npm", "run", frontend_build], cwd=ROOT / "web", env=env,

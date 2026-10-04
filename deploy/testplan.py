@@ -230,7 +230,8 @@ def run(plan: dict, binary: str, stage: Path, timeout: float, out=say) -> dict:
     cmds: list[tuple[str, list[str]]] = []
     if plan["full"] or plan["suites"]:
         argv = [sys.executable, str(RUNNER), "--binary", binary, "--log-dir",
-                str(stage / "logs" / "validation"), "--json", str(json_path)]
+                str(stage / "logs" / "validation"), "--json", str(json_path),
+                "--web-dir", str((stage / "web").resolve())]
         cmds.append(("run_validation", argv + ([] if plan["full"] else ["--only", ",".join(plan["suites"])])))
     cmds += [(s, [sys.executable, s]) for s in plan["scripts"]]
     if not cmds:

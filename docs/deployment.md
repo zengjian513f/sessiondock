@@ -113,6 +113,10 @@ stage，须重新构建，避免不同平台部署不同版本。
 `--web-only --test affected` 不纳入未随页面更新发布的 `crates/`、`Cargo.toml` 与
 `Cargo.lock` 改动；前端及对应浏览器测试仍走测试门。
 
+测试门显式传入 `--web-dir <stage>/web`，浏览器使用本次已构建的发布资源，
+不再重新构建或默认读取工作区旧入口。独立验收也可用此参数验证已有构建；
+未指定时仍保留验证器原有的自动构建行为。
+
 顺序固定为 build → test → push：测试失败先于任何上传，退出 1，并在 stderr 列出失败套件名与各自的日志
 路径（`<stage>/logs/validation/<suite>.log`）。测试输出实时流到控制台（run_validation 自己的进度行）并
 落盘到 `<stage>/logs/tests.log`；整轮超时 `--test-timeout`（默认 2400 s）。跑之前一定先打印计划：
