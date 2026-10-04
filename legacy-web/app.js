@@ -8599,6 +8599,9 @@ const RE_MD_IMAGE = /!\[([^\]]*)\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+["'][^"']*["'])?\s
 const RE_CODE_SPAN = /(^|[^`])(`+)(?!`)([^\n]*?)(?<!`)\2(?!`)/g;
 
 const RE_REFERENCE = /(?<![A-Za-z0-9_@/\\:.-])(?:(?:https?:\/\/|www\.)[^\s<>"'`\u0000，。；、！？]+|[A-Za-z]:[/\\][^\s<>"'`\u0000，。；、！？()[\]{}]*|(?:~\/|\.\.?\/|\/|[A-Za-z0-9_.-]+\/)[^\s<>"'`\u0000，。；、！？()[\]{}]+|[A-Za-z0-9_-][A-Za-z0-9_.-]*\.[A-Za-z][A-Za-z0-9_-]*(?::\d+(?::\d+)?|#L\d+(?:C\d+)?)?)/gi;
+// Prose web addresses also link outside parentheses. Keep Markdown emphasis
+// and Chinese prose delimiters outside the destination.
+const RE_WEB_REFERENCE = /(?<![A-Za-z0-9_@/\\:.-])(?:https?:\/\/|www\.)[^\s<>"'`*\u0000，。；、！？（）【】“”‘’：]+/gi;
 
 const isWindowsDrivePath = path => /^[A-Za-z]:[/\\]/.test(path);
 function fileParentDirectory(path) {
@@ -8815,8 +8818,11 @@ function inline(s, media = [], context = {}) {
     const html = referenceLink(ref, esc(ref), context);
     return html ? keepLink(html) + raw.slice(ref.length) : raw;
   };
-  // Parentheses opt prose into linkification. Code spans are explicit
-  // references too, including when they appear outside parentheses.
+  // Existing Markdown links, images and code spans are already placeholders,
+  // so web linkification cannot rewrite their labels or destinations.
+  s = s.replace(RE_WEB_REFERENCE, linkCandidate);
+  // Parentheses opt file references in prose into linkification. Code spans
+  // are explicit references too, including outside parentheses.
   const parenthesized = (part, explicit) => {
     // A complete target may itself contain balanced parentheses. Do not split
     // a URL or a filename such as report(final).pdf into several links.
