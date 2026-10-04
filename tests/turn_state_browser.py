@@ -19,7 +19,7 @@ keeps turning until its end notice or TaskStop, and a watchdog Monitor that
 tails an ended command's output file no longer holds it. No model binary,
 native CLI home or production host is touched.
 """
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 import json
 import os
@@ -436,7 +436,8 @@ def main(binary=BINARY):
                     expect(page.locator("#msgs")).to_contain_text("Synthetic background result")
                     page.wait_for_function(js("S.agent === 'a1b2c3d4e5f6a7b8c'", "runtime.core.state.selection.agent === 'a1b2c3d4e5f6a7b8c'"))
                     expect(page.locator("#a-term")).to_have_attribute("aria-label", re.compile("子代理"))
-                    page.evaluate(js("renderTakeoverBtn()", 'runtime.takeover.renderTakeoverBtn()'))
+                    if not scoped_frontend():
+                        page.evaluate("renderTakeoverBtn()")
                     expect(page.locator("#composer")).to_be_hidden()
                     expect(page.locator("#composer-input-status")).to_be_hidden()
                     page.locator(f'#side .item[data-uid="{claude_uid}"]:not(.agent)').click()

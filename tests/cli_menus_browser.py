@@ -290,7 +290,7 @@ def main():
                                 }''', """() => {
                                     const item = document.querySelector('#side .item.sel');
                                     runtime.core.state.unread.unread.set(item.dataset.uid, {count:2});
-                                    runtime.status.paintItemStatus(item);
+                                    runtime.status.paintTurn(item.dataset.uid);
                                 }"""))
                                 marker = page.locator('#side .item.sel > .ico > .item-status')
                                 expect(marker).to_have_text('?')
@@ -302,7 +302,7 @@ def main():
                                 }''', """() => {
                                     const item = document.querySelector('#side .item.sel');
                                     runtime.core.state.unread.unread.delete(item.dataset.uid);
-                                    runtime.status.paintItemStatus(item);
+                                    runtime.status.paintTurn(item.dataset.uid);
                                 }"""))
                         # The history watch contains CLI status but no CHECK
                         # screen projection. It must preserve this live card.

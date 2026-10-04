@@ -93,7 +93,7 @@ def main():
                 }""", r"""() => {
                     const item = document.querySelector('#side .item.sel');
                     runtime.core.state.unread.unread.set(item.dataset.uid, {count:2});
-                    runtime.status.paintItemStatus(item);
+                    runtime.status.paintTurn(item.dataset.uid);
                 }"""))
                 marker = page.locator('#side .item.sel > .ico > .item-status')
                 expect(marker).to_have_text('2')
@@ -105,7 +105,7 @@ def main():
                 }""", r"""() => {
                     const item = document.querySelector('#side .item.sel');
                     runtime.core.state.unread.unread.delete(item.dataset.uid);
-                    runtime.status.paintItemStatus(item);
+                    runtime.status.paintTurn(item.dataset.uid);
                 }"""))
                 expect(page.locator('#composer-input-status')).not_to_have_class(re.compile(r'\binput-attention\b'))
                 # No submission is needed to show or retain the reason. Enter

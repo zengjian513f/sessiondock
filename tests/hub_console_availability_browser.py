@@ -185,8 +185,8 @@ def scoped_main():
                     const runtime = window.SessionDockRuntime;
                     runtime.core.nodes.applyNodeState({capabilities:{...runtime.core.state.nodes.capabilities,[nid]:capability}});
                     runtime.terminal.state.resume_sources = {claude:top_level};
-                    runtime.terminal.state.ended = ended ? new Map([[uid,{reason:'已退出且不可恢复'}]]) : new Map();
-                    runtime.takeover.renderTakeoverBtn();
+                    runtime.terminal.state.ended.clear();
+                    if(ended)runtime.terminal.state.ended.set(uid,{reason:'已退出且不可恢复'});
                 }''', {'nid':first.nid, 'uid':uid, 'capability':capability, 'ended':ended, 'top_level':top_level})
             for ended in [False, True]:
                 apply(ready, ended=ended)
@@ -209,9 +209,10 @@ def scoped_main():
             expect(button).to_have_attribute('data-unavailable', 'true')
             page.locator(f'#side .item[data-uid="{uid}"] .t').click()
             expect(button).to_have_attribute('data-unavailable', 'false')
-            page.evaluate('uid => window.SessionDockRuntime.core.nodes.paintConsoleAvailability(document.querySelector("#a-term"),uid,"child-agent")', uid)
+            page.evaluate('window.SessionDockRuntime.core.state.selection.agent="child-agent"')
             expect(button).to_have_attribute('data-unavailable', 'true')
             expect(button).to_have_attribute('aria-label', re.compile('子代理没有独立控制台'))
+            page.evaluate('window.SessionDockRuntime.core.state.selection.agent=null')
             apply(ready)
             dialogs = []
             on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
