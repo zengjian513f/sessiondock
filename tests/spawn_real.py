@@ -16,6 +16,8 @@ session dir, and temp dirs. SKIP when `claude`/`grok` is absent or login fails.
 """
 from __future__ import annotations
 
+from frontend_paths import frontend_dir
+
 import argparse, hashlib, json, os, shlex, shutil, socket, subprocess, tempfile, time, uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -121,7 +123,7 @@ def server_with_env(executable, extra_env):
         port = reservation.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
     environment.update({"SESSIONDOCK_BIND": f"127.0.0.1:{port}",
-                        "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web"), **extra_env})
+                        "SESSIONDOCK_WEB_DIR": str(frontend_dir()), **extra_env})
     opener = build_opener(ProxyHandler({}), NoRedirects())
     with tempfile.TemporaryFile(mode="w+b") as log:
         process = subprocess.Popen([str(executable)], cwd=REPO, env=environment,
@@ -171,7 +173,7 @@ def print_dry_run(binary):
     print(f"SESSIONDOCK_CLAUDE_ROOT=<isolated-or-real>/projects "
           f"SESSIONDOCK_GROK_ROOT={GROK_ROOT} SESSIONDOCK_CODEX_ROOT=<temp>/codex "
           f"SESSIONDOCK_STATE_DIR=<temp>/state SESSIONDOCK_BIND=127.0.0.1:<ephemeral> "
-          f"SESSIONDOCK_WEB_DIR={REPO / 'legacy-web'} {binary}")
+          f"SESSIONDOCK_WEB_DIR={frontend_dir()} {binary}")
     print("GET /api/live")
     print("GET /api/sessions?force=1")
     print(f"rm {CLAUDE_PROJECTS}/<encoded-cwd>/<minted-uuid>.jsonl")

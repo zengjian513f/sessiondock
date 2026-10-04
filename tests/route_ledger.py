@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-check HTTP route inventory from the Rust router, route ledger, and legacy-web."""
+"""Cross-check HTTP route inventory from the Rust router, route ledger, and Vue frontend."""
 # run_validation: skip
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ ROUTER = ROOT / "crates/sessiondock/src/api/mod.rs"
 HUB_ROUTER = ROOT / "crates/sessiondock/src/api/hub.rs"
 HUB_ROUTE_RE = re.compile(r'\(\s*"(?:GET|POST|DELETE|ANY)"\s*,\s*"([^"]+)"\s*\)')
 LEDGER = ROOT / "docs/route-ledger.md"
-LEGACY = ROOT / "legacy-web"
+FRONTEND = ROOT / "web/src"
 UID_EXPR = "${encodeURIComponent(uid)}"
 ROUTE_RE = re.compile(r'\.route\(\s*"([^"]+)"\s*,\s*(?:get|post|put|delete|patch|any)\s*\(')
 LIST_RE = re.compile(r"for path in \[([^\]]+)\]")
@@ -71,7 +71,7 @@ def hub_inventory(text: str) -> set[str]:
     """The hub binary's self-answered routes (`api::hub::HUB_ROUTES`).
 
     `{nid}`/`{*path}` template segments become `{param}` so they match the
-    legacy `/api/nodes/${id}/…` calls exactly like the node router's paths.
+    frontend `/api/nodes/${id}/…` calls exactly like the node router's paths.
     """
     routes = set()
     for path in HUB_ROUTE_RE.findall(text):
@@ -115,9 +115,9 @@ def skip_expr(text: str, index: int) -> int:
     return index
 
 
-def legacy_uses(folder: Path) -> dict[str, set[str]]:
+def frontend_uses(folder: Path) -> dict[str, set[str]]:
     used: dict[str, set[str]] = defaultdict(set)
-    for source in sorted(folder.glob("*.js")):
+    for source in sorted((p for p in folder.rglob('*') if p.suffix in {'.js','.ts','.vue'})):
         text = source.read_text(encoding="utf-8")
         index, n = 0, len(text)
         while index < n:
@@ -138,7 +138,7 @@ def legacy_uses(folder: Path) -> dict[str, set[str]]:
                     index += 1
                 path = api_path("".join(buf))
                 if path not in {"", "/api"}:
-                    used[path].add(source.name)
+                    used[path].add(source.relative_to(folder).as_posix())
             index += 1
     return used
 
@@ -159,28 +159,28 @@ def build() -> dict:
     rust = rust_inventory(ROUTER.read_text(encoding="utf-8"))
     hub = hub_inventory(HUB_ROUTER.read_text(encoding="utf-8")) if HUB_ROUTER.exists() else set()
     ledger = ledger_inventory(LEDGER.read_text(encoding="utf-8"))
-    legacy = legacy_uses(LEGACY)
+    frontend = frontend_uses(FRONTEND)
     rows: list[dict] = []
     for path, status in rust.items():
         rows.append(
-            {"route": path, "rust": status, "ledger_status": "-", "group": "-", "legacy": []}
+            {"route": path, "rust": status, "ledger_status": "-", "group": "-", "frontend": []}
         )
     # Hub-only routes (settings-page writes, aggregates the node never serves).
     for path in sorted(hub - set(rust)):
-        rows.append({"route": path, "rust": "hub", "ledger_status": "hub mode", "group": "Hub", "legacy": []})
+        rows.append({"route": path, "rust": "hub", "ledger_status": "hub mode", "group": "Hub", "frontend": []})
     for path, (group, status) in ledger.items():
         row = find_row(rows, path, loose=False)
         if row is None:
-            row = {"route": path, "rust": "missing", "ledger_status": "-", "group": "-", "legacy": []}
+            row = {"route": path, "rust": "missing", "ledger_status": "-", "group": "-", "frontend": []}
             rows.append(row)
         row["ledger_status"] = status
         row["group"] = group
-    for path, files in legacy.items():
+    for path, files in frontend.items():
         row = find_row(rows, path, loose=True)
         if row is None:
-            row = {"route": path, "rust": "missing", "ledger_status": "-", "group": "-", "legacy": []}
+            row = {"route": path, "rust": "missing", "ledger_status": "-", "group": "-", "frontend": []}
             rows.append(row)
-        row["legacy"] = sorted(set(row["legacy"]) | files)
+        row["frontend"] = sorted(set(row["frontend"]) | files)
     rows.sort(key=lambda row: row["route"])
     summary = {
         "implemented": sum(row["rust"] == "implemented" for row in rows),
@@ -188,8 +188,8 @@ def build() -> dict:
         "in ledger but absent from router": sum(
             row["ledger_status"] != "-" and row["rust"] == "missing" for row in rows
         ),
-        "used by legacy but absent from router": sum(
-            bool(row["legacy"]) and row["rust"] == "missing" for row in rows
+        "used by frontend but absent from router": sum(
+            bool(row["frontend"]) and row["rust"] == "missing" for row in rows
         ),
     }
     return {"routes": rows, "summary": summary}
@@ -197,11 +197,11 @@ def build() -> dict:
 
 def render_table(data: dict) -> str:
     lines = [
-        "| Route | Rust | Ledger status | Used by legacy |",
+        "| Route | Rust | Ledger status | Used by frontend |",
         "| --- | --- | --- | --- |",
     ]
     for row in data["routes"]:
-        files = ", ".join(row["legacy"]) if row["legacy"] else "-"
+        files = ", ".join(row["frontend"]) if row["frontend"] else "-"
         lines.append(f"| {row['route']} | {row['rust']} | {row['ledger_status']} | {files} |")
     summary = data["summary"]
     lines.append("")
@@ -209,8 +209,8 @@ def render_table(data: dict) -> str:
     lines.append(f"501: {summary['501']}")
     lines.append(f"in ledger but absent from router: {summary['in ledger but absent from router']}")
     lines.append(
-        "used by legacy but absent from router: "
-        f"{summary['used by legacy but absent from router']}"
+        "used by frontend but absent from router: "
+        f"{summary['used by frontend but absent from router']}"
     )
     return "\n".join(lines)
 

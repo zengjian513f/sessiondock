@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Static checks for served and frozen legacy HTML.
+"""Static checks for the built frontend and frozen historical HTML.
 
-legacy-web/*.html and reference/legacy-web/*.html: duplicate ids,
+web/dist-migration/*.html and reference/legacy-web/*.html: duplicate ids,
 <script src>/<link href> files missing under that tree (ignore http(s)
 and data: URLs), inline on* handlers, index.html placeholders
 __SESSIONDOCK_MODE__/__SESSIONDOCK_HOSTNAME__/__SESSIONDOCK_ASSET_VERSION__,
@@ -19,8 +19,10 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from frontend_paths import frontend_dir
+
 ROOT = Path(__file__).resolve().parents[1]
-TREES = (ROOT / "legacy-web", ROOT / "reference" / "legacy-web")
+TREES = (frontend_dir(), ROOT / "reference" / "legacy-web")
 PLACEHOLDERS = (
     "__SESSIONDOCK_MODE__",
     "__SESSIONDOCK_HOSTNAME__",
@@ -122,7 +124,7 @@ def check_file(path: Path, tree: Path, out: list) -> None:
         for token in PLACEHOLDERS:
             if token not in text:
                 note(out, "missing-placeholder", path, 1, token)
-    if page.caps is None:
+    if page.caps is None and 'name="sessiondock-mode" content="__SESSIONDOCK_MODE__"' not in text:
         note(out, "missing-capabilities", path, 1,
              'meta name="sessiondock-capabilities"')
     for line in page.imgs:

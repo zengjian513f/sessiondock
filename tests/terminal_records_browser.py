@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Real recordings-page acceptance for either entry; isolated free shells only.
+"""Real Vue recordings-page acceptance; isolated free shells only.
 
 Build sessiondock and ptyhost first; SESSIONDOCK_TEST_WEB_DIR selects the
-migration build, otherwise the production legacy entry is used. The test opens
+explicit artifact; otherwise the compiled Vue entry is used. The test opens
 only its fixtures' recordings page, never creates descendants, and exercises
 list filtering, selection, live follow, resize, read-only viewing, exit, reload
 and fit by normal browser clicks and keyboard input. Terminal assertions read
@@ -27,7 +27,7 @@ PROBE = """() => {
   window.WebSocket = class extends OriginalWebSocket {
     constructor(...args) {
       super(...args);
-      if (new URL(args[0], location.href).pathname !== '/api/term/records/attach') return;
+      if (new URL(args[0], location.href).pathname !== new URL('api/term/records/attach', location.href).pathname) return;
       const state = {close:null, sent:[], received:''};
       this.__recordsState = state;
       __recordsProbe.sockets.push(state);
@@ -102,6 +102,10 @@ def main():
                 archived_process, archived_record = cleanup.enter_context(
                     host(root, archived_instance, name="synthetic-records-archived"))
                 with isolated_server(corpus, BINARY, host_dir=root / "host") as (base, _):
+                    if os.environ.get('SESSIONDOCK_TEST_PREFIX'):
+                        from frontend_entry_browser import prefixed_proxy
+                        prefixed, target = cleanup.enter_context(prefixed_proxy())
+                        target.url, base = base, prefixed.rstrip('/')
                     context = browser.new_context(
                         viewport={"width": 1280, "height": 900}, service_workers="block")
                     cleanup.callback(context.close)

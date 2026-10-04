@@ -3,9 +3,9 @@
 
 Prerequisite, not performed here:
 
-    npm --prefix web run build:legacy
+    npm --prefix web run build
 
-That build writes legacy-web/framework/settings.js, which the page loads.
+That build writes web/dist-migration/, the default served frontend.
 This script only drives the served UI.
 
 Synthetic corpus and a loopback isolated_server. Desktop 1280×900 and phone

@@ -3,6 +3,7 @@
 # run_validation: skip
 import argparse, errno, json, os, socket, subprocess, sys
 from pathlib import Path
+from frontend_paths import entry_asset, html_assets, local_asset
 
 REPO = Path(__file__).resolve().parents[1]
 PRIV = ("SESSIONDOCK_STATE_DIR", "SESSIONDOCK_LIFECYCLE_DIR",
@@ -128,7 +129,7 @@ def chk_priv(env):
         mode = Path(v).stat().st_mode
         if not (mode & 0o022 == 0 and mode & 0o700 == 0o700):
             emit("FAIL", "private_dirs", f"chmod 700 {v}"); fail = True
-    others = [("SESSIONDOCK_WEB_DIR", env.get("SESSIONDOCK_WEB_DIR") or str(REPO / "legacy-web"))]
+    others = [("SESSIONDOCK_WEB_DIR", env.get("SESSIONDOCK_WEB_DIR") or str(REPO / "web/dist-migration"))]
     others += [(k, env[k]) for k in ROOTS if k in env]
     for k in LISTS:
         others += [(k, p) for p in env.get(k, "").split(os.pathsep) if p]
@@ -173,14 +174,22 @@ def chk_web(env):
     raw = env.get("SESSIONDOCK_WEB_DIR")
     if not raw or not Path(raw).is_absolute():
         emit("WARN", "web_dir", "set SESSIONDOCK_WEB_DIR to an absolute path")
-        raw = str(REPO / (raw or "legacy-web"))
+        raw = str(REPO / (raw or "web/dist-migration"))
     if blocked(raw):
         emit("FAIL", "web_dir", f"{raw} is under a CLI/Python home"); return
-    miss = [n for n in ("index.html", "app.js") if not (Path(raw) / n).is_file()]
-    if miss:
-        emit("FAIL", "web_dir", f"missing {', '.join(miss)} in {raw}")
-    else:
-        emit("PASS", "web_dir", f"{raw} has index.html and app.js")
+    web = Path(raw)
+    try:
+        entry = entry_asset(web)
+        resources = set()
+        for page in sorted(web.rglob("*.html")):
+            resources.update(html_assets(web, page.relative_to(web).as_posix()))
+        manifest_path = web / "manifest.webmanifest"
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            resources.update(local_asset(web, icon["src"]) for icon in manifest.get("icons", []))
+    except (AssertionError, OSError, ValueError, KeyError) as exc:
+        emit("FAIL", "web_dir", f"{raw}: {exc}"); return
+    emit("PASS", "web_dir", f"{raw}: entry={entry.relative_to(web.resolve())}; {len(resources)} local HTML/manifest resources present")
 
 def chk_state(env):
     raw = env.get("SESSIONDOCK_STATE_DIR")

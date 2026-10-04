@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Graceful shutdown (M7): SIGTERM/SIGINT drain SSE, media, search, and audit."""
+
+from frontend_paths import frontend_dir
 import argparse, http.client, json, os, signal, socket, subprocess, sys, tempfile, threading, time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -30,7 +32,7 @@ def start(corpus, binary, audit):
     env = {k: v for k, v in os.environ.items() if not k.startswith("SESSIONDOCK_")}
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0)); port = reservation.getsockname()[1]
-    env.update({"SESSIONDOCK_BIND": f"127.0.0.1:{port}", "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web"),
+    env.update({"SESSIONDOCK_BIND": f"127.0.0.1:{port}", "SESSIONDOCK_WEB_DIR": str(frontend_dir()),
                 "SESSIONDOCK_AUDIT_DIR": str(audit)})
     for src in ("claude", "codex", "grok"):
         env["SESSIONDOCK_" + src.upper() + "_ROOT"] = str(corpus.root / src)

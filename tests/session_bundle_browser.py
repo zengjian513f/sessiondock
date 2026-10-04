@@ -276,7 +276,11 @@ def main():
                             page.route('**/api/session/clone/plan',final_options,times=1)
                         with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as planned:
                             page.locator('#a-clone-group').click()
-                        if provider=='codex' and not peer:rejected_bundles(a,b,planned.value.json()['operation_id'])
+                        # Corrupt clone bundles reach content validation. Local move
+                        # fixtures share storage and are rejected earlier; their
+                        # real UI refusal and intact source are asserted below.
+                        if provider=='codex' and not peer and not args.move:
+                            rejected_bundles(a,b,planned.value.json()['operation_id'])
                         dialog=page.locator('#clone-group-dialog')
                         expect(dialog.locator('.clone-members tbody tr')).to_have_count(count,timeout=20000)
                         dialog.locator('#transfer-target').select_option(b.nid)

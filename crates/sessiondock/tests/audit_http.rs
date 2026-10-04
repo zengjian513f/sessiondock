@@ -49,7 +49,7 @@ impl Fixture {
 
     fn config(&self, limits: Limits) -> Config {
         Config {
-            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
             audit_dir: Some(self.audit.clone()),
             audit_limits: limits,
             ..Config::default()
@@ -86,7 +86,7 @@ impl Fixture {
 
 fn unconfigured() -> Config {
     Config {
-        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
         ..Config::default()
     }
 }

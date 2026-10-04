@@ -275,7 +275,7 @@ impl Server {
         let cancel = CancellationToken::new();
         let config = Config {
             bind: address,
-            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
             ptyhost_dir: directory.map(Path::to_owned),
             ..Default::default()
         };
@@ -551,7 +551,7 @@ async fn claim_labels_hub_traffic_by_forwarded_address_and_flags_same_address_co
     std::fs::write(&token_file, format!("{NODE_TOKEN}\n")).unwrap();
     std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600)).unwrap();
     let config = Config {
-        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
         ptyhost_dir: Some(host.directory.path().to_owned()),
         node_bind: Some("127.0.0.1:0".parse().unwrap()),
         node_token_file: Some(token_file),

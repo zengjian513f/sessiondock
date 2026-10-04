@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """HTTP-only contract of POST /api/bug-report and the bug-report attachment upload against the fake Claude and Codex CLIs. No Chromium, no model binary."""
 from __future__ import annotations
+
+from frontend_paths import frontend_dir
 import argparse, json, os, shutil, socket, subprocess, tempfile, time
 from contextlib import contextmanager
 from pathlib import Path
@@ -54,7 +56,7 @@ def server(binary, root, extra):
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
     env = {key: value for key, value in os.environ.items() if not key.startswith("SESSIONDOCK_")}
-    env.update(SESSIONDOCK_BIND=f"127.0.0.1:{port}", SESSIONDOCK_WEB_DIR=str(REPO / "legacy-web"),
+    env.update(SESSIONDOCK_BIND=f"127.0.0.1:{port}", SESSIONDOCK_WEB_DIR=str(frontend_dir()),
                SESSIONDOCK_CLAUDE_ROOT=str(root / "claude"), SESSIONDOCK_CODEX_ROOT=str(root / "codex"),
                SESSIONDOCK_GROK_ROOT=str(root / "grok"), SESSIONDOCK_PTYHOST_DIR=str(root / "host"),
                SESSIONDOCK_STATE_DIR=str(root / "state"), SESSIONDOCK_LIFECYCLE_DIR=str(root / "ledger"), SESSIONDOCK_AUDIT_DIR=str(root / "audit"),

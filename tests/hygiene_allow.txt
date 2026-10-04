@@ -9,6 +9,5 @@ crates/ptyhost-client/tests/*.rs:non-loopback-ip
 # Redaction tests use synthetic personal-looking paths on purpose:
 crates/sessiondock/src/audit/tests.rs:personal-path
 # UI placeholder text and the repository path in the delegation doc:
-legacy-web/index.html:personal-path
 reference/legacy-web/index.html:personal-path
 docs/delegation.md:personal-path

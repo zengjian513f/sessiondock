@@ -11,6 +11,8 @@ serves `/api/health` and the synthetic session. `/api/meta` reports `hub:false`.
 """
 from __future__ import annotations
 
+from frontend_paths import frontend_dir
+
 import argparse
 import json
 import os
@@ -182,7 +184,7 @@ def main():
         env = {key: value for key, value in os.environ.items() if not key.startswith("SESSIONDOCK_")}
         env.update({
             "SESSIONDOCK_BIND": "127.0.0.1:0",
-            "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web"),
+            "SESSIONDOCK_WEB_DIR": str(frontend_dir()),
             "SESSIONDOCK_CLAUDE_ROOT": str(corpus.root / "claude"),
             "SESSIONDOCK_CODEX_ROOT": str(corpus.root / "codex"),
             "SESSIONDOCK_GROK_ROOT": str(corpus.root / "grok"),

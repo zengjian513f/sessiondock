@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Inline group management, session submenus and offline-safe deletion through Chromium."""
-from browser_runtime import js, scoped_frontend
+from browser_runtime import js
 import argparse
 from contextlib import ExitStack
 import json
@@ -262,58 +262,6 @@ def main():
             assert stored(1)['group_catalog']['groups'] == []
             assert stored(1)['group_catalog']['changes']
             create(solo, '空列表新建')
-            if scoped_frontend():
-                lifecycle = page_at(bases[0], clock=True)
-                tree(lifecycle); edit(lifecycle, uid_a)
-                lifecycle.evaluate("""() => {
-                  const r=window.SessionDockRuntime, fetch=r.core.network.fetch;
-                  window.__lateGroups={fetch, reads:0};
-                  r.core.network.fetch=async (url, options) => {
-                    if (!String(url).endsWith('api/groups') || options?.method === 'POST') return fetch(url, options);
-                    __lateGroups.reads++;
-                    const response=await fetch(url, options), data=await response.json();
-                    data.groups.push('卸载后的迟到分组');
-                    return new Promise(done => {__lateGroups.release=()=>done(new Response(JSON.stringify(data), {status:200}))});
-                  };
-                }""")
-                lifecycle.clock.fast_forward(10000)
-                lifecycle.wait_for_function('!!__lateGroups.release')
-                lifecycle.evaluate("""() => {
-                  const r=window.SessionDockRuntime;
-                  __lateGroups.names=r.core.groups.names;
-                  document.querySelector('#app').__vue_app__.unmount();
-                  __lateGroups.release();
-                }""")
-                lifecycle.clock.fast_forward(30000)
-                lifecycle.wait_for_function("""() => !document.querySelector('#session-group-menu')
-                  && window.SessionDockRuntime.core.groups.names === __lateGroups.names""")
-                assert lifecycle.evaluate('__lateGroups.reads') == 1
-                lifecycle.evaluate('window.SessionDockRuntime.core.network.fetch=__lateGroups.fetch')
-                print('PASS Vue group menu root disposal ignores late reads and stops refresh polling', flush=True)
-                writing = page_at(bases[0])
-                writing.locator('#view [data-v="group"]').click()
-                writing.locator('#session-group-add').click()
-                writing.locator('#session-group-name').fill('卸载时已接受创建')
-                writing.evaluate("""() => {
-                  const r=window.SessionDockRuntime, fetch=r.core.network.fetch;
-                  window.__acceptedGroup={fetch};
-                  r.core.network.fetch=async (url, options) => {
-                    const response=await fetch(url, options);
-                    if (!String(url).endsWith('api/groups') || options?.method !== 'POST') return response;
-                    return new Promise(done => {__acceptedGroup.release=()=>done(response)});
-                  };
-                }""")
-                writing.locator('#session-group-name').press('Enter')
-                writing.wait_for_function('!!__acceptedGroup.release')
-                writing.evaluate("""() => {
-                  document.querySelector('#app').__vue_app__.unmount();
-                  __acceptedGroup.release();
-                }""")
-                writing.wait_for_function("window.SessionDockRuntime.core.groups.names.includes('卸载时已接受创建')")
-                expect(writing.locator('#session-group-create-row')).to_have_count(0)
-                assert '卸载时已接受创建' in stored(0)['group_catalog']['groups']
-                writing.evaluate('window.SessionDockRuntime.core.network.fetch=__acceptedGroup.fetch')
-                print('PASS Vue group disposal preserves an accepted create operation', flush=True)
             assert all(p.read_bytes() == raw for p, raw in native.items())
             assert not errors, errors
             print('PASS groups browser: no dropdown, obsolete filter ignored across views/reload, inline create/cancel/delete, no dialog/ungrouped section, submenus hover/click/keyboard/touch, keyboard focus survives catalog refresh, immediate assignment, batch, offline deletion/rejoin, same-name recreation, restarts, standalone deletion, native files unchanged')

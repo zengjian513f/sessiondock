@@ -2,7 +2,7 @@
 """Local composer user paths against a private fake Claude PTY, never a model.
 
 Requires an already-built sessiondock binary and target/debug/ptyhost. Select
-the built Vue entry with SESSIONDOCK_TEST_WEB_DIR; unset it for legacy-web.
+the built Vue entry with SESSIONDOCK_TEST_WEB_DIR; leave it unset for the default compiled frontend.
 Uses send_browser's lifecycle/history helpers and history_parity's loopback
 server. Two ordinary UI sends populate native input history. Delayed real
 draft/SEND replies and an intercepted meta build exercise stale completion;
@@ -274,7 +274,8 @@ def exercise(browser, base, root, mobile=False):
     page.on('pageerror', lambda error: errors.append(str(error)))
     on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
     try:
-        page.goto(base, wait_until='domcontentloaded')
+        page.goto(base, wait_until='networkidle')
+        page.wait_for_selector('#new-session:not(.hidden)', state='attached')
         # Header folding can replace the inline button during actionability
         # checks. Let the live locator resolve whichever entry is visible.
         page.locator('#new-session:visible, #header-more-btn:visible').first.click()

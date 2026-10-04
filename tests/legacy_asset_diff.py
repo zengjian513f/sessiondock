@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Report how served legacy-web/ differs from frozen reference/legacy-web/.
+"""Historical report comparing an explicit legacy frontend backup to its baseline.
+
+This tool is not a production frontend validator. Both --legacy-dir and
+--reference-dir must name preserved backup trees; it never reads the current
+production artifact or the repository's frozen reference by default.
 
 Walks both trees with no skips and classifies every file as identical,
 modified, only-in-legacy or only-in-reference via SHA-256. Modified text
@@ -19,8 +23,6 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-LEGACY = ROOT / "legacy-web"
-REFERENCE = ROOT / "reference" / "legacy-web"
 TEXT_SUFFIXES = {".js", ".css", ".html", ".json", ".webmanifest", ".md", ".txt", ".svg"}
 STATUS_ORDER = ("modified", "only-in-legacy", "only-in-reference", "identical")
 DIFF_LIMIT = 400
@@ -49,7 +51,7 @@ def read_text(path: Path | None) -> str:
 def unified(old: str, new: str, rel: str) -> list[str]:
     return list(difflib.unified_diff(
         old.splitlines(True), new.splitlines(True),
-        fromfile=f"reference/legacy-web/{rel}", tofile=f"legacy-web/{rel}",
+        fromfile=f"historical-reference/{rel}", tofile=f"historical-legacy/{rel}",
     ))
 
 
@@ -151,12 +153,19 @@ def show_diff(row: dict, legacy_files: dict[str, Path], reference_files: dict[st
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--legacy-dir", type=Path, required=True,
+                        help="explicit historical served-frontend backup")
+    parser.add_argument("--reference-dir", type=Path, required=True,
+                        help="explicit historical baseline backup (read-only comparison)")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     parser.add_argument("--show-diff", metavar="NAME",
                         help="print unified diff of one file (max 400 lines)")
     args = parser.parse_args()
-    legacy_files = collect(LEGACY)
-    reference_files = collect(REFERENCE)
+    for directory in (args.legacy_dir, args.reference_dir):
+        if not directory.is_dir() or not (directory / "index.html").is_file():
+            parser.error(f"historical backup must be a frontend directory with index.html: {directory}")
+    legacy_files = collect(args.legacy_dir)
+    reference_files = collect(args.reference_dir)
     rows = classify(legacy_files, reference_files)
     tot = totals(rows)
     if args.show_diff:

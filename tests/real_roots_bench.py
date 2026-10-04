@@ -4,6 +4,8 @@
 Isolated loopback server; explicit native read roots only; never writes under them.
 Requires --i-understand-this-reads-real-histories.
 """
+
+from frontend_paths import frontend_dir
 # run_validation: skip
 import argparse, json, math, os, socket, subprocess, sys, tempfile, time
 from collections import Counter
@@ -82,7 +84,7 @@ def server(binary, roots):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
-    env.update(SESSIONDOCK_BIND=f"127.0.0.1:{port}", SESSIONDOCK_WEB_DIR=str(REPO / "legacy-web"))
+    env.update(SESSIONDOCK_BIND=f"127.0.0.1:{port}", SESSIONDOCK_WEB_DIR=str(frontend_dir()))
     shown = {}
     for src, path in roots.items():
         key = "SESSIONDOCK_" + src.upper() + "_ROOT"

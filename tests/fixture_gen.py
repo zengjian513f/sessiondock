@@ -22,6 +22,8 @@ Claude line, a missing last-prompt leaf and a parent cycle); independent of
 # run_validation: skip
 from __future__ import annotations
 
+from frontend_paths import frontend_dir
+
 import argparse
 import json
 import random
@@ -248,7 +250,7 @@ def print_env(root):
         ("SESSIONDOCK_CODEX_ROOT", root / "codex"),
         ("SESSIONDOCK_GROK_ROOT", root / "grok"),
         ("SESSIONDOCK_BIND", BIND),
-        ("SESSIONDOCK_WEB_DIR", REPO / "legacy-web"),
+        ("SESSIONDOCK_WEB_DIR", frontend_dir()),
     ]
     for key, value in mapping:
         print(f"export {key}={value}")

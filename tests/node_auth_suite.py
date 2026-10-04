@@ -11,6 +11,8 @@ no Chromium, no real CLI home.
 """
 from __future__ import annotations
 
+from frontend_paths import frontend_dir
+
 import argparse
 import http.client
 import json
@@ -67,7 +69,7 @@ def corpus(root: Path):
 def environment(root: Path, port: int, extra: dict[str, str]):
     env = {key: value for key, value in os.environ.items() if not key.startswith("SESSIONDOCK_")}
     env.update({
-        "SESSIONDOCK_BIND": f"127.0.0.1:{port}", "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web"),
+        "SESSIONDOCK_BIND": f"127.0.0.1:{port}", "SESSIONDOCK_WEB_DIR": str(frontend_dir()),
         "SESSIONDOCK_CLAUDE_ROOT": str(root / "claude"), "SESSIONDOCK_CODEX_ROOT": str(root / "codex"),
         "SESSIONDOCK_GROK_ROOT": str(root / "grok"),
     })

@@ -48,7 +48,7 @@ impl Fixture {
     }
     fn app(&self) -> Router {
         sessiondock::app(Config {
-            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
             roots: SessionRoots {
                 claude: Some(self.root.join("claude")),
                 codex: Some(self.root.join("codex")),

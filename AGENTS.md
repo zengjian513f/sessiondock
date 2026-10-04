@@ -70,8 +70,10 @@
 
 - Treat SessionDock as an independent project. Current contracts live in `docs/`
   and unfinished work lives only in `TODO.md`; do not use the archived migration
-  history as current guidance. `legacy-web/` is the production frontend. Do not
-  expand the Vue scaffold unless the user selects that direction.
+  history as current guidance. `legacy-web/` is the production frontend at
+  `/sessiondock/`. The Vue frontend in `web/` is preview-only at `/sessiondock2/`.
+  Do not replace the production frontend or delete `legacy-web/` without an
+  explicit user instruction to do so.
 - `crates/sessiondock`: Rust HTTP service. Keep transport handlers separate
   from session/domain logic and future ptyhost client code.
 - `crates/ptyhost`: imported independent session host. Preserve its local wire

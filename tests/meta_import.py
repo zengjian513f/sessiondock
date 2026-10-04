@@ -2,6 +2,8 @@
 """One-shot M8 converter: Python session-meta.json → Rust session-metadata.json.
 
 Only session metadata is imported; tests use independent temporary roots."""
+
+from frontend_paths import frontend_dir
 # run_validation: skip
 import argparse, json, os, re, socket, stat, subprocess, sys, tempfile, time
 from datetime import datetime
@@ -157,7 +159,7 @@ def verify(binary, out, roots, imported):
     env = {k: v for k, v in os.environ.items() if not k.startswith("SESSIONDOCK_")}
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]
-    env.update(SESSIONDOCK_BIND=f"127.0.0.1:{port}", SESSIONDOCK_WEB_DIR=str(REPO / "legacy-web"),
+    env.update(SESSIONDOCK_BIND=f"127.0.0.1:{port}", SESSIONDOCK_WEB_DIR=str(frontend_dir()),
                SESSIONDOCK_STATE_DIR=str(out.resolve()))
     for src, path in roots.items():
         env["SESSIONDOCK_" + src.upper() + "_ROOT"] = str(path.resolve(strict=True))

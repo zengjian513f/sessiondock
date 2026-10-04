@@ -383,13 +383,22 @@ def check_report_layout(page):
         titles: [...document.querySelectorAll('#bug-report-source label')].map(l => l.title),
         tops: [select.top, sources.top, model.top, effort.top].map(Math.round),
         order: select.right <= sources.left + 1 && sources.right <= model.left + 1 && model.right <= effort.left + 1,
+        wrapped: select.right <= sources.left + 1 && model.right <= effort.left + 1
+          && Math.max(select.bottom, sources.bottom) <= Math.min(model.top, effort.top),
         select_width: select.width,
         joined: spans.every((s, i) => !i || Math.abs(s[0] - spans[i - 1][1]) <= 0.5),
         send_align: Math.abs(send.right - effort.right), inside: effort.right <= row.right + 1,
       };
     }""")
-    assert wide["titles"] == ["Claude", "Codex", "Grok", "OpenCode"], wide
-    assert len(set(wide["tops"])) == 1 and wide["order"] and wide["joined"], wide
+    assert wide["titles"] == ["Claude", "Codex", "Grok", "OpenCode", "Agy"], wide
+    if scoped_frontend():
+        assert len(set(wide["tops"])) == 1 and wide["order"], wide
+    else:
+        # Preserve the restored 600px legacy dialog: five CLI icons put the
+        # model/effort controls on the next aligned row. Vue uses 640px.
+        assert wide["tops"][0] == wide["tops"][1] and wide["tops"][2] == wide["tops"][3], wide
+        assert wide["order"] or wide["wrapped"], wide
+    assert wide["joined"], wide
     assert wide["select_width"] <= 140 and wide["inside"] and wide["send_align"] <= 1, wide
     # The model list is the chosen machine's; the choice goes out with the report.
     page.select_option("#bug-report-node", NID["b"])

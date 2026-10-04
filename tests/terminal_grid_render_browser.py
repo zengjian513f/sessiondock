@@ -2,7 +2,7 @@
 of tall glyphs (block elements, ❯, accented capitals, CJK, emoji) leaves no
 pixel in the neighbouring rows' boxes, the cell height lands on whole device
 pixels for fractional dpr, and a multi-row background shows no seam. Modules
-come from legacy-web/ by default; `--base URL` fetches them from a running
+come from the compiled frontend by default; `--base URL` fetches them from a running
 instance instead (production check of the deployed assets).
 
 Before the per-row clip this failed with 20–90 lit pixels above/below the
@@ -91,7 +91,7 @@ def run(browser, dpr):
 def main():
     global BASE
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base", default="", help="fetch grid modules from this running instance instead of legacy-web/")
+    parser.add_argument("--base", default="", help="fetch grid modules from this running instance instead of the compiled frontend")
     BASE = parser.parse_args().base
     with sync_playwright() as p:
         b = p.chromium.launch(headless=True)

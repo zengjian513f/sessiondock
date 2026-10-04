@@ -1,4 +1,4 @@
-"""Answer SessionDock's in-page popups (legacy-web/popup.js) the way tests answered native dialogs.
+"""Answer SessionDock's in-page popups (the Vue popup component) the way tests answered native dialogs.
 
 `appAlert`/`appConfirm` open a centered modal `<dialog class="app-popup">` instead of
 `alert`/`confirm`. `on_popup(page_or_context, handler)` gives `handler` an object shaped

@@ -228,7 +228,7 @@ def main():
                 # ---- Picker: six sources, one labelled row on desktop, icons on a phone.
                 page.locator('#new-session').click()
                 labels = page.locator('#new-session-form .new-source label')
-                expect(labels).to_have_count(5 if scoped_frontend() else 6)
+                expect(labels).to_have_count(6)
                 assert len(picker_rows(page)) == 1, picker_rows(page)
                 for label in labels.all():
                     scroll, client = label.locator('span').evaluate('e => [e.scrollWidth, e.clientWidth]')

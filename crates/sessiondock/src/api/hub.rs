@@ -507,7 +507,10 @@ async fn handle(
                 .map_err(|_| Reply::Invalid("需要有效的分组集合".into()))?;
         let value = state.groups.sync(registry, client, Some(catalog)).await;
         // A partial fleet write still changed metadata on confirmed nodes.
-        if value["synced_nodes"].as_u64().is_some_and(|count| count > 0) {
+        if value["synced_nodes"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+        {
             state.ui_events.publish_sessions();
         }
         return if value["ok"] == true {
@@ -680,7 +683,10 @@ async fn handle(
             let value = aggregate::fork_visibility(registry, client, &value).await?;
             // `ok:true` also covers all-failed batches; only confirmed rows
             // justify an invalidation, including batches with some errors.
-            if value["updated"].as_array().is_some_and(|rows| !rows.is_empty()) {
+            if value["updated"]
+                .as_array()
+                .is_some_and(|rows| !rows.is_empty())
+            {
                 state.ui_events.publish_sessions();
             }
             return ok(&value);

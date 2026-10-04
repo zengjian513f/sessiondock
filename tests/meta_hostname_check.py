@@ -2,6 +2,8 @@
 """Prove /api/meta.hostname, served page titles, and list-payload warning trim."""
 from __future__ import annotations
 
+from frontend_paths import frontend_dir
+
 import argparse
 import json
 import os
@@ -69,7 +71,7 @@ def check_pages(opener, base, host):
         fail("index.html title", f"missing {needle!r}", index[:400])
     passed("index.html title")
     files = fetch_text(opener, base, "/files.html")
-    if "__SESSIONDOCK_HOSTNAME__" not in Path(REPO / "legacy-web" / "files.html").read_text(encoding="utf-8"):
+    if "__SESSIONDOCK_HOSTNAME__" not in Path(frontend_dir() / "files.html").read_text(encoding="utf-8"):
         print("PASS files.html hostname (skipped: served page has no hostname placeholder)", flush=True)
         global CHECKS
         CHECKS += 1
@@ -116,7 +118,7 @@ def check_empty_hostname(binary: Path, corpus: Corpus, state_dir: Path):
     env = {k: v for k, v in os.environ.items() if not k.startswith("SESSIONDOCK_")}
     env.update({
         "SESSIONDOCK_BIND": "127.0.0.1:0",
-        "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web"),
+        "SESSIONDOCK_WEB_DIR": str(frontend_dir()),
         "SESSIONDOCK_STATE_DIR": str(state_dir),
         "SESSIONDOCK_HOSTNAME": "",
     })

@@ -120,7 +120,7 @@ impl Drop for FakeHost {
 
 fn config(native: Option<PathBuf>, host: Option<PathBuf>) -> Config {
     Config {
-        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
         roots: SessionRoots {
             claude: None,
             codex: native,

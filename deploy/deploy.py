@@ -312,7 +312,7 @@ def cmd_build(args) -> Path:
                     dirty=(crates_dirty and not args.web_only) or (web_dirty and web_from_worktree),
                     built_at=started.isoformat(timespec="seconds"), web_dir=stage / "web",
                     binaries=binaries, sha256=sha256, source_archive=stage / "source.tar",
-                    web_only=args.web_only)
+                    web_only=args.web_only, frontend=args.frontend)
     doc = {"commit": art.commit, "short": art.short, "dirty": art.dirty, "built_at": art.built_at,
            "web_dir": "web", "binaries": {n: f"bin/{n}" for n in binaries}, "sha256": sha256,
            "source_archive": "source.tar", "web_only": art.web_only, "stage": str(stage),
@@ -347,7 +347,7 @@ def load_stage(path: Path) -> Artifacts:
                      binaries={n: path / rel for n, rel in doc["binaries"].items()},
                      sha256=dict(doc["sha256"]),
                      source_archive=path / doc["source_archive"] if doc.get("source_archive") else None,
-                     web_only=bool(doc.get("web_only")))
+                     web_only=bool(doc.get("web_only")), frontend=doc.get("frontend", "legacy"))
 
 
 def stage_test_info(stage: Path) -> dict:
@@ -456,6 +456,9 @@ def run_push(t: Target, art: Artifacts, opts: DeployOptions, log_path: Path, ech
     log(f"push {art.short} to {t.name} ({t.kind}) prefix={t.prefix} opts={vars(opts)}")
     if not t.enabled:
         return finish("SKIPPED", "disabled in targets file")
+    frontend = t.extra.get("frontend", "legacy")
+    if t.kind != "resource-agent" and not opts.bin_only and frontend != art.frontend:
+        return finish("SKIPPED", f"target frontend={frontend}; stage frontend={art.frontend}")
     try:
         cls = handler_for(t.kind)
     except Exception as e:  # missing module, syntax error, unknown kind

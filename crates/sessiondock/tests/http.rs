@@ -13,7 +13,7 @@ use tower::ServiceExt;
 
 fn config() -> Config {
     Config {
-        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
         ..Config::default()
     }
 }
@@ -155,9 +155,9 @@ async fn static_snapshot_replaces_templates_and_prevents_traversal() {
     ] {
         assert_eq!(get(&app, uri).await.status(), StatusCode::NOT_FOUND);
     }
-    let js = get(&app, "/capabilities.js").await;
+    let js = get(&app, "/migration-shell.js").await;
     assert_eq!(js.status(), StatusCode::OK);
-    let mut req = request("/capabilities.js");
+    let mut req = request("/migration-shell.js");
     req.headers_mut()
         .insert("if-none-match", js.headers()["etag"].clone());
     assert_eq!(

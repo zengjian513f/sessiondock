@@ -60,15 +60,16 @@ class Artifacts:
     """What `deploy.py build` produced on the build machine."""
     commit: str                     # full sha
     short: str                      # 7-12 chars, used in backup dir names
-    dirty: bool                     # working tree differed from HEAD in crates/ or legacy-web/
+    dirty: bool                     # working tree differed from HEAD in crates/ or web/
     built_at: str                   # UTC ISO
-    web_dir: Path                   # snapshot of legacy-web/ to rsync (trailing-slash semantics)
+    web_dir: Path                   # compiled frontend snapshot to rsync (trailing-slash semantics)
     binaries: dict[str, Path]       # name -> release file on the build machine (Linux glibc)
     sha256: dict[str, str]          # name -> hex digest of binaries[name]
     source_archive: Path | None     # `git archive HEAD` tar for build_on_target kinds
     web_only: bool = False
     source_zip: Path | None = None  # optional `git archive --format=zip` of the same commit
                                     # (windows-node; derived from source_archive when None)
+    frontend: str = "legacy"
 
 
 @dataclass
