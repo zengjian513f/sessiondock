@@ -148,11 +148,23 @@ class OpencodeCli extends SessionDockCli {
   }
 }
 
+// Agy 一期尚未接入原生历史，沿用普通终端输入并优先显示控制台。
+class AgyCli extends SessionDockCli {
+  constructor() {
+    super('agy', 'Agy', 'i-agy', 'var(--agy)');
+  }
+
+  get nativeHistory() {
+    return false;
+  }
+}
+
 const SESSIONDOCK_CLIS = Object.freeze({
   claude: new ClaudeCli(),
   codex: new CodexCli(),
   grok: new GrokCli(),
   opencode: new OpencodeCli(),
+  agy: new AgyCli(),
 });
 
 function sessiondockCli(sourceOrUid) {
@@ -161,12 +173,12 @@ function sessiondockCli(sourceOrUid) {
   // 首条原生记录落盘前，新建会话的 uid 是 tmux:sessiondock-<cli>-...。
   // 这个阶段也必须使用对应 CLI 的发送确认策略。
   if (source === 'tmux') {
-    source = value.match(/^tmux:sessiondock-(claude|codex|grok|opencode)-/)?.[1] || source;
+    source = value.match(/^tmux:sessiondock-(claude|codex|grok|opencode|agy)-/)?.[1] || source;
   }
   return SESSIONDOCK_CLIS[source] || null;
 }
 
 // 供 app.js、term.js 以及 headless 回归共同使用。
 Object.assign(globalThis, {
-  SessionDockCli, ClaudeCli, CodexCli, GrokCli, OpencodeCli, SESSIONDOCK_CLIS, sessiondockCli,
+  SessionDockCli, ClaudeCli, CodexCli, GrokCli, OpencodeCli, AgyCli, SESSIONDOCK_CLIS, sessiondockCli,
 });

@@ -15,6 +15,7 @@ pub enum Source {
     Grok,
     Shell,
     Opencode,
+    Agy,
 }
 
 /// Private persisted intent data, not authority to bind a native session.
@@ -45,6 +46,7 @@ impl BindingSpec {
             Source::Codex => "codex:",
             Source::Grok => "grok:",
             Source::Opencode => "opencode:",
+            Source::Agy => "agy:",
             Source::Shell => return Err(Error::InvalidSpec),
         };
         if self.sid.is_empty()
@@ -139,7 +141,7 @@ impl Launch {
             // (the launcher creates that session first); Codex discovers its
             // thread identity after launch. OpenCode records from before
             // pre-creation stay pending and must still load.
-            Self::NewPending => matches!(source, Source::Codex | Source::Opencode),
+            Self::NewPending => matches!(source, Source::Codex | Source::Opencode | Source::Agy),
             Self::NewAssigned => matches!(source, Source::Claude | Source::Grok | Source::Opencode),
             Self::Resume { sid, uid } => native_sid(sid) && native_uid(source, uid),
         };
@@ -158,6 +160,7 @@ pub fn native_uid(source: Source, text: &str) -> bool {
         Source::Codex => "codex:",
         Source::Grok => "grok:",
         Source::Opencode => "opencode:",
+        Source::Agy => "agy:",
         Source::Shell => return false,
     };
     text.strip_prefix(prefix)
@@ -192,7 +195,7 @@ impl LaunchSpec {
     pub fn profile_new(source: Source, adapter_id: String, cwd: &Path) -> Result<Self, Error> {
         let launch = if source == Source::Shell {
             Launch::Fixed
-        } else if source != Source::Codex {
+        } else if !matches!(source, Source::Codex | Source::Agy) {
             Launch::NewAssigned
         } else {
             Launch::NewPending

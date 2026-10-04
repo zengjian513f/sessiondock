@@ -134,6 +134,7 @@ impl VerifiedNativeBinding {
             "codex" => Source::Codex,
             "grok" => Source::Grok,
             "opencode" => Source::Opencode,
+            "agy" => Source::Agy,
             _ => return Err(Error::InvalidBinding),
         };
         if source != receipt.spec().source()
@@ -1596,6 +1597,7 @@ fn host_source(source: Source) -> ptyhost_client::Source {
         Source::Codex => ptyhost_client::Source::Codex,
         Source::Grok => ptyhost_client::Source::Grok,
         Source::Opencode => ptyhost_client::Source::Opencode,
+        Source::Agy => ptyhost_client::Source::Agy,
         Source::Shell => ptyhost_client::Source::Shell,
     }
 }

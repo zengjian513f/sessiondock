@@ -547,7 +547,7 @@ def main():
                     break
                 time.sleep(0.2)
             assert listed["sources"] == {"claude": False, "codex": True, "grok": True,
-                                         "opencode": True, "shell": True}, listed["sources"]
+                                         "opencode": True, "agy": False, "shell": True}, listed["sources"]
             assert listed["resume_sources"]["claude"] is False, listed["resume_sources"]
             context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
             context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())

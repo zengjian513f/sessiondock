@@ -472,10 +472,12 @@ impl Session {
                     | "codex"
                     | "grok"
                     | "opencode"
+                    | "agy"
                     | "claude.exe"
                     | "codex.exe"
                     | "grok.exe"
                     | "opencode.exe"
+                    | "agy.exe"
             ) {
                 return base;
             }

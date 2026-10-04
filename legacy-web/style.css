@@ -15,6 +15,7 @@
   --codex: #10a37f;
   --grok: #8b5cf6;
   --opencode: #4b5563;
+  --agy: #2563eb;
   --tool: #b7791f;
   --terminal-bg: #f4f6f8;
   --terminal-fg: #252a32;
@@ -60,6 +61,7 @@
     --text: #dfe3ea;
     --muted: #8b93a1;
     --opencode: #aab2bf;
+    --agy: #93c5fd;
     --accent: #6d95ff;
     --brand-a: #8fb2ff;
     --brand-b: #d49aff;
@@ -523,6 +525,7 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 }
 :is(#new-session-form, #bug-report-form) .new-source input:focus-visible + span { outline-offset: -2px; }
 :is(#new-session-form, #bug-report-form) .new-source { flex: 0 1 212px; min-width: 172px; }
+#new-session-form .new-source:has(input[value="agy"]) { flex-basis: 254px; min-width: 206px; }
 #bug-report-form .new-source { flex-basis: 170px; min-width: 138px; }
 :is(#new-session-form, #bug-report-form) .new-source label { flex: 1 1 42px; min-width: 34px; }
 :is(#new-session-form, #bug-report-form) .new-source .src-label {
@@ -584,6 +587,8 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 @container (max-width: 380px) {
   #new-session-form .node-select:not([hidden]) { flex-basis: min(132px, calc(100% - 179px)); }
   #new-session-form .new-source { flex: 1 1 172px; }
+  #new-session-form:has(input[value="agy"]) .node-select:not([hidden]) { flex-basis: min(132px, calc(100% - 213px)); }
+  #new-session-form .new-source:has(input[value="agy"]) { flex: 1 1 206px; }
 }
 @container (max-width: 300px) {
   :is(#new-session-form, #bug-report-form) .new-source span { min-width: 34px; padding: 6px 4px; }
@@ -615,6 +620,7 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .new-source input[value="codex"] + span .ico { color: var(--codex); }
 .new-source input[value="grok"] + span .ico { color: var(--grok); }
 .new-source input[value="opencode"] + span .ico { color: var(--opencode); }
+.new-source input[value="agy"] + span .ico { color: var(--agy); }
 .new-cwd-combobox { min-width: 0; }
 /* 启动目录独占一行。 */
 .new-where { display: flex; gap: 7px; min-width: 0; }

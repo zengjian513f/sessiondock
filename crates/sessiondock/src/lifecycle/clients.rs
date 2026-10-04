@@ -325,7 +325,8 @@ fn latest(profile: &CliProfile) -> Option<String> {
                 .find(|line| line.trim_start().starts_with('{'))?;
             text(&serde_json::from_str(answer).ok()?, "latestVersion")
         }
-        Source::Shell => None,
+        // No verified read-only latest-version endpoint for Agy yet.
+        Source::Agy | Source::Shell => None,
     }
 }
 
