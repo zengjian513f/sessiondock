@@ -21,7 +21,9 @@ def main():
         corpus = Corpus(root)
         sid = 'conversation-performance'
         rows = [codex_row('session_meta', {'id': sid, 'cwd': '/synthetic/performance'}),
-                codex_message('user', 'Performance conversation')]
+                codex_message('user', 'Performance conversation'),
+                codex_row('response_item', {'type': 'reasoning', 'summary': [
+                    {'type': 'summary_text', 'text': 'Planning the tool sequence.'}]})]
         for index in range(180):
             rows.append(codex_row('response_item', {'type': 'function_call', 'name': 'shell_command',
                 'call_id': f'call-{index}', 'arguments': '{"command":"echo perf"}'}))
@@ -61,10 +63,21 @@ def main():
                 page.goto(base, wait_until='networkidle')
                 page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]').click()
                 expect(page.locator('#msgs')).to_contain_text('Tool sequence complete.')
-                # A single tool group does not need an outer process wrapper.
-                process = page.locator('#msgs .turn-process.folded .fold-toggle')
-                if process.count():
-                    process.first.click()
+                # The header toggles existing process state, retaining the
+                # mounted process and lazy tool group through fold/reopen.
+                process = page.locator('#msgs > .turn-process')
+                expect(process).to_have_count(1)
+                process_node = process.element_handle()
+                toggle = page.locator('#a-turns')
+                for expanded in (True, False, True):
+                    if not toggle.is_visible():
+                        page.locator('#a-more').click()
+                    toggle.click()
+                    expect(toggle).to_have_attribute('aria-pressed', str(expanded).lower())
+                    expect(process.locator('.turn-toolbar .fold-toggle')).to_have_attribute(
+                        'aria-expanded', str(expanded).lower())
+                    assert process_node.evaluate('node => node === document.querySelector("#msgs > .turn-process")')
+                process_node.dispose()
                 group = page.locator('#msgs .grp').first
                 expect(group).to_have_class(re.compile(r'\bfolded\b'))
                 expect(group.locator(':scope > .tool-entry')).to_have_count(0)

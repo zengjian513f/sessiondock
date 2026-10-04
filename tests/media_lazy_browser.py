@@ -46,7 +46,8 @@ def build(root):
     corpus.put('codex-inline','codex',[
         codex_row('session_meta',{'id':'codex-inline','cwd':str(inline_dir)}),
         codex_row('response_item',{'type':'message','role':'user','content':[
-            {'type':'input_text','text':'INLINE IMAGE ![inline](inline.png)'}]})],[])
+            {'type':'input_text','text':'INLINE IMAGE\n' + 'INLINE FOLD FILLER\n' * 240
+                + '\nINLINE FULL IMAGE ![inline](inline.png)'}]})],[])
     return corpus
 
 
@@ -255,20 +256,51 @@ def main():
                 # gallery components; its recovery controls must work too.
                 mode['status']=503
                 page.locator(f'#side .item[data-uid="{uid(corpus,"codex-inline")}"]').click()
+                inline_toggle=page.locator('#msgs .msg[data-role="user"] > .more[aria-expanded]')
+                expect(inline_toggle).to_have_attribute('aria-expanded','false')
+                expect(page.locator('#msgs img')).to_have_count(0)
+                inline_toggle.click()
                 inline_image=page.locator('#msgs img')
                 expect(inline_image).to_have_count(1)
+                page.locator('#msgs .media-load').scroll_into_view_if_needed()
                 assert inline_image.get_attribute('data-vue-media') is None
                 expect(page.locator('.media-load-error')).to_contain_text('HTTP 503')
+                expect(page.locator('.media-load-retry')).to_be_visible()
                 inline_snapshot=state()
+                inline_src=inline_image.get_attribute('src')
+                assert [(url,diagnostic) for url,diagnostic in media_requests if url==inline_src]==[
+                    (inline_src,False),(inline_src,True)],'one inline image failure and one diagnostic'
+
+                # Full-text disclosure repaints Markdown in both entries. The old
+                # error panel must disappear, and the replacement must recover
+                # through the same actual retry/reload controls.
+                failed_wrapper=inline_image.locator('xpath=ancestor::span[contains(@class,"media-load")]').element_handle()
+                inline_toggle.click()
+                expect(inline_toggle).to_have_attribute('aria-expanded','false')
+                expect(page.locator('#msgs img')).to_have_count(0)
+                expect(page.locator('.media-load-error')).to_have_count(0)
+                assert failed_wrapper.evaluate('wrapper=>!wrapper.isConnected')
+                assert state()==inline_snapshot
+                inline_toggle.click()
+                expect(inline_toggle).to_have_attribute('aria-expanded','true')
+                expect(inline_image).to_have_count(1)
+                page.locator('#msgs .media-load').scroll_into_view_if_needed()
+                expect(page.locator('.media-load-error')).to_have_count(1)
+                expect(page.locator('.media-load-error')).to_contain_text('HTTP 503')
+                expect(page.locator('.media-load-retry')).to_be_visible()
+                assert state()==inline_snapshot
                 mode['status']=None
+                retry_requests=list(media_requests)
                 page.locator('.media-load-retry').click()
                 page.wait_for_function("document.querySelector('#msgs img').naturalWidth===2")
                 expect(page.locator('.media-load-error')).to_have_count(0)
                 assert state()==inline_snapshot
+                assert media_requests[len(retry_requests):]==[(inline_src,False)],'manual retry must issue one same-token image GET'
                 mode['status']=404
                 inline_image.evaluate("img=>{const src=img.src;img.removeAttribute('src');setTimeout(()=>img.src=src,30)}")
                 expect(page.locator('.media-load-error')).to_contain_text('HTTP 404')
                 mode['status']=None
+                reload_requests=len(requests)
                 for attempt in range(3):
                     page.locator('.media-load-reload').click()
                     page.wait_for_function(js('historyPageRequests.size===0', 'runtime.core.history.historyPageRequests.size===0'))
@@ -278,12 +310,22 @@ def main():
                     expect(panel).to_contain_text('实时历史已更新；已保留新内容，请再次手动重新载入')
                     page.wait_for_function(js('_es?.readyState === EventSource.OPEN', 'runtime.core.sync.watching?.readyState === EventSource.OPEN'))
                 expect(page.locator('.media-load-error')).to_have_count(0)
+                assert any('/api/messages/' in url and 'window=1' in url for url in requests[reload_requests:])
+                if inline_toggle.get_attribute('aria-expanded')=='false':
+                    inline_toggle.click()
+                inline_image.scroll_into_view_if_needed()
                 page.wait_for_function("document.querySelector('#msgs img').naturalWidth===2")
                 mode['status']=503;mode['hold_diagnostic']=True
                 inline_image.evaluate("img=>{const src=img.src;img.removeAttribute('src');setTimeout(()=>img.src=src,30)}")
                 page.wait_for_function(js('(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===1', 'runtime.mediaRuntime.diagnosticActive===1'))
+                expect(page.locator('.media-load-error')).to_have_count(1)
+                expect(page.locator('.media-load-error')).to_contain_text('正在读取错误说明')
                 page.locator(f'#side .item[data-uid="{uid(corpus,"codex-other")}"]').click()
                 expect(page.locator('#msgs')).to_contain_text('OTHER VIEW ONLY')
+                expect(page.locator('.media-load-error')).to_have_count(0)
+                expect(page.locator('.media-load-retry')).to_have_count(0)
+                expect(page.locator('.media-load-reload')).to_have_count(0)
+                assert len(held)==1
                 held.pop().fulfill(status=503,json={'error':'STALE INLINE DIAGNOSTIC'})
                 page.wait_for_function(js('(globalThis.SessionDockOverlays ? SessionDockOverlays.mediaState.diagnosticActive : mediaDiagnosticActive)===0', 'runtime.mediaRuntime.diagnosticActive===0'))
                 expect(page.locator('.media-load-error')).to_have_count(0)
@@ -311,7 +353,7 @@ def main():
                 assert not errors,errors
                 assert all(url.startswith(base+'/') for url in requests)
                 assert all('window=1' in url or '/page?' in url or 'start=' in url for url in requests if '/api/messages/' in url)
-                print("PASS lazy media: offscreen zero GET; scroll decode; one bounded error diagnostic; manual503 retry and404/409 window reload; stale view isolation; mobile gap/console; no remote/full-history/native mutations")
+                print("PASS lazy media: offscreen zero GET; scroll decode; one bounded error diagnostic; inline fold/unfold cleanup; manual503 retry and404/409 window reload; stale view isolation; mobile gap/console; no remote/full-history/native mutations")
             finally:
                 assert native_bytes(corpus.root)==before
                 browser.close()

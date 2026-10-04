@@ -5,6 +5,9 @@ No page uses the browser's native alert/confirm any more: a delete asks in a
 centered `.app-popup` dialog (title from the first line, 取消/Esc keep the
 session, the confirm button deletes), and floating notices such as the stale
 build card sit in the centered `#float-stack` with the same panel look.
+Later keeps the stale card's DOM identity while polling is paused. An HTTP
+login redirect shows the matching login card; its button opens the local app
+URL in a real new page with no opener.
 Real clicks at desktop and 390px against an isolated server; synthetic corpus.
 """
 from browser_runtime import js
@@ -86,8 +89,23 @@ def main():
                 expect(card).to_be_visible()
                 expect(card.locator("strong")).to_have_text("SessionDock 已更新")
                 centered(page, card, width, height)
+                stale_card = card.element_handle()
+                expect(page.locator("#float-stack > .app-float:visible")).to_have_count(1)
+                assert card.evaluate("d => d.parentElement.id === 'float-stack'")
+                reference = card.evaluate("""d => { const s = getComputedStyle(d);
+                    return [s.width, s.borderRadius, s.backgroundColor, s.boxShadow,
+                            s.padding, s.fontSize, s.flexDirection]; }""")
                 card.get_by_role("button", name="稍后").click()
                 expect(card).to_be_hidden()
+                # Exercise the actual polling/visibility handlers. A paused build
+                # check must not recreate the hidden card or silently unhide it.
+                page.evaluate(js("checkServerBuild()", 'runtime.build.checkServerBuild()'))
+                page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+                expect(card).to_be_hidden()
+                expect(card).to_have_count(1)
+                assert stale_card.evaluate("d => d.isConnected && d === document.querySelector('.version-stale')")
+                stale_card.dispose()
+
                 # All operation notices use the update card's panel and vertical layout.
                 reference = card.evaluate("""d => { const s = getComputedStyle(d);
                     return [s.width, s.borderRadius, s.backgroundColor, s.boxShadow,
@@ -112,12 +130,47 @@ def main():
                     else:
                         notice.get_by_role('button', name='忽略').click()
                     expect(notice).to_be_hidden()
+
+                # Reload normally before the next network scenario: stale pages
+                # deliberately stop HTTP polling, so no product state is reset here.
+                page.unroute("**/api/meta")
+                page.reload(wait_until="networkidle")
+                page.wait_for_function(js("S.sessions.length > 0", 'runtime.core.state.catalog.sessions.length > 0'))
+                page.route("**/__auth/login", lambda route: route.fulfill(
+                    content_type="text/html", body="<p>Fixture login</p>"))
+                page.route("**/api/meta", lambda route: route.fulfill(
+                    status=302, headers={"Location": "/__auth/login"}))
+                page.evaluate(js("checkServerBuild()", 'runtime.build.checkServerBuild()'))
+                login = page.locator("#float-stack > .login-expired")
+                expect(login).to_be_visible()
+                expect(login.locator("strong")).to_have_text("登录已失效")
+                expect(page.locator("#float-stack > .app-float:visible")).to_have_count(1)
+                centered(page, login, width, height)
+                appearance = login.evaluate("""d => { const s = getComputedStyle(d);
+                    return [s.width, s.borderRadius, s.backgroundColor, s.boxShadow,
+                            s.padding, s.fontSize, s.flexDirection]; }""")
+                assert appearance == reference, (appearance, reference)
+                assert login.evaluate("d => d.scrollWidth <= d.clientWidth")
+                # The button opens the app's local base URL in a real new page,
+                # rather than navigating this page or opening the redirect target.
+                source_url = page.url
+                with context.expect_page() as opened:
+                    login.get_by_role("button", name="打开登录页").click()
+                login_page = opened.value
+                login_page.wait_for_load_state("domcontentloaded")
+                expect(login_page).to_have_url(base + "/")
+                assert page.url == source_url
+                assert login_page.evaluate("window.opener === null")
+                login_page.close()
+                expect(login).to_be_visible()
                 assert not native, native
                 assert not errors, errors
                 context.close()
         browser.close()
     print("PASS popup browser: delete confirm centered with the dialog look, 取消/Esc keep, 确定 deletes; "
-          "stale-build card centered in the float stack, 稍后 folds it; no native dialogs; desktop + 390px")
+          "stale-build card centered in the float stack, 稍后 keeps the same card hidden across polling/visibility; "
+          "HTTP login redirect shows a matching card, its actual button opens the local app URL; "
+          "no native dialogs; desktop + 390px")
 
 
 if __name__ == "__main__":

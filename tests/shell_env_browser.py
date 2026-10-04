@@ -7,8 +7,10 @@ rc file; editing it makes `GET /api/shell-env` report the changed variable
 names (never values). Chromium on the hub page shows the per-machine notice,
 the node's own page can ignore it, and 重启后端 makes the node exit with 75
 after a graceful shutdown; a supervisor-like restart clears the notice.
+Removed shell cards return with a new DOM identity at the stack end; a later
+HTTP build mismatch appends its card after the existing shell card.
 
-A real hub and one real isolated node; no real CLI or production data.
+A real hub and two real isolated nodes; no real CLI or production data.
 """
 from browser_runtime import js
 import argparse
@@ -138,6 +140,8 @@ def main():
         assert b"secret" not in raw, raw
         hub_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
         expect(notice).to_be_visible()
+        first_notice = notice.element_handle()
+        assert notice.evaluate("d => d.parentElement.id === 'float-stack' && d.parentElement.lastElementChild === d")
         expect(notice.locator("th")).to_have_text(["机器", "变化", "", ""])
         expect(row(NID).locator("td")).to_have_text(["shellnode", "SD_TEST_NEW、SD_TEST_TOKEN", "重启", "忽略"])
         expect(row(NID2).locator("td")).to_have_text(["shellnode2", "SD_TEST_NEW、SD_TEST_TOKEN", "重启", "忽略"])
@@ -152,10 +156,25 @@ def main():
         local_notice = local_page.locator("#shell-env-notice")
         expect(local_notice.locator('tr[data-node="local"]')).to_contain_text("SD_TEST_TOKEN")
         expect(local_notice.get_by_role("button", name="全部重启")).to_have_count(0)
+        ignored_notice = local_notice.element_handle()
         local_notice.get_by_role("button", name="忽略").click()
         expect(local_notice).to_have_count(0)
+        assert not ignored_notice.evaluate("d => d.isConnected")
         local_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
         expect(local_notice).to_have_count(0)
+        # Ignoring one set of names does not hide a later, genuinely different drift.
+        # A removed card gets a new DOM identity and is appended to the existing stack.
+        rc.write_text("export SD_TEST_TOKEN=secret-two\nexport SD_TEST_NEW=1\nexport SD_TEST_AFTER_IGNORE=1\n")
+        local_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+        expect(local_notice).to_be_visible()
+        expect(local_notice.locator('tr[data-node="local"] td').nth(1)).to_have_text(
+            "SD_TEST_AFTER_IGNORE、SD_TEST_NEW、SD_TEST_TOKEN")
+        assert not ignored_notice.evaluate("d => d === document.querySelector('#shell-env-notice')")
+        assert local_notice.evaluate("d => d.parentElement.id === 'float-stack' && d.parentElement.lastElementChild === d")
+        rc.write_text("export SD_TEST_TOKEN=secret-two\nexport SD_TEST_NEW=1\n")
+        local_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+        expect(local_notice).to_have_count(0)
+        ignored_notice.dispose()
         local_page.close()
         # 全部重启: both machines shut down gracefully and exit 75; a supervisor restart clears the notice.
         hub_page.get_by_role("button", name="全部重启 (2)").click()
@@ -164,13 +183,17 @@ def main():
         restart_node("shellnode")
         restart_node("shellnode2")
         expect(notice).to_have_count(0, timeout=40000)
+        assert not first_notice.evaluate("d => d.isConnected")
         # Another edit, one machine at a time: the other row stays, no 全部重启 for a single one.
         rc.write_text("export SD_TEST_TOKEN=secret-three\nexport SD_TEST_NEW=1\n")
         hub_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
         expect(hub_page.get_by_role("button", name="全部重启 (2)")).to_be_visible()
+        assert not first_notice.evaluate("d => d === document.querySelector('#shell-env-notice')")
+        assert notice.evaluate("d => d.parentElement.id === 'float-stack' && d.parentElement.lastElementChild === d")
+        first_notice.dispose()
         hub_page.evaluate("""() => { window.__noticeGone = false;
             new MutationObserver(() => { if (!document.querySelector('#shell-env-notice')) window.__noticeGone = true; })
-                .observe(document.body, {childList: true}); }""")
+                .observe(document.querySelector('#float-stack'), {childList: true}); }""")
         hub_page.get_by_role("button", name="重启 shellnode 后端").click()
         # Only that row changes; the other machine's row stays through the whole restart.
         expect(row(NID).locator("td").nth(1)).to_have_text("正在重启…")
@@ -185,9 +208,22 @@ def main():
         assert not hub_page.evaluate("window.__noticeGone"), "the notice vanished during a one-machine restart"
         data, _ = shell_env(locals_["shellnode"])
         assert not data["stale"], data
+        # The shell card appeared first. A real build poll must append the update
+        # card after it, even when Vue owns both cards through one Teleport.
+        shell_card = notice.element_handle()
+        hub_page.route("**/api/meta", lambda route: route.fulfill(json={"build": "shell-env-test-newer"}))
+        hub_page.evaluate(js("checkServerBuild()", 'runtime.build.checkServerBuild()'))
+        expect(hub_page.locator("#float-stack > .version-stale")).to_be_visible()
+        expect(hub_page.locator("#float-stack > :is(#shell-env-notice, .version-stale)")).to_have_count(2)
+        assert hub_page.locator("#float-stack > :is(#shell-env-notice, .version-stale)").evaluate_all(
+            "cards => cards.map(d => d.id || (d.classList.contains('version-stale') ? 'stale' : d.className))"
+        ) == ["shell-env-notice", "stale"]
+        assert shell_card.evaluate("d => d === document.querySelector('#shell-env-notice')")
+        shell_card.dispose()
         assert not errors, errors
     print("PASS shell env browser: drift names only (no values, per-shell values ignored), two-machine table at 390px, ignore, "
-          "全部重启 and single restart exit 75 after graceful shutdown, a fresh start clears each row")
+          "全部重启 and single restart exit 75 after graceful shutdown, a fresh start clears each row; "
+          "removed shell cards return with new identity at the stack end, shell precedes the later build notice")
 
 
 if __name__ == "__main__":

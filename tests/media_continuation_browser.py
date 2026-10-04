@@ -277,6 +277,39 @@ def browser(corpus, base, expected_native):
                   return {text:e.msgs.map(m=>m.text),end:e.end,anchor:e.anchor,version:e.version,
                     cursor:runtime.core.state.unread.cursors.get(key),media:many?many.media.length:0,more:many?.media_more||null};})()"""))
 
+            def remember_identity():
+                # Keep references in a Playwright handle, not in product state.
+                # A continuation appends descriptors to the same raw message;
+                # it does not rebuild unrelated bubbles or decoded images.
+                return page.evaluate_handle(js("""(() => {
+                  const key=viewKey(S.sel,S.agent);
+                  const read=()=>cache.get(key),entry=read();
+                  const message=entry.msgs.find(m=>m.media_more||m.media?.length>=16);
+                  return {read,entry,messages:entry.msgs,raw:entry.msgs.slice(),message,
+                    media:message.media.slice(),nodes:[...document.querySelectorAll('#msgs .msg')],
+                    images:[...document.querySelectorAll('#msgs img')]};})()""", """(() => {
+                  const key=runtime.viewKey(runtime.core.state.selection.sel,runtime.core.state.selection.agent);
+                  const read=()=>runtime.core.cache.cache.get(key),entry=read();
+                  const message=entry.msgs.find(m=>m.media_more||m.media?.length>=16);
+                  return {read,entry,messages:entry.msgs,raw:entry.msgs.slice(),message,
+                    media:message.media.slice(),nodes:[...document.querySelectorAll('#msgs .msg')],
+                    images:[...document.querySelectorAll('#msgs img')]};})()"""))
+
+            def assert_identity(saved):
+                assert saved.evaluate("""saved => {
+                  const entry=saved.read(),box=document.querySelector('#msgs');
+                  const nodes=[...box.querySelectorAll('.msg')],images=[...box.querySelectorAll('img')];
+                  return entry===saved.entry && entry.msgs===saved.messages
+                    && entry.msgs.length===saved.raw.length
+                    && saved.raw.every((message,index)=>entry.msgs[index]===message)
+                    && entry.msgs.includes(saved.message)
+                    && saved.media.every((item,index)=>saved.message.media[index]===item)
+                    && saved.nodes.length>0 && nodes.length===saved.nodes.length
+                    && saved.nodes.every((node,index)=>node.isConnected && nodes[index]===node)
+                    && saved.images.length>=16
+                    && saved.images.every((image,index)=>image.isConnected && images[index]===image);
+                }"""), "media continuation replaced raw messages, existing descriptors or displayed nodes"
+
             def load_more(expected_text, count, remaining):
                 unfold()
                 button = page.locator("#msgs .media-more")
@@ -284,9 +317,14 @@ def browser(corpus, base, expected_native):
                 expect(button).to_have_text(expected_text)
                 expect(button).to_be_enabled()
                 button.scroll_into_view_if_needed()
-                button.click()
-                page.wait_for_function(js("mediaPageRequests.size===0", 'runtime.mediaRuntime.mediaPageRequests.size===0'))
-                decoded(count)
+                saved = remember_identity()
+                try:
+                    button.click()
+                    page.wait_for_function(js("mediaPageRequests.size===0", 'runtime.mediaRuntime.mediaPageRequests.size===0'))
+                    decoded(count)
+                    assert_identity(saved)
+                finally:
+                    saved.dispose()
                 expect(page.locator(".media-page-error")).to_have_count(0)
                 if remaining:
                     expect(page.locator("#msgs .media-more")).to_have_text(f"还有 {remaining} 张图片，加载下一批")
@@ -342,6 +380,7 @@ def browser(corpus, base, expected_native):
                 page.wait_for_timeout(100)
             assert len(held) == 1, "watch for the rewrite view was not held"
             before = state()
+            saved = remember_identity()
             page.evaluate(js("S.lastSync=Date.now()", 'runtime.core.state.selection.lastSync=Date.now()'))  # Keep the periodic fallback sync out of this short window.
             rewrite(corpus.paths["codex-rewrite"], b"REWRITE IMAGEZ", b"REWRITE IMAGEY", expected_native, corpus.root)
             unfold()
@@ -358,6 +397,7 @@ def browser(corpus, base, expected_native):
             expect(button).to_be_enabled()
             expect(page.locator("#msgs img")).to_have_count(16)
             assert state() == before, "failed page changed the snapshot"
+            assert_identity(saved)
             button.click()
             page.wait_for_function(js("mediaPageRequests.size===0", 'runtime.mediaRuntime.mediaPageRequests.size===0'))
             expect(page.locator("#msgs .media-page-error")).to_have_count(1)
@@ -366,11 +406,13 @@ def browser(corpus, base, expected_native):
             expect(page.locator("#a-term")).to_be_visible()
             expect(page.locator("#a-term")).to_be_enabled()
             assert state() == before
+            assert_identity(saved)
+            saved.dispose()
             assert not errors, errors
             assert all(url.startswith(base + "/") for url in requests), requests
             assert all("window=1" in url or "start=" in url or "/media-page?" in url or "/page?" in url
                        for url in requests if "/api/messages/" in url), "unbounded history fetch occurred"
-            print("PASS media continuation browser: desktop/mobile Codex 16->32->40 and Claude 16->20 decoded in order, live cursor untouched, SSE append after pages, console visible, real 409 after rewrite with visible alert/retry and intact snapshot, no page errors")
+            print("PASS media continuation browser: desktop/mobile Codex 16->32->40 and Claude 16->20 decoded in order, raw message/descriptor and existing DOM identity preserved, live cursor untouched, SSE append after pages, console visible, real 409 after rewrite with visible alert/retry and intact snapshot/identity, no page errors")
         finally:
             for route in held:  # Release the withheld stream before teardown.
                 try:

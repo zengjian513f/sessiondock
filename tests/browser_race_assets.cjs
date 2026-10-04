@@ -13,20 +13,24 @@ function walk(node, functions = []) {
     functions = [...functions, node];
   if (node.type === 'ForStatement' && node.update?.type === 'AssignmentExpression'
       && node.update.operator === '+=' && node.update.right?.value === 250) {
-    const literals = []; let awaits = 0, slices = 0;
+    const literals = []; let awaits = 0, timerYields = 0, slices = 0;
     function inspect(child) {
       if (!child || typeof child !== 'object') return;
       if (Array.isArray(child)) {child.forEach(inspect); return;}
       if (child.type === 'NumericLiteral' && child.value === 250) literals.push([child.start, child.end]);
-      if (child.type === 'AwaitExpression') awaits++;
+      if (child.type === 'AwaitExpression') {
+        awaits++;
+        if (child.argument?.type === 'NewExpression' && child.argument.callee?.name === 'Promise') timerYields++;
+      }
       if (child.type === 'MemberExpression' && child.property?.name === 'slice') slices++;
       for (const [key, value] of Object.entries(child)) if (!['loc', 'extra', 'comments', 'tokens'].includes(key)) inspect(value);
     }
     inspect(node);
     const owner = functions.at(-1);
-    // The actual renderer has four uses of its batch size and one Promise
-    // yield. Identify its returned named renderSession method as well.
-    if (literals.length === 4 && awaits === 1 && slices === 1 && owner?.id?.name) {
+    // Each batch waits for Vue preparation and retains its real Promise/timer
+    // yield. Also identify the returned named renderSession method; the browser
+    // hook below this inspection still calibrates the actual timer stack.
+    if (literals.length === 4 && awaits === 2 && timerYields === 1 && slices === 1 && owner?.id?.name) {
       const name = owner.id.name;
       let exported = false;
       function exportedMethod(child) {

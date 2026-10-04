@@ -148,7 +148,10 @@ async def exercise(browser, base, data, stale_payload, width, height):
             await pane.dispose()
             pane = None
         await page.reload(wait_until="domcontentloaded")
-        if width == 390 and await page.locator(".mobile-back").is_visible():
+        # The sid URL restores detail asynchronously after the shell mounts.
+        # Leave that restored view only after it is actually ready.
+        await expect(page.locator("#msgs")).to_contain_text("PaneSentinel")
+        if width == 390:
             await page.locator(".mobile-back").click()
         await expect(q).to_have_value("")
         await expect(rows).to_have_count(3)
