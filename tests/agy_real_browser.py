@@ -15,6 +15,7 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import tempfile
@@ -172,7 +173,7 @@ def refuse(page, base, name, text, records):
     return code
 
 
-def run(browser, base, root, agy, records, evidence):
+def run(browser, base, root, agy, records, evidence, holds):
     context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
     context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
     page = context.new_page()
@@ -264,21 +265,52 @@ def run(browser, base, root, agy, records, evidence):
         assert any(r['kind'] == 'main' and r['echo'] == multiline for r in records), records
         evidence.pass_('multiline composer SEND reaches gateway intact and renders native echo')
 
+        slow = 'SESSIONDOCK_AGY_BUSY_' + uuid.uuid4().hex[:10]
+        holds[slow] = threading.Event()
+        try:
+            send(page, slow)
+            page.wait_for_function("composerDraft()?.cli?.instance?.busy === true", timeout=10000)
+            expect(page.locator('#dlive')).to_have_class(re.compile(r'\bturn-working\b'))
+            terminal(page, 'BUSY_DRAFT esc to cancel')
+            wait_screen(page, 'BUSY_DRAFT esc to cancel')
+            checked = page.request.post(base + '/api/session/conversation/check', data={
+                'uid': uid, '_build': page.evaluate('BUILD_ID')}).json()
+            assert checked['cli']['instance']['busy'] is True, checked
+        finally:
+            holds[slow].set()
+        history(page, 'echo: ' + slow)
+        page.wait_for_function("composerDraft()?.cli?.instance?.busy === false", timeout=10000)
+        expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\bturn-working\b'))
+        clear_terminal(page)
+        ready(page)
+        evidence.pass_('real in-flight gateway request is busy; completion returns idle without inferring catalog status')
+
         # Later independent paths still run when one implementation guard fails.
         for stage in ('pty-draft', 'model-select', 'model-cancel', 'resume-menu', 'unknown-menu'):
             try:
                 ready(page)
                 if stage == 'pty-draft':
-                    terminal(page, 'SESSIONDOCK_NATIVE_UNSENT')
+                    terminal(page, 'SESSIONDOCK_NATIVE_UNSENT esc to cancel')
                     wait_screen(page, 'SESSIONDOCK_NATIVE_UNSENT')
                     code = refuse(page, base, name, 'SESSIONDOCK_WEB_DRAFT_KEEP', records)
                     assert code == 'cli_input_pending', code
                     wait_screen(page, 'SESSIONDOCK_NATIVE_UNSENT')
+                    checked = page.request.post(base + '/api/session/conversation/check', data={
+                        'uid': uid, '_build': page.evaluate('BUILD_ID')}).json()
+                    assert checked['cli']['instance']['busy'] is False, checked
                 else:
                     command = '/model' if stage.startswith('model') else '/resume' if stage == 'resume-menu' else '/permissions'
-                    terminal(page, command, 'Enter')
+                    before_command = transcript.read_bytes()
+                    result = send(page, command)
+                    assert result['state'] == 'sent', result
+                    terminal(page)
                     wait_screen(page, 'Switch Model' if stage.startswith('model') else
                                 'Conversations' if stage == 'resume-menu' else 'Permission Config Editor')
+                    assert transcript.read_bytes() == before_command, command
+                    checked = page.request.post(base + '/api/session/conversation/check', data={
+                        'uid': uid, '_build': page.evaluate('BUILD_ID')}).json()
+                    assert checked['cli']['queued'] == [], (command, checked)
+                    assert checked['cli']['instance']['busy'] is None, checked
                     if stage == 'unknown-menu':
                         # The top-level scope picker has a verified parser.
                         # Its deeper Project editor is intentionally unknown.
@@ -299,7 +331,7 @@ def run(browser, base, root, agy, records, evidence):
                         # real PTY; no other conversation exists in its HOME.
                         terminal(page, key='Enter')
                         ready(page)
-                evidence.pass_(stage + ': real native input/menu blocks CHECK and SEND, preserves webpage draft')
+                evidence.pass_(stage + ': real native input/menu blocks CHECK and SEND, preserves webpage draft; menu SEND has no invented native echo')
             except Exception as error:
                 evidence.fail(stage, error, page)
             finally:
@@ -365,6 +397,9 @@ def run(browser, base, root, agy, records, evidence):
         assert any(r['kind'] == 'main' and r['echo'].strip() == prompt for r in records), records
         history(page, 'echo: ')
         evidence.pass_('Agy report dialog launches its worker and submits the exact report prompt through normal SEND')
+        # Start the responsive picker check from a settled list page; the
+        # report worker's asynchronous session selection is a separate path.
+        page.goto(base, wait_until='networkidle')
         check_phone(page)
         evidence.pass_('390px light/dark new-session controls fit viewport')
         assert not errors, errors
@@ -401,7 +436,8 @@ def main():
         'enterpriseOnboardingComplete': True, 'onboardingComplete': True}))
     signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError('suite deadline: 240 seconds')))
     signal.alarm(240)
-    with gateway(root) as (url, records, gateway_errors):
+    holds = {}
+    with gateway(root, holds) as (url, records, gateway_errors):
         env = {'HOME': str(root / 'home'), 'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8',
             'TERM': 'xterm-256color', 'XDG_CONFIG_HOME': str(root / 'config'),
             'XDG_DATA_HOME': str(root / 'data'), 'XDG_CACHE_HOME': str(root / 'cache'),
@@ -441,7 +477,7 @@ def main():
                             options['executable_path'] = chromium
                         browser = pw.chromium.launch(**options)
                         try:
-                            run(browser, base, root, agy, records, evidence)
+                            run(browser, base, root, agy, records, evidence, holds)
                         finally:
                             browser.close()
             assert not gateway_errors, gateway_errors

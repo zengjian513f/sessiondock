@@ -11,11 +11,11 @@ python3 tests/docs_index.py --write
 | Doc | Title | Summary | Lines |
 | --- | --- | --- | --- |
 | [adding-a-cli.md](adding-a-cli.md) | 接入新的 AI CLI | 本文把 OpenCode 接入及后续修复整理成新增 AI CLI 的清单；2026-10-04 对照主线至 `7dabf54` 核对，包含菜单交互、客户端更新、镜像增量读取、会话挂靠和 Vue 迁移入口。每项都要明确实现或记录不适用原因。现行合同以各专题文档为准：OpenCode、启动器、生命周期 HTTP、对话输入就绪、CLI 状态对象、读模型、liveness、移动、克隆。 | 227 |
-| [agy.md](agy.md) | Agy（Antigravity CLI） | 本页记录 agy 1.2.16 的接入合同与证据边界，核对日期为 2026-10-04。 接入范围是 Rust 后端与 legacy 前端；Vue 由独立开发任务维护。 | 142 |
+| [agy.md](agy.md) | Agy（Antigravity CLI） | 本页记录 agy 1.2.16 的接入合同与证据边界，核对日期为 2026-10-04。 接入范围是 Rust 后端与 legacy 前端；Vue 由独立开发任务维护。 | 159 |
 | [architecture.md](architecture.md) | 架构边界 | 当前生产链路：`legacy-web/` → Axum API → 有界 blocking 工作池 → `sessions` 原生记录解析 / 版本缓存；详情增量通过 SSE 返回。 静态资源在启动时读取为内存快照，HTML 注入模式、build 与能力； 请求不访问静态目录中的动态路径。无需 Node.js 服务；发布时用现有 Vue / Vite 工具链构建设置面板，生成资源随同一个静态快照发布。 | 276 |
 | [bug-report.md](bug-report.md) | Bug reports and their CLI workers (M7) | `POST /api/bug-report` captures a self-contained diagnostic bundle and starts a managed CLI instance that investigates it. The Rust implementation lives in `bug_report/mod.rs` (bundle), `bug_report/worker.rs` (launch + prompt injection), `a | 366 |
 | [capabilities.md](capabilities.md) | Capability flags | Defaults come from `state::capabilities()`. `lib.rs` then overwrites configured flags after opening optional services. `assets.rs` injects the JSON as `<meta name="sessiondock-capabilities">` (also `/api/meta`). `allows(name)` is `config[na | 167 |
-| [cli-state.md](cli-state.md) | 会话 CLI 状态对象 | 父合同：会话草稿与 SEND、对话输入就绪。本文定义服务端为每个 AI 会话维护的 **CLI 状态对象**：原生历史（JSONL）之外、只有 CLI 进程和它的画面才知道的事。前端只读原生历史和这个对象，不直接解释 PTY 画面；对象对所有 agent 同一形状，页面不按 source 分支。 | 69 |
+| [cli-state.md](cli-state.md) | 会话 CLI 状态对象 | 父合同：会话草稿与 SEND、对话输入就绪。本文定义服务端为每个 AI 会话维护的 **CLI 状态对象**：原生历史（JSONL）之外、只有 CLI 进程和它的画面才知道的事。前端只读原生历史和这个对象，不直接解释 PTY 画面；对象对所有 agent 同一形状，页面不按 source 分支。 | 71 |
 | [codex-commands.md](codex-commands.md) | Codex 命令与原生回显 | 父合同：会话草稿与 SEND、CLI 状态对象。BUG-20260930-150246-0774e3 的首个错误发生在成功投递之后：服务端把 `/model` 当作需要同文原生回显的普通输入入账，而 Codex 只打开本地菜单。相同假设也不适用于其它内置命令。 | 33 |
 | [codex-names.md](codex-names.md) | Codex name metadata | With `SESSIONDOCK_CODEX_ROOT` configured, the service defaults to the sibling `session_index.jsonl` in that root's parent directory. This reads native `/rename` updates without requiring a second environment setting. No user home is searche | 72 |
 | [composer-input.md](composer-input.md) | 对话输入就绪 | 父合同：会话草稿与 SEND。本文只定义 AI 对话输入是否就绪：以当前 PTY 画面为唯一判定源。`POST /api/session/conversation/check` 与 `POST /api/session/conversation/send` 使用同一分类器。终端传输所有权、会话身份、草稿持久化与提交去重仍由父合同及其他合同处理，本文不改写、不合并。 | 95 |
@@ -87,4 +87,4 @@ python3 tests/docs_index.py --write
 | Doc | Title | Summary | Lines |
 | --- | --- | --- | --- |
 | [delegation.md](delegation.md) | 委派本机 grok CLI（grok-4.6）做简单任务 | 用户已授权：在本仓库的开发过程中，可以把**边界清楚、可机械验证、独立成文件**的 任务交给本机 `grok` CLI 以 headless 方式完成（全局调用法：`~/.claude/grok-cli.md`）。 这是委派编码工作，模型自定；grok 产出仍须人工审阅并按批次记账。 不得让 grok 触碰生产服务、原 Python 仓库、凭据或运行数据。 | 131 |
-| [validation.md](validation.md) | Validation suites | Tables of the default checks in `python3 tests/run_validation.py`, explicit unit/real-CLI/SSH-peer suites and opt-in benchmarks. A documented direct command does not imply inclusion in the default sweep. Narrative rules stay in `AGENTS.md`. | 422 |
+| [validation.md](validation.md) | Validation suites | Tables of the default checks in `python3 tests/run_validation.py`, explicit unit/real-CLI/SSH-peer suites and opt-in benchmarks. A documented direct command does not imply inclusion in the default sweep. Narrative rules stay in `AGENTS.md`. | 423 |

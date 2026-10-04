@@ -416,6 +416,34 @@ pub(super) fn agy_editor(capture: &ScreenCapture) -> Option<String> {
     Some(lines.join("\n").trim_end().to_owned())
 }
 
+/// Agy 1.2.16's footer belongs below the verified editor, not to the
+/// transcript or draft. A model label is right-aligned on the same row.
+pub(super) fn agy_busy(capture: &ScreenCapture) -> Option<bool> {
+    let editor = agy_editor(capture)?;
+    let text = driver::strip_ansi(&capture.text);
+    let rows: Vec<&str> = text.lines().collect();
+    let bottom = (usize::from(capture.cursor.1) + 1..rows.len()).find(|&i| {
+        let row = rows[i].trim();
+        row.chars().count() >= 8 && row.chars().all(|ch| ch == '─')
+    })?;
+    let footer = rows[bottom + 1..]
+        .iter()
+        .find(|row| !row.trim().is_empty())?;
+    let label = |expected: &str| {
+        *footer == expected
+            || footer
+                .strip_prefix(expected)
+                .is_some_and(|tail| tail.starts_with(' '))
+    };
+    if label("esc to cancel") {
+        Some(true)
+    } else if label("? for shortcuts") || (!editor.is_empty() && footer.starts_with(' ')) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
