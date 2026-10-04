@@ -2,8 +2,9 @@
 """Chromium search-state regression using synthetic sessions and private services.
 
 Build beforehand; --binary selects that build and SESSIONDOCK_TEST_WEB_DIR is
-honored by isolated_server. No frontend globals/store names or real CLIs are
-used. A routed NDJSON response is held until Escape has canceled its request.
+honored by isolated_server. No real CLIs are used. A routed NDJSON response
+is held until Escape has canceled its request. The Vue-only disposal case
+observes the actual runtime after user-driven search and root unmount.
 """
 import argparse
 import asyncio
@@ -14,6 +15,7 @@ import tempfile
 from urllib.parse import parse_qs, urlsplit
 
 from playwright.async_api import expect, async_playwright
+from browser_runtime import scoped_frontend
 from history_parity import BINARY, Corpus, claude_row, get_json, isolated_server
 
 VIEWPORTS = ((1280, 900), (390, 844))
@@ -208,6 +210,55 @@ async def exercise(browser, base, data, stale_payload, width, height):
         await unchanged_pane()
         await q.fill("BodyNeedle")
         await run(lambda: q.press("Enter"), 1, mode="any", case="1", word="1")
+        if scoped_frontend():
+            await page.evaluate("""() => {
+              const r=window.SessionDockRuntime, fetch=r.core.network.fetch;
+              const post=Worker.prototype.postMessage, terminate=Worker.prototype.terminate;
+              window.__lateSearch={fetch,post,terminate,workers:new Set(),requests:0};
+              Worker.prototype.postMessage=function(...args) {
+                if (typeof args[0]?.id==='number' && typeof args[0]?.text==='string') __lateSearch.workers.add(this);
+                return post.apply(this,args);
+              };
+              Worker.prototype.terminate=function() {__lateSearch.workers.delete(this);return terminate.call(this)};
+              r.core.network.fetch=async (url,options) => {
+                if (!new URL(url,location.href).pathname.endsWith('/api/search')) return fetch(url,options);
+                __lateSearch.requests++;
+                const response=await fetch(url,{...options,signal:undefined});
+                const getReader=response.body.getReader.bind(response.body);
+                response.body.getReader=(...args) => {
+                  const reader=getReader(...args),read=reader.read.bind(reader);
+                  reader.read=async (...args) => {
+                    const result=await read(...args);
+                    if (!result.done) return result;
+                    return new Promise(done=>{__lateSearch.release=()=>done(result)});
+                  };
+                  return reader;
+                };
+                return response;
+              };
+            }""")
+            await q.fill('Body.*')
+            await flags['regex'].click()
+            await q.press('Enter')
+            await page.wait_for_function('!!__lateSearch.release && __lateSearch.workers.size>0')
+            await page.evaluate("""() => {
+              const r=window.SessionDockRuntime;
+              __lateSearch.results=r.search.state.results;__lateSearch.status=r.search.state.status;
+              document.querySelector('#app').__vue_app__.unmount();
+              __lateSearch.release();
+            }""")
+            await page.evaluate('new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done)))')
+            assert await page.evaluate("""() => {
+              const r=window.SessionDockRuntime;
+              return !document.querySelector('#side') && __lateSearch.workers.size===0
+                && __lateSearch.requests===1 && r.search.state.results===__lateSearch.results
+                && r.search.state.status===__lateSearch.status;
+            }""")
+            await page.evaluate("""() => {
+              window.SessionDockRuntime.core.network.fetch=__lateSearch.fetch;
+              Worker.prototype.postMessage=__lateSearch.post;Worker.prototype.terminate=__lateSearch.terminate;
+            }""")
+            print(f'PASS Vue search disposal {width}px: streamed read and regex Worker stay stopped', flush=True)
         assert not errors, errors
         print(f"PASS search state {width}x{height}: local/fulltext, flags, reload, Escape/stale response, pane identity",
               flush=True)

@@ -291,11 +291,14 @@ def main():
                 browser = playwright.chromium.launch(**launch)
                 try:
                     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+                    # This benchmark measures the xterm parser, not the default Grid renderer.
+                    context.add_init_script("localStorage.setItem('sessiondock.consoleRenderer', '\"xterm\"')")
                     page = context.new_page()
                     errors = []
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     page.goto(base, wait_until="networkidle")
                     open_console(page, uid)
+                    assert page.evaluate(js("!T.views.values().next().value.grid && typeof T.term.onWriteParsed === 'function'", "!runtime.terminal.state.views.values().next().value.grid && typeof runtime.terminal.state.term.onWriteParsed === 'function'"))
                     print("renderer=" + page.evaluate(js("[...T.views.values()][0].renderer", '[...runtime.terminal.state.views.values()][0].renderer')))
                     for mode in args.modes.split(","):
                         page.evaluate(BATCH_MODE, mode)
