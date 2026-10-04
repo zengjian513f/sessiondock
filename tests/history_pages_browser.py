@@ -266,6 +266,40 @@ def main():
                 assert page.locator("#msgs").inner_text().count("APPEND DURING PAGE HTTP")==1, page.locator("#msgs").inner_text()[-2000:]
                 assert page.evaluate(js('_es===window.__watchBefore', 'runtime.core.sync.watching===window.__watchBefore'))
 
+                # Cancel actual prepared rendering, not just an HTTP response.
+                # Keep the same calibrated Promise/timer pause and empty-message
+                # check. A deliberate full render may replace old history nodes;
+                # only the newly selected view must survive the cancelled work.
+                page.evaluate("window.__deferNextPageRender=true")
+                click_page()
+                page.wait_for_function("window.__heldPageRender!==null")
+                assert page.evaluate(js("document.querySelectorAll('#msgs .msg').length===0 && renderSeq===window.__heldRenderSeq", "document.querySelectorAll('#msgs .msg').length===0 && runtime.conversationRenderer.renderSeq===window.__heldRenderSeq"))
+                prepared=snapshot()
+                select("codex-other","OTHER VIEW ONLY")
+                other=snapshot()
+                assert page.evaluate(js('renderSeq>window.__heldRenderSeq', 'runtime.conversationRenderer.renderSeq>window.__heldRenderSeq'))
+                selected_nodes=page.evaluate_handle("[...document.querySelectorAll('#msgs .msg')]")
+                try:
+                    # The request map is already empty before renderSession
+                    # yields. Wait behind its released timer so settled() alone
+                    # cannot pass before the cancelled continuation has run.
+                    page.evaluate("""() => new Promise(resolve => {
+                      window.__heldPageRender();window.__heldPageRender=null;
+                      setTimeout(resolve,0);
+                    })""")
+                    settled()
+                    assert snapshot()==other, "cancelled prepared render changed the selected view"
+                    expect(page.locator("#msgs")).not_to_contain_text("PAGE ROW")
+                    assert selected_nodes.evaluate("""nodes => {
+                      const current=[...document.querySelectorAll('#msgs .msg')];
+                      return nodes.length>0 && current.length===nodes.length
+                        && nodes.every((node,index)=>node.isConnected && current[index]===node);
+                    }"""), "cancelled prepared render replaced the selected view's message DOM"
+                finally:
+                    selected_nodes.dispose()
+                select("codex-pages","APPEND DURING PAGE RENDER")
+                assert snapshot()["text"]==prepared["text"] and snapshot()["partial"]==prepared["partial"]
+
                 # A view switch invalidates a captured response even if its
                 # original cache entry still exists in the LRU.
                 old=snapshot();mode["hold"]=True;click_page()
@@ -439,7 +473,7 @@ def main():
                 assert all(url.startswith(base+"/") for url in requests),requests
                 assert all("/page?" in url or "window=1" in url or "start=" in url for url in requests if "/api/messages/" in url), "unbounded full-history fetch occurred"
                 assert native_bytes(corpus.root)==expected_native,"native bytes changed outside owned test mutations"
-                print("PASS history pages: bounded ordered pages, exact agent scope, HTTP/render/reload SSE races, activity-only/covered interruption, invalid payload preservation, stale view/reset responses discarded, explicit404/409/410 recovery, mobile gap anchor, console, no full-history fetch")
+                print("PASS history pages: bounded ordered pages, exact agent scope, HTTP/render/reload SSE races, cancelled prepared render preserves selected view/DOM, activity-only/covered interruption, invalid payload preservation, stale view/reset responses discarded, explicit404/409/410 recovery, mobile gap anchor, console, no full-history fetch")
             finally:
                 browser.close()
 
