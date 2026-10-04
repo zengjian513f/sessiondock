@@ -2,6 +2,7 @@
 """Real Hub/node report staging: recover a lost reply without duplicate uploads or launches."""
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ from playwright.sync_api import sync_playwright, expect
 from history_parity import REPO, Corpus, isolated_server
 from hub_http_suite import Hub, free_port
 from hub_send_browser import prepare, cleanup_hosts
-from bug_report_node_browser import open_report
+from bug_report_node_browser import open_report, wait_drafts
 from hub_fake_node import PNG
 
 
@@ -41,9 +42,15 @@ def run(browser, root, config):
         page = context.new_page()
         attempts, errors = [], []
         fail_replies = 1
+        fail_saves = False
         stalled_reads = []
 
         def stall_draft(route):
+            if route.request.method == 'POST':
+                if fail_saves:
+                    return route.fulfill(status=500, content_type='application/json',
+                        body='{"error":"synthetic draft save interruption"}')
+                return route.continue_()
             # Leave the first GET unanswered until the real browser timeout.
             # Recovery uses the real Hub/node, not a fabricated draft response.
             if not stalled_reads:
@@ -69,7 +76,7 @@ def run(browser, root, config):
                 route.fulfill(response=response)
 
         context.route('**/api/session/conversation/attachment?*', upload)
-        page.route('**/api/session/conversation?*', stall_draft)
+        page.route(re.compile(r'.*/api/session/conversation(?:\?.*)?$'), stall_draft)
         page.on('pageerror', lambda error: errors.append(str(error)))
         try:
             page.goto(f'http://127.0.0.1:{hub.port}', wait_until='networkidle')
@@ -106,6 +113,25 @@ def run(browser, root, config):
             assert failure['fields']['traceId'] and failure['fields']['uid'].startswith('report:'), failure
             assert not list((root / 'reports').glob('BUG-*'))
             print('PASS draft read timeout: audited phase, retained input, automatic recovery without worker creation', flush=True)
+
+            # A failed save has one live warning, removed when the real node recovers.
+            fail_saves = True
+            page.fill('#bug-report-description', 'Recover report attachment reply after save failure')
+            warning = page.locator('#bug-report-items .draft-save-error')
+            expect(warning).to_have_count(1)
+            expect(warning).to_contain_text('synthetic draft save interruption')
+            page.locator('#bug-report-description').press('Control+End')
+            page.locator('#bug-report-description').press_sequentially('!')
+            wait_drafts(page)
+            expect(warning).to_have_count(1)
+            fail_saves = False
+            page.wait_for_function(js('!bugReportDraftObject().storageError && bugReportDraftObject().savedVersion === bugReportDraftObject().editVersion', '!runtime.launch.bugReportDraftObject().storageError && runtime.launch.bugReportDraftObject().savedVersion === runtime.launch.bugReportDraftObject().editVersion'))
+            expect(warning).to_have_count(0)
+            report_text = 'Recover report attachment reply after save failure!'
+            expect(page.locator('#bug-report-description')).to_have_value(report_text)
+            assert not list((root / 'reports').glob('BUG-*'))
+            print('PASS draft save interruption: one warning across repeated edits, removed after automatic recovery', flush=True)
+
             # Same size class as the reported phone image; valid PNG with padding.
             payload = PNG + b'\0' * (831 * 1024 - len(PNG))
             page.locator('#bug-report-file').set_input_files(
@@ -115,13 +141,30 @@ def run(browser, root, config):
             assert not page.locator('#bug-report-items').get_by_role('button', name='重试', exact=True).count()
             print('PASS lost upload reply: real bytes saved; retry reuses draft/upload ID', flush=True)
 
+            # Click the actual card with the caret in the middle, then read the
+            # real draft back through the Hub to catch UI-only text copies.
+            description = page.locator('#bug-report-description')
+            description.focus()
+            description.press('Control+Home')
+            description.press('ArrowRight')
+            page.locator('#bug-report-items .draft-card').first.click()
+            report_text = report_text[:1] + '[附件1]' + report_text[1:]
+            expect(description).to_have_value(report_text)
+            assert description.evaluate('el => [el.selectionStart, el.selectionEnd]') == [6, 6]
+            wait_drafts(page)
+            uid = page.evaluate(js('BUG_REPORT_DRAFT_UID', 'runtime.launch.BUG_REPORT_DRAFT_UID'))
+            saved = context.request.get(f'http://127.0.0.1:{hub.port}/api/session/conversation', params={'uid': uid})
+            assert saved.status == 200, saved.text()
+            assert saved.json()['draft']['value']['text'] == report_text, saved.json()
+            print('PASS attachment card click: reference inserted at caret and actual text saved on the node', flush=True)
+
             fail_replies = 2
             page.locator('#bug-report-file').set_input_files(
                 {'name': 'second.png', 'mimeType': 'image/png', 'buffer': PNG})
             retry = page.locator('#bug-report-items').get_by_role('button', name='重试', exact=True)
             expect(retry).to_be_visible()
             assert len(attempts) == 4 and attempts[2] == attempts[3], attempts
-            expect(page.locator('#bug-report-description')).to_have_value('Recover report attachment reply')
+            expect(page.locator('#bug-report-description')).to_have_value(report_text)
             retry.click()
             page.wait_for_function(js('bugReportDraftObject().attachments.every(a => a.uploaded?.upload_id && !a.staging)', 'runtime.launch.bugReportDraftObject().attachments.every(a => a.uploaded?.upload_id && !a.staging)'))
             assert len(attempts) == 5 and attempts[4] == attempts[2], attempts
@@ -135,6 +178,7 @@ def run(browser, root, config):
                 page.locator('#bug-report-go').click()
             assert submitted.value.status == 202, submitted.value.text()
             assert json.loads(submitted.value.request.post_data)['model'] == 'opus'
+            assert json.loads(submitted.value.request.post_data)['description'] == report_text
             ledger = json.loads((root / 'ledger/lifecycle-ledger.json').read_text())
             specs = [r['spec'] for r in ledger['records'].values() if r['request_id'].startswith('bug-report-')]
             assert [(spec.get('model'), spec.get('effort')) for spec in specs] == [('opus', 'high')], specs
@@ -145,6 +189,7 @@ def run(browser, root, config):
             expect(page.locator('#bug-report-dialog')).not_to_be_visible()
             bundles = list((root / 'reports').glob('BUG-*'))
             assert len(bundles) == 1, bundles
+            assert (bundles[0] / 'description.md').read_text() == report_text + '\n'
             # The worker brief defers validation to AGENTS.md: no unit-test step.
             brief = (bundles[0] / 'worker-prompt.md').read_text()
             assert 'AGENTS.md' in brief and 'cargo test' not in brief, brief

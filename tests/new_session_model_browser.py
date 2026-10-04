@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, REPO, Corpus, isolated_server
@@ -130,6 +131,59 @@ def row_geometry(page):
           return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; })""")
 
 
+def check_catalog_source_change(browser, base):
+    context = browser.new_context(service_workers="block")
+    delayed = []
+    errors = []
+
+    def catalog_route(route):
+        source = parse_qs(urlsplit(route.request.url).query)["source"][0]
+        if source == "codex":
+            delayed.append(route)
+        else:
+            route.fulfill(json={"models": [{"id": f"{source}-current", "name": f"{source} current",
+                "efforts": ["low", "high"]}], "default_model": f"{source}-current"})
+
+    context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
+    context.route("**/api/term/models?*", catalog_route)
+    page = context.new_page()
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    try:
+        page.goto(base, wait_until="networkidle")
+        page.wait_for_function(js("T.listLoaded", 'runtime.terminal.state.listLoaded'))
+        open_dialog(page)
+        pick_source(page, "claude")
+        expect(page.locator("#new-model-label")).to_have_text("claude current")
+        page.locator("#new-model").click()
+        expect(page.locator("#new-model-menu")).to_be_visible()
+        # Hold the old source's HTTP response while the user selects another CLI.
+        page.locator('#new-session-form label:has(input[value="codex"])').click()
+        expect(page.locator("#new-model-menu")).to_be_hidden()
+        expect(page.locator("#new-model-label")).to_have_text("读取模型…")
+        expect(page.locator("#new-model")).to_be_disabled()
+        pick_source(page, "grok")
+        expect(page.locator("#new-model-label")).to_have_text("grok current")
+        page.locator("#new-effort").select_option("low")
+        assert len(delayed) == 1, len(delayed)
+        delayed.pop().fulfill(json={"models": [{"id": "codex-late", "name": "Codex late",
+            "efforts": ["medium"]}], "default_model": "codex-late"})
+        page.wait_for_load_state("networkidle")
+        expect(page.locator("#new-model-label")).to_have_text("grok current")
+        expect(page.locator("#new-effort")).to_have_value("low")
+        page.locator("#new-model").click()
+        expect(page.locator("#new-model-options [role=option] > span")).to_have_text(["grok current"])
+        expect(page.locator("#new-model-options [role=option]")).to_have_attribute("aria-selected", "true")
+        page.keyboard.press("Escape")
+        expect(page.locator("#new-model")).to_be_focused()
+        # The response is still cached for its own source, without replacing Grok.
+        pick_source(page, "codex")
+        expect(page.locator("#new-model-label")).to_have_text("Codex late")
+        expect(page.locator("#new-effort")).to_have_value("medium")
+        assert not delayed and not errors, (delayed, errors)
+    finally:
+        context.close()
+
+
 def check_shared_effort(browser, binary, root):
     (root / "hub").mkdir(mode=0o700)
     nodes = [FakeNode("a" * 32, "NodeA"), FakeNode("b" * 32, "NodeB")]
@@ -244,6 +298,7 @@ def main():
             page.keyboard.press("Escape")
             expect(page.locator("#new-model-menu")).to_be_hidden()
             expect(page.locator("#new-session-dialog")).to_be_visible()
+            expect(page.locator("#new-model")).to_be_focused()
             body = create(page, work)
             assert body["model"] == "opus" and body["effort"] == "high", body
             open_dialog(page)
@@ -294,7 +349,19 @@ def main():
             names = page.locator("#new-model-options [role=option]").all_inner_texts()
             assert not any("Hidden" in name for name in names) and len(names) == 2, names
             page.keyboard.press("Escape")
-            choose_model(page, "GPT Fake A")
+            # Keyboard selection also works when there is no search input.
+            page.locator("#new-model").press("ArrowDown")
+            expect(page.locator("#new-model-options")).to_be_focused()
+            expect(page.locator("#new-model-options")).to_have_attribute("aria-activedescendant", "new-model-option-1")
+            page.keyboard.press("ArrowDown")
+            expect(page.locator("#new-model-options")).to_have_attribute("aria-activedescendant", "new-model-option-0")
+            page.keyboard.press("ArrowUp")
+            expect(page.locator("#new-model-options")).to_have_attribute("aria-activedescendant", "new-model-option-1")
+            page.keyboard.press("ArrowUp")
+            page.keyboard.press("Enter")
+            expect(page.locator("#new-model-label")).to_have_text("GPT Fake A")
+            expect(page.locator("#new-model-menu")).to_be_hidden()
+            expect(page.locator("#new-model")).to_be_focused()
             assert page.locator("#new-effort option").all_inner_texts() == ["low", "high"]
             expect(page.locator("#new-effort")).to_have_value("high")
             page.locator("#new-effort").select_option("low")
@@ -379,6 +446,50 @@ def main():
             open_dialog(page)
             pick_source(page, "opencode")
             expect(page.locator("#new-effort")).to_be_disabled()
+            choose_model(page, "prov/model-00")
+            page.locator("#new-model").press("ArrowDown")
+            search = page.locator("#new-model-search")
+            options = page.locator("#new-model-options [role=option]")
+            expect(search).to_be_visible()
+            expect(search).to_be_focused()
+            expect(options).to_have_count(len(OPENCODE_MODELS))
+            expect(search).to_have_attribute("aria-activedescendant", "new-model-option-0")
+            page.keyboard.press("ArrowUp")
+            expect(search).to_have_attribute("aria-activedescendant", f"new-model-option-{len(OPENCODE_MODELS) - 1}")
+            page.keyboard.press("ArrowDown")
+            expect(search).to_have_attribute("aria-activedescendant", "new-model-option-0")
+            page.keyboard.press("ArrowDown")
+            expect(search).to_have_attribute("aria-activedescendant", "new-model-option-1")
+            page.keyboard.press("Enter")
+            expect(page.locator("#new-model-label")).to_have_text("prov/model-01")
+            expect(page.locator("#new-model-menu")).to_be_hidden()
+            expect(page.locator("#new-model")).to_be_focused()
+            page.locator("#new-model").press("ArrowUp")
+            expect(search).to_be_focused()
+            page.keyboard.press("ArrowUp")
+            expect(search).to_have_attribute("aria-activedescendant", "new-model-option-0")
+            page.keyboard.press("Enter")
+            expect(page.locator("#new-model-label")).to_have_text("prov/model-00")
+            page.locator("#new-model").click()
+            expect(search).to_be_focused()
+            page.keyboard.type("no-matching-model")
+            expect(options).to_have_count(0)
+            expect(page.locator("#new-model-search[aria-activedescendant]")).to_have_count(0)
+            page.keyboard.press("Enter")
+            expect(page.locator("#new-model-menu")).to_be_visible()
+            expect(page.locator("#new-session-dialog")).to_be_visible()
+            expect(page.locator("#new-model-label")).to_have_text("prov/model-00")
+            expect(search).to_be_focused()
+            page.keyboard.press("ControlOrMeta+A")
+            page.keyboard.press("Backspace")
+            expect(search).to_have_value("")
+            expect(options).to_have_count(len(OPENCODE_MODELS))
+            expect(search).to_have_attribute("aria-activedescendant", "new-model-option-0")
+            expect(options.first).to_have_attribute("aria-selected", "true")
+            page.keyboard.press("Escape")
+            expect(page.locator("#new-model-menu")).to_be_hidden()
+            expect(page.locator("#new-session-dialog")).to_be_visible()
+            expect(page.locator("#new-model")).to_be_focused()
             page.locator("#new-model").click()
             expect(page.locator("#new-model-search")).to_be_visible()
             expect(page.locator("#new-model-search")).to_be_focused()
@@ -419,6 +530,7 @@ def main():
 
             assert not errors, errors
             context.close()
+            check_catalog_source_change(browser, base)
 
         # ---- A configured CLI that is not installed (a shell wrapper whose
         #      command is missing, exit 127) cannot be picked.
@@ -459,6 +571,7 @@ def main():
     print("PASS new_session_model_browser: claude/codex/grok/opencode catalogs, per-model effort shared across nodes, "
           "drag selection outside keeps the dialog and text, backdrop/cancel/close/Escape dismiss (desktop + phone), "
           "steady row across sources, search above ten, argv and pre-created session carry the model, phone wrap, "
+          "keyboard selection and wrapping, empty-result Enter, clearing search, Escape focus, stale catalog isolation, "
           "an uninstalled CLI cannot be picked")
 
 
