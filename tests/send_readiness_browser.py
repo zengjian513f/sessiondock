@@ -239,10 +239,39 @@ def main():
                 # input, not only synchronous DOM changes in one JS turn.
                 screen.write_text('custom')
                 page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"))
+                expect(page.locator('#csend')).to_be_enabled()
+                expect(page.locator('#composer-input-status')).to_be_hidden()
                 expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\binput-attention\b'))
-                page.locator('#cinput').click()
+                editor = page.locator('#cinput')
+                editor.click()
+                editor.press('Home')
+                editor.press('Shift+ArrowRight')
+                editor.press('Shift+ArrowRight')
+                # Native menu arrival and departure flow through ordinary CHECK
+                # polling. No presentation refresh or product-state injection.
+                menus = json.loads((REPO / 'tests/fixtures/cli_menus_grok.json').read_text())
+                screen.write_text(next(menu['screen'] for menu in menus if menu['name'] == 'approval_bash'))
+                expect(page.locator('#composer-input-status')).to_contain_text('选择', timeout=10000)
+                expect(page.locator('#composer-input-status')).to_be_visible()
+                expect(page.locator('#csend')).to_be_disabled()
+                expect(editor).to_be_enabled()
+                expect(editor).to_be_focused()
+                expect(editor).to_have_value('keep this message')
+                assert editor.evaluate('el => el.value.slice(el.selectionStart, el.selectionEnd)') == 'ke'
+                editor.press('Enter')
+                expect(editor).to_have_value('keep this message')
+                assert not trace.exists(), 'blocked composer submitted terminal input'
+                screen.write_text('custom')
+                expect(page.locator('#composer-input-status')).to_be_hidden(timeout=10000)
+                expect(page.locator('#csend')).to_be_enabled()
+                expect(editor).to_be_focused()
+                expect(editor).to_have_value('keep this message')
+                assert editor.evaluate('el => el.value.slice(el.selectionStart, el.selectionEnd)') == 'ke'
+                editor.press('End')
                 screen.write_text('login')
                 page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'unknown'", "runtime.composer.composerDraft()?.inputStatus?.state === 'unknown'"))
+                expect(page.locator('#csend')).to_be_disabled()
+                expect(page.locator('#composer-input-status')).to_be_visible()
                 assert page.evaluate("document.activeElement?.id === 'cinput'"), 'polling stole composer focus'
                 page.keyboard.type('!')
                 expect(page.locator('#cinput')).to_have_value('keep this message!')
@@ -439,7 +468,7 @@ def main():
                 }""", r"""() => {
                     const key=runtime.composer.composerUid, entry=runtime.core.cache.cache.get(key) || {};
                     entry.prompt={id:'stale-question',questions:[{question:'Old question',options:['Yes','No']}]};
-                    runtime.core.cache.cache.set(key,entry); runtime.composer.syncComposerSendState();
+                    runtime.core.cache.cachePut(key,entry);
                 }"""))
                 expect(page.locator('#csend')).to_be_enabled()
                 with page.expect_response(lambda r: urlsplit(r.url).path.endswith('/conversation/send')) as sent:

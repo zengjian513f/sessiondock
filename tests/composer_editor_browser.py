@@ -4,8 +4,9 @@
 Requires an already-built sessiondock binary and target/debug/ptyhost. Select
 the built Vue entry with SESSIONDOCK_TEST_WEB_DIR; unset it for legacy-web.
 Uses send_browser's lifecycle/history helpers and history_parity's loopback
-server. Two ordinary UI sends populate native input history; no protocol
-assertions or injected product state. Only IME events are explicitly simulated
+server. Two ordinary UI sends populate native input history. Delayed real
+draft/SEND replies and an intercepted meta build exercise stale completion;
+no injected product state. Only IME events are explicitly simulated
 (Chromium automation cannot drive an OS IME); this checks the KeyboardEvent
 guard, not real candidate selection. Mobile is a 390px Chromium viewport,
 not a device soft keyboard. The file chooser selects a tiny synthetic file.
@@ -15,8 +16,9 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -167,6 +169,100 @@ def sizing(page, editor):
     expect(editor).to_have_value('short')
 
 
+def stale_completions(page):
+    # Hold real server replies at the HTTP boundary. The ordinary load/SEND
+    # still runs; only its completion races the real build-check notice.
+    uid = page.locator('#side .item.sel').first.get_attribute('data-uid')
+    editor, send, add = (page.locator(selector) for selector in ('#cinput', '#csend', '#cadd'))
+    text = 'completion draft from server'
+    with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation'
+            and r.request.method == 'POST' and r.request.post_data_json['value']['text'] == text) as saved:
+        type_text(editor, text)
+    assert saved.value.status == 200, saved.value.text()
+
+    def new_build(route):
+        response = route.fetch()
+        data = response.json()
+        data['build'] = 'composer-late-response-build'
+        route.fulfill(response=response, json=data)
+
+    sends = []
+    page.on('request', lambda request: sends.append(request)
+            if urlsplit(request.url).path == '/api/session/conversation/send' else None)
+    for phase in ('loading', 'sending'):
+        held = []
+        pattern = '**/api/session/conversation?*' if phase == 'loading' else '**/api/session/conversation/send'
+
+        def hold_reply(route):
+            query = parse_qs(urlsplit(route.request.url).query)
+            if not held and (phase == 'sending' or query == {'uid': [uid]}):
+                response = route.fetch()
+                assert response.status == 200, response.text()
+                held.append((route, response))
+            else:
+                route.continue_()
+
+        page.route(pattern, hold_reply)
+        page.reload(wait_until='domcontentloaded')
+        page.locator(f'#side .item[data-uid="{uid}"]').first.click()
+        if phase == 'sending':
+            expect(editor).to_be_enabled()
+            expect(add).to_be_enabled()
+            expect(send).to_be_enabled()
+            type_text(editor, 'completion submitted draft')
+            send.click()
+        deadline = time.monotonic() + 10
+        while not held:
+            assert time.monotonic() < deadline, f'{phase} reply was not intercepted'
+            page.wait_for_timeout(20)  # Dispatch the pending route callback.
+        expect(send).to_be_disabled()
+        expect(add).to_be_disabled()
+        if phase == 'loading':
+            expect(editor).to_be_disabled()
+            retained = text
+        else:
+            assert held[0][1].json()['state'] == 'sent', held[0][1].text()
+            expect(send).to_have_attribute('aria-busy', 'true')
+            expect(editor).to_be_enabled()
+            retained = 'new draft while SEND reply is pending'
+            type_text(editor, retained)
+            editor.press('Home')
+            editor.press('Shift+ArrowRight')
+            editor.press('Shift+ArrowRight')
+
+        page.route('**/api/meta', new_build)
+        page.evaluate(js('checkServerBuild()', 'runtime.build.checkServerBuild()'))
+        expect(page.locator('.version-stale')).to_be_visible()
+        page.unroute('**/api/meta', new_build)
+        route, response = held[0]
+        route.fulfill(response=response)
+        page.unroute(pattern, hold_reply)
+        expect(editor).to_be_enabled()
+        expect(editor).to_have_value(retained)
+        expect(send).to_have_attribute('aria-busy', 'false')
+        expect(send).to_be_disabled()
+        expect(add).to_be_disabled()
+        expect(page.locator('#composer-input-status')).to_be_hidden()
+        if phase == 'sending':
+            expect(editor).to_be_focused()
+            assert editor.evaluate('el => el.value.slice(el.selectionStart, el.selectionEnd)') == 'ne'
+
+        # Stale pages still edit/save after completion, but Enter cannot SEND.
+        editor.click()
+        editor.press('End')
+        with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation'
+                and r.request.method == 'POST'
+                and r.request.post_data_json['value']['text'] == retained + '!') as saved:
+            editor.press_sequentially('!')
+        assert saved.value.status == 200, saved.value.text()
+        editor.press('Enter')
+        expect(editor).to_have_value(retained + '!')
+        expect(send).to_be_disabled()
+        expect(add).to_be_disabled()
+        assert len(sends) == (0 if phase == 'loading' else 1), sends
+        print(f'PASS composer stale build after delayed {phase} completion', flush=True)
+
+
 def exercise(browser, base, root, mobile=False):
     context = browser.new_context(viewport={'width': 390 if mobile else 1280,
                                            'height': 844 if mobile else 900},
@@ -213,6 +309,9 @@ def exercise(browser, base, root, mobile=False):
                 else:
                     editor.press('Enter')
                 expect(editor).to_have_value('')
+                expect(page.locator('#csend')).to_have_attribute('aria-busy', 'false')
+                expect(page.locator('#csend')).to_be_enabled()
+                expect(page.locator('#cadd')).to_be_enabled()
                 wait_history(page, text)
             type_text(editor, 'IME draft remains')
             expect(page.locator('#csend')).to_be_enabled()
@@ -222,6 +321,7 @@ def exercise(browser, base, root, mobile=False):
             history_paths(page, editor)
             attachments(page, editor)
             sizing(page, editor)
+            stale_completions(page)
         assert not errors, errors
         assert not dialogs, dialogs
         print(f"PASS composer editor {'mobile Enter' if mobile else 'desktop/history/IME/attachments/sizing'}", flush=True)
