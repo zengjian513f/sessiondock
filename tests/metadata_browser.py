@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Synthetic preferences through the real legacy UI; no original state or CLI."""
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 import json
 import os
@@ -9,6 +9,137 @@ import tempfile
 
 from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, batch35_meta, build_corpus, codex_message, isolated_server
+
+
+def refresh_catalog(page):
+    # Fetch and accept the real list, including metadata enrichment. Do not
+    # inject rows or call the header renderer directly.
+    assert page.evaluate(js('loadSessions(true)', 'runtime.core.list.loadSessions(true)'))
+    page.evaluate('new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
+
+
+def assert_same_focused_header(page, header, button, selector):
+    if scoped_frontend():
+        assert page.evaluate('''({header, button, selector}) =>
+            header === document.querySelector('#detail > .dhead') && header.isConnected
+            && button === document.querySelector(selector) && button.isConnected
+            && document.activeElement === button''',
+            {'header': header, 'button': button, 'selector': selector}), selector
+
+
+def check_header_metadata_refresh(page, corpus, base):
+    """Open menus survive accepted metadata, while UID/agent changes replace them."""
+    uid, agent = corpus.uid('claude-branch'), 'claude-agent-one'
+    sidecar = corpus.paths[agent].with_suffix('.meta.json')
+    original = sidecar.read_bytes()
+    child_selector = f'#session-view-menu button[data-agent="{agent}"]'
+    main_selector = '#session-view-menu button[data-agent=""]'
+    page.locator(f'#side .item[data-uid="{uid}"]').click()
+    expect(page.locator('#msgs')).to_contain_text('Claude selected answer')
+    try:
+        # First refresh an open main-view menu with its child button focused.
+        # Only the native sidecar description changes; transcript bytes stay intact.
+        page.locator('#a-view-switch').click()
+        child = page.locator(child_selector)
+        expect(child).to_be_visible()
+        child.focus()
+        header, button = page.locator('#detail > .dhead').element_handle(), child.element_handle()
+        sidecar.write_text(json.dumps({'description': 'Refreshed Claude child one', 'agentType': 'reviewer'}))
+        refresh_catalog(page)
+        expect(child.locator('b')).to_have_text('Refreshed Claude child one')
+        assert_same_focused_header(page, header, button, child_selector)
+        if scoped_frontend():
+            expect(child).to_be_visible()
+            expect(page.locator('#a-view-switch')).to_have_attribute('aria-expanded', 'true')
+        elif not child.is_visible():
+            page.locator('#a-view-switch').click()  # legacy intentionally remounts
+        child.click()
+        expect(page.locator('#msgs')).to_contain_text('Claude agent answer')
+        expect(page.locator('#a-view-switch')).to_contain_text('Refreshed Claude child one')
+        expect(page.locator('#session-view-menu')).to_be_hidden()
+        if scoped_frontend():
+            assert not header.evaluate('e => e.isConnected'), 'changing agent must replace the header'
+        button.dispose()
+        header.dispose()
+
+        # The selected agent title and its menu row both derive from the new
+        # description, even though the focused main-view button is unchanged.
+        page.locator('#a-view-switch').click()
+        main = page.locator(main_selector)
+        expect(main).to_be_visible()
+        main.focus()
+        header, button = page.locator('#detail > .dhead').element_handle(), main.element_handle()
+        sidecar.write_text(json.dumps({'description': 'Refreshed Claude child two', 'agentType': 'reviewer'}))
+        refresh_catalog(page)
+        expect(page.locator('#a-view-switch')).to_contain_text('Refreshed Claude child two')
+        expect(page.locator(child_selector + ' b')).to_have_text('Refreshed Claude child two')
+        assert_same_focused_header(page, header, button, main_selector)
+        if scoped_frontend():
+            expect(main).to_be_visible()
+            expect(page.locator('#a-view-switch')).to_have_attribute('aria-expanded', 'true')
+        elif not main.is_visible():
+            page.locator('#a-view-switch').click()
+        main.click()
+        expect(page.locator('#msgs')).to_contain_text('Claude selected answer')
+        expect(page.locator('#session-view-menu')).to_be_hidden()
+        if scoped_frontend():
+            assert not header.evaluate('e => e.isConnected'), 'returning to main must replace the header'
+        button.dispose()
+        header.dispose()
+
+        page.locator('#a-view-switch').click()
+        header = page.locator('#detail > .dhead').element_handle()
+        page.locator(f'#side .item[data-uid="{corpus.uid("claude-compact")}"]').click()
+        expect(page.locator('#msgs')).to_contain_text('Claude post compact answer')
+        expect(page.locator('#session-view-menu')).to_have_count(0)
+        if scoped_frontend():
+            assert not header.evaluate('e => e.isConnected'), 'changing UID must replace the header'
+        header.dispose()
+    finally:
+        sidecar.write_bytes(original)
+        refresh_catalog(page)
+
+    # Keep a fork menu open while the HTTP writer changes both the selected
+    # row and an ancestor. The latter must update the already visible chain.
+    fork_uid, parent_uid = corpus.uid('codex-grandchild'), corpus.uid('codex-parent')
+    page.locator(f'#side .item[data-uid="{fork_uid}"]').click()
+    expect(page.locator('#msgs')).to_contain_text('Codex nested fork answer')
+    page.locator('#a-fork-chain').click()
+    toggle_selector = f'#fork-chain-menu .chain-row[data-uid="{parent_uid}"] .chain-toggle'
+    toggle = page.locator(toggle_selector)
+    expect(toggle).to_have_text('显示')
+    toggle.focus()
+    header, button = page.locator('#detail > .dhead').element_handle(), toggle.element_handle()
+    response = page.request.post(base + '/api/sessions/fork-visibility', data={'uids': [parent_uid], 'visible': True})
+    assert response.ok, response.text()
+    response = page.request.post(base + '/api/session/star', data={'uid': fork_uid, 'starred': True})
+    assert response.ok, response.text()
+    refresh_catalog(page)
+    expect(page.locator('#a-star')).to_have_attribute('aria-pressed', 'true')
+    if scoped_frontend():
+        expect(toggle).to_have_text('隐藏')
+        expect(toggle).to_be_visible()
+        expect(page.locator('#a-fork-chain')).to_have_attribute('aria-expanded', 'true')
+        assert_same_focused_header(page, header, button, toggle_selector)
+    elif not toggle.is_visible():
+        page.locator('#a-fork-chain').click()
+    expect(toggle).to_have_text('隐藏')
+    with page.expect_response(lambda r: r.url.endswith('/api/sessions/fork-visibility') and r.request.method == 'POST') as saved:
+        toggle.click()
+    assert saved.value.ok, saved.value.text()
+    expect(page.locator(f'#side .item[data-uid="{parent_uid}"]')).to_have_count(0)
+    expect(toggle).to_have_text('显示')
+    page.locator(f'#side .item[data-uid="{uid}"]').click()
+    expect(page.locator('#msgs')).to_contain_text('Claude selected answer')
+    expect(page.locator('#fork-chain-menu')).to_have_count(0)
+    expect(page.locator('#session-view-menu')).to_be_hidden()
+    if scoped_frontend():
+        assert not header.evaluate('e => e.isConnected'), 'fork menu must not cross session identities'
+    button.dispose()
+    header.dispose()
+    response = page.request.post(base + '/api/session/star', data={'uid': fork_uid, 'starred': False})
+    assert response.ok, response.text()
+    refresh_catalog(page)
 
 
 def check_shown_fork_chain(page, corpus):
@@ -74,6 +205,7 @@ def main():
                         expect(page.locator("#msgs")).to_contain_text("Claude selected answer")
                         page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
                     first, other = pages
+                    check_header_metadata_refresh(first, corpus, base)
                     check_shown_fork_chain(first, corpus)
                     button = f'#side .star-toggle[data-star-uid="{corpus.uid("claude-branch")}"]'
                     first.locator(button).click()
@@ -124,7 +256,7 @@ def main():
                         expect(page.locator(f'#side .item[data-uid="{corpus.uid(f"shown-fork-{i}")}"]')).to_be_visible()
                     context.close()
                 assert all(path.read_bytes() == before for path, before in native_before.items())
-                print("PASS preferences browser: five same-title fork generations, open/hide/restore, cross-tab SSE star/unstar, parent visibility, mobile console, writer restart, native files unchanged")
+                print("PASS preferences browser: main/agent and fork menus across metadata refresh (Vue DOM/focus identity), session switches, five same-title fork generations, open/hide/restore, cross-tab SSE star/unstar, parent visibility, mobile console, writer restart, native files unchanged")
             finally:
                 browser.close()
 
