@@ -203,7 +203,7 @@ def main():
                     group.locator('.ghead').click()
                     expect(parent).to_have_count(0)
                     check_red_themes(group.locator('.caret'))
-                    page.evaluate(js('renderSide()', 'runtime.sidebarView.renderSide()'))
+                    page.evaluate(js('renderSide()', 'async () => {runtime.core.state.catalog.notifyChanges(); await new Promise(requestAnimationFrame)}'))
                     expect(parent).to_have_count(0)
                     group.locator('.ghead').click()
                     expect(parent).to_be_visible()

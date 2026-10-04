@@ -62,8 +62,12 @@ def main():
             assert requests==Counter({n.nid:1 for n in nodes if n is not nodes[3]}),requests
             assert page.evaluate(js('uid=>composerDrafts.get(uid).text', 'uid=>runtime.composer.composerDrafts.get(uid).text'),uid)=='Restored draft'
             page.evaluate(js('''()=>{window.__recoveryRenders=0;const render=renderSide;
-              renderSide=function(...args){__recoveryRenders++;return render(...args)}}''', """()=>{window.__recoveryRenders=0;const render=runtime.sidebarView.renderSide;
-              runtime.sidebarView.renderSide=function(...args){__recoveryRenders++;return render(...args)}}"""))
+              renderSide=function(...args){__recoveryRenders++;return render(...args)}}''', """()=>{window.__recoveryRenders=0;
+              window.__recoveryObserver=new MutationObserver(records=>{
+                __recoveryRenders+=records.filter(record=>[...record.removedNodes]
+                  .some(node=>node instanceof Element && (node.matches('.item') || node.querySelector('.item')))).length;
+              });
+              __recoveryObserver.observe(document.querySelector('#side'),{childList:true,subtree:true});}"""))
             # Only the failed, due node retries; concurrent calls share its GET.
             page.evaluate(js('node=>{composerServerRecoveries.get(node).retryAt=0}', 'node=>{runtime.composer.composerServerRecoveries.get(node).retryAt=0}'),nodes[5].nid)
             page.evaluate(js('Promise.all([recoverServerComposerDrafts(),recoverServerComposerDrafts()])', 'Promise.all([runtime.composer.recoverServerComposerDrafts(),runtime.composer.recoverServerComposerDrafts()])'))

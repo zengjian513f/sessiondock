@@ -24,7 +24,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
+from frontend_paths import frontend_dir
 from client_update_browser import matrix_row, open_machines
 from history_parity import BINARY, REPO, Corpus, isolated_server
 from hub_http_suite import Hub, free_port
@@ -140,6 +141,8 @@ def node_fixture(root, args, name, *, installed):
                       "claude", "codex", "grok", "opencode", "agy", "native-agy"):
         (root / directory).mkdir(mode=0o700)
     env = private_env(root)
+    # Resolve before clear=True drops the caller's frontend selection.
+    env["SESSIONDOCK_TEST_WEB_DIR"] = str(frontend_dir())
     for executable, body in (("agy", FAKE_CLI), ("missing-agy", FAKE_CLI),
                              ("fake-codex", FAKE_CLI), ("curl", FAKE_CURL)):
         path = root / "bin" / executable
@@ -385,7 +388,9 @@ def run(args):
         (root / "hub").mkdir(mode=0o700)
         runner_env = private_env(root)
         runner_env["PLAYWRIGHT_BROWSERS_PATH"] = browser_cache
-        runner_env["SESSIONDOCK_TEST_WEB_DIR"] = str(REPO / "legacy-web")
+        runner_env["SESSIONDOCK_TEST_WEB_DIR"] = str(frontend_dir())
+        print("Frontend: " + ("scoped/Vue" if scoped_frontend() else "legacy")
+              + " (" + runner_env["SESSIONDOCK_TEST_WEB_DIR"] + ")", flush=True)
         with patch.dict(os.environ, runner_env, clear=True), sync_playwright() as playwright, ExitStack() as stack:
             options = {"headless": True}
             if chromium:
@@ -452,7 +457,7 @@ def main():
         report = ["# Agy clients Chromium report", "",
                   "Result: " + ("FAIL" if failure else "PASS"),
                   f"Machine: {os.uname().nodename}; elapsed: {time.monotonic() - started:.1f}s",
-                  "Frontend: legacy; real loopback Rust nodes and Hub; private fake CLI/curl; no unit tests.", "",
+                  f"Frontend: {frontend_dir()}; real loopback Rust nodes and Hub; private fake CLI/curl; no unit tests.", "",
                   *["- PASS: " + name for name in CHECKS]]
         if failure:
             report.extend(["", "Failed phase: " + PHASE, "", "```text", failure[:5000], "```"])

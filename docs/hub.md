@@ -245,6 +245,9 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
   注册表缓存，观察器不请求它们；恢复探测仍由原有健康监控负责。
   健康检查时间戳等无语义变化的字段不会产生通知。浏览器按通知刷新需要的状态，
   用户选中会话后才加载详细内容。
+  节点完成元数据写入后立即发布 `sessions` 失效通知；Hub 确认代理或聚合写入成功
+  后也发布，部分成功只要已有确认写入就通知。失败不通知。这样星标等状态在两次
+  定时观察之间改变又恢复时，已经读到中间状态的页面仍会重新读取最终状态。
 - `term_list`：`enabled = any`（含过期缓存里的 `enabled:false`）、`home:""`、
   `sessions/pending` 全部拼接（含 stale 行）、`capabilities[nid] = {enabled: 真值且未失败,
   unavailable_reason: 失败文案或节点的, sources, home, backend, backends（失败为 []）}`、

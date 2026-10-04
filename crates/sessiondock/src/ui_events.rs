@@ -141,6 +141,15 @@ pub struct EventBus {
     sender: Mutex<Option<broadcast::Sender<Value>>>,
 }
 impl EventBus {
+    /// Invalidate directory reads after a completed metadata write. Snapshot
+    /// sampling alone can miss a change and its reversal between observations.
+    pub fn publish_sessions(&self) {
+        let sender_slot = self.sender.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(sender) = sender_slot.as_ref() {
+            let _ = sender.send(json!({"sessions":true}));
+        }
+    }
+
     pub fn subscribe<F, Fut>(self: &Arc<Self>, observe: F) -> broadcast::Receiver<Value>
     where
         F: Fn() -> Fut + Send + Sync + 'static,

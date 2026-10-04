@@ -58,7 +58,8 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 - `rollback`：不给 `--backup` 时取目标机上**mtime 最新**的 `backup-deploy-*`（手工备份的时间戳是
   本地时间、本工具是 UTC，按名字排不可靠）。`--backup` 只接受匹配
   `backup-deploy-<hex>-<YYYYmmdd>-<HHMMSS>` 的目录。
-- `--frontend vue`：从同源 `web/` 和 `legacy-web/` 快照编译完整 Vue 页面，stage 的 `web/`
+- `--frontend vue`：从同源 `web/` 快照编译完整 Vue 页面，静态资源也由其中的
+  `public/`、`shared/` 提供；stage 的 `web/`
   只包含 `dist-migration/` 产物；默认仍为 `legacy`。预览使用独立目标目录、用户服务和 loopback
   端口，再在现有鉴权代理中添加预览前缀，位置模板见
   [sessiondock-preview.nginx.conf](../deploy/sessiondock-preview.nginx.conf)。页面与全部 `api/`

@@ -75,9 +75,8 @@ def run(page):
       runtime.core.state.sidebar.nest = true;
       runtime.core.preferences.set('view', 'date');
       runtime.core.preferences.set('nest', true);
-      runtime.sidebarView.renderSide();
     }"""))
-    page.wait_for_function("document.querySelectorAll('#side .item[data-uid]').length === %d" % COUNT)
+    page.wait_for_function("document.querySelectorAll('#side .item[data-uid]').length === %d && document.querySelector('#view [data-v=date]').classList.contains('on') && document.querySelector('#nest-toggle').getAttribute('aria-pressed') === 'true'" % COUNT)
     uids = page.evaluate("() => [...document.querySelectorAll('#side .item[data-uid]')].map(n => n.dataset.uid)")
     first, last = uids[0], uids[-1]
     assert first != last, uids
@@ -102,11 +101,11 @@ def run(page):
       };
     }""", r"""() => {
       window.__sidebarRenders = 0;
-      const inner = runtime.sidebarView.renderSide;
-      runtime.sidebarView.renderSide = function() {
-        window.__sidebarRenders += 1;
-        return inner.apply(this, arguments);
-      };
+      window.__sidebarObserver = new MutationObserver(records => {
+        __sidebarRenders += records.filter(record => [...record.removedNodes]
+          .some(node => node instanceof Element && (node.matches('.item') || node.querySelector('.item')))).length;
+      });
+      __sidebarObserver.observe(document.querySelector('#side'), {childList: true, subtree: true});
     }"""))
     before = last_row_state(page)
     assert before["uid"] == last, before
@@ -143,15 +142,15 @@ def check_reconciliation(page):
       window.__sideMutations = observer.takeRecords().length;
       observer.disconnect();
     }""", r"""async () => {
-      runtime.sidebarView.renderSide();
-      await Promise.resolve();
+      runtime.core.state.catalog.notifyChanges();
+      await new Promise(requestAnimationFrame);
       window.__sideRows = [...document.querySelectorAll('#side .item')];
       const side = document.querySelector('#side');
       window.__sideMutations = 0;
       const observer = new MutationObserver(records => { window.__sideMutations += records.length; });
       observer.observe(side, {childList: true, subtree: true});
-      runtime.sidebarView.renderSide();
-      await Promise.resolve();
+      runtime.core.state.catalog.notifyChanges();
+      await new Promise(requestAnimationFrame);
       window.__sideMutations += observer.takeRecords().length;
       observer.disconnect();
     }"""))
@@ -164,9 +163,9 @@ def check_reconciliation(page):
     }""", r"""async () => {
       const base = runtime.core.state.catalog.sessions[0];
       runtime.core.state.catalog.sessions = [...runtime.core.state.catalog.sessions, {...base, uid: 'synthetic-extra', sid: 'synthetic-extra', title: 'Added row'}];
-      runtime.sidebarView.renderSide();
-      await Promise.resolve();
+      await new Promise(requestAnimationFrame);
     }"""))
+    page.wait_for_function("document.querySelector('#side .item[data-uid=synthetic-extra]')?.textContent.includes('Added row')")
     assert page.locator('#side .item[data-uid="synthetic-extra"]').count() == 1
     assert page.evaluate("__sideRows.every(row => row.isConnected)")
     page.evaluate(js(r"""() => {
@@ -174,15 +173,17 @@ def check_reconciliation(page):
       renderSide();
     }""", r"""async () => {
       runtime.core.state.catalog.sessions = runtime.core.state.catalog.sessions.filter(row => row.uid !== 'synthetic-extra');
-      runtime.sidebarView.renderSide();
-      await Promise.resolve();
+      await new Promise(requestAnimationFrame);
     }"""))
     assert page.evaluate("__sideRows.every(row => row.isConnected)")
+    page.wait_for_function("!document.querySelector('#side .item[data-uid=synthetic-extra]')")
     group = page.locator('#side > .group').first
     group.locator('.ghead').click()
+    page.wait_for_function("document.querySelector('#side > .group').classList.contains('closed') && !document.querySelector('#side > .group').querySelector('.item')")
     assert group.locator('.item').count() == 0
     assert 'closed' in group.get_attribute('class')
     group.locator('.ghead').click()
+    page.wait_for_function("!document.querySelector('#side > .group').classList.contains('closed') && !!document.querySelector('#side > .group').querySelector('.item')")
     assert group.locator('.item').count() > 0
     assert 'closed' not in group.get_attribute('class')
 

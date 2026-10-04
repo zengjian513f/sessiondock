@@ -139,11 +139,12 @@ def check_page(page, nodes, hub):
     }""", """() => {
       const types = ['claude', 'codex', 'grok'];
       runtime.core.state.catalog.sessions.forEach((row, index) => { row.source = types[index]; });
-      runtime.sidebarView.renderSide();
+      runtime.core.state.catalog.notifyChanges();
     }"""))
+    if scoped_frontend():
+        page.wait_for_function("['codex', 'grok'].every(source => {const chip = document.querySelector('#chips button[data-source=' + source + ']'); return chip && chip.getAttribute('aria-disabled') !== 'true'})")
     page.locator('#chips button[data-source="codex"]').click(button="right")
-    legacy_sources = [] if scoped_frontend() else ["agy"]
-    assert page.evaluate(js("[...S.off].sort()", '[...runtime.core.state.sidebar.off].sort()')) == legacy_sources + ["claude", "grok", "opencode", "shell"]
+    assert page.evaluate(js("[...S.off].sort()", '[...runtime.core.state.sidebar.off].sort()')) == ["agy", "claude", "grok", "opencode", "shell"]
     grok = page.locator('#chips button[data-source="grok"]')
     grok.dispatch_event("pointerdown", {"pointerType": "touch", "pointerId": 41,
                                         "button": 0, "clientX": 20, "clientY": 20})
@@ -151,8 +152,8 @@ def check_page(page, nodes, hub):
     grok.dispatch_event("pointerup", {"pointerType": "touch", "pointerId": 41,
                                       "button": 0, "clientX": 20, "clientY": 20})
     grok.dispatch_event("click")
-    assert page.evaluate(js("[...S.off].sort()", '[...runtime.core.state.sidebar.off].sort()')) == legacy_sources + ["claude", "codex", "opencode", "shell"]
-    assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.off')).sort()") == legacy_sources + ["claude", "codex", "opencode", "shell"]
+    assert page.evaluate(js("[...S.off].sort()", '[...runtime.core.state.sidebar.off].sort()')) == ["agy", "claude", "codex", "opencode", "shell"]
+    assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.off')).sort()") == ["agy", "claude", "codex", "opencode", "shell"]
     page.evaluate(js("""() => {
       S.off.clear(); store.set('off', []); loadSessions(true);
     }""", """() => {

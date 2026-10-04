@@ -12,6 +12,7 @@ from browser_runtime import js, scoped_frontend
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -68,6 +69,133 @@ def fail(area, why, body=""):
 
 def passed(area):
     print(f"PASS {area}", flush=True)
+
+
+def pending_live_identity(browser, base):
+    """Observed pending liveness belongs to a UID and receipt/host identity."""
+    if not scoped_frontend():
+        return
+    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+    try:
+        page = context.new_page()
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(base, wait_until="networkidle")
+        page.wait_for_function("window.SessionDockRuntime?.terminal.state.listLoaded && "
+                               "window.SessionDockRuntime.core.state.catalog.sig")
+        # Accepted receipt/list state, with polling paused so it cannot repair
+        # an incorrect paint before we inspect it. Simultaneous receipts have
+        # separate UIDs/instances; their observations must remain independent.
+        page.evaluate("""() => {
+          const runtime = window.SessionDockRuntime;
+          runtime.core.network.pause('idle');
+          const receipt = {name: 'observed-pending', source: 'codex', cwd: '/synthetic/pending',
+            title: 'Observed pending', record_id: 'observed-record', instance_id: 'observed-instance',
+            started: 1700000000, stale: false, running: true, state: 'running'};
+          const neighbor = {...receipt, name: 'neighbor-pending', title: 'Neighbor pending',
+            record_id: 'neighbor-record', instance_id: 'neighbor-instance'};
+          runtime.terminal.state.pending = [receipt, neighbor];
+          runtime.terminal.state.list = [neighbor];
+          runtime.core.state.sidebar.closed.clear();
+        }""")
+        row = page.locator('#side .item[data-uid="tmux:observed-pending"]')
+        neighbor = page.locator('#side .item[data-uid="tmux:neighbor-pending"]')
+        live = re.compile(r'\blive\b')
+        live_tmux = re.compile(r'\blive-tmux\b')
+        visible = re.compile(r'\bvisible\b')
+        expect(row).to_have_class(live)
+        expect(neighbor).to_have_class(live)
+        row_handle, neighbor_handle = row.element_handle(), neighbor.element_handle()
+        page.evaluate("window.SessionDockRuntime.status.paintLive()")
+        expect(row).not_to_have_class(live)
+        expect(row).not_to_have_class(live_tmux)
+        expect(row.locator('.item-status')).not_to_have_class(visible)
+        expect(neighbor).to_have_class(live)
+        expect(neighbor.locator('.item-status')).to_have_class(visible)
+        page.evaluate("""() => {
+          const runtime = window.SessionDockRuntime;
+          window.__observedPendingRows = runtime.core.pending.pendingTmuxSessions();
+          window.__pendingGroupings = 0;
+          const groupBy = runtime.sidebarView.groupBy;
+          runtime.sidebarView.groupBy = (...args) => { __pendingGroupings++; return groupBy(...args); };
+        }""")
+        # Nesting reprojections do not call paintLive: a row-object-keyed
+        # observation would fall back to !stale and incorrectly resurrect it.
+        nesting = page.get_by_role('button', name='分层显示', exact=True)
+        for pressed in ('true', 'false'):
+            before = page.evaluate('__pendingGroupings')
+            nesting.click()
+            expect(nesting).to_have_attribute('aria-pressed', pressed)
+            assert page.evaluate('__pendingGroupings') > before
+            expect(row).not_to_have_class(live)
+            expect(row.locator('.item-status')).not_to_have_class(visible)
+            expect(neighbor).to_have_class(live)
+        page.locator('#livecount').click()
+        expect(page.locator('#livecount')).to_have_attribute('aria-checked', 'true')
+        expect(row).to_have_count(1)
+        expect(row).not_to_have_class(live)
+        page.locator('#allcount').click()
+        expect(page.locator('#allcount')).to_have_attribute('aria-checked', 'true')
+        before = page.evaluate('__pendingGroupings')
+        page.evaluate("""async () => {
+          const runtime = window.SessionDockRuntime, uid = 'tmux:observed-pending';
+          const receipt = runtime.terminal.state.pending.find(row => 'tmux:' + row.name === uid);
+          const draft = runtime.composer.restoreComposerDraftRecord({text: 'unsent', session: receipt}, uid);
+          runtime.composer.composerDrafts.set(uid, draft);
+          await new Promise(requestAnimationFrame);
+          draft.text = 'changed unsent draft';
+          draft.session = {...receipt, title: 'Draft-only title'};
+          draft.inputStatus = {state: 'starting', code: 'cli_starting'};
+          await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+        }""")
+        assert page.evaluate('__pendingGroupings') == before
+        assert page.evaluate("window.SessionDockRuntime.core.pending.pendingTmuxSessions() === __observedPendingRows")
+        expect(row.locator('.t')).to_have_text('Observed pending')
+        expect(row).not_to_have_class(live)
+        expect(row.locator('.item-status')).not_to_have_class(visible)
+        assert row.evaluate('(node, old) => node === old', row_handle)
+        assert neighbor.evaluate('(node, old) => node === old', neighbor_handle)
+        # A decoded receipt with changed metadata gets a new projected object,
+        # but the same UID/instance keeps the already observed inactive state.
+        page.evaluate("""() => {
+          const terminal = window.SessionDockRuntime.terminal.state;
+          terminal.pending = terminal.pending.map(row => row.name === 'observed-pending'
+            ? {...row, title: 'Updated receipt title'} : row);
+        }""")
+        expect(row.locator('.t')).to_have_text('Updated receipt title')
+        assert page.evaluate("window.SessionDockRuntime.core.pending.pendingTmuxSessions()[0] !== __observedPendingRows[0]")
+        expect(row).not_to_have_class(live)
+        expect(row.locator('.item-status')).not_to_have_class(visible)
+        expect(neighbor).to_have_class(live)
+        assert row.evaluate('(node, old) => node === old', row_handle)
+        # Same endpoint/UID and record, new instance: it starts with the normal
+        # receipt default until observed, rather than inheriting old false.
+        # Receipts without an instance use record identity with the same rule.
+        for identity in ({'instance_id': 'replacement-instance', 'record_id': 'observed-record'},
+                         {'instance_id': None, 'record_id': 'record-only-a'},
+                         {'instance_id': None, 'record_id': 'record-only-b'}):
+            page.evaluate("""identity => {
+              const terminal = window.SessionDockRuntime.terminal.state;
+              terminal.pending = terminal.pending.map(row => {
+                if (row.name !== 'observed-pending') return row;
+                const next = {...row, ...identity};
+                if (next.instance_id === null) delete next.instance_id;
+                return next;
+              });
+            }""", identity)
+            expect(row).to_have_class(live)
+            expect(row).to_have_class(live_tmux)
+            expect(row.locator('.item-status')).to_have_class(visible)
+            assert row.evaluate('(node, old) => node === old', row_handle)
+            page.evaluate("window.SessionDockRuntime.status.paintLive()")
+            expect(row).not_to_have_class(live)
+            expect(row.locator('.item-status')).not_to_have_class(visible)
+            expect(neighbor).to_have_class(live)
+            assert neighbor.evaluate('(node, old) => node === old', neighbor_handle)
+        assert not errors, errors
+        passed('pending: inactive observation survives controls/drafts; UID, instance and record isolation')
+    finally:
+        context.close()
 
 
 def wait_native(context, base, sid, timeout=4):
@@ -363,6 +491,7 @@ def main():
                 options["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
             browser = playwright.chromium.launch(**options)
             try:
+                pending_live_identity(browser, base)
                 context = browser.new_context(
                     viewport={"width": 1280, "height": 900}, service_workers="block")
                 context.route(

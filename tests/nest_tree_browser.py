@@ -260,7 +260,7 @@ def check_page(page, uid, data, server, width):
       // Initial details add cursor anchors/warnings to list summaries. Publish
       // that real metadata change before checking an unchanged repeated open.
       await runtime.core.sync.syncSession(runtime.core.state.selection.sel, runtime.core.state.selection.agent);
-      runtime.sidebarView.renderSide();
+      await new Promise(requestAnimationFrame);
     }"""))
     page.locator(f'#side .item[data-uid="{C}"]').click()
     opened(page, C)
@@ -294,22 +294,22 @@ def check_page(page, uid, data, server, width):
       // The actual repeated click above reconciles cached details. Exact
       // no-op metadata must preserve the already published tree snapshot.
       await runtime.core.sync.syncSession(runtime.core.state.selection.sel, runtime.core.state.selection.agent);
+      await new Promise(requestAnimationFrame);
       window.__nestCalls = {render: 0, group: 0};
       window.__nestOutside = [];
       window.__nestInside = false;
-      window.__nestRenderSide = runtime.sidebarView.renderSide;
+      window.__nestObserver = new MutationObserver(records => {
+        for (const record of records) for (const node of record.removedNodes) {
+          if (node instanceof Element && (node.contains(window.__unrelatedNestRow)
+            || node.contains(window.__unrelatedNestHead))) __nestCalls.render++;
+        }
+      });
+      __nestObserver.observe(document.querySelector('#side'), {childList: true, subtree: true});
       window.__nestGroupBy = runtime.sidebarView.groupBy;
       window.__nestToggle = runtime.sidebarView.toggleNestFold;
       runtime.sidebarView.toggleNestFold = function(...args) {
         __nestInside = true;
         try { return __nestToggle(...args); } finally { __nestInside = false; }
-      };
-      // Cached-session synchronization and periodic list refreshes may finish
-      // between clicks. Count only work performed by the actual caret handler.
-      runtime.sidebarView.renderSide = function(...args) {
-        if (__nestInside) __nestCalls.render++;
-        else __nestOutside.push(new Error().stack);
-        return __nestRenderSide(...args);
       };
       runtime.sidebarView.groupBy = function(...args) {
         if (__nestInside) __nestCalls.group++;
@@ -341,11 +341,14 @@ def check_page(page, uid, data, server, width):
       window.__unfoldedNestRow = document.querySelector(`.item[data-uid="${uid}"]`);
       renderSide = __nestRenderSide; groupBy = __nestGroupBy; toggleNestFold = __nestToggle;
       renderSide();
-    }""", """uid => {
+    }""", """async uid => {
       window.__unfoldedNestRow = document.querySelector(`.item[data-uid="${uid}"]`);
-      runtime.sidebarView.renderSide = __nestRenderSide; runtime.sidebarView.groupBy = __nestGroupBy; runtime.sidebarView.toggleNestFold = __nestToggle;
-      runtime.sidebarView.renderSide();
+      __nestObserver.disconnect();
+      runtime.sidebarView.groupBy = __nestGroupBy; runtime.sidebarView.toggleNestFold = __nestToggle;
+      runtime.core.state.catalog.notifyChanges();
+      await new Promise(requestAnimationFrame);
     }"""), C)
+    page.wait_for_function("__unfoldedNestRow === document.querySelector('.item[data-uid=\"' + __unfoldedNestRow.dataset.uid + '\"]')")
     assert page.evaluate('__unfoldedNestRow.isConnected')
     page.evaluate(js('setPicking(true)', 'runtime.bulk.setPicking(true)'))
     b_caret.click()

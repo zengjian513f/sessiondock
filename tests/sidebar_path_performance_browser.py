@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Click folded branches/groups and filters with many same-basename directories."""
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 from pathlib import Path
 import tempfile
@@ -62,8 +62,8 @@ def main():
             }"""))
             caret=page.locator('.item[data-uid="claude:fold-0"] .nest-caret')
             page.evaluate(js('''() => {window.__full=0;const render=renderSide;
-              renderSide=function(...args){__full++;return render(...args)}}''', """() => {window.__full=0;const render=runtime.sidebarView.renderSide;
-              runtime.sidebarView.renderSide=function(...args){__full++;return render(...args)}}"""))
+              renderSide=function(...args){__full++;return render(...args)}}''', """() => {window.__full=0;const group=runtime.sidebarView.groupBy;
+              runtime.sidebarView.groupBy=function(...args){__full++;return group(...args)}}"""))
             for i in range(4):
                 page.evaluate(js('''i=>{const row=indexedSessions().byUid.get('claude:fold-0');
                   applyMigrationMeta(row.uid,null,{meta:row},{...row,size:4096+i,cursor:{end:i,head:'test'}})}''', """i=>{const row=runtime.core.index.indexedSessions().byUid.get('claude:fold-0');
@@ -74,20 +74,32 @@ def main():
             assert caret.get_attribute('aria-expanded') == 'false'
             group=page.locator('#side>.group').first
             group.locator('.ghead').click()
-            page.wait_for_timeout(160)
+            if scoped_frontend():
+                page.wait_for_function("document.querySelector('#side > .group').classList.contains('closed') && !document.querySelector('#side > .group .item')")
+                page.evaluate('new Promise(requestAnimationFrame)')
+            else:
+                page.wait_for_timeout(160)
             page.evaluate('__fits=0')
             group.locator('.ghead').click()
-            page.wait_for_timeout(160)
+            if scoped_frontend():
+                page.wait_for_function("!document.querySelector('#side > .group').classList.contains('closed') && !!document.querySelector('#side > .group .item') && __fits === 1")
+            else:
+                page.wait_for_timeout(160)
             assert page.evaluate('__fits') == 1, page.evaluate('__fits')
             page.locator('#chips .chip[data-source="claude"]').click()
             page.locator('#chips .chip[data-source="claude"]').click()
             page.set_viewport_size({'width': 1250, 'height': 900})
-            page.wait_for_timeout(150)
+            if scoped_frontend():
+                page.evaluate('new Promise(requestAnimationFrame)')
+                page.wait_for_function('window.SessionDockRuntime.timeline.timelineFitFrame === 0')
+            else:
+                page.wait_for_timeout(150)
             assert page.evaluate(js('timelinePathPlans([...S.sessions].reverse())===__plans', 'runtime.timeline.timelinePathPlans([...runtime.core.state.catalog.sessions].reverse())===__plans'))
             # A new colliding directory invalidates the plan and remains distinct.
             page.evaluate(js('''()=>{S.sessions=[...S.sessions,{...S.sessions[0],uid:'claude:extra',sid:'extra',
               cwd:'/synthetic/other/run-0/checkout/workspace'}];renderSide()}''', """()=>{runtime.core.state.catalog.sessions=[...runtime.core.state.catalog.sessions,{...runtime.core.state.catalog.sessions[0],uid:'claude:extra',sid:'extra',
-              cwd:'/synthetic/other/run-0/checkout/workspace'}];runtime.sidebarView.renderSide()}"""))
+              cwd:'/synthetic/other/run-0/checkout/workspace'}];}"""))
+            page.wait_for_function("document.querySelector('.item[data-uid=\"claude:extra\"]') !== null")
             assert page.evaluate(js('timelinePlanCache.plans!==__plans', 'runtime.timeline.timelinePlanCache.plans!==__plans'))
             assert page.locator('.item[data-uid="claude:extra"]').count() == 1
             assert not errors, errors

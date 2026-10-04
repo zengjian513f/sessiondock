@@ -17,6 +17,7 @@ use crate::{
     },
     sessions::SessionStore,
     state::{AppState, JsonBytes},
+    ui_events::EventBus,
 };
 
 impl From<MetadataError> for ApiError {
@@ -121,7 +122,7 @@ fn invalid(error: JsonRejection) -> ApiError {
 
 async fn write(
     state: AppState,
-    work: impl FnOnce(&SessionStore) -> Result<Value, ApiError> + Send + 'static,
+    work: impl FnOnce(&SessionStore, &EventBus) -> Result<Value, ApiError> + Send + 'static,
 ) -> Result<JsonBytes, ApiError> {
     if state.shutdown.is_cancelled() {
         return Err(ApiError::new(
@@ -132,11 +133,12 @@ async fn write(
     }
     let permit = state.reader.acquire().await?;
     let store = state.reader.store.clone();
+    let events = state.ui_events.clone();
     // Once admitted, an HTTP cancellation cannot roll back an atomic write or
     // release capacity before the blocking job has actually finished.
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        work(&store).map(|value| JsonBytes::new(&value))
+        work(&store, &events).map(|value| JsonBytes::new(&value))
     })
     .await
     .map_err(|_| {
@@ -146,6 +148,22 @@ async fn write(
             "偏好工作异常退出，请重新读取状态确认结果",
         )
     })?
+}
+
+fn update(
+    metadata: &MetadataStore,
+    events: &EventBus,
+    work: impl FnOnce(&MetadataStore) -> Result<Arc<MetadataSnapshot>, ApiError>,
+) -> Result<Arc<MetadataSnapshot>, ApiError> {
+    let previous = metadata.snapshot()?;
+    let snapshot = work(metadata)?;
+    // No-op catalog synchronization retains the same immutable snapshot.
+    // Publish here, before any later response read can fail, and inside the
+    // admitted worker so HTTP cancellation cannot discard the invalidation.
+    if !Arc::ptr_eq(&previous, &snapshot) {
+        events.publish_sessions();
+    }
+    Ok(snapshot)
 }
 
 #[derive(Deserialize)]
@@ -161,7 +179,7 @@ pub struct GroupRequest {
 
 pub async fn groups(State(state): State<AppState>) -> Result<JsonBytes, ApiError> {
     let metadata = configured(&state)?;
-    write(state, move |_| {
+    write(state, move |_, _| {
         Ok(json!(metadata.snapshot()?.group_catalog()))
     })
     .await
@@ -173,8 +191,11 @@ pub async fn merge_groups(
 ) -> Result<JsonBytes, ApiError> {
     let metadata = configured(&state)?;
     let Json(body) = body.map_err(invalid)?;
-    write(state, move |_| {
-        Ok(json!(metadata.merge_group_catalog(&body)?.group_catalog()))
+    write(state, move |_, events| {
+        let snapshot = update(&metadata, events, |metadata| {
+            Ok(metadata.merge_group_catalog(&body)?)
+        })?;
+        Ok(json!(snapshot.group_catalog()))
     })
     .await
 }
@@ -187,13 +208,14 @@ pub async fn session_group(
     let metadata = configured(&state)?;
     let Json(body) = body.map_err(invalid)?;
     body.diagnostics.validate(&state, hub.is_some())?;
-    write(state, move |store| {
+    write(state, move |store, events| {
         let list = store.list(true)?;
         if !list["sessions"].as_array().is_some_and(|rows| rows.iter().any(|row| row["uid"] == body.uid)) {
             return Err(ApiError::new(StatusCode::NOT_FOUND, "session_missing", "会话不存在"));
         }
-        let snapshot = metadata.set_group(&body.uid,
-            body.set_group.then_some(body.group))?;
+        let snapshot = update(&metadata, events, |metadata| {
+            Ok(metadata.set_group(&body.uid, body.set_group.then_some(body.group))?)
+        })?;
         let row = snapshot.row(&body.uid);
         Ok(json!({"ok": true, "uid": body.uid, "group": row["group"], "metadata_revision": snapshot.revision()}))
     }).await
@@ -214,7 +236,7 @@ pub async fn star(
             "需要有效的会话 uid",
         ));
     }
-    write(state, move |store| {
+    write(state, move |store, events| {
         let list = store.list(true)?;
         if !list["sessions"]
             .as_array()
@@ -226,7 +248,9 @@ pub async fn star(
                 "会话不存在",
             ));
         }
-        let snapshot = metadata.set_starred(&body.uid, body.starred)?;
+        let snapshot = update(&metadata, events, |metadata| {
+            Ok(metadata.set_starred(&body.uid, body.starred)?)
+        })?;
         let row = snapshot.row(&body.uid);
         Ok(json!({"ok":true,"uid":body.uid,"starred":body.starred,
             "starred_at":row["starred_at"],"metadata_revision":snapshot.revision()}))
@@ -249,7 +273,7 @@ pub async fn visibility(
             "需要有效会话 uid",
         ));
     }
-    write(state, move |store| {
+    write(state, move |store, events| {
         let list = store.list(true)?;
         let rows = list["sessions"].as_array().expect("session snapshot rows");
         let known: BTreeSet<_> = rows.iter().filter_map(|row| row["uid"].as_str()).collect();
@@ -264,7 +288,9 @@ pub async fn visibility(
             if let Some(error) = error { errors.push(json!({"uid":uid,"error":error})) }
             else { valid.push(uid) }
         }
-        let snapshot = metadata.set_fork_visibility(&valid, body.visible)?;
+        let snapshot = update(&metadata, events, |metadata| {
+            Ok(metadata.set_fork_visibility(&valid, body.visible)?)
+        })?;
         let updated: Vec<_> = valid.into_iter().map(|uid| json!({"uid":uid,"fork_parent_visible":body.visible})).collect();
         Ok(json!({"ok":true,"updated":updated,"errors":errors,"metadata_revision":snapshot.revision()}))
     }).await
@@ -349,7 +375,7 @@ pub async fn nest(
             "跨机器附属需要通过 Hub 验证",
         ));
     }
-    write(state, move |store| {
+    write(state, move |store, events| {
         let list = store.list(true)?;
         let rows = list["sessions"].as_array().expect("session snapshot rows");
         if listed_row(rows, &body.uid).is_none() {
@@ -422,7 +448,9 @@ pub async fn nest(
         } else {
             None
         };
-        let snapshot = metadata.set_nest_display(&body.uid, parent)?;
+        let snapshot = update(&metadata, events, |metadata| {
+            Ok(metadata.set_nest_display(&body.uid, parent)?)
+        })?;
         let nest_parent = snapshot.nest_parent(&body.uid).map(|parent| json!(parent));
         Ok(json!({
             "ok": true,
@@ -460,9 +488,9 @@ pub async fn rewind(
             "target 必须是 Claude 记录节点 ID，或 null 表示取消固定",
         ));
     }
-    write(state, move |store| {
+    write(state, move |store, events| {
         let uid = body.uid;
-        let snapshot = match &body.target {
+        let snapshot = update(&metadata, events, |metadata| Ok(match &body.target {
             Some(target) => {
                 let resolved = store.claude_rewind_target(&uid, target)?;
                 let now = std::time::SystemTime::now()
@@ -500,7 +528,7 @@ pub async fn rewind(
                 }
                 metadata.clear_timeline_pin(&uid)?
             }
-        };
+        }))?;
         // Report the row exactly as `/api/sessions` now publishes it, including
         // an immediate retirement if native records already moved past the pin.
         let list = store.list(true)?;
@@ -564,6 +592,7 @@ pub(crate) async fn follow_cli_rewind(
         return false;
     };
     let store = state.reader.store.clone();
+    let events = state.ui_events.clone();
     let owner = uid.to_owned();
     let wanted = target.clone();
     let pinned = tokio::task::spawn_blocking(move || {
@@ -575,8 +604,8 @@ pub(crate) async fn follow_cli_rewind(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|at| at.as_secs_f64())
             .ok();
-        metadata
-            .set_timeline_pin(
+        update(&metadata, &events, |metadata| {
+            Ok(metadata.set_timeline_pin(
                 &owner,
                 crate::metadata::TimelinePin {
                     tip: resolved.tip.clone(),
@@ -585,8 +614,9 @@ pub(crate) async fn follow_cli_rewind(
                     pinned_at: now,
                     cli: true,
                 },
-            )
-            .map_err(|error| error.message)?;
+            )?)
+        })
+        .map_err(|error| error.message)?;
         Ok::<_, String>(resolved)
     })
     .await

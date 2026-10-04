@@ -248,8 +248,8 @@ def main():
                     showSearchMatches = rows => { window.searchPaints++; original(rows); };
                 }""", r"""() => {
                     window.searchPaints = 0;
-                    const original = runtime.sidebarView.showSearchMatches;
-                    runtime.sidebarView.showSearchMatches = rows => { window.searchPaints++; original(rows); };
+                    const original = runtime.sidebarView.groupBy;
+                    runtime.sidebarView.groupBy = (...args) => { window.searchPaints++; return original(...args); };
                 }"""))
                 search("Needle")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(2)

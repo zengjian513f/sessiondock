@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Inactive views use unread summaries without fetching cached message bodies, node and hub."""
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 from contextlib import ExitStack
 import json
@@ -49,7 +49,9 @@ def main():
                     checkpoints[uid]={'end':result['end'],'head':result['version']['head'],'anchor':result['anchor']}
                 page.evaluate(js('''points=>{S.unread.clear();cache.clear();S.cursors=new Map(Object.entries(points));
                   S.view='date';S.nest=true;S.closed.clear();renderView();renderSide()}''', """points=>{runtime.core.state.unread.unread.clear();runtime.core.cache.cache.clear();runtime.core.state.unread.cursors=new Map(Object.entries(points));
-                  runtime.core.state.sidebar.view='date';runtime.core.state.sidebar.nest=true;runtime.core.state.sidebar.closed.clear();runtime.sidebarView.renderSide()}"""),checkpoints)
+                  runtime.core.state.sidebar.view='date';runtime.core.state.sidebar.nest=true;runtime.core.state.sidebar.closed.clear();}"""),checkpoints)
+                if scoped_frontend():
+                    page.wait_for_function("document.querySelector('#view [data-v=date]').classList.contains('on') && document.querySelector('#nest-toggle').getAttribute('aria-pressed') === 'true' && document.querySelectorAll('#side .item').length === 20")
                 page.locator('#side>.group>.ghead').first.click()
                 requests=[]
                 page.on('request',lambda r:requests.append((r.method,r.url)))
@@ -63,6 +65,7 @@ def main():
                 assert len(batches)==1,requests
                 assert not any('/api/messages/' in u for _,u in requests),requests
                 page.locator('#side>.group>.ghead').first.click()
+                page.wait_for_function("document.querySelectorAll('#side .item-status.counted').length === 20")
                 assert page.locator('#side .item-status.counted').count()==20
                 # Broken checkpoints reset individually; another unknown UID
                 # must not suppress a valid entry in the same batch.
