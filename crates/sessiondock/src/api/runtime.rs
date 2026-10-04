@@ -124,10 +124,10 @@ fn finish(mut response: Value, volatile: Volatile) -> Response {
     if let (Some(report), Some(managed)) = (volatile.managed, response["managed"].as_object_mut()) {
         managed.insert("cache".into(), report);
     }
-    if let Some(scan) = response["scan"].as_object_mut() {
-        if let Some(report) = volatile.scan {
-            scan.insert("cache".into(), report);
-        }
+    if let Some(scan) = response["scan"].as_object_mut()
+        && let Some(report) = volatile.scan
+    {
+        scan.insert("cache".into(), report);
     }
     ([(header::CACHE_CONTROL, "no-store")], Json(response)).into_response()
 }

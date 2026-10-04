@@ -147,10 +147,10 @@ impl TransferService {
         let mut keys = vec![format!("operation:{}", op.id)];
         for member in &op.group().members {
             keys.push(format!("session:{}", member.uid));
-            if let Some(staged) = &op.staged {
-                if let Ok(uid) = self.member_target_uid(op, member, staged) {
-                    keys.push(format!("session:{uid}"));
-                }
+            if let Some(staged) = &op.staged
+                && let Ok(uid) = self.member_target_uid(op, member, staged)
+            {
+                keys.push(format!("session:{uid}"));
             }
         }
         keys

@@ -93,32 +93,33 @@ impl Cache {
         }
         let links = Arc::new(read(e));
         // A concurrent writer must never associate a partial read with its final stamp.
-        if links.errors.is_empty() && key(e).ok().as_ref() == Some(&before) {
-            if let Ok(mut cache) = self.entries.lock() {
-                cache.insert(e.data.clone(), (before, links.clone()));
-                self.dirty.store(true, Ordering::Relaxed);
-            }
+        if links.errors.is_empty()
+            && key(e).ok().as_ref() == Some(&before)
+            && let Ok(mut cache) = self.entries.lock()
+        {
+            cache.insert(e.data.clone(), (before, links.clone()));
+            self.dirty.store(true, Ordering::Relaxed);
         }
         Ok(links)
     }
 }
 fn key(e: &CandidateRef) -> Result<Key, TransferError> {
     let mut paths = BTreeSet::from([e.data.clone()]);
-    if e.source == "grok" {
-        if let Some(summary) = &e.summary_path {
-            paths.insert(summary.clone());
-            let root = summary.parent().unwrap();
-            paths.insert(root.join("updates.jsonl"));
-            for (directory, nested) in [("compaction_checkpoints", false), ("subagents", true)] {
-                let dir = root.join(directory);
-                if dir.is_dir() {
-                    for entry in fs::read_dir(dir)? {
-                        let path = entry?.path();
-                        if nested {
-                            paths.insert(path.join("meta.json"));
-                        } else if path.extension().is_some_and(|v| v == "json") {
-                            paths.insert(path);
-                        }
+    if e.source == "grok"
+        && let Some(summary) = &e.summary_path
+    {
+        paths.insert(summary.clone());
+        let root = summary.parent().unwrap();
+        paths.insert(root.join("updates.jsonl"));
+        for (directory, nested) in [("compaction_checkpoints", false), ("subagents", true)] {
+            let dir = root.join(directory);
+            if dir.is_dir() {
+                for entry in fs::read_dir(dir)? {
+                    let path = entry?.path();
+                    if nested {
+                        paths.insert(path.join("meta.json"));
+                    } else if path.extension().is_some_and(|v| v == "json") {
+                        paths.insert(path);
                     }
                 }
             }
@@ -221,37 +222,35 @@ fn relationship_row(line: &[u8], source: &str) -> serde_json::Result<Value> {
             "uuid",
         ],
     )?;
-    if let Some(message) = raw.get("message") {
-        if let Ok(message) = serde_json::from_str::<Object<'_>>(message.get()) {
-            if let Some(content) = message.get("content") {
-                if let Ok(blocks) = serde_json::from_str::<Vec<&RawValue>>(content.get()) {
-                    let mut kept = Vec::new();
-                    for block in blocks {
-                        let Ok(block) = serde_json::from_str::<Object<'_>>(block.get()) else {
-                            continue;
-                        };
-                        match text(&block, "type").as_deref() {
-                            Some("tool_use")
-                                if matches!(
-                                    text(&block, "name").as_deref(),
-                                    Some("SendMessage" | "Agent" | "Task")
-                                ) =>
-                            {
-                                kept.push(pick(&block, &["type", "id", "name", "input"])?)
-                            }
-                            Some("tool_result") => {
-                                kept.push(pick(&block, &["type", "tool_use_id", "content"])?)
-                            }
-                            _ => {}
-                        }
-                    }
-                    if !kept.is_empty() {
-                        row["message"] = serde_json::json!({"content": kept});
-                        if let Some(result) = raw.get("toolUseResult") {
-                            row["toolUseResult"] = serde_json::from_str(result.get())?;
-                        }
-                    }
+    if let Some(message) = raw.get("message")
+        && let Ok(message) = serde_json::from_str::<Object<'_>>(message.get())
+        && let Some(content) = message.get("content")
+        && let Ok(blocks) = serde_json::from_str::<Vec<&RawValue>>(content.get())
+    {
+        let mut kept = Vec::new();
+        for block in blocks {
+            let Ok(block) = serde_json::from_str::<Object<'_>>(block.get()) else {
+                continue;
+            };
+            match text(&block, "type").as_deref() {
+                Some("tool_use")
+                    if matches!(
+                        text(&block, "name").as_deref(),
+                        Some("SendMessage" | "Agent" | "Task")
+                    ) =>
+                {
+                    kept.push(pick(&block, &["type", "id", "name", "input"])?)
                 }
+                Some("tool_result") => {
+                    kept.push(pick(&block, &["type", "tool_use_id", "content"])?)
+                }
+                _ => {}
+            }
+        }
+        if !kept.is_empty() {
+            row["message"] = serde_json::json!({"content": kept});
+            if let Some(result) = raw.get("toolUseResult") {
+                row["toolUseResult"] = serde_json::from_str(result.get())?;
             }
         }
     }
@@ -340,12 +339,11 @@ fn extract(e: &CandidateRef, links: &mut Links) -> Result<(), TransferError> {
                     p["type"].as_str(),
                     Some("function_call_output" | "custom_tool_call_output")
                 )
+                && let Some(call) = p["call_id"].as_str()
             {
-                if let Some(call) = p["call_id"].as_str() {
-                    let ids = super::code_mode::result_references(&p["output"]);
-                    if !ids.is_empty() {
-                        links.outputs.entry(call.into()).or_default().extend(ids);
-                    }
+                let ids = super::code_mode::result_references(&p["output"]);
+                if !ids.is_empty() {
+                    links.outputs.entry(call.into()).or_default().extend(ids);
                 }
             }
         } else {
@@ -366,10 +364,10 @@ fn extract(e: &CandidateRef, links: &mut Links) -> Result<(), TransferError> {
                     ));
                 }
             }
-            if row.get("parentUuid").is_some() {
-                if let Some(id) = row["uuid"].as_str().filter(|s| !s.is_empty()) {
-                    links.messages.insert(id.into());
-                }
+            if row.get("parentUuid").is_some()
+                && let Some(id) = row["uuid"].as_str().filter(|s| !s.is_empty())
+            {
+                links.messages.insert(id.into());
             }
             claude_rows.push(row);
         }

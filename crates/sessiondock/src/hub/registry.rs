@@ -20,7 +20,7 @@ mod tests;
 use std::{
     collections::HashMap,
     fmt, fs,
-    io::{self, Write},
+    io::{self, BufWriter, Write},
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     str::FromStr,
@@ -1045,7 +1045,15 @@ impl Registry {
         events: Option<&mpsc::Sender<SearchEvent>>,
     ) -> Fetched {
         let encoded = encode_query(query);
-        let key: CacheKey = (node.id.clone(), path.to_string(), encoded.clone());
+        // A conditional signature selects a revision, not a different list.
+        // Keeping it in the key retains up to 128 full historical snapshots.
+        let canonical_sessions =
+            path == "/api/sessions" && query.iter().all(|(key, _)| key == "force" || key == "sig");
+        let key = if canonical_sessions {
+            sessions_key(&node.id)
+        } else {
+            (node.id.clone(), path.to_string(), encoded.clone())
+        };
         let stamp = now();
         let mut found: IndexMap<String, Value> = IndexMap::new();
         let search = path == "/api/search";
@@ -1081,14 +1089,7 @@ impl Registry {
                                 inner.cache.shift_remove_index(0);
                             }
                         }
-                        let snapshot = path == "/api/sessions"
-                            && !unchanged
-                            && query.iter().all(|(key, _)| key == "force" || key == "sig");
-                        if snapshot {
-                            inner
-                                .cache
-                                .insert(sessions_key(&node.id), (stamp, data.clone()));
-                        }
+                        let snapshot = canonical_sessions && !unchanged;
                         inner.health.insert(
                             node.id.clone(),
                             Health {
@@ -1395,8 +1396,15 @@ fn now() -> f64 {
 fn write_snapshot_file(dir: &Path, nid: &str, stamp: f64, data: &Value) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     let temp = dir.join(format!("{nid}.sessions.tmp"));
-    let mut file = private_create(&temp)?;
-    serde_json::to_writer(&mut file, &json!({"stamp": stamp, "data": data}))?;
+    #[derive(Serialize)]
+    struct Snapshot<'a> {
+        stamp: f64,
+        data: &'a Value,
+    }
+    // JSON serialization emits many tiny writes. Buffer them and borrow the
+    // payload instead of cloning the entire session list into another Value.
+    let mut file = BufWriter::new(private_create(&temp)?);
+    serde_json::to_writer(&mut file, &Snapshot { stamp, data })?;
     file.flush()?;
     drop(file);
     fs::rename(&temp, dir.join(format!("{nid}.sessions.json")))
