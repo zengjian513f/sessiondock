@@ -12,7 +12,7 @@ import time
 from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright, expect
-from history_parity import Corpus, codex_row, get_json
+from history_parity import Corpus, claude_row, codex_row, get_json
 import spawned_by_suite as fixture
 from spawned_by_suite import BINARY, BTIME, proc_pid, server_with_env
 
@@ -105,6 +105,94 @@ def first_publication(browser, root, binary):
     print('PASS first list publication and every Chromium render nest a newly discovered exec worker', flush=True)
 
 
+def inactive_children(browser, root, binary):
+    """The active filter explains omitted exec children without making them selectable."""
+    corpus = Corpus(root)
+    children = ['nodes', 'groups', 'audit']
+    for sid in ['parent', 'unrelated', *children]:
+        corpus.put(sid, 'codex', [
+            codex_row('session_meta', {'id': sid, 'cwd': '/synthetic/work',
+                'timestamp': stamp(101 if sid == 'parent' else 401), 'source': 'exec',
+                'thread_source': 'user'}),
+            codex_row('response_item', {'type': 'message', 'role': 'user',
+                'content': 'Inspect ' + sid})], [])
+    corpus.put('other-source', 'claude', [claude_row('other-source', 'user', 'u0', None,
+        'Inspect other-source', cwd='/synthetic/work', timestamp=stamp(401))], [])
+    state = root / 'state'
+    state.mkdir(mode=0o700)
+    (state / 'session-metadata.json').write_text(json.dumps({'schema_version': 1,
+        'revision': 1, 'sessions': {corpus.uid(sid): {
+            'nest_parent': {'source': 'codex', 'sid': 'parent'}, 'nest_initialized': True}
+            for sid in [*children, 'other-source']}}))
+    proc = root / 'proc'
+    proc.mkdir()
+    (proc / 'stat').write_text(f'btime {BTIME}\n')
+    proc_pid(proc, 100, 'codex', ['codex'], 1, fds={3: corpus.paths['parent']})
+    proc_pid(proc, 400, 'codex', ['codex', 'exec'], 100, fds={3: corpus.paths['audit']})
+    with server_with_env(corpus, {'SESSIONDOCK_PROC_ROOT': proc,
+            'SESSIONDOCK_STATE_DIR': state, 'SESSIONDOCK_GROK_ACTIVE': root / 'absent'},
+            binary) as (base, opener):
+        for width in [1280, 390]:
+            context = browser.new_context(viewport={'width': width, 'height': 900})
+            page = context.new_page()
+            page.goto(base)
+            expect(page.locator('#session-total')).to_have_text('6')
+            expect(page.locator('#session-active')).to_have_text('2')
+            if not page.evaluate(js('S.nest', 'runtime.core.state.sidebar.nest')):
+                page.locator('#nest-toggle').click()
+            def item(sid):
+                return page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]')
+            parent = item('parent')
+            hint = parent.locator('.nest-inactive')
+            expect(hint).to_be_hidden()
+            page.locator('#livecount').click()
+            expect(hint).to_have_text('有 3 个不活跃会话（已被筛选隐藏）')
+            expect(hint).to_be_visible()
+            for sid in ['nodes', 'groups', 'unrelated', 'other-source']:
+                expect(item(sid)).to_have_count(0)
+            expect(page.locator('#side .gcount')).to_have_text('2')
+            parent.locator('.nest-caret').click()
+            expect(hint).to_be_hidden()
+            expect(parent.locator('.nest-caret')).to_have_attribute('title', '展开 1 项，另有 3 个不活跃会话')
+            parent.locator('.nest-caret').press('Enter')
+            expect(hint).to_be_visible()
+            # Source exclusions remain exclusions, not inactive children.
+            page.locator('#chips button[data-source="claude"]').click()
+            expect(hint).to_have_text('有 2 个不活跃会话（已被筛选隐藏）')
+            page.locator('#nest-toggle').click()
+            expect(hint).to_be_hidden()
+            page.locator('#nest-toggle').click()
+            expect(hint).to_be_visible()
+            page.locator('#q').fill('Inspect parent')
+            expect(hint).to_be_hidden()
+            page.locator('#q').fill('')
+            expect(hint).to_have_text('有 2 个不活跃会话（已被筛选隐藏）')
+            # Finish the remaining worker; background live polling updates both
+            # list membership and the hint, including an inactive-only branch.
+            shutil.rmtree(proc / '400')
+            expect(page.locator('#session-active')).to_have_text('1', timeout=15000)
+            expect(hint).to_have_text('有 3 个不活跃会话（已被筛选隐藏）')
+            expect(parent.locator('.nest-caret')).to_be_visible()
+            parent.locator('.nest-caret').click()
+            expect(hint).to_be_hidden()
+            expect(parent.locator('.nest-caret')).to_have_attribute('title', '展开 3 个不活跃会话')
+            parent.locator('.nest-caret').click()
+            expect(hint).to_be_visible()
+            page.locator('#allcount').click()
+            expect(hint).to_be_hidden()
+            for sid in children:
+                expect(item(sid)).to_have_attribute('data-depth', '1')
+                item(sid).click()
+                expect(page.locator('#msgs')).to_contain_text('Inspect ' + sid)
+                if page.evaluate('document.body.classList.contains("mobile-detail")'):
+                    page.locator('.dhead .mobile-back').first.click()
+            context.close()
+            proc_pid(proc, 400, 'codex', ['codex', 'exec'], 100,
+                     fds={3: corpus.paths['audit']})
+            get_json(opener, base, '/api/live?force=1')
+    print('PASS inactive child hint, fold/keyboard, source/search/flat filters, live exit, all histories, desktop/mobile', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -113,6 +201,7 @@ def main():
         root = Path(tmp)
         browser = pw.chromium.launch(headless=True)
         first_publication(browser, root / 'first-publication', args.binary)
+        inactive_children(browser, root / 'inactive-children', args.binary)
         corpus = Corpus(root)
         children = [f'exec-worker-{i}' for i in range(6)]
         for sid in ['parent', 'other', 'resumed', 'standalone', 'cycle-parent', 'cycle-child', 'imported-detached', 'imported-attached', *children]:

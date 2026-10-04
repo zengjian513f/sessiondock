@@ -2855,7 +2855,15 @@ function visible() {
   const eligible = s => (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
     && nodeSelected(s) && (globalThis.SessionDockGroups?.matches(s) ?? true);
   let pool = (S.results || sidebarSessions()).filter(eligible);
-  if (S.activeOnly) pool = pool.filter(s => s.pending || S.live.has(s.uid));
+  if (S.activeOnly) {
+    const active = s => s.pending || S.live.has(s.uid);
+    const children = S.nest && S.view !== 'group' && !S.term
+      ? nestEdges(pool).children : new Map();
+    pool = pool.filter(active).map(s => {
+      const inactive = (children.get(s.uid) || []).filter(child => !active(child)).length;
+      return inactive ? {...s, sidebarInactiveChildren: inactive} : s;
+    });
+  }
   if (S.term && S.results === null) pool = pool.filter(s => sidebarMainMatches(s)
     || sidebarAgentItems(s).length > 0);
   if (S.term && S.nest && S.view !== 'group') {
@@ -4168,14 +4176,14 @@ function nestSize(s, children, memo = new Map()) {
 }
 
 function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
-  const row = {s, agent: null, depth, kids: 0, closed: false};
+  const row = {s, agent: null, depth, kids: 0, closed: false, inactive: s.sidebarInactiveChildren || 0};
   const showMain = sidebarMainMatches(s) || (S.nest && S.view !== 'group');
   if (showMain) out.push(row);
   // 子代理行与分层开关无关，平铺模式同样挂在会话下面；children 在平铺时为空，
   // 发起的会话只在分层模式缩进。
   if (sidebarNestClosed(s.uid)) {
     row.kids = nestSize(s, children, sizes).rows - 1;
-    row.closed = row.kids > 0;
+    row.closed = row.kids > 0 || !!row.inactive;
     return;
   }
   const when = v => +new Date(v) || 0;
@@ -4300,10 +4308,15 @@ const agentMeta = (uid, a) => `子代理 · ${a.type} · ${fmtSpan(a.created, ag
 /** 每行前面的引导区：每一级祖先一根竖线，再一个放三角的槽位（叶子留空）。子代理行让
  *  平铺模式也有引导区；有子代理或发起的孩子就有三角，与分层开关无关。
  *  槽位与分组标题的三角同列，深一层的槽位正好落在上一层图标的下方。 */
+function nestFoldCount(r) {
+  return [r.kids ? `${r.kids} 项` : '', r.inactive ? `${r.inactive} 个不活跃会话` : '']
+    .filter(Boolean).join('，另有 ');
+}
+
 function nestLeadMarkup(r) {
-  const caret = r.kids ? `<button type="button" class="nest-caret" aria-expanded="${!r.closed}"
-      title="${r.closed ? '展开' : '收起'} ${r.kids} 项" aria-label="${r.closed ? '展开' : '收起'}「${esc(r.s.title)}」下的 ${r.kids} 项"></button>` : '';
-  return `<span class="nest-lead" aria-hidden="${r.kids ? 'false' : 'true'}">${'<i class="nest-guide"></i>'.repeat(r.depth)}<span class="nest-slot">${caret}</span></span>`;
+  const caret = r.kids || r.inactive ? `<button type="button" class="nest-caret" aria-expanded="${!r.closed}"
+      title="${r.closed ? '展开' : '收起'} ${nestFoldCount(r)}" aria-label="${r.closed ? '展开' : '收起'}「${esc(r.s.title)}」下的 ${nestFoldCount(r)}"></button>` : '';
+  return `<span class="nest-lead" aria-hidden="${r.kids || r.inactive ? 'false' : 'true'}">${'<i class="nest-guide"></i>'.repeat(r.depth)}<span class="nest-slot">${caret}</span></span>`;
 }
 
 function agentRow(s, a, depth) {
@@ -4421,11 +4434,16 @@ function patchSidebarRow(node, row, highlightKey) {
   globalThis.SessionDockGroups?.paintRow(node, s);
   paintStarButton(node.querySelector('.item-star'), !!s.starred, S.starBusy.has(s.uid));
   syncRowPickBox(node, s);
+  const inactive = node.querySelector('.nest-inactive');
+  if (inactive) {
+    inactive.hidden = !row.inactive || row.closed;
+    inactive.textContent = row.inactive ? `有 ${row.inactive} 个不活跃会话（已被筛选隐藏）` : '';
+  }
   const caret = node.querySelector('.nest-caret');
   if (caret) {
     caret.setAttribute('aria-expanded', String(!row.closed));
-    caret.title = `${row.closed ? '展开' : '收起'} ${row.kids} 项`;
-    caret.ariaLabel = `${row.closed ? '展开' : '收起'}「${s.title}」下的 ${row.kids} 项`;
+    caret.title = `${row.closed ? '展开' : '收起'} ${nestFoldCount(row)}`;
+    caret.ariaLabel = `${row.closed ? '展开' : '收起'}「${s.title}」下的 ${nestFoldCount(row)}`;
   }
   if (s.pending) node.dataset.tmuxName = s.tmuxName;
   node.onclick = event => {
@@ -4442,14 +4460,14 @@ function sidebarRowIdentity(r, picked, sessionSignatures) {
     const {agent_items, cursor, ...fields} = r.s;
     sessionSignatures.set(r.s.uid, JSON.stringify(fields));
   }
-  const signature = JSON.stringify([sessionSignatures.get(r.s.uid), r.agent, r.depth, r.kids, r.closed,
+  const signature = JSON.stringify([sessionSignatures.get(r.s.uid), r.agent, r.depth, r.kids, r.closed, r.inactive,
     r.agent ? agentMeta(r.s.uid, r.agent) : itemMeta(r.s),
     S.view, S.nestAttachUids.includes(r.s.uid), S.term, S.opts,
     S.opts.regex ? regexResultRevision : 0,
     S.sel === r.s.uid && (r.agent ? S.agent === r.agent.id : !S.agent),
     S.starBusy.has(r.s.uid), S.live.has(r.s.uid), S.liveTmux.has(r.s.uid)]);
   const structure = JSON.stringify([!!r.agent, S.view, !!S.term,
-    r.depth, !!r.kids, !!r.s.pending, !!sidebarRowSnippet(r.s, r.agent), r.s.source]);
+    r.depth, !!(r.kids || r.inactive), !!r.s.pending, !!sidebarRowSnippet(r.s, r.agent), r.s.source]);
   return {signature, structure};
 }
 
@@ -4472,6 +4490,7 @@ function createSidebarRow(r, picked = pickedSessions) {
      <div class="body">
        <div class="t" title="${esc(s.title)}">${hl(s.title)}</div>
        <div class="m">${esc(meta)}</div>
+       <div class="nest-inactive"${!r.inactive || r.closed ? ' hidden' : ''}>${r.inactive ? `有 ${r.inactive} 个不活跃会话（已被筛选隐藏）` : ''}</div>
        ${S.view === 'date'
          ? `<div class="cwd" title="${esc(s.cwd)}" data-node-name="${esc(s.node_name || '')}">${timelineDirectoryMarkup(s)}</div>` : ''}
        ${snippet ? `<div class="snip" title="${esc(snippet)}">${sidebarSnippet(snippet)}</div>` : ''}

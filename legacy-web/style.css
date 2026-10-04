@@ -972,7 +972,7 @@ body.dragging #drag { will-change: transform; }
   font-size: 13px; line-height: 1.4; overflow: hidden; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
-.item .m {
+.item .m, .item .nest-inactive {
   font-size: 11.5px; color: var(--muted); margin-top: 1px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
