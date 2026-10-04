@@ -6,6 +6,10 @@ resume, external CLI takeover, stop and native association; default startup
 launches nothing. Conversation SEND has its own [contract](conversation.md),
 and public authentication belongs to the reverse proxy.
 
+[Agy](agy.md) uses `new_pending` and opens its native console first. Its initial
+integration supports terminal input and reconnecting the running host; it does
+not infer a native conversation ID from the working directory.
+
 New sessions open the conversation page. The configured CLI and ptyhost still
 start on the backend; the browser does not claim or attach a console until the
 user switches to it. Reopening a session may restore the user’s saved terminal

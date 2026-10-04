@@ -19,6 +19,10 @@
 
 ## Native interaction semantics
 
+- [ ] 完成 [Agy](docs/agy.md) 原生读模型、身份绑定/恢复、网页输入识别、模型目录、
+  菜单与问题报告；明确原生删除、移动/克隆及外部子会话证据。基础启动和终端
+  不代表这些能力已经可用。
+
 - [ ] 决定并实现真正的 native rewind/rollback。现有 timeline pin 只改变 SessionDock
   的展示视图，不改 CLI 原生历史，也不向 CLI 发送回滚动作。
 - [ ] 若仍需要 activity stop 覆盖，先定义原生确认和退役语义，再接入读模型；不得仅凭

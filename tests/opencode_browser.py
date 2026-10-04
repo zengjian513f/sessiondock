@@ -5,13 +5,13 @@ The server mirrors an OpenCode 2 style SQLite store (`project`, `session_v2`,
 `session_message`) into files and lists, renders and searches its sessions.
 A new session is created in OpenCode under a server-assigned id before its
 TUI starts with `--session`, so the page switches straight to the native row.
-Covered: the five-source picker on desktop and phone, a seeded session with
+Covered: the six-source picker on desktop and phone, a seeded session with
 reasoning, tool calls, an image and failures, body search, launch, composer
 SEND with its native echo, input checks, stop and resume, portrait/dark
 icons, the report dialog and irreversible delete. Private fake CLI,
 loopback server, temporary directories only.
 """
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import base64
 import argparse
 import json
@@ -150,7 +150,7 @@ def main():
         profiles = [{'id': 'opencode-cli-v1', 'source': 'opencode', 'executable': executable,
                      'args': [str(REPO / 'tests/fake_opencode_composer.py')],
                      'resume_args': ['--session', '{sid}'], 'env': env}]
-        # The other CLIs only need to exist so the picker shows all five sources.
+        # The other CLIs only need to exist so the picker shows the configured sources.
         profiles += [{'id': f'{source}-cli-v1', 'source': source, 'executable': executable,
                       'args': ['-c', 'import time; time.sleep(60)'], 'env': env}
                      for source in ('claude', 'codex', 'grok')]
@@ -225,10 +225,10 @@ def main():
                 page.locator('#q').fill('')
                 page.locator('#q').press('Enter')
 
-                # ---- Picker: five sources, one labelled row on desktop, icons on a phone.
+                # ---- Picker: six sources, one labelled row on desktop, icons on a phone.
                 page.locator('#new-session').click()
                 labels = page.locator('#new-session-form .new-source label')
-                expect(labels).to_have_count(5)
+                expect(labels).to_have_count(5 if scoped_frontend() else 6)
                 assert len(picker_rows(page)) == 1, picker_rows(page)
                 for label in labels.all():
                     scroll, client = label.locator('span').evaluate('e => [e.scrollWidth, e.clientWidth]')
@@ -419,7 +419,7 @@ def main():
             finally:
                 context.close()
                 browser.close()
-    print('PASS opencode browser: mirrored seed (image, tools, failures) listed/rendered/searched, five-source picker, '
+    print('PASS opencode browser: mirrored seed (image, tools, failures) listed/rendered/searched, six-source picker, '
           'pre-created launch lands on the native row, SEND with native echo, input checks, stop+resume, '
           'icons, report dialog, irreversible delete, OpenCode report worker receives the prompt')
 

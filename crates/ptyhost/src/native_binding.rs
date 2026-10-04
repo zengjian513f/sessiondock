@@ -97,7 +97,7 @@ pub fn prepare(request: &Value, metadata: &Value) -> Result<NativeBinding, Error
     };
     if !matches!(
         candidate.source.as_str(),
-        "claude" | "codex" | "grok" | "opencode"
+        "claude" | "codex" | "grok" | "opencode" | "agy"
     ) || !candidate.uid.starts_with(&format!("{}:", candidate.source))
         || candidate.uid.len() <= candidate.source.len() + 1
         || !candidate.matches_pending(metadata)

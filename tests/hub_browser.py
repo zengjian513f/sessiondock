@@ -10,7 +10,7 @@ Fake nodes only (`tests/hub_fake_node.py`); no CLI, no session root.
 """
 from __future__ import annotations
 
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 import json
 import os
@@ -142,7 +142,8 @@ def check_page(page, nodes, hub):
       runtime.sidebarView.renderSide();
     }"""))
     page.locator('#chips button[data-source="codex"]').click(button="right")
-    assert page.evaluate(js("[...S.off].sort()", '[...runtime.core.state.sidebar.off].sort()')) == ["claude", "grok", "opencode", "shell"]
+    legacy_sources = [] if scoped_frontend() else ["agy"]
+    assert page.evaluate(js("[...S.off].sort()", '[...runtime.core.state.sidebar.off].sort()')) == legacy_sources + ["claude", "grok", "opencode", "shell"]
     grok = page.locator('#chips button[data-source="grok"]')
     grok.dispatch_event("pointerdown", {"pointerType": "touch", "pointerId": 41,
                                         "button": 0, "clientX": 20, "clientY": 20})
@@ -150,8 +151,8 @@ def check_page(page, nodes, hub):
     grok.dispatch_event("pointerup", {"pointerType": "touch", "pointerId": 41,
                                       "button": 0, "clientX": 20, "clientY": 20})
     grok.dispatch_event("click")
-    assert page.evaluate(js("[...S.off].sort()", '[...runtime.core.state.sidebar.off].sort()')) == ["claude", "codex", "opencode", "shell"]
-    assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.off')).sort()") == ["claude", "codex", "opencode", "shell"]
+    assert page.evaluate(js("[...S.off].sort()", '[...runtime.core.state.sidebar.off].sort()')) == legacy_sources + ["claude", "codex", "opencode", "shell"]
+    assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.off')).sort()") == legacy_sources + ["claude", "codex", "opencode", "shell"]
     page.evaluate(js("""() => {
       S.off.clear(); store.set('off', []); loadSessions(true);
     }""", """() => {

@@ -43,8 +43,8 @@ pub const ANCESTRY_DEPTH: usize = 16;
 /// CLI-ancestor and tmux-host walk depth.
 const CLI_ANCESTOR_DEPTH: usize = 12;
 
-const KEYWORDS: [&str; 3] = ["claude", "codex", "grok"];
-const CLI_NAMES: [&str; 3] = ["claude", "codex", "grok"];
+const KEYWORDS: [&str; 4] = ["claude", "codex", "grok", "agy"];
+const CLI_NAMES: [&str; 4] = ["claude", "codex", "grok", "agy"];
 /// Environment identity a CLI sets for its tool children.
 const ENV_FAMILY: [(&str, &str); 3] = [
     ("CLAUDE_CODE_SESSION_ID=", "claude"),
@@ -126,6 +126,8 @@ pub fn cli_family(argv0: &str) -> Option<&'static str> {
         Some("claude")
     } else if head == "codex" || head.starts_with("codex-") {
         Some("codex")
+    } else if head == "agy" {
+        Some("agy")
     } else {
         None
     }

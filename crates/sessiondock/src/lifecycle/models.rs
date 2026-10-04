@@ -50,7 +50,10 @@ pub struct Catalog {
 
 /// Whether `--effort`/`-c model_reasoning_effort`/`--reasoning-effort` exist.
 pub fn supports_effort(source: Source) -> bool {
-    matches!(source, Source::Claude | Source::Codex | Source::Grok)
+    matches!(
+        source,
+        Source::Claude | Source::Codex | Source::Grok | Source::Agy
+    )
 }
 
 pub fn catalog(profile: &CliProfile) -> Catalog {
@@ -59,6 +62,14 @@ pub fn catalog(profile: &CliProfile) -> Catalog {
         Source::Codex => codex_profile(profile),
         Source::Grok => grok(&cli_home(profile, "GROK_HOME", ".grok")),
         Source::Opencode => opencode(profile),
+        Source::Agy => Catalog {
+            models: Vec::new(),
+            efforts: CLAUDE_EFFORTS
+                .iter()
+                .map(|effort| (*effort).to_owned())
+                .collect(),
+            default_model: None,
+        },
         Source::Shell => Catalog::default(),
     };
     if catalog.efforts.is_empty() {

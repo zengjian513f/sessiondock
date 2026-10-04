@@ -1,7 +1,7 @@
 # Lifecycle launcher
 
 `lifecycle::launcher` turns a server-configured source profile into the argv
-passed to `ptyhost`. Browser requests choose `claude`, `codex`, `grok`, or `opencode` and a
+passed to `ptyhost`. Browser requests choose `claude`, `codex`, `grok`, `opencode`, or `agy` and a
 working directory; the `shell` source opens the selected node's interactive
 terminal (labelled SSH in the browser). Executable, fixed arguments, and environment still come
 from server configuration, so request JSON cannot become an arbitrary command.
@@ -53,6 +53,9 @@ missing identity templates no longer disable a source:
 
 - Claude new: `--session-id <generated UUID>`; resume: `--resume <sid>`.
 - Codex new: no assigned SID; resume: `resume <sid>`.
+- Agy new: no assigned SID; default resume argv: `--conversation <sid>`.
+  The initial integration offers pending consoles; native catalog/resume and
+  composer support follow the explicit scope in [Agy](agy.md).
 - Grok new: `--session-id <generated UUID>`; resume: `--resume <sid>`.
 - OpenCode new: `--session <assigned ses_… id>`, after creating that session
   through `opencode api session.create` ([OpenCode](opencode.md)); resume:

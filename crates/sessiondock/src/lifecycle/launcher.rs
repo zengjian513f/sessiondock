@@ -155,7 +155,7 @@ fn choice_args(spec: &LaunchSpec) -> Vec<String> {
     let mut args = Vec::new();
     let (model, effort) = (spec.model(), spec.effort());
     match spec.source() {
-        Source::Claude => {
+        Source::Claude | Source::Agy => {
             if let Some(model) = model {
                 args.extend(["--model".into(), model.into()]);
             }
@@ -550,6 +550,7 @@ impl Launcher {
                         Source::Codex => &["resume", SID_PLACEHOLDER],
                         Source::Claude | Source::Grok => &["--resume", SID_PLACEHOLDER],
                         Source::Opencode => &["--session", SID_PLACEHOLDER],
+                        Source::Agy => &["--conversation", SID_PLACEHOLDER],
                         Source::Shell => return Err(Error::InvalidSpec),
                     };
                     (&profile.resume_args, defaults, SID_PLACEHOLDER, Some(sid))
