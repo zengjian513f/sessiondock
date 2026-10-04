@@ -2,13 +2,14 @@
 
 The fixture locates the real returned renderSession function and its cancellable loop by
 syntax, including renamed/minified identifiers and ES split chunks. It changes
-only the four existing 250 literals to 10; no product batching options exist.
+only the existing 250 literals (or legacy constant) to 10; no product batching options exist.
 """
 from pathlib import Path
 import json
+import re
 import subprocess
 
-from frontend_paths import frontend_dir
+from frontend_paths import entry_asset, frontend_dir, frontend_html
 
 
 def install_small_render_batches(page, context):
@@ -16,6 +17,15 @@ def install_small_render_batches(page, context):
     repository = Path(__file__).resolve().parents[1]
     matches = []
     inspector = Path(__file__).with_suffix('.cjs')
+    if not frontend_html().modules:
+        asset = entry_asset(directory)
+        source = asset.read_text()
+        literals = list(re.finditer(r'const RENDER_BATCH = (250);', source))
+        assert len(literals) == 1, 'expected one legacy renderer batch constant'
+        literal = literals[0]
+        positions = [len(source[:position].encode('utf-16-le')) // 2
+                     for position in literal.span(1)]
+        matches.append((asset, source, {'name': 'renderSession', 'literals': [positions]}))
     for candidate in directory.rglob('*.js'):
         source = candidate.read_text()
         if 'renderSession' not in source or '250' not in source:
