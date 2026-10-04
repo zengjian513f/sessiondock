@@ -793,6 +793,7 @@ main { display: flex; flex: 1; min-height: 0; }
 }
 .ctx-menu[hidden] { display: none; }
 #item-menu { max-height: calc(100vh - 16px); overflow-y: auto; }
+#item-menu [role="separator"] { border: 0; border-top: 1px solid var(--border); margin: 4px 6px; }
 #file-menu { width: min(380px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; }
 .ctx-menu-target {
   padding: 8px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border);
