@@ -45,11 +45,11 @@ def seed(page, rows, view='tree'):
       const keys = [...new Set(rows.map(s => view === 'tree' ? s.cwd : dayKey(s.updated)))];
       S.closed = new Set(keys.slice(1)); renderView(); renderSide();
     }''', """({rows, view}) => {
-      runtime.core.state.selection.sel = null; runtime.core.state.selection.agent = null; runtime.core.state.search.results = null; runtime.core.state.search.term = ''; runtime.core.state.sidebar.off.clear();
+      runtime.core.state.selection.sel = null; runtime.core.state.selection.agent = null; runtime.core.state.search.results = null; runtime.core.state.search.query = ''; runtime.core.state.sidebar.off.clear();
       runtime.core.state.sidebar.activeOnly = false; runtime.core.state.sidebar.nest = true; runtime.core.state.sidebar.view = view; runtime.core.state.catalog.sessions = rows; runtime.core.state.catalog.sig = 'fold-0';
       runtime.core.state.sidebar.nestClosed = new Set(rows.filter(s => s.agent_items).map(s => s.uid));
       const keys = [...new Set(rows.map(s => view === 'tree' ? s.cwd : runtime.timeline.dayKey(s.updated)))];
-      runtime.core.state.sidebar.closed = new Set(keys.slice(1)); runtime.sidebarView.renderView(); runtime.sidebarView.renderSide();
+      runtime.core.state.sidebar.closed = new Set(keys.slice(1));  runtime.sidebarView.renderSide();
     }"""), dict(rows=rows, view=view))
 
 

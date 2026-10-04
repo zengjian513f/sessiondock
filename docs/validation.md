@@ -55,9 +55,10 @@ The independent Vue entry uses `npm --prefix web run build:migration` (also
 `npm --prefix web run build`) and `SESSIONDOCK_TEST_WEB_DIR` pointing to
 `web/dist-migration`. The runner selects this build when that variable is set;
 without it the production legacy entry remains the target. The unused Vue demo
-and Vitest dependency have been removed. During the frontend refactor goal,
-the user's instruction holds production references: commit and push validated
-source without deploying or restarting production.
+and Vitest dependency have been removed. Frontend refactor batches preserve the production legacy entry. Validate the
+independent Vue artifact, then commit, push and deploy through the standard
+fleet workflow with its default legacy frontend; the final entry switch remains
+a separate stage.
 
 For example, run the prefixed entry and a selected conversation path against
 the independent build:
@@ -265,6 +266,7 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | search_suite | `python3 tests/search_suite.py --binary target/release/sessiondock` | Search contract coverage over 12 synthetic sessions; no Chromium. | binary | n/a |
 | security_suite | `python3 tests/security_suite.py --binary target/release/sessiondock` | Raw-socket checks of the local-only security middleware. | binary | n/a |
 | send_browser | `python3 tests/send_browser.py` | Claude reliable send through the real legacy composer against the fake Claude CLI (desktop + 390 px); busy sends show as queued bubbles from the server CLI state (`check` returns `cli.queued`) until their native echo; a second page's send and composer Esc refused with the owner while the console is held, the 390 px Esc written with no console open; attachments staged on selection, surviving a reload, failed staging with retry, discard of removed staging, publication on SEND; a six-file paste confirm dismissed then accepted, five files unasked. | Chromium, ptyhost | n/a |
+| composer_editor_browser | `python3 tests/composer_editor_browser.py --binary target/release/sessiondock` | Desktop and narrow composer: typing, Shift+Enter/mobile Enter, simulated IME key guard, native input-history selection and dismissal, attachment chooser/reference replacing a selection, and textarea growth/cap/shrink. | Chromium, fake CLI, ptyhost | n/a |
 | draft_sync_browser | `python3 tests/draft_sync_browser.py` | Two pages on one draft: a second page opens the saved text with the server revision and no error, a refused save rebases and the editing page wins (no revision dead end), an idle page follows within the poll both ways, an attachment staged on one page is sent from the other, that SEND empties the first page, an image staged on one page previews on the other from the staged bytes, and a console command sent from the composer clears the server draft. | Chromium, ptyhost | n/a |
 | send_readiness_browser | `python3 tests/send_readiness_browser.py` | Grok login/unknown SEND refusal, recovery, post-paste recheck, and no auto-retry of an unknown write (fake CLI, desktop + 390 px). | Chromium, ptyhost | n/a |
 | send_codex_attachments_browser | `python3 tests/send_codex_attachments_browser.py` | Codex composer sends text plus two PNG attachments while an unrelated transfer stalls, then text plus a `.txt`, against the fake Codex CLI; each batch is published to the session cwd and submitted with Enter. | Chromium, ptyhost | n/a |

@@ -5,12 +5,40 @@ Subagent rows hang under their owner in both sidebar modes, so the deep link
 must reveal and select them without flipping the user's hierarchy preference.
 """
 from browser_runtime import js
-import argparse,json,tempfile
+import argparse,json,os,tempfile
 from pathlib import Path
 from urllib.parse import urlencode, urlparse, parse_qs
 from playwright.sync_api import sync_playwright,expect
 from history_parity import BINARY,build_corpus,isolated_server,batch35_meta,codex_message,encoded
 NODE='a'*32
+
+def add_sidebar_overflow(corpus):
+    # Put newer independent rows ahead of the linked owner in the same project.
+    # Codex roots sort by native mtime, rather than the record timestamp.
+    stamp = max(path.stat().st_mtime for path in corpus.paths.values()) + 60
+    for index in range(32):
+        sid = f'deep-link-scroll-{index:02d}'
+        text = f'Synthetic sidebar filler {index:02d}'
+        path = corpus.put(sid, 'codex', [batch35_meta(sid), codex_message('user', text)], [text])
+        os.utime(path, (stamp + index, stamp + index))
+
+
+def expect_selected_in_side_viewport(page):
+    expect(page.locator('#side .item.sel')).to_be_visible()
+    page.wait_for_function("""() => {
+        const side = document.querySelector('#side');
+        const selected = side?.querySelector('.item.sel');
+        if (!selected || !side.clientHeight) return false;
+        const viewport = side.getBoundingClientRect();
+        const row = selected.getBoundingClientRect();
+        const top = viewport.top + side.clientTop;
+        const left = viewport.left + side.clientLeft;
+        return side.scrollHeight > side.clientHeight && side.scrollTop > 0
+            && row.top - top + side.scrollTop > side.clientHeight
+            && row.top >= top - 1 && row.bottom <= top + side.clientHeight + 1
+            && row.left >= left - 1 && row.right <= left + side.clientWidth + 1;
+    }""")
+
 
 def add_rotated_sessions(corpus):
     meta = batch35_meta('codex-rotation', '2026-09-11T08:00:00Z')
@@ -98,7 +126,7 @@ def check_rotated_links(browser, base, corpus):
 def main():
  parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--binary',type=Path,default=BINARY);args=parser.parse_args()
  with tempfile.TemporaryDirectory(prefix='session-deep-link-') as t:
-  corpus=build_corpus(Path(t));add_rotated_sessions(corpus)
+  corpus=build_corpus(Path(t));add_rotated_sessions(corpus);add_sidebar_overflow(corpus)
   before={p:p.read_bytes() for p in corpus.paths.values()}
   owner=corpus.uid('codex-parent')
   with isolated_server(corpus,args.binary) as (base,_),sync_playwright() as pw:
@@ -121,7 +149,8 @@ def main():
       # including the owner's folded subagent rows, without flipping S.nest.
       ctx.add_init_script("""window.EventSource=undefined; localStorage.setItem('sessiondock.off',JSON.stringify(['codex']));
         localStorage.setItem('sessiondock.activeOnly','true');
-        localStorage.setItem('sessiondock.closed',JSON.stringify(['/synthetic/project']));"""
+        localStorage.setItem('sessiondock.view',JSON.stringify('tree'));"""
+        +f"localStorage.setItem('sessiondock.closed',JSON.stringify([JSON.stringify(['{NODE}','/synthetic/history'])]));"
         +f"localStorage.setItem('sessiondock.nest',JSON.stringify({str(nest).lower()}));"
         +f"localStorage.setItem('sessiondock.nestClosed',JSON.stringify(['{owner}']));""")
       page=ctx.new_page();page.on('pageerror',lambda e:errors.append(str(e)))
@@ -138,7 +167,7 @@ def main():
        expect(selected).to_have_attribute('data-uid',owner)
        # A root link keeps the owner's fold: its own subagent rows stay hidden.
        assert page.locator('#side .item.agent[data-owner="'+owner+'"]').count()==0
-      if width==1280: expect(selected).to_be_visible()
+      if width==1280: expect_selected_in_side_viewport(page)
       route=parse_qs(urlparse(page.url).query)
       assert route['sid']==['codex:codex-parent'+('/agent:'+agent if agent else '')],route
       assert route['node']==[NODE]
