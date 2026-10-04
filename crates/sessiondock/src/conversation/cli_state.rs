@@ -274,6 +274,7 @@ pub fn screen_busy(source: &str, capture: &crate::delivery::driver::ScreenCaptur
         "codex" => Some(
             driver::codex_busy_screen(&capture.text) || driver::codex_background_running(capture),
         ),
+        "agy" => super::input::agy_busy(capture),
         _ => None,
     }
 }
@@ -286,6 +287,12 @@ pub fn screen_busy(source: &str, capture: &crate::delivery::driver::ScreenCaptur
 /// arguments); leading whitespace and arguments to non-inline commands are
 /// ordinary input. See docs/codex-commands.md for the source audit.
 pub(super) fn expects_native_echo(source: &str, text: &str) -> bool {
+    // These exact Agy 1.2.16 commands open native menus without writing a
+    // USER_INPUT record. Other spellings, arguments and unknown commands
+    // keep normal echo accounting until their native dispatch is verified.
+    if source == "agy" {
+        return !matches!(text, "/model" | "/permissions" | "/resume");
+    }
     if source != "codex" {
         return true;
     }

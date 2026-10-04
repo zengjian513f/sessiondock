@@ -14,7 +14,7 @@ THINKING = 'SESSIONDOCK_AGY_SYNTHETIC_THINKING'
 
 
 @contextmanager
-def gateway(root):
+def gateway(root, holds=None):
     records, errors = [], []
 
     class Handler(BaseHTTPRequestHandler):
@@ -69,6 +69,10 @@ def gateway(root):
             message = {'role': 'assistant', 'content': text}
             if main:
                 message['reasoning_content'] = THINKING
+            if main and holds is not None and user in holds:
+                # A browser-controlled request stays in flight until its
+                # actual busy screen has been observed (bounded on failure).
+                holds[user].wait(timeout=20)
             self.send_response(200)
             if request.get('stream'):
                 self.send_header('Content-Type', 'text/event-stream')

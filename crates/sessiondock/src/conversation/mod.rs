@@ -873,7 +873,7 @@ impl Conversations {
             result.clone(),
             input.draft_revision,
         )?;
-        // Codex command dispatch does not echo the original command text.
+        // Verified native menu commands do not echo the original text.
         self.remember_cli_identity(&input.uid, identity);
         if cli_state::expects_native_echo(&identity.source, &prompt) {
             self.store.enqueue(

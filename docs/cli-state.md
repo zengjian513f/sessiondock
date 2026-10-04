@@ -22,7 +22,7 @@
 | --- | --- |
 | `observed_at` | 最近一次成功读到画面的 Unix 秒；从未读到为 `null` |
 | `instance.running` | 最近一次读画面成功为 `true`，失败（实例已退出、宿主不可达）为 `false`，尚未尝试为 `null` |
-| `instance.busy` | 最近一次读画面成功时画面是否显示 CLI 的忙碌指示（spinner、`esc to interrupt`；Claude、Codex），或 Codex 当前编辑区上方的 `N background terminal(s) running · /ps to view · /stop to close`（N > 0）；两者之间可有 Codex 的额度提示（包括折行），其他正文仍隔断后台状态识别。后台终端可在模型回合结束后继续运行，仍算活动中，但不改变输入就绪或发送队列中断判定。历史引用和编辑区文字不算后台状态；读失败、尚未读到或 Grok、OpenCode、Agy 为 `null` |
+| `instance.busy` | 最近一次读画面成功时画面是否显示 CLI 的忙碌指示（spinner、`esc to interrupt`；Claude、Codex），或 Codex 当前编辑区上方的 `N background terminal(s) running · /ps to view · /stop to close`（N > 0）；两者之间可有 Codex 的额度提示（包括折行），其他正文仍隔断后台状态识别。后台终端可在模型回合结束后继续运行，仍算活动中，但不改变输入就绪或发送队列中断判定。历史引用和编辑区文字不算后台状态；Agy 根据已识别编辑区下方的原生页脚判断（见下文）；读失败、尚未读到、未知布局或 Grok、OpenCode 为 `null` |
 | `input` | 与 CHECK 相同的分类结果（`ready`/`starting`/`blocked`/`unknown` 及 `code`/`message`）；最近一次读失败时为 `null` |
 | `editor.text` | 识别到编辑区时的可见文字（Claude、Codex、Agy）；Grok、OpenCode 尚无提取，为 `null` |
 | `queued` | 终端已接受、原生记录尚未出现的 SEND，按发送顺序；`state` 为 `queued`、`interrupted` 或 `lost` |
@@ -30,9 +30,11 @@
 
 题卡/审批仍是同级的 `prompt` 字段，不重复放进对象。
 
-Agy 1.2.16 的当前实现提取已识别编辑区正文，并用只读镜像中的 native user
-正文及时间参与普通 SEND 回显对账。没有证据时不推断 `instance.busy`，行摘要也
-不输出 `turn`；native status 或进程存活不能代替它们。菜单与验收边界见 [Agy](agy.md)。
+Agy 1.2.16 提取已识别编辑区正文，并用只读镜像中的 native user 正文及时间参与
+普通 SEND 回显对账。编辑区下方的 `esc to cancel` 页脚表示忙碌，`? for shortcuts`
+及非空草稿下仅有的右对齐模型标签表示闲置；正文和草稿里的同名文本不算，未知
+画面为 `null`。行摘要不输出 `turn`；原生 DONE/IDLE 不能区分中断和正常完成。
+菜单与验收边界见 [Agy](agy.md)。
 
 ## 谁写
 

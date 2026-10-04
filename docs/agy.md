@@ -88,14 +88,27 @@ dev/ino、size、mtime stamp，目录未提交也能发现正文追加或改写�
   自己的正文与内层同名文本，作为原生回显对账依据。
 - `PLANNER_RESPONSE`：`thinking` 单独投影；无 `tool_calls` 且 status 为 `DONE`
   时正文为 `phase: final`，其他情况为 `progress`。`ERROR_MESSAGE` 投影为可见错误消息。
-- `tool_calls` 和 `media` 字段来自 CLI 内置格式文档，尚无成功真实工具/媒体样本。
-  当前调用保留 native JSON，其他有正文的步骤独立显示为工具结果；没有已核实的
-  跨步骤 call ID，不按位置猜配对，也不宣称真实工具配对已通过。
+- `tool_calls` 和 `media` 已取得真实 CLI 样本：`view_file` 调用包含 `name` 与 `args`，
+  后续 GENERIC 步骤提供文本或图片结果。调用保留 native JSON，结果独立显示；
+  完整 transcript 的这些实测记录没有跨步骤 call ID，不按位置猜配对，也不宣称
+  已验证其他工具、并行工具或可靠的调用/结果配对。
 - 图片按 `media[].mime_type` 和 `uri` 接入既有媒体授权/文件校验，其他媒体类型显示
-  跳过提示。图片的合成 schema history browser 已通过；这不是 CLI 实际媒体产出证据。
+  跳过提示。真实 CLI 读取临时 PNG 后写出的绝对路径 `media.uri`，已通过 Chromium
+  实际打开会话、展开工具结果并加载图片；不只依赖合成 schema 夹具。
 
-`instance.busy` 尚无 Agy 判定，返回 `null`；摘要不输出 `turn`。
-不从原生 status、没有回复或进程存活猜测忙碌、空闲、中断和回合完成。
+工具验收仍使用本机合成网关，不使用账号或付费模型。未知自定义模型名的原有实验
+没有导出工具；本次用 CLI 已知的 `gemini-3.1-pro-low-thinking` 元数据，显式启动
+该模型并核对请求中的映射名 `gemini-3.1-pro-preview`，网关只返回两次读取临时文件
+的 `view_file`。模型名用于选取 CLI 能力元数据，所有请求仍由 loopback 网关响应。
+测试设置仅写临时 HOME，不改变日常模型或网关配置。
+
+`instance.busy` 仅从已识别编辑区下方的原生页脚判断：左侧 `esc to cancel` 为忙碌，
+`? for shortcuts` 为闲置；非空草稿下只剩右对齐模型标签时为闲置。正文、草稿中的
+同名文字不参与判断；菜单或未知布局返回 `null`。真实隔离请求的进行中、完成及
+非空草稿画面已核对，浏览器检查同一状态与会话头的工作指示。
+摘要仍不输出 `turn`：实测 Esc 中断流式输出后，目录也会回到 IDLE，已产生的
+PLANNER_RESPONSE 仍为 DONE，与正常完成无法仅凭这些字段区分；没有独立原生
+中断记录。`phase: final` 不代表整个回合正常完成，不据此伪造中断/完成三态。
 
 ## Composer 与原生菜单
 
@@ -104,6 +117,9 @@ dev/ino、size、mtime stamp，目录未提交也能发现正文追加或改写�
 空编辑区可进入普通 CHECK/SEND，非空编辑区返回 `cli_input_pending` 保留输入。
 可见正文写入 `cli.editor.text`；原生 user 镜像用于 SEND 回显确认，多行发送复用
 粘贴后画面再检。真实 CLI 浏览器覆盖普通正文、多行正文以及完整问题报告正文。
+网页发送精确的裸命令 `/model`、`/permissions`、`/resume` 时，CLI 打开菜单而不写
+原命令的 `USER_INPUT`；这些发送只确认终端投递，不建立等待原生回显的队列项。
+带参数、空白变体和其他命令尚未核实分派语义，仍沿用普通输入对账。
 
 当前菜单投影支持 model 单选/取消、workspace trust 的信任/退出选择、permissions
 scope 的 Project / Shared with Antigravity / Global 选择。它们沿用 `screen_menu`
@@ -133,10 +149,11 @@ composer 路径；真实 CLI 浏览器核对了处理会话、完整报告提示
 | --- | --- | --- |
 | [agy_browser.py](../tests/agy_browser.py) | `python3 tests/agy_browser.py --binary target/debug/sessiondock`；fake CLI pending，新建、effort argv、终端键入、刷新重连、清理、未安装与 390 px 深浅主题 | 不证明 native history 或真实 CLI 恢复 |
 | [agy_history_browser.py](../tests/agy_history_browser.py) | `python3 tests/agy_history_browser.py --binary target/debug/sessiondock`；native schema seeds，Chromium 列表/搜索/分页/增量/旧记录改写/回退/DB 替换/重启/transcript 缺失与恢复/目录行删除/图片/原始工具字段/错误、删除提示及混合组移动克隆拒绝，检查原生字节及 mtime 不被修改 | 合成 schema，图片路径已有通过记录；不证明真实工具或媒体产出，不是原生删除 API 测试 |
-| [agy_real_browser.py](../tests/agy_real_browser.py) | 直接显式运行 `python3 tests/agy_real_browser.py --agy <absolute CLI path> --binary target/debug/sessiondock --ptyhost target/debug/ptyhost`；临时 HOME/XDG、私有目录和 loopback 合成 gateway，真实 CLI + Chromium | operator only，`run_validation: skip`；验证发送、多行、绑定、思考、菜单阻发/回答/取消、停止恢复、问题报告与窄屏；不调用付费模型 |
+| [agy_real_browser.py](../tests/agy_real_browser.py) | 直接显式运行 `python3 tests/agy_real_browser.py --agy <absolute CLI path> --binary target/debug/sessiondock --ptyhost target/debug/ptyhost`；临时 HOME/XDG、私有目录和 loopback 合成 gateway，真实 CLI + Chromium | operator only，`run_validation: skip`；验证发送、多行、绑定、思考、网页发送菜单命令不等待原生回显、菜单阻发/回答/取消、停止恢复、问题报告与窄屏；不调用付费模型 |
+| [agy_tools_real_browser.py](../tests/agy_tools_real_browser.py) | 直接显式运行并提供 `--agy <absolute CLI path> --binary target/debug/sessiondock`；真实 CLI 读取临时文本和 PNG，再由 Chromium 展开原生工具历史和加载图片 | operator only，`run_validation: skip`；loopback 合成模型，核对实际请求模型；不证明跨步骤配对或其他工具语义 |
 | [agy_clients_browser.py](../tests/agy_clients_browser.py) | 本机与 Hub 的模型、强度 argv、版本、官方 manifest、更新成功/失败、未安装与离线门控 | 仅运行私有假 CLI/curl，不修改已安装客户端 |
 | [cli_menus_browser.py](../tests/cli_menus_browser.py) | `--sources agy`；12 个捕获/边界夹具、10 个原生按键动作 | Chromium 验证过期画面、信任路径变化及同名宿主实例替换不写入；夹具不声称覆盖全部闭源菜单 |
 
-能力限制：真实工具/媒体成功样本、可靠工具配对、busy/turn、原生子代理及非交互
-删除能力尚未证实。原生工具 JSON 和媒体 schema 夹具证明字段投影，不证明这些
-原生行为。未完成的交付项记录于 [TODO](../TODO.md)。
+能力限制：可靠工具配对、回合三态、原生子代理及非交互删除能力尚未证实。
+真实工具/媒体验收仅覆盖只读 `view_file` 的文本和 PNG，不能推广为所有原生工具
+行为。未完成的交付项记录于 [TODO](../TODO.md)。
