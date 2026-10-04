@@ -8,6 +8,8 @@ recording; finally continued-in pane inheritance against a real ptyhost pane
 whose synthetic subtree runs the continued session. No Chromium."""
 from __future__ import annotations
 
+from frontend_paths import frontend_dir
+
 import argparse
 import json
 import os
@@ -201,7 +203,7 @@ def scan_server(binary, roots, state, proc_root, grok_active=None, managed=None)
         port = reservation.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
     environment.update({
-        "SESSIONDOCK_BIND": f"127.0.0.1:{port}", "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web"),
+        "SESSIONDOCK_BIND": f"127.0.0.1:{port}", "SESSIONDOCK_WEB_DIR": str(frontend_dir()),
         "SESSIONDOCK_STATE_DIR": str(state),
         "SESSIONDOCK_PROC_ROOT": str(proc_root)})
     if grok_active is not None:

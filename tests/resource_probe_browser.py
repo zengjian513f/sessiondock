@@ -261,7 +261,7 @@ def main():
             # The actual resource toggle/row/dialog paths above establish the
             # live owners. Release them with a response still pending, then
             # deliver that response even though its AbortSignal was cancelled.
-            assert page.evaluate("""async () => {
+            cleanup = page.evaluate("""async () => {
               const r = window.SessionDockRuntime, service = r.sidebarResources;
               const fetch = r.core.network.fetch;
               let resolve, signal, requests = 0;
@@ -281,18 +281,23 @@ def main():
               const clean = signal.aborted && requests === 1 && before === values();
               r.core.network.fetch = fetch;
               service.start();
-              const timeline = r.timeline, oldFit = timeline.fitTimelineDirectories;
-              let fits = 0;
-              timeline.fitTimelineDirectories = (...args) => {fits++; return oldFit(...args)};
+              const timeline = r.timeline, raf = window.requestAnimationFrame;
+              let frameRan = false;
+              // Observe the exact scheduled callback. Reactive row commits may
+              // still call the public fit method, whose disposed guard is inert.
+              window.requestAnimationFrame = callback => raf.call(window, time => {
+                frameRan = true; callback(time);
+              });
               timeline.scheduleTimelineFit();
+              window.requestAnimationFrame = raf;
               const stopTimeline = timeline.start();
               stopTimeline(); stopTimeline();
               await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
-              const stopped = fits === 0 && timeline.timelineFitFrame === 0;
-              timeline.fitTimelineDirectories = oldFit;
+              const stopped = !frameRan && timeline.timelineFitFrame === 0;
               timeline.start();
-              return clean && stopped;
+              return {clean, stopped, aborted:signal.aborted, requests, frameRan, frame:timeline.timelineFitFrame};
             }""")
+            assert cleanup["clean"] and cleanup["stopped"], cleanup
         print('PASS sidebar resource badges, refresh, outage, mobile layout and real browser/Hub/node probe start-stop, diagnostic GET, partial error, related-only routing, offline exclusion, authentication and invalid-session gate', flush=True)
 
 

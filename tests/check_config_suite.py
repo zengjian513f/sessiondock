@@ -2,6 +2,8 @@
 """Startup-validation matrix through `sessiondock --check-config` (no server start, no Chromium)."""
 from __future__ import annotations
 
+from frontend_paths import frontend_dir
+
 import argparse
 import os
 import socket
@@ -11,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-WEB = str(REPO / "legacy-web")
+WEB = str(frontend_dir())
 
 
 def default_binary():

@@ -83,7 +83,7 @@ def posix_inner(t: Target, hasher: str) -> str:
         parts.append(f"printf 'sha_{name}=%s\\n' "
                      f"\"$({hasher} {q(f'{pfx}/bin/{name}')} 2>/dev/null | cut -c1-12)\"")
     parts += [
-        f"printf 'web=%s\\n' \"$({hasher} {q(pfx + '/web/app.js')} 2>/dev/null | cut -c1-12)\"",
+        f"printf 'web=%s\\n' \"$({hasher} {q(pfx + '/web/' + ('migration-shell.js' if t.extra.get('frontend') == 'vue' else 'app.js'))} 2>/dev/null | cut -c1-12)\"",
         f"printf 'commit=%s\\n' \"$(cat {q(pfx + '/etc/deployed-commit')} 2>/dev/null)\"",
         "printf 'ptyhost=%s\\n' \"$(pgrep -xc ptyhost)\"",
         f"printf 'hosts=%s\\n' \"$(ls {q(pfx + '/host')} 2>/dev/null | wc -l)\"",

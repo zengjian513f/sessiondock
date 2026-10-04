@@ -4,7 +4,7 @@
 With SESSIONDOCK_TRASH_DIR configured (and no host directory, so every run
 state is unknown) the untouched legacy delete flow shows the explicit force
 confirmation, the detail pane's "已移入回收站" receipt, the trash dialog with
-restore/purge, and the visible refusal reasons (fork parent, unknown state
+restore/purge/clear-all, and the visible refusal reasons (fork parent, unknown state
 declined, restore conflict). Desktop and 390px. Synthetic corpus only.
 """
 from browser_runtime import js
@@ -225,15 +225,93 @@ def main():
                     page.locator("#trash-done").click()
                     expect(page.locator(f'#side .item[data-uid="{compact}"]')).to_have_count(1)
                     assert corpus.paths["claude-compact"].read_bytes() == native_before["claude-compact"]
+
+                    # Clear all: delete two independent sessions through the UI,
+                    # then cancel and accept the same irreversible confirmation.
+                    cleared = ("claude-abandoned", "codex-cli-current")
+                    for sid, text in ((cleared[0], "Claude abandoned base answer"),
+                                      (cleared[1], "Codex current answer")):
+                        open_session(page, corpus, sid, text)
+                        dialogs.expect(("服务端回收站", True))
+                        click_delete(page, narrow=True)
+                        expect(page.locator("#detail")).to_contain_text("已移入回收站")
+                        dialogs.drained()
+                        expect(page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]')).to_have_count(0)
+                        assert not corpus.paths[sid].exists()
+                    open_trash(page, narrow=True)
+                    listing = get_json(opener, base, "/api/trash")
+                    assert listing["count"] == 2
+                    assert {item["uid"] for item in listing["items"]} == {corpus.uid(sid) for sid in cleared}
+                    entry_ids = {item["id"] for item in listing["items"]}
+                    assert {path.name for path in trash.iterdir()} == entry_ids
+                    trash_before_clear = {path.relative_to(trash): path.read_bytes()
+                                          for path in trash.rglob("*") if path.is_file()}
+                    expect(page.locator("#trash-list .trash-item")).to_have_count(2)
+                    for entry_id in entry_ids:
+                        expect(page.locator(f'.trash-item[data-id="{entry_id}"]')).to_be_visible()
+                    expect(page.locator("#trash-sub")).to_contain_text("2 个已删除会话")
+                    clear_button = page.locator("#trash-purge-all")
+                    expect(clear_button).to_be_enabled()
+                    purge_requests = []
+
+                    def is_purge(request):
+                        return request.method == "POST" and request.url.split("?", 1)[0] == base + "/api/trash/purge"
+
+                    def record_purge(request):
+                        if is_purge(request):
+                            purge_requests.append(request.post_data_json)
+
+                    page.on("request", record_purge)
+                    confirmation = "清空回收站?\n\n将从磁盘彻底删除 2 个会话, 不可恢复。"
+                    dialogs.expect((confirmation, False))
+                    clear_button.click()
+                    expect(page.locator("dialog.app-popup[open]")).to_have_count(0)
+                    dialogs.drained()
+                    assert dialogs.seen[-1] == ("confirm", confirmation)
+                    expect(page.locator("#trash-list .trash-item")).to_have_count(2)
+                    expect(clear_button).to_be_enabled()
+                    cancelled = get_json(opener, base, "/api/trash")
+                    assert cancelled["count"] == 2 and cancelled["items"] == listing["items"]
+                    assert {path.relative_to(trash): path.read_bytes()
+                            for path in trash.rglob("*") if path.is_file()} == trash_before_clear
+                    assert not purge_requests, "cancel must not send a purge request"
+
+                    dialogs.expect((confirmation, True))
+                    with page.expect_response(lambda response: is_purge(response.request)) as purge_response:
+                        clear_button.click()
+                    response = purge_response.value
+                    assert response.status == 200
+                    assert response.request.post_data_json == {"all": True}
+                    purged = response.json()
+                    assert purged["removed"] == 2 and purged["remaining"] == 0, purged
+                    assert purged["freed"] > 0 and purged["errors"] == [] and purged["failed"] == [], purged
+                    expect(page.locator("#trash-note")).to_contain_text("已彻底删除 2 个会话")
+                    expect(page.locator("#trash-note")).not_to_have_class("err")
+                    expect(page.locator("#trash-list .trash-item")).to_have_count(0)
+                    expect(page.locator("#trash-list .trash-empty")).to_be_visible()
+                    expect(page.locator("#trash-list .trash-empty")).to_have_text("没有已删除的会话")
+                    expect(page.locator("#trash-sub")).to_contain_text("回收站是空的")
+                    expect(clear_button).to_be_disabled()
+                    dialogs.drained()
+                    assert dialogs.seen[-1] == ("confirm", confirmation)
+                    assert purge_requests == [{"all": True}]
+                    page.remove_listener("request", record_purge)
+                    empty = get_json(opener, base, "/api/trash")
+                    assert empty["count"] == 0 and empty["items"] == [], empty
+                    assert not any(trash.iterdir()), "clear all must remove the entry directories and payloads"
+                    assert all(not corpus.paths[sid].exists() for sid in cleared)
+                    assert {corpus.uid(sid) for sid in cleared}.isdisjoint(listed_uids(opener, base))
+                    page.locator("#trash-done").click()
                     assert not errors, errors
                     context.close()
                 for name, path in corpus.paths.items():
-                    if name not in {"claude-branch", "claude-agent-one"}:
+                    if name not in {"claude-branch", "claude-agent-one", *cleared}:
                         assert path.read_bytes() == native_before[name], name
             finally:
                 browser.close()
     print("PASS trash browser: delete needs explicit force while run state is unknown, detail receipt → trash dialog → restore, "
-          "fork parent and declined force refused visibly, restore conflict never overwrites, purge removes the entry; desktop + 390px")
+          "fork parent and declined force refused visibly, restore conflict never overwrites, purge removes the entry; "
+          "390px clear-all cancellation preserves entries, confirmation removes all via API and disk and shows the empty state; desktop + 390px")
 
 
 if __name__ == "__main__":

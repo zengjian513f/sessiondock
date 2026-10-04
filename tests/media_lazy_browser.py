@@ -75,10 +75,6 @@ def main():
                 page.on("request",lambda request:requests.append(request.url))
                 page.on("pageerror",lambda error:errors.append(str(error)))
                 if args.synthetic_descriptors:
-                    def capability_script(route):
-                        response=route.fetch()
-                        script=response.text()+"\n globalThis.SessionDockCapabilities=Object.freeze({...SessionDockCapabilities,config:Object.freeze({...SessionDockCapabilities.config,media_lazy:true})});"
-                        route.fulfill(response=response,body=script)
                     def capability_html(route):
                         response = route.fetch()
                         def enable(match):
@@ -105,7 +101,6 @@ def main():
                         route.fulfill(status=200,json=data)
                     page.route(base + "/", capability_html)
                     page.route("**/api/meta",metadata)
-                    page.route("**/capabilities.js*",capability_script)
                     page.route("**/api/messages/**",descriptors)
                 def media_route(route):
                     diagnostic=route.request.headers.get("accept")=="application/json"

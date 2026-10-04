@@ -5,11 +5,13 @@
 Excluded from the default validation sweep. No installation, everyday HOME,
 credentials, production sessions, or paid model. Build SessionDock separately.
 The real binary uses --model sessiondock-fake, no effort, and a temporary
-loopback synthetic gateway. Only the legacy frontend is served. Every input,
+loopback synthetic gateway. The selected compiled frontend is served. Every input,
 send and menu answer uses actual page controls or native PTY keyboard events.
 Evidence is retained in the printed private /tmp directory; owned hosts die
 on success, failure, or the suite's bounded SIGALRM deadline.
 """
+
+from frontend_paths import frontend_dir
 import argparse
 from contextlib import contextmanager
 import json
@@ -464,7 +466,7 @@ def main():
             'SESSIONDOCK_PROC_ROOT': str(root / 'proc')}
         try:
             with patch.dict(os.environ, {**env, 'PLAYWRIGHT_BROWSERS_PATH': browser_cache,
-                    'SESSIONDOCK_TEST_WEB_DIR': str(REPO / 'legacy-web')}, clear=True):
+                    'SESSIONDOCK_TEST_WEB_DIR': str(frontend_dir())}, clear=True):
                 initialize('--initialize-lifecycle', root / 'ledger', binary)
                 with private_proc(root, agy), isolated_server(Corpus(root), binary,
                         host_dir=root / 'host', lifecycle_dir=root / 'ledger',

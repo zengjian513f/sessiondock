@@ -16,6 +16,8 @@ malformed JSON is 400 invalid_audit_request; without the directory the route is
 """
 from __future__ import annotations
 
+from frontend_paths import frontend_dir
+
 import argparse
 from contextlib import contextmanager
 import json
@@ -69,7 +71,7 @@ def server_with_env(corpus, extra_env, executable=None):
         port = reservation.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
     env.update({"SESSIONDOCK_BIND": f"127.0.0.1:{port}",
-                "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web"), **extra_env})
+                "SESSIONDOCK_WEB_DIR": str(frontend_dir()), **extra_env})
     for source in ("claude", "codex", "grok"):
         env["SESSIONDOCK_" + source.upper() + "_ROOT"] = str(corpus.root / source)
     opener = build_opener(ProxyHandler({}), NoRedirects())

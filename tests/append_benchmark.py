@@ -10,6 +10,8 @@ release binary on an otherwise idle machine. No CLI/model/native home is used.
 """
 from __future__ import annotations
 
+from frontend_paths import frontend_dir
+
 import argparse
 from contextlib import contextmanager
 import hashlib
@@ -54,7 +56,7 @@ def server(root, binary):
     # Explicit roots, no inherited credentials, CLI configuration or proxies.
     environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
                    "SESSIONDOCK_BIND": f"127.0.0.1:{port}",
-                   "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web")}
+                   "SESSIONDOCK_WEB_DIR": str(frontend_dir())}
     if os.name == "nt" and "SystemRoot" in os.environ:
         environment["SystemRoot"] = os.environ["SystemRoot"]
     for source in SOURCES:

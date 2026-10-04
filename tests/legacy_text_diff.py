@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""User-visible CJK/fullwidth text changed vs frozen reference/legacy-web.
+"""Historical CJK/fullwidth text differences between explicit frontend backups.
 
 Differing .js/.html/.css via legacy_asset_diff.classify. JS/CSS: quotes/templates
 (comments skipped; ' and " cannot span lines); HTML: text nodes plus title,
@@ -11,7 +11,7 @@ import argparse, json, re, signal, sys
 from difflib import SequenceMatcher
 from html.parser import HTMLParser
 from pathlib import Path
-from legacy_asset_diff import LEGACY, REFERENCE, ROOT, classify, collect
+from legacy_asset_diff import ROOT, classify, collect
 
 SUFFIX = {".js", ".html", ".css"}
 ATTRS = {"title", "placeholder", "aria-label"}
@@ -141,11 +141,16 @@ def emit_text(added, removed, changed):
 def main():
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--legacy-dir", type=Path, required=True)
+    parser.add_argument("--reference-dir", type=Path, required=True)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
+    for directory in (args.legacy_dir, args.reference_dir):
+        if not directory.is_dir() or not (directory / "index.html").is_file():
+            parser.error(f"historical backup must contain index.html: {directory}")
     blob = MIG.read_text(encoding="utf-8", errors="replace") if MIG.is_file() else ""
     added, removed, changed = [], [], []
-    legacy_files, reference_files = collect(LEGACY), collect(REFERENCE)
+    legacy_files, reference_files = collect(args.legacy_dir), collect(args.reference_dir)
     for row in classify(legacy_files, reference_files):
         rel = row["file"]
         if Path(rel).suffix.lower() not in SUFFIX or row["status"] == "identical":

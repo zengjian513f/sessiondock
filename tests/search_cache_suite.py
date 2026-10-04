@@ -7,6 +7,8 @@ eviction, ordinary path aliases and permissions, idle startup without a search,
 concurrent searches and a list during a search, NDJSON order, memory-only
 mode with a pure state dir, `--check-config`.
 """
+
+from frontend_paths import frontend_dir
 import argparse, http.client, json, os, stat, subprocess, sys, tempfile, threading, time
 from pathlib import Path
 from urllib.error import HTTPError
@@ -35,7 +37,7 @@ def uids(payload):
 
 def check_config(env_extra, corpus_root):
     environment = {key: value for key, value in os.environ.items() if not key.startswith("SESSIONDOCK_")}
-    environment.update({"SESSIONDOCK_BIND": "127.0.0.1:0", "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web")})
+    environment.update({"SESSIONDOCK_BIND": "127.0.0.1:0", "SESSIONDOCK_WEB_DIR": str(frontend_dir())})
     for source in ("claude", "codex", "grok"):
         environment["SESSIONDOCK_" + source.upper() + "_ROOT"] = str(corpus_root / source)
     environment.update(env_extra)

@@ -83,7 +83,7 @@ impl Fixture {
     }
     fn config(&self, write: bool, limits: WriteLimits, state: bool) -> Config {
         Config {
-            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
             roots: SessionRoots {
                 codex: Some(self.root.join("native")),
                 ..Default::default()

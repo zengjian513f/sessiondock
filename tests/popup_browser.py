@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Popups are centered and share the dialog look (legacy-web/popup.js).
+"""Popups are centered and share the dialog look (the Vue popup component).
 
 No page uses the browser's native alert/confirm any more: a delete asks in a
 centered `.app-popup` dialog (title from the first line, 取消/Esc keep the

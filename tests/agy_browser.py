@@ -242,14 +242,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
     parser.add_argument('--ptyhost', type=Path, default=Path(os.environ.get('PTYHOST', REPO / 'target/debug/ptyhost')))
-    parser.add_argument('--frontend', help='legacy, vue, or artifact directory; otherwise SESSIONDOCK_TEST_WEB_DIR')
+    parser.add_argument('--frontend', help='vue or artifact directory; otherwise SESSIONDOCK_TEST_WEB_DIR')
     args = parser.parse_args()
     # Resolve the installed browser cache before giving child CLIs a private HOME.
     os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH', str(
         Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'ms-playwright'))
     if args.frontend:
-        os.environ['SESSIONDOCK_TEST_WEB_DIR'] = str({'legacy': REPO / 'legacy-web',
-            'vue': REPO / 'web/dist-migration'}.get(args.frontend, Path(args.frontend)).resolve())
+        os.environ['SESSIONDOCK_TEST_WEB_DIR'] = str({'vue': REPO / 'web/dist-migration'}.get(args.frontend, Path(args.frontend)).resolve())
     host_binary = args.ptyhost.resolve(strict=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-agy-') as tmp:
         root = Path(tmp).resolve()

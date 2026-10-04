@@ -220,6 +220,10 @@ def main():
         try:
             with host(root, instance, uid=uid) as (_process, _record), ExitStack() as cleanup:
                 with isolated_server(corpus, BINARY, host_dir=root / "host") as (base, _):
+                    if os.environ.get('SESSIONDOCK_TEST_PREFIX'):
+                        from frontend_entry_browser import prefixed_proxy
+                        prefixed, target = cleanup.enter_context(prefixed_proxy())
+                        target.url, base = base, prefixed.rstrip('/')
                     context = browser.new_context(
                         viewport={"width": 1280, "height": 900}, service_workers="block")
                     cleanup.callback(context.close)

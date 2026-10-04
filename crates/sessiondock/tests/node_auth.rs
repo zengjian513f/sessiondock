@@ -44,7 +44,7 @@ fn corpus(temp: &Path) -> Config {
     )
     .unwrap();
     Config {
-        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
         roots: SessionRoots {
             claude: Some(root),
             ..Default::default()

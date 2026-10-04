@@ -33,6 +33,7 @@ import time
 from datetime import datetime
 
 from python_oracle import discover_source
+from frontend_paths import frontend_dir
 
 ROOT = Path(__file__).resolve().parents[1]
 SKIP_PY = {
@@ -229,6 +230,11 @@ def main(argv=None):
     parser.add_argument("--include-oracle", action="store_true",
                         help="also run suites compared against the frozen Python oracle (excluded by default)")
     args = parser.parse_args(argv)
+    env = os.environ.copy()
+    prebuilt_web = args.web_dir or env.get("SESSIONDOCK_TEST_WEB_DIR")
+    selected_web = Path(prebuilt_web).resolve() if prebuilt_web else frontend_dir()
+    frontend_build = "build:migration" if selected_web.name != "legacy-web" else "build:legacy"
+    env["SESSIONDOCK_TEST_WEB_DIR"] = str(selected_web)
 
     wanted = set(csv(args.tags))
     only = set(csv(args.only)) or None
@@ -259,6 +265,7 @@ def main(argv=None):
             return 0
 
     if args.list:
+        print(f"frontend: {selected_web} ({'prebuilt' if prebuilt_web else frontend_build + ' before browser suites'})")
         for suite in plan:
             line = f"{suite['name']:<36} {suite['kind']:<7} {suite['timeout']:4d}s  {shlex.join(suite['argv'])}"
             if suite["skip"]:
@@ -275,18 +282,15 @@ def main(argv=None):
     log_dir.mkdir(parents=True, exist_ok=True)
     started = datetime.now().astimezone().isoformat()
 
-    env = os.environ.copy()
-    if args.web_dir:
-        env["SESSIONDOCK_TEST_WEB_DIR"] = str(args.web_dir.resolve())
     if not shutil.which("cargo", path=env.get("PATH", "")):
         cargo_bin = Path.home() / ".cargo/bin"
         if cargo_bin.is_dir():
             env["PATH"] = str(cargo_bin) + os.pathsep + env.get("PATH", "")
     chrome = find_chromium()
 
-    if not args.dry_run and not args.web_dir and any(suite.get("browser") and not suite["skip"] for suite in plan):
-        frontend_build = "build:migration" if env.get("SESSIONDOCK_TEST_WEB_DIR") else "build:legacy"
-        print(f"building Vue assets before browser suites: {frontend_build}", flush=True)
+    print(f"frontend: {selected_web} ({'prebuilt' if prebuilt_web else frontend_build + ' before browser suites'})", flush=True)
+    if not args.dry_run and not prebuilt_web and any(suite.get("browser") and not suite["skip"] for suite in plan):
+        print(f"building frontend assets before browser suites: {frontend_build}", flush=True)
         result = subprocess.run(["npm", "run", frontend_build], cwd=ROOT / "web", env=env,
                                 timeout=300)
         if result.returncode != 0:

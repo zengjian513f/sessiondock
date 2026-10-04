@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {GridModel} from '../legacy-web/grid/model.js';
-import {LineDecoder, encodeResize, segmentText} from '../legacy-web/grid/wire.js';
+import {GridModel} from '../web/shared/grid/model.js';
+import {LineDecoder, encodeResize, segmentText} from '../web/shared/grid/wire.js';
 
 const enc = new TextEncoder();
 const u8 = s => enc.encode(s);

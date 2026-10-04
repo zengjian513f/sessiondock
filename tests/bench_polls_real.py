@@ -13,6 +13,8 @@ concurrent lists, the `force=1` paths, the browser cadence (a call every
 --i-understand-this-reads-real-histories. Never point it at a deployment's
 directories.
 """
+
+from frontend_paths import frontend_dir
 # run_validation: skip
 import argparse, json, os, socket, statistics, subprocess, sys, tempfile, threading, time
 from pathlib import Path
@@ -121,7 +123,7 @@ def main(argv=None):
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
         env = {k: v for k, v in os.environ.items() if not k.startswith("SESSIONDOCK_")}
-        env.update({"SESSIONDOCK_BIND": f"127.0.0.1:{port}", "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web"),
+        env.update({"SESSIONDOCK_BIND": f"127.0.0.1:{port}", "SESSIONDOCK_WEB_DIR": str(frontend_dir()),
                     "SESSIONDOCK_PROC_SCAN": "1",
                     "SESSIONDOCK_STATE_DIR": str(root / "state"), "SESSIONDOCK_PTYHOST_DIR": str(root / "host"),
                     "SESSIONDOCK_LIFECYCLE_DIR": str(root / "ledger"), "SESSIONDOCK_LAUNCHER_CONFIG": str(cfg)})

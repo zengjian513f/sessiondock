@@ -13,6 +13,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import argparse
 import json
 import re
+import select
+import socket
 import tempfile
 import threading
 from pathlib import Path
@@ -150,7 +152,7 @@ def verify_initial_reads(page, base, corpus, width):
 
 @contextmanager
 def prefixed_proxy():
-    target = SimpleNamespace(url=None)
+    target = SimpleNamespace(url=None, fixtures={})
 
     class Proxy(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -160,7 +162,36 @@ def prefixed_proxy():
             if not self.path.startswith(PREFIX):
                 self.send_error(404)
                 return
+            if self.path in target.fixtures:
+                content_type, payload = target.fixtures[self.path]
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
             backend = urlsplit(target.url)
+            if self.headers.get("Upgrade", "").lower() == "websocket":
+                # Relay the genuine upgrade and frames through the same stripped
+                # prefix; the browser still talks to the private Rust host.
+                self.close_connection = True
+                with socket.create_connection((backend.hostname, backend.port), timeout=5) as upstream:
+                    request = f"{self.command} /{self.path[len(PREFIX):]} HTTP/1.1\r\n"
+                    request += "".join(f"{key}: {value}\r\n" for key, value in self.headers.items()) + "\r\n"
+                    upstream.sendall(request.encode("latin1"))
+                    upstream.settimeout(None)
+                    try:
+                        while True:
+                            ready, _, _ = select.select([self.connection, upstream], [], [], 60)
+                            if not ready:
+                                return
+                            for source in ready:
+                                data = source.recv(65536)
+                                if not data:
+                                    return
+                                (upstream if source is self.connection else self.connection).sendall(data)
+                    except OSError:
+                        return
             connection = HTTPConnection(backend.hostname, backend.port, timeout=15)
             try:
                 body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
@@ -168,6 +199,15 @@ def prefixed_proxy():
                            if key.lower() != "connection"}
                 connection.request(self.command, "/" + self.path[len(PREFIX):], body, headers)
                 response = connection.getresponse()
+                if response.getheader("Content-Type", "").startswith("text/event-stream"):
+                    self.close_connection = True
+                    self.send_response(response.status)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.end_headers()
+                    while payload := response.read1(65536):
+                        self.wfile.write(payload)
+                        self.wfile.flush()
+                    return
                 payload = response.read()
                 self.send_response(response.status)
                 for key, value in response.getheaders():

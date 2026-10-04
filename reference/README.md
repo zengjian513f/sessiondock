@@ -1,12 +1,21 @@
 # 冻结前端参考
 
-`legacy-web/` 是前身项目前端的静态快照，不是新 UI 的运行依赖。
-不要将它直接接到生产 API，也不要为了构建新前端而修改这些文件。
+本目录的 `legacy-web/` 是前身项目前端的冻结静态快照，仅用于历史参考。
+不要将它直接接到生产 API，也不要为了构建生产前端而修改这些文件。
 
-生产前端是仓库根目录的 `legacy-web/`，以本快照为基线做小幅、能力门控的改动。
-`tests/legacy_asset_diff.py` 与 `tests/legacy_text_diff.py` 报告两者的差异；
-有意保留的基线改动记录在下面，`legacy_text_diff.py` 以此判定一处用户可见文本
-差异是否已登记。
+生产前端唯一来源是 `web/`，构建并服务 `web/dist-migration/`；仓库根目录的
+`legacy-web/` 已退役。本快照不参与构建、服务或默认验收。
+`tests/legacy_asset_diff.py` 与 `tests/legacy_text_diff.py` 仅比较显式提供的历史
+备份目录，必须同时传入 `--legacy-dir` 和 `--reference-dir`，不会默认读取生产
+产物或本目录。它们不是 Vue 验收工具：
+
+```sh
+python3 tests/legacy_asset_diff.py --legacy-dir BACKUP_LEGACY --reference-dir BACKUP_REFERENCE
+python3 tests/legacy_text_diff.py --legacy-dir BACKUP_LEGACY --reference-dir BACKUP_REFERENCE
+```
+
+下面保留旧前端相对冻结快照的历史基线改动登记；`legacy_text_diff.py` 在历史
+比较中以此判断用户可见文本差异是否已登记，不表示当前 Vue 验收已通过。
 
 ## 有意的基线改动
 

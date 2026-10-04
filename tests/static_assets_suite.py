@@ -15,16 +15,17 @@ import tempfile
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
+from urllib.parse import parse_qs, unquote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from history_parity import BINARY as DEBUG_BINARY, REPO, build_corpus, get_json, isolated_server
+from frontend_paths import FrontendHTML, entry_asset, frontend_dir, local_asset
 
 BINARY = next(p for p in (REPO / "target/release/sessiondock", DEBUG_BINARY) if p.is_file())
 BODY_CAP = 2 * 1024 * 1024
 PLACEHOLDER = re.compile(r"__SESSIONDOCK_[A-Z0-9_]+__")
-TYPES = (("/app.js", "javascript"), ("/style.css", "text/css"),
-         ("/manifest.webmanifest", "manifest"), ("/fonts/CascadiaMono.woff2", "woff2"),
-         ("/icons/icon.svg", "svg"))
+TYPES = {".js": "javascript", ".css": "text/css", ".webmanifest": "manifest",
+         ".woff2": "woff2", ".svg": "svg", ".png": "image/png"}
 
 
 def fail(area, why, body=b""):
@@ -57,6 +58,9 @@ def meta_content(page, name):
 
 
 def run(base, opener):
+    web = frontend_dir()
+    entry = entry_asset(web)
+    entry_path = "/" + entry.relative_to(web).as_posix()
     status, headers, body = fetch(opener, base, "/")
     if status != 200:
         fail("/", f"HTTP {status}", body)
@@ -81,23 +85,30 @@ def run(base, opener):
         fail("html cache", f"Cache-Control={cache!r} allows caching", body)
     passed("html Cache-Control")
 
-    derived = re.search(r"""(?:src|href)=["']([^"']+\?v=([^"'&]+))["']""", page)
-    if not derived:
-        fail("asset version", "no versioned asset URL in HTML", body)
-    version = derived.group(2)
-    if meta_content(page, "sessiondock-build") != version:
-        fail("asset version", f"build meta != URL v={version!r}", body)
-    mismatched = [item for item in re.findall(r"[?&]v=([^\"'&]+)", page) if item != version]
-    if mismatched:
-        fail("asset version", f"URL versions {mismatched} != {version!r}", body)
+    version = meta_content(page, "sessiondock-build")
+    document = FrontendHTML(page)
+    resource_paths = {}
+    for src in document.resources:
+        url = urlsplit(src)
+        if url.scheme or url.netloc:
+            continue
+        asset = local_asset(web, src)
+        path = "/" + asset.relative_to(web).as_posix()
+        resource_paths[path] = src
+        versions = parse_qs(url.query).get("v", [])
+        if (asset.suffix in (".js", ".css", ".woff2", ".ttf") and versions != [version]) or (versions and versions != [version]):
+            fail("asset version", f"{src} must carry HTML build v={version}", body)
+    if not version or entry_path not in resource_paths or not document.styles:
+        fail("asset version", "missing build, served entry or stylesheet", body)
     passed("asset version")
 
     js_body = b""
-    for path in ("/app.js", "/style.css"):
+    cache_paths = [path for path in resource_paths if Path(path).suffix in (".js", ".css")]
+    for path in cache_paths:
         status, hdrs, raw = fetch(opener, base, path)
         if status != 200:
             fail(path, f"HTTP {status}", raw)
-        if path == "/app.js":
+        if path == entry_path:
             js_body = raw
         etag, last_mod = hdrs.get("etag"), hdrs.get("last-modified")
         if not etag and not last_mod:
@@ -110,22 +121,29 @@ def run(base, opener):
             fail(path, f"ETag {etag!r} != HTML version {version!r}", raw)
     passed("asset revalidation")
 
-    for path in ("/app.js", "/vendor/xterm.js", "/fonts/UbuntuSansMono.woff2"):
+    for path in dict.fromkeys([*cache_paths, "/vendor/xterm.js", "/fonts/UbuntuSansMono.woff2"]):
         status, hdrs, raw = fetch(opener, base, f"{path}?v={version}")
         cache = (hdrs.get("cache-control") or "").lower()
         if status != 200 or "immutable" not in cache or "max-age=" not in cache:
             fail(path, f"versioned HTTP {status} Cache-Control={cache!r} (want immutable)", raw)
-    status, hdrs, raw = fetch(opener, base, "/app.js?v=stale")
+    status, hdrs, raw = fetch(opener, base, f"{entry_path}?v=stale")
     if status != 200 or "immutable" in (hdrs.get("cache-control") or "").lower():
-        fail("/app.js?v=stale", f"HTTP {status} Cache-Control={hdrs.get('cache-control')!r} must revalidate", raw)
-    unversioned = [url for url in re.findall(r"""(?:src|href)=["']([^"']+)["']""", page)
-                   if re.search(r"\.(?:js|css|woff2|ttf)$", url)]
-    if unversioned:
-        fail("asset version", f"asset URLs without ?v= in HTML: {unversioned}", body)
+        fail(f"{entry_path}?v=stale", f"HTTP {status} Cache-Control={hdrs.get('cache-control')!r} must revalidate", raw)
     status, _, raw = fetch(opener, base, "/typography.css")
     css = raw.decode("utf-8", "replace")
     if status != 200 or PLACEHOLDER.search(css) or f"?v={version}" not in css:
         fail("/typography.css", f"HTTP {status}; font URLs must carry ?v={version}", raw)
+    font_urls = re.findall(r"url\(\s*['\"]?([^'\"\s)]+)", css)
+    for src in font_urls:
+        url = urlsplit(src)
+        if url.scheme or url.netloc:
+            continue
+        local_asset(web, src)
+        if parse_qs(url.query).get("v") != [version]:
+            fail("typography fonts", f"unversioned font URL: {src}", raw)
+        status, hdrs, font = fetch(opener, base, "/" + url.path.lstrip("/") + "?" + url.query)
+        if status != 200 or "immutable" not in (hdrs.get("cache-control") or "").lower():
+            fail("typography fonts", f"{src}: HTTP {status}, expected immutable font", font)
     passed("immutable versioned assets")
 
     status, _, raw = fetch(opener, base, "/__no_such_asset__.js")
@@ -137,38 +155,54 @@ def run(base, opener):
         fail("listing", f"HTTP {status} looks like a directory listing", raw)
     passed("unknown 404")
 
-    nested = fetch(opener, base, "/legacy-web/app.js")
-    alt = fetch(opener, base, "/app.js")
-    if alt[0] == 200:
-        js_body = alt[2]
-        if nested[0] != 404:
-            fail("/legacy-web/app.js", f"HTTP {nested[0]} (want 404)", nested[2])
-    elif nested[0] == 200:
-        js_body = nested[2]
-        if alt[0] != 404:
-            fail("/app.js", f"HTTP {alt[0]} (want 404)", alt[2])
-    else:
-        fail("app.js path", f"/app.js HTTP {alt[0]} /legacy-web/app.js HTTP {nested[0]}", nested[2])
-    passed("app.js path")
+    nested_path = "/web/dist-migration" + entry_path
+    status, _, raw = fetch(opener, base, nested_path)
+    if status != 404:
+        fail("entry path", f"{nested_path}: HTTP {status} (want 404)", raw)
+    passed("entry path")
 
     for path in ("/files.html", "/file.html"):
         status, _, raw = fetch(opener, base, path)
         if status != 200 or PLACEHOLDER.search(raw.decode("utf-8", "replace")):
             fail(path, f"HTTP {status}", raw)
+        entry_asset(web, path.lstrip("/"))
+        for src in FrontendHTML(raw.decode("utf-8", "replace")).resources:
+            url = urlsplit(src)
+            if url.scheme or url.netloc:
+                continue
+            asset = local_asset(web, src, path.lstrip("/"))
+            asset_path = "/" + asset.relative_to(web).as_posix()
+            resource_paths[asset_path] = src
+            versions = parse_qs(url.query).get("v", [])
+            if asset.suffix in (".js", ".css") and versions != [version]:
+                fail(path, f"unversioned page resource: {src}", raw)
+            status_asset, _, raw_asset = fetch(opener, base, asset_path + ("?" + url.query if url.query else ""))
+            if status_asset != 200:
+                fail(path, f"{src}: HTTP {status_asset}", raw_asset)
     passed("files.html/file.html")
 
-    for path, needle in TYPES:
+    resource_paths.update({"/manifest.webmanifest": "", "/fonts/CascadiaMono.woff2": "", "/icons/icon.svg": ""})
+    status, _, raw = fetch(opener, base, "/manifest.webmanifest")
+    if status != 200:
+        fail("manifest", f"HTTP {status}", raw)
+    for icon in json.loads(raw).get("icons", []):
+        asset = local_asset(web, icon["src"])
+        resource_paths["/" + asset.relative_to(web).as_posix()] = icon["src"]
+    for path in resource_paths:
+        needle = TYPES.get(Path(unquote(path)).suffix)
+        if needle is None:
+            continue
         status, hdrs, raw = fetch(opener, base, path)
         ctype = (hdrs.get("content-type") or "").lower()
         if status != 200 or needle not in ctype:
             fail(path, f"HTTP {status} Content-Type={ctype!r}", raw)
     passed("content types")
 
-    disk = hashlib.sha256((REPO / "legacy-web" / "app.js").read_bytes()).hexdigest()
+    disk = hashlib.sha256(entry.read_bytes()).hexdigest()
     served = hashlib.sha256(js_body).hexdigest()
     if served != disk:
-        fail("app.js sha256", f"served={served} disk={disk}", js_body[:80])
-    passed("app.js sha256")
+        fail("entry sha256", f"{entry_path}: served={served} disk={disk}", js_body[:80])
+    passed("entry sha256")
 
     meta = get_json(opener, base, "/api/meta")
     host = meta.get("hostname")

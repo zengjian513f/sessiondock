@@ -142,7 +142,7 @@ fn native_fixture() -> TempDir {
 
 fn config(native: PathBuf, host: PathBuf) -> Config {
     Config {
-        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
         roots: SessionRoots {
             claude: None,
             codex: Some(native),
@@ -336,7 +336,7 @@ async fn live_without_host_directory_still_reports_the_python_process_scan() {
     let native = native_fixture();
     let app = app_with_shutdown(
         Config {
-            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
             roots: SessionRoots {
                 claude: None,
                 codex: Some(native.path().into()),

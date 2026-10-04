@@ -3,21 +3,15 @@
 Fixture source supplies both complete scripts. This helper never rewrites JS,
 installs globals, copies service state, or manufactures operations.
 """
-import os
 import time
-from html.parser import HTMLParser
-from pathlib import Path
-from urllib.parse import unquote, urlsplit
 
-from frontend_paths import frontend_dir
+from frontend_paths import entry_asset, frontend_dir, frontend_html
 
 
 def scoped_frontend() -> bool:
-    """Select the isolated artifact using the existing test-only source selector."""
-    selected = os.environ.get("SESSIONDOCK_TEST_WEB_DIR")
-    # Both entries can be built in private snapshots. Select fixture scripts
-    # from the actual served entry, rather than treating every custom path as Vue.
-    return bool(selected and entry_asset(Path(selected)).name != 'app.js')
+    """Select scoped scripts from the served HTML, including the default build."""
+    entry_asset()  # Require a real built entry before choosing fixture scripts.
+    return bool(frontend_html().modules)
 
 
 def init_js(legacy: str, scoped: str) -> str:
@@ -40,37 +34,6 @@ def js(legacy: str, scoped: str, *, body: bool = False) -> str:
         "(() => { const runtime = window.SessionDockRuntime; "
         f"return runtime ? ({scoped}) : {fallback}; }})()"
     )
-
-
-def entry_asset(directory: Path | None = None) -> Path:
-    """Find the actual served main entry in a private frontend artifact."""
-    directory = Path(directory or frontend_dir()).resolve()
-    class Scripts(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.modules = []
-            self.classic = []
-
-        def handle_starttag(self, tag, attrs):
-            values = dict(attrs)
-            if tag == 'script' and values.get('src'):
-                target = self.modules if values.get('type') == 'module' else self.classic
-                target.append(values['src'])
-
-    parser = Scripts()
-    parser.feed((directory / 'index.html').read_text())
-    if parser.modules:
-        assert len(parser.modules) == 1, parser.modules
-        src = parser.modules[0]
-    else:
-        candidates = [src for src in parser.classic if Path(urlsplit(src).path).name == 'app.js']
-        assert len(candidates) == 1, parser.classic
-        src = candidates[0]
-    url = urlsplit(src)
-    assert not url.scheme and not url.netloc, f'external entry: {src}'
-    entry = (directory / unquote(url.path).lstrip('/')).resolve()
-    assert entry.is_relative_to(directory) and entry.is_file(), f'missing local entry: {src}'
-    return entry
 
 
 def entry_pattern() -> str:

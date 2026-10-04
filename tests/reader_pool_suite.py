@@ -2,6 +2,8 @@
 """Concurrent reads queue until a worker is available."""
 from __future__ import annotations
 
+from frontend_paths import frontend_dir
+
 import argparse
 import http.client
 import json
@@ -104,7 +106,7 @@ def check_env(binary: Path, corpus: Corpus, extra):
     env = {k: v for k, v in os.environ.items() if not k.startswith("SESSIONDOCK_")}
     env.update({
         "SESSIONDOCK_BIND": "127.0.0.1:0",
-        "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web"),
+        "SESSIONDOCK_WEB_DIR": str(frontend_dir()),
         **extra,
     })
     for source in ("claude", "codex", "grok"):

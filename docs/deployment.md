@@ -70,6 +70,11 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
   机器显示与顺序等 Hub 设置独立保存。不要修改原入口的代理或资源引用。
   本地目标清单指定预览目标后，用 `deploy --targets <PREVIEW_TARGET> --web-only --frontend vue`
   发布；首次准备目录和服务时可复用目标机现有 Hub 二进制，注册表与缓存使用预览私有目录。
+  持续使用的预览目标保留在本地清单中，并设置 `extra.frontend: "vue"`；正式目标默认
+  `extra.frontend: "legacy"`。发布阶段跳过前端类型与产物不匹配的目标，`--bin-only` 除外。
+  因此 `deploy --all` 发布正式 legacy；再以 `deploy --targets <PREVIEW_TARGET> --frontend vue`
+  发布 Vue 预览。两次发布分别构建对应前端，Rust 使用同一源码及共享构建缓存。
+  主入口和预览入口都要验证实际页面资源、列表、会话打开和刷新，不能仅检查 `/api/meta`。
 - `status` 不在本工具里：只读的舰队状态见 `deploy/fleet_status.py`。
 
 ## 并发部署锁

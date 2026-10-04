@@ -1,8 +1,8 @@
 # SessionDock
 
 独立演进的 Rust 会话服务，包含本地节点、多机 Hub、受管终端、可靠发送、文件与
-媒体能力。当前生产前端位于 `legacy-web/`；Vue 3 / TypeScript / Pinia 前端
-使用 `web/migration/` 独立入口。重构不切换生产引用，当前接线见架构合同。
+媒体能力。当前生产前端位于 `legacy-web/`（`/sessiondock/`）；Vue 3 / TypeScript / Pinia 前端
+使用 `web/migration/` 独立构建，仅发布到 `/sessiondock2/`。重构不切换生产引用，当前接线见架构合同。
 
 未完成工作见 [TODO.md](TODO.md)；全部当前合同文档索引见
 [docs/README.md](docs/README.md)，路由清单见

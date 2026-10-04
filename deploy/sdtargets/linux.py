@@ -224,7 +224,8 @@ class LinuxNodeHandler(TargetHandler):
             self.log(f"swapped bin/{name}")
         if self.ship_web():
             staging = self.path("web.staging")
-            self.sh.run(f"test -f {q(staging + '/index.html')} && rsync -a --delete {q(staging + '/')} {q(self.path('web') + '/')} "
+            # Equal size/mtime does not imply equal release contents.
+            self.sh.run(f"test -f {q(staging + '/index.html')} && rsync -a --ignore-times --delete {q(staging + '/')} {q(self.path('web') + '/')} "
                         f"&& rm -rf {q(staging)}", timeout=300, check=True)
             self.log("swapped web/")
 
@@ -276,7 +277,7 @@ class LinuxNodeHandler(TargetHandler):
             'rm -rf "$P/web.staging"',
             'for f in "$B"/bin/*; do [ -f "$f" ] || continue; n=$(basename "$f");'
             ' cp -p "$f" "$P/bin/$n.new" && mv -f "$P/bin/$n.new" "$P/bin/$n"; echo "restored bin/$n"; done',
-            'if [ -f "$B/web/index.html" ]; then rsync -a --delete "$B/web/" "$P/web/"; echo "restored web/"; fi',
+            'if [ -f "$B/web/index.html" ]; then rsync -a --ignore-times --delete "$B/web/" "$P/web/"; echo "restored web/"; fi',
         ])
         rc, out = self.sh.run(script, timeout=300, check=True)
         for line in out.strip().splitlines():

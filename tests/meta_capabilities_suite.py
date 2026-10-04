@@ -6,6 +6,8 @@ Never scans CLI homes, production state, or the network.
 """
 from __future__ import annotations
 
+from frontend_paths import frontend_dir
+
 import argparse
 from contextlib import contextmanager
 import json
@@ -98,7 +100,7 @@ def environment(corpus, port, extra):
     proc_root = corpus.root / "proc-empty"
     proc_root.mkdir(exist_ok=True)
     env = {key: value for key, value in os.environ.items() if not key.startswith("SESSIONDOCK_")}
-    env.update(SESSIONDOCK_BIND=f"127.0.0.1:{port}", SESSIONDOCK_WEB_DIR=str(REPO / "legacy-web"),
+    env.update(SESSIONDOCK_BIND=f"127.0.0.1:{port}", SESSIONDOCK_WEB_DIR=str(frontend_dir()),
                SESSIONDOCK_PROC_ROOT=str(proc_root), **extra)
     for source in ("claude", "codex", "grok"):
         env["SESSIONDOCK_" + source.upper() + "_ROOT"] = str(corpus.root / source)

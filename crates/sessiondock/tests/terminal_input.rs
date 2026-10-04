@@ -101,7 +101,7 @@ impl Harness {
         let app = app_with_shutdown(
             Config {
                 bind: address,
-                web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+                web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
                 roots: SessionRoots {
                     claude: None,
                     codex: Some(native),
@@ -750,7 +750,7 @@ async fn transport_off_keeps_send_and_scroll_unimplemented() {
     let directory = tempfile::tempdir().unwrap();
     let app = app_with_shutdown(
         Config {
-            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
             roots: SessionRoots {
                 claude: None,
                 codex: Some(directory.path().to_owned()),

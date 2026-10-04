@@ -189,26 +189,27 @@ def run(browser, base, root, renderer):
 
 
 def main():
-    root = Path(tempfile.mkdtemp(prefix="timeline-", dir="/tmp/claude-1000" if Path("/tmp/claude-1000").is_dir() else None))
-    for name in ["host", "work", "ledger", "delivery", "state", "bin", "home", "claude", "codex", "grok"]:
-        (root / name).mkdir(mode=0o700)
-    corpus = Corpus(root)
-    cfg = root / "launcher.json"
-    cfg.touch(mode=0o600)
-    cfg.write_text(json.dumps({
-        "schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"), "host_dir": str(root / "host"),
-        "adapters": [{"id": "synthetic-shell-v1", "source": "shell", "executable": str(Path("/bin/sh").resolve()),
-                      "args": ["-c", SHELL], "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}}],
-        "profiles": []}))
-    initialize("--initialize-lifecycle", root / "ledger")
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        with isolated_server(corpus, BINARY, host_dir=root / "host", lifecycle_dir=root / "ledger",
-                             launcher_config=cfg, state_dir=root / "state") as (base, _):
-            for renderer in ("xterm", "grid"):
-                run(browser, base, root, renderer)
-        browser.close()
-    print("PASS terminal_timeline_browser", flush=True)
+    with tempfile.TemporaryDirectory(prefix="sessiondock-timeline-") as temporary:
+        root = Path(temporary)
+        for name in ["host", "work", "ledger", "delivery", "state", "bin", "home", "claude", "codex", "grok"]:
+            (root / name).mkdir(mode=0o700)
+        corpus = Corpus(root)
+        cfg = root / "launcher.json"
+        cfg.touch(mode=0o600)
+        cfg.write_text(json.dumps({
+            "schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"), "host_dir": str(root / "host"),
+            "adapters": [{"id": "synthetic-shell-v1", "source": "shell", "executable": str(Path("/bin/sh").resolve()),
+                          "args": ["-c", SHELL], "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}}],
+            "profiles": []}))
+        initialize("--initialize-lifecycle", root / "ledger")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            with isolated_server(corpus, BINARY, host_dir=root / "host", lifecycle_dir=root / "ledger",
+                                 launcher_config=cfg, state_dir=root / "state") as (base, _):
+                for renderer in ("xterm", "grid"):
+                    run(browser, base, root, renderer)
+            browser.close()
+        print("PASS terminal_timeline_browser", flush=True)
 
 
 if __name__ == "__main__":
