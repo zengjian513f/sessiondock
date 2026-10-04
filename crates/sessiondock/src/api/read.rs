@@ -48,10 +48,22 @@ pub async fn list(
     query: Result<Query<ListQuery>, QueryRejection>,
 ) -> Result<JsonBytes, ApiError> {
     let Query(query) = query.map_err(query_error)?;
+    let scanner = state.proc_scan.clone();
+    let metadata = state.metadata.clone();
     state
         .reader
         .run(move |store| {
-            let bytes = store.list_view_bytes(query.force == "1", &query.sig)?;
+            let bytes = store.list_view_bytes_prepared(query.force == "1", &query.sig, |rows| {
+                if let (Some(scanner), Some(metadata)) = (&scanner, &metadata) {
+                    crate::runtime::spawn::prepare_list(scanner, metadata, rows).map_err(
+                        |error| SessionError {
+                            status: error.status,
+                            message: error.message,
+                        },
+                    )?;
+                }
+                Ok(())
+            })?;
             Ok(JsonBytes(bytes))
         })
         .await

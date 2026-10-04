@@ -132,6 +132,11 @@ directory at birth; every matching process must identify the same initiator.
 An ambiguous directory, a native OpenCode subagent or a session older than
 the process is not inferred this way. Resuming a session created before the
 process does not attach it.
+Before `/api/sessions` first publishes a new native identity, it performs local
+process discovery against that exact inventory, bypassing the older live-scan
+cache, then enriches and signs the rows with the recorded parent. Internal list
+reads do not consume this gate. Unchanged identities keep the ordinary list byte
+cache; background discovery still records evidence that arrives later.
 Verified SSH initiators also initialize the same parent, with the remote node ID.
 A private `nest_initialized` decision marker preserves automatic initialization
 and explicit attach/detach across scans, exits and restarts; it is not a second
