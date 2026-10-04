@@ -4,7 +4,7 @@ search above ten models, and the choice reaching the launched CLI's argv.
 
 Isolated server, private homes and a free fake CLI (`fake_model_cli.py`) for
 all four agent sources; no real CLI or model is started."""
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 import json
 import os
@@ -563,6 +563,30 @@ def main():
             for source in ("codex", "grok", "opencode", "shell"):
                 expect(page.locator(f'input[name="new-source"][value="{source}"]')).to_be_enabled()
             expect(page.locator('input[name="new-source"]:checked')).to_have_value("codex")
+            if scoped_frontend():
+                page.keyboard.press('Escape')
+                page.evaluate("""() => {
+                  const r = window.SessionDockRuntime, fetch = r.core.network.fetch;
+                  window.__lateModel = {fetch};
+                  r.core.network.fetch = (url, options) => String(url).includes('api/term/models')
+                    ? new Promise(done => {__lateModel.release = done}) : fetch(url, options);
+                }""")
+                open_dialog(page)
+                page.wait_for_function('!!__lateModel.release')
+                assert page.evaluate("""async () => {
+                  const r = window.SessionDockRuntime, picker = r.launch.NewModels;
+                  const before = picker.seq, catalog = picker.catalog;
+                  document.querySelector('#app').__vue_app__.unmount();
+                  r.launch.dispose(); r.sessionUi.dispose();
+                  __lateModel.release(new Response(JSON.stringify({models:[{id:'late-model'}]}),
+                    {headers:{'Content-Type':'application/json'}}));
+                  window.dispatchEvent(new Event('resize'));
+                  window.dispatchEvent(new Event('scroll'));
+                  await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+                  r.core.network.fetch = __lateModel.fetch;
+                  return picker.seq > before && picker.catalog === catalog
+                    && !document.querySelector('#new-session-dialog');
+                }""")
             assert not errors, errors
             context.close()
         check_shared_effort(browser, args.binary.resolve(), root)

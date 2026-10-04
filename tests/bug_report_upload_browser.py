@@ -159,8 +159,19 @@ def run(browser, root, config):
             print('PASS attachment card click: reference inserted at caret and actual text saved on the node', flush=True)
 
             fail_replies = 2
-            page.locator('#bug-report-file').set_input_files(
-                {'name': 'second.png', 'mimeType': 'image/png', 'buffer': PNG})
+            # Drop through the actual report form; Vue owns the hover state and
+            # listeners while upload/retry remains the existing draft operation.
+            transfer = page.evaluate_handle("""bytes => {
+              const dt=new DataTransfer();
+              dt.items.add(new File([new Uint8Array(bytes)], 'second.png', {type:'image/png'}));
+              return dt;
+            }""", list(PNG))
+            form=page.locator('#bug-report-form')
+            form.dispatch_event('dragenter', {'dataTransfer': transfer})
+            expect(form).to_have_class(re.compile(r'\bdragover\b'))
+            form.dispatch_event('dragover', {'dataTransfer': transfer})
+            form.dispatch_event('drop', {'dataTransfer': transfer})
+            expect(form).not_to_have_class(re.compile(r'\bdragover\b'))
             retry = page.locator('#bug-report-items').get_by_role('button', name='重试', exact=True)
             expect(retry).to_be_visible()
             assert len(attempts) == 4 and attempts[2] == attempts[3], attempts

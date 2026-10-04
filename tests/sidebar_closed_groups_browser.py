@@ -177,7 +177,23 @@ def main():
                 # exposed sessions, even though it has no session row objects.
                 hidden.locator('.ghead').click()
                 page.evaluate(js('setPicking(true)', 'runtime.bulk.setPicking(true)'))
+                if scoped_frontend():
+                    page.evaluate('''() => {
+                      const runtime = window.SessionDockRuntime;
+                      window.__pickGroups = document.querySelectorAll('#side .group');
+                      window.__pickProjected = 0;
+                      // Catch a selection-driven full row reprojection, not DOM identity alone.
+                      const old = runtime.sidebarView.refreshSidebarRows;
+                      runtime.sidebarView.refreshSidebarRows = (...args) => {
+                        __pickProjected++; return old(...args);
+                      };
+                    }''')
                 hidden.locator('.ghead-pick').click()
+                page.wait_for_function('''() => document.querySelector('#side-picked').textContent.includes('100')''')
+                assert hidden.locator('.ghead-pick').is_checked()
+                if scoped_frontend():
+                    assert page.evaluate('__pickProjected') == 0
+                    assert page.evaluate('[...__pickGroups].every(node => node.isConnected)')
                 assert page.evaluate(js('pickedSessions.size', 'runtime.bulk.state.picked.size')) == 100
                 assert page.evaluate(js('pickedSessions.has("claude:fold-101")', 'runtime.bulk.state.picked.has("claude:fold-101")'))
                 page.locator('#side-pick-cancel').click()
@@ -238,6 +254,38 @@ def main():
                     assert page.evaluate('__foldWork.rows') == []
                     page.locator('#allcount').click()
                 assert not errors, errors
+                # Selection reactivity uses a fresh scene so its additional
+                # clicks do not race the earlier exact lazy-expansion counters.
+                rows = fixture()
+                response['sessions'] = rows
+                seed(page, rows)
+                page.evaluate(js('setPicking(true)', 'runtime.bulk.setPicking(true)'))
+                hidden = group(page, '/synthetic/project-01')
+                hidden.locator('.ghead-pick').click()
+                if scoped_frontend():
+                    page.evaluate('__pickProjected = 0')
+                hidden.locator('.ghead').click()
+                page.wait_for_function('''() => document.querySelectorAll('#side .item-pick:checked').length === 95''')
+                selected_row = hidden.locator('.item[data-uid="claude:fold-106"]')
+                row_handle = selected_row.element_handle()
+                selected_row.evaluate("node => node.scrollIntoView({block: 'center'})")
+                page.evaluate('new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))')
+                assert page.locator('#side-picked').text_content() == '已选 95 项'
+                reset_work(page)
+                selected_row.locator('.body').click()
+                page.wait_for_function('''() => document.querySelector('#side-picked').textContent.includes('94')''', timeout=5000)
+                assert not selected_row.locator('.item-pick').is_checked()
+                assert 'picked' not in selected_row.get_attribute('class').split()
+                assert hidden.locator('.ghead-pick').evaluate('node => node.indeterminate')
+                assert selected_row.evaluate('(node, old) => node === old', row_handle)
+                if scoped_frontend():
+                    assert page.evaluate('__pickProjected') == 0
+                    assert page.evaluate('__foldWork.rows.length') == 0
+                page.locator('#side-pick-all').click()
+                page.wait_for_function('''() => document.querySelector('#side-pick-all').textContent === '全不选' ''')
+                assert selected_row.locator('.item-pick').is_checked()
+                assert 'picked' in selected_row.get_attribute('class').split()
+                page.locator('#side-pick-cancel').click()
                 print('PASS closed groups browser: 5000 sessions, 49/50 folded; hidden updates, '
                       'lazy ordering, nested counts, closed-group selection and date migration')
             finally:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real Hub/node HTTP and Chromium diagnostic controls, private Unix collectors."""
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 from contextlib import ExitStack
 import json
@@ -229,8 +229,8 @@ def main():
         page.clock.fast_forward(20000)
         page.mouse.move(605,300)
         page.clock.fast_forward(11000)
-        wait_for(lambda: len(collectors[0].calls) > sent_before)
-        assert collectors[0].calls[-1]['lease_seconds'] <= 50
+        wait_for(lambda: len(collectors[0].calls) > sent_before
+                 and collectors[0].calls[-1]['lease_seconds'] <= 50)
         page.clock.fast_forward(48000)
         assert collectors[0].enabled
         page.clock.fast_forward(2000)
@@ -257,6 +257,42 @@ def main():
         assert context.request.post(local[0][0] + '/api/session/resources/probe', data={'uid': 'codex:missing', 'scope': 'direct', 'enabled': True}).status == 404
         assert counts == [len(c.calls) for c in collectors]
         assert not collectors[2].calls and not collectors[3].calls
+        if scoped_frontend():
+            # The actual resource toggle/row/dialog paths above establish the
+            # live owners. Release them with a response still pending, then
+            # deliver that response even though its AbortSignal was cancelled.
+            assert page.evaluate("""async () => {
+              const r = window.SessionDockRuntime, service = r.sidebarResources;
+              const fetch = r.core.network.fetch;
+              let resolve, signal, requests = 0;
+              r.core.network.fetch = (url, options) => {
+                if (!String(url).includes('api/resources/summary')) return fetch(url, options);
+                requests++; signal = options.signal;
+                return new Promise(done => {resolve = done});
+              };
+              const values = () => [...document.querySelectorAll('.item-resource-value')].map(n => n.textContent).join('|');
+              const before = values(), pending = service.refresh(), stop = service.start();
+              if (!resolve) throw new Error('resource refresh was not started');
+              stop(); stop();
+              document.dispatchEvent(new Event('visibilitychange'));
+              resolve(new Response(JSON.stringify({sessions: [], sampled_at: Date.now()/1000}),
+                {headers: {'Content-Type': 'application/json'}}));
+              await pending;
+              const clean = signal.aborted && requests === 1 && before === values();
+              r.core.network.fetch = fetch;
+              service.start();
+              const timeline = r.timeline, oldFit = timeline.fitTimelineDirectories;
+              let fits = 0;
+              timeline.fitTimelineDirectories = (...args) => {fits++; return oldFit(...args)};
+              timeline.scheduleTimelineFit();
+              const stopTimeline = timeline.start();
+              stopTimeline(); stopTimeline();
+              await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+              const stopped = fits === 0 && timeline.timelineFitFrame === 0;
+              timeline.fitTimelineDirectories = oldFit;
+              timeline.start();
+              return clean && stopped;
+            }""")
         print('PASS sidebar resource badges, refresh, outage, mobile layout and real browser/Hub/node probe start-stop, diagnostic GET, partial error, related-only routing, offline exclusion, authentication and invalid-session gate', flush=True)
 
 
