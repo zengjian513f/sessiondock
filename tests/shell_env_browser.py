@@ -12,7 +12,7 @@ HTTP build mismatch appends its card after the existing shell card.
 
 A real hub and two real isolated nodes; no real CLI or production data.
 """
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 from contextlib import ExitStack
 import json
@@ -66,6 +66,108 @@ def shell_env(base):
     with urlopen(base + "/api/shell-env", timeout=40) as response:
         raw = response.read()
     return json.loads(raw), raw
+
+
+def restart_failure_fixture(context, hub_url):
+    """Actual buttons use held HTTP requests, then recover from their failures."""
+    page = context.new_page()
+    errors, requests = [], []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    second = "f" * 32
+    data = {nid: {"configured": True, "stale": True, "started_at": "fixture-start",
+                  "changed": ["SD_FIXTURE_CHANGED"]} for nid in (NID, second)}
+
+    def env_route(route):
+        nid = route.request.url.split("/api/nodes/", 1)[1].split("/", 1)[0]
+        route.fulfill(json=data[nid])
+
+    def restart_route(route):
+        assert route.request.method == "POST", route.request.method
+        requests.append(route)  # Leave the real fetch pending until the assertions finish.
+
+    page.route("**/api/nodes/*/api/shell-env", env_route)
+    page.route("**/api/nodes/*/api/shell-env/restart", restart_route)
+    try:
+        # Let the startup timer's own check finish before holding any POST:
+        # legacy would otherwise recreate its directly disabled button at 3s.
+        with ExitStack() as initial_check:
+            for nid in (NID, second):
+                initial_check.enter_context(page.expect_response(
+                    lambda response, nid=nid: response.request.method == "GET"
+                    and response.url.endswith(f"/api/nodes/{nid}/api/shell-env")))
+            page.goto(hub_url, wait_until="networkidle")
+            page.wait_for_function(js("Nodes.list.length === 2", 'runtime.core.state.nodes.list.length === 2'))
+        notice = page.locator("#shell-env-notice")
+        first_row = notice.locator(f'tr[data-node="{NID}"]')
+        second_row = notice.locator(f'tr[data-node="{second}"]')
+        expect(first_row).to_be_visible()
+        expect(second_row).to_be_visible()
+        # Ignore only this machine's exact names; the other row and card remain.
+        card = notice.element_handle()
+        second_row.get_by_role("button", name="忽略 shellnode2", exact=True).click()
+        expect(second_row).to_have_count(0)
+        expect(first_row).to_be_visible()
+        assert card.evaluate("d => d === document.querySelector('#shell-env-notice')")
+        page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+        expect(second_row).to_have_count(0)
+        data[second]["changed"] = ["SD_FIXTURE_CHANGED_AGAIN"]
+        page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+        expect(second_row.locator("td").nth(1)).to_have_text("SD_FIXTURE_CHANGED_AGAIN")
+        assert not requests, "ignore sent a restart request"
+
+        for label, targets in (("重启 shellnode 后端", (NID,)),
+                               ("全部重启 (2)", (NID, second))):
+            # Retry the same recovered control, rather than merely inspecting it.
+            for attempt in range(2):
+                button = notice.get_by_role("button", name=label, exact=True)
+                head = notice.locator(".app-float-head").element_handle()
+                table = notice.locator("table").element_handle()
+                original_button = button.element_handle()
+                before = len(requests)
+                with ExitStack() as started:
+                    for nid in targets:
+                        started.enter_context(page.expect_request(
+                            lambda request, nid=nid: request.method == "POST"
+                            and f"/api/nodes/{nid}/api/shell-env/restart" in request.url))
+                    button.click()
+                expect(button).to_be_disabled()
+                if scoped_frontend():
+                    # A poll must retain the shared lock and the existing DOM.
+                    page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+                    expect(button).to_be_disabled()
+                    for nid in targets:
+                        expect(notice.locator(f'tr[data-node="{nid}"]').get_by_role(
+                            "button", name="重启", exact=False)).to_be_disabled()
+                box = button.bounding_box()
+                assert box, label
+                page.mouse.dblclick(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+                assert len(requests) == before + len(targets), "pending clicks sent duplicate restart requests"
+                failure = f"fixture_restart_failed_{attempt}"
+                for route in requests[before:]:
+                    route.fulfill(status=503, json={"error": failure})
+                popup = page.locator('.app-popup[data-popup-type="alert"]')
+                expect(popup).to_be_visible()
+                expect(popup).to_contain_text("重启后端失败:")
+                for nid in targets:
+                    name = "shellnode" if nid == NID else "shellnode2"
+                    expect(popup).to_contain_text(f"{name}: {failure}")
+                popup.get_by_role("button", name="知道了", exact=True).click()
+                expect(popup).to_have_count(0)
+                expect(button).to_be_enabled()
+                expect(first_row.locator("td").nth(1)).to_have_text("SD_FIXTURE_CHANGED")
+                expect(second_row.locator("td").nth(1)).to_have_text("SD_FIXTURE_CHANGED_AGAIN")
+                assert card.evaluate("d => d === document.querySelector('#shell-env-notice')")
+                if scoped_frontend():
+                    assert head.evaluate("d => d === document.querySelector('#shell-env-notice .app-float-head')")
+                    assert table.evaluate("d => d === document.querySelector('#shell-env-notice table')")
+                    assert original_button.evaluate("d => d.isConnected"), "failure replaced the recovering button"
+                for handle in (head, table, original_button):
+                    handle.dispose()
+        card.dispose()
+        assert not errors, errors
+    finally:
+        page.close()
 
 
 def main():
@@ -123,6 +225,7 @@ def main():
         browser = pw.chromium.launch(**launch)
         stack.callback(browser.close)
         context = browser.new_context(service_workers="block", viewport={"width": 390, "height": 860})
+        restart_failure_fixture(context, f"http://127.0.0.1:{hub.port}")
         hub_page = context.new_page()
         errors = []
         hub_page.on("pageerror", lambda error: errors.append(str(error)))
@@ -222,6 +325,7 @@ def main():
         shell_card.dispose()
         assert not errors, errors
     print("PASS shell env browser: drift names only (no values, per-shell values ignored), two-machine table at 390px, ignore, "
+          "fixture restart failures recover row/bulk buttons and retries, pending double-clicks send no duplicate POST, "
           "全部重启 and single restart exit 75 after graceful shutdown, a fresh start clears each row; "
           "removed shell cards return with new identity at the stack end, shell precedes the later build notice")
 

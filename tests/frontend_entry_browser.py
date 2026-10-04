@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """Use the complete frontend under /sessiondock/ and restore after a private restart.
 
-The loopback proxy strips the same prefix as the production proxy. Both Rust
-processes use one synthetic corpus and private state; no deployed service,
-production sessions, real CLI, or production proxy configuration is touched.
+Initial history reads cover loading, a late response after a real session switch,
+and a visible 503 retry on desktop and phone. The loopback proxy strips the same
+prefix as the production proxy. Both Rust processes use one synthetic corpus and
+private state; no deployed service, production sessions, real CLI, or production
+proxy configuration is touched.
 """
 from contextlib import contextmanager
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import argparse
+import json
 import re
 import tempfile
 import threading
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 from frontend_framework_browser import launch_chromium, open_settings, select_tab
@@ -23,6 +26,125 @@ from history_parity import BINARY, build_corpus, codex_message, codex_row, isola
 PREFIX = "/sessiondock/"
 MAIN_SID = "frontend-entry-main"
 OTHER_SID = "frontend-entry-other"
+RETRY_SID = "frontend-entry-retry"
+
+
+def initial_read_observer(context, base, corpus):
+    # Let one genuine HTTP response arrive after selection cancellation. This
+    # exercises the stale-result guard independently of transport abort, without
+    # replacing a UI operation or writing application/store state.
+    path = urlsplit(base).path + "api/messages/" + corpus.uid(MAIN_SID)
+    context.add_init_script("""(() => {
+      const nativeFetch = window.fetch.bind(window);
+      let protectedRead = false;
+      window.__entryInitialReadConsumed = false;
+      window.__entryManualRetryClicked = false;
+      window.fetch = async (input, options) => {
+        const url = new URL(input instanceof Request ? input.url : input, location.href);
+        if (protectedRead || decodeURIComponent(url.pathname) !== """ + json.dumps(path) + """
+            || url.searchParams.get('window') !== '1' || url.searchParams.has('start')) {
+          return nativeFetch(input, options);
+        }
+        protectedRead = true;
+        const response = await nativeFetch(input, {...options, signal: undefined});
+        const getReader = response.body.getReader.bind(response.body);
+        response.body.getReader = (...args) => {
+          const reader = getReader(...args), read = reader.read.bind(reader);
+          reader.read = async (...args) => {
+            const result = await read(...args);
+            if (result.done) window.__entryInitialReadConsumed = true;
+            return result;
+          };
+          return reader;
+        };
+        return response;
+      };
+      // Observe the real user event so automatic retries cannot satisfy the
+      // manual-retry assertion or make the fixture recover before the click.
+      document.addEventListener('click', event => {
+        const button = event.target.closest('#detail .empty button');
+        if (button?.textContent.trim() === '重试读取') window.__entryManualRetryClicked = true;
+      }, true);
+    })();""")
+
+
+def show_sidebar(page, width):
+    if width == 390:
+        page.locator(".mobile-back").click()
+
+
+def verify_initial_reads(page, base, corpus, width):
+    main_route = base + "api/messages/" + quote(corpus.uid(MAIN_SID), safe="") + "?window=1"
+    retry_route = base + "api/messages/" + quote(corpus.uid(RETRY_SID), safe="") + "?window=1"
+    held = []
+    failures = []
+
+    def hold_initial(route):
+        query = parse_qs(urlsplit(route.request.url).query)
+        assert query.get("window") == ["1"] and "start" not in query, route.request.url
+        held.append(route)
+
+    def fail_until_clicked(route):
+        query = parse_qs(urlsplit(route.request.url).query)
+        assert query.get("window") == ["1"] and "start" not in query, route.request.url
+        if not page.evaluate("window.__entryManualRetryClicked"):
+            failures.append(route.request.url)
+            route.fulfill(status=503, json={"error": "会话在读取期间变化，请重试（初次打开夹具）"})
+        else:
+            route.continue_()
+
+    page.route(main_route, hold_initial)
+    try:
+        with page.expect_request(main_route):
+            page.locator(f'#side .item[data-uid="{corpus.uid(MAIN_SID)}"]').click()
+        expect(page.locator("#detail .spin")).to_be_visible()
+        expect(page.locator("#detail .spin")).to_have_text("正在读取会话…")
+        assert len(held) == 1, held
+        show_sidebar(page, width)
+        page.locator(f'#side .item[data-uid="{corpus.uid(OTHER_SID)}"]').click()
+        expect(page.locator("#msgs")).to_contain_text(corpus.expected[OTHER_SID][-1])
+        heading = page.locator("#detail .dhead h2")
+        expect(heading).to_contain_text(corpus.expected[OTHER_SID][0])
+        heading_before = heading.inner_text()
+        history_before = page.locator("#msgs").inner_text()
+        url_before = page.url
+        old_read = held.pop()
+        old_read.fulfill(response=old_read.fetch())
+        page.wait_for_function("window.__entryInitialReadConsumed === true")
+        page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+        expect(heading).to_have_text(heading_before, use_inner_text=True)
+        expect(page.locator("#msgs")).to_have_text(history_before, use_inner_text=True)
+        expect(page.locator("#msgs")).not_to_contain_text(corpus.expected[MAIN_SID][-1])
+        expect(page.locator("#detail .spin, #detail .empty")).to_have_count(0)
+        assert page.url == url_before, page.url
+    finally:
+        page.unroute(main_route, hold_initial)
+
+    page.route(retry_route, fail_until_clicked)
+    try:
+        show_sidebar(page, width)
+        page.locator(f'#side .item[data-uid="{corpus.uid(RETRY_SID)}"]').click()
+        failure = page.locator("#detail .empty")
+        expect(failure).to_be_visible()
+        expect(failure).to_contain_text("读取失败")
+        expect(failure).to_contain_text("会话在读取期间变化，请重试（初次打开夹具）")
+        retry = failure.get_by_role("button", name="重试读取", exact=True)
+        expect(retry).to_be_visible()
+        expect(retry).to_be_enabled()
+        expect(page.locator("#migration-read-error")).to_have_count(0)
+        assert failures, "initial history request did not receive the fixture 503"
+        with page.expect_response(lambda response: response.ok
+                                  and response.url == retry_route):
+            retry.click()
+        assert page.evaluate("window.__entryManualRetryClicked") is True
+        expect(page.locator("#msgs")).to_contain_text(corpus.expected[RETRY_SID][-1])
+        expect(page.locator("#detail .dhead h2")).to_contain_text(corpus.expected[RETRY_SID][0])
+        expect(page.locator("#detail .spin, #detail .empty, #migration-read-error")).to_have_count(0)
+        assert parse_qs(urlsplit(page.url).query)["sid"] == ["codex:" + RETRY_SID], page.url
+    finally:
+        page.unroute(retry_route, fail_until_clicked)
+    show_sidebar(page, width)
+    print(f"PASS initial read {width}px: loading, stale response isolation, visible 503 retry", flush=True)
 
 
 @contextmanager
@@ -116,7 +238,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="sessiondock-frontend-entry-") as temporary:
         root = Path(temporary)
         corpus = build_corpus(root)
-        for sid in (MAIN_SID, OTHER_SID):
+        for sid in (MAIN_SID, OTHER_SID, RETRY_SID):
             corpus.put(sid, "codex", [
                 codex_row("session_meta", {"id": sid, "cwd": "/synthetic/frontend-entry", "source": "cli"}),
                 codex_message("user", sid + " question"),
@@ -137,12 +259,14 @@ def main():
                         context = browser.new_context(viewport={"width": width, "height": 900},
                                                       service_workers="block")
                         context.add_init_script("window.EventSource = undefined;")
+                        initial_read_observer(context, base, corpus)
                         context.on("request", lambda request: requests.append(request.url))
                         page = context.new_page()
                         page.on("pageerror", lambda error: errors.append(str(error)))
                         pages.append((context, page, width))
                         page.goto(base, wait_until="domcontentloaded")
                         expect(page.locator("#side .item[data-uid]").first).to_be_visible()
+                        verify_initial_reads(page, base, corpus, width)
                         choose_preferences(page)
                         page.locator(f'#side .item[data-uid="{corpus.uid(MAIN_SID)}"]').click()
                         expect(page.locator("#msgs")).to_contain_text(corpus.expected[MAIN_SID][-1])
@@ -158,7 +282,7 @@ def main():
                     context.close()
                 browser.close()
         assert all(path.read_bytes() == value for path, value in before.items())
-    print("PASS frontend_entry_browser: /sessiondock/ assets/API and private Rust restart", flush=True)
+    print("PASS frontend_entry_browser: initial loading/stale/retry, /sessiondock/ assets/API and private Rust restart", flush=True)
 
 
 if __name__ == "__main__":
