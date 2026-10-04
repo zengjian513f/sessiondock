@@ -3202,12 +3202,14 @@ async function deleteSessions(uids, button = null) {
   // OpenCode keeps sessions in its own database: they are deleted there,
   // with their child sessions, and never reach the recycle bin.
   const opencode = recorded.filter(uid => sidebarSessions().find(x => x.uid === uid)?.source === 'opencode');
+  const agy = recorded.filter(uid => sidebarSessions().find(x => x.uid === uid)?.source === 'agy');
   // Unpersisted launches discard immediately. Recorded sessions still confirm
   // because they move into the recycle bin.
   if (recorded.length && !await appConfirm((uids.length === 1
       ? `${action}会话「${only}」?\n\n` : `${action}选中的 ${uids.length} 个会话?\n\n`)
     + (pending.length ? `${pending.length} 个新建会话将停止并丢弃，未发送的草稿也会清除；若已生成会话记录，记录会保留。\n` : '')
-    + (opencode.length < recorded.length ? trashLocationNote() : '')
+    + (opencode.length + agy.length < recorded.length ? trashLocationNote() : '')
+    + (agy.length ? `\n其中 ${agy.length} 个 Agy 会话将跳过：${agyDeleteNote()}` : '')
     + (opencode.length ? (opencode.length === recorded.length ? '' : '\n')
       + (opencode.length === 1 && uids.length === 1 ? '' : `其中 ${opencode.length} 个 `) + opencodeDeleteNote() : '')
     + (running ? `\n其中 ${running} 个还在运行，会被跳过，需要先停止。` : '')))
@@ -6108,6 +6110,13 @@ function head(m, total) {
     </div>`)}
       </div>
     </div>`;
+  if (m.source === 'agy' && Array.isArray(m.migration_warnings)) {
+    for (const warning of m.migration_warnings) {
+      const notice = el('div', 'tool-change-warning native-history-warning', warning);
+      notice.setAttribute('role', 'status');
+      h.append(notice);
+    }
+  }
   h.querySelector('.mobile-back').onclick = showMobileList;
   h.querySelector('#a-star').onclick = () => toggleSessionStar(m.uid);
   h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
@@ -6472,9 +6481,11 @@ async function requestSessionDelete(uid, force = false) {
 
 // OpenCode 会话在它自己的数据库里：直接删除（连同子会话），不进回收站。
 const opencodeDeleteNote = () => 'OpenCode 会话会从 OpenCode 直接删除（连同子会话），不进回收站，无法恢复。';
+const agyDeleteNote = () => '请在 agy 的 /resume 菜单删除原生会话，SessionDock 会自动更新列表。';
 
 async function del(m) {
   const opencode = m.source === 'opencode';
+  if (m.source === 'agy') { await appAlert(agyDeleteNote()); return; }
   if (!await appConfirm(`删除会话「${m.title}」?\n\n${opencode ? opencodeDeleteNote() : trashLocationNote()}`)) return;
   closeWatch();                         // 先停 SSE，避免文件移走后 EventSource 自动重连 404
   let { response, data } = await requestSessionDelete(m.uid);

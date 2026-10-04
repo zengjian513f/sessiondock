@@ -20,7 +20,7 @@ frontend expects (`capabilities.live: true`).
 
 The scan is read-only: it lists the table, reads `cmdline` of every process,
 and `environ`, `cwd` and `fd/*` links of the processes whose command line
-mentions `claude`, `codex` or `grok` (plus the `cwd` of `opencode` processes);
+mentions `claude`, `codex`, `grok` or `agy` (plus the `cwd` of `opencode` processes);
 `stat` lines are read lazily for ancestry walks. It never signals, writes, follows a link outside the tree, or elevates
 privileges (another user's `environ`/`fd` are unreadable and simply skipped;
 `cmdline` is world-readable).
@@ -265,6 +265,15 @@ records anyway.
 probe; claim, attach, unleased send, stop and process-evidence binding keep
 `runtime::observe`, the fresh uncached probe. Its `sessions` and `pending`
 rows are therefore at most 2 s old, the predecessor's `PANES_TTL`.
+
+Agy 1.2.16 main-process fd identity has been checked against a real CLI in a
+private HOME with a loopback synthetic gateway. The scan resolves the explicit
+`SESSIONDOCK_AGY_HOME` and accepts a direct `conversations/<sid>.db` fd only
+for an Agy CLI main process, storing it as `agy:<lowercase sid>` so unrelated
+sources do not share the key. It does not use cwd as Agy identity or the text
+mirror as its native fd. Pending binding uses the same host-child ancestry
+evidence below. This establishes identity/liveness evidence, not Agy busy or
+turn semantics. A real CLI browser test also covers stopped-session resume ([Agy](agy.md)).
 
 ## Pending launches bound by process evidence
 

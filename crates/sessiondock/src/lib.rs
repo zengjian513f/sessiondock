@@ -309,7 +309,8 @@ fn build_app(
                 .into_iter()
                 .flatten()
                 .map(std::path::PathBuf::as_path),
-            ),
+            )
+            .with_agy_home(config.agy_home.clone()),
         ))
     });
     capabilities["live"] = serde_json::json!(proc_scan.is_some());
@@ -363,6 +364,14 @@ fn build_app(
         std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
         builder.create(&root)?;
         sessions::opencode::Mirror::new(database, root).spawn(shutdown.clone())?;
+    }
+    if let (Some(home), Some(root)) = (config.agy_home.clone(), config.roots.agy.clone()) {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(&root)?;
+        sessions::agy::Mirror::new(home, root).spawn(shutdown.clone())?;
     }
     // The canonical spelling rows carry in `path`.
     let opencode_root = config

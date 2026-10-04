@@ -89,7 +89,8 @@ impl Index {
                         .map(|m| Stamp::of(&m)),
                     agent_id: entry.agent_id.clone(),
                 };
-                if candidate.stamp.is_none() && !matches!(entry.source, "grok" | "opencode") {
+                if candidate.stamp.is_none() && !matches!(entry.source, "grok" | "opencode" | "agy")
+                {
                     break;
                 }
                 let cached = state

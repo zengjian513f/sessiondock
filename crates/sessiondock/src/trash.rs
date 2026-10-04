@@ -203,6 +203,7 @@ impl TrashService {
                 codex: freeze(roots.codex),
                 grok: freeze(roots.grok),
                 opencode: freeze(roots.opencode),
+                agy: freeze(roots.agy),
             },
             lock: Mutex::new(()),
         })

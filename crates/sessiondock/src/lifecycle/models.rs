@@ -16,6 +16,10 @@ use super::{launcher::CliProfile, model::Source};
 
 /// `opencode models` may first start OpenCode's background service.
 const OPENCODE_MODELS_TIMEOUT: Duration = Duration::from_secs(15);
+/// Agy may fetch its account's available models.
+const AGY_MODELS_TIMEOUT: Duration = Duration::from_secs(15);
+/// Agy's documented `--effort` levels; model compatibility stays with the CLI.
+const AGY_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 /// Claude's documented `--effort` levels.
 const CLAUDE_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 /// Claude's `--model` aliases for the latest model of each family.
@@ -62,14 +66,7 @@ pub fn catalog(profile: &CliProfile) -> Catalog {
         Source::Codex => codex_profile(profile),
         Source::Grok => grok(&cli_home(profile, "GROK_HOME", ".grok")),
         Source::Opencode => opencode(profile),
-        Source::Agy => Catalog {
-            models: Vec::new(),
-            efforts: CLAUDE_EFFORTS
-                .iter()
-                .map(|effort| (*effort).to_owned())
-                .collect(),
-            default_model: None,
-        },
+        Source::Agy => agy(profile),
         Source::Shell => Catalog::default(),
     };
     if catalog.efforts.is_empty() {
@@ -338,6 +335,39 @@ pub(super) fn grok(home: &Path) -> Catalog {
     }
 }
 
+/// `agy models`: one `id\tdisplay name` per line on stdout, with progress
+/// on stderr. It reports no default model or per-model effort metadata.
+fn agy(profile: &CliProfile) -> Catalog {
+    let cwd = cli_home(profile, "HOME", "");
+    let output = run_bounded(profile, &cwd, &["models"], AGY_MODELS_TIMEOUT).unwrap_or_default();
+    let efforts: Vec<String> = AGY_EFFORTS
+        .iter()
+        .map(|effort| (*effort).to_owned())
+        .collect();
+    let models = output
+        .lines()
+        .filter_map(|line| {
+            let (id, name) = line.split_once('\t')?;
+            let id = id.trim();
+            if id.is_empty() {
+                return None;
+            }
+            let name = name.trim();
+            Some(Model {
+                id: id.to_owned(),
+                name: if name.is_empty() { id } else { name }.to_owned(),
+                efforts: efforts.clone(),
+                default_effort: None,
+            })
+        })
+        .collect();
+    Catalog {
+        models,
+        efforts,
+        default_model: None,
+    }
+}
+
 /// `opencode models`: one `provider/model` per line. OpenCode selects a
 /// reasoning variant per model, so no effort is offered.
 fn opencode(profile: &CliProfile) -> Catalog {
@@ -422,6 +452,7 @@ fn run_bounded(
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
+            Ok(Some(status)) if profile.source == Source::Agy && !status.success() => return None,
             Ok(Some(_)) => break,
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
             _ => {

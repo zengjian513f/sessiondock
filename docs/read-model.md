@@ -33,6 +33,25 @@
 | `observe`（SSE） | 每会话 `stat` 轮询 + 视图增量扩展；列表 SSE 用索引 `sig` | 索引 + 视图 | 事件流 |
 | 运行时 / lifecycle / trash / delivery | 从候选表取原生 id、路径、stamp、归属；发送确认边界与原生尾部来自打开的视图 | 索引、视图 | — |
 
+## Agy 原生数据投影
+
+当前 Agy 1.2.16 实现用成对的 `SESSIONDOCK_AGY_HOME`（显式原生目录）与
+`SESSIONDOCK_AGY_ROOT`（私有可写镜像）接入：只读目录 DB 加完整
+`brain/<sid>/.system_generated/logs/transcript_full.jsonl`，生成
+`<AGY_ROOT>/cli/<sid>/summary.json`、`messages.jsonl`，复用下游索引、历史分页、
+增量、搜索和媒体。持续连接的 `data_version` 负责目录提交，已知 transcript stamp
+负责正文变化；追加保留前缀，旧记录改写/回退原子重写，相同字节不改 mtime。
+完整目录 DB 暂时缺失保留镜像；目录行尚在但 transcript 缺失则保留上次消息镜像，
+摘要标记 `transcript_missing`，历史详情显示暂不可读提示（从未导出时消息文件才
+为空）；恢复后重新核对并清除提示。成功读取
+目录发现行被删时只清理带本实现标记的私有镜像，不修改 native 文件。
+
+真实 user、planner final、thinking、错误与 fd identity 已核对；工具/媒体字段来自
+CLI 内置格式文档，尚无成功真实工具/媒体样本。工具调用保留原始 JSON，其他步骤
+独立投影结果，不按位置猜配对；图片使用既有媒体授权，其合成 schema browser
+路径已有通过记录。Agy 不输出 `turn`，未证实 busy；parent/status 的读取也不代表
+原生子代理/回合状态已支持。具体合同及验证边界见 [Agy](agy.md)。
+
 ## 列表：索引与摘要
 
 - **候选发现**：Claude `<root>/<project>/<sid>.jsonl` 主会话与 `agent-*.jsonl`

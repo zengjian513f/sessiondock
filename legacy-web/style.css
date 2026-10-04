@@ -527,6 +527,7 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 :is(#new-session-form, #bug-report-form) .new-source { flex: 0 1 212px; min-width: 172px; }
 #new-session-form .new-source:has(input[value="agy"]) { flex-basis: 254px; min-width: 206px; }
 #bug-report-form .new-source { flex-basis: 170px; min-width: 138px; }
+#bug-report-form .new-source:has(input[value="agy"]) { flex-basis: 212px; min-width: 172px; }
 :is(#new-session-form, #bug-report-form) .new-source label { flex: 1 1 42px; min-width: 34px; }
 :is(#new-session-form, #bug-report-form) .new-source .src-label {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;

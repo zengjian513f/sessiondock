@@ -116,6 +116,14 @@ fn classify_with(source: &str, capture: &ScreenCapture, draft_allowed: bool) -> 
         }
         "grok" => (grok_composer(capture), false, false),
         "opencode" => (opencode_editor(capture), false, false),
+        "agy" => {
+            let text = agy_editor(capture);
+            (
+                text.is_some(),
+                false,
+                text.is_some_and(|text| !text.trim().is_empty()),
+            )
+        }
         _ => (false, false, false),
     };
     if !recognized {
@@ -208,6 +216,9 @@ where
     Fut: std::future::Future<Output = Result<ScreenCapture, Failure>>,
 {
     let editor_text = |screen: &ScreenCapture| {
+        if source == "agy" {
+            return agy_editor(screen);
+        }
         let view = if source == "codex" {
             driver::inspect_codex(screen)
         } else {
@@ -362,6 +373,47 @@ fn opencode_editor(capture: &ScreenCapture) -> bool {
             .trim_start()
             .split_once(" · ")
             .is_some_and(|(agent, model)| !agent.trim().is_empty() && !model.trim().is_empty())
+}
+
+/// Agy 1.2.16: a `> ` editor between full horizontal rules. Menus are
+/// rendered below that rule and move the cursor out of the editor. The one
+/// footer row is not used to infer a model or to authorize an overlay.
+pub(super) fn agy_editor(capture: &ScreenCapture) -> Option<String> {
+    let text = driver::strip_ansi(&capture.text);
+    let rows: Vec<&str> = text.lines().collect();
+    let (x, y) = (usize::from(capture.cursor.0), usize::from(capture.cursor.1));
+    if y >= rows.len() || x < 2 {
+        return None;
+    }
+    let rule =
+        |row: &str| row.trim().chars().count() >= 8 && row.trim().chars().all(|ch| ch == '─');
+    let top = (0..y).rev().find(|&i| rule(rows[i]))?;
+    let bottom = (y + 1..rows.len()).find(|&i| rule(rows[i]))?;
+    if !rows[top + 1].starts_with('>')
+        || rows[top].trim() != rows[bottom].trim()
+        || rows[bottom + 1..]
+            .iter()
+            .filter(|row| !row.trim().is_empty())
+            .count()
+            > 1
+    {
+        return None;
+    }
+    let mut lines = Vec::new();
+    for (i, row) in rows[top + 1..bottom].iter().enumerate() {
+        let content = if i == 0 {
+            if *row == ">" {
+                ""
+            } else {
+                row.strip_prefix("> ")?
+            }
+        } else {
+            row.strip_prefix("  ")
+                .or_else(|| row.trim().is_empty().then_some(""))?
+        };
+        lines.push(content.trim_end());
+    }
+    Some(lines.join("\n").trim_end().to_owned())
 }
 
 #[cfg(test)]

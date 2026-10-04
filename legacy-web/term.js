@@ -811,13 +811,13 @@ async function post(url, body, {timeoutMs = 0} = {}) {
 // ---------------------------------------------------------------- 缺陷报告
 let bugReportToastTimer = 0;
 
-const BUG_REPORT_SOURCES = { claude: 'Claude', codex: 'Codex', grok: 'Grok', opencode: 'OpenCode' };
+const BUG_REPORT_SOURCES = { claude: 'Claude', codex: 'Codex', grok: 'Grok', opencode: 'OpenCode', agy: 'Agy' };
 
 function bugReportSource() {
   return $('#bug-report-source input:checked')?.value || 'codex';
 }
 
-// 与新建会话一样，四种 AI CLI 都可以做处理会话；记住上次的选择，处理机器上
+// 与新建会话一样，AI CLI 都可以做处理会话；记住上次的选择，处理机器上
 // 缺少的命令置灰（中央站下按所选机器的能力表，单机按本机）。
 function syncBugReportSources() {
   const remembered = store.get('bugReportSource', 'codex');
@@ -1670,7 +1670,10 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     const catalog = picker.catalog, chosen = info(model);
     const shown = chosen || info(catalog?.default_model);
     picker.model = shown?.id || '';
-    const efforts = shown?.efforts || catalog?.efforts || [];
+    const availableEfforts = shown?.efforts || catalog?.efforts || [];
+    // Agy's directory does not report per-model effort support. Let its own
+    // default work (including gateway models), while allowing an explicit flag.
+    const efforts = source() === 'agy' && availableEfforts.length ? ['', ...availableEfforts] : availableEfforts;
     const effortKey = `modelEffort.${source()}|${picker.model}`;
     const remembered = store.get(effortKey, '');
     picker.effort = efforts.includes(effort) ? effort : efforts.includes(remembered) ? remembered
@@ -1679,12 +1682,12 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     const name = shown ? shown.name || shown.id : catalog?.models.length ? '选择模型' : '模型不可用';
     controls(name, shown && shown.name !== shown.id ? `${shown.name}（${shown.id}）` : '模型：' + name,
       !!catalog?.models.length);
-    select.replaceChildren(...efforts.map(value => new Option(value, value)));
+    select.replaceChildren(...efforts.map(value => new Option(value || 'CLI 默认', value)));
     select.value = picker.effort;
     select.disabled = !efforts.length;
     select.parentElement.title = efforts.length ? '推理强度' : '该 CLI 不支持选择推理强度';
     if (persist) store.set(`${storeKey}.${picker.key}`, {model: picker.model});
-    if (persist && effort && picker.model && efforts.includes(effort)) store.set(effortKey, effort);
+    if (persist && (effort || source() === 'agy') && picker.model && efforts.includes(effort)) store.set(effortKey, effort);
   };
   picker.refresh = async () => {
     const current = source(), where = node(), seq = ++picker.seq;

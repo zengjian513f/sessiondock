@@ -65,6 +65,7 @@ struct Roots {
     codex: Option<PathBuf>,
     grok: Option<PathBuf>,
     opencode: Option<PathBuf>,
+    agy: Option<PathBuf>,
 }
 
 impl From<Roots> for SessionRoots {
@@ -74,6 +75,7 @@ impl From<Roots> for SessionRoots {
             codex: r.codex,
             grok: r.grok,
             opencode: r.opencode,
+            agy: r.agy,
         }
     }
 }

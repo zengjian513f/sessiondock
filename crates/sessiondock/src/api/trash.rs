@@ -424,6 +424,7 @@ pub async fn delete_session(
         .ok_or_else(encoding)?;
     let status = match refused.code {
         "not_found" => StatusCode::NOT_FOUND,
+        "agy_delete_unsupported" => StatusCode::CONFLICT,
         "fork_parent_protected"
         | "session_running"
         | "changed_since_inventory"

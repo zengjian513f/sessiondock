@@ -148,6 +148,7 @@ fn config(native: PathBuf, host: PathBuf) -> Config {
             codex: Some(native),
             grok: None,
             opencode: None,
+            agy: None,
         },
         ptyhost_dir: Some(host),
         ..Default::default()
@@ -341,6 +342,7 @@ async fn live_without_host_directory_still_reports_the_python_process_scan() {
                 codex: Some(native.path().into()),
                 grok: None,
                 opencode: None,
+                agy: None,
             },
             ..Default::default()
         },

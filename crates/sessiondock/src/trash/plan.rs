@@ -89,6 +89,13 @@ impl Plan {
     pub fn derive(row: &Value, roots: &SessionRoots) -> Result<Self, TrashError> {
         let uid = text(row, "uid").to_owned();
         let source = text(row, "source").to_owned();
+        if source == "agy" {
+            return Err(TrashError::new(
+                409,
+                "agy_delete_unsupported",
+                "Agy 尚无已核实的原生删除接口；请在 agy 的 /resume 菜单删除会话，不能删除文本镜像冒充原生删除",
+            ));
+        }
         let root = match source.as_str() {
             "claude" => roots.claude.as_ref(),
             "codex" => roots.codex.as_ref(),
