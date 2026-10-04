@@ -375,8 +375,11 @@ def main():
             argv = wait_argv(log, lambda a: "-m" in a and "gpt-fake-a" in a)
             assert argv[-4:] == ["-m", "gpt-fake-a", "-c", 'model_reasoning_effort="low"'], argv
 
-            # The displayed value is a concrete choice, including after reopening.
+            # Opening refreshes the real catalog. Assert the restored, displayed
+            # choice before submitting; the loading state has no concrete effort.
             open_dialog(page)
+            expect(page.locator("#new-model-label")).to_have_text("GPT Fake A")
+            expect(page.locator("#new-effort")).to_have_value("low")
             count = len(argv_lines(log))
             body = create(page, work)
             assert body["effort"] == "low", body

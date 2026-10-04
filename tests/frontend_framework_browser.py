@@ -13,8 +13,11 @@ Synthetic corpus and a loopback isolated_server. Desktop 1280×900 and phone
 the gear is folded), click appearance/features/machines tabs, and change the
 existing theme, font, scale, cache, sleep, stop-concurrency and paste-files
 controls. Close, reopen and reload must show the same selections. Escape
-closes the dialog. The machines tab is only opened and left; install stays
-at the current browser's availability state.
+closes the dialog. The machines tab is only opened and left. Synthetic
+beforeinstallprompt events enable real install-button clicks; deferred prompt
+choices cover dismissed/accepted, and appinstalled updates the same button.
+The prompt receiver must remain the original event. These checks also run
+against the independent Vue entry with SESSIONDOCK_TEST_WEB_DIR.
 
 The last settings tab is restored on open, so every check clicks its tab.
 Scale coverage here is a short keyboard nudge plus reset, not the matrix in
@@ -87,6 +90,75 @@ def expect_install(page):
     expect(button).to_be_disabled()
     expect(button).to_have_text("安装到桌面")
     expect(button).to_have_attribute("title", INSTALL_TITLE)
+
+
+def dispatch_install_prompt(page):
+    assert page.evaluate("""() => {
+      const event = new Event('beforeinstallprompt', {cancelable: true});
+      const probe = {calls: 0, original: false, resolve: null};
+      event.prompt = function() {
+        probe.calls++;
+        probe.original = this === event;
+        return new Promise(resolve => {probe.resolve = resolve;});
+      };
+      window.__pwaInstallProbe = probe;
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    }"""), "beforeinstallprompt must suppress the browser's default prompt"
+    button = page.locator("[data-pwa-install-button]")
+    expect(button).to_be_enabled()
+    expect(button).to_have_text("安装到桌面")
+    expect(button).to_have_attribute("title", "安装为独立桌面应用")
+    return button
+
+
+def expect_installed(page):
+    button = page.locator("[data-pwa-install-button]")
+    expect(button).to_be_visible()
+    expect(button).to_be_disabled()
+    expect(button).to_have_text("已安装")
+    expect(button).to_have_attribute("title", "当前已作为独立应用运行")
+
+
+def exercise_install(page):
+    open_settings(page)
+    select_tab(page, "appearance")
+    expect_install(page)
+
+    for outcome in ("dismissed", "accepted"):
+        button = dispatch_install_prompt(page)
+        button.click()
+        # The event is consumed before the asynchronous choice finishes.
+        expect_install(page)
+        assert page.evaluate("""() => ({
+          calls: window.__pwaInstallProbe.calls,
+          original: window.__pwaInstallProbe.original,
+        })""") == {"calls": 1, "original": True}
+        page.evaluate("""outcome => window.__pwaInstallProbe.resolve({outcome})""", outcome)
+        if outcome == "dismissed":
+            expect_install(page)
+        else:
+            expect_installed(page)
+
+    # Closing and reopening settings keeps the accepted install state.
+    page.keyboard.press("Escape")
+    expect(page.locator("#settings-dialog")).to_be_hidden()
+    open_settings(page)
+    select_tab(page, "appearance")
+    expect_installed(page)
+
+    # A new page lets appinstalled exercise its own transition independently.
+    page.reload(wait_until="domcontentloaded")
+    wait_app(page)
+    open_settings(page)
+    select_tab(page, "appearance")
+    expect_install(page)
+    dispatch_install_prompt(page)
+    page.evaluate("() => window.dispatchEvent(new Event('appinstalled'))")
+    expect_installed(page)
+    assert page.evaluate("() => window.__pwaInstallProbe.calls") == 0
+    page.keyboard.press("Escape")
+    expect(page.locator("#settings-dialog")).to_be_hidden()
 
 
 def nudge_scale(page, steps):
@@ -190,8 +262,9 @@ def exercise(browser, base, width, height):
         expect_saved(page)
         page.keyboard.press("Escape")
         expect(page.locator("#settings-dialog")).to_be_hidden()
+        exercise_install(page)
         assert not errors, errors
-        print(f"PASS {width}x{height}: settings tabs, theme/font, scale, features, machines, persisted", flush=True)
+        print(f"PASS {width}x{height}: settings tabs, theme/font, scale, features, machines, persisted, PWA install", flush=True)
     finally:
         context.close()
 
