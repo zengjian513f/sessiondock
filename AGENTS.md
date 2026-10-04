@@ -27,15 +27,18 @@
   costlier model. See `~/.claude/cli-model-isolation.md`.
 - Never commit deployment addresses, personal absolute paths, credentials,
   runtime data, build outputs, or local environment files.
-- `origin` is `zengjian513f/sessiondock`. Every completed change must be
-  validated, committed, pushed and deployed immediately, without another
-  confirmation. Do not stop at a local commit. Stage only this task's changes;
-  preserve concurrent edits. If validation, push or deployment fails, report
-  the failure and which steps or targets remain incomplete.
+- `origin` is `zengjian513f/sessiondock`. Validate, commit and push completed
+  changes without another confirmation. Stage only this task's changes and
+  preserve concurrent edits. Report validation or push failures accurately.
 - Hub SSH: `ecs-user@driftnode.cn`.
-- Every change includes build as applicable, validation, push, deployment, restart and
-  health check. Deploy the current workspace unless the user names another
-  source. Preserve sessions, state and concurrent changes; keep a rollback.
+- Deployment is a delivery step, not a prerequisite for continuing engineering.
+  Publish validated runtime changes to reachable targets without another
+  confirmation; documentation and rule changes do not require deployment or
+  service restarts. Record offline targets for later delivery and continue the
+  engineering task. Offline targets alone do not block engineering completion
+  or its goal. Report actual deployment failures separately.
+  Deploy the current workspace unless the user names another source. Preserve
+  sessions, state and concurrent changes; keep a rollback.
   Use `python3 deploy/deploy.py deploy --all` (build once, push every target,
   verify, auto-rollback; `docs/deployment.md`) and `deploy/fleet_status.py`
   for the read-only fleet table; do not hand-roll scp/restart sequences.
