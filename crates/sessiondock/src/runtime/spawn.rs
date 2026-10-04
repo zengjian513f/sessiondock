@@ -265,6 +265,20 @@ pub fn record(
     Ok(())
 }
 
+/// The first HTTP publication of new identities must use current process
+/// evidence, even if /api/live cached a scan before their CLI was launched.
+/// Called on the blocking reader with the inventory that will be signed.
+pub fn prepare_list(
+    scanner: &super::procscan::ProcScanner,
+    metadata: &MetadataStore,
+    rows: &[serde_json::Value],
+) -> Result<(), MetadataError> {
+    let sessions: Vec<_> = rows.iter().filter_map(SessionRow::from_value).collect();
+    let scan = scanner.scan_blocking();
+    let active = scan.active_processes(&sessions);
+    record(metadata, &scan, &sessions, &active.owned)
+}
+
 async fn tick(state: &AppState) -> Result<(), String> {
     let (Some(scanner), Some(metadata)) = (&state.proc_scan, &state.metadata) else {
         return Ok(());

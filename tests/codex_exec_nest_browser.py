@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright, expect
 from history_parity import Corpus, codex_row, get_json
@@ -20,12 +21,98 @@ def stamp(seconds):
     return datetime.fromtimestamp(BTIME + seconds, timezone.utc).isoformat()
 
 
+def first_publication(browser, root, binary):
+    """New exec files must carry their parent in the first list and DOM render."""
+    corpus = Corpus(root)
+    def put(sid, created):
+        corpus.put(sid, 'codex', [
+            codex_row('session_meta', {'id': sid, 'session_id': sid,
+                'cwd': '/synthetic/work', 'timestamp': stamp(created),
+                'source': 'exec', 'thread_source': 'user'}),
+            codex_row('response_item', {'type': 'message', 'role': 'user',
+                'content': 'Inspect ' + sid})], [])
+    put('parent', 101)
+    proc = root / 'proc'
+    proc.mkdir()
+    (proc / 'stat').write_text(f'btime {BTIME}\n')
+    proc_pid(proc, 100, 'codex', ['codex'], 1, fds={3: corpus.paths['parent']})
+    proc_pid(proc, 200, 'python', ['python', 'dispatch.py'], 1,
+             env=[('CODEX_THREAD_ID', 'parent'), ('CODEX_SESSION_ID', 'parent')])
+    state = root / 'state'
+    state.mkdir(mode=0o700)
+    with server_with_env(corpus, {'SESSIONDOCK_PROC_ROOT': proc,
+            'SESSIONDOCK_STATE_DIR': state, 'SESSIONDOCK_GROK_ACTIVE': root / 'absent'},
+            binary) as (base, opener):
+        context = browser.new_context(viewport={'width': 1280, 'height': 900})
+        page = context.new_page()
+        page.goto(base)
+        page.wait_for_function(js('S.sessions.length === 1',
+            'runtime.core.state.catalog.sessions.length === 1'))
+        if not page.evaluate(js('S.nest', 'runtime.core.state.sidebar.nest')):
+            page.locator('#nest-toggle').click()
+        # Prime the shared process cache before the new CLI exists.
+        get_json(opener, base, '/api/live?force=1')
+        put('fresh-worker', 401)
+        fixture.START[990] = 40_000
+        proc_pid(proc, 990, 'codex', ['codex', 'exec'], 200,
+                 env=[('CODEX_THREAD_ID', 'parent'), ('CODEX_SESSION_ID', 'parent')],
+                 fds={3: corpus.paths['fresh-worker']})
+        uid = corpus.uid('fresh-worker')
+        page.evaluate('''uid => {
+            window.workerDepths = [];
+            const sample = () => {
+                const item = document.querySelector('#side .item[data-uid="' + uid + '"]');
+                if (item) window.workerDepths.push(item.dataset.depth);
+            };
+            window.workerObserver = new MutationObserver(sample);
+            window.workerObserver.observe(document.querySelector('#side'),
+                {childList: true, subtree: true, attributes: true, attributeFilter: ['data-depth']});
+        }''', uid)
+        # User refresh forces inventory discovery inside the scanner's TTL.
+        with page.expect_response(lambda response: '/api/sessions?force=1' in response.url) as response:
+            page.evaluate(js('loadSessions(true)', 'runtime.core.list.loadSessions(true)'))
+        rows = {r['sid']: r for r in response.value.json()['sessions']}
+        assert rows['fresh-worker'].get('nest_parent') == {'source': 'codex', 'sid': 'parent'}, \
+            'first list published a new exec worker without its parent'
+        item = page.locator(f'#side .item[data-uid="{uid}"]')
+        expect(item).to_have_attribute('data-depth', '1')
+        item.click()
+        expect(page.locator('#msgs')).to_contain_text('Inspect fresh-worker')
+        assert page.evaluate('window.workerDepths') and set(page.evaluate('window.workerDepths')) == {'1'}, \
+            'exec worker briefly rendered as a root'
+        page.evaluate('window.workerObserver.disconnect()')
+        # Automatic signature polling must also publish the parent immediately.
+        get_json(opener, base, '/api/live?force=1')
+        put('polled-worker', 401)
+        fixture.START[991] = 40_000
+        proc_pid(proc, 991, 'codex', ['codex', 'exec'], 200,
+                 env=[('CODEX_THREAD_ID', 'parent')], fds={3: corpus.paths['polled-worker']})
+        page.wait_for_timeout(550)  # Expire the 500ms inventory cache, not the 3s process cache.
+        with page.expect_response(lambda response: urlsplit(response.url).path == '/api/sessions') as response:
+            page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
+        wire = response.value.json()
+        published = wire.get('sessions', [item['row'] for item in
+            wire.get('list_delta', {}).get('collections', {}).get('sessions', {}).get('upsert', [])
+            if 'row' in item])
+        rows = {r['sid']: r for r in published}
+        assert rows['polled-worker'].get('nest_parent') == {'source': 'codex', 'sid': 'parent'}, \
+            'first automatic list poll published an exec worker without its parent'
+        item = page.locator(f'#side .item[data-uid="{corpus.uid("polled-worker")}"]')
+        expect(item).to_have_attribute('data-depth', '1')
+        item.click()
+        expect(page.locator('#msgs')).to_contain_text('Inspect polled-worker')
+        context.close()
+    print('PASS first list publication and every Chromium render nest a newly discovered exec worker', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='codex-exec-nest-') as tmp, sync_playwright() as pw:
         root = Path(tmp)
+        browser = pw.chromium.launch(headless=True)
+        first_publication(browser, root / 'first-publication', args.binary)
         corpus = Corpus(root)
         children = [f'exec-worker-{i}' for i in range(6)]
         for sid in ['parent', 'other', 'resumed', 'standalone', 'cycle-parent', 'cycle-child', 'imported-detached', 'imported-attached', *children]:
@@ -73,7 +160,6 @@ def main():
                        check=True, capture_output=True, timeout=20)
         env = {'SESSIONDOCK_PROC_ROOT': proc, 'SESSIONDOCK_STATE_DIR': state,
                'SESSIONDOCK_GROK_ACTIVE': root / 'absent'}
-        browser = pw.chromium.launch(headless=True)
         for restarted in (False, True):
             with server_with_env(corpus, env, args.binary) as (base, opener):
                 # Background discovery must work without opening /api/live.

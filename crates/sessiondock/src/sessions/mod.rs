@@ -33,7 +33,7 @@ pub(crate) use records::string_reader::JsonStringReader;
 mod scope;
 pub(crate) use scope::CatalogEntry as NativeCatalogEntry;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -412,8 +412,13 @@ impl SessionSnapshot {
     }
 }
 
+type ListPreparation<'a> = dyn Fn(&[Value]) -> Result<(), SessionError> + 'a;
+
 struct ListState {
     published: Option<Arc<Published>>,
+    /// Identities prepared for an HTTP list, independent of internal publications.
+    prepared_identities: BTreeSet<(String, String)>,
+    prepared_signature: Option<String>,
     /// Owner uids that vanished from the index since the views were last
     /// touched; applied before the next use of the view cache.
     evictions: Vec<String>,
@@ -502,6 +507,8 @@ impl SessionStore {
             metadata,
             list: Mutex::new(ListState {
                 published: None,
+                prepared_identities: BTreeSet::new(),
+                prepared_signature: None,
                 evictions: Vec::new(),
                 search_rows: None,
             }),
@@ -556,8 +563,38 @@ impl SessionStore {
         force: bool,
         ttl: std::time::Duration,
     ) -> Result<Arc<Published>, SessionError> {
+        self.publish_prepared(force, ttl, None)
+    }
+
+    fn publish_prepared(
+        &self,
+        force: bool,
+        ttl: std::time::Duration,
+        prepare: Option<&ListPreparation<'_>>,
+    ) -> Result<Arc<Published>, SessionError> {
         let mut state = self.list_state()?;
         let index = self.index.refresh_within(force, ttl)?;
+        if let Some(prepare) = prepare
+            && state.prepared_signature.as_deref() != Some(index.sig())
+        {
+            let identities: BTreeSet<_> = index
+                .sessions()
+                .iter()
+                .map(|row| {
+                    (
+                        row["uid"].as_str().unwrap_or("").to_owned(),
+                        row["sid"].as_str().unwrap_or("").to_owned(),
+                    )
+                })
+                .collect();
+            if !identities.is_subset(&state.prepared_identities) {
+                // Prepare this exact inventory before taking the metadata snapshot.
+                // Internal readers/background ticks must not consume this first-list gate.
+                prepare(index.sessions())?;
+            }
+            state.prepared_identities = identities;
+            state.prepared_signature = Some(index.sig().to_owned());
+        }
         let metadata = self.metadata_snapshot()?;
         let revision = metadata.as_ref().map(|snapshot| snapshot.revision());
         if let Some(previous) = &state.published {
@@ -696,6 +733,28 @@ impl SessionStore {
     /// while an open holds the view lock is undecorated and not kept.
     pub fn list_view_bytes(&self, force: bool, sig: &str) -> Result<Bytes, SessionError> {
         let published = self.publish(force)?;
+        self.published_view_bytes(published, force, sig)
+    }
+
+    /// Run topology preparation once per newly listed native identity, before
+    /// metadata enrichment/signing. The inventory cannot advance between preparation
+    /// and rendering; process discovery itself belongs to the caller.
+    pub(crate) fn list_view_bytes_prepared(
+        &self,
+        force: bool,
+        sig: &str,
+        prepare: impl Fn(&[Value]) -> Result<(), SessionError>,
+    ) -> Result<Bytes, SessionError> {
+        let published = self.publish_prepared(force, index::CHECK_TTL, Some(&prepare))?;
+        self.published_view_bytes(published, force, sig)
+    }
+
+    fn published_view_bytes(
+        &self,
+        published: Arc<Published>,
+        force: bool,
+        sig: &str,
+    ) -> Result<Bytes, SessionError> {
         let document = published.document.clone();
         if !force && !sig.is_empty() && document["sig"].as_str() == Some(sig) {
             let unchanged = json!({"unchanged": true, "sig": sig});
