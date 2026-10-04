@@ -354,6 +354,8 @@ class GateCliTest(unittest.TestCase):
         self.assertEqual(opt(runner, "binary"), "target/release/sessiondock", "web-only stage has no binary")
         self.assertEqual(opt(runner, "log-dir"), str(stage / "logs" / "validation"))
         self.assertEqual(opt(runner, "json"), str(stage / "logs" / "tests.json"))
+        self.assertEqual(opt(runner, "web-dir"), str((stage / "web").resolve()),
+                         "the gate must exercise the frontend that will be uploaded")
         self.assertNotIn("--" + "include-real", runner)
         self.assertEqual(self.fake.calls[1:], [[sys.executable, "tests/check_agents_md.py"], [sys.executable, "tests/check_docs_links.py"]])
         self.assertTrue((stage / "logs" / "tests.log").is_file())
