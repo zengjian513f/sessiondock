@@ -41,6 +41,12 @@ letters are file references rather than URL schemes. Resolution remains scoped
 to the selected session and happens on its node; copying a file's parent preserves
 the drive-root separator (`X:\` or `X:/`).
 
+Web addresses beginning with `http://`, `https://` or `www.` are clickable in
+ordinary prose, including bold and italic text. Emphasis markers and trailing
+prose punctuation remain outside the destination. Markdown links retain their
+labels, and fenced code remains literal. File references in ordinary prose
+still require parentheses, code spans or explicit Markdown links.
+
 FileDock does not load session history, establish conversation grants, or attach
 uploads to a conversation. Its filesystem worker retains checked handles, OS
 permission checks, bounded previews and streaming. Directory and file-manager

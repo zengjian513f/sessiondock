@@ -37,6 +37,20 @@ def main():
   text+=r'Unicode `x:\项目 with spaces\report.md:12:3`; [drive file](Q:\report.md); `R:/report.md`. '
   text+='Reject `X:relative.md` and [unsafe](javascript:alert(1)).'
   corpus.put(windows,'claude',[claude_row(windows,'user','u0',None,text,cwd=str(directory))],[])
+  web='claude-web-links'
+  web_targets=['https://links.example.test/artifact/abc',
+   'https://links.example.test/demos/skate/',
+   'https://links.example.test/search?q=sea&lang=zh#result',
+   'https://links.example.test/report(final)',
+   'https://www.links.example.test/demo',
+   'https://links.example.test/label',
+   'https://links.example.test/code']
+  text=f'网页已经上线：\n\n**{web_targets[0]}**\n\n**{web_targets[1]}**\n\n'
+  text+=f'- 裸链接：{web_targets[2]}。\n- 斜体：*{web_targets[3]}*。\n'
+  text+='- （www.links.example.test/demo）\n'
+  text+=f'- [**查看网页**]({web_targets[5]})\n- `{web_targets[6]}`\n\n'
+  text+='普通文件 report.md 和目录 ./docs/ 保持原样。\n\n```text\nhttps://links.example.test/literal\n```'
+  corpus.put(web,'claude',[claude_row(web,'assistant','a0',None,text,cwd=str(directory))],[])
   before={p:p.read_bytes() for p in corpus.paths.values()}
   with isolated_server(corpus,args.binary,file_roots=(directory,)) as (base,_),sync_playwright() as pw:
    browser=pw.chromium.launch(**({'executable_path':os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') else {}))
@@ -49,6 +63,7 @@ def main():
     def destination(route):
      destinations.append(parse_qs(urlsplit(route.request.url).query));route.fulfill(content_type='text/html',body='<h1>FileDock destination</h1>')
     context.route('**/files/?*',destination)
+    context.route('https://**.example.test/**',lambda route:route.fulfill(content_type='text/html',body='<h1>Web destination</h1>'))
     checked_windows=set()
     def windows_resolution(route):
      ref=route.request.post_data_json['refs'][0]
@@ -107,6 +122,24 @@ def main():
       expect(page.locator('#file-menu [data-action="download"]')).to_be_hidden()
       page.locator('#file-menu').press('Escape')
     assert checked_windows==set(windows_targets),checked_windows
+    if width<600:page.locator('.mobile-back').click()
+    page.locator(f'#side .item[data-uid="{corpus.uid(web)}"]').click()
+    links=page.locator('#msgs a[data-reference-kind="web"]')
+    expect(links).to_have_count(len(web_targets))
+    expect(page.locator('#msgs b a')).to_have_count(2)
+    expect(page.locator('#msgs i a')).to_have_count(1)
+    expect(page.locator('#msgs a b')).to_have_text('查看网页')
+    expect(page.locator('#msgs a a')).to_have_count(0)
+    expect(page.locator('#msgs pre a')).to_have_count(0)
+    expect(page.locator('#msgs a[data-file-ref]')).to_have_count(0)
+    for target in web_targets:
+     link=page.locator(f'#msgs a[href={json.dumps(target)}]')
+     expect(link).to_have_count(1)
+     with context.expect_page() as opened:link.click()
+     expect(opened.value.locator('h1')).to_have_text('Web destination')
+     assert opened.value.url==target,opened.value.url
+     opened.value.close()
+    print(f'PASS web links: bold/plain/italic/parenthesized/www/query/fragment/Markdown/code-span clicks; width={width}',flush=True)
     assert not errors,errors;context.close()
    browser.close()
   assert all(p.read_bytes()==v for p,v in before.items())
