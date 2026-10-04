@@ -73,9 +73,10 @@ WebSocket 后仍在同一 TLS 流上双向转发。HTTP 与 HTTPS 都继续受�
 
 **缓存与快照**：`cache` 键 `(nid, path, urlencode(query))`，只存 200 且经
 `public_payload` 改写后的载荷，上限 128 条（先进先出，`/api/search` 不缓存）。
-`/api/sessions` 且 query 只含 `force`/`sig` 的完整答复另存为 `(nid,"/api/sessions","")`，
+`/api/sessions` 且 query 只含 `force`/`sig` 的完整答复统一存为 `(nid,"/api/sessions","")`，
+签名变化替换当前列表，不保留每个旧签名对应的完整列表，
 并按 `sig` 变化写 `hub-cache/<nid>.sessions.json`（`{stamp,data}`，0600，`.tmp`+rename，
-在阻塞线程池写，失败忽略）。启动/重新启用时加载快照：缓存有了，健康记录为
+在阻塞线程池缓冲写入，序列化借用载荷而不再复制整个列表，失败忽略）。启动/重新启用时加载快照：缓存有了，健康记录为
 `{online:null,last_seen:stamp}`，直到监控探过。`stale_payload(path, cached)`：给
 `sessions`/`pending` 行加 `stale:true,last_seen`；`/api/term/list` 另置
 `enabled:false,sources:{}`；无缓存则 `{}`。
