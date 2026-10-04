@@ -6,6 +6,7 @@ old rollouts for its resume picker) must stay pending; once the pane writes
 and holds its own fresh rollout, the page follows that binding by itself.
 Synthetic shell adapter and fixtures only, never a model CLI."""
 from browser_runtime import js
+from contextlib import ExitStack
 import json
 import os
 import shutil
@@ -17,6 +18,7 @@ import time
 from playwright.sync_api import sync_playwright, expect
 from history_parity import REPO, BINARY, Corpus, codex_row, codex_message, isolated_server
 from terminal_exit_browser import XTERM_TEXT
+from hub_send_browser import cleanup_hosts
 from popups import on_popup  # noqa: E402
 
 PANE_SCRIPT = """exec 3< "$SESSIONDOCK_TEST_OLD"
@@ -44,8 +46,11 @@ def binding(root, record_id):
 def main():
     if os.name != "posix":
         raise SystemExit("autobind acceptance requires /proc; no Windows/macOS claim.")
-    with tempfile.TemporaryDirectory(prefix="sessiondock-autobind-ui-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sessiondock-autobind-ui-") as temporary, ExitStack() as cleanup:
         root = Path(temporary)
+        # A detached host outlives the web server; retain its guarded socket
+        # until cleanup finishes, on both success and failure.
+        cleanup.callback(cleanup_hosts, root)
         for name in ["host", "work", "ledger", "claude", "codex", "grok", "audit"]:
             (root / name).mkdir(mode=0o700)
         corpus = Corpus(root)

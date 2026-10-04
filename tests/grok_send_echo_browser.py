@@ -7,6 +7,7 @@ text used to keep the composer waiting after that line was already visible
 send. Private fake CLI, loopback server, temporary directories only.
 """
 from browser_runtime import js
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -19,6 +20,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from history_parity import BINARY, REPO, Corpus, isolated_server
 from send_browser import initialize
+from hub_send_browser import cleanup_hosts
 from popups import on_popup  # noqa: E402
 
 
@@ -36,8 +38,11 @@ def user_line(text, prompt_index):
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix='sessiondock-grok-echo-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-grok-echo-') as temporary, ExitStack() as cleanup:
         root = Path(temporary).resolve()
+        # Web-server shutdown deliberately preserves hosts. Stop our fake CLI
+        # even on assertion failure, before TemporaryDirectory unlinks sockets.
+        cleanup.callback(cleanup_hosts, root)
         for name in ('host', 'work', 'ledger', 'delivery', 'state', 'home', 'claude', 'codex', 'grok'):
             (root / name).mkdir(mode=0o700)
         launcher = root / 'launcher.json'

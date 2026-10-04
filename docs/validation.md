@@ -74,6 +74,14 @@ actual `SessionDockRuntime` owners; they do not install compatibility globals.
 Asynchronous polling awaits the resolved condition within the original deadline.
 The original UI, identity, checkpoint and race assertions remain in place.
 
+Tests that launch detached ptyhost sessions must stop their private hosts before
+removing the temporary directory, including after assertion failures. Stopping
+the web server intentionally preserves those sessions. Use the guarded
+`cleanup_hosts` helper in [hub_send_browser.py](../tests/hub_send_browser.py),
+which verifies socket removal and, on Linux, host/CLI process exit. Otherwise a
+leaked fake CLI can remain attributed to the initiating session through SSH and
+keep its activity dot breathing after the turn ends (BUG-20261004-070702-c1ac6b).
+
 - **Small change / one bug fix** — run the affected headless browser suite
   (`--only <name>`); a full sweep is not required for every edit. Once the change
   is complete and validated, commit, push and deploy the current workspace to
