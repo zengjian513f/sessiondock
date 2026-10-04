@@ -3560,7 +3560,6 @@ $('#item-menu').onclick = async e => {
     const text = `机器：${machine}\n目录：${row.cwd || '(未知)'}\nagent：${row.source}\nUUID：${row.sid}`;
     try {
       await copyFileText(text);
-      showSessionStopNotice('会话标识已复制。');
     } catch (error) {
       await appAlert(`复制会话标识失败：${error.message || error}`);
     }

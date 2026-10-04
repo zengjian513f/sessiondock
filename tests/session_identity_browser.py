@@ -25,17 +25,28 @@ def menu(page, uid, touch=False):
         row.dispatch_event("click")
     else:
         row.click(button="right")
+    expect(page.locator('#item-menu [role="menuitem"]')).to_have_count(9)
+    assert page.locator('#item-menu').evaluate("el => Array.from(el.children, child => child.dataset.act || child.getAttribute('role'))") == [
+        'copy-identity', 'pick', 'separator', 'group', 'attach', 'detach',
+        'clone', 'hide', 'separator', 'stop', 'delete',
+    ], "session actions must stay grouped in the same order, including unavailable actions"
+    box = page.locator('#item-menu').bounding_box()
+    viewport = page.viewport_size
+    assert box['x'] >= 0 and box['y'] >= 0
+    assert box['x'] + box['width'] <= viewport['width'] and box['y'] + box['height'] <= viewport['height']
     return page.get_by_role("menuitem", name="复制会话标识", exact=True)
 
 
-def copy(page, uid, expected, touch=False):
+def copy(page, uid, expected, touch=False, notice=""):
     selected = page.evaluate(js("S.sel", 'runtime.core.state.selection.sel'))
     menu(page, uid, touch).click()
     expect(page.locator("#item-menu")).to_be_hidden()
-    expect(page.locator("#session-stop-notice")).to_have_text("会话标识已复制。")
     assert page.evaluate("navigator.clipboard.readText()") == expected
+    if notice:
+        expect(page.locator("#session-stop-notice")).to_have_text(notice)
+    else:
+        expect(page.locator("#session-stop-notice")).to_be_hidden()
     assert page.evaluate(js("S.sel", 'runtime.core.state.selection.sel')) == selected, "copy must not open another session"
-    page.evaluate(js("showSessionStopNotice('')", "runtime.sessionUi.showSessionStopNotice('')"))
 
 
 def context_for(browser, base, width=1280):
@@ -74,6 +85,10 @@ def main():
                 # Denied Clipboard API falls back to the browser's actual copy command.
                 page.evaluate("() => { navigator.clipboard.writeText = async () => { throw new Error('denied'); }; }")
                 copy(page, uid, expected, width == 390)
+                # Copying must also leave an existing lifecycle notice untouched.
+                page.evaluate(js("showSessionStopNotice('已有停止结果')", "runtime.sessionUi.showSessionStopNotice('已有停止结果')"))
+                copy(page, uid, expected, width == 390, notice="已有停止结果")
+                page.evaluate(js("showSessionStopNotice('')", "runtime.sessionUi.showSessionStopNotice('')"))
                 # If both browser paths fail, report the failure visibly.
                 page.evaluate("() => { document.execCommand = () => false; }")
                 menu(page, uid, width == 390).click()
@@ -84,7 +99,7 @@ def main():
                 expect(menu(page, uid, width == 390)).to_have_attribute("aria-disabled", "true")
                 assert not errors, errors
                 context.close()
-                print(f"PASS local identity: clipboard, fallback, failure, missing SID; width={width}", flush=True)
+                print(f"PASS local identity: grouped menu, silent clipboard, fallback, preserved notice, failure, missing SID; width={width}", flush=True)
 
         nodes = [FakeNode("a" * 32, "FixtureA"), FakeNode("b" * 32, "FixtureB")]
         hub = None

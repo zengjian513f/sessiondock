@@ -160,7 +160,7 @@ Hub 机器 chip：点击切换，右键或长按「只选这台」。`app.js` �
 
 长按开行菜单时，若用户正在选侧栏文字，会取消长按（`sidebarTextSelectionProtected`），避免抢走选择。
 
-行菜单（`#item-menu`，`openItemMenu`）：复制会话标识、停止会话、隐藏父会话、解除附属、附属到…、删除会话、移动/复制整组…、分组、多选。不可用项保持可聚焦并带 `aria-disabled` 与原因，点击不发请求。复制标识：[`tests/session_identity_browser.py`](../tests/session_identity_browser.py)。
+行菜单（`#item-menu`，`openItemMenu`）按固定顺序分三段：复制会话标识、多选；分组、附属到…、解除附属、移动/复制整组…、隐藏父会话；停止会话、删除会话。段间使用现有边框色的分隔线。不可用项保持可聚焦并带 `aria-disabled` 与原因，点击不发请求。复制标识成功后静默完成，不显示 toast，也不覆盖已有停止结果；失败仍显示错误。复制标识：[`tests/session_identity_browser.py`](../tests/session_identity_browser.py)。
 
 ### 未读
 
