@@ -121,6 +121,14 @@ def check_header_metadata_refresh(page, corpus, base):
         expect(toggle).to_be_visible()
         expect(page.locator('#a-fork-chain')).to_have_attribute('aria-expanded', 'true')
         assert_same_focused_header(page, header, button, toggle_selector)
+        # Only ancestor visibility changes: no selected-title/star refresh can
+        # incidentally rebuild the chain. The open menu derives the new catalog.
+        for visible, label in ((False, '显示'), (True, '隐藏')):
+            response = page.request.post(base + '/api/sessions/fork-visibility', data={'uids': [parent_uid], 'visible': visible})
+            assert response.ok, response.text()
+            refresh_catalog(page)
+            expect(toggle).to_have_text(label)
+            assert_same_focused_header(page, header, button, toggle_selector)
     elif not toggle.is_visible():
         page.locator('#a-fork-chain').click()
     expect(toggle).to_have_text('隐藏')
