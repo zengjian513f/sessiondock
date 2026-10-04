@@ -21,19 +21,20 @@ Dragging the divider only changes the detail width; the title bar folds in the s
 """
 from __future__ import annotations
 
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 import os
 from pathlib import Path
 import tempfile
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 from history_parity import BINARY, Corpus, claude_row, isolated_server
 
 SID = "fold-sweep"
+OTHER_SID = "fold-switch"
 HEADER_PRIORITY = ["new-session", "page-reload", "trash", "report-bug", "settings"]
-ACTION_ORDER = ["a-star", "a-turns", "a-session-freeze", "report-bug", "a-session-action"]
+ACTION_ORDER = ["a-star", "a-turns", "a-session-freeze", "report-bug", "a-clone-group", "a-session-action"]
 # The branch is an API field the title bar no longer shows.
 META_PRIORITY = ["mcount-total", "size", "time", "meta-node", "cwd", "meta-source", "model", "session-id"]
 
@@ -116,6 +117,10 @@ def corpus(root: Path) -> Corpus:
         claude_row(SID, "user", "u0", None, "Fold sweep question", gitBranch="feat/fold-sweep"),
         claude_row(SID, "assistant", "a0", "u0", "reply Sweep", gitBranch="feat/fold-sweep")],
         ["Fold sweep question", "reply Sweep"])
+    data.put(OTHER_SID, "claude", [
+        claude_row(OTHER_SID, "user", "other-u", None, "Other fold question"),
+        claude_row(OTHER_SID, "assistant", "other-a", "other-u", "Other fold answer")],
+        ["Other fold question", "Other fold answer"])
     return data
 
 
@@ -310,6 +315,86 @@ def check_scope_scrolls(page):
     bar.evaluate("e => { e.scrollLeft = 0; }")
 
 
+def check_action_metadata_refresh(page, data, base):
+    """A folded action remains clickable and focused after a real metadata write."""
+    uid = data.uid(SID)
+    page.set_viewport_size({'width': 320, 'height': 900})
+    settle(page)
+    back = page.get_by_role('button', name='返回会话列表', exact=True)
+    if back.is_visible():
+        back.click()
+    page.locator(f'#side .item[data-uid="{uid}"]').click()
+    expect(page.locator('#msgs')).to_contain_text('reply Sweep')
+    settle(page)
+    page.locator('#a-more').click()
+    turns = page.locator('#session-actions-menu #a-turns')
+    expect(turns).to_be_visible()
+    before_turns = turns.get_attribute('aria-pressed')
+    turns.click()
+    expected_turns = 'false' if before_turns == 'true' else 'true'
+    expect(page.locator('#a-turns')).to_have_attribute('aria-pressed', expected_turns)
+    turn_label = page.locator('#a-turns').get_attribute('aria-label')
+    expect(page.locator('#session-actions-menu')).to_be_hidden()
+
+    page.locator('#a-more').click()
+    star = page.locator('#session-actions-menu #a-star')
+    expect(star).to_be_visible()
+    expect(star).to_have_attribute('aria-pressed', 'false')
+    star.focus()
+    header = page.locator('#detail > .dhead').element_handle()
+    button = star.element_handle()
+    menu = page.locator('#session-actions-menu').element_handle()
+    response = page.request.post(base + '/api/session/star', data={'uid': uid, 'starred': True})
+    assert response.ok, response.text()
+    # Exercise the product's HTTP list acceptance and metadata refresh path,
+    # with no direct header calls, row injection or navigation away from focus.
+    assert page.evaluate(js('loadSessions(true)', 'runtime.core.list.loadSessions(true)'))
+    settle(page)
+    expect(page.locator('#a-star')).to_have_attribute('aria-pressed', 'true')
+    expect(page.locator('#a-turns')).to_have_attribute('aria-pressed', expected_turns)
+    expect(page.locator('#a-turns')).to_have_attribute('aria-label', turn_label)
+    if scoped_frontend():
+        expect(star).to_be_visible()
+        expect(star.locator('span')).to_have_text('取消星标')
+        expect(page.locator('#a-more')).to_have_attribute('aria-expanded', 'true')
+        assert page.evaluate('''({header, button, menu}) =>
+            header === document.querySelector('#detail > .dhead') && header.isConnected
+            && menu === document.querySelector('#session-actions-menu') && !menu.hidden
+            && button === document.querySelector('#a-star') && button.isConnected
+            && document.activeElement === button''',
+            {'header': header, 'button': button, 'menu': menu}), 'metadata refresh lost action DOM/focus'
+    elif not star.is_visible():
+        page.locator('#a-more').click()  # legacy metadata refresh remounts the header
+    expect(star.locator('span')).to_have_text('取消星标')
+    # A real click must use the refreshed state, saving false rather than
+    # repeating true through a callback that captured the pre-refresh metadata.
+    with page.expect_response(lambda r: r.url.endswith('/api/session/star') and r.request.method == 'POST') as saved:
+        star.click()
+    assert saved.value.ok, saved.value.text()
+    assert saved.value.json()['starred'] is False, saved.value.json()
+    expect(page.locator('#a-star')).to_have_attribute('aria-pressed', 'false')
+    expect(page.locator('#session-actions-menu')).to_be_hidden()
+    page.locator('#a-more').click()
+    turns.click()  # restore the preference for the existing width sweeps
+    expect(page.locator('#a-turns')).to_have_attribute('aria-pressed', before_turns)
+    page.locator('#a-more').click()
+    expect(page.locator('#session-actions-menu')).to_be_visible()
+    switching_header = page.locator('#detail > .dhead').element_handle()
+    page.get_by_role('button', name='返回会话列表', exact=True).click()
+    page.locator(f'#side .item[data-uid="{data.uid(OTHER_SID)}"]').click()
+    expect(page.locator('#msgs')).to_contain_text('Other fold answer')
+    expect(page.locator('#session-actions-menu')).to_be_hidden()
+    expect(page.locator('#a-more')).to_have_attribute('aria-expanded', 'false')
+    expect(page.locator('#a-star')).to_have_attribute('data-star-uid', data.uid(OTHER_SID))
+    if scoped_frontend():
+        assert not switching_header.evaluate('e => e.isConnected'), 'new UID must get a new header'
+        assert not menu.evaluate('e => e.isConnected'), 'old open menu must be disposed'
+    switching_header.dispose()
+    menu.dispose()
+    button.dispose()
+    header.dispose()
+
+
 def run(page, uid):
     page.evaluate(js("uid => openSession(uid)", 'uid => runtime.core.open.openSession(uid)'), uid)
     page.wait_for_function('document.querySelector("#msgs")?.textContent.includes("reply Sweep")')
@@ -404,7 +489,9 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="sessiondock-header-fold-") as directory:
         data = corpus(Path(directory))
-        with isolated_server(data, args.binary) as (base, _opener), sync_playwright() as playwright:
+        state = data.root / 'state'
+        state.mkdir(mode=0o700)
+        with isolated_server(data, args.binary, state_dir=state) as (base, _opener), sync_playwright() as playwright:
             launch = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
                 launch["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
@@ -419,6 +506,7 @@ def main():
                 assert page.locator("#reload").count() == 0
                 assert not page.locator("#page-reload").is_visible()
                 run(page, data.uid(SID))
+                check_action_metadata_refresh(page, data, base)
                 context.close()
                 for mode in ("standalone", "ios"):
                     context = browser.new_context(viewport={"width": 390, "height": 844})
@@ -449,7 +537,7 @@ def main():
                 assert not errors, errors
             finally:
                 browser.close()
-    print("PASS header fold browser: fold order over N widths for the header and the title bar, plus divider drag", flush=True)
+    print("PASS header fold browser: fold order over N widths for the header and the title bar, divider drag, folded action metadata refresh (Vue DOM/focus identity), turn preference and session switch", flush=True)
 
 
 if __name__ == "__main__":

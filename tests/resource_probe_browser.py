@@ -211,12 +211,14 @@ def main():
 
         page.screenshot(path='/tmp/sidebar-resources-desktop.png')
         assert page.locator('#detail [data-session-resources]').count() == 0
-        other = page.locator(f'#side .item[data-uid="{scoped(nodes[2].nid, corpora[2].uid('probe'))}"]')
+        other = page.locator(f'#side .item[data-uid="{scoped(nodes[2].nid, corpora[2].uid("probe"))}"]')
         other.locator('.body').click()
         selected_before = page.evaluate(js('S.sel', 'runtime.core.state.selection.sel'))
         sidebar.locator('.item-resources').click()
         assert page.evaluate(js('S.sel', 'runtime.core.state.selection.sel')) == selected_before
-        assert page.locator('.sr-subtitle').inner_text() == sidebar.evaluate('(e) => e._resourceSession.title')
+        assert page.locator('.sr-subtitle').inner_text() == page.evaluate(js(
+            'uid => S.sessions.find(session => session.uid === uid).title',
+            'uid => runtime.core.index.indexedSessions().byUid.get(uid).title'), uid)
         assert '64' in page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='内存带宽')).inner_text()
         page.locator('.sr-probe[data-state="active"]').wait_for()
         page.locator('.sr-metric').filter(has=page.locator('dt', has_text='本地读次数')).filter(has_text='12.5').first.wait_for()

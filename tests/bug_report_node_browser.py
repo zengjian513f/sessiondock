@@ -15,7 +15,7 @@ bodies the page builds can be asserted. No CLI, no session root.
 """
 from __future__ import annotations
 
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 import json
 import re
@@ -44,12 +44,20 @@ class Boundary:
         self.discards = []
         self.defer = False
         self.pending = []
+        self.hold_conversation = ''
+        self.pending_conversations = []
 
     def conversation(self, route):
         request=route.request;path=urlsplit(request.url).path
         query=parse_qs(urlsplit(request.url).query)
         body=request.post_data_json if request.method=='POST' and ('attachment' not in path or path.endswith('/discard')) else {}
         uid=body.get('uid') or query.get('uid',[''])[0]
+        if uid.startswith('report:') and (
+            self.hold_conversation == 'hydrate' and path.endswith('/conversation') and request.method == 'GET'
+            or self.hold_conversation == 'upload' and path.endswith('/attachment') and request.method == 'POST'
+        ):
+            self.pending_conversations.append(route)
+            return
         row=self.drafts.setdefault(uid, {'revision':0,'value':None})
         if path.endswith('/attachment') and request.method=='GET':
             # Staged bytes read back for an image card that holds no File.
@@ -266,6 +274,89 @@ def check_send_busy_width(page, boundary):
 
 def wait_drafts(page):
     page.evaluate(js("async () => { for (;;) { const pending = composerDraftWrites; await pending; if (pending === composerDraftWrites) break; } }", 'async () => { for (;;) { const pending = runtime.composer.composerDraftWrites; await pending; if (pending === runtime.composer.composerDraftWrites) break; } }'))
+
+
+def check_stale_async_gates(browser, url):
+    # Legacy imperatively resets these buttons after asynchronous work. The
+    # computed Vue gates must survive those completions without changing SEND.
+    for phase in ('hydrate', 'upload', 'submit'):
+        context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
+        boundary = Boundary()
+        context.route(re.compile(r'.*/api/session/conversation.*'), boundary.conversation)
+        context.route(re.compile(r'.*/api/bug-report(/capture)?(\?.*)?$'), boundary.handle)
+        page = context.new_page()
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        try:
+            page.goto(url, wait_until='networkidle')
+            page.wait_for_function(js('Nodes.list.length === 3', 'runtime.core.state.nodes.list.length === 3'))
+            if phase == 'hydrate':
+                boundary.hold_conversation = phase
+            open_report(page)
+            description = page.locator('#bug-report-description')
+            if phase != 'hydrate':
+                expect(description).to_be_enabled()
+                page.fill('#bug-report-description', '异步完成后保留草稿')
+                wait_drafts(page)
+                if phase == 'upload':
+                    boundary.hold_conversation = phase
+                    page.locator('#bug-report-file').set_input_files(
+                        {'name': 'late.png', 'mimeType': 'image/png', 'buffer': PNG})
+                else:
+                    boundary.defer = True
+                    page.locator('#bug-report-go').click()
+
+            pending = boundary.pending if phase == 'submit' else boundary.pending_conversations
+            deadline = time.monotonic() + 10
+            while not pending:
+                assert time.monotonic() < deadline, (phase, boundary.calls)
+                page.wait_for_timeout(20)  # Dispatch the held browser request.
+            if phase in ('hydrate', 'submit'):
+                expect(description).to_be_disabled()
+                expect(page.locator('#bug-report-add')).to_be_disabled()
+            if phase == 'submit':
+                expect(page.locator('#bug-report-go')).to_be_disabled()
+                expect(page.locator('#bug-report-node')).to_be_disabled()
+                page.evaluate("document.querySelector('#bug-report-form').requestSubmit()")
+                assert [p for p, _ in boundary.calls] == ['bug-report'], boundary.calls
+
+            page.evaluate(js("markStaleBuild('late-test-build')", "runtime.build.markStaleBuild('late-test-build')"))
+            expect(page.locator('#bug-report-add')).to_be_disabled()
+            expect(page.locator('#bug-report-go')).to_be_disabled()
+            boundary.hold_conversation = ''
+            if phase == 'submit':
+                pending[0].fulfill(status=500, content_type='application/json',
+                                   body='{"error":"synthetic hold"}')
+                page.wait_for_function(js('!bugReportSending', '!runtime.launch.bugReportSending'))
+                expect(page.locator('#bug-report-error')).to_have_text('synthetic hold')
+            else:
+                if phase == 'hydrate':
+                    uid = parse_qs(urlsplit(pending[0].request.url).query)['uid'][0]
+                    boundary.drafts[uid] = {'revision': 1, 'value': {
+                        'text': '异步完成后保留草稿', 'quotes': [], 'attachments': [],
+                        'nextAttachmentNumber': 1}}
+                for route in pending:
+                    boundary.conversation(route)
+                if phase == 'hydrate':
+                    page.wait_for_function(js('!bugReportDraftObject().loading', '!runtime.launch.bugReportDraftObject().loading'))
+                else:
+                    page.wait_for_function(js('bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging', 'runtime.launch.bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !runtime.launch.bugReportDraftObject().attachments[0].staging'))
+            pending.clear()
+            expect(page.locator('#bug-report-add')).to_be_disabled()
+            expect(page.locator('#bug-report-go')).to_be_disabled()
+            expect(description).to_be_enabled()
+            expect(description).to_have_value('异步完成后保留草稿')
+            page.fill('#bug-report-description', '过期页仍可编辑保存：' + phase)
+            wait_drafts(page)
+            uid = page.evaluate(js('BUG_REPORT_DRAFT_UID', 'runtime.launch.BUG_REPORT_DRAFT_UID'))
+            assert boundary.drafts[uid]['value']['text'] == '过期页仍可编辑保存：' + phase
+            expect(page.locator('#bug-report-add')).to_be_disabled()
+            expect(page.locator('#bug-report-go')).to_be_disabled()
+            assert len(boundary.calls) == (1 if phase == 'submit' else 0), boundary.calls
+            assert not errors, errors
+        finally:
+            context.close()
+    print('PASS Vue stale gates: loading/sending lock controls; late hydration, upload and submit finally keep add/send disabled and text editable/saveable', flush=True)
 
 
 def check_report_layout(page):
@@ -740,6 +831,8 @@ def main():
                     page.locator("#bug-report-dialog .modal-close").click()
 
                     assert not errors, errors
+                    if scoped_frontend():
+                        check_stale_async_gates(browser, f'http://127.0.0.1:{hub.port}/')
                     browser.close()
             finally:
                 hub.stop()

@@ -4,7 +4,7 @@
 Synthetic list responses over an isolated service; Chromium clicks real group
 and branch disclosures, then receives updates through the normal list poll.
 """
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 from datetime import datetime, timedelta, timezone
 import os
@@ -33,6 +33,9 @@ def fixture():
             if offset == 0:
                 row['agent_items'] = [dict(id=f'agent-{a}', title=f'Worker {a}', type='general',
                                          updated=stamp, created=stamp) for a in range(20)]
+            if group == 1 and offset == 1:
+                row['agent_items'] = [dict(id='nested-worker', title='Nested worker', type='general',
+                                          updated=stamp, created=stamp)]
             rows.append(row)
     return rows
 
@@ -41,13 +44,13 @@ def seed(page, rows, view='tree'):
     page.evaluate(js('''({rows, view}) => {
       S.sel = null; S.agent = null; S.results = null; S.term = ''; S.off.clear();
       S.activeOnly = false; S.nest = true; S.view = view; S.sessions = rows; S.sig = 'fold-0';
-      S.nestClosed = new Set(rows.filter(s => s.agent_items).map(s => s.uid));
+      S.nestClosed = new Set(rows.filter(s => s.agent_items && s.uid !== 'claude:fold-101').map(s => s.uid));
       const keys = [...new Set(rows.map(s => view === 'tree' ? s.cwd : dayKey(s.updated)))];
       S.closed = new Set(keys.slice(1)); renderView(); renderSide();
     }''', """({rows, view}) => {
       runtime.core.state.selection.sel = null; runtime.core.state.selection.agent = null; runtime.core.state.search.results = null; runtime.core.state.search.query = ''; runtime.core.state.sidebar.off.clear();
       runtime.core.state.sidebar.activeOnly = false; runtime.core.state.sidebar.nest = true; runtime.core.state.sidebar.view = view; runtime.core.state.catalog.sessions = rows; runtime.core.state.catalog.sig = 'fold-0';
-      runtime.core.state.sidebar.nestClosed = new Set(rows.filter(s => s.agent_items).map(s => s.uid));
+      runtime.core.state.sidebar.nestClosed = new Set(rows.filter(s => s.agent_items && s.uid !== 'claude:fold-101').map(s => s.uid));
       const keys = [...new Set(rows.map(s => view === 'tree' ? s.cwd : runtime.timeline.dayKey(s.updated)))];
       runtime.core.state.sidebar.closed = new Set(keys.slice(1));  runtime.sidebarView.renderSide();
     }"""), dict(rows=rows, view=view))
@@ -114,7 +117,7 @@ def main():
                 assert hidden.locator('.item').count() == 95
                 reset_work(page)
                 hidden.locator('.item[data-uid="claude:fold-100"] .nest-caret').click()
-                assert hidden.locator('.item').count() == 120
+                assert hidden.locator('.item').count() == 121
                 assert hidden.locator('.gcount').text_content() == '100'
                 assert hidden.locator('.item[data-uid="claude:fold-101"] .t').text_content() == 'Hidden update sentinel'
                 assert len(page.evaluate('__foldWork.rows')) == 6
@@ -122,6 +125,54 @@ def main():
                   const n = document.querySelector('.item[data-uid="claude:fold-100"]');
                   return n.nextElementSibling.dataset.uid;
                 }''') == 'claude:fold-101'
+                if scoped_frontend():
+                    # Business metadata is read from the real runtime graph.
+                    # A local size patch keeps the cached tree/session identity,
+                    # and two disclosure events before Vue commits must use the
+                    # current projected ancestor count rather than old DOM rows.
+                    assert page.evaluate('''() => {
+                      const fields = ['_nestTree', '_nestRow', '_rows', '_sessionUids',
+                        '_pickUids', '_pickLabel', '_resourceSession', '_resourceAgent'];
+                      return [...document.querySelectorAll('#side, #side .group, #side .ghead, #side .item')]
+                        .every(node => fields.every(field => !Object.hasOwn(node, field)));
+                    }''')
+                    expected_meta = page.evaluate('''() => {
+                      const runtime = window.SessionDockRuntime;
+                      window.__foldCatalog = runtime.core.state.catalog.sessions;
+                      window.__foldSession = runtime.core.index.indexedSessions().byUid.get('claude:fold-101');
+                      window.__foldUnrelated = document.querySelector('.item[data-uid="claude:fold-106"]');
+                      runtime.core.diff.applyMigrationMeta(__foldSession.uid, null,
+                        {meta: {...__foldSession}}, {...__foldSession, size: 4096});
+                      return runtime.sidebarView.itemMeta(__foldSession);
+                    }''')
+                    page.wait_for_function('''text => document.querySelector(
+                      '.item[data-uid="claude:fold-101"] .m').textContent === text''', arg=expected_meta)
+                    page.evaluate('''() => {
+                      document.querySelector('.item[data-uid="claude:fold-101"] .nest-caret').click();
+                      document.querySelector('.item[data-uid="claude:fold-100"] .nest-caret').click();
+                    }''')
+                    parent = hidden.locator('.item[data-uid="claude:fold-100"] .nest-caret')
+                    child = hidden.locator('.item[data-uid="claude:fold-101"] .nest-caret')
+                    page.wait_for_function('''() => document.querySelector(
+                      '.item[data-uid="claude:fold-100"] .nest-caret').getAttribute('aria-expanded') === 'false' ''')
+                    assert '25 项' in parent.get_attribute('title')
+                    assert hidden.locator('.item').count() == 95
+                    reset_work(page)
+                    parent.click()
+                    assert hidden.locator('.item').count() == 120
+                    assert child.get_attribute('aria-expanded') == 'false'
+                    assert hidden.locator('.item[data-uid="claude:fold-101"] .m').text_content() == expected_meta
+                    assert len(page.evaluate('__foldWork.rows')) == 6
+                    child.click()
+                    assert hidden.locator('.item').count() == 121
+                    assert '26 项' in parent.get_attribute('title')
+                    assert page.evaluate('''() => {
+                      const runtime = window.SessionDockRuntime;
+                      return __foldCatalog === runtime.core.state.catalog.sessions
+                        && __foldSession === runtime.core.index.indexedSessions().byUid.get(__foldSession.uid)
+                        && __foldUnrelated.isConnected
+                        && runtime.sidebarView.shownSessionsMatch(new Set(__foldCatalog.map(row => row.uid)));
+                    }''')
                 # A closed project's checkbox must still select the same
                 # exposed sessions, even though it has no session row objects.
                 hidden.locator('.ghead').click()
@@ -148,6 +199,44 @@ def main():
                 assert page.locator('#side .item.agent').count() == 0
                 group(page, old_key).locator('.ghead').click()
                 assert group(page, old_key).locator('.item').count() == 94
+                if scoped_frontend():
+                    # Source availability follows current selected-machine
+                    # counts even when an old chip's DOM reason disagrees.
+                    page.evaluate('window.SessionDockRuntime.sidebarView.renderChips()')
+                    codex = page.locator('#chips button[data-source="codex"]')
+                    codex.evaluate('button => { delete button.dataset.unavailableReason; }')
+                    before = page.evaluate('[...window.SessionDockRuntime.core.state.sidebar.off]')
+                    codex.click(button='right', force=True)
+                    assert page.evaluate('[...window.SessionDockRuntime.core.state.sidebar.off]') == before
+                    claude = page.locator('#chips button[data-source="claude"]')
+                    # The global unavailable-control capture still protects UI
+                    # clicks. Check the service itself against a stale hint,
+                    # then restore it before the real context-menu interaction.
+                    assert claude.evaluate('''button => {
+                      button.dataset.unavailableReason = 'obsolete reason';
+                      return window.SessionDockRuntime.sidebarView.selectOnlyFilter(button);
+                    }''')
+                    claude.evaluate('button => { delete button.dataset.unavailableReason; }')
+                    claude.click(button='right', force=True)
+                    assert page.evaluate('''() => {
+                      const off = window.SessionDockRuntime.core.state.sidebar.off;
+                      return !off.has('claude') && off.has('codex') && off.has('grok');
+                    }''')
+                    # Enter active scope through its actual control. A live
+                    # update inserts the row, and an unchanged paint must not
+                    # rebuild it merely because the DOM has no UID set.
+                    live_response = dict(uids=[])
+                    page.route('**/api/live*', lambda route: route.fulfill(json=live_response))
+                    page.evaluate('window.SessionDockRuntime.core.live.refreshLive()')
+                    page.locator('#livecount').click()
+                    assert page.locator('#side .item').count() == 0
+                    live_response['uids'] = ['claude:fold-106']
+                    page.evaluate('window.SessionDockRuntime.core.live.refreshLive()')
+                    page.locator('#side .item[data-uid="claude:fold-106"]').wait_for()
+                    reset_work(page)
+                    page.evaluate('window.SessionDockRuntime.status.paintLive()')
+                    assert page.evaluate('__foldWork.rows') == []
+                    page.locator('#allcount').click()
                 assert not errors, errors
                 print('PASS closed groups browser: 5000 sessions, 49/50 folded; hidden updates, '
                       'lazy ordering, nested counts, closed-group selection and date migration')
