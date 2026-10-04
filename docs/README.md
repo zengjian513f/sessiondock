@@ -10,7 +10,7 @@ python3 tests/docs_index.py --write
 
 | Doc | Title | Summary | Lines |
 | --- | --- | --- | --- |
-| [adding-a-cli.md](adding-a-cli.md) | 接入新的 AI CLI | 本文把 OpenCode 接入（2026-09-28～29，`b14e070`、`6021595`、`9026e9b`、`f04f26b`、`99002fa`）以及同期几项按 CLI 分支的功能（`20b4098` 模型与强度、`08087c2` 未安装检测、`ea087cd` 问题报告、`b3d9c68`/`47dea60`/`9cb09ca` CLI 状态对象、`a68f673` 回合三态、`b9662b8` 子会话挂靠）整理成接入第五种 CLI 的清单。现行合同以各专题 | 167 |
+| [adding-a-cli.md](adding-a-cli.md) | 接入新的 AI CLI | 本文把 OpenCode 接入及后续修复整理成新增 AI CLI 的清单；2026-10-04 对照主线至 `7dabf54` 核对，包含菜单交互、客户端更新、镜像增量读取、会话挂靠和 Vue 迁移入口。每项都要明确实现或记录不适用原因。现行合同以各专题文档为准：OpenCode、启动器、生命周期 HTTP、对话输入就绪、CLI 状态对象、读模型、liveness、移动、克隆。 | 225 |
 | [architecture.md](architecture.md) | 架构边界 | 第一阶段默认链路：`legacy-web/` → Axum API → 有界 blocking 工作池 → `sessions` 原生记录解析 / 版本缓存；详情增量通过 SSE 返回。 静态资源在启动时读取为内存快照，HTML 注入模式、build 与能力； 请求不访问静态目录中的动态路径。无需 Node.js 服务或前端构建。 | 111 |
 | [bug-report.md](bug-report.md) | Bug reports and their CLI workers (M7) | `POST /api/bug-report` captures a self-contained diagnostic bundle and starts a managed CLI instance that investigates it. The Rust implementation lives in `bug_report/mod.rs` (bundle), `bug_report/worker.rs` (launch + prompt injection), `a | 361 |
 | [capabilities.md](capabilities.md) | Capability flags | Defaults come from `state::capabilities()`. `lib.rs` then overwrites configured flags after opening optional services. `assets.rs` injects the JSON as `<meta name="sessiondock-capabilities">` (also `/api/meta`). `allows(name)` is `config[na | 167 |
