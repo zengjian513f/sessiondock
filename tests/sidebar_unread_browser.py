@@ -49,7 +49,7 @@ def main():
                     checkpoints[uid]={'end':result['end'],'head':result['version']['head'],'anchor':result['anchor']}
                 page.evaluate(js('''points=>{S.unread.clear();cache.clear();S.cursors=new Map(Object.entries(points));
                   S.view='date';S.nest=true;S.closed.clear();renderView();renderSide()}''', """points=>{runtime.core.state.unread.unread.clear();runtime.core.cache.cache.clear();runtime.core.state.unread.cursors=new Map(Object.entries(points));
-                  runtime.core.state.sidebar.view='date';runtime.core.state.sidebar.nest=true;runtime.core.state.sidebar.closed.clear();runtime.sidebarView.renderView();runtime.sidebarView.renderSide()}"""),checkpoints)
+                  runtime.core.state.sidebar.view='date';runtime.core.state.sidebar.nest=true;runtime.core.state.sidebar.closed.clear();runtime.sidebarView.renderSide()}"""),checkpoints)
                 page.locator('#side>.group>.ghead').first.click()
                 requests=[]
                 page.on('request',lambda r:requests.append((r.method,r.url)))

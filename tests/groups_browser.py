@@ -49,13 +49,14 @@ def main():
         def start_node(i):
             return stacks[i].enter_context(isolated_server(corpora[i], args.binary, state_dir=states[i],
                 extra_env=node_env(corpora[i].root, nodes[i].port, '127.0.0.0/8')))[0]
-        def page_at(base, mobile=False):
+        def page_at(base, mobile=False, clock=False):
             context = browser.new_context(service_workers='block', viewport={'width': 390 if mobile else 1280, 'height': 900}, has_touch=mobile)
             contexts.append(context)
             # An obsolete saved dropdown selection must never hide sessions/groups.
             context.add_init_script("localStorage.setItem('sessiondock.groupFilter', JSON.stringify('历史分组'))")
             context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
             page = context.new_page(); page.on('pageerror', lambda error: errors.append(str(error)))
+            if clock: page.clock.install()
             page.goto(base, wait_until='networkidle')
             try:
                 page.wait_for_function(js('SessionDockGroups.available && S.sessions.length > 0', 'runtime.core.groups.available && runtime.core.state.catalog.sessions.length > 0'))
@@ -100,9 +101,51 @@ def main():
             expect(page.locator('#session-group-add')).to_be_enabled(timeout=20000)
         def stored(i):
             return json.loads((states[i] / 'session-metadata.json').read_text())
+        def menu_refresh_focus(page, uid):
+            tree(page)
+            page.locator(f'#side .item[data-uid="{uid}"]').click(button='right')
+            trigger = page.locator('#item-menu [data-act="group"]')
+            trigger.focus(); trigger.press('ArrowRight')
+            menu = page.locator('#session-group-menu')
+            expect(menu).to_be_visible()
+            # Navigate away from the checked assignment with real keyboard input.
+            # A refresh must keep this choice, even when a new item precedes it.
+            names = menu.locator('button').evaluate_all('(buttons) => buttons.map(button => button.dataset.groupName)')
+            page.keyboard.press('Home')
+            for _ in range(names.index('待办')): page.keyboard.press('ArrowDown')
+            focused = menu.locator('button[data-group-name="待办"]')
+            expect(focused).to_be_focused()
+            expect(focused).to_have_attribute('aria-checked', 'false')
+            extra = 'AA刷新分组'
+            def catalog_refresh(route):
+                response = route.fetch(); data = response.json()
+                data['groups'] = [*data['groups'], extra]
+                route.fulfill(response=response, json=data)
+            page.route('**/api/groups', catalog_refresh)
+            try:
+                # Exercise the normal background refresh without a wall-clock sleep.
+                page.clock.fast_forward(10000)
+                expect(menu.locator(f'button[data-group-name="{extra}"]')).to_be_visible()
+                refreshed = menu.locator('button').evaluate_all('(buttons) => buttons.map(button => button.dataset.groupName)')
+                assert refreshed.index(extra) < refreshed.index('待办'), refreshed
+                expect(focused).to_be_focused()
+                page.keyboard.press('ArrowDown')
+                expect(menu.locator('button').nth((refreshed.index('待办') + 1) % len(refreshed))).to_be_focused()
+                page.keyboard.press('ArrowUp')
+                expect(focused).to_be_focused()
+            finally:
+                page.unroute('**/api/groups', catalog_refresh)
+            # Restore the real catalog through the same refresh path before continuing.
+            page.clock.fast_forward(10000)
+            expect(menu.locator(f'button[data-group-name="{extra}"]')).to_have_count(0)
+            expect(focused).to_be_focused()
+            focused.press('ArrowLeft')
+            expect(menu).to_be_hidden(); expect(trigger).to_be_focused()
+            trigger.press('Escape')
+            expect(page.locator('#item-menu')).to_be_hidden()
         try:
             bases = [start_node(i) for i in range(2)]
-            local = [page_at(base) for base in bases]
+            local = [page_at(base, clock=i == 0) for i, base in enumerate(bases)]
             uid_a, uid_b = corpora[0].uid('same'), corpora[1].uid('same')
             assert local[0].locator('#session-group-dialog').count() == 0
             create(local[0], '待办')
@@ -117,6 +160,7 @@ def main():
             local[0].locator('#session-group-name').press('Escape')
             expect(local[0].locator('#session-group-name')).to_have_count(0)
             if args.screenshots_dir: local[0].locator('#side').screenshot(path=str(args.screenshots_dir / 'desktop.png'))
+            menu_refresh_focus(local[0], uid_a)
             tree(local[0]); edit(local[0], uid_a, hover=True)
             expect(local[0].locator('#session-group-menu [aria-checked="true"]')).to_contain_text('历史分组')
             assign(local[0], '待办')
@@ -220,7 +264,7 @@ def main():
             create(solo, '空列表新建')
             assert all(p.read_bytes() == raw for p, raw in native.items())
             assert not errors, errors
-            print('PASS groups browser: no dropdown, obsolete filter ignored across views/reload, inline create/cancel/delete, no dialog/ungrouped section, submenus hover/click/keyboard/touch, immediate assignment, batch, offline deletion/rejoin, same-name recreation, restarts, standalone deletion, native files unchanged')
+            print('PASS groups browser: no dropdown, obsolete filter ignored across views/reload, inline create/cancel/delete, no dialog/ungrouped section, submenus hover/click/keyboard/touch, keyboard focus survives catalog refresh, immediate assignment, batch, offline deletion/rejoin, same-name recreation, restarts, standalone deletion, native files unchanged')
         finally:
             for context in contexts: context.close()
             if hub: hub.stop()

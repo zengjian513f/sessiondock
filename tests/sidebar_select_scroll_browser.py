@@ -75,7 +75,6 @@ def run(page):
       runtime.core.state.sidebar.nest = true;
       runtime.core.preferences.set('view', 'date');
       runtime.core.preferences.set('nest', true);
-      runtime.sidebarView.renderView();
       runtime.sidebarView.renderSide();
     }"""))
     page.wait_for_function("document.querySelectorAll('#side .item[data-uid]').length === %d" % COUNT)

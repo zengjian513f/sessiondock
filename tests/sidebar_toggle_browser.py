@@ -29,7 +29,7 @@ def main():
                            cwd='/synthetic/toggle',created='2026-10-01T00:00:00Z',updated='2026-10-01T00:00:00Z',size=100,
                            **({'nest_parent':{'source':'claude','sid':f'toggle-{i-1}'}} if i%20==1 else {})) for i in range(1200)]
                 page.route('**/api/sessions?*',lambda route:route.fulfill(json={'sessions':rows,'sig':'toggle-fixture'}))
-                page.evaluate(js('''rows=>{S.sessions=rows;S.results=null;S.term='';S.closed.clear();S.nestClosed.clear();S.off.clear();S.view='tree';S.nest=false;renderView();renderSide();}''', "rows=>{runtime.core.state.catalog.sessions=rows;runtime.core.state.search.results=null;runtime.core.state.search.term='';runtime.core.state.sidebar.closed.clear();runtime.core.state.sidebar.nestClosed.clear();runtime.core.state.sidebar.off.clear();runtime.core.state.sidebar.view='tree';runtime.core.state.sidebar.nest=false;runtime.sidebarView.renderView();runtime.sidebarView.renderSide();}"),rows)
+                page.evaluate(js('''rows=>{S.sessions=rows;S.results=null;S.term='';S.closed.clear();S.nestClosed.clear();S.off.clear();S.view='tree';S.nest=false;renderView();renderSide();}''', "rows=>{runtime.core.state.catalog.sessions=rows;runtime.core.state.search.results=null;runtime.core.state.search.term='';runtime.core.state.sidebar.closed.clear();runtime.core.state.sidebar.nestClosed.clear();runtime.core.state.sidebar.off.clear();runtime.core.state.sidebar.view='tree';runtime.core.state.sidebar.nest=false;runtime.sidebarView.renderSide();}"),rows)
                 assert page.locator('#side .item').count()==1200
                 unchanged=page.locator('.item[data-uid="claude:toggle-1199"]')
                 handle=unchanged.element_handle()

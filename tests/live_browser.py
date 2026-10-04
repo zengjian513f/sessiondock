@@ -108,6 +108,15 @@ def main():
                         for other in others:
                             expect(page.locator(f'#side .item[data-uid="{other}"]')).to_have_count(0)
                         assert page.evaluate(js("S.activeOnly", 'runtime.core.state.sidebar.activeOnly')) is True
+                        scope = page.locator("#livecount")
+                        scope.focus(); scope.press("ArrowRight")
+                        expect(page.locator("#allcount")).to_be_focused()
+                        expect(page.locator("#allcount")).to_have_attribute("aria-checked", "true")
+                        page.locator("#allcount").press("Home")
+                        expect(scope).to_be_focused()
+                        expect(scope).to_have_attribute("aria-checked", "true")
+                        scope.press("End")
+                        expect(page.locator("#allcount")).to_be_focused()
                         page.locator("#allcount").click()
                         assert page.evaluate(js("S.activeOnly", 'runtime.core.state.sidebar.activeOnly')) is False
                         for other in others:

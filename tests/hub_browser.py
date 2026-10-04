@@ -231,12 +231,14 @@ def check_node_chip_issue(page):
       const ok = {nodes: runtime.core.state.nodes.list, errors: []};
       runtime.core.nodes.applyNodeState(fail, 'live');
       runtime.core.nodes.applyNodeState(fail, 'term');
+      await new Promise(requestAnimationFrame);
       const shown = {
         noticeHidden: notice.hidden, noticeText: notice.textContent,
         issue: chip.classList.contains('node-issue'), title: chip.title,
       };
       runtime.core.nodes.applyNodeState(ok, 'live');
       runtime.core.nodes.applyNodeState(ok, 'term');
+      await new Promise(requestAnimationFrame);
       const recovered = {noticeHidden: notice.hidden, issue: chip.classList.contains('node-issue')};
       await Promise.resolve();
       return {shown, recovered, title: chip.title};

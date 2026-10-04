@@ -55,9 +55,10 @@ The independent Vue entry uses `npm --prefix web run build:migration` (also
 `npm --prefix web run build`) and `SESSIONDOCK_TEST_WEB_DIR` pointing to
 `web/dist-migration`. The runner selects this build when that variable is set;
 without it the production legacy entry remains the target. The unused Vue demo
-and Vitest dependency have been removed. During the frontend refactor goal,
-the user's instruction holds production references: commit and push validated
-source without deploying or restarting production.
+and Vitest dependency have been removed. Frontend refactor batches preserve the production legacy entry. Validate the
+independent Vue artifact, then commit, push and deploy through the standard
+fleet workflow with its default legacy frontend; the final entry switch remains
+a separate stage.
 
 For example, run the prefixed entry and a selected conversation path against
 the independent build:
