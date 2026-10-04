@@ -77,6 +77,31 @@ def main():
                 expect(page.locator('#side .item:not(.agent)')).to_have_count(2002)
                 page.locator(f'#side .item[data-uid="{corpus.uid("speed-other")}"]').click()
                 expect(page.locator('#msgs')).to_contain_text('END speed-other')
+                # An actual decoded catalog update must retain unrelated UI rows,
+                # while parent and child metadata changes still reach their controls.
+                rows = page.evaluate(js('S.sessions', 'runtime.core.state.catalog.sessions'))
+                owner = next(row for row in rows if row['uid'] == 'claude:fold-0')
+                owner['title'] = 'Changed parent sentinel'
+                response = {'sessions': rows, 'sig': 'responsiveness-parent'}
+                page.route('**/api/sessions*', lambda route: route.fulfill(json=response))
+                page.evaluate(js('''window.__previousRows=new Map(S.sessions.map(row=>[row.uid,row]))''',
+                    '''window.__previousRows=new Map(runtime.core.state.catalog.sessions.map(row=>[row.uid,row]))'''))
+                page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
+                expect(page.locator('#side .item[data-uid="claude:fold-0"] .t')).to_have_text('Changed parent sentinel')
+                if os.environ.get('SESSIONDOCK_TEST_WEB_DIR'):
+                    assert page.evaluate(js('false', '''runtime.core.state.catalog.sessions.every(row=>
+                        row.uid==='claude:fold-0' || row===__previousRows.get(row.uid))'''))
+                    assert page.evaluate(js('false', '''runtime.core.state.catalog.sessions.find(row=>row.uid==='claude:fold-0')
+                        .agent_items===__previousRows.get('claude:fold-0').agent_items'''))
+                page.evaluate(js('''window.__previousRows=new Map(S.sessions.map(row=>[row.uid,row]))''',
+                    '''window.__previousRows=new Map(runtime.core.state.catalog.sessions.map(row=>[row.uid,row]))'''))
+                owner['agent_items'][0]['title'] = 'Changed worker sentinel'
+                response['sig'] = 'responsiveness-child'
+                page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
+                expect(page.locator('#side .item.agent[data-owner="claude:fold-0"][data-agent="agent-0"] .t')).to_have_text('Changed worker sentinel')
+                if os.environ.get('SESSIONDOCK_TEST_WEB_DIR'):
+                    assert page.evaluate(js('false', '''runtime.core.state.catalog.sessions.find(row=>row.uid==='claude:fold-0')
+                        .agent_items[1]===__previousRows.get('claude:fold-0').agent_items[1]'''))
                 assert not errors, errors
                 print('PASS frontend_responsiveness_browser: 2002 sessions, targeted selection, '
                       'stable live history, filtering and cached navigation; open_ms=' + json.dumps(timings), flush=True)
