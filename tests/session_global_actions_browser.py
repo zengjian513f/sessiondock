@@ -51,8 +51,9 @@ def main():
             # Reload preserves ?sid=...; keep the same synthetic capability
             # on that document too, rather than reverting to the disabled server.
             context.route(re.compile(re.escape(base) + r'/(?:\?.*)?$'), document)
+            terminal_enabled = {'value': True}
             context.route('**/api/term/list', lambda route: route.fulfill(json={
-                'enabled': True, 'sessions': [], 'pending': [], 'sources': {'claude': True}}))
+                'enabled': terminal_enabled['value'], 'sessions': [], 'pending': [], 'sources': {'claude': True}}))
             page = context.new_page()
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
@@ -65,6 +66,19 @@ def main():
             expect(page.locator('#left')).not_to_be_visible()
             expect(page.locator('#settings')).not_to_be_visible()
             expect(page.locator('[id^="a-global-"]')).to_have_count(3)
+            dialogs(page)
+            # A genuine term-list refresh changes capability visibility while
+            # actions are docked. The existing conversation stays in place.
+            messages = page.locator('#msgs').element_handle()
+            terminal_enabled['value'] = False
+            page.evaluate(js('loadTermList()', 'runtime.terminal.loadTermList()'))
+            expect(page.locator('#a-global-new-session')).to_have_count(0)
+            expect(page.locator('[id^="a-global-"]')).to_have_count(2)
+            terminal_enabled['value'] = True
+            page.evaluate(js('loadTermList()', 'runtime.terminal.loadTermList()'))
+            expect(page.locator('[id^="a-global-"]')).to_have_count(3)
+            assert messages.evaluate("node => node === document.querySelector('#msgs')")
+            messages.dispose()
             dialogs(page)
             # Reload from the session toolbar restores the selected session and collapsed list.
             if not page.locator('#a-global-page-reload').is_visible():

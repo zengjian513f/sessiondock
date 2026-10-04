@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # run_validation: tags=browser
-"""Hub settings: color palette, unsaved machine name, and renderer rollback.
+"""Hub settings: reactive drafts, stable focus, palette and display recovery.
 
 grok-4.7 high headless draft, reviewed by the primary at integration.
 All fixtures are synthetic. Hub and FakeNode listen on loopback only; the
@@ -8,16 +8,15 @@ working directory is private and removed on exit. The page is the frontend
 Hub already serves through frontend_dir(), including SESSIONDOCK_TEST_WEB_DIR.
 
 Real clicks, typing, Enter and select changes drive the existing controls.
-Enable, pointer/keyboard order, rename persistence and client update stay in
-their own suites. One Playwright route fails a single display POST for a name
-save and another for a renderer change; the page's own request handles it.
-The uncommitted name is checked by calling renderMachineSettings() once.
-That is the redraw the open machines pane already runs after a term list
-refresh, invoked here as an explicit simulation rather than a second launcher.
+Pointer/keyboard order, rename persistence and client update stay in their own
+suites. Playwright holds and fails display POSTs for name, enabled and renderer
+changes, exercising pending controls and editable recovery. The real terminal
+list refresh drives polling in the Vue entry; the legacy entry uses its existing
+renderMachineSettings hook. Both entries retain stored-name rollback on failure and exercise the actual controls.
 """
 from __future__ import annotations
 
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 import json
 import os
@@ -38,6 +37,7 @@ DRAFT = "未提交草稿"
 FAILED_NAME = "失败草稿"
 NAME_ERROR = "合成名称失败"
 RENDER_ERROR = "合成渲染失败"
+ENABLED_ERROR = "合成启用失败"
 BLUE = "blue"
 BLUE_LABEL = "蓝"
 GRID = "grid"
@@ -47,6 +47,7 @@ XTERM_LABEL = "xterm.js（浏览器解析）"
 NOTE = "#machine-note"
 SAVED = f"已保存 {NAME_A}。"
 NAME_FAIL = f"保存失败：{NAME_ERROR}"
+ENABLED_FAIL = f"保存失败：{ENABLED_ERROR}"
 RENDER_FAIL = f"{NAME_A}：切换失败：{RENDER_ERROR}"
 RENDER_OK = f"{NAME_A}：控制台改用 {XTERM_LABEL}；重新打开控制台后生效。"
 
@@ -58,10 +59,25 @@ class DisplayFault:
         self.field = None
         self.error = ""
         self.hits = []
+        self.hold = False
+        self.pending = None
 
-    def arm(self, field, error):
+    def arm(self, field, error, *, hold=False):
+        assert self.field is None and self.pending is None
         self.field = field
         self.error = error
+        self.hold = hold
+
+    @staticmethod
+    def fail(route, error):
+        route.fulfill(status=500, content_type="application/json",
+                      body=json.dumps({"error": error}, ensure_ascii=False))
+
+    def release(self):
+        assert self.pending is not None
+        route, error = self.pending
+        self.pending = None
+        self.fail(route, error)
 
     def handle(self, route):
         request = route.request
@@ -73,8 +89,10 @@ class DisplayFault:
             error = self.error
             self.hits.append({"field": self.field, "body": body})
             self.field = None
-            route.fulfill(status=500, content_type="application/json",
-                          body=json.dumps({"error": error}, ensure_ascii=False))
+            if self.hold:
+                self.pending = (route, error)
+            else:
+                self.fail(route, error)
             return
         route.continue_()
 
@@ -109,6 +127,17 @@ def open_machines(page):
 def close_settings(page):
     page.locator("#settings-dialog .modal-actions button").click()
     expect(page.locator("#settings-dialog")).to_be_hidden()
+
+
+def refresh_machines(page):
+    # Await the actual terminal-list consumer and its DOM commit, without adding
+    # product globals or substituting state for the user's draft.
+    page.evaluate(js("renderMachineSettings()", "runtime.terminal.loadTermList()"))
+    page.evaluate("() => new Promise(requestAnimationFrame)")
+
+
+def same_node(locator, original):
+    assert locator.evaluate("(element, original) => element === original", original)
 
 
 def saved_machine(hub, nid):
@@ -175,46 +204,140 @@ def check(page, hub, fault):
 
     # Type a name and redraw before Enter. The draft and the caret stay put.
     name = row.locator("input[type='text']")
+    name_node = name.element_handle()
+    row_node = row.element_handle()
     name.click()
-    name.fill(DRAFT)
+    name.press("ControlOrMeta+A")
+    name.press_sequentially(DRAFT)
     expect(name).to_have_value(DRAFT)
     expect(name).to_be_focused()
-    # The ESM terminal-list refresh calls the actual Machines renderer while
-    # settings are open. Exercise that consumer without a fabricated hook.
-    page.evaluate(js("renderMachineSettings()", "runtime.terminal.loadTermList()"))
+    name.press("ArrowLeft")
+    caret = name.evaluate("input => [input.selectionStart, input.selectionEnd]")
+    refresh_machines(page)
     expect(name).to_have_value(DRAFT)
     expect(name).to_be_focused()
+    assert name.evaluate("input => [input.selectionStart, input.selectionEnd]") == caret
+    if scoped_frontend():
+        same_node(row, row_node)
+        same_node(name, name_node)
     name.fill(NAME_A)
     page.locator("#settings-title").click()
     expect(name).to_have_value(NAME_A)
 
-    # The name save fails once. The field returns to the stored name.
+    # Failure releases the original control and restores the stored name.
     expect(name).to_have_value(NAME_A)
-    fault.arm("name", NAME_ERROR)
+    fault.arm("name", NAME_ERROR, hold=scoped_frontend())
     name.click()
     name.fill(FAILED_NAME)
     name.press("Enter")
+    if scoped_frontend():
+        expect(name).to_be_disabled()
+        refresh_machines(page)
+        expect(name).to_have_value(FAILED_NAME)
+        expect(name).to_be_disabled()
+        fault.release()
+    expect(name).to_be_enabled()
     expect(name).to_have_value(NAME_A)
     expect(note).to_have_text(NAME_FAIL)
     expect(note).to_have_attribute("data-state", "error")
     expect(page.locator("#settings-dialog")).to_be_visible()
     expect(chip).to_contain_text(NAME_A)
+    name.click()
+    name.fill(DRAFT)
+    name.press("ArrowLeft")
+    caret = name.evaluate("input => [input.selectionStart, input.selectionEnd]")
+    refresh_machines(page)
+    expect(name).to_have_value(DRAFT)
+    expect(name).to_be_focused()
+    assert name.evaluate("input => [input.selectionStart, input.selectionEnd]") == caret
+    if scoped_frontend():
+        same_node(row, row_node)
+        same_node(name, name_node)
+    name.fill(NAME_A)
+    page.locator("#settings-title").click()
+
+    # An enabled failure must roll back the checkbox while preserving a name
+    # typed during the pending request, its focus and its caret.
+    toggle = row.locator("input.machine-enabled")
+    select = row.locator("select.machine-renderer")
+    fault.arm("enabled", ENABLED_ERROR, hold=scoped_frontend())
+    toggle.uncheck()
+    if scoped_frontend():
+        expect(toggle).not_to_be_checked()
+        expect(toggle).to_be_disabled()
+        name.click()
+        name.fill(DRAFT)
+        name.press("ArrowLeft")
+        caret = name.evaluate("input => [input.selectionStart, input.selectionEnd]")
+        refresh_machines(page)
+        expect(toggle).not_to_be_checked()
+        expect(toggle).to_be_disabled()
+        expect(select).to_be_enabled()
+        expect(name).to_have_value(DRAFT)
+        expect(name).to_be_focused()
+        fault.release()
+    expect(toggle).to_be_checked()
+    expect(toggle).to_be_enabled()
+    expect(note).to_have_text(ENABLED_FAIL)
+    expect(note).to_have_attribute("data-state", "error")
+    expect(chip).to_be_visible()
+    if scoped_frontend():
+        expect(name).to_have_value(DRAFT)
+        expect(name).to_be_focused()
+        assert name.evaluate("input => [input.selectionStart, input.selectionEnd]") == caret
+        same_node(row, row_node)
+        same_node(name, name_node)
+    name.fill(NAME_A)
+    page.locator("#settings-title").click()
 
     # The renderer change fails once, then grid to xterm succeeds and stays.
     select = row.locator("select.machine-renderer")
     expect(select.locator("option")).to_have_text([GRID_LABEL, XTERM_LABEL])
     expect(select).to_have_value(GRID)
-    fault.arm("renderer", RENDER_ERROR)
+    fault.arm("renderer", RENDER_ERROR, hold=scoped_frontend())
     select.select_option(label=XTERM_LABEL)
+    if scoped_frontend():
+        expect(select).to_have_value(XTERM)
+        expect(select).to_be_disabled()
+        name.click()
+        name.fill(DRAFT)
+        name.press("ArrowLeft")
+        caret = name.evaluate("input => [input.selectionStart, input.selectionEnd]")
+        refresh_machines(page)
+        expect(select).to_have_value(XTERM)
+        expect(select).to_be_disabled()
+        expect(name).to_have_value(DRAFT)
+        expect(name).to_be_focused()
+        fault.release()
+    expect(select).to_be_enabled()
     expect(select).to_have_value(GRID)
     expect(select.locator("option:checked")).to_have_text(GRID_LABEL)
     expect(note).to_have_text(RENDER_FAIL)
     expect(note).to_have_attribute("data-state", "error")
+    if scoped_frontend():
+        expect(name).to_have_value(DRAFT)
+        expect(name).to_be_focused()
+        assert name.evaluate("input => [input.selectionStart, input.selectionEnd]") == caret
+        same_node(row, row_node)
+        same_node(name, name_node)
+    name.fill(NAME_A)
+    page.locator("#settings-title").click()
     select.select_option(label=XTERM_LABEL)
     expect(select).to_have_value(XTERM)
     expect(select.locator("option:checked")).to_have_text(XTERM_LABEL)
     expect(note).to_have_text(RENDER_OK)
     expect(note).to_have_attribute("data-state", "ok")
+    if scoped_frontend():
+        # A polling refresh with a focused grip used to replace every row and
+        # rely on a watcher to move focus onto a different button.
+        grip = row.locator("button.machine-grip")
+        grip.focus()
+        grip_node = grip.element_handle()
+        refresh_machines(page)
+        expect(grip).to_be_focused()
+        same_node(grip, grip_node)
+        same_node(row, row_node)
+        same_node(name, name_node)
     close_settings(page)
     open_machines(page)
     select = machine_row(page, NAME_A).locator("select.machine-renderer")
@@ -226,10 +349,11 @@ def check(page, hub, fault):
     node_b = saved_machine(hub, NID_B)
     assert node_a["name"] == NAME_A and node_a["color"] == BLUE and node_a["renderer"] == XTERM, node_a
     assert node_b["name"] == NAME_B and node_b["color"] == "" and node_b["renderer"] == GRID, node_b
-    assert [hit["field"] for hit in fault.hits] == ["name", "renderer"], fault.hits
+    assert [hit["field"] for hit in fault.hits] == ["name", "enabled", "renderer"], fault.hits
     assert fault.hits[0]["body"]["name"] == FAILED_NAME, fault.hits[0]
-    assert fault.hits[1]["body"]["renderer"] == XTERM, fault.hits[1]
-    assert fault.field is None
+    assert fault.hits[1]["body"]["enabled"] is False, fault.hits[1]
+    assert fault.hits[2]["body"]["renderer"] == XTERM, fault.hits[2]
+    assert fault.field is None and fault.pending is None
 
 
 def main():
@@ -265,7 +389,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS machine_controls_browser: color palette, name draft, display rollback, renderer", flush=True)
+    print("PASS machine_controls_browser: palette, pending drafts, focus recovery, display rollback, renderer", flush=True)
 
 
 if __name__ == "__main__":

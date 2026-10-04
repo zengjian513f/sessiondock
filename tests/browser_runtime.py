@@ -15,8 +15,9 @@ from frontend_paths import frontend_dir
 def scoped_frontend() -> bool:
     """Select the isolated artifact using the existing test-only source selector."""
     selected = os.environ.get("SESSIONDOCK_TEST_WEB_DIR")
-    repository = Path(__file__).resolve().parents[1]
-    return bool(selected and Path(selected).resolve() != (repository / "legacy-web").resolve())
+    # Both entries can be built in private snapshots. Select fixture scripts
+    # from the actual served entry, rather than treating every custom path as Vue.
+    return bool(selected and entry_asset(Path(selected)).name != 'app.js')
 
 
 def init_js(legacy: str, scoped: str) -> str:
