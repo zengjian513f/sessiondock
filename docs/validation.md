@@ -346,6 +346,12 @@ need their own CLI args; the runner does not supply them.
 
 ## Adding a suite
 
+`frontend_search_state_browser` 使用合成会话和隔离服务，通过桌面及手机实际输入、
+点击和重载验证搜索的单一状态：本地筛选/全文结果切换、各选项请求与持久化、Esc
+取消后迟到 NDJSON 响应不恢复结果，以及桌面已展开正文的 DOM 和滚动身份保持。
+运行 `python3 tests/frontend_search_state_browser.py --binary target/release/sessiondock`；
+`SESSIONDOCK_TEST_WEB_DIR` 指向独立 Vue 构建时验证新入口，不设置时验证生产旧入口。
+
 Frontend performance regressions also run as ordinary browser suites:
 
 - `conversation_performance_browser`: click to expand a lazy tool group,

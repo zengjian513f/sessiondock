@@ -86,6 +86,7 @@ of the verification commands.
 
 | 日期 | 任务 | 结果 |
 | --- | --- | --- |
+| 2026-10-04 | Vue 首批重构的静态根组件、搜索浏览器回归、状态/验证边界只读审查 | 按用户指令三路 `gpt-6.1-sol` high `codex exec` 并行；核对各自会话记录中的实际模型和 effort。主审审阅根组件及新增回归，独立完成搜索状态合并与集成。新入口 15 套 Chromium 验收通过，含桌面/手机取消迟到响应、正文身份、发送、草稿与 Hub 搜索；两路构建及类型检查通过，未运行 unit test。 |
 | 2026-10-03 | `docs/frontend-migration-surfaces.md` 与独立的 `tests/machine_controls_browser.py` | 两场 grok-4.7 high headless 产出，人工审阅。主审修正清单中的覆盖统计与机器筛选双击描述，并将调色板验收改为旧页面实际的改色后重载流程，修正 Playwright 断言参数。机器控件脚本在旧入口和独立 Vue 构建均通过；未运行 unit test。 |
 | 2026-10-03 | `tests/frontend_framework_browser.py`：Vue 设置迁移的独立 Chromium 用户操作脚本 | grok-4.7 high headless 产出，人工审阅（按本次用户明确指定模型）。主审修正设置/更多按钮的双匹配选择器，桌面 1280×900 和手机 390×844 的标签、控件、关闭/重开与刷新持久化均通过。两路 Sol 6.1 medium 分别产出构建部署接线和外观/功能设置组件，主审补充生产模式构建常量；五套实际浏览器验收及部署静态快照操作通过，未运行 unit test。 |
 | 2026-09-18 | `legacy-web/grid/facade.js`（xterm.js 兼容的 `GridTerm` 外观层）与 `tests/grid_facade_contract.mjs` | grok-4.6 headless 产出，人工审阅。691 s，rc=0，11 例合同测试通过；人工补充 `onClipboard`（OSC 52 经网格协议转发）。主页面 term.js 接线、设置项、录制网格回放、分页与超链接由主审实现。 |
