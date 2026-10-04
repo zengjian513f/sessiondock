@@ -10,7 +10,7 @@ python3 tests/docs_index.py --write
 
 | Doc | Title | Summary | Lines |
 | --- | --- | --- | --- |
-| [adding-a-cli.md](adding-a-cli.md) | 接入新的 AI CLI | 本文把 OpenCode 接入及后续修复整理成新增 AI CLI 的清单；2026-10-04 对照主线至 `7dabf54` 核对，包含菜单交互、客户端更新、镜像增量读取、会话挂靠和 Vue 迁移入口。每项都要明确实现或记录不适用原因。现行合同以各专题文档为准：OpenCode、启动器、生命周期 HTTP、对话输入就绪、CLI 状态对象、读模型、liveness、移动、克隆。 | 225 |
+| [adding-a-cli.md](adding-a-cli.md) | 接入新的 AI CLI | 本文把 OpenCode 接入及后续修复整理成新增 AI CLI 的清单；2026-10-04 对照主线至 `7dabf54` 核对，包含菜单交互、客户端更新、镜像增量读取、会话挂靠和 Vue 迁移入口。每项都要明确实现或记录不适用原因。现行合同以各专题文档为准：OpenCode、启动器、生命周期 HTTP、对话输入就绪、CLI 状态对象、读模型、liveness、移动、克隆。 | 226 |
 | [agy.md](agy.md) | Agy（Antigravity CLI） | 本页记录 agy 1.2.16 的接入合同与证据边界，核对日期为 2026-10-04。 接入范围是 Rust 后端与 legacy 前端；Vue 由独立开发任务维护。 | 142 |
 | [architecture.md](architecture.md) | 架构边界 | 当前生产链路：`legacy-web/` → Axum API → 有界 blocking 工作池 → `sessions` 原生记录解析 / 版本缓存；详情增量通过 SSE 返回。 静态资源在启动时读取为内存快照，HTML 注入模式、build 与能力； 请求不访问静态目录中的动态路径。无需 Node.js 服务；发布时用现有 Vue / Vite 工具链构建设置面板，生成资源随同一个静态快照发布。 | 272 |
 | [bug-report.md](bug-report.md) | Bug reports and their CLI workers (M7) | `POST /api/bug-report` captures a self-contained diagnostic bundle and starts a managed CLI instance that investigates it. The Rust implementation lives in `bug_report/mod.rs` (bundle), `bug_report/worker.rs` (launch + prompt injection), `a | 366 |
@@ -24,7 +24,7 @@ python3 tests/docs_index.py --write
 | [deploy-hub.md](deploy-hub.md) | 部署 `sessiondock-hub`（多机 Hub，仅样例） | 实际节点身份、两套 WireGuard 的边界和路由核对方法见 网络拓扑。尤其不要把另一套网络的中转站 `192.168.2.10` 当作 Cetus。 | 132 |
 | [deploy-macos.md](deploy-macos.md) | macOS 节点原生构建与 launchd 部署 | 这是 macOS（Apple Silicon，Command Line Tools 已装）上的节点构建与更新流程。不要记录 生产地址或凭据；`<PREFIX>` 是节点私有目录（如 `~/sessiondock`），`<NODE_WG_IP>` 是 Hub↔节点 私网地址。Linux 的目录布局、环境变量和 Hub 注册都不变（deploy-hub.md）； 本文只列 macOS 与 Linux 不同的地方。 | 127 |
 | [deploy-windows.md](deploy-windows.md) | Windows 节点原生构建与滚动部署 | 这是 Windows OpenSSH 的构建和更新流程。不要记录生产地址或凭据。 `SD_SOURCE`、`SD_RUNTIME`、`SD_BACKUP` 必须是已核对的绝对路径。 | 118 |
-| [deployment.md](deployment.md) | 舰队部署工具 `deploy/deploy.py` | `deploy/deploy.py` 把"在构建机上 release 构建一次，再推到每台机器"的手工流程固定下来：每台目标机 按同一套步骤走，失败自动回滚，最后给出对齐表格和 JSON 报告。它取代的手工做法（备份到 `backup-deploy-*`、`bin/sessiondock.new` + `mv`、`rsync -a --delete legacy-web/ web/`、重启、curl `/api/meta`）形状不变，所以旧备份和新备份长得一样。不要把真实地址 | 239 |
+| [deployment.md](deployment.md) | 舰队部署工具 `deploy/deploy.py` | `deploy/deploy.py` 把"在构建机上 release 构建一次，再推到每台机器"的手工流程固定下来：每台目标机 按同一套步骤走，失败自动回滚，最后给出对齐表格和 JSON 报告。它取代的手工做法（备份到 `backup-deploy-*`、`bin/sessiondock.new` + `mv`、`rsync -a --delete legacy-web/ web/`、重启、curl `/api/meta`）形状不变，所以旧备份和新备份长得一样。不要把真实地址 | 244 |
 | [diagnostics.md](diagnostics.md) | Browser diagnostics | `POST /api/audit/browser` accepts browser-side receipts when `SESSIONDOCK_AUDIT_DIR` is configured. The directory is created as needed and chmodded to `0700` on Unix. Files are created with mode `0600`. | 132 |
 | [environment.md](environment.md) | Environment variables | This file is produced by `tests/env_reference.py`. Regenerate: | 83 |
 | [error-codes.md](error-codes.md) | HTTP error codes | This file is produced by `tests/error_codes.py`. Handlers return JSON `{"error": "<message>", "code": "<code>"}`. Status **501** means the route or capability is declared not implemented in this migration stage. Session errors use `unsuppor | 1702 |

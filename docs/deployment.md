@@ -51,6 +51,7 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 - `push`：默认取 `target/deploy/` 下最新的 stage，默认并行 4、保留 5 份备份（`0` = 不清理）、健康
   超时 45 s。`--dry-run` 只做 probe 并打印每台的计划，什么都不上传。离线或禁用的目标记为
   `SKIPPED`（未更新），不使命令失败；真实部署失败仍退出 1。全离线也会逐项报告跳过，不声称已部署。
+  待补发与工程进度分别记录；节点离线不阻断实现、验证或工程目标完成，也不要求反复轮询。
   `push` 在构建机上**从不跑测试**（它只是把已构建的 stage 发出去），但会先打印这个 stage 是按哪种模式
   验证过的（`stage tests: mode=… result=… base=… suites=…`）。
 - `deploy`：build → test → push。`--test` 默认 `affected`；任一套件失败就退出 1，**什么都不上传**。

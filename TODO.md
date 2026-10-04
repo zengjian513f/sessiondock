@@ -19,10 +19,8 @@
 
 ## Native interaction semantics
 
-- [ ] 完成 [Agy](docs/agy.md) 离线节点补发：实现、Chromium 验收、已安装节点配置、
-  提交推送及在线节点发布/健康检查已完成；尚有 Linux、macOS、Windows 各一个
-  节点网络不可达，恢复联机后用官方部署工具补发并验证。原生删除/移动/克隆
-  无已验证接口；工具配对、busy/turn 和原生子代理的证据边界见合同。
+- [ ] 部署补发（不阻塞 [Agy](docs/agy.md) 接入工程）：Linux、macOS、Windows
+  各一个节点网络不可达，恢复联机后用官方部署工具补发并验证。
 
 - [ ] 决定并实现真正的 native rewind/rollback。现有 timeline pin 只改变 SessionDock
   的展示视图，不改 CLI 原生历史，也不向 CLI 发送回滚动作。
