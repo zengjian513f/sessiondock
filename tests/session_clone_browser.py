@@ -256,7 +256,7 @@ def main():
                         page.keyboard.press('Escape')
                         # Offline machines and empty agent-type filters use the
                         # same native hint; no toggle/solo action or alert is sent.
-                        page.evaluate(js("id => {Nodes.list.find(n=>n.id===id).online=false; renderNodes();}", 'id => {runtime.core.state.nodes.list.find(n=>n.id===id).online=false; runtime.core.nodes.renderNodes();}'),destination_node.nid)
+                        page.evaluate(js("id => {Nodes.list.find(n=>n.id===id).online=false; renderNodes();}", 'id => {runtime.core.state.nodes.list.find(n=>n.id===id).online=false; runtime.core.state.nodes.touch();}'),destination_node.nid)
                         machine=page.locator(f'#node-chips button[data-node="{destination_node.nid}"]')
                         expect(machine).to_have_attribute('aria-disabled','true')
                         off=page.evaluate(js('[...Nodes.off]', '[...runtime.core.state.nodes.off]'))
@@ -273,7 +273,7 @@ def main():
                         assert page.evaluate(js('[...S.off]', '[...runtime.core.state.sidebar.off]'))==sources
                         expect(page.locator('dialog[open]')).to_have_count(0)
                         page.keyboard.press('Escape');expect(tip).to_have_count(0)
-                        page.evaluate(js("id => {Nodes.list.find(n=>n.id===id).online=true; renderNodes();}", 'id => {runtime.core.state.nodes.list.find(n=>n.id===id).online=true; runtime.core.nodes.renderNodes();}'),destination_node.nid)
+                        page.evaluate(js("id => {Nodes.list.find(n=>n.id===id).online=true; renderNodes();}", 'id => {runtime.core.state.nodes.list.find(n=>n.id===id).online=true; runtime.core.state.nodes.touch();}'),destination_node.nid)
                         expect(machine).not_to_have_attribute('aria-disabled','true')
                         print('PASS native title hints without custom overlays: running action/menu, offline machine, empty agent; hover/touch/keyboard and live recovery',flush=True)
 

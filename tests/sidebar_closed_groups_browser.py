@@ -218,7 +218,6 @@ def main():
                 if scoped_frontend():
                     # Source availability follows current selected-machine
                     # counts even when an old chip's DOM reason disagrees.
-                    page.evaluate('window.SessionDockRuntime.sidebarView.renderChips()')
                     codex = page.locator('#chips button[data-source="codex"]')
                     codex.evaluate('button => { delete button.dataset.unavailableReason; }')
                     before = page.evaluate('[...window.SessionDockRuntime.core.state.sidebar.off]')

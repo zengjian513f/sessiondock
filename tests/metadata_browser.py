@@ -124,11 +124,27 @@ def check_header_metadata_refresh(page, corpus, base):
     elif not toggle.is_visible():
         page.locator('#a-fork-chain').click()
     expect(toggle).to_have_text('隐藏')
+    total_before = int(page.locator('#session-total').text_content())
+    codex_before = int(page.locator('#chips [data-source="codex"] b').text_content())
+    if scoped_frontend():
+        page.evaluate("""uid => {
+          const r=window.SessionDockRuntime;
+          window.__visibilityCatalog=r.core.state.catalog.sessions;
+          window.__visibilityRow=r.core.index.indexedSessions().byUid.get(uid);
+        }""", parent_uid)
     with page.expect_response(lambda r: r.url.endswith('/api/sessions/fork-visibility') and r.request.method == 'POST') as saved:
         toggle.click()
     assert saved.value.ok, saved.value.text()
     expect(page.locator(f'#side .item[data-uid="{parent_uid}"]')).to_have_count(0)
     expect(toggle).to_have_text('显示')
+    expect(page.locator('#session-total')).to_have_text(str(total_before - 1))
+    expect(page.locator('#chips [data-source="codex"] b')).to_have_text(str(codex_before - 1))
+    if scoped_frontend():
+        assert page.evaluate("""() => {
+          const r=window.SessionDockRuntime;
+          return r.core.state.catalog.sessions === __visibilityCatalog
+            && r.core.index.indexedSessions().byUid.get(__visibilityRow.uid) === __visibilityRow;
+        }""")
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     expect(page.locator('#msgs')).to_contain_text('Claude selected answer')
     expect(page.locator('#fork-chain-menu')).to_have_count(0)
