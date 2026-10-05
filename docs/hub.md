@@ -120,7 +120,9 @@ client 会把连接池、解析器、`tower`、`tracing` 一并带进锁文件�
 - 响应框架按 `http.client` 规则：1xx/204/304/HEAD 无正文；`Transfer-Encoding: chunked`；
   `Content-Length`（多值必须相同）；否则读到对端关闭；`100 Continue` 跳过；
 - 状态行与每条响应头分别以 64 KiB 为界，响应头最多 100 条；不对全部响应头另设累计上限；
-- JSON 正文上限 `JSON_LIMIT` = 64 MiB，超限是 `invalid_response`，绝不部分解析；
+- 普通 JSON 正文上限 `JSON_LIMIT` = 64 MiB，超限是 `invalid_response`，绝不部分解析；
+  迁移控制通道独立读取完整 JSON，不套用该清单接口上限：迁移 manifest 包含原生数据库的
+  原始及改写快照，合法的会话组可能超过 64 MiB。仍检查 HTTP 完整性、节点鉴权及空闲超时；
 - 请求头/目标含 CR/LF 直接拒绝；每个请求都带 `X-SessionDock-Node-Token`、
   `X-SessionDock-Protocol: 1`、`Accept-Encoding: identity`，未指定 `Connection` 时加
   `Connection: close`（WebSocket 升级由调用方给 `Connection: Upgrade`）。
