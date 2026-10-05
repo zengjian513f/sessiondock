@@ -482,7 +482,7 @@ pub struct SessionStore {
     /// Serialized list body; its lock also makes
     /// concurrent renders of one view single-flight (the second waits and
     /// then hits). Never held while waiting for the list or view lock.
-    serialized: Mutex<Option<SerializedList>>,
+    serialized: Mutex<[Option<SerializedList>; 2]>,
 }
 
 impl SessionStore {
@@ -517,7 +517,7 @@ impl SessionStore {
             }),
             views: Mutex::new(views),
             views_revision,
-            serialized: Mutex::new(None),
+            serialized: Mutex::new([None, None]),
         }
     }
 
@@ -736,7 +736,7 @@ impl SessionStore {
     /// while an open holds the view lock is undecorated and not kept.
     pub fn list_view_bytes(&self, force: bool, sig: &str) -> Result<Bytes, SessionError> {
         let published = self.publish(force)?;
-        self.published_view_bytes(published, force, sig)
+        self.published_view_bytes(published, force, sig, false)
     }
 
     /// Run topology preparation once per newly listed native identity, before
@@ -746,10 +746,11 @@ impl SessionStore {
         &self,
         force: bool,
         sig: &str,
+        hide_children: bool,
         prepare: impl Fn(&[Value]) -> Result<(), SessionError>,
     ) -> Result<Bytes, SessionError> {
         let published = self.publish_prepared(force, index::CHECK_TTL, Some(&prepare))?;
-        self.published_view_bytes(published, force, sig)
+        self.published_view_bytes(published, force, sig, hide_children)
     }
 
     fn published_view_bytes(
@@ -757,18 +758,25 @@ impl SessionStore {
         published: Arc<Published>,
         force: bool,
         sig: &str,
+        hide_children: bool,
     ) -> Result<Bytes, SessionError> {
         let document = published.document.clone();
-        if !force && !sig.is_empty() && document["sig"].as_str() == Some(sig) {
+        let view_sig = if hide_children {
+            format!("{}:main", document["sig"].as_str().unwrap_or_default())
+        } else {
+            document["sig"].as_str().unwrap_or_default().to_owned()
+        };
+        if !force && !sig.is_empty() && view_sig == sig {
             let unchanged = json!({"unchanged": true, "sig": sig});
             return Ok(Bytes::from(
                 serde_json::to_vec(&unchanged).expect("serde_json::Value serializes"),
             ));
         }
-        let mut cache = self
+        let mut caches = self
             .serialized
             .lock()
             .map_err(|_| SessionError::new(500, "会话列表缓存锁不可用"))?;
+        let cache = &mut caches[usize::from(hide_children)];
         if !force
             && let Some(entry) = cache.as_ref()
             && Arc::ptr_eq(&entry.document, &document)
@@ -776,7 +784,21 @@ impl SessionStore {
         {
             return Ok(entry.bytes.clone());
         }
-        let (value, revision) = self.render_view(&published, &document);
+        let (mut value, revision) = self.render_view(&published, &document);
+        if hide_children {
+            value["sig"] = Value::String(view_sig);
+            if let Some(rows) = value["sessions"].as_array_mut() {
+                rows.retain(|row| {
+                    row["nest_parent"]["sid"].as_str().is_none_or(str::is_empty)
+                        && row["agent_id"].as_str().is_none_or(str::is_empty)
+                });
+                for row in rows {
+                    if let Some(row) = row.as_object_mut() {
+                        row.remove("agent_items");
+                    }
+                }
+            }
+        }
         let bytes = Bytes::from(serde_json::to_vec(&value).expect("serde_json::Value serializes"));
         if let Some(revision) = revision {
             *cache = Some(SerializedList {

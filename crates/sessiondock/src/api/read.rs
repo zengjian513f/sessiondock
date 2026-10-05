@@ -33,6 +33,7 @@ use crate::{
 pub struct ListQuery {
     force: String,
     sig: String,
+    children: String,
 }
 
 /// Responses above this many bytes schedule a coalesced `malloc_trim` once
@@ -53,17 +54,22 @@ pub async fn list(
     state
         .reader
         .run(move |store| {
-            let bytes = store.list_view_bytes_prepared(query.force == "1", &query.sig, |rows| {
-                if let (Some(scanner), Some(metadata)) = (&scanner, &metadata) {
-                    crate::runtime::spawn::prepare_list(scanner, metadata, rows).map_err(
-                        |error| SessionError {
-                            status: error.status,
-                            message: error.message,
-                        },
-                    )?;
-                }
-                Ok(())
-            })?;
+            let bytes = store.list_view_bytes_prepared(
+                query.force == "1",
+                &query.sig,
+                query.children == "hidden",
+                |rows| {
+                    if let (Some(scanner), Some(metadata)) = (&scanner, &metadata) {
+                        crate::runtime::spawn::prepare_list(scanner, metadata, rows).map_err(
+                            |error| SessionError {
+                                status: error.status,
+                                message: error.message,
+                            },
+                        )?;
+                    }
+                    Ok(())
+                },
+            )?;
             Ok(JsonBytes(bytes))
         })
         .await

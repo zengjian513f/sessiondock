@@ -158,7 +158,7 @@ def inactive_children(browser, root, binary):
             # Source exclusions remain exclusions, not inactive children.
             page.locator('#chips button[data-source="claude"]').click()
             expect(hint).to_have_text('有 2 个不活跃会话（已被筛选隐藏）')
-            page.locator('#nest-toggle').click()
+            page.locator('#nest-flat').click()
             expect(hint).to_be_hidden()
             page.locator('#nest-toggle').click()
             expect(hint).to_be_visible()

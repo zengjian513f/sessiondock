@@ -83,7 +83,7 @@ def main():
                     page.goto(base, wait_until='networkidle')
                     page.locator(f'#view [data-v="{view}"]').click()
                     if not page.locator('#nest-toggle').get_attribute('aria-pressed') == 'true':
-                        page.locator('#nest-toggle').click()
+                        page.locator("#nest-flat" if page.evaluate("S.nest") else "#nest-toggle").click()
                     parent = page.locator(f'#side .item[data-uid="{parent_uid}"]')
                     child = page.locator(f'#side .item[data-uid="{child_uid}"]')
                     worker = page.locator('#side .item.agent[data-agent="worker"]')
@@ -146,7 +146,7 @@ def main():
                     stored = page.evaluate('JSON.stringify([localStorage.getItem("sessiondock.closed"), localStorage.getItem("sessiondock.nestClosed")])')
 
                     # Flat mode also folds matching sidecars under a matched owner.
-                    page.locator('#nest-toggle').click()
+                    page.locator("#nest-flat" if page.evaluate("S.nest") else "#nest-toggle").click()
                     page.locator('#q').fill('Synthetic')
                     expect(parent).to_be_visible()
                     expect(worker).to_be_visible()
@@ -154,7 +154,7 @@ def main():
                     expect(worker).to_have_count(0)
                     parent.locator('.nest-caret').click()
                     expect(worker).to_be_visible()
-                    page.locator('#nest-toggle').click()
+                    page.locator("#nest-flat" if page.evaluate("S.nest") else "#nest-toggle").click()
 
                     # Typing filters titles and must already expose saved folds.
                     page.locator('#q').fill('"Synthetic worker"')
@@ -267,11 +267,11 @@ def main():
                     expect(parent).to_be_visible()
                     expect(parent.locator('.snip')).to_have_count(0)
                     expect(only.locator('.snip mark')).to_have_text(['SidecarOnly', 'SidecarOnly'])
-                    page.locator('#nest-toggle').click()
+                    page.locator("#nest-flat" if page.evaluate("S.nest") else "#nest-toggle").click()
                     expect(parent).to_have_count(0)
                     expect(only).to_be_visible()
                     expect(page.locator('#side .item')).to_have_count(1)
-                    page.locator('#nest-toggle').click()
+                    page.locator("#nest-flat" if page.evaluate("S.nest") else "#nest-toggle").click()
                     expect(parent).to_be_visible()
                     expect(parent.locator('.snip')).to_have_count(0)
                     expect(worker).to_have_count(0)
@@ -308,10 +308,10 @@ def main():
                     if width == 390:
                         page.locator('.mobile-back').click()
                     # Flat mode keeps only independently matched sessions too.
-                    page.locator('#nest-toggle').click()
+                    page.locator("#nest-flat" if page.evaluate("S.nest") else "#nest-toggle").click()
                     expect(grand).to_be_visible()
                     expect(page.locator('#side .item')).to_have_count(1)
-                    page.locator('#nest-toggle').click()
+                    page.locator("#nest-flat" if page.evaluate("S.nest") else "#nest-toggle").click()
 
                     # Reusing a persistent search cache must still observe an
                     # append to a previously unmatched sidecar on the next search.

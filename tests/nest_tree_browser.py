@@ -446,8 +446,8 @@ def check_page(page, uid, data, server, width):
         assert page.locator('#item-menu [data-act="detach"]').get_attribute('aria-disabled') == 'true'
         page.keyboard.press('Escape')
 
-    # Off again: attached sessions return to roots; the subagent rows stay under A.
-    page.locator("#nest-toggle").click()
+    # Flat again: attached sessions return to roots; subagents stay under A.
+    page.locator("#nest-flat").click()
     back = rows()
     assert [(r["uid"], r["agent"], r["depth"]) for r in back] == [
         (B, None, 0), (A, None, 0), (None, "y", 1), (None, "x", 1),

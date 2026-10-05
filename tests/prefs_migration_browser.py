@@ -257,7 +257,7 @@ def main():
                     assert dump["sessiondock." + key] == seed["sessiondock." + key], key
                 assert dump["sessiondock.mobilePage"] == '"list"'
                 # Changes update the same namespace.
-                page.locator("#nest-toggle").click()
+                page.locator("#nest-flat").click()
                 page.wait_for_function("S.nest === false")
                 after = page.evaluate(LS_DUMP)
                 assert after["sessiondock.nest"] == "false", after
