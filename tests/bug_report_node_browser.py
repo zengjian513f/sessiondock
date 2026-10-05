@@ -383,7 +383,7 @@ def check_report_layout(page):
         send_align: Math.abs(send.right - effort.right), inside: effort.right <= row.right + 1,
       };
     }""")
-    assert wide["titles"] == ["Claude", "Codex", "Grok", "OpenCode", "Agy"], wide
+    assert wide["titles"] == ["Claude", "Codex", "Grok", "Agy", "OpenCode"], wide
     # Preserve the restored 600px legacy dialog: five CLI icons put the
     # model/effort controls on the next aligned row.
     assert wide["tops"][0] == wide["tops"][1] and wide["tops"][2] == wide["tops"][3], wide

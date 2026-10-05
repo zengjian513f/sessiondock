@@ -1260,12 +1260,13 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .queued-sends { display: contents; }
 #detail > .queued-sends { display: block; padding: 0 18px 24px; }
 .msg.queued-send { opacity: .72; border-style: dashed; }
-.queued-send-state {
+.queued-send-state, .queued-send-foot {
   display: block; padding: 0 10px 8px; color: var(--muted);
   font-size: 10.5px; line-height: 1.2; text-align: right;
 }
+.queued-send-foot > .queued-send-state { display: inline; padding: 0; color: inherit; }
 .msg.queued-send.lost { opacity: .85; border-color: color-mix(in srgb, #d4a72c 60%, var(--border)); }
-.msg.queued-send.lost .queued-send-state { color: #9a6700; }
+.msg.queued-send.lost .queued-send-foot { color: #9a6700; }
 .queued-send-dismiss {
   margin-left: 8px; padding: 0 6px; border: 1px solid var(--border); border-radius: 4px;
   background: transparent; color: inherit; font: inherit; cursor: pointer;
