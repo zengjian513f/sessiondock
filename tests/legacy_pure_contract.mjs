@@ -271,8 +271,19 @@ test('consoleUnavailableReason: empty selection, stubs, hub errors, exact-instan
   assert.equal(reason({T: {listLoaded: true, enabled: true, pending: [{record_id: 'r', name: 'p', stale: true,
     unavailable_reason: '还在准备'}], ended: new Map()}, pendingUid: () => 'u'}, 'u'), '还在准备');
   assert.match(reason({T: {listLoaded: true, enabled: false, ended: new Map(), pending: []}}, 'u'), /未返回具体原因/);
+  // A source without a configured CLI explains the launcher prerequisite before
+  // the unlinked-terminal rule; in a Hub the reason names the machine.
+  assert.equal(reason({linkedTermSession: () => null, SessionDockCapabilities: {config: {backend: 'rust'}, allows: () => false},
+    T: {listLoaded: true, enabled: true, ended: new Map(), pending: [], resume_sources: {}}}, 'codex:u'),
+    '未配置可用的 Codex 启动命令。请检查该机器的 CLI 安装和启动器配置，再重启服务。');
+  assert.equal(hubReason(true, {Nodes: {list: [node], errors: new Map(),
+    capabilities: {[nid]: {enabled: true, sources: {}, resume_sources: {codex: true}}}}}),
+    'box：未配置可用的 Codex 启动命令。请检查该机器的 CLI 安装和启动器配置，再重启服务。');
+  assert.equal(hubReason(true, {linkedTermSession: () => ({name: 't'}), Nodes: {list: [node], errors: new Map(),
+    capabilities: {[nid]: {enabled: true, sources: {}, resume_sources: {}}}}}), '', 'a linked terminal needs no launcher');
   assert.match(reason({linkedTermSession: () => null, SessionDockCapabilities: {config: {backend: 'rust'}, allows: () => false},
-    T: {listLoaded: true, enabled: true, ended: new Map(), pending: [], resume_sources: {}}}, 'codex:u'), /不能按名称猜测关联/);
+    T: {listLoaded: true, enabled: true, ended: new Map(), pending: [], sources: {codex: true}, resume_sources: {}}}, 'codex:u'),
+    /不能按名称猜测关联/);
   assert.equal(reason({ConsoleUI: {errors: new Map([['u', '上次失败']]), busy: new Set()}}, 'u', null, true), '上次失败');
   assert.equal(reason({ConsoleUI: {errors: new Map([['u', '上次失败']]), busy: new Set()}}, 'u', null, false), '');
 });
@@ -280,9 +291,11 @@ test('consoleUnavailableReason: empty selection, stubs, hub errors, exact-instan
 test('nest tree: nest_parent nests by node/source/sid, cycles stay roots, missing fields degrade to flat', () => {
   // nestEdges also resolves a spawner hidden by rewind/continuation through S.sessions;
   // here every spawner is listed, so the full inventory equals the rendered list.
-  const S = {nest: true, nestClosed: new Set(), live: new Set(), sessions: []};
+  const S = {nest: true, childMode: 'shown', nestClosed: new Set(), lazyOpen: new Set(), lazyPending: new Set(),
+    live: new Set(), sessions: [], term: '', view: 'time'};
   const context = ctx({S});
-  for (const name of ['spawnKey', 'nestSpecParent', 'nestParentOf', 'nestEdges', 'nestTree', 'nestStamp', 'nestSize', 'agentRunning', 'expandRows']) load(context, name);
+  for (const name of ['sidebarNested', 'sidebarNestFolds', 'sidebarNestClosed', 'sidebarMainMatches', 'sidebarAgentItems',
+    'spawnKey', 'nestSpecParent', 'nestParentOf', 'nestEdges', 'nestTree', 'nestStamp', 'nestSize', 'agentRunning', 'expandRows']) load(context, name);
   const a = {uid: 'claude:a', source: 'claude', sid: 'a', updated: '2026-09-12T00:00:00Z',
     agent_items: [{id: 'ag', type: 'Task', updated: '2026-09-12T00:30:00Z'}]};
   const b = {uid: 'claude:b', source: 'claude', sid: 'b', updated: '2026-09-12T01:00:00Z', nest_parent: {source: 'claude', sid: 'a'}};
@@ -324,24 +337,44 @@ test('nest tree: nest_parent nests by node/source/sid, cycles stay roots, missin
   same(foldedRows.map(r => [r.agent ? r.agent.id : r.s.uid, r.closed]), [['claude:a', true]]);
   assert.equal(foldedRows[0].kids, 1);
   S.nestClosed.delete('claude:a');
+  // On-demand mode nests regardless of the flat/nested toggle; an unopened owner
+  // shows the server's child count and loads nothing until its caret is opened.
+  S.childMode = 'hidden';
+  same([...context.nestTree([a, b, c]).nested], ['claude:b', 'codex:c']);
+  const lazyRows = [];
+  context.expandRows({...a, child_count: 4}, 0, new Map(), lazyRows, new Set());
+  same(lazyRows.map(r => [r.s.uid, r.closed, r.kids]), [['claude:a', true, 4]]);
+  S.lazyOpen.add('claude:a');
+  const openRows = [];
+  context.expandRows(a, 0, new Map(), openRows, new Set());
+  same(openRows.map(r => [r.agent ? r.agent.id : r.s.uid, r.depth]), [['claude:a', 0], ['ag', 1]]);
+  S.childMode = 'shown';
+  S.lazyOpen.clear();
 });
 
-test('continued-in: the old Claude file is hidden while its continuation is listed and never nests it as a child', () => {
+test('continued-in: the old Claude file is hidden while its continuation is listed and inherits its attached children', () => {
   const S = {nest: true, nestClosed: new Set(), live: new Set(), sessions: []};
   const context = ctx({S});
-  for (const name of ['spawnKey', 'nestSpecParent', 'nestParentOf', 'nestEdges', 'nestTree', 'sessionContinued', 'hiddenForkParent', 'sessionHidden']) load(context, name);
+  for (const name of ['sidebarNested', 'spawnKey', 'nestSpecParent', 'nestParentOf', 'nestEdges', 'nestTree', 'sessionContinued',
+    'hiddenForkParent', 'sessionHidden', 'forkChildren']) load(context, name);
   const old = {uid: 'claude:old', source: 'claude', sid: 'old', updated: '2026-09-12T00:00:00Z', continued_in: 'claude:new'};
-  // The continuation inherits the old process's environment: the scan records the old session as its spawner.
+  // nest_parent is the only (user-selected) attachment; one pointing at the
+  // continued file resolves to its visible continuation, never to itself.
   const fresh = {uid: 'claude:new', source: 'claude', sid: 'new', updated: '2026-09-12T01:00:00Z', nest_parent: {source: 'claude', sid: 'old'}};
-  const child = {uid: 'codex:c', source: 'codex', sid: 'c', updated: '2026-09-12T02:00:00Z', nest_parent: {source: 'claude', sid: 'new'}};
+  const child = {uid: 'codex:c', source: 'codex', sid: 'c', updated: '2026-09-12T02:00:00Z', nest_parent: {source: 'claude', sid: 'old'}};
   S.sessions = [old, fresh, child];
   assert.equal(context.sessionContinued(old), true);
   assert.equal(context.sessionHidden(old), true);
   assert.equal(context.sessionHidden(fresh), false);
-  const {children, nested} = context.nestTree([old, fresh, child]);
-  same([...nested], ['codex:c']);                        // the continuation stays a root, C hangs under it
+  const visible = S.sessions.filter(row => !context.sessionHidden(row));
+  same(visible.map(row => row.uid), ['claude:new', 'codex:c']);
+  const {children, nested} = context.nestTree(visible);
+  same([...nested], ['codex:c']);                        // the continuation stays a root, C follows it
   assert.equal(children.has('claude:old'), false);
-  same(children.get('claude:new').map(s => s.uid), ['codex:c']);
+  same(children.get('claude:new').map(row => row.uid), ['codex:c']);
+  // A continuation on another machine or source is not a successor: C stays a root.
+  S.sessions = [{...old, continued_in: 'codex:new'}, {...fresh, uid: 'codex:new', source: 'codex'}, child];
+  assert.equal(context.nestTree(S.sessions.slice(1)).nested.size, 0);
   // A continued_in pointing at a row that is not listed (deleted, other node) hides nothing.
   S.sessions = [old, child];
   assert.equal(context.sessionHidden(old), false);
