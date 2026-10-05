@@ -11,7 +11,7 @@ python3 tests/docs_index.py --write
 | Doc | Title | Summary | Lines |
 | --- | --- | --- | --- |
 | [adding-a-cli.md](adding-a-cli.md) | 接入新的 AI CLI | 本文把 OpenCode、Agy 接入及后续修复整理成新增 AI CLI 的清单；2026-10-05 补充 Agy 1.2.17 的审批、问卷、命令回显和模型目录经验。每项都要明确实现或记录不适用原因，不能把能启动、能发送当作交互接入完成。现行合同以各专题文档为准：OpenCode、Agy、启动器、生命周期 HTTP、对话输入就绪、CLI 状态对象、读模型、liveness、移动、克隆。 | 245 |
-| [agy.md](agy.md) | Agy（Antigravity CLI） | 本页记录 agy 1.2.16/1.2.17 的接入合同与证据边界，核对日期为 2026-10-05。 接入范围是 Rust 后端与 legacy 前端。 | 186 |
+| [agy.md](agy.md) | Agy（Antigravity CLI） | 本页记录 agy 1.2.16/1.2.17 的接入合同与证据边界，核对日期为 2026-10-05。 接入范围是 Rust 后端与 legacy 前端。 | 197 |
 | [architecture.md](architecture.md) | 架构边界 | 当前生产链路：`legacy-web/` → Axum API → 有界 blocking 工作池 → `sessions` 原生记录解析 / 版本缓存；详情增量通过 SSE 返回。 静态资源在启动时读取为内存快照，HTML 注入模式、build 与能力； 请求不访问静态目录中的动态路径。无需 Node.js 服务，前端也没有构建步骤。 | 114 |
 | [bug-report.md](bug-report.md) | Bug reports and their CLI workers (M7) | `POST /api/bug-report` captures a self-contained diagnostic bundle and starts a managed CLI instance that investigates it. The Rust implementation lives in `bug_report/mod.rs` (bundle), `bug_report/worker.rs` (launch + prompt injection), `a | 366 |
 | [capabilities.md](capabilities.md) | Capability flags | Defaults come from `state::capabilities()`. `lib.rs` then overwrites configured flags after opening optional services. `assets.rs` injects the JSON as `<meta name="sessiondock-capabilities">` (also `/api/meta`). `allows(name)` is `config[na | 169 |
@@ -57,7 +57,7 @@ python3 tests/docs_index.py --write
 | [perf-methodology.md](perf-methodology.md) | Performance measurement methodology | How this repository times native-history and native-media HTTP work, and how results must be reported. These scripts emit **observations**, not pass/fail thresholds; cursor/rewrite/image assertions are the only gates. Historical static anal | 139 |
 | [process-links.md](process-links.md) | Shared process attribution and session resource accounting | `process-links` is the common attribution protocol and Rust library. SessionDock adapts native session identities and hosts the fleet coordinator. An independent `resource-agent` system service owns collection and durable attribution when i | 351 |
 | [processes.md](processes.md) | Controlled process observations | This optional capability only observes configured host records. It does not discover CLI homes, control processes, or grant terminal access. Ordinary inventory reads do not clean records; lifecycle recovery may retire an exact unchanged Lin | 219 |
-| [read-model.md](read-model.md) | 读模型设计：惰性索引 + 按需视图 | 这是会话读模型（列表、详情、分页、SSE、搜索、运行时身份的数据来源）的 **唯一有效设计**。它取代了 2026-09-12 之前的"冻结库存"（全量启动解析）； 那套设计已废弃，不再是任何代码或文档的依据。 | 491 |
+| [read-model.md](read-model.md) | 读模型设计：惰性索引 + 按需视图 | 这是会话读模型（列表、详情、分页、SSE、搜索、运行时身份的数据来源）的 **唯一有效设计**。它取代了 2026-09-12 之前的"冻结库存"（全量启动解析）； 那套设计已废弃，不再是任何代码或文档的依据。 | 496 |
 | [replacement-checklist.md](replacement-checklist.md) | 替换完成后的运行与回退清单 | 生产替换已完成，旧 Python 项目与部署已退休。当前服务与能力以 `/api/meta`、capabilities.md 和 environment.md 为准。日常发布不恢复旧源码、服务、端口或代理入口。 | 39 |
 | [route-ledger.md](route-ledger.md) | HTTP route ledger | This is the compact route-family inventory used by `tests/route_ledger.py`. It describes the standalone SessionDock product, not migration progress. Concrete behavior and capability gates live in the module contracts linked from the documen | 28 |
 | [runbook-dev.md](runbook-dev.md) | Local developer runbook | Run SessionDock against synthetic or explicitly authorized data. Ordinary reads preserve native histories. Explicit clone, move and trash operations change only the confirmed group/files under their contracts; test those in a synthetic tree | 106 |
@@ -87,4 +87,4 @@ python3 tests/docs_index.py --write
 | Doc | Title | Summary | Lines |
 | --- | --- | --- | --- |
 | [delegation.md](delegation.md) | 委派本机 grok CLI（grok-4.6）做简单任务 | 用户已授权：在本仓库的开发过程中，可以把**边界清楚、可机械验证、独立成文件**的 任务交给本机 `grok` CLI 以 headless 方式完成（全局调用法：`~/.claude/grok-cli.md`）。 这是委派编码工作，模型自定；grok 产出仍须人工审阅并按批次记账。 不得让 grok 触碰生产服务、原 Python 仓库、凭据或运行数据。 | 131 |
-| [validation.md](validation.md) | Validation suites | Tables of the default checks in `python3 tests/run_validation.py`, explicit unit/real-CLI/SSH-peer suites and opt-in benchmarks. A documented direct command does not imply inclusion in the default sweep. Narrative rules stay in `AGENTS.md`. | 398 |
+| [validation.md](validation.md) | Validation suites | Tables of the default checks in `python3 tests/run_validation.py`, explicit unit/real-CLI/SSH-peer suites and opt-in benchmarks. A documented direct command does not imply inclusion in the default sweep. Narrative rules stay in `AGENTS.md`. | 399 |
