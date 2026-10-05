@@ -360,6 +360,55 @@ def check_action_metadata_refresh(page, data, base):
     header.dispose()
 
 
+def check_menu_keyboard(page):
+    """Both ⋯ menus open from the keyboard and rove focus with arrows/Home/End."""
+    def focused():
+        return page.evaluate("document.activeElement?.id || document.activeElement?.textContent.trim()")
+
+    def rows(selector):
+        return page.evaluate("""s => [...document.querySelectorAll(s)]
+            .map(b => b.id || b.textContent.trim())""", selector)
+
+    def rove(trigger, menu, selector):
+        page.locator(trigger).focus()
+        page.keyboard.press('ArrowDown')
+        expect(page.locator(menu)).to_be_visible()
+        expect(page.locator(trigger)).to_have_attribute('aria-expanded', 'true')
+        items = rows(selector)
+        assert len(items) >= 2, (trigger, items)
+        assert focused() == items[0], (trigger, focused(), items)
+        page.keyboard.press('ArrowDown')
+        assert focused() == items[1], (trigger, focused(), items)
+        page.keyboard.press('End')
+        assert focused() == items[-1], (trigger, focused(), items)
+        page.keyboard.press('ArrowDown')
+        assert focused() == items[0], ('wrap down', trigger, focused(), items)
+        page.keyboard.press('ArrowUp')
+        assert focused() == items[-1], ('wrap up', trigger, focused(), items)
+        page.keyboard.press('Home')
+        assert focused() == items[0], (trigger, focused(), items)
+        page.keyboard.press('Escape')
+        expect(page.locator(menu)).to_be_hidden()
+        page.locator(trigger).focus()
+        page.keyboard.press('ArrowUp')
+        expect(page.locator(menu)).to_be_visible()
+        assert focused() == rows(selector)[-1], ('ArrowUp opens on last', trigger, focused())
+        page.keyboard.press('Escape')
+        expect(page.locator(menu)).to_be_hidden()
+        expect(page.locator(trigger)).to_have_attribute('aria-expanded', 'false')
+
+    page.set_viewport_size({'width': 320, 'height': 900})
+    settle(page)
+    expect(page.locator('#a-more')).to_be_visible()
+    rove('#a-more', '#session-actions-menu', '#session-actions-menu button:not(:disabled)')
+    page.evaluate("showMobileList()")
+    settle(page)
+    expect(page.locator('#header-more-btn')).to_be_visible()
+    rove('#header-more-btn', '#header-menu', '#header-menu button:not(:disabled):not(.hidden)')
+    page.evaluate("showMobileDetail()")
+    settle(page)
+
+
 def run(page, uid):
     page.evaluate("uid => openSession(uid)", uid)
     page.wait_for_function('document.querySelector("#msgs")?.textContent.includes("reply Sweep")')
@@ -474,6 +523,7 @@ def main():
                 assert not page.locator("#page-reload").is_visible()
                 run(page, data.uid(SID))
                 check_action_metadata_refresh(page, data, base)
+                check_menu_keyboard(page)
                 context.close()
                 for mode in ("standalone", "ios"):
                     context = browser.new_context(viewport={"width": 390, "height": 844})
@@ -504,7 +554,7 @@ def main():
                 assert not errors, errors
             finally:
                 browser.close()
-    print("PASS header fold browser: fold order over N widths for the header and the title bar, divider drag, folded action metadata refresh (DOM/focus identity), turn preference and session switch", flush=True)
+    print("PASS header fold browser: fold order over N widths for the header and the title bar, divider drag, folded action metadata refresh (DOM/focus identity), turn preference, session switch and ⋯ menu keyboard roving", flush=True)
 
 
 if __name__ == "__main__":
