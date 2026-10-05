@@ -110,24 +110,26 @@ before publishing.
 | `sessions` | `true` | no `config`/`allows` gate | [architecture.md](architecture.md) |
 | `watch` | `true` | no `config`/`allows` gate (SSE is always on) | [architecture.md](architecture.md) |
 | `search` | `true` | else title-only filter, no NDJSON `/api/search` | [architecture.md](architecture.md) |
-| `list_delta` | `true` | incremental session-list snapshots | [read-model.md](read-model.md) |
+| `list_delta` | `true` | incremental session-list snapshots (`legacy-web/list-sync.js`) | [liveness.md](liveness.md#apilive-with-the-scan) |
 | `unread_batch` | `true` | batched background unread summaries | [history-pages.md](history-pages.md) |
-| `ui_events` | `true` | lightweight list/preference change events | [read-model.md](read-model.md) |
+| `ui_events` | `true` | lightweight list/preference change events (`/api/events`) | [liveness.md](liveness.md#apilive-with-the-scan) |
 | `live` | `true` where native process discovery is supported | when false the page skips `/api/live` (“运行状态未知”); when true `/api/live` merges managed observations with native process discovery | [liveness.md](liveness.md), [processes.md](processes.md) |
 | `terminal` | true when `SESSIONDOCK_PTYHOST_DIR` opens TerminalService | notice + 3s term-list poll if `live` is false | [terminal-ownership.md](terminal-ownership.md) |
 | `terminal_transport` | same as `terminal` | no `config`/`allows` gate | [terminal-ownership.md](terminal-ownership.md) |
 | `terminal_records` | same as `terminal` | recording list/replay availability; the main console opens replay from the session row's `recording` field | [terminal-records.md](terminal-records.md) |
 | `terminal_backend` | same as `terminal` | no `config`/`allows` gate | [lifecycle-http.md](lifecycle-http.md) |
+| `terminal_input` | same as `terminal` | raw HTTP text/key input under the page's terminal lease | [terminal-input.md](terminal-input.md) |
 | `terminal_create` | true when lifecycle opens (`SESSIONDOCK_LIFECYCLE_DIR` + launcher) | unhides `#new-session`; notice “受控创建已配置” | [lifecycle-integration.md](lifecycle-integration.md) |
 | `terminal_pending` | same as `terminal_create` | no `config`/`allows` gate | [lifecycle-http.md](lifecycle-http.md) |
 | `terminal_bind` | same as `terminal_create` | none — `POST /api/term/bind` is API-only; the pending page follows a confirmed binding by itself | [lifecycle-http.md](lifecycle-http.md) |
 | `terminal_takeover` | same as `terminal_create` | resume via `resume_sources`, never name-guess | [lifecycle-http.md](lifecycle-http.md) |
 | `terminal_complete_dir` | same as `terminal_create` | enables cwd directory suggestions | [lifecycle-http.md](lifecycle-http.md) |
 | `session_stop` | true when `terminal_create` and `terminal` are both true | stop control for listed managed instances and inline outcome/refusal notice | [lifecycle-http.md](lifecycle-http.md#stopping-a-session) |
+| `session_freeze` | true on Linux when `terminal_create` and `terminal` are both true | freeze/resume button; otherwise a gray pause button with a hover reason | [lifecycle-http.md](lifecycle-http.md#freeze-a-diagnostic-scene-linux) |
 | `outbox` | always false (the legacy send routes, browser outbox and delivery ledger are retired; SEND is `conversation_send`) | kept so older pages read the outbox as disabled | [conversation.md](conversation.md) |
 | `conversation_send` | node: metadata, terminal, lifecycle and file writes configured; Hub forwards to node | server-owned drafts, SEND and CLI echo tracking | [conversation.md](conversation.md) |
 | `audit` | true when `SESSIONDOCK_AUDIT_DIR` is configured | queues `POST /api/audit/browser`; else no posts | [diagnostics.md](diagnostics.md) |
-| `bug_report` | true when `SESSIONDOCK_BUG_REPORT_DIR`/`REPO`, the audit directory, the terminal transport, the lifecycle service are all configured | no `config`/`allows` gate yet (the report dialog posts and shows the `501 bug_report_disabled` error); `POST /api/bug-report` and the `uid=bug-report` upload answer 501 while false | [bug-report.md](bug-report.md) |
+| `bug_report` | true when `SESSIONDOCK_BUG_REPORT_DIR`/`REPO`, the audit directory, the terminal transport, the lifecycle service, the metadata store and file writes are all configured | no `config`/`allows` gate yet (the report dialog posts and shows the `501 bug_report_disabled` error); `POST /api/bug-report` and the `uid=bug-report` upload answer 501 while false | [bug-report.md](bug-report.md) |
 | `metadata` | true when `SESSIONDOCK_STATE_DIR` opens MetadataStore | enables stars and display preferences | [metadata.md](metadata.md) |
 | `files` | `true`; paths resolve from the selected session/cwd | opens referenced paths through the file browser | [files.md](files.md) |
 | `files_jobs` | true when file writes are configured or terminal transport is available | enables the file job dialog | [files.md](files.md) |
