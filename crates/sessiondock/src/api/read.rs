@@ -623,7 +623,7 @@ pub async fn watch(
                     // next input; follow it from the editor and transcript.
                     if claude_view
                         && let Some(current) = &observed
-                        && let Ok(snapshot) = subscription.current()
+                        && let Ok(snapshot) = subscription.peek()
                     {
                         let probe = (current["editor"]["text"].clone(), current["input"]["code"].clone(),
                             service_transcript(&state, &watched_uid), snapshot.anchor.clone());
