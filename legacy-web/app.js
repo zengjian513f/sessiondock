@@ -8043,6 +8043,7 @@ function msgNode(m) {
   // 对话内容从不整泡折叠；长内容只在泡内提供“展开全文”。
   const n = el('div', 'msg' + (found && !hit ? ' hashit' : ''));
   n.dataset.role = m.role;
+  if (m.native_type) n.dataset.nativeType = m.native_type;
   if (m.counted === false) n.dataset.counted = 'false';
   const body = el('div', 'mb');
   const linkContext = {uid: S.sel, agent: S.agent};
@@ -8082,6 +8083,15 @@ function msgNode(m) {
     n.classList.add('native-interrupted');
     const state = el('small', 'native-message-state', '已中断');
     if (m.interrupt_reason) state.title = m.interrupt_reason;
+    n.appendChild(state);
+  }
+  if (m.role === 'system' && m.native_type) {
+    const labels = {SYSTEM_MESSAGE: '系统消息', USER_SETTINGS_CHANGE: '设置变更',
+      AGY_USER_METADATA: '附加信息'};
+    const state = el('small', 'native-message-state', labels[m.native_type] || `附加信息 · ${m.native_type}`);
+    state.title = [m.native_type, m.system_sender && `来源：${m.system_sender}`,
+      m.system_priority && `优先级：${m.system_priority}`,
+      m.system_timestamp].filter(Boolean).join('\n');
     n.appendChild(state);
   }
   timelinePinAction(n, m);

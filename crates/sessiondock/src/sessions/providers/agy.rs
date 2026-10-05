@@ -1,7 +1,41 @@
 //! Agy's complete, system-generated transcript (not the truncated transcript).
 use serde_json::{Value, json};
 
-use super::{Parser, clip, normalized, string};
+use super::{Parser, clip, envelopes, normalized, string};
+
+/// Agy's exact system injection envelope; ordinary user/code tags are never
+/// passed here. Unrecognized or incomplete layouts stay verbatim.
+fn system_message(text: &str) -> (String, Value) {
+    const INTRO: &str = "The following is a <SYSTEM_MESSAGE> not actually sent by the user. It is provided by the system as important information to pay attention to.\n\n";
+    let wrapped = text.strip_prefix(INTRO).unwrap_or(text);
+    let body = envelopes::whole(wrapped, "SYSTEM_MESSAGE")
+        .map(str::trim)
+        .unwrap_or(text);
+    let header = body
+        .strip_prefix("[Message] timestamp=")
+        .and_then(|rest| rest.split_once(" sender="))
+        .and_then(|(timestamp, rest)| {
+            rest.split_once(" priority=")
+                .map(|(sender, rest)| (timestamp, sender, rest))
+        })
+        .and_then(|(timestamp, sender, rest)| {
+            rest.split_once(" content=")
+                .map(|(priority, content)| (timestamp, sender, priority, content))
+        });
+    match header {
+        Some((timestamp, sender, priority, content)) => (
+            content.to_owned(),
+            json!({
+                "native_type":"SYSTEM_MESSAGE", "counted":false, "system_timestamp":timestamp,
+                "system_sender":sender, "system_priority":priority,
+            }),
+        ),
+        None => (
+            body.to_owned(),
+            json!({"native_type":"SYSTEM_MESSAGE", "counted":false}),
+        ),
+    }
+}
 
 pub(super) fn metadata(summary: &Value, records: &[(Value, u64)], fallback: &str) -> Value {
     let session = &summary["session"];
@@ -52,9 +86,52 @@ impl Parser<'_> {
         match record["type"].as_str().unwrap_or("") {
             "USER_INPUT" => {
                 self.turn = format!("step:{}", record["step_index"]);
-                let text = crate::sessions::agy::user_text(&string(&record["content"]));
+                let content = string(&record["content"]);
+                let (text, tail) =
+                    crate::sessions::agy::user_envelope(&content).unwrap_or((&content, ""));
+                let parts = envelopes::fields(tail);
+                let metadata: Vec<_> = parts
+                    .iter()
+                    .flatten()
+                    .filter(|(tag, _)| *tag == "ADDITIONAL_METADATA")
+                    .map(|(tag, body)| json!({"tag":tag,"text":body.trim()}))
+                    .collect();
                 if !text.trim().is_empty() || !media.is_empty() {
-                    self.emit_media(end, "user", text, &ts, json!({}), media)?;
+                    self.emit_media(
+                        end,
+                        "user",
+                        text.to_owned(),
+                        &ts,
+                        json!({"native_type":"USER_INPUT", "native_metadata":metadata}),
+                        media,
+                    )?;
+                }
+                if let Some(parts) = parts {
+                    for (tag, body) in parts {
+                        if tag != "ADDITIONAL_METADATA" && !body.trim().is_empty() {
+                            self.emit(
+                                end,
+                                "system",
+                                body.trim(),
+                                &ts,
+                                json!({"native_type":tag,"counted":false}),
+                            );
+                        }
+                    }
+                } else if !tail.trim().is_empty() {
+                    self.emit(
+                        end,
+                        "system",
+                        tail.trim(),
+                        &ts,
+                        json!({"native_type":"AGY_USER_METADATA","counted":false}),
+                    );
+                }
+            }
+            "SYSTEM_MESSAGE" => {
+                let (text, extra) = system_message(&string(&record["content"]));
+                if !text.trim().is_empty() || !media.is_empty() {
+                    self.emit_media(end, "system", text, &ts, extra, media)?;
                 }
             }
             "PLANNER_RESPONSE" => {
@@ -64,7 +141,13 @@ impl Parser<'_> {
                     .unwrap_or(&[]);
                 let thinking = string(&record["thinking"]);
                 if !thinking.trim().is_empty() {
-                    self.emit(end, "thinking", thinking, &ts, json!({}));
+                    self.emit(
+                        end,
+                        "thinking",
+                        thinking,
+                        &ts,
+                        json!({"native_type":"PLANNER_RESPONSE"}),
+                    );
                 }
                 let text = string(&record["content"]);
                 if !text.trim().is_empty() || !media.is_empty() {
@@ -73,7 +156,7 @@ impl Parser<'_> {
                         "assistant",
                         text,
                         &ts,
-                        json!({"phase":if calls.is_empty() && record["status"] == "DONE" { "final" } else { "progress" }}),
+                        json!({"native_type":"PLANNER_RESPONSE", "phase":if calls.is_empty() && record["status"] == "DONE" { "final" } else { "progress" }}),
                         media,
                     )?;
                 }
@@ -87,7 +170,7 @@ impl Parser<'_> {
                         "tool",
                         string(call),
                         &ts,
-                        json!({"name":name,"changes":null}),
+                        json!({"native_type":"PLANNER_RESPONSE", "name":name,"changes":null}),
                     );
                 }
             }
@@ -102,18 +185,18 @@ impl Parser<'_> {
                         "assistant",
                         text,
                         &ts,
-                        json!({"phase":"progress","error":true}),
+                        json!({"native_type":"ERROR_MESSAGE", "phase":"progress","error":true}),
                     );
                 }
             }
             other => {
                 let content = string(&record["content"]);
                 if !content.is_empty() || !media.is_empty() {
-                    // Tool and system steps publish their own content. The
+                    // Generic/unknown steps publish their own content. The
                     // transcript has no documented cross-step call ID, so do
                     // not attach a result to an unrelated call by position.
                     self.emit_media(end, "tool_result", content, &ts,
-                        json!({"name":other,"error":record["status"]=="ERROR" || record["error"].is_string()}), media)?;
+                        json!({"native_type":other,"name":other,"error":record["status"]=="ERROR" || record["error"].is_string()}), media)?;
                 } else {
                     self.skipped.note("Agy 记录类型", other);
                 }

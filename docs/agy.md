@@ -96,10 +96,21 @@ dev/ino、size、mtime stamp，目录未提交也能发现正文追加或改写�
 原生样本，未使用账号凭据或付费模型。已核对 native user、planner final、thinking、
 `ERROR_MESSAGE` 和原生会话 DB 的 fd identity。
 
-- `USER_INPUT`：仅去除 CLI 外层 `<USER_REQUEST>` 与附加 metadata 包裹，保留用户
-  自己的正文与内层同名文本，作为原生回显对账依据。
+- `USER_INPUT`：仅去除 CLI 外层 `<USER_REQUEST>`，保留用户自己的正文与内层
+  同名文本，作为原生回显对账依据。尾部 `<ADDITIONAL_METADATA>` 识别为
+  `native_metadata`，不混入用户正文；`<USER_SETTINGS_CHANGE>` 独立显示为
+  “设置变更”的系统气泡。其他完整尾部 tag 保留类型和正文，显示“附加信息”；
+  不完整结构保留原文，不按正文里的代码/HTML tag 推断系统消息。
+- `SYSTEM_MESSAGE`：独立投影为 `system`，使用既有系统气泡并标注“系统消息”，
+  不进入工具组、不计为回复。仅移除原生说明前缀和完整外层 `<SYSTEM_MESSAGE>`；
+  `[Message]` 头的 timestamp/sender/priority 单独保留在消息字段与标注提示中，
+  content 显示为正文。后台任务完成通知沿用系统角色，不冒充工具结果或用户输入；
+  纯文本和不完整包裹保留可见正文。
 - `PLANNER_RESPONSE`：`thinking` 单独投影；无 `tool_calls` 且 status 为 `DONE`
   时正文为 `phase: final`，其他情况为 `progress`。`ERROR_MESSAGE` 投影为可见错误消息。
+- 所有投影消息携带 `native_type`。`GENERIC` 沿用独立工具结果；未知原生步骤仍
+  保留类型名称与原始内容，不猜工具配对或丢弃内容。上述识别覆盖本次报告会话实际
+  出现的记录与包裹，不宣称识别尚未见到的任意 tag。
 - `tool_calls` 和 `media` 已取得真实 CLI 样本：`view_file` 调用包含 `name` 与 `args`，
   后续 GENERIC 步骤提供文本或图片结果。调用保留 native JSON，结果独立显示；
   完整 transcript 的这些实测记录没有跨步骤 call ID，不按位置猜配对，也不宣称
