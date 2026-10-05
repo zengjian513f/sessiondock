@@ -33,7 +33,7 @@ BASE = {
     "terminal": False, "outbox": False, "audit": False, "files": True,
     "mutations": False, "hub": False,
     "media": True, "media_remote": True, "media_lazy": True, "history_pages": True,
-    "unread_batch": True, "ui_events": True,
+    "unread_batch": True, "ui_events": True, "list_delta": True,
     "media_continuation": True, "history_semantics": "limited_native",
     "terminal_transport": False, "terminal_records": False, "terminal_create": False, "terminal_pending": False,
     "terminal_bind": False, "terminal_takeover": False, "terminal_complete_dir": False,
