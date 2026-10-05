@@ -20,7 +20,7 @@
     try {
       const caps = JSON.parse(document.querySelector('meta[name="sessiondock-capabilities"]')?.content || '{}');
       namespace = typeof caps.storage_namespace === 'string' && caps.storage_namespace
-        ? caps.storage_namespace : caps.backend === 'rust' ? 'sessiondock.' : '';
+        ? caps.storage_namespace : 'sessiondock.';
     } catch {}
     const current = document.querySelector('meta[name="sessiondock-mode"]')?.content === 'hub'
       ? `sessiondock.hub.${location.pathname}.` : 'sessiondock.';
@@ -358,8 +358,8 @@
         <label title="Claude"><input type="radio" name="new-source" value="claude" checked><span><svg class="ico source-icon" data-source="claude" aria-hidden="true"><use href="#i-claude"/></svg><em class="src-label">Claude</em></span></label>
         <label title="Codex"><input type="radio" name="new-source" value="codex"><span><svg class="ico source-icon" data-source="codex" aria-hidden="true"><use href="#i-codex"/></svg><em class="src-label">Codex</em></span></label>
         <label title="Grok"><input type="radio" name="new-source" value="grok"><span><svg class="ico source-icon" data-source="grok" aria-hidden="true"><use href="#i-grok"/></svg><em class="src-label">Grok</em></span></label>
-        <label title="OpenCode"><input type="radio" name="new-source" value="opencode"><span><svg class="ico source-icon" data-source="opencode" aria-hidden="true"><use href="#i-opencode"/></svg><em class="src-label">OpenCode</em></span></label>
         <label title="Agy"><input type="radio" name="new-source" value="agy"><span><svg class="ico source-icon" data-source="agy" aria-hidden="true"><use href="#i-agy"/></svg><em class="src-label">Agy</em></span></label>
+        <label title="OpenCode"><input type="radio" name="new-source" value="opencode"><span><svg class="ico source-icon" data-source="opencode" aria-hidden="true"><use href="#i-opencode"/></svg><em class="src-label">OpenCode</em></span></label>
         <label title="SSH"><input type="radio" name="new-source" value="shell"><span><svg class="ico source-icon" data-source="shell" aria-hidden="true"><use href="#i-terminal"/></svg><em class="src-label">SSH</em></span></label>
       </fieldset>
       <div class="new-choice">
@@ -414,8 +414,8 @@
         <label title="Claude"><input type="radio" name="bug-report-source" value="claude"><span><svg class="ico source-icon" data-source="claude" aria-hidden="true"><use href="#i-claude"/></svg><em class="src-label">Claude</em></span></label>
         <label title="Codex"><input type="radio" name="bug-report-source" value="codex" checked><span><svg class="ico source-icon" data-source="codex" aria-hidden="true"><use href="#i-codex"/></svg><em class="src-label">Codex</em></span></label>
         <label title="Grok"><input type="radio" name="bug-report-source" value="grok"><span><svg class="ico source-icon" data-source="grok" aria-hidden="true"><use href="#i-grok"/></svg><em class="src-label">Grok</em></span></label>
-        <label title="OpenCode"><input type="radio" name="bug-report-source" value="opencode"><span><svg class="ico source-icon" data-source="opencode" aria-hidden="true"><use href="#i-opencode"/></svg><em class="src-label">OpenCode</em></span></label>
         <label title="Agy"><input type="radio" name="bug-report-source" value="agy"><span><svg class="ico source-icon" data-source="agy" aria-hidden="true"><use href="#i-agy"/></svg><em class="src-label">Agy</em></span></label>
+        <label title="OpenCode"><input type="radio" name="bug-report-source" value="opencode"><span><svg class="ico source-icon" data-source="opencode" aria-hidden="true"><use href="#i-opencode"/></svg><em class="src-label">OpenCode</em></span></label>
       </fieldset>
       <div class="new-choice">
         <div class="new-model">
@@ -581,7 +581,7 @@
 <script defer src="session-resources.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="groups.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script type="module">
-  // 服务端网格的 xterm 兼容外观层；模块脚本与 defer 脚本按文档顺序执行，term.js 能直接用到。
+  // 服务端网格的终端外观层；模块脚本与 defer 脚本按文档顺序执行，term.js 能直接用到。
   import {GridTerm} from './grid/facade.js?v=__SESSIONDOCK_ASSET_VERSION__';
   globalThis.GridTerm = GridTerm;
 </script>
