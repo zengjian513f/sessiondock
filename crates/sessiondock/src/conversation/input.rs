@@ -375,10 +375,10 @@ fn opencode_editor(capture: &ScreenCapture) -> bool {
             .is_some_and(|(agent, model)| !agent.trim().is_empty() && !model.trim().is_empty())
 }
 
-/// Agy 1.2.16: a `> ` editor between full horizontal rules. Menus are
-/// rendered below that rule and move the cursor out of the editor. The one
-/// footer row is not used to infer a model or to authorize an overlay.
-pub(super) fn agy_editor(capture: &ScreenCapture) -> Option<String> {
+/// Agy 1.2.16/1.2.17: a `> ` editor between full horizontal rules, followed
+/// by an optional running-task panel and a footer. Menus move the cursor out
+/// of the editor; arbitrary output below it is not a task panel.
+fn agy_editor_layout(capture: &ScreenCapture) -> Option<(String, String, bool)> {
     let text = driver::strip_ansi(&capture.text);
     let rows: Vec<&str> = text.lines().collect();
     let (x, y) = (usize::from(capture.cursor.0), usize::from(capture.cursor.1));
@@ -389,16 +389,48 @@ pub(super) fn agy_editor(capture: &ScreenCapture) -> Option<String> {
         |row: &str| row.trim().chars().count() >= 8 && row.trim().chars().all(|ch| ch == '─');
     let top = (0..y).rev().find(|&i| rule(rows[i]))?;
     let bottom = (y + 1..rows.len()).find(|&i| rule(rows[i]))?;
-    if !rows[top + 1].starts_with('>')
-        || rows[top].trim() != rows[bottom].trim()
-        || rows[bottom + 1..]
-            .iter()
-            .filter(|row| !row.trim().is_empty())
-            .count()
-            > 1
-    {
+    if !rows[top + 1].starts_with('>') || rows[top].trim() != rows[bottom].trim() {
         return None;
     }
+    let tail: Vec<&str> = rows[bottom + 1..]
+        .iter()
+        .copied()
+        .filter(|row| !row.trim().is_empty())
+        .collect();
+    let background = tail.len() > 1;
+    let footer = if background {
+        // Captured 1.2.17 panel: one or more `  ● [HH:MM:SS] … running`
+        // rows, the same full rule, then the normal footer with /tasks.
+        let task = |row: &str| {
+            let Some(rest) = row.strip_prefix("  ● [") else {
+                return false;
+            };
+            let Some((time, command)) = rest.split_once("] ") else {
+                return false;
+            };
+            let parts: Vec<&str> = time.split(':').collect();
+            parts.len() == 3
+                && parts
+                    .iter()
+                    .all(|part| part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_digit()))
+                && command
+                    .strip_suffix(" running")
+                    .is_some_and(|s| !s.is_empty())
+        };
+        if tail.len() < 3
+            || tail[tail.len() - 2].trim() != rows[bottom].trim()
+            || !tail[..tail.len() - 2].iter().all(|row| task(row))
+        {
+            return None;
+        }
+        let footer = tail[tail.len() - 1];
+        if !footer.trim_end().ends_with(" · /tasks") {
+            return None;
+        }
+        footer
+    } else {
+        tail.first().copied().unwrap_or("")
+    };
     let mut lines = Vec::new();
     for (i, row) in rows[top + 1..bottom].iter().enumerate() {
         let content = if i == 0 {
@@ -413,29 +445,28 @@ pub(super) fn agy_editor(capture: &ScreenCapture) -> Option<String> {
         };
         lines.push(content.trim_end());
     }
-    Some(lines.join("\n").trim_end().to_owned())
+    Some((
+        lines.join("\n").trim_end().to_owned(),
+        footer.to_owned(),
+        background,
+    ))
+}
+
+pub(super) fn agy_editor(capture: &ScreenCapture) -> Option<String> {
+    agy_editor_layout(capture).map(|(editor, _, _)| editor)
 }
 
 /// Agy 1.2.16's footer belongs below the verified editor, not to the
 /// transcript or draft. A model label is right-aligned on the same row.
 pub(super) fn agy_busy(capture: &ScreenCapture) -> Option<bool> {
-    let editor = agy_editor(capture)?;
-    let text = driver::strip_ansi(&capture.text);
-    let rows: Vec<&str> = text.lines().collect();
-    let bottom = (usize::from(capture.cursor.1) + 1..rows.len()).find(|&i| {
-        let row = rows[i].trim();
-        row.chars().count() >= 8 && row.chars().all(|ch| ch == '─')
-    })?;
-    let footer = rows[bottom + 1..]
-        .iter()
-        .find(|row| !row.trim().is_empty())?;
+    let (editor, footer, background) = agy_editor_layout(capture)?;
     let label = |expected: &str| {
-        *footer == expected
+        footer == expected
             || footer
                 .strip_prefix(expected)
                 .is_some_and(|tail| tail.starts_with(' '))
     };
-    if label("esc to cancel") {
+    if background || label("esc to cancel") {
         Some(true)
     } else if label("? for shortcuts") || (!editor.is_empty() && footer.starts_with(' ')) {
         Some(false)
