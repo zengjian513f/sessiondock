@@ -5,6 +5,7 @@ use super::{
     environment::StorageProbe,
     service::{Operation, TransferService},
 };
+use crate::sessions::SessionSnapshot;
 use crate::trash::manifest::{EntryState, FileRecord, FileRole, Manifest, RunStateNote, Stamp};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -70,8 +71,40 @@ impl TransferService {
         self.touch(&op.id);
         Ok(Some(op))
     }
-    pub fn plan_move(&self, uid: &str, new_ids: bool) -> Result<Operation, TransferError> {
-        let mut op = self.plan_copy(uid, new_ids)?;
+    /// Confirm only the operation mode; identity changes still require a preview.
+    /// The caller holds the operation gate through confirmation and execution.
+    pub fn confirm_mode(
+        &self,
+        uid: &str,
+        id: &str,
+        new_ids: bool,
+        mode: &str,
+    ) -> Result<Operation, TransferError> {
+        let moving = match mode {
+            "clone" => false,
+            "move" => true,
+            _ => return Err(TransferError::new("move_format", "未知的操作类型")),
+        };
+        let op = self.load(id)?;
+        if op.uid != uid || op.new_ids() != new_ids || op.incoming_digest.is_some() {
+            return Err(TransferError::new(
+                "move_plan_stale",
+                "确认选项与会话清单不一致",
+            ));
+        }
+        if op.moving == moving {
+            return Ok(op);
+        }
+        self.reuse_preview(uid, id, new_ids, moving)?
+            .ok_or_else(|| TransferError::new("move_plan_stale", "操作已开始，不能更改操作类型"))
+    }
+    pub fn plan_move(
+        &self,
+        uid: &str,
+        new_ids: bool,
+        snapshot: &SessionSnapshot,
+    ) -> Result<Operation, TransferError> {
+        let mut op = self.plan_copy(uid, new_ids, snapshot)?;
         op.moving = true;
         for (provider, root) in self.bundle_roots(&op)? {
             op.storage_probes
@@ -172,7 +205,11 @@ impl TransferService {
         self.cleanup_staging(&op)?;
         Ok(op)
     }
-    pub fn switch_source(&self, id: &str) -> Result<Operation, TransferError> {
+    pub fn switch_source(
+        &self,
+        id: &str,
+        snapshot: &SessionSnapshot,
+    ) -> Result<Operation, TransferError> {
         let mut op = self.load(id)?;
         if !op.moving || op.incoming_digest.is_some() {
             return Err(TransferError::new("move_plan_stale", "此操作不是迁移源"));
@@ -183,7 +220,7 @@ impl TransferService {
         if op.phase != "exporting" {
             return Err(TransferError::new("move_plan_stale", "迁移源尚未完成导出"));
         }
-        self.recheck(&op)?;
+        self.recheck_in(&op, snapshot)?;
         op.phase = "moved".into();
         op.export_lease_until = 0;
         self.save(&op)?;
@@ -260,11 +297,11 @@ impl TransferService {
 
     /// Also works after a partial cleanup: compare explicit references against
     /// captured identities even when the referenced source file is now in trash.
-    fn outside_references(&self, op: &Operation) -> Result<(), TransferError> {
-        let snapshot = self
-            .store()
-            .search_snapshot()
-            .map_err(|e| TransferError::new("move_inventory", e.message))?;
+    fn outside_references(
+        &self,
+        op: &Operation,
+        snapshot: &SessionSnapshot,
+    ) -> Result<(), TransferError> {
         let uids: BTreeSet<_> = op.group().members.iter().map(|m| m.uid.as_str()).collect();
         let ids: BTreeSet<_> = op
             .group()
@@ -372,7 +409,12 @@ impl TransferService {
         }
         Ok(())
     }
-    pub fn retire_source(&self, id: &str, trash: &Path) -> Result<Operation, TransferError> {
+    pub fn retire_source(
+        &self,
+        id: &str,
+        trash: &Path,
+        snapshot: &SessionSnapshot,
+    ) -> Result<Operation, TransferError> {
         let mut op = self.load(id)?;
         if !op.moving
             || op.incoming_digest.is_some()
@@ -387,9 +429,9 @@ impl TransferService {
             return Ok(op);
         }
         if op.phase == "moved" {
-            self.recheck(&op)?;
+            self.recheck_in(&op, snapshot)?;
         }
-        self.outside_references(&op)?;
+        self.outside_references(&op, snapshot)?;
         super::native::retire(&op.native, false)?;
         op.phase = "retiring".into();
         self.save(&op)?;
