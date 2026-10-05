@@ -23,10 +23,18 @@ pub fn transcript_warning(summary: &Value, has_history: bool) -> Option<&'static
 
 /// Strip only Agy's outer user envelope, preserving the user's own text.
 pub(crate) fn user_text(text: &str) -> String {
+    user_envelope(text).map_or_else(|| text.to_owned(), |(body, _)| body.to_owned())
+}
+
+/// The native body and its trailing injections, never tags inside user text.
+pub(super) fn user_envelope(text: &str) -> Option<(&str, &str)> {
     text.strip_prefix("<USER_REQUEST>\n")
         .and_then(|body| body.rsplit_once("\n</USER_REQUEST>"))
-        .filter(|(_, tail)| tail.is_empty() || tail.starts_with("\n<ADDITIONAL_METADATA>"))
-        .map_or_else(|| text.to_owned(), |(body, _)| body.to_owned())
+        .filter(|(_, tail)| {
+            tail.is_empty()
+                || tail.starts_with("\n<ADDITIONAL_METADATA>")
+                || tail.starts_with("\n<USER_SETTINGS_CHANGE>")
+        })
 }
 
 #[derive(Clone, PartialEq, Eq)]

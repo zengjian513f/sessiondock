@@ -850,7 +850,7 @@ pub fn skipped_warnings(source: &str, records: &Records) -> Vec<String> {
                 other => skipped.note("Codex 记录类型", other),
             },
             "agy" => match kind {
-                "USER_INPUT" | "PLANNER_RESPONSE" | "ERROR_MESSAGE" => {}
+                "USER_INPUT" | "PLANNER_RESPONSE" | "ERROR_MESSAGE" | "SYSTEM_MESSAGE" => {}
                 _ if value["content"]
                     .as_str()
                     .is_some_and(|text| !text.is_empty())
