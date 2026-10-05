@@ -27,7 +27,7 @@ struct Document {
     merged_echoes: BTreeMap<String, HashSet<String>>,
 }
 /// One SEND the terminal accepted whose native user/command record has not
-/// been seen yet. `state` is `queued`, `interrupted` or `lost`.
+/// been seen yet. `state` is `queued`, `interrupted`, `rejected` or `lost`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct QueuedSend {
     pub request_id: String,
@@ -39,6 +39,12 @@ pub struct QueuedSend {
     /// time (Codex); `null` until the CLI's own queue is observed.
     #[serde(default)]
     pub cli_queued_at: Option<f64>,
+    /// Count of matching Claude warnings before this SEND. Older receipts
+    /// have no baseline and cannot be rejected from an undated screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_rejections_before: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Draft {
@@ -506,6 +512,19 @@ impl Store {
             Ok(())
         })
     }
+    pub fn mark_rejected(&self, key: &str, errors: &[(String, String)]) -> Result<()> {
+        self.update(|doc| {
+            for row in doc.queued.get_mut(key).into_iter().flatten() {
+                if row.state == "queued"
+                    && let Some((_, error)) = errors.iter().find(|(id, _)| *id == row.request_id)
+                {
+                    row.state = "rejected".into();
+                    row.error = Some(error.clone());
+                }
+            }
+            Ok(())
+        })
+    }
     /// Marks every queued send of the key with `state` (e.g. `lost`).
     pub fn mark_queued(&self, key: &str, state: &str) -> Result<bool> {
         let changed = self
@@ -514,13 +533,18 @@ impl Store {
             .unwrap_or_else(|p| p.into_inner())
             .queued
             .get(key)
-            .is_some_and(|rows| rows.iter().any(|row| row.state != state));
+            .is_some_and(|rows| {
+                rows.iter()
+                    .any(|row| row.state != "rejected" && row.state != state)
+            });
         if !changed {
             return Ok(false);
         }
         self.update(|doc| {
             for row in doc.queued.get_mut(key).into_iter().flatten() {
-                row.state = state.into();
+                if row.state != "rejected" {
+                    row.state = state.into();
+                }
             }
             Ok(true)
         })

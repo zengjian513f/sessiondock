@@ -4320,6 +4320,7 @@ function renderQueuedSends(uid = composerUid) {
   for (const item of rows) {
     const lost = item.state === 'lost';
     const interrupted = item.state === 'interrupted';
+    const rejected = item.state === 'rejected';
     const n = el('div', 'msg queued-send' + (lost ? ' lost' : ''));
     n.dataset.role = 'user';
     n.dataset.requestId = item.request_id;
@@ -4330,14 +4331,16 @@ function renderQueuedSends(uid = composerUid) {
     else body.textContent = text;
     n.appendChild(body);
     // The CLI's own enqueue record means it holds the text until its current step ends.
-    const inCli = !lost && !interrupted && item.cli_queued_at != null;
+    const inCli = !lost && !interrupted && !rejected && item.cli_queued_at != null;
     if (inCli) n.dataset.cliQueued = '1';
     const state = el('small', 'queued-send-state', lost ? '未送达，请到终端查看'
       : interrupted ? 'CLI 已中断，未确认处理，请到终端查看'
+      : rejected ? 'CLI 已拒绝命令：' + String(item.error || '未知命令')
       : inCli ? '已进入 CLI 队列，当前步骤结束后处理' : '已发送，等待 CLI 处理');
-    if (lost || interrupted) {
+    if (lost || interrupted || rejected || /^\s*\/\S+/.test(text)) {
       const close = el('button', 'queued-send-dismiss', '关闭');
       close.type = 'button';
+      close.title = '仅关闭此发送提示，不取消或重发 CLI 输入';
       close.onclick = () => dismissQueuedSend(uid, item.request_id);
       state.appendChild(close);
     }

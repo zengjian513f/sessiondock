@@ -199,7 +199,7 @@ impl Conversations {
         let mut retired_text = None;
         let mut enqueued = Vec::new();
         for (start, row) in queued.iter().enumerate() {
-            if retired.contains(&row.request_id) {
+            if row.state == "rejected" || retired.contains(&row.request_id) {
                 continue;
             }
             let hit = echoes.iter().enumerate().find_map(|(index, echo)| {
@@ -835,9 +835,15 @@ impl Conversations {
         {
             return submission_result(&old);
         }
+        let mut command_rejections_before = None;
         let write = async {
             let before_paste = self.driver.capture(lease).await.map_err(driver_error)?;
             input::classify(&identity.source, &before_paste).result()?;
+            if identity.source == "claude" {
+                command_rejections_before =
+                    cli_state::claude_command_rejections(&before_paste, &prompt)
+                        .map(|warnings| warnings.len());
+            }
             self.driver
                 .paste(lease, &prompt)
                 .await
@@ -887,6 +893,8 @@ impl Conversations {
                     sent_at: cli_state::unix_now(),
                     state: "queued".into(),
                     cli_queued_at: None,
+                    command_rejections_before,
+                    error: None,
                 },
             )?;
         }
