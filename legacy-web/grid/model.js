@@ -5,6 +5,10 @@
 import {segmentText} from './wire.js';
 
 const FLAG_WIDE = 32;
+/// 分页结果末尾与本地最旧几行重叠，用来对齐接缝；再多带一段余量，宿主行号
+/// 估计偏小（重排、尺寸变化）时接缝仍落在结果里。
+const HISTORY_SEAM_ROWS = 4;
+const HISTORY_SEAM_SLACK = 64;
 
 const DEFAULT_MODES = Object.freeze({
   alt: false,
@@ -71,6 +75,11 @@ function spansFromCells(cells) {
   return spans;
 }
 
+function sameRow(a, b) {
+  return !!a && !!b && a.wrapped === b.wrapped
+    && JSON.stringify(a.spans) === JSON.stringify(b.spans);
+}
+
 function posLess(a, b) {
   return a.line !== b.line ? a.line < b.line : a.col < b.col;
 }
@@ -86,8 +95,18 @@ export class GridModel {
     this.cursor = {x: 0, y: 0, visible: true};
     this.modes = {...DEFAULT_MODES};
     this.title = '';
-    /// 服务端仍持有、尚未下发的更早历史行数（分页时递减）。
+    /// 服务端仍持有、尚未下发的更早历史行数，也就是本地最旧一行在宿主历史里
+    /// 的绝对行号（0 = 最旧）的估计；分页时递减，接缝比对时校正。
     this.historyOlder = 0;
+    /// 是否还能往前分页：reset 快照带来更早历史时打开，接缝对不上时关闭。
+    this.historyPaging = false;
+    /// reset 快照、重排或停止分页时递增，作废尚未落地的分页请求。
+    this.historyEpoch = 0;
+    /// 宿主历史总行数的估计 = historyBase + historyAppended（之后滚出的行）。
+    this.historyBase = 0;
+    this.historyAppended = 0;
+    /// 本地按新宽度重排过回滚区，宿主行号要先用一次探测重新估计。
+    this.historyResync = false;
     this.seq = 0;
     this.lostMessages = 0;
     this.version = 0;
@@ -110,19 +129,79 @@ export class GridModel {
     return this.scrollback.length + this.rows;
   }
 
-  /// 把更早的历史行插到回滚区最前面（按需分页）；返回实际插入的行数。
-  prependHistory(rawRows) {
-    if (!Array.isArray(rawRows) || !rawRows.length) return 0;
-    this.version++;
-    const rows = rawRows.map(raw => this._row(raw));
-    this.scrollback.unshift(...rows);
-    // 插入后若超限，从最旧一端裁掉，返回值只算真正留下的。
-    const extra = this.scrollback.length - this.scrollbackLimit;
-    if (extra > 0) {
-      this.scrollback.splice(0, extra);
-      return Math.max(0, rows.length - extra);
+  /// 下一页更早历史的请求范围（宿主绝对行号 [from, to)），没有可取的就
+  /// 返回 null。范围末尾多带本地最旧的几行，用来在结果里找到接缝。
+  historyRequest(maxRows = 500) {
+    if (!this.historyPaging || this.modes.alt || !this.scrollback.length) return null;
+    const base = {
+      epoch: this.historyEpoch,
+      head: this.scrollback[0],
+      older: this.historyOlder,
+      length: this.scrollback.length,
+      appended: this.historyAppended,
+      expected: this.historyBase + this.historyAppended,
+    };
+    if (this.historyResync) return {...base, probe: true, from: 0, to: 1};
+    const edge = this.historyOlder;
+    const room = this.scrollbackLimit - this.scrollback.length;
+    const count = Math.min(maxRows | 0, room, edge);
+    if (!(count > 0)) return null;
+    const overlap = Math.min(HISTORY_SEAM_ROWS, this.scrollback.length);
+    return {...base, from: edge - count, to: edge + overlap + HISTORY_SEAM_SLACK, edge, overlap};
+  }
+
+  /// 应用 `GET /api/term/grid/history` 的结果。status：applied（插入了
+  /// added 行）、retry（估计已校正，按新范围再取）、stale（请求已作废）、
+  /// stop（结果里找不到接缝，停止分页；绝不插入对不齐的行）。
+  acceptHistory(req, result) {
+    if (!req || req.epoch !== this.historyEpoch || !this.historyPaging) {
+      return {status: 'stale', added: 0};
     }
-    return rows.length;
+    if (req.head !== this.scrollback[0] || req.older !== this.historyOlder) {
+      return {status: 'retry', added: 0};
+    }
+    const total = typeof result?.total === 'number' ? result.total : null;
+    if (req.probe) {
+      if (total == null) return this._haltHistory();
+      // 重排后假定本地回滚区就是宿主最新的那些历史行，接缝比对再校正。
+      this.historyResync = false;
+      this.historyBase = total - req.appended;
+      this.historyOlder = Math.max(0, total - req.length);
+      return {status: 'retry', added: 0};
+    }
+    // 宿主回滚区满了以后每进一行就从最旧一端丢一行，绝对行号随之前移；
+    // 宿主总数比本地估计少多少，本地最旧一行的行号至少就前移了多少。
+    if (total != null && total < req.expected) {
+      const dropped = req.expected - total;
+      this.historyBase -= dropped;
+      this.historyOlder = Math.max(0, this.historyOlder - dropped);
+      return {status: 'retry', added: 0};
+    }
+    const rows = Array.isArray(result?.rows) ? result.rows.map(raw => this._row(raw)) : [];
+    if (result?.from !== req.from) return this._haltHistory();
+    // 在结果里找本地最旧的 overlap 行；有多处时取离预期位置最近的一处。
+    const expectedAt = req.edge - req.from;
+    let at = -1;
+    for (let p = 0; p + req.overlap <= rows.length; p++) {
+      let same = true;
+      for (let k = 0; k < req.overlap && same; k++) same = sameRow(rows[p + k], this.scrollback[k]);
+      if (same && (at < 0 || Math.abs(p - expectedAt) < Math.abs(at - expectedAt))) at = p;
+    }
+    if (at < 0) return this._haltHistory();
+    this.historyOlder = req.from + at;
+    if (at === 0) return {status: req.from > 0 ? 'retry' : 'applied', added: 0};
+    this.version++;
+    this.scrollback.unshift(...rows.slice(0, at));
+    this.historyOlder = req.from;
+    // 请求发出后又滚进了新行时，超出上限的部分照常从最旧一端裁掉。
+    const trimmed = Math.max(0, this.scrollback.length - this.scrollbackLimit);
+    this._capScrollback();
+    return {status: 'applied', added: at - trimmed};
+  }
+
+  stopHistory() {
+    this.historyPaging = false;
+    this.historyEpoch++;
   }
 
   rowAt(i) {
@@ -220,6 +299,11 @@ export class GridModel {
       // 服务端还留着多少更早的历史：history_total - 快照随附的行数。
       const total = typeof msg.history_total === 'number' ? msg.history_total : this.scrollback.length;
       this.historyOlder = Math.max(0, total - this.scrollback.length);
+      this.historyEpoch++;
+      this.historyBase = total;
+      this.historyAppended = 0;
+      this.historyResync = false;
+      this.historyPaging = this.historyOlder > 0;
     } else if (this.cols > 0 && cols !== this.cols) {
       this._rebuildScrollback(cols);
     }
@@ -245,6 +329,7 @@ export class GridModel {
     let full = false;
     if (Array.isArray(msg.scrolled) && msg.scrolled.length && !this.modes.alt) {
       for (const raw of msg.scrolled) this.scrollback.push(this._row(raw));
+      this.historyAppended += msg.scrolled.length;
       this._capScrollback();
       scrolledCount = msg.scrolled.length;
       full = true;
@@ -284,7 +369,16 @@ export class GridModel {
 
   _capScrollback() {
     const extra = this.scrollback.length - this.scrollbackLimit;
-    if (extra > 0) this.scrollback.splice(0, extra);
+    if (extra > 0) {
+      this.scrollback.splice(0, extra);
+      // 本地最旧一端前移了；它在宿主里仍是连续的，只是更早的行不再留着。
+      this.historyOlder += extra;
+    }
+  }
+
+  _haltHistory() {
+    this.stopHistory();
+    return {status: 'stop', added: 0};
   }
 
   _materialize(spans, cols) {
@@ -342,6 +436,9 @@ export class GridModel {
   }
 
   _rebuildScrollback(newCols) {
+    // 宿主按自己的宽度重排历史，本地重排后的行与原来的绝对行号不再对应。
+    this.historyEpoch++;
+    this.historyResync = this.historyPaging;
     const rebuilt = [];
     let group = [];
     const flush = () => {

@@ -657,6 +657,35 @@ export class GridTerm {
     this._scheduleRender();
   }
 
+  /// 宿主还留着更早的历史时，下一页的请求范围（见 GridModel.historyRequest）；
+  /// 结果原样交回 applyHistoryPage。请求绑定当前模型，重连后自然作废。
+  historyPageRequest(maxRows) {
+    const req = this.model.historyRequest(maxRows);
+    if (req) req.model = this.model;
+    return req;
+  }
+
+  /// 把一页更早的历史插到回滚区最前面；视口和选区随之下移，看到的内容不动。
+  applyHistoryPage(req, result) {
+    if (this._disposed || !req || req.model !== this.model) return 'stale';
+    const {status, added} = this.model.acceptHistory(req, result);
+    if (added > 0) {
+      if (!this._following) this._viewportTop += added;
+      const shift = pos => pos && {line: pos.line + added, col: pos.col};
+      if (this._selection) {
+        this._selection = {start: shift(this._selection.start), end: shift(this._selection.end)};
+      }
+      if (this._selectAnchor) this._selectAnchor = shift(this._selectAnchor);
+      this._stickFollow();
+      this._scheduleRender();
+    }
+    return status;
+  }
+
+  stopHistoryPaging() {
+    this.model.stopHistory();
+  }
+
   proposeDimensions(widthCss, heightCss) {
     return proposeGridDimensions(this, widthCss, heightCss);
   }
