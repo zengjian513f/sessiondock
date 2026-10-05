@@ -55,8 +55,7 @@
 - [ ] Hub 注册表的 `renderer` 字段与 `set_renderer` 只剩 legacy 使用；legacy 退役时一并删除。
 - [ ] 对话区：消息容器 `#msgs` 仍由服务创建并作为各视图的 Teleport 目标，历史分页、
   差量追加和待落盘提示按 `#msgs` 查询；改为组件渲染容器后再收掉这些查询。
-- [ ] 终端：每个视图的 socket/心跳/重连/同步帧收进 `TerminalSession`；布局策略、
-  CLI 菜单改为组件；新建会话启动流程移出终端；列表与 pane 绑定独立。
-- [ ] 辅助页：grid 拆为画布渲染器类加组件；records 列表与播放器改为组件。
-- [ ] 收尾：依赖接口改为实现类型推导，更新 `architecture.md` 与
-  `frontend-migration-surfaces.md`。
+- [ ] 终端：布局策略（`layoutTermPane` 的高度、全幅与移动端定位）仍在控制器内计算，
+  可改为面板组件的 computed；终端列表与 pane 绑定仍共用控制器状态，尚未拆成独立 store。
+- [ ] 类型：`any` 仍有约 157 处，主要是线上记录的开放字段（`api/types.ts`）与各请求
+  `response.json()` 的结果；需按接口补响应类型后再收紧，验收目标 < 100。
