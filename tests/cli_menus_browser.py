@@ -243,6 +243,52 @@ def main():
                     private_host = json.loads((root / 'host' / (receipt['name'] + '.json')).read_text())
                     assert host_request(private_host, {'op':'resize', 'cols':160, 'rows':100})['ok']
                     expect(page.locator('#composer')).to_be_visible()
+                    if source == 'agy':
+                        # BUG-20261005-150140-776952: the empty editor remains
+                        # usable while a background command panel is visible.
+                        rule = '─' * 150
+                        task = '  ● [23:00:53] python3 -c background_fixture running'
+                        footer = '? for shortcuts' + ' ' * 65 + 'Fixture model · medium · 1 task(s) · /tasks'
+                        rows = ['Captured task-panel layout', rule, '> ', rule, task, rule, footer]
+
+                        def task_frame(lines, cursor=(2, 2), expected=b''):
+                            return fixture_frame(source, {'screen': '\n'.join(lines),
+                                'cursor': cursor, 'cols': 160}, expected, 'message sent')
+
+                        for label, lines, cursor, state, busy, text in [
+                            ('background task', rows, (2, 2), 'ready', True, ''),
+                            ('multiple tasks', rows[:5] + [task] + rows[5:], (2, 2), 'ready', True, ''),
+                            ('native draft', rows[:2] + ['> keep native draft'] + rows[3:],
+                             (19, 2), 'blocked', True, 'keep native draft'),
+                            ('cursor outside', rows, (2, 4), 'unknown', None, None),
+                            ('unrelated output', rows[:4] + ['ordinary output'] + rows[5:],
+                             (2, 2), 'unknown', None, None),
+                            ('missing task rule', rows[:5] + rows[6:], (2, 2), 'unknown', None, None),
+                            ('task finished', rows[:4] + ['? for shortcuts'], (2, 2), 'ready', False, ''),
+                        ]:
+                            result = loaded(source, task_frame(lines, cursor))
+                            subset(result['cli'], {'input': {'state': state},
+                                'instance': {'busy': busy}, 'editor': {'text': text}}, label)
+                            page.locator('#cinput').fill('task panel browser message')
+                            if state == 'ready':
+                                expect(page.locator('#csend')).to_be_enabled()
+                            else:
+                                expect(page.locator('#csend')).to_be_disabled()
+                                page.locator('#cinput').press('Enter')
+                                expect(page.locator('#cinput')).to_have_value('task panel browser message')
+                            assert not screens[source].with_suffix('.trace').read_bytes()
+                            print(f'PASS agy task panel: {label}', flush=True)
+                        message = 'task panel browser message'
+                        native = b'\x1b[200~' + message.encode() + b'\x1b[201~\r'
+                        loaded(source, task_frame(rows, expected=native))
+                        page.locator('#cinput').fill(message)
+                        with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
+                            page.locator('#csend').click()
+                        assert sent.value.status == 200, sent.value.text()
+                        expect(page.locator('#cinput')).to_have_value('')
+                        assert screens[source].with_suffix('.trace').read_bytes() == native
+                        assert screens[source].with_suffix('.outcome').read_text() == 'message sent'
+                        print('PASS agy task panel: browser SEND writes exactly one paste and Enter', flush=True)
                     page.locator('#cinput').fill('Keep this message draft')
                     page.evaluate('async () => await composerDraftWrites')
                     for fixture in fixtures:

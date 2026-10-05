@@ -77,7 +77,8 @@ Codex 的「模型 · Context … used · Main […]」状态栏在手机窄终�
 ## 测试矩阵
 
 Agy 1.2.16/1.2.17 已实现正向编辑区识别：上下相同的完整 `─` 横线、`> ` 首行、
-缩进续行与区内光标，底部最多一条非空页脚；不按模型名识别。非空编辑区
+缩进续行与区内光标，底部为单行页脚，或 1.2.17 的后台任务栏（带时间的 `●` running 行、
+同宽分隔线与 `/tasks` 页脚）；后台任务不阻止空编辑区发送，不按模型名识别。非空编辑区
 返回 `cli_input_pending` 保留终端正文，SEND 复用粘贴后的正文稳定再检与原生 user
 镜像回显。菜单投影支持 model 单选/取消、workspace trust 信任/退出、permissions
 scope 三种范围选择，沿用 `screen_menu` 与当前焦点的 Up/Down/Enter；model/scope
