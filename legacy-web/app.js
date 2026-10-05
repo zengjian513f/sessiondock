@@ -1423,6 +1423,7 @@ function applyMigrationMeta(uid, agent, entry, meta) {
       || meta.uid !== uid || (meta.agent_id || null) !== agent) return;
   const key = m => JSON.stringify([m.title, m.parent_title, m.sid, m.agent_type,
     m.cwd, m.model, !!m.starred, m.fork_parent_visible,
+    m.source === 'agy' ? (m.migration_warnings || []) : null,
     m.nest_parent || null, m.group || null,
     (m.agent_items || []).map(a => [a.id, a.title, a.type])]);
   const changed = key(entry.meta) !== key(meta);

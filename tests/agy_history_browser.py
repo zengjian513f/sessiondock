@@ -38,6 +38,7 @@ SEEDED = 'a6000000-0000-4000-8000-000000000001'
 PAGES = 'a6000000-0000-4000-8000-000000000002'
 DECOY = 'a6000000-0000-4000-8000-000000000003'
 ORPHAN = 'a6000000-0000-4000-8000-000000000004'
+INDEX_ONLY = 'a6000000-0000-4000-8000-000000000006'
 TITLE = '已有的 Agy 中文会话'
 USER = '请阅读原生历史，保留正文中的 <USER_REQUEST>literal</USER_REQUEST>。'
 ANSWER = '原生正文 agyzebracorn REWRITE_A'
@@ -78,7 +79,8 @@ def seed_catalog(db, work, *, title=TITLE):
     with closing(sqlite3.connect(db)) as connection, connection:
         connection.execute(SCHEMA)
         for sid, label, steps in ((SEEDED, title, 2), (PAGES, 'Agy 分页历史', 480),
-                                  (DECOY, '另一条 Agy 会话', 2)):
+                                  (DECOY, '另一条 Agy 会话', 2),
+                                  (INDEX_ONLY, '只有索引的 Agy 会话', 1)):
             connection.execute('INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                                (sid, label, '2026-10-04T00:08:00Z',
                                 json.dumps([work.as_uri()]), '', 'DONE', steps, 'synthetic-agent'))
@@ -326,24 +328,46 @@ def run(binary):
                         assert_native(native, expected_native, 'idle/no-op commit')
                         progress('unchanged database content preserves summary/messages mtime')
 
+                        # BUG-20261005-082202-dc28f8: a catalog entry can predate
+                        # any readable transcript. Do not claim cached history exists.
+                        index_uid, index_item = row(INDEX_ONLY)
+                        index_item.click()
+                        warning = page.locator('.native-history-warning')
+                        expect(warning).to_contain_text('仅找到 Agy 的会话索引')
+                        expect(warning).to_contain_text('没有已缓存的历史')
+                        expect(warning).to_contain_text('请在 Agy 中确认该会话是否仍可打开')
+                        expect(warning).not_to_contain_text('保留上次读取的历史')
+                        expect(page.locator('#msgs .msg')).to_have_count(0)
+                        index_detail = messages(opener, base, index_uid)
+                        assert index_detail['messages'] == []
+                        assert index_detail['meta']['migration_warnings'] == [warning.inner_text()]
+                        assert_native(native, expected_native, 'index-only missing transcript')
+                        write_transcript(native, INDEX_ONLY, [record(0, 'USER_INPUT', 'AGY FIRST READ')])
+                        expected_native = native_snapshot(native)
+                        expect(page.locator('#msgs')).to_contain_text('AGY FIRST READ')
+                        expect(warning).to_have_count(0)
+                        assert_native(native, expected_native, 'first readable transcript')
+                        progress('index-only session explains absent body/cache; first native transcript appears live')
+
                         # A missing transcript is unavailable, not an empty conversation.
+                        open_row(SEEDED, ANSWER)
                         native_bytes = path.read_bytes()
                         saved_mirror = directory.joinpath('messages.jsonl').read_bytes()
                         path.unlink()
                         expected_native = native_snapshot(native)
                         wait_for(lambda: json.loads(directory.joinpath('summary.json').read_text())
                                  .get('transcript_missing') is True, 'missing transcript warning')
-                        page.reload(wait_until='domcontentloaded')
-                        open_row(SEEDED, ANSWER)
                         expect(page.locator('.native-history-warning')).to_contain_text('保留上次读取的历史')
+                        expect(page.locator('.native-history-warning')).not_to_contain_text('没有已缓存的历史')
+                        cached_detail = messages(opener, base, uid)
+                        assert cached_detail['meta']['migration_warnings'] == [
+                            page.locator('.native-history-warning').inner_text()]
                         assert directory.joinpath('messages.jsonl').read_bytes() == saved_mirror
                         assert_native(native, expected_native, 'missing transcript read')
                         path.write_bytes(native_bytes)
                         expected_native = native_snapshot(native)
                         wait_for(lambda: json.loads(directory.joinpath('summary.json').read_text())
                                  .get('transcript_missing') is False, 'restored transcript')
-                        page.reload(wait_until='domcontentloaded')
-                        open_row(SEEDED, ANSWER)
                         expect(page.locator('.native-history-warning')).to_have_count(0)
                         assert_native(native, expected_native, 'restored transcript read')
                         progress('missing transcript retains cached history with notice; restoration clears notice')

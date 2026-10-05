@@ -75,8 +75,10 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     } else {
         skipped_warnings("agy", &records)
     };
-    if info["transcript_missing"] == true {
-        warnings.push(crate::sessions::agy::TRANSCRIPT_UNAVAILABLE.to_owned());
+    if let Some(warning) =
+        crate::sessions::agy::transcript_warning(&info, records.all().next().is_some())
+    {
+        warnings.push(warning.to_owned());
     }
     let (native_id, declared_ids) = if hard_error.is_none() {
         native_identity(session.get("id").into_iter())

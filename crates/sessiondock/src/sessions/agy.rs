@@ -13,8 +13,13 @@ use std::{
 pub const FORMAT: &str = "sessiondock-agy-mirror";
 pub const SUMMARY_FILE: &str = "summary.json";
 pub const MESSAGES_FILE: &str = "messages.jsonl";
-pub const TRANSCRIPT_UNAVAILABLE: &str =
-    "Agy 完整记录暂时不可读取；保留上次读取的历史，等待原生文件恢复";
+pub fn transcript_warning(summary: &Value, has_history: bool) -> Option<&'static str> {
+    (summary["transcript_missing"] == true).then_some(if has_history {
+        "未找到 Agy 的完整正文文件；保留上次读取的历史。正文文件可读取后会自动更新。"
+    } else {
+        "仅找到 Agy 的会话索引，未找到完整正文文件，也没有已缓存的历史，因此暂时无法显示消息。请在 Agy 中确认该会话是否仍可打开；正文文件可读取后会自动显示。"
+    })
+}
 
 /// Strip only Agy's outer user envelope, preserving the user's own text.
 pub(crate) fn user_text(text: &str) -> String {
