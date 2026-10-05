@@ -27,6 +27,8 @@ python3 tests/legacy_text_diff.py --legacy-dir BACKUP_LEGACY --reference-dir BAC
   在 5 秒后中止本次等待，提示服务端可能已取得控制权，清理本页忙碌状态。
   不自动重试或强制抢占，也不改变输入发送行为。超时与忙碌提示不弹原生对话框。
   按钮悬停或重绘时的提示按当前状态重新计算，含上一次失败的原因。
+- 来源缺少可用 CLI 时，控制台说明写明机器名和“未配置可用的 … 启动命令”，提示检查
+  CLI 安装与启动器配置后重启服务（见 docs/lifecycle-http.md）；判定条件与快照相同。
 - 产品名与新写入的偏好命名空间是 SessionDock（`sessiondock.*` 键）；兼容的线上
   字段名、旧偏好键的回退读取和本快照保留既有客户端所需的历史标识。
 - 附件引用分隔符按目标节点选择（`path_style`，旧节点按盘符/UNC 判断），Windows
