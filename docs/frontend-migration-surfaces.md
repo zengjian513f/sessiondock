@@ -408,7 +408,7 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 
 网格在主控制台右侧留 12px 滚动条。拖动或点击轨道只改本地视口，不把滚轮发给 PTY。焦点在滚动条上时可用方向键、PgUp/PgDn、Home/End。新输出不抢走已上翻的位置；回到底部再跟随。备用屏幕上滚动条隐藏。[`tests/terminal_scrollback_browser.py`](../tests/terminal_scrollback_browser.py)。
 
-独立 `grid.html` 见第 7 节。主控制台和它共用网格模型，但主控制台还有归属、租约和录制。
+原先未链接的独立 `grid.html` 已删除，网格只在主控制台里使用。[`tests/terminal_grid_browser.py`](../tests/terminal_grid_browser.py) 在主控制台里点控制台按钮连接网格，覆盖输入、PTY 尺寸与视口缩放跟随、剪贴板粘贴和第二个页面确认后接管。
 
 ### 归属与连接
 
@@ -440,31 +440,15 @@ Codex 侧线程：终端视口里出现 side thread 时记下状态（`setCodexS
 
 ### 录制回放
 
-会话结束后，主控制台用同一条录制流在原地回放（`startShellRecordingReplay` / `renderTimeline`）。条上：状态「会话已结束 · 只读回放」、播放、进度、时间、倍速 1/2/4/8/16、跳到最新并跟随。`timelineSeekTo` 不把按键发给已退出的 PTY。进行中的录制可跟随。独立录制页见第 7 节。
+会话结束后，主控制台用同一条录制流在原地回放（`startShellRecordingReplay` / `renderTimeline`）。条上：状态「会话已结束 · 只读回放」、播放、进度、时间、倍速 1/2/4/8/16、跳到最新并跟随。`timelineSeekTo` 不把按键发给已退出的 PTY。进行中的录制可跟随。原先未链接的独立录制页 `records.html` 已删除。
 
-[`tests/terminal_records_browser.py`](../tests/terminal_records_browser.py) 覆盖录制页的列表、跟随、尺寸、只读、退出、刷新和「适应窗口」。主控制台里的倍速和刻度点击尚需逐项核对。
+[`tests/terminal_timeline_browser.py`](../tests/terminal_timeline_browser.py) 覆盖主控制台的只读回放：退出后原地切到回放、时间轴点击/拖动/键盘、倍速播放、跳到开头与末尾、按键不改画面。
 
 ---
 
-## 7. 辅助页：网格、录制、文件
+## 7. 辅助页：文件
 
-这些页和主站共用主题前缀与字体，采用独立 HTML。迁移时它们仍是用户能打开的入口，不是内部调试页。
-
-### 网格终端 `grid.html`
-
-[`legacy-web/grid.html`](../legacy-web/grid.html) + [`legacy-web/grid.js`](../legacy-web/grid.js)。标题「网格终端」。工具条：会话下拉、连接、抢占（需要时）、状态、尺寸、复制选区、粘贴、回到底部、从录制返回（`?record=` 时）。画面是 canvas 加隐藏输入框。
-
-连接：`term/list`、`term/claim`、WebSocket `term/attach?mode=grid`。录制：`term/records/attach?mode=grid`，只读，无 claim、无输入、无 pty resize。滚轮在应用鼠标模式里发给 PTY，否则本地翻页并按需拉历史（`term/grid/history`）。Ctrl/⌘+点击开 OSC 8 链接。双击选词。主题跟随主站 `theme`。
-
-主控制台的网格套件覆盖了画、滚动和主题的一部分。[`tests/terminal_grid_render_browser.py`](../tests/terminal_grid_render_browser.py) 看的是画完之后的格子，不能单独代替把 `grid.html` 的连接、抢占、粘贴、历史当作用户路径点一遍。独立 `grid.html` 的点击流在审阅到的脚本头里尚需逐项核对。模块分工见 [`docs/terminal-grid.md`](terminal-grid.md)。
-
-### 录制页 `records.html`
-
-[`legacy-web/records.html`](../legacy-web/records.html) + [`legacy-web/records.js`](../legacy-web/records.js)。标题「终端录制」。左列表、右网格回放（`GridTerm`，`mode=grid`）。刷新、只看进行中、状态、大小、「适应窗口」（`records-fit`，默认关）、复制选区、回到底部。空态「选择左侧的录制」。嵌在主页面里（`embedded=1` 或 iframe）时去掉自己的标题栏。
-
-Hub：`?nodes=` 聚合多机，单条用 `?node=`。列表 `term/records`，观看 WebSocket `term/records/attach`。键盘：↑↓ Home End Enter/Space 在列表里移动。断线在可见时重连；`code === 1000` 或已经结束则不重连。缺口在画面里写成「（录制有缺口，已从下一个快照继续）」。能力关掉时状态是「此机器未启用终端录制」。
-
-[`tests/terminal_records_browser.py`](../tests/terminal_records_browser.py)。
+这些页和主站共用主题前缀与字体，采用独立 HTML。迁移时它们仍是用户能打开的入口，不是内部调试页。原先未链接的网格终端 `grid.html` 和录制页 `records.html` 已删除；网格和录制回放只在主控制台里使用（第 6 节）。
 
 ### 文件入口 `file.html` 与 `files.html`
 
@@ -596,7 +580,6 @@ Hub：`?nodes=` 聚合多机，单条用 `?node=`。列表 `term/records`，观�
 - 报告对话框里的模型、推理强度和描述键入（上传补救已有套件）。
 - 控制台「粘贴文件」打开后的粘贴。
 - 主控制台录制条的倍速和拖动进度。
-- 独立 `grid.html` 的连接、抢占、粘贴、历史加载。
 - PWA 安装提示；版本卡片已有 popup/draft 浏览器覆盖。
 
 `tests/terminal_grid_render_browser.py` 含像素断言。迁移验收沿用会点击、输入、提交的现有套件，不把截图像素当成新标准。
@@ -605,7 +588,7 @@ Hub：`?nodes=` 聚合多机，单条用 `?node=`。列表 `term/records`，观�
 
 前端只有 `legacy-web/`，按提交原样发布。`2552436` 记录迁移开始时的行为基线。
 
-视觉复用现有 `style.css`、`typography.css`、`grid.css`、`records.css`、
+视觉复用现有 `style.css`、`typography.css`、
 `session-resources.css`；不引入像素补偿。验收锚点为本文中的浏览器操作与临时 loopback，
 不增加单元测试或产品检查。FileDock、ptyhost 线协议及克隆/移动的字节身份改写
 继续按各自合同执行；已注销的 Service Worker 离线壳不会因重构恢复。

@@ -72,24 +72,10 @@ def check_surface(pw, surface, mobile=False):
             page = context.new_page()
             errors = []
             page.on('pageerror', lambda e: errors.append(str(e)))
-            standalone = surface == 'standalone'
-            page.goto(base + ('/grid.html' if standalone else ''), wait_until='networkidle')
-            if standalone:
-                page.wait_for_function("__grid.model && document.querySelector('#session').options.length > 0")
-                page.locator('#connect').click()
-                page.wait_for_function("__grid.state.connected && __gridText().includes('RS_SHELL_READY')")
-                page.evaluate("""window.selectionTerm = {
-                  getSelection() { const s = __grid.state.selection;
-                    return s ? __grid.model.selectionText(s.start, s.end) : ''; },
-                  get modes() { return {mouseTrackingMode: __grid.model.modes.mouse}; },
-                  renderer: __grid.renderer,
-                  _canvas: document.querySelector('#grid')
-                };""")
-                keyboard = page.locator('#keys')
-            else:
-                fixture.open_console(page, uid)
-                page.evaluate('window.selectionTerm = [...T.views.values()][0].term')
-                keyboard = page.locator('#termpane .xterm-helper-textarea')
+            page.goto(base, wait_until='networkidle')
+            fixture.open_console(page, uid)
+            page.evaluate('window.selectionTerm = [...T.views.values()][0].term')
+            keyboard = page.locator('#termpane .xterm-helper-textarea')
             if mobile:
                 check_touch(page, context, root, keyboard, surface)
                 check_touch_coexistence(page, context, root, keyboard, surface)
@@ -102,8 +88,7 @@ def check_surface(pw, surface, mobile=False):
                 keyboard.focus()
                 page.keyboard.type('mode:' + mode)
                 page.keyboard.press('Enter')
-                expected = ({'none':'none','1000':'press_release','1002':'button_motion','1003':'any_motion'}
-                            if standalone else {'none':'none','1000':'vt200','1002':'drag','1003':'any'})[mode]
+                expected = {'none':'none','1000':'vt200','1002':'drag','1003':'any'}[mode]
                 page.wait_for_function('mode => selectionTerm.modes.mouseTrackingMode === mode', arg=expected)
                 page.wait_for_timeout(100)
                 b = page.evaluate("""() => {
@@ -150,138 +135,136 @@ def check_surface(pw, surface, mobile=False):
                     data = bytes(sum(page.evaluate('selectionBytes'), []))
                     assert b'\x1b[<' in data and data.endswith(b'm'), (surface, mode, data)
                     assert page.evaluate('navigator.clipboard.readText()') == 'remote-gesture-sentinel'
-            if surface == 'grid':
-                check_scaled_rows(page, root, keyboard, surface)
-            if not standalone:
-                keyboard.focus()
-                page.keyboard.type('mode:none')
-                page.keyboard.press('Enter')
-                page.wait_for_function("selectionTerm.modes.mouseTrackingMode === 'none'")
-                screen = page.locator('.grid-canvas')
-                def menu(edge=False):
-                    box = screen.bounding_box()
-                    screen.click(button='right', position={'x': box['width'] - 2, 'y': box['height'] - 2}
-                                 if edge else {'x': 30, 'y': 12})
-                    page.locator('.term-context-menu:visible').wait_for()
-                    assert page.locator('.term-context-menu:visible').evaluate("""menu => {
-                      const box = menu.getBoundingClientRect();
-                      const host = menu.closest('.xterm-view').getBoundingClientRect();
-                      return box.left >= Math.max(0, host.left) - 1
-                        && box.top >= Math.max(0, host.top) - 1
-                        && box.right <= Math.min(innerWidth, host.right) + 1
-                        && box.bottom <= Math.min(innerHeight, host.bottom) + 1;
-                    }"""), (surface, edge, 'menu outside terminal host')
-                menu()
-                assert page.locator('.term-context-menu:visible button').all_text_contents() == ['粘贴', '查找']
-                # Reposition with a real right-click beside the viewport's lower
-                # terminal edge, where an unclamped menu would be clipped.
-                menu(edge=True)
-                # Reuse the existing menu surface, with menu rows rather than
-                # individually bordered form buttons, in both themes.
-                for theme in ['dark', 'light']:
-                    page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
-                    appearance = page.locator('.term-context-menu:visible').evaluate("""menu => {
-                      const button = menu.querySelector('button');
-                      const style = getComputedStyle(button);
-                      return {shared: menu.classList.contains('ctx-menu'), border: style.borderTopWidth,
-                        background: style.backgroundColor, size: style.fontSize,
-                        width: menu.getBoundingClientRect().width};
-                    }""")
-                    assert appearance['shared'] and appearance['border'] == '0px', appearance
-                    assert appearance['background'] == 'rgba(0, 0, 0, 0)', appearance
-                    assert appearance['size'] == '13px' and appearance['width'] >= 150, appearance
-                page.get_by_role('menuitem', name='粘贴', exact=True).press('ArrowDown')
-                assert page.get_by_role('menuitem', name='查找', exact=True).evaluate('e => e === document.activeElement')
-                page.get_by_role('menuitem', name='查找', exact=True).click()
-                searchbox = page.get_by_role('searchbox', name='查找终端输出')
-                assert searchbox.evaluate('e => e === document.activeElement')
-                page.keyboard.type('second_word')
-                assert searchbox.input_value() == 'second_word'
-                page.wait_for_function("selectionTerm.getSelection() === 'second_word'")
-                page.get_by_role('searchbox', name='查找终端输出').fill('中文查找')
-                page.wait_for_function("selectionTerm.getSelection() === '中文查找'")
-                count = int(page.locator('.term-find [role=status]').inner_text().split('/')[1])
-                assert count >= 2
-                assert page.locator('.term-find [role=status]').inner_text() == f'1/{count}'
-                page.get_by_role('button', name='下一个', exact=True).click()
-                assert page.locator('.term-find [role=status]').inner_text() == f'2/{count}'
-                page.get_by_role('button', name='上一个', exact=True).click()
-                assert page.locator('.term-find [role=status]').inner_text() == f'1/{count}'
-                page.get_by_role('searchbox', name='查找终端输出').fill('absent-term-query')
-                page.wait_for_function("document.querySelector('.term-find [role=status]').textContent === '无匹配'")
-                page.get_by_role('searchbox', name='查找终端输出').press('Escape')
-                assert not page.locator('.term-find').is_visible()
-                keyboard.focus()
-                page.keyboard.type('mode:flood')
-                page.keyboard.press('Enter')
-                page.wait_for_function("selectionTerm.model.scrollback.length >= 4900")
-                menu()
-                page.get_by_role('menuitem', name='查找', exact=True).click()
-                searchbox = page.get_by_role('searchbox', name='查找终端输出')
-                # Deliver two synthetic cursor diffs precisely while the
-                # real menu search yields. Neither stale pass may select
-                # coordinates; continuous updates must stop retrying.
-                page.evaluate("""() => {
-                  const model = selectionTerm.model, read = model.readCells;
-                  let pending = false;
-                  window.searchInvalidations = 0;
-                  window.restoreSearchRead = () => { model.readCells = read; };
-                  model.readCells = function(row) {
-                    if (!pending && searchInvalidations < 2) {
-                      pending = true;
-                      setTimeout(() => {
-                        searchInvalidations++;
-                        selectionTerm.write(JSON.stringify({t:'diff', cursor:{x:searchInvalidations, y:0}}) + '\\n');
-                        pending = false;
-                      }, 0);
-                    }
-                    return read.call(this, row);
-                  };
+            check_scaled_rows(page, root, keyboard, surface)
+            keyboard.focus()
+            page.keyboard.type('mode:none')
+            page.keyboard.press('Enter')
+            page.wait_for_function("selectionTerm.modes.mouseTrackingMode === 'none'")
+            screen = page.locator('.grid-canvas')
+            def menu(edge=False):
+                box = screen.bounding_box()
+                screen.click(button='right', position={'x': box['width'] - 2, 'y': box['height'] - 2}
+                             if edge else {'x': 30, 'y': 12})
+                page.locator('.term-context-menu:visible').wait_for()
+                assert page.locator('.term-context-menu:visible').evaluate("""menu => {
+                  const box = menu.getBoundingClientRect();
+                  const host = menu.closest('.xterm-view').getBoundingClientRect();
+                  return box.left >= Math.max(0, host.left) - 1
+                    && box.top >= Math.max(0, host.top) - 1
+                    && box.right <= Math.min(innerWidth, host.right) + 1
+                    && box.bottom <= Math.min(innerHeight, host.bottom) + 1;
+                }"""), (surface, edge, 'menu outside terminal host')
+            menu()
+            assert page.locator('.term-context-menu:visible button').all_text_contents() == ['粘贴', '查找']
+            # Reposition with a real right-click beside the viewport's lower
+            # terminal edge, where an unclamped menu would be clipped.
+            menu(edge=True)
+            # Reuse the existing menu surface, with menu rows rather than
+            # individually bordered form buttons, in both themes.
+            for theme in ['dark', 'light']:
+                page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
+                appearance = page.locator('.term-context-menu:visible').evaluate("""menu => {
+                  const button = menu.querySelector('button');
+                  const style = getComputedStyle(button);
+                  return {shared: menu.classList.contains('ctx-menu'), border: style.borderTopWidth,
+                    background: style.backgroundColor, size: style.fontSize,
+                    width: menu.getBoundingClientRect().width};
                 }""")
-                searchbox.fill('HISTORY_04999')
-                page.wait_for_function("searchInvalidations === 2 && document.querySelector('.term-find [role=status]').textContent === '输出已变化，请重试查找'")
-                assert page.evaluate('selectionTerm.getSelection()') == ''
-                page.evaluate('restoreSearchRead()')
-                page.get_by_role('button', name='下一个', exact=True).click()
-                page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_04999'")
-                searchbox.fill('HISTORY_')
-                searchbox.fill('HISTORY_04999')
-                page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_04999'")
-                assert page.evaluate('selectionTerm.model.scrollback.filter(row => row.cells).length') <= 512
-                searchbox.press('Escape')
-                page.set_viewport_size({'width': 1000, 'height': 900})
-                page.wait_for_timeout(250)
-                page.set_viewport_size({'width': 1280, 'height': 900})
-                page.wait_for_timeout(250)
-                menu()
-                page.get_by_role('menuitem', name='查找', exact=True).click()
-                searchbox.fill('HISTORY_00000')
-                page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_00000'")
-                assert page.evaluate('selectionTerm.model.scrollback.filter(row => row.cells).length') <= 512
-                searchbox.press('Escape')
-                keyboard.focus()
-                page.keyboard.type('mode:none')
-                page.keyboard.press('Enter')
-                page.wait_for_function("selectionTerm.buffer.active.getLine(selectionTerm.buffer.active.baseY).translateToString(true).includes('SELECT_FIRST')")
-                page.evaluate("navigator.clipboard.writeText('PASTE_MENU_SENTINEL')")
-                before = (root / 'work/input.bin').read_bytes()
-                menu()
-                page.get_by_role('menuitem', name='粘贴', exact=True).click()
-                page.wait_for_function("selectionBytes.flat().length > 0")
-                import time
-                deadline = time.monotonic() + 5
-                while time.monotonic() < deadline and (root / 'work/input.bin').read_bytes() == before:
-                    page.wait_for_timeout(50)
-                assert (root / 'work/input.bin').read_bytes()[len(before):] == b'\x1b[200~PASTE_MENU_SENTINEL\x1b[201~'
-                page.evaluate("[...T.views.values()][0].replay = true")
-                menu()
-                assert page.get_by_role('menuitem', name='粘贴', exact=True).is_disabled()
-                assert page.get_by_role('menuitem', name='查找', exact=True).evaluate('e => e === document.activeElement')
-                page.get_by_role('menuitem', name='查找', exact=True).click()
-                page.get_by_role('searchbox', name='查找终端输出').fill('second_word')
-                page.wait_for_function("selectionTerm.getSelection() === 'second_word'")
-                page.get_by_role('searchbox', name='查找终端输出').press('Escape')
-                print('PASS', surface, 'context menu without copy all / find / paste / read-only', flush=True)
+                assert appearance['shared'] and appearance['border'] == '0px', appearance
+                assert appearance['background'] == 'rgba(0, 0, 0, 0)', appearance
+                assert appearance['size'] == '13px' and appearance['width'] >= 150, appearance
+            page.get_by_role('menuitem', name='粘贴', exact=True).press('ArrowDown')
+            assert page.get_by_role('menuitem', name='查找', exact=True).evaluate('e => e === document.activeElement')
+            page.get_by_role('menuitem', name='查找', exact=True).click()
+            searchbox = page.get_by_role('searchbox', name='查找终端输出')
+            assert searchbox.evaluate('e => e === document.activeElement')
+            page.keyboard.type('second_word')
+            assert searchbox.input_value() == 'second_word'
+            page.wait_for_function("selectionTerm.getSelection() === 'second_word'")
+            page.get_by_role('searchbox', name='查找终端输出').fill('中文查找')
+            page.wait_for_function("selectionTerm.getSelection() === '中文查找'")
+            count = int(page.locator('.term-find [role=status]').inner_text().split('/')[1])
+            assert count >= 2
+            assert page.locator('.term-find [role=status]').inner_text() == f'1/{count}'
+            page.get_by_role('button', name='下一个', exact=True).click()
+            assert page.locator('.term-find [role=status]').inner_text() == f'2/{count}'
+            page.get_by_role('button', name='上一个', exact=True).click()
+            assert page.locator('.term-find [role=status]').inner_text() == f'1/{count}'
+            page.get_by_role('searchbox', name='查找终端输出').fill('absent-term-query')
+            page.wait_for_function("document.querySelector('.term-find [role=status]').textContent === '无匹配'")
+            page.get_by_role('searchbox', name='查找终端输出').press('Escape')
+            assert not page.locator('.term-find').is_visible()
+            keyboard.focus()
+            page.keyboard.type('mode:flood')
+            page.keyboard.press('Enter')
+            page.wait_for_function("selectionTerm.model.scrollback.length >= 4900")
+            menu()
+            page.get_by_role('menuitem', name='查找', exact=True).click()
+            searchbox = page.get_by_role('searchbox', name='查找终端输出')
+            # Deliver two synthetic cursor diffs precisely while the
+            # real menu search yields. Neither stale pass may select
+            # coordinates; continuous updates must stop retrying.
+            page.evaluate("""() => {
+              const model = selectionTerm.model, read = model.readCells;
+              let pending = false;
+              window.searchInvalidations = 0;
+              window.restoreSearchRead = () => { model.readCells = read; };
+              model.readCells = function(row) {
+                if (!pending && searchInvalidations < 2) {
+                  pending = true;
+                  setTimeout(() => {
+                    searchInvalidations++;
+                    selectionTerm.write(JSON.stringify({t:'diff', cursor:{x:searchInvalidations, y:0}}) + '\\n');
+                    pending = false;
+                  }, 0);
+                }
+                return read.call(this, row);
+              };
+            }""")
+            searchbox.fill('HISTORY_04999')
+            page.wait_for_function("searchInvalidations === 2 && document.querySelector('.term-find [role=status]').textContent === '输出已变化，请重试查找'")
+            assert page.evaluate('selectionTerm.getSelection()') == ''
+            page.evaluate('restoreSearchRead()')
+            page.get_by_role('button', name='下一个', exact=True).click()
+            page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_04999'")
+            searchbox.fill('HISTORY_')
+            searchbox.fill('HISTORY_04999')
+            page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_04999'")
+            assert page.evaluate('selectionTerm.model.scrollback.filter(row => row.cells).length') <= 512
+            searchbox.press('Escape')
+            page.set_viewport_size({'width': 1000, 'height': 900})
+            page.wait_for_timeout(250)
+            page.set_viewport_size({'width': 1280, 'height': 900})
+            page.wait_for_timeout(250)
+            menu()
+            page.get_by_role('menuitem', name='查找', exact=True).click()
+            searchbox.fill('HISTORY_00000')
+            page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_00000'")
+            assert page.evaluate('selectionTerm.model.scrollback.filter(row => row.cells).length') <= 512
+            searchbox.press('Escape')
+            keyboard.focus()
+            page.keyboard.type('mode:none')
+            page.keyboard.press('Enter')
+            page.wait_for_function("selectionTerm.buffer.active.getLine(selectionTerm.buffer.active.baseY).translateToString(true).includes('SELECT_FIRST')")
+            page.evaluate("navigator.clipboard.writeText('PASTE_MENU_SENTINEL')")
+            before = (root / 'work/input.bin').read_bytes()
+            menu()
+            page.get_by_role('menuitem', name='粘贴', exact=True).click()
+            page.wait_for_function("selectionBytes.flat().length > 0")
+            import time
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and (root / 'work/input.bin').read_bytes() == before:
+                page.wait_for_timeout(50)
+            assert (root / 'work/input.bin').read_bytes()[len(before):] == b'\x1b[200~PASTE_MENU_SENTINEL\x1b[201~'
+            page.evaluate("[...T.views.values()][0].replay = true")
+            menu()
+            assert page.get_by_role('menuitem', name='粘贴', exact=True).is_disabled()
+            assert page.get_by_role('menuitem', name='查找', exact=True).evaluate('e => e === document.activeElement')
+            page.get_by_role('menuitem', name='查找', exact=True).click()
+            page.get_by_role('searchbox', name='查找终端输出').fill('second_word')
+            page.wait_for_function("selectionTerm.getSelection() === 'second_word'")
+            page.get_by_role('searchbox', name='查找终端输出').press('Escape')
+            print('PASS', surface, 'context menu without copy all / find / paste / read-only', flush=True)
             assert not errors, errors
             context.close()
             browser.close()
@@ -521,8 +504,7 @@ def check_shift_selection(page, context, root, keyboard, surface):
 def main():
     fixture.SHELL = 'exec python3 -u -c ' + shlex.quote(CLI)
     with sync_playwright() as pw:
-        for surface in ['grid', 'standalone']:
-            check_surface(pw, surface)
+        check_surface(pw, 'grid')
         check_surface(pw, 'grid', mobile=True)
 
 

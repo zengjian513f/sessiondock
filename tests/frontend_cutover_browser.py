@@ -60,7 +60,7 @@ def main():
                 expect(page.locator('#settings-dialog')).to_be_visible()
                 page.keyboard.press('Escape')
                 # File adapters retain their original capability-script contract.
-                for name in ('index.html', 'grid.html', 'records.html', 'file.html', 'files.html'):
+                for name in ('index.html', 'file.html', 'files.html'):
                     response = context.request.get(base + name)
                     assert response.ok, (name, response.status)
                     body = response.text()
@@ -68,6 +68,9 @@ def main():
                     if name not in ('file.html', 'files.html'):
                         assert 'name="sessiondock-capabilities"' in body, name
                     assert response.headers.get('cache-control') == 'no-store', name
+                # The unlinked standalone grid and recordings pages are removed.
+                for name in ('grid.html', 'grid.js', 'grid.css', 'records.html', 'records.js', 'records.css'):
+                    assert context.request.get(base + name).status == 404, name
                 for name in ('app.js', 'term.js', 'capabilities.js'):
                     assert context.request.get(base + name).status == (200), name
                 # The retired Vue settings bundle is never served.
@@ -77,7 +80,7 @@ def main():
             finally:
                 browser.close()
     print('PASS frontend cutover: actual previous worker/cache retired, unrelated cache retained, '
-          'prefixed search/history/settings work, five HTML entries injected, scripts match selected frontend')
+          'prefixed search/history/settings work, three HTML entries injected, removed pages 404, scripts match selected frontend')
 
 
 if __name__ == '__main__':

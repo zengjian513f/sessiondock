@@ -146,7 +146,7 @@ impl Assets {
             .map(|(path, mut data)| {
                 let html = matches!(
                     path.as_str(),
-                    "/index.html" | "/files.html" | "/file.html" | "/records.html" | "/grid.html"
+                    "/index.html" | "/files.html" | "/file.html"
                 );
                 if html {
                     data = String::from_utf8_lossy(&data)

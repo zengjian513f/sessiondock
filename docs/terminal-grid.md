@@ -7,11 +7,12 @@ Recordings stay a byte log of that same PTY
 ([terminal session recordings](terminal-records.md)): they are not this
 protocol, and this protocol is not a recording.
 
-The page is `grid.html`. It uses the same claim and attach lease as the
-byte console ([terminal ownership](terminal-ownership.md),
-[raw terminal input](terminal-input.md)). Hub pages pass `?node=` and
-prefix calls with `/api/nodes/{nid}/api/` the same way as
-`records.html` ([hub](hub.md)).
+The client is the main console (`term.js` through `legacy-web/grid/facade.js`,
+see [Main console](#main-console)); the former standalone `grid.html` page was
+removed. It uses the same claim and attach lease as the byte console
+([terminal ownership](terminal-ownership.md),
+[raw terminal input](terminal-input.md)). On a hub page, calls for a node's
+session are prefixed with `/api/nodes/{nid}/api/` ([hub](hub.md)).
 
 ## Purpose
 
@@ -227,9 +228,9 @@ queries never reach a client and are not stored.
 
 ## Browser modules
 
-`legacy-web/grid.js` is the page. The four modules under
-`legacy-web/grid/` have no DOM except `input.js`'s hidden-textarea
-helper.
+The four modules under `legacy-web/grid/` have no DOM except
+`input.js`'s hidden-textarea helper; `grid/facade.js` assembles them into
+the console's `GridTerm`.
 
 | Module | Owns |
 | --- | --- |
@@ -237,7 +238,6 @@ helper.
 | `grid/model.js` | viewport, scrollback, cursor, modes, title, `seq`. Applies `snapshot`/`diff`. Materializes cells lazily. Default `scrollbackLimit` 100_000. **Does not reflow the viewport** (the host resends it) |
 | `grid/render.js` | Canvas 2D. Metrics: `"W"` advance (CJK `"中"` / 2 as fallback), `cellHeight = round(fontSize * lineHeight * dpr) / dpr` (a whole device pixel, like the width) with defaults 14 px and 1.2, baseline from `'M'.actualBoundingBoxAscent` plus vertical centering. Backing store is CSS × `devicePixelRatio` × effective ancestor CSS zoom; the context and cell alignment use that combined density. Zoom changes rebuild the backing store and repaint even when rows/columns stay unchanged or a keyboard prevents PTY resizing. Every row is painted inside a clip of its own box: glyphs taller than the em box (block elements, ❯, emoji, accented capitals, CJK fallbacks) cannot spill into the neighbouring rows, which only repaint when dirty. Fit floor: 2 columns, 1 row |
 | `grid/input.js` | `InputEncoder`: keys, paste (newlines → CR; bracketed `\x1b[200~…\x1b[201~` when that mode is on), focus (`\x1b[I` / `\x1b[O`), mouse (SGR / UTF-8 / X10, default X10 clamped at 223), alt-screen wheel-as-arrows (3 lines). `KeyCapture` holds a hidden textarea |
-| `grid.js` | claim, attach `mode=grid`, list, fit/resize, follow/scroll, selection, copy/paste, mouse reporting vs selection, IME, title, reconnect |
 
 Scrollback reflow happens only in the model, on `reset: false` when
 `cols` changes and on an explicit `reflow`/`resize`. Wrapped runs are
@@ -369,10 +369,9 @@ a `record` frame and a `reset:true` snapshot of the model as of that
 instant, and the `timeline` / `record` / `clock` / `exit` / `end` text
 frames and the `seek` / `play` / `pause` / `live` controls are those of
 the byte replay
-([terminal session recordings](terminal-records.md)). `grid.html?record=<id>`
-opens that stream read-only (no claim, no input, no pty resize); the
-main console uses the same stream to replay an exited session in place
-(see [recordings](terminal-records.md)). The checkpoint serializer
+([terminal session recordings](terminal-records.md)). The main console
+opens that stream read-only (no claim, no input, no pty resize) to replay
+an exited session in place (see [recordings](terminal-records.md)). The checkpoint serializer
 positions and erases each row (`ESC[r;1H ESC[2K`) instead of `ESC[2J`,
 because alacritty's ED 2 would push the cleared rows into scrollback.
 
@@ -393,8 +392,8 @@ built on the grid modules; `index.html` publishes it as
 `ensureTerm` creates it and adds `mode=grid` to the attach URL;
 `writeTermOutput` hands each JSON-line chunk straight to it. Claim, lease,
 resize, revoke, exit and the Codex side-thread scan through `buffer.active`
-work on that object. The records page (`records.html`) replays through the same
-facade with `mode=grid`, reading each snapshot's recorded size.
+work on that object. Recording replay goes through the same facade with
+`mode=grid`, reading each snapshot's recorded size.
 
 The main console's grid renderer reserves a 12-pixel right gutter for a vertical
 history scrollbar. Dragging the thumb or clicking the track changes the same
@@ -424,12 +423,15 @@ selection text across wrapped lines.
 keys, paste, focus, mouse encodings, and alt-screen wheel-as-arrows
 (≥ 40 cases).
 
-`python3 tests/terminal_grid_browser.py` is the legacy `grid.html`
-acceptance (Playwright Chromium, temporary fixtures): claim and
-connect, typing, PTY resize follow, scrollback wheel/follow, selection
-copy, paste, host exit, no page errors. Needs POSIX and the debug
-`sessiondock` and `ptyhost` binaries already built; it does not build
-them.
+`python3 tests/terminal_grid_browser.py` is the main-console grid
+acceptance (Playwright Chromium, temporary fixtures): the console button
+claims and attaches `mode=grid`, typing, the shell's `stty size` equals
+the grid view before and after a viewport resize, clipboard text paste
+(Ctrl+V), takeover by a second page after confirmation with the first page
+notified, no page errors. Selection/copy, scrollback, file paste and host
+exit are in `terminal_selection_browser`, `terminal_scrollback_browser`
+and `terminal_input_browser`. Needs POSIX and the debug `sessiondock` and
+`ptyhost` binaries already built; it does not build them.
 
 The two Node files are also in the `node_contracts` group of
 [validation.md](validation.md). The browser file is the
