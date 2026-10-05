@@ -106,6 +106,14 @@ def main():
                     assert len(compact_rows) == 3 and all(row['uid'] != child for row in compact_rows)
                     page.wait_for_function('S.sessions.length === 3')
                     assert page.locator(f'#side .item[data-uid="{child}"]').count() == 0
+                    # Remote child counts preserve its parent's arrow; expansion only opens that branch.
+                    compact_parent = next(row for row in compact_rows if row['uid'] == (twin if restart else parent))
+                    assert compact_parent['child_count'] == 1
+                    page.locator(f'#side .item[data-uid="{compact_parent["uid"]}"] .nest-caret').click()
+                    page.wait_for_function('S.sessions.length === 4')
+                    depth(child, 1)
+                    other = twin if not restart else parent
+                    depth(other, 0)
                     page.locator('#nest-toggle').click()
                     page.wait_for_function('S.sessions.length === 4')
                     depth(child, 1)

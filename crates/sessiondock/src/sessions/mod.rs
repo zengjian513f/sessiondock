@@ -32,6 +32,7 @@ mod providers;
 mod records;
 pub(crate) use records::string_reader::JsonStringReader;
 mod scope;
+pub(crate) mod sidebar;
 pub(crate) use scope::CatalogEntry as NativeCatalogEntry;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -439,6 +440,7 @@ struct SerializedList {
     /// `Views::revision` when the decorations were borrowed.
     revision: u64,
     bytes: Bytes,
+    projection: String,
 }
 
 /// Dependency resolution over one index snapshot: Codex `history_base`
@@ -736,7 +738,7 @@ impl SessionStore {
     /// while an open holds the view lock is undecorated and not kept.
     pub fn list_view_bytes(&self, force: bool, sig: &str) -> Result<Bytes, SessionError> {
         let published = self.publish(force)?;
-        self.published_view_bytes(published, force, sig, false)
+        self.published_view_bytes(published, force, sig, None)
     }
 
     /// Run topology preparation once per newly listed native identity, before
@@ -746,11 +748,11 @@ impl SessionStore {
         &self,
         force: bool,
         sig: &str,
-        hide_children: bool,
+        projection: Option<(&[sidebar::ExpandedParent], &str)>,
         prepare: impl Fn(&[Value]) -> Result<(), SessionError>,
     ) -> Result<Bytes, SessionError> {
         let published = self.publish_prepared(force, index::CHECK_TTL, Some(&prepare))?;
-        self.published_view_bytes(published, force, sig, hide_children)
+        self.published_view_bytes(published, force, sig, projection)
     }
 
     fn published_view_bytes(
@@ -758,14 +760,20 @@ impl SessionStore {
         published: Arc<Published>,
         force: bool,
         sig: &str,
-        hide_children: bool,
+        projection: Option<(&[sidebar::ExpandedParent], &str)>,
     ) -> Result<Bytes, SessionError> {
         let document = published.document.clone();
-        let view_sig = if hide_children {
-            format!("{}:main", document["sig"].as_str().unwrap_or_default())
-        } else {
-            document["sig"].as_str().unwrap_or_default().to_owned()
-        };
+        let projection_key = projection.map_or_else(String::new, |(expanded, _)| {
+            format!(
+                ":main:{}",
+                serde_json::to_string(expanded).expect("expanded parents serialize")
+            )
+        });
+        let view_sig = format!(
+            "{}{}",
+            document["sig"].as_str().unwrap_or_default(),
+            projection_key
+        );
         if !force && !sig.is_empty() && view_sig == sig {
             let unchanged = json!({"unchanged": true, "sig": sig});
             return Ok(Bytes::from(
@@ -776,28 +784,19 @@ impl SessionStore {
             .serialized
             .lock()
             .map_err(|_| SessionError::new(500, "会话列表缓存锁不可用"))?;
-        let cache = &mut caches[usize::from(hide_children)];
+        let cache = &mut caches[usize::from(projection.is_some())];
         if !force
             && let Some(entry) = cache.as_ref()
+            && entry.projection == projection_key
             && Arc::ptr_eq(&entry.document, &document)
             && entry.revision == self.views_revision.load(Ordering::Acquire)
         {
             return Ok(entry.bytes.clone());
         }
         let (mut value, revision) = self.render_view(&published, &document);
-        if hide_children {
+        if let Some((expanded, node_id)) = projection {
             value["sig"] = Value::String(view_sig);
-            if let Some(rows) = value["sessions"].as_array_mut() {
-                rows.retain(|row| {
-                    row["nest_parent"]["sid"].as_str().is_none_or(str::is_empty)
-                        && row["agent_id"].as_str().is_none_or(str::is_empty)
-                });
-                for row in rows {
-                    if let Some(row) = row.as_object_mut() {
-                        row.remove("agent_items");
-                    }
-                }
-            }
+            sidebar::project(&mut value, expanded, node_id);
         }
         let bytes = Bytes::from(serde_json::to_vec(&value).expect("serde_json::Value serializes"));
         if let Some(revision) = revision {
@@ -805,6 +804,7 @@ impl SessionStore {
                 document,
                 revision,
                 bytes: bytes.clone(),
+                projection: projection_key,
             });
         }
         Ok(bytes)

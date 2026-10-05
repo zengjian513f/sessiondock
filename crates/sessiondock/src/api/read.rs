@@ -34,6 +34,7 @@ pub struct ListQuery {
     force: String,
     sig: String,
     children: String,
+    expanded: String,
 }
 
 /// Responses above this many bytes schedule a coalesced `malloc_trim` once
@@ -49,6 +50,18 @@ pub async fn list(
     query: Result<Query<ListQuery>, QueryRejection>,
 ) -> Result<JsonBytes, ApiError> {
     let Query(query) = query.map_err(query_error)?;
+    let expanded: Vec<crate::sessions::sidebar::ExpandedParent> = if query.expanded.is_empty() {
+        Vec::new()
+    } else {
+        serde_json::from_str(&query.expanded).map_err(|error| {
+            ApiError::new(StatusCode::BAD_REQUEST, "invalid_query", error.to_string())
+        })?
+    };
+    let node_id = state
+        .node
+        .as_ref()
+        .map(|node| node.node_id.clone())
+        .unwrap_or_default();
     let scanner = state.proc_scan.clone();
     let metadata = state.metadata.clone();
     state
@@ -57,7 +70,7 @@ pub async fn list(
             let bytes = store.list_view_bytes_prepared(
                 query.force == "1",
                 &query.sig,
-                query.children == "hidden",
+                (query.children == "hidden").then_some((expanded.as_slice(), node_id.as_str())),
                 |rows| {
                     if let (Some(scanner), Some(metadata)) = (&scanner, &metadata) {
                         crate::runtime::spawn::prepare_list(scanner, metadata, rows).map_err(

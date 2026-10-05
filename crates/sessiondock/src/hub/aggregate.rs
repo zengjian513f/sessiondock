@@ -245,6 +245,27 @@ pub async fn sessions(
 fn sessions_body(registry: &Registry, answers: &[Answer], known: &str) -> Value {
     let mut result = envelope(registry, answers);
     merge_rows(&mut result, answers, "sessions");
+    // Nodes omit deferred rows, but still publish counts for remote owners.
+    let counts = answers
+        .iter()
+        .flat_map(|answer| answer.rows("child_counts"))
+        .collect::<Vec<_>>();
+    if let Some(rows) = result.get_mut("sessions").and_then(Value::as_array_mut) {
+        for row in rows {
+            let remote = counts
+                .iter()
+                .filter(|count| {
+                    count["node_id"] == row["node_id"]
+                        && count["source"] == row["source"]
+                        && count["sid"] == row["sid"]
+                })
+                .filter_map(|count| count["count"].as_u64())
+                .sum::<u64>();
+            if remote > 0 {
+                row["child_count"] = json!(row["child_count"].as_u64().unwrap_or(0) + remote);
+            }
+        }
+    }
     let sig = signature(&result);
     if known == sig {
         return json!({
