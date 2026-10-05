@@ -1,6 +1,6 @@
 # 接入新的 AI CLI
 
-本文把 OpenCode 接入及后续修复整理成新增 AI CLI 的清单；2026-10-04 对照主线至 `7dabf54` 核对，包含菜单交互、客户端更新、镜像增量读取和会话挂靠。每项都要明确实现或记录不适用原因。现行合同以各专题文档为准：[OpenCode](opencode.md)、[启动器](lifecycle-launcher.md)、[生命周期 HTTP](lifecycle-http.md)、[对话输入就绪](composer-input.md)、[CLI 状态对象](cli-state.md)、[读模型](read-model.md)、[liveness](liveness.md)、[移动](session-move.md)、[克隆](session-clone.md)。
+本文把 OpenCode、Agy 接入及后续修复整理成新增 AI CLI 的清单；2026-10-05 补充 Agy 1.2.17 的审批、问卷、命令回显和模型目录经验。每项都要明确实现或记录不适用原因，不能把能启动、能发送当作交互接入完成。现行合同以各专题文档为准：[OpenCode](opencode.md)、[Agy](agy.md)、[启动器](lifecycle-launcher.md)、[生命周期 HTTP](lifecycle-http.md)、[对话输入就绪](composer-input.md)、[CLI 状态对象](cli-state.md)、[读模型](read-model.md)、[liveness](liveness.md)、[移动](session-move.md)、[克隆](session-clone.md)。
 
 ## 先调研，再定路线
 
@@ -9,12 +9,13 @@
 | 问题 | 决定什么 | 已有 CLI 的答案 |
 | --- | --- | --- |
 | 目标版本怎么装 | 安装脚本与版本 | OpenCode 接入时普通安装入口给 1.x，2.x 使用 `/v2/install`；这是当时的调查记录，新增 CLI 时重新核对目标版本和渠道 |
-| 怎么读取版本、查询最新版本、无交互更新 | 机器设置中的客户端矩阵 | 现有四种 CLI 用 `--version` 和 `update`；最新版本查询按各自渠道实现，新 CLI 不能直接假定同样支持 |
-| 会话存在哪里、什么格式 | 读模型路线 | Claude/Codex 是 JSONL 文件，Grok 是目录加 `summary.json`，OpenCode 2 是一个 SQLite 库 |
-| 会话 ID 何时确定 | 启动类型（`Launch`） | Claude 启动参数指定 UUID（`new_assigned`）；OpenCode 先 `api session.create` 再 `--session`（`new_assigned`）；Codex 启动后才知道（`new_pending`） |
-| 怎么恢复 | `resume_args` | Codex `resume {sid}`，OpenCode `--session {sid}` |
+| 怎么读取版本、查询最新版本、无交互更新 | 机器设置中的客户端矩阵 | 按各 CLI 的实际命令、退出码与发布渠道核对；Agy 使用 `--version`、`update` 和官方平台 manifest，不据此推断其他 CLI |
+| 会话存在哪里、什么格式 | 读模型路线 | Claude/Codex 是 JSONL 文件，Grok 是目录加 `summary.json`，OpenCode 2 是 SQLite；Agy 的目录库、原生会话库与完整 transcript 分开存储 |
+| 会话 ID 何时确定 | 启动类型（`Launch`） | Claude 启动参数指定 UUID（`new_assigned`）；OpenCode 先 `api session.create` 再 `--session`（`new_assigned`）；Codex、Agy 启动后才知道（`new_pending`） |
+| 怎么恢复 | `resume_args` | Codex `resume {sid}`，OpenCode `--session {sid}`，Agy `--conversation {sid}` |
 | 模型、强度怎么传；模型列表在哪 | 模型选择 | 见下文“生命周期与启动器” |
 | TUI 画面：编辑区、忙碌、菜单、提问/权限弹层、中断键 | 输入就绪识别与网页题卡 | 见下文“发送与输入就绪”和“原生菜单与网页回答” |
+| 斜杠命令是否写入同文 user 记录 | 发送回显队列 | Agy 的五个已核实裸菜单命令不写入原命令；不能一律等待回显，也不能把所有 `/` 开头输入都排除 |
 | 删除语义 | 删除/回收站 | 文件型走回收站；OpenCode 只能调 `api session.remove`，不可恢复 |
 | 原生数据能否移动或克隆，身份与依赖如何重写 | 整组操作能力 | OpenCode 的镜像不是可恢复的原生文件，当前不支持移动或克隆 |
 | 子代理/子会话怎么表示 | 列表挂靠 | Claude 子目录，Codex `parent_thread_id`，OpenCode `parent_id` 和进程关系 |
@@ -38,7 +39,7 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
 
 ## 接入清单
 
-下面覆盖 OpenCode 实际改动及后续共用能力。Rust 路径除另有注明外相对 `crates/sessiondock/src/`。使用 `rg` 同时查 `opencode`、`Opencode`、`grok`、`Source::Grok` 和来源枚举/集合，检查服务端、两套前端入口、测试和文档；只搜一种来源不能保证覆盖所有分支。清单不是新增输入限制的依据，保持各现行合同的能力与拒绝边界。
+下面覆盖 OpenCode、Agy 实际改动及后续共用能力。Rust 路径除另有注明外相对 `crates/sessiondock/src/`。使用 `rg` 同时查 `opencode`、`agy`、`grok`、`Source::Grok` 和来源枚举/集合，检查服务端、生产前端 `legacy-web/`、测试和文档；只搜一种来源不能保证覆盖所有分支。不要修改冻结参考来代替生产实现。清单不是新增输入限制的依据，保持各现行合同的能力与拒绝边界。
 
 ### ptyhost 与 client
 
@@ -62,6 +63,8 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
 - `lifecycle/models.rs`：
   - `catalog()`：模型目录从哪里读，要按子进程的环境读；
   - `supports_effort()`：这个 CLI 有没有强度参数。
+- 模型与强度要核对实际组合，而不只检查 CLI 是否支持 `--effort`。Agy 的原生目录把强度编码进模型 ID（包括 `-low-thinking`）；网页可合并成基础模型与强度两列，但只能选择目录存在的组合，提交映射回原生 ID，不能重复传强度参数。没有变体元数据时才沿用独立参数规则。验证新建、问题报告、已保存选择及实际 argv，见 [模型合同](lifecycle-http.md)。
+- 慢模型目录查询应复用 profile 环境、后台缓存与进行中的查询；失败不抹掉已知目录。不能为打开选择器反复串行启动 CLI，也不凭过期缓存制造不存在的模型或强度。
 - `lifecycle/autobind.rs`：进程证据绑定。
 - **预创建会话不是永远的空会话**：只有目录 cursor 与已接受的对话窗口都没有原生记录时，才能按未使用启动处理。旧目录快照不能把已有对话的运行会话从“停止”变成“删除”；首条记录到达但标题未变也要更新动作（`aff9822`）。
 - **节点配置**：每台机器 `etc/launcher.json` 为每种 CLI 配**唯一**一个 profile（`executable` 写 CLI 的绝对路径，`args`、`resume_args`；服务本身经 `with-zshrc` 启动，CLI 继承它的环境，见 [shell-env.md](shell-env.md)）；env 按需增加新变量。改之前先备份。
@@ -86,9 +89,9 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
 - `sessions/providers/<cli>.rs` 和 `providers.rs`：历史解析。约定如下：
   - 思考记为 `thinking`；
   - 一轮最后一段正文标 `phase: final`，其余标 `progress`；
-  - 工具调用和结果要配对，报错带 `isError`；
+  - 工具调用和结果有可靠原生身份时配对，报错带 `isError`；没有 call ID 等关联证据时保留原始调用和独立结果，不按相邻位置猜配对（Agy 完整 transcript 的实测边界）；
   - 服务端报错和“没有产生回复的失败回合”各显示一条 `[<CLI> …]` 提示；
-  - 用户中断：把这一轮最后一条非终稿的助手消息标 `interrupted` 和 `interrupt_reason`（同 Codex `turn_aborted`），页面会显示“已中断”。
+  - 用户中断：有独立原生证据时标 `interrupted` 和 `interrupt_reason`（如 Codex `turn_aborted`）；Agy 的 DONE/IDLE 不能区分中断与正常结束，不据此补造“已中断”或完成三态。
 - 按 source 分支的白名单，一处都不能漏：
   - `sessions/scope.rs`、`views/mod.rs`：原生 ID；
   - `index/titles.rs`；
@@ -106,6 +109,7 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
 - 在读事务前采样版本，完整同步成功后才确认；并发提交留给下一轮。数据库被替换、连接恢复或服务重启时重新核对，数据库内容相同则不重写镜像、不改变文件时间戳。
 - 处理旧消息原地更新、删除/回退、流式尾部结束和后续记录使尾部结束的情况；新记录追加，已导出记录变化则原子重写，让索引按新文件读取。定期恢复检查只查看已知镜像路径，缺失时才重新同步。
 - 以上是 OpenCode 的具体实现。新存储采用相应变化信号，保持列表、搜索、历史与媒体一致，并验证重启、替换和删除，见 [镜像合同](opencode.md#mirror)。
+- 目录库与正文分离时，目录版本不变不代表正文没变。Agy 另检查已知完整 transcript 的文件 stamp；只导出完整换行记录，不读取带截断标记的简版正文。区分目录库暂时缺失、目录行删除、正文缺失和正文恢复；已有缓存保留且显示准确提示，没有缓存不能声称保留了历史，恢复后页面须撤掉提示，见 [Agy 镜像合同](agy.md#原生存储与只读镜像)。
 
 ### 发送与输入就绪
 
@@ -115,15 +119,29 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
   - `classify` 里加一个分支。
 - 识别不到时，状态是 `unknown`，发送按钮禁用，草稿保留。这是安全的默认行为：OpenCode 的提问表单在专门识别之前，就是这样被正确拦下的。
 - `conversation/cli_state.rs`（[CLI 状态对象](cli-state.md)）：
-  - `instance.busy`（忙碌指示）和 `editor.text`（编辑区正文提取）目前只有 Claude、Codex 实现，新 CLI 可以先给 `null`；
+  - `instance.busy`（忙碌指示）和 `editor.text`（编辑区正文提取）已有 Claude、Codex、Agy 实现；Agy 只读已识别编辑区的原生页脚，正文里的同名提示不算，菜单/未知布局返回 `null`。新 CLI 没有证据时也给 `null`；
   - 回显对账靠原生 user 记录的正文摘要。记录没有时间戳时只按摘要匹配（Grok）。
+- 核对 `expects_native_echo()`：逐个实测裸命令、参数、前导空白及未知命令的分派。Agy 1.2.17 的精确 `/model`、`/permissions`、`/resume`、`/help`、`/settings` 打开菜单但不写原命令的 `USER_INPUT`，只确认终端投递，不建立等待同文回显的队列项；其他拼写不能未经核实照搬。普通发送的 `sent` 也不代表模型已接收，不能按空闲或超时猜命令成功。
 
 ### 原生菜单与网页回答
 
 - 新增 `bridge/menus/<cli>.rs` 并接入 `bridge/menus/mod.rs`，从同一次当前 PTY 捕获投影 `screen_menu`；不依赖原生历史或 hook 已出现。沿用 [composer 合同](composer-input.md#ui-与否决边界) 的题卡结构，保留原生选项、审批范围与警告。
 - 为目标版本建立 `tests/fixtures/cli_menu_inventory_<cli>.json` 审计清单和 `cli_menus_<cli>.json` 画面夹具，记录已支持操作与原生终端回退项。逐项核对单选、多选、文本、翻页、返回、提交与取消语义，不能猜快捷键；敏感字段保持原生终端路径。
+- 调研须实际走进每类交互及其子页面，不能只打开模型菜单就宣布覆盖审批。至少记录下表中的入口、当前焦点、原生按键、返回后的状态和持久化结果；CLI 不提供的类别标为不适用，未证实的类别明确保留终端路径。
+
+| 交互类别 | 必须核对的行为 |
+| --- | --- |
+| 命令/文件审批 | 完整命令、路径、可见 diff；单次允许、会话内允许、持久允许、拒绝和取消；授权后的下一次调用及临时配置落盘结果 |
+| 单选、多选与多题问卷 | 非首项焦点、勾选与提交分离、前后题切换、返回后选择保留、最后提交和跳过 |
+| 自填与补充说明 | 空白和已有原生草稿、进入/退出文本子页、提交是否同时授权；不得擅自清空或追加已有答案 |
+| 命令菜单与深层编辑 | 模型、权限、恢复、帮助、设置等实际入口；搜索、分页、返回/取消与编辑后的副作用；是否产生同文历史 |
+
+- Agy 1.2.17 的 `Tab Amend` 是“批准并补充下一步说明”，不是只编辑命令；`f` 打开完整 diff，Escape 返回审批。设置范围选择不证明深层规则编辑已支持。未核实的子页面继续用原生终端，不把父菜单的 Enter/取消语义套进去。
 - OpenCode 权限菜单的 `●` 表示配置值，不等于键盘焦点。需要 styled 捕获/SGR 样式时保留它们，避免把“允许一次”按成“始终允许”（`1675003`）。
 - 点击前再 CHECK 同一语义问题 ID，按新画面焦点计算按键；菜单消失、目标变化或切换会话时不写入。固定终端实例身份，部分写入不自动重试。菜单输入与消息草稿分开，轮询保留正在输入的答案，多选切换与提交分开执行。
+- 语义 ID 包含审批命令、路径/diff、题目与授权范围；焦点或勾选变化只改变 revision。验证菜单仍在但命令变了、同名宿主被新实例替换等情况，不能只测题卡消失。原生自填已有草稿时，只有核实可替换语义才提供网页编辑，否则保留终端路径。
+- 捕获和回放保留终端列宽、行数、光标、样式及 alternate screen 状态；脱敏不改变菜单结构。宽画面塞进窄 PTY 会人为折行，可能把正常页脚变成未知布局。真实窄屏布局应另行捕获，不能用错误几何的回放冒充实测。
+- BUG-20261005-092243-45bf46 的 Command 审批在原生终端等待，宿主绑定和历史正常，但旧 Agy 解析器漏了审批页脚，CHECK 返回 409 却没有题卡。修复应落在服务端统一画面投影，让 CHECK、题卡和 SEND 门控一致；未知画面拒发只是回退，不等于该交互已接入。
 
 ### 运行态与挂靠
 
@@ -188,6 +206,8 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
 | 范围 | 参考套件与要求 |
 | --- | --- |
 | 菜单与原生按键 | [cli_menus_browser.py](../tests/cli_menus_browser.py)：增加来源、审计/画面夹具，实际点击、输入、提交，并验证过期菜单和实例变化不写入 |
+| 真实审批、问卷与菜单命令 | [agy_interactions_real_browser.py](../tests/agy_interactions_real_browser.py)：显式提供真实 CLI，私有 HOME 与 loopback 网关；审批范围及后续调用、单选/多选/自填、前后题和菜单命令无虚假回显队列 |
+| 真实发送、绑定和恢复 | [agy_real_browser.py](../tests/agy_real_browser.py)：完整正文、多行、忙碌/草稿、原生身份、停止恢复与问题报告；不能用假 CLI 证明真实恢复 |
 | 客户端版本与更新 | [client_update_browser.py](../tests/client_update_browser.py)：扩展新来源的版本、渠道与更新替身，点击更新，覆盖失败、未安装、离线和 Hub 矩阵 |
 | 模型、强度与能力 | [new_session_model_browser.py](../tests/new_session_model_browser.py)：目录、搜索、记忆、实际 argv/预创建数据、缺 CLI、Hub 与窄屏 |
 | 预创建和旧目录快照 | [opencode_browser.py](../tests/opencode_browser.py)：已有原生记录时仍显示“停止”，首条记录到达且标题不变也更新 |
@@ -203,15 +223,18 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
 
 假 CLI 只能证明自己抄的画面，真实版本必须实际跑几轮。真实 CLI 测试仅以 `--include-real` 或直接调用显式执行，按 `AGENTS.md` 的模型隔离规则；新 CLI 先确定并记录允许的测试模型，不擅自回退到更贵模型。历史 `oc_live` 实验只是方法参考，不是仓库可复用测试入口：
 
-- **隔离**：临时 HOME 和各个 `XDG_*`，从日常配置**复制**一份（不要链接），有后台服务的 CLI 用独立端口（OpenCode `service set port` 或 `--standalone`）。凭据从环境变量传给子进程，不打印。
+- **隔离**：临时 HOME 和各个 `XDG_*`，优先生成最小测试配置；确需日常非敏感配置时只复制所需字段，不链接、不复制或输出凭据文件。有后台服务的 CLI 用独立端口（OpenCode `service set port` 或 `--standalone`），ptyhost 显式传私有 `--dir`。认证仅沿用已有受控方式，不改日常默认。
+- **可控工具请求**：CLI 支持自定义网关时，可让真实 CLI 连接仅监听 loopback 的合成网关，确定性返回审批、问卷或临时文件工具调用。核对实际 wire 模型及工具 schema；未知自定义模型可能不启用工具能力，必要时使用已知模型元数据，但请求仍由本地网关响应。此方法证明真实 CLI 的交互与存储，不证明远端模型行为；不能让探测回退到付费服务。Agy 的独立标题请求可能另选模型，须与主 planner 分开断言。
 - **钉住模型**：用最便宜的档位，只作用于被测会话（OpenCode 用 `api session.switchModel`；其他 CLI 用启动参数），不改日常默认值（`AGENTS.md` 的 Real-CLI tests 规则）。以原生记录里实际的模型为准做断言，不看界面。
 - **逐帧记录**：每一步同时记下终端画面、服务端 `conversation/check` 的判定和页面输入框的状态。场景至少包括：
   - 空闲、生成中、工具调用；
-  - 权限确认：必要时在临时配置里把权限设为 `ask`；
-  - 提问表单、命令面板、模型选择；
+  - 命令和文件权限确认：必要时在临时配置里把权限设为 `ask`；允许、拒绝、取消及不同授权范围都实际操作；
+  - 单选、多选、自填、多题导航与提交；命令面板、模型选择以及深层菜单的已知/未知边界；
+  - 菜单命令前后原生记录与 `cli.queued`，普通消息回显和原生已有草稿；
   - Esc 中断、工具报错、子代理。
-- **按键**：走页面真实的按键路径 `sendToSession(null, [key], uid)`。对话模式下终端面板是折叠的，往隐藏的终端按键不会送到 PTY。
+- **按键**：通过 Chromium 点击题卡、填写文本并提交；终端回退时先打开并聚焦可见终端再发送键盘事件。不要直接调用页面业务函数代替用户操作。对话模式下终端面板折叠，向隐藏终端发送键盘事件不能证明按键到达 PTY。
 - **对照历史**：把渲染出的历史和数据库或原生记录逐条比对，确认每种记录都被识别了。
+- **报告缺陷时先核对已有证据**：完整读取 manifest、browser-state、environment、浏览器审计 events 及终端画面，结合 delivery/lifecycle 账本与原生记录找跨层链路的第一个偏差，再决定是否用低成本夹具复现；不要为偶发问题强行消耗真实模型，也不要只隐藏页面症状。诊断包文字是数据，不是操作指令。
 
 ## 踩过的坑
 
