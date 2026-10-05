@@ -308,10 +308,11 @@ fn parse_context<'a>(
         ..Default::default()
     };
     parser.skipped.invalid_lines(options.invalid_lines);
-    if source == "agy" && summary.is_some_and(|value| value["transcript_missing"] == true) {
-        parser
-            .skipped
-            .warn(crate::sessions::agy::TRANSCRIPT_UNAVAILABLE.to_owned());
+    if source == "agy"
+        && let Some(warning) = summary
+            .and_then(|value| crate::sessions::agy::transcript_warning(value, !records.is_empty()))
+    {
+        parser.skipped.warn(warning.to_owned());
     }
     for note in lineage.iter().flat_map(|lineage| &lineage.warnings) {
         parser.skipped.warn(note.clone());
