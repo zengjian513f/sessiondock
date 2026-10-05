@@ -1,6 +1,6 @@
 # Agy（Antigravity CLI）
 
-本页记录 agy 1.2.16 的接入合同与证据边界，核对日期为 2026-10-04。
+本页记录 agy 1.2.16/1.2.17 的接入合同与证据边界，核对日期为 2026-10-05。
 接入范围是 Rust 后端与 legacy 前端。
 
 官方接口依据：[会话管理](https://www.antigravity.google/docs/cli/conversations/)、
@@ -120,16 +120,30 @@ PLANNER_RESPONSE 仍为 DONE，与正常完成无法仅凭这些字段区分；�
 空编辑区可进入普通 CHECK/SEND，非空编辑区返回 `cli_input_pending` 保留输入。
 可见正文写入 `cli.editor.text`；原生 user 镜像用于 SEND 回显确认，多行发送复用
 粘贴后画面再检。真实 CLI 浏览器覆盖普通正文、多行正文以及完整问题报告正文。
-网页发送精确的裸命令 `/model`、`/permissions`、`/resume` 时，CLI 打开菜单而不写
+网页发送精确的裸命令 `/model`、`/permissions`、`/resume`、`/help`、`/settings` 时，CLI 打开菜单而不写
 原命令的 `USER_INPUT`；这些发送只确认终端投递，不建立等待原生回显的队列项。
 带参数、空白变体和其他命令尚未核实分派语义，仍沿用普通输入对账。
 
 当前菜单投影支持 model 单选/取消、workspace trust 的信任/退出选择、permissions
-scope 的 Project / Shared with Antigravity / Global 选择。它们沿用 `screen_menu`
+scope 的 Project / Shared with Antigravity / Global 选择。沿用 `screen_menu`
 题卡和当前焦点推算的 Up/Down/Enter；model 与 scope 提供 Escape，trust 不猜取消键。
-已识别菜单先于编辑区判断并阻止普通 SEND。未知菜单（含 permissions 深层编辑、
-未投影的 `/resume` 菜单）回退原生终端，未识别编辑区时拒发并保留网页草稿。
-scope 选择不等于已支持工具审批、多选、文本表单或整个权限编辑器。
+
+1.2.17 的命令审批保留完整命令与四种原生范围：单次、当前会话、持久允许、拒绝；
+Escape 中断。文件创建审批保留路径、可见 diff 与允许/拒绝选项。Tab Amend 打开的是
+批准并补充下一步说明，仍在终端输入；文件审批的 `f` 打开完整 diff，Escape 返回。
+`ask_question` 支持当前页单选、多选 Space 勾选、前后题切换和明确提交；`Write-in...`
+进入自填页后，仅空白原生输入框提供网页填写。终端已有答案时保留 native 编辑路径。
+语义 ID 包含命令、diff、题目和授权范围，焦点或多选勾选变化只更新 revision；
+点击前重新 CHECK，命令或题目变化后不得沿用旧题卡授权。
+
+已识别菜单先于编辑区判断并阻止普通 SEND。未知菜单（包括权限深层编辑、settings、
+help、resume 的复杂列表操作）、Amend 文本与完整 diff 视图保留原生终端路径。
+编辑区未识别时拒发并保留网页草稿，不把未知画面当普通输入框。
+
+BUG-20261005-092243-45bf46：原生 `run_command` 已进入 Command 审批，绑定正常，
+浏览器 CHECK 随后返回 409；旧解析器只接受 Keyboard/model、trust、scope 的页脚，
+没有识别 `↑/↓ Navigate · tab Amend · ctrl+g edit/expand command`，因此未提供题卡。
+修复位于服务端画面投影，同一结果用于 CHECK、题卡与 SEND 门控，不修改原生记录。
 
 ## 操作、更新与问题报告
 
@@ -155,8 +169,9 @@ composer 路径；真实 CLI 浏览器核对了处理会话、完整报告提示
 | [agy_real_browser.py](../tests/agy_real_browser.py) | 直接显式运行 `python3 tests/agy_real_browser.py --agy <absolute CLI path> --binary target/debug/sessiondock --ptyhost target/debug/ptyhost`；临时 HOME/XDG、私有目录和 loopback 合成 gateway，真实 CLI + Chromium | operator only，`run_validation: skip`；验证发送、多行、绑定、思考、网页发送菜单命令不等待原生回显、菜单阻发/回答/取消、停止恢复、问题报告与窄屏；不调用付费模型 |
 | [agy_tools_real_browser.py](../tests/agy_tools_real_browser.py) | 直接显式运行并提供 `--agy <absolute CLI path> --binary target/debug/sessiondock`；真实 CLI 读取临时文本和 PNG，再由 Chromium 展开原生工具历史和加载图片 | operator only，`run_validation: skip`；loopback 合成模型，核对实际请求模型；不证明跨步骤配对或其他工具语义 |
 | [agy_clients_browser.py](../tests/agy_clients_browser.py) | 本机与 Hub 的模型、强度 argv、版本、官方 manifest、更新成功/失败、未安装与离线门控 | 仅运行私有假 CLI/curl，不修改已安装客户端 |
-| [cli_menus_browser.py](../tests/cli_menus_browser.py) | `--sources agy`；12 个捕获/边界夹具、10 个原生按键动作 | Chromium 验证过期画面、信任路径变化及同名宿主实例替换不写入；夹具不声称覆盖全部闭源菜单 |
+| [cli_menus_browser.py](../tests/cli_menus_browser.py) | `--sources agy`；28 个捕获/边界夹具，含本次脱敏报告画面 | Chromium 点击选项、操作和文本提交，验证过期画面、命令/信任路径变化及同名宿主实例替换不写入；回放保留捕获列宽 |
+| [agy_interactions_real_browser.py](../tests/agy_interactions_real_browser.py) | 显式 `--agy PATH --binary PATH --ptyhost PATH`；真实 1.2.17、私有 HOME 和 loopback 模型；审批、问卷、自填及五个菜单命令 | 实际 wire 模型为 `gemini-3.1-pro-preview`；验证单次/拒绝/取消/补充说明、会话/持久授权及后续命令、创建文件、多选和前后题；无账号或付费请求 |
 
 能力限制：可靠工具配对、回合三态、原生子代理及非交互删除能力尚未证实。
-真实工具/媒体验收仅覆盖只读 `view_file` 的文本和 PNG，不能推广为所有原生工具
-行为。未完成的交付项记录于 [TODO](../TODO.md)。
+历史工具/媒体验收覆盖 `view_file` 的文本和 PNG；交互验收另覆盖临时命令、创建文件
+与 `ask_question`，不能推广为所有原生工具行为。未完成的交付项记录于 [TODO](../TODO.md)。
