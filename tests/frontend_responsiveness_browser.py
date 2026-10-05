@@ -45,7 +45,11 @@ def main():
                 page.route('**/api/sessions*', lambda route: route.fulfill(json={'unchanged': True}))
                 page.evaluate('''rows=>{S.sessions=[...S.sessions,...rows];S.closed=new Set();
                     S.nest=false;S.off.clear();renderSide()}''', fixture()[:2000])
-                expect(page.locator('#side .item:not(.agent)')).to_have_count(2002)
+                # Above the windowing threshold the DOM holds only rows near the viewport.
+                logical = '''[...document.querySelectorAll('#side > .group')]
+                    .flatMap(group => group._rows || []).filter(row => !row.agent).length'''
+                page.wait_for_function(logical + ' === 2002')
+                assert 0 < page.locator('#side .item').count() < 200
                 page.evaluate('''() => {
                   window.__changedRows=new Set();
                   window.__rowObserver=new MutationObserver(records=>{
@@ -69,7 +73,8 @@ def main():
                 page.locator('#q').fill('no-match-responsiveness')
                 expect(page.locator('#side .item')).to_have_count(0)
                 page.locator('#q').fill('')
-                expect(page.locator('#side .item:not(.agent)')).to_have_count(2002)
+                page.wait_for_function(logical + ' === 2002')
+                assert 0 < page.locator('#side .item').count() < 200
                 page.locator(f'#side .item[data-uid="{corpus.uid("speed-other")}"]').click()
                 expect(page.locator('#msgs')).to_contain_text('END speed-other')
                 # An actual decoded catalog update must retain unrelated UI rows,

@@ -117,6 +117,8 @@ def main():
                 uid = corpus.uid('bulk-0000')
                 if hub_mode: uid = uid.replace(':', f':{nid}~', 1)
                 # A real user action changes one row among a batch-sized list.
+                # 1200 rows are windowed: scroll the oldest row into the sidebar first.
+                page.evaluate('uid=>sidebarRowNode(uid,null,true)?.scrollIntoView({block:"center"})', uid)
                 page.locator(f'#side .star-toggle[data-star-uid="{uid}"]').click()
                 page.wait_for_function('uid=>S.sessions.find(s=>s.uid===uid)?.starred', arg=uid)
                 # The local optimistic star precedes the Hub's next catalog

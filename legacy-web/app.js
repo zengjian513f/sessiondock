@@ -3024,8 +3024,9 @@ function pickDragRows() {
 function pickDragTo(row) {
   const uid = row?.dataset.uid;
   if (!pickDrag || !uid || uid === pickDrag.last) return;
-  const rows = pickDragRows();
-  const from = rows.findIndex(r => r.dataset.uid === pickDrag.anchor), to = rows.indexOf(row);
+  // The run follows sidebar order, including rows the visible window has not rendered.
+  const order = sidebarPickOrder();
+  const from = order.indexOf(pickDrag.anchor), to = order.indexOf(uid);
   if (from < 0 || to < 0) return;
   pickDrag.last = uid;
   pickDrag.moved = true;
@@ -3033,11 +3034,10 @@ function pickDragTo(row) {
   pickedSessions.clear();
   for (const kept of pickDrag.before) pickedSessions.add(kept);
   for (let i = Math.min(from, to); i <= Math.max(from, to); i++) {
-    pickDrag.on ? pickedSessions.add(rows[i].dataset.uid) : pickedSessions.delete(rows[i].dataset.uid);
+    pickDrag.on ? pickedSessions.add(order[i]) : pickedSessions.delete(order[i]);
   }
-  const groups = new Set();
-  for (const r of rows) { paintItemPick(r); groups.add(r.closest('.group')); }
-  groups.forEach(paintGroupPick);
+  for (const r of pickDragRows()) paintItemPick(r);
+  $('#side').querySelectorAll(':scope > .group').forEach(paintGroupPick);
   renderPickBar();
 }
 /** 指针所在高度上可见的那一行；落在组标题、间隙或列表外时取纵向最近的可见行。 */
@@ -4360,7 +4360,9 @@ function paintSidebarSelection(uid, agent = null) {
   if (!row) {
     // A newly published transfer target may open before its list event arrives.
     // Rebuilding the old list cannot create that row.
-    if (!indexedSessions().byUid.has(uid)) {
+    // Outside the visible window the row is created with S.sel when it scrolls in.
+    if (!indexedSessions().byUid.has(uid) || sidebarWindowGroups(side).some(group =>
+      group._rows.some(r => r.s.uid === uid && (agent ? r.agent?.id === agent : !r.agent)))) {
       side?.querySelectorAll('.item.sel').forEach(item => item.classList.remove('sel'));
       return false;
     }
@@ -4524,6 +4526,241 @@ function createSidebarRow(r, picked = pickedSessions) {
   return it;
 }
 
+/* ---------- 大列表可见区渲染 ----------
+ * 全部展开时行数可达数千。超过 SIDE_WINDOW_MIN 行后，每个展开组的 .glist 只放视口及上下
+ * 各 SIDE_WINDOW_OVERSCAN 像素内的行，其余用首尾两个占位块撑住高度；组标题照常全部在。
+ * 逻辑顺序始终在 group._rows：多选范围、整组勾选、深链定位都按它算，不依赖 DOM 里有没有这行。
+ * 行高按行键记住实测值，未渲染过的行用同类行的平均高度估计。 */
+const SIDE_WINDOW_MIN = 400, SIDE_WINDOW_OVERSCAN = 600;
+const sideRowHeights = new Map(), sideRowAverages = new Map();
+let sideWindowBusy = false;
+
+const sideHeightScope = () => `${S.view}\u0000${S.term ? 1 : 0}`;
+function sideRowHeight(r, scope = sideHeightScope()) {
+  return sideRowHeights.get(`${scope}\u0000${rowKey(r)}`)
+    ?? sideRowAverages.get(`${scope}\u0000${r.agent ? 'agent' : 'session'}`)?.mean
+    ?? (r.agent ? 44 : 52);
+}
+
+function sideWindowSpacer(ul, edge) {
+  const name = edge === 'before' ? '_before' : '_after';
+  if (!ul[name]) {
+    ul[name] = el('div', 'glist-spacer');
+    ul[name].setAttribute('aria-hidden', 'true');
+  }
+  return ul[name];
+}
+
+/** Reconcile one .glist with `rows` (a full list or a window of it). Unchanged
+ *  rows keep their elements, selection, focus and handlers. */
+function placeSidebarRows(ul, rows, context, spacing = null) {
+  const {picked, sessionSignatures, highlightKey} = context;
+  const before = spacing ? sideWindowSpacer(ul, 'before') : ul._before;
+  const after = spacing ? sideWindowSpacer(ul, 'after') : ul._after;
+  after?.remove();
+  if (before && !spacing) before.remove();
+  if (spacing && ul.firstElementChild !== before) ul.prepend(before);
+  const previous = new Map(), wanted = new Set(rows.map(rowKey));
+  // Drop departing rows first so kept rows are never moved: moving a node
+  // collapses a text selection inside it.
+  for (const node of [...ul.children]) {
+    if (!node.classList.contains('item')) continue;
+    if (wanted.has(node.dataset.key)) previous.set(node.dataset.key, node);
+    else node.remove();
+  }
+  let nextRow = ul.firstElementChild;
+  if (spacing && nextRow === before) nextRow = nextRow.nextElementSibling;
+  for (const r of rows) {
+    const {signature, structure} = sidebarRowIdentity(r, picked, sessionSignatures);
+    const old = previous.get(rowKey(r));
+    previous.delete(rowKey(r));
+    const place = node => {
+      node._nestRow = r;
+      node._signature = signature;
+      node._structure = structure;
+      node._highlightKey = highlightKey;
+      if (node === nextRow) nextRow = nextRow.nextElementSibling;
+      else ul.insertBefore(node, nextRow);
+    };
+    if (old?._signature === signature) {
+      if (!r.agent) syncRowPickBox(old, r.s);
+      place(old);
+      continue;
+    }
+    if (old?._structure === structure) {
+      patchSidebarRow(old, r, highlightKey);
+      place(old);
+      continue;
+    }
+    if (old === nextRow) nextRow = old.nextElementSibling;
+    old?.remove();
+    if (r.agent) { place(agentRow(r.s, r.agent, r.depth)); continue; }
+    place(createSidebarRow(r, picked));
+  }
+  for (const old of previous.values()) old.remove();
+  if (spacing) {
+    before.style.height = `${spacing.before}px`;
+    after.style.height = `${spacing.after}px`;
+    ul.appendChild(after);
+  }
+}
+
+/** Rows that must stay rendered: a text selection's ends and the focused control. */
+function sidebarPinnedKeys(side) {
+  const keys = new Set();
+  const add = node => {
+    const item = (node?.nodeType === 1 ? node : node?.parentElement)?.closest?.('.item');
+    if (item && side.contains(item)) keys.add(item.dataset.key);
+  };
+  const selection = getSelection();
+  if (selection && !selection.isCollapsed) { add(selection.anchorNode); add(selection.focusNode); }
+  add(document.activeElement);
+  return keys;
+}
+
+function sidebarWindowGroups(side) {
+  return side._windowed
+    ? [...side.querySelectorAll(':scope > .group:not(.closed)')].filter(group => group._rows?.length) : [];
+}
+
+/** Place every windowed group's visible rows. `top` is the scroll position the
+ *  caller will restore; `force` rerenders groups whose window still covers the
+ *  viewport (their rows changed). Returns the groups that changed. */
+function layoutSidebarWindow({force = false, top = null} = {}) {
+  const side = $('#side');
+  const groups = sidebarWindowGroups(side);
+  if (!groups.length || sideWindowBusy) return [];
+  sideWindowBusy = true;
+  try {
+    const scope = sideHeightScope();
+    const heights = new Map(groups.map(group => [group, group._rows.map(r => sideRowHeight(r, scope))]));
+    const box = side.getBoundingClientRect();
+    // The row under the viewport top, read before any write (see the end).
+    const anchor = force ? null : [...side.querySelectorAll('.glist > .item')]
+      .find(node => node.getBoundingClientRect().bottom > box.top);
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    // Fixed list heights make every group's position readable in one layout,
+    // whatever rows each list currently holds.
+    for (const group of groups) {
+      const ul = group.querySelector(':scope > .glist');
+      ul.style.height = `${heights.get(group).reduce((sum, h) => sum + h, 0)}px`;
+    }
+    const viewTop = top ?? side.scrollTop, viewBottom = viewTop + side.clientHeight;
+    const pinned = sidebarPinnedKeys(side);
+    const plans = groups.map(group => {
+      const ul = group.querySelector(':scope > .glist'), rows = group._rows, list = heights.get(group);
+      const listTop = ul.getBoundingClientRect().top - box.top + side.scrollTop;
+      const span = margin => {
+        let y = listTop, start = rows.length, end = rows.length;
+        for (let i = 0; i < rows.length; i++) {
+          if (start === rows.length && y + list[i] > viewTop - margin) start = i;
+          if (y >= viewBottom + margin) { end = i; break; }
+          y += list[i];
+        }
+        return [Math.min(start, end), end];
+      };
+      let [start, end] = span(SIDE_WINDOW_OVERSCAN);
+      const window = group._window;
+      if (!force && window) {
+        const [needStart, needEnd] = span(SIDE_WINDOW_OVERSCAN / 2);
+        const covered = needStart >= needEnd ? window.start >= window.end
+          : needStart >= window.start && needEnd <= window.end && window.start >= start && window.end <= end;
+        if (covered) {
+          [start, end] = [window.start, window.end];
+        }
+      }
+      if (pinned.size) rows.forEach((r, i) => {
+        if (!pinned.has(rowKey(r))) return;
+        start = Math.min(start, i);
+        end = Math.max(end, i + 1);
+      });
+      const changed = force || !window || window.start !== start || window.end !== end;
+      return {group, ul, rows, list, start, end, changed};
+    });
+    const context = {picked: pickedSessions, sessionSignatures: new Map(),
+      highlightKey: JSON.stringify([S.term, S.opts, S.opts.regex ? regexResultRevision : 0])};
+    const changed = plans.filter(plan => plan.changed);
+    for (const plan of changed) {
+      const {group, ul, rows, list, start, end} = plan;
+      let before = 0, after = 0;
+      for (let i = 0; i < start; i++) before += list[i];
+      for (let i = end; i < rows.length; i++) after += list[i];
+      placeSidebarRows(ul, rows.slice(start, end), context, {before, after});
+      group._window = {start, end};
+    }
+    // Remember real heights; a hidden sidebar has none to measure.
+    if (side.clientHeight) {
+      for (const plan of changed) {
+        for (const node of plan.ul.children) {
+          if (!node._nestRow || !node.offsetHeight) continue;
+          const key = `${scope}\u0000${rowKey(node._nestRow)}`, h = node.offsetHeight;
+          if (sideRowHeights.get(key) === h) continue;
+          sideRowHeights.set(key, h);
+          const kind = `${scope}\u0000${node._nestRow.agent ? 'agent' : 'session'}`;
+          const average = sideRowAverages.get(kind) || {mean: 0, count: 0};
+          average.count = Math.min(average.count + 1, 200);
+          average.mean += (h - average.mean) / average.count;
+          sideRowAverages.set(kind, average);
+        }
+      }
+    }
+    for (const group of groups) group.querySelector(':scope > .glist').style.height = '';
+    // overflow-anchor is off for #side: keep the row under the viewport top
+    // still when rows above it were measured at a different height.
+    if (anchor?.isConnected && anchorTop !== undefined) {
+      const delta = anchor.getBoundingClientRect().top - anchorTop;
+      if (Math.abs(delta) >= 1) side.scrollTop += delta;
+    }
+    if (S.view === 'date' && changed.length) {
+      fitTimelineDirectories(changed.flatMap(plan => [...plan.ul.querySelectorAll('.cwd-path')]), timelineFitContext);
+    }
+    return changed.map(plan => plan.group);
+  } finally {
+    sideWindowBusy = false;
+  }
+}
+
+/** The logical row for `uid`/`agent`, rendered and scrolled into the window if needed. */
+function sidebarRowNode(uid, agent = null, reveal = false) {
+  const side = $('#side');
+  const selector = agent ? `.item[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`
+    : `.item[data-uid="${CSS.escape(uid)}"]`;
+  const found = side.querySelector(selector);
+  if (found || !reveal || !side._windowed) return found;
+  const key = agent ? `${uid}#${agent}` : uid;
+  for (const group of sidebarWindowGroups(side)) {
+    const index = group._rows.findIndex(r => rowKey(r) === key);
+    if (index < 0) continue;
+    const ul = group.querySelector(':scope > .glist');
+    layoutSidebarWindow();
+    const scope = sideHeightScope();
+    let offset = 0;
+    for (let i = 0; i < index; i++) offset += sideRowHeight(group._rows[i], scope);
+    const box = side.getBoundingClientRect();
+    const rowTop = ul.getBoundingClientRect().top - box.top + side.scrollTop + offset;
+    const height = sideRowHeight(group._rows[index], scope);
+    const head = group.querySelector(':scope > .ghead')?.offsetHeight || 0;
+    if (rowTop - head < side.scrollTop) side.scrollTop = rowTop - head;
+    else if (rowTop + height > side.scrollTop + side.clientHeight) side.scrollTop = rowTop + height - side.clientHeight;
+    layoutSidebarWindow();
+    return side.querySelector(selector);
+  }
+  return null;
+}
+
+/** Sessions a 多选 drag can cover, in sidebar order, rendered or not. */
+function sidebarPickOrder() {
+  const order = [];
+  if (!S.picking) return order;
+  for (const group of $('#side').querySelectorAll(':scope > .group:not(.closed)')) {
+    for (const r of group._rows || []) if (!r.agent && sessionPickable(r.s)) order.push(r.s.uid);
+  }
+  return order;
+}
+
+$('#side').addEventListener('scroll', () => { if ($('#side')._windowed) layoutSidebarWindow(); }, {passive: true});
+new ResizeObserver(() => { if ($('#side')._windowed) layoutSidebarWindow(); }).observe($('#side'));
+
 function renderSide(suppliedList = null) {
   if (sidebarTextSelectionProtected() || transferSidebarPaused()) {
     sidebarRenderDeferred = true;
@@ -4542,6 +4779,7 @@ function renderSide(suppliedList = null) {
   renderPickBar();
   if (!list.length && !(S.view === 'group' && globalThis.SessionDockGroups?.available)) {
     side._nestTree = null;
+    side._windowed = false;
     side.replaceChildren();
     if (S.term) {
       const empty = el('div', 'empty search-empty', '当前搜索无匹配会话');
@@ -4561,11 +4799,12 @@ function renderSide(suppliedList = null) {
     return;
   }
   let groupPosition = 0;
-  const sessionSignatures = new Map();
   const highlightKey = JSON.stringify([S.term, S.opts, S.opts.regex ? regexResultRevision : 0]);
+  const context = {picked, sessionSignatures: new Map(), highlightKey};
   const groups = groupBy(list, {skipClosed: true});
   side._nestTree = {children: groups.children, sessions: S.sessions, results: S.results,
     context: sidebarNestContext()};
+  side._windowed = groups.reduce((sum, [, rows]) => sum + rows.length, 0) > SIDE_WINDOW_MIN;
   for (const [key, rows, summary] of groups) {
     const items = rows.filter(r => !r.agent).map(r => r.s);
     const first = summary ? summary.first : (items[0] || rows[0]?.s);
@@ -4595,37 +4834,11 @@ function renderSide(suppliedList = null) {
     if (head !== oldHead) { if (oldHead) oldHead.replaceWith(head); else g.prepend(head); }
     g._pickUids = groupUids;
     g._rows = rows;
+    g._window = null;
     const ul = g.querySelector(':scope > .glist') || el('div', 'glist');
-    const previous = new Map([...ul.children].map(node => [node.dataset.key, node]));
-    let nextRow = ul.firstElementChild;
-    for (const r of (sidebarGroupClosed(key) ? [] : rows)) {
-      const {signature, structure} = sidebarRowIdentity(r, picked, sessionSignatures);
-      const old = previous.get(rowKey(r));
-      previous.delete(rowKey(r));
-      const place = node => {
-        node._nestRow = r;
-        node._signature = signature;
-        node._structure = structure;
-        node._highlightKey = highlightKey;
-        if (node === nextRow) nextRow = nextRow.nextElementSibling;
-        else ul.insertBefore(node, nextRow);
-      };
-      if (old?._signature === signature) {
-        if (!r.agent) syncRowPickBox(old, r.s);
-        place(old);
-        continue;
-      }
-      if (old?._structure === structure) {
-        patchSidebarRow(old, r, highlightKey);
-        place(old);
-        continue;
-      }
-      if (old === nextRow) nextRow = old.nextElementSibling;
-      old?.remove();
-      if (r.agent) { place(agentRow(r.s, r.agent, r.depth)); continue; }
-      place(createSidebarRow(r, picked));
-    }
-    for (const old of previous.values()) old.remove();
+    const open = !sidebarGroupClosed(key);
+    // A windowed list is filled once every group is in place (layoutSidebarWindow).
+    if (!(side._windowed && open && rows.length)) placeSidebarRows(ul, open ? rows : [], context);
     if (ul.parentElement !== g) g.appendChild(ul);
     if (side.children[groupPosition] !== g) side.insertBefore(g, side.children[groupPosition] || null);
     groupPosition++;
@@ -4633,6 +4846,7 @@ function renderSide(suppliedList = null) {
   }
   for (const old of oldGroups.values()) old.remove();
   globalThis.SessionDockGroups?.paintSidebar(side);
+  if (side._windowed) layoutSidebarWindow({force: true, top});
   fitTimelineDirectories();
   side.scrollTop = top;
 }
@@ -4994,8 +5208,7 @@ function updateSessionUrl(uid, agent, mode) {
   history[method](history.state, '', url);
 }
 function revealSessionInSidebar(uid, agent) {
-  const target = agent ? $('#side').querySelector(`.item[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`)
-    : $('#side').querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
+  const target = sidebarRowNode(uid, agent, true);
   // Selecting an existing row opens its conversation, not its descendants.
   // In particular, do not clear a fold the user set with this row's caret.
   if (target) {
@@ -5033,9 +5246,7 @@ function revealSessionInSidebar(uid, agent) {
     }
   }
   if (changed) { renderView(); renderChips(); if (HUB_MODE) renderNodes(); renderSide(); }
-  const revealed = agent ? $('#side').querySelector(`.item[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`)
-    : $('#side').querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
-  revealed?.scrollIntoView({block: 'nearest'});
+  sidebarRowNode(uid, agent, true)?.scrollIntoView({block: 'nearest'});
 }
 
 /** `follow` continues the page already on screen (a new launch reaching its
@@ -6235,8 +6446,7 @@ function bindForkChainMenu(heading, m) {
       await setForkParentVisibility([row.dataset.uid], visible, toggle);
       if (visible) {
         // 新显示的会话在左栏滚到可见处，让“显示”有个看得见的结果
-        $(`#side .item[data-uid="${CSS.escape(row.dataset.uid)}"]`)
-          ?.scrollIntoView({ block: 'nearest' });
+        sidebarRowNode(row.dataset.uid, null, true)?.scrollIntoView({ block: 'nearest' });
       }
       return;
     }
@@ -8937,6 +9147,19 @@ function sidebarNestContext() {
     S.activeOnly, [...S.off], HUB_MODE ? [...Nodes.off] : []]);
 }
 
+/** Group checkbox membership and count after a branch opened or closed in place. */
+function patchNestFoldGroup(group) {
+  const sessions = group._rows.filter(row => !row.agent).map(row => row.s);
+  group._pickUids = sessions.filter(sessionPickable).map(row => row.uid);
+  const count = group.querySelector('.gcount');
+  const rowCount = S.term ? group._rows.filter(row => row.agent || sidebarMainMatches(row.s)).length : sessions.length;
+  if (count && count.textContent !== String(rowCount)) {
+    count.textContent = rowCount;
+    group.querySelector('.ghead')._signature = null;
+  }
+  paintGroupPick(group);
+}
+
 function patchNestFold(uid) {
   const side = $('#side'), tree = side?._nestTree;
   if (sidebarTextSelectionProtected() || !tree
@@ -8962,6 +9185,21 @@ function patchNestFold(uid) {
     element._structure = structure;
     element._highlightKey = highlightKey;
   };
+  if (side._windowed) {
+    // Windowed lists change the logical rows; reconciliation keeps unchanged elements.
+    group._rows = group._rows.slice(0, index).concat(rows, group._rows.slice(end));
+    let depth = current.depth;
+    for (let i = index - 1; depth > 0 && i >= 0; i--) {
+      const ancestor = group._rows[i];
+      if (ancestor.depth >= depth || ancestor.agent) continue;
+      depth = ancestor.depth;
+      ancestor.kids += delta;
+    }
+    patchNestFoldGroup(group);
+    layoutSidebarWindow({force: true, top});
+    side.scrollTop = top;
+    return true;
+  }
   // Read the next sibling before deleting descendants; unrelated rows remain
   // connected and keep focus, text selection and all event handlers.
   let next = node.nextElementSibling;
@@ -8992,15 +9230,7 @@ function patchNestFold(uid) {
     const element = group.querySelector(`.item[data-uid="${CSS.escape(ancestor.s.uid)}"]`);
     if (element) { patchSidebarRow(element, ancestor, highlightKey); stamp(element, ancestor); }
   }
-  const sessions = group._rows.filter(row => !row.agent).map(row => row.s);
-  group._pickUids = sessions.filter(sessionPickable).map(row => row.uid);
-  const count = group.querySelector('.gcount');
-  const rowCount = S.term ? group._rows.filter(row => row.agent || sidebarMainMatches(row.s)).length : sessions.length;
-  if (count && count.textContent !== String(rowCount)) {
-    count.textContent = rowCount;
-    group.querySelector('.ghead')._signature = null;
-  }
-  paintGroupPick(group);
+  patchNestFoldGroup(group);
   if (paths.length) fitTimelineDirectories(paths, timelineFitContext);
   side.scrollTop = top;
   return true;
