@@ -16,7 +16,7 @@
     try {
       const caps = JSON.parse(document.querySelector('meta[name="sessiondock-capabilities"]')?.content || '{}');
       namespace = typeof caps.storage_namespace === 'string' && caps.storage_namespace
-        ? caps.storage_namespace : caps.backend === 'rust' ? 'sessiondock.' : '';
+        ? caps.storage_namespace : 'sessiondock.';
     } catch {}
     const current = document.querySelector('meta[name="sessiondock-mode"]')?.content === 'hub'
       ? `sessiondock.hub.${location.pathname}.` : 'sessiondock.';

@@ -123,10 +123,10 @@ test('appUrl resolves against APP_BASE, hub node filters', () => {
   assert.equal(url(base, null), 'http://127.0.0.1:8080/sessiondock/null');
 });
 
-test('only exact Rust boolean flags enable history pages, lazy media and continuation', () => {
+test('only exact boolean flags enable history pages, lazy media and continuation', () => {
   const flags = [['historyPagesEnabled', 'history_pages'], ['lazyMediaEnabled', 'media_lazy'],
     ['mediaContinuationEnabled', 'media_continuation']];
-  for (const config of [{}, {backend: 'python'}, {backend: 'python', history_pages: true, media_lazy: true, media_continuation: true},
+  for (const config of [{}, {history_pages: true, media_lazy: true, media_continuation: true},
     {backend: 'rust'}, {backend: 'rust', history_pages: 1, media_lazy: 1, media_continuation: 1},
     {backend: 'rust', history_pages: false, media_lazy: false, media_continuation: false},
     {backend: 'rust', history_pages: 'true', media_lazy: 'true', media_continuation: 'true'},
@@ -134,7 +134,7 @@ test('only exact Rust boolean flags enable history pages, lazy media and continu
     const c = ctx({SessionDockCapabilities: {config}});
     for (const [name, flag] of flags) {
       load(c, name);
-      assert.equal(c[name](), config.backend === 'rust' && config[flag] === true, `${name} ${JSON.stringify(config)}`);
+      assert.equal(c[name](), config[flag] === true, `${name} ${JSON.stringify(config)}`);
     }
   }
 });
@@ -160,9 +160,9 @@ test('safeMediaSrc admits local tokens, hub paths only when not lazy, remote htt
   assert.equal(remote('https://user:pass@evil.example/x'), 'https://user:pass@evil.example/x');
   assert.equal(remote('https://evil.example/"onclick'), 'https://evil.example/%22onclick');
   assert.equal(remote('/relative'), '');
-  assert.equal(src({backend: 'python'}, {allows: true})('https://example.invalid/x'), 'https://example.invalid/x');
+  assert.equal(src({}, {allows: true})('https://example.invalid/x'), 'https://example.invalid/x');
   assert.equal(src({})('https://example.invalid/x'), '');
-  assert.equal(src({backend: 'python'}, {HUB_MODE: true, allows: true})(HUB), 'APP:' + HUB);
+  assert.equal(src({}, {HUB_MODE: true, allows: true})(HUB), 'APP:' + HUB);
 });
 
 test('mediaMoreInfo accepts only positive safe integers and a hex cursor or explicit null', () => {
@@ -228,13 +228,13 @@ test('validateMediaPage extra edges: 16-item cap, extra fields, start mismatch, 
   assert.throws(() => validate(data(16, 32, {cursor: A.toUpperCase()}), more, A.toUpperCase()), /不匹配/);
 });
 
-test('consoleUnavailableReason: empty selection, stubs, hub errors, rust-only gates, Python skip', () => {
+test('consoleUnavailableReason: empty selection, stubs, hub errors, exact-instance gates', () => {
   const reason = (over, ...args) => {
     const c = ctx({
       SessionDockCapabilities: {config: {backend: 'rust'}, allows: () => true},
       T: {listLoaded: true, listError: '', enabled: true, ended: new Map(), pending: [],
         resume_sources: {codex: true}, sources: {codex: true}},
-      takeover() {}, Terminal() {}, FitAddon() {},
+      takeover() {},
       ConsoleUI: {errors: new Map(), busy: new Set()},
       Nodes: {list: [], errors: new Map(), capabilities: {}},
       linkedTermSession: () => ({name: 't'}), pendingUid: n => 'tmux:' + n,
@@ -247,9 +247,6 @@ test('consoleUnavailableReason: empty selection, stubs, hub errors, rust-only ga
   assert.match(reason({}, 'codex:u', 'agent'), /子代理/);
   assert.doesNotMatch(reason({}, 'codex:u', ''), /子代理/);
   assert.match(reason({takeover: 1}, 'u'), /尚未加载完成/);
-  for (const missing of [{Terminal: undefined}, {FitAddon: undefined}]) {
-    assert.match(reason(missing, 'u'), /浏览器终端组件加载失败/);
-  }
   assert.match(reason({ConsoleUI: {errors: new Map(), busy: new Set(['u'])}}, 'u'), /正在打开控制台/);
   assert.equal(reason({T: {listLoaded: true, listError: 'list boom', enabled: true}}, 'u'), 'list boom');
   assert.match(reason({T: {listLoaded: false, listError: '', enabled: true}}, 'u'), /正在读取控制台状态/);
@@ -269,9 +266,6 @@ test('consoleUnavailableReason: empty selection, stubs, hub errors, rust-only ga
   assert.equal(hubReason(true, {T: {listLoaded: true, ended: new Map([[uid, {reason: '已退出'}]]), resume_sources: {}}}), '');
   assert.equal(hubReason(false, {T: {listLoaded: true, ended: new Map([[uid, {reason: '已退出'}]]), resume_sources: {codex: true}}}), '已退出');
   assert.equal(reason({T: {listLoaded: true, enabled: true, ended: new Map([['u', {reason: '已退出'}]])}}, 'u'), '已退出');
-  assert.equal(reason({SessionDockCapabilities: {config: {backend: 'python'}, allows: () => true},
-    T: {listLoaded: true, enabled: true, ended: new Map([['u', {reason: '已退出'}]]), sources: {codex: true}},
-    linkedTermSession: () => ({name: 't'})}, 'u'), '');
   assert.match(reason({T: {listLoaded: true, enabled: true, pending: [{record_id: 'r', name: 'p', stale: true}],
     ended: new Map()}, pendingUid: () => 'u'}, 'u'), /创建实例尚未就绪/);
   assert.equal(reason({T: {listLoaded: true, enabled: true, pending: [{record_id: 'r', name: 'p', stale: true,
@@ -279,9 +273,6 @@ test('consoleUnavailableReason: empty selection, stubs, hub errors, rust-only ga
   assert.match(reason({T: {listLoaded: true, enabled: false, ended: new Map(), pending: []}}, 'u'), /未返回具体原因/);
   assert.match(reason({linkedTermSession: () => null, SessionDockCapabilities: {config: {backend: 'rust'}, allows: () => false},
     T: {listLoaded: true, enabled: true, ended: new Map(), pending: [], resume_sources: {}}}, 'codex:u'), /不能按名称猜测关联/);
-  assert.match(reason({SessionDockCapabilities: {config: {backend: 'python'}, allows: () => true},
-    linkedTermSession: () => null, T: {listLoaded: true, enabled: true, sources: {}, ended: new Map(), pending: []}}, 'codex:u'),
-    /未找到可用的 Codex 命令/);
   assert.equal(reason({ConsoleUI: {errors: new Map([['u', '上次失败']]), busy: new Set()}}, 'u', null, true), '上次失败');
   assert.equal(reason({ConsoleUI: {errors: new Map([['u', '上次失败']]), busy: new Set()}}, 'u', null, false), '');
 });
@@ -366,7 +357,7 @@ test('Codex rollback: the deepest branch is the leaf, live siblings first, and o
   const MOBILE = {matches: false}, page = new Map([['mobilePage', 'detail']]);
   const context = ctx({S, T, MOBILE, store: {get: (key, fallback) => page.has(key) ? page.get(key) : fallback},
     migrateComposerDraft: (from, to) => migrated.push([from, to]),
-    browserAuditEvent: (event, data, _content, fields) => audited.push([event, data, fields]),
+    browserAuditEvent: (event, data, fields) => audited.push([event, data, fields]),
     openSession: async (uid, agent, options) => opened.push([uid, agent, options])});
   for (const name of ['hiddenForkParent', 'forkAncestors', 'forkChildren', 'forkLeaf', 'forkLeafUid', 'followSelectedFork']) load(context, name);
   const a = {uid: 'codex:a', source: 'codex', sid: 'sid-a', fork_parent: true, created: '2026-09-14T00:00:00Z'};
@@ -434,119 +425,9 @@ test('liveStatusTitle says unknown without the live capability and managed/direc
   const rust = fn('liveStatusTitle', {SessionDockCapabilities: {config: {backend: 'rust'}, allows: () => false}});
   assert.equal(rust(false), '运行状态未知，尚未实现进程探测');
   assert.equal(rust(true), '运行状态未知，尚未实现进程探测');
-  const python = fn('liveStatusTitle', {SessionDockCapabilities: {config: {}, allows: () => true}});
-  assert.equal(python(false), '运行中');
-  assert.equal(python(true), '运行于受管终端');
-});
-
-test('console output: plain chunks go straight to xterm, a DEC 2026 frame is written whole', () => {
-  const term = readFileSync(new URL('../legacy-web/term.js', import.meta.url), 'utf8');
-  const timers = [];
-  const context = ctx({
-    document: {documentElement: {dataset: {theme: 'dark'}}},
-    setTimeout: (callback, ms) => { timers.push({callback, ms}); return timers.length; },
-    clearTimeout: id => { if (timers[id - 1]) timers[id - 1].cleared = true; },
-  });
-  for (const name of ['TERM_SYNC_HOLD_MAX', 'TERM_SYNC_HOLD_MS', 'TERM_SYNC_SETTLE_MS', 'stripOscColorSets', 'terminalColorChunk',
-    'termSyncFrameOpen', 'writeParsedTermOutput', 'flushTermSyncHold', 'dropTermSyncHold',
-    'writeTermOutput']) {
-    load(context, name, term);
-  }
-  const {writeTermOutput, flushTermSyncHold, dropTermSyncHold, TERM_SYNC_HOLD_MAX} = context;
-  const view = () => {
-    const writes = [];
-    return {writes, term: {write: s => writes.push(s)}, ansiTail: '', syncHold: null, syncHoldTimer: null};
-  };
-  const H = '\x1b[?2026h', L = '\x1b[?2026l';
-
-  // Keystroke echo and ordinary output never wait.
-  let v = view();
-  writeTermOutput(v, 'a');
-  writeTermOutput(v, '\x1b[31mb\x1b[0m');
-  same(v.writes, ['a', '\x1b[31mb\x1b[0m']);
-  assert.equal(timers.length, 0);
-
-  // One frame over three packets: nothing reaches xterm until ?2026l, then one write.
-  v = view();
-  writeTermOutput(v, H + '\x1b[2K\x1b[1A');
-  writeTermOutput(v, '\x1b[2K\x1b[0Gredrawn');
-  same(v.writes, []);
-  assert.equal(timers.length, 1);
-  writeTermOutput(v, ' tail' + L + 'after');
-  same(v.writes, []);
-  timers.at(-1).callback();
-  same(v.writes, [H + '\x1b[2K\x1b[1A\x1b[2K\x1b[0Gredrawn tail' + L + 'after']);
-  assert.equal(timers[0].cleared, true);
-  writeTermOutput(v, 'x');
-  same(v.writes.slice(1), ['x']);
-
-  // Complete marker pairs also wait for ConPTY's late cursor restore. A new
-  // open frame cancels the quiet timer but never extends the total deadline.
-  v = view();
-  writeTermOutput(v, H + 'whole' + L);
-  same(v.writes, []);
-  const quiet = timers.at(-1);
-  writeTermOutput(v, '\x1b[11;3H');
-  assert.equal(quiet.cleared, true);
-  timers.at(-1).callback();
-  same(v.writes, [H + 'whole' + L + '\x1b[11;3H']);
-  writeTermOutput(v, H + 'first' + L + H + 'second');
-  same(v.writes.slice(1), []);
-  writeTermOutput(v, L);
-  timers.at(-1).callback();
-  same(v.writes.slice(1), [H + 'first' + L + H + 'second' + L]);
-
-  // ?2026h split across packets is completed by terminalColorChunk's tail
-  // buffer before the frame check sees it.
-  v = view();
-  writeTermOutput(v, 'p\x1b[?20');
-  same(v.writes, ['p']);
-  writeTermOutput(v, '26h\x1b[2Kq');
-  same(v.writes, ['p']);
-  writeTermOutput(v, L);
-  timers.at(-1).callback();
-  same(v.writes, ['p', H + '\x1b[2Kq' + L]);
-
-  // Fallback: the hold timer or the size cap flushes an unterminated frame.
-  v = view();
-  writeTermOutput(v, H + 'stuck');
-  timers.at(-1).callback();
-  same(v.writes, [H + 'stuck']);
-  assert.equal(v.syncHold, null);
-  writeTermOutput(v, 'more');
-  same(v.writes, [H + 'stuck', 'more']);
-  v = view();
-  writeTermOutput(v, H + 'a'.repeat(TERM_SYNC_HOLD_MAX));
-  same(v.writes.map(w => w.length), [H.length + TERM_SYNC_HOLD_MAX]);
-
-  // Reattach drops a half frame silently; close flushes it.
-  v = view();
-  writeTermOutput(v, H + 'dropped');
-  dropTermSyncHold(v);
-  same(v.writes, []);
-  writeTermOutput(v, H + 'closing');
-  flushTermSyncHold(v);
-  same(v.writes, [H + 'closing']);
-});
-
-test('OSC 10/11/12/4 reports from xterm never go to the PTY as keystrokes', () => {
-  const term = readFileSync(new URL('../legacy-web/term.js', import.meta.url), 'utf8');
-  const context = ctx();
-  load(context, 'stripOscColorReports', term);
-  const {stripOscColorReports} = context;
-  const st = s => s + '\x1b\\';
-  const bel = s => s + '\x07';
-  assert.equal(stripOscColorReports(st('\x1b]11;rgb:f4f4/f6f6/f8f8')), '');
-  assert.equal(stripOscColorReports(bel('\x1b]10;rgb:2525/2a2a/3232')), '');
-  assert.equal(stripOscColorReports(st('\x1b]12;#315f9f')), '');
-  assert.equal(stripOscColorReports(st('\x1b]11;rgb:0000/0000/0000')), '');
-  assert.equal(stripOscColorReports(st('\x1b]4;1;rgb:a8a8/3232/3b3b')), '');
-  assert.equal(stripOscColorReports(st('\x1b]4;232;rgb:0808/0808/0808')), '');
-  assert.equal(stripOscColorReports('a' + st('\x1b]11;rgb:ffff/ffff/ffff') + 'b'), 'ab');
-  assert.equal(stripOscColorReports('\x1b]52;c;abcd\x1b\\'), '\x1b]52;c;abcd\x1b\\');
-  assert.equal(stripOscColorReports('hi'), 'hi');
-  assert.equal(stripOscColorReports(''), '');
-  assert.match(term, /d = stripOscColorReports\(d\);\s*if \(!d\) return;/);
+  const live = fn('liveStatusTitle', {SessionDockCapabilities: {config: {}, allows: () => true}});
+  assert.equal(live(false), '运行中');
+  assert.equal(live(true), '运行于受管终端');
 });
 
 test('a draft-retained pending row keeps one start time instead of sorting by the render clock', () => {

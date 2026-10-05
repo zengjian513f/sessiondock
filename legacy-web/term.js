@@ -11,12 +11,6 @@ const TERM_HEARTBEAT_TIMEOUT_MS = 10_000;
 // Claim includes browser/proxy transit plus the Hub's 5 s connect / 10 s read
 // waits. A 5 s page deadline can cancel before the node even sees the request.
 const TERM_CLAIM_TIMEOUT_MS = 20_000;
-// DEC 2026 同步帧在页面这层暂存的上限：超过就先交给 xterm（它自己对 2026 还有
-// 1 s 兜底），不让一个没收尾的帧无限占住输出。
-const TERM_SYNC_HOLD_MAX = 256 * 1024;
-const TERM_SYNC_HOLD_MS = 100;
-// ConPTY can emit the sync-end marker before its final screen/cursor update.
-const TERM_SYNC_SETTLE_MS = 50;
 const TERM_LAYOUT_POLICY_VERSION = 2;
 // 每次页面加载独立生成；不写 local/sessionStorage，复制标签页也不会复制归属。
 const TERM_PAGE_ID = window.__sessiondockPageId || crypto.randomUUID?.()
@@ -24,12 +18,12 @@ const TERM_PAGE_ID = window.__sessiondockPageId || crypto.randomUUID?.()
     .map(value => value.toString(16).padStart(2, '0')).join('');
 
 const T = {
-  term: null,      // xterm 实例
+  term: null,      // 当前视图的网格终端
   ws: null,
   name: null,      // 当前挂着的 tmux 会话名
   uid: null,       // 对应的 SessionDock 会话
-  views: new Map(), // 已打开过且仍存活的 tmux → xterm/WebSocket；切会话只隐藏
-  ended: new Map(), // Rust only: explicit host exit, pinned to UID/instance.
+  views: new Map(), // 已打开过且仍存活的 tmux → 终端视图/WebSocket；切会话只隐藏
+  ended: new Map(), // Explicit host exit, pinned to UID/instance.
   enabled: false,
   listLoaded: false,
   listRequest: null,   // 进行中的 api/term/list 请求；首屏的 live 轮询复用它而不是再发一次
@@ -45,9 +39,6 @@ const T = {
   home: '',
   pending: [],
   pendingModes: new Map(), // 临时会话名 → 打开前的终端布局；退出未落盘时恢复
-  resolving: new Set(),
-  discarding: new Set(),
-  resolveControllers: new Map(),
   openViews: new Map(store.get('termviews', [])), // tmux 名 → {mode, height}
 };
 // 旧版把 normal 当默认布局，无法区分“系统默认分屏”和“用户手动分屏”。
@@ -107,8 +98,7 @@ function terminalFontGridRatio(family, size) {
 }
 
 /** Resolve one font face whose CJK glyph is exactly two Latin cells wide.
- * Ubuntu keeps its original glyph size: xterm reserves two cells for CJK and
- * rescaleOverlappingGlyphs prevents wide outlines from crossing cell bounds.
+ * Ubuntu keeps its original glyph size: the grid reserves two cells for CJK.
  * Other mixed stacks still prefer a locally available exact 1:2 font. */
 async function prepareTerminalFont() {
   const configured = configuredTermFont();
@@ -140,175 +130,6 @@ async function prepareTerminalFont() {
   return resolved;
 }
 
-function hexToRgb(hex) {
-  const value = (hex || '').trim().replace('#', '');
-  if (value.length === 3) {
-    return [...value].map(ch => parseInt(ch + ch, 16));
-  }
-  if (value.length !== 6) return null;
-  return [0, 2, 4].map(i => parseInt(value.slice(i, i + 2), 16));
-}
-
-function hslLightness(r, g, b) {
-  r /= 255; g /= 255; b /= 255;
-  return (Math.max(r, g, b) + Math.min(r, g, b)) / 2;
-}
-
-// 保持色相、反射亮度；轻微曲线把中间色拉回 50%，避免彩色文字过艳。
-function reflectedLightRgb(r, g, b, background = false) {
-  r /= 255; g /= 255; b /= 255;
-  const hi = Math.max(r, g, b), lo = Math.min(r, g, b);
-  const sourceLight = (hi + lo) / 2;
-  let h = 0, s = 0;
-  if (hi !== lo) {
-    const d = hi - lo;
-    s = d / (1 - Math.abs(2 * sourceLight - 1));
-    if (hi === r) h = ((g - b) / d) % 6;
-    else if (hi === g) h = (b - r) / d + 2;
-    else h = (r - g) / d + 4;
-    h = (h * 60 + 360) % 360;
-  }
-  const reflected = 1 - sourceLight;
-  const sign = Math.sign(reflected - .5);
-  let l = .5 + sign * .5 * Math.pow(Math.abs(reflected - .5) / .5, 1.35);
-  if (background) l = Math.min(l, .96);   // 显式黑底随亮色方案恢复为接近白色
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs((h / 60) % 2 - 1));
-  const m = l - c / 2;
-  let rr = 0, gg = 0, bb = 0;
-  if (h < 60) [rr, gg, bb] = [c, x, 0];
-  else if (h < 120) [rr, gg, bb] = [x, c, 0];
-  else if (h < 180) [rr, gg, bb] = [0, c, x];
-  else if (h < 240) [rr, gg, bb] = [0, x, c];
-  else if (h < 300) [rr, gg, bb] = [x, 0, c];
-  else [rr, gg, bb] = [c, 0, x];
-  return [rr, gg, bb].map(v => Math.max(0, Math.min(255, Math.round((v + m) * 255))));
-}
-
-function indexedTerminalRgb(n) {
-  if (n >= 0 && n <= 15) {
-    const theme = termTheme();
-    const keys = [
-      'black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
-      'brightBlack', 'brightRed', 'brightGreen', 'brightYellow',
-      'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite',
-    ];
-    return hexToRgb(theme[keys[n]]);
-  }
-  if (n >= 232 && n <= 255) {
-    const v = 8 + (n - 232) * 10;
-    return [v, v, v];
-  }
-  if (n < 16 || n > 231) return null;
-  const steps = [0, 95, 135, 175, 215, 255];
-  n -= 16;
-  return [steps[Math.floor(n / 36)], steps[Math.floor(n / 6) % 6], steps[n % 6]];
-}
-
-function adaptRgbForLight(r, g, b, background) {
-  r = Math.max(0, Math.min(255, +r));
-  g = Math.max(0, Math.min(255, +g));
-  b = Math.max(0, Math.min(255, +b));
-  const light = hslLightness(r, g, b);
-  // 已是浅底/深字的真彩色（Codex diff、浅色 prompt）保持原样；
-  // 只有和亮色页面冲突的深底/浅字才反射亮度。
-  if (background ? light >= .5 : light < .5) return [r, g, b];
-  return reflectedLightRgb(r, g, b, background);
-}
-
-function adaptColonRgb(token) {
-  const match = token.match(/^(38|48):2(?::\d*)?:(\d{1,3}):(\d{1,3}):(\d{1,3})$/);
-  if (!match) return token;
-  const rgb = adaptRgbForLight(+match[2], +match[3], +match[4], match[1] === '48');
-  return `${match[1]};2;${rgb.join(';')}`;
-}
-
-function adaptSgrBody(body) {
-  const tokens = body.split(';');
-  const out = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const raw = tokens[i];
-    if (/^(38|48):2/.test(raw)) {
-      out.push(adaptColonRgb(raw));
-      continue;
-    }
-    const code = raw === '' ? 0 : Number(raw);
-    if ((code === 38 || code === 48) && tokens[i + 1] === '2' && i + 4 < tokens.length) {
-      const rgb = adaptRgbForLight(tokens[i + 2], tokens[i + 3], tokens[i + 4], code === 48);
-      out.push(String(code), '2', ...rgb.map(String));
-      i += 4;
-      continue;
-    }
-    if ((code === 38 || code === 48) && tokens[i + 1] === '5' && i + 2 < tokens.length) {
-      const source = indexedTerminalRgb(+tokens[i + 2]);
-      if (!source) {
-        out.push(String(code), '5', tokens[i + 2]);
-      } else {
-        const rgb = adaptRgbForLight(...source, code === 48);
-        out.push(String(code), '2', ...rgb.map(String));
-      }
-      i += 2;
-      continue;
-    }
-    let palette = -1, background = false;
-    if (code >= 40 && code <= 47) { palette = code - 40; background = true; }
-    else if (code >= 100 && code <= 107) { palette = code - 100 + 8; background = true; }
-    else if (code >= 30 && code <= 37) palette = code - 30;
-    else if (code >= 90 && code <= 97) palette = code - 90 + 8;
-    if (palette >= 0) {
-      const source = indexedTerminalRgb(palette);
-      if (source) {
-        const light = hslLightness(...source);
-        const clashes = background ? light < .5 : light >= .5;
-        if (clashes) {
-          const rgb = adaptRgbForLight(...source, background);
-          out.push(background ? '48' : '38', '2', ...rgb.map(String));
-          continue;
-        }
-      }
-    }
-    out.push(raw);
-  }
-  return out.join(';');
-}
-
-function stripOscColorSets(s) {
-  // 丢掉 CLI 把默认前景/背景/光标改成黑底的 OSC。查询（11;?）仍交给 xterm；
-  // 回包在 stripOscColorReports 里丢掉，不写回 PTY。
-  return s.replace(/\x1b\](?:10|11|12|104|110|111|112);(?!\?)[^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
-}
-
-// xterm 会回答 OSC 10/11/12/4 查询，答案走 term.onData，看起来像键盘输入。
-// 把回包改写成暗色 palettes 再写回 PTY，会让 gh/survey 这类在查询后立刻
-// 进 raw 读键的 CLI 把 ESC ] 当成非法按键（leftover 11;rgb:0000/0000/0000）。
-// 丢掉回包：CLI 超时后沿用默认暗色 TUI，亮色页面只在浏览器反色，
-// 也不把页面底色告诉 Codex/Claude/Grok。
-function stripOscColorReports(s) {
-  if (!s || !s.includes('\x1b]')) return s;
-  s = s.replace(
-    /\x1b\](?:10|11|12);(?:rgb:[^\\\x07]*|#[0-9a-fA-F]+)(?:\x07|\x1b\\)/g, '');
-  return s.replace(
-    /\x1b\]4;\d+;(?:rgb:[^\\\x07]*|#[0-9a-fA-F]+)(?:\x07|\x1b\\)/g, '');
-}
-
-function lightTerminalAnsi(s) {
-  return s.replace(/\x1b\[([0-9;:]*)m/g, (_, body) => `\x1b[${adaptSgrBody(body)}m`);
-}
-
-function terminalColorChunk(view, s) {
-  s = (view.ansiTail || '') + s;
-  view.ansiTail = '';
-  // PTY/WebSocket 可能恰好在 CSI/OSC 中间断包，留下不完整尾巴等下一块再处理。
-  const tail = s.match(/\x1b(?:\[[?0-9;:]*|\][^\x07\x1b]*)$/)?.[0] || '';
-  if (tail) {
-    view.ansiTail = tail;
-    s = s.slice(0, -tail.length);
-  }
-  s = stripOscColorSets(s);
-  if (document.documentElement.dataset.theme !== 'light') return s;
-  return lightTerminalAnsi(s);
-}
-
 async function refreshTerminalPreferences(redraw = false) {
   terminalFontReady = prepareTerminalFont();
   try { await terminalFontReady; } catch {}
@@ -319,7 +140,7 @@ async function refreshTerminalPreferences(redraw = false) {
   for (const view of views) {
     view.term.options.fontFamily = termFont();
     view.term.options.theme = termTheme();
-    // 已退出的临时会话可能在下一次列表轮询前仍留有一个 xterm 视图。
+    // 已退出的临时会话可能在下一次列表轮询前仍留有一个终端视图。
     // 配色切换只重连目前确实存在的 tmux，不能拿陈旧视图去 claim 404。
     const currentConnected = T.name === view.name && view.ws?.readyState === WebSocket.OPEN;
     if (redraw && view.name && (liveNames.has(view.name) || currentConnected)) {
@@ -330,7 +151,7 @@ async function refreshTerminalPreferences(redraw = false) {
   setTimeout(() => { fitTerm(); }, 0);
 }
 
-// xterm 先测量网页字体再创建 DOM 行，避免按回退字体计算出错误的字符宽度。
+// 网格先测量网页字体再排格子，避免按回退字体计算出错误的字符宽度。
 let terminalFontReady = prepareTerminalFont();
 addEventListener('resize', () => { layoutTermPane(); fitTerm(); });
 
@@ -341,7 +162,7 @@ function terminalListUncertain(uid) {
 }
 
 function mergeUnavailableTermRows(rows, previous, errors) {
-  if (SessionDockCapabilities.config.backend !== 'rust' || !HUB_MODE) return rows;
+  if (!HUB_MODE) return rows;
   const failed = new Set((errors || []).map(error => error.node_id));
   const retained = (previous || []).filter(row => failed.has(row.node_id || nodeOf(pendingUid(row.name))));
   const names = new Set(retained.map(row => row.name));
@@ -360,14 +181,16 @@ async function fetchTermList() {
   const requestSeq = ++termListRequestSeq;
   const openEpoch = termOpenEpoch;
   const fingerprint = () => [
-    ...(T.list || []).map(x => `${x.name}\t${x.cwd}` + (SessionDockCapabilities.config.backend === 'rust' ? `\t${x.uid}\t${x.instance_id}\t${x.current_uid || ''}\t${x.frozen}` : '')),
-    ...(T.pending || []).map(x => `pending\t${x.name}\t${x.cwd}` + (SessionDockCapabilities.config.backend === 'rust' ? `\t${x.record_id}\t${x.instance_id}\t${x.state}\t${pendingPhase(x)}` : '')),
+    ...(T.list || []).map(x =>
+      `${x.name}\t${x.cwd}\t${x.uid}\t${x.instance_id}\t${x.current_uid || ''}\t${x.frozen}`),
+    ...(T.pending || []).map(x =>
+      `pending\t${x.name}\t${x.cwd}\t${x.record_id}\t${x.instance_id}\t${x.state}\t${pendingPhase(x)}`),
   ].join('\n');
   const before = fingerprint();
   let loaded = false;
   let data = null;
   let failure = '';
-  let transient = false;   // Rust：网络错误 / 5xx / 429 只影响这一轮，不清空控制台状态
+  let transient = false;   // 网络错误 / 5xx / 429 只影响这一轮，不清空控制台状态
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12000);
   try {
@@ -386,7 +209,7 @@ async function fetchTermList() {
   // 只允许最后发出的请求改状态；否则慢响应会覆盖更新的 tmux 列表。
   if (requestSeq !== termListRequestSeq) return;
   // 请求在终端打开/切换之前发出时，它的“没有该视图”结论已经过期。丢弃
-  // 整份结果并立刻重取，不能先销毁刚打开的常驻 xterm 再补回来。
+  // 整份结果并立刻重取，不能先销毁刚打开的常驻终端视图再补回来。
   if (openEpoch !== termOpenEpoch) {
     void loadTermList();
     return;
@@ -406,21 +229,18 @@ async function fetchTermList() {
       && (T.pending || []).some(row => pendingUid(row.name) === S.sel);
     T.pending = mergeUnavailableTermRows(data.pending || [], T.pending, data.errors);
     if (hadSelected && !T.pending.some(row => pendingUid(row.name) === S.sel)
-        && !T.discarding.has(String(S.sel).slice(5))
         && !(typeof pendingTmuxSessions === 'function' && pendingTmuxSessions().some(row => row.uid === S.sel)))
       pendingSelectionGone(String(S.sel).slice(5));
     if (typeof recoverServerComposerDrafts === 'function') void recoverServerComposerDrafts();
     if (typeof syncComposerDraftBindings === 'function') syncComposerDraftBindings();
-    if (SessionDockCapabilities.config.backend === 'rust') {
-      for (const [uid, ended] of T.ended) {
-        const replacement = T.list.find(row => row.uid === uid && row.instance_id !== ended.instanceId);
-        if (replacement) {
-          T.ended.delete(uid);
-          if (ConsoleUI.errors.get(uid) === ended.reason) ConsoleUI.errors.delete(uid);
-        }
+    for (const [uid, ended] of T.ended) {
+      const replacement = T.list.find(row => row.uid === uid && row.instance_id !== ended.instanceId);
+      if (replacement) {
+        T.ended.delete(uid);
+        if (ConsoleUI.errors.get(uid) === ended.reason) ConsoleUI.errors.delete(uid);
       }
     }
-  } else if (SessionDockCapabilities.config.backend === 'rust' && transient) {
+  } else if (transient) {
     // 瞬时失败：保留上一轮的 enabled/sources/list/pending，“+”与接管按钮不消失；
     // 下一轮轮询自然恢复。只有明确的 4xx 才把状态清空。
   } else {
@@ -438,7 +258,6 @@ async function fetchTermList() {
     const valid = new Set([...T.list, ...T.pending].map(x => x.name));
     const kept = new Map([...T.openViews].filter(([name, saved]) => {
       if (!valid.has(name)) return false;
-      if (SessionDockCapabilities.config.backend !== 'rust') return true;
       const row = (saved.record_id ? T.pending : T.list).find(row => row.name === name);
       return !!row && saved.uid === (row.uid || (row.record_id && pendingUid(row.name)))
         && saved.instance_id === row.instance_id && (!row.record_id || saved.record_id === row.record_id);
@@ -449,8 +268,7 @@ async function fetchTermList() {
     }
     for (const name of T.views.keys()) {
       const current = [...T.list, ...T.pending].find(row => row.name === name);
-      const replaced = SessionDockCapabilities.config.backend === 'rust'
-        && current
+      const replaced = current
         && T.views.get(name)?.instanceId
         && T.views.get(name).instanceId !== current.instance_id;
       const view = T.views.get(name);
@@ -492,8 +310,8 @@ async function fetchTermList() {
   for (const pending of pendingTmuxSessions()) if (!pending.stale) resolveNewSession(pending);
   // Declared launches leave the sidebar once their native record exists;
   // the selected pending page still has to follow that association.
-  if (SessionDockCapabilities.config.backend === 'rust')
-    for (const row of T.pending) if (row.declared_sid || row.binding?.state === 'confirmed') resolveNewSession(row);
+  for (const row of T.pending)
+    if (row.declared_sid || row.binding?.state === 'confirmed') resolveNewSession(row);
   restoreTermPane(S.sel, S.agent);
   if (String(S.sel || '').startsWith('tmux:')) refreshPendingStage(String(S.sel).slice(5));
 }
@@ -521,82 +339,48 @@ function termBindingServes(boundUid, uid) {
  *
  * 默认只接受 pane 的精确 uid 归属。Codex 回退后，同一个稳定 pane 会改绑到
  * 新叶子；只有负责跟进回退或用户明确切换终端的调用方才允许追随这个替代 uid。
- * Rust 后端的 pane 行始终写接管时绑定的 uid，叶子由列表的 fork 图推出。
+ * pane 行始终写接管时绑定的 uid，叶子由列表的 fork 图推出。
  */
 function linkedTermSession(uid, { followReplacement = false } = {}) {
   const panes = [...(T.list || []), ...(T.pending || [])];
-  if (SessionDockCapabilities.config.backend === 'rust') {
-    const current = panes.filter(pane => pane.instance_id && pane.current_uid === uid);
-    if (current.length === 1) return {name: current[0].name, uid};
-    if (current.length > 1) return null;
-    const session = sessionTermMeta(uid);
-    // Codex rewind can rotate the rollout while keeping the native thread ID.
-    // These generations have no forked_from_id; the host's guard UID stays put.
-    const sameThread = next => session?.source === 'codex' && session.sid
-      && next?.source === session.source && next.sid === session.sid
-      && nodeOf(next.uid) === nodeOf(uid);
-    const moved = panes.filter(pane => pane.instance_id
-      && (pane.uid === uid || sameThread(sessionTermMeta(pane.current_uid)))
-      && pane.current_uid && pane.current_uid !== uid);
-    // Only the same thread or a proven fork carries a draft; /new is unrelated.
-    if (moved.length) {
-      const next = moved.length === 1 ? sessionTermMeta(moved[0].current_uid) : null;
-      return followReplacement && next && (sameThread(next)
-        || (typeof forkAncestors === 'function'
-          && forkAncestors(next).some(({row}) => row?.uid === uid)))
-        ? {name: moved[0].name, uid: moved[0].current_uid} : null;
-    }
-    const exactFor = target => panes.filter(pane => pane.instance_id && (pane.uid === target
-      || (pane.record_id && pane.launch_id && !pane.stale && pendingUid(pane.name) === target)));
-    const leafOf = target => (typeof forkLeafUid === 'function' ? forkLeafUid(target) : target);
-    const exact = exactFor(uid);
-    if (exact.length === 1) {
-      const leaf = leafOf(uid);
-      return leaf === uid || followReplacement ? {name: exact[0].name, uid: leaf} : null;
-    }
-    if (exact.length || typeof forkAncestors !== 'function') return null;
-    // 回退分支没有自己的 pane：最近一个仍有 pane 的祖先就是它的控制台，前提是
-    // 这条分支正是那个 pane 当前写入的叶子。
-    for (const {row} of session ? forkAncestors(session) : []) {
-      if (!row) break;
-      const inherited = exactFor(row.uid);
-      if (!inherited.length) continue;
-      if (inherited.length !== 1) return null;
-      const leaf = leafOf(row.uid);
-      return leaf === uid || followReplacement ? {name: inherited[0].name, uid: leaf} : null;
-    }
-    return null;
-  }
-  const linked = (pane, name = pane?.name) => {
-    if (!pane || (!followReplacement && pane.uid && pane.uid !== uid)) return null;
-    return { name, uid: pane.uid || uid };
-  };
-  if (String(uid || '').startsWith('tmux:')) {
-    const name = String(uid).slice(5);
-    const pane = panes.find(x => x.name === name);
-    return pane ? { name, uid: pane.uid || uid } : null;
-  }
-  const direct = panes.find(x => x.uid === uid);
-  if (direct) return { name: direct.name, uid: direct.uid || uid };
-
-  // 终端已经在本页打开时，pane 名是跨分支的稳定身份。
-  // 服务端映射出的 pane.uid 才是当前原生叶子。
-  if (T.uid === uid && T.name) {
-    const active = panes.find(x => x.name === T.name);
-    const result = linked(active);
-    if (result) return result;
-  }
-
+  const current = panes.filter(pane => pane.instance_id && pane.current_uid === uid);
+  if (current.length === 1) return {name: current[0].name, uid};
+  if (current.length > 1) return null;
   const session = sessionTermMeta(uid);
-  if (!session) return null;
-  // Codex 分支的 sid 会变，而接管时的 tmux 名由根会话 sid 生成。
-  // 优先保留普通会话的叶子名，再用 root_sid 追溯回同一 pane。
-  const ids = [...new Set([session.sid, session.root_sid].filter(Boolean))];
-  for (const sid of ids) {
-    const name = (session.node_id ? session.node_id + '~' : '') + `sessiondock-${session.source}-${String(sid).slice(0, 8)}`;
-    const pane = panes.find(x => x.name === name);
-    const result = linked(pane, name);
-    if (result) return result;
+  // Codex rewind can rotate the rollout while keeping the native thread ID.
+  // These generations have no forked_from_id; the host's guard UID stays put.
+  const sameThread = next => session?.source === 'codex' && session.sid
+    && next?.source === session.source && next.sid === session.sid
+    && nodeOf(next.uid) === nodeOf(uid);
+  const moved = panes.filter(pane => pane.instance_id
+    && (pane.uid === uid || sameThread(sessionTermMeta(pane.current_uid)))
+    && pane.current_uid && pane.current_uid !== uid);
+  // Only the same thread or a proven fork carries a draft; /new is unrelated.
+  if (moved.length) {
+    const next = moved.length === 1 ? sessionTermMeta(moved[0].current_uid) : null;
+    return followReplacement && next && (sameThread(next)
+      || (typeof forkAncestors === 'function'
+        && forkAncestors(next).some(({row}) => row?.uid === uid)))
+      ? {name: moved[0].name, uid: moved[0].current_uid} : null;
+  }
+  const exactFor = target => panes.filter(pane => pane.instance_id && (pane.uid === target
+    || (pane.record_id && pane.launch_id && !pane.stale && pendingUid(pane.name) === target)));
+  const leafOf = target => (typeof forkLeafUid === 'function' ? forkLeafUid(target) : target);
+  const exact = exactFor(uid);
+  if (exact.length === 1) {
+    const leaf = leafOf(uid);
+    return leaf === uid || followReplacement ? {name: exact[0].name, uid: leaf} : null;
+  }
+  if (exact.length || typeof forkAncestors !== 'function') return null;
+  // 回退分支没有自己的 pane：最近一个仍有 pane 的祖先就是它的控制台，前提是
+  // 这条分支正是那个 pane 当前写入的叶子。
+  for (const {row} of session ? forkAncestors(session) : []) {
+    if (!row) break;
+    const inherited = exactFor(row.uid);
+    if (!inherited.length) continue;
+    if (inherited.length !== 1) return null;
+    const leaf = leafOf(row.uid);
+    return leaf === uid || followReplacement ? {name: inherited[0].name, uid: leaf} : null;
   }
   return null;
 }
@@ -612,8 +396,7 @@ function takenOver(uid) {
  *  claims for itself and reports any other page's lease as an ownership
  *  error. Undeclared capabilities send nothing extra. */
 function termSendLease(name) {
-  if (SessionDockCapabilities.config.backend !== 'rust'
-      || SessionDockCapabilities.config.conversation_send!==true) return {};
+  if (SessionDockCapabilities.config.conversation_send!==true) return {};
   const lease = T.views.get(name)?.inputLease;
   if (!lease?.token || !lease?.instance_id) return {};
   const out = { page: TERM_PAGE_ID, token: lease.token, instance_id: lease.instance_id };
@@ -644,8 +427,7 @@ function termRowBinding(name, uid) {
  *  the reliable-send composer (see `termSendLease`), so a bare `text` returns
  *  null. Undeclared capabilities keep the body. */
 function termInputBody(name, body) {
-  if (SessionDockCapabilities.config.backend !== 'rust'
-      || !SessionDockCapabilities.allows('terminal_input')) return body;
+  if (!SessionDockCapabilities.allows('terminal_input')) return body;
   const lease = T.views.get(name)?.inputLease;
   const identity = lease || termRowBinding(name, body.uid);
   const out = { name, page: TERM_PAGE_ID, token: lease?.token || '' };
@@ -664,7 +446,7 @@ function adoptLinkedTermSession(fromUid, linked, reason) {
   if (!toUid || toUid === fromUid || String(toUid).startsWith('tmux:')) return fromUid;
   browserAuditEvent?.('terminal.session_rebound', {
     name: linked.name, from_uid: fromUid, to_uid: toUid, reason,
-  }, null, { uid: toUid });
+  }, { uid: toUid });
   migrateComposerDraft(fromUid, toUid);
   T.uid = toUid;
   return toUid;
@@ -705,11 +487,10 @@ async function takeover(uid, btn) {
   };
   setBtn('接管中…', true);
   try {
-    // Rust: takeover is an idempotent, server-resolved `resume` receipt; the
+    // Takeover is an idempotent, server-resolved `resume` receipt; the
     // request ID keeps a retried click from starting a second CLI.
-    const rustResume = SessionDockCapabilities.config.backend === 'rust'
-      ? {request_id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`} : {};
-    let d = await post('api/term/takeover', { uid, cols: 120, rows: termRows(), ...rustResume });
+    const request_id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let d = await post('api/term/takeover', { uid, cols: 120, rows: termRows(), request_id });
     if (d.needs_confirm) {
       const n = (d.pids || []).length;
       const ok = await appConfirm(
@@ -725,10 +506,10 @@ async function takeover(uid, btn) {
       return appAlert('打开控制台失败：' + d.error);
     }
     await loadTermList();
-    // Rust: the receipt is ready, but the fresh instance reaches the console
+    // The receipt is ready, but the fresh instance reaches the console
     // list only once its guarded observation matches the session row; wait
     // for that (bounded) instead of attaching against a stale list.
-    for (let attempt = 0; SessionDockCapabilities.config.backend === 'rust' && attempt < 12
+    for (let attempt = 0; attempt < 12
          && !(T.list || []).some(row => row.name === d.name && row.instance_id === d.instance_id); attempt++) {
       await new Promise(resolve => setTimeout(resolve, 500));
       await loadTermList();
@@ -751,7 +532,7 @@ async function post(url, body, {timeoutMs = 0} = {}) {
     || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const payload = { ...body, _build: BUILD_ID, _trace_id: traceId,
     _page_id: TERM_PAGE_ID };
-  browserAuditEvent?.('http.request.started', {url, method: 'POST'}, null, {
+  browserAuditEvent?.('http.request.started', {url, method: 'POST'}, {
     uid: body?.uid || '', traceId, requestId: body?.request_id || '',
   });
   const started = performance.now();
@@ -770,7 +551,7 @@ async function post(url, body, {timeoutMs = 0} = {}) {
     headersMs = Math.round((performance.now() - started) * 1000) / 1000;
     status = r.status;
     phase = 'body';
-    browserAuditEvent?.('http.response.headers', {url, status, headers_ms: headersMs}, null,
+    browserAuditEvent?.('http.response.headers', {url, status, headers_ms: headersMs},
       {uid: body?.uid || '', traceId, requestId: body?.request_id || ''});
     const text = await r.text();
     const bodyMs = Math.round((performance.now() - started - headersMs) * 1000) / 1000;
@@ -787,7 +568,7 @@ async function post(url, body, {timeoutMs = 0} = {}) {
       url, status: r.status, ok: r.ok, headers_ms: headersMs,
       body_ms: bodyMs,
       duration_ms: Math.round((performance.now() - started) * 1000) / 1000,
-    }, data, {uid: body?.uid || '', traceId, requestId: body?.request_id || '',
+    }, {uid: body?.uid || '', traceId, requestId: body?.request_id || '',
       severity: r.ok ? 'info' : 'warning'});
     if (data?.reload) markStaleBuild(data.build);
     return data;
@@ -800,7 +581,7 @@ async function post(url, body, {timeoutMs = 0} = {}) {
       url, error: String(error?.stack || error), phase, status, headers_ms: headersMs,
       timeout_ms: timeoutMs, online: navigator.onLine, visibility: document.visibilityState,
       duration_ms: Math.round((performance.now() - started) * 1000) / 1000,
-    }, null, {uid: body?.uid || '', traceId, requestId: body?.request_id || '',
+    }, {uid: body?.uid || '', traceId, requestId: body?.request_id || '',
       severity: 'error'});
     throw error;
   } finally {
@@ -1266,7 +1047,7 @@ $('#bug-report-form').onsubmit = async event => {
   browserAuditEvent('bug_report.requested', {
     ...snapshot.data, attachments: attachments.length,
     worker_node: node, origin_node: origin.node_id || '', remote,
-  }, snapshot.content);
+  });
   try {
     bugReportDraftObject().text = reportText;
     await hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
@@ -1580,7 +1361,7 @@ async function loadCwdCompletions(complete = false) {
   const input = $('#new-cwd');
   const value = input.value.trim();
   const recent = matchingRecentCwdOptions(value);
-  if (SessionDockCapabilities.config.backend === 'rust' && !SessionDockCapabilities.allows('terminal_complete_dir')) {
+  if (!SessionDockCapabilities.allows('terminal_complete_dir')) {
     renderCwdOptions(value, recent, [], '请填写已配置白名单中的现有工作目录；不会自动创建目录。');
     return;
   }
@@ -1899,8 +1680,7 @@ function showNewSessionStage(info) {
       <span class="meta-secondary"><code>${esc(shortCwd(info.cwd, 999))}</code></span>
       <span class="meta-source">${esc(src.name)}</span></div>`)}
     </div></div>
-  </div><div class="empty new-session-wait">${SessionDockCapabilities.config.backend === 'rust'
-    ? esc(pendingStageMessage(info)) : ''}</div>`;
+  </div><div class="empty new-session-wait">${esc(pendingStageMessage(info))}</div>`;
   $('#detail .mobile-back').onclick = showMobileList;
   bindConsoleButton($('#a-term'), S.sel);
   renderPendingSessionAction(info);
@@ -1944,7 +1724,7 @@ function pendingPhase(row) {
 
 /** Sidebar meta text of a Rust pending row (other rows keep "等待首条消息"). */
 function pendingStateLabel(s) {
-  if (SessionDockCapabilities.config.backend !== 'rust' || !s.record_id) return '等待首条消息';
+  if (!s.record_id) return '等待首条消息';
   if (s.kind === 'bug-report' && s.worker_status && s.worker_status !== 'starting'
       && pendingPhase(s) === 'running')
     return WORKER_STATUS_TEXT[s.worker_status] || s.worker_status;
@@ -2058,29 +1838,25 @@ function pendingSelectionGone(name) {
 }
 
 async function stopPendingSession(info, button) {
-  if (SessionDockCapabilities.config.backend === 'rust') {
-    if (!await appConfirm(`停止会话「${pendingTitle(info)}」?\n\n停止后才可以删除会话记录。`)) return;
-    if (button) button.disabled = true;
-    try {
-      const result = await post('api/term/kill', {record_id: info.record_id, instance_id: info.instance_id,
-        ...(HUB_MODE ? {_node: info.node_id} : {})});
-      if (result.error) throw new Error(result.error);
-      const current = T.pending.find(row => row.record_id === info.record_id);
-      if (current) Object.assign(current, result);
-      if (S.sel === pendingUid(info.name)) {
-        const wait = $('.new-session-wait');
-        if (wait) wait.textContent = '正在停止…';
-      }
-      await loadTermList();
-    } catch (error) { await appAlert(error.message || '停止失败，请重试。'); }
-    finally { if (button) button.disabled = false; }
-    return;
-  }
-  return deleteSessions([pendingUid(info.name)], button);
+  if (!await appConfirm(`停止会话「${pendingTitle(info)}」?\n\n停止后才可以删除会话记录。`)) return;
+  if (button) button.disabled = true;
+  try {
+    const result = await post('api/term/kill', {record_id: info.record_id, instance_id: info.instance_id,
+      ...(HUB_MODE ? {_node: info.node_id} : {})});
+    if (result.error) throw new Error(result.error);
+    const current = T.pending.find(row => row.record_id === info.record_id);
+    if (current) Object.assign(current, result);
+    if (S.sel === pendingUid(info.name)) {
+      const wait = $('.new-session-wait');
+      if (wait) wait.textContent = '正在停止…';
+    }
+    await loadTermList();
+  } catch (error) { await appAlert(error.message || '停止失败，请重试。'); }
+  finally { if (button) button.disabled = false; }
 }
 
 async function deletePendingSession(info, button) {
-  if (info.source === 'shell' && SessionDockCapabilities.config.backend === 'rust'
+  if (info.source === 'shell'
       && !await appConfirm(`删除会话「${pendingTitle(info)}」?\n\n会话记录和它的录制会一并删除，无法恢复。`)) return;
   if (button) button.disabled = true;
   try {
@@ -2092,31 +1868,19 @@ async function deletePendingSession(info, button) {
 }
 
 async function discardPendingSession(info) {
-  if (SessionDockCapabilities.config.backend === 'rust') {
-    // A finished receipt (exited/failed/cancelled) is dropped from the pending
-    // view through `term/discard`; a running one must be stopped first.
-    const current = T.pending.find(row => row.record_id === info.record_id) || info;
-    if (current.running && !current.stale) {
-      const result = await post('api/term/kill', {record_id: current.record_id, instance_id: current.instance_id,
-        ...(HUB_MODE ? {_node: current.node_id} : {})});
-      if (result.error) throw new Error(result.error);
-      Object.assign(current, result);
-    }
-    const dropped = await post('api/term/discard', {record_id: current.record_id, instance_id: current.instance_id,
+  // A finished receipt (exited/failed/cancelled) is dropped from the pending
+  // view through `term/discard`; a running one must be stopped first.
+  const current = T.pending.find(row => row.record_id === info.record_id) || info;
+  if (current.running && !current.stale) {
+    const result = await post('api/term/kill', {record_id: current.record_id, instance_id: current.instance_id,
       ...(HUB_MODE ? {_node: current.node_id} : {})});
-    if (dropped.error) throw new Error(dropped.error);
-    discardAbandonedNewSession(info);
-    return;
+    if (result.error) throw new Error(result.error);
+    Object.assign(current, result);
   }
-  T.discarding.add(info.name);
-  T.resolveControllers.get(info.name)?.abort();
-  try {
-    const d = await post('api/term/kill', { name: info.name });
-    if (d.error || !d.ok) throw new Error(d.error || '丢弃失败');
-    discardAbandonedNewSession(info);
-  } finally {
-    T.discarding.delete(info.name);
-  }
+  const dropped = await post('api/term/discard', {record_id: current.record_id, instance_id: current.instance_id,
+    ...(HUB_MODE ? {_node: current.node_id} : {})});
+  if (dropped.error) throw new Error(dropped.error);
+  discardAbandonedNewSession(info);
 }
 
 /** SSH/shell receipts have no conversation archive; the PTY is the session. */
@@ -2146,8 +1910,7 @@ async function openPendingSession(info) {
   showNewSessionStage(pending);
   // Agent 会话留在对话页，直到用户打开控制台。SSH 运行中默认 PTY 在
   // 输入框上方；结束后有录制则全幅只读回放。记住的布局优先。
-  const running = SessionDockCapabilities.config.backend !== 'rust'
-    || (pending.running && !pending.stale);
+  const running = pending.running && !pending.stale;
   const retained = T.views?.get(pending.name)?.keepOutput || T.views?.get(pending.name)?.ended;
   const remembered = T.openViews.has(pending.name) && running;
   const replay = pending.source === 'shell' && pending.recording && !running;
@@ -2162,7 +1925,6 @@ async function openPendingSession(info) {
 
 function discardAbandonedNewSession(info) {
   const uid = pendingUid(info.name);
-  T.resolveControllers.get(info.name)?.abort();
   pendingFirstInput.delete(info.name);
   T.pending = (T.pending || []).filter(x => x.name !== info.name);
   T.list = (T.list || []).filter(x => x.name !== info.name);
@@ -2202,116 +1964,49 @@ function discardAbandonedNewSession(info) {
 }
 
 async function resolveNewSession(info) {
-  if (SessionDockCapabilities.config.backend === 'rust') {
-    // Periodic term/list is authoritative for this launch-only view. Never run
-    // filename-based resolution or automatic draft/receipt cleanup.
-    const current = T.pending.find(row => row.record_id === info.record_id);
-    const pendingId = pendingUid(info.name);
-    // A launch that declared its full SID on the command line is associated
-    // by the runtime catalog (same host name + instance nonce, immutable
-    // metadata), never by cwd/time/filename; follow it to the real session
-    // while keeping this page's existing pending terminal view.
-    // A pending Codex/Grok launch whose binding the server confirmed
-    // (process evidence, or `POST /api/term/bind`) is followed the same way.
-    const associated = current && (current.declared_sid || current.binding?.state === 'confirmed');
-    const terminalLinked = associated && (T.list || []).find(row => row.name === current.name
-      && row.instance_id === current.instance_id && row.uid);
-    // ptyhost removes its routing record immediately after exit. A durable
-    // binding still names the exact native row, so follow that history even
-    // when there is no terminal left to reopen.
-    const nativeLinked = current?.binding?.state === 'confirmed'
-      && S.sessions.find(row => row.uid === current.binding.uid
-        && row.source === current.binding.source
-        && String(row.sid) === String(current.binding.sid));
-    const linked = terminalLinked || nativeLinked;
-    if (linked && S.sel === pendingId && !S.agent) {
-      migrateComposerDraft(pendingId, linked.uid);
-      // The pending view holds a launch-kind lease and socket; the native
-      // console claims a native lease on the same host, so release ours first.
-      // Reopen it on the native session when it was open (or remembered open
-      // — a mobile layout change parks the pane without forgetting it).
-      const reopen = (!$('#termpane').classList.contains('hidden') && T.name === current.name)
-        || T.openViews.has(current.name);
-      const existing = T.views.get(current.name);
-      if (existing && existing.bindingUid === pendingId) {
-        rememberTermOpen(current.name, false);
-        disposeTermView(current.name);
-      }
-      T.uid = linked.uid;
-      await openSession(linked.uid, null, {follow: true, historyMode: 'replace'});
-      if (S.sel === linked.uid && !S.agent && reopen && terminalLinked) await openTermPane(current.name);
-      T.pendingModes.delete(info.name);
-      paintLive();
-      return;
+  // Periodic term/list is authoritative for this launch-only view. Never run
+  // filename-based resolution or automatic draft/receipt cleanup.
+  const current = T.pending.find(row => row.record_id === info.record_id);
+  const pendingId = pendingUid(info.name);
+  // A launch that declared its full SID on the command line is associated
+  // by the runtime catalog (same host name + instance nonce, immutable
+  // metadata), never by cwd/time/filename; follow it to the real session
+  // while keeping this page's existing pending terminal view.
+  // A pending Codex/Grok launch whose binding the server confirmed
+  // (process evidence, or `POST /api/term/bind`) is followed the same way.
+  const associated = current && (current.declared_sid || current.binding?.state === 'confirmed');
+  const terminalLinked = associated && (T.list || []).find(row => row.name === current.name
+    && row.instance_id === current.instance_id && row.uid);
+  // ptyhost removes its routing record immediately after exit. A durable
+  // binding still names the exact native row, so follow that history even
+  // when there is no terminal left to reopen.
+  const nativeLinked = current?.binding?.state === 'confirmed'
+    && S.sessions.find(row => row.uid === current.binding.uid
+      && row.source === current.binding.source
+      && String(row.sid) === String(current.binding.sid));
+  const linked = terminalLinked || nativeLinked;
+  if (linked && S.sel === pendingId && !S.agent) {
+    migrateComposerDraft(pendingId, linked.uid);
+    // The pending view holds a launch-kind lease and socket; the native
+    // console claims a native lease on the same host, so release ours first.
+    // Reopen it on the native session when it was open (or remembered open
+    // — a mobile layout change parks the pane without forgetting it).
+    const reopen = (!$('#termpane').classList.contains('hidden') && T.name === current.name)
+      || T.openViews.has(current.name);
+    const existing = T.views.get(current.name);
+    if (existing && existing.bindingUid === pendingId) {
+      rememberTermOpen(current.name, false);
+      disposeTermView(current.name);
     }
-    if (current && S.sel === pendingId && typeof refreshPendingStage === 'function')
-      refreshPendingStage(info.name);
+    T.uid = linked.uid;
+    await openSession(linked.uid, null, {follow: true, historyMode: 'replace'});
+    if (S.sel === linked.uid && !S.agent && reopen && terminalLinked) await openTermPane(current.name);
+    T.pendingModes.delete(info.name);
+    paintLive();
     return;
   }
-  const pendingId = pendingUid(info.name);
-  if (T.resolving.has(info.name) || T.discarding.has(info.name)) return;
-  T.resolving.add(info.name);
-  const controller = new AbortController();
-  T.resolveControllers.set(info.name, controller);
-  try {
-    for (let i = 0; i < 160; i++) {         // TUI 等用户首次输入时可能较久，最多等两分钟
-      await new Promise(r => setTimeout(r, 750));
-      let d;
-      try {
-        const response = await fetch(appUrl(`api/term/new-status?name=${encodeURIComponent(info.name)}`),
-          { signal: controller.signal });
-        d = await response.json();
-        if (controller.signal.aborted) return;
-        if (HUB_MODE && response.status >= 500) continue;
-      } catch {
-        if (controller.signal.aborted) return;
-        continue;
-      }
-      // 另一浏览器可能已经先清理了同一临时记录；gone 与本页观察到
-      // exited 的收尾动作完全相同，不能退化成一个关联失败的孤儿页。
-      if (d.exited || d.gone) {
-        if (conversationSendEnabled()) {composerDraft(pendingId);await hydrateComposerDraft(pendingId);}
-        const draft = composerDrafts.get(pendingId);
-        if (draft && (draft.text || draft.attachments.length || draft.quotes.length)) {
-          const wait = $('.new-session-wait');
-          if (wait && S.sel === pendingId) wait.textContent = 'CLI 已退出，输入已保留';
-        } else discardAbandonedNewSession(info);
-        return;
-      }
-      if (d.error) {
-        const wait = $('.new-session-wait');
-        if (wait && S.sel === pendingId) wait.textContent = `会话关联失败：${d.error}`;
-        return;
-      }
-      if (d.waiting) {
-        const wait = $('.new-session-wait');
-        if (wait && S.sel === pendingId && !d.running) wait.textContent = 'CLI 已退出，尚未生成会话记录';
-        continue;
-      }
-      await loadSessions(true);
-      await loadTermList();
-      if (controller.signal.aborted) return;
-      if (S.sel !== pendingId) return;      // 等待刷新期间也可能切走，不能抢走右侧页面
-      migrateComposerDraft(pendingId, d.uid);
-      T.uid = d.uid;
-      if (d.running) {
-        S.live.add(d.uid);
-        S.liveTmux.add(d.uid);
-      }
-      await openSession(d.uid);
-      if (S.sel !== d.uid || S.agent) return;
-      if (d.running && T.openViews.has(d.name)) await openTermPane(d.name);
-      else closeTermPane();
-      T.pendingModes.delete(info.name);
-      paintLive();
-      return;
-    }
-    const wait = $('.new-session-wait');
-    if (wait && S.sel === pendingId) wait.textContent = '会话仍在终端中运行；产生首条记录后会出现在列表里';
-  } finally {
-    T.resolving.delete(info.name);
-    if (T.resolveControllers.get(info.name) === controller) T.resolveControllers.delete(info.name);
-  }
+  if (current && S.sel === pendingId && typeof refreshPendingStage === 'function')
+    refreshPendingStage(info.name);
 }
 
 let newCreateAttempt = null;
@@ -2458,7 +2153,7 @@ function auditTermPane(action, extra = {}) {
     action, name: T.name, uid: T.uid, mode: T.mode, mobile: MOBILE.matches,
     visible: !!pane && !pane.classList.contains('hidden'),
     views: [...T.views.keys()], open_views: [...T.openViews.keys()], ...extra,
-  }, null, {uid: T.uid || S.sel || ''});
+  }, {uid: T.uid || S.sel || ''});
 }
 
 // ---------------------------------------------------------------- 终端面板
@@ -2557,7 +2252,7 @@ function handleOsc52Clipboard(view, payload) {
   const audit = (status, method = '') => browserAuditEvent('terminal.clipboard', {
     name: view.name, operation: decoded?.query ? 'query' : 'write', status, method,
     selection: String(decoded?.selection || '').slice(0, 16), bytes: decoded?.bytes || 0,
-  }, null, {uid: T.uid || '', connectionId: view.auditConnectionId || '',
+  }, {uid: T.uid || '', connectionId: view.auditConnectionId || '',
     severity: status === 'failed' || status === 'malformed' ? 'warning' : 'info'});
   if (!decoded) {
     audit('malformed');
@@ -2611,52 +2306,13 @@ function restoreTermSelection(view) {
   });
 }
 
-function termSelectionMouseDown(event) {
-  return new MouseEvent('mousedown', {
-    bubbles: true, cancelable: true, composed: true, view: window,
-    detail: event.detail,
-    screenX: event.screenX, screenY: event.screenY,
-    clientX: event.clientX, clientY: event.clientY,
-    ctrlKey: event.ctrlKey, altKey: event.altKey, metaKey: event.metaKey,
-    shiftKey: false, button: event.button, buttons: event.buttons,
-  });
-}
-
-function shouldUseTermWebgl(uid = T.uid) {
-  return !String(uid || '').startsWith('tmux:')
-    && Math.abs((parseFloat(getComputedStyle(document.documentElement).zoom) || 1) - 1) < .001;
-}
-
-/** 用户选择的控制台渲染器：`grid` = 服务端网格（宿主解析，浏览器只画格子）。
- *  只有宿主声明支持网格（term/list 行的 `grid:true`）才用；旧宿主进程自动回退 xterm.js。 */
-/** 这一行所在机器的控制台渲染：hub 按机器（中央注册表的 renderer），单机按本浏览器。默认服务端网格。 */
-function consoleRendererFor(row) {
-  if (HUB_MODE) {
-    const nid = row?.node_id || (typeof newNodeId === 'function' ? newNodeId() : '');
-    const node = [...(Nodes.machines || []), ...(Nodes.list || [])].find(n => n.id === nid);
-    return node?.renderer === 'xterm' ? 'xterm' : 'grid';
-  }
-  return store.get('consoleRenderer', 'grid') === 'xterm' ? 'xterm' : 'grid';
-}
-
-function consoleRendererIsGrid(name) {
-  const row = (T.list || []).find(x => x.name === name) || (T.pending || []).find(x => x.name === name);
-  if (consoleRendererFor(row) !== 'grid' || typeof globalThis.GridTerm !== 'function') return false;
-  // 列表里还没有这一行（刚创建的会话）：新宿主一定支持网格，按偏好来。
-  // 已结束但有录制的会话：回放由服务端模型驱动，两种渲染都行，也按偏好来。
-  // `grid` 未知（create 回执刚本地塞进列表、还没经 term/list 补全）同样按偏好；旧宿主服务端总是显式给 false。
-  if (!row || row.grid == null || (row.running === false && row.recording?.id)) return true;
-  return row.grid === true;
-}
-
 function ensureTerm(name) {
   let view = T.views.get(name);
   if (view) return view;
   const host = el('div', 'xterm-view');
   host.hidden = true;
   $('#xterm').appendChild(host);
-  const grid = consoleRendererIsGrid(name);
-  const term = grid ? new GridTerm({
+  const term = new GridTerm({
     fontFamily: termFont(), fontSize: termFontSize(), theme: termTheme(),
     cursorBlink: true, scrollback: 100000,
     onDiagnostic: (event, data) => {
@@ -2665,92 +2321,49 @@ function ensureTerm(name) {
         name, ...data, visible: termPaneRenderable(view),
         visibility: document.visibilityState,
         elapsed_ms: Math.round(performance.now() - view.auditConnectStarted),
-      }, null, {uid: view.bindingUid || T.uid || '', connectionId: view.auditConnectionId});
+      }, {uid: view.bindingUid || T.uid || '', connectionId: view.auditConnectionId});
     },
-  }) : new Terminal({
-    allowProposedApi: true,
-    fontFamily: termFont(),
-    fontSize: termFontSize(), fontWeight: '400', fontWeightBold: '600',
-    rescaleOverlappingGlyphs: true,
-    cursorBlink: true, scrollback: 10000,
-    scrollOnUserInput: true, theme: termTheme(),
   });
-  // 网格外观层没有 FitAddon：按 #xterm 容器尺寸提议行列，其余流程不变。
-  const fit = grid
-    ? {proposeDimensions: () => {
-      const box = $('#xterm'), css = getComputedStyle(box);
-      return term.proposeDimensions(box.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight),
-        box.clientHeight - parseFloat(css.paddingTop) - parseFloat(css.paddingBottom));
-    }}
-    : new FitAddon.FitAddon();
+  // 按 #xterm 容器尺寸提议行列。
+  const fit = {proposeDimensions: () => {
+    const box = $('#xterm'), css = getComputedStyle(box);
+    return term.proposeDimensions(box.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight),
+      box.clientHeight - parseFloat(css.paddingTop) - parseFloat(css.paddingBottom));
+  }};
   view = {
-    name, host, term, fit, grid, ws: null, connectTimer: null, reconnectTimer: null,
-    reconnectDelay: 500, scrollPos: 0, ansiTail: '',
+    name, host, term, fit, ws: null, connectTimer: null, reconnectTimer: null,
+    reconnectDelay: 500, scrollPos: 0,
     fitFrame: null,
     lastResizeKey: '', lastResizeWs: null,
     activationEpoch: 0,
     attachPromise: null, revoked: false,
     focusRequest: null, resumeFocus: false,
-    renderer: 'dom', webgl: null, unicode11: null,
-    syncHold: null, syncHoldTimer: null, syncSettleTimer: null,
     selectionLocked: false, selectionSnapshot: null, restoringSelection: false,
     codexSideThread: false, sideThreadScanQueued: false,
   };
   T.views.set(name, view);
-  if (!grid) term.loadAddon(fit);
-  if (!grid && globalThis.Unicode11Addon?.Unicode11Addon) {
-    try {
-      view.unicode11 = new Unicode11Addon.Unicode11Addon();
-      term.loadAddon(view.unicode11);
-      term.unicode.activeVersion = '11';
-    } catch { view.unicode11 = null; }
-  }
   term.open(host);
   installTermMenu(view);
   term.onScroll(() => positionTermViewport(view));
   // Edge 在任何聚焦的可编辑元素插入点旁挂一个 Copilot“撰写”浮动按钮（一个蓝点），
-  // 它会贴着 xterm 这个隐藏的 IME textarea 跟随光标。Edge 124+ 认这个属性，
+  // 它会贴着终端隐藏的 IME textarea 跟随光标。Edge 124+ 认这个属性，
   // 同时关掉文本预测；其它浏览器忽略。
   term.textarea?.setAttribute('writingsuggestions', 'false');
   // Files pasted into the console are captured before the renderer's own
   // paste handler; text keeps the renderer's bracketed-paste path.
   host.addEventListener('paste', e => consolePasteFiles(view, name, e), true);
-  // Claude Code uses OSC 52 after mouse selection. xterm parses the sequence
-  // but has no browser clipboard policy of its own, so the embedding page must
-  // opt in before Ctrl+V can paste the selected text back into the PTY.
-  view.osc52 = term.parser.registerOscHandler(52, payload => handleOsc52Clipboard(view, payload));
-  // WebGL 初始化是同步的，软件渲染环境可能卡住几十秒。新建/待绑定会话必须
-  // 先取得控制权并连上宿主，因此其首个 view 保持 DOM renderer。原生会话仍
-  // 使用 WebGL 缓解 Codex DEC ?2026 重画在 Chromium/Wayland 下的中间帧。
-  if (grid && typeof term.onClipboard === 'function') {
-    // 网格协议把 OSC 52 解码成文本送达；沿用 xterm 路径同一套剪贴板策略。
-    term.onClipboard(text => {
-      const bytes = new TextEncoder().encode(text);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i += 0x8000) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-      }
-      handleOsc52Clipboard(view, 'c;' + btoa(binary));
-    });
-  }
-  if (!grid && shouldUseTermWebgl() && globalThis.WebglAddon?.WebglAddon) {
-    try {
-      const webgl = new WebglAddon.WebglAddon();
-      webgl.onContextLoss(() => {
-        if (view.webgl !== webgl) return;
-        view.webgl = null;
-        view.renderer = 'dom';
-        webgl.dispose();
-        requestAnimationFrame(() => term.refresh(0, term.rows - 1));
-      });
-      term.loadAddon(webgl);
-      view.webgl = webgl;
-      view.renderer = 'webgl';
-    } catch { /* WebGL2/硬件加速不可用时保留 DOM renderer */ }
-  }
-  const forwardedSelectionStarts = new WeakSet();
+  // Claude Code uses OSC 52 after mouse selection. The host model decodes it
+  // to text; the page applies its own clipboard policy before Ctrl+V pastes it.
+  term.onClipboard(text => {
+    const bytes = new TextEncoder().encode(text);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    handleOsc52Clipboard(view, 'c;' + btoa(binary));
+  });
   host.addEventListener('mousedown', e => {
-    if (forwardedSelectionStarts.has(e) || e.button !== 0) return;
+    if (e.button !== 0) return;
     if (e.shiftKey || term.modes.mouseTrackingMode === 'none') {
       // Complete the local selection before copying, including releases
       // outside the terminal. Remote CLI mouse gestures never enter here.
@@ -2762,19 +2375,7 @@ function ensureTerm(name) {
       }, {once: true});
     }
     view.selectionLocked = e.shiftKey;
-    if (!e.shiftKey) return;
-    view.selectionSnapshot = null;
-    // VT mouse 开启时 xterm 自己用 Shift 强制进入本地选择，必须保留原事件，
-    // 才不会把鼠标发给 vim/less 等里面的程序。
-    if (term.modes.mouseTrackingMode !== 'none') return;
-    // xterm 把 Shift+拖拽解释为“扩展已有选区”，没有旧选区时结果为空。
-    // tmux 用户则用 Shift 绕过终端鼠标模式并开始一次新框选。拦住原事件，
-    // 以普通左键事件启动 xterm 自己的选择器；后续 move/up 仍由它原样处理。
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    const forwarded = termSelectionMouseDown(e);
-    forwardedSelectionStarts.add(forwarded);
-    e.target.dispatchEvent(forwarded);
+    if (e.shiftKey) view.selectionSnapshot = null;
   }, true);
   term.onSelectionChange(() => {
     if (term.hasSelection()) rememberTermSelection(view);
@@ -2783,7 +2384,7 @@ function ensureTerm(name) {
   term.attachCustomKeyEventHandler(e => {
     if (e.code === 'ControlRight') {
       if (e.type === 'keydown' && !e.repeat) setTermCtrl(true);
-      return false;                        // 右 Ctrl 只锁定下一键，不交给 xterm
+      return false;                        // 右 Ctrl 只锁定下一键，不交给终端
     }
     const paste = (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'v';
     if (paste) {
@@ -2791,7 +2392,7 @@ function ensureTerm(name) {
         view.selectionLocked = false;
         view.selectionSnapshot = null;
       }
-      return false;                       // 交给浏览器派发 paste，xterm 再做 bracketed paste
+      return false;                       // 交给浏览器派发 paste，终端再做 bracketed paste
     }
     if (e.type === 'keydown' && !['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
       view.selectionLocked = false;
@@ -2802,11 +2403,10 @@ function ensureTerm(name) {
   term.onData(d => {
     if (T.name !== name || view.replay) return;   // 录制回放只读
     d = applyTermAlt(applyTermCtrl(d));
-    d = stripOscColorReports(d);
     if (!d) return;
     if (view.ws?.readyState !== 1) return;
     browserAuditEvent('terminal.input', {name, bytes: new TextEncoder().encode(d).length},
-      d, {uid: T.uid || '', connectionId: view.auditConnectionId || ''});
+      {uid: T.uid || '', connectionId: view.auditConnectionId || ''});
     if (view.scrollPos || _wheelRequests.size || _resumeInput) {
       // 等所有已经发出的滚轮请求落地，再由一个服务端请求原子执行
       // 「退出 copy-mode → 写入字符」。直接向 attach 发 q 不可靠，而把
@@ -2826,11 +2426,11 @@ function ensureTerm(name) {
     view.ws.send(new TextEncoder().encode(d));
     if (/[\r\n]/.test(d)) notePendingInput(name);
   });
-  // ptyhost 没有服务端 copy-mode；滚轮交给 grid/xterm 的历史或应用鼠标处理。
+  // ptyhost 没有服务端 copy-mode；滚轮交给网格的历史或应用鼠标处理。
   // 改造前遗留在默认 tmux server 的会话仍走旧兼容路径。
   term.attachCustomWheelEventHandler(e => {
     if (T.name !== name) return true;
-    // 录制回放和已退出的画面没有宿主 copy-mode；滚轮留给 xterm / 面板滚动条。
+    // 录制回放和已退出的画面没有宿主 copy-mode；滚轮留给网格的历史。
     if (view.replay || view.ended || view.revoked) return true;
     const server = T.list?.find(x => x.name === name)?.server;
     if (server === 'ptyhost' || server === 'sessiondock') return true;
@@ -2840,58 +2440,14 @@ function ensureTerm(name) {
   return view;
 }
 
-// 普通回显直接写入；只有 DEC 2026 重绘合帧，避免把绘制中间的光标位置
-// 提交给 xterm 及它的 IME textarea。同步结束后还要收齐 ConPTY 的迟到尾包。
+// 网格视图收到的是宿主模型产生的 JSON 行，没有转义序列，也不需要攒同步帧。
 function writeTermOutput(view, chunk) {
   if (!chunk) return;
-  // 网格视图收到的是 JSON 行，没有转义序列，也不需要攒同步帧。
-  if (view.grid) {
-    writeParsedTermOutput(view, chunk);
-    return;
-  }
-  // 亮色页面只反射“深底/浅字”的显式颜色；Codex 已是浅色的 diff 保持原样。
-  // 暗色页面与默认/ANSI 16 色仍交给 termTheme。xterm 会跨 write 保留 SGR 状态。
-  chunk = terminalColorChunk(view, chunk);
-  if (!chunk) return;
-  // BUG-20261003-110817-4e7c32: ConPTY forwards ?2026l about one refresh
-  // before the remaining cells and cursor restore. Even a complete marker
-  // pair in one packet therefore needs a short quiet window before parsing.
-  if (view.syncHold !== null) {
-    view.syncHold += chunk;
-  } else if (chunk.includes('\x1b[?2026h')) {
-    view.syncHold = chunk;
-    view.syncHoldTimer = setTimeout(() => flushTermSyncHold(view), TERM_SYNC_HOLD_MS);
-  } else {
-    writeParsedTermOutput(view, chunk);
-    return;
-  }
-  if (view.syncSettleTimer) clearTimeout(view.syncSettleTimer);
-  view.syncSettleTimer = null;
-  if (view.syncHold.length >= TERM_SYNC_HOLD_MAX) {
-    flushTermSyncHold(view);
-  } else if (!termSyncFrameOpen(view.syncHold)) {
-    view.syncSettleTimer = setTimeout(() => flushTermSyncHold(view), TERM_SYNC_SETTLE_MS);
-  }
-  // The original total deadline is never extended by tail packets/new frames.
-}
-
-// 最后一个 ?2026h 之后没有 ?2026l 就算帧还开着。
-function termSyncFrameOpen(s) {
-  return s.lastIndexOf('\x1b[?2026h') > s.lastIndexOf('\x1b[?2026l');
-}
-
-function flushTermSyncHold(view) {
-  if (view.syncHoldTimer) clearTimeout(view.syncHoldTimer);
-  if (view.syncSettleTimer) clearTimeout(view.syncSettleTimer);
-  view.syncHoldTimer = null;
-  view.syncSettleTimer = null;
-  const held = view.syncHold;
-  view.syncHold = null;
-  if (held) writeParsedTermOutput(view, held);
+  writeParsedTermOutput(view, chunk);
 }
 
 /** Codex 的 side thread 目前可能只存在于正在运行的 TUI，绑定 main thread 的
- * 原生记录不会随它增长。只检查 xterm 已解析的实时屏幕底部，不能从原始包或
+ * 原生记录不会随它增长。只检查宿主已解析的实时屏幕底部，不能从原始包或
  * scrollback 搜索：重绘包会带旧内容，用户向上滚动也不代表 CLI 已切线程。 */
 function terminalViewportHasCodexSideThread(term) {
   const buffer = term?.buffer?.active;
@@ -2946,13 +2502,13 @@ function writeParsedTermOutput(view, chunk) {
 
 // Keep the PTY size stable under a soft keyboard, but do not bottom-align its
 // blank tail. Short menus fit from the top; tall screens follow their content
-// and cursor. Use parsed cells for both renderers, not CLI-specific text rules.
+// and cursor. Use parsed cells, not CLI-specific text rules.
 function positionTermViewport(view) {
   if (!termPaneRenderable(view)) return;
   const host = view.host, term = view.term, buffer = term.buffer?.active;
   let offset = 0;
   if (!view.replay && visualKeyboardOpen() && buffer) {
-    const screen = host.querySelector(view.grid ? 'canvas' : '.xterm-screen');
+    const screen = host.querySelector('canvas');
     const zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
     const height = (screen?.getBoundingClientRect().height || 0) / zoom;
     const cellHeight = height / term.rows;
@@ -2972,14 +2528,6 @@ function positionTermViewport(view) {
   host.style.setProperty('--terminal-viewport-offset', `${-offset}px`);
 }
 
-function dropTermSyncHold(view) {
-  if (view.syncHoldTimer) clearTimeout(view.syncHoldTimer);
-  if (view.syncSettleTimer) clearTimeout(view.syncSettleTimer);
-  view.syncHoldTimer = null;
-  view.syncSettleTimer = null;
-  view.syncHold = null;
-}
-
 function termPaneRenderable(view = currentTermViewObject()) {
   if (!view || view !== currentTermViewObject()) return false;
   const pane = $('#termpane');
@@ -2988,8 +2536,8 @@ function termPaneRenderable(view = currentTermViewObject()) {
     return false;
   if (pane.classList.contains('term-collapsed')) return false;
   // 手机从桌面布局切回会话列表时，#right 会由祖先的 display:none 隐藏，
-  // 但 #termpane 本身没有 hidden 类。FitAddon 在这种容器上会返回内部最小值
-  // 10×5；先确认当前 host 真正参与布局，不能让这组伪尺寸污染 xterm/PTY。
+  // 但 #termpane 本身没有 hidden 类。这种容器量出的是无意义的最小行列；
+  // 先确认当前 host 真正参与布局，不能让这组伪尺寸污染 PTY。
   const host = view.host;
   if (!host || host.hidden || !host.isConnected) return false;
   const rect = host.getBoundingClientRect();
@@ -3009,7 +2557,7 @@ function performTermFit(view, forceSync = false) {
     if (size && (view.term.cols !== size.cols || view.term.rows !== size.rows)) view.term.resize(size.cols, size.rows);
     // Older grid recordings included container padding in their column count.
     // Fit their pixels to the available width without changing recorded cells.
-    if (view.grid && size) {
+    if (size) {
       const box = $('#xterm'), css = getComputedStyle(box);
       const width = box.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight);
       view.term.options.fontSize = termFontSize();
@@ -3027,7 +2575,7 @@ function performTermFit(view, forceSync = false) {
     if (forceSync) repaintTermView(view);
     return;
   }
-  // 软键盘会把 FitAddon 量到的行数砍掉一截。把这个尺寸发给 PTY 会让 CLI
+  // 软键盘会把量到的行数砍掉一截。把这个尺寸发给 PTY 会让 CLI
   // 重排并丢掉编辑区，会话模式 CHECK/SEND 随即 409 cli_not_ready。网页已经
   // 按 visual viewport 让位，这里按键盘收起时的布局取行列，只把画面钉在提示符；
   // 键盘开着时的界面缩放仍是真实布局变化，行列照常跟随。
@@ -3044,8 +2592,6 @@ function performTermFit(view, forceSync = false) {
     if (keyboard) positionTermViewport(view);
     return;
   }
-  // FitAddon.fit() 会先调用私有 _renderService.clear()，DOM renderer 因而在每次
-  // 窗口缩放时先变空再重画。直接使用公开 resize API 保留旧行，并平滑增删行列。
   const resized = view.term.cols !== dimensions.cols || view.term.rows !== dimensions.rows;
   if (resized) {
     view.term.resize(dimensions.cols, dimensions.rows);
@@ -3059,26 +2605,14 @@ function performTermFit(view, forceSync = false) {
     view.lastResizeWs = ws;
     view.lastResizeKey = key;
   }
-  // display:none 下缓存的 WebGL/DOM surface 可能失去内容；若行列数碰巧没变，
-  // Terminal.resize 不会触发 renderer。重新激活时必须显式画回整个 viewport。
+  // display:none 下缓存的画布可能失去内容；若行列数碰巧没变，resize 不会重画。
+  // 重新激活时必须显式画回整个 viewport。
   if (resized || forceSync) repaintTermView(view);
   if (keyboard) positionTermViewport(view);
 }
 
-function refreshTerminalScale(settled = false) {
-  // xterm's WebGL atlas uses window DPR alone. DOM text is rasterized by the
-  // browser at CSS zoom, so scaled views must not stretch the old glyph atlas.
-  const zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
-  for (const view of T.views.values()) {
-    // Removing a canvas mid-pinch cancels touches anchored to it. Switch only
-    // after the gesture ends; grid canvases can be repainted in place throughout.
-    if (settled && view.webgl && Math.abs(zoom - 1) >= .001) {
-      const webgl = view.webgl;
-      view.webgl = null;
-      view.renderer = 'dom';
-      webgl.dispose();
-    }
-  }
+// Grid canvases repaint in place at any zoom, including mid-pinch.
+function refreshTerminalScale() {
   fitTerm();
   const view = currentTermViewObject();
   if (termPaneRenderable(view)) repaintTermView(view);
@@ -3115,8 +2649,7 @@ function settleActivatedTermView(view) {
 }
 
 function currentTermView(name = T.name) {
-  const row = SessionDockCapabilities.config.backend === 'rust'
-    ? (String(T.uid || '').startsWith('tmux:') ? (T.pending || []) : T.list).find(row => row.name === name) : null;
+  const row = (String(T.uid || '').startsWith('tmux:') ? (T.pending || []) : T.list).find(row => row.name === name);
   return { mode: T.mode, height: T.height,
     ...(row ? {uid: row.uid || (row.record_id && pendingUid(row.name)), instance_id: row.instance_id,
       ...(row.record_id ? {record_id: row.record_id, launch_id: row.launch_id} : {})} : {}) };
@@ -3138,7 +2671,7 @@ function rememberTermOpen(name, open) {
 }
 
 function restoreTermPane(uid, agent = null) {
-  if (SessionDockCapabilities.config.backend === 'rust' && T.ended.has(uid)) return;
+  if (T.ended.has(uid)) return;
   if (!uid || agent || S.sel !== uid || !sessionTerminalEnabled(uid) || !$('#a-term')) return;
   const name = takenOver(uid);
   if (!name || !T.openViews.has(name)) return;
@@ -3172,19 +2705,18 @@ function restoreTermPane(uid, agent = null) {
   openTermPane(name, false, null, true);
 }
 
-async function loadTerminalRenderer(name) {
-  try {
-    await window.ensureTerminalAssets?.(consoleRendererIsGrid(name));
-    return true;
-  } catch (error) {
-    const uid = T.views.get(name)?.bindingUid
-      || T.list?.find(row => row.name === name)?.uid || T.uid || S.sel;
-    const message = '控制台组件加载失败，请再次打开终端重试：' + (error.message || error);
-    ConsoleUI.errors.set(uid, message);
-    renderTakeoverBtn();
-    if (typeof showConsoleToast === 'function' && uid === S.sel) showConsoleToast(message);
-    return false;
-  }
+/** Only hosts with the server-side screen model serve a live console. A running
+ *  host that predates it says `grid:false`; its session opens after a restart.
+ *  An exited row has no host at all and goes on to replay or explain itself. */
+function terminalSupported(name) {
+  const row = (T.list || []).find(x => x.name === name) || (T.pending || []).find(x => x.name === name);
+  if (row?.grid !== false || row.running === false) return true;
+  const uid = T.views.get(name)?.bindingUid || row.uid || T.uid || S.sel;
+  const message = '此会话的终端宿主不支持网格显示，重新启动会话后即可打开控制台。';
+  ConsoleUI.errors.set(uid, message);
+  renderTakeoverBtn();
+  if (typeof showConsoleToast === 'function' && uid === S.sel) showConsoleToast(message);
+  return false;
 }
 
 async function openTermPane(name, autoFocus = true, requestedMode = null, auto = false, directClaim = false) {
@@ -3200,7 +2732,7 @@ async function openTermPane(name, autoFocus = true, requestedMode = null, auto =
   // 同一宿主上另一类控制台（如已关联前的等待页）还连着时，先放开它；
   // 原生控制台随后按自己的租约重新连接，和跨页面抢占走同一条路。
   const existing = T.views.get(name);
-  if (SessionDockCapabilities.config.backend === 'rust' && existing?.bindingUid
+  if (existing?.bindingUid
       && !termBindingServes(existing.bindingUid, T.uid)) {
     rememberTermOpen(name, false);
     disposeTermView(name);
@@ -3225,7 +2757,7 @@ async function openTermPane(name, autoFocus = true, requestedMode = null, auto =
   layoutTermPane();
   renderTakeoverBtn();
   try { await terminalFontReady; } catch { /* 字体失败时继续用 Consola/monospace */ }
-  if (!await loadTerminalRenderer(name)) {
+  if (!terminalSupported(name)) {
     if (openEpoch === termOpenEpoch) {
       pane.classList.add('hidden');
       $('#right').classList.remove('term-full');
@@ -3237,7 +2769,7 @@ async function openTermPane(name, autoFocus = true, requestedMode = null, auto =
   const view = ensureTerm(name);
   if (autoFocus) requestTermFocus(view, focusSource);
   activateTermView(view);
-  // 桌面 Agent「纯对话」吸附态高度为 0。此时保留 xterm 对象和已有连接，但不要
+  // 桌面 Agent「纯对话」吸附态高度为 0。此时保留终端视图和已有连接，但不要
   // 新连或 fit；否则内部最小尺寸会把真实 tmux pane 压成 10×6。
   if (termPaneRenderable(view)) {
     // 缓存 view 即使行列数相同也可能丢了 renderer surface；强制同步并重绘。
@@ -3427,7 +2959,6 @@ function renderTermOutputNotice(view) {
 }
 
 function recordHostExit(view, uid, event) {
-  if (SessionDockCapabilities.config.backend !== 'rust') return false;
   const incomplete = event.code === 1011 && event.reason.startsWith('host output incomplete');
   if (!incomplete && !(event.code === 1000 && event.reason === 'host exited')) return false;
   const pendingRow = (T.pending || []).find(item => item.name === view.name);
@@ -3448,12 +2979,8 @@ function recordHostExit(view, uid, event) {
   if (incomplete) {
     // GridTerm accepts grid JSON, not terminal text. Keep its host screen
     // intact and show the diagnostic beside it within the same console pane.
-    if (view.grid) {
-      view.outputNotice = reason;
-      if (T.name === view.name) renderTermOutputNotice(view);
-    } else {
-      try { view.term.write(`\r\n${reason}\r\n`); } catch { /* disposed view */ }
-    }
+    view.outputNotice = reason;
+    if (T.name === view.name) renderTermOutputNotice(view);
   } else {
     // AI sessions close the pane and return to the conversation. SSH/shell
     // keeps the console and, when a recording exists, switches it to
@@ -3481,7 +3008,7 @@ function recordHostExit(view, uid, event) {
   return true;
 }
 
-/** 在控制台面板里只读回放一段录制：不 claim、不发输入；网格视图收 JSON 行，xterm 视图收净化后的字节。 */
+/** 在控制台面板里只读回放一段录制：不 claim、不发输入；网格视图收 JSON 行。 */
 function startShellRecordingReplay(view, uid) {
   if (typeof attachRecordingReplay !== 'function' || !view) return false;
   if (view.replay && view.ws && view.ws.readyState < 2) return true;
@@ -3635,7 +3162,7 @@ function attachRecordingReplay(view, row, uid) {
     ? new URL(`api/nodes/${encodeURIComponent(row.node_id)}/api/term/records/attach`, APP_BASE)
     : new URL(appUrl('api/term/records/attach'));
   url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.search = new URLSearchParams({id: row.recording.id, mode: view.grid ? 'grid' : 'bytes'});
+  url.search = new URLSearchParams({id: row.recording.id, mode: 'grid'});
   const ws = new WebSocket(url.href);
   ws.binaryType = 'arraybuffer';
   view.ws = ws;
@@ -3665,15 +3192,8 @@ function attachRecordingReplay(view, row, uid) {
           view.term.resize(message.cols, message.rows);
           fitTerm(true);
         }
-        if (!view.grid) view.term.reset();
         tl.clock = message.unix_ms || tl.clock;
         tl.atEnd = false;
-      } else if (message.t === 'resize' && !view.grid && message.cols && message.rows) {
-        view.replaySize = { cols: message.cols, rows: message.rows };
-        view.term.resize(message.cols, message.rows);
-        fitTerm(true);
-      } else if (message.t === 'gap') {
-        if (!view.grid) view.term.reset();
       } else if (message.t === 'exit') {
         const code = message.exit?.code;
         ConsoleUI.errors.set(uid, `会话已结束（退出码 ${code}），这是它的录制回放，只读。`);
@@ -3714,12 +3234,7 @@ function attachRecordingReplay(view, row, uid) {
 
 async function attachTerm(name, auto = false, directClaim = false) {
   if (SessionDockNetwork.paused) return;
-  const existing = T.views.get(name);
-  if (!await loadTerminalRenderer(name)) return false;
-  if (SessionDockNetwork.paused) return false;
-  // Loading assets yields: a replaced/disposed host must not be recreated by
-  // an old reconnect or theme refresh after the user's next action.
-  if (existing && T.views.get(name) !== existing) return false;
+  if (!terminalSupported(name)) return false;
   const view = ensureTerm(name);
   if (view.attachPromise) return view.attachPromise;
   const job = attachOwnedTerm(view, true, auto, directClaim).catch(error => {
@@ -3743,27 +3258,25 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
   if (view.replay && view.ws && view.ws.readyState < 2) return true;
   const name = view.name;
   const wantedUid = view.bindingUid || T.uid;
-  const row = (SessionDockCapabilities.config.backend === 'rust'
-    ? (String(wantedUid || '').startsWith('tmux:') ? (T.pending || []) : (T.list || []))
-    : [...(T.list || []), ...(T.pending || [])]).find(row => row.name === name);
+  const row = (String(wantedUid || '').startsWith('tmux:') ? (T.pending || []) : (T.list || []))
+    .find(row => row.name === name);
   const uid = row?.uid || T.uid;
-  const bound = SessionDockCapabilities.config.backend === 'rust';
   // 进程已退出但有录制：不 claim，直接只读回放录制（会话列表就是录制的索引）。
   // 本页刚观察到的宿主退出（view.ended / pendingPhase）也走这条路，不能
   // 被 ended 提前 return 挡住，否则直播尾帧既没有时间轴也滚不动。
   // 只有启动型（pending）行才有 running 字段；原生会话行是活的，永远走 claim。
-  if (bound && row?.recording?.id
+  if (row?.recording?.id
       && (view.ended || pendingPhase(row) === 'exited' || pendingPhase(row) === 'failed'))
     return attachRecordingReplay(view, row, uid);
   if (view.ended) return false;
-  if (bound && row?.record_id && pendingPhase(row) !== 'running' && pendingPhase(row) !== 'starting' && !row.recording?.id) {
+  if (row?.record_id && pendingPhase(row) !== 'running' && pendingPhase(row) !== 'starting' && !row.recording?.id) {
     ConsoleUI.errors.set(uid, row.source === 'shell' ? '会话已结束，没有留下录制。' : '实例已退出。');
     renderTakeoverBtn();
     return false;
   }
-  const launch = bound && row?.record_id && row?.launch_id && !row?.stale;
-  if (bound && ((!row?.uid && !launch) || !row.instance_id
-      || (view.instanceId && view.instanceId !== row.instance_id))) {
+  const launch = row?.record_id && row?.launch_id && !row?.stale;
+  if ((!row?.uid && !launch) || !row.instance_id
+      || (view.instanceId && view.instanceId !== row.instance_id)) {
     // The pane list and the selected session are refreshed independently. A
     // report dialog (or an SSE update) can leave an already-open view carrying
     // the previous instance for one poll. Refresh the authoritative pane row
@@ -3777,10 +3290,10 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
     return false;
   }
   // Capture once: claim and attachment must never silently follow replacement.
-  const binding = bound ? (launch
+  const binding = launch
     ? {record_id: row.record_id, launch_id: row.launch_id, instance_id: row.instance_id}
-    : {uid: row.uid, instance_id: row.instance_id}) : {};
-  if (bound) { view.instanceId = binding.instance_id; view.bindingUid = uid; }
+    : {uid: row.uid, instance_id: row.instance_id};
+  view.instanceId = binding.instance_id; view.bindingUid = uid;
   const active = !$('#termpane').classList.contains('hidden') && T.name === name;
   if (active) activateTermView(view);
   cancelTermReconnect(view);
@@ -3789,7 +3302,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
   // attempt on the selected view; the wire binding remains the host's tuple.
   const token = await claimTermOwnership(name, active ? T.uid || uid : uid, binding, auto, directClaim);
   if (SessionDockNetwork.paused) return false;
-  if (bound && T.views.get(name) !== view) return false;
+  if (T.views.get(name) !== view) return false;
   if (!token) {
     view.revoked = true;
     view.focusRequest = null;
@@ -3797,12 +3310,10 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
     return false;
   }
   view.revoked = false;
-  // Rust raw HTTP input reuses this exact page lease and binding tuple; the
+  // Raw HTTP input reuses this exact page lease and binding tuple; the
   // server still decides, so a revoked/expired token simply gets refused.
-  view.inputLease = bound ? { token, ...binding } : null;
-  dropTermSyncHold(view);
+  view.inputLease = { token, ...binding };
   setCodexSideThreadState(view, false);
-  view.ansiTail = '';
   view.selectionLocked = false;
   view.selectionSnapshot = null;
   view.term.reset();
@@ -3814,13 +3325,13 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
     || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   view.auditConnectionId = connectionId;
   view.auditConnectStarted = performance.now();
-  browserAuditEvent('terminal.connecting', {name, cols, rows, renderer: view.grid ? 'grid' : 'xterm'},
-    null, {uid: uid || '', connectionId});
+  browserAuditEvent('terminal.connecting', {name, cols, rows, renderer: 'grid'},
+    {uid: uid || '', connectionId});
   wsUrl.search = new URLSearchParams({name, page: TERM_PAGE_ID, token,
                                       connection: connectionId, ...binding,
                                       heartbeat: '1',
                                       cols: String(cols), rows: String(rows),
-                                      ...(view.grid ? {mode: 'grid'} : {})});
+                                      mode: 'grid'});
   const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
   view.ws = ws;
@@ -3833,7 +3344,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
     if (!outputChunks) return;
     browserAuditEvent('terminal.output_received', {
       name, bytes: outputBytes, chunks: outputChunks,
-    }, null, {uid: T.uid || '', connectionId});
+    }, {uid: T.uid || '', connectionId});
     outputBytes = 0;
     outputChunks = 0;
   };
@@ -3878,7 +3389,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
       firstOutput = false;
       browserAuditEvent('terminal.first_output', {
         name, bytes: outputBytes, elapsed_ms: Math.round(performance.now() - view.auditConnectStarted),
-      }, null, {uid: uid || '', connectionId});
+      }, {uid: uid || '', connectionId});
     }
     if (!outputTimer) outputTimer = setTimeout(flushOutputAudit, 750);
     writeTermOutput(view, s);
@@ -3886,8 +3397,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
   ws.onopen = () => {
     if (view.ws !== ws) return;
     cancelTermConnectTimeout(view);
-    browserAuditEvent('terminal.opened', {name, cols, rows}, null,
-      {uid: T.uid || '', connectionId});
+    browserAuditEvent('terminal.opened', {name, cols, rows}, {uid: T.uid || '', connectionId});
     if (T.name === name) {
       syncTermAliases(view);
       fitTerm(true, true);
@@ -3904,11 +3414,10 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
       `控制台连接已关闭（WebSocket ${event.code}）${event.reason ? '：' + event.reason : '，服务器未提供详细原因。'}`);
     renderTakeoverBtn();
     writeTermOutput(view, dec.decode());
-    flushTermSyncHold(view);
     flushOutputAudit();
     browserAuditEvent('terminal.closed', {
       name, code: event.code, reason: event.reason, clean: event.wasClean,
-    }, null, {uid: T.uid || '', connectionId,
+    }, {uid: T.uid || '', connectionId,
       severity: event.code === 1000 ? 'info' : 'warning'});
     view.ws = null;
     view.inputLease = null;
@@ -3919,7 +3428,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
       handleTermRevoked(view, event.reason.slice('revoked:'.length));
       return;
     }
-    if (SessionDockCapabilities.config.backend === 'rust' && event.code === 4002 && event.reason === 'launch retired') {
+    if (event.code === 4002 && event.reason === 'launch retired') {
       view.revoked = true;
       view.retired = true;
       cancelTermReconnect(view);
@@ -3965,8 +3474,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
     if (view.ws !== ws) return;
     ConsoleUI.errors.set(uid, '控制台 WebSocket 连接失败；浏览器未提供更详细的错误，请检查网络或重新连接。');
     renderTakeoverBtn();
-    browserAuditEvent('terminal.error', {name}, null,
-      {uid: T.uid || '', connectionId, severity: 'error'});
+    browserAuditEvent('terminal.error', {name}, {uid: T.uid || '', connectionId, severity: 'error'});
   };
   armTermConnectTimeout(view, ws, uid, connectionId);
   return true;
@@ -4037,7 +3545,7 @@ function armTermConnectTimeout(view, ws, uid, connectionId) {
     try { view.term.write(`\r\n\x1b[33m⚠ ${reason}\x1b[0m\r\n`); } catch {}
     browserAuditEvent('terminal.connect_timeout', {
       name: view.name, timeout_ms: TERM_CONNECT_TIMEOUT_MS,
-    }, null, {uid: uid || '', connectionId, severity: 'warning'});
+    }, {uid: uid || '', connectionId, severity: 'warning'});
     try { ws.close(); } catch {}
     Promise.resolve(pollLive(true)).finally(() => {
       if (T.views.get(view.name) === view && !view.ws) scheduleTermReconnect(view);
@@ -4087,7 +3595,7 @@ function startTermHeartbeat(view, ws, uid, connectionId) {
       browserAuditEvent('terminal.heartbeat_timeout', {
         name: view.name, timeout_ms: TERM_HEARTBEAT_TIMEOUT_MS,
         elapsed_ms: Math.round(performance.now() - sentAt), buffered_bytes: ws.bufferedAmount,
-      }, null, {uid: uid || '', connectionId, severity: 'warning'});
+      }, {uid: uid || '', connectionId, severity: 'warning'});
       dropTermSocket(view);
       ConsoleUI.errors.set(uid, '控制台连接无响应，正在重新连接；已输入的按键不会自动重发。');
       renderTakeoverBtn();
@@ -4384,7 +3892,7 @@ async function readServerComposerDraft(uid) {
   let phase = 'headers', status = null, headersMs = null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  browserAuditEvent?.('http.request.started', {url, method:'GET'}, null, fields);
+  browserAuditEvent?.('http.request.started', {url, method:'GET'}, fields);
   try {
     const response = await fetch(appUrl(url), {cache:'no-store', signal:controller.signal,
       headers:{'X-SessionDock-Trace':traceId, 'X-SessionDock-Page':TERM_PAGE_ID,
@@ -4392,13 +3900,13 @@ async function readServerComposerDraft(uid) {
     status = response.status;
     headersMs = Math.round(performance.now() - started);
     phase = 'body';
-    browserAuditEvent?.('http.response.headers', {url, status, headers_ms:headersMs}, null, fields);
+    browserAuditEvent?.('http.response.headers', {url, status, headers_ms:headersMs}, fields);
     const data = await response.json();
     phase = 'response';
     if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
     // Record transport metadata only: draft text and attachments stay private.
     browserAuditEvent?.('http.response.received', {url, status, ok:true,
-      headers_ms:headersMs, duration_ms:Math.round(performance.now() - started)}, null, fields);
+      headers_ms:headersMs, duration_ms:Math.round(performance.now() - started)}, fields);
     return data.draft;
   } catch (error) {
     if (controller.signal.aborted) {
@@ -4408,7 +3916,7 @@ async function readServerComposerDraft(uid) {
     browserAuditEvent?.('http.request.failed', {url, error:String(error), phase, status,
       headers_ms:headersMs, timeout_ms:timeoutMs, online:navigator.onLine,
       visibility:document.visibilityState, duration_ms:Math.round(performance.now() - started)},
-    null, {...fields, severity:'warning'});
+    {...fields, severity:'warning'});
     throw error;
   } finally { clearTimeout(timer); }
 }
@@ -5726,7 +5234,7 @@ async function publishConsolePaste(view, name, uid, files) {
   if (T.name !== name || view.ended || view.revoked) return;
   const text = paths.join(' ') + ' ';
   browserAuditEvent?.('terminal.paste_files', {name, count: paths.length, attachment_id: attachmentId},
-    null, {uid, connectionId: view.auditConnectionId || ''});
+    {uid, connectionId: view.auditConnectionId || ''});
   try {
     const d = await post('api/term/send', termInputBody(name, {name, paste: text, uid}) || {name, paste: text});
     if (d.error) throw new Error(d.error);
@@ -6457,9 +5965,6 @@ function foregroundTerm(force = false) {
   if (document.hidden || (!force && !termWasBackgrounded)) return;
   termWasBackgrounded = false;
   for (const view of T.views.values()) {
-    if (view.webgl) {
-      try { view.term.clearTextureAtlas(); } catch {}
-    }
     if (view.resumeFocus) requestTermFocus(view, document.body);
     view.resumeFocus = false;
     if (view.replay && view.resumeTimeline) void attachTerm(view.name, true);
@@ -6487,8 +5992,7 @@ addEventListener('sessiondock-network-resumed', () => {
 // Rust capabilities. The live poll normally refreshes this list; do not
 // lose discovery of new/replacement hosts just because Rust keeps live:false.
 async function pollRustTermList() {
-  if (SessionDockCapabilities.config.backend !== 'rust'
-      || !SessionDockCapabilities.allows('terminal') || SessionDockCapabilities.allows('live')) return;
+  if (!SessionDockCapabilities.allows('terminal') || SessionDockCapabilities.allows('live')) return;
   try {
     if (!document.hidden) await loadTermList();
   } catch { /* Keep the next observation available after a render/network error. */ }
@@ -6496,6 +6000,5 @@ async function pollRustTermList() {
 }
 
 loadTermList();
-if (SessionDockCapabilities.config.backend === 'rust'
-    && SessionDockCapabilities.allows('terminal') && !SessionDockCapabilities.allows('live'))
+if (SessionDockCapabilities.allows('terminal') && !SessionDockCapabilities.allows('live'))
   setTimeout(pollRustTermList, 3000);

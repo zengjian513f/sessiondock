@@ -97,21 +97,21 @@
 
 * { box-sizing: border-box; }
 
-:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body, #xterm .xterm-viewport) {
+:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body) {
   scrollbar-width: thin;
   scrollbar-color: var(--scroll-thumb) var(--scroll-track);
 }
-:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body, #xterm .xterm-viewport)::-webkit-scrollbar {
+:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body)::-webkit-scrollbar {
   width: 8px; height: 8px;
 }
-:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body, #xterm .xterm-viewport)::-webkit-scrollbar-track {
+:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body)::-webkit-scrollbar-track {
   background: var(--scroll-track); border-radius: 999px;
 }
-:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body, #xterm .xterm-viewport)::-webkit-scrollbar-thumb {
+:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body)::-webkit-scrollbar-thumb {
   min-width: 28px; min-height: 28px; border: 2px solid transparent; border-radius: 999px;
   background: var(--scroll-thumb); background-clip: padding-box;
 }
-:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body, #xterm .xterm-viewport)::-webkit-scrollbar-thumb:hover {
+:where(#side, .msgs, #cinput, .input-history-list, .mb pre, .tool-entry > pre, .file-change-body)::-webkit-scrollbar-thumb:hover {
   background-color: var(--scroll-thumb-hover);
 }
 
@@ -427,20 +427,12 @@ header.header-fold-nodes #node-chips button { min-width: 28px; padding-inline: 6
 .machine-row.dragging { background: var(--hover); box-shadow: 0 6px 20px rgba(0, 0, 0, .18); position: relative; z-index: 1; }
 .machine-row.dragging .machine-grip { cursor: grabbing; }
 /* 停用的机器只剩勾选框是实的，其余压暗：它此刻对页面其它部分不存在 */
-.machine-row.machine-off .machine-head > :not(.machine-enabled),
-.machine-row.machine-off .machine-fields { opacity: .5; }
+.machine-row.machine-off .machine-head > :not(.machine-enabled) { opacity: .5; }
 .machine-row input[type="text"] {
   min-width: 0; flex: 1; padding: 3px 8px; border: 1px solid var(--border); border-radius: 7px;
   background: var(--panel-2); color: var(--text); font: inherit; font-weight: 600;
 }
 .machine-row input[type="text"]:focus { outline: none; border-color: var(--accent); }
-.machine-row .machine-fields { display: flex; gap: 8px; align-items: center; }
-.machine-row .machine-renderer { width: 168px; }
-.machine-row select {
-  padding: 3px 8px; border: 1px solid var(--border); border-radius: 7px;
-  background: var(--panel-2); color: var(--text); font: inherit;
-}
-.machine-row select:focus { outline: none; border-color: var(--accent); }
 /* AI 客户端矩阵：行是机器、列是客户端，格子里左版本号右 ↑；窄屏在自己的框里横向滚动 */
 #client-matrix { overflow-x: auto; }
 .client-matrix { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -1962,7 +1954,7 @@ body.stale-build #composer-input-status { display: none; }
 
 #termpane {
   flex: none; display: flex; flex-direction: column; position: relative;
-  /* 把拖动条、锁定提示和 xterm 的层级留在终端内，不能盖住详情菜单。 */
+  /* 把拖动条、锁定提示和终端画布的层级留在终端内，不能盖住详情菜单。 */
   z-index: 0;
   width: 100%; min-height: 0; overflow: hidden;
   border-top: 1px solid var(--border); background: var(--panel);
@@ -2086,9 +2078,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   --terminal-bright-cyan: #7ee6ed;
   --terminal-bright-white: #b9c0ca;
 }
-#xterm .xterm { height: 100%; }
 .xterm-view { width: 100%; height: 100%; }
-#xterm .xterm-viewport { background-color: var(--terminal-bg); }
 .btn.go.on { background: #22c55e; color: #fff; }
 .spin { padding: 14px; color: var(--muted); font-size: 13px; }
 .ico { width: 14px; height: 14px; }
@@ -2234,10 +2224,9 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     overflow: hidden;
   }
   .xterm-view[hidden] { display: none !important; }
-  .xterm-view > .grid-canvas, .xterm-view > .xterm {
+  .xterm-view > .grid-canvas {
     flex: none; transform: translateY(var(--terminal-viewport-offset, 0px));
   }
-  #xterm .xterm { height: auto; }
 
   .trash-item { flex-wrap: wrap; }
   .trash-acts { width: 100%; justify-content: flex-end; }
@@ -2323,11 +2312,11 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     width: 36px; height: 32px; padding: 0; border: 1px solid var(--border);
     border-radius: 6px; background: var(--panel); color: var(--text); font-size: 22px;
   }
-  .xterm-view > .grid-canvas, .xterm-view .xterm-screen { -webkit-touch-callout: none; }
+  .xterm-view > .grid-canvas { -webkit-touch-callout: none; }
 }
 
 /* Shift selection owns a one-finger drag before native scrolling can claim it. */
-.term-shift-select .grid-canvas, .term-shift-select .xterm-screen { touch-action: none; }
+.term-shift-select .grid-canvas { touch-action: none; }
 
 /* Global actions live in the session toolbar while the list is hidden. */
 header .btn[data-session-docked] { display: none; }

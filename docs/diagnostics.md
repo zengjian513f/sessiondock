@@ -107,7 +107,6 @@ and elapsed time from connection creation. This measures a canvas draw, not
 physical display/compositor presentation. The first malformed grid line is
 reported as `browser.terminal.grid_parse_error` with its length, never its text.
 These first-frame/error markers reset on a new attachment, not on every diff.
-Byte/xterm consoles currently report first-output but not snapshot/paint markers.
 
 The node records its side of each attach with the page's `page_id` and, in
 `data.connection`, the page's connection id. Frames are aggregated into windows

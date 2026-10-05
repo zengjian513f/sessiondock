@@ -83,10 +83,10 @@ def run(browser, root, config):
             page.evaluate(r"""() => {
                 window.draftReadAudit = [];
                 const original = browserAuditEvent;
-                browserAuditEvent = (event, data, content, fields) => {
+                browserAuditEvent = (event, data, fields) => {
                     if (data?.url?.startsWith('api/session/conversation?'))
-                        draftReadAudit.push({event, data, content, fields});
-                    return original(event, data, content, fields);
+                        draftReadAudit.push({event, data, fields});
+                    return original(event, data, fields);
                 };
             }""")
             open_report(page)
@@ -101,7 +101,6 @@ def run(browser, root, config):
             assert failure['data']['phase'] == 'headers' and failure['data']['status'] is None, failure
             assert failure['data']['timeout_ms'] == 12000 and 'TimeoutError' in failure['data']['error'], failure
             assert any(e['event'] == 'http.response.received' for e in audit), audit
-            assert all(e['content'] is None for e in audit), audit
             assert failure['fields']['traceId'] and failure['fields']['uid'].startswith('report:'), failure
             assert not list((root / 'reports').glob('BUG-*'))
             print('PASS draft read timeout: audited phase, retained input, automatic recovery without worker creation', flush=True)

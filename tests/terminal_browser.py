@@ -39,7 +39,6 @@ done
 INSTALL = """() => {
   window.__transport = {};
   window.__connectTransport = async (key, page, name, force = false) => {
-    await ensureTerminalAssets(false);
     const response = await fetch('/api/term/claim', {method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name,page,force,_page_id:page,_build:'synthetic',_trace_id:'synthetic'})});
@@ -48,26 +47,18 @@ INSTALL = """() => {
     const url = new URL('/api/term/attach', location.href);
     url.protocol = 'ws:';
     url.search = new URLSearchParams({name,page,token:claim.token,cols:'80',rows:'24',connection:'synthetic-browser'});
-    const state = {text:'', notices:[], close:null, terminal:null, ws:new WebSocket(url)};
+    const state = {text:'', notices:[], close:null, ws:new WebSocket(url)};
     state.ws.binaryType = 'arraybuffer';
     window.__transport[key] = state;
     const pre = document.createElement('pre');
     pre.id = 'transport-' + key;
     document.body.append(pre);
-    // Exercise the same imported xterm renderer without opening the still-gated
-    // legacy CLI/UID console actions. This is a transport-only development test.
-    const mount = document.createElement('div');
-    mount.style.cssText = 'width:800px;height:260px;position:fixed;left:0;bottom:0;background:#111;z-index:99999';
-    document.body.append(mount);
-    state.terminal = new Terminal({cols:80,rows:24,allowProposedApi:true});
-    state.terminal.open(mount);
     const decoder = new TextDecoder();
     state.ws.onmessage = event => {
       if (typeof event.data === 'string') { state.notices.push(JSON.parse(event.data)); return; }
       const data = new Uint8Array(event.data);
       state.text += decoder.decode(data,{stream:true});
       pre.textContent = state.text;
-      state.terminal.write(data);
     };
     state.ws.onclose = event => { state.close = {code:event.code,reason:event.reason}; };
     await new Promise((resolve,reject) => {
@@ -177,8 +168,6 @@ def main():
                     state.ws.send(JSON.stringify({t:'resize',cols:100,rows:40}));
                     state.ws.send(new TextEncoder().encode('size\\n')); }""")
                 expect(first.locator("#transport-first")).to_contain_text("40 100")
-                # The legacy page also feeds the bytes through its xterm renderer.
-                first.wait_for_function("Array.from({length:__transport.first.terminal.buffer.active.length},(_,i)=>__transport.first.terminal.buffer.active.getLine(i)?.translateToString()).join('\\n').includes('RS_PING_OK')")
                 denied = second.evaluate("([name]) => __connectTransport('denied','synthetic-page-b',name)", [name])
                 assert denied == {"status":409,"conflict":True}
                 assert second.evaluate("([name]) => __connectTransport('second','synthetic-page-b',name,true)", [name])["status"] == 200
@@ -204,7 +193,7 @@ def main():
                 assert host.wait(timeout=7) == 0
                 context.close()
                 browser.close()
-            print("PASS: isolated real shell, browser bytes/xterm, resize, takeover, Web restart preserves PTY")
+            print("PASS: isolated real shell, browser bytes, resize, takeover, Web restart preserves PTY")
         finally:
             stop(server)
             if host.poll() is None:

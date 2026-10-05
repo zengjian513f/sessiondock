@@ -47,8 +47,6 @@ def live_rotation(browser, hub_mode):
                 base = f"http://127.0.0.1:{hub.port}"
             context = browser.new_context(viewport={"width":1280,"height":900}, service_workers="block")
             try:
-                context.add_init_script("localStorage.setItem('sessiondock.consoleRenderer', JSON.stringify('%s'))"
-                                        % ("grid" if hub_mode else "xterm"))
                 context.route("**/*", lambda route: route.continue_()
                               if route.request.url.startswith(base + "/") else route.abort())
                 page = context.new_page()
@@ -175,7 +173,7 @@ def main():
                         expect(page.locator("#termpane")).to_be_visible()
                         page.wait_for_function("T.name === 'synthetic-identity-host'")
                         page.wait_for_function("T.ws && T.ws.readyState === WebSocket.OPEN")
-                        # Read the actual imported xterm buffer only to assert
+                        # Read the actual grid buffer only to assert
                         # rendered output; all controls use normal user events.
                         page.wait_for_function("[...T.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_SHELL_READY'))")
                         page.locator("#termpane .xterm-helper-textarea").press_sequentially("next" if restart else "ping")
@@ -217,7 +215,7 @@ def main():
                 assert corpus.paths[sid].read_bytes()==native
             finally:
                 browser.close()
-    print("PASS managed console browser: exact UID/instance, normal console click/xterm keyboard, second-page force/revoke, no new CLI action, mobile, Web restart, native fixture unchanged")
+    print("PASS managed console browser: exact UID/instance, normal console click/grid keyboard, second-page force/revoke, no new CLI action, mobile, Web restart, native fixture unchanged")
 
 
 if __name__=="__main__":

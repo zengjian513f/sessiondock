@@ -2,7 +2,7 @@
 """Slow claim transport through the real console UI, with a private free shell.
 
 Hold the request before forwarding or hold its response body beyond the old
-five-second deadline. Exercise both renderers and preserve explicit-only retry
+five-second deadline. Exercise desktop and mobile and preserve explicit-only retry
 when the full end-to-end deadline expires. No production session or real CLI.
 """
 
@@ -21,7 +21,7 @@ from terminal_exit_browser import XTERM_TEXT
 from popups import on_popup  # noqa: E402
 
 
-def scenario(root, browser, renderer, phase):
+def scenario(root, browser, surface, phase):
     for name in ['host', 'work', 'claude', 'codex', 'grok']:
         (root / name).mkdir(mode=0o700)
     corpus = Corpus(root)
@@ -32,7 +32,7 @@ def scenario(root, browser, renderer, phase):
     ], [])
     uid = corpus.uid(sid)
     selected_uid = uid
-    if renderer == 'grid':
+    if surface == 'mobile':
         child = 'synthetic-fork-sid'
         corpus.put(child, 'codex', [
             codex_row('session_meta', {'id': child, 'cwd': str(root / 'work'),
@@ -44,11 +44,9 @@ def scenario(root, browser, renderer, phase):
     instance = 'synthetic-' + uuid.uuid4().hex
     with host(root, instance, uid=uid) as (process, _), isolated_server(
             corpus, BINARY, host_dir=root / 'host') as (base, _):
-        context = browser.new_context(viewport={'width': 390 if renderer == 'grid' else 1280,
+        context = browser.new_context(viewport={'width': 390 if surface == 'mobile' else 1280,
                                                'height': 900}, service_workers='block')
         try:
-            context.add_init_script("localStorage.setItem('sessiondock.consoleRenderer', JSON.stringify(%s))"
-                                    % json.dumps(renderer))
             context.route('**/*', lambda route: route.continue_()
                           if route.request.url.startswith(base + '/') else route.abort())
             page = context.new_page()
@@ -128,7 +126,7 @@ def scenario(root, browser, renderer, phase):
             page.unroute('**/api/term/claim', fail_reclaims)
 
             assert process.poll() is None and corpus.paths[sid].read_bytes() == native
-            if renderer == 'xterm':
+            if surface == 'desktop':
                 # A new owner is an authority decision, not a network failure.
                 conflicts = []
                 def held_elsewhere(route):
@@ -141,7 +139,7 @@ def scenario(root, browser, renderer, phase):
                 page.wait_for_timeout(1500)
                 assert len(conflicts) == 1 and not conflicts[0].get('force'), conflicts
             assert not errors and not dialogs, (errors, dialogs)
-            print(f'PASS terminal claim {renderer}/{phase}: real click, delayed transport, shell input/output, network recovery, no automatic force', flush=True)
+            print(f'PASS terminal claim {surface}/{phase}: real click, delayed transport, shell input/output, network recovery, no automatic force', flush=True)
         finally:
             context.close()
 
@@ -153,10 +151,10 @@ def main():
             launch['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
         browser = pw.chromium.launch(**launch)
         try:
-            for renderer, phase in [('xterm', 'headers'), ('grid', 'body'), ('grid', 'timeout')]:
-                root = Path(temporary) / (renderer + '-' + phase)
+            for surface, phase in [('desktop', 'headers'), ('mobile', 'body'), ('mobile', 'timeout')]:
+                root = Path(temporary) / (surface + '-' + phase)
                 root.mkdir()
-                scenario(root, browser, renderer, phase)
+                scenario(root, browser, surface, phase)
         finally:
             browser.close()
 

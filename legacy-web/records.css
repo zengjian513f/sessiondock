@@ -35,9 +35,8 @@ body.embedded header { display:none; }
 #status { flex:1; font-size:12px; color:var(--muted); overflow-wrap:anywhere; min-width:0; }
 #status.error { color:var(--danger); }
 #size { font-size:12px; color:var(--muted); white-space:nowrap; }
-#xterm { flex:1; min-height:0; overflow:auto; background:#f4f6f8; }
+#xterm { position:relative; flex:1; min-height:0; overflow:auto; background:#f4f6f8; }
 #xterm.fit { overflow:hidden; }
-#xterm.fit .xterm { height:100%; }
 #empty { position:absolute; inset:40px 0 0; display:flex; align-items:center; justify-content:center; color:var(--muted); pointer-events:none; }
 
 @media(max-width:720px) {

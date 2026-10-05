@@ -59,3 +59,8 @@ python3 tests/legacy_text_diff.py --legacy-dir BACKUP_LEGACY --reference-dir BAC
 
 - 生产前端不再读取或转发 `debug_run` URL 参数；测试使用临时独立数据根。
   本目录冻结快照保留原始测试视图接线，仅作为历史基线。
+- 控制台只用服务端网格渲染：移除了 xterm.js 及其 fit/unicode11/webgl 插件、浅色主题下
+  的 ANSI 颜色改写、页面层的 DEC 2026 合帧和设置页“控制台渲染”选项。运行中的旧宿主
+  报 `grid:false` 时，控制台说明需要重新启动会话；录制页 `records.html` 改用网格回放。
+- 不再保留非 Rust 后端的页面分支：按 tmux 名称猜测终端关联、新建会话按文件名轮询
+  `api/term/new-status?name=` 和按名称停止/丢弃的旧路径一并删除；浏览器审计只发送元数据。

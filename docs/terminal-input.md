@@ -75,7 +75,7 @@ it and the CLI's own `[Image #N]` path cannot work through SessionDock. The
 console offers the drag-a-file equivalent instead, behind the browser
 preference `sessiondock.consolePasteFiles` (设置 › 功能 › 控制台粘贴文件, off
 by default): `term.js` captures a `paste` event carrying files ahead of the
-grid/xterm paste handler, writes each file through the raw attachment route
+grid paste handler, writes each file through the raw attachment route
 (`POST /api/session/attachment?uid=…&name=…`, one `sessiondock_attachments/<batch>/`
 directory per paste, `id` reused for the second file on) and then sends the
 relative paths as one bracketed `{paste}` over `/api/term/send` under the
@@ -94,9 +94,9 @@ retried.
 scrollback:"browser"}`; 404 `terminal_missing` without a record, 400 on bad
 shape, 501 when the transport is off. `scroll()` returns 0 and
 `leave_copy_mode()` is a no-op because the browser's
-xterm scrolls itself; the host protocol has no view/scroll state (only
+grid console scrolls itself; the host protocol has no view/scroll state (only
 `capture` snapshots), so the route performs no host I/O and never writes to
-the PTY. For `ptyhost` rows the console leaves wheel events to the grid/xterm
+the PTY. For `ptyhost` rows the console leaves wheel events to the grid
 renderer: ordinary shell output scrolls locally, while mouse-reporting or
 alternate-screen applications retain their terminal input behavior. Only old
 tmux rows use the legacy HTTP scroll path.
@@ -125,7 +125,7 @@ ptyhost running a private `/bin/sh`: text + Enter echoed through capture,
 refusal without lease, after revoke and after exit, size limits and input bursts,
 the lease-less page written through its pinned instance even with a PTY holder; skips when ptyhost is not built) and
 `python3 tests/terminal_scrollback_browser.py` (real wheel up/down over PTY history
-in grid and xterm, stable history position, subsequent live input, no HTTP scroll);
+in the grid console, stable history position, subsequent live input, no HTTP scroll);
 `python3 tests/terminal_input_browser.py` (desktop local wheel and WebSocket input,
 console file paste off (hint, no upload) and on from the settings switch
 (clipboard image and a two-file paste published per batch and typed as

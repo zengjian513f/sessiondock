@@ -156,8 +156,6 @@ test('Rust terminal lookup requires a unique full UID and instance, never a name
   T.list.pop();
   delete T.list[0].instance_id;
   assert.equal(linked('codex:wanted'), null);
-  const python = contextWithCapabilities(undefined, {T, sessionTermMeta: context.sessionTermMeta});
-  assert.equal(loadFunction(python, 'linkedTermSession', read('term.js'))('tmux:sessiondock-codex-abcdefgh').name, T.name);
 });
 
 test('terminal ownership force retry retains the exact captured binding', async () => {
@@ -363,20 +361,6 @@ test('the audit flush drains its response body', () => {
   assert.match(flush, /await response\.arrayBuffer\(\)\.catch\(\(\) => \{\}\);\n\s+if \(!response\.ok\)/);
 });
 
-test('pending terminals attach before any synchronous WebGL initialization', () => {
-  let zoom = '1';
-  const context = contextWithCapabilities(disabled, {
-    T: {uid: 'tmux:pane'}, getComputedStyle: () => ({zoom}),
-  });
-  const shouldUse = loadFunction(context, 'shouldUseTermWebgl', read('term.js'));
-  assert.equal(shouldUse(), false);
-  assert.equal(shouldUse('codex:native'), true);
-  zoom = '0.85';
-  assert.equal(shouldUse('codex:native'), false, 'scaled xterm uses DOM rendering');
-  zoom = '1.2';
-  assert.equal(shouldUse('codex:native'), false);
-});
-
 test('Codex side-thread detection reads only the live screen footer', () => {
   const context = contextWithCapabilities(disabled);
   const detect = loadFunction(context, 'terminalViewportHasCodexSideThread', read('term.js'));
@@ -405,8 +389,6 @@ test('Rust remembered terminal layouts pin the full UID and instance', () => {
   const saved = loadFunction(rust, 'currentTermView', read('term.js'))();
   assert.equal(saved.uid, 'codex:uid');
   assert.equal(saved.instance_id, 'instance');
-  const python = contextWithCapabilities(undefined, {T});
-  assert.deepEqual(Object.keys(loadFunction(python, 'currentTermView', read('term.js'))()), ['mode', 'height']);
 });
 
 test('binding appearance does not upgrade the remembered pending target', () => {
@@ -580,7 +562,7 @@ test('a WebSocket stuck connecting is retired through the normal reconnect path'
   assert.ok(calls.some(call => Array.isArray(call) && call[0] === 'write' && /建立超时/.test(call[1])));
   assert.ok(calls.some(call => Array.isArray(call) && call[0] === 'audit'
     && call[1] === 'terminal.connect_timeout' && call[2].timeout_ms === 15000
-    && call[4].uid === 'tmux:uid' && call[4].connectionId === 'connection'));
+    && call[3].uid === 'tmux:uid' && call[3].connectionId === 'connection'));
   assert.ok(calls.some(call => Array.isArray(call) && call[0] === 'poll' && call[1] === true));
   assert.ok(calls.some(call => Array.isArray(call) && call[0] === 'reconnect' && call[1] === view));
 });
@@ -612,10 +594,8 @@ test('only an explicit Rust host exit retires reconnect without consuming a draf
   assert.equal(view.revoked, true);
   assert.equal(ended.get('codex:uid').instanceId, 'instance');
   assert.match(errors.get('codex:uid'), /PTY drain timeout/);
-  assert.match(writes[0], /输出不完整/);
+  assert.match(view.outputNotice, /输出不完整/);
   assert.deepEqual(layouts, [['pane', false]]);
-  const python = contextWithCapabilities(undefined);
-  assert.equal(loadFunction(python, 'recordHostExit', read('term.js'))(null, null, {code: 1000, reason: 'host exited'}), false);
 });
 
 test('Rust managed terminal polling is independent of global live and waits for the current read', async () => {
@@ -980,13 +960,13 @@ test('file entry delegates to FileDock and console availability remains unchange
   assert.match(appSource, /if \(!SessionDockCapabilities\.allows\('files'\)\) throw new Error/);
   const baseline = readFileSync(new URL('../reference/legacy-web/nodes.js', import.meta.url), 'utf8');
   const start = 'function consoleUnavailableReason';
-  const rustGuard = "  // Rust: an unlinked session can only be resumed through an explicitly\n  // configured resume-capable CLI profile; otherwise no name-based guessing.\n  if (SessionDockCapabilities.config.backend === 'rust' && !linked\n      && !(SessionDockCapabilities.allows('terminal_takeover')\n        && cap?.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))\n    return '该会话没有通过完整 UID 和实例校验的运行中终端；不能按名称猜测关联。';\n";
+  const rustGuard = "  // An unlinked session can only be resumed through an explicitly\n  // configured resume-capable CLI profile; otherwise no name-based guessing.\n  if (!linked\n      && !(SessionDockCapabilities.allows('terminal_takeover')\n        && cap?.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))\n    return '该会话没有通过完整 UID 和实例校验的运行中终端；不能按名称猜测关联。';\n";
   assert.ok(read('nodes.js').includes(rustGuard));
   const replayGuard = "  if (typeof sessionRecordingReplayable === 'function' && sessionRecordingReplayable(uid))\n    return '';\n";
-  const exitGuard = "  if (SessionDockCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {\n    // An exited instance leaves the button as \"接管会话\"\n    // whenever the source has a resume-capable CLI profile (the click starts\n    // a fresh `--resume`); only an unresumable source keeps the gray\n    // explanation. The exited xterm is never reclaimed automatically.\n    // A shell recording is the console itself, so it must not go gray.\n    const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];\n    const resumable = !String(uid).startsWith('tmux:') && cap?.enabled\n      && SessionDockCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]\n      && !linkedTermSession(uid, {followReplacement: true});\n    if (!resumable) return T.ended.get(uid).reason;\n  }\n";
+  const exitGuard = "  if (T.ended?.has(uid)) {\n    // An exited instance leaves the button as \"接管会话\"\n    // whenever the source has a resume-capable CLI profile (the click starts\n    // a fresh `--resume`); only an unresumable source keeps the gray\n    // explanation. The exited console is never reclaimed automatically.\n    // A shell recording is the console itself, so it must not go gray.\n    const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];\n    const resumable = !String(uid).startsWith('tmux:') && cap?.enabled\n      && SessionDockCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]\n      && !linkedTermSession(uid, {followReplacement: true});\n    if (!resumable) return T.ended.get(uid).reason;\n  }\n";
   assert.ok(read('nodes.js').includes(replayGuard));
   assert.ok(read('nodes.js').includes(exitGuard));
-  const pendingGuard = "  if (SessionDockCapabilities.config.backend === 'rust') {\n    const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);\n    if (pending?.stale) {\n      const phase = typeof pendingPhase === 'function' ? pendingPhase(pending) : '';\n      if (phase !== 'exited' && phase !== 'failed')\n        return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';\n    }\n  }\n";
+  const pendingGuard = "  const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);\n  if (pending?.stale) {\n    const phase = typeof pendingPhase === 'function' ? pendingPhase(pending) : '';\n    if (phase !== 'exited' && phase !== 'failed')\n      return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';\n  }\n";
   assert.ok(read('nodes.js').includes(pendingGuard));
   // A repaint while the pointer rests on the button shows the current reason,
   // including the last failed claim, instead of the reason computed before it.
@@ -995,8 +975,8 @@ test('file entry delegates to FileDock and console availability remains unchange
   assert.ok(read('nodes.js').includes(hoverToast));
   const compatible = read('nodes.js').replace(rustGuard, '').replace(replayGuard, '').replace(exitGuard, '').replace(pendingGuard, '')
     .replace(hoverToast, baselineHoverToast)
-    .replace("  if (typeof ensureTerminalAssets !== 'function'\n      && (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined'))",
-      "  if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined')");
+    .replace("  if (ConsoleUI.busy.has(uid))", "  if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined')\n"
+      + "    return '浏览器终端组件加载失败，无法显示控制台，请刷新页面重新加载。';\n  if (ConsoleUI.busy.has(uid))");
   // Availability stays compatible; the intentionally changed click handling is
   // exercised by hub_console_availability_browser.py and recorded in reference/README.md.
   const end = 'function bindConsoleButton';
@@ -1110,14 +1090,6 @@ test('a plain stream error never pauses; a rejected stream is probed and reopene
   assert.match(context.migrationReadFailures.get('codex:fixture').message, /probe 501/);
   assert.equal(reopens(), pending, 'no reconnect scheduled for a paused view');
   assert.equal(context._es, null);
-  // Pages without the capability keep the fixed 1.5 s reopen.
-  const python = migrationContext({EventSource: FakeEventSource, window: {EventSource: true},
-    AUDIT_PAGE_ID: 'fixture', browserAuditEvent: () => {}, appUrl: value => value,
-    setTimeout: (callback, delay) => {timers.push({callback, delay}); return timers.length;}}, undefined);
-  python.SessionDockCapabilities = contextWithCapabilities().SessionDockCapabilities;
-  loadFunction(python, 'watchSession')('codex:fixture', null);
-  sources.at(-1).onerror();
-  assert.equal(timers.at(-1).delay, 1500);
 });
 
 test('sidebar append reads retry transient failures with backoff and give up on 4xx', async () => {

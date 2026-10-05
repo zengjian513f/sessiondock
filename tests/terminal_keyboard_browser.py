@@ -35,7 +35,7 @@ while True:
 GEOMETRY = """() => {
   const v=currentTermViewObject(), t=v.term, b=t.buffer.active;
   const host=v.host.getBoundingClientRect();
-  const screen=v.host.querySelector(v.grid ? 'canvas' : '.xterm-screen').getBoundingClientRect();
+  const screen=v.host.querySelector('canvas').getBoundingClientRect();
   const ch=screen.height/t.rows;
   return {top:screen.top-host.top, bottom:screen.bottom-host.top, height:host.height,
     cursor:screen.top-host.top+(b.cursorY+1)*ch, ch, rows:t.rows, cols:t.cols};
@@ -46,17 +46,12 @@ def assert_terminal_density(page):
     density = page.evaluate("""() => {
       const v = currentTermViewObject(), canvas = v.host.querySelector('canvas');
       const rect = canvas?.getBoundingClientRect();
-      return {grid: v.grid, renderer: v.renderer, zoom: parseFloat(getComputedStyle(document.documentElement).zoom),
-        dpr: devicePixelRatio, backing: canvas?.width, width: rect?.width,
-        dom: !!v.host.querySelector('.xterm-rows')};
+      return {dpr: devicePixelRatio, backing: canvas?.width, width: rect?.width};
     }""")
-    if density['grid']:
-        assert abs(density['backing'] - density['width'] * density['dpr']) <= 1.1, density
-    elif abs(density['zoom'] - 1) > .001:
-        assert density['renderer'] == 'dom' and density['dom'], density
+    assert abs(density['backing'] - density['width'] * density['dpr']) <= 1.1, density
 
 
-def run(browser, renderer, scale=100):
+def run(browser, scale=100):
     with tempfile.TemporaryDirectory(prefix='sessiondock-keyboard-') as tmp:
         root = Path(tmp)
         for name in ('host', 'work', 'claude', 'codex', 'grok'):
@@ -70,7 +65,6 @@ def run(browser, renderer, scale=100):
                 isolated_server(corpus, BINARY, host_dir=root / 'host') as (base, _):
             context = browser.new_context(viewport={'width': 608, 'height': 761}, service_workers='block',
                                           has_touch=True, is_mobile=True)
-            context.add_init_script('localStorage.setItem("sessiondock.consoleRenderer", JSON.stringify(%s))' % json.dumps(renderer))
             page = context.new_page()
             errors = []
             page.on('pageerror', lambda e: errors.append(str(e)))
@@ -111,7 +105,7 @@ def run(browser, renderer, scale=100):
             page.wait_for_function('visualKeyboardOpen()')
             page.wait_for_timeout(300)
             short = page.evaluate(GEOMETRY)
-            assert abs(short['top']) < 1, (renderer, 'short prompt clipped', short)
+            assert abs(short['top']) < 1, ('short prompt clipped', short)
             assert short['cursor'] <= short['height'] + 1, short
             keys.press('b')
             fixture.xterm_contains(page, 'STATUS FOOTER')
@@ -157,7 +151,7 @@ def run(browser, renderer, scale=100):
             page.locator('#a-term').click()
             page.wait_for_timeout(300)
             reopened = page.evaluate(GEOMETRY)
-            assert abs(reopened['top']) < 1, (renderer, 'reopen', reopened)
+            assert abs(reopened['top']) < 1, ('reopen', reopened)
             page.set_viewport_size({'width': 608, 'height': 761})
             page.wait_for_function('!visualKeyboardOpen()')
             page.wait_for_timeout(200)
@@ -193,16 +187,15 @@ def run(browser, renderer, scale=100):
             fixture.xterm_contains(page, 'Enter to confirm')
             assert not errors, errors
             context.close()
-            print('PASS', renderer, scale, 'short menu, bottom editor, cursor, keyboard resize, reopen, desktop', flush=True)
+            print('PASS grid', scale, 'short menu, bottom editor, cursor, keyboard resize, reopen, desktop', flush=True)
 
 
 def main():
     fixture.SHELL = 'exec ' + shlex.quote(sys.executable) + ' -u -c ' + shlex.quote(CLI)
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
-        for renderer in ['grid', 'xterm']:
-            for scale in (30, 100, 150):
-                run(browser, renderer, scale)
+        for scale in (30, 100, 150):
+            run(browser, scale)
         browser.close()
 
 

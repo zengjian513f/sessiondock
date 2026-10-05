@@ -15,7 +15,7 @@ from history_parity import BINARY, Corpus, codex_message, codex_row, isolated_se
 import terminal_input_browser as fixture
 
 
-def run(browser, binary, renderer):
+def run(browser, binary):
     with tempfile.TemporaryDirectory(prefix='sessiondock-heartbeat-') as temporary:
         root = Path(temporary)
         for name in ['host', 'work', 'claude', 'codex', 'grok', 'audit']:
@@ -29,7 +29,6 @@ def run(browser, binary, renderer):
         with fixture.host(root, 'synthetic-' + uuid.uuid4().hex, uid) as (host, _), \
                 isolated_server(corpus, binary, host_dir=root / 'host', audit_dir=root / 'audit') as (base, _):
             context = browser.new_context(viewport={'width': 1000, 'height': 800}, service_workers='block')
-            context.add_init_script('localStorage.setItem("sessiondock.consoleRenderer", JSON.stringify(%s))' % json.dumps(renderer))
             context.route('**/*', lambda r: r.continue_() if r.request.url.startswith(base + '/') else r.abort())
             sockets, probes = [], []
 
@@ -88,7 +87,7 @@ def run(browser, binary, renderer):
                 page.wait_for_timeout(200)
                 expected = ['once', 'ping'] if direction == 'down' else ['once', 'ping', 'ping']
                 assert log.read_text().splitlines() == expected, (direction, log.read_text())
-                print('PASS', renderer, direction, 'stalled OPEN socket recovered; no input replay', flush=True)
+                print('PASS grid', direction, 'stalled OPEN socket recovered; no input replay', flush=True)
 
             wait_for_events(page, root / 'audit', {'browser.terminal.heartbeat_timeout'})
             deadline = time.monotonic() + 15
@@ -123,8 +122,7 @@ done
             options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
         browser = pw.chromium.launch(**options)
         try:
-            for renderer in ['grid', 'xterm']:
-                run(browser, args.binary, renderer)
+            run(browser, args.binary)
         finally:
             browser.close()
 

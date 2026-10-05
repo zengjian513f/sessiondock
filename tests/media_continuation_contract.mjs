@@ -88,11 +88,11 @@ function page(start = 16, end = 32, total = 40, cursor = A, next = B) {
 }
 const rendered = gallery => gallery.children.map(item => item.tag === 'html' ? item.html : item.className);
 
-test('only exact Rust media_continuation capability renders the button; other pages keep byte-identical galleries', () => {
+test('only the exact media_continuation capability renders the button; other pages keep byte-identical galleries', () => {
   const items = descriptors(0, 2), more = {remaining: 24, total: 40, cursor: A};
-  for (const config of [{}, {backend: 'python'}, {backend: 'python', media_continuation: true}, {backend: 'rust'},
+  for (const config of [{}, {backend: 'rust'},
     {backend: 'rust', media_continuation: 1}, {backend: 'rust', media_continuation: false}, {backend: 'rust', media_continuation: true}]) {
-    const enabled = config.backend === 'rust' && config.media_continuation === true;
+    const enabled = config.media_continuation === true;
     const c = renderContext({...config, media_lazy: true});
     assert.equal(c.mediaContinuationEnabled(), enabled);
     const plain = c.mediaGallery(items), withMore = c.mediaGallery(items, more);

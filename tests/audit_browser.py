@@ -125,7 +125,7 @@ def main():
                     page.evaluate("""() => {
                       window.__cadenceN=0;
                       window.__cadenceTimer=setInterval(()=>browserAuditEvent('probe.cadence',
-                        {n:++__cadenceN},'x'.repeat(64000)),200);
+                        {n:++__cadenceN}),200);
                     }""")
                     page.wait_for_timeout(11000)
                     page.evaluate("clearInterval(__cadenceTimer)")
@@ -134,7 +134,7 @@ def main():
                                for event in payload['events'])
                     # Error priority advances the timer even if ordinary events
                     # already scheduled a later flush.
-                    page.evaluate("browserAuditEvent('probe.urgent', {}, null, {severity:'error'})")
+                    page.evaluate("browserAuditEvent('probe.urgent', {}, {severity:'error'})")
                     wait_for_events(page, audit, {'browser.probe.urgent'}, timeout=2)
                     page.wait_for_function(await_idle)
                     # A full batch flushes without waiting for the 5-second timer.

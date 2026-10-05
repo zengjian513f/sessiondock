@@ -40,9 +40,6 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
   if (agent) return '子代理没有独立控制台，请切换到主会话后打开控制台。';
   if (typeof T === 'undefined' || typeof takeover !== 'function')
     return '控制台组件尚未加载完成或加载失败，请稍后重试；持续失败时请刷新页面。';
-  if (typeof ensureTerminalAssets !== 'function'
-      && (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined'))
-    return '浏览器终端组件加载失败，无法显示控制台，请刷新页面重新加载。';
   if (ConsoleUI.busy.has(uid)) return '正在打开控制台，请等待当前连接请求完成。';
   if (T.listError) return T.listError;
   if (!T.listLoaded) return '正在读取控制台状态，请稍后重试。';
@@ -56,11 +53,11 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
   }
   if (typeof sessionRecordingReplayable === 'function' && sessionRecordingReplayable(uid))
     return '';
-  if (SessionDockCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {
+  if (T.ended?.has(uid)) {
     // An exited instance leaves the button as "接管会话"
     // whenever the source has a resume-capable CLI profile (the click starts
     // a fresh `--resume`); only an unresumable source keeps the gray
-    // explanation. The exited xterm is never reclaimed automatically.
+    // explanation. The exited console is never reclaimed automatically.
     // A shell recording is the console itself, so it must not go gray.
     const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];
     const resumable = !String(uid).startsWith('tmux:') && cap?.enabled
@@ -68,22 +65,20 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
       && !linkedTermSession(uid, {followReplacement: true});
     if (!resumable) return T.ended.get(uid).reason;
   }
-  if (SessionDockCapabilities.config.backend === 'rust') {
-    const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);
-    if (pending?.stale) {
-      const phase = typeof pendingPhase === 'function' ? pendingPhase(pending) : '';
-      if (phase !== 'exited' && phase !== 'failed')
-        return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';
-    }
+  const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);
+  if (pending?.stale) {
+    const phase = typeof pendingPhase === 'function' ? pendingPhase(pending) : '';
+    if (phase !== 'exited' && phase !== 'failed')
+      return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';
   }
   if (!cap?.enabled) return `${node ? node.name + '：' : ''}${cap?.unavailable_reason || '服务报告控制台不可用，但未返回具体原因。'}`;
   const linked = linkedTermSession(uid, {followReplacement: true});
   const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];
   if (!linked && !cap.sources?.[source])
     return `${node ? node.name + '：' : ''}未配置可用的 ${SOURCES[source]?.name || source} 启动命令。请检查该机器的 CLI 安装和启动器配置，再重启服务。`;
-  // Rust: an unlinked session can only be resumed through an explicitly
+  // An unlinked session can only be resumed through an explicitly
   // configured resume-capable CLI profile; otherwise no name-based guessing.
-  if (SessionDockCapabilities.config.backend === 'rust' && !linked
+  if (!linked
       && !(SessionDockCapabilities.allows('terminal_takeover')
         && cap?.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))
     return '该会话没有通过完整 UID 和实例校验的运行中终端；不能按名称猜测关联。';

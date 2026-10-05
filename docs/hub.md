@@ -56,8 +56,8 @@ WebSocket 后仍在同一 TLS 流上双向转发。HTTP 与 HTTPS 都继续受�
 `remove(nid)` 删除条目、缓存、健康状态和快照。`set_renderer(nid, renderer)`：这台机器的
 控制台渲染，`grid`（或空 = 默认，不落盘）/ `xterm`，其它值 400；设置页的
 `POST /api/nodes/{nid}/display` 接受 `renderer` 与 `name`/`color`/`enabled` 同一请求。
-它是展示属性：存在中央，所有浏览器一致；`term.js` 按行的 `node_id` 取它决定控制台
-用服务端网格还是 xterm.js（旧宿主自动回落 xterm）。
+它是展示属性，存在中央；前端已只用服务端网格渲染控制台，不再读取它，设置页也不再
+提供这个选项。
 
 **视图**：`all()`/`get()` 只含启用机器（聚合、监控、代理、uid 解析用）；`find()` 含停用
 （设置页用）；`public()` = 启用机器 `{id,name,color,renderer} ∪ health`（无健康记录时

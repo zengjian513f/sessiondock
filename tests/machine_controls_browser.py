@@ -7,9 +7,9 @@ All fixtures are synthetic. Hub and FakeNode listen on loopback only; the
 working directory is private and removed on exit. The page is the frontend
 Hub already serves through frontend_dir(), including SESSIONDOCK_TEST_WEB_DIR.
 
-Real clicks, typing, Enter and select changes drive the existing controls.
+Real clicks, typing and Enter drive the existing controls.
 Pointer/keyboard order, rename persistence and client update stay in their own
-suites. Playwright holds and fails display POSTs for name, enabled and renderer
+suites. Playwright holds and fails display POSTs for name and enabled
 changes, exercising pending controls and editable recovery through the existing
 renderMachineSettings hook, with stored-name rollback on failure.
 """
@@ -35,20 +35,14 @@ NAME_B = "NodeB"
 DRAFT = "未提交草稿"
 FAILED_NAME = "失败草稿"
 NAME_ERROR = "合成名称失败"
-RENDER_ERROR = "合成渲染失败"
 ENABLED_ERROR = "合成启用失败"
 BLUE = "blue"
 BLUE_LABEL = "蓝"
 GRID = "grid"
-XTERM = "xterm"
-GRID_LABEL = "服务端网格（默认）"
-XTERM_LABEL = "xterm.js（浏览器解析）"
 NOTE = "#machine-note"
 SAVED = f"已保存 {NAME_A}。"
 NAME_FAIL = f"保存失败：{NAME_ERROR}"
 ENABLED_FAIL = f"保存失败：{ENABLED_ERROR}"
-RENDER_FAIL = f"{NAME_A}：切换失败：{RENDER_ERROR}"
-RENDER_OK = f"{NAME_A}：控制台改用 {XTERM_LABEL}；重新打开控制台后生效。"
 
 
 class DisplayFault:
@@ -256,41 +250,19 @@ def check(page, hub, fault):
     name.fill(NAME_A)
     page.locator("#settings-title").click()
 
-    # The renderer change fails once, then grid to xterm succeeds and stays.
-    select = row.locator("select.machine-renderer")
-    expect(select.locator("option")).to_have_text([GRID_LABEL, XTERM_LABEL])
-    expect(select).to_have_value(GRID)
-    fault.arm("renderer", RENDER_ERROR, hold=False)
-    select.select_option(label=XTERM_LABEL)
-    expect(select).to_be_enabled()
-    expect(select).to_have_value(GRID)
-    expect(select.locator("option:checked")).to_have_text(GRID_LABEL)
-    expect(note).to_have_text(RENDER_FAIL)
-    expect(note).to_have_attribute("data-state", "error")
-    name.fill(NAME_A)
-    page.locator("#settings-title").click()
-    select.select_option(label=XTERM_LABEL)
-    expect(select).to_have_value(XTERM)
-    expect(select.locator("option:checked")).to_have_text(XTERM_LABEL)
-    expect(note).to_have_text(RENDER_OK)
-    expect(note).to_have_attribute("data-state", "ok")
+    # The console renders only the server-side grid: no renderer control.
+    expect(row.locator("select")).to_have_count(0)
     close_settings(page)
     open_machines(page)
-    select = machine_row(page, NAME_A).locator("select.machine-renderer")
-    expect(select).to_have_value(XTERM)
-    expect(select.locator("option:checked")).to_have_text(XTERM_LABEL)
     expect(color_swatch(machine_row(page, NAME_A))).to_have_attribute("data-node-color", BLUE)
 
     node_a = saved_machine(hub, NID_A)
     node_b = saved_machine(hub, NID_B)
-    renderer = XTERM
-    assert node_a["name"] == NAME_A and node_a["color"] == BLUE and node_a["renderer"] == renderer, node_a
+    assert node_a["name"] == NAME_A and node_a["color"] == BLUE and node_a["renderer"] == GRID, node_a
     assert node_b["name"] == NAME_B and node_b["color"] == "" and node_b["renderer"] == GRID, node_b
-    fields = ["name", "enabled"] + (["renderer"])
-    assert [hit["field"] for hit in fault.hits] == fields, fault.hits
+    assert [hit["field"] for hit in fault.hits] == ["name", "enabled"], fault.hits
     assert fault.hits[0]["body"]["name"] == FAILED_NAME, fault.hits[0]
     assert fault.hits[1]["body"]["enabled"] is False, fault.hits[1]
-    assert fault.hits[2]["body"]["renderer"] == XTERM, fault.hits[2]
     assert fault.field is None and fault.pending is None
 
 
@@ -327,7 +299,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS machine_controls_browser: palette, pending drafts, focus recovery, display rollback, renderer", flush=True)
+    print("PASS machine_controls_browser: palette, pending drafts, focus recovery, display rollback, no renderer control", flush=True)
 
 
 if __name__ == "__main__":

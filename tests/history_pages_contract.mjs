@@ -36,15 +36,15 @@ function fixture(chain=false) {
 const message = text => ({role:'user',text});
 function page() {return {data:{messages:['page0','page1'].map(message),page:{cursor:A,next:B,start:1,end:3,stop:5,remaining:2}},bytes:20};}
 
-test('only exact Rust history_pages capability selects pages; Python keeps full-history behavior', () => {
-  for (const config of [{},{backend:'python'},{backend:'rust'},{backend:'rust',history_pages:1},
+test('only the exact history_pages capability selects pages; otherwise full history', () => {
+  for (const config of [{},{backend:'rust'},{backend:'rust',history_pages:1},
     {backend:'rust',history_pages:false},{backend:'rust',history_pages:true}]) {
     const calls=[];
     const context=vm.createContext({SessionDockCapabilities:{config},el:element,
       loadHistoryPage:()=>calls.push('page'),loadFullHistory:()=>calls.push('full')});
     load(context,'historyPagesEnabled'); const gap=load(context,'historyGapNode')({uid:'u',agent:null,omitted:800});
     gap.children[0].onclick();
-    assert.deepEqual(calls,[config.backend==='rust'&&config.history_pages===true?'page':'full']);
+    assert.deepEqual(calls,[config.history_pages===true?'page':'full']);
   }
 });
 

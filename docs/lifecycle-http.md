@@ -401,7 +401,7 @@ cannot regain native control simply because the host remains alive.
 
 `tests/lifecycle_browser.py` builds a temporary corpus and private launcher
 configuration for a fixed free shell. It uses the real legacy create dialog,
-pending xterm keyboard, Web stop/restart, sidebar navigation and mobile
+pending console keyboard, Web stop/restart, sidebar navigation and mobile
 discard of an unpersisted launch. It checks same-request replay creates only one shell, conflicting specs
 are rejected, pending status is explicit, no reliable-send composer is enabled,
 cancellation does not reclaim ownership, an unpersisted pending header offers

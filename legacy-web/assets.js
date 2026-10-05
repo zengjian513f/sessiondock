@@ -30,13 +30,3 @@ globalThis.SessionDockAssets = (() => {
   }
   return {url, script: path => load(path), style: path => load(path, true)};
 })();
-
-globalThis.ensureTerminalAssets = async grid => {
-  if (grid) return;
-  await Promise.all([
-    SessionDockAssets.style('vendor/xterm.css'),
-    SessionDockAssets.script('vendor/xterm.js'),
-  ]);
-  await Promise.all(['addon-fit.js', 'addon-unicode11.js', 'addon-webgl.js']
-    .map(name => SessionDockAssets.script(`vendor/${name}`)));
-};
