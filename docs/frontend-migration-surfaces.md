@@ -103,7 +103,7 @@ Hub 顶栏另有机器 chip，见第 2 节。节点离线、列表/运行状态/
 
 ## 2. 侧栏：嵌套、筛选、分组、多选、未读、深链、资源
 
-渲染入口是 `renderSide` / `patchSide` / `groupBy`。列表数据来自 `GET api/sessions`，增量签名 `GET api/sessions?sig=`，能力 `list_delta` 时走 [`legacy-web/list-sync.js`](../legacy-web/list-sync.js) 的 `expand`。`ui_events` 时用 `EventSource api/events`（`startUiEvents`），页面隐藏会停。空闲页不拉未选中会话的正文。[`tests/list_delta_browser.py`](../tests/list_delta_browser.py)、[`tests/ui_events_browser.py`](../tests/ui_events_browser.py)。
+渲染入口是 `renderSide` / `patchSide` / `groupBy`。列表数据来自 `GET api/sessions`，增量签名 `GET api/sessions?sig=`，能力 `list_delta` 时走 [`legacy-web/list-sync.js`](../legacy-web/list-sync.js) 的 `expand`。`ui_events` 时用 `EventSource api/events`（`startUiEvents`），页面隐藏会停。空闲页不拉未选中会话的正文。[`tests/list_delta_browser.py`](../tests/list_delta_browser.py)、[`tests/ui_events_browser.py`](../tests/ui_events_browser.py)。收到列表失效（`sessions`）或连接基线（`initial`）时派发页面事件 `sessiondock-ui-sessions`，分组和迁移任务据此刷新。选中会话的正文订阅之外，SSE 正常时仍每 20 秒兜底对账一次（`tickSync` / `BACKUP_MS`）：正文订阅可能静默停滞而 `readyState` 仍为 open，这一兜底不是冗余，保留不变。空闲请求预算：[`tests/idle_requests_browser.py`](../tests/idle_requests_browser.py)。
 
 ### 三种列表
 
@@ -145,7 +145,7 @@ Hub 机器 chip：点击切换，右键或长按「只选这台」。`app.js` �
 
 [`legacy-web/groups.js`](../legacy-web/groups.js)，需要 `metadata`。
 
-- `GET/POST api/groups`：创建、删除。删除确认就是按钮本身，没有第二套确认框。离线节点时状态是「已创建/已删除；离线节点恢复连接后同步。」
+- `GET/POST api/groups`：创建、删除。分组集合在收到 `sessiondock-ui-sessions`、回到前台和休眠恢复时重读；事件通道正常时定时重读放慢到约 60 秒（兜底 Hub 合并节点页面直接改过的集合），断开时保持 10 秒；休眠、隐藏或编辑中不读。删除确认就是按钮本身，没有第二套确认框。离线节点时状态是「已创建/已删除；离线节点恢复连接后同步。」
 - 分组视图底部「＋ 新建分组」，Esc 退出编辑并焦点回到按钮。
 - 行菜单「分组 ›」和多选「分组」打开 `#session-group-menu`：未分组或某个组名，单选勾。`POST api/session/group`。悬停（鼠标）展开，→ 打开，← 或 Esc 关闭。
 - 行上显示「分组：名称」。目录里没有的组名不当成当前组。
@@ -188,7 +188,7 @@ Boot 时若上次 `sel` 是 `tmux:` 前缀的新建会话，会等 `api/term/lis
 
 ### 资源列与会话资源
 
-资源列默认关（`sidebarResources`）。打开后每行一个按钮，六格：CPU 核数、进程数、内存 PSS、GPU 张数、磁盘读、磁盘写（[`legacy-web/sidebar-resources.js`](../legacy-web/sidebar-resources.js)）。只画视口内的行（含 160px 预读）。采样超过约 15 秒或子代理行显示「—」。数字用 zh-CN 紧凑格式。每 5 秒，以及回到前台时，`GET api/resources/summary`。失败则清空数字，不把缺失显示成 0。点格子打开会话资源，不选中行。
+资源列默认关（`sidebarResources`）。打开后每行一个按钮，六格：CPU 核数、进程数、内存 PSS、GPU 张数、磁盘读、磁盘写（[`legacy-web/sidebar-resources.js`](../legacy-web/sidebar-resources.js)）。只画视口内的行（含 160px 预读）。采样超过约 15 秒或子代理行显示「—」。数字用 zh-CN 紧凑格式。每 5 秒，以及回到前台和休眠恢复时，`GET api/resources/summary`；页面休眠期间不读。失败则清空数字，不把缺失显示成 0。点格子打开会话资源，不选中行。
 
 [`tests/sidebar_toggle_browser.py`](../tests/sidebar_toggle_browser.py)。
 
@@ -360,7 +360,7 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 - 按钮随状态变成「复制整组 / 移动整组 / 正在复制… / 重试同一次复制 / 撤回本次移动」。结果不确定时不能改目标、操作和 UID 选择。
 - 计划 `POST api/session/clone/plan`，执行同机 `api/session/clone`、跨机 `api/session/transfer/clone`，进度 `api/session/clone/progress` 或 `api/session/transfer/progress`，取消 `api/session/clone/cancel` 或 `api/session/transfer/cancel`。
 - 完成后关闭对话框，打开目标会话，通知「整组复制完成，原会话已保留。」或「整组移动完成。」
-- 顶栏 `#transfer-tasks` 列出未完成任务，可继续。`GET api/session/transfers`，`refreshTransferTasks`。
+- 顶栏 `#transfer-tasks` 列出未完成任务，可继续。`GET api/session/transfers`，`refreshTransferTasks`。有未完成任务或任务面板打开时每 5 秒刷新；没有未完成任务且事件通道正常时只在 `sessiondock-ui-sessions`、本页操作、休眠恢复和约 60 秒一次的兜底读取时刷新；事件通道断开时仍每 5 秒；休眠或隐藏时不读。
 
 [`tests/session_clone_browser.py`](../tests/session_clone_browser.py)、[`tests/session_transfer_browser.py`](../tests/session_transfer_browser.py)、[`tests/session_transfer_cache_browser.py`](../tests/session_transfer_cache_browser.py)、[`tests/session_transfer_environment_browser.py`](../tests/session_transfer_environment_browser.py)、[`tests/session_transfer_isolation_browser.py`](../tests/session_transfer_isolation_browser.py)、[`tests/session_files_clone_browser.py`](../tests/session_files_clone_browser.py)、[`tests/session_mixed_clone_browser.py`](../tests/session_mixed_clone_browser.py)、[`tests/session_mixed_bundle_browser.py`](../tests/session_mixed_bundle_browser.py)、[`tests/session_local_recovery_browser.py`](../tests/session_local_recovery_browser.py)、[`tests/session_prefix_browser.py`](../tests/session_prefix_browser.py)、[`tests/session_files_browser.py`](../tests/session_files_browser.py)、[`tests/session_grok_checkpoint_browser.py`](../tests/session_grok_checkpoint_browser.py)、[`tests/session_goals_native_browser.py`](../tests/session_goals_native_browser.py)。
 

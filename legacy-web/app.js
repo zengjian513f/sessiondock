@@ -745,6 +745,7 @@ function shellEnvTargets() {
 }
 
 async function checkShellEnv() {
+  if (SessionDockNetwork.paused) return;
   const run = ++shellEnvRun;
   const targets = shellEnvTargets();
   const found = await Promise.all(targets.map(async target => {
@@ -2730,6 +2731,9 @@ function queueUiChange(change) {
   for (const key of ['live', 'term', 'sessions']) pending[key] ||= !!(change.initial || change[key]);
   for (const row of change.cursors || []) pending.cursors.set(viewKey(row.uid, row.agent), row);
   void applyUiChanges();
+  // Side panels (groups, transfer tasks) refresh on list invalidations and
+  // (re)connect baselines instead of keeping their own fast timers.
+  if (change.initial || change.sessions) dispatchEvent(new CustomEvent('sessiondock-ui-sessions'));
 }
 async function applyUiChanges() {
   if (uiEventApplying) return;
@@ -10594,14 +10598,15 @@ function transferPhaseLabel(task) {
     label += ` · ${fmtSize(task.bytes_sent)} / ${fmtSize(task.bytes_total)}`;
   return label;
 }
-let transferTasksLoading = false;
+let transferTasksLoading = false, transferTasksOpen = 0, transferTasksAt = 0;
 async function refreshTransferTasks() {
-  if (!HUB_MODE || transferTasksLoading) return;
+  if (!HUB_MODE || transferTasksLoading || SessionDockNetwork.paused) return;
   transferTasksLoading = true;
   try {
     const response = await fetch(appUrl('api/session/transfers'));
     if (!response.ok) return;
     const {operations} = await response.json();
+    transferTasksOpen = operations.length; transferTasksAt = Date.now();
     const button = $('#transfer-tasks');
     button.hidden = operations.length === 0;
     button.querySelector('.transfer-task-count').textContent = String(operations.length);
@@ -10656,7 +10661,19 @@ $('#transfer-tasks').onclick = () => {
   panel.addEventListener('cancel', e => {e.preventDefault(); close();});
   document.body.append(panel); panel.showModal(); refreshTransferTasks();
 };
+// Unfinished operations advance on the Hub without a UI event, so follow them
+// (and an open task panel) every 5 s. With none outstanding, list events and
+// this page's own actions refresh the button; a slow read covers operations
+// started elsewhere, and polling stays fast while the event channel is down.
+const TRANSFER_TASKS_MS = 5000, TRANSFER_TASKS_IDLE_MS = 60000;
 if (HUB_MODE) {
   refreshTransferTasks();
-  setInterval(() => {if (!document.hidden) refreshTransferTasks();}, 5000);
+  setInterval(() => {
+    if (document.hidden || SessionDockNetwork.paused) return;
+    if (!transferTasksOpen && uiEventsReady && !$('#transfer-tasks-dialog')
+        && Date.now() - transferTasksAt < TRANSFER_TASKS_IDLE_MS) return;
+    refreshTransferTasks();
+  }, TRANSFER_TASKS_MS);
+  addEventListener('sessiondock-ui-sessions', () => refreshTransferTasks());
+  addEventListener('sessiondock-network-resumed', () => refreshTransferTasks());
 }

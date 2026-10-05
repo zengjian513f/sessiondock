@@ -142,7 +142,8 @@ def main():
             page.route('**/api/groups', catalog_refresh)
             try:
                 # Exercise the normal background refresh without a wall-clock sleep.
-                page.clock.fast_forward(10000)
+                # With the UI event channel healthy that fallback read is slow.
+                page.clock.fast_forward(60000)
                 expect(menu.locator(f'button[data-group-name="{extra}"]')).to_be_visible()
                 refreshed = menu.locator('button').evaluate_all('(buttons) => buttons.map(button => button.dataset.groupName)')
                 assert refreshed.index(extra) < refreshed.index('待办'), refreshed
@@ -154,7 +155,7 @@ def main():
             finally:
                 page.unroute('**/api/groups', catalog_refresh)
             # Restore the real catalog through the same refresh path before continuing.
-            page.clock.fast_forward(10000)
+            page.clock.fast_forward(60000)
             expect(menu.locator(f'button[data-group-name="{extra}"]')).to_have_count(0)
             expect(focused).to_be_focused()
             focused.press('ArrowLeft')

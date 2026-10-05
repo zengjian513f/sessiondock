@@ -2535,6 +2535,7 @@ function scheduleCodexSideThreadScan(view) {
 }
 
 function writeParsedTermOutput(view, chunk) {
+  noteComposerTermOutput(view);
   view.term.write(chunk, () => {
     if (view.outputLayoutFrame) return;
     view.outputLayoutFrame = requestAnimationFrame(() => {
@@ -4810,7 +4811,7 @@ function updateComposerInputStatus(uid, data) {
       : draft.inputAnswer.id !== prompt?.id
         || (draft.inputAnswer.sent && draft.inputAnswer.revision !== screenMenuRevision(prompt))))
     draft.inputAnswer = null;
-  if (changed && composerDraftOwner(composerUid) === owner) renderComposerInputStatus();
+  if (changed && composerDraftOwner(composerUid) === owner) { renderComposerInputStatus(); composerChecksFast(); }
   paintTurn(uid);
 }
 
@@ -5082,10 +5083,12 @@ async function pollComposerInput() {
   if (!uid || !conversationSendEnabled() || document.hidden || composerSending || composerInputProbeBusy
       || !$('#composer').getClientRects().length || !takenOver(uid)) return;
   composerInputProbeBusy=true;
+  composerCheckOutput=false;
   let data;
   try { data = await probeComposerInput(uid); }
   catch { /* SEND independently checks the current input surface. */ }
   finally { composerInputProbeBusy=false; }
+  noteComposerCheck(uid, data);
   // Draft/history reads must not hold up the live input-status checks.
   if (composerDraftSyncBusy) return;
   composerDraftSyncBusy=true;
@@ -5095,8 +5098,41 @@ async function pollComposerInput() {
   } catch { /* A missing/in-progress receipt keeps the editor intact. */ }
   finally { composerDraftSyncBusy=false; }
 }
+// A ready (or menu/not-ready) screen that stays the same is rechecked less
+// often, up to 6 s; terminal output, typing, focus, a watch-pushed status
+// change or any changed CHECK result returns to 1.5 s at once. Transitional
+// and failed checks always stay fast so recovery remains prompt.
+const COMPOSER_CHECK_MS = 1500, COMPOSER_CHECK_IDLE_MS = 6000;
+let composerCheckDelay = COMPOSER_CHECK_MS, composerCheckDue = 0, composerCheckTimer = 0;
+let composerCheckBasis = '', composerCheckOutput = false, composerCheckPoll = null;
+function armComposerChecks() {
+  clearTimeout(composerCheckTimer);
+  composerCheckDue = performance.now() + composerCheckDelay;
+  composerCheckTimer = setTimeout(() => { armComposerChecks(); composerCheckPoll?.(); }, composerCheckDelay);
+}
+function composerChecksFast() {
+  composerCheckDelay = COMPOSER_CHECK_MS;
+  if (composerCheckPoll && composerCheckDue - performance.now() > COMPOSER_CHECK_MS) armComposerChecks();
+}
+function noteComposerTermOutput(view) {
+  if (!composerUid || takenOver(composerUid) !== view.name) return;
+  composerCheckOutput = true;
+  composerChecksFast();
+}
+function noteComposerCheck(uid, data) {
+  const draft = composerDrafts.get(composerDraftOwner(uid)), status = draft?.inputStatus;
+  const basis = JSON.stringify([uid, status, draft?.inputPrompt, data?.draft_revision ?? null]);
+  const stable = !!status && (['ready','blocked'].includes(status.state) || status.code === 'cli_not_ready');
+  composerCheckDelay = stable && basis === composerCheckBasis && !composerCheckOutput
+    ? Math.min(COMPOSER_CHECK_IDLE_MS, composerCheckDelay * 2) : COMPOSER_CHECK_MS;
+  composerCheckBasis = basis;
+}
 function scheduleComposerInputChecks(poll) {
-  setInterval(poll, 1500);
+  composerCheckPoll = poll;
+  armComposerChecks();
+  for (const type of ['input', 'focus', 'keydown']) $('#cinput').addEventListener(type, composerChecksFast);
+  addEventListener('focus', composerChecksFast);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) composerChecksFast(); });
   // Parent layout can hide the composer without changing its own classes.
   // Resume immediately on terminal/split toggles that reveal the input.
   let wasVisible = false;
