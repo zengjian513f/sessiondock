@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Inline group management, session submenus and offline-safe deletion through Chromium."""
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 from contextlib import ExitStack
+from io import BytesIO
 import json
 import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 
+from PIL import Image
 from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, Corpus, codex_row, isolated_server
 from hub_http_suite import Hub, free_port, scoped
@@ -67,6 +69,24 @@ def main():
             return page
         def tree(page):
             page.locator('#view [data-v="tree"]').click()
+        def check_group_icon(page):
+            if scoped_frontend():
+                return
+            button = page.get_by_role('button', name='会话分组', exact=True)
+            # Inspect the rendered button, so a monochrome desktop font fallback
+            # fails even if the markup still contains the label character.
+            for selected in (False, True):
+                if selected:
+                    button.click()
+                    expect(button).to_have_class('on')
+                    expect(page.locator('#session-group-add')).to_be_visible()
+                image = Image.open(BytesIO(button.screenshot())).convert('RGB')
+                yellow = sum(r > 100 and g > 80 and b < r * .75 and g > b * 1.3
+                    for r, g, b in (image.getpixel((x, y))
+                        for y in range(image.height) for x in range(image.width)))
+                assert yellow > 5, f'group icon lost its yellow emoji rendering: selected={selected}, pixels={yellow}'
+            tree(page)
+            print('PASS yellow group icon and view switching:', page.viewport_size, flush=True)
         def edit(page, uid, hold=False, hover=False):
             item = page.locator(f'#side .item[data-uid="{uid}"]')
             if hold:
@@ -146,6 +166,7 @@ def main():
         try:
             bases = [start_node(i) for i in range(2)]
             local = [page_at(base, clock=i == 0) for i, base in enumerate(bases)]
+            check_group_icon(local[0])
             uid_a, uid_b = corpora[0].uid('same'), corpora[1].uid('same')
             assert local[0].locator('#session-group-dialog').count() == 0
             create(local[0], '待办')
@@ -210,6 +231,7 @@ def main():
             for i, uid in enumerate((uid_a, uid_b)): assert stored(i)['sessions'][uid]['group'] == '搁置'
             page.locator('#side-pick-cancel').click()
             mobile = page_at(bases[0], mobile=True); mobile.emulate_media(color_scheme='dark')
+            check_group_icon(mobile)
             edit(mobile, uid_a, hold=True)
             bounds = mobile.locator('#session-group-menu').bounding_box()
             assert bounds['x'] >= 0 and bounds['x'] + bounds['width'] <= 390
