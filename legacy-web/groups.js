@@ -157,8 +157,21 @@ globalThis.SessionDockGroups = (() => {
   $('#side-pick-group').onclick = event => showMenu([...pickedSessions], event.currentTarget);
   document.addEventListener('pointerdown', event => { if (!event.target.closest('#session-group-menu, #item-menu, #side-pick-group')) closeMenu(); }, true);
   addEventListener('resize', closeMenu);
+  // Catalog writes publish a list invalidation on the UI event channel, which
+  // refreshes immediately. A Hub can still merge a catalog edited directly on
+  // a node without one, so keep a slow read while events flow and the old
+  // 10 s cadence while they are down. Page sleep and hidden tabs read nothing.
+  let refreshedAt = Date.now();
+  const due = () => !document.hidden && !busy && !editing && !SessionDockNetwork.paused;
+  const reread = () => { refreshedAt = Date.now(); void refresh(); };
   void refresh();
-  setInterval(() => { if (!document.hidden && !busy && !editing) void refresh(); }, 10000);
+  setInterval(() => {
+    if (due() && Date.now() - refreshedAt >= (typeof uiEventsReady !== 'undefined' && uiEventsReady ? 60000 : 10000)) reread();
+  }, 10000);
+  // A change seen while editing is read on the next tick after editing ends.
+  addEventListener('sessiondock-ui-sessions', () => { if (due()) reread(); else refreshedAt = 0; });
+  addEventListener('sessiondock-network-resumed', () => { if (due()) reread(); });
+  document.addEventListener('visibilitychange', () => { if (due()) reread(); });
   return {matches, paintRow, paintPickBar, paintHeading, paintSidebar, showMenu, closeMenu, escapeMenu,
     contains: name => catalog.includes(name), get names() { return catalog; }, get available() { return available; }};
 })();
