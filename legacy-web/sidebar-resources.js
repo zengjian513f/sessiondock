@@ -87,7 +87,7 @@
   }).observe(document.querySelector('#side'), {childList:true, subtree:true});
   document.querySelectorAll('#side .item').forEach(paint);
   async function refresh() {
-    if (!enabled || pending || document.hidden) return;
+    if (!enabled || pending || document.hidden || SessionDockNetwork.paused) return;
     pending = true;
     try {
       const response = await fetch(appUrl('api/resources/summary'), {signal:AbortSignal.timeout(4500)});
@@ -116,5 +116,6 @@
   globalThis.SessionDockSidebarResources = {paint, refresh};
   document.addEventListener('visibilitychange', () => {if (!document.hidden) {paintVisible(); void refresh();}});
   setInterval(() => {if (!document.hidden) {paintVisible(); void refresh();}}, 5000);
+  addEventListener('sessiondock-network-resumed', () => void refresh());
   toggle(enabled, false);
 })();
