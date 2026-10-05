@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use alacritty_terminal::event::{Event, EventListener};
-use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::grid::{Dimensions, Row, Scroll};
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::{Config, Term, TermMode};
@@ -114,6 +114,11 @@ pub struct Screen {
     rows: u16,
     history: usize,
     resets: u64,
+    /// 滚动计数（见 [`Screen::take_scrolled`]）：上次取数后是否把主屏的
+    /// display_offset 设成了 1，以及当时的历史行数和最新一行历史。
+    scroll_armed: bool,
+    scroll_seen: usize,
+    scroll_mark: Option<Row<Cell>>,
 }
 
 fn new_term(cols: u16, rows: u16, history: usize, responder: Responder) -> Term<Responder> {
@@ -142,6 +147,9 @@ impl Screen {
             rows: rows.max(1),
             history,
             resets: 0,
+            scroll_armed: false,
+            scroll_seen: 0,
+            scroll_mark: None,
         }
     }
 
@@ -271,6 +279,50 @@ impl Screen {
     /// 历史行数（主屏已滚出视口的行）。
     pub fn history_len(&self) -> usize {
         self.term.grid().history_size()
+    }
+
+    /// 自上次调用以来主屏推入历史的行数，不超过当前历史长度：历史满了以后
+    /// 每进一行就从最旧一端挤掉一行，长度不再变化，但新行照样计入。返回的行
+    /// 就是历史最后那么多行。备用屏幕期间返回 None，计数留到回到主屏。
+    ///
+    /// alacritty 不公开滚动计数，这里借用主屏的 display_offset：它不为 0 时，
+    /// 每次把行滚进历史都会加上滚动的行数（封顶于历史上限）。取数后把它放回 1；
+    /// 宿主只按绝对行号读网格（[`Screen::line_at`]），不依赖 display_offset。
+    /// 清空历史（ED 3、RIS）和模型重建会把它清零，此时现有历史都是之后滚进的。
+    /// resize 也会挪动它，调用方在 resize 后的那次捕获里丢弃结果即可。
+    pub fn take_scrolled(&mut self) -> Option<usize> {
+        if self.alt() {
+            return None;
+        }
+        let total = self.history_len();
+        let offset = self.term.grid().display_offset();
+        let count = if !self.scroll_armed {
+            total.saturating_sub(self.scroll_seen)
+        } else if offset == 0 {
+            total
+        } else if offset < self.history {
+            offset - 1
+        } else {
+            // 封顶：至少滚了 history-1 行（此时历史一定是满的）。恰好 history-1 行时，
+            // 上次最新的历史行正好成了最旧一行；否则保留的历史全是新行。
+            let oldest = &self.term.grid()[Line(-(total as i32))];
+            if total > 0 && self.scroll_mark.as_ref() == Some(oldest) {
+                total - 1
+            } else {
+                total
+            }
+        };
+        self.scroll_seen = total;
+        self.scroll_armed = self.history >= 2 && total >= 1;
+        if self.scroll_armed {
+            self.scroll_mark = Some(self.term.grid()[Line(-1)].clone());
+            self.term
+                .grid_mut()
+                .scroll_display(Scroll::Delta(1 - offset as i32));
+        } else {
+            self.scroll_mark = None;
+        }
+        Some(count.min(total))
     }
 
     /// 绝对行号 → 网格行：历史为 0..history，可见屏接在后面。

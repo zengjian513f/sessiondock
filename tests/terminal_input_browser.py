@@ -57,13 +57,14 @@ done
 
 
 @contextmanager
-def host(root, instance, uid):
+def host(root, instance, uid, history=None):
     name = "synthetic-input-host"
     environment = {key: value for key, value in os.environ.items() if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE"}}
     environment["TERM"] = "xterm-256color"
     metadata = {"source": "codex", "sid": "synthetic-native-sid", "uid": uid, "instance_id": instance}
     process = subprocess.Popen([str(REPO / "target/debug/ptyhost"), "--dir", str(root / "host"), "run", "--name", name,
-        "--cwd", str(root / "work"), "--cols", "80", "--rows", "24", "--meta", json.dumps(metadata), "--",
+        "--cwd", str(root / "work"), "--cols", "80", "--rows", "24", "--meta", json.dumps(metadata),
+        *(["--history", str(history)] if history is not None else []), "--",
         shutil.which("sh"), "-c", SHELL], cwd=root / "work", env=environment,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     record = None
