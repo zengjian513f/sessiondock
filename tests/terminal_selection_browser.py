@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real mouse selection/copy with and without CLI mouse capture, in isolated PTYs."""
-from browser_runtime import js, wait_for_async
+from browser_runtime import js, wait_for_async, console_renderers
 import os
 from pathlib import Path
 import shlex
@@ -536,9 +536,9 @@ def check_shift_selection(page, context, root, keyboard, surface):
 def main():
     fixture.SHELL = 'exec python3 -u -c ' + shlex.quote(CLI)
     with sync_playwright() as pw:
-        for surface in ['grid', 'standalone', 'xterm']:
+        for surface in ['grid', 'standalone', *console_renderers('xterm')]:
             check_surface(pw, surface)
-        for surface in ['grid', 'xterm']:
+        for surface in console_renderers('grid', 'xterm'):
             check_surface(pw, surface, mobile=True)
 
 

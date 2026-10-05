@@ -259,7 +259,6 @@ def check(page, hub, fault):
     # An enabled failure must roll back the checkbox while preserving a name
     # typed during the pending request, its focus and its caret.
     toggle = row.locator("input.machine-enabled")
-    select = row.locator("select.machine-renderer")
     fault.arm("enabled", ENABLED_ERROR, hold=scoped_frontend())
     toggle.uncheck()
     if scoped_frontend():
@@ -272,7 +271,6 @@ def check(page, hub, fault):
         refresh_machines(page)
         expect(toggle).not_to_be_checked()
         expect(toggle).to_be_disabled()
-        expect(select).to_be_enabled()
         expect(name).to_have_value(DRAFT)
         expect(name).to_be_focused()
         fault.release()
@@ -290,43 +288,47 @@ def check(page, hub, fault):
     name.fill(NAME_A)
     page.locator("#settings-title").click()
 
-    # The renderer change fails once, then grid to xterm succeeds and stays.
-    select = row.locator("select.machine-renderer")
-    expect(select.locator("option")).to_have_text([GRID_LABEL, XTERM_LABEL])
-    expect(select).to_have_value(GRID)
-    fault.arm("renderer", RENDER_ERROR, hold=scoped_frontend())
-    select.select_option(label=XTERM_LABEL)
     if scoped_frontend():
+        # The Vue console renders only the server-side grid: no renderer control.
+        expect(row.locator("select.machine-renderer")).to_have_count(0)
+    else:
+        # The renderer change fails once, then grid to xterm succeeds and stays.
+        select = row.locator("select.machine-renderer")
+        expect(select.locator("option")).to_have_text([GRID_LABEL, XTERM_LABEL])
+        expect(select).to_have_value(GRID)
+        fault.arm("renderer", RENDER_ERROR, hold=scoped_frontend())
+        select.select_option(label=XTERM_LABEL)
+        if scoped_frontend():
+            expect(select).to_have_value(XTERM)
+            expect(select).to_be_disabled()
+            name.click()
+            name.fill(DRAFT)
+            name.press("ArrowLeft")
+            caret = name.evaluate("input => [input.selectionStart, input.selectionEnd]")
+            refresh_machines(page)
+            expect(select).to_have_value(XTERM)
+            expect(select).to_be_disabled()
+            expect(name).to_have_value(DRAFT)
+            expect(name).to_be_focused()
+            fault.release()
+        expect(select).to_be_enabled()
+        expect(select).to_have_value(GRID)
+        expect(select.locator("option:checked")).to_have_text(GRID_LABEL)
+        expect(note).to_have_text(RENDER_FAIL)
+        expect(note).to_have_attribute("data-state", "error")
+        if scoped_frontend():
+            expect(name).to_have_value(DRAFT)
+            expect(name).to_be_focused()
+            assert name.evaluate("input => [input.selectionStart, input.selectionEnd]") == caret
+            same_node(row, row_node)
+            same_node(name, name_node)
+        name.fill(NAME_A)
+        page.locator("#settings-title").click()
+        select.select_option(label=XTERM_LABEL)
         expect(select).to_have_value(XTERM)
-        expect(select).to_be_disabled()
-        name.click()
-        name.fill(DRAFT)
-        name.press("ArrowLeft")
-        caret = name.evaluate("input => [input.selectionStart, input.selectionEnd]")
-        refresh_machines(page)
-        expect(select).to_have_value(XTERM)
-        expect(select).to_be_disabled()
-        expect(name).to_have_value(DRAFT)
-        expect(name).to_be_focused()
-        fault.release()
-    expect(select).to_be_enabled()
-    expect(select).to_have_value(GRID)
-    expect(select.locator("option:checked")).to_have_text(GRID_LABEL)
-    expect(note).to_have_text(RENDER_FAIL)
-    expect(note).to_have_attribute("data-state", "error")
-    if scoped_frontend():
-        expect(name).to_have_value(DRAFT)
-        expect(name).to_be_focused()
-        assert name.evaluate("input => [input.selectionStart, input.selectionEnd]") == caret
-        same_node(row, row_node)
-        same_node(name, name_node)
-    name.fill(NAME_A)
-    page.locator("#settings-title").click()
-    select.select_option(label=XTERM_LABEL)
-    expect(select).to_have_value(XTERM)
-    expect(select.locator("option:checked")).to_have_text(XTERM_LABEL)
-    expect(note).to_have_text(RENDER_OK)
-    expect(note).to_have_attribute("data-state", "ok")
+        expect(select.locator("option:checked")).to_have_text(XTERM_LABEL)
+        expect(note).to_have_text(RENDER_OK)
+        expect(note).to_have_attribute("data-state", "ok")
     if scoped_frontend():
         # A polling refresh with a focused grip used to replace every row and
         # rely on a watcher to move focus onto a different button.
@@ -340,19 +342,23 @@ def check(page, hub, fault):
         same_node(name, name_node)
     close_settings(page)
     open_machines(page)
-    select = machine_row(page, NAME_A).locator("select.machine-renderer")
-    expect(select).to_have_value(XTERM)
-    expect(select.locator("option:checked")).to_have_text(XTERM_LABEL)
+    if not scoped_frontend():
+        select = machine_row(page, NAME_A).locator("select.machine-renderer")
+        expect(select).to_have_value(XTERM)
+        expect(select.locator("option:checked")).to_have_text(XTERM_LABEL)
     expect(color_swatch(machine_row(page, NAME_A))).to_have_attribute("data-node-color", BLUE)
 
     node_a = saved_machine(hub, NID_A)
     node_b = saved_machine(hub, NID_B)
-    assert node_a["name"] == NAME_A and node_a["color"] == BLUE and node_a["renderer"] == XTERM, node_a
+    renderer = GRID if scoped_frontend() else XTERM
+    assert node_a["name"] == NAME_A and node_a["color"] == BLUE and node_a["renderer"] == renderer, node_a
     assert node_b["name"] == NAME_B and node_b["color"] == "" and node_b["renderer"] == GRID, node_b
-    assert [hit["field"] for hit in fault.hits] == ["name", "enabled", "renderer"], fault.hits
+    fields = ["name", "enabled"] + ([] if scoped_frontend() else ["renderer"])
+    assert [hit["field"] for hit in fault.hits] == fields, fault.hits
     assert fault.hits[0]["body"]["name"] == FAILED_NAME, fault.hits[0]
     assert fault.hits[1]["body"]["enabled"] is False, fault.hits[1]
-    assert fault.hits[2]["body"]["renderer"] == XTERM, fault.hits[2]
+    if not scoped_frontend():
+        assert fault.hits[2]["body"]["renderer"] == XTERM, fault.hits[2]
     assert fault.field is None and fault.pending is None
 
 

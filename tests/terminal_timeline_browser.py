@@ -6,7 +6,7 @@ the start shows the screen before any output; play at 16x brings the output back
 and ends at the tail (play button back to ▶); seeking to the end shows the final
 screen; the pane stays read-only throughout. No page errors.
 """
-from browser_runtime import js
+from browser_runtime import js, console_renderers
 import json
 import sys
 import tempfile
@@ -206,7 +206,7 @@ def main():
             browser = p.chromium.launch(headless=True)
             with isolated_server(corpus, BINARY, host_dir=root / "host", lifecycle_dir=root / "ledger",
                                  launcher_config=cfg, state_dir=root / "state") as (base, _):
-                for renderer in ("xterm", "grid"):
+                for renderer in console_renderers("xterm", "grid"):
                     run(browser, base, root, renderer)
             browser.close()
         print("PASS terminal_timeline_browser", flush=True)

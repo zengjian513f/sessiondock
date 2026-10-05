@@ -31,7 +31,8 @@ session's row (`pending_listed`): with a recording, opening its console
 replays it read-only in the console pane itself (`term.js`
 `attachRecordingReplay`: no claim, no input; the byte stream into
 xterm.js, or `mode=grid` into the grid view when the renderer setting is
-the server grid); without one (an old host, `--no-record`), the console
+the server grid; the Vue preview always uses the grid, as does its records
+page); without one (an old host, `--no-record`), the console
 says 会话已结束，没有留下录制. A running shell session offers 停止
 (`term/kill`: EOF first, the guarded stop only if the shell is still
 there after 1.2 s, like `session/stop` for a CLI) and an exited one offers

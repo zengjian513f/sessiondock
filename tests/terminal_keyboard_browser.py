@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Keyboard inset keeps short prompts and bottom editors visible without SIGWINCH."""
-from browser_runtime import js
+from browser_runtime import js, console_renderers
 import json
 import shlex
 import sys
@@ -220,7 +220,7 @@ def main():
     fixture.SHELL = 'exec ' + shlex.quote(sys.executable) + ' -u -c ' + shlex.quote(CLI)
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
-        for renderer in ('grid', 'xterm'):
+        for renderer in console_renderers('grid', 'xterm'):
             for scale in (30, 100, 150):
                 run(browser, renderer, scale)
         browser.close()

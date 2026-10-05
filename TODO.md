@@ -52,9 +52,7 @@
 不变：DOM id/class、存储键、请求格式、文案、`window.SessionDockRuntime` 上被测试
 使用的路径；发送确认、同步与终端字节缓冲留在 service。每阶段完成即验证并部署预览站。
 
-- [ ] 去掉 Vue 版 xterm，只保留网格渲染：宿主报告不支持网格时控制台给出说明；
-  录制页改用网格回放；Hub 注册表的 `renderer` 字段暂留，前端不再读取；
-  xterm 专项浏览器测试在 Vue 构建下走网格路径，legacy 构建保持 xterm 覆盖。
+- [ ] Hub 注册表的 `renderer` 字段与 `set_renderer` 只剩 legacy 使用；legacy 退役时一并删除。
 - [ ] 偏好统一：`usePreference` 与带类型的偏好 store，替换直接的 `get/set`。
 - [ ] 页面骨架：侧栏宽度、折叠、移动端详情、顶栏折叠、视口与缩放改为组件内 composable。
 - [ ] 侧栏：长按、拖动多选、右键与分组菜单改为 composable/组件；分组树由 `computed`

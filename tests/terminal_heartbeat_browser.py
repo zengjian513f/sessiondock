@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """OPEN-but-stalled terminal sockets recover without replaying ambiguous input."""
-from browser_runtime import js
+from browser_runtime import js, console_renderers
 import argparse
 import json
 import os
@@ -123,7 +123,7 @@ done
             options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
         browser = pw.chromium.launch(**options)
         try:
-            for renderer in ['grid', 'xterm']:
+            for renderer in console_renderers('grid', 'xterm'):
                 run(browser, args.binary, renderer)
         finally:
             browser.close()

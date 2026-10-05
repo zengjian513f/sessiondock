@@ -121,7 +121,7 @@ def run(base, opener):
             fail(path, f"ETag {etag!r} != HTML version {version!r}", raw)
     passed("asset revalidation")
 
-    for path in dict.fromkeys([*cache_paths, "/vendor/xterm.js", "/fonts/UbuntuSansMono.woff2"]):
+    for path in dict.fromkeys([*cache_paths, "/vendor/katex/katex.min.js", "/fonts/UbuntuSansMono.woff2"]):
         status, hdrs, raw = fetch(opener, base, f"{path}?v={version}")
         cache = (hdrs.get("cache-control") or "").lower()
         if status != 200 or "immutable" not in cache or "max-age=" not in cache:

@@ -87,7 +87,7 @@ Hub 每一行（`machineRow` / `renderMachineSettings`）：
 - 勾选启用。取消后这台机器不显示、不检查。`saveMachine`。
 - 名称输入，最长 80，回车失焦后保存。
 - 颜色：默认、蓝、紫、琥珀、青、玫红、青柠、天蓝、品红（`MACHINE_COLORS`）。
-- 控制台渲染：`服务端网格（默认）` 或 `xterm.js（浏览器解析）`。重新打开控制台后生效。旧宿主报 `grid:false` 时自动用 xterm。停用时下拉不可用；离线时悬停说明原因，保留中央展示属性的现有修改行为。
+- 控制台渲染：`服务端网格（默认）` 或 `xterm.js（浏览器解析）`。重新打开控制台后生效。旧宿主报 `grid:false` 时自动用 xterm。停用时下拉不可用；离线时悬停说明原因，保留中央展示属性的现有修改行为。Vue 预览版没有这一项：它只用网格渲染，不读本机 `consoleRenderer` 或中央 `renderer`。
 
 AI 客户端矩阵（`renderClientMatrix` / `loadMachineClients` / `updateMachineClient`）：机器 × Claude/Codex/Grok/OpenCode。单元格显示版本、是否最新，以及「更新」。更新走该机器自己的 `api/clients/update`，页面每 2 秒轮询到结束。首次读取失败显示离线单元格，错误保留在悬停提示；更新失败显示在 `#machine-note`。
 
@@ -406,7 +406,7 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 
 ### 两种渲染器
 
-默认网格。机器设置或单机 `consoleRenderer` 可选 xterm。`ensureTerm`：网格加 `mode=grid`，不用 xterm 的 fit/webgl/unicode 插件；xterm 路径才加载那些插件，并在符合条件时用 WebGL（`shouldUseTermWebgl`）。宿主太旧则强制 xterm。切换后要重新打开控制台。
+默认网格。机器设置或单机 `consoleRenderer` 可选 xterm。`ensureTerm`：网格加 `mode=grid`，不用 xterm 的 fit/webgl/unicode 插件；xterm 路径才加载那些插件，并在符合条件时用 WebGL（`shouldUseTermWebgl`）。宿主太旧则强制 xterm。切换后要重新打开控制台。Vue 预览版只有网格：宿主报 `grid:false` 时不连接，控制台提示「此会话的终端宿主不支持网格显示，重新启动会话后即可打开控制台。」；录制页用 `mode=grid` 回放，录制尺寸取自每个快照。
 
 网格在主控制台右侧留 12px 滚动条。拖动或点击轨道只改本地视口，不把滚轮发给 PTY。焦点在滚动条上时可用方向键、PgUp/PgDn、Home/End。新输出不抢走已上翻的位置；回到底部再跟随。备用屏幕上滚动条隐藏。xterm 用它自己的滚动条。[`tests/terminal_scrollback_browser.py`](../tests/terminal_scrollback_browser.py)。
 

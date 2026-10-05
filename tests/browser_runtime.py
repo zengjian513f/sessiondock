@@ -14,6 +14,11 @@ def scoped_frontend() -> bool:
     return bool(frontend_html().modules)
 
 
+def console_renderers(*renderers: str) -> list[str]:
+    """Console renderers this build serves: the Vue build has only the grid."""
+    return [name for name in renderers if name != 'xterm'] if scoped_frontend() else list(renderers)
+
+
 def init_js(legacy: str, scoped: str) -> str:
     """Choose explicit startup scripts; their callbacks resolve the graph later."""
     return scoped if scoped_frontend() else legacy
