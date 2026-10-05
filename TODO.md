@@ -44,3 +44,27 @@
   当前已复用未变化行、按需创建折叠组；全部展开时 DOM 数量仍随会话数增长。
 - [ ] 将 Grid 历史折行改为逻辑行惰性计算或可取消分批计算，同时保持选择坐标和完整历史。
   当前拖动已合并、临时 cell 不常驻，但最后一次变窄仍同步遍历历史。
+
+### Vue 前端改为 Vue 写法（仅 `web/`，生产 `legacy-web/` 不变）
+
+验收：services/pages 直接调用 DOM API 只留在网格画布渲染器与 diagnostics 快照；
+偏好读写全部经由偏好 store；能由状态推导的界面数据用 `computed`；`any` < 100。
+不变：DOM id/class、存储键、请求格式、文案、`window.SessionDockRuntime` 上被测试
+使用的路径；发送确认、同步与终端字节缓冲留在 service。每阶段完成即验证并部署预览站。
+
+- [ ] 去掉 Vue 版 xterm，只保留网格渲染：宿主报告不支持网格时控制台给出说明；
+  录制页改用网格回放；Hub 注册表的 `renderer` 字段暂留，前端不再读取；
+  xterm 专项浏览器测试在 Vue 构建下走网格路径，legacy 构建保持 xterm 覆盖。
+- [ ] 偏好统一：`usePreference` 与带类型的偏好 store，替换直接的 `get/set`。
+- [ ] 页面骨架：侧栏宽度、折叠、移动端详情、顶栏折叠、视口与缩放改为组件内 composable。
+- [ ] 侧栏：长按、拖动多选、右键与分组菜单改为 composable/组件；分组树由 `computed`
+  推导并保留行复用与局部折叠；删除/停止编排留在 service。
+- [ ] 会话头部与弹窗：头部折叠测量、菜单键盘导航改为 composable；移动/复制、回收站、
+  任务列表对话框由状态控制。
+- [ ] 对话区：滚动锚定改为 composable；语法高亮、公式、搜索标记改为指令。
+- [ ] 输入区：界面交互移入组件；草稿持久化、附件上传、CHECK/SEND 留在 service。
+- [ ] 终端：每个视图的 socket/心跳/重连/同步帧收进 `TerminalSession`；布局策略、快捷键条、
+  CLI 菜单改为组件；新建会话启动流程移出终端；列表与 pane 绑定独立。
+- [ ] 辅助页：grid 拆为画布渲染器类加组件；records 列表与播放器改为组件。
+- [ ] 收尾：依赖接口改为实现类型推导，更新 `architecture.md` 与
+  `frontend-migration-surfaces.md`。
