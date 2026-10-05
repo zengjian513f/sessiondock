@@ -5349,6 +5349,8 @@ function renderComposerQuestion(draft) {
   const duplicate = screenPrompt?.kind === 'screen_menu'
     && screenPrompt.questions?.length === 1
     && (question?.state || 'waiting') === 'waiting'
+    && (question?.questions?.length === 1 ? !question.questions[0].multiple
+      : sessiondockCli(composerUid)?.canAnswerQuestionForm(question))
     && question?.questions?.some(q => {
       const visible = screenPrompt.questions[0];
       return compact(q.question) === compact(visible.question)

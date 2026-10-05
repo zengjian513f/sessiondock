@@ -273,6 +273,9 @@ def main():
                             "node => getComputedStyle(node, '::before').content") == '"?"'
                         assert not page.evaluate('T.openViews.size'), 'Composer answers must not require terminal attach'
                         prompt = result['prompt']
+                        if source == 'claude' and fixture['name'] == 'workspace_permission_backstop':
+                            assert all(not option.get('description') for option in prompt['questions'][0]['options'])
+                            expect(card.locator('.question-option small')).to_have_count(0)
                         if source == 'codex' and prompt.get('kind') == 'screen_menu':
                             labels = [action['label'] for action in prompt.get('actions', [])]
                             if fixture['name'] in ('slow_response', 'model_picker', 'request_options', 'checkbox_experiments'):

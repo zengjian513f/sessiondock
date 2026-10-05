@@ -19,7 +19,19 @@
     "expected": {
       "source": "claude",
       "kind": "screen_menu",
-      "state": "waiting"
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "No, continue without these permissions"
+            },
+            {
+              "label": "Yes, I trust this folder"
+            }
+          ]
+        }
+      ]
     },
     "evidence": {
       "embedded_source_offset": 228234252,
