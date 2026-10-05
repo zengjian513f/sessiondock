@@ -36,7 +36,7 @@
 | `#side-toggle` | 收起/展开左栏。`setSideCollapsed`，键 `sideCollapsed`，默认展开 |
 | `#session-scope` | 「只显示活跃会话」/「显示全部会话」。计数在 `#session-active`、`#session-total`。`selectSessionScope`；`activeOnly` 默认关，且 `live` 能力为 false 时不按空集合筛选 |
 | `#sidebar-resources-toggle` | 见第 2 节资源列 |
-| `#nest` | 子会话三档：仅主会话、层叠、平铺；保存 `childMode`，兼容已有 `nest` 偏好，默认平铺。 |
+| `#nest` | 子会话三档：按需展开、层叠、平铺；保存 `childMode`，兼容已有 `nest` 偏好，默认平铺。 |
 | `#view` | 项目树 `tree`（默认）、会话分组 `group`、时间轴 `date`。`renderView` |
 | `#node-chips` | 仅 Hub。见第 2 节 |
 | `#chips` | Claude / Codex / Grok / OpenCode / SSH 筛选 |
@@ -117,7 +117,7 @@ Hub 顶栏另有机器 chip，见第 2 节。节点离线、列表/运行状态/
 
 ### 行上能看见的东西
 
-每一行：来源图标、运行/冻结角标、标题、目录、可选星标、可选分组名、可选资源格。子代理行文案是「子代理 · 类型 · 时间」（`agentMeta`）。「仅主会话」不显示子代理和附属会话；子代理在平铺和层叠模式下都挂在所属会话下面；三角折叠的是子代理行或整棵子树，分层开关只决定「由会话发起的会话」是否缩进。打开子代理深链不会因此打开分层。[`docs/external-links.md`](external-links.md)、[`tests/session_deep_link_browser.py`](../tests/session_deep_link_browser.py)、[`tests/nest_tree_browser.py`](../tests/nest_tree_browser.py)。
+每一行：来源图标、运行/冻结角标、标题、目录、可选星标、可选分组名、可选资源格。子代理行文案是「子代理 · 类型 · 时间」（`agentMeta`）。「按需展开」默认仅主会话，保留箭头，点击后临时加载下一层子会话；子代理在平铺和层叠模式下都挂在所属会话下面；三角折叠的是子代理行或整棵子树，分层开关只决定「由会话发起的会话」是否缩进。打开子代理深链不会因此打开分层。[`docs/external-links.md`](external-links.md)、[`tests/session_deep_link_browser.py`](../tests/session_deep_link_browser.py)、[`tests/nest_tree_browser.py`](../tests/nest_tree_browser.py)。
 
 运行角标：`paintItemStatus` / `paintStatusMarker`。冻结用暂停图标。有未读时显示数字；等待回答时是 `?`，标题带「等待回答」。颜色按当前 tmux/运行态现算，不把旧计数的颜色写进存储。后台命令的呼吸点：[`tests/process_activity_browser.py`](../tests/process_activity_browser.py)。
 
@@ -135,7 +135,7 @@ Hub 机器 chip：点击切换，右键或长按「只选这台」。`app.js` �
 
 ### 嵌套与附属
 
-`#nest` 用同组按钮选择「仅主会话 / 层叠 / 平铺」，当前项使用 `aria-pressed`。偏好 `childMode` 保存所选档位；旧 `nest` 偏好继续生效，首次默认平铺。「仅主会话」的首次加载、轮询和重新扫描均请求 `children=hidden`，不下载子代理列表及附属会话行，搜索筛选也不展示这些行；切回其他模式重新加载完整列表。已打开的子会话详情仍可继续使用。
+`#nest` 用同组按钮选择「按需展开 / 层叠 / 平铺」，当前项使用 `aria-pressed`。偏好 `childMode` 保存所选档位（首档沿用 `hidden` 值）；旧 `nest` 偏好继续生效，首次默认平铺。按需模式初次仅加载主会话与 `child_count`，保留展开箭头；点击后用 `expanded` 父身份列表请求各展开分支的直接子会话与子代理，更深层仍折叠且未下载。展开态只存本页 `lazyOpen`，收起释放该分支及后代，刷新页面或重入首档恢复全收起。轮询和重新扫描保留本页展开的分支，失败保留列表和重试箭头，过期响应不能重新打开已收起分支。切回其他模式重新加载完整列表；已打开的子会话详情仍可继续使用。
 
 `S.nest` 默认关。层叠时，由会话发起的会话缩进在发起者下（`nestParentOf` / `nestTree`）。手动收起的发起者在 `nestClosed`（持久）。搜索态用 `searchNestClosed`，不写回。
 
