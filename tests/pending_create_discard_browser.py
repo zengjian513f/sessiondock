@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from private_hosts import private_hosts
 from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
@@ -296,7 +297,7 @@ def main():
         print("SKIP pending_create_discard_browser: target/debug/ptyhost is not built", flush=True)
         return
     binary = args.binary.resolve()
-    with tempfile.TemporaryDirectory(prefix="sessiondock-create-discard-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="sessiondock-create-discard-") as tmp, private_hosts(Path(tmp)):
         root = Path(tmp).resolve()
         for name in ("host", "work", "ledger", "delivery", "bin", "claude", "codex", "grok", "state", "trash", "home"):
             (root / name).mkdir(mode=0o700)

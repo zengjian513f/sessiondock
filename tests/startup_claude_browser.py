@@ -4,6 +4,7 @@
 import json
 import os
 from pathlib import Path
+from private_hosts import private_hosts
 import select
 import sys
 import tempfile
@@ -87,7 +88,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, default=BINARY)
     binary = parser.parse_args().binary.resolve()
-    with tempfile.TemporaryDirectory(prefix='sessiondock-startup-claude-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-startup-claude-') as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         for name in ['host', 'work', 'work/claude-area', 'ledger', 'state', 'home', 'claude', 'codex', 'grok']:
             (root / name).mkdir(mode=0o700)

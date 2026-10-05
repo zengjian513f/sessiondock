@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from private_hosts import private_hosts
 from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright, expect
@@ -37,7 +38,7 @@ def user_bubbles(page, text):
 def main():
     if os.name != "posix":
         raise SystemExit("CLI rewind browser acceptance requires POSIX.")
-    with tempfile.TemporaryDirectory(prefix="sessiondock-cli-rewind-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sessiondock-cli-rewind-") as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         for name in ["host", "work", "work/claude-area", "ledger", "state", "bin", "home", "claude", "codex", "grok"]:
             (root / name).mkdir(mode=0o700)
