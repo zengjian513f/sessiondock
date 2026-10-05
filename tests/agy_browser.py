@@ -5,7 +5,7 @@ Uses only a private fake CLI and loopback service. No native history, model
 discovery or composer SEND is assumed. The unavailable-CLI case explicitly
 overrides the capability response; it does not test installation probing.
 """
-from browser_runtime import js, scoped_frontend
+
 import argparse
 import json
 import os
@@ -56,8 +56,7 @@ def wait_screen(page, text):
         for (let i = 0; i < b.length; i++)
           if ((b.getLine(i)?.translateToString(true) || '').includes(text)) return true;
         return false; }"""
-    page.wait_for_function(js(read.replace('TERM', 'T.term'),
-        read.replace('TERM', 'runtime.terminal.state.term')), arg=text, timeout=15000)
+    page.wait_for_function((read.replace('TERM', 'T.term')), arg=text, timeout=15000)
 
 
 def pending(page, base, record_id):
@@ -132,8 +131,7 @@ def check_unavailable(browser, base):
     page.on('request', lambda r: creates.append(r) if urlsplit(r.url).path == '/api/term/create' else None)
     try:
         page.goto(base, wait_until='networkidle')
-        page.wait_for_function(js('T.listLoaded && T.sources.agy === false',
-            'runtime.terminal.state.listLoaded && runtime.terminal.state.sources.agy === false'))
+        page.wait_for_function('T.listLoaded && T.sources.agy === false')
         open_picker(page)
         radio = page.locator('input[name="new-source"][value="agy"]')
         label = page.locator('#new-session-form label:has(input[value="agy"])')
@@ -160,8 +158,7 @@ def run(browser, base, root):
     on_popup(page, lambda popup: popup.accept())
     try:
         page.goto(base, wait_until='networkidle')
-        page.wait_for_function(js('T.listLoaded && T.sources.agy === true',
-            'runtime.terminal.state.listLoaded && runtime.terminal.state.sources.agy === true'))
+        page.wait_for_function('T.listLoaded && T.sources.agy === true')
         open_picker(page)
         page.locator('#new-session-form label:has(input[value="agy"])').click()
         # The picker may already select Agy and cache its catalog on opening.
@@ -181,8 +178,7 @@ def run(browser, base, root):
         assert receipt['running'] and receipt['launch_kind'] == 'new_pending', receipt
         assert not receipt.get('declared_sid'), receipt
         uid = 'tmux:' + receipt['name']
-        page.wait_for_function(js('uid => S.sel === uid',
-            'uid => runtime.core.state.selection.sel === uid'), arg=uid)
+        page.wait_for_function('uid => S.sel === uid', arg=uid)
         item = page.locator(f'#side .item[data-uid="{uid}"]')
         expect(item).to_be_visible()
         expect(item.locator('use[href="#i-agy"]')).to_have_count(1)
@@ -242,13 +238,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
     parser.add_argument('--ptyhost', type=Path, default=Path(os.environ.get('PTYHOST', REPO / 'target/debug/ptyhost')))
-    parser.add_argument('--frontend', help='vue or artifact directory; otherwise SESSIONDOCK_TEST_WEB_DIR')
+    parser.add_argument('--frontend', help='frontend directory; otherwise SESSIONDOCK_TEST_WEB_DIR')
     args = parser.parse_args()
     # Resolve the installed browser cache before giving child CLIs a private HOME.
     os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH', str(
         Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'ms-playwright'))
     if args.frontend:
-        os.environ['SESSIONDOCK_TEST_WEB_DIR'] = str({'vue': REPO / 'web/dist-migration'}.get(args.frontend, Path(args.frontend)).resolve())
+        os.environ['SESSIONDOCK_TEST_WEB_DIR'] = str(Path(args.frontend).resolve())
     host_binary = args.ptyhost.resolve(strict=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-agy-') as tmp:
         root = Path(tmp).resolve()
@@ -280,7 +276,7 @@ def main():
                         options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
                     browser = pw.chromium.launch(**options)
                     try:
-                        print('Frontend: ' + ('scoped/Vue' if scoped_frontend() else 'legacy'), flush=True)
+                        print('Frontend: ' + ('legacy'), flush=True)
                         run(browser, base, root)
                     finally:
                         browser.close()

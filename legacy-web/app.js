@@ -17,8 +17,6 @@ const store = {
   set: (k, v) => localStorage.setItem(STORAGE_PREFIX + k, JSON.stringify(v)),
 };
 
-let settingsMounted = false;
-
 const FONT_CHOICES = SessionDockTypography.choices;
 const themeMedia = matchMedia('(prefers-color-scheme: dark)');
 
@@ -27,7 +25,6 @@ function applyTheme(choice = store.get('theme', 'system'), persist = false) {
   if (persist) store.set('theme', choice);
   document.documentElement.dataset.theme = choice === 'system'
     ? (themeMedia.matches ? 'dark' : 'light') : choice;
-  if (settingsMounted) SessionDockSettings.update({theme: choice});
   if (typeof refreshTerminalPreferences === 'function') refreshTerminalPreferences(true);
 }
 
@@ -35,7 +32,6 @@ function applyFont(choice = store.get('font', 'ubuntu'), persist = false) {
   if (!FONT_CHOICES[choice]) choice = 'ubuntu';
   if (persist) store.set('font', choice);
   document.documentElement.style.setProperty('--terminal-font', FONT_CHOICES[choice]);
-  if (settingsMounted) SessionDockSettings.update({font: choice});
   if (typeof refreshTerminalPreferences === 'function') refreshTerminalPreferences(false);
 }
 
@@ -54,12 +50,8 @@ function applyInterfaceScale(value = interfaceScale(), persist = false) {
   value = normalizedInterfaceScale(value);
   if (persist) store.set('interfaceScale', value);
   document.documentElement.style.setProperty('--compact-scale', value / 100);
-  if (settingsMounted) SessionDockSettings.update({scale: value});
-  else {
-    // Startup applies scale to the initial markup before the pane handoff.
-    document.querySelector('#setting-scale').value = String(value);
-    document.querySelector('#setting-scale-value').value = `${value}%`;
-  }
+  document.querySelector('#setting-scale').value = String(value);
+  document.querySelector('#setting-scale-value').value = `${value}%`;
   if (typeof refreshTerminalScale === 'function') refreshTerminalScale(persist);
   // Resize listeners also update terminal fitting and the visible mobile viewport.
   if (persist) window.dispatchEvent(new Event('resize'));
@@ -10125,7 +10117,12 @@ for (const tab of document.querySelectorAll('.settings-tab')) {
 
 function openSettings() {
   applyInterfaceScale();
-  SessionDockSettings.update(settingsValues());
+  $('#setting-font').value = store.get('font', 'ubuntu');
+  $('#setting-theme').value = store.get('theme', 'system');
+  $('#setting-cache').value = String(cacheLimitMb);
+  $('#setting-sleep').value = String(SessionDockSleep.minutes);
+  $('#setting-stop-concurrency').value = String(sessionStopConcurrency());
+  $('#setting-console-paste-files').checked = consolePasteFilesEnabled();
   setMachineNote('');
   showSettingsTab(store.get('settingsTab', 'appearance'));
   $('#settings-dialog').showModal();
@@ -10135,43 +10132,37 @@ $('#settings').onclick = openSettings;
 $('#settings-dialog').addEventListener('click', e => {
   if (e.target === $('#settings-dialog')) $('#settings-dialog').close();
 });
-function settingsValues() {
-  return {
-    scale: interfaceScale(), font: store.get('font', 'ubuntu'),
-    theme: store.get('theme', 'system'), cache: cacheLimitMb,
-    sleep: SessionDockSleep.minutes, stopConcurrency: sessionStopConcurrency(),
-    pasteFiles: consolePasteFilesEnabled(),
-  };
-}
-
-// Called once by page-sleep.js after its existing service is initialized.
-function mountSettings() {
-  SessionDockSettings.mount({
-    read: settingsValues,
-    scale: applyInterfaceScale,
-    scaleIndicator: showScaleIndicator,
-    font: value => applyFont(value, true),
-    theme: value => applyTheme(value, true),
-    sleep: value => SessionDockSleep.configure(value, true),
-    cache: value => {
-      cacheLimitMb = Math.max(0, +value || 0);
-      CACHE_MAX_BYTES = cacheLimitMb ? cacheLimitMb * 1024 * 1024 : Infinity;
-      store.set('cacheMb', cacheLimitMb);
-      trimCache();
-      SessionDockSettings.update({cache: cacheLimitMb});
-    },
-    stopConcurrency: value => {
-      store.set('stopConcurrency', Number(value));
-      SessionDockSettings.update({stopConcurrency: sessionStopConcurrency()});
-    },
-    pasteFiles: value => {
-      store.set('consolePasteFiles', value === true);
-      SessionDockSettings.update({pasteFiles: consolePasteFilesEnabled()});
-    },
-    pwa: SessionDockPwaInstall,
-  });
-  settingsMounted = true;
-}
+let scaleSliderActive = false;
+$('#setting-scale').onpointerdown = e => {
+  scaleSliderActive = true;
+  showScaleIndicator(e.target.value, true);
+};
+$('#setting-scale').oninput = e => {
+  applyInterfaceScale(e.target.value, true);
+  showScaleIndicator(e.target.value, scaleSliderActive);
+};
+const finishScaleSlider = () => {
+  if (!scaleSliderActive) return;
+  scaleSliderActive = false;
+  showScaleIndicator(interfaceScale());
+};
+window.addEventListener('pointerup', finishScaleSlider);
+window.addEventListener('pointercancel', finishScaleSlider);
+$('#setting-scale').onblur = finishScaleSlider;
+$('#setting-scale-reset').onclick = () => {
+  applyInterfaceScale(100, true);
+  showScaleIndicator(100);
+};
+$('#setting-font').onchange = e => applyFont(e.target.value, true);
+$('#setting-theme').onchange = e => applyTheme(e.target.value, true);
+$('#setting-cache').onchange = e => {
+  cacheLimitMb = Math.max(0, +e.target.value || 0);
+  CACHE_MAX_BYTES = cacheLimitMb ? cacheLimitMb * 1024 * 1024 : Infinity;
+  store.set('cacheMb', cacheLimitMb);
+  trimCache();
+};
+$('#setting-stop-concurrency').onchange = e => store.set('stopConcurrency', Number(e.target.value));
+$('#setting-console-paste-files').onchange = e => store.set('consolePasteFiles', e.target.checked === true);
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;

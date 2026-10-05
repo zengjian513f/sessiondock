@@ -19,7 +19,7 @@ use tower::ServiceExt;
 
 fn config() -> Config {
     Config {
-        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
+        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
         ..Default::default()
     }
 }

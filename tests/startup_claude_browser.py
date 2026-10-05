@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Claude workspace trust before hooks/history, through shared composer cards."""
-from browser_runtime import js
+
 import json
 import os
 from pathlib import Path
@@ -128,7 +128,7 @@ def main():
                 def launch(state):
                     screen.write_text(state)
                     page.set_viewport_size({'width': 1280, 'height': 720})
-                    page.evaluate(js('showMobileList()', 'runtime.shell.showMobileList()'))
+                    page.evaluate('showMobileList()')
                     receipt = create_claude(page, base, root / 'work', open_terminal=False)
                     expect(card).to_be_visible(timeout=15000)
                     assert not (root / 'claude/project-history' / (receipt['declared_sid'] + '.jsonl')).exists()
@@ -138,13 +138,13 @@ def main():
                     expect(card.locator('.question-options button b')).to_have_text(['信任并继续', '退出'])
                     expect(page.locator('#csend')).to_be_disabled()
                     page.locator('#cinput').fill('keep Claude draft')
-                    page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                    page.evaluate('async () => await composerDraftWrites')
                     return receipt
 
                 def trust(keys, mobile=False):
                     if mobile:
                         page.set_viewport_size({'width': 390, 'height': 844})
-                        page.evaluate(js('showMobileDetail()', 'runtime.shell.showMobileDetail()'))
+                        page.evaluate('showMobileDetail()')
                     card.locator('[data-question-option="0"]').click()
                     expect(card).to_be_hidden(timeout=10000)
                     expect(page.locator('#csend')).to_be_enabled(timeout=10000)
@@ -177,10 +177,10 @@ def main():
                 for selector in ['[data-question-option="1"]', '.question-cancel']:
                     launch('yes')
                     card.locator(selector).click()
-                    page.wait_for_function(js('sessionComposerEnded(S.sel)', 'runtime.composer.sessionComposerEnded(runtime.core.state.selection.sel)'), timeout=15000)
+                    page.wait_for_function('sessionComposerEnded(S.sel)', timeout=15000)
                     assert screen.with_suffix('.outcome').read_text() == 'quit'
                     assert writes[-1]['keys'] == ['Escape']
-                    assert page.evaluate(js('composerDraft().text', 'runtime.composer.composerDraft().text')) == 'keep Claude draft'
+                    assert page.evaluate('composerDraft().text') == 'keep Claude draft'
                 assert not errors and not dialogs, (errors, dialogs)
             finally:
                 browser.close()

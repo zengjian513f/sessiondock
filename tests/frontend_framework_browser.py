@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""Chromium user acceptance: settings survive the Vue appearance/features panes.
+"""Chromium user acceptance: the appearance/features settings panes.
 
-Prerequisite, not performed here:
-
-    npm --prefix web run build
-
-That build writes web/dist-migration/, the default served frontend.
-This script only drives the served UI.
+Runs against the served frontend (legacy-web/ by default, which needs no
+build). This script only drives the served UI.
 
 Synthetic corpus and a loopback isolated_server. Desktop 1280×900 and phone
 390×844 open the existing settings button (the phone header-more menu when
@@ -16,8 +12,7 @@ controls. Close, reopen and reload must show the same selections. Escape
 closes the dialog. The machines tab is only opened and left. Synthetic
 beforeinstallprompt events enable real install-button clicks; deferred prompt
 choices cover dismissed/accepted, and appinstalled updates the same button.
-The prompt receiver must remain the original event. These checks also run
-against the independent Vue entry with SESSIONDOCK_TEST_WEB_DIR.
+The prompt receiver must remain the original event.
 
 The last settings tab is restored on open, so every check clicks its tab.
 Scale coverage here is a short keyboard nudge plus reset, not the matrix in

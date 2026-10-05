@@ -10,7 +10,7 @@ with a one-line notice, and the editor text is not called Esc-returned), that
 the next input settles it natively, and that recalling an answered input that
 is still on screen neither rewinds the view nor claims an Esc return.
 """
-from browser_runtime import js
+
 import json
 import os
 import subprocess
@@ -74,7 +74,7 @@ def main():
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     page.goto(base, wait_until="networkidle")
                     receipt = create_claude(page, base, root / "work", open_terminal=False)
-                    page.wait_for_function(js("composerUid && !composerDraft().loading && takenOver(composerUid)", 'runtime.composer.composerUid && !runtime.composer.composerDraft().loading && runtime.terminal.takenOver(runtime.composer.composerUid)'))
+                    page.wait_for_function("composerUid && !composerDraft().loading && takenOver(composerUid)")
 
                     def send(text):
                         expect(page.locator("#csend")).to_be_enabled(timeout=10000)
@@ -86,8 +86,8 @@ def main():
                         wait_history(page, "OK: " + text)
 
                     send(FIRST)
-                    page.wait_for_function(js("S.sel && !S.sel.startsWith('tmux:')", "runtime.core.state.selection.sel && !runtime.core.state.selection.sel.startsWith('tmux:')"), timeout=20000)
-                    native = page.evaluate(js("S.sel", 'runtime.core.state.selection.sel'))
+                    page.wait_for_function("S.sel && !S.sel.startsWith('tmux:')", timeout=20000)
+                    native = page.evaluate("S.sel")
                     send(SECOND)
                     jsonl = root / "claude/project-history" / f"{receipt['declared_sid']}.jsonl"
                     before = jsonl.read_bytes()
@@ -95,7 +95,7 @@ def main():
                     # The TUI rewinds to before SECOND: the view follows it without
                     # any native record, and the editor text is no Esc return.
                     (root / "rewind").touch()
-                    page.evaluate(js("uid => sendToSession(null, ['Escape'], uid)", "uid => runtime.composer.sendToSession(null, ['Escape'], uid)"), native)
+                    page.evaluate("uid => sendToSession(null, ['Escape'], uid)", native)
                     expect(page.locator("#timeline-pin-notice")).to_have_text(NOTICE, timeout=15000)
                     expect(page.locator("#timeline-pin-notice")).to_have_attribute("data-cli", "true")
                     expect(page.locator("#timeline-pin-clear")).to_have_count(0)
@@ -117,7 +117,7 @@ def main():
 
                     # The next input settles it natively: it chains below FIRST's
                     # answer, SECOND stays off the timeline, the notice goes away.
-                    page.evaluate(js("uid => sendToSession(null, ['C-u'], uid)", "uid => runtime.composer.sendToSession(null, ['C-u'], uid)"), native)
+                    page.evaluate("uid => sendToSession(null, ['C-u'], uid)", native)
                     send(THIRD)
                     expect(page.locator("#timeline-pin-notice")).to_have_count(0, timeout=15000)
                     expect(user_bubbles(page, SECOND)).to_have_count(0)
@@ -129,7 +129,7 @@ def main():
 
                     # Recalling THIRD while its prompt is still on screen is no
                     # rewind and no Esc return, although SEND retired that text.
-                    page.evaluate(js("([uid, text]) => sendToSession(null, [text], uid)", '([uid, text]) => runtime.composer.sendToSession(null, [text], uid)'), [native, THIRD])
+                    page.evaluate("([uid, text]) => sendToSession(null, [text], uid)", [native, THIRD])
                     expect(status).to_contain_text("终端输入框里已有未发送的文字", timeout=10000)
                     deadline = time.monotonic() + 4
                     while time.monotonic() < deadline:

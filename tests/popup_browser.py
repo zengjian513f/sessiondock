@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Popups are centered and share the dialog look (the Vue popup component).
+"""Popups are centered and share the dialog look.
 
 No page uses the browser's native alert/confirm any more: a delete asks in a
 centered `.app-popup` dialog (title from the first line, 取消/Esc keep the
@@ -10,7 +10,7 @@ login redirect shows the matching login card; its button opens the local app
 URL in a real new page with no opener.
 Real clicks at desktop and 390px against an isolated server; synthetic corpus.
 """
-from browser_runtime import js
+
 import argparse
 import os
 from pathlib import Path
@@ -60,7 +60,7 @@ def main():
                 # 取消 keeps the session.
                 click_delete(page, narrow)
                 expect(popup).to_be_visible()
-                expect(popup.locator("h2")).to_have_text(f"删除会话「{page.evaluate(js('uid => S.sessions.find(s => s.uid === uid).title', 'uid => runtime.core.state.catalog.sessions.find(s => s.uid === uid).title'), uid)}」?")
+                expect(popup.locator("h2")).to_have_text(f"删除会话「{page.evaluate('uid => S.sessions.find(s => s.uid === uid).title', uid)}」?")
                 expect(popup.locator(".app-popup-message")).to_contain_text("回收站")
                 centered(page, popup, width, height)
                 look = popup.evaluate("""d => { const s = getComputedStyle(d), t = getComputedStyle(document.querySelector('#trash-dialog'));
@@ -84,7 +84,7 @@ def main():
                 page.route("**/api/meta", lambda route: route.fulfill(
                     status=200, content_type="application/json",
                     body='{"build":"popup-test-newer","hostname":"popup","capabilities":{}}'))
-                page.evaluate(js("checkServerBuild()", 'runtime.build.checkServerBuild()'))
+                page.evaluate("checkServerBuild()")
                 card = page.locator("#float-stack .version-stale")
                 expect(card).to_be_visible()
                 expect(card.locator("strong")).to_have_text("SessionDock 已更新")
@@ -99,7 +99,7 @@ def main():
                 expect(card).to_be_hidden()
                 # Exercise the actual polling/visibility handlers. A paused build
                 # check must not recreate the hidden card or silently unhide it.
-                page.evaluate(js("checkServerBuild()", 'runtime.build.checkServerBuild()'))
+                page.evaluate("checkServerBuild()")
                 page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
                 expect(card).to_be_hidden()
                 expect(card).to_have_count(1)
@@ -111,10 +111,10 @@ def main():
                     return [s.width, s.borderRadius, s.backgroundColor, s.boxShadow,
                             s.padding, s.fontSize, s.flexDirection]; }""")
                 for selector, trigger, clear in (
-                    ('#bug-report-toast', js("showBugReportToast('BUG-' + '1234567890'.repeat(8), {source:'codex', name:'fixture'})", "runtime.launch.showBugReportToast('BUG-' + '1234567890'.repeat(8), {source:'codex', name:'fixture'})"),
+                    ('#bug-report-toast', "showBugReportToast('BUG-' + '1234567890'.repeat(8), {source:'codex', name:'fixture'})",
                      None),
-                    ('#console-toast', js("showConsoleToast('合成控制台通知')", "runtime.core.nodes.showConsoleToast('合成控制台通知')"), js("showConsoleToast('')", "runtime.core.nodes.showConsoleToast('')")),
-                    ('#session-stop-notice', js("showSessionStopNotice('合成会话停止通知', true)", "runtime.sessionUi.showSessionStopNotice('合成会话停止通知', true)"), js("showSessionStopNotice('')", "runtime.sessionUi.showSessionStopNotice('')")),
+                    ('#console-toast', "showConsoleToast('合成控制台通知')", "showConsoleToast('')"),
+                    ('#session-stop-notice', "showSessionStopNotice('合成会话停止通知', true)", "showSessionStopNotice('')"),
                 ):
                     page.evaluate(trigger)
                     notice = page.locator(selector)
@@ -135,12 +135,12 @@ def main():
                 # deliberately stop HTTP polling, so no product state is reset here.
                 page.unroute("**/api/meta")
                 page.reload(wait_until="networkidle")
-                page.wait_for_function(js("S.sessions.length > 0", 'runtime.core.state.catalog.sessions.length > 0'))
+                page.wait_for_function("S.sessions.length > 0")
                 page.route("**/__auth/login", lambda route: route.fulfill(
                     content_type="text/html", body="<p>Fixture login</p>"))
                 page.route("**/api/meta", lambda route: route.fulfill(
                     status=302, headers={"Location": "/__auth/login"}))
-                page.evaluate(js("checkServerBuild()", 'runtime.build.checkServerBuild()'))
+                page.evaluate("checkServerBuild()")
                 login = page.locator("#float-stack > .login-expired")
                 expect(login).to_be_visible()
                 expect(login.locator("strong")).to_have_text("登录已失效")

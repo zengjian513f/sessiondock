@@ -71,8 +71,7 @@
 - Treat SessionDock as an independent project. Current contracts live in `docs/`
   and unfinished work lives only in `TODO.md`; do not use the archived migration
   history as current guidance. `legacy-web/` is the production frontend at
-  `/sessiondock/`. The Vue frontend in `web/` is preview-only at `/sessiondock2/`.
-  Do not replace the production frontend or delete `legacy-web/` without an
+  `/sessiondock/`. Do not replace the production frontend or delete `legacy-web/` without an
   explicit user instruction to do so.
 - `crates/sessiondock`: Rust HTTP service. Keep transport handlers separate
   from session/domain logic and future ptyhost client code.
@@ -85,11 +84,6 @@
   fields degrade like Python. Keep console explanations visible.
   Preferences use `SessionDockCapabilities.stored` and only `sessiondock.*`
   keys. `tests/brand_names_check.py` checks the complete tracked source tree.
-- `web/src/api`: wire types, runtime validation, and network clients.
-- `web/src/domain`: framework-independent state transitions and protocol logic.
-- `web/src/stores`: small Pinia stores, split by responsibility.
-- `web/src/components`: UI components. Do not put session synchronization,
-  delivery confirmation, or terminal byte buffering in view callbacks.
 - `reference/legacy-web`: frozen migration reference, not served or bundled.
   Record intentional baseline changes in `reference/README.md`.
 

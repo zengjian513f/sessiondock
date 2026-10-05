@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Chromium: configurable inactivity sleep, full-page shade, quiet transport and Resume."""
-from browser_runtime import js
+
 import json
 from pathlib import Path
 import sys
@@ -50,31 +50,31 @@ def main():
                 page.on('websocket', lambda ws: sockets.append(ws))
                 page.clock.install()
                 page.goto(base, wait_until='domcontentloaded')
-                page.wait_for_function(js('T.listLoaded && uiEventsReady', 'runtime.terminal.state.listLoaded && runtime.core.events.ready'))
+                page.wait_for_function('T.listLoaded && uiEventsReady')
                 receipt = create_claude(page, base, root / 'work', open_terminal=False)
                 try:
                     uid = 'tmux:' + receipt['name']
-                    page.wait_for_function(js('!composerDraft().loading', '!runtime.composer.composerDraft().loading'))
+                    page.wait_for_function('!composerDraft().loading')
                     page.fill('#cinput', 'Keep this draft while sleeping')
                     wait_server_text(context, base, uid, 'Keep this draft while sleeping')
                     page.locator('#a-term').click()
-                    page.wait_for_function(js('T.ws?.readyState===WebSocket.OPEN', 'runtime.terminal.state.ws?.readyState===WebSocket.OPEN'))
+                    page.wait_for_function('T.ws?.readyState===WebSocket.OPEN')
                     settings(page)
                     expect(page.locator('#setting-sleep')).to_have_value('60')
                     page.locator('#settings-dialog .modal-close').click()
                     page.clock.fast_forward(59 * 60000)
-                    assert not page.evaluate(js('SessionDockSleep.sleeping', 'runtime.sleep.sleeping'))
+                    assert not page.evaluate('SessionDockSleep.sleeping')
                     # Real keyboard input restarts the deadline; output/polls do not.
                     page.keyboard.press('Shift')
                     page.clock.fast_forward(59 * 60000)
-                    assert not page.evaluate(js('SessionDockSleep.sleeping', 'runtime.sleep.sleeping'))
+                    assert not page.evaluate('SessionDockSleep.sleeping')
                     page.clock.fast_forward(61000)
                     dialog = page.locator('#page-sleep-dialog')
                     expect(dialog).to_be_visible()
-                    assert page.evaluate(js('SessionDockNetwork.paused && !uiEvents && !_es && [...T.views.values()].every(v=>!v.ws)', 'runtime.core.network.paused && !runtime.core.events.connection && !runtime.core.sync.watching && [...runtime.terminal.state.views.values()].every(v=>!v.ws)'))
+                    assert page.evaluate('SessionDockNetwork.paused && !uiEvents && !_es && [...T.views.values()].every(v=>!v.ws)')
                     assert sockets and all(ws.is_closed() for ws in sockets)
                     for theme, shade in [('light','rgba(15, 23, 42, 0.24)'), ('dark','rgba(0, 0, 0, 0.52)')]:
-                        page.evaluate(js('theme=>applyTheme(theme)', 'theme=>runtime.appearance.applyTheme(theme)'), theme)
+                        page.evaluate('theme=>applyTheme(theme)', theme)
                         assert dialog.evaluate("e=>getComputedStyle(e,'::backdrop').backgroundColor") == shade
                     card = dialog.bounding_box()
                     assert abs(card['x'] + card['width']/2 - 640) < 2
@@ -94,7 +94,7 @@ def main():
                     corpus.put('while-asleep', 'claude', [claude_row('while-asleep','user','u0',None,'Appeared while asleep')], [])
                     page.get_by_role('button', name='Resume', exact=True).click()
                     expect(dialog).not_to_be_visible()
-                    page.wait_for_function(js('uiEventsReady && T.ws?.readyState===WebSocket.OPEN && S.sessions.some(s=>s.sid==="while-asleep")', 'runtime.core.events.ready && runtime.terminal.state.ws?.readyState===WebSocket.OPEN && runtime.core.state.catalog.sessions.some(s=>s.sid==="while-asleep")'))
+                    page.wait_for_function('uiEventsReady && T.ws?.readyState===WebSocket.OPEN && S.sessions.some(s=>s.sid==="while-asleep")')
                     expect(page.locator('#cinput')).to_have_value('Keep this draft while sleeping')
                     assert any('/api/sessions' == p for p in requests)
                     print('PASS default 1h, keyboard resets deadline, shade in both themes, HTTP/SSE/WebSocket quiet, Resume catches up and keeps draft/host', flush=True)
@@ -103,11 +103,11 @@ def main():
                     settings(page)
                     page.locator('#setting-sleep').select_option('5')
                     page.reload(wait_until='domcontentloaded')
-                    page.wait_for_function(js('typeof SessionDockSleep !== "undefined" && T.listLoaded', 'typeof runtime.sleep !== "undefined" && runtime.terminal.state.listLoaded'))
+                    page.wait_for_function('typeof SessionDockSleep !== "undefined" && T.listLoaded')
                     settings(page)
                     expect(page.locator('#setting-sleep')).to_have_value('5')
                     page.clock.fast_forward(4 * 60000)
-                    assert not page.evaluate(js('SessionDockSleep.sleeping', 'runtime.sleep.sleeping'))
+                    assert not page.evaluate('SessionDockSleep.sleeping')
                     page.clock.fast_forward(61000)
                     expect(dialog).to_be_visible()
                     assert page.locator('#settings-dialog').evaluate('e=>e.open')
@@ -119,14 +119,14 @@ def main():
                     page.locator('#setting-sleep').select_option('0')
                     page.locator('#settings-dialog .modal-close').click()
                     page.clock.fast_forward(4 * 3600000)
-                    assert not page.evaluate(js('SessionDockSleep.sleeping', 'runtime.sleep.sleeping'))
+                    assert not page.evaluate('SessionDockSleep.sleeping')
                     settings(page)
                     page.locator('#setting-sleep').select_option('5')
                     page.locator('#settings-dialog .modal-close').click()
                     # A claim already in flight must not attach after sleep begins.
                     claims = []
                     page.route('**/api/term/claim', lambda route: claims.append(route))
-                    page.evaluate(js('reconnectTerm()', 'runtime.terminal.reconnectTerm()'))
+                    page.evaluate('reconnectTerm()')
                     page.wait_for_timeout(500)
                     assert claims, 'expected an in-flight terminal claim'
                     # Simulate OS sleep: wall clock advances without running timers.
@@ -136,10 +136,10 @@ def main():
                     for route in claims: route.continue_()
                     page.unroute('**/api/term/claim')
                     page.wait_for_timeout(500)
-                    assert page.evaluate(js('[...T.views.values()].every(v=>!v.ws)', '[...runtime.terminal.state.views.values()].every(v=>!v.ws)'))
-                    page.evaluate(js("markStaleBuild('synthetic-new-build')", "runtime.build.markStaleBuild('synthetic-new-build')"))
+                    assert page.evaluate('[...T.views.values()].every(v=>!v.ws)')
+                    page.evaluate("markStaleBuild('synthetic-new-build')")
                     page.get_by_role('button', name='Resume', exact=True).click()
-                    assert page.evaluate(js('SessionDockNetwork.paused && SessionDockNetwork.reason === "stale"', 'runtime.core.network.paused && runtime.core.network.reason === "stale"'))
+                    assert page.evaluate('SessionDockNetwork.paused && SessionDockNetwork.reason === "stale"')
                     expect(page.locator('.version-stale')).to_be_visible()
                     assert not errors, errors
                     print('PASS Features preference persists, 5min/disabled, top-layer modal and explicit Resume, suspended-clock catch-up, stale-build pause retained', flush=True)

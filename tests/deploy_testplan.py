@@ -129,7 +129,7 @@ class MappingTest(unittest.TestCase):
         self.assertTrue(suites_of("crates/sessiondock/tests/fixtures/claude/x.jsonl")[2])
 
     def test_frontend_deploy_docs_tests(self) -> None:
-        s, sc, full = suites_of("web/src/migration/main.ts")
+        s, sc, full = suites_of("legacy-web/app.js")
         self.assertFalse(full)
         self.assertEqual(s, BROWSERS | {"node_contracts", "brand_names_check"})
         self.assertTrue(s.isdisjoint(CARGO))
@@ -174,7 +174,7 @@ class MappingTest(unittest.TestCase):
             self.assertTrue(s - {n for n in names if n.startswith("cargo_")}, f"{module}: no Python suite matched")
         s = set(tp.plan_for("affected", ["crates/ptyhost/src/main.rs"], names)["suites"])
         self.assertTrue({"terminal_browser", "lifecycle_browser", "host_identity"} <= s, s)
-        s = set(tp.plan_for("affected", ["web/migration/index.html"], names)["suites"])
+        s = set(tp.plan_for("affected", ["legacy-web/index.html"], names)["suites"])
         self.assertTrue({"legacy_browser", "brand_names_check"} <= s and len(s) > 20, s)
         self.assertEqual(set(tp.plan_for("affected", ["deploy/sdtargets/linux.py"], names)["suites"]),
                          {"deploy_native_handlers"})
@@ -224,11 +224,11 @@ class BaseCommitTest(unittest.TestCase):
         # caused the affected test gate to select an unrelated full sweep.
         def result(argv, **kwargs):
             output = (' M crates/sessiondock/src/delivery/claude.rs\n'
-                      ' M web/public/style.css\n') if 'status' in argv else ''
+                      ' M legacy-web/style.css\n') if 'status' in argv else ''
             return subprocess.CompletedProcess(argv, 0, stdout=output, stderr='')
         with patch.object(tp.subprocess, 'run', side_effect=result):
             changed = tp.changed_files('HEAD', True)
-        self.assertEqual(changed, ['crates/sessiondock/src/delivery/claude.rs', 'web/public/style.css'])
+        self.assertEqual(changed, ['crates/sessiondock/src/delivery/claude.rs', 'legacy-web/style.css'])
         self.assertFalse(tp.plan_for('affected', changed, NAMES)['full'])
 
 
@@ -274,7 +274,7 @@ class GateCliTest(unittest.TestCase):
         self.saved = (tp.stream, tp.changed_files, tp.list_suites)
         self.fake = FakeRun()
         tp.stream = self.fake
-        tp.changed_files = lambda base, dirty: ["web/src/migration/main.ts", "docs/deployment.md"]
+        tp.changed_files = lambda base, dirty: ["legacy-web/app.js", "docs/deployment.md"]
         tp.list_suites = lambda binary: NAMES
         # This fixture builds HEAD with a stubbed diff/runner. Real workspace
         # edits must not turn its synthetic clean build into a refusal.
@@ -324,7 +324,7 @@ class GateCliTest(unittest.TestCase):
 
     def test_web_only_does_not_validate_unshipped_backend_edits(self) -> None:
         tp.changed_files = lambda base, dirty: ["crates/sessiondock/src/delivery/executor.rs",
-                                               "Cargo.lock", "web/src/services/terminal/controller.js"]
+                                               "Cargo.lock", "legacy-web/term.js"]
         rc, out, err = self.cli("build", "--web-only", "--test", "affected", "--test-base", "HEAD~1")
         self.assertEqual(rc, 0, out + err)
         art = self.artifacts()
@@ -339,7 +339,7 @@ class GateCliTest(unittest.TestCase):
         base = git("rev-parse", "HEAD~1")
         self.assertIn(f"test gate: mode=affected  base {base[:12]} (--test-base HEAD~1)", out)
         self.assertIn("changed files (2):", out)
-        self.assertIn("  web/src/migration/main.ts  [web/]", out)
+        self.assertIn("  legacy-web/app.js  [legacy-web/]", out)
         self.assertIn("  docs/deployment.md  [docs/]", out)
         expected = sorted(BROWSERS | {"node_contracts", "brand_names_check"})
         self.assertIn(f"selected suites ({len(expected)}): {', '.join(expected)}", out)

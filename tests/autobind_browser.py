@@ -5,7 +5,7 @@ A pending Codex pane whose process holds an *older* rollout open (Codex reads
 old rollouts for its resume picker) must stay pending; once the pane writes
 and holds its own fresh rollout, the page follows that binding by itself.
 Synthetic shell adapter and fixtures only, never a model CLI."""
-from browser_runtime import js
+
 from contextlib import ExitStack
 import json
 import os
@@ -102,11 +102,11 @@ def main():
                     receipt = created.value.json()
                     assert receipt["launch_kind"] == "new_pending", receipt
                     pending_uid = "tmux:" + receipt["name"]
-                    page.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'), arg=pending_uid)
+                    page.wait_for_function("uid => S.sel === uid", arg=pending_uid)
                     expect(page.locator("#termpane")).to_be_hidden()
                     page.locator("#a-term").click()
                     expect(page.locator("#termpane")).to_be_visible()
-                    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
+                    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
                     page.wait_for_function("(" + XTERM_TEXT + ")().includes('RS_SHELL_READY')")
                     # The pane now holds the older rollout open. Several autobind
                     # passes (6 s idle, then 1.5 s) must leave the receipt pending.
@@ -114,7 +114,7 @@ def main():
                     while time.monotonic() < deadline:
                         assert binding(root, receipt["record_id"]) is None, binding(root, receipt["record_id"])
                         time.sleep(0.5)
-                    assert page.evaluate(js("S.sel", 'runtime.core.state.selection.sel')) == pending_uid
+                    assert page.evaluate("S.sel") == pending_uid
                     expect(page.locator(f'#side .item[data-uid="{pending_uid}"]')).to_have_count(1)
                     # The user's first prompt writes the pane's own rollout; the
                     # page follows that binding without any operator action.
@@ -124,7 +124,7 @@ def main():
                     corpus.paths["fresh"] = fresh_path
                     fresh_uid = corpus.uid("fresh")
                     try:
-                        page.wait_for_function(js("uid => S.sel && S.sel !== uid && !S.sel.startsWith('tmux:')", "uid => runtime.core.state.selection.sel && runtime.core.state.selection.sel !== uid && !runtime.core.state.selection.sel.startsWith('tmux:')"),
+                        page.wait_for_function("uid => S.sel && S.sel !== uid && !S.sel.startsWith('tmux:')",
                                                arg=pending_uid, timeout=30000)
                     except Exception:
                         for path in sorted((root / "audit").rglob("*")):
@@ -136,7 +136,7 @@ def main():
                         print(json.dumps(json.loads((root / "ledger/lifecycle-ledger.json").read_text())["records"])[:1500])
                         print(json.dumps(context.request.get(base + "/api/live").json())[:1500])
                         raise
-                    selected = page.evaluate(js("S.sel", 'runtime.core.state.selection.sel'))
+                    selected = page.evaluate("S.sel")
                     assert selected != older_uid, selected
                     bound = binding(root, receipt["record_id"])
                     assert bound and bound["state"] == "confirmed", bound

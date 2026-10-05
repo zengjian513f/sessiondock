@@ -3,7 +3,7 @@
 Private GROK_HOME/cwd; existing authentication is linked, never read or copied.
 """
 # run_validation: skip
-from browser_runtime import js
+
 import argparse
 from contextlib import ExitStack
 import hashlib
@@ -124,7 +124,7 @@ def main():
                 operation=json.loads((corpus.root/'state/transfers'/copied.value.json()['operation_id']/'operation.json').read_text())
                 plan=operation['file_plan'];clone=plan['sessions']['grok:'+sid]
                 mapped=plan['records']['grok:'+old_checkpoint];assert mapped!=old_checkpoint
-                page.wait_for_function(js('(id)=>S.sel===id', '(id)=>runtime.core.state.selection.sel===id'),arg=copied.value.json()['target_uid'])
+                page.wait_for_function('(id)=>S.sel===id',arg=copied.value.json()['target_uid'])
                 expect(page.locator('#msgs')).to_contain_text('AFTER_COMPACTION')
             cloned=folder.with_name(clone)
             assert (cloned/'compaction_checkpoints'/(mapped+'.json')).is_file()

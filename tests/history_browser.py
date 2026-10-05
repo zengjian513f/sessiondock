@@ -6,7 +6,7 @@ are generated in temporary directories by history_parity; no real CLI state or
 paid commands are accessed. No frontend private method is used to switch views.
 """
 
-from browser_runtime import js
+
 import argparse
 import json
 import os
@@ -274,7 +274,7 @@ def main():
                 expect(page.locator("#msgs")).not_to_contain_text('<pasted_content id="a202">')
                 expect(page.locator("#msgs")).to_contain_text("literal user paste")
                 expect(page.locator("#msgs")).to_contain_text(assistant_paste)
-                page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
+                page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
                 with corpus.paths["claude-pasted"].open("ab") as stream:
                     stream.write(encoded(claude_row("claude-pasted", "user", "paste-live", "paste-answer", paste("live", "Live pasted 正文"))))
                 expect(page.locator("#msgs")).to_contain_text("Live pasted 正文", timeout=10000)
@@ -295,7 +295,7 @@ def main():
                 # The server's cached main/agent views already exist. Refresh
                 # only a sibling sidecar. Shared SSE must update the displayed
                 # menu without a list refresh/reload or a leaf-byte change.
-                page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
+                page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
                 corpus.paths["claude-agent-one"].with_suffix(".meta.json").write_text(json.dumps({
                     "description": "Renamed synthetic Claude child", "agentType": "reviewer"}))
                 expect(page.locator("#msgs")).to_contain_text("Claude selected answer")
@@ -322,8 +322,8 @@ def main():
                 # The queued prompt stays a live input: no interrupt badge, and
                 # the turn keeps working after the native cancel record.
                 select(queued, "Claude queued base question")
-                page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
-                activity = js("cache.get(viewKey(S.sel, S.agent))?.activity?.state", 'runtime.core.cache.cache.get(runtime.viewKey(runtime.core.state.selection.sel, runtime.core.state.selection.agent))?.activity?.state')
+                page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+                activity = "cache.get(viewKey(S.sel, S.agent))?.activity?.state"
                 page.wait_for_function(f"{activity} === 'working'")
                 rejected = [{"type": "tool_result", "tool_use_id": "toolu_queued", "is_error": True,
                              "content": "The user doesn't want to proceed with this tool use."}]
@@ -366,7 +366,7 @@ def main():
                 # A last-prompt append retracts a completed branch. A proper SSE
                 # reset must replace the already rendered timeline, not append.
                 select("claude-branch", "Claude selected answer")
-                page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
+                page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
                 page.evaluate("window.__historyEvents = []")
                 with corpus.paths["claude-branch"].open("ab") as stream:
                     stream.write(encoded(claude_row("claude-branch", "user", "new-u", "a0", "Claude browser new branch")))
@@ -406,7 +406,7 @@ def main():
 
                 select("codex-fork", "Codex fork answer")
                 expect(page.locator("#a-view-switch")).to_have_count(0)
-                page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
+                page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
                 page.evaluate("window.__historyEvents = []")
                 parent = corpus.paths["codex-parent"]
                 original = parent.read_bytes()

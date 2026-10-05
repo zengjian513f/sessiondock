@@ -129,7 +129,7 @@ def chk_priv(env):
         mode = Path(v).stat().st_mode
         if not (mode & 0o022 == 0 and mode & 0o700 == 0o700):
             emit("FAIL", "private_dirs", f"chmod 700 {v}"); fail = True
-    others = [("SESSIONDOCK_WEB_DIR", env.get("SESSIONDOCK_WEB_DIR") or str(REPO / "web/dist-migration"))]
+    others = [("SESSIONDOCK_WEB_DIR", env.get("SESSIONDOCK_WEB_DIR") or str(REPO / "legacy-web"))]
     others += [(k, env[k]) for k in ROOTS if k in env]
     for k in LISTS:
         others += [(k, p) for p in env.get(k, "").split(os.pathsep) if p]
@@ -174,7 +174,7 @@ def chk_web(env):
     raw = env.get("SESSIONDOCK_WEB_DIR")
     if not raw or not Path(raw).is_absolute():
         emit("WARN", "web_dir", "set SESSIONDOCK_WEB_DIR to an absolute path")
-        raw = str(REPO / (raw or "web/dist-migration"))
+        raw = str(REPO / (raw or "legacy-web"))
     if blocked(raw):
         emit("FAIL", "web_dir", f"{raw} is under a CLI/Python home"); return
     web = Path(raw)

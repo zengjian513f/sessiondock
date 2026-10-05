@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {GridRenderer} from '../web/shared/grid/render.js';
+import {GridRenderer} from '../legacy-web/grid/render.js';
 
 // A recording 2D context: enough surface for measure() and render().
 function fakeCanvas(width, height) {

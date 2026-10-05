@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Opt-in two-host Chromium transfer of one fourteen-session cross-CLI family."""
 # run_validation: skip
-from browser_runtime import js
+
 import argparse
 from contextlib import ExitStack
 import json
@@ -82,7 +82,7 @@ def main():
                             dialog.locator('.clone-confirm').click()
                         assert transferred.value.ok,transferred.value.text()
                         result=transferred.value.json()
-                        page.wait_for_function(js('(uid)=>S.sel===uid', '(uid)=>runtime.core.state.selection.sel===uid'),arg=result['target_uid'])
+                        page.wait_for_function('(uid)=>S.sel===uid',arg=result['target_uid'])
                         expect(page.locator('#msgs')).to_contain_text('Branch A final')
                         operation=json.loads((source.root/'state/transfers'/result['operation_id']/'operation.json').read_text())
                         target=json.loads(peer.read(root/'destination/state/transfers'/result['operation_id']/'operation.json'))

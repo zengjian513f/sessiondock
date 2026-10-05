@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {InputEncoder, KeyCapture} from '../web/shared/grid/input.js';
+import {InputEncoder, KeyCapture} from '../legacy-web/grid/input.js';
 
 function defaults() {
   return {

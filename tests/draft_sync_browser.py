@@ -7,7 +7,7 @@ image staged on one page is previewed on the other from the server's staged
 bytes, and a console command sent from the composer clears the server draft. Runs the real
 legacy composer against the fake Claude CLI plus a synthetic shell.
 """
-from browser_runtime import js, wait_for_async
+from browser_runtime import wait_for_async
 import base64
 import json
 import os
@@ -48,7 +48,7 @@ def wait_server_text(context, base, uid, text, timeout=10.0):
 
 def open_session(page, uid):
     page.locator(f'#side .item[data-uid="{uid}"]').first.click()
-    page.wait_for_function(js('uid => composerUid === uid && !composerDraft().loading && takenOver(uid)', 'uid => runtime.composer.composerUid === uid && !runtime.composer.composerDraft().loading && runtime.terminal.takenOver(uid)'), arg=uid)
+    page.wait_for_function('uid => composerUid === uid && !composerDraft().loading && takenOver(uid)', arg=uid)
 
 
 def main():
@@ -96,7 +96,7 @@ def main():
                             page.route('**/api/session/conversation?*', draft_route)
                         page.goto(base, wait_until='domcontentloaded')
                         expect(page.locator('#side')).to_be_visible()
-                        page.wait_for_function(js('T.listLoaded', 'runtime.terminal.state.listLoaded'))
+                        page.wait_for_function('T.listLoaded')
                         return page
 
                     context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
@@ -105,7 +105,7 @@ def main():
                     a = open_page(context)
                     receipt = create_claude(a, base, root / 'work', open_terminal=False)
                     uid = 'tmux:' + receipt['name']
-                    a.wait_for_function(js('composerUid && !composerDraft().loading && takenOver(composerUid)', 'runtime.composer.composerUid && !runtime.composer.composerDraft().loading && runtime.terminal.takenOver(runtime.composer.composerUid)'))
+                    a.wait_for_function('composerUid && !composerDraft().loading && takenOver(composerUid)')
 
                     # 1. A second page opens the same session: it reads the saved
                     #    text, adopts the server revision and reports no error.
@@ -117,9 +117,9 @@ def main():
                     open_session(b, uid)
                     expect(b.locator('#cinput')).to_have_value('from A')
                     assert not b.locator('.draft-save-error').count(), b.locator('.draft-save-error').all_text_contents()
-                    assert b.evaluate(js('composerDraft().revision', 'runtime.composer.composerDraft().revision')) == draft(context, base, uid)[0]
+                    assert b.evaluate('composerDraft().revision') == draft(context, base, uid)[0]
                     b.type('#cinput', ' late B')
-                    b.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                    b.evaluate('async () => await composerDraftWrites')
                     assert not b.locator('.draft-save-error').count(), b.locator('.draft-save-error').all_text_contents()
                     wait_server_text(context, base, uid, 'from A late B')
 
@@ -131,7 +131,7 @@ def main():
                         data={'uid': uid, 'revision': revision, 'value': {**value, 'text': 'phone wrote this'}})
                     assert bumped.status == 200, bumped.text()
                     a.type('#cinput', ' +A')
-                    a.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                    a.evaluate('async () => await composerDraftWrites')
                     assert not a.locator('.draft-save-error').count(), a.locator('.draft-save-error').all_text_contents()
                     expect(a.locator('#cinput')).to_have_value('from A late B +A')
                     wait_server_text(context, base, uid, 'from A late B +A')
@@ -141,7 +141,7 @@ def main():
                     b.wait_for_function("document.querySelector('#cinput').value === 'from A late B +A'", timeout=6000)
                     assert not b.locator('.draft-save-error').count()
                     b.type('#cinput', ' +B')
-                    b.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                    b.evaluate('async () => await composerDraftWrites')
                     wait_server_text(context, base, uid, 'from A late B +A +B')
                     a.wait_for_function("document.querySelector('#cinput').value === 'from A late B +A +B'", timeout=6000)
 
@@ -153,9 +153,9 @@ def main():
                     with a.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/attachment') as staged:
                         chooser.value.set_files([{'name': 'shared.txt', 'mimeType': 'text/plain', 'buffer': b'staged on A'}])
                     assert staged.value.status == 200, staged.value.text()
-                    a.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
-                    b.wait_for_function(js("composerDraft().attachments.length === 1 && composerDraft().attachments[0].uploaded?.upload_id", 'runtime.composer.composerDraft().attachments.length === 1 && runtime.composer.composerDraft().attachments[0].uploaded?.upload_id'), timeout=6000)
-                    assert not b.evaluate(js('composerDraft().attachments[0].file instanceof File', 'runtime.composer.composerDraft().attachments[0].file instanceof File'))
+                    a.evaluate('async () => await composerDraftWrites')
+                    b.wait_for_function("composerDraft().attachments.length === 1 && composerDraft().attachments[0].uploaded?.upload_id", timeout=6000)
+                    assert not b.evaluate('composerDraft().attachments[0].file instanceof File')
                     expect(b.locator('#compose-items .draft-card')).to_have_count(1)
                     with b.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=20000) as sent:
                         b.locator('#csend').click()
@@ -164,7 +164,7 @@ def main():
                     published = list((root / 'work/claude-area/sessiondock_attachments').glob('*/shared.txt'))
                     assert len(published) == 1 and published[0].read_bytes() == b'staged on A'
                     expect(b.locator('#cinput')).to_have_value('')
-                    a.wait_for_function(js("document.querySelector('#cinput').value === '' && composerDraft().attachments.length === 0", "document.querySelector('#cinput').value === '' && runtime.composer.composerDraft().attachments.length === 0"), timeout=6000)
+                    a.wait_for_function("document.querySelector('#cinput').value === '' && composerDraft().attachments.length === 0", timeout=6000)
                     assert not a.locator('.draft-save-error').count() and not b.locator('.draft-save-error').count()
 
                     # 4b. An image staged on A is previewed on B from the
@@ -177,9 +177,9 @@ def main():
                         chooser.value.set_files([{'name': 'shot.png', 'mimeType': 'image/png', 'buffer': PNG}])
                     assert picture.value.status == 200, picture.value.text()
                     upload_id = picture.value.json()['upload_id']
-                    a.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
-                    b.wait_for_function(js("composerDraft().attachments.length === 1 && !!composerDraft().attachments[0].uploaded?.upload_id", 'runtime.composer.composerDraft().attachments.length === 1 && !!runtime.composer.composerDraft().attachments[0].uploaded?.upload_id'), timeout=6000)
-                    assert not b.evaluate(js('composerDraft().attachments[0].file instanceof File', 'runtime.composer.composerDraft().attachments[0].file instanceof File'))
+                    a.evaluate('async () => await composerDraftWrites')
+                    b.wait_for_function("composerDraft().attachments.length === 1 && !!composerDraft().attachments[0].uploaded?.upload_id", timeout=6000)
+                    assert not b.evaluate('composerDraft().attachments[0].file instanceof File')
                     b.wait_for_function("document.querySelector('#compose-items .draft-card .draft-thumb img')?.src.startsWith('blob:') || false", timeout=6000)
                     served = context.request.get(base + '/api/session/conversation/attachment?uid=' + uid + '&id=' + upload_id)
                     assert served.status == 200 and served.body() == PNG, served.status
@@ -188,19 +188,19 @@ def main():
                     assert 'sandbox' in served.headers['content-security-policy'], served.headers
                     # Staged bytes of an unknown id are not served.
                     assert context.request.get(base + '/api/session/conversation/attachment?uid=' + uid + '&id=absent').status == 404
-                    b.evaluate(js('removeComposerAttachment(composerDraft().attachments[0].id)', 'runtime.composer.removeComposerAttachment(runtime.composer.composerDraft().attachments[0].id)'))
-                    b.wait_for_function(js('composerDraft().attachments.length === 0', 'runtime.composer.composerDraft().attachments.length === 0'), timeout=6000)
-                    a.wait_for_function(js('composerDraft().attachments.length === 0', 'runtime.composer.composerDraft().attachments.length === 0'), timeout=6000)
+                    b.evaluate('removeComposerAttachment(composerDraft().attachments[0].id)')
+                    b.wait_for_function('composerDraft().attachments.length === 0', timeout=6000)
+                    a.wait_for_function('composerDraft().attachments.length === 0', timeout=6000)
 
                     # Failed writes recover without another keystroke or SEND.
                     def fail_draft(route):
                         route.abort('failed')
                     a.route('**/api/session/conversation', fail_draft)
                     a.fill('#cinput', 'offline draft')
-                    a.wait_for_function(js('!!composerDraft().storageError', '!!runtime.composer.composerDraft().storageError'))
+                    a.wait_for_function('!!composerDraft().storageError')
                     expect(a.locator('#cinput')).to_have_value('offline draft')
                     a.unroute('**/api/session/conversation', fail_draft)
-                    a.wait_for_function(js('!composerDraft().storageError && composerDraft().savedVersion === composerDraft().editVersion', '!runtime.composer.composerDraft().storageError && runtime.composer.composerDraft().savedVersion === runtime.composer.composerDraft().editVersion'), timeout=10000)
+                    a.wait_for_function('!composerDraft().storageError && composerDraft().savedVersion === composerDraft().editVersion', timeout=10000)
                     wait_server_text(context, base, uid, 'offline draft')
                     assert len(sends) == 1, sends
 
@@ -211,17 +211,17 @@ def main():
                     # feeds can queue every draft request before it reaches Rust.
                     offline_context = browser.new_context(viewport={'width':1280,'height':900}, service_workers='block')
                     c = open_page(offline_context, fail_draft)
-                    open_session(c, a.evaluate(js("S.sel", 'runtime.core.state.selection.sel')))
-                    c.wait_for_function(js('composerDraft().loadFailed === true', 'runtime.composer.composerDraft().loadFailed === true'))
+                    open_session(c, a.evaluate("S.sel"))
+                    c.wait_for_function('composerDraft().loadFailed === true')
                     c.fill('#cinput', 'early offline edit')
-                    c.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                    c.evaluate('async () => await composerDraftWrites')
                     c.type('#cinput', ' retained')
-                    c.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                    c.evaluate('async () => await composerDraftWrites')
                     error_text = c.locator('.draft-save-error').inner_text()
                     assert error_text.count('服务端草稿读取失败') == 1, error_text
                     assert '服务端草稿保存失败' not in error_text, error_text
                     c.unroute('**/api/session/conversation?*', fail_draft)
-                    c.wait_for_function(js('!composerDraft().loadFailed && !composerDraft().storageError && composerDraft().savedVersion === composerDraft().editVersion', '!runtime.composer.composerDraft().loadFailed && !runtime.composer.composerDraft().storageError && runtime.composer.composerDraft().savedVersion === runtime.composer.composerDraft().editVersion'), timeout=20000)
+                    c.wait_for_function('!composerDraft().loadFailed && !composerDraft().storageError && composerDraft().savedVersion === composerDraft().editVersion', timeout=20000)
                     expect(c.locator('#cinput')).to_have_value('offline draft\nearly offline edit retained')
                     wait_server_text(context, base, uid, 'offline draft\nearly offline edit retained')
                     assert len(sends) == 1, sends
@@ -230,7 +230,7 @@ def main():
                     # Deployment notice: the real meta-check path marks this
                     # page stale, but editing still saves with an old build ID.
                     b.close()
-                    reload_uid = a.evaluate(js('S.sel', 'runtime.core.state.selection.sel'))
+                    reload_uid = a.evaluate('S.sel')
                     def obsolete_build(route):
                         if route.request.method == 'POST':
                             body = route.request.post_data_json
@@ -245,7 +245,7 @@ def main():
                         data['build'] = 'new-server-build'
                         route.fulfill(response=response, json=data)
                     a.route('**/api/meta', new_build)
-                    a.evaluate(js('checkServerBuild()', 'runtime.build.checkServerBuild()'))
+                    a.evaluate('checkServerBuild()')
                     expect(a.locator('.version-stale')).to_contain_text('自动保存草稿')
                     expect(a.locator('#csend')).to_be_disabled()
                     a.fill('#cinput', 'typed after deployment')
@@ -257,14 +257,14 @@ def main():
                     # banner reload without discarding the editor.
                     a.route('**/api/session/conversation', fail_draft)
                     a.fill('#cinput', 'unsaved during outage')
-                    a.wait_for_function(js('!!composerDraft().storageError', '!!runtime.composer.composerDraft().storageError'))
+                    a.wait_for_function('!!composerDraft().storageError')
                     expect(a.locator('.draft-save-error')).to_be_visible()
-                    assert a.evaluate(js('composerUnloadProtected', 'runtime.composer.composerUnloadProtected'))
+                    assert a.evaluate('composerUnloadProtected')
                     a.locator('.version-stale button[data-act="reload"]').click()
                     expect(a.locator('.version-stale')).to_contain_text('已取消重新加载')
                     expect(a.locator('#cinput')).to_have_value('unsaved during outage')
                     a.unroute('**/api/session/conversation', fail_draft)
-                    a.wait_for_function(js('!composerDraft().storageError && composerDraft().savedVersion === composerDraft().editVersion', '!runtime.composer.composerDraft().storageError && runtime.composer.composerDraft().savedVersion === runtime.composer.composerDraft().editVersion'), timeout=10000)
+                    a.wait_for_function('!composerDraft().storageError && composerDraft().savedVersion === composerDraft().editVersion', timeout=10000)
 
                     # Report drafts share the same save path. Failed upload
                     # bytes must prevent reload even after metadata is saved.
@@ -272,7 +272,7 @@ def main():
                     expect(a.locator('#bug-report-description')).to_be_enabled()
                     expect(a.locator('#bug-report-go')).to_be_disabled()
                     a.fill('#bug-report-description', 'report after deployment')
-                    report_uid = a.evaluate(js('BUG_REPORT_DRAFT_UID', 'runtime.launch.BUG_REPORT_DRAFT_UID'))
+                    report_uid = a.evaluate('BUG_REPORT_DRAFT_UID')
                     wait_server_text(context, base, report_uid, 'report after deployment')
                     a.route('**/api/session/conversation/attachment?*', fail_draft)
                     a.locator('#bug-report-file').set_input_files(
@@ -309,9 +309,9 @@ def main():
                     assert shell.status == 200 and shell.json()['running'], shell.text()
                     shell = shell.json()
                     shell_uid = 'tmux:' + shell['name']
-                    a.evaluate(js('info => openPendingSession(info)', 'info => runtime.terminal.openPendingSession(info)'), shell)
+                    a.evaluate('info => openPendingSession(info)', shell)
                     expect(a.locator('#composer')).to_be_visible()
-                    a.wait_for_function(js('T.ws?.readyState === WebSocket.OPEN', 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
+                    a.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
                     a.fill('#cinput', 'echo composer-sent')
                     wait_server_text(context, base, shell_uid, 'echo composer-sent')
                     a.locator('#csend').click()
@@ -324,7 +324,7 @@ def main():
                     wait_server_text(context, base, shell_uid, '')
                     # The session list is the index of recordings: the exited console stays
                     # listed (not running, with its recording) but leaves no server draft.
-                    wait_for_async(a, js('async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && row.recording?.id); }', 'async id => { await runtime.terminal.loadTermList(); return runtime.terminal.state.pending.some(row => row.record_id === id && row.running === false && row.recording?.id); }'), arg=shell['record_id'], timeout=30000)
+                    wait_for_async(a, 'async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && row.recording?.id); }', arg=shell['record_id'], timeout=30000)
                     expect(a.locator(f'#side .item[data-uid="{shell_uid}"]')).to_have_count(1)
                     listed = context.request.get(base + '/api/session/conversation/drafts').json()['drafts']
                     assert not any(row['uid'] == shell_uid for row in listed), listed

@@ -16,7 +16,7 @@ import tempfile
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, parse_qs
 
-from browser_runtime import js
+
 from browser_race_assets import install_small_render_batches
 from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, Corpus, codex_row, encoded, get_json, isolated_server
@@ -83,8 +83,7 @@ HOOK = """(() => {
         && (stack[4]?.includes('renderSession') || stack[4]?.includes((window.__raceRendererName || 'renderSession') + ' ('))) {
       window.__deferNextPageRender = false;
       window.__heldRenderStack = stack;
-      window.__heldRenderSeq = window.SessionDockRuntime
-        ? window.SessionDockRuntime.conversationRenderer.renderSeq : renderSeq;
+      window.__heldRenderSeq = renderSeq;
       window.__heldPageRender = () => timeout(callback,0,...args);
       return 0;
     }
@@ -139,14 +138,12 @@ def main():
                 # window by yielding every ten DOM groups in this test only.
                 install_small_render_batches(page, context)
                 page.goto(base,wait_until="networkidle")
-                page.evaluate(js('HISTORY_PAGE_CHAIN=false', 'runtime.core.history.timing.chain=false'))
+                page.evaluate('HISTORY_PAGE_CHAIN=false')
 
                 def snapshot():
-                    return page.evaluate(js(r"""(() => {const e=cache.get(viewKey(S.sel,S.agent));return {
+                    return page.evaluate(r"""(() => {const e=cache.get(viewKey(S.sel,S.agent));return {
                       uid:S.sel,agent:S.agent,text:e.msgs.map(m=>m.text),partial:e.partial,
-                      end:e.end,anchor:e.anchor,version:e.version,cursor:S.cursors.get(viewKey(S.sel,S.agent))};})()""", r"""(() => {const e=runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel));return {
-                      uid:runtime.core.state.selection.sel,agent:runtime.core.state.selection.agent,text:e.msgs.map(m=>m.text),partial:e.partial,
-                      end:e.end,anchor:e.anchor,version:e.version,cursor:runtime.core.state.unread.cursors.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel))};})()"""))
+                      end:e.end,anchor:e.anchor,version:e.version,cursor:S.cursors.get(viewKey(S.sel,S.agent))};})()""")
 
                 def select(name,marker):
                     if page.locator(".mobile-back").is_visible():
@@ -161,7 +158,7 @@ def main():
                     with path.open("ab") as stream:
                         stream.write(encoded(row(text)))
                     expected_native[str(path.relative_to(corpus.root))]=hashlib.sha256(path.read_bytes()).hexdigest()
-                    page.wait_for_function(js('text=>cache.get(viewKey(S.sel,S.agent)).msgs.some(m=>m.text===text)', 'text=>runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel)).msgs.some(m=>m.text===text)'),arg=text)
+                    page.wait_for_function('text=>cache.get(viewKey(S.sel,S.agent)).msgs.some(m=>m.text===text)',arg=text)
 
                 def status(state,failed=False):
                     path=corpus.paths["codex-pages"]
@@ -182,13 +179,10 @@ def main():
                     button.click()
 
                 def settled():
-                    page.wait_for_function(js(r"""historyPageRequests.size===0 && (() => {
+                    page.wait_for_function(r"""historyPageRequests.size===0 && (() => {
                       const e=cache.get(viewKey(S.sel,S.agent));
                       return !!document.querySelector(e?.partial ? '#msgs .history-gap' : '#msgs .msg');
-                    })()""", r"""runtime.core.history.historyPageRequests.size===0 && (() => {
-                      const e=runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel));
-                      return !!document.querySelector(e?.partial ? '#msgs .history-gap' : '#msgs .msg');
-                    })()"""))
+                    })()""")
 
                 # Open a recent tool-heavy turn without requesting older pages.
                 start=len(requests)
@@ -211,14 +205,14 @@ def main():
                 select("codex-pages","PAGE ROW 1399")
                 first=snapshot()
                 assert len(first["text"])==205 and first["partial"]["omitted"]==1195
-                page.wait_for_function(js('_es && _es.readyState===EventSource.OPEN', 'runtime.core.sync.watching && runtime.core.sync.watching.readyState===EventSource.OPEN'))
-                page.evaluate(js('window.__watchBefore=_es', 'window.__watchBefore=runtime.core.sync.watching'))
+                page.wait_for_function('_es && _es.readyState===EventSource.OPEN')
+                page.evaluate('window.__watchBefore=_es')
 
                 # A real valid page response is delayed until an ordinary SSE
                 # append updates the same entry and real-time cursor.
                 mode["hold"]=True
                 click_page()
-                page.wait_for_function(js('historyPageRequests.size===1', 'runtime.core.history.historyPageRequests.size===1'))
+                page.wait_for_function('historyPageRequests.size===1')
                 append("APPEND DURING PAGE HTTP")
                 live=snapshot()
                 release();settled()
@@ -226,22 +220,22 @@ def main():
                 assert after["partial"]["head"]==205 and len(after["text"])==406
                 assert after["text"][-1]=="APPEND DURING PAGE HTTP" and after["text"].count("APPEND DURING PAGE HTTP")==1
                 assert after["cursor"]==live["cursor"] and after["end"]==live["end"] and after["anchor"]==live["anchor"]
-                assert page.evaluate(js('_es===window.__watchBefore', 'runtime.core.sync.watching===window.__watchBefore'))
+                assert page.evaluate('_es===window.__watchBefore')
 
                 # Activity-only SSE changes no messages array. Final page DOM
                 # publication must nevertheless retain the newer idle state.
                 status("task_complete",failed=True)
-                page.wait_for_function(js("cache.get(viewKey(S.sel,S.agent)).activity?.state==='failed'", 'runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel)).activity?.state===\'failed\''))
+                page.wait_for_function("cache.get(viewKey(S.sel,S.agent)).activity?.state==='failed'")
                 expect(page.locator("#activity")).to_contain_text("执行失败")
                 page.evaluate("window.__deferNextPageRender=true")
                 click_page()
                 page.wait_for_function("window.__heldPageRender!==null")
-                assert page.evaluate(js("document.querySelectorAll('#msgs .msg').length===0 && renderSeq===window.__heldRenderSeq", "document.querySelectorAll('#msgs .msg').length===0 && runtime.conversationRenderer.renderSeq===window.__heldRenderSeq"))
-                page.evaluate(js('window.__activityMessages=cache.get(viewKey(S.sel,S.agent)).msgs', 'window.__activityMessages=runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel)).msgs'))
+                assert page.evaluate("document.querySelectorAll('#msgs .msg').length===0 && renderSeq===window.__heldRenderSeq")
+                page.evaluate('window.__activityMessages=cache.get(viewKey(S.sel,S.agent)).msgs')
                 status("task_complete")
-                page.wait_for_function(js("cache.get(viewKey(S.sel,S.agent)).activity?.state==='idle'", 'runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel)).activity?.state===\'idle\''))
-                assert page.evaluate(js('window.__activityMessages===cache.get(viewKey(S.sel,S.agent)).msgs', 'window.__activityMessages===runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel)).msgs'))
-                assert page.evaluate(js('renderSeq===window.__heldRenderSeq', 'runtime.conversationRenderer.renderSeq===window.__heldRenderSeq'))
+                page.wait_for_function("cache.get(viewKey(S.sel,S.agent)).activity?.state==='idle'")
+                assert page.evaluate('window.__activityMessages===cache.get(viewKey(S.sel,S.agent)).msgs')
+                assert page.evaluate('renderSeq===window.__heldRenderSeq')
                 page.evaluate("window.__heldPageRender();window.__heldPageRender=null")
                 settled()
                 expect(page.locator("#activity")).to_have_count(0)
@@ -252,10 +246,10 @@ def main():
                 page.evaluate("window.__deferNextPageRender=true")
                 click_page()
                 page.wait_for_function("window.__heldPageRender!==null")
-                assert page.evaluate(js("document.querySelectorAll('#msgs .msg').length===0 && renderSeq===window.__heldRenderSeq", "document.querySelectorAll('#msgs .msg').length===0 && runtime.conversationRenderer.renderSeq===window.__heldRenderSeq"))
+                assert page.evaluate("document.querySelectorAll('#msgs .msg').length===0 && renderSeq===window.__heldRenderSeq")
                 append("APPEND DURING PAGE RENDER")
                 live=snapshot()
-                assert page.evaluate(js('renderSeq===window.__heldRenderSeq', 'runtime.conversationRenderer.renderSeq===window.__heldRenderSeq'))
+                assert page.evaluate('renderSeq===window.__heldRenderSeq')
                 assert 'PAGE ROW 1399' not in page.locator('#msgs').inner_text()
                 page.evaluate("window.__heldPageRender();window.__heldPageRender=null")
                 settled()
@@ -264,7 +258,7 @@ def main():
                 assert after["cursor"]==live["cursor"]
                 assert page.locator("#msgs").inner_text().count("APPEND DURING PAGE RENDER")==1
                 assert page.locator("#msgs").inner_text().count("APPEND DURING PAGE HTTP")==1, page.locator("#msgs").inner_text()[-2000:]
-                assert page.evaluate(js('_es===window.__watchBefore', 'runtime.core.sync.watching===window.__watchBefore'))
+                assert page.evaluate('_es===window.__watchBefore')
 
                 # Cancel actual prepared rendering, not just an HTTP response.
                 # Keep the same calibrated Promise/timer pause and empty-message
@@ -273,11 +267,11 @@ def main():
                 page.evaluate("window.__deferNextPageRender=true")
                 click_page()
                 page.wait_for_function("window.__heldPageRender!==null")
-                assert page.evaluate(js("document.querySelectorAll('#msgs .msg').length===0 && renderSeq===window.__heldRenderSeq", "document.querySelectorAll('#msgs .msg').length===0 && runtime.conversationRenderer.renderSeq===window.__heldRenderSeq"))
+                assert page.evaluate("document.querySelectorAll('#msgs .msg').length===0 && renderSeq===window.__heldRenderSeq")
                 prepared=snapshot()
                 select("codex-other","OTHER VIEW ONLY")
                 other=snapshot()
-                assert page.evaluate(js('renderSeq>window.__heldRenderSeq', 'runtime.conversationRenderer.renderSeq>window.__heldRenderSeq'))
+                assert page.evaluate('renderSeq>window.__heldRenderSeq')
                 selected_nodes=page.evaluate_handle("[...document.querySelectorAll('#msgs .msg')]")
                 try:
                     # The request map is already empty before renderSession
@@ -316,7 +310,7 @@ def main():
                 changed=path.read_bytes().replace(b"PAGE ROW 0000",b"EDIT ROW 0000")
                 path.write_bytes(changed)
                 expected_native[str(path.relative_to(corpus.root))]=hashlib.sha256(changed).hexdigest()
-                page.wait_for_function(js("cache.get(viewKey(S.sel,S.agent)).msgs[0].text==='EDIT ROW 0000'", 'runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel)).msgs[0].text===\'EDIT ROW 0000\''))
+                page.wait_for_function("cache.get(viewKey(S.sel,S.agent)).msgs[0].text==='EDIT ROW 0000'")
                 reset=snapshot()
                 assert reset["partial"] and len(reset["text"])<=205
                 release();settled()
@@ -341,10 +335,10 @@ def main():
                 page.evaluate("window.__deferNextPageRender=true")
                 page.locator(".history-gap-reload").click()
                 page.wait_for_function("window.__heldPageRender!==null")
-                assert page.evaluate(js("document.querySelectorAll('#msgs .msg').length===0 && renderSeq===window.__heldRenderSeq", "document.querySelectorAll('#msgs .msg').length===0 && runtime.conversationRenderer.renderSeq===window.__heldRenderSeq"))
+                assert page.evaluate("document.querySelectorAll('#msgs .msg').length===0 && renderSeq===window.__heldRenderSeq")
                 append("APPEND DURING GAP RELOAD RENDER")
                 live=snapshot()["cursor"]
-                assert page.evaluate(js('renderSeq===window.__heldRenderSeq', 'runtime.conversationRenderer.renderSeq===window.__heldRenderSeq'))
+                assert page.evaluate('renderSeq===window.__heldRenderSeq')
                 assert 'EDIT ROW 0000' not in page.locator('#msgs').inner_text()
                 page.evaluate("window.__heldPageRender();window.__heldPageRender=null")
                 settled()
@@ -451,19 +445,14 @@ def main():
                 select("codex-page-activity","COVERED ACTIVITY PROGRESS")
                 page.evaluate("window.__deferNextPageRender=true")
                 click_page();page.wait_for_function("window.__heldPageRender!==null")
-                assert page.evaluate(js("document.querySelectorAll('#msgs .msg').length===0 && renderSeq===window.__heldRenderSeq", "document.querySelectorAll('#msgs .msg').length===0 && runtime.conversationRenderer.renderSeq===window.__heldRenderSeq"))
-                page.evaluate(js(r"""(() => {
+                assert page.evaluate("document.querySelectorAll('#msgs .msg').length===0 && renderSeq===window.__heldRenderSeq")
+                page.evaluate(r"""(() => {
                   const e=cache.get(viewKey(S.sel,S.agent));window.__coveredMessages=e.msgs;
                   applyCoveredActivity(S.sel,S.agent,e,{activity_changed:true,activity:{
                     state:'aborted',turn_id:'activity-turn',reason:'SYNTHETIC COVERED INTERRUPT',
                     ts:new Date(Date.now()+1000).toISOString()}});
-                })()""", r"""(() => {
-                  const e=runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel));window.__coveredMessages=e.msgs;
-                  runtime.core.diff.applyCoveredActivity(runtime.core.state.selection.sel,runtime.core.state.selection.agent,e,{activity_changed:true,activity:{
-                    state:'aborted',turn_id:'activity-turn',reason:'SYNTHETIC COVERED INTERRUPT',
-                    ts:new Date(Date.now()+1000).toISOString()}});
-                })()"""))
-                assert page.evaluate(js('window.__coveredMessages===cache.get(viewKey(S.sel,S.agent)).msgs && window.__coveredMessages.at(-1).interrupted===true', 'window.__coveredMessages===runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel)).msgs && window.__coveredMessages.at(-1).interrupted===true'))
+                })()""")
+                assert page.evaluate('window.__coveredMessages===cache.get(viewKey(S.sel,S.agent)).msgs && window.__coveredMessages.at(-1).interrupted===true')
                 page.evaluate("window.__heldPageRender();window.__heldPageRender=null")
                 settled()
                 expect(page.locator("#msgs .native-interrupted")).to_contain_text("COVERED ACTIVITY PROGRESS")

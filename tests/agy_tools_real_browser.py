@@ -19,7 +19,7 @@ import tempfile
 import threading
 
 from playwright.sync_api import expect, sync_playwright
-from browser_runtime import js
+
 from history_parity import BINARY, Corpus, isolated_server
 
 MODEL = 'gemini-3.1-pro-low-thinking'
@@ -147,10 +147,8 @@ def main():
         page_errors = []
         page.on('pageerror', lambda e: page_errors.append(str(e)))
         page.goto(base, wait_until='networkidle')
-        page.wait_for_function(js('sid => S.sessions.some(r => r.sid === sid)',
-            'sid => runtime.core.state.catalog.sessions.some(r => r.sid === sid)'), arg=sid)
-        uid = page.evaluate(js('sid => S.sessions.find(r => r.sid === sid).uid',
-            'sid => runtime.core.state.catalog.sessions.find(r => r.sid === sid).uid'), sid)
+        page.wait_for_function('sid => S.sessions.some(r => r.sid === sid)', arg=sid)
+        uid = page.evaluate('sid => S.sessions.find(r => r.sid === sid).uid', sid)
         page.locator(f'#side .item[data-uid="{uid}"]').click()
         expect(page.locator('#msgs')).to_contain_text(FINAL)
         if not page.locator('#a-turns').is_visible():

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Claude/Grok complex family copies through actual node/Hub Chromium controls."""
-from browser_runtime import js
+
 from session_clone_browser import prepare_confirmed
 import argparse
 import json
@@ -154,7 +154,7 @@ def main():
                             with page.expect_response(lambda r:r.url.endswith('/api/session/clone') and r.request.method=='POST') as reply:
                                 dialog.locator('.clone-confirm').click()
                             response=reply.value;assert response.ok,response.text();result=response.json()
-                            page.wait_for_function(js('(id)=>S.sel===id', '(id)=>runtime.core.state.selection.sel===id'),arg=result['target_uid'])
+                            page.wait_for_function('(id)=>S.sel===id',arg=result['target_uid'])
                             expect(page.locator('#msgs')).to_contain_text('Branch A final' if source=='claude' else 'Grok answer 10')
                             op=json.loads((corpus.root/'state/transfers'/result['operation_id']/'operation.json').read_text())
                             assert op['phase']=='complete'

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Main console theme switching with real PTY colors and dark-only OSC replies."""
-from browser_runtime import js
+
 import json
 import os
 from pathlib import Path
@@ -46,7 +46,7 @@ finally:
  termios.tcsetattr(0, termios.TCSANOW, old)
 '''
 
-SAMPLE = js("""() => {
+SAMPLE = """() => {
  const t = [...T.views.values()].find(v => v.grid).term, r = t.renderer;
  const canvas = t._canvas, ctx = canvas.getContext('2d');
  const labels = ['PROMPT','GREEN','RED','CODE','YELLOW','DIM','INVERSE'];
@@ -64,25 +64,7 @@ SAMPLE = js("""() => {
   result[label] = {bg, paint, raw: cells.slice(0,1)};
  }
  return result;
-}""", """() => {
- const t = [...runtime.terminal.state.views.values()].find(v => v.grid).term, r = t.renderer;
- const canvas = t._canvas, ctx = canvas.getContext('2d');
- const labels = ['PROMPT','GREEN','RED','CODE','YELLOW','DIM','INVERSE'];
- const result = {};
- for (let slot = 0; slot < r._slots.length; slot++) {
-  const row = t.model.rowAt(r._slots[slot].line);
-  const cells = row ? t.model.cellsOf(row) : [];
-  const text = cells.map(c => c.text).join('');
-  const label = labels.find(l => text.startsWith(l));
-  if (!label) continue;
-  const y = slot * r.cellHeight + r.baseline;
-  const paint = canvas._paints?.filter(p => p.x === 0 && Math.abs(p.y-y) < .01).at(-1);
-  const bg = [...ctx.getImageData(Math.round(15*r.cellWidth*r.dpr),
-     Math.round((slot+.5)*r.cellHeight*r.dpr), 1, 1).data].slice(0,3);
-  result[label] = {bg, paint, raw: cells.slice(0,1)};
- }
- return result;
-}""")
+}"""
 
 
 def lum(rgb):
@@ -124,7 +106,7 @@ def main():
             page.on('pageerror', lambda e: errors.append(str(e)))
             page.goto(base, wait_until='networkidle')
             fixture.open_console(page, uid)
-            assert page.evaluate(js('[...T.views.values()].every(v => v.grid)', '[...runtime.terminal.state.views.values()].every(v => v.grid)'))
+            assert page.evaluate('[...T.views.values()].every(v => v.grid)')
             keyboard = page.locator('#termpane .xterm-helper-textarea')
 
             def command(text):
@@ -146,7 +128,7 @@ def main():
                 page.locator('#settings').click()
                 page.locator('#setting-theme').select_option(theme)
                 page.keyboard.press('Escape')
-                page.wait_for_function(js('theme => [...T.views.values()].every(v => !!v.term.renderer.theme.light === (theme === "light"))', 'theme => [...runtime.terminal.state.views.values()].every(v => !!v.term.renderer.theme.light === (theme === "light"))'), arg=theme)
+                page.wait_for_function('theme => [...T.views.values()].every(v => !!v.term.renderer.theme.light === (theme === "light"))', arg=theme)
                 command('colors')
                 page.wait_for_timeout(250)
                 data = sample()

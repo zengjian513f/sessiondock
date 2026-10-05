@@ -8,7 +8,7 @@ Grok's empty summary.json.
 """
 from __future__ import annotations
 
-from browser_runtime import js, scoped_frontend
+
 import argparse
 import json
 import os
@@ -71,133 +71,6 @@ def passed(area):
     print(f"PASS {area}", flush=True)
 
 
-def pending_live_identity(browser, base):
-    """Observed pending liveness belongs to a UID and receipt/host identity."""
-    if not scoped_frontend():
-        return
-    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
-    try:
-        page = context.new_page()
-        errors = []
-        page.on("pageerror", lambda error: errors.append(str(error)))
-        page.goto(base, wait_until="networkidle")
-        page.wait_for_function("window.SessionDockRuntime?.terminal.state.listLoaded && "
-                               "window.SessionDockRuntime.core.state.catalog.sig")
-        # Accepted receipt/list state, with polling paused so it cannot repair
-        # an incorrect paint before we inspect it. Simultaneous receipts have
-        # separate UIDs/instances; their observations must remain independent.
-        page.evaluate("""() => {
-          const runtime = window.SessionDockRuntime;
-          runtime.core.network.pause('idle');
-          const receipt = {name: 'observed-pending', source: 'codex', cwd: '/synthetic/pending',
-            title: 'Observed pending', record_id: 'observed-record', instance_id: 'observed-instance',
-            started: 1700000000, stale: false, running: true, state: 'running'};
-          const neighbor = {...receipt, name: 'neighbor-pending', title: 'Neighbor pending',
-            record_id: 'neighbor-record', instance_id: 'neighbor-instance'};
-          runtime.terminal.state.pending = [receipt, neighbor];
-          runtime.terminal.state.list = [neighbor];
-          runtime.core.state.sidebar.closed.clear();
-        }""")
-        row = page.locator('#side .item[data-uid="tmux:observed-pending"]')
-        neighbor = page.locator('#side .item[data-uid="tmux:neighbor-pending"]')
-        live = re.compile(r'\blive\b')
-        live_tmux = re.compile(r'\blive-tmux\b')
-        visible = re.compile(r'\bvisible\b')
-        expect(row).to_have_class(live)
-        expect(neighbor).to_have_class(live)
-        row_handle, neighbor_handle = row.element_handle(), neighbor.element_handle()
-        page.evaluate("window.SessionDockRuntime.status.paintLive()")
-        expect(row).not_to_have_class(live)
-        expect(row).not_to_have_class(live_tmux)
-        expect(row.locator('.item-status')).not_to_have_class(visible)
-        expect(neighbor).to_have_class(live)
-        expect(neighbor.locator('.item-status')).to_have_class(visible)
-        page.evaluate("""() => {
-          const runtime = window.SessionDockRuntime;
-          window.__observedPendingRows = runtime.core.pending.pendingTmuxSessions();
-          window.__pendingGroupings = 0;
-          const groupBy = runtime.sidebarView.groupBy;
-          runtime.sidebarView.groupBy = (...args) => { __pendingGroupings++; return groupBy(...args); };
-        }""")
-        # Nesting reprojections do not call paintLive: a row-object-keyed
-        # observation would fall back to !stale and incorrectly resurrect it.
-        nesting = page.get_by_role('button', name='分层显示', exact=True)
-        for pressed in ('true', 'false'):
-            before = page.evaluate('__pendingGroupings')
-            nesting.click()
-            expect(nesting).to_have_attribute('aria-pressed', pressed)
-            assert page.evaluate('__pendingGroupings') > before
-            expect(row).not_to_have_class(live)
-            expect(row.locator('.item-status')).not_to_have_class(visible)
-            expect(neighbor).to_have_class(live)
-        page.locator('#livecount').click()
-        expect(page.locator('#livecount')).to_have_attribute('aria-checked', 'true')
-        expect(row).to_have_count(1)
-        expect(row).not_to_have_class(live)
-        page.locator('#allcount').click()
-        expect(page.locator('#allcount')).to_have_attribute('aria-checked', 'true')
-        before = page.evaluate('__pendingGroupings')
-        page.evaluate("""async () => {
-          const runtime = window.SessionDockRuntime, uid = 'tmux:observed-pending';
-          const receipt = runtime.terminal.state.pending.find(row => 'tmux:' + row.name === uid);
-          const draft = runtime.composer.restoreComposerDraftRecord({text: 'unsent', session: receipt}, uid);
-          runtime.composer.composerDrafts.set(uid, draft);
-          await new Promise(requestAnimationFrame);
-          draft.text = 'changed unsent draft';
-          draft.session = {...receipt, title: 'Draft-only title'};
-          draft.inputStatus = {state: 'starting', code: 'cli_starting'};
-          await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
-        }""")
-        assert page.evaluate('__pendingGroupings') == before
-        assert page.evaluate("window.SessionDockRuntime.core.pending.pendingTmuxSessions() === __observedPendingRows")
-        expect(row.locator('.t')).to_have_text('Observed pending')
-        expect(row).not_to_have_class(live)
-        expect(row.locator('.item-status')).not_to_have_class(visible)
-        assert row.evaluate('(node, old) => node === old', row_handle)
-        assert neighbor.evaluate('(node, old) => node === old', neighbor_handle)
-        # A decoded receipt with changed metadata gets a new projected object,
-        # but the same UID/instance keeps the already observed inactive state.
-        page.evaluate("""() => {
-          const terminal = window.SessionDockRuntime.terminal.state;
-          terminal.pending = terminal.pending.map(row => row.name === 'observed-pending'
-            ? {...row, title: 'Updated receipt title'} : row);
-        }""")
-        expect(row.locator('.t')).to_have_text('Updated receipt title')
-        assert page.evaluate("window.SessionDockRuntime.core.pending.pendingTmuxSessions()[0] !== __observedPendingRows[0]")
-        expect(row).not_to_have_class(live)
-        expect(row.locator('.item-status')).not_to_have_class(visible)
-        expect(neighbor).to_have_class(live)
-        assert row.evaluate('(node, old) => node === old', row_handle)
-        # Same endpoint/UID and record, new instance: it starts with the normal
-        # receipt default until observed, rather than inheriting old false.
-        # Receipts without an instance use record identity with the same rule.
-        for identity in ({'instance_id': 'replacement-instance', 'record_id': 'observed-record'},
-                         {'instance_id': None, 'record_id': 'record-only-a'},
-                         {'instance_id': None, 'record_id': 'record-only-b'}):
-            page.evaluate("""identity => {
-              const terminal = window.SessionDockRuntime.terminal.state;
-              terminal.pending = terminal.pending.map(row => {
-                if (row.name !== 'observed-pending') return row;
-                const next = {...row, ...identity};
-                if (next.instance_id === null) delete next.instance_id;
-                return next;
-              });
-            }""", identity)
-            expect(row).to_have_class(live)
-            expect(row).to_have_class(live_tmux)
-            expect(row.locator('.item-status')).to_have_class(visible)
-            assert row.evaluate('(node, old) => node === old', row_handle)
-            page.evaluate("window.SessionDockRuntime.status.paintLive()")
-            expect(row).not_to_have_class(live)
-            expect(row.locator('.item-status')).not_to_have_class(visible)
-            expect(neighbor).to_have_class(live)
-            assert neighbor.evaluate('(node, old) => node === old', neighbor_handle)
-        assert not errors, errors
-        passed('pending: inactive observation survives controls/drafts; UID, instance and record isolation')
-    finally:
-        context.close()
-
-
 def wait_native(context, base, sid, timeout=4):
     if not sid:
         return None
@@ -253,7 +126,7 @@ def create_source(page, source, work):
     if not receipt.get("running"):
         fail(f"{source} create", "not running", receipt)
     pending_uid = "tmux:" + receipt["name"]
-    page.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'), arg=pending_uid, timeout=10000)
+    page.wait_for_function("uid => S.sel === uid", arg=pending_uid, timeout=10000)
     return receipt, pending_uid
 
 
@@ -273,19 +146,16 @@ def run_source(page, context, base, source, work):
     if composer.is_visible() and "hidden" not in (composer.get_attribute("class") or ""):
         page.locator("#cinput").fill("审计下所有")
         page.wait_for_function(
-            js("text => composerDrafts.get(S.sel)?.text === text", 'text => runtime.composer.composerDrafts.get(runtime.core.state.selection.sel)?.text === text'), arg="审计下所有", timeout=10000)
+            "text => composerDrafts.get(S.sel)?.text === text", arg="审计下所有", timeout=10000)
         passed(f"{source}: unsent composer input retained")
     else:
         passed(f"{source}: composer hidden (no retained input)")
 
     if source == "codex":
-        page.wait_for_function(js("""() => {
+        page.wait_for_function("""() => {
             const draft = composerDrafts.get(S.sel);
             return draft && draft.savedVersion > 0 && draft.savedVersion === draft.editVersion;
-        }""", """() => {
-            const draft = runtime.composer.composerDrafts.get(runtime.core.state.selection.sel);
-            return draft && draft.savedVersion > 0 && draft.savedVersion === draft.editVersion;
-        }"""))
+        }""")
         # No native JSONL exists yet. Restore from the durable launch receipt,
         # including when it arrives after the native catalog on reload.
         for width in (1280, 390):
@@ -296,80 +166,66 @@ def run_source(page, context, base, source, work):
             def hold_term_list(route):
                 held.append((route, route.fetch()))
             page.route("**/api/term/list", hold_term_list)
-            if scoped_frontend():
-                # ESM composes the terminal controller with the core. Delay its
-                # actual HTTP receipt, so the catalog must win startup first.
-                page.reload(wait_until="domcontentloaded")
-                page.wait_for_function("window.SessionDockRuntime?.core.state.catalog.sig")
-                assert page.evaluate("window.SessionDockRuntime.terminal.state.listLoaded") is False
-                assert page.evaluate("window.SessionDockRuntime.terminal.state.pending.length") == 0
-            else:
-                scripts = []
-                def hold_term_script(route):
-                    scripts.append((route, route.fetch()))
-                page.route("**/term.js?*", hold_term_script)
-                page.reload(wait_until="commit")
-                page.wait_for_function(js("typeof S !== 'undefined' && S.sig", "typeof runtime.core.state !== 'undefined' && runtime.core.state.catalog.sig"))
-                assert page.evaluate(js("typeof T", 'typeof runtime.terminal.state')) == "undefined"
-                assert scripts, "term.js was not requested"
-                for route, response in scripts:
-                    route.fulfill(response=response)
-                page.unroute("**/term.js?*", hold_term_script)
-                page.wait_for_load_state("domcontentloaded")
-                page.wait_for_function(js("S.sig && typeof T !== 'undefined'", "runtime.core.state.catalog.sig && typeof runtime.terminal.state !== 'undefined'"))
+            scripts = []
+            def hold_term_script(route):
+                scripts.append((route, route.fetch()))
+            page.route("**/term.js?*", hold_term_script)
+            page.reload(wait_until="commit")
+            page.wait_for_function("typeof S !== 'undefined' && S.sig")
+            assert page.evaluate("typeof T") == "undefined"
+            assert scripts, "term.js was not requested"
+            for route, response in scripts:
+                route.fulfill(response=response)
+            page.unroute("**/term.js?*", hold_term_script)
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_function("S.sig && typeof T !== 'undefined'")
             page.wait_for_timeout(100)
-            assert page.evaluate(js("S.sel", 'runtime.core.state.selection.sel')) is None
+            assert page.evaluate("S.sel") is None
             assert held, "term/list was not requested"
             for route, response in held:
                 route.fulfill(response=response)
             page.unroute("**/api/term/list", hold_term_list)
             try:
-                page.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'), arg=pending_uid, timeout=10000)
+                page.wait_for_function("uid => S.sel === uid", arg=pending_uid, timeout=10000)
             except Exception:
-                print(page.evaluate(js("() => ({sel:S.sel, saved:store.get('sel'), mobile:store.get('mobilePage'), pending:T.pending, error:T.listError})", "() => ({sel:runtime.core.state.selection.sel, saved:runtime.core.preferences.get('sel'), mobile:runtime.core.preferences.get('mobilePage'), pending:runtime.terminal.state.pending, error:runtime.terminal.state.listError})")), flush=True)
+                print(page.evaluate("() => ({sel:S.sel, saved:store.get('sel'), mobile:store.get('mobilePage'), pending:T.pending, error:T.listError})"), flush=True)
                 raise
             expect(page.locator("#cinput")).to_have_value("审计下所有")
             expect(page.locator("#a-term")).to_be_visible()
             expect(page.locator("#termpane")).to_be_hidden()
-            assert page.evaluate(js("T.pending.find(row => 'tmux:' + row.name === S.sel).record_id", "runtime.terminal.state.pending.find(row => 'tmux:' + row.name === runtime.core.state.selection.sel).record_id")) == receipt["record_id"]
+            assert page.evaluate("T.pending.find(row => 'tmux:' + row.name === S.sel).record_id") == receipt["record_id"]
             passed(f"codex: reload restores pending receipt and draft at {width}px")
         # Returning to the mobile list is a saved choice, not a request to
         # reopen the last detail when the delayed receipt finally arrives.
         page.locator("#detail .mobile-back").click()
         page.reload(wait_until="networkidle")
-        assert page.evaluate(js("S.sel", 'runtime.core.state.selection.sel')) is None
+        assert page.evaluate("S.sel") is None
         page.locator(f'#side .item[data-uid="{pending_uid}"]').click()
-        page.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'), arg=pending_uid)
+        page.wait_for_function("uid => S.sel === uid", arg=pending_uid)
         page.set_viewport_size({"width": 1280, "height": 900})
         passed("codex: mobile list choice survives reload")
 
     native = wait_native(context, base, receipt.get("declared_sid"))
     native_uid = native["uid"] if native else None
     if native_uid:
-        page.evaluate(js("async () => { if (typeof loadSessions === 'function') await loadSessions(true); }", "async () => { if (typeof runtime.core.list.loadSessions === 'function') await runtime.core.list.loadSessions(true); }"))
+        page.evaluate("async () => { if (typeof loadSessions === 'function') await loadSessions(true); }")
         try:
             page.wait_for_function(
-                js("uid => (typeof sidebarSessions === 'function' ? sidebarSessions() : []).some(s => s.uid === uid)", "uid => (typeof runtime.core.index.sidebarSessions === 'function' ? runtime.core.index.sidebarSessions() : []).some(s => s.uid === uid)"),
+                "uid => (typeof sidebarSessions === 'function' ? sidebarSessions() : []).some(s => s.uid === uid)",
                 arg=native_uid, timeout=8000)
         except Exception:
-            dump = page.evaluate(js("""() => ({
+            dump = page.evaluate("""() => ({
                 sessions: (S.sessions || []).map(s => ({uid: s.uid, sid: s.sid, title: s.title})),
                 pending: (typeof pendingTmuxSessions === 'function' ? pendingTmuxSessions() : []).map(
                     s => ({uid: s.uid, sid: s.sid, title: s.title})),
                 side: [...document.querySelectorAll('#side .item')].map(
                     n => ({uid: n.dataset.uid, text: (n.innerText || '').slice(0, 80)}))
-            })""", """() => ({
-                sessions: (runtime.core.state.catalog.sessions || []).map(s => ({uid: s.uid, sid: s.sid, title: s.title})),
-                pending: (typeof runtime.core.pending.pendingTmuxSessions === 'function' ? runtime.core.pending.pendingTmuxSessions() : []).map(
-                    s => ({uid: s.uid, sid: s.sid, title: s.title})),
-                side: [...document.querySelectorAll('#side .item')].map(
-                    n => ({uid: n.dataset.uid, text: (n.innerText || '').slice(0, 80)}))
-            })"""))
+            })""")
             fail(f"{source} native row", f"catalog uid {native_uid} missing from sidebar", dump)
         row = page.locator(f'#side .item[data-uid="{native_uid}"]')
         expect(row).to_have_count(1)
         row.click()
-        page.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'), arg=native_uid, timeout=10000)
+        page.wait_for_function("uid => S.sel === uid", arg=native_uid, timeout=10000)
         passed(f"{source}: native row {native_uid} appeared before first send")
     else:
         passed(f"{source}: no native row before first send")
@@ -388,7 +244,7 @@ def run_source(page, context, base, source, work):
             menu_stop.click()
         assert stopped.value.status == 200, stopped.value.text()
         page.wait_for_function(
-            js("id => T.pending.some(row => row.record_id === id && row.running === false)", 'id => runtime.terminal.state.pending.some(row => row.record_id === id && row.running === false)'),
+            "id => T.pending.some(row => row.record_id === id && row.running === false)",
             arg=receipt["record_id"], timeout=15000)
         row.click(button="right")
         passed("shell: sidebar stop exits the session and retains its row")
@@ -417,13 +273,13 @@ def run_source(page, context, base, source, work):
     passed(f"{source}: header action removed pending, drafts and native files")
 
     page.reload(wait_until="networkidle")
-    page.wait_for_function(js("typeof sidebarSessions === 'function'", "typeof runtime.core.index.sidebarSessions === 'function'"))
+    page.wait_for_function("typeof sidebarSessions === 'function'")
     assert_gone(context, base, page, receipt, pending_uid, native_uid, f"{source} after reload")
     passed(f"{source}: reload did not rebuild the row")
 
     other = context.new_page()
     other.goto(base, wait_until="networkidle")
-    other.wait_for_function(js("typeof sidebarSessions === 'function'", "typeof runtime.core.index.sidebarSessions === 'function'"))
+    other.wait_for_function("typeof sidebarSessions === 'function'")
     assert_gone(context, base, other, receipt, pending_uid, native_uid, f"{source} second page")
     other.close()
     passed(f"{source}: second page did not rebuild the row")
@@ -491,7 +347,6 @@ def main():
                 options["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
             browser = playwright.chromium.launch(**options)
             try:
-                pending_live_identity(browser, base)
                 context = browser.new_context(
                     viewport={"width": 1280, "height": 900}, service_workers="block")
                 context.route(

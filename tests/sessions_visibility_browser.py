@@ -3,7 +3,7 @@
 
 All histories and state are synthetic and temporary; no CLI is launched.
 """
-from browser_runtime import js
+
 import argparse
 from contextlib import ExitStack
 import json
@@ -88,7 +88,7 @@ def main():
                         assert found['total_pool'] == 3, found
                         page.goto(base + '/' + suffix, wait_until='domcontentloaded')
                         expect(page.locator('#side .item[data-uid]')).to_have_count(3)
-                        page.wait_for_function(js('uiEventsReady', 'runtime.core.events.ready'), timeout=30000)
+                        page.wait_for_function('uiEventsReady', timeout=30000)
                         for sid in ('by-id', 'by-cwd', 'ordinary'):
                             page.locator('#side .item[data-uid]').filter(has_text=f'visibilityneedle {sid}').click()
                             expect(page.locator('#msgs')).to_contain_text(f'answer {sid}')
@@ -111,7 +111,7 @@ def main():
                     assert {row['uid'] for row in after['sessions']} == uids
                     page.reload(wait_until='domcontentloaded')
                     expect(page.locator('#side .item[data-uid]')).to_have_count(3)
-                    page.wait_for_function(js('uiEventsReady', 'runtime.core.events.ready'), timeout=30000)
+                    page.wait_for_function('uiEventsReady', timeout=30000)
                     corpus.put('added', 'claude', [claude_row('added', 'user', 'u0', None,
                         'visibilityneedle added', cwd='/synthetic/old-run/work')], [])
                     expect(page.locator('#side .item[data-uid]')).to_have_count(4, timeout=15000)

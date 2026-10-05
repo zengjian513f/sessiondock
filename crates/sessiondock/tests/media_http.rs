@@ -85,7 +85,7 @@ impl Fixture {
     }
     fn config(&self) -> Config {
         Config {
-            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
+            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
             roots: SessionRoots {
                 claude: Some(self.root.join("claude")),
                 codex: Some(self.root.join("codex")),

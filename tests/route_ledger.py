@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-check HTTP route inventory from the Rust router, route ledger, and Vue frontend."""
+"""Cross-check HTTP route inventory from the Rust router, route ledger, and frontend."""
 # run_validation: skip
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ ROUTER = ROOT / "crates/sessiondock/src/api/mod.rs"
 HUB_ROUTER = ROOT / "crates/sessiondock/src/api/hub.rs"
 HUB_ROUTE_RE = re.compile(r'\(\s*"(?:GET|POST|DELETE|ANY)"\s*,\s*"([^"]+)"\s*\)')
 LEDGER = ROOT / "docs/route-ledger.md"
-FRONTEND = ROOT / "web/src"
+FRONTEND = ROOT / "legacy-web"
 UID_EXPR = "${encodeURIComponent(uid)}"
 ROUTE_RE = re.compile(r'\.route\(\s*"([^"]+)"\s*,\s*(?:get|post|put|delete|patch|any)\s*\(')
 LIST_RE = re.compile(r"for path in \[([^\]]+)\]")

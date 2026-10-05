@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Complex-family transfer: CLI advice and persisted dynamic-tool dependencies."""
-from browser_runtime import js
+
 import argparse
 from contextlib import ExitStack
 import json
@@ -105,7 +105,7 @@ def main():
         with page.expect_response(lambda r:r.url.endswith('/api/session/clone')) as copied:
             dialog.locator('.clone-confirm').click()
         assert copied.value.ok,copied.value.text()
-        page.wait_for_function(js('(uid)=>S.sel===uid', '(uid)=>runtime.core.state.selection.sel===uid'),arg=copied.value.json()['target_uid'])
+        page.wait_for_function('(uid)=>S.sel===uid',arg=copied.value.json()['target_uid'])
         expect(page.locator('#msgs')).to_contain_text('Branch A current')
         print('PASS Chromium shows CLI absence/older/unknown versions, ignores stale target replies, lists native dynamic tools without definitions, and copies the fourteen-session family',flush=True)
 

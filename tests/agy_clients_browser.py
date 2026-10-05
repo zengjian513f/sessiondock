@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
-from browser_runtime import js, scoped_frontend
+
 from frontend_paths import frontend_dir
 from client_update_browser import matrix_row, open_machines
 from history_parity import BINARY, REPO, Corpus, isolated_server
@@ -202,7 +202,7 @@ def page_fixture(browser, base):
     page.on("pageerror", lambda error: errors.append(str(error)))
     try:
         page.goto(base + "/", wait_until="networkidle")
-        page.wait_for_function(js("T.listLoaded", "runtime.terminal.state.listLoaded"))
+        page.wait_for_function("T.listLoaded")
         yield page
         assert not errors, errors
     finally:
@@ -389,7 +389,7 @@ def run(args):
         runner_env = private_env(root)
         runner_env["PLAYWRIGHT_BROWSERS_PATH"] = browser_cache
         runner_env["SESSIONDOCK_TEST_WEB_DIR"] = str(frontend_dir())
-        print("Frontend: " + ("scoped/Vue" if scoped_frontend() else "legacy")
+        print("Frontend: " + ("legacy")
               + " (" + runner_env["SESSIONDOCK_TEST_WEB_DIR"] + ")", flush=True)
         with patch.dict(os.environ, runner_env, clear=True), sync_playwright() as playwright, ExitStack() as stack:
             options = {"headless": True}

@@ -21,7 +21,7 @@ Dragging the divider only changes the detail width; the title bar folds in the s
 """
 from __future__ import annotations
 
-from browser_runtime import js, scoped_frontend
+
 import argparse
 import os
 from pathlib import Path
@@ -221,18 +221,14 @@ def check_status_badge(page, uid):
     for width in (320, 390, 424, 608, 720, 721, 1200):
         page.set_viewport_size({"width": width, "height": 900})
         if width <= 720:
-            page.evaluate(js("showMobileDetail()", 'runtime.shell.showMobileDetail()'))
+            page.evaluate("showMobileDetail()")
         settle(page)
         for tmux in (False, True):
-            page.evaluate(js("""({uid, tmux}) => {
+            page.evaluate("""({uid, tmux}) => {
                 S.live.add(uid);
                 if (tmux) S.liveTmux.add(uid); else S.liveTmux.delete(uid);
                 paintLive();
-            }""", """({uid, tmux}) => {
-                runtime.core.state.live.live.add(uid);
-                if (tmux) runtime.core.state.live.liveTmux.add(uid); else runtime.core.state.live.liveTmux.delete(uid);
-                runtime.status.paintLive();
-            }"""), {"uid": uid, "tmux": tmux})
+            }""", {"uid": uid, "tmux": tmux})
             badge = page.evaluate("""() => {
                 const dot = document.querySelector('#dlive');
                 const r = dot.getBoundingClientRect();
@@ -251,13 +247,13 @@ def check_status_badge(page, uid):
             }""")
             assert badge["visible"] and badge["tmux"] == tmux, (width, badge)
             assert all(abs(n) < 0.1 for n in badge["clipped"]), (width, badge)
-    page.evaluate(js("uid => { S.live.delete(uid); S.liveTmux.delete(uid); paintLive(); }", 'uid => { runtime.core.state.live.live.delete(uid); runtime.core.state.live.liveTmux.delete(uid); runtime.status.paintLive(); }'), uid)
+    page.evaluate("uid => { S.live.delete(uid); S.liveTmux.delete(uid); paintLive(); }", uid)
 
 
 def seed_header_nodes(page):
     # Local mode has no machine chips. Three named chips (two sharing an initial) make the third
     # fold step measurable; the markup mirrors nodes.js renderNodes and uses its nodeAbbrs.
-    page.evaluate(js("""() => {
+    page.evaluate("""() => {
       const picker = document.querySelector('#node-picker');
       picker.hidden = false;
       const chips = document.querySelector('#node-chips');
@@ -275,34 +271,14 @@ def seed_header_nodes(page):
         chips.appendChild(b);
       }
       layoutHeader();
-    }""", """() => {
-      // The fold reads machine visibility from the node store, as Hub mode sets it.
-      runtime.core.state.nodes.visible = true;
-      const picker = document.querySelector('#node-picker');
-      picker.hidden = false;
-      const chips = document.querySelector('#node-chips');
-      chips.replaceChildren();
-      const nodes = [['n1', 'Lyra'], ['n2', 'Cygnus'], ['n3', 'Cetus']]
-        .map(([id, name]) => ({id, name}));
-      const abbrs = runtime.core.nodes.nodeAbbrs(nodes);
-      for (const node of nodes) {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.dataset.node = node.id;
-        const part = (tag, cls, text) => Object.assign(document.createElement(tag), {className: cls, textContent: text});
-        b.append(part('span', 'node-name', node.name), part('span', 'node-abbr', abbrs.get(node.id)),
-          part('b', 'node-count', '9'));
-        chips.appendChild(b);
-      }
-      runtime.shell.layoutHeader();
-    }"""))
+    }""")
     settle(page)
 
 
 def check_scope_scrolls(page):
     # The active/total counters sit in the draggable filter bar and move with it.
     page.set_viewport_size({"width": 320, "height": 900})
-    page.evaluate(js("showMobileList()", 'runtime.shell.showMobileList()'))
+    page.evaluate("showMobileList()")
     settle(page)
     bar = page.locator("header .header-filters")
     assert bar.locator("#session-scope").count() == 1
@@ -350,22 +326,12 @@ def check_action_metadata_refresh(page, data, base):
     assert response.ok, response.text()
     # Exercise the product's HTTP list acceptance and metadata refresh path,
     # with no direct header calls, row injection or navigation away from focus.
-    assert page.evaluate(js('loadSessions(true)', 'runtime.core.list.loadSessions(true)'))
+    assert page.evaluate('loadSessions(true)')
     settle(page)
     expect(page.locator('#a-star')).to_have_attribute('aria-pressed', 'true')
     expect(page.locator('#a-turns')).to_have_attribute('aria-pressed', expected_turns)
     expect(page.locator('#a-turns')).to_have_attribute('aria-label', turn_label)
-    if scoped_frontend():
-        expect(star).to_be_visible()
-        expect(star.locator('span')).to_have_text('取消星标')
-        expect(page.locator('#a-more')).to_have_attribute('aria-expanded', 'true')
-        assert page.evaluate('''({header, button, menu}) =>
-            header === document.querySelector('#detail > .dhead') && header.isConnected
-            && menu === document.querySelector('#session-actions-menu') && !menu.hidden
-            && button === document.querySelector('#a-star') && button.isConnected
-            && document.activeElement === button''',
-            {'header': header, 'button': button, 'menu': menu}), 'metadata refresh lost action DOM/focus'
-    elif not star.is_visible():
+    if not star.is_visible():
         page.locator('#a-more').click()  # legacy metadata refresh remounts the header
     expect(star.locator('span')).to_have_text('取消星标')
     # A real click must use the refreshed state, saving false rather than
@@ -388,9 +354,6 @@ def check_action_metadata_refresh(page, data, base):
     expect(page.locator('#session-actions-menu')).to_be_hidden()
     expect(page.locator('#a-more')).to_have_attribute('aria-expanded', 'false')
     expect(page.locator('#a-star')).to_have_attribute('data-star-uid', data.uid(OTHER_SID))
-    if scoped_frontend():
-        assert not switching_header.evaluate('e => e.isConnected'), 'new UID must get a new header'
-        assert not menu.evaluate('e => e.isConnected'), 'old open menu must be disposed'
     switching_header.dispose()
     menu.dispose()
     button.dispose()
@@ -398,11 +361,11 @@ def check_action_metadata_refresh(page, data, base):
 
 
 def run(page, uid):
-    page.evaluate(js("uid => openSession(uid)", 'uid => runtime.core.open.openSession(uid)'), uid)
+    page.evaluate("uid => openSession(uid)", uid)
     page.wait_for_function('document.querySelector("#msgs")?.textContent.includes("reply Sweep")')
     check_status_badge(page, uid)
     page.set_viewport_size({"width": 1698, "height": 900})
-    page.evaluate(js("setSideWidth(340, true)", 'runtime.shell.setSideWidth(340, true)'))
+    page.evaluate("setSideWidth(340, true)")
     settle(page)
     seed_header_nodes(page)
     first = page.evaluate(HEADER_FOLD_JS)
@@ -413,7 +376,7 @@ def run(page, uid):
     meta_order = head["brief"] + head["menu_meta"]
     assert meta_order == ["mcount-total", "size", "time", "cwd", "meta-source", "session-id"], head
     mobile_actions = ["a-global-settings"]
-    if page.evaluate(js("appDisplayMode.matches || navigator.standalone === true", 'runtime.shell.displayMode.matches || navigator.standalone === true')):
+    if page.evaluate("appDisplayMode.matches || navigator.standalone === true"):
         mobile_actions.append("a-global-page-reload")
     priority_of = lambda tier: (mobile_actions if tier == "narrow" else []) + ACTION_ORDER + meta_order  # noqa: E731
     header_rows, head_rows, heights, header_tiers, head_tiers, chrome_tiers = [], [], [], {}, {}, {}
@@ -424,7 +387,7 @@ def run(page, uid):
         settle(page)
         tier = tier_of(width)
         if width <= 720:
-            page.evaluate(js("showMobileList()", 'runtime.shell.showMobileList()'))
+            page.evaluate("showMobileList()")
             settle(page)
         fold = check_header(page, width, header_tiers, header_actions, chrome_tiers)
         header_rows.append((width, fold["menu"], tier))
@@ -442,7 +405,7 @@ def run(page, uid):
                 chrome_events.append((width, "buttons"))
         previous_chrome = chrome
         if width <= 720:
-            page.evaluate(js("showMobileDetail()", 'runtime.shell.showMobileDetail()'))
+            page.evaluate("showMobileDetail()")
             settle(page)
         state = check_head(page, width, tier, head_tiers, "viewport", meta_order)
         head_rows.append((width, state["menu_meta"] + state["menu_actions"], tier))
@@ -472,11 +435,11 @@ def run(page, uid):
         settle(page)
         tier, drag_tiers = tier_of(width), {}
         for side in range(200, width - 320, 20):
-            page.evaluate(js("w => setSideWidth(w, true)", 'w => runtime.shell.setSideWidth(w, true)'), side)
+            page.evaluate("w => setSideWidth(w, true)", side)
             settle(page)
             state = check_head(page, side, tier, drag_tiers, f"drag{width}", meta_order)
             drag_rows.append((width - side, state["menu_meta"] + state["menu_actions"], tier))
-        page.evaluate(js("setSideWidth(340, true)", 'runtime.shell.setSideWidth(340, true)'))
+        page.evaluate("setSideWidth(340, true)")
     drag_events = fold_events(drag_rows, priority_of)
     assert drag_events, drag_rows
     print(f"{len(header_rows)} widths, header chrome " + ", ".join(f"{n}≤{w}" for w, n in chrome_events)
@@ -504,7 +467,7 @@ def main():
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(base, wait_until="networkidle")
-                page.wait_for_function(js("S.sessions.length && T.listLoaded", 'runtime.core.state.catalog.sessions.length && runtime.terminal.state.listLoaded'))
+                page.wait_for_function("S.sessions.length && T.listLoaded")
                 assert page.locator("#reload").count() == 0
                 assert not page.locator("#page-reload").is_visible()
                 run(page, data.uid(SID))
@@ -521,7 +484,7 @@ def main():
                     page = context.new_page()
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     page.goto(base, wait_until="networkidle")
-                    page.wait_for_function(js("S.sessions.length && T.listLoaded", 'runtime.core.state.catalog.sessions.length && runtime.terminal.state.listLoaded'))
+                    page.wait_for_function("S.sessions.length && T.listLoaded")
                     if not page.locator("#page-reload").is_visible():
                         page.locator("#header-more-btn").click()
                     assert page.locator("#page-reload").is_visible(), mode
@@ -529,7 +492,7 @@ def main():
                     with page.expect_navigation(wait_until="networkidle"):
                         page.get_by_role("button", name="刷新页面", exact=True).or_(
                             page.get_by_role("menuitem", name="刷新页面", exact=True)).click()
-                    page.wait_for_function(js("S.sessions.length && T.listLoaded", 'runtime.core.state.catalog.sessions.length && runtime.terminal.state.listLoaded'))
+                    page.wait_for_function("S.sessions.length && T.listLoaded")
                     assert page.evaluate("window.beforeRefresh === undefined"), mode
                     assert page.evaluate("performance.getEntriesByType('navigation')[0].type") == "reload"
                     assert page.locator(f'#side .item[data-uid="{data.uid(SID)}"]').count() == 1
@@ -539,7 +502,7 @@ def main():
                 assert not errors, errors
             finally:
                 browser.close()
-    print("PASS header fold browser: fold order over N widths for the header and the title bar, divider drag, folded action metadata refresh (Vue DOM/focus identity), turn preference and session switch", flush=True)
+    print("PASS header fold browser: fold order over N widths for the header and the title bar, divider drag, folded action metadata refresh (DOM/focus identity), turn preference and session switch", flush=True)
 
 
 if __name__ == "__main__":

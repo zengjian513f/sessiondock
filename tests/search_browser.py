@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from browser_runtime import js
+
 from playwright.sync_api import expect, sync_playwright
 
 from history_parity import BINARY, Corpus, claude_row, codex_message, codex_row, isolated_server
@@ -64,7 +64,7 @@ def main():
                 page.on("response", lambda response: searches.append((response.url, response.status,
                     response.headers.get("content-type", ""))) if "/api/search?" in response.url else None)
                 page.goto(base, wait_until="networkidle")
-                assert page.evaluate(js("SessionDockCapabilities.allows('search')", 'JSON.parse(document.querySelector(\'meta[name="sessiondock-capabilities"]\').content).search !== false')) is True
+                assert page.evaluate("SessionDockCapabilities.allows('search')") is True
                 expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
                 expect(page.locator('#side-search-state')).to_be_hidden()
                 normal_background = page.locator('#side').evaluate('el => getComputedStyle(el).backgroundColor')
@@ -242,15 +242,11 @@ def main():
                 ]) + "\n"
                 page.route("**/api/search?**", lambda route: route.fulfill(
                     status=200, content_type="application/x-ndjson", body=payload))
-                page.evaluate(js(r"""() => {
+                page.evaluate(r"""() => {
                     window.searchPaints = 0;
                     const original = showSearchMatches;
                     showSearchMatches = rows => { window.searchPaints++; original(rows); };
-                }""", r"""() => {
-                    window.searchPaints = 0;
-                    const original = runtime.sidebarView.groupBy;
-                    runtime.sidebarView.groupBy = (...args) => { window.searchPaints++; return original(...args); };
-                }"""))
+                }""")
                 search("Needle")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(2)
                 paints = page.evaluate("window.searchPaints")
@@ -259,7 +255,7 @@ def main():
 
                 # Keep a synthetic stream open while the user hits Backspace.
                 # Its late result must not restore the canceled search.
-                page.evaluate(js(r"""result => {
+                page.evaluate(r"""result => {
                     const original = window.fetch;
                     window.fetch = (url, opts) => {
                         if (!String(url).includes('api/search?')) return original(url, opts);
@@ -280,28 +276,7 @@ def main():
                         }), {headers: {'Content-Type': 'application/x-ndjson'}}));
                     };
                     window.restoreSearchFetch = () => { window.fetch = original; };
-                }""", r"""result => {
-                    const original = runtime.core.network.fetch;
-                    runtime.core.network.fetch = (url, opts) => {
-                        if (!String(url).includes('api/search?')) return original(url, opts);
-                        const encoder = new TextEncoder();
-                        window.lateSearchResult = null;
-                        return Promise.resolve(new Response(new ReadableStream({
-                            start(controller) {
-                                controller.enqueue(encoder.encode(JSON.stringify({
-                                    type: 'matches', results: result.results
-                                }) + '\n'));
-                                window.lateSearchResult = () => {
-                                    controller.enqueue(encoder.encode(JSON.stringify({
-                                        type: 'result', data: result
-                                    }) + '\n'));
-                                    controller.close();
-                                };
-                            }
-                        }), {headers: {'Content-Type': 'application/x-ndjson'}}));
-                    };
-                    window.restoreSearchFetch = () => { runtime.core.network.fetch = original; };
-                }"""), result)
+                }""", result)
                 page.locator("#q").fill("Needle")
                 page.locator("#q").press("Enter")
                 expect(page.locator("#side-search-count")).to_have_text("2 条")

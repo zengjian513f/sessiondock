@@ -6,7 +6,7 @@ the start shows the screen before any output; play at 16x brings the output back
 and ends at the tail (play button back to ▶); seeking to the end shows the final
 screen; the pane stays read-only throughout. No page errors.
 """
-from browser_runtime import js, console_renderers
+
 import json
 import sys
 import tempfile
@@ -19,16 +19,12 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 from history_parity import REPO, BINARY, Corpus, isolated_server  # noqa: E402
 from draft_sync_browser import SHELL, initialize  # noqa: E402
 
-XTERM_TEXT = js("""() => [...T.views.values()].map(view => {
+XTERM_TEXT = """() => [...T.views.values()].map(view => {
   const buffer = view.term?.buffer?.active;
   return buffer ? Array.from({length:buffer.length}, (_,i) =>
     buffer.getLine(i)?.translateToString(true) || '').join('\\n').trimEnd() : '';
-}).join('\\n')""", """() => [...runtime.terminal.state.views.values()].map(view => {
-  const buffer = view.term?.buffer?.active;
-  return buffer ? Array.from({length:buffer.length}, (_,i) =>
-    buffer.getLine(i)?.translateToString(true) || '').join('\\n').trimEnd() : '';
-}).join('\\n')""")
-TIMELINE = js("() => { const v = [...T.views.values()].find(v => v.replay); return v ? {...v.timeline} : null; }", '() => { const v = [...runtime.terminal.state.views.values()].find(v => v.replay); return v ? {...v.timeline} : null; }')
+}).join('\\n')"""
+TIMELINE = "() => { const v = [...T.views.values()].find(v => v.replay); return v ? {...v.timeline} : null; }"
 
 
 def seek(page, fraction):
@@ -52,8 +48,8 @@ def run(browser, base, root, renderer):
         "source": "shell", "cwd": str(root / "work"), "request_id": f"timeline-{renderer}"}).json()
     name = shell["name"]
     uid = "tmux:" + name
-    page.evaluate(js("info => openPendingSession(info)", 'info => runtime.terminal.openPendingSession(info)'), shell)
-    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'), timeout=10000)
+    page.evaluate("info => openPendingSession(info)", shell)
+    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN", timeout=10000)
     assert not page.evaluate("document.querySelector('#termpane').classList.contains('replay')"), "live view has no timeline"
     kb = page.locator("#termpane .xterm-helper-textarea")
     kb.press_sequentially("hello")
@@ -62,7 +58,7 @@ def run(browser, base, root, renderer):
     time.sleep(3)  # most of this recording is idle, like the reported SSH session
     kb.press_sequentially("quit")
     kb.press("Enter")
-    page.wait_for_function(js("[...T.views.values()].some(v => v.ended)", '[...runtime.terminal.state.views.values()].some(v => v.ended)'), timeout=15000)
+    page.wait_for_function("[...T.views.values()].some(v => v.ended)", timeout=15000)
     # Live exit on this page must switch to recording replay with a timeline.
     # Reloading and clicking the row is a second path; the first mismatch in
     # BUG-20260919-122121-bbc5dc was staying on the clipped live tail.
@@ -91,7 +87,7 @@ def run(browser, base, root, renderer):
     page.goto(base, wait_until="networkidle")
     page.wait_for_function(f"!!document.querySelector('#side .item[data-uid=\"{uid}\"]')", timeout=15000)
     page.locator(f'#side .item[data-uid="{uid}"]').first.click()
-    page.wait_for_function(js("[...T.views.values()].some(v => v.replay)", '[...runtime.terminal.state.views.values()].some(v => v.replay)'), timeout=15000)
+    page.wait_for_function("[...T.views.values()].some(v => v.replay)", timeout=15000)
     page.wait_for_function("(" + XTERM_TEXT + ")().includes('RS_UNKNOWN')", timeout=15000)
     page.wait_for_function("document.querySelector('#termpane').classList.contains('replay')"
                            " && getComputedStyle(document.querySelector('#term-timeline')).display === 'flex'",
@@ -143,16 +139,16 @@ def run(browser, base, root, renderer):
         # their cells intact while fitting their font, including after resize.
         page.set_viewport_size({'width': 1000, 'height': 800})
         page.wait_for_timeout(300)
-        assert box.evaluate('(e) => e.scrollWidth <= e.clientWidth + 1'), page.evaluate(js('''() => {const v=currentTermViewObject(), e=document.querySelector('#xterm');return {width:e.clientWidth,scroll:e.scrollWidth,font:v.term.options.fontSize,cell:v.term.renderer.cellWidth,size:v.replaySize,canvas:v.host.querySelector('canvas').getBoundingClientRect().toJSON(),host:v.host.getBoundingClientRect().toJSON()}}''', "() => {const v=runtime.terminal.currentTermViewObject(), e=document.querySelector('#xterm');return {width:e.clientWidth,scroll:e.scrollWidth,font:v.term.options.fontSize,cell:v.term.renderer.cellWidth,size:v.replaySize,canvas:v.host.querySelector('canvas').getBoundingClientRect().toJSON(),host:v.host.getBoundingClientRect().toJSON()}}"))
+        assert box.evaluate('(e) => e.scrollWidth <= e.clientWidth + 1'), page.evaluate('''() => {const v=currentTermViewObject(), e=document.querySelector('#xterm');return {width:e.clientWidth,scroll:e.scrollWidth,font:v.term.options.fontSize,cell:v.term.renderer.cellWidth,size:v.replaySize,canvas:v.host.querySelector('canvas').getBoundingClientRect().toJSON(),host:v.host.getBoundingClientRect().toJSON()}}''')
         page.set_viewport_size({'width': 1280, 'height': 900})
     print(f"PASS {renderer} idle clicks/drag/keyboard, compact status, ticks, wheel and width", flush=True)
 
     before_sleep = page.evaluate(TIMELINE)['clock']
     page.clock.fast_forward(61 * 60000)
-    page.wait_for_function(js('SessionDockSleep.sleeping && !T.ws', 'runtime.sleep.sleeping && !runtime.terminal.state.ws'))
+    page.wait_for_function('SessionDockSleep.sleeping && !T.ws')
     page.get_by_role('button', name='Resume', exact=True).click()
-    page.wait_for_function(js('T.ws?.readyState === WebSocket.OPEN', 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
-    page.wait_for_function(js('clock => Math.abs(currentTermViewObject().timeline.clock - clock) < 25', 'clock => Math.abs(runtime.terminal.currentTermViewObject().timeline.clock - clock) < 25'), arg=before_sleep)
+    page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
+    page.wait_for_function('clock => Math.abs(currentTermViewObject().timeline.clock - clock) < 25', arg=before_sleep)
     print(f"PASS {renderer} sleep/Resume preserves replay position and reconnects scrubbing", flush=True)
 
     seek(page, 0)
@@ -178,11 +174,11 @@ def run(browser, base, root, renderer):
     page.keyboard.press("Enter")
     time.sleep(0.6)
     assert page.evaluate(XTERM_TEXT) == before, "replay must stay read-only"
-    assert page.evaluate(js("T.ws?.readyState", 'runtime.terminal.state.ws?.readyState')) == 1, "socket stays open for scrubbing"
+    assert page.evaluate("T.ws?.readyState") == 1, "socket stays open for scrubbing"
     print(f"PASS {renderer} e (seek to end shows the final screen; read-only)", flush=True)
 
     # Leaving the replay hides the timeline again.
-    page.evaluate(js("closeTermPane()", 'runtime.terminal.closeTermPane()'))
+    page.evaluate("closeTermPane()")
     page.wait_for_function("document.querySelector('#termpane').classList.contains('hidden')", timeout=5000)
     assert not errors, errors
     context.close()
@@ -206,7 +202,7 @@ def main():
             browser = p.chromium.launch(headless=True)
             with isolated_server(corpus, BINARY, host_dir=root / "host", lifecycle_dir=root / "ledger",
                                  launcher_config=cfg, state_dir=root / "state") as (base, _):
-                for renderer in console_renderers("xterm", "grid"):
+                for renderer in ["xterm", "grid"]:
                     run(browser, base, root, renderer)
             browser.close()
         print("PASS terminal_timeline_browser", flush=True)

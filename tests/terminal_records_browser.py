@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Real Vue recordings-page acceptance; isolated free shells only.
+"""Real recordings-page acceptance; isolated free shells only.
 
-Build sessiondock and ptyhost first; SESSIONDOCK_TEST_WEB_DIR selects the
-explicit artifact; otherwise the compiled Vue entry is used. The test opens
+Build sessiondock and ptyhost first; SESSIONDOCK_TEST_WEB_DIR selects another
+frontend directory. The test opens
 only its fixtures' recordings page, never creates descendants, and exercises
 list filtering, selection, live follow, resize, read-only viewing, exit, reload
 and fit by normal browser clicks and keyboard input. Terminal assertions read

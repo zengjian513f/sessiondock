@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Pre-rollout Codex folder trust answered in the composer (free fake CLI)."""
-from browser_runtime import js
+
 import json
 import os
 from pathlib import Path
@@ -138,11 +138,11 @@ def main():
                 expect(card.locator('.question-options > button b')).to_have_text(['信任并继续', '退出'])
                 expect(card.locator('.question-actions button')).to_have_text(['打开终端', '取消'])
                 expect(page.locator('#termpane')).to_be_hidden()
-                assert page.evaluate(js('T.views.size === 0', 'runtime.terminal.state.views.size === 0'))
+                assert page.evaluate('T.views.size === 0')
                 assert not list((root / 'codex').rglob('*.jsonl'))
                 expect(page.locator('#csend')).to_be_disabled()
                 page.locator('#cinput').fill('keep this draft')
-                page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                page.evaluate('async () => await composerDraftWrites')
                 page.locator('#cinput').press('Enter')
                 page.wait_for_timeout(1800)
                 assert not writes and not screen.with_suffix('.trace').exists()
@@ -167,7 +167,7 @@ def main():
                 expect(card).to_be_visible(timeout=10000)
                 # Both desktop and phone keep the disclosure, choices and draft.
                 page.set_viewport_size({'width': 390, 'height': 844})
-                page.evaluate(js('showMobileDetail()', 'runtime.shell.showMobileDetail()'))
+                page.evaluate('showMobileDetail()')
                 expect(card).to_be_visible()
                 buttons = card.locator('.question-options > button').all()
                 first, second = [button.bounding_box() for button in buttons]
@@ -189,16 +189,16 @@ def main():
                 # A second untouched launch takes the negative path explicitly.
                 screen.write_text('trust')
                 page.set_viewport_size({'width': 1280, 'height': 720})
-                page.evaluate(js('showMobileList()', 'runtime.shell.showMobileList()'))
+                page.evaluate('showMobileList()')
                 create()
                 expect(card).to_be_visible(timeout=10000)
                 page.locator('#cinput').fill('retain after quit')
-                page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                page.evaluate('async () => await composerDraftWrites')
                 card.locator('.question-cancel').click()
-                page.wait_for_function(js("sessionComposerEnded(S.sel)", 'runtime.composer.sessionComposerEnded(runtime.core.state.selection.sel)'), timeout=15000)
+                page.wait_for_function("sessionComposerEnded(S.sel)", timeout=15000)
                 assert screen.with_suffix('.outcome').read_text() == 'quit'
                 assert writes[-1]['keys'] == ['2']
-                assert page.evaluate(js('composerDraft().text', 'runtime.composer.composerDraft().text')) == 'retain after quit'
+                assert page.evaluate('composerDraft().text') == 'retain after quit'
                 assert not errors and not dialogs, (errors, dialogs)
             finally:
                 browser.close()

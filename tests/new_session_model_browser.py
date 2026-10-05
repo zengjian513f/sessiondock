@@ -4,7 +4,7 @@ search above ten models, and the choice reaching the launched CLI's argv.
 
 Isolated server, private homes and a free fake CLI (`fake_model_cli.py`) for
 all four agent sources; no real CLI or model is started."""
-from browser_runtime import js
+
 import argparse
 import json
 import os
@@ -150,7 +150,7 @@ def check_catalog_source_change(browser, base):
     page.on("pageerror", lambda error: errors.append(str(error)))
     try:
         page.goto(base, wait_until="networkidle")
-        page.wait_for_function(js("T.listLoaded", 'runtime.terminal.state.listLoaded'))
+        page.wait_for_function("T.listLoaded")
         open_dialog(page)
         pick_source(page, "claude")
         expect(page.locator("#new-model-label")).to_have_text("claude current")
@@ -198,11 +198,10 @@ def check_shared_effort(browser, binary, root):
         context.route("**/api/term/models?*", lambda route: route.fulfill(json=catalog))
         page = context.new_page()
         page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
-        page.wait_for_function(js("T.listLoaded && Nodes.list.length === 2", 'runtime.terminal.state.listLoaded && runtime.core.state.nodes.list.length === 2'))
+        page.wait_for_function("T.listLoaded && Nodes.list.length === 2")
         # Old machine-specific effort is not a model preference.
-        page.evaluate(js("""nid => store.set('newModel.' + nid + '|codex',
-            {model: 'shared-a', effort: 'low'})""", """nid => runtime.core.preferences.set('newModel.' + nid + '|codex',
-            {model: 'shared-a', effort: 'low'})"""), nodes[0].nid)
+        page.evaluate("""nid => store.set('newModel.' + nid + '|codex',
+            {model: 'shared-a', effort: 'low'})""", nodes[0].nid)
         open_dialog(page)
         page.locator("#new-node").select_option(nodes[0].nid)
         pick_source(page, "codex")
@@ -277,7 +276,7 @@ def main():
             shots = os.environ.get("SESSIONDOCK_TEST_SHOTS")
             shot = (lambda name: page.screenshot(path=os.path.join(shots, f"model-{name}.png"))) if shots else (lambda name: None)
             page.goto(base, wait_until="networkidle")
-            page.wait_for_function(js("T.listLoaded", 'runtime.terminal.state.listLoaded'))
+            page.wait_for_function("T.listLoaded")
             check_drag_selection(page, work)
 
             # ---- Claude: aliases, no search at five rows, effort list, one row on desktop.
@@ -321,7 +320,7 @@ def main():
 
             # ---- The choice is remembered per source; switching sources never moves the row.
             page.reload(wait_until="networkidle")
-            page.wait_for_function(js("T.listLoaded", 'runtime.terminal.state.listLoaded'))
+            page.wait_for_function("T.listLoaded")
             open_dialog(page)
             expect(page.locator("#new-model-label")).to_have_text("Opus")
             expect(page.locator("#new-effort")).to_have_value("high")
@@ -557,7 +556,7 @@ def main():
             page = context.new_page()
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(base, wait_until="networkidle")
-            page.wait_for_function(js("T.listLoaded", 'runtime.terminal.state.listLoaded'))
+            page.wait_for_function("T.listLoaded")
             open_dialog(page)
             claude = page.locator('input[name="new-source"][value="claude"]')
             expect(claude).to_be_disabled()

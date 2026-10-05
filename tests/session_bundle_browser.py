@@ -2,7 +2,7 @@
 """Real Hub/two-node Chromium cross-node clone path with shared native storage.
 Each provider uses synthetic branches and agents; runtime state is node-private.
 """
-from browser_runtime import js
+
 import argparse
 import base64
 import copy
@@ -541,7 +541,7 @@ def main():
                         pending=context.request.get(f'http://127.0.0.1:{hub.port}/api/session/transfers')
                         assert pending.ok and all(t['request']['operation_id']!=completed['operation_id'] for t in pending.json()['operations']),pending.text()
                         assert completed['phase']=='complete' and b.nid in completed['target_uid']
-                        page.wait_for_function(js('(uid)=>S.sel===uid', '(uid)=>runtime.core.state.selection.sel===uid'),arg=completed['target_uid'],timeout=30000)
+                        page.wait_for_function('(uid)=>S.sel===uid',arg=completed['target_uid'],timeout=30000)
                         expect(page.locator('#msgs')).to_contain_text({'codex':'Branch A current','claude':'Branch A final','grok':'Grok answer 10'}[provider])
                         source_op=json.loads((source.root/'state/transfers'/completed['operation_id']/'operation.json').read_text())
                         target_op=json.loads(read_target(destination.root/'state/transfers'/completed['operation_id']/'operation.json'))
@@ -584,7 +584,7 @@ def main():
                                 pending=context.request.get(f'http://127.0.0.1:{hub.port}/api/term/list',params={'node':a.nid})
                                 assert pending.ok,pending.text()
                                 assert not any(str(row.get('record_id','')).endswith(rid) for row in pending.json()['pending'] for rid in receipt_ids[:4]),pending.text()
-                                page.wait_for_function(js('uid=>S.sel===uid', 'uid=>runtime.core.state.selection.sel===uid'),arg=completed['target_uid'])
+                                page.wait_for_function('uid=>S.sel===uid',arg=completed['target_uid'])
                                 print('PASS '+provider+' move clears bound/aliased/old-rollout and already-discarded receipts; preserves unrelated and other-provider identities',flush=True)
                             for database in source_op['native']['databases']:
                                 with sqlite3.connect(database['path']) as db:

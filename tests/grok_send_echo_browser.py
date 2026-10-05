@@ -6,7 +6,7 @@ text used to keep the composer waiting after that line was already visible
 (BUG-20260927-211850-1fa082). An older identical line must not retire a later
 send. Private fake CLI, loopback server, temporary directories only.
 """
-from browser_runtime import js
+
 from contextlib import ExitStack
 import hashlib
 import json
@@ -84,13 +84,13 @@ def main():
                 assert created.value.status == 200, created.value.text()
                 receipt = created.value.json()
                 if not page.locator('#composer').is_visible():
-                    page.evaluate(js('showMobileDetail()', 'runtime.shell.showMobileDetail()'))
+                    page.evaluate('showMobileDetail()')
                 expect(page.locator('#composer')).to_be_visible()
                 sid = receipt['declared_sid']
                 chat = root / 'grok' / 'echo' / sid / 'chat_history.jsonl'
                 native = uid_for(chat.parent)
-                page.wait_for_function(js('uid => S.sel === uid', 'uid => runtime.core.state.selection.sel === uid'), arg=native, timeout=20000)
-                page.wait_for_function(js("() => composerDraft()?.inputStatus?.state === 'ready'", "() => runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"), timeout=15000)
+                page.wait_for_function('uid => S.sel === uid', arg=native, timeout=20000)
+                page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
                 expect(page.locator('#csend')).to_be_enabled()
 
                 def append(text, prompt_index):
@@ -104,7 +104,7 @@ def main():
                 page.wait_for_function(
                     "text => [...document.querySelectorAll('#msgs .msg[data-role=user]:not(.queued-send)')].some(n => n.textContent.includes(text))",
                     arg='claude我已经卸载。cygnus上有', timeout=15000)
-                stamps = page.evaluate(js("() => (cache.get(S.sel)?.msgs || []).filter(m => m.role === 'user').map(m => m.ts)", "() => (runtime.core.cache.cache.get(runtime.core.state.selection.sel)?.msgs || []).filter(m => m.role === 'user').map(m => m.ts)"))
+                stamps = page.evaluate("() => (cache.get(S.sel)?.msgs || []).filter(m => m.role === 'user').map(m => m.ts)")
                 assert stamps == [None], stamps
 
                 def send(text):
@@ -121,9 +121,9 @@ def main():
                 assert user_count('新的一句') == 0
                 # The queue is server state (docs/cli-state.md): a reloaded page
                 # shows the bubble again before any echo exists.
-                page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                page.evaluate('async () => await composerDraftWrites')
                 page.reload(wait_until='networkidle')
-                page.wait_for_function(js("composerUid && !composerDraft().loading", 'runtime.composer.composerUid && !runtime.composer.composerDraft().loading'), timeout=15000)
+                page.wait_for_function("composerUid && !composerDraft().loading", timeout=15000)
                 expect(page.locator('#queued-sends .msg.queued-send[data-role=user]').filter(has_text='新的一句')).to_have_count(1, timeout=15000)
                 expect(page.locator('#csend')).to_have_attribute('aria-busy', 'false')
                 append('新的一句', 1)

@@ -10,7 +10,7 @@ Fake nodes only (`tests/hub_fake_node.py`); no CLI, no session root.
 """
 from __future__ import annotations
 
-from browser_runtime import js, scoped_frontend
+
 import argparse
 import json
 import os
@@ -23,13 +23,10 @@ from hub_http_suite import REPO, FakeNode, Hub
 
 CHROMIUM = Path.home() / ".cache/ms-playwright/chromium-1234/chrome-linux64/chrome"
 NID = {"a": "a" * 32, "b": "b" * 32, "c": "c" * 32}
-ROWS_JS = js("""() => { const byUid = new Map(S.sessions.map(s => [s.uid, s]));
+ROWS_JS = """() => { const byUid = new Map(S.sessions.map(s => [s.uid, s]));
   return [...document.querySelectorAll('#side .item')].map(n => ({
     uid: n.dataset.uid || null, depth: +n.dataset.depth, caret: !!n.querySelector('.nest-caret'),
-    node: byUid.get(n.dataset.uid)?.node_id || ''})); }""", """() => { const byUid = new Map(runtime.core.state.catalog.sessions.map(s => [s.uid, s]));
-  return [...document.querySelectorAll('#side .item')].map(n => ({
-    uid: n.dataset.uid || null, depth: +n.dataset.depth, caret: !!n.querySelector('.nest-caret'),
-    node: byUid.get(n.dataset.uid)?.node_id || ''})); }""")
+    node: byUid.get(n.dataset.uid)?.node_id || ''})); }"""
 
 
 def scoped(nid, uid):
@@ -68,14 +65,14 @@ class Injector:
 
 def check_page(page, nodes, hub):
     a, b, vega = nodes
-    page.wait_for_function(js('S.sessions.length === 3 && Nodes.list.length === 3 && !!Nodes.capabilities["' + NID["b"] + '"]', 'runtime.core.state.catalog.sessions.length === 3 && runtime.core.state.nodes.list.length === 3 && !!runtime.core.state.nodes.capabilities["' + NID['b'] + '"]'))
-    assert page.evaluate(js("SessionDockCapabilities.namespace", 'runtime.capabilities.namespace')) == "sessiondock.hub./."
-    assert page.evaluate(js("STORAGE_PREFIX", 'runtime.core.environment.STORAGE_PREFIX')) == "sessiondock.hub./."
+    page.wait_for_function(('S.sessions.length === 3 && Nodes.list.length === 3 && !!Nodes.capabilities["' + NID["b"] + '"]'))
+    assert page.evaluate("SessionDockCapabilities.namespace") == "sessiondock.hub./."
+    assert page.evaluate("STORAGE_PREFIX") == "sessiondock.hub./."
     assert page.evaluate("document.querySelector('meta[name=sessiondock-mode]').content") == "hub"
     assert "SessionDock" in page.title()
     side = page.locator("#side").inner_text()
     assert all(name in side for name in ("NodeA", "NodeB", "Vega")), side
-    assert len(set(page.evaluate(js("S.sessions.map(s => s.uid)", 'runtime.core.state.catalog.sessions.map(s => s.uid)')))) == 3
+    assert len(set(page.evaluate("S.sessions.map(s => s.uid)"))) == 3
     page.wait_for_function('document.querySelector("#session-total").textContent === "3"')
     # Typing a machine name filters the hub list locally, without Enter.
     search_requests = []
@@ -90,13 +87,13 @@ def check_page(page, nodes, hub):
     expect(page.locator('#side .item')).to_have_count(3)
     # Machine filter: right-click keeps one machine, while an ordinary click adds another.
     page.get_by_role("button", name="NodeB 1", exact=True).click(button="right")
-    page.wait_for_function(js('visible().length === 1', 'runtime.filters.visible().length === 1'))
+    page.wait_for_function('visible().length === 1')
     assert page.locator("#session-total").inner_text() == "1"
     page.get_by_role("button", name="NodeA 1", exact=True).click()
-    page.wait_for_function(js('visible().length === 2', 'runtime.filters.visible().length === 2'))
+    page.wait_for_function('visible().length === 2')
     assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.nodesOff'))") == [NID["c"]]
     page.get_by_role("button", name="Vega 1", exact=True).click()
-    page.wait_for_function(js('visible().length === 3', 'runtime.filters.visible().length === 3'))
+    page.wait_for_function('visible().length === 3')
     node_a = page.get_by_role("button", name="NodeA 1", exact=True)
     node_a.dispatch_event("pointerdown", {"pointerType": "touch", "pointerId": 40,
                                           "button": 0, "clientX": 20, "clientY": 20})
@@ -104,12 +101,12 @@ def check_page(page, nodes, hub):
     node_a.dispatch_event("pointerup", {"pointerType": "touch", "pointerId": 40,
                                         "button": 0, "clientX": 20, "clientY": 20})
     node_a.dispatch_event("click")
-    assert page.evaluate(js("[...Nodes.off].sort()", '[...runtime.core.state.nodes.off].sort()')) == [NID["b"], NID["c"]]
+    assert page.evaluate("[...Nodes.off].sort()") == [NID["b"], NID["c"]]
     page.get_by_role("button", name="NodeB 1", exact=True).click()
     page.get_by_role("button", name="Vega 1", exact=True).click()
-    page.wait_for_function(js('visible().length === 3', 'runtime.filters.visible().length === 3'))
+    page.wait_for_function('visible().length === 3')
     page.get_by_role("button", name="NodeB 1", exact=True).dblclick()
-    page.wait_for_function(js('visible().length === 3', 'runtime.filters.visible().length === 3'))
+    page.wait_for_function('visible().length === 3')
     page.wait_for_function("""nid => document.querySelector(
       `#node-chips button[data-node="${nid}"]`)?.title ===
       '点击选择或取消；右键或长按只选这台机器'""", arg=NID["b"])
@@ -123,28 +120,22 @@ def check_page(page, nodes, hub):
       .filter(c => getComputedStyle(c).display !== 'none').map(c => c.textContent).join(' '))""")
     assert shown == ["No", "No", "V"], shown
     page.get_by_role("button", name="Vega 1", exact=True).click()
-    page.wait_for_function(js('visible().length === 2', 'runtime.filters.visible().length === 2'))
+    page.wait_for_function('visible().length === 2')
     page.get_by_role("button", name="Vega 1", exact=True).click()
-    page.wait_for_function(js('visible().length === 3', 'runtime.filters.visible().length === 3'))
+    page.wait_for_function('visible().length === 3')
     page.set_viewport_size({"width": 1280, "height": 900})
     page.wait_for_function("!document.querySelector('header').classList.contains('header-fold-nodes')")
 
     # Agent Type has the same exclusive gesture. Give the three synthetic rows distinct types
     # locally, then verify both desktop right-click and touch long-press (including the browser's
     # trailing click, which must not undo the exclusive choice).
-    page.evaluate(js("""() => {
+    page.evaluate("""() => {
       const types = ['claude', 'codex', 'grok'];
       S.sessions.forEach((row, index) => { row.source = types[index]; });
       renderChips(); renderSide();
-    }""", """() => {
-      const types = ['claude', 'codex', 'grok'];
-      runtime.core.state.catalog.sessions.forEach((row, index) => { row.source = types[index]; });
-      runtime.core.state.catalog.notifyChanges();
-    }"""))
-    if scoped_frontend():
-        page.wait_for_function("['codex', 'grok'].every(source => {const chip = document.querySelector('#chips button[data-source=' + source + ']'); return chip && chip.getAttribute('aria-disabled') !== 'true'})")
+    }""")
     page.locator('#chips button[data-source="codex"]').click(button="right")
-    assert page.evaluate(js("[...S.off].sort()", '[...runtime.core.state.sidebar.off].sort()')) == ["agy", "claude", "grok", "opencode", "shell"]
+    assert page.evaluate("[...S.off].sort()") == ["agy", "claude", "grok", "opencode", "shell"]
     grok = page.locator('#chips button[data-source="grok"]')
     grok.dispatch_event("pointerdown", {"pointerType": "touch", "pointerId": 41,
                                         "button": 0, "clientX": 20, "clientY": 20})
@@ -152,33 +143,31 @@ def check_page(page, nodes, hub):
     grok.dispatch_event("pointerup", {"pointerType": "touch", "pointerId": 41,
                                       "button": 0, "clientX": 20, "clientY": 20})
     grok.dispatch_event("click")
-    assert page.evaluate(js("[...S.off].sort()", '[...runtime.core.state.sidebar.off].sort()')) == ["agy", "claude", "codex", "opencode", "shell"]
+    assert page.evaluate("[...S.off].sort()") == ["agy", "claude", "codex", "opencode", "shell"]
     assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.off')).sort()") == ["agy", "claude", "codex", "opencode", "shell"]
-    page.evaluate(js("""() => {
+    page.evaluate("""() => {
       S.off.clear(); store.set('off', []); loadSessions(true);
-    }""", """() => {
-      runtime.core.state.sidebar.off.clear(); runtime.core.preferences.set('off', []); runtime.core.list.loadSessions(true);
-    }"""))
-    page.wait_for_function(js("S.sessions.length === 3 && S.sessions.every(row => row.source === 'claude')", "runtime.core.state.catalog.sessions.length === 3 && runtime.core.state.catalog.sessions.every(row => row.source === 'claude')"))
+    }""")
+    page.wait_for_function("S.sessions.length === 3 && S.sessions.every(row => row.source === 'claude')")
     # Search streams NDJSON progress; a slow machine keeps the bar visible.
     page.locator("#q").fill("needle")
     page.locator("#q").press("Enter")
-    page.wait_for_function(js("S.results?.length === 3", 'runtime.core.state.search.results?.length === 3'))
-    assert {r["node_name"] for r in page.evaluate(js("S.results", 'runtime.core.state.search.results'))} == {"NodeA", "NodeB", "Vega"}
+    page.wait_for_function("S.results?.length === 3")
+    assert {r["node_name"] for r in page.evaluate("S.results")} == {"NodeA", "NodeB", "Vega"}
     b.set(search_steps=6, search_delay=0.5)
     seq = page.locator("#stat").get_attribute("data-seq")
     page.locator("#q").press("Enter")
     page.wait_for_function('document.querySelector("#search-progress b")?.textContent.includes(" / ")')
     assert page.locator("#search-progress").is_visible()
     page.wait_for_function("(seq) => document.querySelector('#stat').dataset.seq !== seq", arg=seq, timeout=20000)
-    assert page.evaluate(js("S.results.length", 'runtime.core.state.search.results.length')) == 3
+    assert page.evaluate("S.results.length") == 3
     b.pop("search_steps", "search_delay")
     b.set(search_error=True)
     seq = page.locator("#stat").get_attribute("data-seq")
     page.locator("#q").press("Enter")
     page.wait_for_function("(seq) => document.querySelector('#stat').dataset.seq !== seq", arg=seq)
     assert page.locator("#node-notice").is_hidden()
-    assert page.evaluate(js('Nodes.list.find(n => n.name === "NodeB").online', 'runtime.core.state.nodes.list.find(n => n.name === "NodeB").online'))
+    assert page.evaluate('Nodes.list.find(n => n.name === "NodeB").online')
     chip = page.locator(f'#node-chips button[data-node="{NID["b"]}"]')
     page.wait_for_function("""nid => {
       const b = document.querySelector(`#node-chips button[data-node="${nid}"]`);
@@ -187,7 +176,7 @@ def check_page(page, nodes, hub):
     chip.hover()
     assert "全文搜索失败" in (chip.get_attribute("title") or "")
     b.pop("search_error")
-    page.evaluate(js("cancelSearch(true)", 'runtime.search.cancelSearch(true)'))
+    page.evaluate("cancelSearch(true)")
     page.wait_for_function("""nid => {
       const b = document.querySelector(`#node-chips button[data-node="${nid}"]`);
       return b && !b.classList.contains('node-issue');
@@ -196,19 +185,19 @@ def check_page(page, nodes, hub):
     # Open the same native id on two machines through the proxy: media and SSE.
     for node, char in ((a, "a"), (b, "b")):
         uid = scoped(NID[char], "claude:same-file-hash")
-        page.evaluate(js("(uid) => openSession(uid)", '(uid) => runtime.core.open.openSession(uid)'), uid)
+        page.evaluate("(uid) => openSession(uid)", uid)
         page.wait_for_function('(name) => document.querySelector("#msgs")?.textContent.includes("reply " + name)', arg=node.name)
         page.wait_for_function('Array.from(document.querySelectorAll("#msgs img")).some(i => i.complete && i.naturalWidth > 0)')
         node.set(messages=node.state()["messages"] + [{"role": "assistant", "text": node.name + " streamed update", "ts": "2026-09-07T00:01:00Z"}])
         page.wait_for_function('(name) => document.querySelector("#msgs")?.textContent.includes(name + " streamed update")', arg=node.name)
-        assert page.evaluate(js("S.sel", 'runtime.core.state.selection.sel')) == uid
+        assert page.evaluate("S.sel") == uid
         assert node.name in page.locator("#detail .dhead").inner_text()
-    page.evaluate(js("closeWatch()", 'runtime.core.sync.closeWatch()'))
+    page.evaluate("closeWatch()")
 
 
 def check_node_chip_issue(page):
     """Live/term failures gray the machine chip and put the reason in title; #node-notice stays off."""
-    result = page.evaluate(js("""async () => {
+    result = page.evaluate("""async () => {
       const notice = document.querySelector('#node-notice');
       const nid = Nodes.list.find(n => n.name === 'NodeB').id;
       const chip = document.querySelector(`#node-chips button[data-node="${nid}"]`);
@@ -225,26 +214,7 @@ def check_node_chip_issue(page):
       const recovered = {noticeHidden: notice.hidden, issue: chip.classList.contains('node-issue')};
       await Promise.resolve();
       return {shown, recovered, title: chip.title};
-    }""", """async () => {
-      const notice = document.querySelector('#node-notice');
-      const nid = runtime.core.state.nodes.list.find(n => n.name === 'NodeB').id;
-      const chip = document.querySelector(`#node-chips button[data-node="${nid}"]`);
-      const fail = {nodes: runtime.core.state.nodes.list, errors: [{node_id: nid, name: 'NodeB', error: 'timeout'}]};
-      const ok = {nodes: runtime.core.state.nodes.list, errors: []};
-      runtime.core.nodes.applyNodeState(fail, 'live');
-      runtime.core.nodes.applyNodeState(fail, 'term');
-      await new Promise(requestAnimationFrame);
-      const shown = {
-        noticeHidden: notice.hidden, noticeText: notice.textContent,
-        issue: chip.classList.contains('node-issue'), title: chip.title,
-      };
-      runtime.core.nodes.applyNodeState(ok, 'live');
-      runtime.core.nodes.applyNodeState(ok, 'term');
-      await new Promise(requestAnimationFrame);
-      const recovered = {noticeHidden: notice.hidden, issue: chip.classList.contains('node-issue')};
-      await Promise.resolve();
-      return {shown, recovered, title: chip.title};
-    }"""))
+    }""")
     shown, recovered = result["shown"], result["recovered"]
     assert shown["noticeHidden"] and not shown["noticeText"], shown
     assert shown["issue"], shown
@@ -261,12 +231,12 @@ def check_node_chip_issue(page):
 
 def check_nesting(page, injector):
     injector.on = True
-    page.evaluate(js("loadSessions(true)", 'runtime.core.list.loadSessions(true)'))
-    page.wait_for_function(js("S.sessions.length === 6 && S.sessions.some(s => s.nest_parent)", 'runtime.core.state.catalog.sessions.length === 6 && runtime.core.state.catalog.sessions.some(s => s.nest_parent)'))
+    page.evaluate("loadSessions(true)")
+    page.wait_for_function("S.sessions.length === 6 && S.sessions.some(s => s.nest_parent)")
     toggle = page.locator("#nest-toggle")
     assert toggle.is_visible()
     toggle.click()
-    page.wait_for_function(js("S.nest === true", 'runtime.core.state.sidebar.nest === true'))
+    page.wait_for_function("S.nest === true")
     assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.nest'))") is True
     rows = page.evaluate(ROWS_JS)
     children = [r for r in rows if r["uid"] and "child-of-same" in r["uid"]]
@@ -280,10 +250,10 @@ def check_nesting(page, injector):
             parent = rows[index - 1]
             assert parent["depth"] == 0 and parent["node"] == row["node"], (parent, row)
     toggle.click()
-    page.wait_for_function(js("S.nest === false", 'runtime.core.state.sidebar.nest === false'))
+    page.wait_for_function("S.nest === false")
     injector.on = False
-    page.evaluate(js("loadSessions(true)", 'runtime.core.list.loadSessions(true)'))
-    page.wait_for_function(js("S.sessions.length === 3", 'runtime.core.state.catalog.sessions.length === 3'))
+    page.evaluate("loadSessions(true)")
+    page.wait_for_function("S.sessions.length === 3")
 
 
 def check_settings(page, nodes, hub):
@@ -300,18 +270,18 @@ def check_settings(page, nodes, hub):
     vega_row = rows.filter(has=page.locator('input[aria-label="Vega 的名称"]'))
     probes = lambda: len([p for p, _ in vega.state()["gets"] if p.startswith("/api/")])  # noqa: E731
     vega_row.locator(".machine-enabled").uncheck()
-    page.wait_for_function(js('!Nodes.list.some(n => n.name === "Vega") && Nodes.machines.some(n => n.name === "Vega" && !n.enabled)', '!runtime.core.state.nodes.list.some(n => n.name === "Vega") && runtime.core.state.nodes.machines.some(n => n.name === "Vega" && !n.enabled)'))
-    page.wait_for_function(js('!S.sessions.some(s => s.node_name === "Vega")', '!runtime.core.state.catalog.sessions.some(s => s.node_name === "Vega")'))
+    page.wait_for_function('!Nodes.list.some(n => n.name === "Vega") && Nodes.machines.some(n => n.name === "Vega" && !n.enabled)')
+    page.wait_for_function('!S.sessions.some(s => s.node_name === "Vega")')
     assert page.locator("#node-chips button", has_text="Vega").count() == 0
     assert names() == ["NodeA", "NodeB", "Vega"], names()
     before = probes()
     page.wait_for_timeout(1500)
     assert probes() == before, "an unticked machine is not probed"
-    assert page.evaluate(js('fetch("api/nodes/" + "c".repeat(32) + "/api/live").then(r => r.status)', 'runtime.core.network.fetch("api/nodes/" + "c".repeat(32) + "/api/live").then(r => r.status)')) == 404
+    assert page.evaluate('fetch("api/nodes/" + "c".repeat(32) + "/api/live").then(r => r.status)') == 404
     vega_row.locator(".machine-enabled").check()
-    page.wait_for_function(js('Nodes.list.some(n => n.name === "Vega") && Nodes.machines.every(n => n.enabled)', 'runtime.core.state.nodes.list.some(n => n.name === "Vega") && runtime.core.state.nodes.machines.every(n => n.enabled)'))
-    page.wait_for_function(js('Nodes.list.find(n => n.name === "Vega")?.online === true', 'runtime.core.state.nodes.list.find(n => n.name === "Vega")?.online === true'), timeout=20000)
-    page.wait_for_function(js('S.sessions.some(s => s.node_name === "Vega" && !s.stale)', 'runtime.core.state.catalog.sessions.some(s => s.node_name === "Vega" && !s.stale)'), timeout=20000)
+    page.wait_for_function('Nodes.list.some(n => n.name === "Vega") && Nodes.machines.every(n => n.enabled)')
+    page.wait_for_function('Nodes.list.find(n => n.name === "Vega")?.online === true', timeout=20000)
+    page.wait_for_function('S.sessions.some(s => s.node_name === "Vega" && !s.stale)', timeout=20000)
     # Drag Vega's grip to the top: chips, dropdown and the registry follow.
     grip = page.locator('[data-machine-grip="' + NID["c"] + '"]')
     top = page.locator("#machine-rows .machine-row").first.bounding_box()
@@ -321,7 +291,7 @@ def check_settings(page, nodes, hub):
     page.mouse.move(box["x"] + box["width"] / 2, top["y"] + 4, steps=8)
     assert names() == ["Vega", "NodeA", "NodeB"], names()
     page.mouse.up()
-    page.wait_for_function(js('Nodes.machines[0]?.name === "Vega" && Nodes.list[0]?.name === "Vega"', 'runtime.core.state.nodes.machines[0]?.name === "Vega" && runtime.core.state.nodes.list[0]?.name === "Vega"'))
+    page.wait_for_function('Nodes.machines[0]?.name === "Vega" && Nodes.list[0]?.name === "Vega"')
     assert chips() == ["Vega", "NodeA", "NodeB"], chips()
     status, listing = hub.json("GET", "/api/nodes")
     assert [n["id"] for n in listing["machines"]] == [NID["c"], NID["a"], NID["b"]], listing
@@ -335,12 +305,12 @@ def check_settings(page, nodes, hub):
     grip.press("ArrowDown")
     grip.press("ArrowDown")
     assert names() == ["NodeA", "NodeB", "Vega"], names()
-    page.wait_for_function(js('Nodes.list[2]?.name === "Vega"', 'runtime.core.state.nodes.list[2]?.name === "Vega"'), timeout=20000)
+    page.wait_for_function('Nodes.list[2]?.name === "Vega"', timeout=20000)
     assert chips() == ["NodeA", "NodeB", "Vega"], chips()
     name_input = page.locator('input[aria-label="NodeA 的名称"]')
     name_input.fill("机房 A")
     name_input.press("Enter")
-    page.wait_for_function(js('Nodes.list.some(n => n.name === "机房 A")', 'runtime.core.state.nodes.list.some(n => n.name === "机房 A")'))
+    page.wait_for_function('Nodes.list.some(n => n.name === "机房 A")')
     page.locator("#settings-dialog .modal-actions button").click()
     events = hub.audit_events()
     assert any(e["event"] == "hub.node.order.changed" for e in events), events

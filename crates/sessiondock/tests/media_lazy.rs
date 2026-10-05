@@ -47,7 +47,7 @@ impl Fixture {
             .into_bytes();
         fs::write(&path, &original).unwrap();
         let app = sessiondock::app(Config {
-            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
+            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
             roots: SessionRoots {
                 claude: None,
                 codex: Some(native),

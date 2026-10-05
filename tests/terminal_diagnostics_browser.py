@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Claim/header/body/first-grid-paint receipts; isolated shell and delayed HTTP only."""
-from browser_runtime import js
+
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -85,7 +85,7 @@ def main():
                     page.on('pageerror', lambda e: errors.append(str(e)))
                     page.goto(base, wait_until='networkidle')
                     open_console(page, uid)
-                    assert page.evaluate(js('currentTermViewObject().grid', 'runtime.terminal.currentTermViewObject().grid'))
+                    assert page.evaluate('currentTermViewObject().grid')
                     keyboard = page.locator('#termpane .xterm-helper-textarea')
                     keyboard.fill('ping')
                     keyboard.press('Enter')
@@ -122,7 +122,7 @@ def main():
                     assert sum(r['data']['bytes'] for r in sent) > 0, sent
                     # A split snapshot must not claim success before the last byte;
                     # a hidden canvas must not claim it was visibly painted.
-                    page.evaluate(js("""() => {
+                    page.evaluate("""() => {
                       window.gridReceipts=[];
                       const mount=document.createElement('div'); mount.id='diagnostic-grid';
                       mount.style='position:fixed;top:180px;left:10px;width:300px;height:100px;z-index:99999';
@@ -141,26 +141,7 @@ def main():
                         if(step===2){mount.hidden=false;diagnosticGrid.refresh();}
                         step++;
                       };
-                    }""", """() => {
-                      window.gridReceipts=[];
-                      const mount=document.createElement('div'); mount.id='diagnostic-grid';
-                      mount.style='position:fixed;top:180px;left:10px;width:300px;height:100px;z-index:99999';
-                      document.body.append(mount);
-                      window.diagnosticGrid=new runtime.GridTerm({onDiagnostic:(event,data)=>gridReceipts.push({event,data})});
-                      diagnosticGrid.open(mount); mount.hidden=true;
-                      const wire=JSON.stringify({t:'snapshot',seq:1,reset:true,cols:20,rows:2,
-                        grid:[{s:[['DIAGNOSTIC_GRID',-1,-1,0]],w:false},{s:[],w:false}],history:[],
-                        cursor:{x:0,y:1,visible:true}})+'\\n';
-                      const b=document.createElement('button'); b.id='diagnostic-frame'; b.textContent='Frame';
-                      b.style='position:fixed;top:140px;left:10px;z-index:99999'; document.body.append(b);
-                      let step=0;
-                      b.onclick=()=>{
-                        if(step===0)diagnosticGrid.write(wire.slice(0,-1));
-                        if(step===1)diagnosticGrid.write(wire.slice(-1));
-                        if(step===2){mount.hidden=false;diagnosticGrid.refresh();}
-                        step++;
-                      };
-                    }"""))
+                    }""")
                     frame = page.locator('#diagnostic-frame')
                     frame.click()
                     page.wait_for_timeout(80)
@@ -173,7 +154,7 @@ def main():
                     assert page.evaluate('gridReceipts.map(r=>r.event)') == ['snapshot_applied', 'first_paint']
                     page.evaluate("diagnosticGrid.dispose(); document.querySelector('#diagnostic-frame').remove(); document.querySelector('#diagnostic-grid').remove()")
                     # A synthetic action button uses the production post() and real delayed HTTP.
-                    page.evaluate(js('''base => {
+                    page.evaluate('''base => {
                       const b = document.createElement('button'); b.id='diagnostic-request';
                       b.style='position:fixed;top:100px;left:10px;z-index:99999';
                       b.textContent='Probe'; document.body.append(b);
@@ -182,23 +163,14 @@ def main():
                           b.dataset.result='ok';}
                         catch(e){b.dataset.result=e.name;}
                       };
-                    }''', """base => {
-                      const b = document.createElement('button'); b.id='diagnostic-request';
-                      b.style='position:fixed;top:100px;left:10px;z-index:99999';
-                      b.textContent='Probe'; document.body.append(b);
-                      b.onclick=async()=>{
-                        try {await runtime.post.post(base+'/'+b.dataset.phase,{request_id:'diag-'+b.dataset.phase}, {timeoutMs:400});
-                          b.dataset.result='ok';}
-                        catch(e){b.dataset.result=e.name;}
-                      };
-                    }"""), slow_base)
+                    }''', slow_base)
                     button = page.locator('#diagnostic-request')
                     for phase in ['headers', 'body', 'ok']:
                         button.evaluate('(b,phase)=>{b.dataset.phase=phase;delete b.dataset.result}', phase)
                         button.click()
                         expect(button).to_have_attribute('data-result', 'ok' if phase == 'ok' else 'TimeoutError')
                     wait_for_events(page, root/'audit', {'browser.http.request.failed'})
-                    page.wait_for_function(js('!browserAuditQueue.length && !browserAuditSending', '!runtime.core.audit.queue.length && !runtime.core.audit.sending'))
+                    page.wait_for_function('!browserAuditQueue.length && !browserAuditSending')
                     rows = audit_lines(root/'audit')
                     failures = {r['trace_id']: r['data'] for r in rows if r['event'] == 'browser.http.request.failed'}
                     assert failures['diag-headers']['phase'] == 'headers' and failures['diag-headers']['headers_ms'] is None

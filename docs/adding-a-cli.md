@@ -1,6 +1,6 @@
 # 接入新的 AI CLI
 
-本文把 OpenCode 接入及后续修复整理成新增 AI CLI 的清单；2026-10-04 对照主线至 `7dabf54` 核对，包含菜单交互、客户端更新、镜像增量读取、会话挂靠和 Vue 迁移入口。每项都要明确实现或记录不适用原因。现行合同以各专题文档为准：[OpenCode](opencode.md)、[启动器](lifecycle-launcher.md)、[生命周期 HTTP](lifecycle-http.md)、[对话输入就绪](composer-input.md)、[CLI 状态对象](cli-state.md)、[读模型](read-model.md)、[liveness](liveness.md)、[移动](session-move.md)、[克隆](session-clone.md)。
+本文把 OpenCode 接入及后续修复整理成新增 AI CLI 的清单；2026-10-04 对照主线至 `7dabf54` 核对，包含菜单交互、客户端更新、镜像增量读取和会话挂靠。每项都要明确实现或记录不适用原因。现行合同以各专题文档为准：[OpenCode](opencode.md)、[启动器](lifecycle-launcher.md)、[生命周期 HTTP](lifecycle-http.md)、[对话输入就绪](composer-input.md)、[CLI 状态对象](cli-state.md)、[读模型](read-model.md)、[liveness](liveness.md)、[移动](session-move.md)、[克隆](session-clone.md)。
 
 ## 先调研，再定路线
 
@@ -163,12 +163,7 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
   - `--<cli>` 颜色，浅色和深色主题都要定义；
   - 新建会话选择器已经是五列，再加一列要重新验证手机宽度（390 px 一行排得下）。
 - `legacy-web/term.js`：输入识别还不可靠时用终端优先布局（`sessionTerminalFirst`）；检查 `legacy-web/app.js` 的来源能力、停止/删除及批量操作分支。
-- **已存在的 Vue 入口**：生产 legacy 与 Vue 预览分别按 [部署](deployment.md) 的 frontend 选择，不把这次接入当作另起一套 Vue 界面的授权。对照 [前端界面清单](frontend-migration-surfaces.md)，同步现有来源分支：
-  - `web/src/domain/runtime/cli.js`（及类型声明）：CLI 类、注册表、来源识别；
-  - `web/src/components/session-ui/NewSessionDialog.vue`、`BugReportDialog.vue` 与 `web/src/services/session-ui/launch.js`：选择器、报告来源和能力集合；
-  - `web/migration/index.html`：图标 symbol；`web/src/services/terminal/controller.js`：终端优先和生命周期展示；
-  - `web/src/components/session-ui/DeletedReceipt.vue`、`web/src/services/runtime/bulk.js`：特殊删除提示和批量操作。遵循现有 Vue 状态所有权，不重新在视图回调中实现会话同步。
-- 新图标、按钮、颜色与交互优先复用所在界面已有样式；两种入口按实际发布范围验证，包含 390 px 窄屏及深浅主题。
+- 新图标、按钮、颜色与交互优先复用所在界面已有样式；验证包含 390 px 窄屏及深浅主题。
 
 ### 文档与测试
 

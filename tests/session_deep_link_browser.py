@@ -4,7 +4,7 @@
 Subagent rows hang under their owner in both sidebar modes, so the deep link
 must reveal and select them without flipping the user's hierarchy preference.
 """
-from browser_runtime import js
+
 import argparse,json,os,tempfile
 from pathlib import Path
 from urllib.parse import urlencode, urlparse, parse_qs
@@ -103,19 +103,19 @@ def check_rotated_links(browser, base, corpus):
             query = {'sid':sid}
             if node: query['node'] = node
             page.goto(base+'/?'+urlencode(query), wait_until='networkidle')
-            page.wait_for_function(js('S.sessions.length > 0', 'runtime.core.state.catalog.sessions.length > 0'))
+            page.wait_for_function('S.sessions.length > 0')
             if selected:
                 expect(page.locator('#msgs')).to_contain_text('Rotation current question')
                 expect(page.locator('#msgs')).to_contain_text('Rotation inherited answer')
-                assert page.evaluate(js('S.sel', 'runtime.core.state.selection.sel')) == selected
+                assert page.evaluate('S.sel') == selected
                 if selected == current:
                     expect(page.locator('#msgs')).not_to_contain_text('Rotation historical tail')
                     expect(page.locator('#side .item.sel')).to_have_attribute('data-uid', current)
                     page.reload(wait_until='networkidle')
                     expect(page.locator('#msgs')).to_contain_text('Rotation current question')
-                    assert page.evaluate(js('S.sel', 'runtime.core.state.selection.sel')) == current
+                    assert page.evaluate('S.sel') == current
             else:
-                assert page.evaluate(js('S.sel', 'runtime.core.state.selection.sel')) is None, (mode, page.evaluate(js('S.sel', 'runtime.core.state.selection.sel')))
+                assert page.evaluate('S.sel') is None, (mode, page.evaluate('S.sel'))
                 expect(page.locator('#side .item.sel')).to_have_count(0)
                 assert parse_qs(urlparse(page.url).query)['sid'] == [sid]
             assert not errors, errors
@@ -157,9 +157,9 @@ def main():
       page=ctx.new_page();page.on('pageerror',lambda e:errors.append(str(e)))
       page.goto(base+'/?'+urlencode({'sid':'codex:'+sid,'node':NODE}))
       expect(page.locator('#msgs')).to_contain_text(corpus.expected[agent or sid][-1])
-      assert page.evaluate(js('S.sel', 'runtime.core.state.selection.sel'))==owner
-      assert page.evaluate(js('S.agent', 'runtime.core.state.selection.agent'))==agent
-      assert page.evaluate(js('S.nest', 'runtime.core.state.sidebar.nest'))==nest,'deep link must not flip the hierarchy mode'
+      assert page.evaluate('S.sel')==owner
+      assert page.evaluate('S.agent')==agent
+      assert page.evaluate('S.nest')==nest,'deep link must not flip the hierarchy mode'
       selected=page.locator('#side .item.sel')
       expect(selected).to_have_count(1)
       if agent:
@@ -175,7 +175,7 @@ def main():
       if not agent:
        # Click a real sidebar row, then use browser history and reload the URL.
        other=page.locator('#side .item[data-uid="'+corpus.uid('claude-compact')+'"]')
-       if width==390: page.evaluate(js('showMobileList()', 'runtime.shell.showMobileList()'))
+       if width==390: page.evaluate('showMobileList()')
        other.click()
        expect(page.locator('#msgs')).to_contain_text(corpus.expected['claude-compact'][-1])
        assert parse_qs(urlparse(page.url).query)['sid']==['claude:claude-compact']

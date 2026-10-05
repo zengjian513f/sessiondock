@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Shared SSH attribution: isolated node pair/Hub, process consumers and Chromium."""
-from browser_runtime import js
+
 import argparse
 from contextlib import ExitStack, contextmanager
 import json
@@ -272,24 +272,24 @@ def main():
                         page.goto(f'http://127.0.0.1:{hub.port}', wait_until='networkidle')
                         uid = scoped(nodes[1].nid, corpora[1].uid('child'))
                         parent = scoped(nodes[0].nid, corpora[0].uid('parent'))
-                        page.wait_for_function(js('uid => S.sessions.some(s => s.uid === uid)', 'uid => runtime.core.state.catalog.sessions.some(s => s.uid === uid)'), arg=uid)
-                        assert page.evaluate(js('([uid,parent]) => nestParentOf(S.sessions.find(s => s.uid === uid), new Map(S.sessions.map(s => [spawnKey(s.node_id,s.source,s.sid),s])))?.uid === parent', '([uid,parent]) => runtime.sidebarView.nestParentOf(runtime.core.state.catalog.sessions.find(s => s.uid === uid), new Map(runtime.core.state.catalog.sessions.map(s => [runtime.sidebarView.spawnKey(s.node_id,s.source,s.sid),s])))?.uid === parent'), [uid, parent])
+                        page.wait_for_function('uid => S.sessions.some(s => s.uid === uid)', arg=uid)
+                        assert page.evaluate('([uid,parent]) => nestParentOf(S.sessions.find(s => s.uid === uid), new Map(S.sessions.map(s => [spawnKey(s.node_id,s.source,s.sid),s])))?.uid === parent', [uid, parent])
                         page.locator(f'[data-uid="{parent}"]').first.click()
                         page.locator(f'[data-uid="{uid}"]').first.click()
-                        assert page.evaluate(js('S.sel', 'runtime.core.state.selection.sel')) == uid
-                        if not page.evaluate(js('S.nest', 'runtime.core.state.sidebar.nest')):
+                        assert page.evaluate('S.sel') == uid
+                        if not page.evaluate('S.nest'):
                             page.locator('#nest-toggle').click()
                         child_item = page.locator(f'#side .item[data-uid="{uid}"]')
                         child_item.click(button='right')
                         page.locator('#item-menu [data-act="detach"]').click()
                         get_json(opener, base, '/api/process-links')
-                        page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
-                        page.wait_for_function(js('uid => !S.sessions.find(s => s.uid === uid)?.nest_parent', 'uid => !runtime.core.state.catalog.sessions.find(s => s.uid === uid)?.nest_parent'), arg=uid)
+                        page.evaluate('pollSessions()')
+                        page.wait_for_function('uid => !S.sessions.find(s => s.uid === uid)?.nest_parent', arg=uid)
                         assert 'nest_parent' not in next(r for r in get_json(opener, base, '/api/sessions?force=1')['sessions'] if r['sid'] == 'child')
                         child_item.click(button='right')
                         page.locator('#item-menu [data-act="attach"]').click()
                         page.locator(f'#side .item[data-uid="{parent}"]').click()
-                        page.wait_for_function(js('([uid,node]) => S.sessions.find(s => s.uid === uid)?.nest_parent?.node_id === node', '([uid,node]) => runtime.core.state.catalog.sessions.find(s => s.uid === uid)?.nest_parent?.node_id === node'), arg=[uid,nodes[0].nid])
+                        page.wait_for_function('([uid,node]) => S.sessions.find(s => s.uid === uid)?.nest_parent?.node_id === node', arg=[uid,nodes[0].nid])
                         response = context.request.post(f'http://127.0.0.1:{hub.port}' + '/api/process-links?node=' + nodes[1].nid,
                             data={'boot_id':'forged','links':[]})
                         assert response.status == 403
@@ -352,8 +352,8 @@ def main():
                         wait_for(lambda: any(b['process']['pid'] == 700 for b in
                             get_json(opener, base, '/api/process-links')['bindings']))
                         page.locator(f'[data-uid="{uid}"]').first.click()
-                        page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
-                        page.wait_for_function(js('([uid,node]) => S.sessions.find(s => s.uid === uid)?.nest_parent?.node_id === node', '([uid,node]) => runtime.core.state.catalog.sessions.find(s => s.uid === uid)?.nest_parent?.node_id === node'),
+                        page.evaluate('pollSessions()')
+                        page.wait_for_function('([uid,node]) => S.sessions.find(s => s.uid === uid)?.nest_parent?.node_id === node',
                             arg=[uid, nodes[0].nid])
                         print('PASS stable polls skip publish, read recovery republishes and new descendant retries failed publication', flush=True)
                         older = scoped(nodes[0].nid, corpora[0].uid('older'))
@@ -361,11 +361,11 @@ def main():
                         shutil.rmtree(procs[0] / '910')
                         hub_live = lambda: get_json(opener, f'http://127.0.0.1:{hub.port}', '/api/live?force=1')
                         wait_for(lambda: older not in hub_live()['working_uids'] and owner in hub_live()['remote_working'])
-                        page.evaluate(js('refreshLive(true)', 'runtime.core.live.refreshLive(true)'))
+                        page.evaluate('refreshLive(true)')
                         expect(older_badge).to_have_class(WORKING)
                         shutil.rmtree(procs[1] / '920')
                         wait_for(lambda: owner not in hub_live()['remote_working'])
-                        page.evaluate(js('refreshLive(true)', 'runtime.core.live.refreshLive(true)'))
+                        page.evaluate('refreshLive(true)')
                         expect(older_badge).not_to_have_class(WORKING)
                         print('PASS remote job lights its owner through Hub after SSH client exit and clears on exit', flush=True)
                         # Persisted per-process identity survives no live SSH evidence.

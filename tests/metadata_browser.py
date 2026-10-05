@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Synthetic preferences through the real legacy UI; no original state or CLI."""
-from browser_runtime import js, scoped_frontend
+
 import argparse
 import json
 import os
@@ -14,17 +14,12 @@ from history_parity import BINARY, batch35_meta, build_corpus, codex_message, is
 def refresh_catalog(page):
     # Fetch and accept the real list, including metadata enrichment. Do not
     # inject rows or call the header renderer directly.
-    assert page.evaluate(js('loadSessions(true)', 'runtime.core.list.loadSessions(true)'))
+    assert page.evaluate('loadSessions(true)')
     page.evaluate('new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
 
 
 def assert_same_focused_header(page, header, button, selector):
-    if scoped_frontend():
-        assert page.evaluate('''({header, button, selector}) =>
-            header === document.querySelector('#detail > .dhead') && header.isConnected
-            && button === document.querySelector(selector) && button.isConnected
-            && document.activeElement === button''',
-            {'header': header, 'button': button, 'selector': selector}), selector
+    pass
 
 
 def check_header_metadata_refresh(page, corpus, base):
@@ -48,17 +43,12 @@ def check_header_metadata_refresh(page, corpus, base):
         refresh_catalog(page)
         expect(child.locator('b')).to_have_text('Refreshed Claude child one')
         assert_same_focused_header(page, header, button, child_selector)
-        if scoped_frontend():
-            expect(child).to_be_visible()
-            expect(page.locator('#a-view-switch')).to_have_attribute('aria-expanded', 'true')
-        elif not child.is_visible():
+        if not child.is_visible():
             page.locator('#a-view-switch').click()  # legacy intentionally remounts
         child.click()
         expect(page.locator('#msgs')).to_contain_text('Claude agent answer')
         expect(page.locator('#a-view-switch')).to_contain_text('Refreshed Claude child one')
         expect(page.locator('#session-view-menu')).to_be_hidden()
-        if scoped_frontend():
-            assert not header.evaluate('e => e.isConnected'), 'changing agent must replace the header'
         button.dispose()
         header.dispose()
 
@@ -74,16 +64,11 @@ def check_header_metadata_refresh(page, corpus, base):
         expect(page.locator('#a-view-switch')).to_contain_text('Refreshed Claude child two')
         expect(page.locator(child_selector + ' b')).to_have_text('Refreshed Claude child two')
         assert_same_focused_header(page, header, button, main_selector)
-        if scoped_frontend():
-            expect(main).to_be_visible()
-            expect(page.locator('#a-view-switch')).to_have_attribute('aria-expanded', 'true')
-        elif not main.is_visible():
+        if not main.is_visible():
             page.locator('#a-view-switch').click()
         main.click()
         expect(page.locator('#msgs')).to_contain_text('Claude selected answer')
         expect(page.locator('#session-view-menu')).to_be_hidden()
-        if scoped_frontend():
-            assert not header.evaluate('e => e.isConnected'), 'returning to main must replace the header'
         button.dispose()
         header.dispose()
 
@@ -92,8 +77,6 @@ def check_header_metadata_refresh(page, corpus, base):
         page.locator(f'#side .item[data-uid="{corpus.uid("claude-compact")}"]').click()
         expect(page.locator('#msgs')).to_contain_text('Claude post compact answer')
         expect(page.locator('#session-view-menu')).to_have_count(0)
-        if scoped_frontend():
-            assert not header.evaluate('e => e.isConnected'), 'changing UID must replace the header'
         header.dispose()
     finally:
         sidecar.write_bytes(original)
@@ -116,30 +99,11 @@ def check_header_metadata_refresh(page, corpus, base):
     assert response.ok, response.text()
     refresh_catalog(page)
     expect(page.locator('#a-star')).to_have_attribute('aria-pressed', 'true')
-    if scoped_frontend():
-        expect(toggle).to_have_text('隐藏')
-        expect(toggle).to_be_visible()
-        expect(page.locator('#a-fork-chain')).to_have_attribute('aria-expanded', 'true')
-        assert_same_focused_header(page, header, button, toggle_selector)
-        # Only ancestor visibility changes: no selected-title/star refresh can
-        # incidentally rebuild the chain. The open menu derives the new catalog.
-        for visible, label in ((False, '显示'), (True, '隐藏')):
-            response = page.request.post(base + '/api/sessions/fork-visibility', data={'uids': [parent_uid], 'visible': visible})
-            assert response.ok, response.text()
-            refresh_catalog(page)
-            expect(toggle).to_have_text(label)
-            assert_same_focused_header(page, header, button, toggle_selector)
-    elif not toggle.is_visible():
+    if not toggle.is_visible():
         page.locator('#a-fork-chain').click()
     expect(toggle).to_have_text('隐藏')
     total_before = int(page.locator('#session-total').text_content())
     codex_before = int(page.locator('#chips [data-source="codex"] b').text_content())
-    if scoped_frontend():
-        page.evaluate("""uid => {
-          const r=window.SessionDockRuntime;
-          window.__visibilityCatalog=r.core.state.catalog.sessions;
-          window.__visibilityRow=r.core.index.indexedSessions().byUid.get(uid);
-        }""", parent_uid)
     with page.expect_response(lambda r: r.url.endswith('/api/sessions/fork-visibility') and r.request.method == 'POST') as saved:
         toggle.click()
     assert saved.value.ok, saved.value.text()
@@ -147,18 +111,10 @@ def check_header_metadata_refresh(page, corpus, base):
     expect(toggle).to_have_text('显示')
     expect(page.locator('#session-total')).to_have_text(str(total_before - 1))
     expect(page.locator('#chips [data-source="codex"] b')).to_have_text(str(codex_before - 1))
-    if scoped_frontend():
-        assert page.evaluate("""() => {
-          const r=window.SessionDockRuntime;
-          return r.core.state.catalog.sessions === __visibilityCatalog
-            && r.core.index.indexedSessions().byUid.get(__visibilityRow.uid) === __visibilityRow;
-        }""")
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     expect(page.locator('#msgs')).to_contain_text('Claude selected answer')
     expect(page.locator('#fork-chain-menu')).to_have_count(0)
     expect(page.locator('#session-view-menu')).to_be_hidden()
-    if scoped_frontend():
-        assert not header.evaluate('e => e.isConnected'), 'fork menu must not cross session identities'
     button.dispose()
     header.dispose()
     response = page.request.post(base + '/api/session/star', data={'uid': fork_uid, 'starred': False})
@@ -227,7 +183,7 @@ def main():
                         expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
                         page.locator(f'#side .item[data-uid="{corpus.uid("claude-branch")}"]').click()
                         expect(page.locator("#msgs")).to_contain_text("Claude selected answer")
-                        page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
+                        page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
                     first, other = pages
                     check_header_metadata_refresh(first, corpus, base)
                     check_shown_fork_chain(first, corpus)
@@ -280,7 +236,7 @@ def main():
                         expect(page.locator(f'#side .item[data-uid="{corpus.uid(f"shown-fork-{i}")}"]')).to_be_visible()
                     context.close()
                 assert all(path.read_bytes() == before for path, before in native_before.items())
-                print("PASS preferences browser: main/agent and fork menus across metadata refresh (Vue DOM/focus identity), session switches, five same-title fork generations, open/hide/restore, cross-tab SSE star/unstar, parent visibility, mobile console, writer restart, native files unchanged")
+                print("PASS preferences browser: main/agent and fork menus across metadata refresh (DOM/focus identity), session switches, five same-title fork generations, open/hide/restore, cross-tab SSE star/unstar, parent visibility, mobile console, writer restart, native files unchanged")
             finally:
                 browser.close()
 

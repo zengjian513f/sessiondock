@@ -58,7 +58,8 @@ from deployment_lock import DeploymentLock, repository_lock  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_DIR = ROOT / "deploy"
 STAGE_ROOT = ROOT / "target" / "deploy"
-DIRTY_SCOPE = ["crates", "legacy-web", "web", "Cargo.toml", "Cargo.lock"]
+# The frontend is legacy-web/, served exactly as committed.
+DIRTY_SCOPE = ["crates", "legacy-web", "Cargo.toml", "Cargo.lock"]
 WEB_EXCLUDES = ["node_modules", ".DS_Store", "*.swp"]
 GOOD = {"OK", "PLANNED", "SKIPPED"}
 COLUMNS = ("target", "kind", "result", "build", "sha256", "ptyhost", "s", "backup")
@@ -202,41 +203,6 @@ def resolve_build(cfg: dict, with_ptyhost: bool) -> tuple[list[str], list[str]]:
     return argv, names
 
 
-def build_web(stage: Path, worktree: bool, frontend: str) -> None:
-    """Compile the selected frontend from the snapshot, using installed dependencies."""
-    log_path = stage / "logs" / "web-build.log"
-    with tempfile.TemporaryDirectory(prefix="web-build-", dir=stage) as temporary:
-        snapshot = Path(temporary)
-        if worktree:
-            subprocess.run(["tar", "-xf", str(stage / "source.tar"), "-C", str(snapshot), "web"],
-                           check=True, timeout=300)
-        else:
-            with subprocess.Popen(["git", "archive", "--format=tar", "HEAD", "web"], cwd=ROOT,
-                                  stdout=subprocess.PIPE) as ga:
-                subprocess.run(["tar", "-x", "-C", str(snapshot)], stdin=ga.stdout,
-                               check=True, timeout=300)
-            if ga.returncode != 0:
-                die("git archive HEAD web failed")
-        (snapshot / "web" / "node_modules").symlink_to(ROOT / "web" / "node_modules",
-                                                       target_is_directory=True)
-        script = "build:migration" if frontend == "vue" else "build:legacy"
-        if frontend == "vue":
-            shutil.copytree(stage / "web", snapshot / "legacy-web")
-        print(f"web: npm run {script} (log {log_path.relative_to(ROOT)})", flush=True)
-        with log_path.open("w", encoding="utf-8") as log:
-            argv = ["npm", "run", script]
-            if frontend == "legacy":
-                argv += ["--", "--outDir", str(stage / "web" / "framework")]
-            result = subprocess.run(argv, cwd=snapshot / "web",
-                                    stdout=log, stderr=subprocess.STDOUT, timeout=300)
-        if result.returncode != 0:
-            tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-30:]
-            die("web build failed (rc=%d):\n%s" % (result.returncode, "\n".join(tail)), 1)
-        if frontend == "vue":
-            shutil.rmtree(stage / "web")
-            shutil.copytree(snapshot / "web" / "dist-migration", stage / "web")
-
-
 def cmd_build(args) -> Path:
     dirty = dirty_files()
     if dirty and not args.allow_dirty:
@@ -261,7 +227,7 @@ def cmd_build(args) -> Path:
     print(f"source: {'tracked working tree' if args.allow_dirty else 'HEAD'} ({snapshot_tree})")
     web_from_worktree = args.allow_dirty and not args.web_from_head
     if web_from_worktree:
-        argv = ["rsync", "-a", "--delete", *(f"--exclude={e}" for e in [*WEB_EXCLUDES, "/framework/"]),
+        argv = ["rsync", "-a", "--delete", *(f"--exclude={e}" for e in WEB_EXCLUDES),
                 str(ROOT / "legacy-web") + "/", str(stage / "web") + "/"]
         subprocess.run(argv, check=True, timeout=300)
         print("web: working tree legacy-web/ (dirty allowed)")
@@ -275,7 +241,6 @@ def cmd_build(args) -> Path:
         print("web: git archive HEAD legacy-web")
     if not (stage / "web" / "index.html").is_file():
         die("web snapshot has no index.html")
-    build_web(stage, web_from_worktree, args.frontend)
 
     binaries: dict[str, Path] = {}
     sha256: dict[str, str] = {}
@@ -312,11 +277,11 @@ def cmd_build(args) -> Path:
                     dirty=(crates_dirty and not args.web_only) or (web_dirty and web_from_worktree),
                     built_at=started.isoformat(timespec="seconds"), web_dir=stage / "web",
                     binaries=binaries, sha256=sha256, source_archive=stage / "source.tar",
-                    web_only=args.web_only, frontend=args.frontend)
+                    web_only=args.web_only)
     doc = {"commit": art.commit, "short": art.short, "dirty": art.dirty, "built_at": art.built_at,
            "web_dir": "web", "binaries": {n: f"bin/{n}" for n in binaries}, "sha256": sha256,
            "source_archive": "source.tar", "web_only": art.web_only, "stage": str(stage),
-           "web_source": "worktree" if web_from_worktree else "HEAD", "frontend": args.frontend,
+           "web_source": "worktree" if web_from_worktree else "HEAD", "frontend": "legacy",
            "dirty_files": dirty,
            "cargo": cargo_argv, "with_ptyhost": args.with_ptyhost,
            "source_tree": snapshot_tree, "source_source": "worktree" if args.allow_dirty else "HEAD"}
@@ -744,8 +709,6 @@ def main(argv: list[str] | None = None) -> int:
     build_flags.add_argument("--web-from-head", action="store_true",
                              help="with --allow-dirty: still snapshot legacy-web/ from HEAD, not the working tree")
     build_flags.add_argument("--build-timeout", type=float, default=3600, help="seconds for cargo build")
-    build_flags.add_argument("--frontend", choices=("legacy", "vue"), default="legacy",
-                             help="frontend snapshot to build (default legacy; vue for a separate preview target)")
 
     def test_flags(default: str) -> argparse.ArgumentParser:   # a fresh parent per command: its own default
         tf = argparse.ArgumentParser(add_help=False)

@@ -163,7 +163,7 @@ impl Fixture {
 
     fn config(&self, host: Option<PathBuf>) -> Config {
         Config {
-            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
+            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
             roots: self.roots(),
             ptyhost_dir: host,
             trash_dir: Some(self.trash.clone()),

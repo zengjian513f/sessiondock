@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Large sidebar: resource viewport rendering, reuse on nesting, and scroll hydration."""
-from browser_runtime import js, scoped_frontend
+
 import argparse
 import os
 from pathlib import Path
@@ -24,14 +24,12 @@ def main():
                 errors=[]
                 page.on('pageerror',lambda e:errors.append(str(e)))
                 page.goto(base,wait_until='networkidle')
-                page.wait_for_function(js('S.sessions.length > 0 && T.listLoaded', 'runtime.core.state.catalog.sessions.length > 0 && runtime.terminal.state.listLoaded'))
+                page.wait_for_function('S.sessions.length > 0 && T.listLoaded')
                 rows=[dict(uid=f'claude:toggle-{i}',sid=f'toggle-{i}',source='claude',title=f'Row {i}',
                            cwd='/synthetic/toggle',created='2026-10-01T00:00:00Z',updated='2026-10-01T00:00:00Z',size=100,
                            **({'nest_parent':{'source':'claude','sid':f'toggle-{i-1}'}} if i%20==1 else {})) for i in range(1200)]
                 page.route('**/api/sessions?*',lambda route:route.fulfill(json={'sessions':rows,'sig':'toggle-fixture'}))
-                page.evaluate(js('''rows=>{S.sessions=rows;S.results=null;S.term='';S.closed.clear();S.nestClosed.clear();S.off.clear();S.view='tree';S.nest=false;renderView();renderSide();}''', "rows=>{runtime.core.state.catalog.sessions=rows;runtime.core.state.search.results=null;runtime.search.input('');runtime.core.state.sidebar.closed.clear();runtime.core.state.sidebar.nestClosed.clear();runtime.core.state.sidebar.off.clear();runtime.core.state.sidebar.view='tree';runtime.core.state.sidebar.nest=false;}"),rows)
-                if scoped_frontend():
-                    expect(page.locator('#side .item')).to_have_count(1200)
+                page.evaluate('''rows=>{S.sessions=rows;S.results=null;S.term='';S.closed.clear();S.nestClosed.clear();S.off.clear();S.view='tree';S.nest=false;renderView();renderSide();}''',rows)
                 assert page.locator('#side .item').count()==1200
                 unchanged=page.locator('.item[data-uid="claude:toggle-1199"]')
                 handle=unchanged.element_handle()
@@ -41,12 +39,7 @@ def main():
                 assert 0 < page.locator('.item-resources').count() < 80
                 for index in range(2):
                     page.get_by_role('button',name='分层显示',exact=True).click()
-                    if scoped_frontend():
-                        expect(page.get_by_role('button',name='分层显示',exact=True)).to_have_attribute('aria-pressed','true' if index==0 else 'false')
-                        expect(page.locator('.item[data-uid="claude:toggle-1"]')).to_have_attribute('data-depth','1' if index==0 else '0')
                     assert unchanged.evaluate('(e,old)=>e===old',handle)
-                    if scoped_frontend():
-                        expect(page.locator('#side .item')).to_have_count(1200)
                     assert page.locator('#side .item').count()==1200
                     nested=page.get_by_role('button',name='分层显示',exact=True).get_attribute('aria-pressed')=='true'
                     assert page.locator('.item[data-uid="claude:toggle-1"]').get_attribute('data-depth')==('1' if nested else '0')
@@ -54,8 +47,6 @@ def main():
                 page.locator('#side .item').last.locator('.item-resource-value').first.wait_for()
                 assert page.locator('.item-resources').count() < 100
                 resource.click()
-                if scoped_frontend():
-                    expect(page.locator('.item-resources:visible')).to_have_count(0)
                 assert page.locator('.item-resources:visible').count()==0
                 resource.click()
                 page.locator('#side .item').last.locator('.item-resource-value').first.wait_for()

@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from browser_runtime import js
+
 from playwright.sync_api import expect, sync_playwright
 
 from history_parity import REPO, BINARY, Corpus, isolated_server
@@ -98,9 +98,9 @@ def main():
                 assert created.value.status == 200, created.value.text()
                 receipt = created.value.json()
                 assert receipt['running'], receipt
-                page.wait_for_function(js('composerUid && !composerDraft().loading', 'runtime.composer.composerUid && !runtime.composer.composerDraft().loading'))
-                page.wait_for_function(js("composerDraft()?.inputStatus?.code === 'cli_starting'", "runtime.composer.composerDraft()?.inputStatus?.code === 'cli_starting'"), timeout=4000)
-                page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"), timeout=15000)
+                page.wait_for_function('composerUid && !composerDraft().loading')
+                page.wait_for_function("composerDraft()?.inputStatus?.code === 'cli_starting'", timeout=4000)
+                page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
                 # An already-open pre-fix Codex can still exit during update.
                 # Empty pending sessions must retain a clickable recovery path.
                 stopped = context.request.post(base + '/api/term/kill', data={
@@ -113,7 +113,7 @@ def main():
                 assert restarted.value.status == 200, restarted.value.text()
                 receipt = restarted.value.json()
                 assert receipt['source'] == 'codex' and receipt['cwd'] == str(root / 'work'), receipt
-                page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"), timeout=15000)
+                page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
                 page.locator('#cinput').fill('report task\n\n│ >_ OpenAI Codex (quoted text)\n│ model: loading\n\n最后一段\n')
                 with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=15000) as multiline:
                     page.locator('#cinput').press('Enter')
@@ -124,9 +124,9 @@ def main():
                 # Count the critical path and hold the post-send draft save.
                 # A slow cleanup must not keep the successful send spinning.
                 page.locator('#cinput').fill('latency regression')
-                page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
-                page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"))
-                page.evaluate(js(r"""() => {
+                page.evaluate('async () => await composerDraftWrites')
+                page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'")
+                page.evaluate(r"""() => {
                     window.sendTrace = [];
                     window.sendFetch = window.fetch;
                     window.releaseCleanup = null;
@@ -141,37 +141,22 @@ def main():
                         return sendFetch(url, options);
                     };
                     window.sendStarted = performance.now();
-                }""", r"""() => {
-                    window.sendTrace = [];
-                    window.sendFetch = runtime.core.network.fetch;
-                    window.releaseCleanup = null;
-                    runtime.core.network.fetch = async (url, options) => {
-                        const path = new URL(url, location.href).pathname;
-                        if ((runtime.composer.composerSending || sendTrace.includes('send')) && options?.method === 'POST'
-                            && path.includes('/conversation')) {
-                            sendTrace.push(path.split('/').pop());
-                            if (path.endsWith('/conversation') && sendTrace.includes('send') && !window.releaseCleanup)
-                                await new Promise(resolve => { window.releaseCleanup = resolve; });
-                        }
-                        return sendFetch(url, options);
-                    };
-                    window.sendStarted = performance.now();
-                }"""))
+                }""")
                 with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as fast_sent:
                     page.locator('#csend').click()
                 assert fast_sent.value.status == 200, fast_sent.value.text()
-                page.wait_for_function(js('() => !composerSending', '() => !runtime.composer.composerSending'), timeout=2000)
+                page.wait_for_function('() => !composerSending', timeout=2000)
                 expect(page.locator('#cinput')).to_have_value('')
                 trace = page.evaluate('sendTrace')
                 assert trace[:2] == ['conversation', 'send'], trace
                 print('Codex click-to-clear ms:', round(page.evaluate('performance.now() - sendStarted')), flush=True)
                 page.wait_for_function('() => !!window.releaseCleanup')
                 page.locator('#cinput').fill('edit while cleanup is pending')
-                page.evaluate(js('() => { window.fetch = sendFetch; releaseCleanup?.(); }', '() => { runtime.core.network.fetch = sendFetch; releaseCleanup?.(); }'))
-                page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                page.evaluate('() => { window.fetch = sendFetch; releaseCleanup?.(); }')
+                page.evaluate('async () => await composerDraftWrites')
                 expect(page.locator('#cinput')).to_have_value('edit while cleanup is pending')
                 saved = context.request.get(base + '/api/session/conversation',
-                    params={'uid': page.evaluate(js('composerUid', 'runtime.composer.composerUid'))}).json()['draft']
+                    params={'uid': page.evaluate('composerUid')}).json()['draft']
                 assert saved['value']['text'] == 'edit while cleanup is pending', saved
                 page.locator('#cinput').fill('')
                 # Keep an authenticated native transfer request receiving data.
@@ -192,9 +177,9 @@ def main():
                     {'name': 'two.png', 'mimeType': 'image/png', 'buffer': png},
                 ])
                 expect(page.locator('#compose-items .draft-card')).to_have_count(2)
-                page.wait_for_function(js('composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)', 'runtime.composer.composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)'), timeout=15000)
+                page.wait_for_function('composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)', timeout=15000)
                 page.locator('#cinput').fill('Please inspect both images')
-                page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                page.evaluate('async () => await composerDraftWrites')
                 with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=30000) as sent:
                     page.locator('#csend').click()
                 assert sent.value.status == 200 and sent.value.json()['state'] == 'sent', sent.value.text()
@@ -202,7 +187,7 @@ def main():
                 print('PASS composer uploads and sends two attachments while an unrelated native transfer is stalled',flush=True)
                 payload = sent.value.request.post_data_json
                 assert payload['text'] == 'Please inspect both images' and len(payload['attachments']) == 2, payload
-                page.wait_for_function(js('() => !composerSending', '() => !runtime.composer.composerSending'))
+                page.wait_for_function('() => !composerSending')
                 expect(page.locator('#cinput')).to_have_value('')
                 assert not dialogs and not errors, (dialogs, errors)
                 published = list((root / 'work/sessiondock_attachments').glob('*/*.png'))
@@ -218,13 +203,13 @@ def main():
                     page.locator('#attach-menu [data-attach="file"]').click()
                 chooser.value.set_files([{'name': 'notes.txt', 'mimeType': 'text/plain',
                     'buffer': b'text attachment bytes'}])
-                page.wait_for_function(js('composerDraft().attachments.length === 1 && composerDraft().attachments[0].uploaded?.upload_id', 'runtime.composer.composerDraft().attachments.length === 1 && runtime.composer.composerDraft().attachments[0].uploaded?.upload_id'))
+                page.wait_for_function('composerDraft().attachments.length === 1 && composerDraft().attachments[0].uploaded?.upload_id')
                 page.locator('#cinput').fill('Please read the text file')
-                page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                page.evaluate('async () => await composerDraftWrites')
                 with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=30000) as text_sent:
                     page.locator('#csend').click()
                 assert text_sent.value.status == 200 and text_sent.value.json()['state'] == 'sent', text_sent.value.text()
-                page.wait_for_function(js('() => !composerSending', '() => !runtime.composer.composerSending'))
+                page.wait_for_function('() => !composerSending')
                 note_paths = list((root / 'work/sessiondock_attachments').glob('*/notes.txt'))
                 assert len(note_paths) == 1 and note_paths[0].read_bytes() == b'text attachment bytes', note_paths
                 page.locator('#a-term').click()
@@ -261,7 +246,7 @@ def main():
                     assert chooser.value.element.get_attribute('capture') is None
                     chooser.value.set_files(files)
                     expect(page.locator('#compose-items .draft-card')).to_have_count(len(files))
-                    page.wait_for_function(js('composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)', 'runtime.composer.composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)'))
+                    page.wait_for_function('composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)')
                     if width == 390:
                         # This fake CLI's footer assumes a wide PTY. Selection and
                         # staging exercise the phone UI; submit at its supported size.
@@ -270,11 +255,11 @@ def main():
                         xterm_includes(page, 'Ask Codex to do anything')
                         page.locator('#a-term').click()
                     page.locator('#cinput').fill(f'Read the files selected at {width}px')
-                    page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                    page.evaluate('async () => await composerDraftWrites')
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=30000) as generic_sent:
                         page.locator('#csend').click()
                     assert generic_sent.value.status == 200, generic_sent.value.text()
-                    page.wait_for_function(js('() => !composerSending', '() => !runtime.composer.composerSending'))
+                    page.wait_for_function('() => !composerSending')
                     for file in files:
                         paths = list((root / 'work/sessiondock_attachments').glob('*/' + file['name']))
                         assert len(paths) == 1 and paths[0].read_bytes() == file['buffer'], paths
@@ -305,16 +290,16 @@ def main():
                 page.evaluate("pickerMode = 'success'")
                 page.locator('#cadd').click()
                 page.locator('#attach-menu [data-attach="file"]').click()
-                page.wait_for_function(js('composerDraft().attachments.length === 1 && composerDraft().attachments[0].uploaded?.upload_id && !composerDraft().attachments[0].staging', 'runtime.composer.composerDraft().attachments.length === 1 && runtime.composer.composerDraft().attachments[0].uploaded?.upload_id && !runtime.composer.composerDraft().attachments[0].staging'))
+                page.wait_for_function('composerDraft().attachments.length === 1 && composerDraft().attachments[0].uploaded?.upload_id && !composerDraft().attachments[0].staging')
                 calls = page.evaluate('pickerCalls')
                 assert all(c['active'] and c['options'] == {'multiple': True, 'excludeAcceptAllOption': False} for c in calls), calls
                 assert not chooser_events
                 page.locator('#cinput').fill('Read the document picker file')
-                page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                page.evaluate('async () => await composerDraftWrites')
                 with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=30000) as picker_sent:
                     page.locator('#csend').click()
                 assert picker_sent.value.status == 200, picker_sent.value.text()
-                page.wait_for_function(js('() => !composerSending', '() => !runtime.composer.composerSending'))
+                page.wait_for_function('() => !composerSending')
                 paths = list((root / 'work/sessiondock_attachments').glob('*/picker.data'))
                 assert len(paths) == 1 and paths[0].read_bytes() == b'picker file bytes', paths
                 page.evaluate("pickerMode = 'unsupported'")
@@ -343,13 +328,13 @@ def main():
                     if index == 3:
                         page.locator('#bug-report-file').set_input_files(
                             {'name': 'trust.png', 'mimeType': 'image/png', 'buffer': png})
-                        page.wait_for_function(js('bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging', 'runtime.launch.bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !runtime.launch.bugReportDraftObject().attachments[0].staging'))
+                        page.wait_for_function('bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging')
                         page.locator('#bug-report-add').click()
                         with page.expect_file_chooser() as chooser:
                             page.locator('#bug-report-attach-menu [data-attach="file"]').click()
                         assert chooser.value.element.get_attribute('accept') == 'application/octet-stream'
                         chooser.value.set_files({'name': 'report.pdf', 'mimeType': 'application/pdf', 'buffer': pdf})
-                        page.wait_for_function(js('bugReportDraftObject().attachments.length === 2 && bugReportDraftObject().attachments.every(a => a.uploaded?.upload_id && !a.staging)', 'runtime.launch.bugReportDraftObject().attachments.length === 2 && runtime.launch.bugReportDraftObject().attachments.every(a => a.uploaded?.upload_id && !a.staging)'))
+                        page.wait_for_function('bugReportDraftObject().attachments.length === 2 && bugReportDraftObject().attachments.every(a => a.uploaded?.upload_id && !a.staging)')
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/bug-report') as report:
                         page.locator('#bug-report-go').click()
                     assert report.value.status == 202, report.value.text()
@@ -360,19 +345,19 @@ def main():
                     if index == 3:
                         staged_uploads = len(uploads)
                         page.locator('#bug-report-toast').get_by_role('button', name='打开', exact=True).click()
-                        page.wait_for_function(js("composerDraft()?.inputStatus?.code === 'cli_question'", "runtime.composer.composerDraft()?.inputStatus?.code === 'cli_question'"), timeout=15000)
+                        page.wait_for_function("composerDraft()?.inputStatus?.code === 'cli_question'", timeout=15000)
                         expect(page.locator('#cinput')).to_have_value(description)
                         expect(page.locator('#csend')).to_be_disabled()
                         page.locator('#a-term').click()
                         xterm_includes(page, 'Do you trust this directory?')
                         page.locator('.xterm-helper-textarea').last.press('Enter')
                         page.locator('#a-term').click()
-                        page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"), timeout=15000)
+                        page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
                         # Refresh loses all File objects and frontend aliases.
                         page.reload(wait_until='domcontentloaded')
                         page.locator('#side .item').filter(has_text=expected_title).click()
                         expect(page.locator('#cinput')).to_have_value(description)
-                        page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"), timeout=15000)
+                        page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
                         with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as retried:
                             page.locator('#csend').click()
                         assert retried.value.status == 200, retried.value.text()
@@ -398,7 +383,7 @@ def main():
                             page.get_by_role('button', name='重新启动', exact=True).click()
                         assert recovered.value.status == 200, recovered.value.text()
                         worker = recovered.value.json()
-                        page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"), timeout=15000)
+                        page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
                         with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as resent:
                             page.locator('#csend').click()
                         assert resent.value.status == 200, resent.value.text()
@@ -416,7 +401,7 @@ def main():
                         (root / 'hide-status').unlink()
                         page.locator('#side .item').filter(has_text=expected_title).click()
                         expect(page.locator('#cinput')).to_have_value(description)
-                        page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'ready'", "runtime.composer.composerDraft()?.inputStatus?.state === 'ready'"), timeout=15000)
+                        page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
                         with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as retried:
                             page.locator('#csend').click()
                         assert retried.value.status == 200, retried.value.text()

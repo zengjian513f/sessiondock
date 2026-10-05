@@ -4,7 +4,7 @@
 Synthetic list responses over an isolated service; Chromium clicks real group
 and branch disclosures, then receives updates through the normal list poll.
 """
-from browser_runtime import js, scoped_frontend
+
 import argparse
 from datetime import datetime, timedelta, timezone
 import os
@@ -41,43 +41,21 @@ def fixture():
 
 
 def seed(page, rows, view='tree'):
-    page.evaluate(js('''({rows, view}) => {
+    page.evaluate('''({rows, view}) => {
       S.sel = null; S.agent = null; S.results = null; S.term = ''; S.off.clear();
       S.activeOnly = false; S.nest = true; S.view = view; S.sessions = rows; S.sig = 'fold-0';
       S.nestClosed = new Set(rows.filter(s => s.agent_items && s.uid !== 'claude:fold-101').map(s => s.uid));
       const keys = [...new Set(rows.map(s => view === 'tree' ? s.cwd : dayKey(s.updated)))];
       S.closed = new Set(keys.slice(1)); renderView(); renderSide();
-    }''', """({rows, view}) => {
-      runtime.core.state.selection.sel = null; runtime.core.state.selection.agent = null; runtime.core.state.search.results = null; runtime.search.input(''); runtime.core.state.sidebar.off.clear();
-      runtime.core.state.sidebar.activeOnly = false; runtime.core.state.sidebar.nest = true; runtime.core.state.sidebar.view = view; runtime.core.state.catalog.sessions = rows; runtime.core.state.catalog.sig = 'fold-0';
-      runtime.core.state.sidebar.nestClosed = new Set(rows.filter(s => s.agent_items && s.uid !== 'claude:fold-101').map(s => s.uid));
-      const keys = [...new Set(rows.map(s => view === 'tree' ? s.cwd : runtime.timeline.dayKey(s.updated)))];
-      runtime.core.state.sidebar.closed = new Set(keys.slice(1));
-    }"""), dict(rows=rows, view=view))
-    if scoped_frontend():
-        page.wait_for_function("""view => {
-          const runtime = window.SessionDockRuntime;
-          const groups = [...document.querySelectorAll('#side > .group')];
-          return !runtime.core.state.search.filterPending && runtime.core.state.search.filterTerm === ''
-            && document.querySelector('#view [data-v="' + view + '"]').classList.contains('on')
-            && groups.length === new Set(runtime.core.state.catalog.sessions.map(row => view === 'tree'
-              ? row.cwd : runtime.timeline.dayKey(row.updated))).size
-            && groups[0]?.dataset.key === (view === 'tree' ? runtime.core.state.catalog.sessions[0].cwd
-              : runtime.timeline.dayKey(runtime.core.state.catalog.sessions[0].updated))
-            && document.querySelectorAll('#side .item').length === 95;
-        }""", arg=view)
+    }''', dict(rows=rows, view=view))
 
 
 def instrument(page):
-    page.evaluate(js('''() => {
+    page.evaluate('''() => {
       window.__foldWork = {rows: []};
       const expand = expandRows;
       expandRows = function(s, ...args) { __foldWork.rows.push(s.uid); return expand(s, ...args); };
-    }''', """() => {
-      window.__foldWork = {rows: []};
-      const expand = runtime.sidebarView.expandRows;
-      runtime.sidebarView.expandRows = function(s, ...args) { __foldWork.rows.push(s.uid); return expand(s, ...args); };
-    }"""))
+    }''')
 
 
 def reset_work(page):
@@ -103,7 +81,7 @@ def main():
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 page.goto(base, wait_until='networkidle')
-                page.wait_for_function(js('S.sessions.length > 0 && T.listLoaded', 'runtime.core.state.catalog.sessions.length > 0 && runtime.terminal.state.listLoaded'))
+                page.wait_for_function('S.sessions.length > 0 && T.listLoaded')
                 instrument(page)
                 rows = fixture()
                 response = dict(sessions=rows, sig='fold-0')
@@ -118,7 +96,7 @@ def main():
                 rows[101] = dict(rows[101], title='Hidden update sentinel', updated='2026-09-21T00:00:00Z')
                 response['sig'] = 'fold-1'
                 reset_work(page)
-                page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
+                page.evaluate('pollSessions()')
                 page.wait_for_function("document.querySelector('#side > .group')?.dataset.key === '/synthetic/project-01'")
                 assert page.locator('#side > .group').first.get_attribute('data-key') == '/synthetic/project-01'
                 assert len(page.evaluate('__foldWork.rows')) == 95
@@ -138,92 +116,28 @@ def main():
                   const n = document.querySelector('.item[data-uid="claude:fold-100"]');
                   return n.nextElementSibling.dataset.uid;
                 }''') == 'claude:fold-101'
-                if scoped_frontend():
-                    # Business metadata is read from the real runtime graph.
-                    # A local size patch keeps the cached tree/session identity,
-                    # and two disclosure events before Vue commits must use the
-                    # current projected ancestor count rather than old DOM rows.
-                    assert page.evaluate('''() => {
-                      const fields = ['_nestTree', '_nestRow', '_rows', '_sessionUids',
-                        '_pickUids', '_pickLabel', '_resourceSession', '_resourceAgent'];
-                      return [...document.querySelectorAll('#side, #side .group, #side .ghead, #side .item')]
-                        .every(node => fields.every(field => !Object.hasOwn(node, field)));
-                    }''')
-                    expected_meta = page.evaluate('''() => {
-                      const runtime = window.SessionDockRuntime;
-                      window.__foldCatalog = runtime.core.state.catalog.sessions;
-                      window.__foldSession = runtime.core.index.indexedSessions().byUid.get('claude:fold-101');
-                      window.__foldUnrelated = document.querySelector('.item[data-uid="claude:fold-106"]');
-                      runtime.core.diff.applyMigrationMeta(__foldSession.uid, null,
-                        {meta: {...__foldSession}}, {...__foldSession, size: 4096});
-                      return runtime.sidebarView.itemMeta(__foldSession);
-                    }''')
-                    page.wait_for_function('''text => document.querySelector(
-                      '.item[data-uid="claude:fold-101"] .m').textContent === text''', arg=expected_meta)
-                    page.evaluate('''() => {
-                      document.querySelector('.item[data-uid="claude:fold-101"] .nest-caret').click();
-                      document.querySelector('.item[data-uid="claude:fold-100"] .nest-caret').click();
-                    }''')
-                    parent = hidden.locator('.item[data-uid="claude:fold-100"] .nest-caret')
-                    child = hidden.locator('.item[data-uid="claude:fold-101"] .nest-caret')
-                    page.wait_for_function('''() => document.querySelector(
-                      '.item[data-uid="claude:fold-100"] .nest-caret').getAttribute('aria-expanded') === 'false' ''')
-                    assert '25 项' in parent.get_attribute('title')
-                    expect(hidden.locator('.item')).to_have_count(95)
-                    reset_work(page)
-                    parent.click()
-                    assert hidden.locator('.item').count() == 120
-                    assert child.get_attribute('aria-expanded') == 'false'
-                    assert hidden.locator('.item[data-uid="claude:fold-101"] .m').text_content() == expected_meta
-                    assert len(page.evaluate('__foldWork.rows')) == 6
-                    child.click()
-                    expect(hidden.locator('.item')).to_have_count(121)
-                    assert '26 项' in parent.get_attribute('title')
-                    assert page.evaluate('''() => {
-                      const runtime = window.SessionDockRuntime;
-                      return __foldCatalog === runtime.core.state.catalog.sessions
-                        && __foldSession === runtime.core.index.indexedSessions().byUid.get(__foldSession.uid)
-                        && __foldUnrelated.isConnected
-                        && runtime.core.index.sidebarSessions().length === __foldCatalog.length
-                        && [...document.querySelectorAll('#side .item[data-uid]')]
-                          .every(node => __foldCatalog.some(row => row.uid === node.dataset.uid));
-                    }''')
                 # A closed project's checkbox must still select the same
                 # exposed sessions, even though it has no session row objects.
                 hidden.locator('.ghead').click()
-                page.evaluate(js('setPicking(true)', 'runtime.bulk.setPicking(true)'))
+                page.evaluate('setPicking(true)')
                 page.wait_for_function("!document.querySelector('#side-tools').hidden && !!document.querySelector('#side .ghead-pick')")
-                if scoped_frontend():
-                    page.evaluate('''() => {
-                      const runtime = window.SessionDockRuntime;
-                      window.__pickGroups = document.querySelectorAll('#side .group');
-                      window.__pickProjected = 0;
-                      // Catch a selection-driven full row reprojection, not DOM identity alone.
-                      const old = runtime.sidebarView.groupBy;
-                      runtime.sidebarView.groupBy = (...args) => {
-                        __pickProjected++; return old(...args);
-                      };
-                    }''')
                 hidden.locator('.ghead-pick').click()
                 page.wait_for_function('''() => document.querySelector('#side-picked').textContent.includes('100')''')
                 assert hidden.locator('.ghead-pick').is_checked()
-                if scoped_frontend():
-                    assert page.evaluate('__pickProjected') == 0
-                    assert page.evaluate('[...__pickGroups].every(node => node.isConnected)')
-                assert page.evaluate(js('pickedSessions.size', 'runtime.bulk.state.picked.size')) == 100
-                assert page.evaluate(js('pickedSessions.has("claude:fold-101")', 'runtime.bulk.state.picked.has("claude:fold-101")'))
+                assert page.evaluate('pickedSessions.size') == 100
+                assert page.evaluate('pickedSessions.has("claude:fold-101")')
                 page.locator('#side-pick-cancel').click()
                 # Date view: a hidden updated session moves to an open day.
                 rows = fixture()
                 response['sessions'] = rows
                 seed(page, rows, 'date')
-                old_key = page.evaluate(js('dayKey(S.sessions[106].updated)', 'runtime.timeline.dayKey(runtime.core.state.catalog.sessions[106].updated)'))
-                today_key = page.evaluate(js('dayKey(S.sessions[6].updated)', 'runtime.timeline.dayKey(runtime.core.state.catalog.sessions[6].updated)'))
+                old_key = page.evaluate('dayKey(S.sessions[106].updated)')
+                today_key = page.evaluate('dayKey(S.sessions[6].updated)')
                 assert group(page, old_key).locator('.gcount').text_content() == '95'
                 rows[106] = dict(rows[106], updated=rows[6]['updated'], title='Moved day sentinel')
                 response['sig'] = 'fold-date-1'
                 reset_work(page)
-                page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
+                page.evaluate('pollSessions()')
                 assert group(page, old_key).locator('.gcount').text_content() == '94'
                 assert group(page, today_key).locator('.gcount').text_content() == '96'
                 assert group(page, today_key).locator('.item[data-uid="claude:fold-106"] .t').text_content() == 'Moved day sentinel'
@@ -231,56 +145,15 @@ def main():
                 assert page.locator('#side .item.agent').count() == 0
                 group(page, old_key).locator('.ghead').click()
                 expect(group(page, old_key).locator('.item')).to_have_count(94)
-                if scoped_frontend():
-                    # Source availability follows current selected-machine
-                    # counts even when an old chip's DOM reason disagrees.
-                    codex = page.locator('#chips button[data-source="codex"]')
-                    codex.evaluate('button => { delete button.dataset.unavailableReason; }')
-                    before = page.evaluate('[...window.SessionDockRuntime.core.state.sidebar.off]')
-                    codex.click(button='right', force=True)
-                    assert page.evaluate('[...window.SessionDockRuntime.core.state.sidebar.off]') == before
-                    claude = page.locator('#chips button[data-source="claude"]')
-                    # The global unavailable-control capture still protects UI
-                    # clicks. Check the service itself against a stale hint,
-                    # then restore it before the real context-menu interaction.
-                    assert claude.evaluate('''button => {
-                      button.dataset.unavailableReason = 'obsolete reason';
-                      return window.SessionDockRuntime.sidebarView.selectOnlyFilter(button);
-                    }''')
-                    claude.evaluate('button => { delete button.dataset.unavailableReason; }')
-                    claude.click(button='right', force=True)
-                    assert page.evaluate('''() => {
-                      const off = window.SessionDockRuntime.core.state.sidebar.off;
-                      return !off.has('claude') && off.has('codex') && off.has('grok');
-                    }''')
-                    # Enter active scope through its actual control. A live
-                    # update inserts the row, and an unchanged paint must not
-                    # rebuild it merely because the DOM has no UID set.
-                    live_response = dict(uids=[])
-                    page.route('**/api/live*', lambda route: route.fulfill(json=live_response))
-                    page.evaluate('window.SessionDockRuntime.core.live.refreshLive()')
-                    page.locator('#livecount').click()
-                    page.wait_for_function("document.querySelectorAll('#side .item').length === 0")
-                    assert page.locator('#side .item').count() == 0
-                    live_response['uids'] = ['claude:fold-106']
-                    page.evaluate('window.SessionDockRuntime.core.live.refreshLive()')
-                    page.locator('#side .item[data-uid="claude:fold-106"]').wait_for()
-                    reset_work(page)
-                    page.evaluate('window.SessionDockRuntime.status.paintLive()')
-                    page.wait_for_function("document.querySelectorAll('#side .item').length === 1 && document.querySelector('#side .item')?.dataset.uid === 'claude:fold-106'")
-                    assert page.evaluate('__foldWork.rows') == []
-                    page.locator('#allcount').click()
                 assert not errors, errors
                 # Selection reactivity uses a fresh scene so its additional
                 # clicks do not race the earlier exact lazy-expansion counters.
                 rows = fixture()
                 response['sessions'] = rows
                 seed(page, rows)
-                page.evaluate(js('setPicking(true)', 'runtime.bulk.setPicking(true)'))
+                page.evaluate('setPicking(true)')
                 hidden = group(page, '/synthetic/project-01')
                 hidden.locator('.ghead-pick').click()
-                if scoped_frontend():
-                    page.evaluate('__pickProjected = 0')
                 hidden.locator('.ghead').click()
                 page.wait_for_function('''() => document.querySelectorAll('#side .item-pick:checked').length === 95''')
                 selected_row = hidden.locator('.item[data-uid="claude:fold-106"]')
@@ -289,17 +162,12 @@ def main():
                 page.evaluate('new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))')
                 assert page.locator('#side-picked').text_content() == '已选 95 项'
                 reset_work(page)
-                if scoped_frontend():
-                    page.evaluate('__pickProjected = 0')
                 selected_row.locator('.body').click()
                 page.wait_for_function('''() => document.querySelector('#side-picked').textContent.includes('94')''', timeout=5000)
                 assert not selected_row.locator('.item-pick').is_checked()
                 assert 'picked' not in selected_row.get_attribute('class').split()
                 assert hidden.locator('.ghead-pick').evaluate('node => node.indeterminate')
                 assert selected_row.evaluate('(node, old) => node === old', row_handle)
-                if scoped_frontend():
-                    assert page.evaluate('__pickProjected') == 0
-                    assert page.evaluate('__foldWork.rows.length') == 0
                 page.locator('#side-pick-all').click()
                 page.wait_for_function('''() => document.querySelector('#side-pick-all').textContent === '全不选' ''')
                 assert selected_row.locator('.item-pick').is_checked()

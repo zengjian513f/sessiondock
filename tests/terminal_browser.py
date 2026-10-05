@@ -6,7 +6,7 @@ All directories are temporary and every ptyhost invocation supplies --dir. No
 native home, production endpoint, host discovery, or paid CLI is used.
 """
 
-from browser_runtime import js, scoped_frontend
+
 import json
 import os
 from pathlib import Path
@@ -36,7 +36,7 @@ while IFS= read -r command; do
 done
 """
 
-INSTALL = js("""() => {
+INSTALL = """() => {
   window.__transport = {};
   window.__connectTransport = async (key, page, name, force = false) => {
     await ensureTerminalAssets(false);
@@ -77,39 +77,7 @@ INSTALL = js("""() => {
     });
     return {status:response.status};
   };
-}""", """() => {
-  window.__transport = {};
-  window.__connectTransport = async (key, page, name, force = false) => {
-    const response = await fetch('/api/term/claim', {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({name,page,force,_page_id:page,_build:'synthetic',_trace_id:'synthetic'})});
-    const claim = await response.json();
-    if (!response.ok) return {status:response.status, conflict:claim.conflict === true};
-    const url = new URL('/api/term/attach', location.href);
-    url.protocol = 'ws:';
-    url.search = new URLSearchParams({name,page,token:claim.token,cols:'80',rows:'24',connection:'synthetic-browser'});
-    const state = {text:'', notices:[], close:null, terminal:null, ws:new WebSocket(url)};
-    state.ws.binaryType = 'arraybuffer';
-    window.__transport[key] = state;
-    const pre = document.createElement('pre');
-    pre.id = 'transport-' + key;
-    document.body.append(pre);
-    const decoder = new TextDecoder();
-    state.ws.onmessage = event => {
-      if (typeof event.data === 'string') { state.notices.push(JSON.parse(event.data)); return; }
-      const data = new Uint8Array(event.data);
-      state.text += decoder.decode(data,{stream:true});
-      pre.textContent = state.text;
-    };
-    state.ws.onclose = event => { state.close = {code:event.code,reason:event.reason}; };
-    await new Promise((resolve,reject) => {
-      state.ws.onopen = resolve;
-      state.ws.onerror = () => reject(new Error('synthetic terminal WebSocket failed'));
-      setTimeout(() => reject(new Error('synthetic terminal WebSocket open timeout')),5000);
-    });
-    return {status:response.status};
-  };
-}""")
+}"""
 
 
 def stop(process):
@@ -195,10 +163,10 @@ def main():
                     page.goto(base, wait_until="networkidle")
                     # A configured host directory enables the transport, not
                     # CLI creation or a native association for this raw host.
-                    assert page.evaluate(js("SessionDockCapabilities.allows('terminal')", "runtime.capabilities.allows('terminal')")) is True
-                    assert page.evaluate(js("SessionDockCapabilities.allows('terminal_create')", "runtime.capabilities.allows('terminal_create')")) is False
-                    assert page.evaluate(js("SessionDockCapabilities.allows('outbox')", "runtime.capabilities.allows('outbox')")) is False
-                    listing = page.evaluate(js("fetch('/api/term/list').then(response=>response.json())", "runtime.core.network.fetch('/api/term/list').then(response=>response.json())"))
+                    assert page.evaluate("SessionDockCapabilities.allows('terminal')") is True
+                    assert page.evaluate("SessionDockCapabilities.allows('terminal_create')") is False
+                    assert page.evaluate("SessionDockCapabilities.allows('outbox')") is False
+                    listing = page.evaluate("fetch('/api/term/list').then(response=>response.json())")
                     assert listing["enabled"] is False and listing["sessions"] == []
                     page.evaluate(INSTALL)
                 assert first.evaluate("([name]) => __connectTransport('first','synthetic-page-a',name)", [name])["status"] == 200
@@ -209,9 +177,8 @@ def main():
                     state.ws.send(JSON.stringify({t:'resize',cols:100,rows:40}));
                     state.ws.send(new TextEncoder().encode('size\\n')); }""")
                 expect(first.locator("#transport-first")).to_contain_text("40 100")
-                if not scoped_frontend():
-                    # The legacy page also feeds the bytes through its xterm renderer.
-                    first.wait_for_function("Array.from({length:__transport.first.terminal.buffer.active.length},(_,i)=>__transport.first.terminal.buffer.active.getLine(i)?.translateToString()).join('\\n').includes('RS_PING_OK')")
+                # The legacy page also feeds the bytes through its xterm renderer.
+                first.wait_for_function("Array.from({length:__transport.first.terminal.buffer.active.length},(_,i)=>__transport.first.terminal.buffer.active.getLine(i)?.translateToString()).join('\\n').includes('RS_PING_OK')")
                 denied = second.evaluate("([name]) => __connectTransport('denied','synthetic-page-b',name)", [name])
                 assert denied == {"status":409,"conflict":True}
                 assert second.evaluate("([name]) => __connectTransport('second','synthetic-page-b',name,true)", [name])["status"] == 200

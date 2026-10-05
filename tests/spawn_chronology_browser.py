@@ -6,7 +6,7 @@ No real CLI or production data is used.
 """
 from __future__ import annotations
 
-from browser_runtime import js
+
 import argparse
 import json
 import os
@@ -75,7 +75,7 @@ def main():
                 expect(item).to_have_attribute("data-depth", "0")
                 item.click()
                 expect(page.locator("#msgs")).to_contain_text("hello G")
-                page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
+                page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
                 # Maintenance changes the native summary and adds synthetic chat
                 # context, but must not move either list or detail activity time.
                 doc["last_active_at"] = "2026-09-27T14:45:34.442Z"
@@ -84,15 +84,15 @@ def main():
                     out.write(encoded({"type": "user", "synthetic_reason": "system_reminder",
                                        "content": "Background maintenance only"}))
                 get_json(opener, base, "/api/sessions?force=1")
-                page.evaluate(js("pollSessions()", 'runtime.core.list.pollSessions()'))
+                page.evaluate("pollSessions()")
                 assert get_json(opener, base, "/api/messages/" + uids[G_SID])["meta"]["updated"] == END
                 # Event-only growth must invalidate the inventory cache and SSE
                 # metadata without appending any chat bytes or changing summary.
                 with events.open("ab") as out:
                     out.write(encoded({"type": "turn_started", "ts": NEW}))
                 get_json(opener, base, "/api/sessions?force=1")
-                page.evaluate(js("pollSessions()", 'runtime.core.list.pollSessions()'))
-                page.wait_for_function(js("([uid, ts]) => S.sessions.find(s => s.uid === uid)?.updated === ts", '([uid, ts]) => runtime.core.state.catalog.sessions.find(s => s.uid === uid)?.updated === ts'),
+                page.evaluate("pollSessions()")
+                page.wait_for_function("([uid, ts]) => S.sessions.find(s => s.uid === uid)?.updated === ts",
                                        arg=[uids[G_SID], NEW])
                 assert get_json(opener, base, "/api/messages/" + uids[G_SID])["meta"]["updated"] == NEW
                 expect(page.locator("#msgs")).not_to_contain_text("Background maintenance only")
@@ -101,7 +101,7 @@ def main():
                 item.click(button="right")
                 expect(page.locator("#item-menu")).to_be_visible()
                 page.locator('#item-menu [data-act="attach"]').click()
-                page.wait_for_function(js("S.nestAttach", 'runtime.core.state.sidebar.nestAttach'))
+                page.wait_for_function("S.nestAttach")
                 page.locator(f'#side .item[data-uid="{uids[P_SID]}"]').click()
                 expect(item).to_have_attribute("data-depth", "1")
                 assert not errors, errors
