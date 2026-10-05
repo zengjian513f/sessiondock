@@ -219,16 +219,18 @@ def live_paging(pw, root, corpus, uid):
             print('PASS reload reconnects and pages from the new snapshot', flush=True)
 
             # 6. A narrower window reflows both sides; paging re-aligns first.
-            #    The height stays: a shorter screen moves rows into host history
-            #    that the browser never receives, which is not paging's seam.
+            #    Rows the host moves between its history and screen while it
+            #    reflows are aligned with its history tail, so there is no seam
+            #    at the newest edge either (terminal_reflow_browser covers more).
             cols = page.evaluate(f'{TERM}.cols')
             page.set_viewport_size({'width': 900, 'height': 900})
             page.wait_for_function(f'cols => {TERM}.cols !== cols && {TERM}.model.historyResync', arg=cols)
-            # Reflow at the newest edge (cursor rows rewrapped by the host) is
-            # outside paging; record those seams and require paging to add none.
+            page.wait_for_function(f'!{TERM}.model.reflowPending && !{TERM}.model.tailSync'
+                                   ' && !currentTermViewObject()?.historyTailLoading', timeout=10000)
             page.wait_for_timeout(300)
             numbers = page.evaluate(NUMBERS)
             seams = breaks(numbers)
+            assert not seams, ('seam at the newest edge after a width change', seams[:5])
             loaded = len(numbers)
             for _ in range(3):
                 seen = len(requests)

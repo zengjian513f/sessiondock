@@ -1,6 +1,9 @@
 // Grid domain model: viewport + scrollback + cursor + modes, reflow, selection.
 // Pure: no DOM. Cells are materialized lazily; a wide cell occupies two columns
 // with no spacer entry. The viewport is never reflowed (the server resends it).
+// A width change can reflow the scrollback lazily (`lazyReflow`): each row keeps
+// the width it was wrapped at (`wcols`) until its logical line is rewrapped, the
+// owner reflows the visible window at once and the rest in cancellable slices.
 
 import {segmentText} from './wire.js';
 
@@ -9,6 +12,10 @@ const FLAG_WIDE = 32;
 /// 估计偏小（重排、尺寸变化）时接缝仍落在结果里。
 const HISTORY_SEAM_ROWS = 4;
 const HISTORY_SEAM_SLACK = 64;
+/// 尺寸变化后与宿主历史末尾对齐：取宿主最新的这么多行，用其中最旧的几行在本地
+/// 找到位置，再用宿主的行替换本地末尾（宿主重排时在历史与屏幕之间搬动的行）。
+const TAIL_SYNC_ROWS = 400;
+const TAIL_ANCHOR_ROWS = 8;
 
 const DEFAULT_MODES = Object.freeze({
   alt: false,
@@ -75,9 +82,54 @@ function spansFromCells(cells) {
   return spans;
 }
 
+function isDefaultSpan(span) {
+  const fg = span[1] ?? -1;
+  const bg = span[2] ?? -1;
+  return fg === -1 && bg === -1 && (span[3] | 0) === 0 && !extraOf(span);
+}
+
+/// 行内容的规范形式：相邻同属性 span 合并，末尾默认属性的空格去掉（宿主的
+/// 行就是这样编码的；本地重排出的行可能带着这些空格）。缓存在行上：行的
+/// spans 从不原地修改。
+function rowKey(row) {
+  if (row.key !== undefined) return row.key;
+  const merged = [];
+  for (const span of Array.isArray(row.spans) ? row.spans : []) {
+    if (!span) continue;
+    const text = span[0] != null ? String(span[0]) : '';
+    const attrs = JSON.stringify([span[1] ?? -1, span[2] ?? -1, span[3] | 0, extraOf(span)]);
+    const last = merged[merged.length - 1];
+    if (last && last.attrs === attrs) last.text += text;
+    else merged.push({text, attrs, plain: isDefaultSpan(span)});
+  }
+  while (merged.length) {
+    const last = merged[merged.length - 1];
+    if (!last.plain) break;
+    last.text = last.text.replace(/ +$/, '');
+    if (last.text) break;
+    merged.pop();
+  }
+  row.key = (row.wrapped ? 'w' : 'n') + JSON.stringify(merged.map(m => [m.text, m.attrs]));
+  return row.key;
+}
+
 function sameRow(a, b) {
-  return !!a && !!b && a.wrapped === b.wrapped
-    && JSON.stringify(a.spans) === JSON.stringify(b.spans);
+  return !!a && !!b && rowKey(a) === rowKey(b);
+}
+
+/// 一定放得下：按 UTF-16 码元数（≥ 字素数）乘宽度估计，不必拆字素。
+function spansFit(spans, cols) {
+  let used = 0;
+  for (const span of Array.isArray(spans) ? spans : []) {
+    const text = span && span[0] != null ? String(span[0]) : '';
+    used += text.length * ((span && span[3] | 0) & FLAG_WIDE ? 2 : 1);
+    if (used > cols) return false;
+  }
+  return true;
+}
+
+function now() {
+  return globalThis.performance?.now ? globalThis.performance.now() : Date.now();
 }
 
 function posLess(a, b) {
@@ -85,8 +137,25 @@ function posLess(a, b) {
 }
 
 export class GridModel {
-  constructor({scrollbackLimit = 100000} = {}) {
+  constructor({scrollbackLimit = 100000, lazyReflow = false} = {}) {
     this.scrollbackLimit = scrollbackLimit;
+    /// true：宽度变化只登记，由调用方 reflowRange/reflowStep 分批重排；false：
+    /// 立即整段重排（契约测试与没有调度器的调用方）。
+    this.lazyReflow = lazyReflow;
+    /// 还有回滚行没按当前宽度重排。_reflowCursor 以下（更新的一端）都已重排。
+    this.reflowPending = false;
+    this._reflowCursor = 0;
+    /// 回滚区 [start, end) 被替换成 count 行时调用 (start, end, count, map)；
+    /// map 把区间内的 {line, col} 换算到新位置。视口与选区靠它不漂移。
+    this.onLinesReplaced = null;
+    /// 宿主最近一个快照里的尺寸（判断宿主是否重排过）。
+    this.hostCols = 0;
+    this.hostRows = 0;
+    /// 尺寸变化后待做的末尾对齐 {total}；tailEpoch 作废过期的结果。
+    this.tailSync = null;
+    this.tailEpoch = 0;
+    /// 备用屏幕期间的快照不带主屏的 history_total，之后的高度补齐不可信。
+    this._historyBaseStale = false;
     this.cols = 0;
     this.rows = 0;
     this.viewport = [];
@@ -133,6 +202,8 @@ export class GridModel {
   /// 返回 null。范围末尾多带本地最旧的几行，用来在结果里找到接缝。
   historyRequest(maxRows = 500) {
     if (!this.historyPaging || this.modes.alt || !this.scrollback.length) return null;
+    // 重排进行中，最旧几行的形状还会变，接缝比对要等重排完。
+    if (this.reflowPending) return null;
     const base = {
       epoch: this.historyEpoch,
       head: this.scrollback[0],
@@ -192,6 +263,7 @@ export class GridModel {
     if (at === 0) return {status: req.from > 0 ? 'retry' : 'applied', added: 0};
     this.version++;
     this.scrollback.unshift(...rows.slice(0, at));
+    if (this.reflowPending) this._reflowCursor += at;
     this.historyOlder = req.from;
     // 请求发出后又滚进了新行时，超出上限的部分照常从最旧一端裁掉。
     const trimmed = Math.max(0, this.scrollback.length - this.scrollbackLimit);
@@ -204,15 +276,66 @@ export class GridModel {
     this.historyEpoch++;
   }
 
+  /// 尺寸变化后宿主历史末尾的请求范围 [from, to)（宿主绝对行号，截止于快照
+  /// 时的 history_total，之后滚出的行不在其中）；没有待做的对齐时为 null。
+  historyTailRequest(maxRows = TAIL_SYNC_ROWS) {
+    if (!this.tailSync || this.modes.alt) return null;
+    const total = this.tailSync.total;
+    const count = Math.min(maxRows | 0, total);
+    if (!(count > TAIL_ANCHOR_ROWS)) {
+      this.tailSync = null;
+      return null;
+    }
+    return {tail: true, epoch: this.tailEpoch, from: total - count, to: total};
+  }
+
+  /// 用宿主历史末尾替换本地末尾。返回 applied（changed 表示本地有改动）、
+  /// stale、stop（结果不完整或找不到锚点：本地保持原样）。
+  acceptHistoryTail(req, result) {
+    if (!req || req.epoch !== this.tailEpoch || !this.tailSync) return {status: 'stale'};
+    this.tailSync = null;
+    const raw = Array.isArray(result?.rows) ? result.rows : [];
+    if (result?.from !== req.from || raw.length !== req.to - req.from || this.modes.alt) {
+      return {status: 'stop'};
+    }
+    const rows = raw.map(r => this._row(r));
+    // 快照之后滚出的行接在宿主这段之后，不参与比对。
+    const limit = this.scrollback.length - Math.min(this.historyAppended, this.scrollback.length);
+    const expected = limit - rows.length;
+    const lo = Math.max(0, expected - rows.length);
+    const hi = Math.min(limit - TAIL_ANCHOR_ROWS, expected + rows.length);
+    if (hi < lo) return {status: 'stop'};
+    this.reflowRange(lo, limit);
+    let at = -1;
+    for (let p = lo; p <= hi; p++) {
+      let same = true;
+      for (let k = 0; k < TAIL_ANCHOR_ROWS && same; k++) same = sameRow(this.scrollback[p + k], rows[k]);
+      if (same && (at < 0 || Math.abs(p - expected) < Math.abs(at - expected))) at = p;
+    }
+    if (at < 0) return {status: 'stop'};
+    let changed = limit - at !== rows.length;
+    for (let k = 0; !changed && k < rows.length; k++) changed = !sameRow(this.scrollback[at + k], rows[k]);
+    if (!changed) return {status: 'applied', changed: false};
+    // 本地多出的行（宿主已拉回屏幕）或缺的行（宿主推进了历史）都在末尾；
+    // 区间内的位置保持绝对行号，之后的（屏幕、快照后滚出的行）随增减移动。
+    this._replaceRows(at, limit, rows, pos => pos);
+    return {status: 'applied', changed: true};
+  }
+
   rowAt(i) {
     if (i < 0 || i >= this.lineCount()) return undefined;
     const hist = this.scrollback.length;
     return i < hist ? this.scrollback[i] : this.viewport[i - hist];
   }
 
+  /// 行当前的折行宽度：尚未重排的回滚行是它原来的宽度。
+  rowCols(row) {
+    return row && row.wcols > 0 ? row.wcols : this.cols;
+  }
+
   cellsOf(row) {
     if (!row) return [];
-    const cols = this.cols;
+    const cols = this.rowCols(row);
     if (row.cells) {
       let used = 0;
       for (const cell of row.cells) used += cell.width;
@@ -233,7 +356,7 @@ export class GridModel {
   // permanently cached array of cell objects.
   readCells(row) {
     if (!row) return [];
-    return this._materialize(row.spans, this.cols);
+    return this._materialize(row.spans, this.rowCols(row));
   }
 
   textOf(row, from = 0, to = Infinity) {
@@ -278,15 +401,57 @@ export class GridModel {
 
   reflow(newCols) {
     this.version++;
-    if (this.cols > 0) this._rebuildScrollback(newCols);
-    this.cols = newCols;
+    this._changeCols(newCols);
   }
 
   resize(cols, rows) {
     this.version++;
-    if (this.cols > 0 && cols !== this.cols) this._rebuildScrollback(cols);
-    this.cols = cols;
+    this._changeCols(cols);
     this.rows = rows;
+  }
+
+  /// 把 [lo, hi) 所在的逻辑行按当前宽度重排（视口附近立即做）。
+  reflowRange(lo, hi) {
+    if (!this.reflowPending) return;
+    const sb = this.scrollback;
+    lo = Math.max(0, lo | 0);
+    let end = Math.min(sb.length, hi | 0);
+    if (lo >= end) return;
+    while (end < sb.length && sb[end - 1].wrapped) end++;
+    while (end > lo) {
+      const start = this._groupStart(end);
+      this._reflowGroup(start, end);
+      end = start;
+    }
+  }
+
+  /// 从最新一端往前重排一批，到 deadline（performance.now() 毫秒）为止；
+  /// 不给 deadline 就做完。返回是否还有没重排的行。
+  reflowStep(deadline = null) {
+    if (!this.reflowPending) return false;
+    const sb = this.scrollback;
+    this._reflowCursor = Math.min(this._reflowCursor, sb.length);
+    while (this._reflowCursor > 0) {
+      let end = this._reflowCursor;
+      while (end < sb.length && sb[end - 1].wrapped) end++;
+      const start = this._groupStart(end);
+      // 组在游标以下的部分已是新宽度；_reflowGroup 会按增减移动游标。
+      this._reflowGroup(start, end);
+      this._reflowCursor = start;
+      if (deadline != null && now() >= deadline) return true;
+    }
+    for (const row of sb) {
+      if (this.rowCols(row) !== this.cols) {
+        this._reflowCursor = sb.length;
+        return true;
+      }
+    }
+    this.reflowPending = false;
+    return false;
+  }
+
+  finishReflow() {
+    while (this.reflowStep(null)) { /* until done */ }
   }
 
   _applySnapshot(msg) {
@@ -295,6 +460,11 @@ export class GridModel {
     const rows = msg.rows | 0;
     if (msg.reset) {
       this.scrollback = Array.isArray(msg.history) ? msg.history.map(raw => this._row(raw)) : [];
+      this.reflowPending = false;
+      this._reflowCursor = 0;
+      this.tailSync = null;
+      this.tailEpoch++;
+      this._historyBaseStale = !!msg.modes?.alt;
       this._capScrollback();
       // 服务端还留着多少更早的历史：history_total - 快照随附的行数。
       const total = typeof msg.history_total === 'number' ? msg.history_total : this.scrollback.length;
@@ -304,11 +474,13 @@ export class GridModel {
       this.historyAppended = 0;
       this.historyResync = false;
       this.historyPaging = this.historyOlder > 0;
-    } else if (this.cols > 0 && cols !== this.cols) {
-      this._rebuildScrollback(cols);
+    } else {
+      this._hostResized(msg, cols);
     }
     this.cols = cols;
     this.rows = rows;
+    this.hostCols = cols;
+    this.hostRows = rows;
     const grid = Array.isArray(msg.grid) ? msg.grid : [];
     this.viewport = [];
     for (let y = 0; y < rows; y++) {
@@ -371,6 +543,7 @@ export class GridModel {
     const extra = this.scrollback.length - this.scrollbackLimit;
     if (extra > 0) {
       this.scrollback.splice(0, extra);
+      if (this.reflowPending) this._reflowCursor = Math.max(0, this._reflowCursor - extra);
       // 本地最旧一端前移了；它在宿主里仍是连续的，只是更早的行不再留着。
       this.historyOlder += extra;
     }
@@ -435,42 +608,131 @@ export class GridModel {
     return out;
   }
 
-  _rebuildScrollback(newCols) {
+  /// 宽度变化：尚未标记宽度的回滚行记下原宽度，然后登记重排（lazyReflow 时
+  /// 由调用方分批完成，否则立即做完）。
+  _changeCols(newCols) {
+    const old = this.cols;
+    if (!(old > 0) || newCols === old) {
+      this.cols = newCols;
+      return;
+    }
+    for (const row of this.scrollback) if (!(row.wcols > 0)) row.wcols = old;
+    this.cols = newCols;
     // 宿主按自己的宽度重排历史，本地重排后的行与原来的绝对行号不再对应。
     this.historyEpoch++;
     this.historyResync = this.historyPaging;
-    const rebuilt = [];
-    let group = [];
-    const flush = () => {
-      if (!group.length) return;
-      if (group.length === 1 && !group[0].wrapped && newCols >= this.cols) {
-        group[0].cells = null;
-        rebuilt.push(group[0]);
-        group = [];
-        return;
-      }
-      const cells = [];
-      for (const row of group) {
-        for (const cell of this.readCells(row)) cells.push(cell);
-      }
-      trimTrailingBlanks(cells);
-      for (const row of this._wrap(cells, newCols)) rebuilt.push(row);
-      group = [];
-    };
-    for (const row of this.scrollback) {
-      group.push(row);
-      if (!row.wrapped) flush();
+    this.tailEpoch++;
+    this.reflowPending = this.scrollback.length > 0;
+    this._reflowCursor = this.scrollback.length;
+    if (!this.lazyReflow) this.finishReflow();
+  }
+
+  /// reset:false 快照（宿主 resize）。宿主重排时会在历史和屏幕之间搬行：变矮
+  /// 把光标以上放不下的行推进历史，变高从历史拉回行，宽度变化整体重排后屏幕
+  /// 取最后几行。这些行不在 `scrolled` 里：高度变化按 history_total 的增减在
+  /// 本地补上，并登记一次与宿主历史末尾的对齐（活连接上由页面取 grid/history）。
+  _hostResized(msg, cols) {
+    const widthChanged = this.hostCols > 0 && cols !== this.hostCols;
+    this._changeCols(cols);
+    const total = typeof msg.history_total === 'number' ? msg.history_total : null;
+    if (total == null) return;
+    if (this.modes.alt || msg.modes?.alt) {
+      // 备用屏幕上的 history_total 不是主屏的；主屏在此期间也可能被重排过。
+      this._historyBaseStale = true;
+      return;
     }
-    flush();
-    this.scrollback = rebuilt;
+    const delta = total - (this.historyBase + this.historyAppended);
+    // 宽度变了或基数不可信时本地算不出搬了哪些行，只能和宿主历史末尾对齐。
+    const local = !widthChanged && !this._historyBaseStale;
+    this._historyBaseStale = false;
+    if (local && delta > 0 && delta <= this.viewport.length) {
+      // 变矮：原屏幕最上面 delta 行进了宿主历史；绝对行号不变。
+      for (let y = 0; y < delta; y++) this.scrollback.push(this.viewport[y]);
+      this._capScrollback();
+    } else if (local && delta < 0 && -delta <= this.scrollback.length) {
+      // 变高：宿主历史最后 -delta 行回到屏幕顶部，新快照里已有它们。
+      this.scrollback.length += delta;
+      if (this.reflowPending) this._reflowCursor = Math.min(this._reflowCursor, this.scrollback.length);
+    }
+    this.historyBase = total;
+    this.historyAppended = 0;
+    if (!local || delta !== 0) {
+      this.tailEpoch++;
+      this.tailSync = {total};
+    }
+  }
+
+  _groupStart(end) {
+    const sb = this.scrollback;
+    let start = end - 1;
+    while (start > 0 && sb[start - 1].wrapped) start--;
+    return Math.max(0, start);
+  }
+
+  /// 把回滚区 [start, end)（一个逻辑行；最后一行可能接着折进屏幕）按当前宽度
+  /// 重排。已经是当前宽度时不动。
+  _reflowGroup(start, end) {
+    const sb = this.scrollback;
+    const target = this.cols;
+    let done = true;
+    for (let k = start; k < end && done; k++) done = this.rowCols(sb[k]) === target;
+    if (done) return;
+    const last = sb[end - 1];
+    if (end - start === 1 && !last.wrapped
+        && (this.rowCols(last) <= target || spansFit(last.spans, target))) {
+      last.wcols = target;
+      last.cells = null;
+      this._cellCache.delete(last);
+      last.version = ++this.version;
+      return;
+    }
+    const cells = [];
+    const oldStarts = [];
+    let offset = 0;
+    for (let k = start; k < end; k++) {
+      oldStarts.push(offset);
+      for (const cell of this.readCells(sb[k])) {
+        cells.push(cell);
+        offset += cell.width === 2 ? 2 : 1;
+      }
+    }
+    trimTrailingBlanks(cells);
+    this.version++;
+    const {rows, starts} = this._wrapWithStarts(cells, target);
+    // 逻辑行接着折进屏幕时保留续行标记。
+    if (last.wrapped && rows.length) rows[rows.length - 1].wrapped = true;
+    const map = pos => {
+      const k = Math.min(end - start - 1, Math.max(0, pos.line - start));
+      const g = oldStarts[k] + Math.max(0, pos.col);
+      let r = 0;
+      while (r + 1 < starts.length && starts[r + 1] <= g) r++;
+      return {line: start + r, col: g - starts[r]};
+    };
+    this._replaceRows(start, end, rows, map);
+  }
+
+  _replaceRows(start, end, rows, map) {
+    for (const row of rows) row.wcols = this.cols;
+    this.scrollback.splice(start, end - start, ...rows);
+    const delta = rows.length - (end - start);
+    if (this.reflowPending && end <= this._reflowCursor) this._reflowCursor += delta;
+    this.version++;
+    if (typeof this.onLinesReplaced === 'function') this.onLinesReplaced(start, end, rows.length, map);
   }
 
   _wrap(cells, cols) {
-    if (!(cols > 0)) return [];
-    if (!cells.length) return [this._empty()];
+    return this._wrapWithStarts(cells, cols).rows;
+  }
+
+  /// 折行结果和每行在逻辑行里的起始列。
+  _wrapWithStarts(cells, cols) {
+    const starts = [];
+    if (!(cols > 0)) return {rows: [], starts};
+    if (!cells.length) return {rows: [this._empty()], starts: [0]};
     const rows = [];
     let current = [];
     let used = 0;
+    let offset = 0;
     const emit = wrapped => {
       rows.push({
         spans: spansFromCells(current),
@@ -478,6 +740,8 @@ export class GridModel {
         cells: null,
         version: this.version,
       });
+      starts.push(offset);
+      offset += used;
       current = [];
       used = 0;
     };
@@ -487,6 +751,7 @@ export class GridModel {
         if (used > 0) emit(true);
         else if (width > cols) {
           // Does not fit even on an empty row; drop rather than loop.
+          offset += width;
           continue;
         }
       }
@@ -496,7 +761,10 @@ export class GridModel {
     }
     if (current.length) emit(false);
     else if (rows.length) rows[rows.length - 1].wrapped = false;
-    else rows.push(this._empty());
-    return rows;
+    else {
+      rows.push(this._empty());
+      starts.push(0);
+    }
+    return {rows, starts};
   }
 }

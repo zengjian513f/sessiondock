@@ -2488,6 +2488,59 @@ function termHistoryLive(view, ws, lease) {
     && !SessionDockNetwork.paused;
 }
 
+function termHistoryParams(view, lease, req) {
+  const params = new URLSearchParams({
+    name: view.name, page: TERM_PAGE_ID, token: lease.token,
+    from: String(req.from), to: String(req.to),
+  });
+  for (const key of ['uid', 'instance_id', 'record_id', 'launch_id']) {
+    if (lease[key]) params.set(key, lease[key]);
+  }
+  return params;
+}
+
+// 宿主 resize 时会在历史和屏幕之间搬行（变矮推进历史、变高拉回、宽度变化整体
+// 重排），这些行不在 diff.scrolled 里。宿主的 reset:false 快照之后取一次它历史
+// 末尾的几百行，与本地末尾对齐并替换（GridModel.acceptHistoryTail）。
+async function syncTermHistoryTail(view) {
+  if (!view || view.historyTailLoading) return;
+  const ws = view.ws, lease = view.inputLease, term = view.term;
+  if (typeof term?.historyTailRequest !== 'function') return;
+  if (!termHistoryLive(view, ws, lease)) {
+    // 回放和已结束的连接不取宿主历史；本地按 history_total 的补齐已经做过。
+    term.dropHistoryTail();
+    return;
+  }
+  const req = term.historyTailRequest();
+  if (!req) return;
+  view.historyTailLoading = true;
+  try {
+    let response, data;
+    try {
+      response = await fetch(appUrl('api/term/grid/history?' + termHistoryParams(view, lease, req)),
+        {cache: 'no-store'});
+      data = await response.json().catch(() => null);
+    } catch {
+      response = null;
+    }
+    if (!termHistoryLive(view, ws, lease) || view.term !== term) return;
+    if (!response?.ok || !data) {
+      // 失败不重试：本地已按 history_total 补齐高度变化，下次 resize 再对齐。
+      if (term.model?.tailSync && req.epoch === term.model.tailEpoch) term.dropHistoryTail();
+      browserAuditEvent?.('terminal.history_tail_failed', {
+        name: view.name, status: response?.status || 0, error: data?.error || '',
+      }, {uid: view.bindingUid || T.uid || '', connectionId: view.auditConnectionId || '',
+        severity: 'info'});
+      return;
+    }
+    term.applyHistoryTail(req, data);
+  } finally {
+    view.historyTailLoading = false;
+    // 等待期间又有一次 resize：按最新的快照再对齐一次。
+    if (view.term === term && term.model?.tailSync) setTimeout(() => void syncTermHistoryTail(view), 0);
+  }
+}
+
 async function loadOlderTermHistory(view) {
   if (!view || view.historyLoading) return;
   const ws = view.ws, lease = view.inputLease, term = view.term;
@@ -2500,13 +2553,7 @@ async function loadOlderTermHistory(view) {
     for (let attempt = 0; attempt < 4; attempt++) {
       const req = term.historyPageRequest(TERM_HISTORY_PAGE_ROWS);
       if (!req) return;
-      const params = new URLSearchParams({
-        name: view.name, page: TERM_PAGE_ID, token: lease.token,
-        from: String(req.from), to: String(req.to),
-      });
-      for (const key of ['uid', 'instance_id', 'record_id', 'launch_id']) {
-        if (lease[key]) params.set(key, lease[key]);
-      }
+      const params = termHistoryParams(view, lease, req);
       let response, data;
       try {
         response = await fetch(appUrl('api/term/grid/history?' + params), {cache: 'no-store'});
@@ -2540,6 +2587,7 @@ async function loadOlderTermHistory(view) {
 function writeTermOutput(view, chunk) {
   if (!chunk) return;
   writeParsedTermOutput(view, chunk);
+  if (view.term?.model?.tailSync && !view.historyTailLoading) void syncTermHistoryTail(view);
 }
 
 /** Codex 的 side thread 目前可能只存在于正在运行的 TUI，绑定 main thread 的

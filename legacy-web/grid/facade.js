@@ -11,6 +11,10 @@ const DEFAULT_ROWS = 24;
 const BLINK_MS = 530;
 const WHEEL_LINES = 3;
 const SCROLLBAR_WIDTH = 12;
+/// 宽度变化后后台重排回滚区，每片最多占主线程这么久；视口上下各留这么多屏
+/// 立即重排，滚动到别处时再按需补上。
+const REFLOW_SLICE_MS = 8;
+const REFLOW_MARGIN_SCREENS = 2;
 let nextCanvasId = 0;
 
 const ANSI_NAMES = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'];
@@ -161,8 +165,9 @@ export class GridTerm {
     this._canvas = null;
     this._textarea = null;
     this._keyCapture = null;
+    this._reflowTimer = 0;
 
-    this.model = new GridModel({scrollbackLimit: scrollback});
+    this.model = this._newModel();
     this.renderer = new GridRenderer(null, {
       theme: 'dark',
       ...(fontFamily ? {fontFamily} : {}),
@@ -473,6 +478,7 @@ export class GridTerm {
       }
     }
     if (offset < chunk.length) this._pending.push(chunk.slice(offset));
+    this._scheduleReflow();
     this._resetBlink();
     this._stickFollow();
     this._scheduleRender(callback);
@@ -484,6 +490,8 @@ export class GridTerm {
     this._cols = cols;
     this._rows = rows;
     this.model.resize(cols, rows);
+    this._reflowVisible();
+    this._scheduleReflow();
     this.renderer.measure();
     const cw = this.renderer.cellWidth > 0 ? this.renderer.cellWidth : 1;
     const ch = this.renderer.cellHeight > 0 ? this.renderer.cellHeight : 1;
@@ -499,7 +507,7 @@ export class GridTerm {
     this._parseErrorReported = false;
     const cols = this.cols;
     const rows = this.rows;
-    this.model = new GridModel({scrollbackLimit: this._scrollback});
+    this.model = this._newModel();
     this.model.apply({
       t: 'snapshot',
       reset: true,
@@ -686,6 +694,36 @@ export class GridTerm {
     this.model.stopHistory();
   }
 
+  /// 宿主 resize 后与它历史末尾对齐的请求（见 GridModel.historyTailRequest）。
+  historyTailRequest(maxRows) {
+    const req = this.model.historyTailRequest(maxRows);
+    if (req) req.model = this.model;
+    return req;
+  }
+
+  /// 用宿主历史末尾替换本地末尾；视口和选区由 onLinesReplaced 跟着换算。
+  applyHistoryTail(req, result) {
+    if (this._disposed || !req || req.model !== this.model) return 'stale';
+    const {status, changed} = this.model.acceptHistoryTail(req, result);
+    if (changed) {
+      this._stickFollow();
+      this._scheduleRender();
+    }
+    return status;
+  }
+
+  dropHistoryTail() {
+    this.model.tailSync = null;
+  }
+
+  /// 立即完成尚未做完的重排（查找等需要稳定行号的操作之前）。
+  flushReflow() {
+    if (!this.model.reflowPending) return;
+    this.model.finishReflow();
+    this._stickFollow();
+    this._scheduleRender();
+  }
+
   proposeDimensions(widthCss, heightCss) {
     return proposeGridDimensions(this, widthCss, heightCss);
   }
@@ -703,6 +741,8 @@ export class GridTerm {
     if (this._disposed) return;
     this._disposed = true;
     this._stopBlink();
+    clearTimeout(this._reflowTimer);
+    this._reflowTimer = 0;
     if (this._rafId) {
       if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(this._rafId);
       clearTimeout(this._rafId);
@@ -737,6 +777,56 @@ export class GridTerm {
 
   _maxTop() {
     return Math.max(0, this.model.lineCount() - this.rows);
+  }
+
+  _newModel() {
+    const model = new GridModel({scrollbackLimit: this._scrollback, lazyReflow: true});
+    model.onLinesReplaced = (start, end, count, map) => {
+      if (this.model === model) this._linesReplaced(start, end, count, map);
+    };
+    return model;
+  }
+
+  /// 回滚区 [start, end) 换成了 count 行：视口顶行、选区和选择锚点换算到同一
+  /// 段文字的新位置，之后的行按增减平移。
+  _linesReplaced(start, end, count, map) {
+    const delta = count - (end - start);
+    const move = pos => {
+      if (!pos || pos.line < start) return pos;
+      if (pos.line >= end) return {line: pos.line + delta, col: pos.col};
+      return map(pos);
+    };
+    if (!this._following) this._viewportTop = Math.max(0, move({line: this._viewportTop, col: 0}).line);
+    if (this._selection) {
+      this._selection = {start: move(this._selection.start), end: move(this._selection.end)};
+    }
+    if (this._selectAnchor) this._selectAnchor = move(this._selectAnchor);
+  }
+
+  /// 视口及上下几屏立即按新宽度重排，其余留给后台分片。
+  _reflowVisible() {
+    if (!this.model.reflowPending) return;
+    const rows = this.rows;
+    const margin = rows * REFLOW_MARGIN_SCREENS;
+    const top = this._following ? this._maxTop() : this._viewportTop;
+    this.model.reflowRange(top - margin, top + rows + margin);
+  }
+
+  /// 后台分片重排：每片不超过 REFLOW_SLICE_MS；新的宽度变化只改目标宽度，
+  /// 已在途的分片接着按新宽度做，旧宽度的中间结果不会白等。
+  _scheduleReflow() {
+    if (this._reflowTimer || this._disposed || !this.model.reflowPending) return;
+    this._reflowTimer = setTimeout(() => {
+      this._reflowTimer = 0;
+      if (this._disposed) return;
+      const now = globalThis.performance?.now ? globalThis.performance.now() : Date.now();
+      const more = this.model.reflowStep(now + REFLOW_SLICE_MS);
+      this._stickFollow();
+      this._scheduleRender();
+      if (more) this._scheduleReflow();
+      // 做完后让页面重新判断是否该往前分页（重排期间不分页）。
+      else if (!this._following) emit(this._scrollListeners, this._viewportTop);
+    }, 0);
   }
 
   _openScrollbar(host) {
@@ -840,6 +930,7 @@ export class GridTerm {
       this.renderer.invalidate();
       return;
     }
+    this._reflowVisible();
     this._stickFollow();
     this._syncScrollbar();
     this.renderer.render(this.model, {
