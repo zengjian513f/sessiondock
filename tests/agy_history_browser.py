@@ -48,6 +48,19 @@ SCHEMA = '''CREATE TABLE conversation_summaries (
     workspace_uris TEXT, parent_conversation_id TEXT, status TEXT,
     step_count INTEGER, agent_name TEXT
 )'''
+SYSTEM_INTRO = ('The following is a <SYSTEM_MESSAGE> not actually sent by the user. '
+                'It is provided by the system as important information to pay attention to.\n\n')
+TAG_USER = '另一条输入：保留 <SYSTEM_MESSAGE>用户自己的示例</SYSTEM_MESSAGE> 和 <String>。'
+SETTINGS = '模型设置已更新 agysettingsnotice'
+UNKNOWN_TAG = '未定义附加标签的正文 agyextratag <String>'
+SYSTEM_NOTICE = '[Notice] 后台任务因服务重启停止 agysystemnotice'
+TASK_NOTICE = 'Task id "fixture/task-46" finished with result:\n\nOutput: agytasknotice <String>'
+
+
+def system_record(index, text, sender='system', priority='MESSAGE_PRIORITY_LOW'):
+    return record(index, 'SYSTEM_MESSAGE', SYSTEM_INTRO + '<SYSTEM_MESSAGE>\n'
+                  + f'[Message] timestamp=2026-10-04T00:00:00Z sender={sender} priority={priority} content={text}'
+                  + '\n</SYSTEM_MESSAGE>')
 
 
 def record(index, kind, text, *, thinking=None):
@@ -187,9 +200,17 @@ def run(binary):
         raw_call['tool_calls'] = [{'name': 'fixture_read', 'arguments': {'path': 'fixture.txt'}}]
         error = record(4, 'ERROR_MESSAGE', 'Error: model output must contain either output text or tool calls')
         error['error'] = 'model output must contain either output text or tool calls'
-        write_transcript(native, DECOY, [record(0, 'USER_INPUT', '另一条输入'),
+        tagged_user = record(0, 'USER_INPUT', TAG_USER)
+        tagged_user['content'] += ('\n<USER_SETTINGS_CHANGE>\n' + SETTINGS + '\n</USER_SETTINGS_CHANGE>'
+                                  '\n<EXTRA_NATIVE_TAG>\n' + UNKNOWN_TAG + '\n</EXTRA_NATIVE_TAG>')
+        write_transcript(native, DECOY, [tagged_user,
                                        record(1, 'PLANNER_RESPONSE', '另一个回答'), raw_call,
-                                       record(3, 'UNKNOWN_NATIVE_STEP', '完整工具结果 agyrawresult'), error])
+                                       record(3, 'UNKNOWN_NATIVE_STEP', '完整工具结果 agyrawresult'), error,
+                                       system_record(5, SYSTEM_NOTICE),
+                                       system_record(6, TASK_NOTICE, 'fixture/task-46', 'MESSAGE_PRIORITY_HIGH'),
+                                       record(7, 'SYSTEM_MESSAGE', '纯文本系统消息 agysystemplain'),
+                                       record(8, 'SYSTEM_MESSAGE', '<SYSTEM_MESSAGE>\n未闭合的原始内容 agysystembroken'),
+                                       record(9, 'SYSTEM_MESSAGE', '')])
         page_records = [record(index, 'USER_INPUT' if index % 2 == 0 else 'PLANNER_RESPONSE',
                                f'AGY PAGE {index:04d}') for index in range(480)]
         page_path = write_transcript(native, PAGES, page_records)
@@ -315,6 +336,34 @@ def run(binary):
                         expect(page.locator('#msgs')).to_contain_text('Error: model output must contain')
                         detail = messages(opener, base, decoy_uid)
                         assert any(m.get('error') and m['text'].startswith('Error:') for m in detail['messages'])
+                        user = page.locator('#msgs .msg[data-role=user]')
+                        expect(user).to_contain_text(TAG_USER)
+                        expect(user).not_to_contain_text('USER_SETTINGS_CHANGE')
+                        expect(user).not_to_contain_text(SETTINGS)
+                        system = page.locator('#msgs .msg[data-role=system]')
+                        expect(system).to_have_count(6)
+                        expect(system.filter(has_text=SYSTEM_NOTICE)).to_be_visible()
+                        expect(system.filter(has_text='agytasknotice')).to_be_visible()
+                        expect(system.filter(has_text=SYSTEM_NOTICE)).not_to_contain_text('<SYSTEM_MESSAGE>')
+                        expect(system.filter(has_text=SYSTEM_NOTICE)).not_to_contain_text('[Message] timestamp=')
+                        expect(system.filter(has_text=SYSTEM_NOTICE).locator('.native-message-state')).to_have_text('系统消息')
+                        expect(system.filter(has_text='agytasknotice').locator('.native-message-state')).to_have_attribute(
+                            'title', re.compile('来源：fixture/task-46.*', re.S))
+                        expect(system.filter(has_text=SETTINGS).locator('.native-message-state')).to_have_text('设置变更')
+                        expect(system.filter(has_text=UNKNOWN_TAG).locator('.native-message-state')).to_have_text('附加信息 · EXTRA_NATIVE_TAG')
+                        expect(system.filter(has_text='agysystembroken')).to_contain_text('<SYSTEM_MESSAGE>')
+                        assert page.locator('#msgs .tool-msg .msg[data-role=system]').count() == 0
+                        system_messages = [m for m in detail['messages'] if m['role'] == 'system']
+                        assert len(system_messages) == 6 and all(m['counted'] is False for m in system_messages), system_messages
+                        notice = next(m for m in system_messages if m['text'] == SYSTEM_NOTICE)
+                        assert notice['native_type'] == 'SYSTEM_MESSAGE' and notice['system_sender'] == 'system', notice
+                        assert notice['system_priority'] == 'MESSAGE_PRIORITY_LOW', notice
+                        user_message = next(m for m in detail['messages'] if m['role'] == 'user')
+                        assert user_message['native_metadata'][0]['tag'] == 'ADDITIONAL_METADATA', user_message
+                        assert user_message['text'] == TAG_USER and user_message['native_type'] == 'USER_INPUT', user_message
+                        assert all(m.get('native_type') for m in detail['messages']), detail['messages']
+                        assert_native(native, expected_native, 'native type/tag classification')
+                        progress('system/task notifications, settings changes, metadata and unknown tags are classified; literal/code tags and malformed envelopes stay intact')
                         open_row(SEEDED, ANSWER)
                         progress('documented raw tool JSON, unknown-step content and native ERROR_MESSAGE remain visible')
 
