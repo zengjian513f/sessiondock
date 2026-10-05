@@ -830,8 +830,7 @@ fn set_display(state: &HubState, nid: &str, body: &Map<String, Value>) -> Result
     let Some(node) = registry.find(nid) else {
         return status(StatusCode::NOT_FOUND, json!({"error": NOT_REGISTERED}));
     };
-    let before = json!({"name": node.name, "color": node.color(), "enabled": node.enabled(),
-        "renderer": node.renderer()});
+    let before = json!({"name": node.name, "color": node.color(), "enabled": node.enabled()});
     let flag = match body.get("enabled") {
         None | Some(Value::Null) => None,
         Some(Value::Bool(flag)) => Some(*flag),
@@ -851,14 +850,7 @@ fn set_display(state: &HubState, nid: &str, body: &Map<String, Value>) -> Result
     };
     let name = text("name")?;
     let color = text("color")?;
-    let renderer = text("renderer")?;
-    let updated = registry
-        .update_display(nid, name.as_deref(), color.as_deref(), flag)
-        .and_then(|row| match &renderer {
-            Some(renderer) => registry.set_renderer(nid, renderer),
-            None => Ok(row),
-        });
-    let row = match updated {
+    let row = match registry.update_display(nid, name.as_deref(), color.as_deref(), flag) {
         Ok(row) => row,
         Err(RegistryError::NotFound(_)) => {
             return status(StatusCode::NOT_FOUND, json!({"error": NOT_REGISTERED}));
@@ -868,8 +860,7 @@ fn set_display(state: &HubState, nid: &str, body: &Map<String, Value>) -> Result
         }
         Err(error) => return Err(Reply::Invalid(error.to_string())),
     };
-    let after = json!({"name": row.name, "color": row.color, "enabled": row.enabled,
-        "renderer": row.renderer});
+    let after = json!({"name": row.name, "color": row.color, "enabled": row.enabled});
     if after != before
         && let Some(audit) = &state.audit
     {
@@ -881,7 +872,7 @@ fn set_display(state: &HubState, nid: &str, body: &Map<String, Value>) -> Result
     }
     ok(
         &json!({"ok": true, "node": {"id": row.id, "name": row.name, "color": row.color,
-        "enabled": row.enabled, "renderer": row.renderer}}),
+        "enabled": row.enabled}}),
     )
 }
 

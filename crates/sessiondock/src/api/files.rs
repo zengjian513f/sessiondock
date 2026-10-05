@@ -158,8 +158,6 @@ pub struct FileQuery {
     path: Option<String>,
     mode: String,
     download: String,
-    #[allow(dead_code)]
-    raw: String,
     offset: String,
     limit: Option<String>,
     sort: String,

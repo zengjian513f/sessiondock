@@ -539,7 +539,6 @@ impl Index {
 
     /// Publish the current list. Runs directory walks and bounded file reads:
     /// call it on a blocking executor, never on a reactor thread.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn refresh(&self, force: bool) -> Result<Arc<IndexSnapshot>, SessionError> {
         self.refresh_within(force, CHECK_TTL)
     }

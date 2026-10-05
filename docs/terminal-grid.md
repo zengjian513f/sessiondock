@@ -360,16 +360,16 @@ the visible rows do not move.
 `ptyhost-screen` is the crate that holds `Screen` (the alacritty_terminal
 wrapper) and `grid` (span extraction, diffing, `FlushPolicy`). ptyhost
 uses it for live sessions; sessiondock uses the same crate to replay a
-recording: `GET /api/term/records/attach?id=…&mode=grid` feeds the
+recording: `GET /api/term/records/attach?id=…` (the page adds `mode=grid`;
+replay is grid-only and the parameter is otherwise ignored) feeds the
 checkpoint and every later output frame through a fresh `Screen`
 (scrollback 10_000) and streams `snapshot` / `diff` lines; a recorded
 resize becomes a `reset:false` snapshot, a gap checkpoint becomes
 `{"t":"gap"}` plus a `reset:true` snapshot, a timeline `seek` answers with
 a `record` frame and a `reset:true` snapshot of the model as of that
 instant, and the `timeline` / `record` / `clock` / `exit` / `end` text
-frames and the `seek` / `play` / `pause` / `live` controls are those of
-the byte replay
-([terminal session recordings](terminal-records.md)). `grid.html?record=<id>`
+frames and the `seek` / `play` / `pause` / `live` controls are described
+in [terminal session recordings](terminal-records.md#browser-wire). `grid.html?record=<id>`
 opens that stream read-only (no claim, no input, no pty resize); the
 main console uses the same stream to replay an exited session in place
 (see [recordings](terminal-records.md)). The checkpoint serializer
@@ -383,8 +383,7 @@ no xterm.js. A running host started before the grid protocol existed reports
 `grid:false`: its console stays closed with the explanation
 「此会话的终端宿主不支持网格显示，重新启动会话后即可打开控制台。」 An exited
 row has no host and still replays its recording or explains itself. The hub
-registry's `renderer` display attribute ([hub](hub.md)) is no longer read by
-the page.
+registry has no per-machine renderer attribute ([hub](hub.md)).
 `legacy-web/grid/facade.js` exports `GridTerm`, an xterm.js-compatible
 object (`write` of JSON-line text, `resize`, `buffer.active`, selection,
 `onData`, `onSelectionChange`, `onClipboard`, `proposeDimensions`, …)
