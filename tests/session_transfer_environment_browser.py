@@ -87,7 +87,7 @@ def main():
         dialog.locator('.clone-cancel').click()
         mode['delay']=True;dialog=open_dialog();note=dialog.locator('.transfer-environment')
         dialog.locator('#transfer-target').select_option(nodes[1].nid)
-        expect(note).to_have_text('正在核对目标 CLI…');expect(dialog.locator('.clone-confirm')).to_be_disabled()
+        expect(note).to_contain_text('正在核对目标 CLI');expect(note).to_contain_text('尚未核验');expect(dialog.locator('.clone-confirm')).to_be_enabled()
         page.wait_for_timeout(100);assert delayed
         dialog.locator('#transfer-target').select_option(nodes[2].nid)
         expect(note).to_have_text('4 个动态工具执行器未核验')
@@ -102,12 +102,42 @@ def main():
         mode['unknown']=True;dialog=open_dialog(False);note=dialog.locator('.transfer-environment')
         expect(note).to_contain_text('未核验目标 CLI');expect(dialog.locator('.clone-confirm')).to_be_enabled()
         expect(note).to_contain_text('未核验动态工具依赖')
-        with page.expect_response(lambda r:r.url.endswith('/api/session/clone')) as copied:
+        # A stalled advisory lookup must not prevent an actual browser copy.
+        mode['unknown']=False
+        pending_source=[]
+        page.route('**/api/clients',lambda route:pending_source.append(route))
+        dialog.locator('#transfer-target').select_option(nodes[2].nid)
+        expect(note).to_contain_text('尚未核验')
+        expect(dialog.locator('.clone-confirm')).to_be_enabled()
+        # Delay the fleet refresh independently of the selected target history.
+        delayed_lists=[]
+        page.route('**/api/sessions?**',lambda route:delayed_lists.append(route))
+        with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone')) as copied:
             dialog.locator('.clone-confirm').click()
         assert copied.value.ok,copied.value.text()
         page.wait_for_function('(uid)=>S.sel===uid',arg=copied.value.json()['target_uid'])
         expect(page.locator('#msgs')).to_contain_text('Branch A current')
-        print('PASS Chromium shows CLI absence/older/unknown versions, ignores stale target replies, lists native dynamic tools without definitions, and copies the fourteen-session family',flush=True)
+        assert pending_source and delayed_lists
+        for request in pending_source:request.fulfill(json={'clients':good})
+        for request in delayed_lists:request.fulfill(response=request.fetch())
+        page.unroute('**/api/sessions?**')
+        page.unroute('**/api/clients')
+        mode['delay']=False
+        page.route('**/api/clients',clients)
+        plans=[]
+        page.on('response',lambda response:plans.append(response.json())
+            if response.url.endswith('/api/session/clone/plan') and response.ok else None)
+        dialog=open_dialog()
+        preview=plans[-1]
+        dialog.locator('#transfer-target').select_option(nodes[1].nid)
+        dialog.locator('input[name="transfer-mode"][value="move"]').check()
+        dialog.locator('#transfer-new-ids').check()
+        with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=30000) as refused:
+            dialog.locator('.clone-confirm').click()
+        assert plans[-1]['operation_id']==preview['operation_id'],'mode change rebuilt the preview'
+        assert plans[-1]['mode']=='move'
+        assert not refused.value.ok,'shared storage move must still be refused'
+        print('PASS Chromium nonblocking CLI advice and fleet refresh, stale replies, fourteen-session copy, and same-identity preview reuse with execution checks',flush=True)
 
 
 if __name__=='__main__':main()

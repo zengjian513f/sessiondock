@@ -80,7 +80,7 @@ mod titles;
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -434,6 +434,7 @@ struct CacheKey {
     events_stamp: Option<Stamp>,
 }
 
+#[derive(Clone)]
 struct Cached {
     key: CacheKey,
     summary: Arc<RowSummary>,
@@ -466,6 +467,7 @@ pub struct Index {
     codex_index: Option<PathBuf>,
     workers: usize,
     state: Mutex<State>,
+    invalidated: AtomicBool,
 }
 
 impl Index {
@@ -503,6 +505,7 @@ impl Index {
             codex_index,
             workers: workers.max(1),
             state: Mutex::new(State::default()),
+            invalidated: AtomicBool::new(false),
         }
     }
 
@@ -541,6 +544,28 @@ impl Index {
         self.refresh_within(force, CHECK_TTL)
     }
 
+    /// Seed a separate on-demand inventory with already parsed file summaries.
+    /// Its first refresh still walks its own roots and validates every stamp.
+    /// Never wait on ordinary readers or share their inventory lock.
+    pub fn seed_summaries(&self, other: &Self) {
+        let Ok(mut state) = self.state.try_lock() else {
+            return;
+        };
+        if state.snapshot.is_some() || !state.cache.is_empty() {
+            return;
+        }
+        let Ok(source) = other.state.try_lock() else {
+            return;
+        };
+        state.cache.clone_from(&source.cache);
+    }
+
+    /// A native publication/removal bypasses the TTL on the next read. This
+    /// does not wait behind a directory walk or perform one on the writer.
+    pub fn invalidate(&self) {
+        self.invalidated.store(true, Ordering::Release);
+    }
+
     /// `refresh` with a caller-chosen reuse window: the previous snapshot is
     /// returned while it is younger than `ttl` (opening a
     /// view tolerates a few seconds of list staleness — the view `stat`s its
@@ -558,6 +583,9 @@ impl Index {
             .state
             .lock()
             .map_err(|_| SessionError::new(500, "会话索引锁不可用"))?;
+        if self.invalidated.swap(false, Ordering::AcqRel) {
+            state.checked = None;
+        }
         if !force
             && let Some(snapshot) = &state.snapshot
             && state.checked.is_some_and(|at| at.elapsed() < ttl)

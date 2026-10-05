@@ -32,6 +32,44 @@ fn private_dir(path: &Path) -> Result<(), TransferError> {
 }
 
 impl TransferService {
+    /// Changing clone/move with the same identity choice does not change the
+    /// displayed group or its snapshot. Execution still rechecks that snapshot.
+    pub fn reuse_preview(
+        &self,
+        uid: &str,
+        id: &str,
+        new_ids: bool,
+        moving: bool,
+    ) -> Result<Option<Operation>, TransferError> {
+        let Ok(mut op) = self.load(id) else {
+            return Ok(None);
+        };
+        if op.uid != uid
+            || op.phase != "planned"
+            || op.staged.is_some()
+            || op.incoming_digest.is_some()
+            || op.new_ids() != new_ids
+        {
+            return Ok(None);
+        }
+        if moving && !op.moving {
+            for (provider, root) in self.bundle_roots(&op)? {
+                op.storage_probes
+                    .insert(provider, StorageProbe::create(&root)?);
+            }
+        } else if !moving && op.moving {
+            for (provider, root) in self.bundle_roots(&op)? {
+                if let Some(probe) = op.storage_probes.get(&provider) {
+                    probe.remove(&root)?;
+                }
+            }
+            op.storage_probes.clear();
+        }
+        op.moving = moving;
+        self.save(&op)?;
+        self.touch(&op.id);
+        Ok(Some(op))
+    }
     pub fn plan_move(&self, uid: &str, new_ids: bool) -> Result<Operation, TransferError> {
         let mut op = self.plan_copy(uid, new_ids)?;
         op.moving = true;

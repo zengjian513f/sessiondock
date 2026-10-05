@@ -134,6 +134,9 @@ impl TransferService {
     /// Build an immutable export after source rechecks. Rewrite happens in the
     /// existing private stager; source histories are never rewritten in place.
     pub fn bundle_manifest(&self, op: &Operation) -> Result<Manifest, TransferError> {
+        self.build_manifest(op, true)
+    }
+    fn build_manifest(&self, op: &Operation, recheck: bool) -> Result<Manifest, TransferError> {
         if !cfg!(target_os = "linux") {
             return Err(TransferError::new(
                 "move_platform",
@@ -143,7 +146,9 @@ impl TransferService {
         if !matches!(op.phase.as_str(), "planned" | "exporting") || op.incoming_digest.is_some() {
             return Err(invalid("此操作不能作为迁移源"));
         }
-        self.recheck(op)?;
+        if recheck {
+            self.recheck(op)?;
+        }
         let mut prepared = op.clone();
         self.prepare(&mut prepared)?;
         let op = &prepared;
@@ -236,7 +241,10 @@ impl TransferService {
         op: &Operation,
         destination: &Path,
     ) -> Result<Manifest, TransferError> {
-        let manifest = self.bundle_manifest(op)?;
+        // The API holds the operation gate and has just reserved/rechecked
+        // this export. Keep the post-archive recheck below, instead of scanning
+        // the whole source group twice before reading any archive bytes.
+        let manifest = self.build_manifest(op, false)?;
         let publications = self.publications(&manifest.operation);
         let raw = serde_json::to_vec(&manifest)?;
         let mut archive = tar::Builder::new(private_file(destination)?);

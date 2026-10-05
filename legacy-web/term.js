@@ -317,7 +317,7 @@ async function fetchTermList() {
 }
 
 function sessionTermMeta(uid) {
-  return S.sessions.find(x => x.uid === uid)
+  return indexedSessions().byUid.get(uid)
     || (typeof cache !== 'undefined' ? cache.get(viewKey(uid))?.meta : null)
     || null;
 }
@@ -353,8 +353,8 @@ function linkedTermSession(uid, { followReplacement = false } = {}) {
     && next?.source === session.source && next.sid === session.sid
     && nodeOf(next.uid) === nodeOf(uid);
   const moved = panes.filter(pane => pane.instance_id
-    && (pane.uid === uid || sameThread(sessionTermMeta(pane.current_uid)))
-    && pane.current_uid && pane.current_uid !== uid);
+    && pane.current_uid && pane.current_uid !== uid
+    && (pane.uid === uid || (session?.source === 'codex' && sameThread(sessionTermMeta(pane.current_uid)))));
   // Only the same thread or a proven fork carries a draft; /new is unrelated.
   if (moved.length) {
     const next = moved.length === 1 ? sessionTermMeta(moved[0].current_uid) : null;

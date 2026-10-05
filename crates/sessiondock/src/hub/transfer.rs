@@ -608,16 +608,24 @@ impl Transfers {
         }
         // Reset only when explicitly starting/retrying an operation, before
         // any preparatory work is dispatched to either node.
-        for address in [&source_address, &target_address] {
+        let reset = json!({"operation_id":request.operation_id,"reset":true});
+        // Both resets finish before preparation; neither depends on the other.
+        tokio::try_join!(
             call(
                 &client,
-                address,
+                &source_address,
                 "/api/session/transfer/interrupt",
-                &json!({"operation_id":request.operation_id,"reset":true}),
-                false,
-            )
-            .await?;
-        }
+                &reset,
+                false
+            ),
+            call(
+                &client,
+                &target_address,
+                "/api/session/transfer/interrupt",
+                &reset,
+                false
+            ),
+        )?;
         let operation = json!({"operation_id":request.operation_id});
         let source_state = call(
             &client,
@@ -770,6 +778,7 @@ impl Transfers {
             )
             .await?;
         }
+        let mut retired = false;
         if moving && current.1["phase"] == "ready" {
             journal.phase = "switching".into();
             self.save(&journal).await?;
@@ -809,6 +818,7 @@ impl Transfers {
                     format!("移动已提交，服务端正在重试源端清理：{}", error.message),
                 ));
             }
+            retired = true;
             current = call(
                 &client,
                 &target_address,
@@ -829,7 +839,7 @@ impl Transfers {
         journal.phase = "releasing".into();
         journal.result = Some(result.clone());
         self.save(&journal).await?;
-        if moving {
+        if moving && !retired {
             journal.phase = "retiring".into();
             self.save(&journal).await?;
             if let Err(error) = call(
@@ -848,7 +858,7 @@ impl Transfers {
                     format!("目标已可继续；源端清理待重试：{}", error.message),
                 ));
             }
-        } else {
+        } else if !moving {
             call(
                 &client,
                 &source_address,
