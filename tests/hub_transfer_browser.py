@@ -5,6 +5,7 @@ Uses temporary synthetic sessions and Linux inotify IN_OPEN to detect actual
 ledger reads (independent of filesystem atime policy). No real CLI is launched.
 """
 import argparse
+from transfer_ui import select_target
 from contextlib import ExitStack
 import ctypes
 import http.client
@@ -164,7 +165,7 @@ def main():
             page.locator('#a-clone-group').click()
             dialog = page.locator('#clone-group-dialog')
             expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=15000)
-            dialog.locator('#transfer-target').select_option(b.nid)
+            select_target(dialog, b.nid)
             expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=15000)
             submitted = []
             page.on('request', lambda request: submitted.append(request.post_data_json)
@@ -210,6 +211,25 @@ def main():
             page.emulate_media(reduced_motion='reduce')
             assert bar.locator('i').evaluate('(el)=>getComputedStyle(el).animationName')=='none'
             assert bar.bounding_box()['width']<=390,'progress bar overflows mobile dialog'
+            if not restart:
+                detail_state={'text':''}
+                def progress_detail(route):
+                    response=route.fetch();data=response.json()
+                    data['work']=([{'label':detail_state['text'],'done':1,'total':10,'unit':'份'}]
+                                  if detail_state['text'] else [])
+                    route.fulfill(response=response,json=data)
+                page.route('**/api/session/transfer/progress',progress_detail)
+                positions=[]
+                for text in ('正在复制相关会话','', '正在复制相关会话和检查历史文件 '*15, ''):
+                    detail_state['text']=text
+                    detail=dialog.locator('.transfer-progress-detail')
+                    expect(detail).to_have_text(text+' · 1 / 10 份' if text else '')
+                    positions.append(bar.bounding_box()['y'])
+                    assert detail.bounding_box()['height']>0,'empty progress detail collapsed'
+                assert max(positions)-min(positions)<1,positions
+                page.unroute('**/api/session/transfer/progress',progress_detail)
+                initial_progress=float(bar.get_attribute('aria-valuenow'))
+                print('PASS mobile progress detail keeps bar position across empty, short and long work descriptions',flush=True)
             assert any(j['request']['operation_id'] == operation for j in pending())
             # More than two recovery ticks while the browser renews its lease.
             page.wait_for_timeout(11000)
@@ -264,7 +284,7 @@ def main():
         for local, late_error in ((False, False), (True, True)):
             page, dialog, submitted = begin()
             if local:
-                dialog.locator('#transfer-target').select_option(a.nid)
+                select_target(dialog, a.nid)
                 expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=15000)
             else:
                 page.set_viewport_size({'width':390,'height':844})

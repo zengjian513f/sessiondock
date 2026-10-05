@@ -10558,6 +10558,84 @@ function paintTransferAvailability(button, uid) {
     || SessionDockCapabilities.config.session_clone_local_codex !== true);
   setControlUnavailable(button, unavailable ? '此会话当前不支持移动或复制整组。' : transferUnavailableReason(uid));
 }
+function setupTransferTarget(dialog, machines, sourceId, selectedId) {
+  const button = dialog.querySelector('#transfer-target');
+  const menu = dialog.querySelector('.transfer-target-menu');
+  const options = dialog.querySelector('#transfer-target-options');
+  const close = () => { if (menu.matches(':popover-open')) menu.hidePopover(); };
+  const sync = () => {
+    for (const option of options.children) {
+      const selected = option.value === button.value;
+      option.setAttribute('aria-selected', String(selected));
+      option.lastElementChild.textContent = selected ? '✓' : '';
+      if (selected) button.firstElementChild.textContent = option.firstElementChild.textContent;
+    }
+  };
+  const choices = [...machines.values()];
+  if (!machines.has(selectedId)) choices.push({id:selectedId, name:'目标机器不可用', online:false});
+  for (const node of choices) {
+    const option = document.createElement('button');
+    const unavailable = node.online === false || node.enabled === false;
+    option.type = 'button'; option.className = 'new-model-option'; option.tabIndex = -1;
+    option.value = node.id; option.dataset.value = node.id; option.setAttribute('role', 'option');
+    option.disabled = unavailable && node.id !== sourceId;
+    const name = document.createElement('span'); name.textContent = node.name + (unavailable ? ' · 不可用' : '');
+    const check = document.createElement('small'); check.setAttribute('aria-hidden', 'true');
+    option.append(name, check); options.append(option);
+    option.onclick = () => {
+      button.value = node.id; sync(); close(); button.focus();
+      button.dispatchEvent(new Event('change'));
+    };
+  }
+  button.value = selectedId; sync();
+  const open = () => {
+    if (button.disabled) return;
+    menu.showPopover();
+    const box = button.getBoundingClientRect(), zoom = menu.currentCSSZoom || 1;
+    const edge = 8, gap = 4, below = innerHeight - box.bottom - gap - edge, above = box.top - gap - edge;
+    const up = below < 160 && above > below;
+    const width = Math.min(Math.max(box.width, 180), innerWidth - edge * 2);
+    menu.style.width = `${width / zoom}px`;
+    menu.style.left = `${Math.max(edge, Math.min(box.left, innerWidth - edge - width)) / zoom}px`;
+    menu.style.maxHeight = `${Math.max(0, up ? above : below) / zoom}px`;
+    menu.style.top = `${(up ? box.top - gap - menu.getBoundingClientRect().height : box.bottom + gap) / zoom}px`;
+    const enabled = [...options.children].filter(option => !option.disabled);
+    (enabled.find(option => option.value === button.value) || enabled[0])?.focus();
+  };
+  button.onclick = event => {
+    event.preventDefault();
+    menu.matches(':popover-open') ? close() : open();
+  };
+  button.onkeydown = event => {
+    if (['ArrowDown', 'ArrowUp'].includes(event.key)) {event.preventDefault(); open();}
+  };
+  menu.onkeydown = event => {
+    if (event.key === 'Escape') {
+      event.preventDefault(); event.stopPropagation(); close(); button.focus();
+    } else if (event.key === 'Tab') {
+      close(); button.focus();
+    } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault();
+      const enabled = [...options.children].filter(option => !option.disabled);
+      const index = enabled.indexOf(document.activeElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? enabled.length - 1
+        : (index + (event.key === 'ArrowDown' ? 1 : -1) + enabled.length) % enabled.length;
+      enabled[next]?.focus();
+    }
+  };
+  let listeners;
+  menu.addEventListener('beforetoggle', event => {
+    const opened = event.newState === 'open';
+    button.setAttribute('aria-expanded', String(opened));
+    listeners?.abort();
+    if (opened) {
+      listeners = new AbortController();
+      window.addEventListener('resize', close, {signal:listeners.signal});
+      dialog.querySelector('.transfer-body').addEventListener('scroll', close, {signal:listeners.signal});
+    }
+  });
+  return close;
+}
 async function cloneSessionGroup(uid, resumed = null) {
   const reason = resumed ? '' : transferUnavailableReason(uid);
   if (reason) {
@@ -10582,7 +10660,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     <div class="transfer-body">
       <div class="transfer-controls">
         <label class="transfer-field"><span>源机器</span><input id="transfer-source" type="text" disabled></label>
-        <label class="transfer-field"><span>目标机器</span><select id="transfer-target"></select></label>
+        <div class="transfer-field"><span id="transfer-target-label">目标机器</span><button id="transfer-target" class="new-pick" type="button" popovertarget="transfer-target-menu" aria-haspopup="listbox" aria-expanded="false" aria-controls="transfer-target-options" aria-labelledby="transfer-target-label transfer-target-value"><span id="transfer-target-value"></span><i aria-hidden="true">▾</i></button></div>
         <fieldset class="transfer-mode"><legend>操作</legend><div class="transfer-segments">
           <label><input type="radio" name="transfer-mode" value="clone" checked><span>复制</span></label>
           <label><input type="radio" name="transfer-mode" value="move"><span>移动</span></label>
@@ -10605,21 +10683,14 @@ async function cloneSessionGroup(uid, resumed = null) {
       </div>
       <p class="transfer-error" role="alert" hidden></p>
     </div>
-    <div class="transfer-footer"><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn transfer-abort" hidden>撤回本次移动</button><button type="button" class="btn primary clone-confirm" disabled>复制整组</button></div>`;
+    <div class="transfer-footer"><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn transfer-abort" hidden>撤回本次移动</button><button type="button" class="btn primary clone-confirm" disabled>复制整组</button></div>
+    <div id="transfer-target-menu" class="new-model-menu transfer-target-menu" popover="auto"><div id="transfer-target-options" class="new-model-options" role="listbox" aria-labelledby="transfer-target-label"></div></div>`;
   const $d = selector => dialog.querySelector(selector);
   const target = $d('#transfer-target'), newIds = $d('#transfer-new-ids');
   const confirm = $d('.clone-confirm'), status = $d('.clone-status');
   const notice = $d('.transfer-notice'), error = $d('.transfer-error');
   const radios = [...dialog.querySelectorAll('[name="transfer-mode"]')];
-  for (const node of machines.values()) {
-    const option = document.createElement('option');
-    option.value = node.id;
-    const unavailable = node.online === false || node.enabled === false;
-    option.textContent = node.name + (unavailable ? ' · 不可用' : '');
-    option.disabled = unavailable && node.id !== sourceId;
-    target.append(option);
-  }
-  target.value = sourceId;
+  const closeTarget = setupTransferTarget(dialog, machines, sourceId, resumed?.request.target_node || sourceId);
   $d('#transfer-source').value = sourceName;
   let plan = resumed?.plan || null, busy = false, planning = false, uncertain = !!resumed;
   let operationStarted = !!resumed, progressTimer = null, progressLoading = false, aborting = false, executionSequence = 0;
@@ -10630,11 +10701,6 @@ async function cloneSessionGroup(uid, resumed = null) {
   const environmentClients = new Map();
   const identityChoices = {clone:true, move:false};
   if (resumed) {
-    if (!machines.has(resumed.request.target_node)) {
-      const option = document.createElement('option'); option.value = resumed.request.target_node;
-      option.textContent = '目标机器不可用'; option.disabled = true; target.append(option);
-    }
-    target.value = resumed.request.target_node;
     radios.forEach(r => r.checked = r.value === plan.mode);
     identityChoices[plan.mode] = plan.new_ids;
   }
@@ -10660,6 +10726,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     confirm.disabled = busy || planning || aborting || !plan || !!reason;
     // Keep the chosen operation fixed while its publication result is uncertain.
     target.disabled = busy || aborting || uncertain;
+    if (target.disabled) closeTarget();
     for (const radio of radios) radio.disabled = busy || aborting || uncertain;
     newIds.disabled = busy || aborting || uncertain;
     $d('.transfer-abort').hidden = !uncertain && !(busy && operationStarted);
@@ -10669,11 +10736,18 @@ async function cloneSessionGroup(uid, resumed = null) {
     $d('.transfer-abort').disabled = aborting;
     dialog.setAttribute('aria-busy', String(busy));
   };
-  target.onchange = () => {renderSelection(); refreshEnvironment();};
-  radios.forEach(r => r.onchange = renderSelection);
-  newIds.onchange = () => {identityChoices[mode()] = newIds.checked; renderSelection();};
+  const selectionChanged = () => {
+    renderSelection();
+    // A rejected move can discard its preview during progress reconciliation.
+    // Recover it when the user chooses a supported destination/mode again.
+    if (!plan && !busy && !planning && !uncertain) void refreshPlan();
+    else refreshEnvironment();
+  };
+  target.onchange = selectionChanged;
+  radios.forEach(r => r.onchange = selectionChanged);
+  newIds.onchange = () => {identityChoices[mode()] = newIds.checked; selectionChanged();};
   const close = (refresh = true) => {
-    clearInterval(progressTimer); dialog.close(); dialog.remove(); refreshTransferTasks();
+    clearInterval(progressTimer); closeTarget(); dialog.close(); dialog.remove(); refreshTransferTasks();
     if (refresh) resumeTransferSidebar();
   };
   const cancelAndClose = () => cancelTransfer(true);
@@ -10846,7 +10920,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     progress.hidden = false; progress.dataset.phase = data.phase;
     progress.querySelector('.transfer-progress-label').textContent = summary;
     progress.querySelector('.transfer-progress-detail').textContent = detail;
-    progress.querySelector('.transfer-progress-detail').hidden = !detail;
+    progress.querySelector('.transfer-progress-detail').title = detail;
     track.setAttribute('aria-valuetext', detail ? `${summary} · ${detail}` : summary);
     track.classList.toggle('paused', ['failed','rollback_required','cleanup_pending','aborted'].includes(data.phase));
     track.setAttribute('aria-valuenow', String(percent));

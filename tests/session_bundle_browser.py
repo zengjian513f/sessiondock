@@ -13,6 +13,7 @@ import shlex
 import sqlite3
 import subprocess
 import time
+from transfer_ui import select_target
 from contextlib import ExitStack
 import json
 import os
@@ -55,7 +56,7 @@ def reopen_transfer(page, hub, operation):
     assert data['request']['operation_id']==operation and data['plan']['operation_id']==operation
     dialog=page.locator('#clone-group-dialog')
     expect(dialog.locator('#transfer-target')).to_be_disabled()
-    expect(dialog.locator('#transfer-target')).to_have_value(data['request']['target_node'])
+    expect(dialog.locator('#transfer-target')).to_have_js_property('value', data['request']['target_node'])
     expect(dialog.locator('.transfer-progress')).to_be_visible()
     expect(dialog.locator('.transfer-progress')).to_have_attribute('data-phase',data['phase'])
     return dialog
@@ -283,7 +284,7 @@ def main():
                             rejected_bundles(a,b,planned.value.json()['operation_id'])
                         dialog=page.locator('#clone-group-dialog')
                         expect(dialog.locator('.clone-members tbody tr')).to_have_count(count,timeout=20000)
-                        dialog.locator('#transfer-target').select_option(b.nid)
+                        select_target(dialog, b.nid)
                         expect(dialog.locator('#transfer-new-ids')).to_be_checked()
                         if args.move:
                             dialog.locator('.transfer-segments label').nth(1).click()

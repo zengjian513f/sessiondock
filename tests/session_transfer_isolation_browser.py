@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """A stalled transfer must not serialize other groups or its own cancellation."""
 import argparse
+from transfer_ui import select_target
 from contextlib import ExitStack
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -72,7 +73,7 @@ def main():
             page.locator(f'#side .item[data-uid="{scoped(a.nid,selected)}"]').click()
             page.locator('#a-clone-group').click()
             dialog=page.locator('#clone-group-dialog');expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=15000)
-            dialog.locator('#transfer-target').select_option(b.nid)
+            select_target(dialog, b.nid)
             if moving:
                 requests=[]
                 page.on('request',lambda request:requests.append(request.url))

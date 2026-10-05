@@ -2,6 +2,7 @@
 """Complex-family transfer: CLI advice and persisted dynamic-tool dependencies."""
 
 import argparse
+from transfer_ui import select_target
 from contextlib import ExitStack
 import json
 import re
@@ -80,17 +81,17 @@ def main():
         dialog=open_dialog();note=dialog.locator('.transfer-environment')
         expect(note).to_have_text('4 个动态工具执行器未核验')
         expect(note).to_have_attribute('title','database.call、db_only、legacy.lookup、remote.search')
-        dialog.locator('#transfer-target').select_option(nodes[1].nid)
+        select_target(dialog, nodes[1].nid)
         expect(note).to_contain_text('目标 Codex 存在较旧版本')
         expect(note).to_contain_text('目标未配置可用的 Claude CLI')
         expect(note).to_contain_text('未核验 Grok 版本差异')
         expect(dialog.locator('.clone-confirm')).to_be_enabled()
         dialog.locator('.clone-cancel').click()
         mode['delay']=True;dialog=open_dialog();note=dialog.locator('.transfer-environment')
-        dialog.locator('#transfer-target').select_option(nodes[1].nid)
+        select_target(dialog, nodes[1].nid)
         expect(note).to_contain_text('正在核对目标 CLI');expect(note).to_contain_text('尚未核验');expect(dialog.locator('.clone-confirm')).to_be_enabled()
         page.wait_for_timeout(100);assert delayed
-        dialog.locator('#transfer-target').select_option(nodes[2].nid)
+        select_target(dialog, nodes[2].nid)
         expect(note).to_have_text('4 个动态工具执行器未核验')
         for request in delayed:request.fulfill(json={'clients':bad})
         page.wait_for_timeout(100)
@@ -107,7 +108,7 @@ def main():
         mode['unknown']=False
         pending_source=[]
         page.route('**/api/clients',lambda route:pending_source.append(route))
-        dialog.locator('#transfer-target').select_option(nodes[2].nid)
+        select_target(dialog, nodes[2].nid)
         expect(note).to_contain_text('尚未核验')
         expect(dialog.locator('.clone-confirm')).to_be_enabled()
         # Delay the fleet refresh independently of the selected target history.
@@ -141,7 +142,7 @@ def main():
           transferObserver.observe(document.querySelector('#side'), {subtree:true, childList:true, attributes:true});
           renderSide(); paintLive(); pollSessions();
         }""")
-        dialog.locator('#transfer-target').select_option(nodes[1].nid)
+        select_target(dialog, nodes[1].nid)
         dialog.locator('input[name="transfer-mode"][value="move"]').check()
         dialog.locator('#transfer-new-ids').check()
         assert page.evaluate('transferSideChanges')==0,'inert sidebar redrawn during transfer dialog'

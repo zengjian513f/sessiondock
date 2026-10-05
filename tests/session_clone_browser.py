@@ -5,6 +5,7 @@ subagents, code-mode references, metadata, idempotent retry and process restart.
 """
 
 import argparse
+from transfer_ui import select_target, seed_names
 from contextlib import ExitStack
 import hashlib
 import json
@@ -177,6 +178,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='sessiondock-clone-browser-') as tmp, sync_playwright() as pw:
         root=Path(tmp)
         corpus=prepare(root/'node')
+        custom_title, name_raw, names_before=seed_names(corpus.root/'codex',ident(2))
         before={str(p):p.read_bytes() for p in corpus.paths.values()}
         db_before=native_rows(corpus.root/'codex')
         node=SimpleNamespace(name='test',nid='a'*32,port=free_port(),token=TOKEN)
@@ -197,6 +199,7 @@ def main():
                 with ExitStack() as stack:
                     env=node_env(corpus.root,node.port,'127.0.0.0/8')
                     env['SESSIONDOCK_PROC_ROOT']=str(corpus.root/'proc')
+                    env['SESSIONDOCK_CODEX_INDEX']=str(corpus.root/'codex/session_index.jsonl')
                     base,opener=stack.enter_context(isolated_server(corpus,args.binary,state_dir=corpus.root/'state',extra_env=env))
                     target_env=node_env(destination.root,destination_node.port,'127.0.0.0/8')
                     target_env['SESSIONDOCK_PROC_ROOT']=str(destination.root/'proc')
@@ -301,6 +304,7 @@ def main():
                         expect(page.locator('#clone-group-dialog')).to_be_visible()
                         page.locator('#clone-group-dialog .clone-cancel').click()
                         page.set_viewport_size({'width':1280,'height':900})
+                        page.evaluate("Nodes.machines.push({id:'offline-picker-fixture',name:'Offline fixture',online:false})")
                         page.locator(f'#side .item[data-uid="{selected}"]').click(button='right')
                         page.locator('#item-menu [data-act="clone"]').click()
                         dialog=page.locator('#clone-group-dialog')
@@ -310,17 +314,48 @@ def main():
                         expect(dialog.locator('#transfer-source')).to_have_attribute('type','text')
                         assert float(dialog.locator('#transfer-source').evaluate('e => getComputedStyle(e).opacity')) < 1
                         expect(dialog.locator('.clone-status')).to_contain_text('整组 6 个会话')
+                        expect(dialog.locator('.transfer-selected .transfer-session-name')).to_have_text(custom_title)
                         expect(dialog.locator('.clone-members tbody tr')).to_have_count(6)
                         expect(dialog.locator('.clone-members thead')).to_contain_text('历史文件')
                         expect(dialog.locator('.transfer-selected .transfer-number').first).to_have_text('2')
                         expect(dialog.locator('.transfer-identity')).to_be_hidden()
-                        expect(dialog.locator('#transfer-target')).to_have_value(node.nid)
+                        expect(dialog.locator('#transfer-target')).to_have_js_property('value', node.nid)
+                        target_picker=dialog.locator('#transfer-target')
+                        target_options=dialog.locator('#transfer-target-options')
+                        target_picker.click()
+                        expect(target_options).to_be_visible()
+                        expect(target_picker).to_have_attribute('aria-expanded','true')
+                        expect(dialog.locator('select')).to_have_count(0)
+                        expect(target_options.locator('[data-value="offline-picker-fixture"]')).to_be_disabled()
+                        expect(target_options.locator('[aria-selected="true"]')).to_have_attribute('data-value',node.nid)
+                        # All machines are ordinary rows, including the first;
+                        # there is no title, divider or Android native select.
+                        assert target_options.locator('[role="option"]').evaluate_all("rows => rows.every(row => {const s=getComputedStyle(row); return s.borderTopWidth==='0px' && s.borderBottomWidth==='0px';})")
+                        page.keyboard.press('End')
+                        expect(target_options.locator(f'[data-value="{destination_node.nid}"]')).to_be_focused()
+                        page.keyboard.press('ArrowDown')
+                        expect(target_options.locator(f'[data-value="{node.nid}"]')).to_be_focused()
+                        page.keyboard.press('Escape')
+                        expect(target_options).to_be_hidden()
+                        expect(dialog).to_be_visible()
+                        expect(target_picker).to_be_focused()
+                        target_picker.press('ArrowDown')
+                        page.keyboard.press('End');page.keyboard.press('Enter')
+                        expect(target_picker).to_have_js_property('value',destination_node.nid)
+                        expect(target_options).to_be_hidden()
+                        select_target(dialog,node.nid)
+                        target_picker.click()
+                        dialog.locator('#transfer-title').click()
+                        expect(target_options).to_be_hidden()
+                        expect(target_picker).to_have_attribute('aria-expanded','false')
+                        target_picker.click();target_picker.click()
+                        expect(target_options).to_be_hidden()
                         requests=[]
                         page.on('request',lambda r:requests.append(r.url) if r.url.endswith('/api/session/clone') else None)
                         dialog.locator('.transfer-segments label').nth(1).click()
                         expect(dialog.locator('.clone-confirm')).to_be_disabled()
                         expect(dialog.locator('.transfer-notice')).to_contain_text('需要选择另一台机器')
-                        dialog.locator('#transfer-target').select_option(destination_node.nid)
+                        select_target(dialog, destination_node.nid)
                         expect(dialog.locator('.transfer-identity')).to_be_visible()
                         expect(dialog.locator('#transfer-new-ids')).not_to_be_checked()
                         dialog.locator('#transfer-new-ids').check()
@@ -354,14 +389,26 @@ def main():
                         assert box['y']>=0 and box['y']+box['height']<=845,box
                         expect(dialog.locator('.clone-cancel')).to_be_visible()
                         dialog.screenshot(path='target/transfer-panel-mobile.png')
-                        dialog.locator('#transfer-target').select_option(node.nid)
+                        for scale in ('1','1.4'):
+                            page.evaluate("scale => document.documentElement.style.setProperty('--interface-scale',scale)",scale)
+                            target_picker.tap()
+                            expect(target_options).to_be_visible()
+                            menu_box=dialog.locator('.transfer-target-menu').bounding_box()
+                            assert menu_box['x']>=0 and menu_box['x']+menu_box['width']<=391,menu_box
+                            assert menu_box['y']>=0 and menu_box['y']+menu_box['height']<=845,menu_box
+                            page.screenshot(path=f'target/transfer-target-mobile-{scale}.png')
+                            target_options.locator(f'[data-value="{node.nid}"]').tap()
+                            expect(target_picker).to_have_js_property('value',node.nid)
+                            expect(target_options).to_be_hidden()
+                        page.evaluate("document.documentElement.style.removeProperty('--interface-scale')")
+                        select_target(dialog, node.nid)
                         expect(dialog.locator('.transfer-identity')).to_be_hidden()
                         expect(dialog.locator('.clone-confirm')).to_be_enabled()
                         page.set_viewport_size({'width':1280,'height':900})
                         assert native_rows(destination.root/'codex')==destination_db_before
                         assert all(Path(p).read_bytes()==content for p,content in destination_before.items())
                         print('PASS transfer table, machine/mode/identity controls, unsupported-action guard and mobile layout',flush=True)
-                        for text in ('Branch B','Common ancestor','Parent agent','A agent','Fork of revert'):
+                        for text in (custom_title,'Common ancestor','Parent agent','A agent'):
                             expect(dialog).to_contain_text(text)
                         with page.expect_response(lambda r:r.url.endswith('/api/session/clone') and r.request.method=='POST') as reply:
                             dialog.locator('.clone-confirm').click()
@@ -377,6 +424,9 @@ def main():
                         # The confirmation really published files, not a staging-only receipt.
                         saved=json.loads((corpus.root/'state/transfers'/operation/'operation.json').read_text())
                         goal_map=saved['plan']['identities']
+                        expected_name=name_raw.replace(('"id" : "'+ident(2)+'"').encode(),('"id" : "'+goal_map['threads'][ident(2)]+'"').encode())
+                        assert (corpus.root/'codex/session_index.jsonl').read_bytes()==names_before+expected_name
+                        expect(page.locator('.dtitle h2')).to_contain_text(custom_title)
                         with sqlite3.connect(corpus.root/'codex/goals_1.sqlite') as db:
                             goal=db.execute('SELECT goal_id,objective,status,token_budget,tokens_used,time_used_seconds FROM thread_goals WHERE thread_id=?',
                                 (goal_map['threads'][ident(2)],)).fetchone()
@@ -498,6 +548,7 @@ def main():
                         # No replacement of existing data is permitted on rollback.
                         with sqlite3.connect(corpus.root/'codex/thread_history_1.sqlite') as db:
                             db.execute("CREATE TRIGGER clone_failure BEFORE INSERT ON thread_items BEGIN SELECT RAISE(ABORT,'synthetic clone failure'); END")
+                        names_before_failure=(corpus.root/'codex/session_index.jsonl').read_bytes()
                         failed=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/clone',data={'uid':selected,'operation_id':next_id})
                         assert not failed.ok,failed.text()
                         saved=json.loads(journal.read_text());assert saved['phase']=='aborted',saved.get('error')
@@ -506,6 +557,7 @@ def main():
                         with sqlite3.connect(corpus.root/'codex/state_5.sqlite') as db:
                             assert not db.execute('SELECT id FROM threads WHERE id=?',(saved['plan']['identities']['threads'][ident(1)],)).fetchall()
                         assert all(Path(p).read_bytes()==raw for p,raw in before.items())
+                        assert (corpus.root/'codex/session_index.jsonl').read_bytes()==names_before_failure
                         print('PASS second-database failure rolls back only owned rows/files and retains source plus existing clone',flush=True)
 
         finally:

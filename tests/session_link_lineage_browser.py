@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real Chromium links survive copy chains, deletion and restarts; private histories."""
 import argparse
+from transfer_ui import select_target
 from contextlib import ExitStack
 import json
 from pathlib import Path
@@ -56,7 +57,7 @@ def main():
             page.locator('#a-clone-group').click()
             dialog=page.locator('#clone-group-dialog');expect(dialog.locator('.clone-confirm')).to_be_enabled()
             if target:
-                dialog.locator('#transfer-target').select_option(target)
+                select_target(dialog, target)
                 expect(dialog.locator('.clone-confirm')).to_be_enabled()
             endpoint='/api/session/transfer/clone' if target else '/api/session/clone'
             with page.expect_response(lambda r:r.url.endswith(endpoint) and r.request.method=='POST') as reply:

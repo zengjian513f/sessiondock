@@ -5,6 +5,7 @@ is never transferred by the bundle or printed by this helper.
 """
 # run_validation: skip
 import base64
+from transfer_ui import select_target
 import hashlib
 import json
 import os
@@ -59,7 +60,7 @@ def move_native(base, home, provider, selected, resume_ids, peer_name, binary, n
             page.locator('#a-clone-group').click()
             dialog=page.locator('#clone-group-dialog')
             expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=30000)
-            dialog.locator('#transfer-target').select_option(b.nid)
+            select_target(dialog, b.nid)
             with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as planned:
                 dialog.locator('.transfer-segments label').nth(1).click()
             if new_ids:
@@ -105,7 +106,7 @@ def move_native(base, home, provider, selected, resume_ids, peer_name, binary, n
                 page.locator('#a-clone-group').click()
                 dialog=page.locator('#clone-group-dialog')
                 expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=30000)
-                dialog.locator('#transfer-target').select_option(a.nid)
+                select_target(dialog, a.nid)
                 with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')):
                     dialog.locator('.transfer-segments label').nth(1).click()
                 with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=120000) as returned:

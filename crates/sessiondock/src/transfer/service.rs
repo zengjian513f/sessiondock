@@ -2,6 +2,8 @@
 //! clients submit an opaque operation ID. Recovery never overwrites changed data.
 #[path = "journal.rs"]
 mod journal;
+#[path = "names.rs"]
+mod names;
 #[path = "prefix.rs"]
 mod prefix;
 #[path = "tool_requirements.rs"]
@@ -64,6 +66,8 @@ pub struct Operation {
     #[serde(default)]
     pub native_before: Option<Native>,
     #[serde(default)]
+    pub codex_names: Option<names::Names>,
+    #[serde(default)]
     pub moving: bool,
     #[serde(default)]
     pub storage_probes: BTreeMap<String, super::environment::StorageProbe>,
@@ -109,6 +113,7 @@ pub struct TransferService {
     pub directory: PathBuf,
     pub roots: SessionRoots,
     pub home: PathBuf,
+    names_path: PathBuf,
     pub locks: super::coordination::Locks,
     pub interrupts: super::coordination::Interrupts,
     pub(super) foreground: std::sync::Mutex<BTreeMap<String, std::time::Instant>>,
@@ -165,6 +170,9 @@ pub(super) fn persist(path: &Path, value: &impl Serialize) -> Result<(), Transfe
 impl TransferService {
     pub fn operation_keys(&self, op: &Operation) -> Vec<String> {
         let mut keys = vec![format!("operation:{}", op.id)];
+        if op.codex_names.is_some() {
+            keys.push("codex-name-index".into());
+        }
         for member in &op.group().members {
             keys.push(format!("session:{}", member.uid));
             if let Some(staged) = &op.staged
@@ -187,8 +195,16 @@ impl TransferService {
     }
     pub fn open(
         directory: PathBuf,
+        roots: SessionRoots,
+        metadata: Option<Arc<MetadataStore>>,
+    ) -> Result<Self, TransferError> {
+        Self::open_with_names(directory, roots, metadata, None)
+    }
+    pub fn open_with_names(
+        directory: PathBuf,
         mut roots: SessionRoots,
         metadata: Option<Arc<MetadataStore>>,
+        names_path: Option<PathBuf>,
     ) -> Result<Self, TransferError> {
         let home = roots
             .codex
@@ -213,8 +229,14 @@ impl TransferService {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
         }
+        let names_path = names_path.unwrap_or_else(|| home.join("session_index.jsonl"));
         let service = Self {
-            inventory: SessionStore::with_metadata(roots.clone(), metadata.clone()),
+            inventory: SessionStore::with_metadata_and_names(
+                roots.clone(),
+                metadata.clone(),
+                Some(names_path.clone()),
+            ),
+            names_path,
             references: super::references::Cache::open(directory.join("relationships-v1.json")),
             relationship_refresh: Default::default(),
             journals: Default::default(),
@@ -430,6 +452,11 @@ impl TransferService {
             native::capture(&self.home, &plan)?
         };
         native::extend_identities(&native, &mut plan)?;
+        let codex_names = if plan.files.is_empty() {
+            None
+        } else {
+            Some(names::Names::capture(&self.names_path, &plan)?)
+        };
         let dynamic_tools = tool_requirements::collect(&plan, &native)?;
         let id = codex::uuid()?;
         let directory = self.directory.join(&id);
@@ -443,6 +470,7 @@ impl TransferService {
             target_uid: None,
             plan,
             native,
+            codex_names,
             rewritten: None,
             staged: None,
             error: None,
@@ -638,6 +666,9 @@ impl TransferService {
                 "原生会话元数据已变化，请重新查看复制清单",
             ));
         }
+        if let Some(names) = &op.codex_names {
+            names.recheck(&self.names_path, &op.plan)?;
+        }
         Ok(())
     }
     pub(crate) fn member_target_uid(
@@ -742,6 +773,9 @@ impl TransferService {
         Ok(())
     }
     pub(super) fn rollback(&self, op: &Operation) -> Result<(), TransferError> {
+        if let Some(names) = &op.codex_names {
+            names.rollback(&self.names_path)?;
+        }
         let files: Vec<_> = self
             .publications(op)
             .into_iter()
@@ -923,6 +957,11 @@ impl TransferService {
             }
             op.metadata_after.retain(|_, row| row != &json!({}));
         }
+        let names_before = op
+            .codex_names
+            .as_mut()
+            .map(|names| names.prepare(&self.names_path))
+            .transpose()?;
         op.phase = "publishing".into();
         self.save(&op)?;
         let result = (|| {
@@ -994,6 +1033,9 @@ impl TransferService {
                 fs::File::open(parent)?.sync_all()?;
             }
             drop(progress);
+            if let Some(names) = &op.codex_names {
+                names.publish(&self.names_path, names_before.as_ref().unwrap())?;
+            }
             native::insert_with_prefix(
                 op.rewritten.as_ref().unwrap(),
                 &op.id,

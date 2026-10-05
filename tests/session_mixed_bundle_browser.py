@@ -3,6 +3,7 @@
 # run_validation: skip
 
 import argparse
+from transfer_ui import select_target
 from contextlib import ExitStack
 import json
 import os
@@ -71,7 +72,7 @@ def main():
                         assert planned.value.ok,planned.value.text()
                         dialog=page.locator('#clone-group-dialog')
                         expect(dialog.locator('.clone-members tbody tr')).to_have_count(14)
-                        dialog.locator('#transfer-target').select_option(b.nid)
+                        select_target(dialog, b.nid)
                         if moving:
                             dialog.locator('.transfer-segments label').nth(1).click()
                         if dialog.locator('#transfer-new-ids').is_checked()!=fresh:
