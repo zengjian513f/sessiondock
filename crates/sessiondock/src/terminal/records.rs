@@ -7,23 +7,13 @@
 //! ownership lease, sends input, or talks to the host process: the files are
 //! the only source, so an exited host's recording is served the same way.
 //!
-//! Browser wire (all text frames are JSON with a `t` field):
-//!
-//! | direction | frame | meaning |
-//! | --- | --- | --- |
-//! | → browser | `{"t":"record","cols","rows","unix_ms","live"}` | first frame; size of the checkpoint |
-//! | → browser | binary | sanitized terminal bytes (checkpoint state, then output) |
-//! | → browser | `{"t":"resize","cols","rows"}` | apply before the following bytes |
-//! | → browser | `{"t":"gap"}` | data was lost; a fresh resize + checkpoint follows, reset the terminal |
-//! | → browser | `{"t":"exit","exit":{…}}` | the recorded host exit payload |
-//! | → browser | `{"t":"end"}` | nothing more will come; preceded by the viewer reset bytes |
-//! | browser → | anything | ignored (read-only) except Close |
-//!
-//! With `mode=grid` the same recording is fed through the host's terminal model
-//! (`ptyhost-screen`) inside the Web service, and the browser receives the grid
-//! protocol (`snapshot` / `diff` JSON lines in binary frames, see
-//! `docs/terminal-grid.md`) instead of sanitized bytes. Live and history then share
-//! one emulator. `record`, `exit` and `end` text frames are the same as above.
+//! The recording is fed through the host's terminal model (`ptyhost-screen`)
+//! inside the Web service, and the browser receives the grid protocol
+//! (`snapshot` / `diff` JSON lines in binary frames, see `docs/terminal-grid.md`),
+//! so live and history share one emulator. Text frames are JSON with a `t`
+//! field: `timeline`, `record` (first, with `mode:"grid"`), `gap` (data was lost;
+//! a reset snapshot follows), `exit`, `clock` and `end`; browser text frames
+//! `seek`/`play`/`pause`/`live` control playback. See `docs/terminal-records.md`.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -34,7 +24,6 @@ use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use futures_util::{SinkExt, StreamExt, stream::SplitSink};
 use ptyhost_record::Position;
 use ptyhost_record::reader::{self, Event, Stamped};
-use ptyhost_record::sanitize::{Sanitizer, VIEWER_RESET};
 use ptyhost_screen::Screen;
 use ptyhost_screen::grid::{self, GridState};
 use serde::Serialize;
@@ -333,91 +322,58 @@ impl GridReplay {
     }
 }
 
-/// What the browser receives: sanitized bytes for xterm.js, or grid JSON lines.
-enum Output {
-    Bytes(Sanitizer),
-    Grid(Box<GridReplay>),
-}
-
 /// Lines/bytes produced by applying events, in order.
 enum Emit {
     Text(Value),
     Bin(Vec<u8>),
 }
 
-/// Apply one event to the output, collecting what to send. `silent` applies without
+/// Apply one event to the model, collecting what to send. `silent` applies without
 /// emitting (used to rebuild state for a seek); the caller emits a snapshot after.
-fn apply_event(output: &mut Output, event: &Event, silent: bool, out: &mut Vec<Emit>) -> bool {
-    let mut exited = false;
-    match output {
-        Output::Bytes(sanitizer) => match event {
-            Event::Output(bytes) => {
-                if !silent {
-                    let mut clean = Vec::with_capacity(bytes.len());
-                    sanitizer.push(bytes, &mut clean);
-                    out.push(Emit::Bin(clean));
-                }
-            }
-            Event::Resize { cols, rows } => {
-                if !silent {
-                    out.push(Emit::Text(
-                        json!({"t": "resize", "cols": cols, "rows": rows}),
-                    ));
-                }
-            }
-            Event::Checkpoint { cols, rows, state } => {
-                if !silent {
-                    out.push(Emit::Text(json!({"t": "gap"})));
-                    out.push(Emit::Text(
-                        json!({"t": "resize", "cols": cols, "rows": rows}),
-                    ));
-                    let mut clean = Vec::with_capacity(state.len());
-                    sanitizer.push(state, &mut clean);
-                    out.push(Emit::Bin(clean));
-                }
-            }
-            Event::Exit(payload) => {
-                let exit: Value = serde_json::from_str(payload).unwrap_or(Value::Null);
-                out.push(Emit::Text(json!({"t": "exit", "exit": exit})));
-                exited = true;
-            }
-            Event::Mark(_) => {}
-        },
-        Output::Grid(replay) => match event {
-            Event::Output(bytes) => {
-                replay.screen.feed(bytes);
-                let _ = replay.screen.take_responses();
-                if !silent {
-                    replay.screen.expire_sync();
-                    if let Some(line) = replay.diff() {
-                        out.push(Emit::Bin(line_bytes(&line)));
-                    }
-                }
-            }
-            Event::Resize { cols, rows } => {
-                replay.screen.resize(*cols, *rows);
-                if !silent {
-                    let line = replay.snapshot(false);
+fn apply_event(replay: &mut GridReplay, event: &Event, silent: bool, out: &mut Vec<Emit>) -> bool {
+    match event {
+        Event::Output(bytes) => {
+            replay.screen.feed(bytes);
+            let _ = replay.screen.take_responses();
+            if !silent {
+                replay.screen.expire_sync();
+                if let Some(line) = replay.diff() {
                     out.push(Emit::Bin(line_bytes(&line)));
                 }
             }
-            Event::Checkpoint { cols, rows, state } => {
-                **replay = GridReplay::new(*cols, *rows, state);
-                if !silent {
-                    out.push(Emit::Text(json!({"t": "gap"})));
-                    let line = replay.snapshot(true);
-                    out.push(Emit::Bin(line_bytes(&line)));
-                }
+        }
+        Event::Resize { cols, rows } => {
+            replay.screen.resize(*cols, *rows);
+            if !silent {
+                let line = replay.snapshot(false);
+                out.push(Emit::Bin(line_bytes(&line)));
             }
-            Event::Exit(payload) => {
-                let exit: Value = serde_json::from_str(payload).unwrap_or(Value::Null);
-                out.push(Emit::Text(json!({"t": "exit", "exit": exit})));
-                exited = true;
+        }
+        Event::Checkpoint { cols, rows, state } => {
+            *replay = GridReplay::new(*cols, *rows, state);
+            if !silent {
+                out.push(Emit::Text(json!({"t": "gap"})));
+                let line = replay.snapshot(true);
+                out.push(Emit::Bin(line_bytes(&line)));
             }
-            Event::Mark(_) => {}
-        },
+        }
+        Event::Exit(payload) => {
+            let exit: Value = serde_json::from_str(payload).unwrap_or(Value::Null);
+            out.push(Emit::Text(json!({"t": "exit", "exit": exit})));
+            return true;
+        }
+        Event::Mark(_) => {}
     }
-    exited
+    false
+}
+
+/// A synchronized-output block that timed out while applying is drawn now.
+fn flush_sync(replay: &mut GridReplay, out: &mut Vec<Emit>) {
+    if replay.screen.expire_sync()
+        && let Some(line) = replay.diff()
+    {
+        out.push(Emit::Bin(line_bytes(&line)));
+    }
 }
 
 fn line_bytes(line: &str) -> Vec<u8> {
@@ -431,8 +387,8 @@ fn line_bytes(line: &str) -> Vec<u8> {
 struct Playback {
     dir: PathBuf,
     entry: RecordEntry,
-    grid: bool,
-    output: Output,
+    /// The replay model; `None` until the first [`Playback::build`].
+    output: Option<Box<GridReplay>>,
     /// Events read from disk but not yet applied (`buffer[buffer_at..]`).
     buffer: Vec<Stamped>,
     buffer_at: usize,
@@ -446,12 +402,11 @@ struct Playback {
 }
 
 impl Playback {
-    fn new(dir: PathBuf, entry: RecordEntry, grid: bool, clock: u64) -> Self {
+    fn new(dir: PathBuf, entry: RecordEntry, clock: u64) -> Self {
         Self {
             dir,
             entry,
-            grid,
-            output: Output::Bytes(Sanitizer::new()),
+            output: None,
             buffer: Vec::new(),
             buffer_at: 0,
             next: Position::default(),
@@ -480,14 +435,10 @@ impl Playback {
     }
 
     fn record_frame(&self, cols: u16, rows: u16) -> Value {
-        let mut value = json!({
+        json!({
             "t": "record", "cols": cols, "rows": rows, "unix_ms": self.clock,
-            "live": self.entry.live, "id": self.entry.id,
-        });
-        if self.grid {
-            value["mode"] = Value::from("grid");
-        }
-        value
+            "live": self.entry.live, "id": self.entry.id, "mode": "grid",
+        })
     }
 
     /// Rebuild at the latest checkpoint (ordinary open) or at `until` (seek): the
@@ -511,29 +462,17 @@ impl Playback {
         self.at_end = false;
         let mut out = Vec::new();
         let Some(t) = until else {
-            self.output = if self.grid {
-                Output::Grid(Box::new(GridReplay::new(
-                    checkpoint.cols,
-                    checkpoint.rows,
-                    &checkpoint.state,
-                )))
-            } else {
-                Output::Bytes(Sanitizer::new())
-            };
+            let mut replay = Box::new(GridReplay::new(
+                checkpoint.cols,
+                checkpoint.rows,
+                &checkpoint.state,
+            ));
             out.push(Emit::Text(
                 self.record_frame(checkpoint.cols, checkpoint.rows),
             ));
-            match &mut self.output {
-                Output::Bytes(sanitizer) => {
-                    let mut clean = Vec::with_capacity(checkpoint.state.len());
-                    sanitizer.push(&checkpoint.state, &mut clean);
-                    out.push(Emit::Bin(clean));
-                }
-                Output::Grid(replay) => {
-                    let line = replay.snapshot(true);
-                    out.push(Emit::Bin(line_bytes(&line)));
-                }
-            }
+            let line = replay.snapshot(true);
+            out.push(Emit::Bin(line_bytes(&line)));
+            self.output = Some(replay);
             return Ok(out);
         };
         // Seek: run a model silently up to `t`; the buffer keeps the rest of the page.
@@ -576,21 +515,10 @@ impl Playback {
         model.screen.expire_sync();
         let captured = grid::capture(&model.screen);
         let (cols, rows) = (captured.cols, captured.rows);
-        if self.grid {
-            let mut replay = model;
-            out.push(Emit::Text(self.record_frame(cols, rows)));
-            let line = replay.snapshot(true);
-            out.push(Emit::Bin(line_bytes(&line)));
-            self.output = Output::Grid(Box::new(replay));
-        } else {
-            let state = model.screen.replay_bytes(GRID_HISTORY);
-            let mut sanitizer = Sanitizer::new();
-            out.push(Emit::Text(self.record_frame(cols, rows)));
-            let mut clean = Vec::with_capacity(state.len());
-            sanitizer.push(&state, &mut clean);
-            out.push(Emit::Bin(clean));
-            self.output = Output::Bytes(sanitizer);
-        }
+        out.push(Emit::Text(self.record_frame(cols, rows)));
+        let line = model.snapshot(true);
+        out.push(Emit::Bin(line_bytes(&line)));
+        self.output = Some(Box::new(model));
         Ok(out)
     }
 
@@ -599,19 +527,18 @@ impl Playback {
         self.fill()?;
         let mut out = Vec::new();
         let events = std::mem::take(&mut self.buffer);
-        for Stamped { unix_ms, event } in &events[self.buffer_at.min(events.len())..] {
-            if apply_event(&mut self.output, event, false, &mut out) {
+        self.buffer_at = self.buffer_at.min(events.len());
+        let Some(replay) = self.output.as_deref_mut() else {
+            return Ok(out);
+        };
+        for Stamped { unix_ms, event } in &events[self.buffer_at..] {
+            if apply_event(replay, event, false, &mut out) {
                 self.exited = true;
             }
             self.clock = *unix_ms;
         }
         self.buffer_at = 0;
-        if let Output::Grid(replay) = &mut self.output
-            && replay.screen.expire_sync()
-            && let Some(line) = replay.diff()
-        {
-            out.push(Emit::Bin(line_bytes(&line)));
-        }
+        flush_sync(replay, &mut out);
         Ok(out)
     }
 
@@ -628,40 +555,22 @@ impl Playback {
         let Some(first) = self.buffered().first().map(|s| s.unix_ms) else {
             return out;
         };
+        let Some(replay) = self.output.as_deref_mut() else {
+            return out;
+        };
         while self.buffer_at < self.buffer.len() {
             let Stamped { unix_ms, event } = &self.buffer[self.buffer_at];
             if unix_ms.saturating_sub(first) > PLAY_COALESCE_MS {
                 break;
             }
-            if apply_event(&mut self.output, event, false, &mut out) {
+            if apply_event(replay, event, false, &mut out) {
                 self.exited = true;
             }
             self.clock = *unix_ms;
             self.buffer_at += 1;
         }
-        if let Output::Grid(replay) = &mut self.output
-            && replay.screen.expire_sync()
-            && let Some(line) = replay.diff()
-        {
-            out.push(Emit::Bin(line_bytes(&line)));
-        }
+        flush_sync(replay, &mut out);
         out
-    }
-
-    /// At the end of playback (byte mode): flush what the sanitizer holds back and
-    /// reset the viewer's modes (mouse tracking, bracketed paste, hidden cursor…)
-    /// so a program that died mid-screen leaves xterm.js usable. The screen
-    /// content stays, so scrubbing afterwards starts from what is shown.
-    fn flush_tail(&mut self) -> Vec<Emit> {
-        match &mut self.output {
-            Output::Bytes(sanitizer) => {
-                let mut tail = Vec::new();
-                sanitizer.finish(&mut tail);
-                tail.extend_from_slice(VIEWER_RESET);
-                vec![Emit::Bin(tail)]
-            }
-            Output::Grid(_) => Vec::new(),
-        }
     }
 
     fn finished(&self, live: bool) -> bool {
@@ -832,9 +741,6 @@ impl Session {
         if self.ended {
             return;
         }
-        if let Some(out) = self.blocking(|p| Ok(p.flush_tail())).await {
-            send_all(&mut self.sender, out).await;
-        }
         self.send_clock().await;
         self.sender.text(json!({"t": "end"})).await;
         self.ended = true;
@@ -845,10 +751,9 @@ impl Session {
 /// Serve one recording over a WebSocket: fast replay of everything, then follow the
 /// tail while live. Text frames `seek`/`play`/`pause`/`live` switch to scrubbing and
 /// paced playback; `timeline` and `clock` frames keep the browser's slider in step.
-async fn serve(
+pub async fn stream(
     dir: PathBuf,
     entry: RecordEntry,
-    grid: bool,
     socket: WebSocket,
     shutdown: CancellationToken,
 ) {
@@ -871,7 +776,7 @@ async fn serve(
         .await;
     let mut session = Session {
         sender,
-        playback: Some(Playback::new(dir, entry.clone(), grid, start_ms)),
+        playback: Some(Playback::new(dir, entry.clone(), start_ms)),
         mode: Mode::Fast,
         start_ms,
         end_ms,
@@ -1018,27 +923,6 @@ async fn serve(
             }
         }
     }
-}
-
-/// Serve one recording as sanitized bytes for xterm.js.
-pub async fn stream(
-    dir: PathBuf,
-    entry: RecordEntry,
-    socket: WebSocket,
-    shutdown: CancellationToken,
-) {
-    serve(dir, entry, false, socket, shutdown).await
-}
-
-/// Grid-mode counterpart of [`stream`]: the recording is replayed through the
-/// terminal model and the browser receives grid JSON lines.
-pub async fn stream_grid(
-    dir: PathBuf,
-    entry: RecordEntry,
-    socket: WebSocket,
-    shutdown: CancellationToken,
-) {
-    serve(dir, entry, true, socket, shutdown).await
 }
 
 #[cfg(test)]

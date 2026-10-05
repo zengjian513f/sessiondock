@@ -448,7 +448,6 @@ async fn register_validates_then_asks_meta_and_keys_by_node_id() {
             name: "NodeA".into(),
             color: String::new(),
             enabled: None,
-            renderer: "grid".into()
         }
     );
     assert_eq!(fake.hits().last().map(String::as_str), Some("/api/meta"));
@@ -504,7 +503,7 @@ async fn register_validates_then_asks_meta_and_keys_by_node_id() {
     assert_eq!(
         public,
         vec![
-            json!({"id": NID_A, "name": "Renamed", "color": "teal", "renderer": "grid", "online": null})
+            json!({"id": NID_A, "name": "Renamed", "color": "teal", "online": null})
         ]
     );
     assert!(!public[0].to_string().contains("token") && public[0].get("url").is_none());
@@ -544,6 +543,34 @@ async fn register_validates_then_asks_meta_and_keys_by_node_id() {
     assert_eq!(registry.get(NID_A).unwrap().name, "NodeA");
 }
 
+#[test]
+fn a_stored_renderer_key_from_older_registries_is_ignored_and_dropped_on_save() {
+    // Registries written before the per-machine console renderer was removed
+    // may carry `renderer`; loading ignores it and the next save omits it.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("hub-nodes.json");
+    let token = "NodeA".repeat(32);
+    fs::write(
+        &file,
+        json!([{"url": "http://127.0.0.1:1", "token": token, "id": NID_A,
+            "name": "NodeA", "color": "teal", "renderer": "xterm"}])
+        .to_string(),
+    )
+    .unwrap();
+    let registry = open(dir.path());
+    assert_eq!(registry.get(NID_A).unwrap().name, "NodeA");
+    assert!(registry.machines()[0].get("renderer").is_none());
+    assert!(registry.public()[0].get("renderer").is_none());
+    registry
+        .update_display(NID_A, Some("Renamed"), None, None)
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&fs::read_to_string(&file).unwrap()).unwrap(),
+        json!([{"url": "http://127.0.0.1:1", "token": token, "id": NID_A,
+            "name": "Renamed", "color": "teal"}])
+    );
+}
+
 #[tokio::test]
 async fn display_enabled_and_order_follow_python_rules_and_persist() {
     let dir = tempfile::tempdir().unwrap();
@@ -570,7 +597,6 @@ async fn display_enabled_and_order_follow_python_rules_and_persist() {
             name: "机房 A".into(),
             color: "teal".into(),
             enabled: Some(true),
-            renderer: "grid".into()
         }
     );
     assert_eq!(
@@ -580,35 +606,6 @@ async fn display_enabled_and_order_follow_python_rules_and_persist() {
             .name,
         "机房 A",
         "one field leaves the other"
-    );
-    assert_eq!(
-        registry.set_renderer(NID_A, "xterm").unwrap().renderer,
-        "xterm"
-    );
-    assert_eq!(registry.find(NID_A).unwrap().renderer(), "xterm");
-    assert_eq!(
-        registry.machines()[0]["renderer"],
-        "xterm",
-        "settings rows carry it"
-    );
-    assert_eq!(
-        registry.public()[0]["renderer"],
-        "xterm",
-        "public rows carry it"
-    );
-    assert!(matches!(
-        registry.set_renderer(NID_A, "tmux"),
-        Err(RegistryError::Invalid(_))
-    ));
-    assert_eq!(
-        registry.set_renderer(NID_A, "").unwrap().renderer,
-        "grid",
-        "empty = default"
-    );
-    assert_eq!(
-        registry.find(NID_A).unwrap().renderer,
-        None,
-        "the default is not stored"
     );
     assert_eq!(
         registry

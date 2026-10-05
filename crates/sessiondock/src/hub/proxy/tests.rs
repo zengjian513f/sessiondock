@@ -16,7 +16,6 @@ fn node(nid: &str, name: &str) -> Node {
         name: name.into(),
         color: None,
         enabled: None,
-        renderer: None,
     }
 }
 

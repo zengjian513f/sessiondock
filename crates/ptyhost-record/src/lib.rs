@@ -23,7 +23,6 @@
 
 pub mod format;
 pub mod reader;
-pub mod sanitize;
 pub mod store;
 
 /// 段头魔数。

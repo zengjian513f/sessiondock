@@ -315,9 +315,10 @@ impl Drop for Charge {
 pub struct MediaBlob {
     bytes: Vec<u8>,
     mime: Mime,
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Validated dimensions, checked by tests; production only validates them.
+    #[cfg(test)]
     width: u32,
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     height: u32,
     _charge: Charge,
 }

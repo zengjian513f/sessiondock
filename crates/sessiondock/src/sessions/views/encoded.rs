@@ -56,7 +56,7 @@ pub(crate) struct EncodedEvents {
     digest: String,
     /// Messages whose bytes were copied from the previous parse of the same
     /// file instead of being re-serialized (tests).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     reused: usize,
 }
 
@@ -118,6 +118,7 @@ impl EncodedEvents {
         let mut scratch = Vec::new();
         let mut total_len = 0usize;
         let mut digest = Sha1::new();
+        #[cfg(test)]
         let mut reused = 0usize;
         let previous = previous.filter(|previous| previous.encoded.bytes.is_some());
         for (index, event) in events.into_iter().enumerate() {
@@ -136,7 +137,10 @@ impl EncodedEvents {
             });
             let (encoded, entry) = match reusable {
                 Some((cached, entry)) => {
-                    reused += 1;
+                    #[cfg(test)]
+                    {
+                        reused += 1;
+                    }
                     (cached, entry)
                 }
                 None => {
@@ -203,6 +207,7 @@ impl EncodedEvents {
             statuses: retain.then_some(statuses),
             total_len,
             digest: format!("{:x}", digest.finalize()),
+            #[cfg(test)]
             reused,
         })
     }
