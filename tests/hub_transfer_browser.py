@@ -180,6 +180,15 @@ def main():
         path = ledger / f'{operation}.json'
         assert json.loads(path.read_text())['phase'] == 'complete'
         assert pending() == []
+        # Execution options are durable. Legacy retries can omit them, while
+        # a conflicting retry cannot turn a completed copy into a move.
+        receipt = json.loads(path.read_text())
+        old_request = {k:v for k,v in submitted[-1].items() if k not in ('mode','new_ids')}
+        retried = context.request.post(base + '/api/session/transfer/clone', data=old_request)
+        assert retried.ok and retried.json()['target_uid'] == done.value.json()['target_uid']
+        conflict = context.request.post(base + '/api/session/transfer/clone', data={**submitted[-1], 'mode':'move'})
+        assert conflict.status == 409
+        assert json.loads(path.read_text()) == receipt, 'conflicting options altered the completed operation'
         reads.watch(path)
         page.close()
 

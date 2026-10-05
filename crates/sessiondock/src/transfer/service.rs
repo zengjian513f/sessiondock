@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     metadata::MetadataStore,
-    sessions::{SessionRoots, SessionStore},
+    sessions::{SessionRoots, SessionSnapshot, SessionStore},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -281,7 +281,26 @@ impl TransferService {
     pub fn store(&self) -> &SessionStore {
         &self.inventory
     }
+    pub fn inventory_snapshot(&self) -> Result<SessionSnapshot, TransferError> {
+        let started = std::time::Instant::now();
+        let result = self
+            .store()
+            .search_snapshot()
+            .map_err(|e| TransferError::new("move_inventory", e.message));
+        eprintln!(
+            "sessiondock transfer inventory: inventory_ms={}",
+            started.elapsed().as_millis()
+        );
+        result
+    }
     fn group(&self, selected: &str) -> Result<group::Group, TransferError> {
+        self.group_in(selected, &self.inventory_snapshot()?)
+    }
+    fn group_in(
+        &self,
+        selected: &str,
+        snapshot: &SessionSnapshot,
+    ) -> Result<group::Group, TransferError> {
         // Discover and refresh relationships on demand, including reverse links
         // from histories outside the selected group. No background warm-up is needed.
         // Only the relationship inventory is serialized; page, composer and
@@ -291,16 +310,10 @@ impl TransferService {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let started = std::time::Instant::now();
-        let snapshot = self
-            .store()
-            .search_snapshot()
-            .map_err(|e| TransferError::new("move_inventory", e.message))?;
-        let indexed = started.elapsed();
-        let result = group::derive_cached(&snapshot, selected, &self.references);
+        let result = group::derive_cached(snapshot, selected, &self.references);
         eprintln!(
-            "sessiondock transfer group: inventory_ms={} relationships_ms={}",
-            indexed.as_millis(),
-            started.elapsed().saturating_sub(indexed).as_millis()
+            "sessiondock transfer group: relationships_ms={}",
+            started.elapsed().as_millis()
         );
         result
     }
@@ -311,16 +324,21 @@ impl TransferService {
         }))
     }
     pub fn plan(&self, selected: &str) -> Result<Operation, TransferError> {
-        self.plan_copy(selected, true)
+        self.plan_copy(selected, true, &self.inventory_snapshot()?)
     }
-    pub fn plan_copy(&self, selected: &str, new_ids: bool) -> Result<Operation, TransferError> {
+    pub fn plan_copy(
+        &self,
+        selected: &str,
+        new_ids: bool,
+        snapshot: &SessionSnapshot,
+    ) -> Result<Operation, TransferError> {
         if self.locked(selected)? {
             return Err(TransferError::new(
                 "move_recovery_required",
                 "会话组有尚未恢复的复制操作",
             ));
         }
-        let group = self.group(selected)?;
+        let group = self.group_in(selected, snapshot)?;
         let mut codex_group = group.clone();
         codex_group.members.retain(|m| m.source == "codex");
         let mut file_group = group.clone();
@@ -507,7 +525,14 @@ impl TransferService {
         }
     }
     pub fn recheck(&self, op: &Operation) -> Result<(), TransferError> {
-        let current = self.group(&op.uid)?;
+        self.recheck_in(op, &self.inventory_snapshot()?)
+    }
+    pub(super) fn recheck_in(
+        &self,
+        op: &Operation,
+        snapshot: &SessionSnapshot,
+    ) -> Result<(), TransferError> {
+        let current = self.group_in(&op.uid, snapshot)?;
         let old: BTreeSet<_> = op
             .group()
             .members
@@ -707,7 +732,11 @@ impl TransferService {
         }
         self.cleanup_markers(op)
     }
-    pub fn execute(&self, mut op: Operation) -> Result<Operation, TransferError> {
+    pub fn execute(
+        &self,
+        mut op: Operation,
+        snapshot: Option<&SessionSnapshot>,
+    ) -> Result<Operation, TransferError> {
         if matches!(op.phase.as_str(), "complete" | "ready") {
             return Ok(op);
         }
@@ -734,7 +763,11 @@ impl TransferService {
                     "保留身份复制需要另一台机器",
                 ));
             }
-            self.recheck(&op)?;
+            if let Some(snapshot) = snapshot {
+                self.recheck_in(&op, snapshot)?;
+            } else {
+                self.recheck(&op)?;
+            }
             self.prepare(&mut op)?;
         } else {
             let snapshots: Vec<super::environment::Snapshot> = serde_json::from_slice(&fs::read(
@@ -966,7 +999,7 @@ impl TransferService {
         Ok(op)
     }
     pub fn public(op: &Operation) -> Value {
-        json!({"operation_id":op.id,"mode":if op.moving {"move"} else {"clone"},"new_ids":op.new_ids(),"phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
+        json!({"confirm_mode":true,"reserve_manifest":true,"operation_id":op.id,"mode":if op.moving {"move"} else {"clone"},"new_ids":op.new_ids(),"phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
             "dynamic_tools":op.dynamic_tools,
             "sessions":op.group().members.iter().map(|m|json!({"uid":m.uid,"sid":m.sid,"title":m.title,"agent":m.agent,"source":m.source,
                 "cwd":m.cwd,"file_count":op.plan.files.iter().filter(|f|f.source==m.path).count()+op.file_plan.as_ref().map_or(0,|p|p.files.iter().filter(|f|f.owner==m.uid).count()),
