@@ -326,10 +326,10 @@ impl Session {
         for arg in &argv[1..] {
             cmd.arg(arg);
         }
-        if let Some(dir) = cwd.as_deref() {
-            if Path::new(dir).is_dir() {
-                cmd.cwd(dir);
-            }
+        if let Some(dir) = cwd.as_deref()
+            && Path::new(dir).is_dir()
+        {
+            cmd.cwd(dir);
         }
         for key in STRIP_ENV {
             cmd.env_remove(key);
@@ -438,7 +438,7 @@ impl Session {
         #[cfg(unix)]
         {
             let listener = Listener::bind_unix(&self.sock_path())?;
-            return Ok(Arc::new(listener));
+            Ok(Arc::new(listener))
         }
         #[cfg(not(unix))]
         {
@@ -538,10 +538,11 @@ impl Session {
         let _ = std::fs::remove_file(self.info_path());
         let _ = std::fs::remove_file(self.sock_path());
         let log = self.directory.join(format!("{}.log", self.name_now()));
-        if let Ok(meta) = std::fs::metadata(&log) {
-            if meta.is_file() && meta.len() == 0 {
-                let _ = std::fs::remove_file(&log);
-            }
+        if let Ok(meta) = std::fs::metadata(&log)
+            && meta.is_file()
+            && meta.len() == 0
+        {
+            let _ = std::fs::remove_file(&log);
         }
     }
 
@@ -672,12 +673,12 @@ impl Session {
             // 于是 Exit 一定排在最后一段输出之后。checkpoint 必须取喂入之前的画面，
             // 否则这段字节会既在快照里又被回放一遍。
             let mut record = lock(&self.record);
-            if let Some(recorder) = record.as_mut() {
-                if recorder.needs_checkpoint() {
-                    let state = lock(&self.screen).replay_bytes(self.history);
-                    let (cols, rows) = *lock(&self.size);
-                    recorder.checkpoint(cols, rows, state);
-                }
+            if let Some(recorder) = record.as_mut()
+                && recorder.needs_checkpoint()
+            {
+                let state = lock(&self.screen).replay_bytes(self.history);
+                let (cols, rows) = *lock(&self.size);
+                recorder.checkpoint(cols, rows, state);
             }
             let answer = apply_screen_piece(
                 &self.screen,
@@ -1237,13 +1238,13 @@ impl Session {
             for (kind, payload) in read_frames(&mut buffer) {
                 if kind == FRAME_DATA {
                     self.write_pty(&payload);
-                } else if kind == FRAME_RESIZE {
-                    if let Ok(size) = serde_json::from_slice::<Value>(&payload) {
-                        let c = size.get("cols").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
-                        let r = size.get("rows").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
-                        if c > 0 && r > 0 {
-                            self.resize(c, r);
-                        }
+                } else if kind == FRAME_RESIZE
+                    && let Ok(size) = serde_json::from_slice::<Value>(&payload)
+                {
+                    let c = size.get("cols").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+                    let r = size.get("rows").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+                    if c > 0 && r > 0 {
+                        self.resize(c, r);
                     }
                 }
             }

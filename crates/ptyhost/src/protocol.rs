@@ -132,25 +132,25 @@ pub fn key_bytes(key: &str, app_cursor: bool) -> Vec<u8> {
     } else {
         key.strip_prefix('^')
     };
-    if let Some(rest) = rest {
-        if !rest.is_empty() {
-            if let Some((_, byte)) = ctrl_special.iter().find(|(name, _)| *name == rest) {
-                return vec![*byte];
-            }
-            let mut chars = rest.chars();
-            if let (Some(c), None) = (chars.next(), chars.next()) {
-                if c.is_ascii_alphabetic() {
-                    return vec![(c.to_ascii_lowercase() as u8) & 0x1f];
-                }
-            }
+    if let Some(rest) = rest
+        && !rest.is_empty()
+    {
+        if let Some((_, byte)) = ctrl_special.iter().find(|(name, _)| *name == rest) {
+            return vec![*byte];
+        }
+        let mut chars = rest.chars();
+        if let (Some(c), None) = (chars.next(), chars.next())
+            && c.is_ascii_alphabetic()
+        {
+            return vec![(c.to_ascii_lowercase() as u8) & 0x1f];
         }
     }
-    if let Some(rest) = key.strip_prefix("M-") {
-        if !rest.is_empty() {
-            let mut out = vec![0x1b];
-            out.extend_from_slice(&key_bytes(rest, app_cursor));
-            return out;
-        }
+    if let Some(rest) = key.strip_prefix("M-")
+        && !rest.is_empty()
+    {
+        let mut out = vec![0x1b];
+        out.extend_from_slice(&key_bytes(rest, app_cursor));
+        return out;
     }
     if let Some(rest) = key.strip_prefix("S-") {
         let shifted = match rest {

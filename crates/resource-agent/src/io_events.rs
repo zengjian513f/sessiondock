@@ -159,10 +159,10 @@ pub fn helper_main() -> std::io::Result<()> {
             let Ok(line) = line else {
                 break;
             };
-            if let Ok(deadline) = line.parse::<u64>() {
-                if sender.send(deadline).is_err() {
-                    break;
-                }
+            if let Ok(deadline) = line.parse::<u64>()
+                && sender.send(deadline).is_err()
+            {
+                break;
             }
         }
     });
