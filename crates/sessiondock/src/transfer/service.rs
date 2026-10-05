@@ -31,6 +31,8 @@ use std::{
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Operation {
     pub id: String,
+    #[serde(default)]
+    pub created_ms: u64,
     pub phase: String,
     pub uid: String,
     pub target_uid: Option<String>,
@@ -101,6 +103,7 @@ pub struct TransferService {
     pub(super) references: super::references::Cache,
     relationship_refresh: std::sync::Mutex<()>,
     journals: journal::Cache,
+    link_records: std::sync::Mutex<BTreeMap<String, crate::session_links::Record>>,
     pub directory: PathBuf,
     pub roots: SessionRoots,
     pub home: PathBuf,
@@ -201,6 +204,7 @@ impl TransferService {
             references: super::references::Cache::open(directory.join("relationships-v1.json")),
             relationship_refresh: Default::default(),
             journals: Default::default(),
+            link_records: Default::default(),
             directory,
             roots,
             home,
@@ -224,7 +228,15 @@ impl TransferService {
                 }
                 continue;
             }
-            let mut operation: Operation = serde_json::from_slice(&fs::read(file)?)?;
+            let mut operation: Operation = serde_json::from_slice(&fs::read(&file)?)?;
+            if operation.created_ms == 0 {
+                operation.created_ms = fs::metadata(&file)?
+                    .modified()?
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+            }
+            service.remember_links(&operation);
             if operation.phase == "aborted" {
                 service.cleanup_staging(&operation)?;
                 continue;
@@ -276,7 +288,9 @@ impl TransferService {
         )?)?)
     }
     pub(super) fn save(&self, op: &Operation) -> Result<(), TransferError> {
-        persist(&self.directory.join(&op.id).join("operation.json"), op)
+        persist(&self.directory.join(&op.id).join("operation.json"), op)?;
+        self.remember_links(op);
+        Ok(())
     }
     pub fn store(&self) -> &SessionStore {
         &self.inventory
@@ -389,6 +403,7 @@ impl TransferService {
         let mut planning = super::cleanup::PlanningDirectory(directory.clone(), false);
         let mut op = Operation {
             id,
+            created_ms: crate::session_links::now_ms(),
             phase: "planned".into(),
             uid: selected.into(),
             target_uid: None,
@@ -998,8 +1013,60 @@ impl TransferService {
         }
         Ok(op)
     }
+    pub fn link_map(op: &Operation) -> BTreeMap<String, String> {
+        let mut map = BTreeMap::new();
+        for (old, new) in &op.plan.identities.threads {
+            map.insert(format!("codex:{old}"), format!("codex:{new}"));
+        }
+        if let Some(plan) = &op.file_plan {
+            for (old, new) in &plan.sessions {
+                if let Some((source, _)) = old.split_once(':') {
+                    map.insert(old.clone(), format!("{source}:{new}"));
+                }
+            }
+        }
+        for member in &op.group().members {
+            if let Some(target) = map
+                .get(&format!("{}:{}", member.source, member.sid))
+                .cloned()
+            {
+                map.insert(member.uid.clone(), target);
+            }
+        }
+        map
+    }
+    fn remember_links(&self, op: &Operation) {
+        // Cross-node records belong to the Hub. Local copies also remain
+        // discoverable when made through a direct node page.
+        if op.incoming_digest.is_some() || op.moving {
+            return;
+        }
+        self.link_records
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                op.id.clone(),
+                crate::session_links::Record {
+                    id: op.id.clone(),
+                    created_ms: op.created_ms,
+                    mode: "clone".into(),
+                    phase: op.phase.clone(),
+                    mappings: Self::link_map(op),
+                    ..Default::default()
+                },
+            );
+    }
+    pub fn link_records(&self) -> Vec<crate::session_links::Record> {
+        self.link_records
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .filter(|r| r.phase == "complete")
+            .cloned()
+            .collect()
+    }
     pub fn public(op: &Operation) -> Value {
-        json!({"confirm_mode":true,"reserve_manifest":true,"operation_id":op.id,"mode":if op.moving {"move"} else {"clone"},"new_ids":op.new_ids(),"phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
+        json!({"link_map":Self::link_map(op),"created_ms":op.created_ms,"confirm_mode":true,"reserve_manifest":true,"operation_id":op.id,"mode":if op.moving {"move"} else {"clone"},"new_ids":op.new_ids(),"phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
             "dynamic_tools":op.dynamic_tools,
             "sessions":op.group().members.iter().map(|m|json!({"uid":m.uid,"sid":m.sid,"title":m.title,"agent":m.agent,"source":m.source,
                 "cwd":m.cwd,"file_count":op.plan.files.iter().filter(|f|f.source==m.path).count()+op.file_plan.as_ref().map_or(0,|p|p.files.iter().filter(|f|f.owner==m.uid).count()),

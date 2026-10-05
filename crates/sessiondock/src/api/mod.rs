@@ -83,6 +83,7 @@ pub fn router() -> Router<AppState> {
         .route("/sessions", get(read::list))
         .route("/events", get(events::events))
         .route("/sessions/titles", get(read::titles))
+        .route("/sessions/resolve", post(read::resolve_links))
         .route(
             "/sessions/unread",
             post(read::unread).layer(axum::extract::DefaultBodyLimit::disable()),

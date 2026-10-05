@@ -546,6 +546,20 @@ def main():
                         source_op=json.loads((source.root/'state/transfers'/completed['operation_id']/'operation.json').read_text())
                         target_op=json.loads(read_target(destination.root/'state/transfers'/completed['operation_id']/'operation.json'))
                         assert source_op['phase']==('retired' if args.move else 'exported') and target_op['phase']=='complete' and target_op['incoming_digest']
+                        if args.move:
+                            # Historical ledger IDs retain their original source node.
+                            old_links=[{'sid':source_uid,'node':a.nid}]
+                            old_links.extend({'sid':m['source']+':'+m['sid'],'node':a.nid}
+                                for m in (source_op.get('file_plan') or source_op['plan'])['group']['members'])
+                            resolved=context.request.post(f'http://127.0.0.1:{hub.port}/api/sessions/resolve',data={'links':old_links})
+                            assert resolved.ok,resolved.text()
+                            assert all(r['status']=='found' and r['session']['node']==b.nid and not r['session']['copied']
+                                for r in resolved.json()['results']),resolved.text()
+                            page.goto(f'http://127.0.0.1:{hub.port}/?sid={source_uid}&node={a.nid}',wait_until='networkidle')
+                            page.wait_for_function('uid=>S.sel===uid',arg=completed['target_uid'])
+                            expect(page.locator('#msgs')).to_contain_text({'codex':'Branch A current','claude':'Branch A final','grok':'Grok answer 10'}[provider])
+                            expect(page.locator('#session-stop-notice')).to_contain_text('已移动')
+                            print('PASS '+provider+' retained original link opens moved session in Chromium',flush=True)
                         if external:
                             environment=json.loads(read_target(destination.root/'state/transfers'/completed['operation_id']/'incoming-environment.json'))
                             dependencies={path:value for snapshot in environment for path,value in snapshot['dependencies'].items()}

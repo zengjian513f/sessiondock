@@ -53,6 +53,7 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/nodes/{nid}/display"),
     ("ANY", "/api/nodes/{nid}/api/{*path}"),
     ("GET", "/api/sessions"),
+    ("POST", "/api/sessions/resolve"),
     ("GET", "/api/search"),
     ("GET", "/api/live"),
     ("GET", "/api/term/list"),
@@ -89,7 +90,7 @@ const NOT_REGISTERED: &str = "机器未注册或已移除";
 /// `/api/nodes/<nid>/api/media/…` source before its hub check when set.
 pub fn hub_capabilities() -> Value {
     json!({
-        "backend": "rust", "hub": true, "session_clone_local_codex": true, "session_clone_remote": true, "session_move_remote": true, "transfer_confirm_mode": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
+        "backend": "rust", "hub": true, "session_clone_local_codex": true, "session_clone_remote": true, "session_move_remote": true, "transfer_confirm_mode": true, "session_link_lineage": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
         "history_pages": true, "unread_batch": true, "media_continuation": true, "ui_events": true, "list_delta": true,
         "history_semantics": "limited_native"
     })
@@ -490,6 +491,15 @@ async fn handle(
         )
         .await
         .map_err(Reply::Invalid)?);
+    }
+    if method == Method::POST && path == "/api/sessions/resolve" {
+        let body = serde_json::from_value::<crate::session_links::Request>(Value::Object(
+            read_body(request).await?,
+        ))
+        .map_err(|e| Reply::Invalid(e.to_string()))?;
+        return ok(
+            &crate::hub::session_links::resolve(registry, client, &state.transfers, body).await,
+        );
     }
     if method == Method::GET && path == "/api/session/transfers" {
         return match state.transfers.pending() {

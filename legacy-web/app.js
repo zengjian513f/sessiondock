@@ -10228,9 +10228,49 @@ function routeSession(spec) {
   const uid = uidOfDeepLink(spec);
   return uid ? {uid, agent: null} : agentOfDeepLink(spec);
 }
+let deepLinkSequence = 0;
+async function openExternalSession(spec, historyMode = 'replace') {
+  if (!spec) return false;
+  const route = routeSession(spec);
+  if (route && !S.sessions.find(s => s.uid === route.uid)?.stale) {
+    await openSession(route.uid, route.agent, {exact:true, historyMode}); return true;
+  }
+  if (!HUB_MODE || !SessionDockCapabilities.config.session_link_lineage) return false;
+  const sequence = ++deepLinkSequence, href = location.href, selected = S.sel;
+  let result;
+  try {
+    const response = await fetch(appUrl('api/sessions/resolve'), {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({links:[{sid:spec, node:deepNode()}]}),
+    });
+    if (!response.ok) throw new Error('链接解析暂时不可用');
+    result = (await response.json()).results[0];
+  } catch { result = {status:'unavailable', alternatives:[]}; }
+  if (sequence !== deepLinkSequence || href !== location.href || selected !== S.sel) return true;
+  const open = async session => {
+    await openSession(session.uid, session.agent || null, {exact:true, historyMode});
+    const url = new URL(location.href); url.searchParams.set('sid',session.sid); url.searchParams.set('node',session.node);
+    history.replaceState(history.state,'',url);
+    if (session.via?.length) showSessionStopNotice(session.copied
+      ? `原会话已不可用，当前打开其副本 · ${session.node_name}。`
+      : `此会话已移动到 ${session.node_name}。`, true, session.uid);
+  };
+  if (result.status === 'found') { await open(result.session); return true; }
+  const text = result.status === 'missing' ? '原会话及已记录的后继均不存在。'
+    : result.status === 'ambiguous' ? '此链接对应多个会话，请选择要打开的记录。'
+    : '原位置暂不可达，尚不能确认会话是否已删除。';
+  showSessionStopNotice(text,true);
+  const notice = $('#session-stop-notice');
+  for (const session of result.alternatives || []) {
+    const button = el('button','btn',`${session.copied ? '打开副本' : '打开后继'} · ${session.node_name || session.node}`);
+    button.type = 'button'; button.onclick = () => open(session);
+    notice.append(' ',button);
+  }
+  leaveBootDetail();
+  return true;
+}
 addEventListener('popstate', () => {
-  const route = routeSession(new URL(location.href).searchParams.get('sid') || '');
-  if (route) openSession(route.uid, route.agent, {exact: true, historyMode: 'none'});
+  void openExternalSession(new URL(location.href).searchParams.get('sid') || '', 'none');
 });
 // index.html 在首帧前就按上次停留的页面进了手机会话页；列表回来前先占位，
 // 恢复不了（列表失败、会话已不在）时退回列表，不写 mobilePage，下次刷新照旧恢复。
@@ -10245,8 +10285,7 @@ function leaveBootDetail() {
 }
 loadSessions(false).then(async ok => {
   if (!ok) return leaveBootDetail();
-  const route = routeSession(DEEP_SID);
-  if (route) { openSession(route.uid, route.agent, {exact: true, historyMode: 'replace'}); return; }
+  if (await openExternalSession(DEEP_SID)) return;
   const last = store.get('sel', null);       // 恢复上次看的会话
   const savedAgent = store.get('agent', null);
   const restoreDetail = !MOBILE.matches || store.get('mobilePage', 'list') === 'detail';

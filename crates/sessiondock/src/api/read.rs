@@ -734,3 +734,35 @@ pub async fn watch(
         .insert("x-accel-buffering", "no".parse().unwrap());
     Ok(response)
 }
+
+/// Read-only batch lookup. Missing and ambiguous are distinct from transport failure.
+pub async fn resolve_links(
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<crate::session_links::Request>,
+) -> Result<axum::Json<Value>, ApiError> {
+    let records = state
+        .transfer
+        .as_ref()
+        .map(|t| t.link_records())
+        .unwrap_or_default();
+    state
+        .reader
+        .run(move |store| {
+            let snapshot = store.search_snapshot()?;
+            let rows = snapshot.list["sessions"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let results: Vec<_> = body
+                .links
+                .iter()
+                .map(|link| crate::session_links::resolve_rows(rows, &link.sid))
+                .collect();
+            let records: Vec<_> = records
+                .into_iter()
+                .filter(|r| body.links.iter().any(|l| r.next(&l.sid).is_some()))
+                .collect();
+            Ok(axum::Json(json!({"results":results,"transfers":records})))
+        })
+        .await
+}

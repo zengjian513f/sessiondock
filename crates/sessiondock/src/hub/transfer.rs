@@ -27,6 +27,8 @@ impl Request {
 }
 #[derive(Clone, Deserialize, Serialize)]
 struct Journal {
+    #[serde(default)]
+    created_ms: u64,
     request: Request,
     phase: String,
     result: Option<Value>,
@@ -41,6 +43,7 @@ struct Journal {
 }
 pub struct Transfers {
     directory: PathBuf,
+    links: Arc<std::sync::Mutex<std::collections::BTreeMap<String, crate::session_links::Record>>>,
     gates: crate::transfer::coordination::Locks,
     unfinished: Arc<std::sync::Mutex<std::collections::BTreeMap<String, Journal>>>,
     // Move the guard into the blocking write: cancelling its async waiter must
@@ -58,13 +61,14 @@ impl Transfers {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
         }
+        let mut links = std::collections::BTreeMap::new();
         let mut unfinished = std::collections::BTreeMap::new();
         for entry in fs::read_dir(&directory)? {
             let path = entry?.path();
             if path.extension().is_none_or(|ext| ext != "json") {
                 continue;
             }
-            let journal: Journal = match fs::read(&path).and_then(|raw| {
+            let mut journal: Journal = match fs::read(&path).and_then(|raw| {
                 serde_json::from_slice(&raw)
                     .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
             }) {
@@ -76,12 +80,22 @@ impl Transfers {
                     continue;
                 }
             };
+            if journal.created_ms == 0 {
+                journal.created_ms = fs::metadata(&path)?
+                    .modified()?
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+            }
+            let record = Self::link_record(&journal);
+            links.insert(record.id.clone(), record);
             if !matches!(journal.phase.as_str(), "complete" | "aborted") {
                 unfinished.insert(journal.request.operation_id.clone(), journal);
             }
         }
         Ok(Self {
             directory,
+            links: Arc::new(std::sync::Mutex::new(links)),
             unfinished: Arc::new(std::sync::Mutex::new(unfinished)),
             saves: Default::default(),
             gates: Default::default(),
@@ -145,6 +159,7 @@ impl Transfers {
         let raw = serde_json::to_vec(journal)?;
         let journal = journal.clone();
         let unfinished = self.unfinished.clone();
+        let links = self.links.clone();
         let save_guard = self
             .saves
             .acquire(vec![journal.request.operation_id.clone()])
@@ -168,6 +183,11 @@ impl Transfers {
                 // fails: readers already see the new journal on disk.
                 let mut pending = unfinished.lock().unwrap_or_else(|e| e.into_inner());
                 fs::rename(temp, &path)?;
+                let record = Self::link_record(&journal);
+                links
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(record.id.clone(), record);
                 if matches!(journal.phase.as_str(), "complete" | "aborted") {
                     pending.remove(&journal.request.operation_id);
                 } else {
@@ -179,6 +199,130 @@ impl Transfers {
         })
         .await
         .map_err(|e| TransferError::new("move_io", e.to_string()))?
+    }
+    fn link_record(journal: &Journal) -> crate::session_links::Record {
+        let (source_node, local_uid) =
+            namespace::split(&journal.request.uid, true).unwrap_or_default();
+        let result = journal.result.as_ref().unwrap_or(&Value::Null);
+        let preview = journal.preview.as_ref().unwrap_or(&Value::Null);
+        let mappings = serde_json::from_value(result["link_map"].clone()).unwrap_or_default();
+        let mut record = crate::session_links::Record {
+            id: journal.request.operation_id.clone(),
+            created_ms: journal.created_ms,
+            mode: result["mode"]
+                .as_str()
+                .or(preview["mode"].as_str())
+                .unwrap_or("clone")
+                .into(),
+            phase: journal.phase.clone(),
+            source_node,
+            target_node: journal.request.target_node.clone(),
+            mappings,
+            legacy: !result["link_map"].is_object(),
+            ..Default::default()
+        };
+        for member in preview["sessions"].as_array().into_iter().flatten() {
+            record.legacy_members.insert(format!(
+                "{}:{}",
+                member["source"].as_str().unwrap_or(""),
+                member["sid"].as_str().unwrap_or("")
+            ));
+            if let Some(uid) = member["uid"].as_str() {
+                record.legacy_members.insert(
+                    namespace::split(uid, true)
+                        .map(|(_, u)| u)
+                        .unwrap_or_else(|_| uid.into()),
+                );
+            }
+        }
+        if record.legacy
+            && let Some(target) = result["target_uid"].as_str()
+        {
+            let target = namespace::split(target, true)
+                .map(|(_, u)| u)
+                .unwrap_or_else(|_| target.into());
+            record.mappings.insert(local_uid, target.clone());
+            for member in preview["sessions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|m| m["uid"] == journal.request.uid)
+            {
+                record.mappings.insert(
+                    format!(
+                        "{}:{}",
+                        member["source"].as_str().unwrap_or(""),
+                        member["sid"].as_str().unwrap_or("")
+                    ),
+                    target.clone(),
+                );
+            }
+        }
+        record
+    }
+    pub fn link_records(&self) -> Vec<crate::session_links::Record> {
+        self.links
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect()
+    }
+    pub async fn hydrate_links(
+        &self,
+        registry: &Registry,
+        client: &Client,
+        id: &str,
+    ) -> Option<crate::session_links::Record> {
+        let _guard = self.gates.acquire(vec![id.to_owned()]).await;
+        let mut journal = self.load(id).await.ok()?;
+        if journal.phase != "complete" {
+            return None;
+        }
+        if journal.created_ms == 0 {
+            journal.created_ms = self
+                .links
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(id)
+                .map(|r| r.created_ms)
+                .unwrap_or_default();
+        }
+        let record = Self::link_record(&journal);
+        if !record.legacy {
+            return Some(record);
+        }
+        let mut queried = std::collections::BTreeSet::new();
+        for nid in [&record.target_node, &record.source_node] {
+            if !queried.insert(nid) {
+                continue;
+            }
+            let Some(node) = registry.get(nid) else {
+                continue;
+            };
+            let Ok((200, value)) = registry
+                .request(
+                    client,
+                    &node,
+                    "/api/session/transfer/status",
+                    "POST",
+                    Some(&json!({"operation_id":id})),
+                    Duration::from_secs(5),
+                )
+                .await
+            else {
+                continue;
+            };
+            if value["operation_id"] == id && value["link_map"].is_object() {
+                journal.result.as_mut()?["link_map"] = value["link_map"].clone();
+                if journal.created_ms == 0 {
+                    journal.created_ms = value["created_ms"].as_u64().unwrap_or(record.created_ms);
+                }
+                self.save(&journal).await.ok()?;
+                return Some(Self::link_record(&journal));
+            }
+        }
+        None
     }
     fn public(journal: &Journal) -> Value {
         json!({"request":journal.request,"phase":journal.phase,"plan":journal.preview,
@@ -602,6 +746,7 @@ impl Transfers {
             previous
         } else {
             Journal {
+                created_ms: crate::session_links::now_ms(),
                 request: request.clone(),
                 phase: "planned".into(),
                 result: None,
