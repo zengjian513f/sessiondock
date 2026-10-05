@@ -34,7 +34,7 @@ const EFFORT_ORDER: [&str; 9] = [
     "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "auto",
 ];
 
-#[derive(Serialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Model {
     pub id: String,
     pub name: String,
@@ -43,7 +43,7 @@ pub struct Model {
     pub default_effort: Option<String>,
 }
 
-#[derive(Serialize, Debug, Default, PartialEq, Eq)]
+#[derive(Serialize, Debug, Clone, Default, PartialEq, Eq)]
 pub struct Catalog {
     pub models: Vec<Model>,
     /// Levels offered while the CLI's own default model stays selected.
@@ -73,6 +73,128 @@ pub fn catalog(profile: &CliProfile) -> Catalog {
         catalog.efforts = merged_efforts(&catalog.models);
     }
     catalog
+}
+
+/// A cached catalog older than this is still served, while one background
+/// run of the CLI's list command replaces it.
+const CACHE_FRESH: Duration = Duration::from_secs(600);
+
+struct Cached {
+    at: Instant,
+    catalog: Catalog,
+    refreshing: bool,
+}
+
+/// Catalogs of CLIs whose list command may contact the network (Agy,
+/// OpenCode) and take seconds. Cache-file catalogs stay uncached. An empty
+/// result (failure or timeout) never replaces a listed one.
+#[derive(Clone, Default)]
+pub struct CatalogCache {
+    entries: std::sync::Arc<std::sync::Mutex<BTreeMap<String, Cached>>>,
+    ready: std::sync::Arc<std::sync::Condvar>,
+}
+
+fn slow(source: Source) -> bool {
+    matches!(source, Source::Agy | Source::Opencode)
+}
+
+impl CatalogCache {
+    /// The profile's catalog: cached when present (refreshed in the
+    /// background once stale), otherwise listed now.
+    pub fn get(&self, profile: &CliProfile) -> Catalog {
+        if !slow(profile.source) {
+            return catalog(profile);
+        }
+        let Ok(mut entries) = self.entries.lock() else {
+            return catalog(profile);
+        };
+        loop {
+            if let Some(entry) = entries.get_mut(&profile.id) {
+                // Join startup warming instead of launching a second network
+                // request. A previously listed catalog never needs to wait.
+                if entry.refreshing && entry.catalog.models.is_empty() {
+                    entries = match self.ready.wait(entries) {
+                        Ok(entries) => entries,
+                        Err(_) => return Catalog::default(),
+                    };
+                    continue;
+                }
+                if entry.at.elapsed() >= CACHE_FRESH && !entry.refreshing {
+                    entry.refreshing = true;
+                    self.spawn_refresh(profile.clone());
+                }
+                return entry.catalog.clone();
+            }
+            entries.insert(
+                profile.id.clone(),
+                Cached {
+                    at: Instant::now(),
+                    catalog: Catalog::default(),
+                    refreshing: true,
+                },
+            );
+            drop(entries);
+            return self.refresh(profile);
+        }
+    }
+
+    /// Start a background listing for each slow profile whose catalog is
+    /// absent or stale and not already being refreshed, so the first picker
+    /// open after start-up reads memory.
+    pub fn warm<'a>(&self, profiles: impl IntoIterator<Item = &'a CliProfile>) {
+        for profile in profiles.into_iter().filter(|profile| slow(profile.source)) {
+            if let Ok(mut entries) = self.entries.lock() {
+                match entries.get_mut(&profile.id) {
+                    Some(entry) if entry.refreshing || entry.at.elapsed() < CACHE_FRESH => continue,
+                    Some(entry) => entry.refreshing = true,
+                    None => {
+                        entries.insert(
+                            profile.id.clone(),
+                            Cached {
+                                at: Instant::now(),
+                                catalog: Catalog::default(),
+                                refreshing: true,
+                            },
+                        );
+                    }
+                }
+            }
+            self.spawn_refresh(profile.clone());
+        }
+    }
+
+    fn spawn_refresh(&self, profile: CliProfile) {
+        let cache = self.clone();
+        std::thread::spawn(move || {
+            cache.refresh(&profile);
+        });
+    }
+
+    fn refresh(&self, profile: &CliProfile) -> Catalog {
+        let listed = catalog(profile);
+        let Ok(mut entries) = self.entries.lock() else {
+            return listed;
+        };
+        let listed = if listed.models.is_empty() {
+            entries
+                .get(&profile.id)
+                .filter(|entry| !entry.catalog.models.is_empty())
+                .map(|entry| entry.catalog.clone())
+                .unwrap_or(listed)
+        } else {
+            listed
+        };
+        entries.insert(
+            profile.id.clone(),
+            Cached {
+                at: Instant::now(),
+                catalog: listed.clone(),
+                refreshing: false,
+            },
+        );
+        self.ready.notify_all();
+        listed
+    }
 }
 
 /// The CLI's home as its child process would see it: the profile's
@@ -337,9 +459,15 @@ pub(super) fn grok(home: &Path) -> Catalog {
 
 /// `agy models`: one `id\tdisplay name` per line on stdout, with progress
 /// on stderr. It reports no default model or per-model effort metadata.
+/// Agy lists each reasoning variant as its own model (`…-high`); such a row
+/// already fixes the effort, so it offers no separate `--effort` choice.
 fn agy(profile: &CliProfile) -> Catalog {
     let cwd = cli_home(profile, "HOME", "");
     let output = run_bounded(profile, &cwd, &["models"], AGY_MODELS_TIMEOUT).unwrap_or_default();
+    agy_lines(&output)
+}
+
+fn agy_lines(output: &str) -> Catalog {
     let efforts: Vec<String> = AGY_EFFORTS
         .iter()
         .map(|effort| (*effort).to_owned())
@@ -353,10 +481,15 @@ fn agy(profile: &CliProfile) -> Catalog {
                 return None;
             }
             let name = name.trim();
+            let variant = id
+                .strip_suffix("-thinking")
+                .unwrap_or(id)
+                .rsplit_once('-')
+                .is_some_and(|(_, suffix)| EFFORT_ORDER.contains(&suffix));
             Some(Model {
                 id: id.to_owned(),
                 name: if name.is_empty() { id } else { name }.to_owned(),
-                efforts: efforts.clone(),
+                efforts: if variant { Vec::new() } else { efforts.clone() },
                 default_effort: None,
             })
         })

@@ -157,7 +157,21 @@ one `provider/model` per line), Claude its fixed aliases `fable`, `opus`,
 opens; the model menu gains a search box above ten models. Agy runs `agy models`
 in the profile environment with a 15 s bound, requires successful exit and
 parses stdout `id\tdisplay name` TSV. It reports no default model; supported
-flag choices are low, medium, high, xhigh, max. The CLI may independently use
+flag choices are low, medium, high, xhigh, max, except that a model whose ID
+ends in an effort level (optionally followed by `-thinking`) is that variant
+and lists no separate flag efforts in the raw API catalog. Both page pickers
+group its variants into one base-model row, keep the effort control visible,
+and disable/gray levels absent from the catalog. Their launch request maps the
+model/effort selection back to the listed native ID and omits `effort`.
+Groups with a listed base-model ID also offer “CLI 默认”; standalone models
+without variant metadata retain the optional effort flag. Saved native variant
+IDs restore the base model and its effort. Agy and OpenCode
+catalogs are cached per profile in memory: the CLI probe warms absent or
+10-minute-stale entries in the background, a stale entry is still served while
+one background refresh runs, and an empty listing never replaces a cached one.
+The first request joins an ongoing startup listing; failed listings also respect
+the refresh interval.
+The CLI may independently use
 a different synthetic catalog model for its background title generator; that
 request is separate from the interactive model selected by `--model`.
 

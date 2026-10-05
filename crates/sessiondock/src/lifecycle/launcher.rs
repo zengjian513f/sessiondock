@@ -311,6 +311,8 @@ pub struct Launcher {
     missing: std::sync::Mutex<BTreeSet<String>>,
     /// Latest manual update of each profile's CLI (machine settings).
     updates: super::clients::Updates,
+    /// Catalogs whose CLI list command is slow, warmed by each probe.
+    catalogs: super::models::CatalogCache,
 }
 
 /// Upper bound of one `--version` probe (a wrapper may first load a shell rc).
@@ -396,6 +398,7 @@ impl Launcher {
             entries,
             missing: std::sync::Mutex::new(BTreeSet::new()),
             updates: super::clients::Updates::default(),
+            catalogs: super::models::CatalogCache::default(),
         })
     }
 
@@ -414,6 +417,11 @@ impl Launcher {
                 .filter_map(|(id, probe)| probe.join().unwrap_or(false).then_some(id))
                 .collect()
         });
+        self.catalogs.warm(
+            self.profiles
+                .values()
+                .filter(|profile| !absent.contains(&profile.id)),
+        );
         if let Ok(mut missing) = self.missing.lock() {
             *missing = absent;
         }
@@ -439,7 +447,7 @@ impl Launcher {
             .values()
             .filter(|profile| profile.source == source);
         match (profiles.next(), profiles.next()) {
-            (Some(profile), None) => super::models::catalog(profile),
+            (Some(profile), None) => self.catalogs.get(profile),
             _ => super::models::Catalog::default(),
         }
     }

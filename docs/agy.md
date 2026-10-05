@@ -29,8 +29,17 @@
 
 模型目录执行 profile 环境中的 `agy models`（15 秒上限），解析 stdout 的
 `id\tdisplay name` TSV；失败不填入猜测模型。目录没有默认模型或逐模型强度元数据。
+ID 以强度级别结尾的条目（如 `gemini-3.8-flash-high`、`gemini-3.1-pro-low-thinking`）
+本身就是强度变体，原始目录行的 `efforts` 为空。网页将同一基础模型的强度变体
+合并成左侧一项，右侧 effort 只允许目录中存在的组合，缺失档位置灰禁用。
+提交时映射回对应的原生模型 ID，启动不再另带 `--effort`；原生基础模型行存在时
+也提供“CLI 默认”。旧的已保存变体 ID 自动恢复为基础模型及对应强度。
+目录按 profile 缓存在服务内存：CLI 探测（启动及每 5 分钟）在后台预热缺失或超过
+10 分钟的目录；首次请求复用正在预热的查询，过期目录照常返回并只触发一次后台刷新；
+空结果不覆盖已有目录，失败后的重试也遵守刷新间隔。
 选择模型用独立 argv `--model <id>`；可选强度用 `--effort <level>`，提供
-low、medium、high、xhigh、max，由 CLI 判断模型是否接受。Agy 选择器支持空值
+low、medium、high、xhigh、max，由 CLI 判断没有强度变体元数据的模型是否接受。
+这些普通模型的 Agy 选择器支持空值
 “CLI 默认”，省略 `--effort`；合成网关的自定义模型测试使用此空值。
 未选模型时也省略模型 override。CLI 的后台 title generator 可能另选目录中的
 第二个合成模型，验收应分别检查 interactive planner 和 title 请求，不能据标题请求

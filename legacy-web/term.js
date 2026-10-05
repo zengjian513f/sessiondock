@@ -1416,6 +1416,37 @@ function scheduleCwdCompletions() {
 const MODEL_SEARCH_MIN = 10;
 const modelCatalogs = new Map();
 
+// Agy's catalog lists concrete model/effort combinations. Group them for the
+// two controls, but keep each native ID for the launch request.
+function agyModelCatalog(catalog) {
+  const order = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'auto'];
+  const groups = new Map(), levels = new Set(catalog.efforts || []);
+  for (const model of catalog.models) {
+    const match = model.id.match(/^(.*)-(none|minimal|low|medium|high|xhigh|max|ultra|auto)(?:-thinking)?$/);
+    const id = match?.[1] || model.id;
+    const name = match ? (model.name === model.id ? id : (model.name || id)
+      .replace(/\s*\((?:none|minimal|low|medium|high|xhigh|max|ultra|auto)(?:\s+thinking)?\)\s*$/i, '')) : model.name;
+    if (!groups.has(id)) groups.set(id, {...model, id, name, variants: null, base: null});
+    const group = groups.get(id);
+    if (match) {
+      group.variants ||= {};
+      group.variants[match[2]] = model.id;
+      levels.add(match[2]);
+    } else {
+      group.base = model;
+      group.name = model.name;
+    }
+  }
+  const efforts = order.filter(level => levels.has(level));
+  const models = [...groups.values()].map(group => {
+    if (!group.variants) return group.base;
+    if (group.base) group.variants[''] = group.base.id;
+    return {...group, efforts: [...(group.base ? [''] : []),
+      ...efforts.filter(level => Object.hasOwn(group.variants, level))]};
+  });
+  return {...catalog, models, efforts};
+}
+
 function fetchModelCatalog(node, source) {
   const key = (HUB_MODE ? node + '|' : '') + source;
   if (!modelCatalogs.has(key)) {
@@ -1424,7 +1455,7 @@ function fetchModelCatalog(node, source) {
         const params = new URLSearchParams({source, ...(HUB_MODE ? {node} : {})});
         const response = await fetch(appUrl(`api/term/models?${params}`), {cache: 'no-store'});
         const data = response.ok ? await response.json() : null;
-        return Array.isArray(data?.models) ? data : null;
+        return Array.isArray(data?.models) ? (source === 'agy' ? agyModelCatalog(data) : data) : null;
       } catch { return null; }
     })().then(catalog => {
       if (!catalog) modelCatalogs.delete(key); // 下次打开再试
@@ -1440,7 +1471,8 @@ function createModelPicker(prefix, {source, node, storeKey}) {
   const button = el('model'), label = el('model-label'), menu = el('model-menu');
   const search = el('model-search'), box = el('model-options'), select = el('effort');
   const picker = {catalog: null, key: '', model: '', effort: '', rows: [], active: -1, seq: 0};
-  const info = id => picker.catalog?.models.find(model => model.id === id) || null;
+  const info = id => picker.catalog?.models.find(model => model.id === id
+    || model.variants && Object.values(model.variants).includes(id)) || null;
   const controls = (text, title, enabled) => {
     label.textContent = text;
     label.classList.toggle('default', !enabled);
@@ -1452,9 +1484,13 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     const shown = chosen || info(catalog?.default_model);
     picker.model = shown?.id || '';
     const availableEfforts = shown?.efforts || catalog?.efforts || [];
-    // Agy's directory does not report per-model effort support. Let its own
-    // default work (including gateway models), while allowing an explicit flag.
-    const efforts = source() === 'agy' && availableEfforts.length ? ['', ...availableEfforts] : availableEfforts;
+    // Variant groups only allow combinations actually listed by Agy. Plain
+    // models retain CLI-default/explicit flag behavior (no support metadata).
+    const variants = shown?.variants;
+    const efforts = source() === 'agy' && !variants && availableEfforts.length ? ['', ...availableEfforts] : availableEfforts;
+    const priorEffort = variants && model !== shown.id
+      ? Object.entries(variants).find(([, id]) => id === model)?.[0] : undefined;
+    effort = priorEffort ?? effort;
     const effortKey = `modelEffort.${source()}|${picker.model}`;
     const remembered = store.get(effortKey, '');
     picker.effort = efforts.includes(effort) ? effort : efforts.includes(remembered) ? remembered
@@ -1463,7 +1499,13 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     const name = shown ? shown.name || shown.id : catalog?.models.length ? '选择模型' : '模型不可用';
     controls(name, shown && shown.name !== shown.id ? `${shown.name}（${shown.id}）` : '模型：' + name,
       !!catalog?.models.length);
-    select.replaceChildren(...efforts.map(value => new Option(value || 'CLI 默认', value)));
+    const options = variants ? [...(Object.hasOwn(variants, '') ? [''] : []), ...catalog.efforts] : efforts;
+    select.replaceChildren(...options.map(value => {
+      const option = new Option(value || 'CLI 默认', value);
+      option.disabled = !efforts.includes(value);
+      if (option.disabled) option.title = '该模型不提供此强度';
+      return option;
+    }));
     select.value = picker.effort;
     select.disabled = !efforts.length;
     select.parentElement.title = efforts.length ? '推理强度' : '该 CLI 不支持选择推理强度';
@@ -1486,12 +1528,16 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     if (seq !== picker.seq) return;
     picker.catalog = catalog;
     const saved = store.get(`${storeKey}.${picker.key}`, {}) || {};
-    picker.apply(saved.model || '', '');
+    picker.apply(saved.model || '');
     if (!catalog) controls('模型不可用', '该机器没有返回模型列表，将使用 CLI 默认模型', false);
   };
   /** 请求体里的具体选择；目录不可用时才由 CLI 自行决定。 */
-  picker.choice = () => ({...(picker.model ? {model: picker.model} : {}),
-    ...(picker.effort ? {effort: picker.effort} : {})});
+  picker.choice = () => {
+    const variants = info(picker.model)?.variants;
+    if (variants) return {model: variants[picker.effort]};
+    return {...(picker.model ? {model: picker.model} : {}),
+      ...(picker.effort ? {effort: picker.effort} : {})};
+  };
   picker.close = (focus = false) => {
     if (menu.hidden) return;
     if (menu.matches(':popover-open')) menu.hidePopover();
@@ -1575,7 +1621,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
   const choose = index => {
     const model = picker.rows[index];
     if (!model) return;
-    picker.apply(model.id, '', true);
+    picker.apply(model.id, undefined, true);
     picker.close(true);
   };
   button.onclick = () => (menu.hidden ? open() : picker.close());
