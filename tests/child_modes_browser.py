@@ -12,6 +12,16 @@ from history_parity import BINARY, get_json, isolated_server
 from nest_tree_browser import corpus
 
 
+def sidebar_layout(page):
+    return page.evaluate("""async () => {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return ['.side-search', '#side', '#detail'].map(selector => {
+            const rect = document.querySelector(selector).getBoundingClientRect();
+            return [rect.top, rect.height];
+        });
+    }""")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -100,10 +110,13 @@ def main():
                             pending.append(route)
                         else:
                             route.continue_()
+                    stable_layout = sidebar_layout(page)
                     page.route('**/api/sessions?*', delay_branch)
                     root_caret.click()
                     page.wait_for_function('document.querySelector(".nest-caret[aria-busy=true]")')
                     assert pending
+                    expect(page.locator('#stat')).to_be_empty()
+                    assert sidebar_layout(page) == stable_layout
                     root_caret.click()
                     page.wait_for_function('!sessionLoadActive')
                     response = pending[0].fetch()
@@ -111,6 +124,8 @@ def main():
                     page.unroute('**/api/sessions?*', delay_branch)
                     expect(page.locator('#side .item')).to_have_count(2)
                     assert page.evaluate('S.lazyOpen.size') == 0
+                    expect(page.locator('#stat')).to_be_empty()
+                    assert sidebar_layout(page) == stable_layout
                     # Failed expansion retains the main rows and a usable retry arrow.
                     def fail_branch(route):
                         if 'expanded=' in route.request.url:
@@ -120,6 +135,8 @@ def main():
                     page.route('**/api/sessions?*', fail_branch)
                     root_caret.click()
                     expect(page.locator('.app-popup-message')).to_have_text('子会话加载失败，请点击箭头重试')
+                    expect(page.locator('#stat')).to_be_empty()
+                    assert sidebar_layout(page) == stable_layout
                     expect(page.locator('#side .item')).to_have_count(2)
                     expect(root_caret).to_have_attribute('aria-expanded', 'false')
                     page.get_by_role('button', name='知道了', exact=True).click()
@@ -153,7 +170,7 @@ def main():
                     assert page.evaluate('S.agent') == 'x'
                     assert not errors, errors
                     context.close()
-                    print(f'PASS child modes {width}px: lazy arrows, one-level requests, collapse/release, stale-response race, refresh, flat/tree and open detail', flush=True)
+                    print(f'PASS child modes {width}px: lazy arrows, one-level requests, collapse/release, stale-response race, stable layout during loading/failure, refresh, flat/tree and open detail', flush=True)
             finally:
                 browser.close()
 

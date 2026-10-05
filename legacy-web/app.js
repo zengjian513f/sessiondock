@@ -2619,7 +2619,6 @@ async function loadSessions(force, preserveList = false) {
   sessionLoadActive = run;
   sessionPollController?.abort();
   clearTimeout(sessionLoadRetry);
-  $('#stat').textContent = force ? ' 重新扫描…' : ' 加载中…';
   const ac = new AbortController();
   const timeout = setTimeout(() => ac.abort(), 15000);
   let d;
@@ -2630,9 +2629,9 @@ async function loadSessions(force, preserveList = false) {
     if (!Array.isArray(d.sessions)) throw new Error('会话列表格式错误');
   } catch (e) {
     if (run !== sessionLoadRun || SessionDockNetwork.paused) return false;
+    if (preserveList) return false;
     $('#stat').textContent = ' 加载失败';
     $('#stat').classList.add('err');
-    if (preserveList) return false;
     $('#side').innerHTML = `<div class="empty load-failed">
       <p>会话列表暂时无法加载</p><button class="btn load-retry">重试</button></div>`;
     $('.load-retry').onclick = () => loadSessions(false);
@@ -4305,7 +4304,7 @@ function nestFoldCount(r) {
 
 function nestLeadMarkup(r) {
   const caret = r.kids || r.inactive ? `<button type="button" class="nest-caret" aria-expanded="${!r.closed}" aria-busy="${!!r.busy}"
-      title="${r.busy ? '加载中… ' : ''}${r.closed ? '展开' : '收起'} ${nestFoldCount(r)}" aria-label="${r.closed ? '展开' : '收起'}「${esc(r.s.title)}」下的 ${nestFoldCount(r)}"></button>` : '';
+      title="${r.closed ? '展开' : '收起'} ${nestFoldCount(r)}" aria-label="${r.closed ? '展开' : '收起'}「${esc(r.s.title)}」下的 ${nestFoldCount(r)}"></button>` : '';
   return `<span class="nest-lead" aria-hidden="${r.kids || r.inactive ? 'false' : 'true'}">${'<i class="nest-guide"></i>'.repeat(r.depth)}<span class="nest-slot">${caret}</span></span>`;
 }
 
@@ -4433,7 +4432,7 @@ function patchSidebarRow(node, row, highlightKey) {
   if (caret) {
     caret.setAttribute('aria-expanded', String(!row.closed));
     caret.setAttribute('aria-busy', String(!!row.busy));
-    caret.title = `${row.busy ? '加载中… ' : ''}${row.closed ? '展开' : '收起'} ${nestFoldCount(row)}`;
+    caret.title = `${row.closed ? '展开' : '收起'} ${nestFoldCount(row)}`;
     caret.ariaLabel = `${row.closed ? '展开' : '收起'}「${s.title}」下的 ${nestFoldCount(row)}`;
   }
   if (s.pending) node.dataset.tmuxName = s.tmuxName;
