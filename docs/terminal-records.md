@@ -52,8 +52,8 @@ the timeline instead of occupying the waiting page. Elapsed-time ticks label
 the track; dragging previews locally and commits a seek on release. Grid
 fitting excludes container padding; replay preserves the recorded cells and
 reduces its display font when necessary to fit the available width.
-`records.html` (replaying through the grid facade, `mode=grid`) and
-`grid.html?record=` remain as unlinked engineering pages used by the suites. Listing and replay take
+The console replay is the only recordings viewer; the former unlinked
+`records.html` and `grid.html?record=` engineering pages were removed. Listing and replay take
 no ownership lease, send no input, and do not talk to the host process
 ([terminal ownership](terminal-ownership.md),
 [raw terminal input](terminal-input.md)). The files under the configured
@@ -355,9 +355,9 @@ Exact bytes:
 ## Hub
 
 `GET /api/term/records` is per machine: it is not one of the hub
-aggregate reads. On a hub page, `records.html?node=<nid>` prefixes every
-call with `/api/nodes/{nid}/api/` so the list and the attach socket hit
-that node ([hub](hub.md)).
+aggregate reads. On a hub page the console opens a node's recording
+through `/api/nodes/{nid}/api/term/records/attach`, so the replay socket
+hits that node ([hub](hub.md)).
 
 `/api/term/records/attach` is proxied as a WebSocket the same way as
 `/api/term/attach`: after the 101, the hub copies the browser connection
@@ -411,9 +411,3 @@ acceptance for both console renderers (Playwright Chromium, temporary
 fixtures): an exited SSH row opens its recording read-only with the
 timeline shown, seek to the start, play at 16x to the end, seek to the
 end, keyboard ignored, timeline hidden again when the pane closes.
-
-`python3 tests/terminal_records_browser.py` is the legacy `records.html`
-acceptance (Playwright Chromium, temporary fixtures): list, live follow,
-resize, read-only keyboard, exit status, `?id=` reload, fit toggle, no
-page errors. Needs the debug `sessiondock` and `ptyhost` binaries
-already built.

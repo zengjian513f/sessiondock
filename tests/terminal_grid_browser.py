@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""Real legacy grid-terminal-page acceptance; isolated free shell and native fixture.
+"""Server-side grid console in the main page; isolated free shell and native fixture.
 
-Build sessiondock and ptyhost first. The test opens only its fixture's
-grid page, never creates descendants, and exercises connect, typing, resize,
-scrollback, selection, copy, paste and exit by normal browser clicks and
-keyboard input. Terminal assertions read the grid model through
-globalThis.__grid and globalThis.__gridText().
+Build sessiondock and ptyhost first. The test opens the fixture session, clicks
+the console button (claim + `term/attach?mode=grid` into GridTerm) and checks,
+by normal clicks, typing and clipboard paste: the shell reports the same pty
+size as the grid view, a viewport resize reaches the pty, clipboard text pastes
+into the shell, and a second page takes the terminal over after confirmation
+while the first page is told and closes its pane. Terminal assertions read the
+grid buffer through the view's xterm-compatible facade. No pageerror.
+
+Selection/copy, scrollback, file paste and exit are covered by
+terminal_selection_browser, terminal_scrollback_browser and
+terminal_input_browser.
 """
-from browser_runtime import wait_for_async
 from contextlib import ExitStack
 import os
 from pathlib import Path
-import re
 import tempfile
 from urllib.parse import urlsplit
 import uuid
@@ -20,67 +24,45 @@ from playwright.sync_api import expect, sync_playwright
 
 from history_parity import BINARY, Corpus, codex_message, codex_row, isolated_server
 from host_identity import host
+from popups import on_popup
+from terminal_exit_browser import XTERM_TEXT
 
 
-def wait_grid(page, needle, timeout=10000):
+def wait_text(page, needle, timeout=10000):
+    page.wait_for_function("text => (" + XTERM_TEXT + ")().includes(text)", arg=needle, timeout=timeout)
+
+
+def count(page, needle):
+    return page.evaluate("text => (" + XTERM_TEXT + ")().split(text).length - 1", needle)
+
+
+def view_size(page):
+    return page.evaluate("() => { const v = currentTermViewObject(); return {cols: v.term.cols, rows: v.term.rows}; }")
+
+
+def type_line(page, text):
+    keyboard = page.locator("#termpane .xterm-helper-textarea")
+    keyboard.press_sequentially(text)
+    keyboard.press("Enter")
+
+
+def expect_pty_size(page, size):
+    before = count(page, f"{size['rows']} {size['cols']}")
+    type_line(page, "size")
     page.wait_for_function(
-        "text => __gridText().includes(text)", arg=needle, timeout=timeout)
+        "a => (" + XTERM_TEXT + ")().split('\\n').filter(line => line.trim() === a.line).length > a.before",
+        arg={"line": f"{size['rows']} {size['cols']}", "before": before}, timeout=10000)
 
 
-def viewport_top(page):
-    return page.evaluate("""() => {
-      if (__grid.state.following)
-        return Math.max(0, __grid.model.lineCount() - __grid.model.rows);
-      const slot = __grid.renderer._slots[0];
-      return slot && typeof slot.line === 'number' ? slot.line : 0;
-    }""")
-
-
-def reveal_line(page, index, timeout=10000):
-    box = page.locator("#term").bounding_box()
-    assert box and box["width"] and box["height"], box
-    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-    deadline = page.evaluate("Date.now()") + timeout
-    for _ in range(120):
-        win = page.evaluate("""() => {
-          const slot = __grid.renderer._slots[0];
-          const top = slot && typeof slot.line === 'number' ? slot.line : 0;
-          return {top, rows: __grid.model.rows, now: Date.now()};
-        }""")
-        if win["top"] <= index < win["top"] + win["rows"]:
-            return
-        assert win["now"] < deadline, f"line {index} still outside viewport {win}"
-        page.mouse.wheel(0, -300 if index < win["top"] else 300)
-        page.wait_for_function(
-            "prev => (__grid.renderer._slots[0] && __grid.renderer._slots[0].line) !== prev",
-            arg=win["top"], timeout=2000)
-    raise AssertionError(f"line {index} not revealed")
-
-
-def selection_point(page, needle):
-    return page.evaluate("""needle => {
-      const lines = __gridText().split('\\n');
-      const index = lines.findIndex(line => line.includes(needle));
-      if (index < 0) return null;
-      const text = lines[index];
-      const col = Math.max(0, text.indexOf(needle));
-      const slot = __grid.renderer._slots[0];
-      const top = slot && typeof slot.line === 'number' ? slot.line : 0;
-      const rect = document.querySelector('#grid').getBoundingClientRect();
-      const cw = __grid.renderer.cellWidth;
-      const ch = __grid.renderer.cellHeight;
-      const row = index - top;
-      return {
-        index,
-        x0: rect.left + (col + 0.2) * cw,
-        x1: rect.left + (col + Math.max(needle.length, 1) - 0.2) * cw,
-        y: rect.top + (row + 0.5) * ch,
-      };
-    }""", needle)
-
-
-def focus_term(page):
-    page.locator("#term").click()
+def open_console(page, uid):
+    page.locator(f'#side .item[data-uid="{uid}"]').click()
+    button = page.locator("#a-term")
+    expect(button).to_have_attribute("data-unavailable", "false")
+    if not page.locator("#termpane").is_visible():
+        button.click()
+    expect(page.locator("#termpane")).to_be_visible()
+    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN", timeout=10000)
+    expect(page.locator("#termpane .grid-canvas")).to_be_visible()
 
 
 def main():
@@ -90,7 +72,7 @@ def main():
     missing = [str(path) for path in (BINARY, ptyhost) if not path.is_file()]
     if missing:
         raise SystemExit("missing built binaries (do not cargo build here): " + ", ".join(missing))
-    page_errors = []
+    errors = []
     with tempfile.TemporaryDirectory(prefix="sessiondock-terminal-grid-") as temporary, sync_playwright() as playwright:
         root = Path(temporary)
         for name in ["host", "work", "claude", "codex", "grok"]:
@@ -102,157 +84,89 @@ def main():
             codex_message("user", "Synthetic grid terminal acceptance"),
         ], [])
         uid = corpus.uid(sid)
+        native = corpus.paths[sid].read_bytes()
         instance = "synthetic-" + uuid.uuid4().hex
         launch = {"headless": True}
         if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
             launch["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
         browser = playwright.chromium.launch(**launch)
         try:
-            with host(root, instance, uid=uid) as (_process, _record), ExitStack() as cleanup:
+            with host(root, instance, uid=uid) as (process, _record), ExitStack() as cleanup:
                 with isolated_server(corpus, BINARY, host_dir=root / "host") as (base, _):
                     if os.environ.get('SESSIONDOCK_TEST_PREFIX'):
                         from frontend_entry_browser import prefixed_proxy
                         prefixed, target = cleanup.enter_context(prefixed_proxy())
                         target.url, base = base, prefixed.rstrip('/')
-                    context = browser.new_context(
-                        viewport={"width": 1280, "height": 900}, service_workers="block")
-                    cleanup.callback(context.close)
-                    context.route("**/*", lambda route: route.continue_()
-                                  if route.request.url.startswith(base + "/") else route.abort())
-                    origin = f"{urlsplit(base).scheme}://{urlsplit(base).netloc}"
-                    context.grant_permissions(
-                        ["clipboard-read", "clipboard-write"], origin=origin)
-                    page = context.new_page()
-                    page.on("pageerror", lambda error: page_errors.append(str(error)))
-                    page.goto(base + "/grid.html", wait_until="networkidle")
-                    page.wait_for_function("typeof __grid === 'object' && !!__grid", timeout=10000)
-                    expect(page.locator("#session")).to_contain_text(
-                        "synthetic-identity-host", timeout=10000)
-                    page.locator("#connect").click()
-                    page.wait_for_function(
-                        "__grid.state.connected === true && __gridText().includes('RS_SHELL_READY')",
-                        timeout=10000)
-                    size = page.locator("#size").inner_text()
-                    assert re.fullmatch(r"\d+×\d+", size), size
-                    shown_cols, shown_rows = (int(part) for part in size.split("×"))
-                    model = page.evaluate(
-                        "() => ({cols: __grid.model.cols, rows: __grid.model.rows})")
-                    assert shown_cols == model["cols"] and shown_rows == model["rows"], (size, model)
-                    canvas = page.evaluate("""() => {
-                      const c = document.querySelector('#grid');
-                      return {width: c.width, height: c.height};
-                    }""")
-                    assert canvas["width"] > 0 and canvas["height"] > 0, canvas
-                    print("PASS a", flush=True)
 
-                    focus_term(page)
-                    page.keyboard.type("ping")
-                    page.keyboard.press("Enter")
-                    wait_grid(page, "RS_PING_OK")
-                    dims = page.evaluate(
-                        "() => ({cols: __grid.model.cols, rows: __grid.model.rows})")
-                    page.keyboard.type("size")
-                    page.keyboard.press("Enter")
-                    page.wait_for_function(
-                        "expected => __gridText().split('\\n').some(line => line.trim() === expected)",
-                        arg=f"{dims['rows']} {dims['cols']}", timeout=10000)
-                    print("PASS b", flush=True)
+                    def new_page():
+                        context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+                        cleanup.callback(context.close)
+                        context.route("**/*", lambda route: route.continue_()
+                                      if route.request.url.startswith(base + "/") else route.abort())
+                        origin = f"{urlsplit(base).scheme}://{urlsplit(base).netloc}"
+                        context.grant_permissions(["clipboard-read", "clipboard-write"], origin=origin)
+                        page = context.new_page()
+                        page.on("pageerror", lambda error: errors.append(str(error)))
+                        return context, page
 
-                    before_cols = page.evaluate("__grid.model.cols")
+                    context, page = new_page()
+                    claims = []
+                    context.on("request", lambda request: claims.append(request.post_data_json)
+                               if urlsplit(request.url).path.endswith("/api/term/claim") else None)
+                    dialogs = []
+                    on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
+                    page.goto(base, wait_until="networkidle")
+                    open_console(page, uid)
+                    wait_text(page, "RS_SHELL_READY")
+                    assert claims and not any(claim.get("force") for claim in claims), claims
+                    assert claims[-1]["instance_id"] == instance, claims
+                    print("PASS a: console button claims and attaches the grid view", flush=True)
+
+                    type_line(page, "ping")
+                    wait_text(page, "RS_PING_OK")
+                    expect_pty_size(page, view_size(page))
+                    print("PASS b: typing reaches the shell; pty size equals the grid view", flush=True)
+
+                    before = view_size(page)
                     page.set_viewport_size({"width": 900, "height": 600})
-                    page.wait_for_function(
-                        "prev => __grid.model.cols !== prev", arg=before_cols, timeout=10000)
-                    focus_term(page)
-                    resized = page.evaluate(
-                        "() => ({cols: __grid.model.cols, rows: __grid.model.rows})")
-                    page.keyboard.type("size")
-                    page.keyboard.press("Enter")
-                    page.wait_for_function(
-                        "expected => __gridText().split('\\n').some(line => line.trim() === expected)",
-                        arg=f"{resized['rows']} {resized['cols']}", timeout=10000)
-                    print("PASS c", flush=True)
+                    page.wait_for_function("prev => currentTermViewObject().term.cols !== prev",
+                                           arg=before["cols"], timeout=10000)
+                    resized = view_size(page)
+                    expect_pty_size(page, resized)
+                    page.set_viewport_size({"width": 1280, "height": 900})
+                    page.wait_for_function("prev => currentTermViewObject().term.cols !== prev",
+                                           arg=resized["cols"], timeout=10000)
+                    print("PASS c: viewport resize follows into the pty", flush=True)
 
-                    focus_term(page)
-                    for i in range(60):
-                        page.keyboard.type(f"x{i}")
-                        page.keyboard.press("Enter")
-                    extra = 60
-                    while extra <= 120:
-                        if page.evaluate("__grid.model.scrollback.length") >= 40:
-                            break
-                        page.keyboard.type(f"x{extra}")
-                        page.keyboard.press("Enter")
-                        extra += 1
-                    page.wait_for_function(
-                        "__grid.model.scrollback.length >= 40", timeout=10000)
-                    assert page.evaluate("__grid.state.following === true")
-                    term = page.locator("#term").bounding_box()
-                    assert term and term["width"] and term["height"], term
-                    page.mouse.move(
-                        term["x"] + term["width"] / 2, term["y"] + term["height"] / 2)
-                    before_top = viewport_top(page)
-                    page.mouse.wheel(0, -300)
-                    page.wait_for_function(
-                        """prev => __grid.state.following === false
-                          && ((__grid.renderer._slots[0] && __grid.renderer._slots[0].line) || 0) < prev""",
-                        arg=before_top, timeout=10000)
-                    page.locator("#bottom").click()
-                    page.wait_for_function("__grid.state.following === true", timeout=10000)
-                    print("PASS d", flush=True)
-
-                    token = "x59" if page.evaluate(
-                        "__gridText().includes('x59')") else "RS_PING_OK"
-                    lines = page.evaluate("__gridText().split('\\n')")
-                    target = next(i for i, line in enumerate(lines) if token in line)
-                    reveal_line(page, target)
-                    point = selection_point(page, token)
-                    assert point, token
-                    page.mouse.move(point["x0"], point["y"])
-                    page.mouse.down()
-                    page.mouse.move(point["x1"], point["y"], steps=8)
-                    page.wait_for_function("""() => {
-                      const s = __grid.state.selection;
-                      return !!(s && s.start && s.end
-                        && (s.start.line !== s.end.line || s.start.col !== s.end.col));
-                    }""", timeout=10000)
-                    page.mouse.up()
-                    page.wait_for_function("__grid.state.selection === null")
-                    wait_for_async(page,
-                        "expected => navigator.clipboard.readText().then(text => text.includes(expected))",
-                        arg=token, timeout=10000)
-                    copied = page.evaluate("navigator.clipboard.readText()")
-                    assert token in copied, copied
-                    print("PASS e", flush=True)
-
-                    before_pings = page.evaluate(
-                        "(__gridText().match(/RS_PING_OK/g) || []).length")
+                    pings = count(page, "RS_PING_OK")
                     page.evaluate("navigator.clipboard.writeText('ping')")
-                    page.locator("#paste").click()
-                    focus_term(page)
-                    page.keyboard.press("Enter")
-                    page.wait_for_function(
-                        "n => (__gridText().match(/RS_PING_OK/g) || []).length > n",
-                        arg=before_pings, timeout=10000)
-                    print("PASS f", flush=True)
+                    keyboard = page.locator("#termpane .xterm-helper-textarea")
+                    keyboard.focus()
+                    keyboard.press("Control+V")
+                    keyboard.press("Enter")
+                    page.wait_for_function("n => (" + XTERM_TEXT + ")().split('RS_PING_OK').length - 1 > n",
+                                           arg=pings, timeout=10000)
+                    print("PASS d: clipboard text pastes into the shell", flush=True)
 
-                    page.locator("#bottom").click()
-                    page.wait_for_function("__grid.state.following === true", timeout=10000)
-                    focus_term(page)
-                    page.keyboard.type("quit")
-                    page.keyboard.press("Enter")
-                    expect(page.locator("#status")).to_contain_text(
-                        "终端进程已退出", timeout=10000)
-                    # ptyhost coalesces grid diffs 1–8 ms and may EXIT before the
-                    # last line is flushed; the page still reports a clean exit.
-                    assert page.evaluate(
-                        "__gridText().includes('RS_SHELL_DONE') || __grid.state.connected === false")
-                    print("PASS g", flush=True)
+                    second_context, second = new_page()
+                    second_dialogs = []
+                    on_popup(second, lambda dialog: (second_dialogs.append(dialog.message), dialog.accept()))
+                    second.goto(base, wait_until="networkidle")
+                    open_console(second, uid)
+                    expect(page.locator("#termpane")).to_be_hidden(timeout=10000)
+                    assert any("抢占终端" in message for message in second_dialogs), second_dialogs
+                    assert any("抢占" in message and "本页面的终端已关闭" in message for message in dialogs), dialogs
+                    second.bring_to_front()
+                    type_line(second, "next")
+                    wait_text(second, "RS_AFTER_RESTART")
+                    print("PASS e: second page takes over after confirmation; first page closes", flush=True)
 
-                    assert not page_errors, page_errors
-                    print("PASS h", flush=True)
+                    assert process.poll() is None
+                    assert corpus.paths[sid].read_bytes() == native
+                    assert not errors, errors
         finally:
             browser.close()
-    print("PASS terminal grid browser: connect, type, resize, scrollback, copy, paste, exit, no pageerror",
+    print("PASS terminal grid browser: claim/attach, typing, pty size, resize follow, paste, takeover, no pageerror",
           flush=True)
 
 
