@@ -1,5 +1,7 @@
 //! Durable same-node clone transaction. Plans contain server-derived paths only;
 //! clients submit an opaque operation ID. Recovery never overwrites changed data.
+#[path = "journal.rs"]
+mod journal;
 #[path = "prefix.rs"]
 mod prefix;
 #[path = "tool_requirements.rs"]
@@ -98,6 +100,7 @@ pub struct TransferService {
     inventory: SessionStore,
     pub(super) references: super::references::Cache,
     relationship_refresh: std::sync::Mutex<()>,
+    journals: journal::Cache,
     pub directory: PathBuf,
     pub roots: SessionRoots,
     pub home: PathBuf,
@@ -197,6 +200,7 @@ impl TransferService {
             inventory: SessionStore::with_metadata(roots.clone(), metadata.clone()),
             references: super::references::Cache::open(directory.join("relationships-v1.json")),
             relationship_refresh: Default::default(),
+            journals: Default::default(),
             directory,
             roots,
             home,
@@ -301,36 +305,10 @@ impl TransferService {
         result
     }
     pub fn locked(&self, uid: &str) -> Result<bool, TransferError> {
-        for entry in fs::read_dir(&self.directory)? {
-            let path = entry?.path().join("operation.json");
-            if !path.is_file() {
-                continue;
-            }
-            let op: Operation = serde_json::from_slice(&fs::read(path)?)?;
-            if !op.reclaimed_by.contains_key(uid)
-                && (matches!(
-                    op.phase.as_str(),
-                    "publishing"
-                        | "verifying"
-                        | "rollback_required"
-                        | "ready"
-                        | "aborting"
-                        | "moved"
-                        | "retiring"
-                        | "retired"
-                ) || (op.phase == "exporting" && op.export_lease_until > super::bundle::now()))
-                && (op.group().members.iter().any(|m| m.uid == uid)
-                    || (!matches!(op.phase.as_str(), "moved" | "retiring" | "retired")
-                        && op.staged.as_ref().is_some_and(|s| {
-                            op.group().members.iter().any(|m| {
-                                self.member_target_uid(&op, m, s).is_ok_and(|id| id == uid)
-                            })
-                        })))
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(self.journal_summaries()?.iter().any(|op| {
+            op.locked_uids.contains(uid)
+                && (op.phase != "exporting" || op.export_lease_until > super::bundle::now())
+        }))
     }
     pub fn plan(&self, selected: &str) -> Result<Operation, TransferError> {
         self.plan_copy(selected, true)

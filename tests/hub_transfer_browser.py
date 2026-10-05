@@ -241,6 +241,56 @@ def main():
         reads.assert_unopened()
         print('PASS hub transfers: startup terminal reads only, new task membership, foreground lease, '
               'completion/cancellation removal, offline restart recovery, preserved source and ledgers')
+        observer.close()
+        for local, late_error in ((False, False), (True, True)):
+            page, dialog, submitted = begin()
+            if local:
+                dialog.locator('#transfer-target').select_option(a.nid)
+                expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=15000)
+            else:
+                page.set_viewport_size({'width':390,'height':844})
+            # Execute against the real nodes, but strand its response in the
+            # browser. Also stall one progress request until its signal expires.
+            page.evaluate('''() => {
+                const original = window.fetch;
+                window.transferFault = {active:false, stalled:false, polls:0, completions:0};
+                window.fetch = async (url, options) => {
+                    const fault = window.transferFault;
+                    if (/\\/api\\/session\\/(transfer\\/clone|clone)$/.test(String(url))) {
+                        fault.active = true;
+                        const response = await original(url, options);
+                        fault.result = await response.clone().json();
+                        await new Promise((resolve, reject) => {fault.release=resolve; fault.reject=reject;});
+                        return response;
+                    }
+                    if (fault.active && /\\/api\\/session\\/(transfer|clone)\\/progress$/.test(String(url))) {
+                        fault.polls++;
+                        if (!fault.stalled) {
+                            fault.stalled = true;
+                            await new Promise((_, reject) => options?.signal?.addEventListener('abort',
+                                () => reject(options.signal.reason), {once:true}));
+                        }
+                    }
+                    return original(url, options);
+                };
+            }''')
+            dialog.locator('.clone-confirm').click()
+            page.wait_for_function('transferFault.result?.phase === "complete"',timeout=30000)
+            result=page.evaluate('transferFault.result')
+            expect(dialog).to_have_count(0,timeout=20000)
+            page.wait_for_function('(uid)=>S.sel===uid',arg=result['target_uid'],timeout=15000)
+            expect(page.locator('#msgs')).to_contain_text('Branch A final')
+            assert page.evaluate('transferFault.polls')>=2,'stalled progress did not retry'
+            # A late execution response must not reopen/navigate after the user
+            # has already left the completed target session.
+            page.evaluate('(uid)=>openSession(uid)',selected)
+            page.wait_for_function('(uid)=>S.sel===uid',arg=selected)
+            page.evaluate('(fail)=>fail ? transferFault.reject(new Error("late connection loss")) : transferFault.release()',late_error)
+            page.wait_for_timeout(300)
+            assert page.evaluate('S.sel')==selected
+            expect(page.locator('#clone-group-dialog')).to_have_count(0)
+            page.close()
+            print(f'PASS {"local" if local else "cross-node mobile"} completion recovered from stalled execution/progress; late response ignored',flush=True)
 
 
 if __name__ == '__main__':
