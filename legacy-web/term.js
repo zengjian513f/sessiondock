@@ -3876,14 +3876,17 @@ function renderQueuedSends(uid = composerUid) {
       : interrupted ? 'CLI 已中断，未确认处理，请到终端查看'
       : rejected ? 'CLI 已拒绝命令：' + String(item.error || '未知命令')
       : inCli ? '已进入 CLI 队列，当前步骤结束后处理' : '已发送，等待 CLI 处理');
+    // The state element carries only the state text; the dismiss button sits beside it.
+    const foot = el('div', 'queued-send-foot');
+    foot.appendChild(state);
     if (lost || interrupted || rejected || /^\s*\/\S+/.test(text)) {
       const close = el('button', 'queued-send-dismiss', '关闭');
       close.type = 'button';
       close.title = '仅关闭此发送提示，不取消或重发 CLI 输入';
       close.onclick = () => dismissQueuedSend(uid, item.request_id);
-      state.appendChild(close);
+      foot.appendChild(close);
     }
-    n.appendChild(state);
+    n.appendChild(foot);
     block.appendChild(n);
   }
   if (box) box.appendChild(block);
