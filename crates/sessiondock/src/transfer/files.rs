@@ -458,7 +458,9 @@ fn parse(raw: &[u8], format: &str) -> Result<Vec<Value>, TransferError> {
     if format == "json" {
         return Ok(vec![serde_json::from_slice(raw)?]);
     }
+    let progress = super::progress::Task::new("解析历史记录", "bytes", Some(raw.len() as u64));
     raw.split(|b| *b == b'\n')
+        .inspect(|line| progress.add(line.len() as u64))
         .filter(|line| !line.iter().all(u8::is_ascii_whitespace))
         .map(|line| serde_json::from_slice(line).map_err(Into::into))
         .collect()
@@ -773,9 +775,11 @@ impl Plan {
         } else {
             raw.split_inclusive(|byte| *byte == b'\n').collect()
         };
+        let progress = super::progress::Task::new("改写当前历史", "bytes", Some(raw.len() as u64));
         for original in records {
             if original.iter().all(u8::is_ascii_whitespace) {
                 output.extend_from_slice(original);
+                progress.add(original.len() as u64);
                 continue;
             }
             let mut row = rewritten
@@ -794,6 +798,7 @@ impl Plan {
                 rewrite_scalar(value, source, &self.records)
             });
             output.extend_from_slice(&super::json_bytes::rewrite(original, &row)?);
+            progress.add(original.len() as u64);
         }
         Ok(output)
     }
@@ -936,7 +941,10 @@ impl Plan {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(destination, fs::Permissions::from_mode(0o700))?;
         }
-        for file in &self.files {
+        let progress =
+            super::progress::Task::new("复制相关历史", "份", Some(self.files.len() as u64));
+        for (index, file) in self.files.iter().enumerate() {
+            progress.set(index as u64);
             let raw = if file.format == "symlink" {
                 fs::read_link(&file.source)?
                     .to_string_lossy()
@@ -970,7 +978,12 @@ impl Plan {
                     "此平台不支持迁移符号链接",
                 ));
             } else {
-                fs::write(&target, output)?;
+                let counter =
+                    super::progress::Task::new("保存当前历史", "bytes", Some(output.len() as u64));
+                super::coordination::copy(
+                    &mut output.as_slice(),
+                    &mut super::progress::Io(fs::File::create(&target)?, counter),
+                )?;
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -979,7 +992,10 @@ impl Plan {
                 }
             }
         }
-        for file in &self.files {
+        let progress =
+            super::progress::Task::new("复制相关历史", "份", Some(self.files.len() as u64));
+        for (index, file) in self.files.iter().enumerate() {
+            progress.set(index as u64);
             let raw = if file.format == "symlink" {
                 fs::read_link(&file.source)?
                     .to_string_lossy()

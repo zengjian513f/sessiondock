@@ -113,6 +113,7 @@ fn rows(raw: &[u8]) -> Result<Vec<(u64, Value)>, TransferError> {
             "原生历史末行尚未写完",
         ));
     }
+    let progress = super::progress::Task::new("解析历史记录", "bytes", Some(raw.len() as u64));
     let mut offset = 0;
     let mut rows = Vec::new();
     for line in raw.split_inclusive(|b| *b == b'\n') {
@@ -122,6 +123,7 @@ fn rows(raw: &[u8]) -> Result<Vec<(u64, Value)>, TransferError> {
             return Err(TransferError::new("move_format", "原生历史记录必须是对象"));
         }
         rows.push((offset, value));
+        progress.set(offset);
     }
     Ok(rows)
 }
@@ -130,7 +132,8 @@ fn stable_read(path: &Path) -> Result<Vec<u8>, TransferError> {
     let mut file = fs::File::open(path)?;
     let before = file.metadata()?;
     let mut raw = Vec::new();
-    std::io::Read::read_to_end(&mut file, &mut raw)?;
+    let progress = super::progress::Task::new("读取历史文件", "bytes", Some(before.len()));
+    super::coordination::copy(&mut file, &mut super::progress::Io(&mut raw, progress))?;
     let after = file.metadata()?;
     let current = fs::metadata(path)?;
     if before.len() != raw.len() as u64
@@ -459,6 +462,7 @@ pub fn stage(plan: &ClonePlan, destination: &Path) -> Result<StagedClone, Transf
         fs::set_permissions(destination, fs::Permissions::from_mode(0o700))?;
     }
     let mut output: BTreeMap<String, OutputFile> = BTreeMap::new();
+    let progress = super::progress::Task::new("复制相关历史", "份", Some(plan.files.len() as u64));
     while output.len() != plan.files.len() {
         let before = output.len();
         for file in &plan.files {
@@ -472,6 +476,7 @@ pub fn stage(plan: &ClonePlan, destination: &Path) -> Result<StagedClone, Transf
             {
                 continue;
             }
+            progress.set(output.len() as u64);
             let raw = stable_read(&file.source)?;
             if raw.len() as u64 != file.bytes || hash(&raw) != file.sha256 {
                 return Err(TransferError::new(
@@ -508,7 +513,10 @@ pub fn stage(plan: &ClonePlan, destination: &Path) -> Result<StagedClone, Transf
             let mut bytes = Vec::new();
             let mut boundaries = BTreeMap::from([(0, 0)]);
             let mut start = 0;
-            for (end, mut row) in rows(&raw)? {
+            let parsed = rows(&raw)?;
+            let rewrite_progress =
+                super::progress::Task::new("改写当前历史", "bytes", Some(raw.len() as u64));
+            for (end, mut row) in parsed {
                 if plan.mode == Mode::Clone {
                     rewrite(&mut row, &plan.identities, inherited)?;
                     bytes.extend_from_slice(&super::json_bytes::rewrite(
@@ -520,7 +528,9 @@ pub fn stage(plan: &ClonePlan, destination: &Path) -> Result<StagedClone, Transf
                     boundaries.insert(end, end);
                 }
                 start = end as usize;
+                rewrite_progress.set(end);
             }
+            drop(rewrite_progress);
             if plan.mode == Mode::Move {
                 bytes = raw;
             }
@@ -533,7 +543,12 @@ pub fn stage(plan: &ClonePlan, destination: &Path) -> Result<StagedClone, Transf
                 .write(true)
                 .create_new(true)
                 .open(&absolute)?;
-            target.write_all(&bytes)?;
+            let written =
+                super::progress::Task::new("保存当前历史", "bytes", Some(bytes.len() as u64));
+            super::coordination::copy(
+                &mut bytes.as_slice(),
+                &mut super::progress::Io(&mut target, written),
+            )?;
             target.sync_all()?;
             output.insert(
                 file.rollout.clone(),
@@ -554,6 +569,8 @@ pub fn stage(plan: &ClonePlan, destination: &Path) -> Result<StagedClone, Transf
             ));
         }
     }
+    progress.set(output.len() as u64);
+    drop(progress);
     for file in &plan.files {
         if hash(&stable_read(&file.source)?) != file.sha256 {
             return Err(TransferError::new(

@@ -142,6 +142,7 @@ pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
     }
     let new_ids = body.new_ids.unwrap_or(!moving);
     let (op, snapshot) = match tokio::task::spawn_blocking(move || {
+        let _work = copy.progress.enter(&format!("planning:{selected}"));
         let snapshot = copy.inventory_snapshot()?;
         if let Some(id) = body.previous_operation_id
             && let Some(op) = copy.reuse_preview(&selected, &id, new_ids, moving)?
@@ -175,10 +176,13 @@ pub async fn clone_progress(
         Ok(s) => s,
         Err(e) => return *e,
     };
-    match service.load(&body.operation_id) {
-        Ok(op) if op.uid == body.uid && op.incoming_digest.is_none() => {
-            service.touch(&op.id);
-            Json(TransferService::public(&op)).into_response()
+    if body.operation_id.is_empty() {
+        return Json(json!({"phase":"planning", "work":service.progress.snapshot(&format!("planning:{}", body.uid))})).into_response();
+    }
+    match service.progress_status(&body.operation_id) {
+        Ok(op) if op["uid"] == body.uid && op["incoming"] == false => {
+            service.touch(&body.operation_id);
+            Json(op).into_response()
         }
         Ok(_) => failure(TransferError::new(
             "move_plan_stale",
@@ -774,6 +778,21 @@ pub async fn reserve_export(
         Err(e) => failure(TransferError::new("move_io", e.to_string())),
     }
 }
+/// Private foreground telemetry also works before the incoming journal exists.
+pub async fn transfer_work(
+    State(state): State<AppState>,
+    Json(body): Json<TransferId>,
+) -> Response {
+    let service = match service(&state) {
+        Ok(s) => s,
+        Err(e) => return *e,
+    };
+    let mut value = service
+        .progress_status(&body.operation_id)
+        .unwrap_or_else(|_| json!({}));
+    value["work"] = service.progress.snapshot(&body.operation_id);
+    Json(value).into_response()
+}
 pub async fn transfer_status(
     State(state): State<AppState>,
     Json(body): Json<TransferId>,
@@ -828,6 +847,7 @@ pub async fn bundle_manifest(
     };
     let result = tokio::task::spawn_blocking(move || {
         let _guard = guard;
+        let _work = service.progress.enter(&body.operation_id);
         let _scope = crate::transfer::coordination::Scope::enter(
             service.interrupts.flag(&body.operation_id),
         );
@@ -859,6 +879,7 @@ pub async fn check_bundle(
         .await;
     let result = tokio::task::spawn_blocking(move || {
         let _guard = guard;
+        let _work = service.progress.enter(&manifest.operation.id);
         let _scope = crate::transfer::coordination::Scope::enter(
             service.interrupts.flag(&manifest.operation.id),
         );

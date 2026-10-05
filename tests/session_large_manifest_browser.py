@@ -20,10 +20,18 @@ from session_bundle_browser import Peer
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary',type=Path,default=BINARY)
+    parser.add_argument('--local',action='store_true',help='Verify same-node copying instead of cross-node transfer')
+    parser.add_argument('--progress',action='store_true',help='Add large related histories and verify live work counters in the dialog')
     parser.add_argument('--peer',help='Optional SSH peer with shared checkout; move between private local filesystems')
     args=parser.parse_args()
+    if args.local and args.peer:parser.error('--local and --peer are mutually exclusive')
     with tempfile.TemporaryDirectory(prefix='sessiondock-large-manifest-') as tmp, sync_playwright() as pw, ExitStack() as stack:
         root=Path(tmp);source=prepare(root/'source');destination=Corpus(root/'destination')
+        if args.progress:
+            row=json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'progress_fixture':'x'*16384}}})+'\n'
+            for key in ('a','b','grandchild'):
+                with source.paths[key].open('a') as stream:
+                    for _ in range(2048):stream.write(row)
         roots={kind:str(source.root/kind) for kind in ('codex','claude','grok')}
         payload=json.dumps({'type':'message','content':'native projection payload '+('x'*(34*1024*1024))})
         database=source.root/'codex/thread_history_1.sqlite'
@@ -46,19 +54,42 @@ def main():
         hubroot=root/'hub';hubroot.mkdir();hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[a,b]);hub.start();stack.callback(hub.stop)
         browser=pw.chromium.launch(headless=True);stack.callback(browser.close)
         page=browser.new_page();page.set_default_timeout(30000)
+        telemetry=[]
+        def observe(response):
+            if response.url.endswith('/progress') and response.ok:
+                data=response.json()
+                if data.get('work'):telemetry.append((time.monotonic(),data))
+        page.on('response',observe)
+        page.add_init_script("""document.addEventListener('DOMContentLoaded',()=>{
+          window.progressPaints=[];
+          let previous='';
+          new MutationObserver(records=>{
+            const removed=records.flatMap(r=>[...r.removedNodes]).find(n=>n.id==='clone-group-dialog');
+            const box=document.querySelector('.transfer-progress:not([hidden])') || removed?.querySelector('.transfer-progress:not([hidden])');
+            if(!box)return;
+            const bar=box.querySelector('[role=progressbar]');
+            const detail=box.querySelector('.transfer-progress-detail')?.textContent;
+            const key=box.dataset.phase+'|'+detail+'|'+bar.getAttribute('aria-valuenow');
+            if(key===previous)return;previous=key;
+            window.progressPaints.push({at:performance.now(),phase:box.dataset.phase,detail,
+              percent:bar.getAttribute('aria-valuenow'),text:bar.getAttribute('aria-valuetext'),
+              width:bar.querySelector('i').style.width});
+          }).observe(document.body,{subtree:true,childList:true,attributes:true,characterData:true});
+        });""")
         errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
         selected=scoped(a.nid,source.uid('a'))
         page.locator(f'#side .item[data-uid="{selected}"]').click()
         page.locator('#a-clone-group').click();dialog=page.locator('#clone-group-dialog')
         expect(dialog.locator('.clone-confirm')).to_be_enabled()
-        dialog.locator('#transfer-target').select_option(b.nid)
+        dialog.locator('#transfer-target').select_option(a.nid if args.local else b.nid)
         if peer:
             dialog.locator('.transfer-segments label').nth(1).click()
             dialog.locator('#transfer-new-ids').check()
         expect(dialog.locator('.clone-confirm')).to_be_enabled()
         started=time.monotonic()
-        with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone') and r.request.method=='POST',timeout=120000) as done:
+        endpoint='/api/session/clone' if args.local else '/api/session/transfer/clone'
+        with page.expect_response(lambda r:r.url.endswith(endpoint) and r.request.method=='POST',timeout=120000) as done:
             dialog.locator('.clone-confirm').click()
         assert done.value.ok,done.value.text()
         result=done.value.json();assert result['phase']=='complete',result
@@ -82,6 +113,39 @@ def main():
         with sqlite3.connect(target_db) as db:
             assert db.execute('SELECT count(*) FROM thread_items WHERE thread_id=? AND item_json=?',(native_id,payload)).fetchone()==(1,)
         assert not errors,errors
+        if args.progress:
+            paints=page.evaluate('window.progressPaints')
+            report=Path('target/session-transfer-progress-report.json');report.parent.mkdir(exist_ok=True)
+            report.write_text(json.dumps(paints,ensure_ascii=False,indent=2))
+            quantified=[p for p in paints if p['detail'] and p['percent'] is not None]
+            assert len(quantified)>5,paints
+            for paint in quantified:
+                assert 0<=float(paint['percent'])<=100,paint
+                assert paint['width']==paint['percent']+'%',paint
+                assert paint['detail'] in paint['text'] and '总进度' in paint['text'],paint
+            assert any('复制相关历史' in p['detail'] for p in paints),paints
+            assert any('→' in p['detail'] and p['percent'] is not None for p in paints),paints
+            assert any('保存迁移记录' in p['detail'] for p in paints),paints
+            if not args.local:assert any(p['phase']=='rechecking' and p['detail'] for p in paints),paints
+            amounts=[float(p['percent']) for p in paints]
+            assert amounts==sorted(amounts),('overall progress went backwards',paints)
+            assert all(float(p['percent'])<100 for p in paints if p['phase']!='complete'),paints
+            assert paints[-1]['phase']=='complete' and amounts[-1]==100,paints
+            print('PASS continuous overall progress through files and phases; 100% only on completion',flush=True)
+            # Actual bytes advance repeatedly inside one step, not just phase changes.
+            counters={}
+            for at,data in telemetry:
+                for step in data['work']:
+                    key=(data['phase'],step['label'])
+                    counters.setdefault(key,set()).add(step['done'])
+            changing={str(k):len(v) for k,v in counters.items() if len(v)>=2}
+            assert changing,counters
+            running=[p for p in paints if p['phase'] not in ('planning','planned','complete') and p['detail']]
+            gaps=[b['at']-a['at'] for a,b in zip(running,running[1:])]
+            gaps.sort()
+            print('PROGRESS '+json.dumps({'paints':len(paints),'changing_steps':changing,
+                'gap_p95_ms':round(gaps[int((len(gaps)-1)*.95)],1) if gaps else None,
+                'gap_max_ms':round(max(gaps),1) if gaps else None},ensure_ascii=False),flush=True)
         print(f'PASS Chromium {"move" if peer else "copy"}: native before/after {native_bytes/1024/1024:.1f} MiB, target history and exact native payload intact, {time.monotonic()-started:.2f}s',flush=True)
 
 

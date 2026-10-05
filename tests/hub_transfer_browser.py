@@ -201,11 +201,21 @@ def main():
             assert blocked.wait(10), 'transfer did not reach preparation'
             operation = submitted[-1]['operation_id']
             expect(dialog.locator('.transfer-progress')).to_have_attribute('data-phase', 'preparing', timeout=10000)
+            bar=dialog.locator('[role=progressbar]')
+            expect(bar).to_be_visible()
+            initial_progress=float(bar.get_attribute('aria-valuenow'))
+            assert 0<=initial_progress<100
+            assert '预计总进度' in bar.get_attribute('aria-valuetext')
+            page.set_viewport_size({'width':390,'height':844})
+            page.emulate_media(reduced_motion='reduce')
+            assert bar.locator('i').evaluate('(el)=>getComputedStyle(el).animationName')=='none'
+            assert bar.bounding_box()['width']<=390,'progress bar overflows mobile dialog'
             assert any(j['request']['operation_id'] == operation for j in pending())
             # More than two recovery ticks while the browser renews its lease.
             page.wait_for_timeout(11000)
             assert any(j['request']['operation_id'] == operation and j['phase'] == 'preparing' for j in pending())
             reads.assert_unopened()
+            assert float(bar.get_attribute('aria-valuenow'))==initial_progress,'waiting alone advanced overall progress'
             if restart:
                 mode['offline'] = True
                 hub.stop()
