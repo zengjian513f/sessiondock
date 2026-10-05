@@ -353,6 +353,10 @@ impl TransferService {
             || !op.reused_files.is_empty()
             || !op.replaced_files.is_empty()
             || op.native_before.is_some()
+            || op
+                .codex_names
+                .as_ref()
+                .is_some_and(|names| !names.valid(&op.plan))
             || !op.metadata_replaced.is_empty()
             || !op.reclaimed_by.is_empty()
             || op.ownership_sequence != 0

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Chromium transfers a group whose native database makes the manifest exceed 64 MiB."""
 import argparse
+from transfer_ui import select_target, seed_names
 from contextlib import ExitStack
 import json
 from pathlib import Path
@@ -22,11 +23,13 @@ def main():
     parser.add_argument('--binary',type=Path,default=BINARY)
     parser.add_argument('--local',action='store_true',help='Verify same-node copying instead of cross-node transfer')
     parser.add_argument('--progress',action='store_true',help='Add large related histories and verify live work counters in the dialog')
+    parser.add_argument('--preserve',action='store_true',help='Preserve session identities in a peer move')
     parser.add_argument('--peer',help='Optional SSH peer with shared checkout; move between private local filesystems')
     args=parser.parse_args()
     if args.local and args.peer:parser.error('--local and --peer are mutually exclusive')
     with tempfile.TemporaryDirectory(prefix='sessiondock-large-manifest-') as tmp, sync_playwright() as pw, ExitStack() as stack:
         root=Path(tmp);source=prepare(root/'source');destination=Corpus(root/'destination')
+        custom_title,name_raw,names_before=seed_names(source.root/'codex',ident(2))
         if args.progress:
             row=json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'progress_fixture':'x'*16384}}})+'\n'
             for key in ('a','b','grandchild'):
@@ -50,6 +53,7 @@ def main():
             env=node_env(corpus.root,node.port,'127.0.0.0/8')
             env.update({f'SESSIONDOCK_{k.upper()}_ROOT':v for k,v in roots.items()})
             env['SESSIONDOCK_PROC_ROOT']=str(corpus.root/'proc')
+            env['SESSIONDOCK_CODEX_INDEX']=str(source.root/'codex/session_index.jsonl')
             stack.enter_context(isolated_server(corpus,args.binary,state_dir=corpus.root/'state',trash_dir=corpus.root/'trash',extra_env=env))
         hubroot=root/'hub';hubroot.mkdir();hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[a,b]);hub.start();stack.callback(hub.stop)
         browser=pw.chromium.launch(headless=True);stack.callback(browser.close)
@@ -82,10 +86,10 @@ def main():
         page.locator(f'#side .item[data-uid="{selected}"]').click()
         page.locator('#a-clone-group').click();dialog=page.locator('#clone-group-dialog')
         expect(dialog.locator('.clone-confirm')).to_be_enabled()
-        dialog.locator('#transfer-target').select_option(a.nid if args.local else b.nid)
+        select_target(dialog, a.nid if args.local else b.nid)
         if peer:
             dialog.locator('.transfer-segments label').nth(1).click()
-            dialog.locator('#transfer-new-ids').check()
+            if not args.preserve:dialog.locator('#transfer-new-ids').check()
         expect(dialog.locator('.clone-confirm')).to_be_enabled()
         started=time.monotonic()
         endpoint='/api/session/clone' if args.local else '/api/session/transfer/clone'
@@ -95,12 +99,17 @@ def main():
         result=done.value.json();assert result['phase']=='complete',result
         page.wait_for_function('uid=>S.sel===uid',arg=result['target_uid'])
         expect(page.locator('#msgs')).to_contain_text('Branch A current')
+        expect(page.locator('.dtitle h2')).to_contain_text(custom_title)
         operation=result['operation_id']
         receipt=json.loads((source.root/'state/transfers'/operation/'operation.json').read_text())
         # Native before/after images alone exceed the ordinary Hub JSON cap.
         native_bytes=sum(len(json.dumps(receipt[k],separators=(',',':'))) for k in ('native','rewritten'))
         assert native_bytes>64*1024*1024,native_bytes
         native_id=result['link_map']['codex:'+ident(2)].split(':',1)[1]
+        expected_name=name_raw.replace(('"id" : "'+ident(2)+'"').encode(),('"id" : "'+native_id+'"').encode())
+        target_names=peer.read(source.root/'codex/session_index.jsonl') if peer else (source.root/'codex/session_index.jsonl').read_bytes()
+        assert expected_name in target_names,target_names
+        if peer:assert (source.root/'codex/session_index.jsonl').read_bytes()==names_before
         target_db=database
         if peer:
             # Fetch only this private test database for native payload verification.

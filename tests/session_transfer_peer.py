@@ -61,6 +61,7 @@ def serve(config,root):
     env.update({f'SESSIONDOCK_{k.upper()}_ROOT':v for k,v in config['roots'].items()})
     env.update(SESSIONDOCK_BIND=f'127.0.0.1:{web_port}',SESSIONDOCK_NODE_BIND=f'127.0.0.1:{node_port}',
         SESSIONDOCK_WEB_DIR=config['web'],SESSIONDOCK_STATE_DIR=str(destination/'state'),
+        SESSIONDOCK_CODEX_INDEX=str(Path(config['roots']['codex'])/'session_index.jsonl'),
         SESSIONDOCK_TRASH_DIR=str(destination/'trash'),
         SESSIONDOCK_PROC_ROOT=str(destination/'proc'),SESSIONDOCK_NODE_TOKEN_FILE=str(token),
         SESSIONDOCK_NODE_ID_FILE=str(destination/'ids/node-id'),SESSIONDOCK_NODE_PEERS='127.0.0.0/8')

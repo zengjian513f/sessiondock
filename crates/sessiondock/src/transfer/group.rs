@@ -308,6 +308,11 @@ pub(super) fn derive_cached(
             pending.extend(adjacency.get(uid).into_iter().flatten().copied());
         }
     }
+    let titles: BTreeMap<_, _> = index
+        .sessions()
+        .iter()
+        .filter_map(|row| Some((row["uid"].as_str()?, row["title"].as_str()?)))
+        .collect();
     let members = seen
         .iter()
         .map(|uid| {
@@ -316,7 +321,11 @@ pub(super) fn derive_cached(
                 uid: e.uid.clone(),
                 source: e.source.into(),
                 sid: e.summary.sid.clone(),
-                title: e.summary.title.clone(),
+                title: titles
+                    .get(e.uid.as_str())
+                    .copied()
+                    .unwrap_or(&e.summary.title)
+                    .to_owned(),
                 cwd: e.summary.cwd.clone(),
                 agent: e.is_agent(),
                 path: e.data.clone(),

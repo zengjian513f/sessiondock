@@ -388,10 +388,11 @@ fn build_app(
             .state_dir
             .as_ref()
             .map(|dir| {
-                transfer::service::TransferService::open(
+                transfer::service::TransferService::open_with_names(
                     dir.join("transfers"),
                     config.roots.clone(),
                     metadata.clone(),
+                    config.codex_index.clone(),
                 )
             })
             .transpose()

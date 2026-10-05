@@ -2339,7 +2339,11 @@ header .btn[data-session-docked] { display: none; }
 .transfer-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(140px, .7fr); gap: 16px; }
 .transfer-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .transfer-field > span, .transfer-mode legend { font-size: 12px; font-weight: 600; color: var(--muted); }
-.transfer-field select, #transfer-source { box-sizing: border-box; width: 100%; min-width: 0; height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); color: var(--text); font: inherit; }
+#transfer-target, #transfer-source { box-sizing: border-box; width: 100%; min-width: 0; height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); color: var(--text); font: inherit; }
+.transfer-target-menu:not(:popover-open) { display: none; }
+.transfer-target-menu .new-model-option { min-height: 36px; }
+.transfer-target-menu .new-model-option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.transfer-target-menu .new-model-option:disabled { color: var(--muted); opacity: .55; cursor: default; background: transparent; }
 #transfer-source:disabled { opacity: .65; color: var(--muted); -webkit-text-fill-color: var(--muted); cursor: default; }
 .transfer-mode { padding: 0; margin: 0; border: 0; min-width: 0; }
 .transfer-mode legend { padding: 0; margin-bottom: 5px; }
@@ -2406,6 +2410,7 @@ header .btn[data-session-docked] { display: none; }
 .transfer-progress { margin: 8px 0 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .transfer-progress[hidden] { display: none; }
 .transfer-progress-label, .transfer-progress-detail { margin: 0 0 6px; overflow-wrap: anywhere; }
+.transfer-progress-detail { height: 1.5em; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .transfer-progress-track { height: 6px; }
 .transfer-progress-track.paused i { animation: none; opacity: .5; }
 @media (prefers-reduced-motion: reduce) {

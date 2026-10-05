@@ -4,6 +4,7 @@
 # Explicit SSH peer required; invoked directly as documented.
 import argparse
 import base64
+from transfer_ui import select_target
 from contextlib import ExitStack
 import json
 import os
@@ -39,7 +40,7 @@ def transfer(page, hub, selected, target, count, move=False, error=None):
     page.locator('#a-clone-group').click()
     dialog=page.locator('#clone-group-dialog')
     expect(dialog.locator('.clone-members tbody tr')).to_have_count(count)
-    dialog.locator('#transfer-target').select_option(target)
+    select_target(dialog, target)
     if move:
         dialog.locator('.transfer-segments label').nth(1).click()
     else:
