@@ -10,7 +10,7 @@ python3 tests/docs_index.py --write
 
 | Doc | Title | Summary | Lines |
 | --- | --- | --- | --- |
-| [adding-a-cli.md](adding-a-cli.md) | 接入新的 AI CLI | 本文把 OpenCode 接入及后续修复整理成新增 AI CLI 的清单；2026-10-04 对照主线至 `7dabf54` 核对，包含菜单交互、客户端更新、镜像增量读取和会话挂靠。每项都要明确实现或记录不适用原因。现行合同以各专题文档为准：OpenCode、启动器、生命周期 HTTP、对话输入就绪、CLI 状态对象、读模型、liveness、移动、克隆。 | 222 |
+| [adding-a-cli.md](adding-a-cli.md) | 接入新的 AI CLI | 本文把 OpenCode、Agy 接入及后续修复整理成新增 AI CLI 的清单；2026-10-05 补充 Agy 1.2.17 的审批、问卷、命令回显和模型目录经验。每项都要明确实现或记录不适用原因，不能把能启动、能发送当作交互接入完成。现行合同以各专题文档为准：OpenCode、Agy、启动器、生命周期 HTTP、对话输入就绪、CLI 状态对象、读模型、liveness、移动、克隆。 | 245 |
 | [agy.md](agy.md) | Agy（Antigravity CLI） | 本页记录 agy 1.2.16 的接入合同与证据边界，核对日期为 2026-10-04。 接入范围是 Rust 后端与 legacy 前端。 | 162 |
 | [architecture.md](architecture.md) | 架构边界 | 当前生产链路：`legacy-web/` → Axum API → 有界 blocking 工作池 → `sessions` 原生记录解析 / 版本缓存；详情增量通过 SSE 返回。 静态资源在启动时读取为内存快照，HTML 注入模式、build 与能力； 请求不访问静态目录中的动态路径。无需 Node.js 服务，前端也没有构建步骤。 | 114 |
 | [bug-report.md](bug-report.md) | Bug reports and their CLI workers (M7) | `POST /api/bug-report` captures a self-contained diagnostic bundle and starts a managed CLI instance that investigates it. The Rust implementation lives in `bug_report/mod.rs` (bundle), `bug_report/worker.rs` (launch + prompt injection), `a | 366 |
