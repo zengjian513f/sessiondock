@@ -184,6 +184,16 @@ impl Subscription {
         }
     }
 
+    /// Inspect the latest view without acknowledging its history notification.
+    /// Side-channel probes must leave it pending for the message consumer.
+    pub fn peek(&self) -> Result<Arc<ViewSnapshot>, ApiError> {
+        match self.receiver.borrow().clone() {
+            Published::Ready(snapshot) => Ok(snapshot),
+            Published::Failed(error) => Err(error),
+            Published::Loading => Err(closed()),
+        }
+    }
+
     pub async fn changed(&mut self) -> Result<(), ApiError> {
         self.receiver.changed().await.map_err(|_| closed())
     }
