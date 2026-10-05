@@ -10,7 +10,7 @@ poll. The synthetic corpus has no matching CLI process, so the real live endpoin
 """
 from __future__ import annotations
 
-from browser_runtime import js
+
 import argparse
 from datetime import datetime, timezone
 import hashlib
@@ -153,7 +153,7 @@ def session_depth(page, uid):
 
 
 def opened(page, uid, agent=None):
-    page.wait_for_function(js("([uid, agent]) => S.sel === uid && S.agent === agent && _es && _esUid === uid", '([uid, agent]) => runtime.core.state.selection.sel === uid && runtime.core.state.selection.agent === agent && runtime.core.sync.watching && runtime.core.sync.watchedUid === uid'),
+    page.wait_for_function("([uid, agent]) => S.sel === uid && S.agent === agent && _es && _esUid === uid",
                            arg=[uid, agent])
 
 
@@ -161,7 +161,7 @@ def poll(page, server, predicate):
     """A disk change reaches the list the way a live one does: the index rescans (forced here instead
     of waiting out its 500 ms check TTL) and the page's own sig poll patches or redraws the sidebar."""
     get_json(*server, "/api/sessions?force=1")
-    page.evaluate(js("pollSessions()", 'runtime.core.list.pollSessions()'))
+    page.evaluate("pollSessions()")
     page.wait_for_function(predicate)
 
 
@@ -170,7 +170,7 @@ def check_page(page, uid, data, server, width):
     A, B, C, D, E = (uid[k] for k in ("a", "b", "c", "d", "e"))
     toggle = page.locator("#nest-toggle")
     assert toggle.is_visible(), "the nest toggle must be visible in the header"
-    assert not page.evaluate(js("S.nest", 'runtime.core.state.sidebar.nest')) and toggle.get_attribute("aria-pressed") == "false"
+    assert not page.evaluate("S.nest") and toggle.get_attribute("aria-pressed") == "false"
 
     # Flat: spawned sessions stay roots, but subagent rows still hang under their
     # owner with a caret of their own; B in its own directory group.
@@ -188,15 +188,15 @@ def check_page(page, uid, data, server, width):
     flat_caret.click()
     assert [(r["uid"], r["agent"]) for r in rows()] == [
         (B, None), (A, None), (C, None), (D, None), (E, None)]
-    assert page.evaluate(js("[...S.nestClosed]", '[...runtime.core.state.sidebar.nestClosed]')) == [A]
+    assert page.evaluate("[...S.nestClosed]") == [A]
     flat_caret.click()
     assert [r["agent"] for r in rows() if r["agent"]] == ["y", "x"]
-    assert page.evaluate(js("[...S.nestClosed]", '[...runtime.core.state.sidebar.nestClosed]')) == []
+    assert page.evaluate("[...S.nestClosed]") == []
 
     # Nested: B (with C) leaves the beta group for A's subtree; the two
     # transcript agents retain backend order; D (spawner gone) and E stay roots.
     toggle.click()
-    assert page.evaluate(js("S.nest", 'runtime.core.state.sidebar.nest')) and toggle.get_attribute("aria-pressed") == "true"
+    assert page.evaluate("S.nest") and toggle.get_attribute("aria-pressed") == "true"
     assert page.evaluate('JSON.parse(localStorage.getItem("sessiondock.nest"))') is True
     tree = rows()
     expect = [(A, None, 0), (B, None, 1), (C, None, 2), (A, "y", 1), (A, "x", 1), (D, None, 0), (E, None, 0)]
@@ -224,48 +224,43 @@ def check_page(page, uid, data, server, width):
     # matching processes, so the active count and filtered list are empty.
     assert page.locator("#session-active").text_content() == "0"
     page.locator("#livecount").click()
-    assert page.evaluate(js("S.activeOnly", 'runtime.core.state.sidebar.activeOnly')) is True
+    assert page.evaluate("S.activeOnly") is True
     assert rows() == []
     page.locator("#allcount").click()
-    assert page.evaluate(js("S.activeOnly", 'runtime.core.state.sidebar.activeOnly')) is False and len(rows()) == 7
+    assert page.evaluate("S.activeOnly") is False and len(rows()) == 7
 
     # A subagent row opens its view and is the only lit row.
     page.locator('#side .item.agent[data-agent="y"]').click()
     page.wait_for_function('document.querySelector(".dhead h2")?.textContent.includes("Agent Y finished")')
-    assert page.evaluate(js("[S.sel, S.agent]", '[runtime.core.state.selection.sel, runtime.core.state.selection.agent]')) == [A, "y"]
+    assert page.evaluate("[S.sel, S.agent]") == [A, "y"]
     opened(page, A, "y")
     assert [r["key"] for r in rows() if r["sel"]] == [A + "#y"]
 
     # Grandchild C: the title bar carries no spawner link any more; the sidebar leads back to B.
     to_list(page)
-    page.evaluate(js("uid => openSession(uid)", 'uid => runtime.core.open.openSession(uid)'), C)
+    page.evaluate("uid => openSession(uid)", C)
     page.wait_for_function('document.querySelector(".dhead h2")?.textContent.includes("Grandchild C")')
     opened(page, C)
     assert page.locator(".dhead .meta-spawner").count() == 0
     to_list(page)
     page.locator(f'#side .item[data-uid="{B}"]').click()
     page.wait_for_function('document.querySelector(".dhead h2")?.textContent.includes("Child B")')
-    assert page.evaluate(js("[S.sel, S.agent]", '[runtime.core.state.selection.sel, runtime.core.state.selection.agent]')) == [B, None]
+    assert page.evaluate("[S.sel, S.agent]") == [B, None]
     opened(page, B)
 
     # A caret changes only its own visible branch. Nested folds preserve the
     # selected descendant, ancestor counts and unrelated row/heading elements.
     to_list(page)
-    page.evaluate(js("""async () => {
+    page.evaluate("""async () => {
       // Initial details add cursor anchors/warnings to list summaries. Publish
       // that real metadata change before checking an unchanged repeated open.
       await syncSession(S.sel, S.agent);
       renderSide();
-    }""", """async () => {
-      // Initial details add cursor anchors/warnings to list summaries. Publish
-      // that real metadata change before checking an unchanged repeated open.
-      await runtime.core.sync.syncSession(runtime.core.state.selection.sel, runtime.core.state.selection.agent);
-      await new Promise(requestAnimationFrame);
-    }"""))
+    }""")
     page.locator(f'#side .item[data-uid="{C}"]').click()
     opened(page, C)
     to_list(page)
-    page.evaluate(js("""async () => {
+    page.evaluate("""async () => {
       // The actual repeated click above reconciles cached details. Exact
       // no-op metadata must preserve the already published tree snapshot.
       await syncSession(S.sel, S.agent);
@@ -290,32 +285,7 @@ def check_page(page, uid, data, server, width):
         if (__nestInside) __nestCalls.group++;
         return __nestGroupBy(...args);
       };
-    }""", """async () => {
-      // The actual repeated click above reconciles cached details. Exact
-      // no-op metadata must preserve the already published tree snapshot.
-      await runtime.core.sync.syncSession(runtime.core.state.selection.sel, runtime.core.state.selection.agent);
-      await new Promise(requestAnimationFrame);
-      window.__nestCalls = {render: 0, group: 0};
-      window.__nestOutside = [];
-      window.__nestInside = false;
-      window.__nestObserver = new MutationObserver(records => {
-        for (const record of records) for (const node of record.removedNodes) {
-          if (node instanceof Element && (node.contains(window.__unrelatedNestRow)
-            || node.contains(window.__unrelatedNestHead))) __nestCalls.render++;
-        }
-      });
-      __nestObserver.observe(document.querySelector('#side'), {childList: true, subtree: true});
-      window.__nestGroupBy = runtime.sidebarView.groupBy;
-      window.__nestToggle = runtime.sidebarView.toggleNestFold;
-      runtime.sidebarView.toggleNestFold = function(...args) {
-        __nestInside = true;
-        try { return __nestToggle(...args); } finally { __nestInside = false; }
-      };
-      runtime.sidebarView.groupBy = function(...args) {
-        if (__nestInside) __nestCalls.group++;
-        return __nestGroupBy(...args);
-      };
-    }"""))
+    }""")
     page.evaluate("""uid => {
       window.__unrelatedNestRow = document.querySelector(`.item[data-uid="${uid}"]`);
       window.__unrelatedNestHead = __unrelatedNestRow.closest('.group').querySelector('.ghead');
@@ -337,28 +307,22 @@ def check_page(page, uid, data, server, width):
     assert page.evaluate('({row: __unrelatedNestRow.isConnected, head: __unrelatedNestHead.isConnected})') == {'row': True, 'head': True}
     assert page.evaluate('__nestCalls') == {'render': 0, 'group': 0}, page.evaluate('({calls: __nestCalls, outside: __nestOutside})')
     # Subsequent full polling must recognize rows inserted by the local path.
-    page.evaluate(js("""uid => {
+    page.evaluate("""uid => {
       window.__unfoldedNestRow = document.querySelector(`.item[data-uid="${uid}"]`);
       renderSide = __nestRenderSide; groupBy = __nestGroupBy; toggleNestFold = __nestToggle;
       renderSide();
-    }""", """async uid => {
-      window.__unfoldedNestRow = document.querySelector(`.item[data-uid="${uid}"]`);
-      __nestObserver.disconnect();
-      runtime.sidebarView.groupBy = __nestGroupBy; runtime.sidebarView.toggleNestFold = __nestToggle;
-      runtime.core.state.catalog.notifyChanges();
-      await new Promise(requestAnimationFrame);
-    }"""), C)
+    }""", C)
     page.wait_for_function("__unfoldedNestRow === document.querySelector('.item[data-uid=\"' + __unfoldedNestRow.dataset.uid + '\"]')")
     assert page.evaluate('__unfoldedNestRow.isConnected')
-    page.evaluate(js('setPicking(true)', 'runtime.bulk.setPicking(true)'))
+    page.evaluate('setPicking(true)')
     b_caret.click()
     group_pick = page.locator(f'#side .item[data-uid="{A}"]').locator('..').locator('..').locator('.ghead-pick')
     group_pick.click()
-    assert C not in page.evaluate(js('[...pickedSessions]', '[...runtime.bulk.state.picked]'))
+    assert C not in page.evaluate('[...pickedSessions]')
     b_caret.click()
     assert group_pick.evaluate('(node) => node.indeterminate')
     group_pick.click()
-    assert C in page.evaluate(js('[...pickedSessions]', '[...runtime.bulk.state.picked]'))
+    assert C in page.evaluate('[...pickedSessions]')
     page.locator('#side-pick-cancel').click()
 
     # Caret: fold A's whole subtree (4 items), persisted across a reload; click again to unfold.
@@ -369,7 +333,7 @@ def check_page(page, uid, data, server, width):
     folded = rows()
     assert [r["depth"] for r in folded] == [0, 0, 0] and folded[0]["closed"], folded
     assert caret.get_attribute("aria-expanded") == "false"
-    assert page.evaluate(js("[...S.nestClosed]", '[...runtime.core.state.sidebar.nestClosed]')) == [A]
+    assert page.evaluate("[...S.nestClosed]") == [A]
     # Selecting a folded parent opens the conversation without opening its
     # children. Repeat through the cache, then reload the selected URL.
     for _ in range(2):
@@ -379,12 +343,12 @@ def check_page(page, uid, data, server, width):
         to_list(page)
         assert caret.get_attribute('aria-expanded') == 'false'
         assert page.locator(f'#side .item[data-uid="{B}"]').count() == 0
-        assert page.evaluate(js('[...S.nestClosed]', '[...runtime.core.state.sidebar.nestClosed]')) == [A]
+        assert page.evaluate('[...S.nestClosed]') == [A]
     page.reload()
-    page.wait_for_function(js("S.sessions.length === 5", 'runtime.core.state.catalog.sessions.length === 5'))
+    page.wait_for_function("S.sessions.length === 5")
     opened(page, A)
     to_list(page)
-    assert page.evaluate(js("S.nest", 'runtime.core.state.sidebar.nest')) and [r["depth"] for r in rows()] == [0, 0, 0], rows()
+    assert page.evaluate("S.nest") and [r["depth"] for r in rows()] == [0, 0, 0], rows()
     page.locator(f'#side .item[data-uid="{A}"] .nest-caret').click()
     assert [r["depth"] for r in rows()] == [0, 1, 2, 1, 1, 0, 0], rows()
 
@@ -392,7 +356,7 @@ def check_page(page, uid, data, server, width):
     page.evaluate(f"document.querySelector('#side .item[data-uid=\"{C}\"]').__mark = 1")
     data.put("nest-grandchild-c", "codex", grandchild_rows("Grandchild C renamed"), [])
     pin_grandchild(data)
-    poll(page, server, js('S.sessions.some(s => s.title === "Grandchild C renamed")', 'runtime.core.state.catalog.sessions.some(s => s.title === "Grandchild C renamed")'))
+    poll(page, server, 'S.sessions.some(s => s.title === "Grandchild C renamed")')
     assert page.evaluate(f"document.querySelector('#side .item[data-uid=\"{C}\"]').__mark") == 1
     assert [(r["key"], r["depth"]) for r in rows()] == [
         (A, 0), (B, 1), (C, 2), (A + "#y", 1), (A + "#x", 1), (D, 0), (E, 0)]
@@ -400,7 +364,7 @@ def check_page(page, uid, data, server, width):
     page.locator(f'#side .item[data-uid="{B}"] .nest-caret').click()
     data.put("nest-grandchild-c", "codex", grandchild_rows("Grandchild C"), [])
     pin_grandchild(data)
-    poll(page, server, js('S.sessions.some(s => s.title === "Grandchild C")', 'runtime.core.state.catalog.sessions.some(s => s.title === "Grandchild C")'))
+    poll(page, server, 'S.sessions.some(s => s.title === "Grandchild C")')
     assert page.locator(f'#side .item[data-uid="{C}"]').count() == 0
     page.locator(f'#side .item[data-uid="{B}"] .nest-caret').click()
     assert page.locator(f'#side .item[data-uid="{C}"] .t').text_content() == 'Grandchild C'
@@ -409,41 +373,41 @@ def check_page(page, uid, data, server, width):
     # (its spawned_by-recorded continuation is not its child), opening the old uid follows to the new one.
     claude_lines(data, "nest-old", "Old continued", "/proj/alpha", "12:00")
     old_uid = data.uid("nest-old")
-    poll(page, server, js('S.sessions.length === 6', 'runtime.core.state.catalog.sessions.length === 6'))
+    poll(page, server, 'S.sessions.length === 6')
     to_list(page)
     open_item_menu(page, E)
     page.locator('#item-menu [data-act="attach"]').click()
-    page.wait_for_function(js("S.nestAttach", 'runtime.core.state.sidebar.nestAttach'))
+    page.wait_for_function("S.nestAttach")
     page.locator(f'#side .item[data-uid="{old_uid}"]').click()
-    page.wait_for_function(js("uid => S.sessions.find(s => s.uid === uid).nest_parent?.sid === 'nest-old'", "uid => runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent?.sid === 'nest-old'"), arg=E)
+    page.wait_for_function("uid => S.sessions.find(s => s.uid === uid).nest_parent?.sid === 'nest-old'", arg=E)
     claude_lines(data, "nest-old", "Old continued", "/proj/alpha", "12:00",
                  tail=[{"type": "continued-in", "continuedInSessionId": "nest-new", "sessionId": "nest-old"}])
     claude_lines(data, "nest-new", "New continued", "/proj/alpha", "12:30")
     new_uid, old_uid = uid["new"], data.uid("nest-old")
     get_json(*server, "/api/sessions?force=1")
     get_json(*server, "/api/live?force=1")
-    poll(page, server, js('S.sessions.length === 7 && S.sessions.some(s => s.continued_in)', 'runtime.core.state.catalog.sessions.length === 7 && runtime.core.state.catalog.sessions.some(s => s.continued_in)'))
-    assert page.evaluate(js("uid => S.sessions.find(s => s.uid === uid).continued_in", 'uid => runtime.core.state.catalog.sessions.find(s => s.uid === uid).continued_in'), old_uid) == new_uid
-    assert page.evaluate(js("uid => !S.sessions.find(s => s.uid === uid).nest_parent", 'uid => !runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent'), new_uid)
+    poll(page, server, 'S.sessions.length === 7 && S.sessions.some(s => s.continued_in)')
+    assert page.evaluate("uid => S.sessions.find(s => s.uid === uid).continued_in", old_uid) == new_uid
+    assert page.evaluate("uid => !S.sessions.find(s => s.uid === uid).nest_parent", new_uid)
     continued = rows()
     listed = [r["uid"] for r in continued if not r["agent"]]
     assert new_uid in listed and old_uid not in listed, listed
     assert next(r["depth"] for r in continued if r["uid"] == new_uid) == 0
     assert session_depth(page, E) == 1
-    assert page.evaluate(js("([p, w]) => nestDescendantUids(p).has(w)", '([p, w]) => runtime.sidebarView.nestDescendantUids(p).has(w)'), [new_uid, E])
+    assert page.evaluate("([p, w]) => nestDescendantUids(p).has(w)", [new_uid, E])
     to_list(page)
-    page.evaluate(js("uid => openSession(uid)", 'uid => runtime.core.open.openSession(uid)'), old_uid)
-    page.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'), arg=new_uid)
+    page.evaluate("uid => openSession(uid)", old_uid)
+    page.wait_for_function("uid => S.sel === uid", arg=new_uid)
     page.wait_for_function('document.querySelector(".dhead h2")?.textContent.includes("New continued")')
     opened(page, new_uid)
     assert [r["uid"] for r in rows() if r["sel"]] == [new_uid]
     to_list(page)
     open_item_menu(page, E)
     page.locator('#item-menu [data-act="detach"]').click()
-    page.wait_for_function(js("uid => !S.sessions.find(s => s.uid === uid).nest_parent", 'uid => !runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent'), arg=E)
+    page.wait_for_function("uid => !S.sessions.find(s => s.uid === uid).nest_parent", arg=E)
     for sid in ("nest-old", "nest-new"):
         data.paths.pop(sid).unlink()
-    poll(page, server, js("S.sessions.length === 5", 'runtime.core.state.catalog.sessions.length === 5'))
+    poll(page, server, "S.sessions.length === 5")
     to_list(page)
 
     # Right-click: detach B from A, manually attach it again, attach E under A, cancel attach.
@@ -451,7 +415,7 @@ def check_page(page, uid, data, server, width):
     page.locator('#item-menu [data-act="detach"]').click()
     page.wait_for_function("uid => { const n = document.querySelector(`#side .item[data-uid=\"${uid}\"]`); return n && +n.dataset.depth === 0; }", arg=B)
     assert session_depth(page, C) == 1
-    poll(page, server, js("S.sessions.every(s => !('spawned_by' in s) && !('nest_independent' in s))", "runtime.core.state.catalog.sessions.every(s => !('spawned_by' in s) && !('nest_independent' in s))"))
+    poll(page, server, "S.sessions.every(s => !('spawned_by' in s) && !('nest_independent' in s))")
     assert session_depth(page, B) == 0
     open_item_menu(page, B)
     page.locator('#item-menu [data-act="attach"]').click()
@@ -460,13 +424,13 @@ def check_page(page, uid, data, server, width):
     assert session_depth(page, C) == 2
     open_item_menu(page, E)
     page.locator('#item-menu [data-act="attach"]').click()
-    page.wait_for_function(js("S.nestAttach && !document.querySelector('#side-tools').hidden", "runtime.core.state.sidebar.nestAttach && !document.querySelector('#side-tools').hidden"))
+    page.wait_for_function("S.nestAttach && !document.querySelector('#side-tools').hidden")
     page.locator("#side-pick-cancel").click()
-    page.wait_for_function(js("!S.nestAttach", '!runtime.core.state.sidebar.nestAttach'))
+    page.wait_for_function("!S.nestAttach")
     assert session_depth(page, E) == 0
     open_item_menu(page, E)
     page.locator('#item-menu [data-act="attach"]').click()
-    page.wait_for_function(js("S.nestAttach", 'runtime.core.state.sidebar.nestAttach'))
+    page.wait_for_function("S.nestAttach")
     page.locator(f'#side .item[data-uid="{A}"]').click()
     page.wait_for_function("uid => { const n = document.querySelector(`#side .item[data-uid=\"${uid}\"]`); return n && +n.dataset.depth === 1; }", arg=E)
     open_item_menu(page, E)
@@ -475,9 +439,9 @@ def check_page(page, uid, data, server, width):
 
     # A missing or filtered parent must not prevent clearing the saved attachment.
     open_item_menu(page, D)
-    if page.evaluate(js("uid => !!S.sessions.find(s => s.uid === uid).nest_parent", 'uid => !!runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent'), D):
+    if page.evaluate("uid => !!S.sessions.find(s => s.uid === uid).nest_parent", D):
         page.locator('#item-menu [data-act="detach"]').click()
-        page.wait_for_function(js("uid => !S.sessions.find(s => s.uid === uid).nest_parent", 'uid => !runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent'), arg=D)
+        page.wait_for_function("uid => !S.sessions.find(s => s.uid === uid).nest_parent", arg=D)
     else:
         assert page.locator('#item-menu [data-act="detach"]').get_attribute('aria-disabled') == 'true'
         page.keyboard.press('Escape')
@@ -520,19 +484,19 @@ def check_hidden_spawner(browser, binary, root, width):
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(base, wait_until="networkidle")
-        page.wait_for_function(js("S.sessions.length === 2", 'runtime.core.state.catalog.sessions.length === 2'))
+        page.wait_for_function("S.sessions.length === 2")
         page.locator("#nest-toggle").click()
         assert session_depth(page, worker) == 1
         # Real list refresh after new native files appear; no invented browser row fields.
         fork = put("rewind-one", "spawner")
-        poll(page, (opener, base), js("S.sessions.length === 3", 'runtime.core.state.catalog.sessions.length === 3'))
+        poll(page, (opener, base), "S.sessions.length === 3")
         assert session_depth(page, parent) is None
         assert session_depth(page, worker) == 1, "worker escaped when its spawner became hidden"
         leaf = put("rewind-two", "rewind-one")
-        poll(page, (opener, base), js("S.sessions.length === 4", 'runtime.core.state.catalog.sessions.length === 4'))
+        poll(page, (opener, base), "S.sessions.length === 4")
         assert session_depth(page, fork) is None
         assert session_depth(page, worker) == 1
-        assert page.evaluate(js("uid => nestDescendantUids(uid).has(" + json.dumps(worker) + ")", 'uid => runtime.sidebarView.nestDescendantUids(uid).has(' + json.dumps(worker) + ')'), leaf)
+        assert page.evaluate(("uid => nestDescendantUids(uid).has(" + json.dumps(worker) + ")"), leaf)
         caret = page.locator(f'#side .item[data-uid="{leaf}"] .nest-caret')
         caret.click()
         assert session_depth(page, worker) is None
@@ -543,30 +507,30 @@ def check_hidden_spawner(browser, binary, root, width):
         to_list(page)
         open_item_menu(page, worker)
         page.locator('#item-menu [data-act="detach"]').click()
-        page.wait_for_function(js("uid => S.sessions.find(s => s.uid === uid).nest_parent == null", 'uid => runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent == null'), arg=worker)
+        page.wait_for_function("uid => S.sessions.find(s => s.uid === uid).nest_parent == null", arg=worker)
         assert session_depth(page, worker) == 0
         open_item_menu(page, worker)
         page.locator('#item-menu [data-act="attach"]').click()
         page.locator(f'#side .item[data-uid="{leaf}"]').click()
-        page.wait_for_function(js("uid => !!S.sessions.find(s => s.uid === uid).nest_parent", 'uid => !!runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent'), arg=worker)
+        page.wait_for_function("uid => !!S.sessions.find(s => s.uid === uid).nest_parent", arg=worker)
         assert session_depth(page, worker) == 1
         # An explicit attachment to the successor stays there when the old parent is shown.
         page.locator(f'#side .item[data-uid="{leaf}"]').click()
         opened(page, leaf)
         page.locator("#a-fork-chain").click()
         page.locator(f'#fork-chain-menu .chain-row[data-uid="{parent}"] .chain-toggle').click()
-        page.wait_for_function(js("uid => S.sessions.find(s => s.uid === uid).fork_parent_visible", 'uid => runtime.core.state.catalog.sessions.find(s => s.uid === uid).fork_parent_visible'), arg=parent)
+        page.wait_for_function("uid => S.sessions.find(s => s.uid === uid).fork_parent_visible", arg=parent)
         to_list(page)
-        assert not page.evaluate(js("([p, w]) => nestDescendantUids(p).has(w)", '([p, w]) => runtime.sidebarView.nestDescendantUids(p).has(w)'), [parent, worker])
-        assert page.evaluate(js("([p, w]) => nestDescendantUids(p).has(w)", '([p, w]) => runtime.sidebarView.nestDescendantUids(p).has(w)'), [leaf, worker])
+        assert not page.evaluate("([p, w]) => nestDescendantUids(p).has(w)", [parent, worker])
+        assert page.evaluate("([p, w]) => nestDescendantUids(p).has(w)", [leaf, worker])
         # Filtering an ordinary visible parent must still leave a root; node/source identity is scoped.
-        assert page.evaluate(js("uid => nestEdges(sidebarSessions().filter(s => s.uid !== uid)).nested.size", 'uid => runtime.sidebarView.nestEdges(runtime.core.index.sidebarSessions().filter(s => s.uid !== uid)).nested.size'), leaf) == 0
+        assert page.evaluate("uid => nestEdges(sidebarSessions().filter(s => s.uid !== uid)).nested.size", leaf) == 0
         assert json.loads(document.read_text())["sessions"][worker] == {"nest_parent": {"source": "codex", "sid": "rewind-two"}, "nest_initialized": True}
         open_item_menu(page, worker)
         page.locator('#item-menu [data-act="detach"]').click()
-        page.wait_for_function(js("uid => !S.sessions.find(s => s.uid === uid).nest_parent", 'uid => !runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent'), arg=worker)
+        page.wait_for_function("uid => !S.sessions.find(s => s.uid === uid).nest_parent", arg=worker)
         page.reload(wait_until="networkidle")
-        page.wait_for_function(js("S.sessions.length === 4", 'runtime.core.state.catalog.sessions.length === 4'))
+        page.wait_for_function("S.sessions.length === 4")
         assert session_depth(page, worker) == 0
         assert not errors, errors
         context.close()
@@ -578,7 +542,7 @@ def check_hidden_spawner(browser, binary, root, width):
         context = browser.new_context(viewport={"width": width, "height": 900}, service_workers="block")
         page = context.new_page()
         page.goto(base, wait_until="networkidle")
-        page.wait_for_function(js("S.sessions.length === 4", 'runtime.core.state.catalog.sessions.length === 4'))
+        page.wait_for_function("S.sessions.length === 4")
         page.locator('#nest-toggle').click()
         assert session_depth(page, worker) == 0
         context.close()
@@ -620,7 +584,7 @@ def main():
                     page.on("requestfailed", lambda request: failed.append((request.url, request.failure))
                             if "/api/watch?" not in request.url and request.failure != "net::ERR_ABORTED" else None)
                     page.goto(base, wait_until="networkidle")
-                    page.wait_for_function(js("S.sessions.length === 5", 'runtime.core.state.catalog.sessions.length === 5'))
+                    page.wait_for_function("S.sessions.length === 5")
                     check_page(page, uid, data, server, width)
                     assert not errors, errors
                     assert not failed, failed

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Global actions follow the hidden session list; isolated server, fake capabilities, no CLI."""
-from browser_runtime import js
+
 import argparse
 import os
 from pathlib import Path
@@ -71,11 +71,11 @@ def main():
             # actions are docked. The existing conversation stays in place.
             messages = page.locator('#msgs').element_handle()
             terminal_enabled['value'] = False
-            page.evaluate(js('loadTermList()', 'runtime.terminal.loadTermList()'))
+            page.evaluate('loadTermList()')
             expect(page.locator('#a-global-new-session')).to_have_count(0)
             expect(page.locator('[id^="a-global-"]')).to_have_count(2)
             terminal_enabled['value'] = True
-            page.evaluate(js('loadTermList()', 'runtime.terminal.loadTermList()'))
+            page.evaluate('loadTermList()')
             expect(page.locator('[id^="a-global-"]')).to_have_count(3)
             assert messages.evaluate("node => node === document.querySelector('#msgs')")
             messages.dispose()
@@ -86,7 +86,7 @@ def main():
             with page.expect_navigation(wait_until='networkidle'):
                 page.locator('#a-global-page-reload').click()
             expect(page.locator('#msgs')).to_contain_text('reply Sweep')
-            assert page.evaluate(js("SessionDockCapabilities.allows('terminal_create')", "runtime.capabilities.allows('terminal_create')"))
+            assert page.evaluate("SessionDockCapabilities.allows('terminal_create')")
             expect(page.locator('#left')).not_to_be_visible()
             dialogs(page)
             page.locator('#side-toggle').click()

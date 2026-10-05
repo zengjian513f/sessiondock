@@ -1,7 +1,7 @@
 # Agy（Antigravity CLI）
 
 本页记录 agy 1.2.16 的接入合同与证据边界，核对日期为 2026-10-04。
-接入范围是 Rust 后端与 legacy 前端；Vue 由独立开发任务维护。
+接入范围是 Rust 后端与 legacy 前端。
 
 官方接口依据：[会话管理](https://www.antigravity.google/docs/cli/conversations/)、
 [恢复命令](https://www.antigravity.google/docs/cli/commands/resume)、
@@ -38,7 +38,7 @@ low、medium、high、xhigh、max，由 CLI 判断模型是否接受。Agy 选�
 
 新建选择器、来源筛选、图标和客户端矩阵沿用已有组件及 profile 能力门控。
 未安装或未配置时禁用该节点的 Agy 选择。未绑定 pending 清理只处理启动回执和
-宿主，不删除原生数据库。当前浏览器套件针对 legacy 前端；不据此宣称 Vue 已验收。
+宿主，不删除原生数据库。当前浏览器套件针对 legacy 前端。
 
 ## 原生存储与只读镜像
 

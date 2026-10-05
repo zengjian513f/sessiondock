@@ -13,7 +13,7 @@ two-option question; the suite then asserts the whole bridge:
 2. `/api/messages` carries that card as `prompt` and `/api/watch` pushed it as
    a `prompt_only` packet before any native record existed;
 3. the answer is sent as keyboard input through `/api/term/send` under a page
-   lease (exactly the keys `web/src/domain/runtime/cli.js` sends: settle on an option
+   lease (exactly the keys `legacy-web/cli.js` sends: settle on an option
    row, then the option's digit) — or,
    with `--browser`, by clicking the option on the real page;
 4. the native `tool_use` / `tool_result` records land, `/api/messages`
@@ -256,7 +256,7 @@ def main():
                     status, claimed = request(opener, base, "POST", "/api/term/claim",
                         {"name": name, "page": PAGE, "uid": uid, "instance_id": instance["instance_id"]})
                     assert status == 200 and claimed.get("token"), claimed
-                    # Exactly what web/src/domain/runtime/cli.js ClaudeCli.questionAnswerKeys sends:
+                    # Exactly what legacy-web/cli.js ClaudeCli.questionAnswerKeys sends:
                     # settle on the last real option row, then the option's digit.
                     keys = ["Down"] * (len(options) + 2) + ["Up", "Up", str(choice + 1)]
                     status, typed = request(opener, base, "POST", "/api/term/send",

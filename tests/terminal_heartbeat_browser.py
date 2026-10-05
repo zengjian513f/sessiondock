@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """OPEN-but-stalled terminal sockets recover without replaying ambiguous input."""
-from browser_runtime import js, console_renderers
+
 import argparse
 import json
 import os
@@ -58,7 +58,7 @@ def run(browser, binary, renderer):
             page.goto(base, wait_until='networkidle')
             fixture.open_console(page, uid)
             keyboard = page.locator('#termpane .xterm-helper-textarea')
-            page.wait_for_function(js('!!currentTermViewObject().heartbeat', '!!runtime.terminal.currentTermViewObject().heartbeat'))
+            page.wait_for_function('!!currentTermViewObject().heartbeat')
             # A quiet CLI must stay connected across multiple real probe rounds.
             page.wait_for_timeout(6500)
             assert len(probes) >= 3 and len(sockets) == 1, (probes, len(sockets))
@@ -72,11 +72,11 @@ def run(browser, binary, renderer):
                 keyboard.focus()
                 page.keyboard.type(command)
                 page.keyboard.press('Enter')
-                assert page.evaluate(js('T.ws.readyState', 'runtime.terminal.state.ws.readyState')) == 1
+                assert page.evaluate('T.ws.readyState') == 1
                 # HTTP/UI remain alive while only this WebSocket direction stalls.
                 assert page.request.get(base + '/api/meta').ok
-                page.wait_for_function(js('currentTermViewObject().heartbeat === null', 'runtime.terminal.currentTermViewObject().heartbeat === null'), timeout=16000)
-                page.wait_for_function(js('!!currentTermViewObject().heartbeat && T.ws.readyState === 1', '!!runtime.terminal.currentTermViewObject().heartbeat && runtime.terminal.state.ws.readyState === 1'), timeout=10000)
+                page.wait_for_function('currentTermViewObject().heartbeat === null', timeout=16000)
+                page.wait_for_function('!!currentTermViewObject().heartbeat && T.ws.readyState === 1', timeout=10000)
                 assert len(sockets) == count + 1, (direction, len(sockets))
                 assert host.poll() is None, 'recovery restarted/stopped the host'
                 if direction == 'down':
@@ -123,7 +123,7 @@ done
             options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
         browser = pw.chromium.launch(**options)
         try:
-            for renderer in console_renderers('grid', 'xterm'):
+            for renderer in ['grid', 'xterm']:
                 run(browser, args.binary, renderer)
         finally:
             browser.close()

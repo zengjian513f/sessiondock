@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from browser_runtime import js
+
 from playwright.sync_api import sync_playwright
 
 from history_parity import BINARY, Corpus, claude_row, isolated_server
@@ -62,26 +62,21 @@ def last_row_state(page):
 
 
 def run(page):
-    page.wait_for_function(js('S.sessions.length === %d && T.listLoaded' % COUNT, 'runtime.core.state.catalog.sessions.length === %d && runtime.terminal.state.listLoaded' % COUNT))
-    page.evaluate(js(r"""() => {
+    page.wait_for_function(('S.sessions.length === %d && T.listLoaded' % COUNT))
+    page.evaluate(r"""() => {
       S.view = 'date';
       S.nest = true;
       store.set('view', 'date');
       store.set('nest', true);
       renderView();
       renderSide();
-    }""", r"""() => {
-      runtime.core.state.sidebar.view = 'date';
-      runtime.core.state.sidebar.nest = true;
-      runtime.core.preferences.set('view', 'date');
-      runtime.core.preferences.set('nest', true);
-    }"""))
+    }""")
     page.wait_for_function("document.querySelectorAll('#side .item[data-uid]').length === %d && document.querySelector('#view [data-v=date]').classList.contains('on') && document.querySelector('#nest-toggle').getAttribute('aria-pressed') === 'true'" % COUNT)
     uids = page.evaluate("() => [...document.querySelectorAll('#side .item[data-uid]')].map(n => n.dataset.uid)")
     first, last = uids[0], uids[-1]
     assert first != last, uids
-    page.evaluate(js('uid => openSession(uid)', 'uid => runtime.core.open.openSession(uid)'), first)
-    page.wait_for_function(js('uid => S.sel === uid', 'uid => runtime.core.state.selection.sel === uid'), arg=first)
+    page.evaluate('uid => openSession(uid)', first)
+    page.wait_for_function('uid => S.sel === uid', arg=first)
     page.wait_for_selector(".dhead h2")
     page.evaluate("""() => {
       const side = document.querySelector('#side');
@@ -92,36 +87,29 @@ def run(page):
       const box = last?.getBoundingClientRect();
       return last?.dataset.uid === uid && box && box.top < innerHeight && box.bottom > 0;
     }""", arg=last)
-    page.evaluate(js(r"""() => {
+    page.evaluate(r"""() => {
       window.__sidebarRenders = 0;
       const inner = renderSide;
       renderSide = function() {
         window.__sidebarRenders += 1;
         return inner.apply(this, arguments);
       };
-    }""", r"""() => {
-      window.__sidebarRenders = 0;
-      window.__sidebarObserver = new MutationObserver(records => {
-        __sidebarRenders += records.filter(record => [...record.removedNodes]
-          .some(node => node instanceof Element && (node.matches('.item') || node.querySelector('.item')))).length;
-      });
-      __sidebarObserver.observe(document.querySelector('#side'), {childList: true, subtree: true});
-    }"""))
+    }""")
     before = last_row_state(page)
     assert before["uid"] == last, before
     assert before["scrollTop"] > 0, before
     assert before["visible"], before
-    count = page.evaluate(js('sidebarSessions().length', 'runtime.core.index.sidebarSessions().length'))
+    count = page.evaluate('sidebarSessions().length')
     title = before["title"]
     page.locator(f'#side .item[data-uid="{last}"] .t').click()
-    page.wait_for_function(js('uid => S.sel === uid', 'uid => runtime.core.state.selection.sel === uid'), arg=last)
+    page.wait_for_function('uid => S.sel === uid', arg=last)
     page.wait_for_function("title => document.querySelector('.dhead h2')?.textContent.includes(title)",
                            arg=title)
     after = last_row_state(page)
     assert after["uid"] == last, after
     assert after["sel"] is True, after
     assert after["count"] == before["count"] == COUNT, (before, after)
-    assert page.evaluate(js('sidebarSessions().length', 'runtime.core.index.sidebarSessions().length')) == count
+    assert page.evaluate('sidebarSessions().length') == count
     assert page.evaluate("window.__sidebarRenders") == 0, page.evaluate("window.__sidebarRenders")
     assert abs(after["scrollTop"] - before["scrollTop"]) <= 1, (before, after)
     assert abs(after["y"] - before["y"]) <= 2, (before, after)
@@ -132,7 +120,7 @@ def run(page):
 def check_reconciliation(page):
     # The selected row was changed by the preceding click. Establish its new
     # presentation, then an unchanged refresh must leave every row in place.
-    page.evaluate(js(r"""() => {
+    page.evaluate(r"""() => {
       renderSide();
       window.__sideRows = [...document.querySelectorAll('#side .item')];
       const side = document.querySelector('#side');
@@ -141,40 +129,21 @@ def check_reconciliation(page):
       renderSide();
       window.__sideMutations = observer.takeRecords().length;
       observer.disconnect();
-    }""", r"""async () => {
-      runtime.core.state.catalog.notifyChanges();
-      await new Promise(requestAnimationFrame);
-      window.__sideRows = [...document.querySelectorAll('#side .item')];
-      const side = document.querySelector('#side');
-      window.__sideMutations = 0;
-      const observer = new MutationObserver(records => { window.__sideMutations += records.length; });
-      observer.observe(side, {childList: true, subtree: true});
-      runtime.core.state.catalog.notifyChanges();
-      await new Promise(requestAnimationFrame);
-      window.__sideMutations += observer.takeRecords().length;
-      observer.disconnect();
-    }"""))
+    }""")
     assert page.evaluate("__sideMutations") == 0
     assert page.evaluate("__sideRows.every(row => row.isConnected)")
-    page.evaluate(js(r"""() => {
+    page.evaluate(r"""() => {
       const base = S.sessions[0];
       S.sessions = [...S.sessions, {...base, uid: 'synthetic-extra', sid: 'synthetic-extra', title: 'Added row'}];
       renderSide();
-    }""", r"""async () => {
-      const base = runtime.core.state.catalog.sessions[0];
-      runtime.core.state.catalog.sessions = [...runtime.core.state.catalog.sessions, {...base, uid: 'synthetic-extra', sid: 'synthetic-extra', title: 'Added row'}];
-      await new Promise(requestAnimationFrame);
-    }"""))
+    }""")
     page.wait_for_function("document.querySelector('#side .item[data-uid=synthetic-extra]')?.textContent.includes('Added row')")
     assert page.locator('#side .item[data-uid="synthetic-extra"]').count() == 1
     assert page.evaluate("__sideRows.every(row => row.isConnected)")
-    page.evaluate(js(r"""() => {
+    page.evaluate(r"""() => {
       S.sessions = S.sessions.filter(row => row.uid !== 'synthetic-extra');
       renderSide();
-    }""", r"""async () => {
-      runtime.core.state.catalog.sessions = runtime.core.state.catalog.sessions.filter(row => row.uid !== 'synthetic-extra');
-      await new Promise(requestAnimationFrame);
-    }"""))
+    }""")
     assert page.evaluate("__sideRows.every(row => row.isConnected)")
     page.wait_for_function("!document.querySelector('#side .item[data-uid=synthetic-extra]')")
     group = page.locator('#side > .group').first
@@ -189,7 +158,7 @@ def check_reconciliation(page):
 
     # A stalled list read is shared; a subsequent explicit refresh wins even
     # if that old transport ignores cancellation and eventually returns data.
-    page.evaluate(js(r"""() => {
+    page.evaluate(r"""() => {
       window.__nativeFetch = fetch;
       window.__pollCalls = 0;
       window.fetch = (url, options) => {
@@ -201,34 +170,17 @@ def check_reconciliation(page):
       };
       window.__pollPromise = pollSessions();
       pollSessions(); pollSessions();
-    }""", r"""() => {
-      window.__nativeFetch = runtime.core.network.fetch;
-      window.__pollCalls = 0;
-      runtime.core.network.fetch = (url, options) => {
-        if (String(url).includes('api/sessions?sig=')) {
-          __pollCalls++;
-          return new Promise(resolve => { window.__finishPoll = resolve; });
-        }
-        return __nativeFetch(url, options);
-      };
-      window.__pollPromise = runtime.core.list.pollSessions();
-      runtime.core.list.pollSessions(); runtime.core.list.pollSessions();
-    }"""))
+    }""")
     assert page.evaluate('__pollCalls') == 1
-    page.evaluate(js('() => loadSessions(false)', '() => runtime.core.list.loadSessions(false)'))
-    page.evaluate(js(r"""async () => {
+    page.evaluate('() => loadSessions(false)')
+    page.evaluate(r"""async () => {
       __finishPoll(new Response(JSON.stringify({sig: 'stale', sessions: []}),
         {headers: {'Content-Type': 'application/json'}}));
       await __pollPromise;
       window.fetch = __nativeFetch;
-    }""", r"""async () => {
-      __finishPoll(new Response(JSON.stringify({sig: 'stale', sessions: []}),
-        {headers: {'Content-Type': 'application/json'}}));
-      await __pollPromise;
-      runtime.core.network.fetch = __nativeFetch;
-    }"""))
-    assert page.evaluate(js('S.sessions.length', 'runtime.core.state.catalog.sessions.length')) == COUNT
-    assert page.evaluate(js('S.sig', 'runtime.core.state.catalog.sig')) != 'stale'
+    }""")
+    assert page.evaluate('S.sessions.length') == COUNT
+    assert page.evaluate('S.sig') != 'stale'
 
 
 def main():

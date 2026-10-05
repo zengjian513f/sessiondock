@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Copy session identities through real Chromium menus and clipboard; private fixtures only."""
-from browser_runtime import js
+
 import argparse
 import os
 from pathlib import Path
@@ -38,7 +38,7 @@ def menu(page, uid, touch=False):
 
 
 def copy(page, uid, expected, touch=False, notice=""):
-    selected = page.evaluate(js("S.sel", 'runtime.core.state.selection.sel'))
+    selected = page.evaluate("S.sel")
     menu(page, uid, touch).click()
     expect(page.locator("#item-menu")).to_be_hidden()
     assert page.evaluate("navigator.clipboard.readText()") == expected
@@ -46,7 +46,7 @@ def copy(page, uid, expected, touch=False, notice=""):
         expect(page.locator("#session-stop-notice")).to_have_text(notice)
     else:
         expect(page.locator("#session-stop-notice")).to_be_hidden()
-    assert page.evaluate(js("S.sel", 'runtime.core.state.selection.sel')) == selected, "copy must not open another session"
+    assert page.evaluate("S.sel") == selected, "copy must not open another session"
 
 
 def context_for(browser, base, width=1280):
@@ -58,7 +58,7 @@ def context_for(browser, base, width=1280):
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(base, wait_until="networkidle")
-    page.wait_for_function(js("S.sessions.length > 0 && serverHostname", 'runtime.core.state.catalog.sessions.length > 0 && runtime.build.state.hostname'))
+    page.wait_for_function("S.sessions.length > 0 && serverHostname")
     return context, page, errors
 
 
@@ -79,23 +79,23 @@ def main():
                 for sid in ("claude-compact", "codex-parent"):
                     print(f"Copy {sid}, width={width}", flush=True)
                     uid = corpus.uid(sid)
-                    row = page.evaluate(js("uid => S.sessions.find(s => s.uid === uid)", 'uid => runtime.core.state.catalog.sessions.find(s => s.uid === uid)'), uid)
+                    row = page.evaluate("uid => S.sessions.find(s => s.uid === uid)", uid)
                     expected = f"机器：FixtureLocal\n目录：{row['cwd']}\nagent：{row['source']}\nUUID：{sid}"
                     copy(page, uid, expected, width == 390)
                 # Denied Clipboard API falls back to the browser's actual copy command.
                 page.evaluate("() => { navigator.clipboard.writeText = async () => { throw new Error('denied'); }; }")
                 copy(page, uid, expected, width == 390)
                 # Copying must also leave an existing lifecycle notice untouched.
-                page.evaluate(js("showSessionStopNotice('已有停止结果')", "runtime.sessionUi.showSessionStopNotice('已有停止结果')"))
+                page.evaluate("showSessionStopNotice('已有停止结果')")
                 copy(page, uid, expected, width == 390, notice="已有停止结果")
-                page.evaluate(js("showSessionStopNotice('')", "runtime.sessionUi.showSessionStopNotice('')"))
+                page.evaluate("showSessionStopNotice('')")
                 # If both browser paths fail, report the failure visibly.
                 page.evaluate("() => { document.execCommand = () => false; }")
                 menu(page, uid, width == 390).click()
                 expect(page.locator("dialog.app-popup")).to_contain_text("复制会话标识失败")
                 page.get_by_role("button", name="知道了", exact=True).click()
                 # Rows without a native ID must not copy a UID or launch name as a UUID.
-                page.evaluate(js("uid => { S.sessions.find(s => s.uid === uid).sid = ''; }", "uid => { runtime.core.state.catalog.sessions.find(s => s.uid === uid).sid = ''; }"), uid)
+                page.evaluate("uid => { S.sessions.find(s => s.uid === uid).sid = ''; }", uid)
                 expect(menu(page, uid, width == 390)).to_have_attribute("aria-disabled", "true")
                 assert not errors, errors
                 context.close()
@@ -114,7 +114,7 @@ def main():
             hub.start()
             base = f"http://127.0.0.1:{hub.port}"
             context, page, errors = context_for(browser, base)
-            page.wait_for_function(js("S.sessions.length === 2", 'runtime.core.state.catalog.sessions.length === 2'))
+            page.wait_for_function("S.sessions.length === 2")
             for node, source in zip(nodes, ("grok", "opencode")):
                 uid = scoped(node.nid, f"{source}:same-file-hash")
                 copy(page, uid, f"机器：{node.name}\n目录：/synthetic/中文 project\nagent：{source}\nUUID：same-native-id")

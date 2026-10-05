@@ -82,7 +82,6 @@ RULES = [
     ("crates/sessiondock/src/", module_rule),
     ("crates/sessiondock/tests/fixtures/", [FULL]), ("crates/sessiondock/tests/", RUST),
     ("legacy-web/", ["node_contracts", "*_browser*", "brand_names_check"]),
-    ("web/", ["*_browser*", "brand_names_check"]),
     ("deploy/", ["deploy_*"]),
     ("tests/", tests_rule),
     ("Cargo.toml", [FULL]), ("Cargo.lock", [FULL]), (".github/", [FULL]),

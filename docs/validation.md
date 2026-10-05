@@ -44,32 +44,12 @@ substitute. Docs-only and deploy-script-only work use the doc/deploy suites.
 **Never run unit tests on your own**; validate the changed surface with the
 headless browser suite that covers it.
 
-The production frontend `legacy-web/` is served as committed and needs no build.
-With `--web-dir web/dist-migration` (or another non-legacy directory and no
-prebuilt assets) the runner builds the Vue preview once before browser suites;
-`--list` and `--dry-run` do not build.
+The frontend `legacy-web/` is served as committed and needs no build.
+`--web-dir` (or `SESSIONDOCK_TEST_WEB_DIR`) points the browser suites at another
+frontend directory.
 
-The independent Vue entry uses `npm --prefix web run build:migration` (also
-`npm --prefix web run build`) and `SESSIONDOCK_TEST_WEB_DIR` pointing to
-`web/dist-migration`. The runner selects this build when that variable is set;
-without it the production legacy entry remains the target. The unused Vue demo
-and Vitest dependency have been removed. Frontend refactor batches preserve the production legacy entry. Validate the
-independent Vue artifact, then commit, push and deploy through the standard
-fleet workflow with its default legacy frontend; the final entry switch remains
-a separate stage.
-
-For example, run the prefixed entry and a selected conversation path against
-the independent build:
-
-```sh
-SESSIONDOCK_TEST_WEB_DIR="$PWD/web/dist-migration" \
-  python3 tests/run_validation.py --only frontend_entry_browser,history_browser
-```
-
-Browser fixtures select explicit legacy or scoped scripts through
-[`browser_runtime.py`](../tests/browser_runtime.py). Scoped scripts access the
-actual `SessionDockRuntime` owners; they do not install compatibility globals.
-Asynchronous polling awaits the resolved condition within the original deadline.
+Shared browser helpers live in [`browser_runtime.py`](../tests/browser_runtime.py);
+asynchronous polling awaits the resolved condition within the original deadline.
 The original UI, identity, checkpoint and race assertions remain in place.
 
 Tests that launch detached ptyhost sessions must stop their private hosts before
@@ -199,7 +179,6 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | terminal_scrollback_browser | `python3 tests/terminal_scrollback_browser.py` | Real wheel input scrolls PTY history locally in both console renderers. | binary, Chromium | n/a |
 | hub_draft_recovery_browser | `python3 tests/hub_draft_recovery_browser.py --binary target/release/sessiondock` | Six-node draft discovery with stalled/503 peers: successful peers stay cached, per-node retry/backoff, offline recovery, real session opening and newly registered nodes. | binary, hub, Chromium | n/a |
 | hub_browser | `python3 tests/hub_browser.py --binary target/release/sessiondock` | The `sessiondock-hub` page over three `hub_fake_node.py` nodes — machine filter chips, per-machine nesting (same native id never cross-nests), NDJSON search progress + one-machine failure, a session opened through the proxy with media/SSE, settings untick/tick/drag/keyboard reorder/rename, `sessiondock.hub.` prefix; `sessiondock-hub` taken from the `--binary` directory | binary, Chromium | 12s |
-| hub_console_availability_browser | `python3 tests/hub_console_availability_browser.py` | Console-button availability from each synthetic hub node's resume capabilities. | Chromium | n/a |
 | hub_pending_state_browser | `python3 tests/hub_pending_state_browser.py` | New-session receipts remain visible during partial hub lists; recovery and terminal exit update the page. | binary, Chromium | n/a |
 | hub_send_browser | `python3 tests/hub_send_browser.py` | Real hub → authenticated Rust node → fake Claude; different builds, desktop/390 px sends, refresh, real hub asset upgrade with draft preservation and stale-page refusal, raw-input/retry/local-spoof auth gates and hub metadata | debug binaries, Chromium | 30s |
 | hub_http_suite | `python3 tests/hub_http_suite.py --binary target/release/sessiondock` | Over the wire: `sessiondock-hub --check-config` + fail-closed config, `register`/`list`/`remove` subcommands (server-side, private registry), `/api/meta`, `/api/nodes`, hub-mode page, gate, resolve uniqueness 400, `_build` 409, JSON/SSE rewrite, offline 503 + recovery, chunked upload, display (name/colour/enabled/renderer)/order + audit, explicit node pass-through, bulk writes, browser-audit routing, NDJSON search | binary | 2s |
@@ -253,11 +232,9 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | pick_drag_browser | `python3 tests/pick_drag_browser.py` | 多选 mode: dragging with the left mouse button from an unpicked row picks the run, from a picked row unpicks it; dragging back restores rows that left the run, the release does not re-toggle the pressed row, no text is selected, holding at the bottom edge auto-scrolls and extends the run; a plain click still toggles one row, a double click selects no text; entering/leaving 多选 keeps the existing row nodes (checkboxes patched in place). | binary, Chromium | n/a |
 | prefs_migration_browser | `python3 tests/prefs_migration_browser.py --binary target/release/sessiondock` | Seeds theme/font/layout/filter/cache/unread/selection and file-manager preferences under `sessiondock.*`; verifies they apply, changes persist across reload, `files.html` uses `sessiondock.files-*`, a fresh browser keeps defaults, and PWA identity is SessionDock. | binary, Chromium | 5s |
 | frontend_framework_browser | `python3 tests/frontend_framework_browser.py --binary target/release/sessiondock` | Desktop and phone settings operated through Chromium: appearance/features controls, close/reopen, reload persistence, Escape and continued access to Machines. | binary, Chromium | n/a |
-| frontend_cutover_browser | `python3 tests/frontend_cutover_browser.py --binary target/release/sessiondock` | Retired worker/cache cleanup, prefixed search/history/settings, HTML metadata injection and script availability for the selected legacy or Vue frontend. | binary, Chromium, built frontend | n/a |
-| composer_boundaries_browser | `python3 tests/composer_boundaries_browser.py --binary target/release/sessiondock` | Composer state boundaries, selected-session ownership and draft behavior through browser operations. | binary, Chromium, built frontend | n/a |
-| frontend_entry_browser | `python3 tests/frontend_entry_browser.py --binary target/release/sessiondock` | Real desktop/phone operation under a loopback `/sessiondock/` proxy: initial loading, late read isolation after a real session switch, manual 503 retry, session selection, theme/font/cache controls, restart of the private Rust fixture, restored conversation and preferences, browser history, and prefix-relative asset/API requests. Runs with either frontend via `SESSIONDOCK_TEST_WEB_DIR`. | binary, Chromium, built Vue assets | n/a |
-| frontend_preview_browser | `python3 tests/frontend_preview_browser.py --binary target/release/sessiondock` | Legacy main and Vue preview behind authenticated Nginx: reproduce split assets/API, then verify both actual entry scripts, desktop/phone list/filter/session clicks, repeated reloads and matching-build submission. | binary, Chromium, Nginx, built Vue assets | n/a |
-| frontend_responsiveness_browser | `python3 tests/frontend_responsiveness_browser.py --binary target/release/sessiondock` | Large sidebar with 2002 synthetic sessions: clicks and cached navigation update only the selected rows, live paints retain history, search filters and restores the list; decoded catalog updates reuse unchanged rows and agents while changed parent/child titles reach the UI. Reports opening times without machine-specific thresholds. | binary, Chromium, built Vue assets | n/a |
+| frontend_cutover_browser | `python3 tests/frontend_cutover_browser.py --binary target/release/sessiondock` | Retired worker/cache cleanup, prefixed search/history/settings, HTML metadata injection and script availability for the frontend. | binary, Chromium | n/a |
+| frontend_entry_browser | `python3 tests/frontend_entry_browser.py --binary target/release/sessiondock` | Real desktop/phone operation under a loopback `/sessiondock/` proxy: initial loading, late read isolation after a real session switch, manual 503 retry, session selection, theme/font/cache controls, restart of the private Rust fixture, restored conversation and preferences, browser history, and prefix-relative asset/API requests. Runs with either frontend via `SESSIONDOCK_TEST_WEB_DIR`. | binary, Chromium | n/a |
+| frontend_responsiveness_browser | `python3 tests/frontend_responsiveness_browser.py --binary target/release/sessiondock` | Large sidebar with 2002 synthetic sessions: clicks and cached navigation update only the selected rows, live paints retain history, search filters and restores the list; decoded catalog updates reuse unchanged rows and agents while changed parent/child titles reach the UI. Reports opening times without machine-specific thresholds. | binary, Chromium | n/a |
 | machine_controls_browser | `python3 tests/machine_controls_browser.py` | Hub machine palette, Escape/outside close, unsaved name/caret preservation through polling, stable rows, pending name/enabled/renderer requests, failed control rollback and saved renderer; actual controls with synthetic nodes and temporary display failures. | binary, sessiondock-hub, Chromium | n/a |
 | session_identity_browser | `python3 tests/session_identity_browser.py --binary target/release/sessiondock` | Session identity copying through real menus and clipboard with private fixtures. | binary, Chromium | n/a |
 | sidebar_toggle_browser | `python3 tests/sidebar_toggle_browser.py --binary target/release/sessiondock` | Large sidebar resource viewport rendering, reuse when nesting changes and scroll hydration. | binary, Chromium | n/a |
@@ -365,8 +342,7 @@ need their own CLI args; the runner does not supply them.
 `frontend_search_state_browser` 使用合成会话和隔离服务，通过桌面及手机实际输入、
 点击和重载验证搜索的单一状态：本地筛选/全文结果切换、各选项请求与持久化、Esc
 取消后迟到 NDJSON 响应不恢复结果，以及桌面已展开正文的 DOM 和滚动身份保持。
-运行 `python3 tests/frontend_search_state_browser.py --binary target/release/sessiondock`；
-`SESSIONDOCK_TEST_WEB_DIR` 指向独立 Vue 构建时验证新入口，不设置时验证生产旧入口。
+运行 `python3 tests/frontend_search_state_browser.py --binary target/release/sessiondock`。
 
 Frontend performance regressions also run as ordinary browser suites:
 

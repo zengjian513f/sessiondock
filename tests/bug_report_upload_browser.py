@@ -8,7 +8,7 @@ import tempfile
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
-from browser_runtime import js
+
 from playwright.sync_api import sync_playwright, expect
 
 from history_parity import REPO, Corpus, isolated_server
@@ -80,7 +80,7 @@ def run(browser, root, config):
         page.on('pageerror', lambda error: errors.append(str(error)))
         try:
             page.goto(f'http://127.0.0.1:{hub.port}', wait_until='networkidle')
-            page.evaluate(js(r"""() => {
+            page.evaluate(r"""() => {
                 window.draftReadAudit = [];
                 const original = browserAuditEvent;
                 browserAuditEvent = (event, data, content, fields) => {
@@ -88,21 +88,13 @@ def run(browser, root, config):
                         draftReadAudit.push({event, data, content, fields});
                     return original(event, data, content, fields);
                 };
-            }""", r"""() => {
-                window.draftReadAudit = [];
-                const original = runtime.core.audit.browserAuditEvent;
-                runtime.core.audit.browserAuditEvent = (event, data, content, fields) => {
-                    if (data?.url?.startsWith('api/session/conversation?'))
-                        draftReadAudit.push({event, data, content, fields});
-                    return original(event, data, content, fields);
-                };
-            }"""))
+            }""")
             open_report(page)
-            page.wait_for_function(js('bugReportDraftObject().loadFailed', 'runtime.launch.bugReportDraftObject().loadFailed'), timeout=16000)
+            page.wait_for_function('bugReportDraftObject().loadFailed', timeout=16000)
             stalled_reads[0].abort()
             expect(page.locator('#bug-report-items')).to_contain_text('草稿读取超时')
             page.fill('#bug-report-description', 'Recover report attachment reply')
-            page.wait_for_function(js('!bugReportDraftObject().loadFailed && !bugReportDraftObject().storageError && bugReportDraftObject().savedVersion === bugReportDraftObject().editVersion', '!runtime.launch.bugReportDraftObject().loadFailed && !runtime.launch.bugReportDraftObject().storageError && runtime.launch.bugReportDraftObject().savedVersion === runtime.launch.bugReportDraftObject().editVersion'))
+            page.wait_for_function('!bugReportDraftObject().loadFailed && !bugReportDraftObject().storageError && bugReportDraftObject().savedVersion === bugReportDraftObject().editVersion')
             expect(page.locator('#bug-report-description')).to_have_value('Recover report attachment reply')
             audit = page.evaluate('draftReadAudit')
             failure = next(e for e in audit if e['event'] == 'http.request.failed')
@@ -125,7 +117,7 @@ def run(browser, root, config):
             wait_drafts(page)
             expect(warning).to_have_count(1)
             fail_saves = False
-            page.wait_for_function(js('!bugReportDraftObject().storageError && bugReportDraftObject().savedVersion === bugReportDraftObject().editVersion', '!runtime.launch.bugReportDraftObject().storageError && runtime.launch.bugReportDraftObject().savedVersion === runtime.launch.bugReportDraftObject().editVersion'))
+            page.wait_for_function('!bugReportDraftObject().storageError && bugReportDraftObject().savedVersion === bugReportDraftObject().editVersion')
             expect(warning).to_have_count(0)
             report_text = 'Recover report attachment reply after save failure!'
             expect(page.locator('#bug-report-description')).to_have_value(report_text)
@@ -136,7 +128,7 @@ def run(browser, root, config):
             payload = PNG + b'\0' * (831 * 1024 - len(PNG))
             page.locator('#bug-report-file').set_input_files(
                 {'name': 'capture.png', 'mimeType': 'image/png', 'buffer': payload})
-            page.wait_for_function(js('bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging', 'runtime.launch.bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !runtime.launch.bugReportDraftObject().attachments[0].staging'))
+            page.wait_for_function('bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging')
             assert len(attempts) == 2 and attempts[0] == attempts[1], attempts
             assert not page.locator('#bug-report-items').get_by_role('button', name='重试', exact=True).count()
             print('PASS lost upload reply: real bytes saved; retry reuses draft/upload ID', flush=True)
@@ -152,15 +144,15 @@ def run(browser, root, config):
             expect(description).to_have_value(report_text)
             assert description.evaluate('el => [el.selectionStart, el.selectionEnd]') == [6, 6]
             wait_drafts(page)
-            uid = page.evaluate(js('BUG_REPORT_DRAFT_UID', 'runtime.launch.BUG_REPORT_DRAFT_UID'))
+            uid = page.evaluate('BUG_REPORT_DRAFT_UID')
             saved = context.request.get(f'http://127.0.0.1:{hub.port}/api/session/conversation', params={'uid': uid})
             assert saved.status == 200, saved.text()
             assert saved.json()['draft']['value']['text'] == report_text, saved.json()
             print('PASS attachment card click: reference inserted at caret and actual text saved on the node', flush=True)
 
             fail_replies = 2
-            # Drop through the actual report form; Vue owns the hover state and
-            # listeners while upload/retry remains the existing draft operation.
+            # Drop through the actual report form; upload/retry remains the
+            # existing draft operation.
             transfer = page.evaluate_handle("""bytes => {
               const dt=new DataTransfer();
               dt.items.add(new File([new Uint8Array(bytes)], 'second.png', {type:'image/png'}));
@@ -177,7 +169,7 @@ def run(browser, root, config):
             assert len(attempts) == 4 and attempts[2] == attempts[3], attempts
             expect(page.locator('#bug-report-description')).to_have_value(report_text)
             retry.click()
-            page.wait_for_function(js('bugReportDraftObject().attachments.every(a => a.uploaded?.upload_id && !a.staging)', 'runtime.launch.bugReportDraftObject().attachments.every(a => a.uploaded?.upload_id && !a.staging)'))
+            page.wait_for_function('bugReportDraftObject().attachments.every(a => a.uploaded?.upload_id && !a.staging)')
             assert len(attempts) == 5 and attempts[4] == attempts[2], attempts
             print('PASS persistent interruption: bounded retry, retained text/file, manual recovery', flush=True)
 

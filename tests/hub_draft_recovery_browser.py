@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Draft discovery isolates slow/offline peers instead of retrying every node."""
-from browser_runtime import js
+
 import argparse
 from collections import Counter
 from contextlib import ExitStack
@@ -50,47 +50,40 @@ def main():
             base=f'http://127.0.0.1:{hub.port}'
             page.goto(base,wait_until='domcontentloaded')
             uid=local_uid.replace(':',':'+nodes[0].nid+'~',1)
-            page.wait_for_function(js('uid=>composerDrafts.get(uid)?.text==="Restored draft"', 'uid=>runtime.composer.composerDrafts.get(uid)?.text==="Restored draft"'),arg=uid)
+            page.wait_for_function('uid=>composerDrafts.get(uid)?.text==="Restored draft"',arg=uid)
             # A real click can open the good node while another discovery hangs.
             page.locator(f'#side .item[data-uid="{uid}"] .t').click()
-            page.wait_for_function(js('uid=>S.sel===uid && cache.has(uid)', 'uid=>runtime.core.state.selection.sel===uid && runtime.core.cache.cache.has(uid)'),arg=uid)
-            assert page.evaluate(js('composerServerRecoveries.get("'+nodes[4].nid+'").request!==null', 'runtime.composer.composerServerRecoveries.get("' + nodes[4].nid + '").request!==null'))
+            page.wait_for_function('uid=>S.sel===uid && cache.has(uid)',arg=uid)
+            assert page.evaluate(('composerServerRecoveries.get("'+nodes[4].nid+'").request!==null'))
             # Let several real live/terminal-list polling cycles pass. The held
             # request times out at 12 seconds; neither peer retries the group.
-            page.wait_for_function(js('composerServerRecoveries.get("'+nodes[4].nid+'").failures===1', 'runtime.composer.composerServerRecoveries.get("' + nodes[4].nid + '").failures===1'),timeout=16000)
+            page.wait_for_function(('composerServerRecoveries.get("'+nodes[4].nid+'").failures===1'),timeout=16000)
             page.wait_for_timeout(3200)
             assert requests==Counter({n.nid:1 for n in nodes if n is not nodes[3]}),requests
-            assert page.evaluate(js('uid=>composerDrafts.get(uid).text', 'uid=>runtime.composer.composerDrafts.get(uid).text'),uid)=='Restored draft'
-            page.evaluate(js('''()=>{window.__recoveryRenders=0;const render=renderSide;
-              renderSide=function(...args){__recoveryRenders++;return render(...args)}}''', """()=>{window.__recoveryRenders=0;
-              window.__recoveryObserver=new MutationObserver(records=>{
-                __recoveryRenders+=records.filter(record=>[...record.removedNodes]
-                  .some(node=>node instanceof Element && (node.matches('.item') || node.querySelector('.item')))).length;
-              });
-              __recoveryObserver.observe(document.querySelector('#side'),{childList:true,subtree:true});}"""))
+            assert page.evaluate('uid=>composerDrafts.get(uid).text',uid)=='Restored draft'
+            page.evaluate('''()=>{window.__recoveryRenders=0;const render=renderSide;
+              renderSide=function(...args){__recoveryRenders++;return render(...args)}}''')
             # Only the failed, due node retries; concurrent calls share its GET.
-            page.evaluate(js('node=>{composerServerRecoveries.get(node).retryAt=0}', 'node=>{runtime.composer.composerServerRecoveries.get(node).retryAt=0}'),nodes[5].nid)
-            page.evaluate(js('Promise.all([recoverServerComposerDrafts(),recoverServerComposerDrafts()])', 'Promise.all([runtime.composer.recoverServerComposerDrafts(),runtime.composer.recoverServerComposerDrafts()])'))
+            page.evaluate('node=>{composerServerRecoveries.get(node).retryAt=0}',nodes[5].nid)
+            page.evaluate('Promise.all([recoverServerComposerDrafts(),recoverServerComposerDrafts()])')
             assert requests[nodes[5].nid]==2 and requests[nodes[4].nid]==1,requests
             assert all(requests[n.nid]==1 for n in nodes[:3]),requests
             assert page.evaluate('__recoveryRenders')==0
-            assert page.evaluate(js('node=>composerServerRecoveries.get(node).retryAt-Date.now()>55000', 'node=>runtime.composer.composerServerRecoveries.get(node).retryAt-Date.now()>55000'),nodes[5].nid)
+            assert page.evaluate('node=>composerServerRecoveries.get(node).retryAt-Date.now()>55000',nodes[5].nid)
             # A known-offline node is not contacted even when its retry is due.
-            page.evaluate(js('''node=>{Nodes.list.find(n=>n.id===node).online=false;
-              composerServerRecoveries.get(node).retryAt=0}''', """node=>{runtime.core.state.nodes.list.find(n=>n.id===node).online=false;
-              runtime.composer.composerServerRecoveries.get(node).retryAt=0}"""),nodes[5].nid)
-            page.evaluate(js('recoverServerComposerDrafts()', 'runtime.composer.recoverServerComposerDrafts()'))
+            page.evaluate('''node=>{Nodes.list.find(n=>n.id===node).online=false;
+              composerServerRecoveries.get(node).retryAt=0}''',nodes[5].nid)
+            page.evaluate('recoverServerComposerDrafts()')
             assert requests[nodes[5].nid]==2
             # Recovery is immediate on the next observation of online:true;
             # there is no need to reload the page or wait out the backoff.
             failing.remove(nodes[5].nid)
-            page.evaluate(js('''node=>{composerServerRecoveries.get(node).retryAt=Date.now()+300000;
-              Nodes.list.find(n=>n.id===node).online=true}''', """node=>{runtime.composer.composerServerRecoveries.get(node).retryAt=Date.now()+300000;
-              runtime.core.state.nodes.list.find(n=>n.id===node).online=true}"""),nodes[5].nid)
-            page.evaluate(js('recoverServerComposerDrafts()', 'runtime.composer.recoverServerComposerDrafts()'))
+            page.evaluate('''node=>{composerServerRecoveries.get(node).retryAt=Date.now()+300000;
+              Nodes.list.find(n=>n.id===node).online=true}''',nodes[5].nid)
+            page.evaluate('recoverServerComposerDrafts()')
             assert requests[nodes[5].nid]==3
-            assert page.evaluate(js('node=>composerServerRecoveries.get(node).done', 'node=>runtime.composer.composerServerRecoveries.get(node).done'),nodes[5].nid)
-            page.evaluate(js('recoverServerComposerDrafts()', 'runtime.composer.recoverServerComposerDrafts()'))
+            assert page.evaluate('node=>composerServerRecoveries.get(node).done',nodes[5].nid)
+            page.evaluate('recoverServerComposerDrafts()')
             assert requests[nodes[5].nid]==3
             # A newly discovered node is not hidden by an all-nodes done flag.
             extra=FakeNode('1'*32,'NodeNew');stack.callback(extra.stop)
@@ -99,7 +92,7 @@ def main():
                         '--token-file',str(token))
             # Registration updates the registry file; reload the isolated Hub.
             hub.stop();hub.start()
-            page.evaluate(js('loadNodes()', 'runtime.core.nodes.loadNodes()'));page.evaluate(js('recoverServerComposerDrafts()', 'runtime.composer.recoverServerComposerDrafts()'))
+            page.evaluate('loadNodes()');page.evaluate('recoverServerComposerDrafts()')
             assert requests[extra.nid]==1,requests
             assert all(requests[n.nid]==1 for n in nodes[:3]),requests
             assert requests[nodes[3].nid]==0,requests

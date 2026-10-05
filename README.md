@@ -1,8 +1,7 @@
 # SessionDock
 
 独立演进的 Rust 会话服务，包含本地节点、多机 Hub、受管终端、可靠发送、文件与
-媒体能力。当前生产前端位于 `legacy-web/`（`/sessiondock/`）；Vue 3 / TypeScript / Pinia 前端
-使用 `web/migration/` 独立构建，仅发布到 `/sessiondock2/`。重构不切换生产引用，当前接线见架构合同。
+媒体能力。前端位于 `legacy-web/`（`/sessiondock/`），是按提交原样发布的纯 JS 静态资源。
 
 未完成工作见 [TODO.md](TODO.md)；全部当前合同文档索引见
 [docs/README.md](docs/README.md)，路由清单见
@@ -22,8 +21,7 @@ crates/
   ptyhost/           独立 Rust PTY host，保留旧协议并增加可选实例校验
   ptyhost-record/    终端录像格式、存储与读取
   ptyhost-screen/    服务端终端画面模型
-legacy-web/          当前生产前端，独立 Vue 入口尚未切换
-web/                 Vue / TypeScript / Pinia 前端和独立静态构建，生产尚未切换
+legacy-web/          前端（纯 JS 静态资源，无构建步骤）
 reference/
   legacy-web/        原前端的冻结快照，仅作迁移参考
 tests/               实际浏览器操作、协议验证和可选 Python fixture 差分
@@ -145,10 +143,7 @@ Rust 运行依赖，也不是所有历史格式已兼容的证明**。
 - 整组操作见 [移动](docs/session-move.md) 与 [克隆](docs/session-clone.md)；
   独立 Linux 资源采集及会话计量见 [process-links](docs/process-links.md)。
 
-在 `web/` 执行 `npm ci && npm run build`，生成完整独立前端 `dist-migration/`。
-`npm run dev` 监听源码并重建静态资源；HTML 能力注入和资源快照仍由 Rust 服务提供，
-修改构建后重启自己的开发服务。生产前端 `legacy-web/` 不经过构建，也不依赖 `web/`。
-已移除未使用的演示页面及 Vue 单元测试依赖；验证采用 Chromium 用户操作。
+前端 `legacy-web/` 不经过构建，Rust 服务直接提供并注入能力声明；验证采用 Chromium 用户操作。
 平台限制见对应合同。
 
 架构见 [docs/architecture.md](docs/architecture.md)，冻结前端参考见

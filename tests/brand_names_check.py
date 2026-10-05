@@ -53,8 +53,7 @@ def check_frontend(failures):
     index = (web / "index.html").read_text(encoding="utf-8")
     if '<meta name="apple-mobile-web-app-title" content="SessionDock">' not in index:
         failures.append(f"{web}/index.html: missing SessionDock mobile app title")
-    # Legacy spreads installation across pwa.js and the settings bundle; Vue
-    # keeps it in the entry bundle. Inspect the actual declared scripts.
+    # Installation code is spread across the declared scripts; inspect them all.
     install_js = "\n".join(path.read_text(encoding="utf-8") for path in html_assets(web) if path.suffix == ".js")
     for needle in ("data-pwa-install-button", "beforeinstallprompt", "appinstalled", "安装到桌面"):
         if needle not in install_js:

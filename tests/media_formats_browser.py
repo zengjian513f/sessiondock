@@ -6,7 +6,7 @@ CLI, native homes, model invocation or external network access.
 """
 from __future__ import annotations
 
-from browser_runtime import js
+
 import argparse
 import base64
 import json
@@ -173,7 +173,7 @@ def main():
                     expect(button).to_be_visible()
                     expect(button).to_have_attribute("data-unavailable", "true")
                     assert button.get_attribute("disabled") is None
-                    reason = page.evaluate(js("consoleUnavailableReason(S.sel, S.agent, false)", 'runtime.core.nodes.consoleUnavailableReason(runtime.core.state.selection.sel, runtime.core.state.selection.agent, false)'))
+                    reason = page.evaluate("consoleUnavailableReason(S.sel, S.agent, false)")
                     assert reason and "尚未加载" not in reason and "正在读取" not in reason, reason
                     dialogs = []
                     def accept_dialog(dialog):

@@ -9,7 +9,7 @@ list's bottom edge scrolls it. A plain click still toggles one row, and entering
 leaving 多选 patches the existing rows instead of rebuilding the list.
 Real mouse input against an isolated server; synthetic corpus.
 """
-from browser_runtime import js
+
 import argparse
 import os
 import re
@@ -45,12 +45,12 @@ def main():
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(base, wait_until="networkidle")
-            page.wait_for_function(js("S.sessions.length >= 30", 'runtime.core.state.catalog.sessions.length >= 30'))
+            page.wait_for_function("S.sessions.length >= 30")
             # Entering and leaving 多选 patches the rows in place: same nodes,
             # the checkboxes come and go, no rebuild of the whole list.
             page.evaluate("() => document.querySelectorAll('#side .item[data-uid]').forEach(n => { n.__kept = true; })")
             for on in (True, False):
-                page.evaluate(js("on => setPicking(on)", 'on => runtime.bulk.setPicking(on)'), on)
+                page.evaluate("on => setPicking(on)", on)
                 state = page.evaluate("""() => {
                     const rows = [...document.querySelectorAll('#side .item[data-uid]')];
                     return {rows: rows.length, kept: rows.filter(n => n.__kept).length,
@@ -91,10 +91,10 @@ def main():
                 page.mouse.up()
 
             def picked():
-                return {i for i, uid in enumerate(uids) if page.evaluate(js("uid => pickedSessions.has(uid)", 'uid => runtime.bulk.state.picked.has(uid)'), uid)}
+                return {i for i, uid in enumerate(uids) if page.evaluate("uid => pickedSessions.has(uid)", uid)}
 
             def expect_picked(indices):
-                page.wait_for_function(js("n => pickedSessions.size === n", 'n => runtime.bulk.state.picked.size === n'), arg=len(indices))
+                page.wait_for_function("n => pickedSessions.size === n", arg=len(indices))
                 assert picked() == set(indices), (picked(), indices)
                 for i in range(8):
                     (expect(row(i)).to_have_class if i in indices else expect(row(i)).not_to_have_class)(
@@ -129,7 +129,7 @@ def main():
             page.mouse.move(*center(6))
             page.mouse.down()
             page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] - 4, steps=8)
-            page.wait_for_function(js("uid => pickedSessions.has(uid)", 'uid => runtime.bulk.state.picked.has(uid)'), arg=uids[16])
+            page.wait_for_function("uid => pickedSessions.has(uid)", arg=uids[16])
             assert page.evaluate("document.querySelector('#side').scrollTop") > 0
             page.mouse.up()
             beyond = picked()

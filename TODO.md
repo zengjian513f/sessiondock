@@ -19,7 +19,7 @@
 
 ## Native interaction semantics
 
-- [ ] 部署补发（不阻塞 [Agy](docs/agy.md) 接入和 Vue 前端切换）：Linux、macOS、Windows
+- [ ] 部署补发（不阻塞 [Agy](docs/agy.md) 接入）：Linux、macOS、Windows
   各一个节点网络不可达，恢复联机后用官方部署工具补发并验证。
 
 - [ ] 决定并实现真正的 native rewind/rollback。现有 timeline pin 只改变 SessionDock
@@ -44,18 +44,3 @@
   当前已复用未变化行、按需创建折叠组；全部展开时 DOM 数量仍随会话数增长。
 - [ ] 将 Grid 历史折行改为逻辑行惰性计算或可取消分批计算，同时保持选择坐标和完整历史。
   当前拖动已合并、临时 cell 不常驻，但最后一次变窄仍同步遍历历史。
-
-### Vue 前端改为 Vue 写法（仅 `web/`，生产 `legacy-web/` 不变）
-
-验收：services/pages 直接调用 DOM API 只留在网格画布渲染器与 diagnostics 快照；
-偏好读写全部经由偏好 store；能由状态推导的界面数据用 `computed`；`any` < 100。
-不变：DOM id/class、存储键、请求格式、文案、`window.SessionDockRuntime` 上被测试
-使用的路径；发送确认、同步与终端字节缓冲留在 service。每阶段完成即验证并部署预览站。
-
-- [ ] Hub 注册表的 `renderer` 字段与 `set_renderer` 只剩 legacy 使用；legacy 退役时一并删除。
-- [ ] 对话区：消息容器 `#msgs` 仍由服务创建并作为各视图的 Teleport 目标，历史分页、
-  差量追加和待落盘提示按 `#msgs` 查询；改为组件渲染容器后再收掉这些查询。
-- [ ] 终端：布局策略（`layoutTermPane` 的高度、全幅与移动端定位）仍在控制器内计算，
-  可改为面板组件的 computed；终端列表与 pane 绑定仍共用控制器状态，尚未拆成独立 store。
-- [ ] 类型：`any` 仍有约 157 处，主要是线上记录的开放字段（`api/types.ts`）与各请求
-  `response.json()` 的结果；需按接口补响应类型后再收紧，验收目标 < 100。

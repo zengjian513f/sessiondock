@@ -193,7 +193,7 @@ impl Harness {
         let app = app_with_shutdown(
             Config {
                 bind: address,
-                web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
+                web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
                 roots: SessionRoots {
                     claude: None,
                     codex: Some(native),

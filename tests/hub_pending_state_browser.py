@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """New-session receipts survive partial hub lists; recovery and real exit stay authoritative."""
-from browser_runtime import js
+
 import argparse
 import json
 import os
@@ -39,7 +39,7 @@ def scenario(browser, hub, node, other):
     page.on("response", observe)
     context.route("**/api/term/create", create_then_disconnect)
     page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
-    page.wait_for_function(js("T.listLoaded && Nodes.list.length === 2 && T.pending.length === 1", 'runtime.terminal.state.listLoaded && runtime.core.state.nodes.list.length === 2 && runtime.terminal.state.pending.length === 1'))
+    page.wait_for_function("T.listLoaded && Nodes.list.length === 2 && T.pending.length === 1")
     page.locator("#new-session").click()
     page.locator("#new-node").select_option(node.nid)
     page.locator('#new-session-form label:has(input[name="new-source"][value="codex"])').click()
@@ -47,25 +47,25 @@ def scenario(browser, hub, node, other):
     page.locator("#new-session-go").click()
     uid = f"tmux:{node.nid}~same-terminal"
     row = page.locator(f'#side .item[data-uid="{uid}"]')
-    page.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'), arg=uid)
+    page.wait_for_function("uid => S.sel === uid", arg=uid)
     page.locator("#cinput").fill("keep this unsent draft")
-    page.wait_for_function(js("Nodes.errors.get('term')?.length > 0", "runtime.core.state.nodes.errors.get('term')?.length > 0"), timeout=20000)
+    page.wait_for_function("Nodes.errors.get('term')?.length > 0", timeout=20000)
     expect(row).to_contain_text("运行状态不确定")
     expect(row).not_to_contain_text("已结束")
     expect(page.locator(".new-session-wait")).to_have_text("暂时无法确认会话状态。")
     assert partials and all(not data.get("pending") for data in partials), partials
-    receipt = page.evaluate(js("T.pending[0]", 'runtime.terminal.state.pending[0]'))
+    receipt = page.evaluate("T.pending[0]")
     assert receipt["instance_id"] == "fixture-new-instance" and receipt["stale"]
-    assert page.evaluate(js("T.pending.length", 'runtime.terminal.state.pending.length')) == 1, "healthy node removal must still apply"
+    assert page.evaluate("T.pending.length") == 1, "healthy node removal must still apply"
     row.click()
     expect(page.locator("#cinput")).to_have_value("keep this unsent draft")
     expect(page.locator(".new-session-wait")).not_to_contain_text("已结束")
 
     # No in-memory receipt after reload: the persisted draft must also remain
     # uncertain while this node's list is unavailable.
-    page.wait_for_function(js("composerDrafts.get(S.sel)?.savedVersion === composerDrafts.get(S.sel)?.editVersion", 'runtime.composer.composerDrafts.get(runtime.core.state.selection.sel)?.savedVersion === runtime.composer.composerDrafts.get(runtime.core.state.selection.sel)?.editVersion'))
+    page.wait_for_function("composerDrafts.get(S.sel)?.savedVersion === composerDrafts.get(S.sel)?.editVersion")
     page.reload(wait_until="networkidle")
-    page.wait_for_function(js("T.listLoaded && Nodes.errors.get('term')?.length > 0", "runtime.terminal.state.listLoaded && runtime.core.state.nodes.errors.get('term')?.length > 0"))
+    page.wait_for_function("T.listLoaded && Nodes.errors.get('term')?.length > 0")
     row.click()
     expect(row).to_contain_text("运行状态不确定")
     expect(page.locator(".new-session-wait")).to_have_text("暂时无法确认会话状态。")
@@ -73,21 +73,21 @@ def scenario(browser, hub, node, other):
 
     node.pop("term_error")
     # Normal monitor + page polling recover the node, without injecting JS state.
-    page.wait_for_function(js("!Nodes.errors.get('term')?.length && T.pending.some(r => !r.stale)", "!runtime.core.state.nodes.errors.get('term')?.length && runtime.terminal.state.pending.some(r => !r.stale)"), timeout=30000)
+    page.wait_for_function("!Nodes.errors.get('term')?.length && T.pending.some(r => !r.stale)", timeout=30000)
     expect(row).to_contain_text("等待首条消息")
     expect(page.locator(".new-session-wait")).not_to_contain_text("已结束")
     expect(page.locator("#cinput")).to_have_value("keep this unsent draft")
-    assert page.evaluate(js("T.pending[0].instance_id", 'runtime.terminal.state.pending[0].instance_id')) == receipt["instance_id"]
+    assert page.evaluate("T.pending[0].instance_id") == receipt["instance_id"]
 
     # A successful authoritative exit is still shown as ended.
     ended = {**node.state()["pending"][0], "state": "exited", "running": False, "stale": True}
     node.set(pending=[ended])
-    page.wait_for_function(js("T.pending.some(r => r.state === 'exited')", "runtime.terminal.state.pending.some(r => r.state === 'exited')"), timeout=20000)
+    page.wait_for_function("T.pending.some(r => r.state === 'exited')", timeout=20000)
     expect(row).to_contain_text("已结束")
     expect(page.locator(".new-session-wait")).to_have_text("会话已结束。")
     # A later partial result cannot erase an already confirmed exit either.
     node.set(term_error=True)
-    page.wait_for_function(js("Nodes.errors.get('term')?.length > 0", "runtime.core.state.nodes.errors.get('term')?.length > 0"), timeout=20000)
+    page.wait_for_function("Nodes.errors.get('term')?.length > 0", timeout=20000)
     expect(row).to_contain_text("已结束")
     expect(page.locator("#cinput")).to_have_value("keep this unsent draft")
     assert not errors, errors
@@ -105,7 +105,7 @@ def node_source_picker(browser, hub, node, other):
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
-    page.wait_for_function(js("T.listLoaded && Nodes.list.length === 2", 'runtime.terminal.state.listLoaded && runtime.core.state.nodes.list.length === 2'))
+    page.wait_for_function("T.listLoaded && Nodes.list.length === 2")
     page.locator("#new-session").click()
     opencode = page.locator('input[name="new-source"][value="opencode"]')
     page.locator("#new-node").select_option(node.nid)
@@ -163,7 +163,7 @@ def node_switch_cwd(browser, hub, node, other):
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
-    page.wait_for_function(js("T.listLoaded && Nodes.list.length === 2", 'runtime.terminal.state.listLoaded && runtime.core.state.nodes.list.length === 2'))
+    page.wait_for_function("T.listLoaded && Nodes.list.length === 2")
     page.locator("#new-session").click()
     cwd = page.locator("#new-cwd")
     page.locator("#new-node").select_option(node.nid)

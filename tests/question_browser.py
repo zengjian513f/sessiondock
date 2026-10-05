@@ -12,7 +12,7 @@ question whose cursor sits on the text row. A fork's AskUserQuestion
 PreToolUse (payload with `agent_id`, BUG-20260928-143049-61a198) never opens a
 native dialog and must not put a card on the page.
 """
-from browser_runtime import js
+
 import json
 import os
 import subprocess
@@ -124,7 +124,7 @@ def main():
                     with page.expect_response(lambda r: urlsplit(r.url).path == "/api/session/conversation/send", timeout=20000) as sent:
                         page.locator("#csend").click()
                     assert sent.value.status == 200, sent.value.text()
-                    page.wait_for_function(js("S.sel && !S.sel.startsWith('tmux:')", "runtime.core.state.selection.sel && !runtime.core.state.selection.sel.startsWith('tmux:')"), timeout=20000)
+                    page.wait_for_function("S.sel && !S.sel.startsWith('tmux:')", timeout=20000)
 
                     # A post-turn fork (prompt suggestion) asks: Claude refuses the
                     # tool without a Post hook and the terminal never shows it.

@@ -4,7 +4,7 @@ Covers busy sends, lost responses, session isolation, uploads, cancellation,
 and startup choice refusal/recovery without browser message persistence.
 Older helper functions remain available to the terminal ownership suites.
 """
-from browser_runtime import js
+
 import hashlib
 import json
 import os
@@ -23,7 +23,7 @@ from popups import on_popup  # noqa: E402
 FAKE_CLI = REPO / "tests/fake_claude_cli.py"
 SETTINGS = "/synthetic/bridge-settings.json"
 
-XTERM_TEXT = js("""() => [...T.views.values()].map(view => {
+XTERM_TEXT = """() => [...T.views.values()].map(view => {
   const buffer = view.term?.buffer?.active;
   if (!buffer) return '';
   const lines = [];
@@ -32,16 +32,7 @@ XTERM_TEXT = js("""() => [...T.views.values()].map(view => {
     if (line) lines.push(line.translateToString(false).trimEnd());
   }
   return lines.join('\\n');
-}).join('\\n')""", """() => [...runtime.terminal.state.views.values()].map(view => {
-  const buffer = view.term?.buffer?.active;
-  if (!buffer) return '';
-  const lines = [];
-  for (let i = 0; i < buffer.length; i++) {
-    const line = buffer.getLine(i);
-    if (line) lines.push(line.translateToString(false).trimEnd());
-  }
-  return lines.join('\\n');
-}).join('\\n')""")
+}).join('\\n')"""
 
 
 def claude_uid(root, sid):
@@ -76,12 +67,12 @@ def create_claude(page, base, work, *, open_terminal=True):
     expect(page.locator("#composer")).to_be_visible()
     expect(page.locator("#cadd")).to_be_visible()
     expect(page.locator("#cesc")).to_be_visible()
-    assert page.evaluate(js("T.views.size === 0 && T.openViews.size === 0", 'runtime.terminal.state.views.size === 0 && runtime.terminal.state.openViews.size === 0'))
+    assert page.evaluate("T.views.size === 0 && T.openViews.size === 0")
     if not open_terminal:
         return receipt
     page.locator("#a-term").click()
     expect(page.locator("#termpane")).to_be_visible()
-    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
+    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
     xterm_includes(page, "FAKE_CLAUDE_READY sid=[%s]" % receipt["declared_sid"])
     return receipt
 
@@ -92,7 +83,7 @@ def wait_history(page, text, timeout=20000):
             "text => [...document.querySelectorAll('#msgs .msg:not(.queued-send)')].some(n => n.textContent.includes(text))",
             arg=text, timeout=timeout)
     except Exception:
-        print("history timeout:", page.evaluate(js("() => ({uid: S.sel, text: document.querySelector('#msgs')?.innerText})", "() => ({uid: runtime.core.state.selection.sel, text: document.querySelector('#msgs')?.innerText})")), flush=True)
+        print("history timeout:", page.evaluate("() => ({uid: S.sel, text: document.querySelector('#msgs')?.innerText})"), flush=True)
         raise
 
 
@@ -154,8 +145,8 @@ def main():
                     context = browser.new_context(viewport={"width":1280,"height":900},service_workers="block")
                     page=watch(context)
                     receipt=create_claude(page,base,root / 'work',open_terminal=False)
-                    page.wait_for_function(js("composerUid && !composerDraft().loading && takenOver(composerUid)", 'runtime.composer.composerUid && !runtime.composer.composerDraft().loading && runtime.terminal.takenOver(runtime.composer.composerUid)'))
-                    assert page.evaluate(js('T.views.size', 'runtime.terminal.state.views.size'))==0
+                    page.wait_for_function("composerUid && !composerDraft().loading && takenOver(composerUid)")
+                    assert page.evaluate('T.views.size')==0
                     uid='tmux:'+receipt['name']
                     build=context.request.get(base+'/api/meta').json()['build']
                     def send(text, check_width=False):
@@ -198,9 +189,9 @@ def main():
                         assert repaired['text']=='' and repaired['attachments']==[] and repaired['quotes']==[]
                     page.reload(wait_until='networkidle')
                     # With no native user turn yet, reopen the pending instance explicitly.
-                    page.evaluate(js('async receipt => {await loadTermList();await openPendingSession(receipt)}', 'async receipt => {await runtime.terminal.loadTermList();await runtime.terminal.openPendingSession(receipt)}'),receipt)
-                    page.wait_for_function(js('composerUid && !composerDraft().loading', 'runtime.composer.composerUid && !runtime.composer.composerDraft().loading'))
-                    assert not page.evaluate(js('composerDraft().storageError || composerDraft().loadFailed', 'runtime.composer.composerDraft().storageError || runtime.composer.composerDraft().loadFailed'))
+                    page.evaluate('async receipt => {await loadTermList();await openPendingSession(receipt)}',receipt)
+                    page.wait_for_function('composerUid && !composerDraft().loading')
+                    assert not page.evaluate('composerDraft().storageError || composerDraft().loadFailed')
                     first=send('first busy input',check_width=True)
                     # A successful write is not a native message yet: the CLI holds it
                     # in its own queue. It shows as a queued bubble at the tail and the
@@ -243,8 +234,8 @@ def main():
                         time.sleep(.1)
                     users=[json.loads(line)['message']['content'] for line in jsonl.read_text().splitlines() if json.loads(line)['type']=='user']
                     assert users==['first busy input','second busy input'],users
-                    page.wait_for_function(js("S.sel && !S.sel.startsWith('tmux:')", "runtime.core.state.selection.sel && !runtime.core.state.selection.sel.startsWith('tmux:')"),timeout=20000)
-                    native=page.evaluate(js('S.sel', 'runtime.core.state.selection.sel'))
+                    page.wait_for_function("S.sel && !S.sel.startsWith('tmux:')",timeout=20000)
+                    native=page.evaluate('S.sel')
                     wait_history(page,'second busy input')
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
                     expect(page.locator('#queued-sends')).to_have_count(0)
@@ -289,14 +280,14 @@ def main():
                     assert refused.status==409 and refused.json()['code']=='cli_input_pending',refused.text()
                     # Clearing the PTY editor lifts the block; text typed in the
                     # PTY blocks SEND the same way.
-                    page.evaluate(js("uid => sendToSession(null, ['C-u'], uid)", "uid => runtime.composer.sendToSession(null, ['C-u'], uid)"),native)
+                    page.evaluate("uid => sendToSession(null, ['C-u'], uid)",native)
                     expect(page.locator('#csend')).to_be_enabled(timeout=10000)
                     expect(page.locator('.returned-to-cli')).to_have_count(0)
-                    page.evaluate(js("uid => sendToSession(null, ['typed in the pty'], uid)", "uid => runtime.composer.sendToSession(null, ['typed in the pty'], uid)"),native)
+                    page.evaluate("uid => sendToSession(null, ['typed in the pty'], uid)",native)
                     expect(status).to_contain_text('终端输入框里已有未发送的文字',timeout=10000)
                     expect(page.locator('#csend')).to_be_disabled()
                     expect(page.locator('.returned-to-cli')).to_have_count(0)
-                    page.evaluate(js("uid => sendToSession(null, ['C-u'], uid)", "uid => runtime.composer.sendToSession(null, ['C-u'], uid)"),native)
+                    page.evaluate("uid => sendToSession(null, ['C-u'], uid)",native)
                     (root/'esc-restore').unlink()
                     expect(page.locator('#csend')).to_be_enabled(timeout=10000)
                     expect(status).to_be_hidden()
@@ -309,8 +300,8 @@ def main():
                     holder=watch(holder_context)
                     holder.locator(f'#side .item[data-uid="{native}"]').click()
                     holder.locator('#a-term').click()
-                    holder.wait_for_function(js('T.ws?.readyState === WebSocket.OPEN', 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
-                    held_token=holder.evaluate(js('name => T.views.get(name)?.inputLease?.token', 'name => runtime.terminal.state.views.get(name)?.inputLease?.token'),receipt['name'])
+                    holder.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
+                    held_token=holder.evaluate('name => T.views.get(name)?.inputLease?.token',receipt['name'])
                     assert held_token
                     # A stale hook card must not veto a currently writable PTY.
                     prompt_dir=root/'state/claude-prompts'
@@ -323,32 +314,27 @@ def main():
                     # The report worker uses the same SEND outside this page.
                     # Its successful receipt must clear an already-open viewer.
                     page.fill('#cinput','server-owned first task')
-                    page.evaluate(js('''async () => {
+                    page.evaluate('''async () => {
                         const draft=composerDraft();
                         draft.requestId='server-owned-task';
                         draft.requestText=JSON.stringify({text:draft.text,attachments:[],quotes:[]});
                         await persistComposerDraft();
-                    }''', """async () => {
-                        const draft=runtime.composer.composerDraft();
-                        draft.requestId='server-owned-task';
-                        draft.requestText=JSON.stringify({text:draft.text,attachments:[],quotes:[]});
-                        await runtime.composer.persistComposerDraft();
-                    }"""))
+                    }''')
                     row=context.request.get(base+'/api/session/conversation?uid='+native).json()['draft']
                     external=context.request.post(base+'/api/session/conversation/send',data={
                         'uid':native,'name':receipt['name'],'request_id':'server-owned-task',
                         'text':'server-owned first task','draft_revision':row['revision'],
                         'attachments':[],'quotes':[],'_build':build})
                     assert external.status==200,external.text()
-                    assert holder.evaluate(js('name => T.views.get(name)?.inputLease?.token', 'name => runtime.terminal.state.views.get(name)?.inputLease?.token'),receipt['name']) == held_token
-                    assert holder.evaluate(js('T.ws?.readyState === WebSocket.OPEN', 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
+                    assert holder.evaluate('name => T.views.get(name)?.inputLease?.token',receipt['name']) == held_token
+                    assert holder.evaluate('T.ws?.readyState === WebSocket.OPEN')
                     holder_context.close()
                     stale_prompt.unlink()
                     expect(page.locator('#cinput')).to_have_value('',timeout=10000)
                     # Recreate the retained report metadata from a failed initial
                     # injection, then type a different message and press Enter.
                     # Assert native CLI bytes, not just the successful HTTP reply.
-                    page.evaluate(js('''async () => {
+                    page.evaluate('''async () => {
                         const draft=composerDraft();
                         draft.text='original report description';
                         draft.report_text=draft.text;
@@ -356,15 +342,7 @@ def main():
                         draft.requestId='report-send:BUG-SYNTHETIC';
                         draft.requestText=JSON.stringify({text:draft.text,attachments:[],quotes:[]});
                         await persistComposerDraft();refreshComposerDraft(composerUid);
-                    }''', """async () => {
-                        const draft=runtime.composer.composerDraft();
-                        draft.text='original report description';
-                        draft.report_text=draft.text;
-                        draft.report_prompt='ORIGINAL REPORT TASK\\nMust not replace a follow-up';
-                        draft.requestId='report-send:BUG-SYNTHETIC';
-                        draft.requestText=JSON.stringify({text:draft.text,attachments:[],quotes:[]});
-                        await runtime.composer.persistComposerDraft();runtime.composer.refreshComposerDraft(runtime.composer.composerUid);
-                    }"""))
+                    }''')
                     page.locator('#cinput').fill('new follow-up after failed report')
                     with page.expect_response(lambda r:urlsplit(r.url).path=='/api/session/conversation/send',timeout=20000) as followup:
                         page.locator('#cinput').press('Enter')
@@ -377,12 +355,12 @@ def main():
                         assert time.monotonic()<deadline,users
                         time.sleep(.1)
                     assert users[-1]=='new follow-up after failed report',('follow-up replaced by stale report prompt',users[-1])
-                    page.fill('#cinput','draft survives refresh');page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                    page.fill('#cinput','draft survives refresh');page.evaluate('async () => await composerDraftWrites')
                     server=context.request.get(base+'/api/session/conversation?uid='+native).json()['draft']
                     assert server['value']['text']=='draft survives refresh'
                     assert not page.evaluate("Object.keys(localStorage).some(k=>k.includes('composerDraft'))")
                     page.reload(wait_until='networkidle')
-                    page.wait_for_function(js("composerUid && !composerDraft().loading", 'runtime.composer.composerUid && !runtime.composer.composerDraft().loading'))
+                    page.wait_for_function("composerUid && !composerDraft().loading")
                     expect(page.locator('#cinput')).to_have_value('draft survives refresh')
                     # CAS refuses another page's stale write without changing either input.
                     stale=context.request.post(base+'/api/session/conversation',data={'uid':native,'revision':server['revision']-1,'value':{'text':'stale other page'}})
@@ -396,7 +374,7 @@ def main():
                     assert context.request.get(base+'/api/session/conversation?uid='+native).json()['draft']['value']['text']=='draft survives refresh'
                     send('spinner session isolation')
                     expect(page.locator('#queued-sends .msg.queued-send').filter(has_text='spinner session isolation')).to_have_count(1)
-                    page.evaluate(js('async receipt => {await loadTermList();await openPendingSession(receipt)}', 'async receipt => {await runtime.terminal.loadTermList();await runtime.terminal.openPendingSession(receipt)}'),other_receipt)
+                    page.evaluate('async receipt => {await loadTermList();await openPendingSession(receipt)}',other_receipt)
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
                     expect(page.locator('#queued-sends')).to_have_count(0)
                     page.locator(f'#side .item[data-uid="{native}"]').click()
@@ -410,16 +388,16 @@ def main():
                         route.abort('failed')
                     page.route('**/api/session/conversation/send',lose_reply)
                     page.fill('#cinput','lost HTTP reply');page.locator('#csend').click()
-                    page.wait_for_function(js('!composerSending', '!runtime.composer.composerSending'))
+                    page.wait_for_function('!composerSending')
                     expect(page.locator('#cinput')).to_have_value('lost HTTP reply')
                     count=len(sends)
                     page.unroute('**/api/session/conversation/send',lose_reply)
-                    page.locator('#csend').click();page.wait_for_function(js('!composerSending', '!runtime.composer.composerSending'))
+                    page.locator('#csend').click();page.wait_for_function('!composerSending')
                     expect(page.locator('#cinput')).to_have_value('')
                     assert len(sends)==count # Lookup only: no duplicate SEND.
                     wait_history(page,'lost HTTP reply')
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
-                    page.fill('#cinput','draft survives refresh');page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                    page.fill('#cinput','draft survives refresh');page.evaluate('async () => await composerDraftWrites')
                     # Selection stages the bytes at once in private staging; no agent file yet.
                     staging=root/'state/conversations/conversation-uploads'
                     uploads=[]
@@ -429,17 +407,17 @@ def main():
                     with page.expect_response(lambda r:urlsplit(r.url).path=='/api/session/conversation/attachment') as staged:
                         chooser.value.set_files([{'name':'payload.txt','mimeType':'text/plain','buffer':b'private bytes'}])
                     assert staged.value.status==200,staged.value.text()
-                    page.wait_for_function(js("composerDraft().attachments[0]?.uploaded?.upload_id && !composerDraft().attachments[0].staging", 'runtime.composer.composerDraft().attachments[0]?.uploaded?.upload_id && !runtime.composer.composerDraft().attachments[0].staging'))
-                    page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                    page.wait_for_function("composerDraft().attachments[0]?.uploaded?.upload_id && !composerDraft().attachments[0].staging")
+                    page.evaluate('async () => await composerDraftWrites')
                     assert len(uploads)==1 and not (root/'work/claude-area/sessiondock_attachments').exists()
                     assert len(list(staging.iterdir()))==1
                     # The staged reference survives a reload: the File is gone, SEND still works.
                     page.reload(wait_until='networkidle')
                     # The declared Claude identity now owns the sidebar row; its draft is the same record.
                     page.locator(f'#side .item[data-uid="{claude_uid(root,receipt["declared_sid"])}"]').first.click()
-                    page.wait_for_function(js("composerUid && !composerDraft().loading && takenOver(composerUid)", 'runtime.composer.composerUid && !runtime.composer.composerDraft().loading && runtime.terminal.takenOver(runtime.composer.composerUid)'))
+                    page.wait_for_function("composerUid && !composerDraft().loading && takenOver(composerUid)")
                     expect(page.locator('#cinput')).to_have_value('draft survives refresh')
-                    assert page.evaluate(js("composerDraft().attachments[0].uploaded.upload_id", 'runtime.composer.composerDraft().attachments[0].uploaded.upload_id')) and not page.evaluate(js('composerDraft().attachments[0].file instanceof File', 'runtime.composer.composerDraft().attachments[0].file instanceof File'))
+                    assert page.evaluate("composerDraft().attachments[0].uploaded.upload_id") and not page.evaluate('composerDraft().attachments[0].file instanceof File')
                     # A failed staging keeps the File on the card with a retry; SEND retries too.
                     def unavailable(route):route.fulfill(status=503,content_type='application/json',body='{"error":"upload unavailable"}')
                     page.route('**/api/session/conversation/attachment?*',unavailable)
@@ -449,13 +427,13 @@ def main():
                     expect(page.locator('#compose-items .draft-card.failed')).to_contain_text('upload unavailable')
                     expect(page.locator('#compose-items .draft-card.failed .draft-retry')).to_be_visible()
                     count=len(sends);page.locator('#csend').click()
-                    page.wait_for_function(js('!composerSending', '!runtime.composer.composerSending'))
-                    assert len(sends)==count and page.evaluate(js('composerDraft().attachments[1].file instanceof File', 'runtime.composer.composerDraft().attachments[1].file instanceof File'))
+                    page.wait_for_function('!composerSending')
+                    assert len(sends)==count and page.evaluate('composerDraft().attachments[1].file instanceof File')
                     expect(page.locator('#cinput')).to_have_value('draft survives refresh')
                     page.unroute('**/api/session/conversation/attachment?*',unavailable)
                     page.locator('#compose-items .draft-card.failed .draft-retry').click()
-                    page.wait_for_function(js("composerDraft().attachments.length===2 && composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)", 'runtime.composer.composerDraft().attachments.length===2 && runtime.composer.composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)'))
-                    page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                    page.wait_for_function("composerDraft().attachments.length===2 && composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)")
+                    page.evaluate('async () => await composerDraftWrites')
                     assert len(list(staging.iterdir()))==2
                     # Removing a staged attachment releases its private bytes once the draft is saved.
                     with page.expect_response(lambda r:urlsplit(r.url).path=='/api/session/conversation/attachment/discard') as discarded:
@@ -481,17 +459,17 @@ def main():
                     page.evaluate(paste_files,six)
                     assert dialogs[-1]==('confirm','粘贴了 6 个文件，共 1 KB。继续？'),dialogs[-1]
                     page.wait_for_timeout(200)
-                    assert page.evaluate(js('composerDraft().attachments.length', 'runtime.composer.composerDraft().attachments.length'))==0
+                    assert page.evaluate('composerDraft().attachments.length')==0
                     dialog_action['accept']=True
                     page.evaluate(paste_files,six)
-                    page.wait_for_function(js("composerDraft().attachments.length===6 && composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)", 'runtime.composer.composerDraft().attachments.length===6 && runtime.composer.composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)'))
+                    page.wait_for_function("composerDraft().attachments.length===6 && composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)")
                     page.evaluate(paste_files,six[:5])
-                    page.wait_for_function(js('composerDraft().attachments.length===11 && composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)', 'runtime.composer.composerDraft().attachments.length===11 && runtime.composer.composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)'))
+                    page.wait_for_function('composerDraft().attachments.length===11 && composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)')
                     assert dialogs[-1][1].startswith('粘贴了 6 个文件'),dialogs[-1]   # five files asked nothing
                     for remaining in range(10,-1,-1):
                         page.locator('#compose-items .draft-card').first.locator('.draft-remove').click()
-                        page.wait_for_function(js(f'composerDraft().attachments.length==={remaining}', f'runtime.composer.composerDraft().attachments.length==={remaining}'))
-                    page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                        page.wait_for_function(f'composerDraft().attachments.length==={remaining}')
+                    page.evaluate('async () => await composerDraftWrites')
                     page.wait_for_function('!document.querySelector("#compose-items .draft-card")')
                     deadline=time.monotonic()+10
                     while list(staging.iterdir()) and time.monotonic()<deadline:page.wait_for_timeout(100)
@@ -522,10 +500,10 @@ def main():
                     (root/'gate').write_text(' Accessing workspace:\n\n Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel'.replace(' ','\x1b[C'))
                     gated=create_claude(page,base,root/'work',open_terminal=False)
                     gated_uid='tmux:'+gated['name']
-                    page.wait_for_function(js("composerDraft()?.inputStatus?.state === 'blocked'", "runtime.composer.composerDraft()?.inputStatus?.state === 'blocked'"),timeout=15000)
+                    page.wait_for_function("composerDraft()?.inputStatus?.state === 'blocked'",timeout=15000)
                     expect(page.locator('#csend')).to_be_disabled()
                     page.fill('#cinput','must not answer trust')
-                    page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                    page.evaluate('async () => await composerDraftWrites')
                     refused=context.request.post(base+'/api/session/conversation/send',data={'uid':gated_uid,'text':'must not answer trust','request_id':'choice-refusal','_build':build})
                     assert refused.status==409 and refused.json()['code']=='cli_question',refused.text()
                     assert not (root/'gate.trace').exists() # No terminal bytes.

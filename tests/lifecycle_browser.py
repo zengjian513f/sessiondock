@@ -2,7 +2,7 @@
 """Opt-in isolated launch pipeline acceptance: fixed free shell, never model CLI.
 
 OpenCode launches (pre-created session, native row) are `opencode_browser.py`."""
-from browser_runtime import js, wait_for_async
+from browser_runtime import wait_for_async
 import json
 import shutil
 import os
@@ -122,8 +122,8 @@ def main(bind_native=False, bare_shell=False):
                             for query in ("?force=1", ""):
                                 listed = context.request.get(base+"/api/term/list"+query).json()
                                 assert [row["record_id"] for row in listed["pending"]] == [receipt["record_id"]], listed
-                            page.evaluate(js("loadTermList()", 'runtime.terminal.loadTermList()'))
-                            assert page.evaluate(js("S.sel", 'runtime.core.state.selection.sel')) == "tmux:" + receipt["name"]
+                            page.evaluate("loadTermList()")
+                            assert page.evaluate("S.sel") == "tmux:" + receipt["name"]
                             expect(page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]')).to_have_count(1)
                             if bare_shell:
                                 page.set_viewport_size({"width":1280,"height":900})
@@ -172,7 +172,7 @@ def main(bind_native=False, bare_shell=False):
                         expect(page.locator("#termpane")).to_be_visible()
                         if not (bind_native and restarted):
                             expect(page.locator("#composer")).to_be_hidden()
-                        page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
+                        page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
                         page.wait_for_function("("+XTERM_TEXT+")().includes('RS_SHELL_READY')")
                         if bind_native and restarted:
                             assert claims[-1].get("uid")==native_uid and "record_id" not in claims[-1],claims[-1]
@@ -187,7 +187,7 @@ def main(bind_native=False, bare_shell=False):
                             assert context.request.post(base+"/api/term/bind",data={**body,"operator_confirmed":False}).status==400
                             ignored={**body,"instance_id":"0"*32,"sid":"forged-display-id"}
                             assert context.request.post(base+"/api/term/bind",data=ignored).status==409
-                            page.evaluate(js("window.bindingSocket = T.ws", 'window.bindingSocket = runtime.terminal.state.ws'))
+                            page.evaluate("window.bindingSocket = T.ws")
                             # The operator path is the API alone; the page has no
                             # binding UI and learns of the binding from its own polling.
                             bound=context.request.post(base+"/api/term/bind",data=body)
@@ -197,26 +197,20 @@ def main(bind_native=False, bare_shell=False):
                             # the pending (launch-kind) socket is released, the native
                             # session opens and its console is claimed through the
                             # native lease; the pending row leaves the sidebar.
-                            page.wait_for_function(js("uid => S.sel === uid", 'uid => runtime.core.state.selection.sel === uid'),arg=native_uid)
+                            page.wait_for_function("uid => S.sel === uid",arg=native_uid)
                             try:
-                                page.wait_for_function(js("T.ws && T.ws !== window.bindingSocket && T.ws.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws && runtime.terminal.state.ws !== window.bindingSocket && runtime.terminal.state.ws.readyState === WebSocket.OPEN'),timeout=10000)
+                                page.wait_for_function("T.ws && T.ws !== window.bindingSocket && T.ws.readyState === WebSocket.OPEN",timeout=10000)
                             except Exception:
-                                print("FOLLOW_DIAGNOSTIC",json.dumps(page.evaluate(js("""name => ({
+                                print("FOLLOW_DIAGNOSTIC",json.dumps(page.evaluate("""name => ({
                                     selected:S.sel, uid:T.uid, name:T.name, ws:T.ws?.readyState,
                                     views:[...T.views].map(([key,v])=>({key,uid:v.bindingUid,retired:v.retired,ended:v.ended,revoked:v.revoked,ws:v.ws?.readyState,instance:v.instanceId})),
                                     pending:T.pending, sessions:T.list, errors:[...ConsoleUI.errors],
                                     visible:!document.querySelector('#termpane').classList.contains('hidden'),
                                     text:document.querySelector('#detail').innerText.slice(0,300),
-                                })""", """name => ({
-                                    selected:runtime.core.state.selection.sel, uid:runtime.terminal.state.uid, name:runtime.terminal.state.name, ws:runtime.terminal.state.ws?.readyState,
-                                    views:[...runtime.terminal.state.views].map(([key,v])=>({key,uid:v.bindingUid,retired:v.retired,ended:v.ended,revoked:v.revoked,ws:v.ws?.readyState,instance:v.instanceId})),
-                                    pending:runtime.terminal.state.pending, sessions:runtime.terminal.state.list, errors:[...runtime.core.state.console.errors],
-                                    visible:!document.querySelector('#termpane').classList.contains('hidden'),
-                                    text:document.querySelector('#detail').innerText.slice(0,300),
-                                })"""),receipt["name"]),ensure_ascii=False))
+                                })""",receipt["name"]),ensure_ascii=False))
                                 raise
                             assert claims[-1].get("uid")==native_uid and "record_id" not in claims[-1],claims[-1]
-                            assert page.evaluate(js("name => T.views.has(name) && T.views.get(name).bindingUid", 'name => runtime.terminal.state.views.has(name) && runtime.terminal.state.views.get(name).bindingUid'),receipt["name"])==native_uid
+                            assert page.evaluate("name => T.views.has(name) && T.views.get(name).bindingUid",receipt["name"])==native_uid
                             expect(page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]')).to_have_count(0)
                             page.wait_for_function("("+XTERM_TEXT+")().includes('RS_SHELL_READY')")
                             page.locator("#termpane .xterm-helper-textarea").press_sequentially("ping")
@@ -229,7 +223,7 @@ def main(bind_native=False, bare_shell=False):
                             assert "sid" not in json.loads((root/"host"/(receipt["name"]+".json")).read_text())["meta"]
                             if mixed.status==200:
                                 # Another page took the native console; ours reports it.
-                                page.wait_for_function(js("uid => !T.ws || T.ws.readyState !== WebSocket.OPEN", 'uid => !runtime.terminal.state.ws || runtime.terminal.state.ws.readyState !== WebSocket.OPEN'),arg=native_uid)
+                                page.wait_for_function("uid => !T.ws || T.ws.readyState !== WebSocket.OPEN",arg=native_uid)
                         status=context.request.get(base+"/api/term/new-status",params={"record_id":receipt["record_id"],"instance_id":receipt["instance_id"]})
                         assert status.status==200 and status.json()["running"],status.text()
                         if restarted:
@@ -252,8 +246,8 @@ def main(bind_native=False, bare_shell=False):
                                 assert cancelled.json()["state"]=="uncertain" and cancelled.json()["discardable"],cancelled.text()
                                 # The derived native lease is retired: this page's
                                 # console reports it and never reclaims by itself.
-                                page.wait_for_function(js("name => { const v = T.views.get(name); return !v || v.retired || v.ended || v.revoked; }", 'name => { const v = runtime.terminal.state.views.get(name); return !v || v.retired || v.ended || v.revoked; }'),arg=receipt["name"],timeout=15000)
-                                page.wait_for_function(js("uid => !(T.list || []).some(row => row.uid === uid)", 'uid => !(runtime.terminal.state.list || []).some(row => row.uid === uid)'),arg=native_uid,timeout=15000)
+                                page.wait_for_function("name => { const v = T.views.get(name); return !v || v.retired || v.ended || v.revoked; }",arg=receipt["name"],timeout=15000)
+                                page.wait_for_function("uid => !(T.list || []).some(row => row.uid === uid)",arg=native_uid,timeout=15000)
                                 again=context.request.post(base+"/api/term/kill",data={"record_id":receipt["record_id"],"instance_id":receipt["instance_id"]})
                                 assert again.status==200
                                 page.wait_for_timeout(1200)
@@ -279,7 +273,7 @@ def main(bind_native=False, bare_shell=False):
                                     assert killed.value.status==200,killed.value.text()
                                     # The shell exits on the Ctrl-D the stop sends first; no HUP needed.
                                     assert killed.value.json()["state"]=="exited",killed.value.text()
-                                    action_page.wait_for_function(js("id => T.pending.some(row => row.record_id === id && row.running === false && row.recording?.id)", 'id => runtime.terminal.state.pending.some(row => row.record_id === id && row.running === false && row.recording?.id)'),arg=receipt["record_id"],timeout=15000)
+                                    action_page.wait_for_function("id => T.pending.some(row => row.record_id === id && row.running === false && row.recording?.id)",arg=receipt["record_id"],timeout=15000)
                                     action=action_page.locator("#a-session-action")
                                     if not action.is_visible():
                                         action_page.locator("#a-more").click()
@@ -287,7 +281,7 @@ def main(bind_native=False, bare_shell=False):
                                 with action_page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/discard") as discarded:
                                     action.click()
                                 assert discarded.value.status==200,discarded.value.text()
-                                action_page.wait_for_function(js("id => !T.pending.some(row=>row.record_id===id)", 'id => !runtime.terminal.state.pending.some(row=>row.record_id===id)'),arg=receipt["record_id"])
+                                action_page.wait_for_function("id => !T.pending.some(row=>row.record_id===id)",arg=receipt["record_id"])
                                 expect(action_page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]')).to_have_count(0)
                                 final = context.request.get(base+"/api/term/new-status",params={"record_id":receipt["record_id"],"instance_id":receipt["instance_id"]})
                                 assert final.status == 200 and not final.json().get("running"), final.text()
@@ -305,12 +299,12 @@ def main(bind_native=False, bare_shell=False):
                                 natural = context.request.post(base+"/api/term/create",data={"source":"shell","cwd":str(root/"work"),"request_id":"shell-natural-exit"})
                                 assert natural.status == 200 and natural.json()["running"], natural.text()
                                 natural = natural.json()
-                                page.evaluate(js("info => openPendingSession(info)", 'info => runtime.terminal.openPendingSession(info)'),natural)
+                                page.evaluate("info => openPendingSession(info)",natural)
                                 expect(page.locator("#termpane")).to_be_visible()
-                                page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
+                                page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
                                 page.locator("#termpane .xterm-helper-textarea:visible").press_sequentially("quit")
                                 page.locator("#termpane .xterm-helper-textarea:visible").press("Enter")
-                                page.wait_for_function(js("name => T.views.get(name)?.ended", 'name => runtime.terminal.state.views.get(name)?.ended'),arg=natural["name"])
+                                page.wait_for_function("name => T.views.get(name)?.ended",arg=natural["name"])
                                 # The page follows the exit it just observed: the header
                                 # action is 删除 and the sidebar says 已结束 before the
                                 # list poll brings the server's own state.
@@ -319,21 +313,21 @@ def main(bind_native=False, bare_shell=False):
                                 # The receipt is the session: a naturally exited SSH stays
                                 # listed (not running) until 删除, with its recording
                                 # (opening it replays read-only) ...
-                                wait_for_async(page, js("async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && row.recording?.id); }", 'async id => { await runtime.terminal.loadTermList(); return runtime.terminal.state.pending.some(row => row.record_id === id && row.running === false && row.recording?.id); }'),arg=natural["record_id"])
+                                wait_for_async(page, "async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && row.recording?.id); }",arg=natural["record_id"])
                                 expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]')).to_have_count(1)
                                 final = context.request.get(base+"/api/term/new-status",params={"record_id":natural["record_id"],"instance_id":natural["instance_id"]})
                                 assert final.status == 200 and final.json()["state"] == "exited", final.text()
                                 # ... and equally without one (an old host, a pruned
                                 # store): the row stays and the console says so.
-                                recording_id = page.evaluate(js("id => T.pending.find(row => row.record_id === id).recording.id", 'id => runtime.terminal.state.pending.find(row => row.record_id === id).recording.id'),natural["record_id"])
+                                recording_id = page.evaluate("id => T.pending.find(row => row.record_id === id).recording.id",natural["record_id"])
                                 shutil.rmtree(root/"host"/"records"/recording_id)
-                                wait_for_async(page, js("async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && !row.recording); }", 'async id => { await runtime.terminal.loadTermList(); return runtime.terminal.state.pending.some(row => row.record_id === id && row.running === false && !row.recording); }'),arg=natural["record_id"])
+                                wait_for_async(page, "async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && !row.recording); }",arg=natural["record_id"])
                                 expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]')).to_have_count(1)
                                 expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话")
                                 # A fresh console view (the retained one keeps the last
                                 # output) is told there is nothing to replay.
-                                page.evaluate(js("name => { disposeTermView(name); return attachTerm(name); }", 'name => { runtime.terminal.disposeTermView(name); return runtime.terminal.attachTerm(name); }'),natural["name"])
-                                page.wait_for_function(js("uid => (ConsoleUI.errors.get(uid) || '').includes('没有留下录制')", "uid => (runtime.core.state.console.errors.get(uid) || '').includes('没有留下录制')"),arg="tmux:"+natural["name"])
+                                page.evaluate("name => { disposeTermView(name); return attachTerm(name); }",natural["name"])
+                                page.wait_for_function("uid => (ConsoleUI.errors.get(uid) || '').includes('没有留下录制')",arg="tmux:"+natural["name"])
                                 page.set_viewport_size({"width":1280,"height":900})
                                 page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]').click(button="right")
                                 expect(page.locator('#item-menu [data-act="stop"]')).to_be_visible()
@@ -342,24 +336,24 @@ def main(bind_native=False, bare_shell=False):
                                 with page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/discard") as gone:
                                     page.locator('#item-menu [data-act="delete"]').click()
                                 assert gone.value.status == 200, gone.value.text()
-                                wait_for_async(page, js("async id => { await loadTermList(); return !T.pending.some(row => row.record_id === id); }", 'async id => { await runtime.terminal.loadTermList(); return !runtime.terminal.state.pending.some(row => row.record_id === id); }'),arg=natural["record_id"])
+                                wait_for_async(page, "async id => { await loadTermList(); return !T.pending.some(row => row.record_id === id); }",arg=natural["record_id"])
                                 expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]')).to_have_count(0)
                                 # An exited SSH kept by composer input still offers delete;
                                 # discard drops the draft row that kill alone would leave.
                                 drafted = context.request.post(base+"/api/term/create",data={"source":"shell","cwd":str(root/"work"),"request_id":"shell-draft-exit"})
                                 assert drafted.status == 200 and drafted.json()["running"], drafted.text()
                                 drafted = drafted.json()
-                                page.evaluate(js("info => openPendingSession(info)", 'info => runtime.terminal.openPendingSession(info)'),drafted)
+                                page.evaluate("info => openPendingSession(info)",drafted)
                                 expect(page.locator("#composer")).to_be_visible()
                                 expect(page.locator("#a-session-action")).to_have_attribute("aria-label","停止会话")
                                 page.locator("#cinput").fill("ls")
-                                page.wait_for_function(js("composerDrafts.get(S.sel)?.text === 'ls'", "runtime.composer.composerDrafts.get(runtime.core.state.selection.sel)?.text === 'ls'"))
+                                page.wait_for_function("composerDrafts.get(S.sel)?.text === 'ls'")
                                 expect(page.locator("#termpane")).to_be_visible()
-                                page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
+                                page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
                                 page.locator("#termpane .xterm-helper-textarea:visible").press_sequentially("quit")
                                 page.locator("#termpane .xterm-helper-textarea:visible").press("Enter")
-                                page.wait_for_function(js("name => T.views.get(name)?.ended", 'name => runtime.terminal.state.views.get(name)?.ended'),arg=drafted["name"])
-                                wait_for_async(page, js("async id => { await loadTermList(); return pendingTmuxSessions().some(row => row.record_id === id && !row.running); }", 'async id => { await runtime.terminal.loadTermList(); return runtime.core.pending.pendingTmuxSessions().some(row => row.record_id === id && !row.running); }'),arg=drafted["record_id"])
+                                page.wait_for_function("name => T.views.get(name)?.ended",arg=drafted["name"])
+                                wait_for_async(page, "async id => { await loadTermList(); return pendingTmuxSessions().some(row => row.record_id === id && !row.running); }",arg=drafted["record_id"])
                                 expect(page.locator(f'#side .item[data-uid="tmux:{drafted["name"]}"]')).to_have_count(1)
                                 action=page.locator("#a-session-action")
                                 if not action.is_visible():

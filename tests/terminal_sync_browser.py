@@ -4,7 +4,7 @@
 BUG-20261003-110817-4e7c32: DEC 2026 end precedes the final cursor restore
 by about 15 ms. No real CLI, production host, or native session is used.
 """
-from browser_runtime import js, scoped_frontend
+
 import json
 import os
 from pathlib import Path
@@ -52,9 +52,6 @@ while True:
 
 
 def main():
-    if scoped_frontend():
-        print('SKIP terminal_sync_browser: the Vue build has no byte console; the host model applies DEC 2026 for the grid', flush=True)
-        return
     if os.name != 'posix':
         raise SystemExit('This private PTY fixture requires POSIX')
     with tempfile.TemporaryDirectory(prefix='sessiondock-sync-') as temporary:
@@ -86,8 +83,8 @@ def main():
                 keyboard.focus()
                 # The initial attach resizes/reflows the fixture's startup grid.
                 keyboard.press('e')
-                page.wait_for_function(js('T.term.buffer.active.cursorX === 2 && T.term.buffer.active.cursorY === 10', 'runtime.terminal.state.term.buffer.active.cursorX === 2 && runtime.terminal.state.term.buffer.active.cursorY === 10'))
-                page.evaluate(js('''() => {
+                page.wait_for_function('T.term.buffer.active.cursorX === 2 && T.term.buffer.active.cursorY === 10')
+                page.evaluate('''() => {
                     window.cursorMoves = [];
                     T.term.onCursorMove(() => cursorMoves.push([
                         T.term.buffer.active.cursorX, T.term.buffer.active.cursorY]));
@@ -97,39 +94,28 @@ def main():
                     view.term.write = (bytes, done) => {
                         parsedWrites.push(bytes); writeTimes.push(performance.now()); write(bytes, done);
                     };
-                }''', """() => {
-                    window.cursorMoves = [];
-                    runtime.terminal.state.term.onCursorMove(() => cursorMoves.push([
-                        runtime.terminal.state.term.buffer.active.cursorX, runtime.terminal.state.term.buffer.active.cursorY]));
-                    window.parsedWrites = [];
-                    window.writeTimes = [];
-                    const view = runtime.terminal.state.views.get(runtime.terminal.state.name), write = view.term.write.bind(view.term);
-                    view.term.write = (bytes, done) => {
-                        parsedWrites.push(bytes); writeTimes.push(performance.now()); write(bytes, done);
-                    };
-                }"""))
+                }''')
                 for key in ('r', 's'):
                     page.evaluate('cursorMoves.length = 0')
                     keyboard.press(key)
                     page.wait_for_function('needle => (' + fixture.XTERM_TEXT + ')().includes(needle)', arg='RS_TAIL_' + key)
                     moves = page.evaluate('cursorMoves')
-                    diagnostic = page.evaluate(js('''({writes:parsedWrites,times:writeTimes,
-                        settle:writeTermOutput.toString().includes('TERM_SYNC_SETTLE_MS')})''', """({writes:parsedWrites,times:writeTimes,
-                        settle:runtime.terminal.writeTermOutput.toString().includes('TERM_SYNC_SETTLE_MS')})"""))
+                    diagnostic = page.evaluate('''({writes:parsedWrites,times:writeTimes,
+                        settle:writeTermOutput.toString().includes('TERM_SYNC_SETTLE_MS')})''')
                     assert all(move == [2, 10] for move in moves), (
                         f'intermediate redraw cursor escaped: {moves}; diagnostic={diagnostic!r}')
                     print(f'PASS {key}: late restore committed with redraw; cursor events={moves}', flush=True)
                 # Ordinary typing reaches the parser without entering either hold timer.
                 keyboard.press('p')
-                page.wait_for_function(js('T.term.buffer.active.cursorX === 3', 'runtime.terminal.state.term.buffer.active.cursorX === 3'))
-                assert page.evaluate(js('T.views.get(T.name).syncHold === null', 'runtime.terminal.state.views.get(runtime.terminal.state.name).syncHold === null'))
+                page.wait_for_function('T.term.buffer.active.cursorX === 3')
+                assert page.evaluate('T.views.get(T.name).syncHold === null')
                 assert page.evaluate("parsedWrites.at(-1) === 'p'")
                 # A broken CLI must still release the page-side buffer at the cap.
                 keyboard.press('h')
                 page.wait_for_function("parsedWrites.some(s => s.includes('RS_UNTERMINATED'))", timeout=2000)
-                assert page.evaluate(js('T.views.get(T.name).syncHold === null', 'runtime.terminal.state.views.get(runtime.terminal.state.name).syncHold === null'))
+                assert page.evaluate('T.views.get(T.name).syncHold === null')
                 keyboard.press('e')
-                page.wait_for_function(js('T.term.buffer.active.cursorX === 2 && T.term.buffer.active.cursorY === 10', 'runtime.terminal.state.term.buffer.active.cursorX === 2 && runtime.terminal.state.term.buffer.active.cursorY === 10'))
+                page.wait_for_function('T.term.buffer.active.cursorX === 2 && T.term.buffer.active.cursorY === 10')
                 assert not errors, errors
                 print('PASS terminal_sync_browser: split/complete markers, late cursor restore, plain echo, bounded fallback', flush=True)
                 browser.close()

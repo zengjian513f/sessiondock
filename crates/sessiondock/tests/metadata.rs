@@ -16,7 +16,7 @@ use tower::ServiceExt;
 
 fn config(root: &Path) -> Config {
     Config {
-        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
+        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
         roots: SessionRoots {
             codex: Some(root.join("native")),
             ..Default::default()

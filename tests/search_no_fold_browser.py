@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Search starts expanded and supports folds isolated from saved list folds."""
-from browser_runtime import js
+
 import argparse
 import json
 import os
@@ -142,7 +142,7 @@ def main():
 
                     group.locator('.ghead').click()
                     expect(parent).to_have_count(0)
-                    saved = page.evaluate(js('JSON.stringify([[...S.closed], [...S.nestClosed]])', 'JSON.stringify([[...runtime.core.state.sidebar.closed], [...runtime.core.state.sidebar.nestClosed]])'))
+                    saved = page.evaluate('JSON.stringify([[...S.closed], [...S.nestClosed]])')
                     stored = page.evaluate('JSON.stringify([localStorage.getItem("sessiondock.closed"), localStorage.getItem("sessiondock.nestClosed")])')
 
                     # Flat mode also folds matching sidecars under a matched owner.
@@ -196,14 +196,14 @@ def main():
                     expect(worker).to_have_count(0)
                     # Polling and rerendering preserve this search's folds.
                     sessions['sig'] += '-fold-refresh'
-                    page.evaluate(js('async () => await runSessionPoll()', 'async () => await runtime.core.list.runSessionPoll()'))
+                    page.evaluate('async () => await runSessionPoll()')
                     expect(child).to_have_count(0)
                     expect(parent.locator('.nest-caret')).to_have_attribute('aria-expanded', 'false')
                     folded_color = check_red_themes(parent.locator('.nest-caret'))
                     group.locator('.ghead').click()
                     expect(parent).to_have_count(0)
                     check_red_themes(group.locator('.caret'))
-                    page.evaluate(js('renderSide()', 'async () => {runtime.core.state.catalog.notifyChanges(); await new Promise(requestAnimationFrame)}'))
+                    page.evaluate('renderSide()')
                     expect(parent).to_have_count(0)
                     group.locator('.ghead').click()
                     expect(parent).to_be_visible()
@@ -231,12 +231,12 @@ def main():
                     # A changed sessions response must not replace the matched
                     # sidecar subset with the full metadata list.
                     sessions['sig'] += '-refresh'
-                    page.evaluate(js('runSessionPoll()', 'runtime.core.list.runSessionPoll()'))
+                    page.evaluate('runSessionPoll()')
                     expect(worker).to_be_visible()
                     expect(worker.locator('.snip mark')).to_have_text('Needle')
                     expect(other).to_have_count(0)
                     expect(only).to_have_count(0)
-                    assert page.evaluate(js('JSON.stringify([[...S.closed], [...S.nestClosed]])', 'JSON.stringify([[...runtime.core.state.sidebar.closed], [...runtime.core.state.sidebar.nestClosed]])')) == saved
+                    assert page.evaluate('JSON.stringify([[...S.closed], [...S.nestClosed]])') == saved
 
                     def search(query):
                         old = page.locator('#stat').get_attribute('data-seq') or ''
@@ -263,7 +263,7 @@ def main():
                     expect(page.locator('#side .item')).to_have_count(2)
                     expect(page.locator('#side-search-count')).to_have_text('1 条')
                     sessions['sig'] += '-sidecar-refresh'
-                    page.evaluate(js('runSessionPoll()', 'runtime.core.list.runSessionPoll()'))
+                    page.evaluate('runSessionPoll()')
                     expect(parent).to_be_visible()
                     expect(parent.locator('.snip')).to_have_count(0)
                     expect(only.locator('.snip mark')).to_have_text(['SidecarOnly', 'SidecarOnly'])
@@ -338,7 +338,7 @@ def main():
                     expect(page.locator('#stat')).to_contain_text('结果不完整')
                     (agent_dir / 'agent-other.jsonl').write_bytes(encoded(claude_row('search-main', 'user',
                         'restored', None, 'Other worker', isSidechain=True, agentId='other')))
-                    assert page.evaluate(js('JSON.stringify([[...S.closed], [...S.nestClosed]])', 'JSON.stringify([[...runtime.core.state.sidebar.closed], [...runtime.core.state.sidebar.nestClosed]])')) == saved
+                    assert page.evaluate('JSON.stringify([[...S.closed], [...S.nestClosed]])') == saved
                     assert page.evaluate('JSON.stringify([localStorage.getItem("sessiondock.closed"), localStorage.getItem("sessiondock.nestClosed")])') == stored
                     page.locator('#side-search-exit').click()
                     expect(group).to_have_class('group closed')

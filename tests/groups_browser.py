@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Inline group management, session submenus and offline-safe deletion through Chromium."""
-from browser_runtime import js, scoped_frontend
+
 import argparse
 from contextlib import ExitStack
 from io import BytesIO
@@ -61,17 +61,15 @@ def main():
             if clock: page.clock.install()
             page.goto(base, wait_until='networkidle')
             try:
-                page.wait_for_function(js('SessionDockGroups.available && S.sessions.length > 0', 'runtime.core.groups.available && runtime.core.state.catalog.sessions.length > 0'))
+                page.wait_for_function('SessionDockGroups.available && S.sessions.length > 0')
             except Exception as exc:
                 raise AssertionError({'page_errors': errors, 'catalog': page.request.get(base + '/api/groups').text(),
-                    'ui': page.evaluate(js('({groups: typeof SessionDockGroups, sessions: S.sessions.length})', '({groups: typeof runtime.core.groups, sessions: runtime.core.state.catalog.sessions.length})'))}) from exc
+                    'ui': page.evaluate('({groups: typeof SessionDockGroups, sessions: S.sessions.length})')}) from exc
             expect(page.locator('#session-group-filter, #session-group-filters')).to_have_count(0)
             return page
         def tree(page):
             page.locator('#view [data-v="tree"]').click()
         def check_group_icon(page):
-            if scoped_frontend():
-                return
             button = page.get_by_role('button', name='会话分组', exact=True)
             # Inspect the rendered button, so a monochrome desktop font fallback
             # fails even if the markup still contains the label character.
@@ -175,7 +173,7 @@ def main():
             local[0].locator('#session-group-add').click()
             local[0].locator('#session-group-name').fill('取消创建')
             # A refresh must not discard the inline draft/focus.
-            local[0].evaluate(js('renderSide()', 'async () => {runtime.core.state.catalog.notifyChanges(); await new Promise(requestAnimationFrame)}'))
+            local[0].evaluate('renderSide()')
             expect(local[0].locator('#session-group-name')).to_have_value('取消创建')
             expect(local[0].locator('#session-group-name')).to_be_focused()
             local[0].locator('#session-group-name').press('Escape')
@@ -207,11 +205,11 @@ def main():
             for name in ('历史分组', '缓存分组', '待办', '稍后'):
                 expect(page.get_by_role('button', name=f'删除分组 {name}', exact=True)).to_be_enabled()
             page.reload(wait_until='networkidle')
-            page.wait_for_function(js('SessionDockGroups.available', 'runtime.core.groups.available'))
+            page.wait_for_function('SessionDockGroups.available')
             expect(page.locator('#side .item')).to_have_count(2)
             tree(page)
-            page.evaluate(js("store.set('labelFilter', ['旧标签'])", "runtime.core.preferences.set('labelFilter', ['旧标签'])"))
-            page.reload(wait_until='networkidle'); page.wait_for_function(js('SessionDockGroups.available', 'runtime.core.groups.available'))
+            page.evaluate("store.set('labelFilter', ['旧标签'])")
+            page.reload(wait_until='networkidle'); page.wait_for_function('SessionDockGroups.available')
             expect(page.locator('#side .item')).to_have_count(4)
             create(page, '搁置'); tree(page)
             # The second level opens with keyboard and closes independently.
@@ -276,7 +274,7 @@ def main():
             assert set(solo.locator('#session-group-menu button').evaluate_all('(buttons) => buttons.map(button => button.dataset.groupName)')) == {'', '历史分组', '缓存分组', '待办', '稍后'}
             solo.locator('#session-group-menu button').first.press('Escape')
             solo.locator('#item-menu [data-act="group"]').press('Escape')
-            remaining = solo.evaluate(js('SessionDockGroups.names', 'runtime.core.groups.names'))
+            remaining = solo.evaluate('SessionDockGroups.names')
             for name in remaining: remove(solo, name)
             expect(solo.locator('#side .group')).to_have_count(0)
             expect(solo.locator('#side .item')).to_have_count(0)

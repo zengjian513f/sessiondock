@@ -4,7 +4,7 @@
 Fixtures retain native key expectations. The fake CLI accepts exactly those
 bytes and records the semantic outcome; it never starts a model request.
 """
-from browser_runtime import js
+
 import argparse
 import json
 import os
@@ -178,7 +178,7 @@ def main():
                     if urlsplit(request.url).path == '/api/term/send' else None)
             try:
                 page.goto(base, wait_until='networkidle')
-                page.evaluate(js('''() => {
+                page.evaluate('''() => {
                     const probe = probeComposerInput;
                     const apply = applyCliState;
                     window.__pauseMenuWatch = false;
@@ -192,21 +192,7 @@ def main():
                         if (__menuChecks.length > 10) __menuChecks.shift();
                         return result;
                     };
-                }''', """() => {
-                    const probe = runtime.composer.probeComposerInput;
-                    const apply = runtime.composer.applyCliState;
-                    window.__pauseMenuWatch = false;
-                    runtime.composer.applyCliState = (uid, cli, options = {}) => {
-                        if (!__pauseMenuWatch || options.status === false) apply(uid, cli, options);
-                    };
-                    window.__menuChecks = [];
-                    runtime.composer.probeComposerInput = async uid => {
-                        const result = await probe(uid);
-                        __menuChecks.push({uid,result});
-                        if (__menuChecks.length > 10) __menuChecks.shift();
-                        return result;
-                    };
-                }"""))
+                }''')
                 card = page.locator('#composer-question')
 
                 def shown(source, generation):
@@ -219,22 +205,18 @@ def main():
 
                 def loaded(source, generation):
                     shown(source, generation)
-                    return page.evaluate(js('async () => await probeComposerInput(composerUid)', 'async () => await runtime.composer.probeComposerInput(runtime.composer.composerUid)'))
+                    return page.evaluate('async () => await probeComposerInput(composerUid)')
 
                 def clear(source):
                     loaded(source, frame(source, 'Private CLI menu test. No provider configured.'))
                     expect(card).to_be_hidden()
 
                 def pause_background():
-                    page.evaluate(js('''async () => {
+                    page.evaluate('''async () => {
                         while (composerInputProbeBusy) await new Promise(resolve => setTimeout(resolve, 10));
                         composerInputProbeBusy = true;
                         __pauseMenuWatch = true;
-                    }''', """async () => {
-                        while (runtime.composer.composerInputProbeBusy) await new Promise(resolve => setTimeout(resolve, 10));
-                        runtime.composer.composerInputProbeBusy = true;
-                        __pauseMenuWatch = true;
-                    }"""))
+                    }''')
 
                 for source in args.sources:
                     fixtures = json.loads((REPO / 'tests/fixtures' / f'cli_menus_{source}.json').read_text())
@@ -258,7 +240,7 @@ def main():
                     assert host_request(private_host, {'op':'resize', 'cols':160, 'rows':100})['ok']
                     expect(page.locator('#composer')).to_be_visible()
                     page.locator('#cinput').fill('Keep this message draft')
-                    page.evaluate(js('async () => await composerDraftWrites', 'async () => await runtime.composer.composerDraftWrites'))
+                    page.evaluate('async () => await composerDraftWrites')
                     for fixture in fixtures:
                         cases += 1
                         clear(source)
@@ -289,7 +271,7 @@ def main():
                         expect(page.locator('#composer-input-status')).to_contain_text('等待用户回答')
                         assert page.locator('#composer-input-status').evaluate(
                             "node => getComputedStyle(node, '::before').content") == '"?"'
-                        assert not page.evaluate(js('T.openViews.size', 'runtime.terminal.state.openViews.size')), 'Composer answers must not require terminal attach'
+                        assert not page.evaluate('T.openViews.size'), 'Composer answers must not require terminal attach'
                         prompt = result['prompt']
                         if source == 'codex' and prompt.get('kind') == 'screen_menu':
                             labels = [action['label'] for action in prompt.get('actions', [])]
@@ -307,29 +289,23 @@ def main():
                                 expect(card.locator('.question-text')).to_have_text('')
                                 # Unread content stays recorded and accessible in the
                                 # tooltip, while the waiting marker remains one symbol.
-                                page.evaluate(js('''() => {
+                                page.evaluate('''() => {
                                     const item = document.querySelector('#side .item.sel');
                                     S.unread.set(item.dataset.uid, {count:2});
                                     paintItemStatus(item);
-                                }''', """() => {
-                                    const item = document.querySelector('#side .item.sel');
-                                    runtime.core.state.unread.unread.set(item.dataset.uid, {count:2});
-                                }"""))
+                                }''')
                                 marker = page.locator('#side .item.sel > .ico > .item-status')
                                 expect(marker).to_have_text('?')
                                 expect(marker).to_have_attribute('title', re.compile('2 条新内容'))
-                                page.evaluate(js('''() => {
+                                page.evaluate('''() => {
                                     const item = document.querySelector('#side .item.sel');
                                     S.unread.delete(item.dataset.uid);
                                     paintItemStatus(item);
-                                }''', """() => {
-                                    const item = document.querySelector('#side .item.sel');
-                                    runtime.core.state.unread.unread.delete(item.dataset.uid);
-                                }"""))
+                                }''')
                                 expect(marker).not_to_have_attribute('title', re.compile('2 条新内容'))
                         # The history watch contains CLI status but no CHECK
                         # screen projection. It must preserve this live card.
-                        page.evaluate(js('''() => {
+                        page.evaluate('''() => {
                             const draft = composerDraft();
                             const id = draft.inputPrompt.id;
                             applyCliState(composerUid, draft.cli);
@@ -338,16 +314,7 @@ def main():
                                 observed_at:draft.cli.observed_at - 1,
                                 input:{state:'ready',code:'',message:''}});
                             if (draft.inputPrompt?.id !== id) throw new Error('Older watch replaced CHECK');
-                        }''', """() => {
-                            const draft = runtime.composer.composerDraft();
-                            const id = draft.inputPrompt.id;
-                            runtime.composer.applyCliState(runtime.composer.composerUid, draft.cli);
-                            if (draft.inputPrompt?.id !== id) throw new Error('Watch erased current menu');
-                            runtime.composer.applyCliState(runtime.composer.composerUid, {...draft.cli,
-                                observed_at:draft.cli.observed_at - 1,
-                                input:{state:'ready',code:'',message:''}});
-                            if (draft.inputPrompt?.id !== id) throw new Error('Older watch replaced CHECK');
-                        }"""))
+                        }''')
                         for index, option in enumerate(prompt['questions'][0].get('options', [])):
                             if not option.get('keys'):
                                 expect(card.locator(f'[data-question-option="{index}"]')).to_be_disabled()
@@ -373,7 +340,7 @@ def main():
                             loaded(source, fixture_frame(source, fixture, native, outcome))
                             if outcome == 'text':
                                 page.locator('#composer-question .question-text-input').fill('browser answer')
-                                page.evaluate(js('async () => await probeComposerInput(composerUid)', 'async () => await runtime.composer.probeComposerInput(runtime.composer.composerUid)'))
+                                page.evaluate('async () => await probeComposerInput(composerUid)')
                                 expect(page.locator('#composer-question .question-text-input')).to_have_value('browser answer')
                             count = len(writes)
                             card.locator(selector).click()
@@ -383,7 +350,7 @@ def main():
                                 found = outcome_file.read_text()
                                 assert not found.startswith('WRONG:'), (source, fixture['name'], selector, found, native.hex())
                                 assert time.monotonic() < deadline, (source, fixture['name'], selector, found, dialogs,
-                                    page.evaluate(js('({uid:composerUid,prompt:composerDraft()?.inputPrompt,pending:composerDraft()?.inputAnswer,status:composerDraft()?.inputStatus})', '({uid:runtime.composer.composerUid,prompt:runtime.composer.composerDraft()?.inputPrompt,pending:runtime.composer.composerDraft()?.inputAnswer,status:runtime.composer.composerDraft()?.inputStatus})')),
+                                    page.evaluate('({uid:composerUid,prompt:composerDraft()?.inputPrompt,pending:composerDraft()?.inputAnswer,status:composerDraft()?.inputStatus})'),
                                     writes[count:], screens[source].with_suffix('.trace').read_bytes().hex(),
                                     page.evaluate('__menuChecks'))
                                 page.wait_for_timeout(10)
@@ -405,7 +372,7 @@ def main():
                         buttons = card.locator('.question-option:enabled')
                         if buttons.count():
                             page.set_viewport_size({'width':390, 'height':844})
-                            page.evaluate(js('showMobileDetail()', 'runtime.shell.showMobileDetail()'))
+                            page.evaluate('showMobileDetail()')
                             expect(card).to_be_visible()
                             # Hold only background polling while the screen changes;
                             # the clicked control must still perform its own CHECK.
@@ -420,7 +387,7 @@ def main():
                                 assert not screens[source].with_suffix('.trace').read_bytes()
                                 print(f'PASS {source}: stale screen refused without PTY input', flush=True)
                             finally:
-                                page.evaluate(js('composerInputProbeBusy = false; __pauseMenuWatch = false', 'runtime.composer.composerInputProbeBusy = false; __pauseMenuWatch = false', body=True))
+                                page.evaluate(('() => { ' + 'composerInputProbeBusy = false; __pauseMenuWatch = false' + ' }'))
                                 page.set_viewport_size({'width':1280, 'height':720})
                     scopes = {
                         'claude': ('bash_permission', 'rm -rf /work/demo/generated', 'rm -rf /work/demo/cache'),
@@ -441,20 +408,20 @@ def main():
                             assert changed != scope['screen']
                             shown(source, frame(source, changed, cursor=scope.get('cursor'), alt=scope.get('alt', False)))
                             card.locator('.question-option:enabled').first.click()
-                            page.wait_for_function(js('id => composerDraft()?.inputPrompt?.id !== id', 'id => runtime.composer.composerDraft()?.inputPrompt?.id !== id'), arg=original)
-                            assert page.evaluate(js('composerDraft()?.inputPrompt?.id', 'runtime.composer.composerDraft()?.inputPrompt?.id')), 'Changed approval still needs a card'
+                            page.wait_for_function('id => composerDraft()?.inputPrompt?.id !== id', arg=original)
+                            assert page.evaluate('composerDraft()?.inputPrompt?.id'), 'Changed approval still needs a card'
                             assert len(writes) == count, 'Changed command must invalidate the shown approval'
                             assert not screens[source].with_suffix('.trace').read_bytes()
                             print(f'PASS {source}: changed approval scope refused without PTY input', flush=True)
                         finally:
-                            page.evaluate(js('composerInputProbeBusy = false; __pauseMenuWatch = false', 'runtime.composer.composerInputProbeBusy = false; __pauseMenuWatch = false', body=True))
+                            page.evaluate(('() => { ' + 'composerInputProbeBusy = false; __pauseMenuWatch = false' + ' }'))
                     if source == 'agy' and positive:
                         clear(source)
                         loaded(source, fixture_frame(source, positive))
                         pause_background()
                         # Hold the real click's completed CHECK. Replace only this
                         # test's host before allowing the bound answer to continue.
-                        page.evaluate(js('''() => {
+                        page.evaluate('''() => {
                             window.__heldMenuCheck = null;
                             const probe = probeComposerInput;
                             window.__resumeMenuCheck = null;
@@ -465,18 +432,7 @@ def main():
                                 return result;
                             };
                             window.__restoreMenuProbe = () => { probeComposerInput = probe; };
-                        }''', """() => {
-                            window.__heldMenuCheck = null;
-                            const probe = runtime.composer.probeComposerInput;
-                            window.__resumeMenuCheck = null;
-                            runtime.composer.probeComposerInput = async uid => {
-                                const result = await probe(uid);
-                                __heldMenuCheck = result;
-                                await new Promise(resolve => { __resumeMenuCheck = resolve; });
-                                return result;
-                            };
-                            window.__restoreMenuProbe = () => { runtime.composer.probeComposerInput = probe; };
-                        }"""))
+                        }''')
                         replacement = None
                         host_binary = REPO / 'target/debug/ptyhost'
                         kill = [str(host_binary), '--dir', str(root / 'host'), 'kill', receipt['name'], '--force']
@@ -485,8 +441,7 @@ def main():
                             card.locator('.question-option:enabled').first.click()
                             page.wait_for_function('!!__resumeMenuCheck && !!__heldMenuCheck?.prompt')
                             held = page.evaluate('__heldMenuCheck.prompt.id')
-                            assert held == page.evaluate(js('composerDraft().inputPrompt.id',
-                                'runtime.composer.composerDraft().inputPrompt.id'))
+                            assert held == page.evaluate('composerDraft().inputPrompt.id')
                             subprocess.run(kill, check=True, capture_output=True, timeout=5)
                             record_path = root / 'host' / (receipt['name'] + '.json')
                             deadline = time.monotonic() + 5
@@ -517,8 +472,7 @@ def main():
                                 page.evaluate('__resumeMenuCheck()')
                             response = refused.value
                             assert response.status >= 400 and response.json().get('error'), (response.status, response.json())
-                            page.wait_for_function(js('!composerDraft()?.inputAnswer',
-                                '!runtime.composer.composerDraft()?.inputAnswer'))
+                            page.wait_for_function('!composerDraft()?.inputAnswer')
                             assert len(writes) == count + 1, 'A rejected answer must never automatically retry'
                             assert writes[-1]['instance_id'] == receipt['instance_id'] != replacement_id
                             assert not screens[source].with_suffix('.trace').read_bytes(), 'Replacement PTY received stale menu keys'
@@ -527,8 +481,7 @@ def main():
                             del dialogs[dialog_count:]
                             print('PASS agy: same-name instance replacement refused; no PTY keys or retry', flush=True)
                         finally:
-                            page.evaluate(js('__restoreMenuProbe(); __resumeMenuCheck?.(); composerInputProbeBusy = false; __pauseMenuWatch = false',
-                                '__restoreMenuProbe(); __resumeMenuCheck?.(); runtime.composer.composerInputProbeBusy = false; __pauseMenuWatch = false', body=True))
+                            page.evaluate(('() => { ' + '__restoreMenuProbe(); __resumeMenuCheck?.(); composerInputProbeBusy = false; __pauseMenuWatch = false' + ' }'))
                             if replacement is not None:
                                 subprocess.run(kill, check=True, capture_output=True, timeout=5)
                                 try:

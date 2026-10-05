@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Local composer user paths against a private fake Claude PTY, never a model.
 
-Requires an already-built sessiondock binary and target/debug/ptyhost. Select
-the built Vue entry with SESSIONDOCK_TEST_WEB_DIR; leave it unset for the default compiled frontend.
+Requires an already-built sessiondock binary and target/debug/ptyhost.
 Uses send_browser's lifecycle/history helpers and history_parity's loopback
 server. Two ordinary UI sends populate native input history. Delayed real
 draft/SEND replies and an intercepted meta build exercise stale completion;
@@ -22,7 +21,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
-from browser_runtime import js
+
 from history_parity import BINARY, REPO, Corpus, isolated_server
 from popups import on_popup
 from send_browser import FAKE_CLI, initialize, wait_history
@@ -231,7 +230,7 @@ def stale_completions(page):
             editor.press('Shift+ArrowRight')
 
         page.route('**/api/meta', new_build)
-        page.evaluate(js('checkServerBuild()', 'runtime.build.checkServerBuild()'))
+        page.evaluate('checkServerBuild()')
         expect(page.locator('.version-stale')).to_be_visible()
         page.unroute('**/api/meta', new_build)
         route, response = held[0]
@@ -291,8 +290,7 @@ def exercise(browser, base, root, mobile=False):
         expect(editor).to_be_visible()
         expect(editor).to_be_enabled()
         page.evaluate('() => document.fonts.ready')
-        page.wait_for_function(js('composerUid && !composerDraft()?.loading',
-                                 'runtime.composer.composerUid && !runtime.composer.composerDraft()?.loading'))
+        page.wait_for_function('composerUid && !composerDraft()?.loading')
         if mobile:
             type_text(editor, 'mobile first')
             expect(page.locator('#csend')).to_be_enabled()

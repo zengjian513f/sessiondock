@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Cancel a failed local publication, then clone after restart without changing sources."""
-from browser_runtime import js
+
 import argparse
 from contextlib import ExitStack
 import json
@@ -78,7 +78,7 @@ def main():
                             print('PASS '+provider+' failed local publication is cancelled and preserves source',flush=True)
                         else:
                             page.locator(f'#side .item[data-uid="{selected}"]').click()
-                            page.wait_for_function(js('(uid)=>S.sel===uid', '(uid)=>runtime.core.state.selection.sel===uid'),arg=selected)
+                            page.wait_for_function('(uid)=>S.sel===uid',arg=selected)
                             with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as response:
                                 page.locator('#a-clone-group').click()
                             assert response.value.ok,response.value.text()
@@ -94,7 +94,7 @@ def main():
                             completed=result.value.json()
                             assert completed['operation_id']==operation and completed['target_uid']==plan['target_uid']
                             assert completed['phase']=='complete'
-                            page.wait_for_function(js('(uid)=>S.sel===uid', '(uid)=>runtime.core.state.selection.sel===uid'),arg=completed['target_uid'])
+                            page.wait_for_function('(uid)=>S.sel===uid',arg=completed['target_uid'])
                             expect(page.locator('#msgs')).to_contain_text(expected)
                             final=json.loads(journal.read_text())
                             assert final['plan']['identities']==saved['plan']['identities']

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PTY history is scrolled locally by real wheel input in both console renderers."""
-from browser_runtime import js, console_renderers
+
 import json
 import os
 from pathlib import Path
@@ -50,8 +50,8 @@ def check(pw, renderer):
             try:
                 page.goto(base, wait_until='networkidle')
                 fixture.open_console(page, uid)
-                page.evaluate(js('window.scrollTerm = [...T.views.values()][0].term', 'window.scrollTerm = [...runtime.terminal.state.views.values()][0].term'))
-                assert page.evaluate(js("T.list.find(r => r.name === T.name).server", 'runtime.terminal.state.list.find(r => r.name === runtime.terminal.state.name).server')) == 'ptyhost'
+                page.evaluate('window.scrollTerm = [...T.views.values()][0].term')
+                assert page.evaluate("T.list.find(r => r.name === T.name).server") == 'ptyhost'
                 keyboard = page.locator('#termpane .xterm-helper-textarea')
                 keyboard.press('h')
                 page.keyboard.type('istory')
@@ -120,7 +120,7 @@ def check(pw, renderer):
 
 def main():
     with sync_playwright() as pw:
-        for renderer in console_renderers('grid', 'xterm'):
+        for renderer in ['grid', 'xterm']:
             check(pw, renderer)
 
 

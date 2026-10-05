@@ -13,7 +13,7 @@ real Chromium clicks. No real CLI or production data is used.
 """
 from __future__ import annotations
 
-from browser_runtime import js
+
 import argparse
 from datetime import datetime, timezone
 import json
@@ -156,7 +156,7 @@ def main():
                     page.goto(base)
                     item = page.locator(f'#side .item[data-uid="{spawned}"]')
                     expect(item).to_be_visible()
-                    if not page.evaluate(js('S.nest', 'runtime.core.state.sidebar.nest')):
+                    if not page.evaluate('S.nest'):
                         page.locator("#nest-toggle").click()
                     expect(item).to_have_attribute("data-depth", "1")
                     codex_uid = corpus.uid(CODEX_PARENT)
@@ -178,7 +178,7 @@ def main():
                         page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
                         expect(item).to_have_attribute("data-depth", "1")
                     get_json(opener, base, "/api/live?force=1")
-                    page.evaluate(js("pollSessions()", 'runtime.core.list.pollSessions()'))
+                    page.evaluate("pollSessions()")
                     expect(worker).to_have_attribute("data-depth", "0")
                     for sid in (CHILD, OLDER, MIXED, CONFLICT):
                         expect(page.locator(f'#side .item[data-uid="{rows[sid]["uid"]}"]')) \

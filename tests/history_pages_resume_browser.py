@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-from browser_runtime import js
+
 from playwright.sync_api import expect, sync_playwright
 from history_pages_browser import build, row
 from history_parity import BINARY, encoded, get_json, isolated_server
@@ -87,25 +87,23 @@ def run(binary, through_hub):
 
                 page.route("**/api/messages/*/page?*", route)
                 page.goto(base, wait_until="networkidle")
-                page.evaluate(js('HISTORY_PAGE_CHAIN=false', 'runtime.core.history.timing.chain=false'))
+                page.evaluate('HISTORY_PAGE_CHAIN=false')
                 selected = selected_uid("codex-pages")
                 page.locator(f'#side .item[data-uid="{selected}"]').click()
                 expect(page.locator("#msgs")).to_contain_text("PAGE ROW 1399")
-                page.wait_for_function(js('_es && _es.readyState===EventSource.OPEN', 'runtime.core.sync.watching && runtime.core.sync.watching.readyState===EventSource.OPEN'))
-                page.evaluate(js('window.__originalWatch=_es', 'window.__originalWatch=runtime.core.sync.watching'))
+                page.wait_for_function('_es && _es.readyState===EventSource.OPEN')
+                page.evaluate('window.__originalWatch=_es')
 
                 def snapshot():
-                    return page.evaluate(js(r"""(() => {const e=cache.get(viewKey(S.sel,S.agent));return {
+                    return page.evaluate(r"""(() => {const e=cache.get(viewKey(S.sel,S.agent));return {
                       text:e.msgs.map(m=>m.text),partial:e.partial,end:e.end,anchor:e.anchor,
-                      version:e.version,cursor:S.cursors.get(viewKey(S.sel,S.agent))};})()""", r"""(() => {const e=runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel));return {
-                      text:e.msgs.map(m=>m.text),partial:e.partial,end:e.end,anchor:e.anchor,
-                      version:e.version,cursor:runtime.core.state.unread.cursors.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel))};})()"""))
+                      version:e.version,cursor:S.cursors.get(viewKey(S.sel,S.agent))};})()""")
 
                 def click():
                     page.locator(".history-gap-load").click()
 
                 def settled():
-                    page.wait_for_function(js("historyPageRequests.size===0 && document.querySelector('#msgs .msg')", "runtime.core.history.historyPageRequests.size===0 && document.querySelector('#msgs .msg')"))
+                    page.wait_for_function("historyPageRequests.size===0 && document.querySelector('#msgs .msg')")
 
                 initial = snapshot()
                 assert initial["partial"]["resume"]["uid"] == selected
@@ -120,13 +118,13 @@ def run(binary, through_hub):
                     initial = warm
                     print("PASS hub valid grant before recovery", flush=True)
                 click()
-                page.wait_for_function(js('historyPageRequests.size===1', 'runtime.core.history.historyPageRequests.size===1'))
+                page.wait_for_function('historyPageRequests.size===1')
                 path = corpus.paths["codex-pages"]
                 added = encoded(row("LIVE APPEND WHILE GRANT RECOVERS"))
                 with path.open("ab") as stream:
                     stream.write(added)
                 before[path] += added
-                page.wait_for_function(js("cache.get(viewKey(S.sel,S.agent)).msgs.at(-1).text==='LIVE APPEND WHILE GRANT RECOVERS'", 'runtime.core.cache.cache.get((runtime.core.state.selection.agent ? runtime.core.state.selection.sel + "::" + runtime.core.state.selection.agent : runtime.core.state.selection.sel)).msgs.at(-1).text===\'LIVE APPEND WHILE GRANT RECOVERS\''))
+                page.wait_for_function("cache.get(viewKey(S.sel,S.agent)).msgs.at(-1).text==='LIVE APPEND WHILE GRANT RECOVERS'")
                 live = snapshot()
                 request, response = held.pop()
                 request.fulfill(response=response)
@@ -141,7 +139,7 @@ def run(binary, through_hub):
                 final = snapshot()
                 assert final["text"] == [*[f"PAGE ROW {i:04d}" for i in range(1400)], "LIVE APPEND WHILE GRANT RECOVERS"]
                 assert final["cursor"] == live["cursor"] and final["anchor"] == live["anchor"]
-                assert page.evaluate(js('_es===window.__originalWatch', 'runtime.core.sync.watching===window.__originalWatch'))
+                assert page.evaluate('_es===window.__originalWatch')
                 expect(page.locator(".history-page-error")).to_have_count(0)
                 print(f"PASS lost grants: {len(recovered)} bounded pages, existing pages/live tail preserved", flush=True)
 

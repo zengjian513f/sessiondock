@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Chromium: latest native Claude/Codex models reach list and title without reopening."""
-from browser_runtime import js
+
 import argparse
 import os
 from pathlib import Path
@@ -30,7 +30,7 @@ def padding(source, count):
 
 
 def wait_model(page, uid, model):
-    page.wait_for_function(js('({uid, model}) => S.sessions.find(s => s.uid === uid)?.model === model', '({uid, model}) => runtime.core.state.catalog.sessions.find(s => s.uid === uid)?.model === model'),
+    page.wait_for_function('({uid, model}) => S.sessions.find(s => s.uid === uid)?.model === model',
                            arg={'uid': uid, 'model': model}, timeout=20000)
     expect(page.locator(f'#side .item[data-uid="{uid}"] .m')).to_contain_text(model)
     expect(page.locator('#detail > .dhead')).to_contain_text(model)
@@ -71,7 +71,7 @@ def main():
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(base, wait_until='networkidle')
-            page.wait_for_function(js('S.sessions.length === 3 && T.listLoaded', 'runtime.core.state.catalog.sessions.length === 3 && runtime.terminal.state.listLoaded'))
+            page.wait_for_function('S.sessions.length === 3 && T.listLoaded')
             for source in ('claude', 'codex'):
                 sid, uid = source + '-model', corpus.uid(source + '-model')
                 path = corpus.paths[sid]
@@ -84,41 +84,41 @@ def main():
                     with path.open('ab') as stream:
                         stream.write(encoded(model_row(source, sid, '<synthetic>', 2)))
                         stream.write(encoded(model_row(source, sid, 'sidechain-model', 3, isSidechain=True)))
-                    page.evaluate(js('loadSessions(true)', 'runtime.core.list.loadSessions(true)'))
+                    page.evaluate('loadSessions(true)')
                     wait_model(page, uid, 'current-model')
                 # A list-only update must repaint the open title. Block detail
                 # refreshes so HTTP/SSE message rendering cannot mask this regression.
-                page.evaluate(js('closeWatch()', 'runtime.core.sync.closeWatch()'))
+                page.evaluate('closeWatch()')
                 page.route('**/api/messages/**', lambda route: route.abort())
                 page.route('**/api/watch?*', lambda route: route.abort())
                 new = encoded(model_row(source, sid, 'switched-model', 4))
                 with path.open('ab') as stream:
                     stream.write(new[:-1])
-                page.evaluate(js('loadSessions(true)', 'runtime.core.list.loadSessions(true)'))
+                page.evaluate('loadSessions(true)')
                 wait_model(page, uid, 'current-model')
                 with path.open('ab') as stream:
                     stream.write(b'\n')
-                page.evaluate(js('loadSessions(true)', 'runtime.core.list.loadSessions(true)'))
+                page.evaluate('loadSessions(true)')
                 wait_model(page, uid, 'switched-model')
                 # Unrelated complete records retain the scalar cached model.
                 with path.open('ab') as stream:
                     stream.write(padding(source, 1000))
-                page.evaluate(js('loadSessions(true)', 'runtime.core.list.loadSessions(true)'))
+                page.evaluate('loadSessions(true)')
                 wait_model(page, uid, 'switched-model')
                 # Equal-size rewriting and inode replacement must invalidate it.
                 path.write_bytes(path.read_bytes().replace(b'switched-model', b'rewriteX-model'))
-                page.evaluate(js('loadSessions(true)', 'runtime.core.list.loadSessions(true)'))
+                page.evaluate('loadSessions(true)')
                 wait_model(page, uid, 'rewriteX-model')
                 replacement = path.with_suffix('.replacement')
                 replacement.write_bytes(path.read_bytes().replace(b'rewriteX-model', b'replaced-model'))
                 replacement.replace(path)
-                page.evaluate(js('loadSessions(true)', 'runtime.core.list.loadSessions(true)'))
+                page.evaluate('loadSessions(true)')
                 wait_model(page, uid, 'replaced-model')
                 page.unroute('**/api/messages/**')
                 page.unroute('**/api/watch?*')
                 # Normal background observation must pick up a further switch,
                 # without a forced list refresh or reopening the selected row.
-                page.evaluate(js('uid => watchSession(uid)', 'uid => runtime.core.sync.watchSession(uid)'), uid)
+                page.evaluate('uid => watchSession(uid)', uid)
                 with path.open('ab') as stream:
                     stream.write(encoded(model_row(source, sid, 'observed-model', 5)))
                 wait_model(page, uid, 'observed-model')
@@ -126,7 +126,7 @@ def main():
             empty_uid = corpus.uid('claude-empty')
             page.locator(f'#side .item[data-uid="{empty_uid}"]').click()
             expect(page.locator('#detail > .dhead')).to_contain_text('No model yet')
-            assert page.evaluate(js('uid => S.sessions.find(s => s.uid === uid).model', 'uid => runtime.core.state.catalog.sessions.find(s => s.uid === uid).model'), empty_uid) is None
+            assert page.evaluate('uid => S.sessions.find(s => s.uid === uid).model', empty_uid) is None
             assert not errors, errors
             browser.close()
     print('PASS latest native session models browser', flush=True)

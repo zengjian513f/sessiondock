@@ -3,7 +3,7 @@
 Covers branch siblings, archived dependencies, revert generations, grandchildren,
 subagents, code-mode references, metadata, idempotent retry and process restart.
 """
-from browser_runtime import js
+
 import argparse
 from contextlib import ExitStack
 import hashlib
@@ -225,7 +225,7 @@ def main():
                             data=response.json();data['uids']=[selected] if running['value'] else []
                             route.fulfill(response=response,json=data)
                         page.route('**/api/live*',live_reply)
-                        page.evaluate(js('async () => await pollLive(true)', 'async () => await runtime.core.live.pollLive(true)'))
+                        page.evaluate('async () => await pollLive(true)')
                         action=page.locator('#a-clone-group')
                         expect(action).to_have_attribute('aria-disabled','true')
                         if not action.is_visible():page.locator('#a-more').click()
@@ -248,7 +248,7 @@ def main():
                         menu_action.tap(force=True);expect(tip).to_have_count(0)
                         assert not plans,'running action must not open a plan'
                         running['value']=False
-                        page.evaluate(js('async () => await pollLive(true)', 'async () => await runtime.core.live.pollLive(true)'))
+                        page.evaluate('async () => await pollLive(true)')
                         expect(action).not_to_have_attribute('aria-disabled','true')
                         expect(action).to_have_attribute('title','移动 / 复制整组')
                         expect(menu_action).not_to_have_attribute('aria-disabled','true')
@@ -256,24 +256,24 @@ def main():
                         page.keyboard.press('Escape')
                         # Offline machines and empty agent-type filters use the
                         # same native hint; no toggle/solo action or alert is sent.
-                        page.evaluate(js("id => {Nodes.list.find(n=>n.id===id).online=false; renderNodes();}", 'id => {runtime.core.state.nodes.list.find(n=>n.id===id).online=false; runtime.core.state.nodes.touch();}'),destination_node.nid)
+                        page.evaluate("id => {Nodes.list.find(n=>n.id===id).online=false; renderNodes();}",destination_node.nid)
                         machine=page.locator(f'#node-chips button[data-node="{destination_node.nid}"]')
                         expect(machine).to_have_attribute('aria-disabled','true')
-                        off=page.evaluate(js('[...Nodes.off]', '[...runtime.core.state.nodes.off]'))
+                        off=page.evaluate('[...Nodes.off]')
                         machine.hover();assert '离线' in machine.get_attribute('title')
                         machine.tap(force=True);expect(tip).to_have_count(0)
                         machine.click(button='right',force=True)
-                        assert page.evaluate(js('[...Nodes.off]', '[...runtime.core.state.nodes.off]'))==off
+                        assert page.evaluate('[...Nodes.off]')==off
                         agent=page.locator('#chips button[data-source="claude"]')
                         expect(agent).to_have_attribute('aria-disabled','true')
-                        sources=page.evaluate(js('[...S.off]', '[...runtime.core.state.sidebar.off]'))
+                        sources=page.evaluate('[...S.off]')
                         agent.hover();assert '没有会话' in agent.get_attribute('title')
                         agent.tap(force=True);expect(tip).to_have_count(0)
                         agent.focus();page.keyboard.press('Enter')
-                        assert page.evaluate(js('[...S.off]', '[...runtime.core.state.sidebar.off]'))==sources
+                        assert page.evaluate('[...S.off]')==sources
                         expect(page.locator('dialog[open]')).to_have_count(0)
                         page.keyboard.press('Escape');expect(tip).to_have_count(0)
-                        page.evaluate(js("id => {Nodes.list.find(n=>n.id===id).online=true; renderNodes();}", 'id => {runtime.core.state.nodes.list.find(n=>n.id===id).online=true; runtime.core.state.nodes.touch();}'),destination_node.nid)
+                        page.evaluate("id => {Nodes.list.find(n=>n.id===id).online=true; renderNodes();}",destination_node.nid)
                         expect(machine).not_to_have_attribute('aria-disabled','true')
                         print('PASS native title hints without custom overlays: running action/menu, offline machine, empty agent; hover/touch/keyboard and live recovery',flush=True)
 
@@ -281,7 +281,7 @@ def main():
                         # icon + managed label, never a naked wrapping text node.
                         for width in (1280,440,390,320):
                             page.set_viewport_size({'width':width,'height':900})
-                            page.evaluate(js('showMobileDetail(); layoutSessionHead()', 'runtime.shell.showMobileDetail(); runtime.sessionUi.layoutSessionHead()', body=True))
+                            page.evaluate(('() => { ' + 'showMobileDetail(); layoutSessionHead()' + ' }'))
                             button=page.locator('#a-clone-group')
                             assert button.evaluate("b => [...b.childNodes].filter(n => n.nodeType===Node.TEXT_NODE).every(n => !n.textContent.trim())")
                             if button.is_visible():
@@ -293,7 +293,7 @@ def main():
                                 expect(button.locator('span')).to_have_text('移动 / 复制整组')
                                 page.locator('#a-more').click()
                         page.set_viewport_size({'width':440,'height':900})
-                        page.evaluate(js('showMobileDetail(); layoutSessionHead()', 'runtime.shell.showMobileDetail(); runtime.sessionUi.layoutSessionHead()', body=True))
+                        page.evaluate(('() => { ' + 'showMobileDetail(); layoutSessionHead()' + ' }'))
                         page.screenshot(path='target/transfer-toolbar-mobile.png')
                         button=page.locator('#a-clone-group')
                         if not button.is_visible():page.locator('#a-more').click()
@@ -369,7 +369,7 @@ def main():
                         assert response.ok,response.text()
                         completed=response.json();operation=completed['operation_id']
                         expect(dialog).to_have_count(0)
-                        page.wait_for_function(js('(uid)=>S.sel===uid', '(uid)=>runtime.core.state.selection.sel===uid'),arg=completed['target_uid'])
+                        page.wait_for_function('(uid)=>S.sel===uid',arg=completed['target_uid'])
                         expect(page.locator('#msgs')).to_contain_text('Branch A current')
                         expect(page.locator('#msgs')).to_contain_text('Branch A old')
                         expect(page.locator('#msgs')).to_contain_text('Common ancestor 原文 '+ident(1))

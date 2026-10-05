@@ -12,7 +12,7 @@ HTTP build mismatch appends its card after the existing shell card.
 
 A real hub and two real isolated nodes; no real CLI or production data.
 """
-from browser_runtime import js, scoped_frontend
+
 import argparse
 from contextlib import ExitStack
 import json
@@ -96,7 +96,7 @@ def restart_failure_fixture(context, hub_url):
                     lambda response, nid=nid: response.request.method == "GET"
                     and response.url.endswith(f"/api/nodes/{nid}/api/shell-env")))
             page.goto(hub_url, wait_until="networkidle")
-            page.wait_for_function(js("Nodes.list.length === 2", 'runtime.core.state.nodes.list.length === 2'))
+            page.wait_for_function("Nodes.list.length === 2")
         notice = page.locator("#shell-env-notice")
         first_row = notice.locator(f'tr[data-node="{NID}"]')
         second_row = notice.locator(f'tr[data-node="{second}"]')
@@ -108,10 +108,10 @@ def restart_failure_fixture(context, hub_url):
         expect(second_row).to_have_count(0)
         expect(first_row).to_be_visible()
         assert card.evaluate("d => d === document.querySelector('#shell-env-notice')")
-        page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+        page.evaluate("checkShellEnv()")
         expect(second_row).to_have_count(0)
         data[second]["changed"] = ["SD_FIXTURE_CHANGED_AGAIN"]
-        page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+        page.evaluate("checkShellEnv()")
         expect(second_row.locator("td").nth(1)).to_have_text("SD_FIXTURE_CHANGED_AGAIN")
         assert not requests, "ignore sent a restart request"
 
@@ -131,13 +131,6 @@ def restart_failure_fixture(context, hub_url):
                             and f"/api/nodes/{nid}/api/shell-env/restart" in request.url))
                     button.click()
                 expect(button).to_be_disabled()
-                if scoped_frontend():
-                    # A poll must retain the shared lock and the existing DOM.
-                    page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
-                    expect(button).to_be_disabled()
-                    for nid in targets:
-                        expect(notice.locator(f'tr[data-node="{nid}"]').get_by_role(
-                            "button", name="重启", exact=False)).to_be_disabled()
                 box = button.bounding_box()
                 assert box, label
                 page.mouse.dblclick(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
@@ -158,10 +151,6 @@ def restart_failure_fixture(context, hub_url):
                 expect(first_row.locator("td").nth(1)).to_have_text("SD_FIXTURE_CHANGED")
                 expect(second_row.locator("td").nth(1)).to_have_text("SD_FIXTURE_CHANGED_AGAIN")
                 assert card.evaluate("d => d === document.querySelector('#shell-env-notice')")
-                if scoped_frontend():
-                    assert head.evaluate("d => d === document.querySelector('#shell-env-notice .app-float-head')")
-                    assert table.evaluate("d => d === document.querySelector('#shell-env-notice table')")
-                    assert original_button.evaluate("d => d.isConnected"), "failure replaced the recovering button"
                 for handle in (head, table, original_button):
                     handle.dispose()
         card.dispose()
@@ -230,8 +219,8 @@ def main():
         errors = []
         hub_page.on("pageerror", lambda error: errors.append(str(error)))
         hub_page.goto(f"http://127.0.0.1:{hub.port}", wait_until="networkidle")
-        hub_page.wait_for_function(js("Nodes.list.length === 2", 'runtime.core.state.nodes.list.length === 2'))
-        hub_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+        hub_page.wait_for_function("Nodes.list.length === 2")
+        hub_page.evaluate("checkShellEnv()")
         notice = hub_page.locator("#shell-env-notice")
         expect(notice).to_have_count(0)
         row = lambda nid: notice.locator(f'tr[data-node="{nid}"]')  # noqa: E731
@@ -241,7 +230,7 @@ def main():
         data, raw = shell_env(local)
         assert data["stale"] and data["changed"] == ["SD_TEST_NEW", "SD_TEST_TOKEN"], data
         assert b"secret" not in raw, raw
-        hub_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+        hub_page.evaluate("checkShellEnv()")
         expect(notice).to_be_visible()
         first_notice = notice.element_handle()
         assert notice.evaluate("d => d.parentElement.id === 'float-stack' && d.parentElement.lastElementChild === d")
@@ -255,7 +244,7 @@ def main():
         # The node's own page: 忽略 hides this change for the page.
         local_page = context.new_page()
         local_page.goto(local, wait_until="networkidle")
-        local_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+        local_page.evaluate("checkShellEnv()")
         local_notice = local_page.locator("#shell-env-notice")
         expect(local_notice.locator('tr[data-node="local"]')).to_contain_text("SD_TEST_TOKEN")
         expect(local_notice.get_by_role("button", name="全部重启")).to_have_count(0)
@@ -263,19 +252,19 @@ def main():
         local_notice.get_by_role("button", name="忽略").click()
         expect(local_notice).to_have_count(0)
         assert not ignored_notice.evaluate("d => d.isConnected")
-        local_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+        local_page.evaluate("checkShellEnv()")
         expect(local_notice).to_have_count(0)
         # Ignoring one set of names does not hide a later, genuinely different drift.
         # A removed card gets a new DOM identity and is appended to the existing stack.
         rc.write_text("export SD_TEST_TOKEN=secret-two\nexport SD_TEST_NEW=1\nexport SD_TEST_AFTER_IGNORE=1\n")
-        local_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+        local_page.evaluate("checkShellEnv()")
         expect(local_notice).to_be_visible()
         expect(local_notice.locator('tr[data-node="local"] td').nth(1)).to_have_text(
             "SD_TEST_AFTER_IGNORE、SD_TEST_NEW、SD_TEST_TOKEN")
         assert not ignored_notice.evaluate("d => d === document.querySelector('#shell-env-notice')")
         assert local_notice.evaluate("d => d.parentElement.id === 'float-stack' && d.parentElement.lastElementChild === d")
         rc.write_text("export SD_TEST_TOKEN=secret-two\nexport SD_TEST_NEW=1\n")
-        local_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+        local_page.evaluate("checkShellEnv()")
         expect(local_notice).to_have_count(0)
         ignored_notice.dispose()
         local_page.close()
@@ -289,7 +278,7 @@ def main():
         assert not first_notice.evaluate("d => d.isConnected")
         # Another edit, one machine at a time: the other row stays, no 全部重启 for a single one.
         rc.write_text("export SD_TEST_TOKEN=secret-three\nexport SD_TEST_NEW=1\n")
-        hub_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+        hub_page.evaluate("checkShellEnv()")
         expect(hub_page.get_by_role("button", name="全部重启 (2)")).to_be_visible()
         assert not first_notice.evaluate("d => d === document.querySelector('#shell-env-notice')")
         assert notice.evaluate("d => d.parentElement.id === 'float-stack' && d.parentElement.lastElementChild === d")
@@ -304,7 +293,7 @@ def main():
         restart_node("shellnode")
         for _ in range(3):   # across polls while the node is down and back, the notice never vanishes
             expect(row(NID2)).to_be_visible()
-            hub_page.evaluate(js("checkShellEnv()", 'runtime.shellEnvironment.check()'))
+            hub_page.evaluate("checkShellEnv()")
         expect(row(NID)).to_have_count(0, timeout=40000)
         expect(row(NID2).locator("td").nth(1)).to_have_text("SD_TEST_TOKEN")
         expect(notice.get_by_role("button", name="全部重启")).to_have_count(0)
@@ -312,10 +301,10 @@ def main():
         data, _ = shell_env(locals_["shellnode"])
         assert not data["stale"], data
         # The shell card appeared first. A real build poll must append the update
-        # card after it, even when Vue owns both cards through one Teleport.
+        # card after it.
         shell_card = notice.element_handle()
         hub_page.route("**/api/meta", lambda route: route.fulfill(json={"build": "shell-env-test-newer"}))
-        hub_page.evaluate(js("checkServerBuild()", 'runtime.build.checkServerBuild()'))
+        hub_page.evaluate("checkServerBuild()")
         expect(hub_page.locator("#float-stack > .version-stale")).to_be_visible()
         expect(hub_page.locator("#float-stack > :is(#shell-env-notice, .version-stale)")).to_have_count(2)
         assert hub_page.locator("#float-stack > :is(#shell-env-notice, .version-stale)").evaluate_all(

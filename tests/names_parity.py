@@ -6,7 +6,7 @@ generated in a temporary directory and the recorded messages execute nothing.
 """
 from __future__ import annotations
 
-from browser_runtime import js
+
 import argparse
 from contextlib import contextmanager
 import json
@@ -187,7 +187,7 @@ def browser_check(corpus, base, index, rows):
             item.click()
             expect(page.locator(".dtitle h2")).to_contain_text("Updated standalone title")
             expect(page.locator("#msgs")).to_contain_text("standalone synthetic searchable message")
-            page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
+            page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
             page.evaluate("window.__namePackets = []")
             rows.append({"id": "standalone", "thread_name": "SSE renamed title", "updated_at": "2026-09-11T11:00:00Z"})
             write_index(index, rows)
@@ -206,7 +206,7 @@ def browser_check(corpus, base, index, rows):
             expect(page.locator("#a-term")).to_be_enabled()
             write_index(index, rows)
             expect(page.locator(".dtitle h2")).to_contain_text("SSE renamed title", timeout=10000)
-            page.wait_for_function(js("_es && _es.readyState === EventSource.OPEN", 'runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN'))
+            page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
             page.set_viewport_size({"width": 390, "height": 844})
             if not page.locator("#a-term").is_visible():
                 item.click()

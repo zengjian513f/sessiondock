@@ -17,7 +17,7 @@ checksum contract; this script introduces no checksum scheme.
 Exercises stage, backup, swap, restart, list_backups and rollback. Deliberately
 does not call probe/verify (they inspect systemd and machine-wide ptyhost PIDs),
 write_marker or prune. This does not validate systemd, proxy routing, Chromium,
-Vue interactions, persistent ptyhost sessions, fleet transport or deploy.py's
+browser interactions, persistent ptyhost sessions, fleet transport or deploy.py's
 automatic failure orchestration. Rollback is explicitly triggered after a
 successful cutover, then repeated after a real HTTP outage.
 """

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Detached Codex exec fan-out initializes nest_parent; user choices survive scans/restart."""
-from browser_runtime import js
+
 import argparse
 from datetime import datetime, timezone
 import json
@@ -46,9 +46,8 @@ def first_publication(browser, root, binary):
         context = browser.new_context(viewport={'width': 1280, 'height': 900})
         page = context.new_page()
         page.goto(base)
-        page.wait_for_function(js('S.sessions.length === 1',
-            'runtime.core.state.catalog.sessions.length === 1'))
-        if not page.evaluate(js('S.nest', 'runtime.core.state.sidebar.nest')):
+        page.wait_for_function('S.sessions.length === 1')
+        if not page.evaluate('S.nest'):
             page.locator('#nest-toggle').click()
         # Prime the shared process cache before the new CLI exists.
         get_json(opener, base, '/api/live?force=1')
@@ -70,7 +69,7 @@ def first_publication(browser, root, binary):
         }''', uid)
         # User refresh forces inventory discovery inside the scanner's TTL.
         with page.expect_response(lambda response: '/api/sessions?force=1' in response.url) as response:
-            page.evaluate(js('loadSessions(true)', 'runtime.core.list.loadSessions(true)'))
+            page.evaluate('loadSessions(true)')
         rows = {r['sid']: r for r in response.value.json()['sessions']}
         assert rows['fresh-worker'].get('nest_parent') == {'source': 'codex', 'sid': 'parent'}, \
             'first list published a new exec worker without its parent'
@@ -89,7 +88,7 @@ def first_publication(browser, root, binary):
                  env=[('CODEX_THREAD_ID', 'parent')], fds={3: corpus.paths['polled-worker']})
         page.wait_for_timeout(550)  # Expire the 500ms inventory cache, not the 3s process cache.
         with page.expect_response(lambda response: urlsplit(response.url).path == '/api/sessions') as response:
-            page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
+            page.evaluate('pollSessions()')
         wire = response.value.json()
         published = wire.get('sessions', [item['row'] for item in
             wire.get('list_delta', {}).get('collections', {}).get('sessions', {}).get('upsert', [])
@@ -138,7 +137,7 @@ def inactive_children(browser, root, binary):
             page.goto(base)
             expect(page.locator('#session-total')).to_have_text('6')
             expect(page.locator('#session-active')).to_have_text('2')
-            if not page.evaluate(js('S.nest', 'runtime.core.state.sidebar.nest')):
+            if not page.evaluate('S.nest'):
                 page.locator('#nest-toggle').click()
             def item(sid):
                 return page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]')
@@ -269,8 +268,8 @@ def main():
                 context = browser.new_context(viewport={'width': 1280, 'height': 900})
                 page = context.new_page()
                 page.goto(base)
-                page.wait_for_function(js('S.sessions.length >= 10', 'runtime.core.state.catalog.sessions.length >= 10'))
-                if not page.evaluate(js('S.nest', 'runtime.core.state.sidebar.nest')):
+                page.wait_for_function('S.sessions.length >= 10')
+                if not page.evaluate('S.nest'):
                     page.locator('#nest-toggle').click()
                 def item(sid):
                     return page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]')
@@ -289,9 +288,9 @@ def main():
                     item(children[1]).click(button='right')
                     page.locator('#item-menu [data-act="attach"]').click()
                     item('other').click()
-                    page.wait_for_function(js('uid => S.sessions.find(s => s.uid === uid).nest_parent?.sid === "other"', 'uid => runtime.core.state.catalog.sessions.find(s => s.uid === uid).nest_parent?.sid === "other"'), arg=corpus.uid(children[1]))
+                    page.wait_for_function('uid => S.sessions.find(s => s.uid === uid).nest_parent?.sid === "other"', arg=corpus.uid(children[1]))
                 get_json(opener, base, '/api/live?force=1')
-                page.evaluate(js('pollSessions()', 'runtime.core.list.pollSessions()'))
+                page.evaluate('pollSessions()')
                 expect(item(children[0])).to_have_attribute('data-depth', '0')
                 rows = {r['sid']: r for r in get_json(opener, base, '/api/sessions?force=1')['sessions']}
                 assert 'nest_parent' not in rows[children[0]]

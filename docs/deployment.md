@@ -31,7 +31,6 @@ Linux 节点及 Hub 可在 `extra.expected_hostname` 填写目标 `hostname` 的
 
 ```sh
 python3 deploy/deploy.py build    [--allow-dirty] [--web-from-head] [--with-ptyhost] [--web-only]
-                                  [--frontend legacy|vue]
                                   [--test none|affected|full] [--test-base REF] [--test-timeout S]
 python3 deploy/deploy.py push     [--targets a,b | --all] [--stage DIR] [--web-only | --bin-only]
                                   [--with-ptyhost] [--dry-run] [--parallel N] [--keep-backups N]
@@ -40,13 +39,12 @@ python3 deploy/deploy.py deploy   # build → test → push，标志相同；--t
 python3 deploy/deploy.py rollback --targets X [--backup DIR]
 ```
 
-- `build`：`git status --porcelain -- crates legacy-web web Cargo.toml Cargo.lock` 非空即拒绝并列出文件；
+- `build`：`git status --porcelain -- crates legacy-web Cargo.toml Cargo.lock` 非空即拒绝并列出文件；
   `--allow-dirty` 才继续（此时 web 快照来自工作树，`--web-from-head` 可改回 HEAD，用于共享
   checkout 里别人的未提交前端改动）。`--web-only` 完全不跑 cargo。默认 `--targets-file` 是
   `deploy/targets.local.json`（缺省时退回 `targets.example.json`），其中 `build` 段给出 cargo
   路径与包名；`sessiondock-hub` 是 `sessiondock` 包里的第二个 bin，工具用 `cargo metadata` 解析。
-  `web/node_modules` 需要已安装现有 lockfile 的依赖。Vue 设置组件从与页面相同来源的
-  `web/` 快照构建，`--web-only` 也执行这一步；生成文件不会从开发目录复制。
+  前端 `legacy-web/` 按快照原样进入 stage，不执行任何 Node 构建。
   `--test`（默认 `none`，build 常用来做 dry run）在构建完成后按[测试门](#测试门build--test--push)跑测试。
 - `push`：默认取 `target/deploy/` 下最新的 stage，默认并行 4、保留 5 份备份（`0` = 不清理）、健康
   超时 45 s。`--dry-run` 只做 probe 并打印每台的计划，什么都不上传。离线或禁用的目标记为
@@ -60,21 +58,7 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 - `rollback`：不给 `--backup` 时取目标机上**mtime 最新**的 `backup-deploy-*`（手工备份的时间戳是
   本地时间、本工具是 UTC，按名字排不可靠）。`--backup` 只接受匹配
   `backup-deploy-<hex>-<YYYYmmdd>-<HHMMSS>` 的目录。
-- `--frontend vue`：从同源 `web/` 快照编译完整 Vue 页面，静态资源也由其中的
-  `public/`、`shared/` 提供；stage 的 `web/`
-  只包含 `dist-migration/` 产物；默认仍为 `legacy`。预览使用独立目标目录、用户服务和 loopback
-  端口，再在现有鉴权代理中添加预览前缀，位置模板见
-  [sessiondock-preview.nginx.conf](../deploy/sessiondock-preview.nginx.conf)。页面与全部 `api/`
-  请求必须代理到同一个预览 Hub，否则页面版本与 API 版本不同，会持续触发更新提示并暂停同步，
-  发送也会返回版本冲突。预览 Hub 的私有注册表使用现有机器节点的配置副本，会话仍来自同一批节点，
-  机器显示与顺序等 Hub 设置独立保存。不要修改原入口的代理或资源引用。
-  本地目标清单指定预览目标后，用 `deploy --targets <PREVIEW_TARGET> --web-only --frontend vue`
-  发布；首次准备目录和服务时可复用目标机现有 Hub 二进制，注册表与缓存使用预览私有目录。
-  持续使用的预览目标保留在本地清单中，并设置 `extra.frontend: "vue"`；正式目标默认
-  `extra.frontend: "legacy"`。发布阶段跳过前端类型与产物不匹配的目标，`--bin-only` 除外。
-  因此 `deploy --all` 发布正式 legacy；再以 `deploy --targets <PREVIEW_TARGET> --frontend vue`
-  发布 Vue 预览。两次发布分别构建对应前端，Rust 使用同一源码及共享构建缓存。
-  主入口和预览入口都要验证实际页面资源、列表、会话打开和刷新，不能仅检查 `/api/meta`。
+- 目标若在本地清单里声明 `extra.frontend` 为 `legacy` 以外的值，发布阶段跳过它（`--bin-only` 除外）。
 - `status` 不在本工具里：只读的舰队状态见 `deploy/fleet_status.py`。
 
 ## 并发部署锁
@@ -96,7 +80,7 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 | 产物 | 内容 | 用途 |
 | --- | --- | --- |
 | `bin/<name>` + `artifacts.json` 里的 `sha256` | `cargo build --release --locked` 的 glibc 二进制，从 `target/release/` 拷进 stage | `linux-node`、`hub` 直接上传；stage 一旦生成就不再受后续构建影响 |
-| `web/` | `git archive HEAD legacy-web` 解出的快照（或 `--allow-dirty` 的工作树，排除 `node_modules`、`.DS_Store`、`*.swp`、生成的 `framework/`），加上同源 `web/` 源码用 Vite 新构建的 `framework/settings.js` | 所有 kind 的 `web/` |
+| `web/` | `git archive HEAD legacy-web` 解出的快照（或 `--allow-dirty` 的工作树，排除 `node_modules`、`.DS_Store`、`*.swp`），原样发布 | 所有 kind 的 `web/` |
 | `source.tar` | 默认 `git archive --format=tar HEAD`；`--allow-dirty` 使用所有已跟踪文件的工作区快照 | `build_on_target` 的 kind（macOS、Windows）在节点上原生构建，与本机构建使用相同源码 |
 
 `artifacts.json` 还记录 commit、`dirty`、`built_at`、web 来源和 cargo 命令，以及测试门的结果
@@ -167,10 +151,9 @@ stem 恰好是套件名则按套件跑；某条改动触发全量时这些脚本
 | `crates/sessiondock/tests/fixtures/**` | 全量（Python 套件也用这些 fixture） |
 | `crates/sessiondock/tests/**`（其它） | `cargo_*` |
 | `legacy-web/**` | 所有 `*_browser*` + `brand_names_check`（Node 单元测试不自动运行） |
-| `web/**` | 所有 `*_browser*` + `brand_names_check`（Vue 编译由构建步骤执行，不自动运行 unit test） |
 | `deploy/**` | `deploy_*`（默认只含 `deploy_native_handlers`；单元测试 `deploy_lock`、`deploy_testplan` 不自动运行） |
 | `tests/<stem>.py` | 若 `<stem>` 是套件 → 该套件及 `<stem>_*`（如 `lifecycle_browser` 带上 `lifecycle_browser_native_binding`）；否则取同前缀的套件（`hub_fake_node.py` → `hub_*`）；仍没有（`fake_claude_cli.py`、`python_oracle.py`）→ 全量；`*.mjs` → 默认列出的同前缀套件（Node 单元测试不自动运行）；`tests/fixtures/**` → 全量；`check_docs_links.py`、`check_agents_md.py` 改自己就跑自己 |
-| `Cargo.toml`、`Cargo.lock`、`.github/**`、其它任何未命中路径（`web/**`、`reference/**` …） | 全量 |
+| `Cargo.toml`、`Cargo.lock`、`.github/**`、其它任何未命中路径（`reference/**` …） | 全量 |
 
 离线回归：`tests/deploy_testplan.py`（映射、base 规则、三种模式的 CLI 行为，runner 被替身替换）；
 `tests/deploy_native_handlers.py` 钉住 macOS / Windows 处理器里原生测试一步的命令序列。

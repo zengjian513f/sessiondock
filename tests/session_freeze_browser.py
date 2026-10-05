@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Freeze/resume a real private fake CLI process tree through Chromium."""
-from browser_runtime import js
+
 import json
 import os
 import re
@@ -69,7 +69,7 @@ def check_unavailable_pause(page, reason):
         page.set_viewport_size({'width': width, 'height': 900})
         page.wait_for_timeout(80)
         if width == 390 and page.locator('#side').is_visible():
-            page.locator(f'#side .item[data-uid="{page.evaluate(js("S.sel", 'runtime.core.state.selection.sel'))}"]').click()
+            page.locator(f'#side .item[data-uid="{page.evaluate("S.sel")}"]').click()
         button = freeze_button(page)
         expect(button.locator('use')).to_have_attribute('href', '#i-pause')
         # SVG geometry catches an empty/invisible glyph, not just button layout.
@@ -78,7 +78,7 @@ def check_unavailable_pause(page, reason):
         expect(button).to_have_attribute('aria-label', '冻结现场')
         expect(button).to_have_attribute('title', re.compile(reason))
         for theme in ['light', 'dark']:
-            page.evaluate(js('theme => applyTheme(theme)', 'theme => runtime.appearance.applyTheme(theme)'), theme)
+            page.evaluate('theme => applyTheme(theme)', theme)
             button.hover()
             expect(button).to_have_css('color', 'rgb(107, 114, 128)' if theme == 'light' else 'rgb(139, 147, 161)')
             expect(button).to_have_css('opacity', '0.55')
@@ -89,7 +89,7 @@ def check_unavailable_pause(page, reason):
         page.keyboard.press('Escape')
     assert not requests, 'Unavailable pause must not submit a freeze request'
     page.remove_listener('request', record)
-    page.evaluate(js("applyTheme('light')", "runtime.appearance.applyTheme('light')"))
+    page.evaluate("applyTheme('light')")
     page.set_viewport_size({'width': 1280, 'height': 900})
     print(f'PASS unavailable pause: {reason}, desktop/mobile, both themes, mouse/keyboard', flush=True)
 
@@ -115,7 +115,7 @@ def check_pause_badges(page, uid):
 def check_freeze_overlay(page):
     overlay = page.locator('#session-freeze-overlay')
     expect(overlay).to_be_visible()
-    expect(overlay).to_have_attribute('data-uid', page.evaluate(js('S.sel', 'runtime.core.state.selection.sel')))
+    expect(overlay).to_have_attribute('data-uid', page.evaluate('S.sel'))
     pane = page.locator('#right').bounding_box()
     card = overlay.locator('.session-freeze-line').bounding_box()
     assert abs(card['x'] + card['width'] / 2 - pane['x'] - pane['width'] / 2) < 2
@@ -131,7 +131,7 @@ def check_freeze_overlay(page):
     assert abs(play_box['y'] + play_box['height'] / 2 - label_box['y'] - label_box['height'] / 2) < 2
     shades = []
     for theme in ['light', 'dark']:
-        page.evaluate(js('theme => applyTheme(theme)', 'theme => runtime.appearance.applyTheme(theme)'), theme)
+        page.evaluate('theme => applyTheme(theme)', theme)
         shades.append(overlay.evaluate('node => getComputedStyle(node).backgroundColor'))
         card_colors = overlay.locator('.session-freeze-line').evaluate(
             'node => [getComputedStyle(node).backgroundColor, getComputedStyle(node).color]')
@@ -139,7 +139,7 @@ def check_freeze_overlay(page):
                                else ['rgb(28, 31, 38)', 'rgb(223, 227, 234)']), card_colors
         expect(overlay.locator('[data-freeze-resume]')).to_be_visible()
     assert shades == ['rgba(15, 23, 42, 0.24)', 'rgba(0, 0, 0, 0.52)'], shades
-    page.evaluate(js("applyTheme('light')", "runtime.appearance.applyTheme('light')"))
+    page.evaluate("applyTheme('light')")
 
 
 def main():
@@ -213,7 +213,7 @@ def main():
                     check_unavailable_pause(page, '当前节点不支持冻结现场')
                     page.unroute(base + '/', unsupported_page)
                     page.goto(base, wait_until='networkidle')
-                    assert page.evaluate(js('SessionDockCapabilities.config.session_freeze', 'runtime.capabilities.config.session_freeze')) is True
+                    assert page.evaluate('SessionDockCapabilities.config.session_freeze') is True
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
                     check_unavailable_pause(page, '没有可验证的运行实例')
                     expect(page.locator('#a-term')).to_have_attribute('data-unavailable', 'false')
@@ -224,7 +224,7 @@ def main():
                     pids = list(map(int, (root / 'pids').read_text().split()))
                     page.wait_for_timeout(100)
                     assert (root / 'child-tick').exists()
-                    page.wait_for_function(js('uid => T.list.some(row => row.uid === uid && row.frozen === false)', 'uid => runtime.terminal.state.list.some(row => row.uid === uid && row.frozen === false)'), arg=uid)
+                    page.wait_for_function('uid => T.list.some(row => row.uid === uid && row.frozen === false)', arg=uid)
                     for width in [1698, 1400, 1200, 1000, 800, 721]:
                         page.set_viewport_size({'width': width, 'height': 900})
                         page.wait_for_timeout(80)
@@ -241,12 +241,12 @@ def main():
                     check_freeze_overlay(page)
                     expect(page.locator('#session-stop-notice')).to_be_hidden()
                     page.locator(f'#side .item[data-uid="{other_uid}"]').click()
-                    page.wait_for_function(js('uid => S.sel === uid', 'uid => runtime.core.state.selection.sel === uid'), arg=other_uid)
+                    page.wait_for_function('uid => S.sel === uid', arg=other_uid)
                     expect(page.locator('#session-stop-notice')).to_be_hidden()
                     expect(page.locator('#session-freeze-overlay')).to_be_hidden()
                     expect(page.locator('#dlive.frozen')).to_have_count(0)
                     # The paused session retains its own marker and unread count.
-                    page.evaluate(js('uid => addUnread(uid, 3)', 'uid => runtime.core.status.addUnread(uid, 3)'), uid)
+                    page.evaluate('uid => addUnread(uid, 3)', uid)
                     paused_side = page.locator(f'#side .item[data-uid="{uid}"] > .ico > .item-status')
                     expect(paused_side).to_have_class(re.compile(r'\bfrozen\b'))
                     expect(paused_side).to_have_text('')
@@ -276,11 +276,11 @@ def main():
                     page.locator('#bug-report-dialog .modal-close').click()
                     page.reload(wait_until='networkidle')
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
-                    page.wait_for_function(js('uid => T.list.some(row => row.uid === uid && row.frozen === true)', 'uid => runtime.terminal.state.list.some(row => row.uid === uid && row.frozen === true)'), arg=uid)
+                    page.wait_for_function('uid => T.list.some(row => row.uid === uid && row.frozen === true)', arg=uid)
                     button = freeze_button(page)
                     expect(button).to_have_attribute('aria-label', '恢复运行')
                     check_pause_badges(page, uid)
-                    assert page.evaluate(js("browserStateSnapshot('fixture').data.terminal.frozen", "runtime.core.diagnostics.browserStateSnapshot('fixture').data.terminal.frozen")) is True
+                    assert page.evaluate("browserStateSnapshot('fixture').data.terminal.frozen") is True
                     check_freeze_overlay(page)
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/freeze') as response:
                         page.locator('[data-freeze-resume]').click()
@@ -324,7 +324,7 @@ def main():
                     page.unroute('**/api/term/list', unsupported_rows)
                     page.goto(base, wait_until='networkidle')
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
-                    page.wait_for_function(js('uid => T.list.some(row => row.uid === uid && row.frozen === false)', 'uid => runtime.terminal.state.list.some(row => row.uid === uid && row.frozen === false)'), arg=uid)
+                    page.wait_for_function('uid => T.list.some(row => row.uid === uid && row.frozen === false)', arg=uid)
                     button = freeze_button(page)
                     expect(button).to_have_attribute('aria-label', '冻结现场')
                     expect(button).not_to_have_attribute('aria-disabled', 'true')
@@ -341,7 +341,7 @@ def main():
                         button.click()
                     expect(button).to_have_attribute('aria-label', '恢复运行')
                     check_pause_badges(page, uid)
-                    assert page.evaluate(js("browserStateSnapshot('fixture').data.terminal.frozen", "runtime.core.diagnostics.browserStateSnapshot('fixture').data.terminal.frozen")) is True
+                    assert page.evaluate("browserStateSnapshot('fixture').data.terminal.frozen") is True
                     page.keyboard.press('Escape')
                     check_freeze_overlay(page)
                     page.locator('.dhead .mobile-back').click()

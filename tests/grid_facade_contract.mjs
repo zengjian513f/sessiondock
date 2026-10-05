@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {GridTerm, proposeGridDimensions} from '../web/shared/grid/facade.js';
+import {GridTerm, proposeGridDimensions} from '../legacy-web/grid/facade.js';
 
 if (typeof globalThis.requestAnimationFrame !== 'function') {
   globalThis.requestAnimationFrame = fn => setTimeout(fn, 0);

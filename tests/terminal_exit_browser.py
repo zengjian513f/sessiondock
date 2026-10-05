@@ -6,7 +6,7 @@ descriptor, never creates descendants, and exercises console controls by normal
 browser clicks and keyboard input. WebSocket instrumentation only observes wire
 events; terminal assertions read the actual xterm/grid buffer and DOM.
 """
-from browser_runtime import js, console_renderers
+
 from contextlib import ExitStack
 import json
 import os
@@ -52,17 +52,13 @@ PROBE = """() => {
   };
 }"""
 
-XTERM_TEXT = js("""() => [...T.views.values()].map(view => {
+XTERM_TEXT = """() => [...T.views.values()].map(view => {
   const buffer = view.term?.buffer?.active;
   return buffer ? Array.from({length:buffer.length}, (_,i) =>
     buffer.getLine(i)?.translateToString(true) || '').join('\\n').trimEnd() : '';
-}).join('\\n')""", """() => [...runtime.terminal.state.views.values()].map(view => {
-  const buffer = view.term?.buffer?.active;
-  return buffer ? Array.from({length:buffer.length}, (_,i) =>
-    buffer.getLine(i)?.translateToString(true) || '').join('\\n').trimEnd() : '';
-}).join('\\n')""")
+}).join('\\n')"""
 
-SNAPSHOT = js("""uid => ({
+SNAPSHOT = """uid => ({
   errors: ConsoleUI.errors.get(uid) || '',
   paneVisible: !document.querySelector('#termpane').classList.contains('hidden'),
   inlineNotice: document.querySelector('#term-output-notice').textContent,
@@ -74,19 +70,7 @@ SNAPSHOT = js("""uid => ({
   }).join('\\n'),
   sockets: __exitProbe.sockets,
   reconnectPending: [...T.views.values()].some(view => !!view.reconnectTimer),
-})""", """uid => ({
-  errors: runtime.core.state.console.errors.get(uid) || '',
-  paneVisible: !document.querySelector('#termpane').classList.contains('hidden'),
-  inlineNotice: document.querySelector('#term-output-notice').textContent,
-  buttonUnavailable: document.querySelector('#a-term').dataset.unavailable,
-  text: [...runtime.terminal.state.views.values()].map(view => {
-    const buffer = view.term?.buffer?.active;
-    return buffer ? Array.from({length:buffer.length}, (_,i) =>
-      buffer.getLine(i)?.translateToString(true) || '').join('\\n').trimEnd() : '';
-  }).join('\\n'),
-  sockets: __exitProbe.sockets,
-  reconnectPending: [...runtime.terminal.state.views.values()].some(view => !!view.reconnectTimer),
-})""")
+})"""
 
 
 def scenario(root, browser, incomplete, renderer):
@@ -133,9 +117,9 @@ def scenario(root, browser, incomplete, renderer):
             expect(page.locator("#a-term")).to_have_attribute("data-unavailable", "false")
             page.locator("#a-term").click()
             expect(page.locator("#termpane")).to_be_visible()
-            page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
+            page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
             page.wait_for_function("(" + XTERM_TEXT + ")().includes('RS_SHELL_READY')")
-            assert page.evaluate(js("[...T.views.values()].every(view => view.grid === %s)" % ("true" if renderer == "grid" else "false"), '[...runtime.terminal.state.views.values()].every(view => view.grid === %s)' % ('true' if renderer == 'grid' else 'false')))
+            assert page.evaluate(("[...T.views.values()].every(view => view.grid === %s)" % ("true" if renderer == "grid" else "false")))
             assert len(claims) == 1 and claims[0]["uid"] == uid and claims[0]["instance_id"] == instance, claims
             keyboard = page.locator("#termpane .xterm-helper-textarea")
             keyboard.press_sequentially("quit")
@@ -229,13 +213,13 @@ def scenario(root, browser, incomplete, renderer):
                 # retired instance's saved layout/lease without a user click.
                 replacement = "synthetic-" + uuid.uuid4().hex
                 with host(root, replacement, uid=uid) as (new_process, _):
-                    page.wait_for_function(js("instance => T.list.some(row => row.instance_id === instance)", 'instance => runtime.terminal.state.list.some(row => row.instance_id === instance)'), arg=replacement)
+                    page.wait_for_function("instance => T.list.some(row => row.instance_id === instance)", arg=replacement)
                     expect(page.locator("#a-term")).to_have_attribute("data-unavailable", "false")
                     page.wait_for_timeout(600)
                     check(len(claims) == 1, "replacement inherited the exited instance's claim")
-                    check(page.evaluate(js("uid => !T.ended.has(uid) && !ConsoleUI.errors.has(uid)", 'uid => !runtime.terminal.state.ended.has(uid) && !runtime.core.state.console.errors.has(uid)'), uid), "replacement retained stale exit diagnostic")
+                    check(page.evaluate("uid => !T.ended.has(uid) && !ConsoleUI.errors.has(uid)", uid), "replacement retained stale exit diagnostic")
                     page.locator("#a-term").click()
-                    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
+                    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
                     page.wait_for_function("(" + XTERM_TEXT + ")().includes('RS_SHELL_READY')")
                     check(len(claims) == 2 and claims[-1]["instance_id"] == replacement, "manual replacement claim is not pinned to the new instance")
                     check("RS_SHELL_DONE" not in page.evaluate(XTERM_TEXT), "replacement reused the exited xterm buffer")
@@ -258,7 +242,7 @@ def main():
             launch["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
         browser = playwright.chromium.launch(**launch)
         try:
-            for renderer in console_renderers("xterm", "grid"):
+            for renderer in ["xterm", "grid"]:
                 for incomplete in [True, False]:
                     root = Path(temporary) / (renderer + ("-incomplete" if incomplete else "-normal"))
                     root.mkdir(mode=0o700)

@@ -1,16 +1,13 @@
 # 现有前端用户可见功能清单
 
-2026-10-04 按用户要求恢复正式 legacy 入口：`legacy-web/` 的 93 个受版本管理文件
-逐字节恢复为删除提交 `103c6714` 的父提交 `eac5ecfc`，包含此前其他会话的修复。
-`/sessiondock/` 使用 legacy，Vue 仅发布到 `/sessiondock2/`。恢复设置构建链及 Rust
-默认静态目录；保留现有后端业务、写后 SSE 列表通知及 Vue 辅助页元数据注入。
-独立入口和发布边界由 [部署合同](deployment.md) 与双入口浏览器验收约束。
+`legacy-web/`（`/sessiondock/`）是唯一的前端。2026-10-05 起它不再包含 Vue 代码，也不依赖
+任何构建；曾经的独立 Vue 前端已从仓库移除。
 
 `grok-4.7 high headless 产出，人工审阅`
 
-这是迁移开始时的行为基线，只盘点当时用户能看见、能操作的行为，当时已发布提交为 `2552436`。生产前端仍引用 `legacy-web/`，入口切换和旧入口退役属于迁移的最终阶段；其它并行任务已接受的修复也同步到迁移入口。独立迁移前端的当前实现见 [架构合同](architecture.md)，本文不把尚未验收的脚手架或过渡接线写成产品表面。
+这是迁移开始时的行为基线，只盘点当时用户能看见、能操作的行为，当时已发布提交为 `2552436`；之后已接受的 legacy 修复按各节补充。
 
-生产 `legacy-web/` 不包含任何 Vue 代码；设置对话框各页由 `app.js` 直接驱动现有 DOM。`tests/frontend_framework_browser.py` 通过用户操作覆盖这些设置在两种前端中的行为。
+设置对话框各页由 `app.js` 直接驱动现有 DOM。`tests/frontend_framework_browser.py` 通过用户操作覆盖这些设置。
 
 浏览器套件是定位既有操作的锚点，不是完整覆盖统计。生产行为以列出的实际代码为准。
 
@@ -61,7 +58,7 @@
 
 设置对话框 `#settings-dialog`，三个标签：外观、功能、机器。上次标签在 `settingsTab`，默认 `appearance`（`showSettingsTab` / `openSettings`）。副标题：「界面偏好保存在浏览器」。
 
-外观（`applyTheme`、`applyFont`、`applyInterfaceScale`，以及 Vue 挂载的 `SettingsAppearance`）：
+外观（`applyTheme`、`applyFont`、`applyInterfaceScale`）：
 
 - 界面缩放 `interfaceScale`：50–150，步长 1，默认 100。滑块、重置、主页面双指捏合共用同一数值。旧的 30–49 读出来按 50。捏合开始派发 `sessiondock-pinch-start`，取消进行中的终端选区且不复制。单指滚动保持浏览器原生。`#app` 使用 `touch-action: pan-x pan-y`。带 `data-pinch-owner` 的区域页面不接管。浏览器自己的页面缩放（`visualViewport.scale !== 1`）不当成键盘，也不因此改 PTY 行列。手势期间 `#scale-indicator` 显示百分比，松手后淡出，不挡输入。设置对话框尺寸不跟着滑块变。
 - 等宽字体 `font`：`ubuntu`（默认，Ubuntu Sans Mono）、`cascadia`、`system`、`consolas`。终端和工具输出共用。字体文件在 `legacy-web/fonts/`。`typography.js` 的 `apply` 在样式表之后执行。
@@ -87,7 +84,7 @@ Hub 每一行（`machineRow` / `renderMachineSettings`）：
 - 勾选启用。取消后这台机器不显示、不检查。`saveMachine`。
 - 名称输入，最长 80，回车失焦后保存。
 - 颜色：默认、蓝、紫、琥珀、青、玫红、青柠、天蓝、品红（`MACHINE_COLORS`）。
-- 控制台渲染：`服务端网格（默认）` 或 `xterm.js（浏览器解析）`。重新打开控制台后生效。旧宿主报 `grid:false` 时自动用 xterm。停用时下拉不可用；离线时悬停说明原因，保留中央展示属性的现有修改行为。Vue 预览版没有这一项：它只用网格渲染，不读本机 `consoleRenderer` 或中央 `renderer`。
+- 控制台渲染：`服务端网格（默认）` 或 `xterm.js（浏览器解析）`。重新打开控制台后生效。旧宿主报 `grid:false` 时自动用 xterm。停用时下拉不可用；离线时悬停说明原因，保留中央展示属性的现有修改行为。
 
 AI 客户端矩阵（`renderClientMatrix` / `loadMachineClients` / `updateMachineClient`）：机器 × Claude/Codex/Grok/OpenCode。单元格显示版本、是否最新，以及「更新」。更新走该机器自己的 `api/clients/update`，页面每 2 秒轮询到结束。首次读取失败显示离线单元格，错误保留在悬停提示；更新失败显示在 `#machine-note`。
 
@@ -406,7 +403,7 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 
 ### 两种渲染器
 
-默认网格。机器设置或单机 `consoleRenderer` 可选 xterm。`ensureTerm`：网格加 `mode=grid`，不用 xterm 的 fit/webgl/unicode 插件；xterm 路径才加载那些插件，并在符合条件时用 WebGL（`shouldUseTermWebgl`）。宿主太旧则强制 xterm。切换后要重新打开控制台。Vue 预览版只有网格：宿主报 `grid:false` 时不连接，控制台提示「此会话的终端宿主不支持网格显示，重新启动会话后即可打开控制台。」；录制页用 `mode=grid` 回放，录制尺寸取自每个快照。
+默认网格。机器设置或单机 `consoleRenderer` 可选 xterm。`ensureTerm`：网格加 `mode=grid`，不用 xterm 的 fit/webgl/unicode 插件；xterm 路径才加载那些插件，并在符合条件时用 WebGL（`shouldUseTermWebgl`）。宿主太旧则强制 xterm。切换后要重新打开控制台。
 
 网格在主控制台右侧留 12px 滚动条。拖动或点击轨道只改本地视口，不把滚轮发给 PTY。焦点在滚动条上时可用方向键、PgUp/PgDn、Home/End。新输出不抢走已上翻的位置；回到底部再跟随。备用屏幕上滚动条隐藏。xterm 用它自己的滚动条。[`tests/terminal_scrollback_browser.py`](../tests/terminal_scrollback_browser.py)。
 
@@ -606,10 +603,7 @@ Hub：`?nodes=` 聚合多机，单条用 `?node=`。列表 `term/records`，观�
 
 ## 入口与验收边界
 
-`web/` 为完整 Vue 独立入口，组件和具名服务的当前接线见
-[架构合同](architecture.md#独立-vue-前端)。新入口已移除 `web/src/compat/`。
-生产仍使用 `legacy-web/`，且不依赖 `web/` 的构建。
-`2552436` 记录目标开始时的行为基线，后续已接受的旧入口修复同步到独立入口。
+前端只有 `legacy-web/`，按提交原样发布。`2552436` 记录迁移开始时的行为基线。
 
 视觉复用现有 `style.css`、`typography.css`、`grid.css`、`records.css`、
 `session-resources.css`；不引入像素补偿。验收锚点为本文中的浏览器操作与临时 loopback，

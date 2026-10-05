@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
-from browser_runtime import js, scoped_frontend, wait_for_async
+from browser_runtime import wait_for_async
 from frontend_entry_browser import PREFIX, prefixed_proxy
 from frontend_framework_browser import launch_chromium, open_settings
 from history_parity import BINARY, build_corpus, isolated_server
@@ -46,7 +46,7 @@ def main():
                 assert page.evaluate('async () => (await navigator.serviceWorker.getRegistrations()).length') == 1
                 assert 'sessiondock-shell-fixture' in page.evaluate('() => caches.keys()')
                 page.goto(base, wait_until='networkidle')
-                page.wait_for_function(js('S.sessions.length > 0', 'runtime.core.state.catalog.sessions.length > 0'))
+                page.wait_for_function('S.sessions.length > 0')
                 wait_for_async(page, '''async () =>
                   !(await navigator.serviceWorker.getRegistrations()).length
                   && !(await caches.keys()).some(key => key.startsWith('sessiondock-shell-'))''')
@@ -59,19 +59,18 @@ def main():
                 open_settings(page)
                 expect(page.locator('#settings-dialog')).to_be_visible()
                 page.keyboard.press('Escape')
-                # Vue file adapters declare mode/build; restored legacy file
-                # adapters retain their original capability-script contract.
+                # File adapters retain their original capability-script contract.
                 for name in ('index.html', 'grid.html', 'records.html', 'file.html', 'files.html'):
                     response = context.request.get(base + name)
                     assert response.ok, (name, response.status)
                     body = response.text()
                     assert '__SESSIONDOCK_' not in body, name
-                    if scoped_frontend() or name not in ('file.html', 'files.html'):
+                    if name not in ('file.html', 'files.html'):
                         assert 'name="sessiondock-capabilities"' in body, name
                     assert response.headers.get('cache-control') == 'no-store', name
                 for name in ('app.js', 'term.js', 'capabilities.js'):
-                    assert context.request.get(base + name).status == (404 if scoped_frontend() else 200), name
-                # Neither frontend ships the retired Vue settings bundle.
+                    assert context.request.get(base + name).status == (200), name
+                # The retired Vue settings bundle is never served.
                 assert context.request.get(base + 'framework/settings.js').status == 404
                 assert not errors, errors
                 context.close()

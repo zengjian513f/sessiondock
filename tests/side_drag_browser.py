@@ -11,7 +11,7 @@ the Rust storage namespace (``sessiondock.width``).
 """
 from __future__ import annotations
 
-from browser_runtime import js
+
 import argparse
 import os
 from pathlib import Path
@@ -23,7 +23,7 @@ from history_parity import BINARY, build_corpus, isolated_server
 
 PHONE_LANDSCAPE = {"width": 814, "height": 380}   # iPhone 15 Pro Max, CSS px
 DESKTOP = {"width": 1280, "height": 900}
-PROBE = js("""() => {
+PROBE = """() => {
   const left = $('#left').getBoundingClientRect();
   const drag = $('#drag').getBoundingClientRect();
   return {left: left.width, drag: {x: drag.x, y: drag.y, w: drag.width, h: drag.height},
@@ -33,17 +33,7 @@ PROBE = js("""() => {
           stored: localStorage.getItem(STORAGE_PREFIX + 'width'),
           touchAction: getComputedStyle($('#drag')).touchAction,
           coarse: matchMedia('(pointer: coarse)').matches};
-}""", """() => {
-  const left = document.querySelector('#left').getBoundingClientRect();
-  const drag = document.querySelector('#drag').getBoundingClientRect();
-  return {left: left.width, drag: {x: drag.x, y: drag.y, w: drag.width, h: drag.height},
-          dragging: document.body.classList.contains('dragging'),
-          sideVar: getComputedStyle(document.documentElement).getPropertyValue('--side-width').trim(),
-          prefix: runtime.core.environment.STORAGE_PREFIX,
-          stored: localStorage.getItem(runtime.core.environment.STORAGE_PREFIX + 'width'),
-          touchAction: getComputedStyle(document.querySelector('#drag')).touchAction,
-          coarse: matchMedia('(pointer: coarse)').matches};
-}""")
+}"""
 
 
 def touch_drag(page, x0, y0, x1, y1, steps=8, end=True):
@@ -66,10 +56,10 @@ def open_first_session(page, base, uid):
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(base, wait_until="networkidle")
-    page.wait_for_function(js("S.sessions.length && T.listLoaded", 'runtime.core.state.catalog.sessions.length && runtime.terminal.state.listLoaded'))
-    page.evaluate(js("uid => openSession(uid)", 'uid => runtime.core.open.openSession(uid)'), uid)
+    page.wait_for_function("S.sessions.length && T.listLoaded")
+    page.evaluate("uid => openSession(uid)", uid)
     page.wait_for_selector(".dhead h2")
-    page.evaluate(js("setSideWidth(340, true)", 'runtime.shell.setSideWidth(340, true)'))
+    page.evaluate("setSideWidth(340, true)")
     page.wait_for_timeout(100)
     return errors
 
@@ -104,7 +94,7 @@ def check_touch(browser, base, uid):
         touch_drag(page, cx + 120 + 4, cy, cx + 40, cy)
         page.wait_for_timeout(150)
         assert abs(page.evaluate(PROBE)["left"] - 380) < 3, page.evaluate(PROBE)
-        page.evaluate(js("setSideWidth(460, true)", 'runtime.shell.setSideWidth(460, true)'))
+        page.evaluate("setSideWidth(460, true)")
 
     # Cancellation discards the moving guide and keeps the last committed width.
     # The OS taking over must not leave the page stuck in the dragging state.
@@ -118,12 +108,12 @@ def check_touch(browser, base, uid):
     assert abs(page.evaluate(PROBE)["left"] - 460) < 3, page.evaluate(PROBE)
 
     # Dragging must not scroll the session list underneath.
-    page.evaluate(js('$("#side").scrollTop = 0', 'document.querySelector.bind(document)("#side").scrollTop = 0'))
+    page.evaluate('$("#side").scrollTop = 0')
     current = page.evaluate(PROBE)['drag']
     handle_x = current['x'] + current['w'] / 2
     touch_drag(page, handle_x, cy + 60, handle_x, cy - 60)
     page.wait_for_timeout(100)
-    assert page.evaluate(js('$("#side").scrollTop', 'document.querySelector.bind(document)("#side").scrollTop')) == 0
+    assert page.evaluate('$("#side").scrollTop') == 0
     assert not errors, errors
     context.close()
 
@@ -164,40 +154,26 @@ def check_mouse(browser, base, uid):
     title.scroll_into_view_if_needed()
     box = title.bounding_box()
     assert box and old_title, (box, old_title)
-    page.evaluate(js("""() => {
+    page.evaluate("""() => {
       document.querySelector('#side').addEventListener('pointerdown', () => {
         window.__sidebarSelectionRenderRace = setInterval(() => renderSide(), 1);
       }, {once: true});
-    }""", """uid => {
-      const catalog = runtime.core.state.catalog;
-      const row = catalog.sessions.find(row => row.uid === uid);
-      if (!row) throw new Error('selection fixture row missing');
-      document.querySelector('#side').addEventListener('pointerdown', () => {
-        window.__sidebarSelectionRenderRace = setInterval(() => {
-          row.size += 1;
-          catalog.notifyRow(row);
-        }, 1);
-      }, {once: true});
-    }"""), other_uid)
+    }""", other_uid)
     page.mouse.move(box["x"] + 3, box["y"] + box["height"] / 2)
     page.mouse.down()
     page.mouse.move(box["x"] + min(box["width"] - 3, 90), box["y"] + box["height"] / 2, steps=8)
     page.mouse.up()
     page.evaluate("clearInterval(window.__sidebarSelectionRenderRace)")
     selected = page.evaluate("getSelection().toString()")
-    assert selected.strip() and page.evaluate(js("sidebarTextSelectionActive()", 'runtime.sidebarGestures.sidebarTextSelectionActive()')), selected
-    assert page.evaluate(js("S.sel", 'runtime.core.state.selection.sel')) == uid, (uid, other_uid, page.evaluate(js("S.sel", 'runtime.core.state.selection.sel')))
+    assert selected.strip() and page.evaluate("sidebarTextSelectionActive()"), selected
+    assert page.evaluate("S.sel") == uid, (uid, other_uid, page.evaluate("S.sel"))
     assert row.get_attribute("data-uid") == other_uid
 
     updated_title = old_title + "（后台更新）"
-    page.evaluate(js("""([otherUid, updatedTitle]) => {
+    page.evaluate("""([otherUid, updatedTitle]) => {
       S.sessions = S.sessions.map(row => row.uid === otherUid ? {...row, title: updatedTitle} : row);
       renderSide();
-    }""", """([otherUid, updatedTitle]) => {
-      const row = runtime.core.state.catalog.sessions.find(row => row.uid === otherUid);
-      row.title = updatedTitle;
-      runtime.core.state.catalog.notifyChanges();
-    }"""), [other_uid, updated_title])
+    }""", [other_uid, updated_title])
     assert page.evaluate("getSelection().toString()") == selected
     assert title.text_content() == old_title
     page.evaluate("getSelection().removeAllRanges()")

@@ -10,7 +10,7 @@ running instance succeeds as a no-op, and being idle it asks no confirmation. Th
 mobile (390 px) sidebar long-press menu stops a fresh resume the same way. No
 model binary, native CLI home or production host is touched.
 """
-from browser_runtime import js
+
 import json
 import os
 import re
@@ -57,8 +57,8 @@ def session_action(page):
 
 def wait_xterm(page, text):
     page.wait_for_function(
-        js("text => [...T.views.values()].some(v => v.term?.buffer?.active && Array.from({length: v.term.buffer.active.length},"
-        " (_, i) => v.term.buffer.active.getLine(i)?.translateToString() || '').join('\\n').includes(text))", "text => [...runtime.terminal.state.views.values()].some(v => v.term?.buffer?.active && Array.from({length: v.term.buffer.active.length}, (_, i) => v.term.buffer.active.getLine(i)?.translateToString() || '').join('\\n').includes(text))"),
+        "text => [...T.views.values()].some(v => v.term?.buffer?.active && Array.from({length: v.term.buffer.active.length},"
+        " (_, i) => v.term.buffer.active.getLine(i)?.translateToString() || '').join('\\n').includes(text))",
         arg=text, timeout=15000)
 
 
@@ -118,7 +118,7 @@ def main():
                             dialog.accept()
                         on_popup(page, on_dialog)
                         page.goto(base, wait_until="networkidle")
-                        assert page.evaluate(js("SessionDockCapabilities.config.session_stop", 'runtime.capabilities.config.session_stop')) is True
+                        assert page.evaluate("SessionDockCapabilities.config.session_stop") is True
                         return page
 
                     # ---- Desktop: resume, then stop through the header action.
@@ -134,9 +134,9 @@ def main():
                     resumed = taken.value.json()
                     assert taken.value.status == 200 and resumed["launch_kind"] == "resume", resumed
                     expect(page.locator("#termpane")).to_be_visible()
-                    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
+                    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
                     wait_xterm(page, "RS_SHELL_READY")
-                    page.wait_for_function(js("uid => (T.list || []).some(row => row.uid === uid && row.instance_id)", 'uid => (runtime.terminal.state.list || []).some(row => row.uid === uid && row.instance_id)'), arg=codex_uid)
+                    page.wait_for_function("uid => (T.list || []).some(row => row.uid === uid && row.instance_id)", arg=codex_uid)
                     action = session_action(page)
                     expect(action).to_have_attribute("aria-label", "停止会话")
                     page.evaluate('''() => {
@@ -166,20 +166,20 @@ def main():
                     # resume-capable profile; the exit explanation is remembered,
                     # the instance leaves the list and the header action flips
                     # back to delete.
-                    page.wait_for_function(js("uid => T.ended.has(uid)", 'uid => runtime.terminal.state.ended.has(uid)'), arg=codex_uid, timeout=15000)
+                    page.wait_for_function("uid => T.ended.has(uid)", arg=codex_uid, timeout=15000)
                     expect(page.locator("#termpane")).to_be_hidden()
-                    assert page.evaluate(js("name => !T.views.has(name) && !T.openViews.has(name)", 'name => !runtime.terminal.state.views.has(name) && !runtime.terminal.state.openViews.has(name)'), resumed["name"])
-                    assert "保留" not in page.evaluate(js("uid => T.ended.get(uid).reason", 'uid => runtime.terminal.state.ended.get(uid).reason'), codex_uid)
+                    assert page.evaluate("name => !T.views.has(name) && !T.openViews.has(name)", resumed["name"])
+                    assert "保留" not in page.evaluate("uid => T.ended.get(uid).reason", codex_uid)
                     expect(page.locator("#a-term")).to_have_attribute("data-unavailable", "false", timeout=15000)
-                    page.wait_for_function(js("uid => !(T.list || []).some(row => row.uid === uid)", 'uid => !(runtime.terminal.state.list || []).some(row => row.uid === uid)'), arg=codex_uid, timeout=15000)
-                    assert page.evaluate(js("uid => S.live.has(uid)", 'uid => runtime.core.state.live.live.has(uid)'), codex_uid) is False
+                    page.wait_for_function("uid => !(T.list || []).some(row => row.uid === uid)", arg=codex_uid, timeout=15000)
+                    assert page.evaluate("uid => S.live.has(uid)", codex_uid) is False
                     expect(session_action(page)).to_have_attribute("aria-label", "删除会话")
                     page.wait_for_timeout(1200)
                     assert page.evaluate('stopAttentionFlashes') == [], page.evaluate('stopAttentionFlashes')
                     page.evaluate('stopAttentionObserver.disconnect()')
                     page.keyboard.press("Escape")
                     # The notice really hides (the shared toast class forces display:flex).
-                    page.evaluate(js("showSessionStopNotice('')", "runtime.sessionUi.showSessionStopNotice('')"))
+                    page.evaluate("showSessionStopNotice('')")
                     expect(notice).to_be_hidden()
                     deadline = time.monotonic() + 10
                     while list((root / "host").glob("*.json")) and time.monotonic() < deadline:
@@ -197,14 +197,14 @@ def main():
                     page.locator("#termpane .xterm-helper-textarea").focus()
                     page.keyboard.type("quit")
                     page.keyboard.press("Enter")
-                    page.wait_for_function(js("name => !T.views.has(name)", 'name => !runtime.terminal.state.views.has(name)'), arg=direct["name"])
+                    page.wait_for_function("name => !T.views.has(name)", arg=direct["name"])
                     expect(notice).to_contain_text("CLI 已退出，终端已关闭")
                     expect(notice).not_to_contain_text("保留")
                     expect(page.locator("#termpane")).to_be_hidden()
-                    assert page.evaluate(js("name => !T.openViews.has(name)", 'name => !runtime.terminal.state.openViews.has(name)'), direct["name"])
-                    page.wait_for_function(js("uid => !(T.list || []).some(row => row.uid === uid)", 'uid => !(runtime.terminal.state.list || []).some(row => row.uid === uid)'), arg=codex_uid)
-                    page.evaluate(js("refreshLive(true)", 'runtime.core.live.refreshLive(true)'))
-                    page.evaluate(js("showSessionStopNotice('')", "runtime.sessionUi.showSessionStopNotice('')"))
+                    assert page.evaluate("name => !T.openViews.has(name)", direct["name"])
+                    page.wait_for_function("uid => !(T.list || []).some(row => row.uid === uid)", arg=codex_uid)
+                    page.evaluate("refreshLive(true)")
+                    page.evaluate("showSessionStopNotice('')")
 
                     # ---- A session without any running instance:
                     # stopping succeeds as a no-op and the stale live marker clears.
@@ -214,7 +214,7 @@ def main():
                     expect(page.locator("#msgs")).to_contain_text("Synthetic session without instance")
                     expect(session_action(page)).to_have_attribute("aria-label", "删除会话")
                     page.keyboard.press("Escape")
-                    page.evaluate(js("uid => { S.live.add(uid); paintLive(); }", 'uid => { runtime.core.state.live.live.add(uid); runtime.status.paintLive(); }'), other_uid)
+                    page.evaluate("uid => { S.live.add(uid); paintLive(); }", other_uid)
                     action = session_action(page)
                     expect(action).to_have_attribute("aria-label", "停止会话")
                     before = len(dialogs)
@@ -227,7 +227,7 @@ def main():
                     expect(notice).to_be_visible()
                     expect(notice).to_contain_text("停止请求已处理")
                     # Its transcript ends with a finished turn: stopping an idle session asks nothing.
-                    assert page.evaluate(js("uid => sessionTurn(uid)", 'uid => runtime.status.sessionTurn(uid)'), other_uid) == "idle"
+                    assert page.evaluate("uid => sessionTurn(uid)", other_uid) == "idle"
                     assert len(dialogs) == before, dialogs[before:]
                     assert not errors, errors
                     # ---- Multi-select: real managed stop, a failed target, retry,
@@ -236,8 +236,8 @@ def main():
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover"):
                         page.locator("#a-term").click()
                     wait_xterm(page, "RS_SHELL_READY")
-                    page.wait_for_function(js("uid => sessionStoppable(uid)", 'uid => runtime.sessionUi.sessionStoppable(uid)'), arg=codex_uid)
-                    page.evaluate(js("uid => { S.live.add(uid); paintLive(); }", 'uid => { runtime.core.state.live.live.add(uid); runtime.status.paintLive(); }'), other_uid)
+                    page.wait_for_function("uid => sessionStoppable(uid)", arg=codex_uid)
+                    page.evaluate("uid => { S.live.add(uid); paintLive(); }", other_uid)
                     page.locator(f'#side .item[data-uid="{codex_uid}"]').click(button="right")
                     page.locator('#item-menu [data-act="pick"]').click()
                     page.locator(f'#side .item[data-uid="{other_uid}"]').click()
@@ -257,8 +257,8 @@ def main():
                     expect(notice).to_be_hidden()
                     page.locator("#side-stop-summary").click()
                     expect(page.locator("#side-stop-errors")).to_contain_text("synthetic unknown host state")
-                    page.wait_for_function(js("!sessionStopBusy", '!runtime.bulk.state.stopBusy'))
-                    page.evaluate(js("uid => { S.live.add(uid); paintLive(); }", 'uid => { runtime.core.state.live.live.add(uid); runtime.status.paintLive(); }'), other_uid)
+                    page.wait_for_function("!sessionStopBusy")
+                    page.evaluate("uid => { S.live.add(uid); paintLive(); }", other_uid)
                     expect(bulk).to_be_enabled()
                     assert len(dialogs) == before + 1, dialogs[before:]
                     assert len(stops) == before_stops + 2, stops[before_stops:]
@@ -266,7 +266,7 @@ def main():
                     expect(page.locator("#side-picked")).to_have_text("已选 2 项")
                     context.unroute("**/api/session/stop", fail_other)
                     # Exited session remains selected, but is skipped on retry.
-                    page.wait_for_function(js("uid => !sessionStoppable(uid)", 'uid => !runtime.sessionUi.sessionStoppable(uid)'), arg=codex_uid)
+                    page.wait_for_function("uid => !sessionStoppable(uid)", arg=codex_uid)
                     expect(bulk).to_have_text("已停止 1/2")
                     def uncertain_stop(route):
                         route.fulfill(status=200, content_type="application/json",
@@ -276,15 +276,15 @@ def main():
                     expect(bulk).to_have_text("已停止 0/1")
                     expect(page.locator("#side-stop-summary")).to_have_text("未确认 1")
                     expect(notice).to_be_hidden()
-                    page.wait_for_function(js("!sessionStopBusy", '!runtime.bulk.state.stopBusy'))
+                    page.wait_for_function("!sessionStopBusy")
                     assert len(stops) == before_stops + 3, "uncertain stop must not retry itself"
                     context.unroute("**/api/session/stop", uncertain_stop)
-                    page.evaluate(js("uid => { S.live.add(uid); paintLive(); }", 'uid => { runtime.core.state.live.live.add(uid); runtime.status.paintLive(); }'), other_uid)
+                    page.evaluate("uid => { S.live.add(uid); paintLive(); }", other_uid)
                     bulk.click()
                     expect(bulk).to_have_text("已停止 1/1")
                     expect(notice).to_be_hidden()
                     assert len(stops) == before_stops + 4 and stops[-1]["uid"] == other_uid
-                    page.evaluate(js("() => { S.live.clear(); paintLive(); }", '() => { runtime.core.state.live.live.clear(); runtime.status.paintLive(); }'))
+                    page.evaluate("() => { S.live.clear(); paintLive(); }")
                     expect(bulk).to_be_disabled()
                     expect(page.locator("#side-pick-delete")).to_be_enabled()
                     page.locator("#side-pick-cancel").click()
@@ -305,7 +305,7 @@ def main():
                     assert result["record_id"] == receipt["record_id"] and result["instance_id"] == receipt["instance_id"]
                     expect(bulk).to_have_text("已停止 1/1")
                     expect(notice).to_be_hidden()
-                    page.wait_for_function(js("!sessionStopBusy", '!runtime.bulk.state.stopBusy'))
+                    page.wait_for_function("!sessionStopBusy")
                     expect(bulk).to_be_disabled()
                     expect(page.locator(f'#side .item[data-uid="{pending_uid}"]')).to_be_visible()
                     # The exited row keeps its entry but loses the running (blue) dot.
@@ -328,7 +328,7 @@ def main():
                         with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover"):
                             page.locator("#a-term").click()
                         wait_xterm(page, "STOP_READY_" + sid)
-                    page.wait_for_function(js("uids => uids.every(sessionStoppable)", 'uids => uids.every(runtime.sessionUi.sessionStoppable)'), arg=slow_uids)
+                    page.wait_for_function("uids => uids.every(sessionStoppable)", arg=slow_uids)
                     page.locator(f'#side .item[data-uid="{slow_uids[0]}"]').click(button="right")
                     page.locator('#item-menu [data-act="pick"]').click()
                     for uid in slow_uids[1:]:
@@ -350,10 +350,10 @@ def main():
                     expect(bulk).to_have_attribute("aria-busy", "true")
                     expect(page.locator("#side-pick-cancel")).to_be_disabled()
                     expect(notice).to_be_hidden()
-                    # Observe the committed UI, not the state mutation before Vue flushes.
+                    # Observe the rendered UI, not an earlier state mutation.
                     expect(bulk).to_have_text(re.compile(r"已停止 [1-7]/8"), timeout=15000)
                     expect(bulk).to_have_text("已停止 8/8", timeout=15000)
-                    page.wait_for_function(js("!sessionStopBusy", '!runtime.bulk.state.stopBusy'))
+                    page.wait_for_function("!sessionStopBusy")
                     elapsed = time.monotonic() - started
                     assert len(stops) == before_stops + 8 and peak[0] == 4, (stops[before_stops:], peak)
                     events = [list(map(float, (root / "events" / sid).read_text().splitlines())) for sid in SLOW_SIDS]
@@ -381,19 +381,16 @@ def main():
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover") as taken:
                         page.locator("#a-term").click()
                     duplicate_target = taken.value.json()
-                    page.wait_for_function(js("""([name, text]) => {
+                    page.wait_for_function("""([name, text]) => {
                       const b = T.views.get(name)?.term?.buffer?.active;
                       return b && Array.from({length:b.length}, (_,i) => b.getLine(i)?.translateToString() || '').join('\\n').includes(text);
-                    }""", """([name, text]) => {
-                      const b = runtime.terminal.state.views.get(name)?.term?.buffer?.active;
-                      return b && Array.from({length:b.length}, (_,i) => b.getLine(i)?.translateToString() || '').join('\\n').includes(text);
-                    }"""), arg=[duplicate_target["name"], "STOP_READY_" + SLOW_SIDS[0]])
+                    }""", arg=[duplicate_target["name"], "STOP_READY_" + SLOW_SIDS[0]])
                     other_page = context.new_page()
                     on_popup(other_page, lambda dialog: dialog.accept())
                     other_page.on("pageerror", lambda error: errors.append(str(error)))
                     other_page.goto(base, wait_until="networkidle")
                     other_page.locator(f'#side .item[data-uid="{slow_uids[0]}"]').click()
-                    other_page.wait_for_function(js("uid => sessionStoppable(uid)", 'uid => runtime.sessionUi.sessionStoppable(uid)'), arg=slow_uids[0])
+                    other_page.wait_for_function("uid => sessionStoppable(uid)", arg=slow_uids[0])
                     first_action, second_action = session_action(page), session_action(other_page)
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as first_stop, \
                             other_page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as duplicate_stop:
@@ -417,7 +414,7 @@ def main():
                     second = taken.value.json()
                     assert taken.value.status == 200 and second["action"] == "started", second
                     assert second["instance_id"] != resumed["instance_id"]
-                    page.wait_for_function(js("T.ws?.readyState === WebSocket.OPEN", 'runtime.terminal.state.ws?.readyState === WebSocket.OPEN'))
+                    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
                     wait_xterm(page, "RS_SHELL_READY")
                     page.locator(".mobile-back").first.click()
                     item = page.locator(f'#side .item[data-uid="{codex_uid}"]')
@@ -448,11 +445,11 @@ def main():
                     assert stopped.value.status == 200 and reply["stage"] == "graceful", reply
                     assert reply["instance_id"] == second["instance_id"], reply
                     expect(page.locator("#session-stop-notice")).to_contain_text("CLI 已在收到 Ctrl-D 后退出")
-                    page.wait_for_function(js("uid => !(T.list || []).some(row => row.uid === uid)", 'uid => !(runtime.terminal.state.list || []).some(row => row.uid === uid)'), arg=codex_uid, timeout=15000)
+                    page.wait_for_function("uid => !(T.list || []).some(row => row.uid === uid)", arg=codex_uid, timeout=15000)
                     assert not errors, errors
                     # Wait for the stop refresh before opening another menu;
                     # paintLive closes a menu rendered from the old running row.
-                    page.wait_for_function(js("uid => !sessionStoppable(uid)", 'uid => !runtime.sessionUi.sessionStoppable(uid)'), arg=codex_uid)
+                    page.wait_for_function("uid => !sessionStoppable(uid)", arg=codex_uid)
                     # Use a fresh real host for the mobile bulk stop. A synthetic
                     # S.live marker can be removed by the concurrent live poll.
                     item.click()
@@ -461,7 +458,7 @@ def main():
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover"):
                         page.locator("#a-term").click()
                     wait_xterm(page, "RS_SHELL_READY")
-                    page.wait_for_function(js("uid => sessionStoppable(uid)", 'uid => runtime.sessionUi.sessionStoppable(uid)'), arg=codex_uid)
+                    page.wait_for_function("uid => sessionStoppable(uid)", arg=codex_uid)
                     page.locator(".mobile-back").first.click()
                     # The multi-select stop action fits the mobile toolbar.
                     item.click(button="right")
@@ -470,7 +467,7 @@ def main():
                     expect(page.locator("#side-pick-stop")).to_be_enabled()
                     page.locator("#side-pick-stop").click()
                     expect(page.locator("#side-pick-stop")).to_have_text("已停止 1/1")
-                    page.wait_for_function(js("!sessionStopBusy", '!runtime.bulk.state.stopBusy'))
+                    page.wait_for_function("!sessionStopBusy")
                     expect(page.locator("#session-stop-notice")).to_be_hidden()
                     for selector in ("#side-pick-stop", "#side-pick-delete", "#side-pick-cancel"):
                         bounds = page.locator(selector).bounding_box()

@@ -233,8 +233,6 @@ def main(argv=None):
     env = os.environ.copy()
     prebuilt_web = args.web_dir or env.get("SESSIONDOCK_TEST_WEB_DIR")
     selected_web = Path(prebuilt_web).resolve() if prebuilt_web else frontend_dir()
-    # legacy-web/ runs as committed; only the Vue preview needs a build.
-    frontend_build = "build:migration" if selected_web.name != "legacy-web" else None
     env["SESSIONDOCK_TEST_WEB_DIR"] = str(selected_web)
 
     wanted = set(csv(args.tags))
@@ -266,7 +264,7 @@ def main(argv=None):
             return 0
 
     if args.list:
-        print(f"frontend: {selected_web} ({'prebuilt' if prebuilt_web or not frontend_build else frontend_build + ' before browser suites'})")
+        print(f"frontend: {selected_web}")
         for suite in plan:
             line = f"{suite['name']:<36} {suite['kind']:<7} {suite['timeout']:4d}s  {shlex.join(suite['argv'])}"
             if suite["skip"]:
@@ -289,13 +287,7 @@ def main(argv=None):
             env["PATH"] = str(cargo_bin) + os.pathsep + env.get("PATH", "")
     chrome = find_chromium()
 
-    print(f"frontend: {selected_web} ({'prebuilt' if prebuilt_web or not frontend_build else frontend_build + ' before browser suites'})", flush=True)
-    if frontend_build and not args.dry_run and not prebuilt_web and any(suite.get("browser") and not suite["skip"] for suite in plan):
-        print(f"building frontend assets before browser suites: {frontend_build}", flush=True)
-        result = subprocess.run(["npm", "run", frontend_build], cwd=ROOT / "web", env=env,
-                                timeout=300)
-        if result.returncode != 0:
-            return result.returncode
+    print(f"frontend: {selected_web}", flush=True)
 
     n = len(plan)
     outcome = {}                                  # name -> (status, elapsed, reason)

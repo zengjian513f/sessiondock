@@ -3,7 +3,7 @@
 Uses a private home/cwd and existing authentication without reading credentials.
 """
 # run_validation: skip
-from browser_runtime import js
+
 import argparse
 from contextlib import ExitStack
 import hashlib
@@ -86,7 +86,7 @@ def main():
                 plan=operation['file_plan'];clone=plan['sessions']['claude:'+sid]
                 cloned_checkpoint=plan['records']['claude:'+checkpoint]
                 assert clone!=sid and cloned_checkpoint!=checkpoint
-                page.wait_for_function(js('(id)=>S.sel===id', '(id)=>runtime.core.state.selection.sel===id'),arg=copied.value.json()['target_uid'])
+                page.wait_for_function('(id)=>S.sel===id',arg=copied.value.json()['target_uid'])
                 expect(page.locator('#msgs')).to_contain_text('After native checkpoint')
             assert {p.relative_to(home/'file-history'/clone):p.read_bytes() for p in (home/'file-history'/clone).rglob('*') if p.is_file()}==backups
             # CLI rewind is local and sends no model request. Same cwd is intentional:

@@ -2,8 +2,7 @@
 """Tool group folding through real Chromium clicks and native Codex appends.
 
 Only temporary synthetic rollout files and an isolated Rust server are used.
-The same user paths cover the legacy and Vue entries; runtime queries only
-observe accepted checkpoints/activity, never create renderer state.
+Runtime queries only observe accepted checkpoints/activity, never create renderer state.
 """
 from __future__ import annotations
 
@@ -17,29 +16,18 @@ import tempfile
 
 from playwright.sync_api import expect, sync_playwright
 
-from browser_runtime import js
+
 from history_parity import BINARY, Corpus, codex_row, encoded, isolated_server
 from media_browser import PNG
 
 GROUP = "#msgs > .grp"
 FOLDED = re.compile(r"(?:^|\s)folded(?:\s|$)")
-ACCEPTED = js(
-    """([uid, end, activity]) => {
+ACCEPTED = """([uid, end, activity]) => {
       const entry = cache.get(viewKey(uid, null));
       return S.sel === uid && !S.agent && entry?.end === end
         && (!activity || entry.activity?.state === activity);
-    }""",
-    """([uid, end, activity]) => {
-      const entry = runtime.core.cache.cache.get(runtime.viewKey(uid, null));
-      return runtime.core.state.selection.sel === uid
-        && !runtime.core.state.selection.agent && entry?.end === end
-        && (!activity || entry.activity?.state === activity);
-    }""",
-)
-WATCHING = js(
-    "_es && _es.readyState === EventSource.OPEN",
-    "runtime.core.sync.watching && runtime.core.sync.watching.readyState === EventSource.OPEN",
-)
+    }"""
+WATCHING = "_es && _es.readyState === EventSource.OPEN"
 
 
 def record(sid, kind, payload):
@@ -245,10 +233,7 @@ def verify(page, corpus, expected, requests):
     expect(group.locator(".tool-entry, .media-gallery, img, .media-more")).to_have_count(0)
     assert len([url for url in requests if "/api/media/" in url]) == before_media, \
         "folded tool result fetched media before a user click"
-    continuation = page.evaluate(js(
-        "SessionDockCapabilities.config.media_continuation === true",
-        "runtime.capabilities.config.media_continuation === true",
-    ))
+    continuation = page.evaluate("SessionDockCapabilities.config.media_continuation === true")
     group.locator(".fold-toggle").click()
     group_state(page, 2, folded=False)
     expect(group.locator(".tool-status")).to_have_count(1)

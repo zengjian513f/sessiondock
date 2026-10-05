@@ -188,7 +188,7 @@ impl Hub {
         let config = HubConfig {
             nodes_file: dir.path().join("hub-nodes.json"),
             cache_dir: dir.path().join("hub-cache"),
-            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
+            web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
             audit_dir: Some(audit),
             ..HubConfig::default()
         };
@@ -1187,7 +1187,7 @@ async fn public_hosts_pass_the_hub_gate_like_the_node_gate() {
     let config = HubConfig {
         nodes_file: dir.path().join("hub-nodes.json"),
         cache_dir: dir.path().join("hub-cache"),
-        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist-migration"),
+        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
         public_hosts: vec!["203.0.113.177".into(), "hub.lan:8443".into()],
         ..HubConfig::default()
     };

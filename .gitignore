@@ -1,11 +1,4 @@
 /target/
-/web/node_modules/
-/web/dist/
-/web/dist-migration/
-/web/dist-pages/
-/web/coverage/
-/web/test-results/
-/web/playwright-report/
 *.tsbuildinfo
 __pycache__/
 *.pyc

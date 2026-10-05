@@ -19,7 +19,7 @@ keeps turning until its end notice or TaskStop, and a watchdog Monitor that
 tails an ended command's output file no longer holds it. No model binary,
 native CLI home or production host is touched.
 """
-from browser_runtime import js, scoped_frontend
+
 import argparse
 import json
 import os
@@ -79,17 +79,17 @@ TURN = re.compile(r"\bturn-(working|waiting)\b")
 
 def wait_xterm(page, text):
     page.wait_for_function(
-        js("text => [...T.views.values()].some(v => v.term?.buffer?.active && Array.from({length: v.term.buffer.active.length},"
-        " (_, i) => v.term.buffer.active.getLine(i)?.translateToString() || '').join('\\n').includes(text))", "text => [...runtime.terminal.state.views.values()].some(v => v.term?.buffer?.active && Array.from({length: v.term.buffer.active.length}, (_, i) => v.term.buffer.active.getLine(i)?.translateToString() || '').join('\\n').includes(text))"),
+        "text => [...T.views.values()].some(v => v.term?.buffer?.active && Array.from({length: v.term.buffer.active.length},"
+        " (_, i) => v.term.buffer.active.getLine(i)?.translateToString() || '').join('\\n').includes(text))",
         arg=text, timeout=15000)
 
 
 def wait_busy(page, uid, busy):
     try:
-        page.wait_for_function(js("([uid, busy]) => cache.get(uid)?.cli?.instance?.busy === busy", '([uid, busy]) => runtime.core.cache.cache.get(uid)?.cli?.instance?.busy === busy'),
+        page.wait_for_function("([uid, busy]) => cache.get(uid)?.cli?.instance?.busy === busy",
                                arg=[uid, busy], timeout=20000)
     except Exception:
-        raise AssertionError(("cli", busy, page.evaluate(js("uid => cache.get(uid)?.cli ?? null", 'uid => runtime.core.cache.cache.get(uid)?.cli ?? null'), uid))) from None
+        raise AssertionError(("cli", busy, page.evaluate("uid => cache.get(uid)?.cli ?? null", uid))) from None
 
 
 def stop_hosts(host_dir):
@@ -189,7 +189,7 @@ def main(binary=BINARY):
                         assert taken.value.status == 200, taken.value.text()
                         assert "needs_confirm" not in taken.value.json(), taken.value.text()
                         wait_xterm(page, "RS_SHELL_READY")
-                        page.wait_for_function(js("uid => S.live.has(uid)", 'uid => runtime.core.state.live.live.has(uid)'), arg=uid, timeout=20000)
+                        page.wait_for_function("uid => S.live.has(uid)", arg=uid, timeout=20000)
                     expect(badge(claude_uid)).to_be_visible()
                     expect(badge(claude_uid)).not_to_have_class(TURN)
                     expect(badge(claude_uid)).to_have_attribute("title", re.compile("空闲"))
@@ -271,7 +271,7 @@ def main(binary=BINARY):
                     expect(choice.locator(".view-live")).to_be_visible()
                     choice.click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic long agent working")
-                    page.wait_for_function(js("cache.get(viewKey(S.sel,S.agent))?.activity?.state === 'working'", "runtime.core.cache.cache.get(runtime.viewKey(runtime.core.state.selection.sel,runtime.core.state.selection.agent))?.activity?.state === 'working'"))
+                    page.wait_for_function("cache.get(viewKey(S.sel,S.agent))?.activity?.state === 'working'")
 
                     def agent_active(expected):
                         rows = json.loads(opener.open(base + "/api/sessions?force=1", timeout=10).read())["sessions"]
@@ -331,9 +331,9 @@ def main(binary=BINARY):
                     writer.start()
                     try:
                         for _ in range(30):
-                            page.evaluate(js("async () => await loadSessions(true)", 'async () => await runtime.core.list.loadSessions(true)'))
+                            page.evaluate("async () => await loadSessions(true)")
                             expect(page.locator(f'#side .item[data-uid="{codex_uid}"]:not(.agent)')).to_have_count(1)
-                            row = page.evaluate(js("uid => S.sessions.find(row => row.uid === uid)", 'uid => runtime.core.state.catalog.sessions.find(row => row.uid === uid)'), codex_uid)
+                            row = page.evaluate("uid => S.sessions.find(row => row.uid === uid)", codex_uid)
                             assert row and row["sid"] == CODEX_SID and row["turn"] == "working", row
                     finally:
                         stop_append.set(); writer.join(timeout=5)
@@ -434,10 +434,9 @@ def main(binary=BINARY):
                     expect(page.locator("#composer")).to_be_visible()
                     page.locator('#side .item.agent[data-agent="a1b2c3d4e5f6a7b8c"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic background result")
-                    page.wait_for_function(js("S.agent === 'a1b2c3d4e5f6a7b8c'", "runtime.core.state.selection.agent === 'a1b2c3d4e5f6a7b8c'"))
+                    page.wait_for_function("S.agent === 'a1b2c3d4e5f6a7b8c'")
                     expect(page.locator("#a-term")).to_have_attribute("aria-label", re.compile("子代理"))
-                    if not scoped_frontend():
-                        page.evaluate("renderTakeoverBtn()")
+                    page.evaluate("renderTakeoverBtn()")
                     expect(page.locator("#composer")).to_be_hidden()
                     expect(page.locator("#composer-input-status")).to_be_hidden()
                     page.locator(f'#side .item[data-uid="{claude_uid}"]:not(.agent)').click()
@@ -467,7 +466,7 @@ def main(binary=BINARY):
                     expect(badge(codex_uid)).not_to_have_class(TURN)
                     expect(badge(codex_uid)).to_have_attribute("title", re.compile("空闲"))
                     # The CLI state object carries the field for every observed session.
-                    cli = page.evaluate(js("uid => cache.get(uid).cli", 'uid => runtime.core.cache.cache.get(uid).cli'), codex_uid)
+                    cli = page.evaluate("uid => cache.get(uid).cli", codex_uid)
                     assert cli["instance"] == {"running": True, "busy": False}, cli
 
                     # BUG-20261001-133105-146ce9: detached work no longer
@@ -479,22 +478,22 @@ def main(binary=BINARY):
                     helper = subprocess.Popen(["/synthetic/codex-code-mode-host", "60"],
                                               executable="/bin/sleep", env=task_env)
                     try:
-                        page.evaluate(js("refreshLive(true)", 'runtime.core.live.refreshLive(true)'))
+                        page.evaluate("refreshLive(true)")
                         expect(header).not_to_have_class(TURN)
                         task = subprocess.Popen(["/bin/sleep", "60"], env=task_env, start_new_session=True)
                         try:
-                            page.evaluate(js("refreshLive(true)", 'runtime.core.live.refreshLive(true)'))
+                            page.evaluate("refreshLive(true)")
                             wait_busy(page, codex_uid, False)
                             expect(header).to_have_class(re.compile(r"\bturn-working\b"))
                             expect(badge(codex_uid)).to_have_class(re.compile(r"\bturn-working\b"))
                             page.reload(wait_until="networkidle")
-                            page.wait_for_function(js("uid => S.sel === uid && S.live.has(uid)", 'uid => runtime.core.state.selection.sel === uid && runtime.core.state.live.live.has(uid)'), arg=codex_uid)
+                            page.wait_for_function("uid => S.sel === uid && S.live.has(uid)", arg=codex_uid)
                             wait_busy(page, codex_uid, False)
                             expect(header).to_have_class(re.compile(r"\bturn-working\b"))
                         finally:
                             task.terminate()
                             task.wait(timeout=5)
-                        page.evaluate(js("refreshLive(true)", 'runtime.core.live.refreshLive(true)'))
+                        page.evaluate("refreshLive(true)")
                         expect(header).not_to_have_class(TURN)
                         expect(badge(codex_uid)).not_to_have_class(TURN)
                     finally:
@@ -519,7 +518,7 @@ def main(binary=BINARY):
                         expect(badge(codex_uid)).to_have_class(re.compile(r"\bturn-working\b"))
                         assert page.evaluate("getComputedStyle(document.querySelector('#dlive')).animationName") != "none"
                         page.reload(wait_until="networkidle")
-                        page.wait_for_function(js("uid => S.sel === uid && S.live.has(uid)", 'uid => runtime.core.state.selection.sel === uid && runtime.core.state.live.live.has(uid)'), arg=codex_uid)
+                        page.wait_for_function("uid => S.sel === uid && S.live.has(uid)", arg=codex_uid)
                         wait_busy(page, codex_uid, True)
                         expect(header).to_have_class(re.compile(r"\bturn-working\b"))
                         if not page.locator("#termpane").is_visible():
@@ -527,19 +526,19 @@ def main(binary=BINARY):
                         wait_xterm(page, "RS_SHELL_READY")
                         # A normal input remains writable while a background
                         # terminal runs; activity is not an input veto.
-                        cli = page.evaluate(js("uid => cache.get(uid).cli", 'uid => runtime.core.cache.cache.get(uid).cli'), codex_uid)
+                        cli = page.evaluate("uid => cache.get(uid).cli", codex_uid)
                         assert cli["input"]["state"] == "ready", cli
 
                     # Phone terminal resizing wraps the model/context footer;
                     # both list and detail must retain the observed busy state.
                     for width in (608, 390, 320):
-                        observed = page.evaluate(js("uid => cache.get(uid).cli.observed_at", 'uid => runtime.core.cache.cache.get(uid).cli.observed_at'), codex_uid)
+                        observed = page.evaluate("uid => cache.get(uid).cli.observed_at", codex_uid)
                         page.set_viewport_size({"width": width, "height": 780})
                         if page.locator(".mobile-back").is_visible():
                             page.locator(".mobile-back").click()
                         expect(badge(codex_uid)).to_be_visible()
                         page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
-                        page.wait_for_function(js("([uid, at]) => cache.get(uid)?.cli?.observed_at > at", '([uid, at]) => runtime.core.cache.cache.get(uid)?.cli?.observed_at > at'),
+                        page.wait_for_function("([uid, at]) => cache.get(uid)?.cli?.observed_at > at",
                                                arg=[codex_uid, observed], timeout=20000)
                         wait_busy(page, codex_uid, True)
                         expect(header).to_be_visible()
@@ -562,12 +561,12 @@ def main(binary=BINARY):
                     wait_xterm(page, "RS_SHELL_READY")
 
                     for command in ["quoted", "quoted-quota", "draft", "background-zero", "idle"]:
-                        observed = page.evaluate(js("uid => cache.get(uid).cli.observed_at", 'uid => runtime.core.cache.cache.get(uid).cli.observed_at'), codex_uid)
+                        observed = page.evaluate("uid => cache.get(uid).cli.observed_at", codex_uid)
                         page.locator("#xterm").click()
                         page.keyboard.type(command)
                         page.keyboard.press("Enter")
                         wait_xterm(page, "RS_IDLE" if command == "idle" else "RS_SCREEN_" + command)
-                        page.wait_for_function(js("([uid, at]) => cache.get(uid)?.cli?.observed_at > at", '([uid, at]) => runtime.core.cache.cache.get(uid)?.cli?.observed_at > at'),
+                        page.wait_for_function("([uid, at]) => cache.get(uid)?.cli?.observed_at > at",
                                                arg=[codex_uid, observed], timeout=20000)
                         wait_busy(page, codex_uid, False)
                         expect(header).not_to_have_class(TURN)

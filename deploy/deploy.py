@@ -58,7 +58,7 @@ from deployment_lock import DeploymentLock, repository_lock  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_DIR = ROOT / "deploy"
 STAGE_ROOT = ROOT / "target" / "deploy"
-# The production frontend is legacy-web/ as committed; web/ matters only for the Vue preview build.
+# The frontend is legacy-web/, served exactly as committed.
 DIRTY_SCOPE = ["crates", "legacy-web", "Cargo.toml", "Cargo.lock"]
 WEB_EXCLUDES = ["node_modules", ".DS_Store", "*.swp"]
 GOOD = {"OK", "PLANNED", "SKIPPED"}
@@ -160,8 +160,8 @@ def build_config(args) -> dict:
 
 
 # -- build ---------------------------------------------------------------------------------
-def dirty_files(frontend: str = "legacy") -> list[str]:
-    out = git("status", "--porcelain", "--", *DIRTY_SCOPE, *(["web"] if frontend == "vue" else []))
+def dirty_files() -> list[str]:
+    out = git("status", "--porcelain", "--", *DIRTY_SCOPE)
     return [line for line in out.splitlines() if line.strip()]
 
 
@@ -203,38 +203,8 @@ def resolve_build(cfg: dict, with_ptyhost: bool) -> tuple[list[str], list[str]]:
     return argv, names
 
 
-def build_web(stage: Path, worktree: bool) -> None:
-    """Compile the Vue preview from the web/ snapshot, using installed dependencies."""
-    log_path = stage / "logs" / "web-build.log"
-    with tempfile.TemporaryDirectory(prefix="web-build-", dir=stage) as temporary:
-        snapshot = Path(temporary)
-        if worktree:
-            subprocess.run(["tar", "-xf", str(stage / "source.tar"), "-C", str(snapshot), "web"],
-                           check=True, timeout=300)
-        else:
-            with subprocess.Popen(["git", "archive", "--format=tar", "HEAD", "web"], cwd=ROOT,
-                                  stdout=subprocess.PIPE) as ga:
-                subprocess.run(["tar", "-x", "-C", str(snapshot)], stdin=ga.stdout,
-                               check=True, timeout=300)
-            if ga.returncode != 0:
-                die("git archive HEAD web failed")
-        (snapshot / "web" / "node_modules").symlink_to(ROOT / "web" / "node_modules",
-                                                       target_is_directory=True)
-        script = "build:migration"
-        shutil.copytree(stage / "web", snapshot / "legacy-web")
-        print(f"web: npm run {script} (log {log_path.relative_to(ROOT)})", flush=True)
-        with log_path.open("w", encoding="utf-8") as log:
-            result = subprocess.run(["npm", "run", script], cwd=snapshot / "web",
-                                    stdout=log, stderr=subprocess.STDOUT, timeout=300)
-        if result.returncode != 0:
-            tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-30:]
-            die("web build failed (rc=%d):\n%s" % (result.returncode, "\n".join(tail)), 1)
-        shutil.rmtree(stage / "web")
-        shutil.copytree(snapshot / "web" / "dist-migration", stage / "web")
-
-
 def cmd_build(args) -> Path:
-    dirty = dirty_files(args.frontend)
+    dirty = dirty_files()
     if dirty and not args.allow_dirty:
         print("refusing to build: working tree differs from HEAD in the build scope "
               "(pass --allow-dirty to build the working tree anyway):", file=sys.stderr)
@@ -271,9 +241,6 @@ def cmd_build(args) -> Path:
         print("web: git archive HEAD legacy-web")
     if not (stage / "web" / "index.html").is_file():
         die("web snapshot has no index.html")
-    # legacy-web/ is served exactly as committed; only the Vue preview is compiled.
-    if args.frontend == "vue":
-        build_web(stage, web_from_worktree)
 
     binaries: dict[str, Path] = {}
     sha256: dict[str, str] = {}
@@ -310,11 +277,11 @@ def cmd_build(args) -> Path:
                     dirty=(crates_dirty and not args.web_only) or (web_dirty and web_from_worktree),
                     built_at=started.isoformat(timespec="seconds"), web_dir=stage / "web",
                     binaries=binaries, sha256=sha256, source_archive=stage / "source.tar",
-                    web_only=args.web_only, frontend=args.frontend)
+                    web_only=args.web_only)
     doc = {"commit": art.commit, "short": art.short, "dirty": art.dirty, "built_at": art.built_at,
            "web_dir": "web", "binaries": {n: f"bin/{n}" for n in binaries}, "sha256": sha256,
            "source_archive": "source.tar", "web_only": art.web_only, "stage": str(stage),
-           "web_source": "worktree" if web_from_worktree else "HEAD", "frontend": args.frontend,
+           "web_source": "worktree" if web_from_worktree else "HEAD", "frontend": "legacy",
            "dirty_files": dirty,
            "cargo": cargo_argv, "with_ptyhost": args.with_ptyhost,
            "source_tree": snapshot_tree, "source_source": "worktree" if args.allow_dirty else "HEAD"}
@@ -742,8 +709,6 @@ def main(argv: list[str] | None = None) -> int:
     build_flags.add_argument("--web-from-head", action="store_true",
                              help="with --allow-dirty: still snapshot legacy-web/ from HEAD, not the working tree")
     build_flags.add_argument("--build-timeout", type=float, default=3600, help="seconds for cargo build")
-    build_flags.add_argument("--frontend", choices=("legacy", "vue"), default="legacy",
-                             help="frontend snapshot to build (default legacy; vue for a separate preview target)")
 
     def test_flags(default: str) -> argparse.ArgumentParser:   # a fresh parent per command: its own default
         tf = argparse.ArgumentParser(add_help=False)
