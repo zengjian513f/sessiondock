@@ -502,6 +502,14 @@ export class GridModel {
     if (Array.isArray(msg.scrolled) && msg.scrolled.length && !this.modes.alt) {
       for (const raw of msg.scrolled) this.scrollback.push(this._row(raw));
       this.historyAppended += msg.scrolled.length;
+      // 宿主回滚区满了以后每滚进一行就从最旧一端挤掉一行，history_total 不再
+      // 增长；按它校正估计，本地最旧一行的宿主行号随之前移（同 acceptHistory）。
+      const total = msg.history_total;
+      const dropped = typeof total === 'number' ? this.historyBase + this.historyAppended - total : 0;
+      if (dropped > 0) {
+        this.historyBase -= dropped;
+        this.historyOlder = Math.max(0, this.historyOlder - dropped);
+      }
       this._capScrollback();
       scrolledCount = msg.scrolled.length;
       full = true;

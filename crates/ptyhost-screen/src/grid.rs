@@ -241,6 +241,18 @@ pub fn history_rows(screen: &Screen, from: usize, to: usize) -> Vec<String> {
         .collect()
 }
 
+/// 自上次调用以来从主屏滚进历史、现在仍留着的行（最旧在前），按推入历史的
+/// 行数计，历史满了（长度不再增长）也照样给出。备用屏幕期间为空，计数留到
+/// 回到主屏。每次捕获都要调用一次以消耗计数；用不上的结果（resize 快照、
+/// 新客户端）直接丢弃。
+pub fn take_scrolled_rows(screen: &mut Screen) -> Vec<String> {
+    let Some(count) = screen.take_scrolled() else {
+        return Vec::new();
+    };
+    let total = screen.history_len();
+    history_rows(screen, total - count, total)
+}
+
 fn cursor_json(cursor: (u16, u16, bool)) -> Value {
     json!({"x": cursor.0, "y": cursor.1, "visible": cursor.2})
 }
@@ -277,6 +289,8 @@ pub fn snapshot_json(
 }
 
 /// 两帧之间的增量；`scrolled` 是这期间从主屏滚出的历史行。没有任何变化时返回 None。
+/// 带 `scrolled` 时同时带上 `history_total`：历史满了以后它不再增长，浏览器据此
+/// 知道宿主从最旧一端挤掉了多少行。
 pub fn diff_json(
     prev: &GridState,
     next: &GridState,
@@ -306,6 +320,7 @@ pub fn diff_json(
     let mut value = json!({"t": "diff", "seq": seq});
     if !scrolled.is_empty() {
         value["scrolled"] = Value::Array(raw_rows(scrolled));
+        value["history_total"] = json!(next.history);
     }
     if !rows.is_empty() {
         value["rows"] = Value::Array(rows);
@@ -446,6 +461,98 @@ mod tests {
         assert_eq!(diff["rows"].as_array().unwrap().len(), 2);
         assert_eq!(diff["cursor"]["y"], 2);
         assert!(diff_json(&next, &next, &[], None, 8).is_none());
+    }
+
+    fn texts(rows: &[String]) -> Vec<String> {
+        rows.iter()
+            .map(|row| parse(row)["s"][0][0].as_str().unwrap_or("").to_string())
+            .collect()
+    }
+
+    /// Feeds rows `r{from}..=r{to}`, each followed by CR LF.
+    fn feed_rows(screen: &mut Screen, from: usize, to: usize) {
+        for n in from..=to {
+            screen.feed(format!("r{n}\r\n").as_bytes());
+        }
+    }
+
+    #[test]
+    fn scrolled_rows_keep_coming_once_history_is_full() {
+        // 3 screen rows, history capped at 6: after `r{n}\r\n` the screen holds
+        // r{n-1}, r{n} and the cursor row, so history ends at r{n-2}.
+        let mut s = Screen::new(10, 3, 6);
+        assert!(take_scrolled_rows(&mut s).is_empty());
+        let mut received = Vec::new();
+        let mut fed = 0;
+        for burst in [1, 2, 4, 3, 1, 4, 2, 4, 4, 3] {
+            feed_rows(&mut s, fed + 1, fed + burst);
+            fed += burst;
+            let prev_len = received.len();
+            received.extend(texts(&take_scrolled_rows(&mut s)));
+            assert!(s.history_len() <= 6);
+            if fed > 8 {
+                assert_eq!(s.history_len(), 6, "history should be full");
+                assert_eq!(received.len() - prev_len, burst, "burst {burst} after r{fed}");
+            }
+        }
+        let expected: Vec<String> = (1..=fed - 2).map(|n| format!("r{n}")).collect();
+        assert_eq!(received, expected);
+        // Nothing new scrolled: nothing reported, and the screen still reads normally.
+        assert!(take_scrolled_rows(&mut s).is_empty());
+        let state = capture(&mut s);
+        assert_eq!(parse(&state.rows_json[0])["s"][0][0], format!("r{}", fed - 1));
+        assert_eq!(state.history, 6);
+    }
+
+    #[test]
+    fn scrolled_rows_at_the_counter_ceiling_are_exact_or_the_whole_history() {
+        let mut s = Screen::new(10, 3, 6);
+        feed_rows(&mut s, 1, 10);
+        let _ = take_scrolled_rows(&mut s);
+        assert_eq!(s.history_len(), 6);
+        // Exactly history - 1 rows: the previous newest row became the oldest one.
+        feed_rows(&mut s, 11, 15);
+        assert_eq!(texts(&take_scrolled_rows(&mut s)), ["r9", "r10", "r11", "r12", "r13"]);
+        // More than the history: every retained row is new.
+        feed_rows(&mut s, 16, 30);
+        let rows = texts(&take_scrolled_rows(&mut s));
+        assert_eq!(rows, ["r23", "r24", "r25", "r26", "r27", "r28"]);
+    }
+
+    #[test]
+    fn scrolled_rows_skip_the_alt_screen_and_restart_after_a_history_clear() {
+        let mut s = Screen::new(10, 3, 6);
+        feed_rows(&mut s, 1, 10);
+        let _ = take_scrolled_rows(&mut s);
+        s.feed(b"\x1b[?1049h");
+        feed_rows(&mut s, 11, 20);
+        assert!(take_scrolled_rows(&mut s).is_empty());
+        s.feed(b"\x1b[?1049l");
+        assert!(take_scrolled_rows(&mut s).is_empty());
+        // ED 3 drops the history; rows scrolled afterwards are reported.
+        s.feed(b"\x1b[3J");
+        feed_rows(&mut s, 21, 23);
+        assert_eq!(texts(&take_scrolled_rows(&mut s)).len(), s.history_len());
+        assert!(s.history_len() > 0);
+    }
+
+    #[test]
+    fn diff_with_scrolled_rows_carries_the_history_total() {
+        let mut s = Screen::new(10, 3, 6);
+        let prev = capture(&mut s);
+        feed_rows(&mut s, 1, 12);
+        let next = capture(&mut s);
+        let scrolled = take_scrolled_rows(&mut s);
+        let diff: Value =
+            serde_json::from_str(&diff_json(&prev, &next, &scrolled, None, 2).unwrap()).unwrap();
+        assert_eq!(diff["history_total"], 6);
+        assert_eq!(diff["scrolled"].as_array().unwrap().len(), 6);
+        let quiet = capture(&mut s);
+        s.feed(b"x");
+        let typed = capture(&mut s);
+        let diff: Value =
+            serde_json::from_str(&diff_json(&quiet, &typed, &[], None, 3).unwrap()).unwrap();
+        assert!(diff.get("history_total").is_none(), "{diff}");
     }
 
     #[test]

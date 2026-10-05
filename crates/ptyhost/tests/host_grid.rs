@@ -409,6 +409,49 @@ fn scrolled_rows_and_history_arrive_in_order() {
 }
 
 #[test]
+fn scrolled_rows_keep_arriving_after_history_is_full() {
+    // The fixture keeps `--history 100`; 300 echoed lines fill it three times over.
+    let host = Host::start();
+    let mut grid = Attach::grid(&host);
+    assert_eq!(grid.next_message()["t"], "snapshot");
+
+    let mut scrolled: Vec<String> = Vec::new();
+    let mut totals = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    for batch in 0..30 {
+        // Small batches stay far below one capture's worth of a full history.
+        for n in batch * 10 + 1..=batch * 10 + 10 {
+            host.send_text(&format!("f{n}\r"));
+        }
+        let last = format!("<f{}>", batch * 10 + 10);
+        loop {
+            let msg = grid.next_message_until(deadline);
+            if msg["t"] != "diff" {
+                continue;
+            }
+            if let Some(rows) = msg["scrolled"].as_array() {
+                scrolled.extend(rows.iter().map(row_text));
+                totals.push(msg["history_total"].as_u64().expect("history_total"));
+            }
+            if diff_rows_contain(&msg, &last) {
+                break;
+            }
+        }
+    }
+    let start = scrolled
+        .iter()
+        .position(|row| row == "<f1>")
+        .expect("first row scrolled");
+    let tail = &scrolled[start..];
+    assert!(tail.len() >= 270, "only {} rows scrolled", tail.len());
+    for (index, row) in tail.iter().enumerate() {
+        assert_eq!(row, &format!("<f{}>", index + 1), "scrolled row {index}");
+    }
+    assert_eq!(totals.last().copied(), Some(100), "history_total: {totals:?}");
+    assert!(totals.iter().all(|&total| total <= 100), "{totals:?}");
+}
+
+#[test]
 fn resize_sends_a_viewport_snapshot_without_history() {
     let host = Host::start();
     let mut grid = Attach::grid(&host);

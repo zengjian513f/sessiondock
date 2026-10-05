@@ -1298,14 +1298,13 @@ impl Session {
             return;
         }
         let (next, scrolled, history, title) = {
-            let screen = lock(&self.screen);
+            let mut screen = lock(&self.screen);
             let next = grid::capture(&screen);
-            let scrolled = match &state.last {
-                Some(prev) if !state.need_snapshot && !next.alt && next.history > prev.history => {
-                    grid::history_rows(&screen, prev.history, next.history)
-                }
-                _ => Vec::new(),
-            };
+            // 每次捕获都消耗滚动计数；resize 快照、刚离开备用屏幕或没有上一帧时丢弃。
+            let mut scrolled = grid::take_scrolled_rows(&mut screen);
+            if !matches!(&state.last, Some(prev) if !state.need_snapshot && !prev.alt) {
+                scrolled.clear();
+            }
             let history = if pending.is_empty() {
                 Vec::new()
             } else {

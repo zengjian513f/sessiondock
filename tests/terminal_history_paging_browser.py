@@ -8,7 +8,9 @@ wheel input and scrollbar keys reach the oldest loaded row; the console fetches
 moving the visible rows, and ends with rows 1..5000 in order with no gap or
 duplicate at any seam. Live input still works afterwards, idle pages issue no
 history requests, a page reload pages again from a fresh snapshot, and a
-recording replay never requests history.
+recording replay never requests history. A host started with a small
+`--history` keeps streaming every scrolled row to the attached page after its
+history is full, without a reconnect.
 """
 
 import json
@@ -252,6 +254,72 @@ def live_paging(pw, root, corpus, uid):
             browser.close()
 
 
+CAP_HISTORY = 60
+CAP_ROWS = 600
+# Bursts of 15 rows with a pause stay below one capture's worth of a full
+# history, so every scrolled row is expected live.
+CAP_SHELL = f"""stty -echo
+printf 'RS_SHELL_READY\\n'
+while IFS= read -r command; do
+  case "$command" in
+    flood)
+      i=1
+      while [ "$i" -le {CAP_ROWS} ]; do
+        printf 'CAP_ROW_%05d\\n' "$i"
+        if [ $((i % 15)) -eq 0 ]; then sleep 0.03; fi
+        i=$((i + 1))
+      done
+      printf 'CAP_FLOOD_DONE\\n' ;;
+    ping) printf 'CAP_PING_OK\\n' ;;
+  esac
+done
+"""
+CAP_NUMBERS = NUMBERS.replace('PAGE_ROW_', 'CAP_ROW_')
+
+
+def full_history_live(pw, root, corpus, uid):
+    """A host whose `--history` is full keeps streaming scrolled rows live."""
+    fixture.SHELL = CAP_SHELL
+    with fixture.host(root, 'synthetic-' + uuid.uuid4().hex, uid, history=CAP_HISTORY), \
+         isolated_server(corpus, BINARY, host_dir=root / 'host') as (base, _):
+        browser = launch_browser(pw)
+        context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
+        requests = track(context, base)
+        errors = []
+        sockets = []
+        page = context.new_page()
+        page.on('pageerror', lambda e: errors.append(str(e)))
+        page.on('websocket', lambda ws: sockets.append(ws.url))
+        try:
+            page.goto(base, wait_until='networkidle')
+            fixture.open_console(page, uid)
+            opened = len(sockets)
+            keyboard = page.locator('#termpane .xterm-helper-textarea')
+            keyboard.press_sequentially('flood')
+            keyboard.press('Enter')
+            fixture.xterm_contains(page, 'CAP_FLOOD_DONE', timeout=30000)
+            numbers = page.evaluate(CAP_NUMBERS)
+            assert numbers == list(range(1, CAP_ROWS + 1)), \
+                ('rows missing after the host history filled', len(numbers), breaks(numbers)[:5], numbers[-3:])
+            model = page.evaluate(f'(() => {{ const m = {TERM}.model; return {{base: m.historyBase, '
+                                  f'appended: m.historyAppended, loaded: m.scrollback.length}}; }})()')
+            # Rows beyond the host cap arrived through diff.scrolled; the host
+            # total estimate follows history_total instead of growing past it.
+            assert model['appended'] > 5 * CAP_HISTORY and model['loaded'] >= model['appended'], model
+            assert model['base'] + model['appended'] == CAP_HISTORY, model
+            assert len(sockets) == opened, ('console reconnected', sockets)
+            keyboard.press_sequentially('ping')
+            keyboard.press('Enter')
+            fixture.xterm_contains(page, 'CAP_PING_OK')
+            assert page.evaluate(CAP_NUMBERS) == numbers
+            assert not requests, ('full history fetched host history', requests)
+            assert not errors, errors
+            print(f'PASS rows 1..{CAP_ROWS} stream live past a {CAP_HISTORY}-row host history', flush=True)
+        finally:
+            context.close()
+            browser.close()
+
+
 def replay_never_pages(pw, root):
     cfg = root / 'launcher.json'
     cfg.touch(mode=0o600)
@@ -310,7 +378,9 @@ def main():
         root = Path(tmp)
         live = root / 'live'
         replay = root / 'replay'
+        capped = root / 'capped'
         for parent, names in ((live, ['host', 'work', 'claude', 'codex', 'grok']),
+                              (capped, ['host', 'work', 'claude', 'codex', 'grok']),
                               (replay, ['host', 'work', 'ledger', 'state', 'claude', 'codex', 'grok'])):
             parent.mkdir(mode=0o700)
             for name in names:
@@ -322,6 +392,10 @@ def main():
         fixture.SHELL = SHELL
         live_paging(pw, live, corpus, corpus.uid(sid))
         replay_never_pages(pw, replay)
+        capped_corpus = Corpus(capped)
+        capped_corpus.put(sid, 'codex', [codex_row('session_meta', {'id': sid, 'cwd': str(capped / 'work')}),
+                                         codex_message('user', 'Synthetic full host history')], [])
+        full_history_live(pw, capped, capped_corpus, capped_corpus.uid(sid))
         print('PASS terminal_history_paging_browser', flush=True)
 
 
