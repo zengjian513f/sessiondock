@@ -58,3 +58,36 @@ sidebar modes; the session row's triangle folds or expands them, and the
 hierarchy toggle only controls whether spawned sessions indent. Opening an
 agent deep link no longer switches the sidebar into hierarchical mode — it
 reveals and selects the agent row in whichever mode is active.
+
+## Retained move and copy lineage
+
+The Hub exposes `POST /api/sessions/resolve` with `{"links":[{"sid":"source:native-id","node":"persistent-node-id"}]}`.
+A link can instead supply a historical `host` name; prefer the persistent node from
+its original URL. Results distinguish `found`, `missing`, `unavailable` and
+`ambiguous`. Found sessions include their current title, canonical SID, scoped UID,
+node, operation path (`via`) and whether that path contains a copy (`copied`).
+
+All operation journals remain retained, including failures and cancellations;
+only completed operations supply lineage edges. Each completed receipt records the
+whole group's old native IDs and record UIDs mapped to target native IDs, including
+subagents. Originals win while present. When absent, search completed descendants
+breadth-first; prefer the earliest recorded operation at the same distance. Cycles
+are visited once. Offline nodes or unresolved legacy mappings do not prove deletion:
+return `unavailable` with accessible descendants offered for explicit selection.
+Copies are labelled because their contents may have diverged.
+
+The small graph is derived while loading existing operation journals and updated
+when those journals are saved. There is no separate database, periodic scan or
+continuous sync. Older receipts are backfilled on demand from the original node
+operation, retaining the selected-session fallback when that is all the old receipt
+proves. Node-local copies made without the Hub remain discoverable through that
+node's retained operation journals when it is reachable. Transfers performed outside
+SessionDock have no recorded edge and cannot be inferred.
+
+Old Hub bookmarks use this resolver when their original row is absent or stale.
+LabDesk batch-resolves only links displayed on the current page, showing current
+titles and locations while preserving catalog identity, historical host and original
+URL. Opening that original URL follows the same resolver. No ledger rewrite occurs.
+[The Chromium lineage suite](../tests/session_link_lineage_browser.py) covers copies,
+deletions, subagents, restarts and offline origins; the bundle browser suite covers
+links after real moves between private nodes.
