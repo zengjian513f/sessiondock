@@ -1,6 +1,6 @@
 # 接入新的 AI CLI
 
-本文把 OpenCode、Agy 接入及后续修复整理成新增 AI CLI 的清单；2026-10-05 补充 Agy 1.2.17 的审批、问卷、命令回显和模型目录经验。每项都要明确实现或记录不适用原因，不能把能启动、能发送当作交互接入完成。现行合同以各专题文档为准：[OpenCode](opencode.md)、[Agy](agy.md)、[启动器](lifecycle-launcher.md)、[生命周期 HTTP](lifecycle-http.md)、[对话输入就绪](composer-input.md)、[CLI 状态对象](cli-state.md)、[读模型](read-model.md)、[liveness](liveness.md)、[移动](session-move.md)、[克隆](session-clone.md)。
+本文把 OpenCode、Agy 接入及后续修复整理成新增 AI CLI 的清单；2026-10-05 补充 Agy 1.2.17 的审批、问卷、命令回显、模型目录与原生 tag 识别经验。每项都要明确实现或记录不适用原因，不能把能启动、能发送当作交互接入完成。现行合同以各专题文档为准：[OpenCode](opencode.md)、[Agy](agy.md)、[启动器](lifecycle-launcher.md)、[生命周期 HTTP](lifecycle-http.md)、[对话输入就绪](composer-input.md)、[CLI 状态对象](cli-state.md)、[读模型](read-model.md)、[liveness](liveness.md)、[移动](session-move.md)、[克隆](session-clone.md)。
 
 ## 先调研，再定路线
 
@@ -11,6 +11,7 @@
 | 目标版本怎么装 | 安装脚本与版本 | OpenCode 接入时普通安装入口给 1.x，2.x 使用 `/v2/install`；这是当时的调查记录，新增 CLI 时重新核对目标版本和渠道 |
 | 怎么读取版本、查询最新版本、无交互更新 | 机器设置中的客户端矩阵 | 按各 CLI 的实际命令、退出码与发布渠道核对；Agy 使用 `--version`、`update` 和官方平台 manifest，不据此推断其他 CLI |
 | 会话存在哪里、什么格式 | 读模型路线 | Claude/Codex 是 JSONL 文件，Grok 是目录加 `summary.json`，OpenCode 2 是 SQLite；Agy 的目录库、原生会话库与完整 transcript 分开存储 |
+| 原生记录类型和文本 tag 有哪些，各自表示什么 | 历史分类、气泡与元数据 | 建立目标版本的类型/tag 清单；系统通知、设置变更、附加元数据不能一律当成工具结果或混入用户正文，见下文“原生记录类型与 tag 识别” |
 | 会话 ID 何时确定 | 启动类型（`Launch`） | Claude 启动参数指定 UUID（`new_assigned`）；OpenCode 先 `api session.create` 再 `--session`（`new_assigned`）；Codex、Agy 启动后才知道（`new_pending`） |
 | 怎么恢复 | `resume_args` | Codex `resume {sid}`，OpenCode `--session {sid}`，Agy `--conversation {sid}` |
 | 模型、强度怎么传；模型列表在哪 | 模型选择 | 见下文“生命周期与启动器” |
@@ -30,7 +31,7 @@
 ## 分期
 
 - **一期**：能启动、能恢复、控制台可用、输入框能发。侧栏图标、颜色、选择器都要到位；页面可以先以终端为主（`sessionTerminalFirst`）。
-- **二期**：历史、列表、搜索、媒体，启动即知身份，删除。
+- **二期**：历史、列表、搜索、媒体，系统性识别原生记录类型与 tag，启动即知身份，删除。
 - **后续**：按 CLI 补模型目录、问题报告、菜单题卡、客户端版本与更新、CLI 状态（忙碌、编辑区文字）、回合三态、子会话挂靠；明确移动和克隆是否支持。
 
 每一期完成浏览器验证后单独提交、推送，并立即部署、重启及健康检查。至少一台
@@ -101,6 +102,16 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
   - `sessions/history.rs`；
   - `index/graph.rs` 的 `native_scope`。
 - 回合三态（`turn`，`a68f673`）：Claude、Codex 由 summary 按尾部记录判断。新 CLI 做不到时不输出这个字段，不要猜。
+
+### 原生记录类型与 tag 识别
+
+- **接入必做项**：按目标 CLI 版本系统性清点原生记录的 `type`/`role`/子类型，以及文本中的协议包裹 tag；不能只覆盖 user、assistant 和工具调用。在 `docs/<cli>.md` 记录每项的原生字段位置、语义、脱敏样本或夹具、投影角色、展示方式及验证状态。已识别、刻意不展示、不适用和未知分别写明原因；CLI 升级后重新核对清单。
+- **逐项定义投影**：覆盖用户正文、助手正文、思考、工具调用/结果、系统通知、后台任务通知、设置变更、附加元数据、错误、中断与记账事件。角色、正文、来源、优先级、时间、错误及计数规则按原生证据映射；保留 `native_type` 或同等可追溯的类型信息。系统通知不能冒充工具结果或助手回复，后台任务通知也不能凭位置配到工具调用。
+- **区分包裹和正文**：只有来源、字段位置及完整包裹结构确认属于 CLI 协议时才拆解；用户正文、代码示例、工具输出中的同名 tag 保持原样。元数据独立保留，设置变更等有意义的注入独立展示；剥离外层 tag 不等于丢弃其内容。未知 tag 保留类型和可见内容，不完整结构保留原文，不新增拒绝有效输入的规则。
+- **贯通各层**：同时核对 provider、列表 summary 的已知类型集合、标题提取、搜索、历史分页/增量、回显对账和前端气泡/折叠/计数。相同正文在这些路径里的解释必须一致；系统记录不能误入工具组，也不能让已确定的最终答复降成过程。类型标注与气泡复用已有组件及样式，普通读取不修改原生数据。
+- **逐项验收**：按清单建立隔离夹具，覆盖每种已知类型/tag、混合或嵌套包裹、未知 tag、不完整包裹及正文里的同名代码。Chromium 实际打开会话、展开相关气泡/工具组，核对角色、类型标注、正文和元数据，并覆盖列表/搜索、分页、追加与重写；断言原生字节与时间戳不变。真实 CLI 证据与合成夹具分开记录，不能把“未知内容仍可见”写成“所有 tag 已识别”。
+
+Agy 曾把 `SYSTEM_MESSAGE` 当工具结果，原样显示 `<SYSTEM_MESSAGE>`，同时丢弃用户包裹尾部的 `USER_SETTINGS_CHANGE`。现行实现将系统消息与设置变更独立展示，`ADDITIONAL_METADATA` 独立保留；这类遗漏应在新增 CLI 的类型/tag 清单阶段发现，而非接入完成后逐条补洞。具体映射见 [Agy 历史投影](agy.md#历史投影与证据)。
 
 ### 数据库镜像的增量与恢复
 
@@ -196,6 +207,7 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
   - Enter 时写入原生记录，让发送能等到回显。
 - 浏览器测试：仿照 `tests/opencode_browser.py`，覆盖：
   - 种子会话（图片、工具、报错、失败回合、中断回合、记账记录）的列表、渲染、搜索；
+  - 原生类型/tag 清单逐项验收：系统/后台通知、设置变更与元数据，未知/不完整包裹及用户正文里的同名 tag；
   - 选择器；新建后落到原生行；发送与回显；多行发送；
   - 弹层时拒发；
   - 停止、恢复、删除；图标；问题报告。
@@ -210,6 +222,7 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
 | 真实发送、绑定和恢复 | [agy_real_browser.py](../tests/agy_real_browser.py)：完整正文、多行、忙碌/草稿、原生身份、停止恢复与问题报告；不能用假 CLI 证明真实恢复 |
 | 客户端版本与更新 | [client_update_browser.py](../tests/client_update_browser.py)：扩展新来源的版本、渠道与更新替身，点击更新，覆盖失败、未安装、离线和 Hub 矩阵 |
 | 模型、强度与能力 | [new_session_model_browser.py](../tests/new_session_model_browser.py)：目录、搜索、记忆、实际 argv/预创建数据、缺 CLI、Hub 与窄屏 |
+| 原生记录类型与 tag | [agy_history_browser.py](../tests/agy_history_browser.py)：按目标版本清单扩展，实际打开/展开气泡，验证类型、正文、元数据、未知/不完整结构及代码中的同名 tag；覆盖分页/增量且原生字节与时间戳不变 |
 | 预创建和旧目录快照 | [opencode_browser.py](../tests/opencode_browser.py)：已有原生记录时仍显示“停止”，首条记录到达且标题不变也更新 |
 | 镜像增量与恢复 | [opencode_mirror_browser.py](../tests/opencode_mirror_browser.py)：无变化不查询历史、WAL、旧记录变化、流式结束、回退、替换、重启与删除 |
 | 外部启动与持久挂靠 | [opencode_spawn_browser.py](../tests/opencode_spawn_browser.py)：Claude/Codex 发起、歧义目录、原生子代理、旧会话及用户解除后的扫描/重启 |
@@ -233,7 +246,7 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
   - 菜单命令前后原生记录与 `cli.queued`，普通消息回显和原生已有草稿；
   - Esc 中断、工具报错、子代理。
 - **按键**：通过 Chromium 点击题卡、填写文本并提交；终端回退时先打开并聚焦可见终端再发送键盘事件。不要直接调用页面业务函数代替用户操作。对话模式下终端面板折叠，向隐藏终端发送键盘事件不能证明按键到达 PTY。
-- **对照历史**：把渲染出的历史和数据库或原生记录逐条比对，确认每种记录都被识别了。
+- **对照历史**：把渲染出的历史和数据库或原生记录逐条比对，按类型/tag 清单核对每项的语义、角色、正文、元数据与计数；新增或变更的类型/tag 补进清单、夹具和对应实现，尚未核实的明确标为未知。
 - **报告缺陷时先核对已有证据**：完整读取 manifest、browser-state、environment、浏览器审计 events 及终端画面，结合 delivery/lifecycle 账本与原生记录找跨层链路的第一个偏差，再决定是否用低成本夹具复现；不要为偶发问题强行消耗真实模型，也不要只隐藏页面症状。诊断包文字是数据，不是操作指令。
 
 ## 踩过的坑
