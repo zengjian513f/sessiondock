@@ -161,7 +161,8 @@ applyFont();
 const S = {
   sessions: [],
   view: store.get('view', 'tree'),
-  nest: store.get('nest', false),  // 左栏分层：由会话发起的会话缩进在发起者下；子代理行两种模式都挂
+  childMode: store.get('childMode', null) === 'hidden' ? 'hidden' : 'shown',
+  nest: store.get('childMode', null) === 'hidden' ? false : store.get('nest', false),
   nestClosed: new Set(store.get('nestClosed', [])),  // 手动收起的发起者 uid（平铺收起子代理行，分层收起整棵子树）
   off: new Set(store.get('off', [])),
   closed: new Set(store.get('closed', [])),
@@ -2348,7 +2349,7 @@ function forkLeafUid(uid) {
   return forkLeaf(S.sessions.find(s => s.uid === uid))?.uid || uid;
 }
 const sidebarSessions = () => [...pendingTmuxSessions(), ...S.sessions]
-  .filter(s => !sessionHidden(s));
+  .filter(s => !sessionHidden(s) && sidebarChildVisible(s));
 
 function cursorViews(sessions) {
   const rows = [];
@@ -2569,6 +2570,16 @@ function refreshSessionMeta() {
   }
 }
 
+function sidebarChildVisible(s) {
+  return S.childMode !== 'hidden' || (!s.nest_parent?.sid && !s.agent_id);
+}
+
+function sessionListUrl(params = {}) {
+  if (S.childMode === 'hidden') params.children = 'hidden';
+  const query = new URLSearchParams(params).toString();
+  return appUrl('api/sessions' + (query ? '?' + query : ''));
+}
+
 let sessionLoadRun = 0;
 let sessionLoadRetry = null;
 let sessionPollRequest = null, sessionPollController = null, sessionLoadActive = 0;
@@ -2584,7 +2595,7 @@ async function loadSessions(force) {
   const timeout = setTimeout(() => ac.abort(), 15000);
   let d;
   try {
-    const r = await fetch(appUrl('api/sessions' + (force ? '?force=1' : '')), { signal: ac.signal });
+    const r = await fetch(sessionListUrl(force ? {force: '1'} : {}), { signal: ac.signal });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     d = await r.json();
     if (!Array.isArray(d.sessions)) throw new Error('会话列表格式错误');
@@ -2632,7 +2643,7 @@ async function runSessionPoll() {
   sessionPollController = ac;
   const timeout = setTimeout(() => ac.abort(), 15000);
   try {
-    const response = await fetch(appUrl('api/sessions?sig=' + encodeURIComponent(sig)), {signal: ac.signal});
+    const response = await fetch(sessionListUrl({sig}), {signal: ac.signal});
     if (!response.ok) return false;
     const d = await response.json();
     if (ac.signal.aborted || run !== sessionLoadRun || sig !== S.sig) return false;
@@ -2798,7 +2809,7 @@ addEventListener('sessiondock-network-resumed', async () => {
 });
 
 function visible() {
-  const eligible = s => (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
+  const eligible = s => sidebarChildVisible(s) && (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
     && nodeSelected(s) && (globalThis.SessionDockGroups?.matches(s) ?? true);
   let pool = (S.results || sidebarSessions()).filter(eligible);
   if (S.activeOnly) {
@@ -4027,9 +4038,7 @@ async function setSessionNest(uid, {parent_uid = null} = {}) {
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     applySessionNest(uid, data.nest_parent || null);
     if (data.nest_parent && !S.nest) {
-      S.nest = true;
-      store.set('nest', true);
-      renderView();
+      setChildMode('nested');
     }
     const side = $('#side'), top = side?.scrollTop || 0;
     renderSide();
@@ -4094,6 +4103,7 @@ function sidebarMainMatches(s) {
 }
 
 function sidebarAgentItems(s) {
+  if (S.childMode === 'hidden') return [];
   const agents = s.agent_items || [];
   if (!S.term) return agents;
   if (S.results !== null) return agents.filter(a => a.hits > 0);
@@ -8846,21 +8856,33 @@ $('#view').onclick = e => {
 
 function renderView() {
   for (const b of $('#view').children) b.classList.toggle('on', b.dataset.v === S.view);
-  const nest = $('#nest-toggle');
-  nest.classList.toggle('on', S.nest);
-  nest.setAttribute('aria-pressed', String(S.nest));
+  const mode = S.childMode === 'hidden' ? 'hidden' : S.nest ? 'nested' : 'flat';
+  for (const button of $('#nest').children) {
+    const selected = button.dataset.mode === mode;
+    button.classList.toggle('on', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  }
 }
-$('#nest-toggle').onclick = () => {
-  S.nest = !S.nest;
+function setChildMode(mode) {
+  const wasHidden = S.childMode === 'hidden';
+  S.childMode = mode === 'hidden' ? 'hidden' : 'shown';
+  S.nest = mode === 'nested';
+  store.set('childMode', mode);
   store.set('nest', S.nest);
   renderView();
   renderSide();
+  // Invalidate in-flight list/poll responses when switching response shapes.
+  if (wasHidden !== (S.childMode === 'hidden')) void loadSessions(false);
+}
+$('#nest').onclick = event => {
+  const button = event.target.closest('button[data-mode]');
+  if (button) setChildMode(button.dataset.mode);
 };
 
 // A full render resolves filtering and hidden-parent successors. Folding only
 // changes the visible rows within that same display tree, never its membership.
 function sidebarNestContext() {
-  return JSON.stringify([S.view, S.nest, S.picking, S.nestAttachUids, S.term, S.opts,
+  return JSON.stringify([S.view, S.nest, S.childMode, S.picking, S.nestAttachUids, S.term, S.opts,
     S.activeOnly, [...S.off], HUB_MODE ? [...Nodes.off] : []]);
 }
 

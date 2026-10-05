@@ -67,7 +67,7 @@ def main():
                     page.goto(f'http://127.0.0.1:{hub.port}', wait_until='networkidle')
                     page.wait_for_function('S.sessions.length === 4')
                     if not page.evaluate('S.nest'):
-                        page.locator('#nest-toggle').click()
+                        page.locator("#nest-toggle").click()
                     def depth(uid, value):
                         page.wait_for_function('([uid, depth]) => document.querySelector(`#side .item[data-uid="${uid}"]`)?.dataset.depth === String(depth)', arg=[uid, value])
                     def action(uid, act):
@@ -99,6 +99,16 @@ def main():
                         depth(child, 1)
                         page.wait_for_function('uid => S.sessions.find(s => s.uid === uid).nest_parent?.sid === "same" && !S.sessions.find(s => s.uid === uid).nest_parent?.node_id', arg=child)
                         assert 'node_id' not in page.evaluate('uid => S.sessions.find(s => s.uid === uid).nest_parent', child)
+                    # The hub forwards the compact mode to real nodes; cross-node children vanish too.
+                    with page.expect_response(lambda response: '/api/sessions?children=hidden' in response.url) as compact:
+                        page.locator('#nest-hidden').click()
+                    compact_rows = compact.value.json()['sessions']
+                    assert len(compact_rows) == 3 and all(row['uid'] != child for row in compact_rows)
+                    page.wait_for_function('S.sessions.length === 3')
+                    assert page.locator(f'#side .item[data-uid="{child}"]').count() == 0
+                    page.locator('#nest-toggle').click()
+                    page.wait_for_function('S.sessions.length === 4')
+                    depth(child, 1)
                     print('PASS cross-node nest: ' + ('node/hub restart, detach, restore, local reattach' if restart else 'click attach, same-SID isolation, cycle, trusted descriptor'), flush=True)
         finally:
             browser.close()

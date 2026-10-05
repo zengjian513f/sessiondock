@@ -38,7 +38,7 @@ def main():
                 page.locator('.item-resources .item-resource-value').first.wait_for()
                 assert 0 < page.locator('.item-resources').count() < 80
                 for index in range(2):
-                    page.get_by_role('button',name='分层显示',exact=True).click()
+                    page.locator('#nest-flat' if page.evaluate('S.nest') else '#nest-toggle').click()
                     assert unchanged.evaluate('(e,old)=>e===old',handle)
                     assert page.locator('#side .item').count()==1200
                     nested=page.get_by_role('button',name='分层显示',exact=True).get_attribute('aria-pressed')=='true'

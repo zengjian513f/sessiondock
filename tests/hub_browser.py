@@ -249,7 +249,7 @@ def check_nesting(page, injector):
         if row["depth"] == 1:
             parent = rows[index - 1]
             assert parent["depth"] == 0 and parent["node"] == row["node"], (parent, row)
-    toggle.click()
+    page.locator("#nest-flat").click()
     page.wait_for_function("S.nest === false")
     injector.on = False
     page.evaluate("loadSessions(true)")

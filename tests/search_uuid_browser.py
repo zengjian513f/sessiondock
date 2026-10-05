@@ -68,7 +68,7 @@ def main():
                         assert not searches, searches
                     # Flat mode makes the actual matches distinguishable from parent navigation rows.
                     if page.locator('#nest-toggle').get_attribute('aria-pressed') == 'true':
-                        page.locator('#nest-toggle').click()
+                        page.locator('#nest-flat').click()
 
                     def clear():
                         if width < 600 and page.locator('.mobile-back').is_visible():

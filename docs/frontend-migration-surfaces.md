@@ -36,7 +36,7 @@
 | `#side-toggle` | 收起/展开左栏。`setSideCollapsed`，键 `sideCollapsed`，默认展开 |
 | `#session-scope` | 「只显示活跃会话」/「显示全部会话」。计数在 `#session-active`、`#session-total`。`selectSessionScope`；`activeOnly` 默认关，且 `live` 能力为 false 时不按空集合筛选 |
 | `#sidebar-resources-toggle` | 见第 2 节资源列 |
-| `#nest-toggle` | 分层显示，默认关。`S.nest` |
+| `#nest` | 子会话三档：仅主会话、层叠、平铺；保存 `childMode`，兼容已有 `nest` 偏好，默认平铺。 |
 | `#view` | 项目树 `tree`（默认）、会话分组 `group`、时间轴 `date`。`renderView` |
 | `#node-chips` | 仅 Hub。见第 2 节 |
 | `#chips` | Claude / Codex / Grok / OpenCode / SSH 筛选 |
@@ -117,7 +117,7 @@ Hub 顶栏另有机器 chip，见第 2 节。节点离线、列表/运行状态/
 
 ### 行上能看见的东西
 
-每一行：来源图标、运行/冻结角标、标题、目录、可选星标、可选分组名、可选资源格。子代理行文案是「子代理 · 类型 · 时间」（`agentMeta`）。子代理在平铺和分层两种模式下都挂在所属会话下面；三角折叠的是子代理行或整棵子树，分层开关只决定「由会话发起的会话」是否缩进。打开子代理深链不会因此打开分层。[`docs/external-links.md`](external-links.md)、[`tests/session_deep_link_browser.py`](../tests/session_deep_link_browser.py)、[`tests/nest_tree_browser.py`](../tests/nest_tree_browser.py)。
+每一行：来源图标、运行/冻结角标、标题、目录、可选星标、可选分组名、可选资源格。子代理行文案是「子代理 · 类型 · 时间」（`agentMeta`）。「仅主会话」不显示子代理和附属会话；子代理在平铺和层叠模式下都挂在所属会话下面；三角折叠的是子代理行或整棵子树，分层开关只决定「由会话发起的会话」是否缩进。打开子代理深链不会因此打开分层。[`docs/external-links.md`](external-links.md)、[`tests/session_deep_link_browser.py`](../tests/session_deep_link_browser.py)、[`tests/nest_tree_browser.py`](../tests/nest_tree_browser.py)。
 
 运行角标：`paintItemStatus` / `paintStatusMarker`。冻结用暂停图标。有未读时显示数字；等待回答时是 `?`，标题带「等待回答」。颜色按当前 tmux/运行态现算，不把旧计数的颜色写进存储。后台命令的呼吸点：[`tests/process_activity_browser.py`](../tests/process_activity_browser.py)。
 
@@ -135,7 +135,9 @@ Hub 机器 chip：点击切换，右键或长按「只选这台」。`app.js` �
 
 ### 嵌套与附属
 
-`S.nest` 默认关。分层时，由会话发起的会话缩进在发起者下（`nestParentOf` / `nestTree`）。手动收起的发起者在 `nestClosed`（持久）。搜索态用 `searchNestClosed`，不写回。
+`#nest` 用同组按钮选择「仅主会话 / 层叠 / 平铺」，当前项使用 `aria-pressed`。偏好 `childMode` 保存所选档位；旧 `nest` 偏好继续生效，首次默认平铺。「仅主会话」的首次加载、轮询和重新扫描均请求 `children=hidden`，不下载子代理列表及附属会话行，搜索筛选也不展示这些行；切回其他模式重新加载完整列表。已打开的子会话详情仍可继续使用。
+
+`S.nest` 默认关。层叠时，由会话发起的会话缩进在发起者下（`nestParentOf` / `nestTree`）。手动收起的发起者在 `nestClosed`（持久）。搜索态用 `searchNestClosed`，不写回。
 
 上下文菜单和多选条有「附属到…」「解除附属」。点选父会话期间 `S.nestAttach` 不持久，Esc 取消。`POST api/session/nest`。成功且当前未开分层时会打开分层。跨节点手动嵌套：[`tests/hub_nest_browser.py`](../tests/hub_nest_browser.py)。Codex exec 扇出初始化 `nest_parent` 且选择在扫描/重启后仍在：[`tests/codex_exec_nest_browser.py`](../tests/codex_exec_nest_browser.py)。OpenCode 由工具 shell 发起的会话挂到发起者下：[`tests/opencode_spawn_browser.py`](../tests/opencode_spawn_browser.py)。
 
@@ -531,6 +533,7 @@ Hub：`?nodes=` 聚合多机，单条用 `?node=`。列表 `term/records`，观�
 | `consolePasteFiles` | `false` | 功能 |
 | `view` | `tree` | 顶栏 |
 | `nest` | `false` | 顶栏 |
+| `childMode` | 未设置 | 子会话显示方式；旧偏好回退到 `nest` |
 | `nestClosed` | `[]` | 分层折叠；搜索态不写 |
 | `closed` | `[]` | 分组折叠；搜索态不写 |
 | `off` | `[]` | 来源筛选 |

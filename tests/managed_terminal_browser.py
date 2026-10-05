@@ -83,7 +83,7 @@ def live_rotation(browser, hub_mode):
                 expect(page.locator('#view button[data-v="date"]')).to_have_class("on")
                 preserved(view_uid(guard_uid))
                 nested = page.locator("#nest-toggle").get_attribute("aria-pressed")
-                page.locator("#nest-toggle").click()
+                page.locator("#nest-flat" if page.evaluate("S.nest") else "#nest-toggle").click()
                 expect(page.locator("#nest-toggle")).to_have_attribute("aria-pressed", "false" if nested == "true" else "true")
                 preserved(view_uid(guard_uid))
                 for generation in [1, 2]:
