@@ -85,9 +85,9 @@ node's retained operation journals when it is reachable. Transfers performed out
 SessionDock have no recorded edge and cannot be inferred.
 
 Old Hub bookmarks use this resolver when their original row is absent or stale.
-LabDesk batch-resolves only links displayed on the current page, showing current
-titles and locations while preserving catalog identity, historical host and original
-URL. Opening that original URL follows the same resolver. No ledger rewrite occurs.
+LabDesk and other callers keep their original links unchanged. Opening an old URL
+runs the resolver inside SessionDock; callers need no migration lookup or extra
+integration. Catalog identity, historical host and recorded URLs remain unchanged.
 [The Chromium lineage suite](../tests/session_link_lineage_browser.py) covers copies,
 deletions, subagents, restarts and offline origins; the bundle browser suite covers
 links after real moves between private nodes.
