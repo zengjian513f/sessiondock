@@ -2224,5 +2224,103 @@
         }
       ]
     }
+  },
+  {
+    "name": "question_descriptions_focus_2",
+    "screen": "Earlier assistant text is not part of the question.\n────────────────────────────────────────────────────────────\n←  ☐ Criterion  ☐ Scope  ✔ Submit  →\n\nWhich criterion should we use?\n  1. Point estimate reaches δ (Recommended)\n     The interval still includes zero.\n     Keep the uncertainty visible.\n❯ 2. Any positive point estimate\n     A wider rule covers more outcomes.\n     Record the noise in the estimate.\n  3. Review the evidence\n     Explain the reasons for the decision.\n  4. Type something.\n────────────────────────────────────────────────────────────\n  5. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "questions": [
+        {
+          "question": "Which criterion should we use?",
+          "options": [
+            {
+              "label": "Point estimate reaches δ (Recommended)",
+              "keys": [
+                "Up",
+                "Enter"
+              ],
+              "description": "The interval still includes zero.\nKeep the uncertainty visible."
+            },
+            {
+              "label": "Any positive point estimate",
+              "keys": [
+                "Enter"
+              ],
+              "description": "A wider rule covers more outcomes.\nRecord the noise in the estimate."
+            },
+            {
+              "label": "Review the evidence",
+              "keys": [
+                "Down",
+                "Enter"
+              ],
+              "description": "Explain the reasons for the decision."
+            },
+            {
+              "label": "Chat about this",
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "layout": "synthetic regression for BUG-20261005-075133-45f0fd: wrapped option descriptions and a separated chat row"
+  },
+  {
+    "name": "question_descriptions_focus_5",
+    "screen": "Earlier assistant text is not part of the question.\n────────────────────────────────────────────────────────────\n←  ☐ Criterion  ☐ Scope  ✔ Submit  →\n\nWhich criterion should we use?\n  1. Point estimate reaches δ (Recommended)\n     The interval still includes zero.\n     Keep the uncertainty visible.\n  2. Any positive point estimate\n     A wider rule covers more outcomes.\n     Record the noise in the estimate.\n  3. Review the evidence\n     Explain the reasons for the decision.\n  4. Type something.\n────────────────────────────────────────────────────────────\n❯ 5. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "questions": [
+        {
+          "question": "Which criterion should we use?",
+          "options": [
+            {
+              "label": "Point estimate reaches δ (Recommended)",
+              "keys": [
+                "Up",
+                "Up",
+                "Up",
+                "Up",
+                "Enter"
+              ],
+              "description": "The interval still includes zero.\nKeep the uncertainty visible."
+            },
+            {
+              "label": "Any positive point estimate",
+              "keys": [
+                "Up",
+                "Up",
+                "Up",
+                "Enter"
+              ],
+              "description": "A wider rule covers more outcomes.\nRecord the noise in the estimate."
+            },
+            {
+              "label": "Review the evidence",
+              "keys": [
+                "Up",
+                "Up",
+                "Enter"
+              ],
+              "description": "Explain the reasons for the decision."
+            },
+            {
+              "label": "Chat about this",
+              "keys": [
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "layout": "synthetic regression for BUG-20261005-075133-45f0fd: wrapped option descriptions and a separated chat row"
   }
 ]

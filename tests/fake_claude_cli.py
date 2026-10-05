@@ -48,6 +48,7 @@ input, which creates the native history) and the file is removed.
 """
 import json
 import os
+import select
 import sys
 import termios
 import threading
@@ -233,9 +234,18 @@ class Fake:
         else:
             question = menu["questions"][menu["tab"]]
             rows = question["options"] + [menu["texts"][menu["tab"]] or "Type something.", "Chat about this"]
+            described = question.get("descriptions")
+            if described:
+                lines += ["─" * 60, "←  ☐ Criterion  ☐ Scope  ✔ Submit  →", ""]
             lines.append(question["question"])
-            lines += [("❯ " if menu["cursors"][menu["tab"]] == i else "  ") + "%d. %s" % (i + 1, row)
-                      for i, row in enumerate(rows)]
+            for i, row in enumerate(rows):
+                if described and i == len(rows) - 1:
+                    lines.append("─" * 60)
+                lines.append(("❯ " if menu["cursors"][menu["tab"]] == i else "  ") + "%d. %s" % (i + 1, row))
+                if described and i < len(described):
+                    lines += ["     " + text for text in described[i].splitlines()]
+            if described:
+                lines += ["", "Enter to select · Tab/Arrow keys to navigate · Esc to cancel"]
         self.write("\x1b[2J\x1b[H" + "\r\n".join(lines))
 
     def finish_menu(self, outcome):
@@ -332,6 +342,9 @@ class Fake:
             pending = b""
             paste = None
             while True:
+                self.load_menu()
+                if not select.select([fd], [], [], .05)[0]:
+                    continue
                 chunk = os.read(fd, 4096)
                 if not chunk:
                     return 0

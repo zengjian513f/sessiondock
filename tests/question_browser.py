@@ -35,13 +35,24 @@ FORM = [
      "options": ["立即停止并一起删除", "停止但保留 checkpoint", "让它跑完"]},
 ]
 SINGLE = [{"header": "宠物", "question": "选哪个？", "options": ["猫", "狗", "鱼"]}]
+DESCRIBED = [
+    {"header": "判定标准", "question": "使用哪种判定标准？（δ 为事前门槛）",
+     "options": ["点估计≥δ (Recommended)", "点估计>0", "综合判断"],
+     "descriptions": ["达到事前规定的门槛，但区间仍含零。\n保留不确定性，等待后续验证。",
+                      "覆盖所有正向点估计。\n波动可能改变方向，需要记录说明。",
+                      "综合多项证据判断。\n写明理由，供其他人复核。"]},
+    {"header": "作用范围", "question": "修改应用于哪些层？",
+     "options": ["台账与展示 (Recommended)", "只改台账", "只改展示"],
+     "descriptions": ["同步修改台账和页面展示。\n既能保存也能筛选。", "只保存新的判定值。", "只更新列表显示。"]},
+]
 
 
 def hook(state, sid, event, tool, questions, agent_id=None):
     payload = {"hook_event_name": event, "session_id": sid, "tool_name": "AskUserQuestion",
                "tool_use_id": tool, "tool_input": {"questions": [
                    {"header": q["header"], "question": q["question"], "multiSelect": False,
-                    "options": [{"label": o, "description": ""} for o in q["options"]]}
+                    "options": [{"label": o, "description": q.get("descriptions", [""] * len(q["options"]))[i]}
+                                for i, o in enumerate(q["options"])]}
                    for q in questions]}}
     if agent_id is not None:
         payload["agent_id"] = agent_id
@@ -50,17 +61,41 @@ def hook(state, sid, event, tool, questions, agent_id=None):
     assert done.returncode == 0, done.stderr.decode()
 
 
-def answer(page, root, sid, tool, questions, choices, menu):
+def answer(page, root, sid, tool, questions, choices, menu, *, layout=False):
     spec = root / "question.json"
     outcome = Path(str(spec) + ".answers")
     outcome.unlink(missing_ok=True)
-    spec.write_text(json.dumps({"questions": [{"question": q["question"], "options": q["options"]}
+    spec.write_text(json.dumps({"questions": [{"question": q["question"], "options": q["options"],
+                                              "descriptions": q.get("descriptions")}
                                               for q in questions], **menu}))
+    if layout:
+        # Before the hook arrives, CHECK must still show the current screen
+        # page with each wrapped description attached to its own option.
+        deadline = time.monotonic() + 5
+        while spec.exists():
+            assert time.monotonic() < deadline
+            page.wait_for_timeout(50)
+        page.wait_for_timeout(100)
+        check = page.evaluate('async () => await probeComposerInput(composerUid)')
+        visible = check['prompt']['questions'][0]
+        assert visible['question'] == questions[0]['question'], visible
+        assert [o.get('description') for o in visible['options'][:3]] == questions[0]['descriptions'], visible
+        expect(page.locator('#composer-question')).to_be_visible()
+        expect(page.locator('#composer-question .question-text')).to_have_text(questions[0]['question'])
+        expect(page.locator('#composer-question .question-option small')).to_have_count(3)
     hook(root / "state", sid, "PreToolUse", tool, questions)
     card = page.locator(f'#msgs .msg.question.live-question[data-call-id="{tool}"]')
     expect(card.locator(".question-item")).to_have_count(len(questions), timeout=20000)
+    if layout:
+        expect(page.locator('#composer-question')).to_be_hidden()
+        expect(page.locator('.live-question:visible')).to_have_count(1)
+        expect(card.locator('.question-option small')).to_have_count(6)
     for index, choice in enumerate(choices):
         card.locator(f'[data-question-index="{index}"][data-question-option="{choice}"]').click()
+        if layout:
+            page.evaluate('async () => await probeComposerInput(composerUid)')
+            expect(card.locator(f'[data-question-index="{index}"][data-question-option="{choice}"]')).to_have_attribute('aria-pressed', 'true')
+            expect(page.locator('.live-question:visible')).to_have_count(1)
     if len(questions) > 1:
         card.locator(".question-submit").click()
     deadline = time.monotonic() + 15
@@ -143,11 +178,19 @@ def main():
                            {"tab": 2, "cursors": [3, 4], "review": 1})
                     # A single question whose cursor sits on the text row.
                     answer(page, root, sid, "toolu-single-text-row", SINGLE, [1], {"cursors": [3]})
+                    # Report regression: descriptions below numbered rows,
+                    # and a separator before Chat. CHECK and hook are two
+                    # projections of the same question, not two answer forms.
+                    for width, height in [(1723, 1039), (390, 844)]:
+                        page.set_viewport_size({'width': width, 'height': height})
+                        if width == 390:
+                            page.evaluate('showMobileDetail()')
+                        answer(page, root, sid, f"toolu-described-{width}", DESCRIBED, [0, 1], {}, layout=True)
                     assert not errors and not dialogs, (errors, dialogs)
             finally:
                 browser.close()
-    print("PASS question_browser: two-question form from the default and parked cursors, and a single "
-          "question from the text row, each select exactly the clicked options in the fake Claude menu")
+    print("PASS question_browser: exact native answers from default/parked cursors; desktop/mobile "
+          "wrapped descriptions, delayed hooks, one visible form and retained selections")
 
 
 if __name__ == "__main__":

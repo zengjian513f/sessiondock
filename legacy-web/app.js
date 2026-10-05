@@ -8411,6 +8411,9 @@ function renderConversationTail(activity, uid = S.sel) {
     renderActivity(activity);
   }
   renderTerminalThreadNotice(uid);
+  if (typeof renderComposerQuestion === 'function' && uid === composerUid) {
+    renderComposerQuestion(composerDraft(uid, false));
+  }
   if (typeof syncComposerSendState==='function') syncComposerSendState();
   refreshMessageTimeDividers(box);
   scheduleBrowserSnapshot('conversation-tail');
