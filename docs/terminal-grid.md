@@ -305,7 +305,7 @@ the byte console.
 | Boundary | Limit | Policy |
 | --- | --- | --- |
 | Snapshot history | 2000 rows (`SNAPSHOT_HISTORY_ROWS`) | Older rows come from `GET /api/term/grid/history` in pages of at most 2000 (`grid_rows`) |
-| Browser scrollback | 100_000 rows | Drop from the oldest |
+| Browser scrollback | 100_000 rows | Drop from the oldest; history paging stops filling at the cap |
 | Scrolled-row flood | none | Every row that left the primary screen between captures is sent in `diff.scrolled` |
 | WebSocket host payload | 32 KiB chunks | Split only; lines are reassembled in the decoder |
 | Attach query size default | 120×32 | Browser fit replaces this on open |
@@ -350,10 +350,8 @@ returns `{"rows":[row…],"from","to","total"}` for absolute history rows
 `ExpectedTarget` rules as `/api/term/send`; a stale token is 409). The
 host op is `grid_rows {from, to}` (guard whitelist: exactly those fields,
 both unsigned); it waits for the model to catch up like `capture`, clamps
-`to` to `total` and to `from + 2000`. The page fetches 500 rows at a time
-when the viewport top is within 40 lines of the oldest loaded row and
-`history_total - loaded > 0`, prepends them and shifts the viewport so
-the visible rows do not move.
+`to` to `total` and to `from + 2000`. The main console uses it; see
+[history paging in the main console](#history-paging-in-the-main-console).
 
 ## Recordings and the shared model
 
@@ -403,6 +401,51 @@ on the alternate screen, where the application owns scrolling.
 `tests/terminal_scrollback_browser.py`
 checks dragging, keyboard navigation, output anchoring and the resize gutter.
 
+### History paging in the main console
+
+A `reset: true` snapshot carries only the newest 2000 history rows, while the
+host keeps `--history` (10_000 by default). `GridModel` records
+`historyOlder = history_total - history.length`: the host index of the oldest
+loaded row. When a user scroll (wheel, scrollbar drag or click, scrollbar
+arrows/PageUp/Home) leaves the viewport top within 40 lines of the oldest
+loaded row, `term.js` (`loadOlderTermHistory`) requests up to 500 older rows
+with the page's own lease tuple (`name`, `page`, `token` and the
+`uid`+`instance_id` or `record_id`+`launch_id`+`instance_id` binding captured
+at claim). One request is in flight per view; nothing is fetched while idle.
+
+The request range ends 4 rows past the oldest loaded row plus 64 rows of
+slack. `GridModel.acceptHistory` finds those 4 local rows in the result (the
+match nearest the expected position) and prepends only the rows before them,
+so the seam has no gap or duplicate even when the host index estimate is off.
+If they are not found, paging stops for that connection; misaligned rows are
+never inserted. `GridTerm.applyHistoryPage` shifts the viewport and selection
+by the inserted count, so the visible rows do not move. A page that leaves the
+top still within 40 lines immediately checks the next one.
+
+The host index estimate follows the host. Rows scrolled in after the
+snapshot are counted; when a response's `total` is lower than that count, the
+host has dropped its oldest rows and the estimate moves down before retrying.
+A local scrollback reflow (width change) marks the model for a resync: the
+next request first probes `[0, 1)` for the host total, assumes the local
+scrollback is the host's newest rows, and the seam search corrects the rest.
+Paging never grows the scrollback past `scrollbackLimit` (100_000).
+
+Requests are made only for a live connection: the view is still current,
+its socket and lease are the ones that issued the request, and it is not a
+recording replay, ended, revoked or retired. A response for a replaced
+model (reconnect calls `term.reset()`, and every `reset: true` snapshot
+bumps the model's history epoch) is ignored. Any failure, including a 409
+stale token, stops paging for the connection quietly
+(`terminal.history_page_failed` audit event); the next reconnect snapshot
+starts again. Recording replay sends all model history in its snapshot and
+never pages.
+
+[`tests/terminal_history_paging_browser.py`](../tests/terminal_history_paging_browser.py)
+prints 5000 numbered rows before the console opens, then pages with a real
+scrollbar drag, wheel input and scrollbar Home until row 1, checking order,
+seams, viewport stability, live input afterwards, no idle requests, a reload,
+a width change and that a recording replay sends no history requests.
+
 ## Validation
 
 `cargo test -p ptyhost --test host_grid --locked` runs the Unix `/bin/sh`
@@ -429,7 +472,8 @@ the grid view before and after a viewport resize, clipboard text paste
 (Ctrl+V), takeover by a second page after confirmation with the first page
 notified, no page errors. Selection/copy, scrollback, file paste and host
 exit are in `terminal_selection_browser`, `terminal_scrollback_browser`
-and `terminal_input_browser`. Needs POSIX and the debug `sessiondock` and
+and `terminal_input_browser`; paging older host history is in
+`terminal_history_paging_browser`. Needs POSIX and the debug `sessiondock` and
 `ptyhost` binaries already built; it does not build them.
 
 The two Node files are also in the `node_contracts` group of
