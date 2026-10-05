@@ -2376,7 +2376,10 @@ function ensureTerm(name) {
   T.views.set(name, view);
   term.open(host);
   installTermMenu(view);
-  term.onScroll(() => positionTermViewport(view));
+  term.onScroll(() => {
+    positionTermViewport(view);
+    void loadOlderTermHistory(view);
+  });
   // Edge 在任何聚焦的可编辑元素插入点旁挂一个 Copilot“撰写”浮动按钮（一个蓝点），
   // 它会贴着终端隐藏的 IME textarea 跟随光标。Edge 124+ 认这个属性，
   // 同时关掉文本预测；其它浏览器忽略。
@@ -2470,6 +2473,67 @@ function ensureTerm(name) {
     return false;
   });
   return view;
+}
+
+// reset 快照只带最近 2000 行历史；宿主（--history）留着更多。滚到离本地最旧
+// 一行 40 行以内时，在本页租约下按 500 行一页往前取，插到最前面且画面不跳。
+// 只在活的连接上取：回放、已结束、被接管或连接/租约已换时都不发请求。
+const TERM_HISTORY_PAGE_ROWS = 500;
+const TERM_HISTORY_MARGIN = 40;
+
+function termHistoryLive(view, ws, lease) {
+  return T.views.get(view.name) === view && view.ws === ws && ws?.readyState === 1
+    && view.inputLease === lease && !!lease?.token
+    && !view.replay && !view.ended && !view.revoked && !view.retired
+    && !SessionDockNetwork.paused;
+}
+
+async function loadOlderTermHistory(view) {
+  if (!view || view.historyLoading) return;
+  const ws = view.ws, lease = view.inputLease, term = view.term;
+  if (!termHistoryLive(view, ws, lease) || typeof term.historyPageRequest !== 'function') return;
+  if (term.buffer.active.viewportY > TERM_HISTORY_MARGIN) return;
+  view.historyLoading = true;
+  let applied = false;
+  try {
+    // retry：宿主行号估计刚被校正（丢行、重排），按新范围再取，最多几次。
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const req = term.historyPageRequest(TERM_HISTORY_PAGE_ROWS);
+      if (!req) return;
+      const params = new URLSearchParams({
+        name: view.name, page: TERM_PAGE_ID, token: lease.token,
+        from: String(req.from), to: String(req.to),
+      });
+      for (const key of ['uid', 'instance_id', 'record_id', 'launch_id']) {
+        if (lease[key]) params.set(key, lease[key]);
+      }
+      let response, data;
+      try {
+        response = await fetch(appUrl('api/term/grid/history?' + params), {cache: 'no-store'});
+        data = await response.json().catch(() => null);
+      } catch {
+        response = null;
+      }
+      if (!termHistoryLive(view, ws, lease) || view.term !== term) return;
+      if (!response?.ok || !data) {
+        // 租约过期（409）、宿主不可用或网络失败：本次连接不再分页，也不打扰
+        // 用户；重连得到新的快照后重新开始。
+        term.stopHistoryPaging();
+        browserAuditEvent?.('terminal.history_page_failed', {
+          name: view.name, status: response?.status || 0, error: data?.error || '',
+        }, {uid: view.bindingUid || T.uid || '', connectionId: view.auditConnectionId || '',
+          severity: 'info'});
+        return;
+      }
+      const status = term.applyHistoryPage(req, data);
+      if (status === 'applied') applied = true;
+      if (status !== 'retry') return;
+    }
+  } finally {
+    view.historyLoading = false;
+    // 一页没能把视口推离顶端（剩余很少或刚好在边上）时，接着判断下一页。
+    if (applied && view.term === term) setTimeout(() => void loadOlderTermHistory(view), 0);
+  }
 }
 
 // 网格视图收到的是宿主模型产生的 JSON 行，没有转义序列，也不需要攒同步帧。

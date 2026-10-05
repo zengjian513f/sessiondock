@@ -408,6 +408,8 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 
 网格在主控制台右侧留 12px 滚动条。拖动或点击轨道只改本地视口，不把滚轮发给 PTY。焦点在滚动条上时可用方向键、PgUp/PgDn、Home/End。新输出不抢走已上翻的位置；回到底部再跟随。备用屏幕上滚动条隐藏。[`tests/terminal_scrollback_browser.py`](../tests/terminal_scrollback_browser.py)。
 
+连接时的快照只带最近 2000 行历史，宿主最多留 10_000 行。滚轮、拖动滚动条或滚动条按键把视口滚到离本地最旧一行 40 行以内时，`loadOlderTermHistory` 用本页租约 `GET api/term/grid/history` 往前取 500 行，插到最前面，画面不跳；接缝按重叠行比对，对不上就停止分页而不插错行。浏览器回滚上限 100_000 行。只在活的连接上取：录制回放、已结束、被接管时不发请求；令牌过期（409）或其它失败时本次连接安静地停止分页，重连后重新开始。空闲时不发请求。[`tests/terminal_history_paging_browser.py`](../tests/terminal_history_paging_browser.py)。
+
 原先未链接的独立 `grid.html` 已删除，网格只在主控制台里使用。[`tests/terminal_grid_browser.py`](../tests/terminal_grid_browser.py) 在主控制台里点控制台按钮连接网格，覆盖输入、PTY 尺寸与视口缩放跟随、剪贴板粘贴和第二个页面确认后接管。
 
 ### 归属与连接
