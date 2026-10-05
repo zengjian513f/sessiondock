@@ -75,6 +75,8 @@ function contextWithCapabilities(value, globals = {}) {
   const context = vm.createContext({AbortController, performance, setTimeout, clearTimeout,
     HUB_MODE: false, pendingUid: name => 'tmux:' + name, sessiondockCli: () => null,
     sidebarPendingCursors: new Map(), browserAuditRetryAt: 0,
+    // list-sync.js owns the real pause state; these contracts only read it.
+    SessionDockNetwork: {paused: false, reason: ''},
     appConfirm: async message => globals.confirm?.(message) ?? true,
     appAlert: async message => globals.alert?.(message),
     document: {querySelector: () => meta}, ...globals,
@@ -120,8 +122,8 @@ test('local media tokens render without granting remote image requests', () => {
     'data:image/png;base64,eA==', 'file:///private/image.png', '/api/media/not-a-token', '//example.com/pixel.png']) {
     assert.equal(safe(source), '', source);
   }
-  const python = contextWithCapabilities(undefined, globals);
-  assert.equal(loadFunction(python, 'safeMediaSrc')('https://example.com/pixel.png'), 'https://example.com/pixel.png');
+  const undeclared = contextWithCapabilities(undefined, globals);
+  assert.equal(loadFunction(undeclared, 'safeMediaSrc')('https://example.com/pixel.png'), 'https://example.com/pixel.png');
 });
 
 test('a page without declared capabilities uses SessionDock defaults', () => {
@@ -313,7 +315,10 @@ test('selecting an existing sidebar row does not rebuild the list', () => {
       return selector === '.item.sel' ? [selected] : [];
     },
   };
+  const S = {sessions: [{uid: 'claude:keep-me', source: 'claude', sid: 'keep-me'},
+    {uid: 'claude:unpainted', source: 'claude', sid: 'unpainted'}]};
   const context = contextWithCapabilities(disabled, {
+    S,
     $: sel => sel === '#side' ? side : null,
     CSS: {escape: value => encodeURIComponent(value)},
     renderSide: () => { renders++; side.scrollTop = 0; },
@@ -330,9 +335,14 @@ test('selecting an existing sidebar row does not rebuild the list', () => {
   assert.deepEqual(agent.classList.added, ['sel']);
 
   side.scrollTop = 180;
-  assert.equal(paint('claude:missing'), false);
-  assert.equal(renders, 1);
+  assert.equal(paint('claude:unpainted'), false);
+  assert.equal(renders, 1, 'a listed row without a painted element rebuilds once');
   assert.equal(side.scrollTop, 180, 'fallback rebuild keeps the pixel offset');
+
+  selected.classList.removed.length = 0;
+  assert.equal(paint('claude:missing'), false);
+  assert.equal(renders, 1, 'an unlisted transfer target cannot gain a row from a rebuild');
+  assert.deepEqual(selected.classList.removed, ['sel'], 'the stale selection is cleared');
 });
 
 test('selecting an existing pending terminal does not rebuild the full sidebar', () => {
@@ -633,11 +643,12 @@ test('Rust managed terminal polling is independent of global live and waits for 
 test('Rust pending rows require launch identity and never run native resolution or draft cleanup', async () => {
   const row={name:'pending-host',record_id:'receipt',launch_id:'launch',instance_id:'instance',stale:false};
   const context=contextWithCapabilities(disabled,{
-    T:{list:[],pending:[row]}, S:{sel:'tmux:pending-host'}, pendingUid:name=>`tmux:${name}`,
+    T:{list:[],pending:[row]}, S:{sel:'tmux:pending-host',sessions:[]}, pendingUid:name=>`tmux:${name}`,
     $:()=>null, fetch:()=>assert.fail('pending must not guess native association'),
     setTimeout:()=>assert.fail('pending must use the shared list poll'),
     discardAbandonedNewSession:()=>assert.fail('pending must retain receipt and draft'),
   });
+  loadFunction(context,'sessionTermMeta',read('term.js'));
   const linked=loadFunction(context,'linkedTermSession',read('term.js'));
   assert.equal(linked('tmux:pending-host').name,'pending-host');
   assert.equal(linked('codex:pending-host'),null);
@@ -978,8 +989,13 @@ test('file entry delegates to FileDock and console availability remains unchange
   const hoverToast = "  if (button.matches(':hover') || document.activeElement === button)\n    showConsoleToast(consoleUnavailableReason(uid, agent));\n";
   const baselineHoverToast = "  if (button.matches(':hover') || document.activeElement === button) showConsoleToast(reason);\n";
   assert.ok(read('nodes.js').includes(hoverToast));
+  // The missing-CLI reason names the machine and the launcher prerequisite
+  // (6357efc9, docs/lifecycle-http.md); the gate itself is the baseline one.
+  const missingCli = "    return `${node ? node.name + '：' : ''}未配置可用的 ${SOURCES[source]?.name || source} 启动命令。请检查该机器的 CLI 安装和启动器配置，再重启服务。`;\n";
+  const baselineMissingCli = "    return `此机器未找到可用的 ${SOURCES[source]?.name || source} 命令，无法启动该会话的控制台。`;\n";
+  assert.ok(read('nodes.js').includes(missingCli));
   const compatible = read('nodes.js').replace(rustGuard, '').replace(replayGuard, '').replace(exitGuard, '').replace(pendingGuard, '')
-    .replace(hoverToast, baselineHoverToast)
+    .replace(hoverToast, baselineHoverToast).replace(missingCli, baselineMissingCli)
     .replace("  if (ConsoleUI.busy.has(uid))", "  if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined')\n"
       + "    return '浏览器终端组件加载失败，无法显示控制台，请刷新页面重新加载。';\n  if (ConsoleUI.busy.has(uid))");
   // Availability stays compatible; the intentionally changed click handling is
@@ -1248,34 +1264,21 @@ test('switching views during asynchronous retry rendering cannot replace the new
   assert.equal(context.S.sel, 'codex:other');
 });
 
-test('Rust HTTP errors retain backend details, while Python keeps its original message', async () => {
-  for (const rust of [true, false]) {
-    const context = contextWithCapabilities(rust ? disabled : undefined, {
+test('HTTP errors retain backend details and fall back to the status without a JSON body', async () => {
+  for (const body of [{error: '无法安全展示此历史', code: 'unsupported_history'}, null]) {
+    const context = contextWithCapabilities(disabled, {
       URLSearchParams, performance: {now: () => 0}, appUrl: value => value,
       AUDIT_PAGE_ID: 'page', BUILD_ID: 'build', browserAuditEvent: () => {},
       fetch: async () => ({ok: false, status: 501,
-        json: async () => {
-          assert.equal(rust, true, 'Python error responses are not consumed differently');
-          return {error: '无法安全展示此历史', code: 'unsupported_history'};
-        }}),
+        json: async () => { if (!body) throw new SyntaxError('not JSON'); return body; }}),
     });
     await assert.rejects(loadFunction(context, 'fetchMessages')('codex:fixture'), error => {
       assert.equal(error.status, 501);
-      assert.equal(error.message, rust ? '无法安全展示此历史' : 'HTTP 501');
+      assert.equal(error.message, body ? '无法安全展示此历史' : 'HTTP 501');
+      assert.equal(error.code, body ? 'unsupported_history' : '');
       return true;
     });
   }
-});
-
-test('Python pages do not gain migration pausing or change their retry policy', () => {
-  const context = migrationContext({}, undefined);
-  // Passing undefined selects the helper default, so explicitly use the real
-  // no-meta contract here to exercise the inherited default path.
-  context.SessionDockCapabilities = contextWithCapabilities().SessionDockCapabilities;
-  assert.equal(context.reportMigrationReadFailure('codex:fixture', null, new Error('network')), null);
-  assert.equal(context.migrationReadPaused('codex:fixture', null), false);
-  assert.equal(context.pauseMigrationWatch({}, 'codex:fixture', null), false);
-  assert.equal(context.migrationReadFailures.size, 0);
 });
 
 test('the real watch listener passes status and ignores stale connections', () => {
@@ -1327,8 +1330,8 @@ test('failure presentation inserts a text-only alert without clearing messages o
 });
 
 test('timeline pins are capability gated and never claim a native rewind', () => {
-  const python = contextWithCapabilities(undefined);
-  assert.equal(loadFunction(python, 'timelinePinEnabled')(), false);
+  const undeclared = contextWithCapabilities(undefined);
+  assert.equal(loadFunction(undeclared, 'timelinePinEnabled')(), false);
   const withoutPin = contextWithCapabilities({...disabled, metadata: true});
   assert.equal(loadFunction(withoutPin, 'timelinePinEnabled')(), false);
   const inserted = [];
@@ -1625,10 +1628,14 @@ test('an idle page follows a newer server draft and an editing page does not', a
     composerSending:false,composerSaving:new Set(),composerPendingSaves:new Map(),performance:{now:()=>5000},
     readServerComposerDraft:async()=>row,refreshComposerDraft:uid=>refreshed.push(uid),syncComposerUnloadProtection:()=>{},
     nodeOf:()=>null,newComposerDraft:()=>({text:'',attachments:[],quotes:[],revision:0,editVersion:0,savedVersion:0,nextAttachmentNumber:1}),
-    URL:{revokeObjectURL:()=>{}}});
+    URL:{revokeObjectURL:()=>{}},SessionDockNetwork:{paused:false}});
   for (const name of ['ensureComposerAttachmentNumbers','restoreComposerDraftRecord','adoptServerDraft']) loadFunction(context,name,read('term.js'));
   vm.runInContext('let composerFollowBusy=false, composerFollowedAt=0;',context);
   const follow=loadFunction(context,'followServerDraft',read('term.js'));
+  context.SessionDockNetwork.paused=true;
+  assert.equal(await follow('uid',5),false,'a paused page does not read the server draft');
+  assert.equal(draft.revision,2);
+  context.SessionDockNetwork.paused=false;
   assert.equal(await follow('uid',2),false); // Nothing newer reported.
   assert.equal(await follow('uid',5),true);
   assert.equal(draft.text,'typed on the phone');assert.equal(draft.revision,5);
@@ -1726,7 +1733,7 @@ test('send buttons keep the idle label and mark aria-busy instead of growing tex
 
 
 test('stale build disables composer and report send', () => {
-  const audit = [];
+  const audit = [], pauses = [];
   const buttons = {
     '#csend': {disabled: false},
     '#bug-report-go': {disabled: false},
@@ -1740,9 +1747,11 @@ test('stale build disables composer and report send', () => {
     document: {body: {classList: {add() {}}, appendChild() {}}},
     el: () => ({dataset:{},setAttribute() {}, innerHTML: '', appendChild() {}, append() {}, type: '', title: '', onclick: null}),
     $: sel => buttons[sel] || null,
+    SessionDockNetwork: {pause: reason => pauses.push(reason)},
   });
   loadFunction(context, 'markStaleBuild');
   context.markStaleBuild('abc');
+  assert.deepEqual(pauses, ['stale'], 'background synchronization stops on a stale build');
   assert.equal(buttons['#csend'].disabled, true);
   assert.equal(buttons['#bug-report-go'].disabled, true);
   assert.equal(buttons['#cadd'].disabled, true);
@@ -1750,6 +1759,7 @@ test('stale build disables composer and report send', () => {
   assert.deepEqual(audit, [['build.stale', 'abc']]);
   context.markStaleBuild('abc');
   assert.equal(audit.length, 1, 'only one update notice and audit event');
+  assert.equal(pauses.length, 1);
 });
 
 
