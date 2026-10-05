@@ -40,7 +40,16 @@ MANIFEST_URL = (
 )
 CODEX_URL = "https://registry.npmjs.org/@openai/codex/latest"
 MODELS = [("agy-fixture-a", "Agy Fixture A"), ("agy-fixture-b", "Agy Fixture B"),
-          ("agy-fixture-unnamed", "agy-fixture-unnamed")]
+          ("agy-fixture-unnamed", "agy-fixture-unnamed"), ("agy-fixture-c-high", "Agy Fixture C (High)"),
+          ("agy-fixture-d-low-thinking", "Agy Fixture D (Low Thinking)"),
+          ("agy-fixture-c-low", "Agy Fixture C (Low)"),
+          ("agy-fixture-b-medium", "Agy Fixture B (Medium)")]
+# Agy lists reasoning variants as separate models; those fix the effort.
+VARIANTS = MODELS[3:]
+PICKER_NAMES = ["Agy Fixture A", "Agy Fixture B", "agy-fixture-unnamed", "Agy Fixture C", "Agy Fixture D"]
+GROUPS = [("Agy Fixture C", {"low": "agy-fixture-c-low", "high": "agy-fixture-c-high"}),
+          ("Agy Fixture D", {"low": "agy-fixture-d-low-thinking"}),
+          ("Agy Fixture B", {"": "agy-fixture-b", "medium": "agy-fixture-b-medium"})]
 CHECKS = []
 PHASE = "setup"
 
@@ -67,8 +76,17 @@ if args[-1:] == ['--version']:
     sys.exit(0)
 if source == 'agy' and args[-1:] == ['models']:
     record()
+    deadline = time.monotonic() + 20
+    while (state / 'models.block').exists():
+        if time.monotonic() > deadline:
+            sys.exit(7)
+        time.sleep(0.02)
     print('agy-fixture-a\tAgy Fixture A\nagy-fixture-b\tAgy Fixture B\n'
-          'agy-fixture-unnamed\t\nignored diagnostic\n\tmissing id', flush=True)
+          'agy-fixture-unnamed\t\nignored diagnostic\n\tmissing id\n'
+          'agy-fixture-c-high\tAgy Fixture C (High)\n'
+          'agy-fixture-d-low-thinking\tAgy Fixture D (Low Thinking)\n'
+          'agy-fixture-c-low\tAgy Fixture C (Low)\n'
+          'agy-fixture-b-medium\tAgy Fixture B (Medium)', flush=True)
     sys.exit(0)
 if source == 'agy' and args[-1:] == ['update']:
     # Closed stdin must reach EOF immediately; bound a regression here too.
@@ -149,6 +167,8 @@ def node_fixture(root, args, name, *, installed):
         path.write_text("#!" + str(Path(sys.executable).resolve()) + "\n" + body)
         path.chmod(0o700)
     (root / "fixture-state/agy.version").write_text(OLD)
+    if installed:
+        (root / "fixture-state/models.block").touch()
     config = root / "launcher.json"
     config.touch(mode=0o600)
     config.write_text(json.dumps({"schema": 2, "host_binary": str(args.ptyhost),
@@ -234,7 +254,7 @@ def check_picker(page, node, *, node_id=None, levels=("",)):
             if effort == "":
                 expect(page.locator("#new-effort")).to_have_value("")
             page.locator("#new-model").click()
-            expect(page.locator("#new-model-options [role=option] > span")).to_have_text([name for _, name in MODELS])
+            expect(page.locator("#new-model-options [role=option] > span")).to_have_text(PICKER_NAMES)
             page.keyboard.press("Escape")
             choose_model(page, MODELS[0][1])
             page.locator("#new-effort").select_option(effort)
@@ -270,13 +290,130 @@ def check_picker(page, node, *, node_id=None, levels=("",)):
         assert catalogs[0].status == 200 and body.get("default_model") is None, body
         assert body["efforts"] == EFFORTS, body
         assert [(m["id"], m["name"]) for m in body["models"]] == MODELS, body
-        assert all(m["efforts"] == EFFORTS and "default_effort" not in m for m in body["models"]), body
+        assert all(m["efforts"] == ([] if (m["id"], m["name"]) in VARIANTS else EFFORTS)
+                   and "default_effort" not in m for m in body["models"]), body
         if node_id:
             assert parse_qs(urlsplit(catalogs[0].url).query).get("node") == [node_id], catalogs[0].url
         passed(("Hub" if node_id else "local") + ": TSV catalog, no default effort, real create and profile argv "
                + repr(list(levels)))
+        check_variant(page, node, node_id=node_id)
     finally:
         page.remove_listener("response", catalog)
+
+
+def models_runs(node):
+    return sum(1 for entry in records(node.state / "cli.jsonl")
+               if entry["source"] == "agy" and entry["argv"][-1:] == ["models"])
+
+
+def check_cold_catalog(page, node):
+    phase("local Agy picker joins startup model warming")
+    open_dialog(page)
+    with page.expect_request(lambda r: urlsplit(r.url).path.endswith("/api/term/models")
+                             and parse_qs(urlsplit(r.url).query).get("source") == ["agy"]):
+        page.locator('#new-session-form label:has(input[value="agy"])').click()
+    expect(page.locator("#new-model")).to_be_disabled()
+    with page.expect_response(lambda r: urlsplit(r.url).path.endswith("/api/term/models")
+                              and parse_qs(urlsplit(r.url).query).get("source") == ["agy"]):
+        (node.state / "models.block").unlink()
+    expect(page.locator("#new-model")).to_be_enabled()
+    assert models_runs(node) == 1, ("startup and picker duplicated agy models", models_runs(node))
+    page.locator("#new-session-dialog .modal-cancel").click()
+    passed("cold picker shares the startup listing; agy models ran exactly once")
+
+
+def check_variant(page, node, *, node_id=None):
+    """Agy variants share one model row, unavailable efforts are disabled, and a
+    reopened page reads the node's cached catalog without listing again."""
+    where = "Hub" if node_id else "local"
+    phase(where + " Agy effort variant and cached catalog")
+    runs = models_runs(node)
+    page.evaluate("""([key, id]) => localStorage.setItem(STORAGE_PREFIX + 'newModel.' + key,
+        JSON.stringify({model: id}))""", [(node_id + "|" if node_id else "") + "agy", "agy-fixture-c-low"])
+    page.reload(wait_until="networkidle")
+    page.wait_for_function("T.listLoaded")
+    open_dialog(page)
+    if node_id:
+        page.locator("#new-node").select_option(node_id)
+    started = time.monotonic()
+    with page.expect_response(lambda r: urlsplit(r.url).path.endswith("/api/term/models")
+                              and parse_qs(urlsplit(r.url).query).get("source") == ["agy"]) as listed:
+        page.locator('#new-session-form label:has(input[value="agy"])').click()
+    assert listed.value.status == 200, listed.value.text()[:1200]
+    expect(page.locator("#new-model")).to_be_enabled()
+    elapsed = time.monotonic() - started
+    assert models_runs(node) == runs, ("cached catalog re-ran agy models", runs, models_runs(node))
+    expect(page.locator("#new-model-label")).to_have_text("Agy Fixture C")
+    expect(page.locator("#new-effort")).to_have_value("low")
+    for width in (1280, 390):
+        page.set_viewport_size({"width": width, "height": 900})
+        for name, variants in GROUPS:
+            choose_model(page, name)
+            expect(page.locator("#new-model")).to_contain_text(name)
+            expect(page.locator("#new-effort")).to_be_enabled()
+            expect(page.locator("#new-session-form .new-effort")).to_be_visible()
+            expect(page.locator("#new-effort option")).to_have_text((["CLI 默认"] if "" in variants else []) + EFFORTS)
+            options = page.locator("#new-effort option").evaluate_all(
+                "items => items.map(o => [o.value, o.disabled])")
+            assert options == [[level, level not in variants] for level in ([""] if "" in variants else []) + EFFORTS], options
+            effort = page.locator("#new-effort")
+            effort.press("Home")
+            effort.press("ArrowDown")
+            assert effort.input_value() in variants, (name, effort.input_value())
+            if name == "Agy Fixture C":
+                # medium is between low and high, but the native select skips it.
+                expect(effort).to_have_value("high")
+    page.set_viewport_size({"width": 1280, "height": 900})
+    choose_model(page, MODELS[0][1])
+    expect(page.locator("#new-session-form .new-effort")).to_be_visible()
+    expect(page.locator("#new-effort")).to_be_enabled()
+    expect(page.locator("#new-effort option")).to_have_text(["CLI 默认", *EFFORTS])
+    for name, variants in GROUPS:
+        for level, native_id in variants.items():
+            if not page.locator("#new-session-dialog").is_visible():
+                open_dialog(page)
+                if node_id:
+                    page.locator("#new-node").select_option(node_id)
+                page.locator('#new-session-form label:has(input[value="agy"])').click()
+                expect(page.locator("#new-model")).to_be_enabled()
+            choose_model(page, name)
+            page.locator("#new-effort").select_option(level)
+            page.locator("#new-cwd").fill(str(node.root / "work"))
+            previous = {entry["pid"] for entry in records(node.state / "cli.jsonl") if entry.get("interactive")}
+            with page.expect_response(lambda r: urlsplit(r.url).path.endswith("/api/term/create")) as created:
+                page.locator("#new-session-go").click()
+            assert created.value.status == 200, created.value.text()[:1200]
+            request = created.value.request.post_data_json
+            assert request["model"] == native_id and not request.get("effort"), request
+            deadline = time.monotonic() + 10
+            while True:
+                launches = [entry for entry in records(node.state / "cli.jsonl")
+                            if entry.get("interactive") and entry["pid"] not in previous]
+                if launches:
+                    break
+                assert time.monotonic() < deadline, "variant launch did not record its argv"
+                time.sleep(0.05)
+            assert launches[0]["argv"] == PROFILE_ARGS + ["--model", native_id], launches
+            expect(page.locator("#new-session-dialog")).to_be_hidden()
+            open_dialog(page)
+            expect(page.locator("#new-model-label")).to_have_text(name)
+            expect(page.locator("#new-effort")).to_have_value(level)
+            page.locator("#new-session-dialog .modal-cancel").click()
+    # The report dialog uses the same grouping and restores the model's effort.
+    page.locator('[data-report-bug]:visible').first.click()
+    if node_id:
+        page.locator("#bug-report-node").select_option(node_id)
+    page.locator('#bug-report-form label:has(input[value="agy"])').click()
+    expect(page.locator("#bug-report-model")).to_be_enabled()
+    page.locator("#bug-report-model").click()
+    expect(page.locator("#bug-report-model-options [role=option] > span")).to_have_text(PICKER_NAMES)
+    page.locator("#bug-report-model-options [role=option]", has_text="Agy Fixture D").click()
+    expect(page.locator("#bug-report-effort")).to_have_value("low")
+    expect(page.locator("#bug-report-effort option:disabled")).to_have_text(["medium", "high", "xhigh", "max"])
+    page.locator("#bug-report-dialog .modal-close").click()
+    passed(f"{where}: grouped models, gray unavailable efforts, exact native IDs and remembered choices "
+           f"in new/report dialogs (desktop + phone); "
+           f"reopened page served cached catalog in {elapsed:.2f}s without rerunning agy models")
 
 
 def check_updates(page, node, machine, *, node_id=None):
@@ -401,6 +538,7 @@ def run(args):
             missing_stack = stack.enter_context(ExitStack())
             missing = missing_stack.enter_context(node_fixture(root / "missing", args, "MissingNode", installed=False))
             with page_fixture(browser, installed.base) as page:
+                check_cold_catalog(page, installed)
                 check_picker(page, installed, levels=("", *EFFORTS))
                 check_updates(page, installed, "本机")
             with page_fixture(browser, missing.base) as page:
