@@ -1166,10 +1166,36 @@ async fn call(
     body: &Value,
     success: bool,
 ) -> Result<(u16, Value), TransferError> {
-    let (status, value) = client
-        .json(target, "POST", path, Some(body), IDLE)
+    // Transfer manifests carry complete native database before/after images.
+    // They are not ordinary catalog replies and can exceed the client's 64 MiB
+    // JSON cap. Keep HTTP framing, authentication and idle timeouts unchanged.
+    let failed = |error: super::ClientError| {
+        eprintln!("sessiondock transfer request {path}: {error}");
+        network(error)
+    };
+    let encoded = serde_json::to_vec(body)?;
+    let response = client
+        .open(
+            target,
+            client::Request {
+                method: "POST",
+                target: path,
+                headers: &[("Content-Type", "application/json")],
+                body: Some(&encoded),
+                connect: IDLE,
+                idle: IDLE,
+            },
+        )
         .await
-        .map_err(network)?;
+        .map_err(failed)?;
+    let status = response.status;
+    let mut response_body = response.into_body();
+    let mut raw = Vec::new();
+    while let Some(chunk) = response_body.read().await.map_err(failed)? {
+        raw.extend_from_slice(&chunk);
+    }
+    let value = serde_json::from_slice(&raw)
+        .map_err(|_| failed(super::ClientError::Invalid("body is not JSON")))?;
     if status != 200 && (success || status != 404) {
         return Err(remote_error(&value));
     }
