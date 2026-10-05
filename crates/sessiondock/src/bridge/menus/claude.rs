@@ -410,18 +410,36 @@ pub fn screen_prompt(screen: &str) -> Option<Value> {
         ));
     }
     let mut rows: Vec<Row> = (0..footer).filter_map(|i| row(i, lines[i])).collect();
-    let anchor = rows
+    let mut anchor_index = rows
         .iter()
-        .rfind(|r| r.focused)
-        .or_else(|| rows.last())?
-        .line;
-    let start = (0..anchor)
-        .rfind(|&i| title(lines[i]) || border(lines[i]))
-        .map(|i| if border(lines[i]) { i + 1 } else { i })
-        .or_else(|| (0..anchor).rfind(|&i| lines[i].trim().ends_with('?')))
-        .or_else(|| {
-            (0..anchor).rfind(|&i| !lines[i].trim().is_empty() && row(i, lines[i]).is_none())
-        })?;
+        .rposition(|r| r.focused)
+        .or_else(|| rows.len().checked_sub(1))?;
+    while anchor_index > 0
+        && rows[anchor_index - 1]
+            .number
+            .is_some_and(|number| rows[anchor_index].number == Some(number + 1))
+    {
+        anchor_index -= 1;
+    }
+    let anchor = rows[anchor_index].line;
+    let question_tabs = lower
+        .contains("tab/arrow keys to navigate")
+        .then(|| {
+            (0..anchor).rfind(|&i| {
+                let s = lines[i].trim();
+                s.starts_with('←') && s.contains("Submit") && s.ends_with('→')
+            })
+        })
+        .flatten();
+    let start = question_tabs.map(|i| i + 1).or_else(|| {
+        (0..anchor)
+            .rfind(|&i| title(lines[i]) || border(lines[i]))
+            .map(|i| if border(lines[i]) { i + 1 } else { i })
+            .or_else(|| (0..anchor).rfind(|&i| lines[i].trim().ends_with('?')))
+            .or_else(|| {
+                (0..anchor).rfind(|&i| !lines[i].trim().is_empty() && row(i, lines[i]).is_none())
+            })
+    })?;
     if lines[start..=footer].iter().any(|s| {
         let t = s.trim();
         t.starts_with('>') || t.starts_with("```")
@@ -472,8 +490,34 @@ pub fn screen_prompt(screen: &str) -> Option<Value> {
         }
         rows.sort_by_key(|r| r.line);
     }
+    // Native Select renders descriptions on indented continuation rows. Keep
+    // them with their option rather than folding every non-option into the
+    // question (including all descriptions of a multi-question form).
+    let mut description_lines = std::collections::HashSet::new();
+    for r in &mut rows {
+        let leading = lines[r.line]
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .count();
+        for (i, line) in lines.iter().enumerate().take(footer).skip(r.line + 1) {
+            let indent = line.chars().take_while(|c| c.is_whitespace()).count();
+            if line.trim().is_empty()
+                || border(line)
+                || row(i, line).is_some()
+                || indent < leading + 2
+            {
+                break;
+            }
+            if !r.description.is_empty() {
+                r.description.push('\n');
+            }
+            r.description.push_str(line.trim());
+            description_lines.insert(i);
+        }
+    }
     let question = (start..footer)
         .filter(|i| !rows.iter().any(|r| r.line == *i))
+        .filter(|i| !description_lines.contains(i) && !border(lines[*i]))
         .filter(|&i| !matches!(lines[i].trim(), "Submit" | "Next"))
         .map(|i| lines[i].trim())
         .collect::<Vec<_>>()

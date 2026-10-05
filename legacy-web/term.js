@@ -5340,8 +5340,24 @@ function renderComposerInputStatus() {
 
 function renderComposerQuestion(draft) {
   const box = $('#composer-question');
-  const prompt = draft?.inputPrompt;
-  const signature = JSON.stringify([composerUid, prompt, draft?.inputAnswer]);
+  const screenPrompt = draft?.inputPrompt;
+  const question = activeCliQuestion(composerUid);
+  // CHECK describes only the visible terminal page; hooks/history can already
+  // supply the complete form. Match its content so a stale hook cannot obscure
+  // a different menu, and give the complete form one set of answer controls.
+  const compact = value => String(value || '').replace(/\s+/gu, '');
+  const duplicate = screenPrompt?.kind === 'screen_menu'
+    && screenPrompt.questions?.length === 1
+    && (question?.state || 'waiting') === 'waiting'
+    && question?.questions?.some(q => {
+      const visible = screenPrompt.questions[0];
+      return compact(q.question) === compact(visible.question)
+        && q.options?.length > 0
+        && q.options.every((option, index) =>
+          compact(option.label) === compact(visible.options?.[index]?.label));
+    });
+  const prompt = duplicate ? null : screenPrompt;
+  const signature = JSON.stringify([composerUid, prompt, duplicate, draft?.inputAnswer]);
   if (box.dataset.signature === signature) return;
   box.dataset.signature = signature;
   const focused = box.querySelector('.question-text-input');
