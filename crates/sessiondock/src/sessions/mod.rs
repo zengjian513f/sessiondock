@@ -687,6 +687,12 @@ impl SessionStore {
         Ok(document)
     }
 
+    /// Reuse parsed headers for the transfer's separate inventory; directory
+    /// discovery and stamp validation still happen on its first read.
+    pub fn seed_inventory(&self, reader: &Self) {
+        self.index.seed_summaries(&reader.index);
+    }
+
     /// Native writers announce a committed membership change without eagerly
     /// rebuilding the entire list. The next list/history read refreshes it.
     pub fn invalidate_inventory(&self) {

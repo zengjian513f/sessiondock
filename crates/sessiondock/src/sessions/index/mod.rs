@@ -434,6 +434,7 @@ struct CacheKey {
     events_stamp: Option<Stamp>,
 }
 
+#[derive(Clone)]
 struct Cached {
     key: CacheKey,
     summary: Arc<RowSummary>,
@@ -541,6 +542,22 @@ impl Index {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn refresh(&self, force: bool) -> Result<Arc<IndexSnapshot>, SessionError> {
         self.refresh_within(force, CHECK_TTL)
+    }
+
+    /// Seed a separate on-demand inventory with already parsed file summaries.
+    /// Its first refresh still walks its own roots and validates every stamp.
+    /// Never wait on ordinary readers or share their inventory lock.
+    pub fn seed_summaries(&self, other: &Self) {
+        let Ok(mut state) = self.state.try_lock() else {
+            return;
+        };
+        if state.snapshot.is_some() || !state.cache.is_empty() {
+            return;
+        }
+        let Ok(source) = other.state.try_lock() else {
+            return;
+        };
+        state.cache.clone_from(&source.cache);
     }
 
     /// A native publication/removal bypasses the TTL on the next read. This

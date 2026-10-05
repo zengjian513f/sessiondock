@@ -30,6 +30,9 @@ fn failure(error: TransferError) -> Response {
         .into_response()
 }
 fn service(state: &AppState) -> Result<Arc<TransferService>, Box<Response>> {
+    if let Some(service) = &state.transfer {
+        service.store().seed_inventory(&state.reader.store);
+    }
     state.transfer.clone().ok_or_else(|| {
         Box::new(failure(TransferError::new(
             "move_group_unsupported",
