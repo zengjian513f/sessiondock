@@ -55,8 +55,15 @@ The original UI, identity, checkpoint and race assertions remain in place.
 Tests that launch detached ptyhost sessions must stop their private hosts before
 removing the temporary directory, including after assertion failures. Stopping
 the web server intentionally preserves those sessions. Use the guarded
-`cleanup_hosts` helper in [hub_send_browser.py](../tests/hub_send_browser.py),
-which verifies socket removal and, on Linux, host/CLI process exit. Otherwise a
+`private_hosts(root)` context in [private_hosts.py](../tests/private_hosts.py),
+inside `TemporaryDirectory` and outside the browser and all server instances.
+It survives service restarts, cleans up on success, assertion failure and SIGTERM,
+and verifies socket removal and, on Linux, host/CLI process exit. The validation
+runner sends SIGTERM on timeout and allows 20 seconds for teardown before a hard
+kill; the suite still reports TIMEOUT. SIGKILL cannot run teardown.
+[private_hosts_browser.py](../tests/private_hosts_browser.py) exercises
+these exits with a browser-created fake CLI. The same module exports
+`cleanup_hosts(root)` for existing explicit teardown paths. Otherwise a
 leaked fake CLI can remain attributed to the initiating session through SSH and
 keep its activity dot breathing after the turn ends (BUG-20261004-070702-c1ac6b).
 

@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+from private_hosts import private_hosts
 import sqlite3
 import sys
 import tempfile
@@ -134,7 +135,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='sessiondock-opencode-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-opencode-') as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         for name in ('host', 'work', 'ledger', 'delivery', 'state', 'home', 'claude', 'codex', 'grok'):
             (root / name).mkdir(mode=0o700)

@@ -163,8 +163,20 @@ def run_one(suite, env, log_dir, scale):
     started = time.monotonic()
     try:
         with log.open("wb") as fh:
-            proc = subprocess.run(suite["argv"], cwd=ROOT, env=env, timeout=timeout,
-                                  stdout=fh, stderr=subprocess.STDOUT)
+            with subprocess.Popen(suite["argv"], cwd=ROOT, env=env,
+                                  stdout=fh, stderr=subprocess.STDOUT) as proc:
+                try:
+                    proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    # Test-owned ptyhosts outlive the web server. Let fixture
+                    # finally blocks stop them before resorting to SIGKILL.
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=20)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                    raise
     except subprocess.TimeoutExpired:
         with log.open("ab") as fh:
             fh.write(b"\nTIMEOUT\n")

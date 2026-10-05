@@ -10,6 +10,7 @@ from browser_runtime import entry_asset
 import json
 import os
 from pathlib import Path
+from private_hosts import cleanup_hosts
 import shutil
 import socket
 import subprocess
@@ -34,44 +35,6 @@ def send_from_composer(page, text):
     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/conversation/send", timeout=20000) as sent:
         page.locator("#csend").click()
     return sent.value
-
-
-def cleanup_hosts(root):
-    # Only the private host instances created by this test, with their exact
-    # guarded identities (the service stopping does not terminate ptyhost).
-    processes = {}
-
-    def running_identity(pid):
-        try:
-            fields = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
-            return fields[19] if fields[0] != "Z" else None
-        except FileNotFoundError:
-            return None
-
-    for path in (root / "host").glob("*.json"):
-        record = json.loads(path.read_text())
-        meta = record["meta"]
-        if Path("/proc/self/stat").exists():
-            for pid in (record.get("host_pid"), record.get("pid")):
-                if pid and (identity := running_identity(pid)) is not None:
-                    processes[pid] = identity
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
-                stream.settimeout(2)
-                stream.connect(str(root / "host" / (record["name"] + ".sock")))
-                stream.sendall(json.dumps({"op": "launch_guard_v1", "expected_source": meta["source"],
-                    "expected_launch_id": meta["launch_id"], "expected_instance_id": meta["instance_id"],
-                    "request": {"op": "kill", "force": True}}).encode() + b"\n")
-        except OSError:
-            pass
-    deadline = time.monotonic() + 6
-    def remaining():
-        return [pid for pid, identity in processes.items() if running_identity(pid) == identity]
-
-    while (list((root / "host").glob("*.sock")) or remaining()) and time.monotonic() < deadline:
-        time.sleep(.05)
-    assert not list((root / "host").glob("*.sock")), "private test host sockets survived cleanup"
-    assert not remaining(), f"private test host/CLI processes survived cleanup: {remaining()}"
 
 
 def prepare(root):
