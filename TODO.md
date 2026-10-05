@@ -37,8 +37,3 @@
   `docs/deploy-windows.md`。
 - [ ] 将真实 Claude/Codex/Grok CLI 套件纳入明确的发布验收步骤；继续使用临时配置和
   `AGENTS.md` 规定的低成本测试模型，不进入普通 `cargo test`。
-
-## Frontend direction
-
-- [ ] 为全部展开的大侧栏增加可见区渲染，并保持分组多选、深链定位和文本选择语义。
-  当前已复用未变化行、按需创建折叠组；全部展开时 DOM 数量仍随会话数增长。

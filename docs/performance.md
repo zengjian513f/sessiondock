@@ -453,6 +453,27 @@ python3 tests/bench_polls_real.py --claude-root ~/.claude/projects --codex-root 
 `sessions/views` 的追加改成增量投影，`graph::build` 改增量
 （`sessions/index/graph.rs`）。
 
+## 左栏大列表可见区渲染（2026-10-05）
+
+`python3 tests/sidebar_scale_browser.py --binary target/release/sessiondock --report-only`：
+4002 个会话（40 个项目组 × 100 条合成行 + 2 条真实记录），层叠模式，全部组和分支展开，
+共 4082 行（含 80 个子代理行）；无头 Chromium，视口 1400×900，cygnus。各两次取范围：
+
+| | 修改前（全部行进 DOM） | 修改后（可见区窗口） |
+| --- | ---: | ---: |
+| 首次 `renderSide`（含布局） | 673–712 ms | 22–29 ms |
+| 数据未变的重画 | 42–51 ms | 11–15 ms |
+| 视口外一行改标题后 `patchSide` | 39–52 ms | 10–14 ms |
+| 视口内一行改标题后 `patchSide` | 37–47 ms | 10–17 ms |
+| `paintLive`（运行集合变化） | 26–34 ms | 3–5 ms |
+| `#side` 内 `.item` / 全部元素 | 4082 / 61516 | 28 / 749（滚动后 40） |
+| 滚轮 70 次期间 long task | 4–26 个，265–1496 ms | 0 |
+| 滚动期间最大帧间隔 | 67–83 ms | 17–33 ms |
+
+修改前两次的 long task 数量波动较大，未逐项归因；修改后两次均为 0。
+套件默认模式断言窗口不超过 240 行、各重画不超过 250 ms（远高于实测，只防退化成全量渲染）。
+实现见 [`docs/frontend-migration-surfaces.md`](frontend-migration-surfaces.md) 第 2 节「大列表可见区渲染」。
+
 ## 旧的合成读取基准（供对照）
 
 `python3 tests/read_benchmark.py --binary target/release/sessiondock --samples 10`

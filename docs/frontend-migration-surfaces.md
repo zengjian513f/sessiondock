@@ -113,6 +113,12 @@ Hub 顶栏另有机器 chip，见第 2 节。节点离线、列表/运行状态/
 
 分组头可折叠。普通浏览的折叠在 `closed`（持久）。搜索态用另一套 `searchClosed`，不写回 `closed`。[`tests/search_no_fold_browser.py`](../tests/search_no_fold_browser.py)。大量同名目录下点击折叠和筛选：[`tests/sidebar_path_performance_browser.py`](../tests/sidebar_path_performance_browser.py)。
 
+### 大列表可见区渲染
+
+全部展开后行数超过 400（`SIDE_WINDOW_MIN`）时，每个展开组的 `.glist` 只放视口及上下各 600px 内的行，其余由首尾两个 `aria-hidden` 占位块（`.glist-spacer`）撑住高度；组标题全部保留。滚动和尺寸变化时 `layoutSidebarWindow` 只增删进出窗口的行，未变化的行沿用原元素（`placeSidebarRows`，与全量渲染同一套签名对账，离开窗口的行先删，保留下来的行不移动）。行高按行键记住实测值，未渲染过的行用同类行均值估计；`#side` 关闭了 `overflow-anchor`，窗口更新后按视口顶部的那一行补偿滚动位置。
+
+逻辑行序始终是每组的 `group._rows`，不依赖 DOM：多选拖选的范围按 `sidebarPickOrder` 计算，可以跨过未渲染的行；整组勾选、全选、计数照旧。深链、父会话链「显示」和选中都走 `sidebarRowNode(uid, agent, true)`，按估计位置滚过去再渲染并 `scrollIntoView`。侧栏里有文字选区或焦点时，所在行在滚动中保留在窗口内，选区不丢。层叠三角在窗口模式下只改 `group._rows` 再重排窗口。行数不超过阈值时仍全部渲染，行为与以前相同。[`tests/sidebar_scale_browser.py`](../tests/sidebar_scale_browser.py)。
+
 左栏宽度 `width`，默认 340，最小 200。拖 `#drag`，双击回到默认。资源列打开时视觉宽度再加 144，存的仍是不含这 144 的值（`setSideWidth`）。
 
 ### 行上能看见的东西
@@ -200,7 +206,7 @@ Boot 时若上次 `sel` 是 `tmux:` 前缀的新建会话，会等 `api/term/lis
 
 ### 侧栏缺口
 
-以下操作的覆盖尚需逐项核对：时间轴目录颜色分配、星标与父会话链的全部菜单路径（星标/可见性在 metadata 套件里有一部分）、单机（非 Hub）多选拖选、资源列六格各自的数值格式。不据套件名称判断这些操作是否已有覆盖。
+以下操作的覆盖尚需逐项核对：时间轴目录颜色分配、星标与父会话链的全部菜单路径（星标/可见性在 metadata 套件里有一部分）、资源列六格各自的数值格式。不据套件名称判断这些操作是否已有覆盖。
 
 ---
 

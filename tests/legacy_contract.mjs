@@ -322,6 +322,8 @@ test('selecting an existing sidebar row does not rebuild the list', () => {
     $: sel => sel === '#side' ? side : null,
     CSS: {escape: value => encodeURIComponent(value)},
     renderSide: () => { renders++; side.scrollTop = 0; },
+    // Below the visible-window threshold no group renders a row window.
+    sidebarWindowGroups: () => [],
   });
   const paint = loadFunction(context, 'paintSidebarSelection');
   assert.equal(paint('claude:keep-me'), true);
