@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PTY history is scrolled locally by real wheel input in both console renderers."""
-from browser_runtime import js
+from browser_runtime import js, console_renderers
 import json
 import os
 from pathlib import Path
@@ -120,7 +120,7 @@ def check(pw, renderer):
 
 def main():
     with sync_playwright() as pw:
-        for renderer in ['grid', 'xterm']:
+        for renderer in console_renderers('grid', 'xterm'):
             check(pw, renderer)
 
 

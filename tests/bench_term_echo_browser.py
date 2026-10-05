@@ -16,7 +16,7 @@ policies compare on one server: `served` (the file as shipped), `timer`
 
 Usage: python3 tests/bench_term_echo_browser.py [--keys 200] [--burst 30000] [--rounds 2] [--modes served,none]
 """
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import argparse
 import json
 import os
@@ -272,6 +272,9 @@ def main():
     parser.add_argument("--rounds", type=int, default=2)
     parser.add_argument("--modes", default="served")
     args = parser.parse_args()
+    if scoped_frontend():
+        print('SKIP bench_term_echo_browser: the Vue build has no xterm parser to measure', flush=True)
+        return
     with tempfile.TemporaryDirectory(prefix="sessiondock-benchecho-") as temporary:
         root = Path(temporary)
         for name in ["host", "work", "claude", "codex", "grok"]:

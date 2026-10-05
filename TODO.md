@@ -44,3 +44,19 @@
   当前已复用未变化行、按需创建折叠组；全部展开时 DOM 数量仍随会话数增长。
 - [ ] 将 Grid 历史折行改为逻辑行惰性计算或可取消分批计算，同时保持选择坐标和完整历史。
   当前拖动已合并、临时 cell 不常驻，但最后一次变窄仍同步遍历历史。
+
+### Vue 前端改为 Vue 写法（仅 `web/`，生产 `legacy-web/` 不变）
+
+验收：services/pages 直接调用 DOM API 只留在网格画布渲染器与 diagnostics 快照；
+偏好读写全部经由偏好 store；能由状态推导的界面数据用 `computed`；`any` < 100。
+不变：DOM id/class、存储键、请求格式、文案、`window.SessionDockRuntime` 上被测试
+使用的路径；发送确认、同步与终端字节缓冲留在 service。每阶段完成即验证并部署预览站。
+
+- [ ] Hub 注册表的 `renderer` 字段与 `set_renderer` 只剩 legacy 使用；legacy 退役时一并删除。
+- [ ] 对话区：消息容器 `#msgs` 仍由服务创建并作为各视图的 Teleport 目标，历史分页、
+  差量追加和待落盘提示按 `#msgs` 查询；改为组件渲染容器后再收掉这些查询。
+- [ ] 终端：每个视图的 socket/心跳/重连/同步帧收进 `TerminalSession`；布局策略、
+  CLI 菜单改为组件；新建会话启动流程移出终端；列表与 pane 绑定独立。
+- [ ] 辅助页：grid 拆为画布渲染器类加组件；records 列表与播放器改为组件。
+- [ ] 收尾：依赖接口改为实现类型推导，更新 `architecture.md` 与
+  `frontend-migration-surfaces.md`。

@@ -6,7 +6,7 @@ descriptor, never creates descendants, and exercises console controls by normal
 browser clicks and keyboard input. WebSocket instrumentation only observes wire
 events; terminal assertions read the actual xterm/grid buffer and DOM.
 """
-from browser_runtime import js
+from browser_runtime import js, console_renderers
 from contextlib import ExitStack
 import json
 import os
@@ -258,7 +258,7 @@ def main():
             launch["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
         browser = playwright.chromium.launch(**launch)
         try:
-            for renderer in ["xterm", "grid"]:
+            for renderer in console_renderers("xterm", "grid"):
                 for incomplete in [True, False]:
                     root = Path(temporary) / (renderer + ("-incomplete" if incomplete else "-normal"))
                     root.mkdir(mode=0o700)

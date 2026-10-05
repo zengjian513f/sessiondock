@@ -4,7 +4,7 @@
 BUG-20261003-110817-4e7c32: DEC 2026 end precedes the final cursor restore
 by about 15 ms. No real CLI, production host, or native session is used.
 """
-from browser_runtime import js
+from browser_runtime import js, scoped_frontend
 import json
 import os
 from pathlib import Path
@@ -52,6 +52,9 @@ while True:
 
 
 def main():
+    if scoped_frontend():
+        print('SKIP terminal_sync_browser: the Vue build has no byte console; the host model applies DEC 2026 for the grid', flush=True)
+        return
     if os.name != 'posix':
         raise SystemExit('This private PTY fixture requires POSIX')
     with tempfile.TemporaryDirectory(prefix='sessiondock-sync-') as temporary:

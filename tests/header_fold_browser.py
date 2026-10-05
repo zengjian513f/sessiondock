@@ -276,6 +276,8 @@ def seed_header_nodes(page):
       }
       layoutHeader();
     }""", """() => {
+      // The fold reads machine visibility from the node store, as Hub mode sets it.
+      runtime.core.state.nodes.visible = true;
       const picker = document.querySelector('#node-picker');
       picker.hidden = false;
       const chips = document.querySelector('#node-chips');

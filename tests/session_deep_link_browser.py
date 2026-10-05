@@ -119,6 +119,7 @@ def check_rotated_links(browser, base, corpus):
                 expect(page.locator('#side .item.sel')).to_have_count(0)
                 assert parse_qs(urlparse(page.url).query)['sid'] == [sid]
             assert not errors, errors
+            ctx.unroute_all(behavior='ignoreErrors')  # in-flight history pages must not fail the closed context
             ctx.close()
             print('PASS rotated native link', width, mode, 'with node' if node else 'without node', flush=True)
 
@@ -187,7 +188,7 @@ def main():
        expect(page.locator('#msgs')).to_contain_text(corpus.expected['claude-compact'][-1])
 
       assert not errors,errors
-      ctx.close();print('PASS native sid deep link',width,'nest' if nest else 'flat',sid,flush=True)
+      ctx.unroute_all(behavior='ignoreErrors');ctx.close();print('PASS native sid deep link',width,'nest' if nest else 'flat',sid,flush=True)
    check_rotated_links(browser,base,corpus)
    browser.close()
   assert all(p.read_bytes()==v for p,v in before.items())
