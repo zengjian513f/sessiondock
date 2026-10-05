@@ -315,6 +315,58 @@ def main(binary=BINARY):
                     agent_path.write_bytes(original)
                     agent_active(False)
                     expect(agent_dot).not_to_have_class(re.compile(r"\bvisible\b"), timeout=20000)
+                    # BUG-20261005-124541-c50fee: a restored collaboration
+                    # agent has no closing JSONL boundary. Its parent's later
+                    # list_agents result says pending_init, so the old turn
+                    # must not keep the child, main list or header pulsing.
+                    def timed(kind, payload, second):
+                        record = codex_row(kind, payload)
+                        record["timestamp"] = f"2026-09-11T12:00:{second:02d}Z"
+                        return record
+
+                    append(agent_path, timed("event_msg", {"type": "task_started", "turn_id": "stale"}, 10))
+                    agent_active(True)
+                    expect(header).to_have_class(re.compile(r"\bturn-working\b"), timeout=20000)
+                    status_output = json.dumps({"agents": [{"agent_name": "/root/long_turn",
+                                                            "agent_status": "pending_init"}]})
+                    # An unrelated tool output with the same JSON is no proof.
+                    append(codex_path, timed("response_item", {"type": "function_call_output",
+                        "call_id": "unrelated", "output": status_output}, 20))
+                    agent_active(True)
+                    append(codex_path, timed("response_item", {"type": "function_call",
+                        "namespace": "collaboration", "name": "list_agents", "arguments": "{}",
+                        "call_id": "agent-status"}, 20))
+                    agent_active(True)  # call and result may arrive in separate scans
+                    status_record = timed("response_item", {"type": "function_call_output",
+                        "call_id": "agent-status", "output": status_output}, 21)
+                    with codex_path.open("ab") as stream:
+                        stream.write(encoded(status_record)[:-1])
+                    agent_active(True)
+                    with codex_path.open("ab") as stream:
+                        stream.write(b"\n")
+                    append(codex_path, padding)  # result outside the tail window
+                    agent_active(False)
+                    expect(agent_dot).not_to_have_class(re.compile(r"\bvisible\b"), timeout=20000)
+                    expect(header).not_to_have_class(TURN)
+                    expect(badge(codex_uid)).not_to_have_class(TURN)
+                    assert row_turn(opener, base, codex_uid, codex_path.stat().st_size) == "idle"
+                    page.locator("#a-view-switch").click()
+                    expect(choice.locator(".view-live")).to_have_count(0)
+                    page.locator('#session-view-menu button[data-agent=""]').click()
+                    page.reload(wait_until="networkidle")
+                    wait_busy(page, codex_uid, False)
+                    expect(header).not_to_have_class(TURN)
+                    # Settings/token updates do not wake an unloaded agent.
+                    append(agent_path, timed("event_msg", {"type": "thread_settings_applied"}, 30))
+                    agent_active(False)
+                    # A real new turn does; no age-based expiry hides work.
+                    append(agent_path, timed("event_msg", {"type": "task_started", "turn_id": "resumed"}, 31))
+                    agent_active(True)
+                    expect(header).to_have_class(re.compile(r"\bturn-working\b"), timeout=20000)
+                    append(agent_path, timed("event_msg", {"type": "task_complete", "turn_id": "resumed"}, 32))
+                    agent_active(False)
+                    expect(header).not_to_have_class(TURN, timeout=20000)
+                    print("PASS restored Codex agent status, matched result, partial line, reload and real wake")
                     # A live CLI can append between metadata and scalar reads.
                     # Refresh the real sidebar while it grows: the main row must
                     # retain its native identity and committed open-turn state.

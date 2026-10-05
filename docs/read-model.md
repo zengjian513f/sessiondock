@@ -105,6 +105,14 @@ Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，�
   扫描期间同一文件继续追加时保留已扫描前缀的状态和原 stamp，下次读取新增后缀；
   不把普通追加当成不可读，也不让会话行暂时丢失。重写、截断与 inode 替换仍使缓存失效。
   半行不生效，截短、同尺寸重写或 inode 变化重建；主会话 `turn` 使用同一状态。
+  Codex 恢复后的子代理可能保留未关闭的旧回合，但父线程后续已报告它不在执行
+  （BUG-20261005-124541-c50fee）。增量扫描直接父线程各 rollout 代里的
+  `collaboration.list_agents` 调用与同 `call_id` 结果，按完整 `agent_name` 匹配：
+  `pending_init`、`idle`、`shutdown` 或 `completed`/`errored`/`interrupted` 状态
+  撤销不晚于该结果的旧回合活动。只有子代理新的回合开始边界才能重新激活；
+  settings/token 等记录不算唤醒，未知状态、无匹配调用和引用正文不算停止证据。
+  该状态校正用于列表和子代理活动标记，不改原生历史；相对仅看子代理边界的
+  基线为本缺陷修复的 **DELTA**。回归见 `tests/turn_state_browser.py`。
   Claude 看 sidecar 尾部最后一条 user/assistant 记录是否为 assistant `end_turn`
   （只有它算收尾），未收尾时再对照主会话里该子代理最近一次停止通知
   （`<task-notification>` 的 `<task-id>` 或前台 Agent 的 `toolUseResult`，

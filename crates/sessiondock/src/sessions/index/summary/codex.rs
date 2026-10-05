@@ -242,6 +242,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         kind: first_truthy([&meta["agent_role"], &spawn["agent_role"]])
             .unwrap_or_else(|| "subagent".to_owned()),
         open_turn: open_turn(&records),
+        turn_at: None,
     });
     let model = records
         .tail
