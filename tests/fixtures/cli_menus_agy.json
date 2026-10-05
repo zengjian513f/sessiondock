@@ -282,5 +282,635 @@
     "expected": null,
     "fixture_origin": "Captured model followed by the captured idle screen, simulating old menu content in the tail.",
     "native_outcome": "Unknown/incomplete/stale form remains in native terminal; no composer menu keys."
+  },
+  {
+    "name": "command_permission",
+    "category": "command_permission",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n● Bash(printf SESSIONDOCK_APPROVED) (ctrl+o to expand)\n\nCommand\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nRequesting permission for:\n   printf SESSIONDOCK_APPROVED\n\nRun this command?\n> 1. Yes, run command\n  2. Yes, and always allow in this conversation for commands that start with 'printf'\n  3. Yes, and always allow for commands that start with 'printf' (Persist to settings.json)\n  4. No, cancel\n\n  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": {
+      "source": "agy",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "menu_type": "command_permission",
+      "questions": [
+        {
+          "multiple": false,
+          "options": [
+            {
+              "label": "Yes, run command",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, and always allow in this conversation for commands that start with 'printf'",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, and always allow for commands that start with 'printf' (Persist to settings.json)",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, cancel",
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Amend",
+          "keys": [
+            "Tab"
+          ]
+        }
+      ]
+    },
+    "cols": 170
+  },
+  {
+    "name": "command_permission_second_focus",
+    "category": "command_permission",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n● Bash(printf SESSIONDOCK_APPROVED) (ctrl+o to expand)\n\nCommand\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nRequesting permission for:\n   printf SESSIONDOCK_APPROVED\n\nRun this command?\n  1. Yes, run command\n> 2. Yes, and always allow in this conversation for commands that start with 'printf'\n  3. Yes, and always allow for commands that start with 'printf' (Persist to settings.json)\n  4. No, cancel\n\n  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": {
+      "source": "agy",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "menu_type": "command_permission",
+      "questions": [
+        {
+          "multiple": false,
+          "options": [
+            {
+              "label": "Yes, run command",
+              "keys": [
+                "Up",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, and always allow in this conversation for commands that start with 'printf'",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, and always allow for commands that start with 'printf' (Persist to settings.json)",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, cancel",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Amend",
+          "keys": [
+            "Tab"
+          ]
+        }
+      ]
+    },
+    "cols": 170
+  },
+  {
+    "name": "bug_45bf46_command_permission",
+    "category": "command_permission",
+    "screen": "\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Private fixture account\n    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (High)\n   ▄▀▀    ▀▀▄     /workspace/fixture\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> fixture command approval\n\n● Read(/workspace/fixture/config/builtin/skills/antigravity_guide/SKILL.md)\n● Read(/workspace/fixture/config/builtin/skills/antigravity_guide/references/cli.md)\n● Bash(agy --help)\n● Bash(ls -la /workspace/fixture/config/) (ctrl+o to expand)\n\nCommand\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nRequesting permission for:\n   ls -la /workspace/fixture/config/\n\nRun this command?\n  1. Yes, run command\n> 2. Yes, and always allow in this conversation for commands that start with 'ls'\n  3. Yes, and always allow for commands that start with 'ls' (Persist to settings.json)\n  4. No, cancel\n\n  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command\nesc to cancel                                                                                                                                      Gemini 3.8 Flash · high\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": {
+      "source": "agy",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "menu_type": "command_permission",
+      "questions": [
+        {
+          "multiple": false,
+          "options": [
+            {
+              "label": "Yes, run command",
+              "keys": [
+                "Up",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, and always allow in this conversation for commands that start with 'ls'",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, and always allow for commands that start with 'ls' (Persist to settings.json)",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, cancel",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Amend",
+          "keys": [
+            "Tab"
+          ]
+        }
+      ]
+    },
+    "cols": 170
+  },
+  {
+    "name": "file_creation_permission",
+    "category": "file_permission",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n● Create(/workspace/fixture/work/safe.txt) (ctrl+o to expand)\n\nCreate file\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\n/workspace/fixture/work/safe.txt  +1\n   1 +  PRIVATE_FIXTURE\n\nAllow creation of this file?\n> 1. Yes, allow creation\n  2. No, deny creation\n\n  ↑/↓ Navigate · tab Amend · f full diff\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": {
+      "source": "agy",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "menu_type": "file_permission",
+      "questions": [
+        {
+          "multiple": false,
+          "options": [
+            {
+              "label": "Yes, allow creation",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, deny creation",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Amend",
+          "keys": [
+            "Tab"
+          ]
+        },
+        {
+          "label": "Full diff",
+          "keys": [
+            "f"
+          ]
+        }
+      ]
+    },
+    "cols": 170
+  },
+  {
+    "name": "ask_question",
+    "category": "question",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n? Choose a color\n? Choose features\n\nQuestion\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nQuestion 1/2: Choose a color\n\n> 1. Red\n  2. Blue\n  3. Write-in...\n\n  ↑/↓ Navigate · → Next · enter Select · esc Skip\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": {
+      "source": "agy",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "menu_type": "question",
+      "questions": [
+        {
+          "multiple": false,
+          "options": [
+            {
+              "label": "Red",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Blue",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Write-in...",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Next question",
+          "keys": [
+            "Right"
+          ]
+        }
+      ]
+    },
+    "cols": 170
+  },
+  {
+    "name": "ask_question-down",
+    "category": "question",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n? Choose a color\n? Choose features\n\nQuestion\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nQuestion 1/2: Choose a color\n\n  1. Red\n> 2. Blue\n  3. Write-in...\n\n  ↑/↓ Navigate · → Next · enter Select · esc Skip\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": {
+      "source": "agy",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "menu_type": "question",
+      "questions": [
+        {
+          "multiple": false,
+          "options": [
+            {
+              "label": "Red",
+              "keys": [
+                "Up",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Blue",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Write-in...",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Next question",
+          "keys": [
+            "Right"
+          ]
+        }
+      ]
+    },
+    "cols": 170
+  },
+  {
+    "name": "ask_question-next",
+    "category": "question",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n? Choose a color\n? Choose features\n\nQuestion\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nQuestion 2/2: Choose features\n\n> 1. [ ] Logs\n  2. [ ] Metrics\n  3. [ ] Tracing\n  4. Write-in...\n\n  ↑/↓ Navigate · ← Back · space Toggle · enter Submit All · esc Skip\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": {
+      "source": "agy",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "menu_type": "question",
+      "questions": [
+        {
+          "multiple": true,
+          "options": [
+            {
+              "label": "Logs",
+              "keys": [
+                "Space"
+              ],
+              "toggle": true,
+              "selected": false
+            },
+            {
+              "label": "Metrics",
+              "keys": [
+                "Down",
+                "Space"
+              ],
+              "toggle": true,
+              "selected": false
+            },
+            {
+              "label": "Tracing",
+              "keys": [
+                "Down",
+                "Down",
+                "Space"
+              ],
+              "toggle": true,
+              "selected": false
+            },
+            {
+              "label": "Write-in...",
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Previous question",
+          "keys": [
+            "Left"
+          ]
+        },
+        {
+          "label": "Submit All",
+          "keys": [
+            "Enter"
+          ]
+        }
+      ]
+    },
+    "cols": 170
+  },
+  {
+    "name": "ask_question-toggle",
+    "category": "question",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n? Choose a color\n? Choose features\n\nQuestion\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nQuestion 2/2: Choose features\n\n> 1. [x] Logs\n  2. [ ] Metrics\n  3. [ ] Tracing\n  4. Write-in...\n\n  ↑/↓ Navigate · ← Back · space Toggle · enter Submit All · esc Skip\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": {
+      "source": "agy",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "menu_type": "question",
+      "questions": [
+        {
+          "multiple": true,
+          "options": [
+            {
+              "label": "Logs",
+              "keys": [
+                "Space"
+              ],
+              "toggle": true,
+              "selected": true
+            },
+            {
+              "label": "Metrics",
+              "keys": [
+                "Down",
+                "Space"
+              ],
+              "toggle": true,
+              "selected": false
+            },
+            {
+              "label": "Tracing",
+              "keys": [
+                "Down",
+                "Down",
+                "Space"
+              ],
+              "toggle": true,
+              "selected": false
+            },
+            {
+              "label": "Write-in...",
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Previous question",
+          "keys": [
+            "Left"
+          ]
+        },
+        {
+          "label": "Submit All",
+          "keys": [
+            "Enter"
+          ]
+        }
+      ]
+    },
+    "cols": 170
+  },
+  {
+    "name": "ask_question-multi",
+    "category": "question",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n? Choose a color\n? Choose features\n\nQuestion\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nQuestion 2/2: Choose features\n\n  1. [x] Logs\n> 2. [x] Metrics\n  3. [ ] Tracing\n  4. Write-in...\n\n  ↑/↓ Navigate · ← Back · space Toggle · enter Submit All · esc Skip\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": {
+      "source": "agy",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "menu_type": "question",
+      "questions": [
+        {
+          "multiple": true,
+          "options": [
+            {
+              "label": "Logs",
+              "keys": [
+                "Up",
+                "Space"
+              ],
+              "toggle": true,
+              "selected": true
+            },
+            {
+              "label": "Metrics",
+              "keys": [
+                "Space"
+              ],
+              "toggle": true,
+              "selected": true
+            },
+            {
+              "label": "Tracing",
+              "keys": [
+                "Down",
+                "Space"
+              ],
+              "toggle": true,
+              "selected": false
+            },
+            {
+              "label": "Write-in...",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Previous question",
+          "keys": [
+            "Left"
+          ]
+        },
+        {
+          "label": "Submit All",
+          "keys": [
+            "Enter"
+          ]
+        }
+      ]
+    },
+    "cols": 170
+  },
+  {
+    "name": "ask_writein",
+    "category": "write_in",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n? Choose a color\n? Choose features\n\nQuestion\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nQuestion 1/2: Choose a color\n\n  1. Red\n  2. Blue\n> 3. Write-in...\n\n  Your answer:\n\n\n\n\n  enter Submit · esc Back\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": {
+      "source": "agy",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "menu_type": "write_in",
+      "questions": [
+        {
+          "multiple": false,
+          "options": []
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [],
+      "text": {
+        "label": "Your answer",
+        "before_keys": [],
+        "after_keys": [
+          "Enter"
+        ],
+        "multiline": false,
+        "mode": "data",
+        "value": ""
+      }
+    },
+    "cols": 170
+  },
+  {
+    "name": "negative_approval_missing_footer",
+    "category": "native_fallback",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n● Bash(printf SESSIONDOCK_APPROVED) (ctrl+o to expand)\n\nCommand\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nRequesting permission for:\n   printf SESSIONDOCK_APPROVED\n\nRun this command?\n> 1. Yes, run command\n  2. Yes, and always allow in this conversation for commands that start with 'printf'\n  3. Yes, and always allow for commands that start with 'printf' (Persist to settings.json)\n  4. No, cancel\n\n\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": null,
+    "cols": 170
+  },
+  {
+    "name": "negative_approval_stale_tail",
+    "category": "native_fallback",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n● Bash(printf SESSIONDOCK_APPROVED) (ctrl+o to expand)\n\nCommand\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nRequesting permission for:\n   printf SESSIONDOCK_APPROVED\n\nRun this command?\n> 1. Yes, run command\n  2. Yes, and always allow in this conversation for commands that start with 'printf'\n  3. Yes, and always allow for commands that start with 'printf' (Persist to settings.json)\n  4. No, cancel\n\n  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nNew editor\n> draft\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": null,
+    "cols": 170
+  },
+  {
+    "name": "negative_approval_no_focus",
+    "category": "native_fallback",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n● Bash(printf SESSIONDOCK_APPROVED) (ctrl+o to expand)\n\nCommand\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nRequesting permission for:\n   printf SESSIONDOCK_APPROVED\n\nRun this command?\n  1. Yes, run command\n  2. Yes, and always allow in this conversation for commands that start with 'printf'\n  3. Yes, and always allow for commands that start with 'printf' (Persist to settings.json)\n  4. No, cancel\n\n  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": null,
+    "cols": 170
+  },
+  {
+    "name": "negative_approval_missing_option",
+    "category": "native_fallback",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n● Bash(printf SESSIONDOCK_APPROVED) (ctrl+o to expand)\n\nCommand\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nRequesting permission for:\n   printf SESSIONDOCK_APPROVED\n\nRun this command?\n> 1. Yes, run command\n  3. Yes, and always allow for commands that start with 'printf' (Persist to settings.json)\n  4. No, cancel\n\n  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": null,
+    "cols": 170
+  },
+  {
+    "name": "negative_amend_native_text",
+    "category": "native_fallback",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n● Bash(printf SESSIONDOCK_APPROVED) (ctrl+o to expand)\n\nCommand\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nRequesting permission for:\n   printf SESSIONDOCK_APPROVED\n\nRun this command?\n> 1. Yes, and tell Antigravity CLI what to do next\n    > █\n  2. Yes, and always allow in this conversation for commands that start with 'printf'\n  3. Yes, and always allow for commands that start with 'printf' (Persist to settings.json)\n  4. No, cancel\n\n  enter Submit\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": null,
+    "cols": 170
+  },
+  {
+    "name": "negative_writein_native_draft",
+    "category": "native_fallback",
+    "screen": "\n\n      ▄▀▀▄        Antigravity CLI 1.2.17\n     ▀▀▀▀▀▀       Enterprise Gateway\n    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)\n   ▄▀▀    ▀▀▄     /workspace/fixture/work\n  ▄▀▀      ▀▀▄\n\n────────────────────────────────────────────────────────────\n> approval fixture\n\n? Choose a color\n? Choose features\n\nQuestion\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\nQuestion 1/2: Choose a color\n\n  1. Red\n  2. Blue\n> 3. Write-in...\n\n  Your answer:\n  Custom answer\n\n\n\n  enter Submit · esc Back\nesc to cancel                                                                                                                                         Gemini 3.1 Pro (Low)\n",
+    "fixture_origin": "Agy 1.2.17 isolated real PTY capture; temporary paths replaced. Negative/focus mutations explicitly named.",
+    "expected": null,
+    "cols": 170
   }
 ]

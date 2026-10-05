@@ -287,11 +287,14 @@ pub fn screen_busy(source: &str, capture: &crate::delivery::driver::ScreenCaptur
 /// arguments); leading whitespace and arguments to non-inline commands are
 /// ordinary input. See docs/codex-commands.md for the source audit.
 pub(super) fn expects_native_echo(source: &str, text: &str) -> bool {
-    // These exact Agy 1.2.16 commands open native menus without writing a
+    // These exact Agy 1.2.16/1.2.17 commands open native menus without writing a
     // USER_INPUT record. Other spellings, arguments and unknown commands
     // keep normal echo accounting until their native dispatch is verified.
     if source == "agy" {
-        return !matches!(text, "/model" | "/permissions" | "/resume");
+        return !matches!(
+            text,
+            "/model" | "/permissions" | "/resume" | "/help" | "/settings"
+        );
     }
     if source != "codex" {
         return true;

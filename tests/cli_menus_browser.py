@@ -125,6 +125,10 @@ def main():
             return sequence
 
         def fixture_frame(source, fixture, expected=b'', outcome='choice'):
+            # Preserve captured terminal geometry; replaying a wide approval
+            # into a narrower PTY invents wraps that the native CLI never drew.
+            assert host_request(private_host, {'op': 'resize',
+                'cols': fixture.get('cols', 160), 'rows': 100})['ok']
             return frame(source, fixture['screen'], expected, outcome,
                          cursor=fixture.get('cursor'), alt=fixture.get('alt', False))
 
@@ -399,25 +403,28 @@ def main():
                         'opencode': ('permission_shell', 'printf inspect-only', 'printf changed-only'),
                         'agy': ('folder_trust', '/workspace/example', '/workspace/changed'),
                     }
-                    scope_name, before, after = scopes[source]
-                    scope = next((fixture for fixture in fixtures if fixture['name'] == scope_name), None)
-                    if scope:
-                        clear(source)
-                        original = loaded(source, fixture_frame(source, scope))['prompt']['id']
-                        pause_background()
-                        try:
-                            count = len(writes)
-                            changed = scope['screen'].replace(before, after, 1)
-                            assert changed != scope['screen']
-                            shown(source, frame(source, changed, cursor=scope.get('cursor'), alt=scope.get('alt', False)))
-                            card.locator('.question-option:enabled').first.click()
-                            page.wait_for_function('id => composerDraft()?.inputPrompt?.id !== id', arg=original)
-                            assert page.evaluate('composerDraft()?.inputPrompt?.id'), 'Changed approval still needs a card'
-                            assert len(writes) == count, 'Changed command must invalidate the shown approval'
-                            assert not screens[source].with_suffix('.trace').read_bytes()
-                            print(f'PASS {source}: changed approval scope refused without PTY input', flush=True)
-                        finally:
-                            page.evaluate(('() => { ' + 'composerInputProbeBusy = false; __pauseMenuWatch = false' + ' }'))
+                    checks = [scopes[source]]
+                    if source == 'agy':
+                        checks.append(('command_permission', 'printf SESSIONDOCK_APPROVED', 'printf CHANGED_COMMAND'))
+                    for scope_name, before, after in checks:
+                        scope = next((fixture for fixture in fixtures if fixture['name'] == scope_name), None)
+                        if scope:
+                            clear(source)
+                            original = loaded(source, fixture_frame(source, scope))['prompt']['id']
+                            pause_background()
+                            try:
+                                count = len(writes)
+                                changed = scope['screen'].replace(before, after)
+                                assert changed != scope['screen']
+                                shown(source, frame(source, changed, cursor=scope.get('cursor'), alt=scope.get('alt', False)))
+                                card.locator('.question-option:enabled').first.click()
+                                page.wait_for_function('id => composerDraft()?.inputPrompt?.id !== id', arg=original)
+                                assert page.evaluate('composerDraft()?.inputPrompt?.id'), 'Changed approval still needs a card'
+                                assert len(writes) == count, 'Changed command must invalidate the shown approval'
+                                assert not screens[source].with_suffix('.trace').read_bytes()
+                                print(f'PASS {source}: changed approval scope refused without PTY input', flush=True)
+                            finally:
+                                page.evaluate(('() => { ' + 'composerInputProbeBusy = false; __pauseMenuWatch = false' + ' }'))
                     if source == 'agy' and positive:
                         clear(source)
                         loaded(source, fixture_frame(source, positive))

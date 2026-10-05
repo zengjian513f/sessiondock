@@ -1,6 +1,6 @@
 {
   "source": "agy",
-  "installed_version": "1.2.16",
+  "installed_version": "1.2.17",
   "audit_method": "Read-only audit of the current agy recognizer and real isolated PTY captures. Closed-source CLI; no exhaustive source-menu audit or installed-binary menu completeness claim.",
   "recognizer": "crates/sessiondock/src/bridge/menus/agy.rs",
   "capture_contract": {
@@ -22,11 +22,14 @@
     "permissions_evidence": "07-permissions-menu.screen.txt and screen.raw identified by sessiondock-agy-evidence-report.md; limited emulator has old-frame residues, so only confirmed menu layout is reconstructed."
   },
   "fixture_method": "Main captures preserve ANSI styles and cursor coordinates after replacing temporary cwd. Trust No focus is a labelled synthetic variation of captured rows. Negative mutations are labelled synthetic; permissions scope uses confirmed captured text with stale fragments removed.",
-  "audit_coverage": "Trust yes/no, the single current model select/cancel, permissions config-scope select/close; captured idle/draft and empty /resume. Fake PTY Chromium validates exact native bytes, retained message drafts, fresh CHECK, stale screen, changed trust target and same-name instance replacement refusal. Fake replay is not further real CLI validation.",
+  "audit_coverage": "Real 1.2.17 isolated PTY and Chromium: command once/deny/cancel/amend, session and persistent grants with next-command checks; create-file approval/full diff; ask_question single/multiple/back/submit/write-in; /model, /permissions, /resume, /help and /settings open/close. Existing 1.2.16 captures retained. Not an exhaustive closed-source menu audit.",
   "key_semantics": {
     "folder_trust": "Up/Down/Enter; no invented Escape cancel.",
     "model": "Captured single sessiondock-fake (current): Enter selects, Escape goes back. No manufactured model navigation/search keys.",
-    "permission_scope": "Up/Down/Enter relative to captured Project focus; Escape closes. No deep rule edit, save or permission grant claimed."
+    "permission_scope": "Up/Down/Enter relative to captured Project focus; Escape closes. No deep rule edit, save or permission grant claimed.",
+    "command_permission": "Up/Down/Enter relative to current focus; Escape interrupts. Tab opens approval-plus-next-instruction input, retained in native terminal. Grant scope is included verbatim.",
+    "file_permission": "Create-file yes/no, Escape; Tab amendment and f full diff (Escape returns to approval).",
+    "question": "Up/Down/Enter single select; Space multi toggle, Enter submit/next, Left/Right disclosed page navigation; Escape skips. Write-in empty field uses data plus Enter; a preexisting native draft remains native."
   },
   "categories": [
     {
@@ -65,13 +68,18 @@
       "fixtures": [
         "fallback_permission_editor_unverified"
       ],
-      "reason": "No real deep editor capture. Synthetic boundary mutation only verifies that the scope prompt is required; editor semantics/keys are not inferred."
+      "reason": "Real 1.2.17 Project rule editor inspected; complex rule editing remains native."
     },
     {
       "category": "permission_request",
-      "status": "native_fallback",
-      "fixtures": [],
-      "reason": "No real permission-request popup captured; config-scope menu does not prove request or grant semantics."
+      "status": "supported",
+      "fixtures": [
+        "command_permission",
+        "command_permission_second_focus",
+        "bug_45bf46_command_permission",
+        "file_creation_permission"
+      ],
+      "reason": "Native 1.2.17 command and create-file approvals; other tool approval families remain unverified."
     },
     {
       "category": "idle_and_draft",
@@ -91,13 +99,31 @@
         "fallback_permission_editor_unverified",
         "negative_model_stale_tail"
       ]
+    },
+    {
+      "category": "ask_question",
+      "status": "supported",
+      "fixtures": [
+        "ask_question",
+        "ask_question-down",
+        "ask_question-next",
+        "ask_question-toggle",
+        "ask_question-multi",
+        "ask_writein"
+      ]
+    },
+    {
+      "category": "help_settings",
+      "status": "native_fallback",
+      "fixtures": [],
+      "reason": "Real menu opening/closing and no original-command native echo verified; settings values/search and help tabs remain native."
     }
   ],
   "unknown_fallback": "Other menu families, undisclosed rows, multi-select, text/search editing, paging, secrets and authorization forms are unaudited and remain native unless the existing recognizer matches a complete verified shape. No assertion that these families exist in this version.",
   "limitations": [
-    "Permissions scope emulator cursor position is not trusted or replayed.",
-    "A footer/action replay proves harness transport, not actual changes to CLI configuration.",
-    "Real main browser model select/cancel and unknown refusal were validated separately by the main session; no new real CLI run in this task."
+    "Closed-source screen recognizer is not a guarantee of all current/future menus.",
+    "Command amendment text, full diff, deep settings/permission editors and populated resume selection retain native terminal controls.",
+    "Only empty write-in fields permit web text submission; existing native drafts are never overwritten."
   ],
-  "fixtures_count": 12
+  "fixtures_count": 28
 }

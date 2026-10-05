@@ -76,12 +76,13 @@ Codex 的「模型 · Context … used · Main […]」状态栏在手机窄终�
 
 ## 测试矩阵
 
-Agy 1.2.16 已实现正向编辑区识别：上下相同的完整 `─` 横线、`> ` 首行、
+Agy 1.2.16/1.2.17 已实现正向编辑区识别：上下相同的完整 `─` 横线、`> ` 首行、
 缩进续行与区内光标，底部最多一条非空页脚；不按模型名识别。非空编辑区
 返回 `cli_input_pending` 保留终端正文，SEND 复用粘贴后的正文稳定再检与原生 user
 镜像回显。菜单投影支持 model 单选/取消、workspace trust 信任/退出、permissions
 scope 三种范围选择，沿用 `screen_menu` 与当前焦点的 Up/Down/Enter；model/scope
-可 Escape，trust 不提供猜测的取消键。已知菜单先拒发；未知菜单（如 permissions
+可 Escape，trust 不提供猜测的取消键。1.2.17 另支持命令/创建文件审批、
+单选/多选问卷、题间导航和空白自填答案；保留原生授权范围与当前焦点。已知菜单先拒发；未知菜单（如 permissions
 深层编辑与未投影的 `/resume`）回退 native terminal，编辑区未识别时仍为
 `unknown` 并拦截 SEND。这不表示已支持全部审批/表单或整个权限编辑器。
 [Agy](agy.md) 区分真实 CLI 证据与合成字段验证；
