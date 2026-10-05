@@ -203,17 +203,16 @@ fn diagnostic_worker(uid: u32, control: Arc<Mutex<Diagnostic>>) {
                 }
             }
         }
-        if let (Some(running), Some(deadline)) = (child.as_mut(), d.deadline) {
-            if sent_deadline != Some(deadline) {
-                if io_events::renew(running, deadline.saturating_duration_since(Instant::now()))
-                    .is_ok()
-                {
-                    sent_deadline = Some(deadline);
-                } else {
-                    d.state = "failed";
-                    d.deadline = None;
-                    d.leases.clear();
-                }
+        if let (Some(running), Some(deadline)) = (child.as_mut(), d.deadline)
+            && sent_deadline != Some(deadline)
+        {
+            if io_events::renew(running, deadline.saturating_duration_since(Instant::now())).is_ok()
+            {
+                sent_deadline = Some(deadline);
+            } else {
+                d.state = "failed";
+                d.deadline = None;
+                d.leases.clear();
             }
         }
         if let Some(rx) = &receiver {
@@ -231,17 +230,17 @@ fn diagnostic_worker(uid: u32, control: Arc<Mutex<Diagnostic>>) {
                 d.window.observe(event, lost);
             }
         }
-        if let Some(running) = child.as_mut() {
-            if let Ok(Some(_)) = running.try_wait() {
-                child = None;
-                receiver = None;
-                if d.deadline.is_some() {
-                    d.state = "failed";
-                }
-                d.deadline = None;
-                d.leases.clear();
-                d.window = IoWindow::new(false);
+        if let Some(running) = child.as_mut()
+            && let Ok(Some(_)) = running.try_wait()
+        {
+            child = None;
+            receiver = None;
+            if d.deadline.is_some() {
+                d.state = "failed";
             }
+            d.deadline = None;
+            d.leases.clear();
+            d.window = IoWindow::new(false);
         }
         drop(d);
         std::thread::sleep(Duration::from_millis(50));
@@ -931,123 +930,6 @@ fn rate(current: Option<f64>, previous: Option<f64>, elapsed: Option<f64>, reaso
     metric(json!((current - previous) / elapsed), "ok", reason)
 }
 
-#[cfg(test)]
-mod metric_tests {
-    use super::*;
-
-    #[test]
-    fn rates_require_a_previous_incarnation_and_nonreset_counter() {
-        assert_eq!(rate(Some(5.0), Some(1.0), Some(2.0), "test")["value"], 2.0);
-        assert_eq!(
-            rate(Some(5.0), None, Some(2.0), "test")["status"],
-            "warming_up"
-        );
-        assert_eq!(
-            rate(Some(1.0), Some(5.0), Some(2.0), "test")["value"],
-            Value::Null
-        );
-        assert_eq!(
-            rate(None, Some(1.0), Some(2.0), "test")["status"],
-            "unavailable"
-        );
-    }
-
-    #[test]
-    fn io_failure_loss_and_pid_reuse_do_not_invent_measurements() {
-        let mut window = IoWindow::new(true);
-        let process = Process {
-            pid: 12,
-            start: 100,
-        };
-        let measure = |window: &IoWindow, process: &Process, lost| {
-            window.metric(
-                io_events::IoKind::NfsRead,
-                "logical NFS",
-                Some(process),
-                0.0,
-                lost,
-                false,
-            )
-        };
-        assert_eq!(measure(&window, &process, 0)["status"], "warming_up");
-        window.update(io_events::Event::Batch {
-            generation: 0,
-            samples: vec![io_events::IoSample {
-                process: process.clone(),
-                device: 7,
-                kind: io_events::IoKind::NfsRead,
-                bytes: 4096,
-                operations: 8,
-                generation: 0,
-            }],
-        });
-        assert_eq!(measure(&window, &process, 0)["value"], 2048.0);
-        assert_eq!(
-            window.metric(
-                io_events::IoKind::NfsRead,
-                "logical operations",
-                Some(&process),
-                0.0,
-                0,
-                true
-            )["value"],
-            4.0
-        );
-        assert_eq!(measure(&window, &process, 0)["status"], "partial");
-        assert_eq!(
-            measure(
-                &window,
-                &Process {
-                    pid: 12,
-                    start: 101
-                },
-                0
-            )["value"],
-            0.0
-        );
-        assert_eq!(
-            measure(
-                &window,
-                &Process {
-                    pid: 12,
-                    start: 101
-                },
-                1
-            )["value"],
-            Value::Null
-        );
-        window.update(io_events::Event::Failed);
-        assert_eq!(measure(&window, &process, 0)["status"], "unavailable");
-        assert_eq!(measure(&window, &process, 0)["value"], Value::Null);
-    }
-
-    #[test]
-    fn complete_io_window_recovers_after_historical_loss() {
-        let mut window = IoWindow::new(true);
-        window.observe(
-            io_events::Event::Batch {
-                generation: 0,
-                samples: vec![],
-            },
-            1,
-        );
-        assert_eq!(
-            window.metric(io_events::IoKind::TcpReceive, "tcp", None, 0.0, 1, false)["status"],
-            "unavailable"
-        );
-        window.observe(
-            io_events::Event::Batch {
-                generation: 1,
-                samples: vec![],
-            },
-            1,
-        );
-        let value = window.metric(io_events::IoKind::TcpReceive, "tcp", None, 0.0, 1, false);
-        assert_eq!(value["status"], "partial");
-        assert_eq!(value["io_lost_events_total"], 1);
-    }
-}
-
 fn save(path: &Path, saved: &Saved) -> io::Result<()> {
     let bytes = serde_json::to_vec(saved)?;
     if fs::read(path).ok().as_ref() == Some(&bytes) {
@@ -1469,4 +1351,121 @@ pub fn run() -> io::Result<()> {
     )?;
     fs::remove_file(&config.socket)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod metric_tests {
+    use super::*;
+
+    #[test]
+    fn rates_require_a_previous_incarnation_and_nonreset_counter() {
+        assert_eq!(rate(Some(5.0), Some(1.0), Some(2.0), "test")["value"], 2.0);
+        assert_eq!(
+            rate(Some(5.0), None, Some(2.0), "test")["status"],
+            "warming_up"
+        );
+        assert_eq!(
+            rate(Some(1.0), Some(5.0), Some(2.0), "test")["value"],
+            Value::Null
+        );
+        assert_eq!(
+            rate(None, Some(1.0), Some(2.0), "test")["status"],
+            "unavailable"
+        );
+    }
+
+    #[test]
+    fn io_failure_loss_and_pid_reuse_do_not_invent_measurements() {
+        let mut window = IoWindow::new(true);
+        let process = Process {
+            pid: 12,
+            start: 100,
+        };
+        let measure = |window: &IoWindow, process: &Process, lost| {
+            window.metric(
+                io_events::IoKind::NfsRead,
+                "logical NFS",
+                Some(process),
+                0.0,
+                lost,
+                false,
+            )
+        };
+        assert_eq!(measure(&window, &process, 0)["status"], "warming_up");
+        window.update(io_events::Event::Batch {
+            generation: 0,
+            samples: vec![io_events::IoSample {
+                process: process.clone(),
+                device: 7,
+                kind: io_events::IoKind::NfsRead,
+                bytes: 4096,
+                operations: 8,
+                generation: 0,
+            }],
+        });
+        assert_eq!(measure(&window, &process, 0)["value"], 2048.0);
+        assert_eq!(
+            window.metric(
+                io_events::IoKind::NfsRead,
+                "logical operations",
+                Some(&process),
+                0.0,
+                0,
+                true
+            )["value"],
+            4.0
+        );
+        assert_eq!(measure(&window, &process, 0)["status"], "partial");
+        assert_eq!(
+            measure(
+                &window,
+                &Process {
+                    pid: 12,
+                    start: 101
+                },
+                0
+            )["value"],
+            0.0
+        );
+        assert_eq!(
+            measure(
+                &window,
+                &Process {
+                    pid: 12,
+                    start: 101
+                },
+                1
+            )["value"],
+            Value::Null
+        );
+        window.update(io_events::Event::Failed);
+        assert_eq!(measure(&window, &process, 0)["status"], "unavailable");
+        assert_eq!(measure(&window, &process, 0)["value"], Value::Null);
+    }
+
+    #[test]
+    fn complete_io_window_recovers_after_historical_loss() {
+        let mut window = IoWindow::new(true);
+        window.observe(
+            io_events::Event::Batch {
+                generation: 0,
+                samples: vec![],
+            },
+            1,
+        );
+        assert_eq!(
+            window.metric(io_events::IoKind::TcpReceive, "tcp", None, 0.0, 1, false)["status"],
+            "unavailable"
+        );
+        window.observe(
+            io_events::Event::Batch {
+                generation: 1,
+                samples: vec![],
+            },
+            1,
+        );
+        let value = window.metric(io_events::IoKind::TcpReceive, "tcp", None, 0.0, 1, false);
+        assert_eq!(value["status"], "partial");
+        assert_eq!(value["io_lost_events_total"], 1);
+    }
 }

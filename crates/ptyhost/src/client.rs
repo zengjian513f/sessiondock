@@ -182,10 +182,10 @@ pub fn session_info(dir: &Path, name: &str) -> Option<Value> {
 }
 
 pub fn connect(info: &Value) -> io::Result<Stream> {
-    if let Some(port) = info.get("port").and_then(|v| v.as_u64()) {
-        if cfg!(windows) || info.get("sock").is_none() {
-            return Stream::connect_tcp(port as u16);
-        }
+    if let Some(port) = info.get("port").and_then(|v| v.as_u64())
+        && (cfg!(windows) || info.get("sock").is_none())
+    {
+        return Stream::connect_tcp(port as u16);
     }
     #[cfg(unix)]
     {
@@ -193,7 +193,7 @@ pub fn connect(info: &Value) -> io::Result<Stream> {
             .get("sock")
             .and_then(|v| v.as_str())
             .ok_or_else(|| io::Error::other("会话信息缺少 socket 路径"))?;
-        return Stream::connect_unix(Path::new(sock));
+        Stream::connect_unix(Path::new(sock))
     }
     #[cfg(not(unix))]
     Err(io::Error::other("会话信息缺少端口"))

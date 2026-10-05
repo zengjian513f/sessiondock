@@ -22,7 +22,7 @@ mod transport;
 
 #[cfg(unix)]
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -216,7 +216,7 @@ fn cmd_run(args: &Args, dir: PathBuf) -> i32 {
     }
 }
 
-fn cmd_list(dir: &PathBuf) -> i32 {
+fn cmd_list(dir: &Path) -> i32 {
     for row in client::list_sessions(dir) {
         let text = |key: &str| row.get(key).and_then(|v| v.as_str()).unwrap_or("");
         let num = |key: &str| row.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
@@ -237,7 +237,7 @@ fn cmd_list(dir: &PathBuf) -> i32 {
     0
 }
 
-fn cmd_simple(dir: &PathBuf, args: &Args, op: &str, extra: Value) -> i32 {
+fn cmd_simple(dir: &Path, args: &Args, op: &str, extra: Value) -> i32 {
     let name = match args.name.as_deref() {
         Some(name) => name,
         None => {
@@ -254,7 +254,7 @@ fn cmd_simple(dir: &PathBuf, args: &Args, op: &str, extra: Value) -> i32 {
     }
 }
 
-fn cmd_send(dir: &PathBuf, args: &Args) -> i32 {
+fn cmd_send(dir: &Path, args: &Args) -> i32 {
     let name = match args.name.as_deref() {
         Some(name) => name,
         None => return 2,
@@ -265,16 +265,16 @@ fn cmd_send(dir: &PathBuf, args: &Args) -> i32 {
         eprintln!("{e}");
         return 1;
     }
-    if args.enter {
-        if let Err(e) = client::request(dir, name, "keys", json!({"keys": ["Enter"]})) {
-            eprintln!("{e}");
-            return 1;
-        }
+    if args.enter
+        && let Err(e) = client::request(dir, name, "keys", json!({"keys": ["Enter"]}))
+    {
+        eprintln!("{e}");
+        return 1;
     }
     0
 }
 
-fn cmd_capture(dir: &PathBuf, args: &Args) -> i32 {
+fn cmd_capture(dir: &Path, args: &Args) -> i32 {
     let name = match args.name.as_deref() {
         Some(name) => name,
         None => return 2,
@@ -323,7 +323,7 @@ fn cmd_capture(dir: &PathBuf, args: &Args) -> i32 {
 }
 
 #[cfg(unix)]
-fn cmd_attach(dir: &PathBuf, args: &Args) -> i32 {
+fn cmd_attach(dir: &Path, args: &Args) -> i32 {
     use std::io::Read;
     let name = match args.name.as_deref() {
         Some(name) => name,
@@ -390,7 +390,7 @@ fn cmd_attach(dir: &PathBuf, args: &Args) -> i32 {
 }
 
 #[cfg(not(unix))]
-fn cmd_attach(_dir: &PathBuf, _args: &Args) -> i32 {
+fn cmd_attach(_dir: &Path, _args: &Args) -> i32 {
     eprintln!("Windows 下暂不支持命令行 attach, 请用网页控制台");
     2
 }
