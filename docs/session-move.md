@@ -387,6 +387,19 @@ Hub 使用已绑定源会话和目标节点的同一操作记录驱动移动。�
 Hub 的 `GET /api/session/transfers` 返回未结束的跨节点操作；
 `POST /api/session/transfer/progress` 按已绑定的源、目标及操作返回清单、阶段、传输字节和最近错误。
 读进度不占用执行锁，Hub 重启后从原子写入的 journal 恢复。老 journal 缺少清单时从源节点补读。
+弹窗在预览扫描及执行期间每 250 毫秒查询一次，前一次未返回时不叠加请求；空闲预览每秒续租。
+进度条表示本次操作连续的预计总进度：按阶段分配比例，再使用实际文件、记录、字节计数推进；
+不同工作单位不能直接相加，因此明确标为估算，不表示剩余时间。切换步骤、处理下一个文件、
+重连或重试同一操作时保留已显示的最高值，不归零、不倒退；只有完成回执才到 100%。
+撤回后另起操作才重置。文字明细继续显示关联历史已处理份数及当前文件的读取、解析、改写、写入字节，
+数据库处理条数、迁移清单传输字节、打包/接收及源端逐文件清理进度。嵌套步骤通过 `work`
+数组返回 `label`、`unit`、`done`、`total`（总量未知时为 null）；未知总量只显示实际计数，总进度保留已确认的位置，
+不按时间伪造百分比。`unit` 为空表示不可细分的实际工作状态，不显示虚假的零字节计数。
+传输完毕后的源端复核使用 `rechecking` 阶段并查询源节点，避免停在传输 100%。文件系统同步、单条数据库操作或网络等待可能没有可细分的计数，不能承诺每次都在一秒内增长。
+这些计数只存在于当前操作内存，随工作结束释放；不增加数据库、后台扫描或高频 journal 写入。
+节点进度接口读取保存时更新的小型公开状态，避免每次刷新重新解析含完整原生投影的大 journal。
+私有 `POST /api/session/transfer/work {operation_id}` 供 Hub 查询正在工作的节点，目标尚未落 journal
+时也能报告实际处理进度；它不作为恢复事务的存在性或完成凭据，恢复仍以原 `status` 接口为准。
 执行响应丢失或迟到时，页面以进度查询中的完成回执收尾并打开目标会话；单次进度查询超时后
 继续查询同一操作，不重新执行。迟到的执行响应不再次导航，也不覆盖已经确认的结果。
 Hub 按操作加锁，节点按相关会话身份加锁。其他会话的发送、附件和启动不等待本次迁移。
@@ -395,7 +408,7 @@ Hub 按操作加锁，节点按相关会话身份加锁。其他会话的发送�
 回收的操作仍读取并更新原账本。
 准备和目标检查分别显示阶段。移动/复制必须留在前台：取消、关闭按钮和 Escape 都请求服务端撤回，
 等清理完成才关闭弹窗。复制也支持撤回；已经提交完成的复制保留结果，避免删除用户可继续的会话。
-进度请求每秒续租；Hub 连续 30 秒收不到前台心跳就中断操作并对账。Hub 启动时读取一次账本并保留未完成集合，之后随账本保存更新集合；
+进度请求续租；Hub 连续 30 秒收不到前台心跳就中断操作并对账。Hub 启动时读取一次账本并保留未完成集合，之后随账本保存更新集合；
 每 5 秒只检查该集合，已完成或已撤回的账本留在磁盘，不再被后台反复读取。
 公开任务列表也读取同一集合。重启后重新从账本恢复：归属切换前撤回，切换后完成源端清理与目标激活。节点暂不可用时保留账本重试。
 撤回先中断准备/读取任务，再按持久补偿协议处理，不等待执行锁后才发中断。
@@ -462,7 +475,7 @@ Hub 按操作加锁，节点按相关会话身份加锁。其他会话的发送�
 
 Hub：
 
-- `POST /api/session/clone/progress {uid, operation_id}`：读取预览/同机复制状态并续租。
+- `POST /api/session/clone/progress {uid, operation_id}`：读取预览/同机复制状态并续租；预览生成中传空 `operation_id`，按所选 uid 查询扫描进度。
 - `POST /api/session/clone/cancel {uid, operation_id}`：撤回预览或同机复制，清理完成后返回。
 - `POST /api/session/clone/plan {uid, mode, new_ids, previous_operation_id?}`：从源节点取得整组清单及 `operation_id`。
   清单按逻辑会话显示；各代物理历史、固定身份映射及引用边界保存在操作记录中。
@@ -555,6 +568,7 @@ Grok 的 `compaction_checkpoints/*.json` 是原生历史，不是普通附件。
 | Claude 原生文件回退 | [session_claude_rewind_browser.py](../tests/session_claude_rewind_browser.py) 原生 Edit、浏览器复制、新检查点回退及文件原字节恢复通过 |
 | Grok 原生压缩检查点 | [session_grok_checkpoint_browser.py](../tests/session_grok_checkpoint_browser.py) Grok 1.0.44 原生压缩、浏览器复制、加载、回退和续聊读回标记通过；源文件和日常配置不变 |
 | 目标 CLI 与动态工具提示 | [session_transfer_environment_browser.py](../tests/session_transfer_environment_browser.py) 缺 CLI、版本较旧/未知、切换目标后迟到响应及执行器未核验提示通过 |
+| 步骤内部实时计数与进度条 | [session_large_manifest_browser.py](../tests/session_large_manifest_browser.py) 的 `--progress --peer` 模式，真实跨机移动、关联大历史与超 64 MiB 原生清单；记录页面更新间隔并核对源清理、目标原生数据 |
 | 表格、机器与身份选择、禁用提示、窄屏及任务进度 | [session_clone_browser.py](../tests/session_clone_browser.py) 控件与 tooltip 通过；双机套件覆盖持久进度、刷新恢复和窄屏入口 |
 | 交付 | 实现及测试已提交、推送；官方 `deploy --all` 已更新六个在线应用目标并通过健康检查，现有 ptyhost 保留。Cetus 离线跳过，未宣称该目标已更新 |
 

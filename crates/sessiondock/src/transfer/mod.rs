@@ -15,6 +15,7 @@ pub mod group;
 mod json_bytes;
 pub mod moving;
 pub mod native;
+pub mod progress;
 pub mod service;
 
 use serde::{Deserialize, Serialize};

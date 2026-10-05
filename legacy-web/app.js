@@ -10593,12 +10593,16 @@ async function cloneSessionGroup(uid, resumed = null) {
       </div>
       <p class="transfer-notice" role="status" hidden></p>
       <p class="transfer-environment" role="status" hidden></p>
+      <div class="transfer-progress" hidden>
+        <p id="transfer-progress-label" class="transfer-progress-label" role="status" aria-live="polite"></p>
+        <p class="transfer-progress-detail"></p>
+        <div class="search-progress-track transfer-progress-track" role="progressbar" aria-labelledby="transfer-progress-label" aria-valuemin="0" aria-valuemax="100"><i></i></div>
+      </div>
       <div class="transfer-section-head"><h3>整组会话</h3><span class="clone-status" role="status">正在读取清单…</span></div>
       <div class="transfer-table-scroll" tabindex="0" role="region" aria-label="整组会话清单">
         <table class="clone-members"><thead><tr><th scope="col">会话</th><th scope="col">来源</th><th scope="col">关联</th><th scope="col" class="transfer-number">历史文件</th><th scope="col" class="transfer-number">大小</th></tr></thead>
           <tbody><tr><td colspan="5" class="transfer-empty">正在检查关联会话和历史依赖…</td></tr></tbody></table>
       </div>
-      <p class="transfer-progress" role="status" hidden></p>
       <p class="transfer-error" role="alert" hidden></p>
     </div>
     <div class="transfer-footer"><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn transfer-abort" hidden>撤回本次移动</button><button type="button" class="btn primary clone-confirm" disabled>复制整组</button></div>`;
@@ -10621,6 +10625,7 @@ async function cloneSessionGroup(uid, resumed = null) {
   let operationStarted = !!resumed, progressTimer = null, progressLoading = false, aborting = false, executionSequence = 0;
   let executionOptions = resumed?.request.mode
     ? {mode:resumed.request.mode, new_ids:resumed.request.new_ids} : {};
+  let overallProgress = 0;
   let environmentSequence = 0;
   const environmentClients = new Map();
   const identityChoices = {clone:true, move:false};
@@ -10685,6 +10690,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     if (!dialog.isConnected || !operationStarted || result.phase !== 'complete' || !result.target_uid) return;
     // Either the execution response or a durable progress receipt can finish
     // the dialog. Fence the other response before awaiting list/navigation work.
+    paintProgress(result);
     ++executionSequence; operationStarted = false; uncertain = false; busy = false;
     transferNavigationPending = true;
     close(false);
@@ -10701,12 +10707,13 @@ async function cloneSessionGroup(uid, resumed = null) {
     if (aborting) return;
     if (!plan) { if (closing) close(); return; }
     ++executionSequence; aborting = true; busy = true; error.hidden = true; renderSelection();
+    paintProgress({phase:'aborting'});
     try {
       const result = operationStarted && HUB_MODE
         ? await request('api/session/transfer/cancel', {uid, operation_id:plan.operation_id, target_node:target.value})
         : await request('api/session/clone/cancel', {uid, operation_id:plan.operation_id});
       if (result.phase === 'complete' && result.target_uid) {await finishTransfer(result); return;}
-      uncertain = false; operationStarted = false; plan = null; busy = false;
+      uncertain = false; operationStarted = false; plan = null; busy = false; overallProgress = 0;
       $d('.transfer-progress').hidden = true; refreshTransferTasks();
       if (closing || result.phase === 'complete') {close();}
       else await refreshPlan();
@@ -10798,6 +10805,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     const previous = plan;
     planning = true; plan = null; error.hidden = true; renderSelection();
     status.textContent = '正在读取清单…';
+    paintProgress({phase:'planning'});
     try {
       const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode,
         ...(previous ? {previous_operation_id:previous.operation_id} : {})});
@@ -10815,40 +10823,67 @@ async function cloneSessionGroup(uid, resumed = null) {
         error.textContent = failure.message; error.hidden = false;
       }
       return false;
-    } finally {planning = false; if (dialog.isConnected) renderSelection();}
+    } finally {
+      planning = false;
+      if (dialog.isConnected) {$d('.transfer-progress').hidden = true; renderSelection();}
+    }
   }
   const paintProgress = data => {
     const progress = $d('.transfer-progress');
-    progress.hidden = false; progress.textContent = transferPhaseLabel(data);
-    progress.dataset.phase = data.phase;
+    const label = transferPhaseLabel(data), track = progress.querySelector('.transfer-progress-track');
+    const work = Array.isArray(data.work) ? data.work : [];
+    const completed = data.phase === 'complete' && !!(data.target_uid || data.result?.target_uid);
+    overallProgress = completed ? 100 : Math.max(overallProgress,
+      transferOverallProgress(data, {cross:crossMachine(), moving:mode() === 'move', executing:operationStarted}));
+    const percent = Math.floor(overallProgress * 10) / 10;
+    const summary = `${completed ? '总进度' : '预计总进度'} ${percent}% · ${label}`;
+    const detail = work.map(step => {
+      if (!step.unit) return step.label;
+      const amount = count => step.unit === 'bytes' ? fmtSize(count) : String(count);
+      const count = step.total == null ? amount(step.done) : `${amount(step.done)} / ${amount(step.total)}`;
+      return `${step.label} · ${count}${step.unit === 'bytes' ? '' : ' '+step.unit}`;
+    }).join(' → ');
+    progress.hidden = false; progress.dataset.phase = data.phase;
+    progress.querySelector('.transfer-progress-label').textContent = summary;
+    progress.querySelector('.transfer-progress-detail').textContent = detail;
+    progress.querySelector('.transfer-progress-detail').hidden = !detail;
+    track.setAttribute('aria-valuetext', detail ? `${summary} · ${detail}` : summary);
+    track.classList.toggle('paused', ['failed','rollback_required','cleanup_pending','aborted'].includes(data.phase));
+    track.setAttribute('aria-valuenow', String(percent));
+    track.querySelector('i').style.width = `${percent}%`;
   };
-  if (resumed) {
-    renderMembers(plan); paintProgress(resumed); renderSelection();
-    refreshEnvironment();
-    if (resumed.error) {error.textContent = resumed.error; error.hidden = false;}
-  } else await refreshPlan();
+  let lastProgressPoll = 0;
   const pollProgress = async () => {
     if (!dialog.isConnected) {clearInterval(progressTimer); return;}
-    if (!plan || progressLoading) return;
-    const id = plan.operation_id;
+    if ((!plan && !planning) || progressLoading) return;
+    if (!operationStarted && !planning && Date.now() - lastProgressPoll < 1000) return;
+    lastProgressPoll = Date.now();
+    const id = planning ? '' : plan.operation_id;
     progressLoading = true;
     try {
-      const data = await request(operationStarted && HUB_MODE ? 'api/session/transfer/progress' : 'api/session/clone/progress', {uid, operation_id:id, target_node:target.value}, AbortSignal.timeout(10000));
-      if (operationStarted && dialog.isConnected && plan?.operation_id === id) {
+      const data = await request(operationStarted && !planning && HUB_MODE ? 'api/session/transfer/progress' : 'api/session/clone/progress', {uid, operation_id:id, target_node:target.value}, AbortSignal.timeout(10000));
+      if (planning && !id && dialog.isConnected) paintProgress(data);
+      if (operationStarted && !planning && dialog.isConnected && plan?.operation_id === id) {
         paintProgress(data);
         if (!aborting && data.phase === 'complete') await finishTransfer(data.result || data);
         else if (!aborting && data.phase === 'aborted') {
-          ++executionSequence; busy = false; uncertain = false; operationStarted = false; plan = null;
+          ++executionSequence; busy = false; uncertain = false; operationStarted = false; plan = null; overallProgress = 0;
           await refreshPlan();
         }
       }
     } catch {
       if (operationStarted && dialog.isConnected && plan?.operation_id === id && !aborting)
-        $d('.transfer-progress').textContent = '连接中断，正在重新确认操作结果…';
+        paintProgress({phase:'reconnecting'});
     }
     finally {progressLoading = false;}
   };
-  progressTimer = setInterval(pollProgress, 1000);
+  progressTimer = setInterval(pollProgress, 250);
+  if (resumed) {
+    renderMembers(plan); paintProgress(resumed); renderSelection();
+    refreshEnvironment();
+    if (resumed.error) {error.textContent = resumed.error; error.hidden = false;}
+  } else await refreshPlan();
+
   confirm.onclick = async () => {
     if (busy || planning || aborting || !plan || blockedReason()) return;
     busy = true; error.hidden = true; renderSelection();
@@ -10858,7 +10893,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     if (!uncertain) executionOptions = plan.confirm_mode && (!HUB_MODE || SessionDockCapabilities.config.transfer_confirm_mode)
       ? {mode:mode(), new_ids:plan.new_ids} : {};
     operationStarted = true; error.hidden = true; renderSelection();
-    if (HUB_MODE) paintProgress({phase:'planned'});
+    paintProgress({phase:'planned'});
     try {
       const result = await request(crossMachine() ? 'api/session/transfer/clone' : 'api/session/clone', {
         uid, operation_id:plan.operation_id, ...(crossMachine() ? {target_node:target.value} : {}),
@@ -10870,21 +10905,72 @@ async function cloneSessionGroup(uid, resumed = null) {
     } catch (failure) {
       if (execution !== executionSequence) return;
       uncertain = failure.code !== 'move_cancelled';
-      if (!uncertain) {operationStarted = false; plan = null; busy = false; $d('.transfer-progress').hidden = true; await refreshPlan();}
+      if (!uncertain) {operationStarted = false; plan = null; busy = false; overallProgress = 0; $d('.transfer-progress').hidden = true; await refreshPlan();}
       if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
     } finally {if (execution === executionSequence) {busy = false; if (dialog.isConnected) renderSelection();} refreshTransferTasks();}
   };
 }
 
 
+// Work units differ (files, rows, bytes), so this is a stage-weighted estimate,
+// not elapsed time or a claim that all remaining work is measurable in bytes.
+// The dialog keeps its high-water mark across file changes, retries and reconnects.
+function transferOverallProgress(data, {cross, moving, executing}) {
+  let phase = data.phase;
+  const work = Array.isArray(data.work) ? data.work : [];
+  if (!cross && executing && phase === 'planned') phase = 'preparing';
+  const ranges = cross
+    ? {planning:[0,5], planned:[5,8], preparing:[8,35], checking:[35,43], transferring:[43,70],
+       rechecking:[70,76], publishing:[76,88], verifying:[88,90], switching:[90,92],
+       retiring:[92,98], releasing:[moving ? 98 : 90,99]}
+    : {planning:[0,5], planned:[5,8], preparing:[8,65], publishing:[65,90], verifying:[90,99]};
+  const range = ranges[phase];
+  // Failure, cancellation and connection loss preserve the last known amount.
+  // Only a verified completion receipt can set 100 in paintProgress.
+  if (!range) return 0;
+  const ratios = work.map(step => Number(step.total) > 0
+    ? Math.max(0, Math.min(1, (Number(step.done) || 0) / Number(step.total))) : 0);
+  const root = work[0];
+  let fraction = ratios[0] || 0;
+  if (root && root.unit !== 'bytes' && Number(root.total) > 0 && work.length > 1) {
+    let child = ratios[1];
+    if (root.label === '复制相关历史') {
+      const parts = {'读取历史文件':[0,.15], '解析历史记录':[.15,.35], '改写当前历史':[.35,.8],
+        '保存当前历史':[.8,1], '校验文件':[.95,1]};
+      const span = parts[work[1].label] || [0,1];
+      child = span[0] + (span[1] - span[0]) * child;
+    }
+    fraction = Math.min(1, fraction + child / Number(root.total));
+  }
+  // Give preparation, packing and publication their own parts of the overall
+  // range; finishing the first file/read must not exhaust an entire phase.
+  const parts = {
+    planning:{'检查关联会话':[0,.35], '读取历史文件':[.35,.45], '解析历史记录':[.45,.65],
+      '读取数据库记录':[.65,.8], '保存迁移记录':[.8,1]},
+    preparing:{'复制相关历史':[.15,.65], '改写数据库记录':[.65,.8], '核对数据库记录':[.8,.85],
+      '保存迁移记录':[.1,.15], '保存传输清单':[.9,.95], '接收迁移清单':[.95,1]},
+    checking:{'编码迁移清单':[0,.1], '发送迁移清单':[.1,.7], '读取数据库记录':[.7,.85], '核对数据库记录':[.85,1]},
+    transferring:{'打包历史文件':[.1,.4], '传输会话包':[.4,.9], '接收历史文件':[.9,1]},
+    publishing:{'发布历史文件':[.1,.55], '导入数据库记录':[.55,1]},
+    retiring:{'清理源历史':[.1,.85], '清理源数据库记录':[.85,1]},
+  }[phase];
+  if (parts) {
+    const span = parts[root?.label] || [0,.1];
+    fraction = span[0] + (span[1] - span[0]) * fraction;
+  }
+  if (phase === 'transferring' && !work.length && Number(data.bytes_total) > 0)
+    fraction = .4 + .5 * Math.max(0, Math.min(1, Number(data.bytes_sent) / Number(data.bytes_total) || 0));
+  return Math.min(99, range[0] + (range[1] - range[0]) * fraction);
+}
+
 function transferPhaseLabel(task) {
-  const labels = {planned:'准备迁移', preparing:'整理会话文件', checking:'检查目标目录与会话依赖', transferring:'传输历史', publishing:'发布历史', verifying:'验证历史与关系',
+  const labels = {planning:'正在读取会话清单…', reconnecting:'连接中断，正在重新确认操作结果…', planned:'准备迁移', preparing:'整理会话文件', checking:'检查目标目录与会话依赖', rechecking:'复核源会话', transferring:'传输历史', publishing:'发布历史', verifying:'验证历史与关系',
     failed:'复制失败，可重试', rollback_required:'恢复待处理',
     switching:'交接执行归属', releasing:'确认完成', retiring:'清理源端',
     cleanup_pending:'源端清理待重试', aborting:'撤回待完成', aborted:'已撤回', complete:'已完成'};
   let label = labels[task.phase] || '等待继续';
-  if (task.phase === 'transferring' && task.bytes_total > 0)
-    label += ` · ${fmtSize(task.bytes_sent)} / ${fmtSize(task.bytes_total)}`;
+  if (task.phase === 'transferring' && task.bytes_total > 0 && !task.work?.length)
+    label += ` · ${Math.max(0, Math.min(100, Math.floor((Number(task.bytes_sent) || 0) / task.bytes_total * 100)))}% · ${fmtSize(task.bytes_sent)} / ${fmtSize(task.bytes_total)}`;
   return label;
 }
 let transferTasksLoading = false, transferTasksOpen = 0, transferTasksAt = 0;

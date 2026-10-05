@@ -116,6 +116,7 @@ impl TransferService {
     /// Persist the decision before compensating the receiver. A concurrent or
     /// delayed switch can never succeed after this point, even after restart.
     pub fn abort_source(&self, id: &str, finished: bool) -> Result<Operation, TransferError> {
+        let _work = self.progress.enter(id);
         let mut op = self.load(id)?;
         if op.incoming_digest.is_some()
             || !matches!(
@@ -152,6 +153,7 @@ impl TransferService {
         Ok(op)
     }
     pub fn abort_target(&self, id: &str) -> Result<Operation, TransferError> {
+        let _work = self.progress.enter(id);
         let mut op = self.load(id)?;
         if !op.moving && op.phase == "complete" {
             return Ok(op);
@@ -185,6 +187,7 @@ impl TransferService {
         Ok(op)
     }
     pub fn abort_local(&self, id: &str) -> Result<Operation, TransferError> {
+        let _work = self.progress.enter(id);
         let mut op = self.load(id)?;
         if op.moving || op.incoming_digest.is_some() {
             return Err(TransferError::new("move_plan_stale", "此操作不是同机复制"));
@@ -210,6 +213,7 @@ impl TransferService {
         id: &str,
         snapshot: &SessionSnapshot,
     ) -> Result<Operation, TransferError> {
+        let _work = self.progress.enter(id);
         let mut op = self.load(id)?;
         if !op.moving || op.incoming_digest.is_some() {
             return Err(TransferError::new("move_plan_stale", "此操作不是迁移源"));
@@ -227,6 +231,7 @@ impl TransferService {
         Ok(op)
     }
     pub fn activate_target(&self, id: &str) -> Result<Operation, TransferError> {
+        let _work = self.progress.enter(id);
         let mut op = self.load(id)?;
         if !op.moving || op.incoming_digest.is_none() {
             return Err(TransferError::new(
@@ -415,6 +420,7 @@ impl TransferService {
         trash: &Path,
         snapshot: &SessionSnapshot,
     ) -> Result<Operation, TransferError> {
+        let _work = self.progress.enter(id);
         let mut op = self.load(id)?;
         if !op.moving
             || op.incoming_digest.is_some()
@@ -515,7 +521,10 @@ impl TransferService {
             }
             manifest.bytes = manifest.files.iter().map(|f| f.stamp.size).sum();
             manifest.write(&directory).map_err(trash_error)?;
+            let progress =
+                super::progress::Task::new("清理源历史", "份", Some(manifest.files.len() as u64));
             for index in 0..manifest.files.len() {
+                progress.set(index as u64);
                 let file = &manifest.files[index];
                 let held = directory.join("files").join(&file.name);
                 let source_exists = fs::symlink_metadata(&file.origin).is_ok();
@@ -561,6 +570,7 @@ impl TransferService {
         Ok(op)
     }
     pub fn finish_retirement(&self, mut op: Operation) -> Result<Operation, TransferError> {
+        let _work = self.progress.enter(&op.id);
         if op.phase == "retired" {
             return Ok(op);
         }

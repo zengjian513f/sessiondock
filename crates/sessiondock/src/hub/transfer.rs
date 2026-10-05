@@ -43,6 +43,7 @@ struct Journal {
 }
 pub struct Transfers {
     directory: PathBuf,
+    work: crate::transfer::progress::Registry,
     links: Arc<std::sync::Mutex<std::collections::BTreeMap<String, crate::session_links::Record>>>,
     gates: crate::transfer::coordination::Locks,
     unfinished: Arc<std::sync::Mutex<std::collections::BTreeMap<String, Journal>>>,
@@ -95,6 +96,7 @@ impl Transfers {
         }
         Ok(Self {
             directory,
+            work: Default::default(),
             links: Arc::new(std::sync::Mutex::new(links)),
             unfinished: Arc::new(std::sync::Mutex::new(unfinished)),
             saves: Default::default(),
@@ -342,8 +344,16 @@ impl Transfers {
         client: &Client,
         request: &Request,
     ) -> Result<Value, TransferError> {
-        let mut journal: Journal =
-            serde_json::from_slice(&fs::read(self.path(&request.operation_id)?)?)?;
+        let cached = self
+            .unfinished
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&request.operation_id)
+            .cloned();
+        let mut journal: Journal = match cached {
+            Some(journal) => journal,
+            None => serde_json::from_slice(&fs::read(self.path(&request.operation_id)?)?)?,
+        };
         if !journal.request.same_transfer(request) {
             return Err(TransferError::new(
                 "move_conflict",
@@ -386,30 +396,53 @@ impl Transfers {
         }
         let (source_id, local_uid) = namespace::split(&request.uid, true)
             .map_err(|e| TransferError::new("move_plan_stale", e.to_string()))?;
-        if source_id == request.target_node && journal.phase != "complete" {
-            // Read the node's durable publication stage without acquiring the
-            // execution gate. Offline nodes leave the saved preview available.
-            if let Some(node) = registry.get(&source_id)
+        let mut work = self.work.snapshot(&request.operation_id);
+        if !matches!(journal.phase.as_str(), "complete" | "aborted")
+            && (source_id == request.target_node || work.as_array().is_none_or(Vec::is_empty))
+        {
+            // One small, lock-free-of-execution probe; never reread the native journal.
+            // Bound only the optional telemetry wait, not the transfer itself.
+            let node_id = if matches!(
+                journal.phase.as_str(),
+                "checking" | "publishing" | "verifying"
+            ) || journal.phase == "transferring"
+                && journal.bytes_total > 0
+                && journal.bytes_sent >= journal.bytes_total
+            {
+                &request.target_node
+            } else {
+                &source_id
+            };
+            if let Some(node) = registry.get(node_id)
                 && let Ok(address) = registry.target(&node)
-                && let Ok((_, status)) = call(
-                    client,
-                    &address,
-                    "/api/session/clone/progress",
-                    &json!({"operation_id":request.operation_id,"uid":local_uid}),
-                    true,
+                && let Ok(Ok((_, status))) = tokio::time::timeout(
+                    Duration::from_millis(750),
+                    call(
+                        client,
+                        &address,
+                        "/api/session/transfer/work",
+                        &json!({"operation_id":request.operation_id}),
+                        true,
+                    ),
                 )
                 .await
-                && status["uid"] == local_uid
             {
-                if let Some(phase) = status["phase"].as_str() {
-                    journal.phase = phase.into();
+                if work.as_array().is_none_or(Vec::is_empty) {
+                    work = status["work"].clone();
                 }
-                if let Some(error) = status["error"].as_str() {
-                    journal.error = Some(error.into());
+                if source_id == request.target_node && status["uid"] == local_uid {
+                    if let Some(phase) = status["phase"].as_str() {
+                        journal.phase = phase.into();
+                    }
+                    if let Some(error) = status["error"].as_str() {
+                        journal.error = Some(error.into());
+                    }
                 }
             }
         }
-        Ok(Self::public(&journal))
+        let mut public = Self::public(&journal);
+        public["work"] = work;
+        Ok(public)
     }
     async fn record_error(&self, request: &Request, error: &TransferError) {
         if let Ok(mut journal) = self.load(&request.operation_id).await
@@ -734,6 +767,7 @@ impl Transfers {
         client: Arc<Client>,
         request: Request,
     ) -> Result<Value, TransferError> {
+        let live = self.work.start(&request.operation_id);
         let path = self.path(&request.operation_id)?;
         let mut journal = if path.exists() {
             let previous = self.load(&request.operation_id).await?;
@@ -916,23 +950,25 @@ impl Transfers {
             if current.0 == 404 {
                 journal.phase = "preparing".into();
                 self.save(&journal).await?;
-                let manifest = call(
+                let manifest = call_work(
                     &client,
                     &source_address,
                     "/api/session/transfer/manifest",
                     &json!({"operation_id":request.operation_id,"reserve":reserve_manifest}),
                     true,
+                    Some(&live),
                 )
                 .await?
                 .1;
                 journal.phase = "checking".into();
                 self.save(&journal).await?;
-                let checked = call(
+                let checked = call_work(
                     &client,
                     &target_address,
                     "/api/session/transfer/check",
                     &manifest,
                     true,
+                    Some(&live),
                 )
                 .await?;
                 if moving && checked.1["move_handoff"] != true {
@@ -954,6 +990,8 @@ impl Transfers {
             }
             // Recheck stopped state and the source snapshot immediately before
             // target publication. Source lease fences managed launches throughout.
+            journal.phase = "rechecking".into();
+            self.save(&journal).await?;
             call(
                 &client,
                 &source_address,
@@ -1125,17 +1163,21 @@ impl Transfers {
             )
             .await
             .map_err(network)?;
+        let live = self.work.start(&journal.request.operation_id);
+        let progress = live.task("传输会话包", "bytes", Some(journal.bytes_total));
         let mut body = response.into_body();
         let mut last_save = std::time::Instant::now();
         while let Some(bytes) = body.read().await.map_err(network)? {
             upload.send(&bytes).await.map_err(network)?;
             journal.bytes_sent += bytes.len() as u64;
+            progress.set(journal.bytes_sent);
             if last_save.elapsed() >= Duration::from_secs(1) {
                 self.save(journal).await?;
                 last_save = std::time::Instant::now();
             }
         }
         self.save(journal).await?;
+        drop(progress);
         let received = upload.response().await.map_err(network)?;
         let status = received.status;
         let raw = received
@@ -1166,6 +1208,16 @@ async fn call(
     body: &Value,
     success: bool,
 ) -> Result<(u16, Value), TransferError> {
+    call_work(client, target, path, body, success, None).await
+}
+async fn call_work(
+    client: &Client,
+    target: &Target,
+    path: &str,
+    body: &Value,
+    success: bool,
+    work: Option<&Arc<crate::transfer::progress::Work>>,
+) -> Result<(u16, Value), TransferError> {
     // Transfer manifests carry complete native database before/after images.
     // They are not ordinary catalog replies and can exceed the client's 64 MiB
     // JSON cap. Keep HTTP framing, authentication and idle timeouts unchanged.
@@ -1173,27 +1225,68 @@ async fn call(
         eprintln!("sessiondock transfer request {path}: {error}");
         network(error)
     };
-    let encoded = serde_json::to_vec(body)?;
-    let response = client
-        .open(
+    let encoded = if let Some(work) = work {
+        let mut writer = std::io::BufWriter::with_capacity(
+            65536,
+            crate::transfer::progress::Io(Vec::new(), work.task("编码迁移清单", "bytes", None)),
+        );
+        serde_json::to_writer(&mut writer, body)?;
+        writer.flush()?;
+        writer
+            .into_inner()
+            .map_err(|e| TransferError::new("move_io", e.to_string()))?
+            .0
+    } else {
+        serde_json::to_vec(body)?
+    };
+    let length = encoded.len().to_string();
+    let headers = [
+        ("Content-Type", "application/json"),
+        ("Content-Length", length.as_str()),
+    ];
+    let mut upload = client
+        .connect(
             target,
-            client::Request {
+            &client::Request {
                 method: "POST",
                 target: path,
-                headers: &[("Content-Type", "application/json")],
-                body: Some(&encoded),
+                headers: &headers,
+                body: None,
                 connect: IDLE,
                 idle: IDLE,
             },
         )
         .await
         .map_err(failed)?;
+    {
+        let sent = work.map(|work| work.task("发送迁移清单", "bytes", Some(encoded.len() as u64)));
+        for chunk in encoded.chunks(65536) {
+            upload.send(chunk).await.map_err(failed)?;
+            if let Some(sent) = &sent {
+                sent.add(chunk.len() as u64);
+            }
+        }
+    }
+    let response = upload.response().await.map_err(failed)?;
+    let received = work.map(|work| {
+        work.task(
+            "接收迁移清单",
+            "bytes",
+            response
+                .header("content-length")
+                .and_then(|s| s.parse().ok()),
+        )
+    });
     let status = response.status;
     let mut response_body = response.into_body();
     let mut raw = Vec::new();
     while let Some(chunk) = response_body.read().await.map_err(failed)? {
         raw.extend_from_slice(&chunk);
+        if let Some(received) = &received {
+            received.add(chunk.len() as u64);
+        }
     }
+    drop(received);
     let value = serde_json::from_slice(&raw)
         .map_err(|_| failed(super::ClientError::Invalid("body is not JSON")))?;
     if status != 200 && (success || status != 404) {

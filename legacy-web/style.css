@@ -2404,6 +2404,14 @@ header .btn[data-session-docked] { display: none; }
 #composer-question .question-actions { flex-wrap:wrap; }
 
 .transfer-progress { margin: 8px 0 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.transfer-progress[hidden] { display: none; }
+.transfer-progress-label, .transfer-progress-detail { margin: 0 0 6px; overflow-wrap: anywhere; }
+.transfer-progress-track { height: 6px; }
+.transfer-progress-track.paused i { animation: none; opacity: .5; }
+@media (prefers-reduced-motion: reduce) {
+  .transfer-progress-track i { transition: none; }
+}
+
 .transfer-tasks-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .transfer-tasks-table th, .transfer-tasks-table td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); }
 .transfer-tasks-table th { color: var(--muted); background: var(--panel-2); }

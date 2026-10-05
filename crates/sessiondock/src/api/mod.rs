@@ -361,6 +361,7 @@ pub fn node_router() -> Router<AppState> {
             "/api/session/transfer/retire",
             post(transfer::retire_source),
         )
+        .route("/api/session/transfer/work", post(transfer::transfer_work))
         .route(
             "/api/session/transfer/status",
             post(transfer::transfer_status),

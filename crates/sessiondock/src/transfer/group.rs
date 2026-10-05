@@ -64,10 +64,16 @@ pub(super) fn derive_cached(
         return Err(TransferError::new("not_found", "会话不在当前索引中"));
     }
     cache.retain(&entries.values().map(|e| e.data.clone()).collect());
+    let progress = super::progress::Task::new("检查关联会话", "份历史", Some(entries.len() as u64));
     let links: BTreeMap<_, _> = entries
         .values()
-        .map(|e| Ok((e.uid.clone(), cache.get(e)?)))
+        .map(|e| {
+            let links = cache.get(e)?;
+            progress.add(1);
+            Ok((e.uid.clone(), links))
+        })
         .collect::<Result<_, TransferError>>()?;
+    drop(progress);
     cache.save();
     let grok_aliases: Vec<_> = entries
         .values()

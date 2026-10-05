@@ -116,6 +116,7 @@ fn read(
     let mut statement = db.prepare(&format!("SELECT * FROM {} WHERE {clause}", quote(name)))?;
     let encoded = serde_json::to_string(ids)?;
     let mut cursor = statement.query([encoded])?;
+    let progress = super::progress::Task::new("读取数据库记录", "条", None);
     let mut rows = Vec::new();
     while let Some(row) = cursor.next()? {
         let mut result = Row::new();
@@ -123,6 +124,7 @@ fn read(
             result.insert(k.clone(), value(row.get_ref(i)?)?);
         }
         rows.push(result);
+        progress.add(1);
     }
     rows.sort_by_cached_key(|r| serde_json::to_string(r).unwrap());
     Ok(Some(Table {
@@ -337,7 +339,10 @@ pub fn rewrite(
     let map = &plan.identities;
     for db in &mut result.databases {
         for table in &mut db.tables {
-            for row in &mut table.rows {
+            let progress =
+                super::progress::Task::new("改写数据库记录", "条", Some(table.rows.len() as u64));
+            for (index, row) in table.rows.iter_mut().enumerate() {
+                progress.set(index as u64);
                 let sid = row
                     .get("thread_id")
                     .and_then(Value::as_str)
@@ -495,7 +500,10 @@ pub fn preflight_copy(native: &Native, reuse: bool) -> Result<(), TransferError>
                     "目标原生历史或当前版本不同",
                 ));
             }
-            for row in &table.rows {
+            let progress =
+                super::progress::Task::new("核对数据库记录", "条", Some(table.rows.len() as u64));
+            for (index, row) in table.rows.iter().enumerate() {
+                progress.set(index as u64);
                 if let Some(existing) = current
                     .rows
                     .iter()
@@ -633,7 +641,13 @@ pub fn retire(native: &Native, apply: bool) -> Result<(), TransferError> {
                 ));
             }
             if apply {
-                for row in &current.rows {
+                let progress = super::progress::Task::new(
+                    "清理源数据库记录",
+                    "条",
+                    Some(current.rows.len() as u64),
+                );
+                for (index, row) in current.rows.iter().enumerate() {
+                    progress.set(index as u64);
                     let clause = table
                         .keys
                         .iter()
@@ -714,7 +728,10 @@ pub fn insert_with_prefix(
                     "目标原生历史或当前版本不同",
                 ));
             }
-            for row in &table.rows {
+            let progress =
+                super::progress::Task::new("导入数据库记录", "条", Some(table.rows.len() as u64));
+            for (index, row) in table.rows.iter().enumerate() {
+                progress.set(index as u64);
                 if (reuse || shared_table(&table.name))
                     && let Some(existing) = current
                         .rows

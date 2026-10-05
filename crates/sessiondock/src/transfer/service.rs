@@ -100,6 +100,8 @@ impl Operation {
 }
 pub struct TransferService {
     inventory: SessionStore,
+    pub progress: super::progress::Registry,
+    progress_public: std::sync::Mutex<BTreeMap<String, Value>>,
     pub(super) references: super::references::Cache,
     relationship_refresh: std::sync::Mutex<()>,
     journals: journal::Cache,
@@ -119,6 +121,8 @@ pub fn hash(path: &Path) -> Result<String, TransferError> {
     } else {
         use std::io::Read;
         let mut file = fs::File::open(path)?;
+        let progress =
+            super::progress::Task::new("校验文件", "bytes", Some(file.metadata()?.len()));
         let mut buffer = [0u8; 65536];
         loop {
             super::coordination::check()?;
@@ -127,6 +131,7 @@ pub fn hash(path: &Path) -> Result<String, TransferError> {
                 break;
             }
             digest.update(&buffer[..count]);
+            progress.add(count as u64);
         }
     }
     Ok(format!("{:x}", digest.finalize()))
@@ -139,11 +144,20 @@ pub fn uid(path: &Path) -> String {
 }
 pub(super) fn persist(path: &Path, value: &impl Serialize) -> Result<(), TransferError> {
     let temp = path.with_extension("tmp");
-    let mut file = std::io::BufWriter::new(fs::File::create(&temp)?);
+    let label = match path.file_name().and_then(|name| name.to_str()) {
+        Some("export-manifest.json") => "保存传输清单",
+        Some("relationships-v1.json") => "保存关联清单",
+        _ => "保存迁移记录",
+    };
+    let counter = super::progress::Task::new(label, "bytes", None);
+    let mut file = std::io::BufWriter::with_capacity(
+        65536,
+        super::progress::Io(fs::File::create(&temp)?, counter),
+    );
     serde_json::to_writer(&mut file, value)?;
     file.write_all(b"\n")?;
     file.flush()?;
-    file.get_ref().sync_all()?;
+    file.get_ref().0.sync_all()?;
     fs::rename(temp, path)?;
     fs::File::open(path.parent().unwrap())?.sync_all()?;
     Ok(())
@@ -204,6 +218,8 @@ impl TransferService {
             references: super::references::Cache::open(directory.join("relationships-v1.json")),
             relationship_refresh: Default::default(),
             journals: Default::default(),
+            progress: Default::default(),
+            progress_public: Default::default(),
             link_records: Default::default(),
             directory,
             roots,
@@ -283,14 +299,32 @@ impl TransferService {
         if id.len() != 36 || !id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
             return Err(TransferError::new("move_plan_stale", "复制记录不存在"));
         }
-        Ok(serde_json::from_slice(&fs::read(
-            self.directory.join(id).join("operation.json"),
-        )?)?)
+        let _work = self.progress.enter(id);
+        let path = self.directory.join(id).join("operation.json");
+        let mut file = fs::File::open(path)?;
+        let counter =
+            super::progress::Task::new("读取迁移记录", "bytes", Some(file.metadata()?.len()));
+        let mut raw = Vec::new();
+        // Do not apply cancellation to journal reads: compensation also needs them.
+        std::io::copy(&mut file, &mut super::progress::Io(&mut raw, counter))?;
+        let _decode = super::progress::Task::new("解析迁移记录", "", None);
+        Ok(serde_json::from_slice(&raw)?)
     }
     pub(super) fn save(&self, op: &Operation) -> Result<(), TransferError> {
         persist(&self.directory.join(&op.id).join("operation.json"), op)?;
         self.remember_links(op);
         Ok(())
+    }
+    pub fn progress_status(&self, id: &str) -> Result<Value, TransferError> {
+        let mut value = self
+            .progress_public
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .cloned()
+            .ok_or_else(|| TransferError::new("move_plan_stale", "迁移操作不存在"))?;
+        value["work"] = self.progress.snapshot(id);
+        Ok(value)
     }
     pub fn store(&self) -> &SessionStore {
         &self.inventory
@@ -755,6 +789,7 @@ impl TransferService {
         if matches!(op.phase.as_str(), "complete" | "ready") {
             return Ok(op);
         }
+        let _work = self.progress.enter(&op.id);
         let _scope = super::coordination::Scope::enter(self.interrupts.flag(&op.id));
         super::coordination::check()?;
         if op.phase == "failed" && (!op.moving || op.incoming_digest.is_some()) {
@@ -891,7 +926,11 @@ impl TransferService {
         op.phase = "publishing".into();
         self.save(&op)?;
         let result = (|| {
-            for file in self.publications(&op) {
+            let publications = self.publications(&op);
+            let progress =
+                super::progress::Task::new("发布历史文件", "份", Some(publications.len() as u64));
+            for (index, file) in publications.into_iter().enumerate() {
+                progress.set(index as u64);
                 if op.reused_files.contains(&file.target) {
                     if hash(&file.target)? != file.sha256 {
                         return Err(TransferError::new("move_plan_stale", "目标复用文件已变化"));
@@ -927,7 +966,15 @@ impl TransferService {
                         let executable = fs::metadata(&staging)?.permissions().mode() & 0o111;
                         out.set_permissions(fs::Permissions::from_mode(0o600 | executable))?;
                     }
-                    super::coordination::copy(&mut fs::File::open(staging)?, &mut out)?;
+                    let bytes = super::progress::Task::new(
+                        "写入目标历史",
+                        "bytes",
+                        Some(fs::metadata(&staging)?.len()),
+                    );
+                    super::coordination::copy(
+                        &mut fs::File::open(staging)?,
+                        &mut super::progress::Io(&mut out, bytes),
+                    )?;
                     out.sync_all()?;
                 }
                 if let Some(old) = op.replaced_files.get(&target) {
@@ -946,6 +993,7 @@ impl TransferService {
                 }
                 fs::File::open(parent)?.sync_all()?;
             }
+            drop(progress);
             native::insert_with_prefix(
                 op.rewritten.as_ref().unwrap(),
                 &op.id,
@@ -1036,6 +1084,12 @@ impl TransferService {
         map
     }
     fn remember_links(&self, op: &Operation) {
+        let mut public = Self::public(op);
+        public["incoming"] = op.incoming_digest.is_some().into();
+        self.progress_public
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(op.id.clone(), public);
         // Cross-node records belong to the Hub. Local copies also remain
         // discoverable when made through a direct node page.
         if op.incoming_digest.is_some() || op.moving {

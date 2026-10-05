@@ -60,7 +60,8 @@ fn append<W: Write>(
     header.set_mode(0o600);
     header.set_size(bytes);
     header.set_entry_type(tar::EntryType::Regular);
-    tar.append_data(&mut header, name, input)?;
+    let progress = super::progress::Task::new("写入迁移包", "bytes", Some(bytes));
+    tar.append_data(&mut header, name, super::progress::Io(input, progress))?;
     Ok(())
 }
 fn private_file(path: &Path) -> Result<fs::File, TransferError> {
@@ -87,6 +88,7 @@ impl TransferService {
         &self,
         id: &str,
     ) -> Result<(Operation, crate::sessions::SessionSnapshot), TransferError> {
+        let _work = self.progress.enter(id);
         let mut op = self.load(id)?;
         if !matches!(op.phase.as_str(), "planned" | "exporting") || op.incoming_digest.is_some() {
             return Err(invalid("此操作不能导出"));
@@ -99,6 +101,7 @@ impl TransferService {
         Ok((op, snapshot))
     }
     pub fn release_export(&self, id: &str, completed: bool) -> Result<Operation, TransferError> {
+        let _work = self.progress.enter(id);
         let mut op = self.load(id)?;
         if op.phase == "exported" && completed {
             return Ok(op);
@@ -249,6 +252,7 @@ impl TransferService {
         op: &Operation,
         destination: &Path,
     ) -> Result<(Manifest, crate::sessions::SessionSnapshot), TransferError> {
+        let _work = self.progress.enter(&op.id);
         // The API holds the operation gate and has just reserved/rechecked
         // this export. Keep the post-archive recheck below, instead of scanning
         // the whole source group twice before reading any archive bytes.
@@ -263,7 +267,10 @@ impl TransferService {
                 raw.len() as u64,
                 raw.as_slice(),
             )?;
+            let progress =
+                super::progress::Task::new("打包历史文件", "份", Some(publications.len() as u64));
             for (i, (file, wire)) in publications.iter().zip(&manifest.files).enumerate() {
+                progress.set(i as u64);
                 let name = format!("files/{i}");
                 if file.symlink {
                     let link = fs::read_link(&file.staging)?
@@ -559,6 +566,7 @@ impl TransferService {
         let _guard = self
             .locks
             .blocking(self.operation_keys(&manifest.operation));
+        let _work = self.progress.enter(&manifest.operation.id);
         let _scope =
             super::coordination::Scope::enter(self.interrupts.flag(&manifest.operation.id));
         super::coordination::check()?;
@@ -588,7 +596,12 @@ impl TransferService {
         let receiving = scratch.join("receiving");
         private_dir(&receiving)?;
         let result = (|| {
+            let progress =
+                super::progress::Task::new("接收历史文件", "份", Some(manifest.files.len() as u64));
             for (index, file) in manifest.files.iter().enumerate() {
+                progress.set(index as u64);
+                let bytes_progress =
+                    super::progress::Task::new("写入暂存文件", "bytes", Some(file.bytes));
                 let mut entry = entries.next().ok_or_else(|| invalid("迁移数据不完整"))??;
                 if entry.path()?.as_ref() != Path::new(&format!("files/{index}"))
                     || !entry.header().entry_type().is_file()
@@ -608,6 +621,7 @@ impl TransferService {
                     output.write_all(&buffer[..n])?;
                     digest.update(&buffer[..n]);
                     bytes += n as u64;
+                    bytes_progress.set(bytes);
                 }
                 output.sync_all()?;
                 if bytes != file.bytes || format!("{:x}", digest.finalize()) != file.sha256 {

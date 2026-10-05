@@ -313,10 +313,12 @@ fn extract(e: &CandidateRef, links: &mut Links) -> Result<(), TransferError> {
         Err(_) if e.source == "codex" => return Ok(()),
         Err(error) => return Err(error.into()),
     };
+    let progress = super::progress::Task::new("扫描历史关联", "bytes", Some(raw.len() as u64));
     let mut claude_rows = Vec::new();
     let empty = BTreeMap::new();
     for line in raw.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
         super::coordination::check()?;
+        progress.add(line.len() as u64);
         let row: Value = match relationship_row(line, e.source) {
             Ok(row) => row,
             Err(error) => {

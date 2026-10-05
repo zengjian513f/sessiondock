@@ -115,6 +115,14 @@ def main():
         assert {str(p) for p in unrelated}.issubset({row[0] for row in saved})
         dialog.locator('.clone-cancel').click()
         dialog,plan,warm=preview();assert not watch.take(),'warm preview reread unrelated histories'
+        progress_watch=Opens([corpus.root/'state/transfers'/plan['operation_id']/'operation.json'],shared=idle_watch)
+        stack.callback(progress_watch.close)
+        for _ in range(2):
+            response=page.wait_for_event('response',predicate=lambda r:r.url.endswith('/api/session/clone/progress'))
+            assert response.ok,response.text()
+            assert response.json()['operation_id']==plan['operation_id']
+        assert not progress_watch.take(),'foreground progress reopened the operation journal'
+        print('PASS Chromium progress polls read cached state without opening the native journal',flush=True)
         started=time.monotonic()
         with page.expect_response(lambda r:r.url.endswith('/api/session/clone') and r.request.method=='POST',timeout=30000) as copied:
             dialog.locator('.clone-confirm').click()
