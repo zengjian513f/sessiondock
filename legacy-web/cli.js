@@ -159,8 +159,8 @@ const SESSIONDOCK_CLIS = Object.freeze({
   claude: new ClaudeCli(),
   codex: new CodexCli(),
   grok: new GrokCli(),
-  opencode: new OpencodeCli(),
   agy: new AgyCli(),
+  opencode: new OpencodeCli(),
 });
 
 function sessiondockCli(sourceOrUid) {

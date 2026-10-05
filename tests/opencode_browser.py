@@ -315,7 +315,7 @@ def main():
                 page.locator('.dhead-actions [data-report-bug]').click()
                 expect(page.locator('#bug-report-dialog')).to_be_visible()
                 assert page.evaluate("[...document.querySelectorAll('#bug-report-source input')].map(i => i.value)") \
-                    == ['claude', 'codex', 'grok', 'opencode', 'agy']
+                    == ['claude', 'codex', 'grok', 'agy', 'opencode']
                 page.keyboard.press('Escape')
                 expect(page.locator('#bug-report-dialog')).to_be_hidden()
 
