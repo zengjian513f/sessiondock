@@ -66,17 +66,17 @@ impl std::error::Error for ScanError {}
 
 // Strict resident production parsing rejects spans; their source metadata is
 // retained for the future, separately authorized extraction/streaming boundary.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct TextSpan {
     start: u64,
     end: u64,
     decoded_len: u64,
     digest: Digest,
+    /// Whether the physical spelling used a JSON escape (tests only).
+    #[cfg(test)]
     escaped: bool,
     prefix: Vec<u8>,
     data_suffix: Option<(u64, Digest)>,
 }
-#[cfg_attr(not(test), allow(dead_code))]
 impl TextSpan {
     /// Half-open PHYSICAL range inside (excluding) the JSON double quotes.
     pub(crate) fn start(&self) -> u64 {
@@ -94,6 +94,7 @@ impl TextSpan {
     pub(crate) fn digest(&self) -> &Digest {
         &self.digest
     }
+    #[cfg(test)]
     pub(crate) fn escaped(&self) -> bool {
         self.escaped
     }
@@ -126,7 +127,6 @@ impl Text {
 }
 // The private span-capable tree remains available for future extraction; normal
 // production resident decoding now chooses the direct Value constructor.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum Node {
     Null,
     Bool(bool),
@@ -137,7 +137,6 @@ pub(crate) enum Node {
     // tool summaries consume object insertion order, not merely Value equality.
     Object(IndexMap<String, Node>),
 }
-#[cfg_attr(not(test), allow(dead_code))]
 impl Node {
     /// Replace every remaining private span with text the caller reads back
     /// from its own checked source (verified against the span's decoded
@@ -197,21 +196,17 @@ pub(crate) struct ScanStats {
     pub peak_resident_bytes: usize,
     pub span_count: usize,
 }
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct Document {
     pub root: Node,
     // Accounting evidence for scanner tests and future streamed record indexes.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub stats: ScanStats,
 }
-#[cfg_attr(not(test), allow(dead_code))]
 impl Document {
     pub(crate) fn into_value(self) -> Result<Value, ScanError> {
         self.root.into_value()
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn scan<R: Read>(reader: R, limits: Limits) -> Result<Document, ScanError> {
     let (root, stats) = scan_into::<_, Node>(reader, limits)?;
     Ok(Document { root, stats })
@@ -417,6 +412,8 @@ struct StringBuild {
     inline: Option<String>,
     decoded_len: u64,
     hash: Option<Box<SpanHash>>,
+    #[cfg(test)]
+    escaped: bool,
 }
 impl StringBuild {
     fn new() -> Self {
@@ -424,6 +421,8 @@ impl StringBuild {
             inline: Some(String::new()),
             decoded_len: 0,
             hash: None,
+            #[cfg(test)]
+            escaped: false,
         }
     }
     fn feed(
@@ -465,7 +464,7 @@ impl StringBuild {
         }
         Ok(())
     }
-    fn finish(self, start: u64, end: u64, escaped: bool) -> Text {
+    fn finish(self, start: u64, end: u64) -> Text {
         if let Some(inline) = self.inline {
             return Text::Inline(inline);
         }
@@ -473,7 +472,8 @@ impl StringBuild {
         Text::Span(TextSpan {
             start,
             end,
-            escaped,
+            #[cfg(test)]
+            escaped: self.escaped,
             decoded_len: self.decoded_len,
             digest: hash.full.finish(),
             prefix: hash.prefix,
@@ -637,20 +637,22 @@ impl<R: Read> Parser<R> {
             self.limits.inline_string_bytes
         };
         let mut build = StringBuild::new();
-        let mut escaped = false;
         loop {
             match self.input.peek()? {
                 Some(b'"') => {
                     let end = self.input.offset;
                     self.input.advance(1);
-                    let text = build.finish(start, end, escaped);
+                    let text = build.finish(start, end);
                     if matches!(text, Text::Span(_)) {
                         self.stats.span_count += 1;
                     }
                     return Ok(text);
                 }
                 Some(b'\\') => {
-                    escaped = true;
+                    #[cfg(test)]
+                    {
+                        build.escaped = true;
+                    }
                     self.input.advance(1);
                     let character = match self.input.next()? {
                         Some(b'"') => '"',

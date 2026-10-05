@@ -342,11 +342,14 @@ impl MediaStore {
             return Err(error(MediaError::Invalid));
         }
         bytes.truncate(written);
+        #[cfg(test)]
         let (width, height) = inspect(mime, &bytes).unwrap_or((0, 0));
         let blob = Arc::new(MediaBlob {
             bytes,
             mime,
+            #[cfg(test)]
             width,
+            #[cfg(test)]
             height,
             _charge: charge,
         });

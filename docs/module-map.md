@@ -17,9 +17,9 @@ python3 tests/module_map.py --write
   - `bug_report.rs` — `POST /api/bug-report`, `POST /api/bug-report/capture` and the (798 lines, 2 tests)
   - `conversation.rs` — Thin HTTP transport for server-owned conversation drafts, staging and one-shot SEND. (652 lines, 0 tests)
   - `events.rs` — Node UI invalidations share one cached observer. (37 lines, 0 tests)
-  - `files.rs` — File transport. Every request resolves the selected session; opening a (967 lines, 1 tests)
+  - `files.rs` — File transport. Every request resolves the selected session; opening a (965 lines, 1 tests)
   - `health.rs` — Local liveness JSON: version, `api_version` 1, and `stage: "read_only"`. (49 lines, 0 tests)
-  - `hub.rs` — The hub's HTTP surface (`hub.py` `HubHandler.dispatch`, 518–584), served (888 lines, 0 tests)
+  - `hub.rs` — The hub's HTTP surface (`hub.py` `HubHandler.dispatch`, 518–584), served (929 lines, 0 tests)
   - `lifecycle.rs` — Explicit creation receipts; native identities and reliable send stay separate. (1368 lines, 1 tests)
   - `media.rs` — Opaque media transport. File tokens require current native-scope authorization. (242 lines, 1 tests)
   - `metadata.rs` — SessionDock-owned preferences only. No native session writes or CLI actions. (614 lines, 0 tests)
@@ -28,7 +28,7 @@ python3 tests/module_map.py --write
   - `node_auth.rs` — Node listener gate (`server.py` `_allowed` / `_hub_protocol` for hub (215 lines, 2 tests)
   - `process_links.rs` — (no module doc) (130 lines, 0 tests)
   - `read.rs` — Read-only session list, messages, grant pages, input history, and SSE watch. (717 lines, 0 tests)
-  - `records.rs` — `/api/term/records`: list session recordings; `/api/term/records/attach`: (119 lines, 0 tests)
+  - `records.rs` — `/api/term/records`: list session recordings; `/api/term/records/attach`: (110 lines, 0 tests)
   - `runtime.rs` — Read-only live status; never upgrades observations into CLI authority. (732 lines, 4 tests)
   - `search.rs` — JSON/NDJSON search transport queues work and applies stream backpressure. Search (219 lines, 1 tests)
   - `shell_env.rs` — `GET /api/shell-env` and `POST /api/shell-env/restart` (`crate::shell_env`). (36 lines, 0 tests)
@@ -126,10 +126,10 @@ python3 tests/module_map.py --write
     - mods: `tests`
   - `proxy/`
     - `tests.rs` — `resolve`, `file_navigation`, the audit grouping and the SSE rewrite (513 lines, 10 tests)
-  - `registry.rs` — The hub's node registry (`hub.py` `Registry`): `hub-nodes.json`, node (1471 lines, 0 tests)
+  - `registry.rs` — The hub's node registry (`hub.py` `Registry`): `hub-nodes.json`, node (1424 lines, 0 tests)
     - mods: `tests`
   - `registry/`
-    - `tests.rs` — Registry rules against an in-process fake node (tokio listener) so faults (1363 lines, 12 tests)
+    - `tests.rs` — Registry rules against an in-process fake node (tokio listener) so faults (1360 lines, 13 tests)
   - `resources.rs` — Session resource views preserve execution nodes and incomplete observations. (389 lines, 3 tests)
   - `transfer.rs` — Durable cross-node clone orchestration over the authenticated node channel. (972 lines, 0 tests)
 - `hub_config.rs` — Configuration of the `sessiondock-hub` binary. Separate from (180 lines, 2 tests)
@@ -156,7 +156,7 @@ python3 tests/module_map.py --write
     - `tests.rs` — (no module doc) (1085 lines, 21 tests)
 - `list_sync.rs` — Opt-in list transport. Cached revisions only save bytes: eviction, restart, (353 lines, 0 tests)
 - `main.rs` — Loopback development binary. No option starts the Web service. (329 lines, 0 tests)
-- `media.rs` — Private image projection. File capabilities require an explicit selected scope; (801 lines, 0 tests)
+- `media.rs` — Private image projection. File capabilities require an explicit selected scope; (802 lines, 0 tests)
   - mods: `descriptors`, `discovery`, `file_media`, `formats`, `native_media`, `tests`
 - `media/`
   - `descriptors.rs` — Bounded source capabilities, separate from decoded bytes. No snapshot or (303 lines, 0 tests)
@@ -281,7 +281,7 @@ python3 tests/module_map.py --write
     - `native_records/`
       - `replay_source.rs` — Replays only reviewed tool strings from the stamped current native record. (242 lines, 1 tests)
       - `tests.rs` — (no module doc) (531 lines, 13 tests)
-    - `scanner.rs` — Private streaming JSON structure scanner. This is not a media classifier or (819 lines, 0 tests)
+    - `scanner.rs` — Private streaming JSON structure scanner. This is not a media classifier or (821 lines, 0 tests)
       - mods: `tests`
     - `scanner/`
       - `tests.rs` — (no module doc) (709 lines, 17 tests)
@@ -315,7 +315,7 @@ python3 tests/module_map.py --write
     - mods: `launch_tests`
   - `ownership_launch_tests.rs` — (no module doc) (306 lines, 5 tests)
   - `receipts.rs` — Per-connection terminal I/O receipts for the diagnostic audit. (134 lines, 1 tests)
-  - `records.rs` — Read-only access to ptyhost session recordings (`<ptyhost dir>/records/<id>/`). (1101 lines, 2 tests)
+  - `records.rs` — Read-only access to ptyhost session recordings (`<ptyhost dir>/records/<id>/`). (985 lines, 2 tests)
   - `service.rs` — Opt-in local transport: an explicit host directory, bounded forwarding, and (1378 lines, 3 tests)
     - mods: `bound_tests`, `launch_tests`, `native_binding_tests`
   - `service_bound_tests.rs` — (no module doc) (372 lines, 6 tests)
@@ -423,10 +423,9 @@ python3 tests/module_map.py --write
 `crates/ptyhost-record/src`: 5 files, 3537 lines, 57 tests, 0 undocumented.
 
 - `format.rs` — 录制分段的字节级编解码：段头与帧。 (599 lines, 12 tests)
-- `lib.rs` — ptyhost 会话录制（record）：每个会话一个目录，若干只追加的分段文件。 (153 lines, 0 tests)
-  - mods: `format`, `reader`, `sanitize`, `store`
+- `lib.rs` — ptyhost 会话录制（record）：每个会话一个目录，若干只追加的分段文件。 (152 lines, 0 tests)
+  - mods: `format`, `reader`, `store`
 - `reader.rs` — 录制目录的只读读取器。 (1337 lines, 15 tests)
-- `sanitize.rs` — 从录制的 pty 输出里剥掉终端 QUERY 序列，其余字节原样放行。 (657 lines, 17 tests)
 - `store.rs` — 录制目录的只追加写入器。 (791 lines, 13 tests)
 
 ## ptyhost-screen

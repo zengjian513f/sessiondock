@@ -30,9 +30,10 @@ let monitor = Monitor::spawn(registry.clone(), client.clone(), shutdown.clone())
 
 ## 注册表（`registry.rs`）
 
-**文件** `hub-nodes.json`：JSON 数组，元素 `{url, token, id, name, color?, enabled?, renderer?}`，
+**文件** `hub-nodes.json`：JSON 数组，元素 `{url, token, id, name, color?, enabled?}`，
 2 空格缩进，0600，`.tmp` 同目录写入 + `fsync` + `rename`。`enabled` 缺省即启用，
-只有明确 `false` 才停用。启动时校验每个 `url` 和 `id`（32 hex），不合法拒绝启动；
+只有明确 `false` 才停用。旧版本写入的 `renderer` 等未知键在加载时忽略，下次落盘时不再写回。
+启动时校验每个 `url` 和 `id`（32 hex），不合法拒绝启动；
 不存在的文件等于空表。
 
 **注册**（服务器端操作，网页无此路由）`register(client, Registration{name,url,token,color,id})`：
@@ -53,14 +54,12 @@ WebSocket 后仍在同一 TLS 流上双向转发。HTTP 与 HTTPS 都继续受�
 其他机器同名；颜色同上，空串清除；`enabled=false` 视同不存在（清缓存与健康状态，监控
 不再探它），`enabled=true` 恢复并重新加载磁盘快照、`nudge()`。`reorder(ids)` 必须是
 全部机器（含停用）各一次的排列；`reorder_json` 附带形状检查文案。
-`remove(nid)` 删除条目、缓存、健康状态和快照。`set_renderer(nid, renderer)`：这台机器的
-控制台渲染，`grid`（或空 = 默认，不落盘）/ `xterm`，其它值 400；设置页的
-`POST /api/nodes/{nid}/display` 接受 `renderer` 与 `name`/`color`/`enabled` 同一请求。
-它是展示属性，存在中央；前端已只用服务端网格渲染控制台，不再读取它，设置页也不再
-提供这个选项。
+`remove(nid)` 删除条目、缓存、健康状态和快照。控制台只用服务端网格渲染，注册表不再有
+按机器的渲染属性；`POST /api/nodes/{nid}/display` 只处理 `name`/`color`/`enabled`，请求里的
+其它键（包括旧前端可能发送的 `renderer`）被忽略。
 
 **视图**：`all()`/`get()` 只含启用机器（聚合、监控、代理、uid 解析用）；`find()` 含停用
-（设置页用）；`public()` = 启用机器 `{id,name,color,renderer} ∪ health`（无健康记录时
+（设置页用）；`public()` = 启用机器 `{id,name,color} ∪ health`（无健康记录时
 `online:null`）；`machines()` = 全部机器加 `enabled`，停用者 `online:null`。两者都不含
 `url`/`token`。
 

@@ -93,7 +93,6 @@ struct Graph<'a> {
 struct Selection {
     owner: String,
     selected: String,
-    #[cfg_attr(not(test), allow(dead_code))]
     ancestry: Vec<String>,
 }
 

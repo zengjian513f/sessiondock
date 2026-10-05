@@ -270,12 +270,14 @@ impl MediaStore {
             bytes: length,
         };
         drop(cache);
-        let (bytes, mime, width, height) = prepared.read_checked(length).map_err(error)?;
+        let (bytes, mime, _width, _height) = prepared.read_checked(length).map_err(error)?;
         let blob = Arc::new(MediaBlob {
             bytes,
             mime,
-            width,
-            height,
+            #[cfg(test)]
+            width: _width,
+            #[cfg(test)]
+            height: _height,
             _charge: charge,
         });
         let mut cache = self

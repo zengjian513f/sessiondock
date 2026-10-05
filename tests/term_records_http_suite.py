@@ -2,6 +2,8 @@
 """HTTP/WebSocket contract of GET /api/term/records and GET /api/term/records/attach.
 
 Isolated free POSIX shell plus an explicit ptyhost directory. No Chromium.
+Replay is always the grid protocol: binary frames carry snapshot/diff JSON lines
+and a `mode` query parameter other than `grid` is ignored.
 """
 from __future__ import annotations
 import argparse, base64, hashlib, json, os, re, socket, struct, tempfile, time, uuid
@@ -17,7 +19,6 @@ BINARY = DEBUG_BINARY
 PTYHOST = REPO / "target/debug/ptyhost"
 ID_RE = re.compile(r"^\d+-\d+-[A-Za-z0-9._-]+$")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-VIEWER_CURSOR = b"\x1b[?25h"
 
 
 def fail(area, why, body=b""):
@@ -196,8 +197,8 @@ def ws_open(base, path, area="websocket"):
 
 
 @contextmanager
-def attach_ws(base, rec_id, area="websocket"):
-    ws = ws_open(base, f"/api/term/records/attach?id={rec_id}", area)
+def attach_ws(base, rec_id, area="websocket", mode="grid"):
+    ws = ws_open(base, f"/api/term/records/attach?id={rec_id}&mode={mode}", area)
     try:
         yield ws
     finally:
@@ -307,7 +308,7 @@ def run(opener, base, process, record, instance):
     with attach_ws(base, rec_id, "replay_and_follow") as live:
         msg = first_text(live, "replay_and_follow")
         if (msg.get("t") != "record" or msg.get("cols") != 80 or msg.get("rows") != 24
-                or msg.get("live") is not True):
+                or msg.get("live") is not True or msg.get("mode") != "grid"):
             fail("replay_and_follow", "record frame", json.dumps(msg).encode())
         if not live.pump(5, lambda w: b"RS_SHELL_READY" in w.binary):
             fail("replay_and_follow", "RS_SHELL_READY missing", bytes(live.binary[-240:]))
@@ -315,9 +316,9 @@ def run(opener, base, process, record, instance):
         if not live.pump(5, lambda w: b"RS_PING_OK" in w.binary):
             fail("replay_and_follow", "RS_PING_OK missing", bytes(live.binary[-240:]))
         host_send(record, instance, {"op": "resize", "cols": 90, "rows": 30}, "replay_and_follow")
-        if not live.pump(5, lambda w: any(t.get("t") == "resize" and t.get("cols") == 90
-                                          and t.get("rows") == 30 for t in w.texts)):
-            fail("replay_and_follow", "resize frame", json.dumps(live.texts).encode())
+        # A recorded resize arrives as a grid snapshot of the new size.
+        if not live.pump(5, lambda w: b'"cols":90' in w.binary and b'"rows":30' in w.binary):
+            fail("replay_and_follow", "resize snapshot", bytes(live.binary[-240:]))
 
         with attach_ws(base, rec_id, "no_input_accepted") as idle:
             first_text(idle, "no_input_accepted")
@@ -341,7 +342,7 @@ def run(opener, base, process, record, instance):
             for t in w.texts:
                 if t.get("t") == "exit":
                     after = True
-                elif after and t.get("t") == "end" and VIEWER_CURSOR in w.binary:
+                elif after and t.get("t") == "end":
                     # The socket stays open after `end`: the timeline can still seek.
                     return True
             return False
@@ -358,9 +359,10 @@ def run(opener, base, process, record, instance):
             fail("replay_and_follow", f"exit.code={code}", json.dumps(exit_msg).encode())
         passed("replay_and_follow")
 
-    with attach_ws(base, rec_id, "replay_ended") as replay:
+    # A non-grid mode is ignored: the replay is still the grid protocol.
+    with attach_ws(base, rec_id, "replay_ended", mode="bytes") as replay:
         msg = first_text(replay, "replay_ended")
-        if msg.get("t") != "record" or msg.get("live") is not False:
+        if msg.get("t") != "record" or msg.get("live") is not False or msg.get("mode") != "grid":
             fail("replay_ended", "record frame", json.dumps(msg).encode())
 
         def finished(w):

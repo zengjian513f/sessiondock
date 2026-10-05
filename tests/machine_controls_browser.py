@@ -38,7 +38,6 @@ NAME_ERROR = "合成名称失败"
 ENABLED_ERROR = "合成启用失败"
 BLUE = "blue"
 BLUE_LABEL = "蓝"
-GRID = "grid"
 NOTE = "#machine-note"
 SAVED = f"已保存 {NAME_A}。"
 NAME_FAIL = f"保存失败：{NAME_ERROR}"
@@ -258,8 +257,8 @@ def check(page, hub, fault):
 
     node_a = saved_machine(hub, NID_A)
     node_b = saved_machine(hub, NID_B)
-    assert node_a["name"] == NAME_A and node_a["color"] == BLUE and node_a["renderer"] == GRID, node_a
-    assert node_b["name"] == NAME_B and node_b["color"] == "" and node_b["renderer"] == GRID, node_b
+    assert node_a["name"] == NAME_A and node_a["color"] == BLUE and "renderer" not in node_a, node_a
+    assert node_b["name"] == NAME_B and node_b["color"] == "" and "renderer" not in node_b, node_b
     assert [hit["field"] for hit in fault.hits] == ["name", "enabled"], fault.hits
     assert fault.hits[0]["body"]["name"] == FAILED_NAME, fault.hits[0]
     assert fault.hits[1]["body"]["enabled"] is False, fault.hits[1]

@@ -170,7 +170,7 @@ frame: `code`, `output_complete`, and `reason` when incomplete) and
 | Frame payload (`MAX_PAYLOAD`) | 16 MiB (`16 << 20`) | Refuse the write (`InvalidInput` / `PayloadTooLarge`); a failed writer stops recording |
 | Follow interval | 150 ms | While the latest page is `at_end` and the host still looks live, wait this long (or until the browser closes / shutdown) and read again |
 | Reader page (`PAGE_BYTES`) | 2 MiB (`2 * 1024 * 1024`) of Output / Checkpoint payload | The event that crosses the budget is included. Resize, Mark and Exit count 0. If any event remains, at least one is returned even when the budget is 0 |
-| Browser binary chunk (`CHUNK`) | 32 KiB (`32 * 1024`) | Sanitized bytes are split into WebSocket binary frames of this size |
+| Browser binary chunk (`CHUNK`) | 32 KiB (`32 * 1024`) | Grid JSON lines are split into WebSocket binary frames of this size |
 
 ## Host flags and `info.record`
 
@@ -255,19 +255,28 @@ route is 501 `terminal_disabled`. An unreadable directory is 503
 non-upgrade GET is 400 `websocket_required`. Replay needs no lease
 ([route ledger](route-ledger.md)).
 
+Replay always uses the grid protocol: the recording is fed through the
+terminal model (`ptyhost-screen`) inside the Web service and the browser
+receives `snapshot` / `diff` JSON lines; see
+[server-side terminal grid](terminal-grid.md#recordings-and-the-shared-model).
+The bundled pages send `mode=grid`; the `mode` parameter is otherwise
+ignored, so any other value (or none) gets the same grid stream. No
+query sanitizing is needed on this wire because the model consumes every
+query and its answers are dropped; there is no byte replay for a client
+terminal emulator.
+
 All text frames are JSON with a `t` field. The browser controls only the
 timeline (seek / play / pause / live); it never reaches the host.
 
 | Direction | Frame | Meaning |
 | --- | --- | --- |
 | → browser | `{"t":"timeline","start_ms","end_ms","live"}` | first frame; bounds of the recording (first segment base, last frame time) |
-| → browser | `{"t":"record","cols","rows","unix_ms","live","id"}` | a full state follows: on open, after every `seek` / `live`, and after a gap; reset the terminal |
-| → browser | binary | sanitized terminal bytes (checkpoint or seek state, then output) |
-| → browser | `{"t":"resize","cols","rows"}` | apply before the following bytes |
-| → browser | `{"t":"gap"}` | data was lost; a fresh resize + checkpoint follows, reset the terminal |
+| → browser | `{"t":"record","cols","rows","unix_ms","live","id","mode":"grid"}` | a `reset:true` snapshot follows: on open and after every `seek` / `live` |
+| → browser | binary | UTF-8 grid JSON lines (`snapshot` / `diff`), one object per `\n` line; a recorded resize is a `reset:false` snapshot of the new size |
+| → browser | `{"t":"gap"}` | data was lost; a `reset:true` snapshot of the next checkpoint follows |
 | → browser | `{"t":"clock","unix_ms","end_ms"}` | playback position after each batch (and the grown `end_ms` while live) |
 | → browser | `{"t":"exit","exit":{…}}` | the recorded host exit payload |
-| → browser | `{"t":"end"}` | the tail of the recording was reached; preceded by the viewer reset bytes; the socket stays open for seeking |
+| → browser | `{"t":"end"}` | the tail of the recording was reached; the socket stays open for seeking |
 | browser → | `{"t":"seek","unix_ms"}` | rebuild the screen as of that instant (clamped to the bounds) and pause there |
 | browser → | `{"t":"play","speed"}` | play from the current position with the recorded gaps divided by `speed` (default 1); at the end, restart from the start |
 | browser → | `{"t":"pause"}` | stop paced playback |
@@ -286,71 +295,15 @@ fast mode.
 
 A `seek` finds the newest checkpoint at or before the instant
 (`reader::checkpoint_before`), runs the terminal model silently over the
-events up to it, and sends `record` plus that screen. Both `record` and
-`clock` retain the requested (clamped) instant, even in an idle interval;
-resuming playback measures the next gap from that instant. The grid wire sends a
-`reset:true` snapshot; the byte wire sends the model's re-rendered state
-(`Screen::replay_bytes`), so a byte viewer sees exactly what the grid
-viewer would. Seeking inside a segment is therefore bounded by one
+events up to it, and sends `record` plus a `reset:true` snapshot of that
+screen. Both `record` and `clock` retain the requested (clamped) instant,
+even in an idle interval; resuming playback measures the next gap from
+that instant. Seeking inside a segment is therefore bounded by one
 segment (≤ 8 MiB) of model work.
 
 A directory with no checkpoint closes with 1011 `record has no checkpoint`.
 An unreadable page closes with 1011 `record unreadable`. Shutdown is
 1001. Mark events are dropped on this wire.
-
-## Grid replay
-
-`GET /api/term/records/attach?id=…&mode=grid` replays the same recording
-through the terminal model inside the Web service and streams the grid
-protocol instead of sanitized bytes; see
-[server-side terminal grid](terminal-grid.md#recordings-and-the-shared-model).
-No sanitizing is needed on that wire because the model consumes every
-query and its answers are dropped.
-
-## Sanitizer
-
-The byte wire (without `mode=grid`) feeds recorded bytes to a client terminal
-emulator; the bundled pages use the grid wire instead. Query sequences that
-would make such a client answer the "host" would write DSR/DA
-replies into a **live** session, and OSC 52 can touch the clipboard. The
-reader strips those queries before the socket; the on-disk record still
-contains them (except the DSR set the host already removed).
-
-Only 7-bit ESC (`0x1B`) introduces a sequence. A C1 CSI byte (`0x9B`)
-and other C1 controls are ordinary bytes. Sequences not listed below —
-cursor motion, SGR, DECSET/DECRST, OSC title/hyperlink, sixel, and the
-rest — pass through unchanged. Splitting a stream across chunks must
-not change the output. An unfinished sequence at end-of-stream is
-**not** a query: `Sanitizer::finish` emits the held bytes as-is. OSC/DCS
-content is allowed to grow to 65536 bytes without a terminator; past
-that the held bytes are flushed as ordinary output so a runaway string
-cannot stall the filter.
-
-Stripped set:
-
-- CSI DSR / DECXCPR: `ESC[5n`, `ESC[6n`, `ESC[?6n`
-- CSI DA1 / DA2 / DA3: `ESC[c`, `ESC[0c`, `ESC[>c`, `ESC[>0c`, `ESC[=c`, `ESC[=0c`
-- CSI XTVERSION: `ESC[>q`, `ESC[>0q`
-- CSI DECRQM: parameters starting with `?` or a digit, ending with `$`,
-  final `p` (for example `ESC[?2026$p`, `ESC[4$p`)
-- CSI window/title reports: final `t`, first parameter 11, 13, 14, 16, 18, 19, or 21
-- OSC 52: clipboard read/write, any form
-- OSC 4, 5, 10–19: color queries (last non-terminator content byte is `?`)
-- DCS XTGETTCAP (content starts with `+q`) and DECRQSS (content starts with `$q`)
-
-After the last event the viewer appends `VIEWER_RESET` and then `end`.
-The sequence turns off mouse tracking, focus reporting, bracketed paste
-and DECCKM, restores the numeric keypad and a visible cursor, turns off
-synchronized output, and resets SGR. The viewer must not write these
-bytes into a session that is still being recorded.
-
-```text
-ESC[?1000l ESC[?1002l ESC[?1003l ESC[?1005l ESC[?1006l ESC[?1015l
-ESC[?1004l ESC[?2004l ESC[?1l ESC> ESC[?25h ESC[?2026l ESC[0m
-```
-
-Exact bytes:
-`\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1004l\x1b[?2004l\x1b[?1l\x1b>\x1b[?25h\x1b[?2026l\x1b[0m`.
 
 ## Hub
 
@@ -366,8 +319,8 @@ and the node's TCP/TLS stream bidirectionally and does not re-frame.
 ## Privacy
 
 A recording contains everything the terminal showed: secrets in CLI
-output, OSC clipboard payloads until the sanitizer strips them on
-**view**, titles, and any other bytes the child wrote. It does not
+output, OSC clipboard payloads (the replay model drops them, so a viewer
+never receives them), titles, and any other bytes the child wrote. It does not
 contain keystrokes or paste bodies; those never enter the record.
 
 On Unix the `records/` directory and each session directory are `0700`,
@@ -383,9 +336,8 @@ immediately and only then enqueues the Resize piece.
 
 The checkpoint `state` is the host model's own re-rendering of its
 screen (alacritty_terminal cells serialized back to escape sequences,
-the same reconstruction attach uses); a byte-wire client emulator can disagree
-with it in edge cases (soft-wrap flags are not preserved). Later output
-frames are the raw PTY tail and are not affected.
+the same reconstruction attach uses); soft-wrap flags are not preserved
+across it. Later output frames are the raw PTY tail and are not affected.
 
 There is no compression. Segment `flags` is 0.
 
@@ -399,8 +351,9 @@ leading checkpoint.
 
 `python3 tests/term_records_http_suite.py --binary target/release/sessiondock`
 is the HTTP/WebSocket contract (no Chromium): 501 when the terminal
-transport is off, bad ids, upgrade required, `timeline` then `record`,
-live follow, resize, ignored inbound frames, exit/end with the socket
+transport is off, bad ids, upgrade required, `timeline` then `record`
+(`mode:"grid"`, also when the query asks for another mode), live follow,
+a resize snapshot, ignored inbound frames, exit/end with the socket
 kept open, replay of an ended recording, and the timeline (seek to the
 start shows nothing later, play at 16x reaches the end, seek to the end
 shows the final screen, pause accepted). Needs POSIX, a built
