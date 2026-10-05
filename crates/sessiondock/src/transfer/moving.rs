@@ -190,28 +190,16 @@ impl TransferService {
             .iter()
             .map(|m| self.member_target_uid(op, m, staged))
             .collect::<Result<BTreeSet<_>, _>>()?;
-        for entry in fs::read_dir(&self.directory)? {
-            let path = entry?.path().join("operation.json");
-            if !path.is_file() {
-                continue;
-            }
-            let mut old: Operation = serde_json::from_slice(&fs::read(path)?)?;
+        for old in self.journal_summaries()? {
             if old.id == op.id
-                || old.phase != "retired"
-                || !old.moving
-                || old.incoming_digest.is_some()
+                || !old.retired_source
                 || op.ownership_sequence <= old.ownership_sequence
             {
                 continue;
             }
-            let uids: Vec<_> = old
-                .group()
-                .members
-                .iter()
-                .filter(|m| active.contains(&m.uid))
-                .map(|m| m.uid.clone())
-                .collect();
+            let uids: Vec<_> = old.source_uids.intersection(&active).cloned().collect();
             if !uids.is_empty() {
+                let mut old = self.load(&old.id)?;
                 for uid in uids {
                     old.reclaimed_by.insert(uid, op.id.clone());
                 }
@@ -221,14 +209,12 @@ impl TransferService {
         Ok(())
     }
     pub(super) fn next_ownership_sequence(&self) -> Result<u64, TransferError> {
-        let mut sequence = 0;
-        for entry in fs::read_dir(&self.directory)? {
-            let path = entry?.path().join("operation.json");
-            if path.is_file() {
-                let op: Operation = serde_json::from_slice(&fs::read(path)?)?;
-                sequence = sequence.max(op.ownership_sequence);
-            }
-        }
+        let sequence = self
+            .journal_summaries()?
+            .iter()
+            .map(|op| op.ownership_sequence)
+            .max()
+            .unwrap_or(0);
         sequence
             .checked_add(1)
             .ok_or_else(|| TransferError::new("move_recovery_required", "迁移序号已耗尽"))

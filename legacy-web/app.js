@@ -10390,11 +10390,19 @@ async function cloneSessionGroup(uid, resumed = null) {
   $d('.transfer-close').onclick = cancelAndClose; $d('.clone-cancel').onclick = cancelAndClose;
   dialog.addEventListener('cancel', e => {e.preventDefault(); cancelAndClose();});
   document.body.appendChild(dialog); renderSelection(); dialog.showModal(); target.focus();
-  const request = async (path, body) => {
-    const response = await fetch(appUrl(path), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  const request = async (path, body, signal) => {
+    const response = await fetch(appUrl(path), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), signal});
     const data = await response.json();
     if (!response.ok) throw Object.assign(new Error(data.error?.message || data.error || '操作失败'), {code:data.code});
     return data;
+  };
+  const finishTransfer = async result => {
+    if (!dialog.isConnected || !operationStarted || result.phase !== 'complete' || !result.target_uid) return;
+    // Either the execution response or a durable progress receipt can finish
+    // the dialog. Fence the other response before awaiting list/navigation work.
+    ++executionSequence; operationStarted = false; uncertain = false; busy = false;
+    close(); await loadSessions(true); await openSession(result.target_uid);
+    showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
   };
   async function discardPreview(previous) {
     if (previous) await request('api/session/clone/cancel', {uid, operation_id:previous.operation_id});
@@ -10407,6 +10415,7 @@ async function cloneSessionGroup(uid, resumed = null) {
       const result = operationStarted && HUB_MODE
         ? await request('api/session/transfer/cancel', {uid, operation_id:plan.operation_id, target_node:target.value})
         : await request('api/session/clone/cancel', {uid, operation_id:plan.operation_id});
+      if (result.phase === 'complete' && result.target_uid) {await finishTransfer(result); return;}
       uncertain = false; operationStarted = false; plan = null; busy = false;
       $d('.transfer-progress').hidden = true; refreshTransferTasks();
       if (closing || result.phase === 'complete') {close(); await loadSessions(true);}
@@ -10530,15 +10539,19 @@ async function cloneSessionGroup(uid, resumed = null) {
     const id = plan.operation_id;
     progressLoading = true;
     try {
-      const data = await request(operationStarted && HUB_MODE ? 'api/session/transfer/progress' : 'api/session/clone/progress', {uid, operation_id:id, target_node:target.value});
+      const data = await request(operationStarted && HUB_MODE ? 'api/session/transfer/progress' : 'api/session/clone/progress', {uid, operation_id:id, target_node:target.value}, AbortSignal.timeout(10000));
       if (operationStarted && dialog.isConnected && plan?.operation_id === id) {
         paintProgress(data);
-        if (!busy && !aborting && uncertain && data.phase === 'aborted') {
-          uncertain = false; operationStarted = false; plan = null;
+        if (!aborting && data.phase === 'complete') await finishTransfer(data.result || data);
+        else if (!aborting && data.phase === 'aborted') {
+          ++executionSequence; busy = false; uncertain = false; operationStarted = false; plan = null;
           await refreshPlan();
         }
       }
-    } catch { /* The execution response reports actionable errors. */ }
+    } catch {
+      if (operationStarted && dialog.isConnected && plan?.operation_id === id && !aborting)
+        $d('.transfer-progress').textContent = '连接中断，正在重新确认操作结果…';
+    }
     finally {progressLoading = false;}
   };
   progressTimer = setInterval(pollProgress, 1000);
@@ -10556,8 +10569,7 @@ async function cloneSessionGroup(uid, resumed = null) {
       });
       if (execution !== executionSequence) return;
       if (result.phase !== 'complete' || !result.target_uid) throw new Error('复制未完成，请重试检查结果');
-      close(); await loadSessions(true); await openSession(result.target_uid);
-      showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
+      await finishTransfer(result);
     } catch (failure) {
       if (execution !== executionSequence) return;
       uncertain = failure.code !== 'move_cancelled';

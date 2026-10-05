@@ -4,6 +4,7 @@
 import argparse
 from contextlib import ExitStack
 import ctypes
+import copy
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import select
 import struct
 import tempfile
 import time
+import uuid
 from types import SimpleNamespace
 from playwright.sync_api import sync_playwright, expect
 from history_parity import BINARY, Corpus, isolated_server
@@ -21,27 +23,31 @@ from session_transfer_browser import ident
 
 
 class Opens:
-    def __init__(self, paths):
+    def __init__(self, paths, shared=None):
         libc=ctypes.CDLL(None,use_errno=True)
-        self.fd=libc.inotify_init1(os.O_NONBLOCK|os.O_CLOEXEC)
+        self.shared=shared
+        self.fd=shared.fd if shared else libc.inotify_init1(os.O_NONBLOCK|os.O_CLOEXEC)
         assert self.fd>=0
-        self.names={}
+        self.names=shared.names if shared else {}
+        self.pending=set()
         for path in paths:
             watch=libc.inotify_add_watch(self.fd,os.fsencode(path),0x20)
             assert watch>=0
-            self.names[watch]=path.name
+            self.names[watch]=(self,path.name)
     def take(self):
-        result=set()
         while True:
             try: data=os.read(self.fd,65536)
-            except BlockingIOError: return result
+            except BlockingIOError:
+                result=self.pending;self.pending=set();return result
             offset=0
             while offset<len(data):
                 watch,mask,cookie,length=struct.unpack_from('iIII',data,offset)
                 assert not mask&0x4000,'inotify queue overflow'
-                if mask&0x20: result.add(self.names[watch])
+                if mask&0x20:
+                    owner,name=self.names[watch];owner.pending.add(name)
                 offset+=16+length
-    def close(self): os.close(self.fd)
+    def close(self):
+        if not self.shared:os.close(self.fd)
 
 
 def main():
@@ -91,7 +97,7 @@ def main():
         page.wait_for_function('(uid)=>S.sel===uid',arg=selected)
         assert not idle_watch.take(),'ordinary browsing scanned unrelated compacted history'
         assert not cache.exists(),'ordinary browsing built relationship summaries'
-        watch=Opens(unrelated);stack.callback(watch.close)
+        watch=Opens(unrelated,shared=idle_watch);stack.callback(watch.close)
         def preview():
             started=time.monotonic()
             with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan'),timeout=30000) as planned:
@@ -116,6 +122,48 @@ def main():
         expect(page.locator('#msgs')).to_contain_text('Branch A final')
         assert not watch.take(),'execution reread unrelated histories'
         print(f'PASS Chromium cold preview {cold:.3f}s, warm preview {warm:.3f}s, copy {time.monotonic()-started:.3f}s; unchanged unrelated histories not opened',flush=True)
+        # Historical operation payloads are much larger than their lock/ownership
+        # metadata. They must not be parsed again for every new small transfer.
+        old=json.loads((operation_dir/'operation.json').read_text())
+        old.update(phase='exported',incoming_digest=None,ownership_sequence=50)
+        old['native']={'databases':[{'path':str(corpus.root/'unused.sqlite'),'tables':[
+            {'name':'thread_items','columns':['thread_id','payload'],'keys':['thread_id'],
+             'schema':'synthetic archived metadata','rows':[
+                 {'thread_id':ident(990),'payload':'x'*(8*1024*1024)}]}]}]}
+        journals=[]
+        for _ in range(32):
+            old['id']=str(uuid.uuid4())
+            directory=corpus.root/'state/transfers'/old['id'];directory.mkdir()
+            journal=directory/'operation.json';journal.write_text(json.dumps(old));journals.append(journal)
+        # Let the existing abandoned-preview worker observe new terminal entries
+        # once; it is independent of the on-demand lock/ownership summary cache.
+        page.wait_for_timeout(11000)
+        page.locator(f'#side .item[data-uid="{selected}"]').click()
+        dialog,_,journal_cold=preview();dialog.locator('.clone-cancel').click()
+        journal_watch=Opens(journals,shared=idle_watch);stack.callback(journal_watch.close)
+        dialog,_,journal_warm=preview()
+        print(f'Historical journals 256 MiB: cold preview {journal_cold:.3f}s, warm preview {journal_warm:.3f}s',flush=True)
+        assert not journal_watch.take(),'warm preview reopened unchanged historical operation journals'
+        with page.expect_response(lambda r:r.url.endswith('/api/session/clone') and r.request.method=='POST',timeout=30000) as copied:
+            dialog.locator('.clone-confirm').click()
+        assert copied.value.ok,copied.value.text()
+        expect(page.locator('#msgs')).to_contain_text('Branch A final')
+        assert not journal_watch.take(),'ownership sequence reopened unchanged historical journals'
+        current=json.loads((corpus.root/'state/transfers'/copied.value.json()['operation_id']/'operation.json').read_text())
+        assert current['ownership_sequence']>50
+        # Atomic replacement and deletion must invalidate lock summaries. The
+        # original native sessions remain unchanged throughout these fixtures.
+        changed=copy.deepcopy(old);changed.update(id=journals[0].parent.name,phase='retired',moving=True)
+        replacement=journals[0].with_suffix('.tmp');replacement.write_text(json.dumps(changed));replacement.replace(journals[0])
+        page.locator(f'#side .item[data-uid="{selected}"]').click()
+        page.locator('#a-clone-group').click()
+        expect(page.locator('#clone-group-dialog .transfer-error')).to_contain_text('会话组有尚未恢复的复制操作')
+        page.locator('#clone-group-dialog .clone-cancel').click()
+        assert not journal_watch.take(),'replacement reopened unchanged old inodes'
+        journals[0].unlink()
+        dialog,_,_=preview();dialog.locator('.clone-cancel').click()
+        assert not journal_watch.take(),'deletion reopened unrelated journals'
+        print('PASS demand-read journal summaries reuse old payloads, preserve ownership order and invalidate replacement/deletion',flush=True)
         # Add a reverse edge from an already cached, unrelated transcript.
         with unrelated[0].open('ab') as stream:
             stream.write(encoded({'type':'fork-context-ref','sessionId':ident(1000),'parentSessionId':ident(2)}))
