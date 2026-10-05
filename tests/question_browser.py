@@ -50,7 +50,7 @@ DESCRIBED = [
 def hook(state, sid, event, tool, questions, agent_id=None):
     payload = {"hook_event_name": event, "session_id": sid, "tool_name": "AskUserQuestion",
                "tool_use_id": tool, "tool_input": {"questions": [
-                   {"header": q["header"], "question": q["question"], "multiSelect": False,
+                   {"header": q["header"], "question": q["question"], "multiSelect": q.get("multiple", False),
                     "options": [{"label": o, "description": q.get("descriptions", [""] * len(q["options"]))[i]}
                                 for i, o in enumerate(q["options"])]}
                    for q in questions]}}
@@ -83,6 +83,12 @@ def answer(page, root, sid, tool, questions, choices, menu, *, layout=False):
         expect(page.locator('#composer-question')).to_be_visible()
         expect(page.locator('#composer-question .question-text')).to_have_text(questions[0]['question'])
         expect(page.locator('#composer-question .question-option small')).to_have_count(3)
+        # A matching but non-answerable history form must leave the native
+        # controls available, including its text field.
+        hook(root / 'state', sid, 'PreToolUse', tool + '-multiple', [{**questions[0], 'multiple': True}])
+        expect(page.locator(f'#msgs .live-question[data-call-id="{tool}-multiple"] .question-multiple')).to_be_visible(timeout=20000)
+        expect(page.locator('#composer-question')).to_be_visible()
+        page.locator('#composer-question .question-text-input').fill('custom answer')
     hook(root / "state", sid, "PreToolUse", tool, questions)
     card = page.locator(f'#msgs .msg.question.live-question[data-call-id="{tool}"]')
     expect(card.locator(".question-item")).to_have_count(len(questions), timeout=20000)

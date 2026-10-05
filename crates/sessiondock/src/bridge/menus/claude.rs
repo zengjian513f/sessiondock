@@ -494,6 +494,7 @@ pub fn screen_prompt(screen: &str) -> Option<Value> {
     // them with their option rather than folding every non-option into the
     // question (including all descriptions of a multi-question form).
     let mut description_lines = std::collections::HashSet::new();
+    let option_lines: std::collections::HashSet<_> = rows.iter().map(|r| r.line).collect();
     for r in &mut rows {
         let leading = lines[r.line]
             .chars()
@@ -503,7 +504,7 @@ pub fn screen_prompt(screen: &str) -> Option<Value> {
             let indent = line.chars().take_while(|c| c.is_whitespace()).count();
             if line.trim().is_empty()
                 || border(line)
-                || row(i, line).is_some()
+                || option_lines.contains(&i)
                 || indent < leading + 2
             {
                 break;
