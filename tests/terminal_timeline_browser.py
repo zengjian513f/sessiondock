@@ -1,4 +1,4 @@
-"""Console replay timeline of an ended SSH session (both console renderers).
+"""Console replay timeline of an ended SSH session in the grid console.
 
 The session list is the index of recordings: an exited shell row opens its
 recording read-only in the console pane, with a timeline underneath. Seeking to
@@ -35,17 +35,15 @@ def seek(page, fraction):
         fraction)
 
 
-def run(browser, base, root, renderer):
+def run(browser, base, root):
     errors = []
     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
-    context.add_init_script(
-        "localStorage.setItem('sessiondock.consoleRenderer', JSON.stringify(%s));" % json.dumps(renderer))
     page = context.new_page()
     page.clock.install()
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(base, wait_until="networkidle")
     shell = context.request.post(base + "/api/term/create", data={
-        "source": "shell", "cwd": str(root / "work"), "request_id": f"timeline-{renderer}"}).json()
+        "source": "shell", "cwd": str(root / "work"), "request_id": "timeline-grid"}).json()
     name = shell["name"]
     uid = "tmux:" + name
     page.evaluate("info => openPendingSession(info)", shell)
@@ -71,7 +69,7 @@ def run(browser, base, root, renderer):
     page.wait_for_function("document.querySelector('#termpane').classList.contains('replay')"
                            " && getComputedStyle(document.querySelector('#term-timeline')).display === 'flex'",
                            timeout=15000)
-    print(f"PASS {renderer} live-exit (same page switches to replay with a timeline)", flush=True)
+    print(f"PASS grid live-exit (same page switches to replay with a timeline)", flush=True)
     deadline = time.monotonic() + 15
     row = None
     while time.monotonic() < deadline:
@@ -82,7 +80,7 @@ def run(browser, base, root, renderer):
             break
         time.sleep(0.3)
     assert row and row["recording"]["live"] is False, row
-    print(f"PASS {renderer} a (exited row listed with recording)", flush=True)
+    print(f"PASS grid a (exited row listed with recording)", flush=True)
 
     page.goto(base, wait_until="networkidle")
     page.wait_for_function(f"!!document.querySelector('#side .item[data-uid=\"{uid}\"]')", timeout=15000)
@@ -102,7 +100,7 @@ def run(browser, base, root, renderer):
     # The recorded screen can be taller than the pane; it must not cover the bar.
     assert page.evaluate("(() => { const r = document.querySelector('#tl-play').getBoundingClientRect();"
                          " return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.id; })()") == "tl-play"
-    print(f"PASS {renderer} b (replay opens at the end with a timeline)", flush=True)
+    print(f"PASS grid b (replay opens at the end with a timeline)", flush=True)
     assert page.locator('.new-session-wait').is_hidden()
     assert '只读回放' in page.locator('#tl-status').inner_text()
     assert page.locator('#tl-ticks span').count() == 5
@@ -115,7 +113,7 @@ def run(browser, base, root, renderer):
                          bounds['y'] + bounds['height'] / 2)
         page.wait_for_timeout(350)
         value = float(slider.input_value())
-        assert abs(value - fraction * 1000) < 20, (renderer, fraction, value)
+        assert abs(value - fraction * 1000) < 20, (fraction, value)
         current = page.evaluate(TIMELINE)
         expected = current['start'] + value / 1000 * (current['end'] - current['start'])
         assert abs(current['clock'] - expected) < 25, current
@@ -134,14 +132,13 @@ def run(browser, base, root, renderer):
     box.hover()
     page.mouse.wheel(0, -300)
     page.wait_for_timeout(200)
-    if renderer == 'grid':
-        # Historical recordings can be wider than the available pixels. Keep
-        # their cells intact while fitting their font, including after resize.
-        page.set_viewport_size({'width': 1000, 'height': 800})
-        page.wait_for_timeout(300)
-        assert box.evaluate('(e) => e.scrollWidth <= e.clientWidth + 1'), page.evaluate('''() => {const v=currentTermViewObject(), e=document.querySelector('#xterm');return {width:e.clientWidth,scroll:e.scrollWidth,font:v.term.options.fontSize,cell:v.term.renderer.cellWidth,size:v.replaySize,canvas:v.host.querySelector('canvas').getBoundingClientRect().toJSON(),host:v.host.getBoundingClientRect().toJSON()}}''')
-        page.set_viewport_size({'width': 1280, 'height': 900})
-    print(f"PASS {renderer} idle clicks/drag/keyboard, compact status, ticks, wheel and width", flush=True)
+    # Historical recordings can be wider than the available pixels. Keep
+    # their cells intact while fitting their font, including after resize.
+    page.set_viewport_size({'width': 1000, 'height': 800})
+    page.wait_for_timeout(300)
+    assert box.evaluate('(e) => e.scrollWidth <= e.clientWidth + 1'), page.evaluate('''() => {const v=currentTermViewObject(), e=document.querySelector('#xterm');return {width:e.clientWidth,scroll:e.scrollWidth,font:v.term.options.fontSize,cell:v.term.renderer.cellWidth,size:v.replaySize,canvas:v.host.querySelector('canvas').getBoundingClientRect().toJSON(),host:v.host.getBoundingClientRect().toJSON()}}''')
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    print(f"PASS grid idle clicks/drag/keyboard, compact status, ticks, wheel and width", flush=True)
 
     before_sleep = page.evaluate(TIMELINE)['clock']
     page.clock.fast_forward(61 * 60000)
@@ -149,13 +146,13 @@ def run(browser, base, root, renderer):
     page.get_by_role('button', name='Resume', exact=True).click()
     page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
     page.wait_for_function('clock => Math.abs(currentTermViewObject().timeline.clock - clock) < 25', arg=before_sleep)
-    print(f"PASS {renderer} sleep/Resume preserves replay position and reconnects scrubbing", flush=True)
+    print(f"PASS grid sleep/Resume preserves replay position and reconnects scrubbing", flush=True)
 
     seek(page, 0)
     page.wait_for_function("!(" + XTERM_TEXT + ")().includes('RS_UNKNOWN')", timeout=10000)
     page.wait_for_function("(" + TIMELINE + ")()?.clock <= (" + TIMELINE + ")()?.start + 1000", timeout=5000)
     assert page.locator("#tl-time").text_content().startswith("00:00 /"), page.locator("#tl-time").text_content()
-    print(f"PASS {renderer} c (seek to start shows the screen before any output)", flush=True)
+    print(f"PASS grid c (seek to start shows the screen before any output)", flush=True)
 
     page.select_option("#tl-speed", "16")
     page.locator("#tl-play").click()
@@ -163,7 +160,7 @@ def run(browser, base, root, renderer):
     page.wait_for_function("(" + XTERM_TEXT + ")().includes('RS_UNKNOWN')", timeout=20000)
     page.wait_for_function("(" + TIMELINE + ")()?.atEnd === true && document.querySelector('#tl-play').textContent === '▶'",
                            timeout=20000)
-    print(f"PASS {renderer} d (play at 16x replays the output and stops at the end)", flush=True)
+    print(f"PASS grid d (play at 16x replays the output and stops at the end)", flush=True)
 
     seek(page, 0)
     page.wait_for_function("!(" + XTERM_TEXT + ")().includes('RS_UNKNOWN')", timeout=10000)
@@ -175,7 +172,7 @@ def run(browser, base, root, renderer):
     time.sleep(0.6)
     assert page.evaluate(XTERM_TEXT) == before, "replay must stay read-only"
     assert page.evaluate("T.ws?.readyState") == 1, "socket stays open for scrubbing"
-    print(f"PASS {renderer} e (seek to end shows the final screen; read-only)", flush=True)
+    print(f"PASS grid e (seek to end shows the final screen; read-only)", flush=True)
 
     # Leaving the replay hides the timeline again.
     page.evaluate("closeTermPane()")
@@ -202,8 +199,7 @@ def main():
             browser = p.chromium.launch(headless=True)
             with isolated_server(corpus, BINARY, host_dir=root / "host", lifecycle_dir=root / "ledger",
                                  launcher_config=cfg, state_dir=root / "state") as (base, _):
-                for renderer in ["xterm", "grid"]:
-                    run(browser, base, root, renderer)
+                run(browser, base, root)
             browser.close()
         print("PASS terminal_timeline_browser", flush=True)
 

@@ -229,7 +229,6 @@ let browserAuditFailCount = 0;
 const AUDIT_BATCH_BYTES = 48 * 1024;
 const AUDIT_BATCH_COUNT = 100;
 const AUDIT_FLUSH_MS = 5000;
-const AUDIT_CONTENT_LIMIT = 32 * 1024;
 
 // 按 UTF-8 字节算：sendBeacon 的 64 KB 配额是字节数，中文一个字占 3 字节
 const auditEncoder = new TextEncoder();
@@ -266,30 +265,16 @@ function scheduleBrowserAudit(delay = AUDIT_FLUSH_MS) {
   browserAuditTimer = setTimeout(flushBrowserAudit, delay);
 }
 
-function browserAuditEvent(event, data = {}, content = null, fields = {}) {
+function browserAuditEvent(event, data = {}, fields = {}) {
   if (!SessionDockCapabilities.allows('audit')) return;
   try {
-    // Rust stores metadata only; sending message/DOM/terminal bodies here
-    // wastes bandwidth and prematurely fills the byte-limited audit batches.
-    let auditContent = SessionDockCapabilities.config.backend === 'rust' ? null : content;
-    let auditData = data;
-    try {
-      if (auditContent != null) {
-        const serialized = JSON.stringify(auditContent);
-        if (serialized.length > AUDIT_CONTENT_LIMIT) {
-          auditContent = {truncated: true, bytes: serialized.length,
-            head: serialized.slice(0, 8 * 1024)};
-          auditData = {...data, content_truncated: true};
-        }
-      }
-    } catch {
-      auditContent = null;
-    }
+    // The service stores metadata only; message/DOM/terminal bodies would
+    // waste bandwidth and prematurely fill the byte-limited audit batches.
     browserAuditQueue.push({
       event, ts: new Date().toISOString(), uid: fields.uid ?? S.sel ?? '',
       trace_id: fields.traceId || '', request_id: fields.requestId || '',
       connection_id: fields.connectionId || '', severity: fields.severity || 'info',
-      data: auditData, content: auditContent,
+      data, content: null,
     });
     capAuditQueue();
     scheduleBrowserAudit(browserAuditQueue.length >= AUDIT_BATCH_COUNT ? 0
@@ -435,7 +420,7 @@ function observeLongFrames() {
         const event = longFrameEvent(entry);
         const sent = navigator.sendBeacon?.(appUrl('api/audit/browser'),
           new Blob([auditPayload([event])], {type: 'application/json'}));
-        if (!sent) browserAuditEvent(event.event, event.data, null, {severity: event.severity});
+        if (!sent) browserAuditEvent(event.event, event.data, {severity: event.severity});
       } catch { /* 诊断不影响页面 */ }
     }
   });
@@ -482,14 +467,6 @@ function browserStateSnapshot(reason = '') {
       dom_messages: nodes.length, terminal: termState,
       header: consoleButtonState(),
     },
-    content: {
-      composer: $('#cinput')?.value || '',
-      messages: nodes.map(node => ({
-        id: node.id || '', role: node.dataset?.role || '',
-        call_id: node.dataset?.callId || '', classes: node.className,
-        text: (node.textContent || '').slice(0, 4000),
-      })),
-    },
   };
 }
 
@@ -504,7 +481,7 @@ function scheduleBrowserSnapshot(reason = 'render') {
       const signature = JSON.stringify(snapshot);
       if (signature === lastBrowserSnapshot) return;
       lastBrowserSnapshot = signature;
-      browserAuditEvent('dom.snapshot', snapshot.data, snapshot.content);
+      browserAuditEvent('dom.snapshot', snapshot.data);
     } catch { /* page can be between detail teardown and rebuild */ }
   }, 100);
 }
@@ -561,11 +538,6 @@ let consoleButtonTimer = 0;
 function auditConsoleButton(reason = '') {
   let state;
   try { state = consoleButtonState(); } catch { return; }
-  const content = () => {
-    const head = $('#detail > .dhead');
-    return {dhead: head ? head.outerHTML.slice(0, 12000) : null,
-      detail: $('#detail')?.innerHTML.slice(0, 2000) || null};
-  };
   const term = typeof T === 'undefined' ? null : {
     name: T.name, uid: T.uid, mode: T.mode, views: [...T.views.keys()],
     visible: !$('#termpane')?.classList.contains('hidden'),
@@ -576,12 +548,12 @@ function auditConsoleButton(reason = '') {
     if (consoleButtonMissingSince && now - consoleButtonMissingSince < 5000) return;
     consoleButtonMissingSince = consoleButtonMissingSince || now;
     browserAuditEvent('console.button.missing', {reason, ...state, selected: S.sel, agent: S.agent,
-      terminal: term}, content(), {severity: 'error'});
+      terminal: term}, {severity: 'error'});
     return;
   }
   if (consoleButtonMissingSince) {
     browserAuditEvent('console.button.restored', {reason, ...state,
-      missing_ms: Date.now() - consoleButtonMissingSince, terminal: term}, null, {severity: 'warning'});
+      missing_ms: Date.now() - consoleButtonMissingSince, terminal: term}, {severity: 'warning'});
     consoleButtonMissingSince = 0;
   }
   const signature = JSON.stringify([state.label, state.on, state.unavailable, state.rect, state.tier,
@@ -636,16 +608,15 @@ queueMicrotask(() => browserAuditEvent('page.loaded', {
 }));
 window.addEventListener('error', event => browserAuditEvent('error', {
   message: event.message, filename: event.filename, line: event.lineno, column: event.colno,
-}, null, {severity: 'error'}));
+}, {severity: 'error'}));
 window.addEventListener('unhandledrejection', event => browserAuditEvent('unhandledrejection', {
   reason: String(event.reason?.stack || event.reason || 'unknown'),
-}, null, {severity: 'error'}));
+}, {severity: 'error'}));
 window.addEventListener('online', () => browserAuditEvent('network.online'));
-window.addEventListener('offline', () => browserAuditEvent('network.offline', {}, null,
-  {severity: 'warning'}));
+window.addEventListener('offline', () => browserAuditEvent('network.offline', {}, {severity: 'warning'}));
 window.addEventListener('pagehide', () => {
   const snapshot = browserStateSnapshot('pagehide');
-  browserAuditEvent('page.hidden', snapshot.data, snapshot.content);
+  browserAuditEvent('page.hidden', snapshot.data);
   flushBrowserAuditBeacon();
 });
 document.addEventListener('visibilitychange', () => {
@@ -1283,7 +1254,7 @@ async function fetchMessages(uid, opts = {}) {
   const started = performance.now();
   browserAuditEvent('http.request.started', {
     url, method: 'GET', start: opts.start || 0, agent: opts.agent || '',
-  }, null, {uid, traceId});
+  }, {uid, traceId});
   let r;
   try {
     r = await fetch(appUrl(url), {
@@ -1295,15 +1266,14 @@ async function fetchMessages(uid, opts = {}) {
     browserAuditEvent('http.request.failed', {
       url, error: String(error?.name || error),
       duration_ms: Math.round((performance.now() - started) * 1000) / 1000,
-    }, null, {uid, traceId, severity: error?.name === 'AbortError' ? 'warning' : 'error'});
+    }, {uid, traceId, severity: error?.name === 'AbortError' ? 'warning' : 'error'});
     throw error;
   }
   opts.onActivity?.();
   if (!r.ok) {
     browserAuditEvent('http.response.received', {url, status: r.status, ok: false},
-      null, {uid, traceId, severity: 'warning'});
-    const detail = SessionDockCapabilities.config.backend === 'rust'
-      ? await r.json().catch(() => null) : null;
+      {uid, traceId, severity: 'warning'});
+    const detail = await r.json().catch(() => null);
     const error = new Error(detail?.error || 'HTTP ' + r.status);
     error.status = r.status;
     error.code = detail?.code || '';
@@ -1345,7 +1315,7 @@ async function fetchMessages(uid, opts = {}) {
     url, status: r.status, bytes: got, reset: !!data.reset,
     start: data.start, end: data.end, messages: data.messages?.length || 0,
     duration_ms: Math.round((performance.now() - started) * 1000) / 1000,
-  }, null, {uid, traceId});
+  }, {uid, traceId});
   return { data, bytes: got,
     networkBytes: encoded && contentTotal ? contentTotal : got };
 }
@@ -1419,7 +1389,7 @@ function applyCoveredActivity(uid, agent, entry, data) {
 }
 
 function applyMigrationMeta(uid, agent, entry, meta) {
-  if (SessionDockCapabilities.config.backend !== 'rust' || !meta
+  if (!meta
       || meta.uid !== uid || (meta.agent_id || null) !== agent) return;
   const key = m => JSON.stringify([m.title, m.parent_title, m.sid, m.agent_type,
     m.cwd, m.model, !!m.starred, m.fork_parent_visible,
@@ -1546,12 +1516,10 @@ async function applyDiffPacket(uid, data, bytes = 0, agent = null) {
                     total: data.message_total, partial: data.partial || null });
     S.cursors.set(key, { end: data.end, head: data.version.head, anchor: data.anchor });
     if (S.sel === uid && S.agent === agent) {
-      // Rust keeps SSE live during explicit window reloads and native resets.
+      // SSE stays live during explicit window reloads and native resets.
       // Publish the new snapshot together with any suffix/activity accepted
       // while this renderer yields; the existing render path is retained.
-      const options = SessionDockCapabilities.config.backend === 'rust'
-        ? {historyPageEntry: cache.get(key)} : {};
-      await renderSession(data.meta, data.messages, data.activity, options);
+      await renderSession(data.meta, data.messages, data.activity, {historyPageEntry: cache.get(key)});
     }
     return data.messages.length;
   }
@@ -1626,8 +1594,7 @@ const migrationReadRetries = new Map();
 const migrationReadProbes = new Map();
 
 function migrationReadPaused(uid, agent = null) {
-  return SessionDockCapabilities.config.backend === 'rust'
-    && migrationReadFailures.has(viewKey(uid, agent));
+  return migrationReadFailures.has(viewKey(uid, agent));
 }
 
 /** 瞬时失败只影响这一次请求：网络层错误、中止、408/429、5xx（501 除外）。
@@ -1652,7 +1619,7 @@ const RETRY_MAX_MS = 15000;
 const retryDelay = attempt => Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.max(0, attempt));
 
 function renderMigrationReadFailure(uid, agent = null) {
-  if (SessionDockCapabilities.config.backend !== 'rust' || S.sel !== uid || S.agent !== agent) return;
+  if (S.sel !== uid || S.agent !== agent) return;
   const detail = $('#detail');
   if (!detail) return;
   $('#migration-read-error')?.remove();
@@ -1684,7 +1651,6 @@ function renderMigrationReadFailure(uid, agent = null) {
 
 /** 不可恢复失败的登记：暂停该视图的后台读取与 SSE，保留先前快照。 */
 function reportMigrationReadFailure(uid, agent, error) {
-  if (SessionDockCapabilities.config.backend !== 'rust') return null;
   const failure = {message: String(error?.message || error?.error || '无法确认最新历史，请重试。'),
     status: Number(error?.status) || 0, code: String(error?.code || '')};
   migrationReadFailures.set(viewKey(uid, agent), failure);
@@ -1696,13 +1662,11 @@ function reportMigrationReadFailure(uid, agent, error) {
 /** 请求失败的分流：瞬时失败不登记（返回 null，由调用方按退避重试），
  *  其余交给 reportMigrationReadFailure。 */
 function reportReadFailure(uid, agent, error) {
-  if (SessionDockCapabilities.config.backend !== 'rust') return null;
   if (transientReadFailure(error)) return null;
   return reportMigrationReadFailure(uid, agent, error);
 }
 
 async function retryMigrationRead(uid, agent = null) {
-  if (SessionDockCapabilities.config.backend !== 'rust') return false;
   const key = viewKey(uid, agent);
   if (migrationReadRetries.has(key)) return migrationReadRetries.get(key);
   const task = (async () => {
@@ -1744,7 +1708,7 @@ async function retryMigrationRead(uid, agent = null) {
  *  原生文件并发增长等情况也会以 migration-error 携带 503；它仍是瞬时失败，
  *  留给随后到来的 es.onerror 按退避策略重开。 */
 function pauseMigrationWatch(es, uid, agent, error = null) {
-  if (SessionDockCapabilities.config.backend !== 'rust' || _es !== es
+  if (_es !== es
       || _esUid !== uid || S.sel !== uid || S.agent !== agent) return false;
   if (!error) return false;
   if (transientReadFailure(error)) return false;
@@ -1756,7 +1720,6 @@ function pauseMigrationWatch(es, uid, agent, error = null) {
  *  探明原因：不可恢复（501 等）就暂停并给出理由；瞬时失败或读取成功则说明
  *  只是流本身没建起来，交回退避重连。探测不改快照、不重开流。 */
 function probeWatchRejection(uid, agent) {
-  if (SessionDockCapabilities.config.backend !== 'rust') return Promise.resolve(false);
   const key = viewKey(uid, agent);
   const current = migrationReadProbes.get(key);
   if (current) return current;
@@ -1857,22 +1820,19 @@ function watchSession(uid, agent = S.agent) {
   _esUid = uid;
   es.__sessiondockConnectionId = connectionId;
   let received = 0;
-  browserAuditEvent('sse.connecting', {start: e.end, agent: agent || ''}, null,
-    {uid, connectionId});
+  browserAuditEvent('sse.connecting', {start: e.end, agent: agent || ''}, {uid, connectionId});
   let opened = false;
   es.onopen = () => {
     opened = true;
     if (_es === es) _esRetryAttempt = 0;
-    browserAuditEvent('sse.opened', {ready_state: es.readyState}, null, {uid, connectionId});
+    browserAuditEvent('sse.opened', {ready_state: es.readyState}, {uid, connectionId});
   };
-  if (SessionDockCapabilities.config.backend === 'rust') {
-    es.addEventListener('migration-error', event => {
-      let reason;
-      try { reason = JSON.parse(event.data); }
-      catch { reason = {error: '实时同步返回了无效的错误信息，请重试。'}; }
-      pauseMigrationWatch(es, uid, agent, reason);
-    });
-  }
+  es.addEventListener('migration-error', event => {
+    let reason;
+    try { reason = JSON.parse(event.data); }
+    catch { reason = {error: '实时同步返回了无效的错误信息，请重试。'}; }
+    pauseMigrationWatch(es, uid, agent, reason);
+  });
   es.onmessage = ev => {
     // close() 后浏览器仍可能派发已经排队的旧事件，不能让旧 watch 改新视图。
     if (_es !== es || _esUid !== uid || S.agent !== agent) return;
@@ -1880,7 +1840,7 @@ function watchSession(uid, agent = S.agent) {
     try { data = JSON.parse(ev.data); }
     catch (error) {
       browserAuditEvent('sse.parse_failed', {error: String(error), bytes: ev.data.length},
-        ev.data.slice(0, 4000), {uid, connectionId, severity: 'error'});
+        {uid, connectionId, severity: 'error'});
       return;
     }
     received++;
@@ -1889,33 +1849,26 @@ function watchSession(uid, agent = S.agent) {
       packet_id: packetId, kind: data._audit?.kind || '', bytes: ev.data.length,
       reset: !!data.reset, start: data.start, end: data.end,
       messages: data.messages?.length || 0, outbox: data.outbox?.length || 0,
-    }, null, {uid, traceId: packetId, connectionId});
+    }, {uid, traceId: packetId, connectionId});
     Promise.resolve(applyDiff(uid, data, 0, agent)).then(applied => {
-      const snapshot = browserStateSnapshot('sse-applied');
       browserAuditEvent('sse.applied', {
         packet_id: packetId, applied_messages: applied,
         cache_end: cache.get(viewKey(uid, agent))?.end,
-      }, snapshot.content, {uid, traceId: packetId, connectionId});
+      }, {uid, traceId: packetId, connectionId});
       scheduleBrowserSnapshot('sse-applied');
     }).catch(error => browserAuditEvent('sse.apply_failed', {
       packet_id: packetId, error: String(error?.stack || error),
-    }, null, {uid, traceId: packetId, connectionId, severity: 'error'}));
+    }, {uid, traceId: packetId, connectionId, severity: 'error'}));
   };
   es.onerror = () => {
     // EventSource 自带的重连会沿用旧 URL(旧偏移), 所以自己关掉重开, 带上新偏移
     es.close();
-    browserAuditEvent('sse.error', {ready_state: es.readyState, received, opened}, null,
+    browserAuditEvent('sse.error', {ready_state: es.readyState, received, opened},
       {uid, connectionId, severity: 'warning'});
     if (_es !== es) return;
     _es = null;
     clearTimeout(_esRetry);
-    if (SessionDockCapabilities.config.backend !== 'rust') {
-      _esRetry = setTimeout(() => {
-        if (S.sel === uid && S.agent === agent) watchSession(uid, agent);
-      }, 1500);
-      return;
-    }
-    // Rust：断网、代理断开、服务重启、503 都是瞬时的——按 1.5 s 起的指数退避
+    // 断网、代理断开、服务重启、503 都是瞬时的——按 1.5 s 起的指数退避
     // 重开（封顶 15 s），不暂停视图。流从未打开过时先探一次 HTTP 原因，
     // 只有探到不可恢复的失败（如 501）才暂停。
     const attempt = opened ? 0 : _esRetryAttempt++;
@@ -1933,7 +1886,7 @@ function watchSession(uid, agent = S.agent) {
 function closeWatch() {
   clearTimeout(_esRetry);
   if (_es) {
-    browserAuditEvent('sse.closed_by_page', {ready_state: _es.readyState}, null,
+    browserAuditEvent('sse.closed_by_page', {ready_state: _es.readyState},
       {uid: _esUid, connectionId: _es.__sessiondockConnectionId || ''});
     _es.close(); _es = null; _esUid = null;
   }
@@ -2306,9 +2259,9 @@ function pendingTmuxSessions() {
     return [{
       node_id: t.node_id, node_name: t.node_name, stale: t.stale,
       uid: pendingUid(t.name), pending: true, name: t.name, tmuxName: t.name, source,
-      ...(SessionDockCapabilities.config.backend === 'rust' ? {record_id:t.record_id,launch_id:t.launch_id,
-        instance_id:t.instance_id,running:t.running,state:t.state,unavailable_reason:t.unavailable_reason,
-        native_binding:t.native_binding,binding:t.binding,recording:t.recording,grid:t.grid} : {}),
+      record_id:t.record_id, launch_id:t.launch_id,
+      instance_id:t.instance_id, running:t.running, state:t.state, unavailable_reason:t.unavailable_reason,
+      native_binding:t.native_binding, binding:t.binding, recording:t.recording, grid:t.grid,
       title: t.title || `新建 ${SOURCES[source].name} 会话`,
       kind: t.kind || '', report_id: t.report_id || '', cwd: t.cwd || '(未知)',
       created: new Date(pendingDraftStartedAt(pendingUid(t.name), t) * 1000).toISOString(),
@@ -2513,7 +2466,7 @@ async function syncSidebarView(row, base, latest, attempt = 0) {
   } catch (error) {
     // 列表签名可能不会再变化；瞬时失败（断网、503）按退避补三次（1.5/3/6 s），
     // 仍不影响其他会话；4xx 这类请求本身不成立的失败不重试。
-    if (attempt < 3 && (SessionDockCapabilities.config.backend !== 'rust' || transientReadFailure(error))) {
+    if (attempt < 3 && transientReadFailure(error)) {
       setTimeout(() => syncSidebarView(row, base, latest, attempt + 1), retryDelay(attempt));
     }
   }
@@ -3729,8 +3682,7 @@ async function toggleSessionStar(uid) {
  * 只改 SessionDock的显示时间线；不写原生记录，也不给 CLI 发任何回滚信号。
  * 没有这个能力声明的页面，保持原有双 Esc 原生回滚流程。 */
 function timelinePinEnabled() {
-  return SessionDockCapabilities.config.backend === 'rust'
-    && SessionDockCapabilities.config.timeline_pin === true;
+  return SessionDockCapabilities.config.timeline_pin === true;
 }
 
 function timelinePinFailed(message) {
@@ -4275,7 +4227,7 @@ function groupBy(list, {skipClosed = false} = {}) {
 // instead of "waiting" (its `stale` is the receipt flag, not a hub cache).
 const pendingMeta = s => `${fmtTime(s.updated)} · ${typeof pendingStateLabel === 'function'
   ? pendingStateLabel(s) : '等待首条消息'}`;
-const rustPendingRow = s => !!s.pending && !!s.record_id && SessionDockCapabilities.config.backend === 'rust';
+const rustPendingRow = s => !!s.pending && !!s.record_id;
 // Explicitly shown ancestors can share the leaf's title. Keep their native
 // relationship visible instead of making a fork chain look like duplicate rows.
 const forkMeta = s => {
@@ -4933,7 +4885,6 @@ function followContinuedSession(uid) {
 // 三次（1.5/3/6 s），期间可手动重试；仍失败则停在可点击重试的提示上。
 const openRetries = new Map();
 function scheduleOpenRetry(uid, agent, ac) {
-  if (SessionDockCapabilities.config.backend !== 'rust') return;
   const key = viewKey(uid, agent);
   const attempt = (openRetries.get(key) || 0) + 1;
   const box = $('#detail .empty');
@@ -4966,7 +4917,7 @@ async function followSelectedFork() {
   if (MOBILE.matches && store.get('mobilePage', 'list') !== 'detail') return false;
   const leaf = forkLeaf(current);
   if (!leaf || leaf.uid === S.sel) return false;
-  browserAuditEvent('session.fork_followed', {from_uid: S.sel}, null, {uid: leaf.uid});
+  browserAuditEvent('session.fork_followed', {from_uid: S.sel}, {uid: leaf.uid});
   if (typeof migrateComposerDraft === 'function') migrateComposerDraft(S.sel, leaf.uid);
   if (typeof T !== 'undefined' && T.uid === S.sel) T.uid = leaf.uid;
   await openSession(leaf.uid, null, {exact: true});
@@ -5044,7 +4995,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     uid = forkLeafUid(uid);
   }
   browserAuditEvent('session.opened', {agent: selectedAgent || '', cached: cache.has(viewKey(uid, selectedAgent))},
-    null, {uid});
+    {uid});
   showMobileDetail();
   inflight?.abort();            // 连点列表时, 放弃上一个还没回来的请求
   const ac = inflight = new AbortController();
@@ -5094,8 +5045,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     });
   } catch (e) {
     if (e.name === 'AbortError') return;      // 已经切到别的会话了
-    if (SessionDockCapabilities.config.backend === 'rust'
-        && (S.sel !== uid || S.agent !== selectedAgent)) return;
+    if (S.sel !== uid || S.agent !== selectedAgent) return;
     progressDone();
     $('#detail').innerHTML = `<div class="empty">读取失败: ${esc(e.message)}</div>`;
     ensureConsolePlaceholder();
@@ -5105,7 +5055,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   }
   if (S.sel !== uid || S.agent !== selectedAgent) return; // 期间切了别的视图
   const { data, bytes } = res;
-  if (SessionDockCapabilities.config.backend === 'rust') { migrationReadFailures.delete(key); openRetries.delete(key); }
+  migrationReadFailures.delete(key); openRetries.delete(key);
   cachePut(key, { meta: data.meta, msgs: data.messages, version: data.version,
                   end: data.end, anchor: data.anchor, activity: data.activity, bytes,
                   prompt: data.prompt || null, cli: data.cli ?? null,
@@ -5284,8 +5234,7 @@ function historyGapNode(info) {
 }
 
 function historyPagesEnabled() {
-  return SessionDockCapabilities.config.backend === 'rust'
-    && SessionDockCapabilities.config.history_pages === true;
+  return SessionDockCapabilities.config.history_pages === true;
 }
 
 const historyPageRequests = new Map();
@@ -5333,7 +5282,7 @@ async function fetchHistoryPage(uid, agent, cursor, signal, partial) {
   const url = `api/messages/${encodeURIComponent(uid)}/page`;
   const traceId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   browserAuditEvent('http.request.started', {url, method: 'GET', agent: agent || '',
-    page_start: partial?.head, page_remaining: partial?.omitted, resumable: !!partial?.resume}, null, {uid, traceId});
+    page_start: partial?.head, page_remaining: partial?.omitted, resumable: !!partial?.resume}, {uid, traceId});
   let response;
   try {
     response = await fetch(appUrl(`${url}?${query}`), {signal, cache: 'no-store',
@@ -5341,11 +5290,11 @@ async function fetchHistoryPage(uid, agent, cursor, signal, partial) {
         'X-SessionDock-Build': BUILD_ID}});
   } catch (error) {
     browserAuditEvent('http.request.failed', {url, error: String(error?.name || error)},
-      null, {uid, traceId, severity: 'warning'});
+      {uid, traceId, severity: 'warning'});
     throw error;
   }
   browserAuditEvent('http.response.received', {url, status: response.status, ok: response.ok},
-    null, {uid, traceId, severity: response.ok ? 'info' : 'warning'});
+    {uid, traceId, severity: response.ok ? 'info' : 'warning'});
   if (!response.ok) {
     const detail = await response.json().catch(() => null);
     const error = new Error(detail?.error || `HTTP ${response.status}`);
@@ -6356,8 +6305,7 @@ function renderSessionAction(m, button = $('#a-session-action')) {
 // then the host's guarded stop); an unmanaged/external CLI is a typed refusal.
 // Without process detection `S.live` only holds sessions this page launched or
 // took over, so a listed managed instance also makes the session stoppable.
-const sessionStopCapable = () => SessionDockCapabilities.config.backend === 'rust'
-  && SessionDockCapabilities.config.session_stop === true;
+const sessionStopCapable = () => SessionDockCapabilities.config.session_stop === true;
 function sessionStoppable(uid) {
   if (S.live.has(uid)) return true;
   return sessionStopCapable() && typeof T !== 'undefined'
@@ -6456,8 +6404,7 @@ async function stopSession(m, button = null) {
 }
 
 // Rust 回收站能力：文件进服务端显式配置的回收站目录。
-const trashCapable = () => SessionDockCapabilities.config.backend === 'rust'
-  && SessionDockCapabilities.config.trash === true;
+const trashCapable = () => SessionDockCapabilities.config.trash === true;
 const trashLocationNote = () => '文件会移入服务端回收站，不会永久删除。';
 // 运行状态未知不等于已退出：只有用户明确确认 CLI 已退出，才带 force 重试。
 function confirmForceDelete(count, detail) {
@@ -7664,7 +7611,7 @@ function groupNode(items, initiallyOpen = false) {
 function safeMediaSrc(src) {
   src = String(src || '');
   if (/^\/api\/media\/[0-9a-f]{32}$/.test(src)) return appUrl(src);
-  if (SessionDockCapabilities.config.backend === 'rust' && SessionDockCapabilities.config.media_lazy === true) return '';
+  if (SessionDockCapabilities.config.media_lazy === true) return '';
   if (HUB_MODE && /^\/api\/nodes\/[0-9a-f]{32}\/api\/media\/[0-9a-f]{32}$/.test(src)) return appUrl(src);
   // Native history is untrusted: Rust's local media capability does not grant
   // permission for the browser to contact URLs mentioned in that history.
@@ -7677,13 +7624,11 @@ function safeMediaSrc(src) {
 }
 
 function lazyMediaEnabled() {
-  return SessionDockCapabilities.config.backend === 'rust'
-    && SessionDockCapabilities.config.media_lazy === true;
+  return SessionDockCapabilities.config.media_lazy === true;
 }
 
 function mediaContinuationEnabled() {
-  return SessionDockCapabilities.config.backend === 'rust'
-    && SessionDockCapabilities.config.media_continuation === true;
+  return SessionDockCapabilities.config.media_continuation === true;
 }
 
 // Error-only diagnostics never materialize an image body. Completed results
@@ -7846,7 +7791,7 @@ function imageHtml(m, inline = false) {
   return lazy ? `<span class="media-load${inline ? ' inline' : ''}">${html}</span>` : html;
 }
 
-// Rust-only per-message continuation: a message carries at most 16 typed
+// Per-message continuation: a message carries at most 16 typed
 // images plus `media_more`. When it is absent, markup is unchanged.
 function mediaMoreInfo(more) {
   if (!more || typeof more !== 'object' || Array.isArray(more)) return null;
@@ -9077,7 +9022,7 @@ MOBILE.addEventListener?.('change', e => {
     const detailVisible = !!S.sel && store.get('mobilePage', 'list') === 'detail';
     // 桌面终端跨进手机断点、而手机上次停在列表时，右栏即将被 CSS 隐藏。
     // 走与返回列表相同的暂存/停用流程，详情重新出现后由 restoreTermPane
-    // 按可见尺寸激活；不能把仍活跃的 xterm 留在 display:none 的祖先下面。
+    // 按可见尺寸激活；不能把仍活跃的终端视图留在 display:none 的祖先下面。
     if (!detailVisible && typeof T !== 'undefined'
         && !$('#termpane').classList.contains('hidden')) closeTermPane(true);
     document.body.classList.toggle('mobile-detail', detailVisible);
@@ -9493,8 +9438,7 @@ $('#trash-dialog').addEventListener('click', e => {
 });
 
 // 终端后端是每台机器的服务端设置，不进 localStorage：换个浏览器看到的必须是同一份。
-// 机器的名称、配色和控制台渲染都保存在中央服务端；接入和移除机器仍是服务器操作。
-// 非 hub 的单机没有注册表，"本机"的控制台渲染存在这个浏览器里。
+// 机器的名称和配色都保存在中央服务端；接入和移除机器仍是服务器操作。
 const MACHINE_COLORS = [
   ['', '默认'], ['blue', '蓝'], ['violet', '紫'], ['amber', '琥珀'], ['teal', '青'],
   ['rose', '玫红'], ['lime', '青柠'], ['cyan', '天蓝'], ['fuchsia', '品红'],
@@ -9504,8 +9448,7 @@ function machineTargets() {
   if (typeof T === 'undefined' || !T.listLoaded) return [];
   if (!HUB_MODE) {
     return T.enabled
-      ? [{id: '', name: '本机', color: '', online: true, local: true, enabled: true,
-          renderer: localConsoleRenderer()}] : [];
+      ? [{id: '', name: '本机', color: '', online: true, local: true, enabled: true}] : [];
   }
   // 按注册表顺序列全部机器，停用的原位留着（只剩勾选框能把它接回来），不往后挪
   const machines = Nodes.machines.length ? Nodes.machines : Nodes.list;
@@ -9514,7 +9457,7 @@ function machineTargets() {
     const cap = on ? Nodes.capabilities[node.id] || {} : {};
     return {id: node.id, name: node.name, color: node.color || '',
             online: on ? node.online : null, local: false, enabled: on,
-            terminal: !!cap.enabled, renderer: node.renderer === 'xterm' ? 'xterm' : 'grid'};
+            terminal: !!cap.enabled};
   });
 }
 
@@ -9680,31 +9623,6 @@ function machineRow(target) {
     head.append(name);
   }
   row.append(head);
-
-  const fields = document.createElement('div');
-  fields.className = 'machine-fields';
-  const renderer = document.createElement('select');
-  renderer.className = 'machine-renderer';
-  renderer.setAttribute('aria-label', `${target.name} 的控制台渲染`);
-  for (const [value, label] of CONSOLE_RENDERERS) {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    renderer.append(option);
-  }
-  renderer.value = target.renderer || 'grid';
-  renderer.disabled = target.enabled === false;
-  renderer.onchange = () => void chooseRenderer(target, renderer);
-  // 一行就是全部：说明都进悬停提示，不占高度
-  renderer.title = target.enabled === false
-    ? '已停用：不显示、不检查，视同不存在；勾选后重新接入'
-    : target.online === false
-    ? (typeof nodeOfflineReason === 'function'
-        ? nodeOfflineReason(Nodes.list.find(n => n.id === target.id) || {}) : '离线')
-    : '这台机器上会话的控制台怎么画：服务端网格由宿主解析终端、浏览器只画格子；'
-      + 'xterm.js 由浏览器自己解析。部署前启动的旧宿主只能用 xterm.js，会自动回落。重新打开控制台后生效。';
-  fields.append(renderer);
-  row.append(fields);
   return row;
 }
 
@@ -10061,35 +9979,9 @@ async function saveMachine(target, patch, control) {
   }
 }
 
-const CONSOLE_RENDERERS = [['grid', '服务端网格（默认）'], ['xterm', 'xterm.js（浏览器解析）']];
-function localConsoleRenderer() {
-  return store.get('consoleRenderer', 'grid') === 'xterm' ? 'xterm' : 'grid';
-}
 // 控制台粘贴文件：默认关；开启后粘贴的文件存入会话目录并把路径填入终端（term.js）。
 function consolePasteFilesEnabled() {
   return store.get('consolePasteFiles', false) === true;
-}
-
-async function chooseRenderer(target, select) {
-  const previous = target.renderer;
-  if (select.value === previous) return;
-  const label = (CONSOLE_RENDERERS.find(([value]) => value === select.value) || [])[1] || select.value;
-  if (target.local) {
-    store.set('consoleRenderer', select.value);
-    target.renderer = select.value;
-    setMachineNote(`本机：控制台改用 ${label}（保存在此浏览器）；重新打开控制台后生效。`);
-    return;
-  }
-  try {
-    const data = await machinePost(`api/nodes/${target.id}/display`, {renderer: select.value}, select);
-    target.renderer = data.node?.renderer || select.value;
-    const node = [...Nodes.machines, ...Nodes.list].find(n => n.id === target.id);
-    if (node) node.renderer = target.renderer;
-    setMachineNote(`${target.name}：控制台改用 ${label}；重新打开控制台后生效。`);
-  } catch (error) {
-    select.value = previous;
-    setMachineNote(`${target.name}：切换失败：${error.message || error}`, true);
-  }
 }
 
 function showSettingsTab(name) {

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""PTY history is scrolled locally by real wheel input in both console renderers."""
+"""PTY history is scrolled locally by real wheel input in the grid console."""
 
-import json
 import os
 from pathlib import Path
 import tempfile
@@ -23,7 +22,7 @@ done
 """
 
 
-def check(pw, renderer):
+def check(pw):
     with tempfile.TemporaryDirectory(prefix='sessiondock-scrollback-') as tmp:
         root = Path(tmp)
         for name in ['host', 'work', 'claude', 'codex', 'grok']:
@@ -41,7 +40,6 @@ def check(pw, renderer):
                 options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
             browser = pw.chromium.launch(**options)
             context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
-            context.add_init_script("localStorage.setItem('sessiondock.consoleRenderer', JSON.stringify(" + json.dumps(renderer) + "))")
             context.route('**/*', lambda r: r.continue_() if r.request.url.startswith(base + '/') else r.abort())
             scrolls, errors = [], []
             context.on('request', lambda r: scrolls.append(r.url) if '/api/term/scroll' in r.url else None)
@@ -58,7 +56,7 @@ def check(pw, renderer):
                 page.keyboard.press('Enter')
                 fixture.xterm_contains(page, 'SCROLL_ROW_150')
                 page.wait_for_function('scrollTerm.buffer.active.baseY > 50')
-                canvas = page.locator('.grid-canvas' if renderer == 'grid' else '.xterm-screen')
+                canvas = page.locator('.grid-canvas')
                 canvas.hover()
                 before = page.evaluate('scrollTerm.buffer.active.viewportY')
                 page.mouse.wheel(0, -300)
@@ -69,50 +67,49 @@ def check(pw, renderer):
                 assert page.evaluate('scrollTerm.buffer.active.viewportY') == top
                 page.mouse.wheel(0, 300)
                 page.wait_for_function('scrollTerm.buffer.active.viewportY === scrollTerm.buffer.active.baseY')
-                if renderer == 'grid':
-                    bar = page.get_by_role('scrollbar', name='终端历史')
-                    thumb = page.locator('.grid-scrollbar-thumb')
-                    bar.wait_for(state='visible')
-                    page.evaluate('window.scrollBytes = []; scrollTerm.onData(d => scrollBytes.push(d))')
-                    def drag_to(fraction):
-                        track_box, thumb_box = bar.bounding_box(), thumb.bounding_box()
-                        x = thumb_box['x'] + thumb_box['width'] / 2
-                        page.mouse.move(x, thumb_box['y'] + thumb_box['height'] / 2)
-                        page.mouse.down()
-                        page.mouse.move(x, track_box['y'] + thumb_box['height'] / 2
-                                        + (track_box['height'] - thumb_box['height']) * fraction, steps=10)
-                        page.mouse.up()
-                    drag_to(0)
-                    page.wait_for_function('scrollTerm.buffer.active.viewportY === 0')
-                    assert bar.get_attribute('aria-valuenow') == '0'
-                    track_box = bar.bounding_box()
-                    bar.click(position={'x': track_box['width'] / 2, 'y': track_box['height'] * .75})
-                    page.wait_for_function('scrollTerm.buffer.active.viewportY > scrollTerm.buffer.active.baseY / 2')
-                    bar.press('Home')
-                    page.wait_for_function('scrollTerm.buffer.active.viewportY === 0')
-                    bar.press('PageDown')
-                    page.wait_for_function('scrollTerm.buffer.active.viewportY === scrollTerm.rows')
-                    bar.press('End')
-                    page.wait_for_function('scrollTerm.buffer.active.viewportY === scrollTerm.buffer.active.baseY')
-                    assert not page.evaluate('scrollBytes'), 'scrollbar interaction reached the PTY'
-                    keyboard.press_sequentially('later')
-                    keyboard.press('Enter')
-                    drag_to(.25)
-                    anchored = page.evaluate('scrollTerm.buffer.active.viewportY')
-                    fixture.xterm_contains(page, 'SCROLL_ROW_180')
-                    assert page.evaluate('scrollTerm.buffer.active.viewportY') == anchored
-                    drag_to(1)
-                    page.wait_for_function('scrollTerm.buffer.active.viewportY === scrollTerm.buffer.active.baseY')
-                    page.set_viewport_size({'width': 900, 'height': 650})
-                    page.wait_for_function('scrollTerm._canvas.getBoundingClientRect().right <= scrollTerm._scrollbar.getBoundingClientRect().left')
-                    print('PASS grid scrollbar drag, keyboard, output anchoring, bottom follow, resize gutter', flush=True)
+                bar = page.get_by_role('scrollbar', name='终端历史')
+                thumb = page.locator('.grid-scrollbar-thumb')
+                bar.wait_for(state='visible')
+                page.evaluate('window.scrollBytes = []; scrollTerm.onData(d => scrollBytes.push(d))')
+                def drag_to(fraction):
+                    track_box, thumb_box = bar.bounding_box(), thumb.bounding_box()
+                    x = thumb_box['x'] + thumb_box['width'] / 2
+                    page.mouse.move(x, thumb_box['y'] + thumb_box['height'] / 2)
+                    page.mouse.down()
+                    page.mouse.move(x, track_box['y'] + thumb_box['height'] / 2
+                                    + (track_box['height'] - thumb_box['height']) * fraction, steps=10)
+                    page.mouse.up()
+                drag_to(0)
+                page.wait_for_function('scrollTerm.buffer.active.viewportY === 0')
+                assert bar.get_attribute('aria-valuenow') == '0'
+                track_box = bar.bounding_box()
+                bar.click(position={'x': track_box['width'] / 2, 'y': track_box['height'] * .75})
+                page.wait_for_function('scrollTerm.buffer.active.viewportY > scrollTerm.buffer.active.baseY / 2')
+                bar.press('Home')
+                page.wait_for_function('scrollTerm.buffer.active.viewportY === 0')
+                bar.press('PageDown')
+                page.wait_for_function('scrollTerm.buffer.active.viewportY === scrollTerm.rows')
+                bar.press('End')
+                page.wait_for_function('scrollTerm.buffer.active.viewportY === scrollTerm.buffer.active.baseY')
+                assert not page.evaluate('scrollBytes'), 'scrollbar interaction reached the PTY'
+                keyboard.press_sequentially('later')
+                keyboard.press('Enter')
+                drag_to(.25)
+                anchored = page.evaluate('scrollTerm.buffer.active.viewportY')
+                fixture.xterm_contains(page, 'SCROLL_ROW_180')
+                assert page.evaluate('scrollTerm.buffer.active.viewportY') == anchored
+                drag_to(1)
+                page.wait_for_function('scrollTerm.buffer.active.viewportY === scrollTerm.buffer.active.baseY')
+                page.set_viewport_size({'width': 900, 'height': 650})
+                page.wait_for_function('scrollTerm._canvas.getBoundingClientRect().right <= scrollTerm._scrollbar.getBoundingClientRect().left')
+                print('PASS grid scrollbar drag, keyboard, output anchoring, bottom follow, resize gutter', flush=True)
                 keyboard.press('p')
                 page.keyboard.type('ing')
                 page.keyboard.press('Enter')
                 fixture.xterm_contains(page, 'SCROLL_PING_OK')
                 assert not scrolls, scrolls
                 assert not errors, errors
-                print('PASS', renderer, 'PTY history wheel up/down, stable repaint, live input, no scroll HTTP', flush=True)
+                print('PASS grid PTY history wheel up/down, stable repaint, live input, no scroll HTTP', flush=True)
             finally:
                 context.close()
                 browser.close()
@@ -120,8 +117,7 @@ def check(pw, renderer):
 
 def main():
     with sync_playwright() as pw:
-        for renderer in ['grid', 'xterm']:
-            check(pw, renderer)
+        check(pw)
 
 
 if __name__ == '__main__':

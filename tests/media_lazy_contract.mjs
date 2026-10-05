@@ -20,11 +20,11 @@ function setup(config={backend:'rust',media_lazy:true}) {
   return context;
 }
 
-test('lazy handling is exact Rust capability gated; Python markup remains unchanged',()=>{
-  for(const config of [{},{backend:'python',media_lazy:true},{backend:'rust',media_lazy:1},
+test('lazy handling is gated by the exact media_lazy capability',()=>{
+  for(const config of [{},{backend:'rust',media_lazy:1},
     {backend:'rust',media_lazy:true}]) {
     const c=setup(config),html=c.imageHtml({src:path,alt:'image',lazy:true});
-    assert.equal(html.includes('data-media-lazy="true"'),config.backend==='rust'&&config.media_lazy===true);
+    assert.equal(html.includes('data-media-lazy="true"'),config.media_lazy===true);
     assert.match(html,/loading="lazy"/);assert.doesNotMatch(html,/width=|height=|data:image/);
   }
   const c=setup();
@@ -94,8 +94,8 @@ test('explicit image-window reload rejects newer observations and does not requi
   }
 });
 
-test('all Rust reset renders reconcile the published entry; Python keeps its old render options',async()=>{
-  for(const backend of ['rust','python']) {
+test('all reset renders reconcile the published entry',async()=>{
+  for(const backend of ['rust']) {
     const c=setup({backend}),cache=new Map([['u:a',{msgs:[],end:1}]]),rendered=[];
     Object.assign(c,{cache,S:{sel:'u',agent:'a',cursors:new Map()},viewKey:(uid,agent)=>uid+':'+agent,
       migrationReadPaused:()=>false,markInterruptedTurn:()=>{},cachePut:(key,e)=>cache.set(key,e),
@@ -105,7 +105,6 @@ test('all Rust reset renders reconcile the published entry; Python keeps its old
     await c.applyDiff('u',{reset:true,meta:{uid:'u',agent_id:'a'},messages:[{role:'user',text:'old'}],
       version:{head:'h'},end:2,anchor:'anchor'},100,'a');
     assert.equal(rendered.length,1);
-    if(backend==='rust') assert.equal(rendered[0][3].historyPageEntry,cache.get('u:a'));
-    else assert.equal(Object.keys(rendered[0][3]).length,0);
+    assert.equal(rendered[0][3].historyPageEntry,cache.get('u:a'));
   }
 });

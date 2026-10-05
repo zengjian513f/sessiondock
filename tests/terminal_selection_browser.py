@@ -68,7 +68,6 @@ def check_surface(pw, surface, mobile=False):
                                           has_touch=mobile, is_mobile=mobile, service_workers='block',
                                           permissions=['clipboard-read','clipboard-write'])
             context.add_init_script(OBSERVE)
-            context.add_init_script("localStorage.setItem('sessiondock.consoleRenderer', JSON.stringify(" + repr(surface) + "))")
             context.route('**/*', lambda r: r.continue_() if r.request.url.startswith(base + '/') else r.abort())
             page = context.new_page()
             errors = []
@@ -88,16 +87,6 @@ def check_surface(pw, surface, mobile=False):
                 };""")
                 keyboard = page.locator('#keys')
             else:
-                if surface == 'xterm' and not mobile:
-                    # A failed optional renderer must leave a visible reason
-                    # and allow the same button to retry without a reload.
-                    page.route('**/vendor/xterm.js*', lambda route: route.abort())
-                    page.locator(f'#side .item[data-uid="{uid}"]').click()
-                    page.locator('#a-term').click()
-                    page.wait_for_function("document.querySelector('#console-toast').textContent.includes('控制台组件加载失败')")
-                    page.wait_for_function("document.querySelector('#termpane').classList.contains('hidden')")
-                    assert page.locator('#a-term').get_attribute('data-unavailable') == 'false'
-                    page.unroute('**/vendor/xterm.js*')
                 fixture.open_console(page, uid)
                 page.evaluate('window.selectionTerm = [...T.views.values()][0].term')
                 keyboard = page.locator('#termpane .xterm-helper-textarea')
@@ -118,23 +107,20 @@ def check_surface(pw, surface, mobile=False):
                 page.wait_for_function('mode => selectionTerm.modes.mouseTrackingMode === mode', arg=expected)
                 page.wait_for_timeout(100)
                 b = page.evaluate("""() => {
-                  const t = selectionTerm;
-                  if (t._canvas) { const r=t.renderer, b=t._canvas.getBoundingClientRect();
-                    return {x:b.x,y:b.y,cw:r.cellWidth,ch:r.cellHeight}; }
-                  const b = document.querySelector('.xterm-screen').getBoundingClientRect();
-                  return {x:b.x,y:b.y,cw:b.width/t.cols,ch:b.height/t.rows};
+                  const t = selectionTerm, r = t.renderer, b = t._canvas.getBoundingClientRect();
+                  return {x:b.x,y:b.y,cw:r.cellWidth,ch:r.cellHeight};
                 }""")
                 # No capture: plain drag. Capture: Shift must bypass the CLI.
                 page.evaluate("navigator.clipboard.writeText('selection-sentinel')")
                 if mode != 'none': page.keyboard.down('Shift')
                 page.mouse.move(b['x'] + .2*b['cw'], b['y'] + .5*b['ch'])
-                # xterm's any-motion hover precedes the local drag. Start the
+                # The any-motion hover precedes the local drag. Start the
                 # transport assertion at mousedown, after that hover is drained.
                 page.wait_for_timeout(100)
                 page.evaluate('selectionBytes = []')
                 before = (root / 'work/input.bin').read_bytes()
                 page.mouse.down()
-                if surface != 'xterm' and mode == '1003':
+                if mode == '1003':
                     # The selection owns the gesture until mouseup, even when
                     # the user lets go of Shift before finishing the drag.
                     page.keyboard.up('Shift')
@@ -171,7 +157,7 @@ def check_surface(pw, surface, mobile=False):
                 page.keyboard.type('mode:none')
                 page.keyboard.press('Enter')
                 page.wait_for_function("selectionTerm.modes.mouseTrackingMode === 'none'")
-                screen = page.locator('.grid-canvas' if surface == 'grid' else '.xterm-screen')
+                screen = page.locator('.grid-canvas')
                 def menu(edge=False):
                     box = screen.bounding_box()
                     screen.click(button='right', position={'x': box['width'] - 2, 'y': box['height'] - 2}
@@ -225,59 +211,58 @@ def check_surface(pw, surface, mobile=False):
                 page.wait_for_function("document.querySelector('.term-find [role=status]').textContent === '无匹配'")
                 page.get_by_role('searchbox', name='查找终端输出').press('Escape')
                 assert not page.locator('.term-find').is_visible()
-                if surface == 'grid':
-                    keyboard.focus()
-                    page.keyboard.type('mode:flood')
-                    page.keyboard.press('Enter')
-                    page.wait_for_function("selectionTerm.model.scrollback.length >= 4900")
-                    menu()
-                    page.get_by_role('menuitem', name='查找', exact=True).click()
-                    searchbox = page.get_by_role('searchbox', name='查找终端输出')
-                    # Deliver two synthetic cursor diffs precisely while the
-                    # real menu search yields. Neither stale pass may select
-                    # coordinates; continuous updates must stop retrying.
-                    page.evaluate("""() => {
-                      const model = selectionTerm.model, read = model.readCells;
-                      let pending = false;
-                      window.searchInvalidations = 0;
-                      window.restoreSearchRead = () => { model.readCells = read; };
-                      model.readCells = function(row) {
-                        if (!pending && searchInvalidations < 2) {
-                          pending = true;
-                          setTimeout(() => {
-                            searchInvalidations++;
-                            selectionTerm.write(JSON.stringify({t:'diff', cursor:{x:searchInvalidations, y:0}}) + '\\n');
-                            pending = false;
-                          }, 0);
-                        }
-                        return read.call(this, row);
-                      };
-                    }""")
-                    searchbox.fill('HISTORY_04999')
-                    page.wait_for_function("searchInvalidations === 2 && document.querySelector('.term-find [role=status]').textContent === '输出已变化，请重试查找'")
-                    assert page.evaluate('selectionTerm.getSelection()') == ''
-                    page.evaluate('restoreSearchRead()')
-                    page.get_by_role('button', name='下一个', exact=True).click()
-                    page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_04999'")
-                    searchbox.fill('HISTORY_')
-                    searchbox.fill('HISTORY_04999')
-                    page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_04999'")
-                    assert page.evaluate('selectionTerm.model.scrollback.filter(row => row.cells).length') <= 512
-                    searchbox.press('Escape')
-                    page.set_viewport_size({'width': 1000, 'height': 900})
-                    page.wait_for_timeout(250)
-                    page.set_viewport_size({'width': 1280, 'height': 900})
-                    page.wait_for_timeout(250)
-                    menu()
-                    page.get_by_role('menuitem', name='查找', exact=True).click()
-                    searchbox.fill('HISTORY_00000')
-                    page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_00000'")
-                    assert page.evaluate('selectionTerm.model.scrollback.filter(row => row.cells).length') <= 512
-                    searchbox.press('Escape')
-                    keyboard.focus()
-                    page.keyboard.type('mode:none')
-                    page.keyboard.press('Enter')
-                    page.wait_for_function("selectionTerm.buffer.active.getLine(selectionTerm.buffer.active.baseY).translateToString(true).includes('SELECT_FIRST')")
+                keyboard.focus()
+                page.keyboard.type('mode:flood')
+                page.keyboard.press('Enter')
+                page.wait_for_function("selectionTerm.model.scrollback.length >= 4900")
+                menu()
+                page.get_by_role('menuitem', name='查找', exact=True).click()
+                searchbox = page.get_by_role('searchbox', name='查找终端输出')
+                # Deliver two synthetic cursor diffs precisely while the
+                # real menu search yields. Neither stale pass may select
+                # coordinates; continuous updates must stop retrying.
+                page.evaluate("""() => {
+                  const model = selectionTerm.model, read = model.readCells;
+                  let pending = false;
+                  window.searchInvalidations = 0;
+                  window.restoreSearchRead = () => { model.readCells = read; };
+                  model.readCells = function(row) {
+                    if (!pending && searchInvalidations < 2) {
+                      pending = true;
+                      setTimeout(() => {
+                        searchInvalidations++;
+                        selectionTerm.write(JSON.stringify({t:'diff', cursor:{x:searchInvalidations, y:0}}) + '\\n');
+                        pending = false;
+                      }, 0);
+                    }
+                    return read.call(this, row);
+                  };
+                }""")
+                searchbox.fill('HISTORY_04999')
+                page.wait_for_function("searchInvalidations === 2 && document.querySelector('.term-find [role=status]').textContent === '输出已变化，请重试查找'")
+                assert page.evaluate('selectionTerm.getSelection()') == ''
+                page.evaluate('restoreSearchRead()')
+                page.get_by_role('button', name='下一个', exact=True).click()
+                page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_04999'")
+                searchbox.fill('HISTORY_')
+                searchbox.fill('HISTORY_04999')
+                page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_04999'")
+                assert page.evaluate('selectionTerm.model.scrollback.filter(row => row.cells).length') <= 512
+                searchbox.press('Escape')
+                page.set_viewport_size({'width': 1000, 'height': 900})
+                page.wait_for_timeout(250)
+                page.set_viewport_size({'width': 1280, 'height': 900})
+                page.wait_for_timeout(250)
+                menu()
+                page.get_by_role('menuitem', name='查找', exact=True).click()
+                searchbox.fill('HISTORY_00000')
+                page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_00000'")
+                assert page.evaluate('selectionTerm.model.scrollback.filter(row => row.cells).length') <= 512
+                searchbox.press('Escape')
+                keyboard.focus()
+                page.keyboard.type('mode:none')
+                page.keyboard.press('Enter')
+                page.wait_for_function("selectionTerm.buffer.active.getLine(selectionTerm.buffer.active.baseY).translateToString(true).includes('SELECT_FIRST')")
                 page.evaluate("navigator.clipboard.writeText('PASTE_MENU_SENTINEL')")
                 before = (root / 'work/input.bin').read_bytes()
                 menu()
@@ -316,7 +301,7 @@ def check_touch(page, context, root, keyboard, surface):
         page.wait_for_timeout(150)
         b = page.evaluate("""() => {
           const t = selectionTerm;
-          const screen = t._canvas || document.querySelector('.xterm-screen');
+          const screen = t._canvas;
           const b = screen.getBoundingClientRect();
           return {x:b.x,y:b.y,cw:b.width/t.cols,ch:b.height/t.rows};
         }""")
@@ -370,7 +355,7 @@ def check_touch_coexistence(page, context, root, keyboard, surface):
         return {'x': x, 'y': y, 'id': identifier}
     def origin():
         return page.evaluate("""() => {
-          const t = selectionTerm, screen = t._canvas || document.querySelector('.xterm-screen');
+          const t = selectionTerm, screen = t._canvas;
           const b = screen.getBoundingClientRect();
           return {x: b.x + .2*b.width/t.cols, y: b.y + .5*b.height/t.rows};
         }""")
@@ -418,7 +403,7 @@ def check_touch_coexistence(page, context, root, keyboard, surface):
             page.wait_for_function("selectionTerm.getSelection() === 'S'")
             send('touchEnd')
             wait_for_async(page, "navigator.clipboard.readText().then(t => t === 'S')")
-            screen = page.locator('.grid-canvas' if surface == 'grid' else '.xterm-screen')
+            screen = page.locator('.grid-canvas')
             screen.click(button='right', position={'x': 30, 'y': 12})
             page.locator('.term-context-menu:visible').wait_for()
             page.get_by_role('menuitem', name='粘贴', exact=True).press('Escape')
@@ -438,7 +423,7 @@ def check_scaled_rows(page, root, keyboard, surface):
                            '?.translateToString(true).startsWith("ROW_")', arg=3)
     rows = page.evaluate('selectionTerm.rows')
     b = page.evaluate("""() => {
-      const t=selectionTerm, b=(t._canvas || document.querySelector('.xterm-screen')).getBoundingClientRect();
+      const t=selectionTerm, b=(t._canvas).getBoundingClientRect();
       return {x:b.x, y:b.y, cw:b.width/t.cols, ch:b.height/t.rows};
     }""")
     for row in (1, rows // 2, rows - 3):
@@ -476,7 +461,7 @@ def check_shift_selection(page, context, root, keyboard, surface):
         cdp.send('Input.dispatchTouchEvent', {'type': kind, 'touchPoints': list(points)})
     def box():
         return page.evaluate("""() => {
-          const t=selectionTerm, b=(t._canvas || document.querySelector('.xterm-screen')).getBoundingClientRect();
+          const t=selectionTerm, b=(t._canvas).getBoundingClientRect();
           return {x:b.x, y:b.y, cw:b.width/t.cols, ch:b.height/t.rows};
         }""")
     for mode in ('none', '1003'):
@@ -536,10 +521,9 @@ def check_shift_selection(page, context, root, keyboard, surface):
 def main():
     fixture.SHELL = 'exec python3 -u -c ' + shlex.quote(CLI)
     with sync_playwright() as pw:
-        for surface in ['grid', 'standalone', *['xterm']]:
+        for surface in ['grid', 'standalone']:
             check_surface(pw, surface)
-        for surface in ['grid', 'xterm']:
-            check_surface(pw, surface, mobile=True)
+        check_surface(pw, 'grid', mobile=True)
 
 
 if __name__ == '__main__':

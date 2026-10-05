@@ -49,8 +49,7 @@ def main():
 
                 open_session('plain')
                 expect(page.locator('#msgs')).to_contain_text('No optional renderer')
-                assert not any('/vendor/katex/' in url or '/vendor/xterm.js' in url
-                               or '/vendor/addon-' in url for url in requests), requests
+                assert not any('/vendor/katex/' in url for url in requests), requests
                 open_session('formula')
                 expect(page.locator('#msgs .katex')).to_be_visible()
                 assert any('/vendor/katex/katex.min.js' in url for url in requests)

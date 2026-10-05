@@ -47,7 +47,7 @@ finally:
 '''
 
 SAMPLE = """() => {
- const t = [...T.views.values()].find(v => v.grid).term, r = t.renderer;
+ const t = currentTermViewObject().term, r = t.renderer;
  const canvas = t._canvas, ctx = canvas.getContext('2d');
  const labels = ['PROMPT','GREEN','RED','CODE','YELLOW','DIM','INVERSE'];
  const result = {};
@@ -94,7 +94,6 @@ def main():
             context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
             context.add_init_script("""
               localStorage.setItem('sessiondock.theme', JSON.stringify('dark'));
-              localStorage.setItem('sessiondock.consoleRenderer', JSON.stringify('grid'));
               const fill = CanvasRenderingContext2D.prototype.fillText;
               CanvasRenderingContext2D.prototype.fillText = function(text,x,y,...rest) {
                 (this.canvas._paints ||= []).push({text,x,y,fg:this.fillStyle,alpha:this.globalAlpha});
@@ -106,7 +105,6 @@ def main():
             page.on('pageerror', lambda e: errors.append(str(e)))
             page.goto(base, wait_until='networkidle')
             fixture.open_console(page, uid)
-            assert page.evaluate('[...T.views.values()].every(v => v.grid)')
             keyboard = page.locator('#termpane .xterm-helper-textarea')
 
             def command(text):

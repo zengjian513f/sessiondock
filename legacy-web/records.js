@@ -17,7 +17,9 @@
   const state = {id: '', key: '', node: '', status: '', live: false, ended: false, gaps: 0, bytes: 0};
 
   let records = [];
-  let term = null, fitAddon = null, socket = null;
+  let term = null, socket = null;
+  // Grid frames carry the recorded size in each snapshot; read it from the lines.
+  let decoder = new TextDecoder(), pendingLine = '';
   let generation = 0, reconnectTimer = 0, reconnectDelay = 1000, leaving = false;
   let fitOn = false, recordedCols = 0, recordedRows = 0;
   let loading = false;
@@ -45,7 +47,7 @@
     return url;
   }
   function attachURL(id, nid) {
-    const url = apiURL('term/records/attach', {id}, nid);
+    const url = apiURL('term/records/attach', {id, mode: 'grid'}, nid);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     return url.href;
   }
@@ -140,7 +142,7 @@
       const dim = `${row.cols || 0}×${row.rows || 0}`;
       item.append(element('div', [created, size, dim].filter(Boolean).join(' · '), 'meta'));
       if (row.cwd) item.append(element('div', row.cwd, 'cwd'));
-      // 同一模型的网格回放：新页面打开，不影响这里的 xterm 回放。
+      // 带时间轴的网格回放：新页面打开，不影响这里的回放。
       const gridLink = element('a', '网格回放', 'grid-link');
       const gridUrl = new URL('grid.html', base);
       gridUrl.searchParams.set('record', row.id);
@@ -199,41 +201,37 @@
       try { ws.close(); } catch {}
     }
   }
-  // reset() keeps the old scrollback; dispose and recreate when switching recordings.
+  // Dispose and recreate when switching recordings so no old scrollback remains.
   function destroyTerm() {
     if (term) {
       try { term.dispose(); } catch {}
       term = null;
-      fitAddon = null;
     }
     $('xterm').replaceChildren();
     $('xterm').classList.toggle('fit', fitOn);
   }
   function createTerm() {
     destroyTerm();
-    term = new Terminal({
-      allowProposedApi: true,
-      disableStdin: true,
+    decoder = new TextDecoder(); pendingLine = '';
+    // Read-only: keystrokes reach no socket, so the page never writes to the PTY.
+    term = new GridTerm({
       cursorBlink: false,
       scrollback: 100000,
       fontFamily: 'UbuntuSansMono, Consolas, monospace',
       fontSize: 14,
       theme: termTheme(),
     });
-    fitAddon = new FitAddon.FitAddon();
-    term.loadAddon(fitAddon);
-    try {
-      if (globalThis.Unicode11Addon?.Unicode11Addon) {
-        term.loadAddon(new Unicode11Addon.Unicode11Addon());
-        term.unicode.activeVersion = '11';
-      }
-    } catch {}
     term.open($('xterm'));
-    if (fitOn) fitAddon.fit();
+    if (fitOn) fit();
+  }
+  /** Re-wrap the recording to the window instead of its recorded size. */
+  function fit() {
+    const box = $('xterm'), size = term?.proposeDimensions(box.clientWidth, box.clientHeight);
+    if (size && size.cols > 0 && size.rows > 0) term.resize(size.cols, size.rows);
   }
   function applyRecordedSize() {
     if (!term || !recordedCols || !recordedRows) return;
-    if (fitOn) fitAddon?.fit();
+    if (fitOn) fit();
     else term.resize(recordedCols, recordedRows);
   }
   function handleFrame(msg) {
@@ -241,7 +239,7 @@
     if (msg.t === 'record') {
       recordedCols = msg.cols || recordedCols;
       recordedRows = msg.rows || recordedRows;
-      term.reset();
+      // A snapshot follows each record frame and replaces the whole screen.
       applyRecordedSize();
       state.bytes = 0;
       state.live = !!msg.live;
@@ -251,16 +249,8 @@
       setStatus(state.live ? '进行中 · 实时跟随' : '已结束');
       return;
     }
-    if (msg.t === 'resize') {
-      recordedCols = msg.cols || recordedCols;
-      recordedRows = msg.rows || recordedRows;
-      $('size').textContent = recordedCols && recordedRows ? `${recordedCols}×${recordedRows}` : '';
-      if (!fitOn) term.resize(recordedCols, recordedRows);
-      return;
-    }
     if (msg.t === 'gap') {
       state.gaps += 1;
-      term.reset();
       appendStatus(GAP_NOTE);
       return;
     }
@@ -286,7 +276,26 @@
     if (!bytes.byteLength) return;
     const follow = !state.live || atBottom();
     state.bytes += bytes.byteLength;
-    term.write(bytes, () => { if (follow && term) term.scrollToBottom(); });
+    const lines = (pendingLine + decoder.decode(bytes, {stream: true})).split('\n');
+    pendingLine = lines.pop() || '';
+    let resized = false;
+    for (const line of lines) {
+      if (!line.includes('"t":"snapshot"')) continue;
+      try {
+        const snapshot = JSON.parse(line);
+        if (snapshot.cols && snapshot.rows) {
+          recordedCols = snapshot.cols; recordedRows = snapshot.rows; resized = true;
+          $('size').textContent = `${recordedCols}×${recordedRows}`;
+        }
+      } catch { /* the renderer reports malformed lines */ }
+    }
+    const target = term;
+    target.write(bytes, () => {
+      if (term !== target) return;
+      // A snapshot replaces the screen at its recorded size; keep the window fit.
+      if (resized && fitOn) fit();
+      if (follow) target.scrollToBottom();
+    });
   }
   function scheduleReconnect(id, event) {
     const delay = reconnectDelay;
@@ -384,7 +393,7 @@
     navigator.clipboard.writeText(text);
   });
   $('bottom').addEventListener('click', () => { term?.scrollToBottom(); });
-  addEventListener('resize', () => { if (fitOn) fitAddon?.fit(); });
+  addEventListener('resize', () => { if (fitOn) fit(); });
   addEventListener('pagehide', () => {
     leaving = true;
     closeSocket();

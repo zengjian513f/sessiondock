@@ -109,31 +109,12 @@ fragmented messages have no separate aggregate application cap.
 
 PTY output is forwarded in order and backpressure waits for the browser. There is
 no fixed queued-output count and no two-second backpressure disconnect policy.
-The page writes every WebSocket frame straight into xterm (`writeTermOutput`);
-there is no page-side merge timer. xterm's own write buffer coalesces parsing
-per frame and honours DEC 2026 synchronized output, which Claude Code and Codex
-wrap their redraws in, so a redraw split across PTY packets still paints once.
-The former 20 ms merge cost every keystroke echo a full timer wait
-(`tests/bench_term_echo_browser.py`: localhost p50 ≈ 30 ms → < 1 ms). The one
-exception is a `?2026h` frame: its packets are held and handed to xterm
-as a single write after `?2026l` and 50 ms without another output packet
-(100 ms total / 256 KiB fallback), because
-xterm moves its hidden IME textarea to the cursor cell after every parsed
-write regardless of 2026, and browser widgets anchored to that textarea (touch
-selection handles) would otherwise chase the cursor through each packet of a
-redraw. The quiet window also covers complete marker pairs in one packet:
-on Cetus, ConPTY emitted `?2026l` with a visible cursor still at an animation
-cell, then emitted the remaining cells and final cursor restore about 15 ms
-later (BUG-20261003-110817-4e7c32); scheduling/transport can widen that gap.
-Flushing at the marker exposed that
-intermediate cursor. Tail packets restart only the quiet timer; they never
-extend the total deadline. Reconnect/disposal cancels both timers, and close
-flushes retained bytes. Ordinary echo outside a redraw still writes directly.
-`tests/terminal_sync_browser.py` uses a private fake CLI and real console
-keystrokes to replay this ordering, assert cursor events, and check plain echo
-and the unterminated-frame fallback. Delays beyond the bounded window can
-still expose upstream intermediate states; the bridge does not infer or
-rewrite the application's cursor position.
+The page hands every WebSocket frame straight to the grid console
+(`writeTermOutput`); there is no page-side merge timer. The grid wire carries
+the host model's cells, not escape sequences, so DEC 2026 synchronized output
+is applied by the host model before the page paints and there is nothing to
+hold or coalesce in the browser. The grid console keeps a hidden one-cell
+input textarea for the IME and the keyboard.
 That textarea also carries `writingsuggestions="false"`: Edge 124+ otherwise
 parks its inline Compose (Copilot) button — a blue dot — and text prediction
 on the focused field, which here is a hidden one-cell box at the cursor.
@@ -165,7 +146,7 @@ negligible host-write latency. Other page traffic and native session work
 continued. The bundle places the stall in the terminal transport but does not
 identify which network/proxy hop caused it. The regression
 `tests/terminal_heartbeat_browser.py` blocks each WebSocket direction separately
-while leaving it OPEN, then types through the recovered grid and xterm consoles;
+while leaving it OPEN, then types through the recovered grid console;
 it checks that delivered input is not duplicated and undelivered input is not
 replayed.
 

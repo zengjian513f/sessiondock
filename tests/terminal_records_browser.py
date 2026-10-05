@@ -6,7 +6,7 @@ frontend directory. The test opens
 only its fixtures' recordings page, never creates descendants, and exercises
 list filtering, selection, live follow, resize, read-only viewing, exit, reload
 and fit by normal browser clicks and keyboard input. Terminal assertions read
-the actual imported xterm buffer through globalThis.__records and the DOM.
+the actual grid buffer through globalThis.__records and the DOM.
 """
 from contextlib import ExitStack
 import os

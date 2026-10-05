@@ -15,7 +15,7 @@
     try {
       const caps = JSON.parse(document.querySelector('meta[name="sessiondock-capabilities"]')?.content || '{}');
       namespace = typeof caps.storage_namespace === 'string' && caps.storage_namespace
-        ? caps.storage_namespace : caps.backend === 'rust' ? 'sessiondock.' : '';
+        ? caps.storage_namespace : 'sessiondock.';
     } catch {}
     const current = document.querySelector('meta[name="sessiondock-mode"]')?.content === 'hub'
       ? `sessiondock.hub.${location.pathname}.` : 'sessiondock.';
@@ -31,11 +31,12 @@
   <script defer src="capabilities.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
   <link rel="stylesheet" href="typography.css?v=__SESSIONDOCK_ASSET_VERSION__">
   <script defer src="typography.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-  <link rel="stylesheet" href="vendor/xterm.css?v=__SESSIONDOCK_ASSET_VERSION__">
-  <script defer src="vendor/xterm.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-  <script defer src="vendor/addon-fit.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-  <script defer src="vendor/addon-unicode11.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
   <link rel="stylesheet" href="records.css?v=__SESSIONDOCK_ASSET_VERSION__">
+  <script type="module">
+    // 模块脚本与 defer 脚本按文档顺序执行，records.js 能直接用到网格外观层。
+    import {GridTerm} from './grid/facade.js?v=__SESSIONDOCK_ASSET_VERSION__';
+    globalThis.GridTerm = GridTerm;
+  </script>
   <script defer src="records.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 </head>
 <body>

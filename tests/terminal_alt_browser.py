@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Mobile Alt reaches the PTY with physical-key bytes in both renderers."""
+"""Mobile Alt reaches the PTY with physical-key bytes through the grid console."""
 
-import json
 import shlex
 import sys
 import tempfile
@@ -23,7 +22,7 @@ while True:
 '''
 
 
-def run(browser, renderer):
+def run(browser):
     with tempfile.TemporaryDirectory(prefix='sessiondock-alt-') as tmp:
         root = Path(tmp)
         for name in ('host', 'work', 'claude', 'codex', 'grok'):
@@ -36,13 +35,11 @@ def run(browser, renderer):
         with fixture.host(root, 'synthetic-' + uuid.uuid4().hex, uid), \
                 isolated_server(corpus, BINARY, host_dir=root / 'host') as (base, _):
             context = browser.new_context(viewport={'width': 390, 'height': 844}, service_workers='block')
-            context.add_init_script('localStorage.setItem("sessiondock.consoleRenderer", JSON.stringify(%s))' % json.dumps(renderer))
             page = context.new_page()
             errors = []
             page.on('pageerror', lambda e: errors.append(str(e)))
             page.goto(base, wait_until='networkidle')
             fixture.open_console(page, uid)
-            assert page.evaluate('!!currentTermViewObject().grid') == (renderer == 'grid')
             alt = page.locator('[data-term-modifier="alt"]')
             ctrl = page.locator('[data-term-modifier="ctrl"]')
             up = page.locator('[data-term-key="Up"]')
@@ -87,15 +84,14 @@ def run(browser, renderer):
             expect(alt).to_have_attribute('aria-pressed', 'false')
             assert not errors, errors
             context.close()
-            print('PASS', renderer, 'Alt+Up PTY bytes, one-shot, character, cancel, physical arrow, Ctrl+Alt, page, close reset', flush=True)
+            print('PASS grid Alt+Up PTY bytes, one-shot, character, cancel, physical arrow, Ctrl+Alt, page, close reset', flush=True)
 
 
 def main():
     fixture.SHELL = 'exec ' + shlex.quote(sys.executable) + ' -u -c ' + shlex.quote(CLI)
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
-        for renderer in ['grid', 'xterm']:
-            run(browser, renderer)
+        run(browser)
         browser.close()
 
 

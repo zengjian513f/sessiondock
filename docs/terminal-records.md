@@ -29,9 +29,8 @@ recording of its host name exists. An exited shell session stays listed
 until 删除 whether or not a recording exists, exactly like an agent
 session's row (`pending_listed`): with a recording, opening its console
 replays it read-only in the console pane itself (`term.js`
-`attachRecordingReplay`: no claim, no input; the byte stream into
-xterm.js, or `mode=grid` into the grid view when the renderer setting is
-the server grid); without one (an old host, `--no-record`), the console
+`attachRecordingReplay`: no claim, no input; `mode=grid` into the grid
+view); without one (an old host, `--no-record`), the console
 says 会话已结束，没有留下录制. A running shell session offers 停止
 (`term/kill`: EOF first, the guarded stop only if the shell is still
 there after 1.2 s, like `session/stop` for a CLI) and an exited one offers
@@ -53,8 +52,8 @@ the timeline instead of occupying the waiting page. Elapsed-time ticks label
 the track; dragging previews locally and commits a seek on release. Grid
 fitting excludes container padding; replay preserves the recorded cells and
 reduces its display font when necessary to fit the available width.
-`records.html` and `grid.html?record=` remain
-as unlinked engineering pages used by the suites. Listing and replay take
+`records.html` (replaying through the grid facade, `mode=grid`) and
+`grid.html?record=` remain as unlinked engineering pages used by the suites. Listing and replay take
 no ownership lease, send no input, and do not talk to the host process
 ([terminal ownership](terminal-ownership.md),
 [raw terminal input](terminal-input.md)). The files under the configured
@@ -310,8 +309,9 @@ query and its answers are dropped.
 
 ## Sanitizer
 
-Read-only replay feeds recorded bytes to the browser's xterm.js. Query
-sequences that would make xterm.js answer the "host" would write DSR/DA
+The byte wire (without `mode=grid`) feeds recorded bytes to a client terminal
+emulator; the bundled pages use the grid wire instead. Query sequences that
+would make such a client answer the "host" would write DSR/DA
 replies into a **live** session, and OSC 52 can touch the clipboard. The
 reader strips those queries before the socket; the on-disk record still
 contains them (except the DSR set the host already removed).
@@ -383,7 +383,7 @@ immediately and only then enqueues the Resize piece.
 
 The checkpoint `state` is the host model's own re-rendering of its
 screen (alacritty_terminal cells serialized back to escape sequences,
-the same reconstruction attach uses); the viewer's xterm.js can disagree
+the same reconstruction attach uses); a byte-wire client emulator can disagree
 with it in edge cases (soft-wrap flags are not preserved). Later output
 frames are the raw PTY tail and are not affected.
 

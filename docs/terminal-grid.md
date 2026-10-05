@@ -244,15 +244,12 @@ Scrollback reflow happens only in the model, on `reset: false` when
 concatenated and rewrapped; a wide cell is never split. The viewport is
 replaced by the next snapshot/diff from the host.
 
-The main console's xterm renderer uses DOM text at interface scales other than
-100%, because its WebGL glyph atlas only accounts for window DPR. Existing
-WebGL views switch to DOM without reconnecting; they retain DOM until recreated.
-The default grid renderer keeps its Canvas 2D path at every scale.
+The grid renderer keeps its Canvas 2D path at every interface scale.
 
 On narrow screens, the overlaid terminal rounds its top toward the opaque
 header. Fractional interface zoom must not expose a strip of message glyphs
 between the header and terminal; the keyboard browser suite checks this at
-85–125% scale for both renderers.
+85–125% scale.
 
 On narrow screens, a soft keyboard reduces the visible pane without resizing
 the PTY. Both console renderers move the screen only enough to show its last
@@ -381,31 +378,31 @@ because alacritty's ED 2 would push the cleared rows into scrollback.
 
 ## Main console
 
-The legacy console (`term.js`) uses the grid by default and can fall back
-to xterm.js per machine: settings → 机器 → 控制台渲染 (`grid`, the default,
-or `xterm`; applied when a console view is next created). On a hub the
-choice is a display attribute of the machine's registry entry
-(`renderer`, [hub](hub.md)) and `term.js` reads it through the row's
-`node_id`; a single instance has no registry, so 本机 keeps it in the
-browser (`sessiondock.consoleRenderer`). A host started before the grid
-protocol existed reports `grid:false` and always gets xterm.js.
+The legacy console (`term.js`) renders only through the grid; the page ships
+no xterm.js. A running host started before the grid protocol existed reports
+`grid:false`: its console stays closed with the explanation
+「此会话的终端宿主不支持网格显示，重新启动会话后即可打开控制台。」 An exited
+row has no host and still replays its recording or explains itself. The hub
+registry's `renderer` display attribute ([hub](hub.md)) is no longer read by
+the page.
 `legacy-web/grid/facade.js` exports `GridTerm`, an xterm.js-compatible
 object (`write` of JSON-line text, `resize`, `buffer.active`, selection,
 `onData`, `onSelectionChange`, `onClipboard`, `proposeDimensions`, …)
 built on the grid modules; `index.html` publishes it as
 `globalThis.GridTerm` from a module script placed before `term.js`.
-`ensureTerm` picks it up, skips the xterm addons, adds `mode=grid` to the
-attach URL and bypasses the SGR rewriting and 2026 hold in
-`writeTermOutput`; everything else (claim, lease, resize, revoke, exit,
-Codex side-thread scan through `buffer.active`) is unchanged.
+`ensureTerm` creates it and adds `mode=grid` to the attach URL;
+`writeTermOutput` hands each JSON-line chunk straight to it. Claim, lease,
+resize, revoke, exit and the Codex side-thread scan through `buffer.active`
+work on that object. The records page (`records.html`) replays through the same
+facade with `mode=grid`, reading each snapshot's recorded size.
 
 The main console's grid renderer reserves a 12-pixel right gutter for a vertical
 history scrollbar. Dragging the thumb or clicking the track changes the same
 local viewport as the wheel, without sending PTY input. When focused, the bar
 accepts arrows, PageUp/PageDown and Home/End. New output preserves a history
 position; returning to the bottom resumes following output. The bar is hidden
-on the alternate screen, where the application owns scrolling. The xterm
-renderer retains its own scrollbar. `tests/terminal_scrollback_browser.py`
+on the alternate screen, where the application owns scrolling.
+`tests/terminal_scrollback_browser.py`
 checks dragging, keyboard navigation, output anchoring and the resize gutter.
 
 ## Validation

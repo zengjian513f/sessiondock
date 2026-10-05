@@ -1,4 +1,4 @@
-/* Local terminal actions shared by the grid and xterm console renderers. */
+/* Local terminal actions for the grid console renderer. */
 function installTermMenu(view) {
   const {host, term} = view;
   const menu = document.createElement('div');
@@ -32,15 +32,8 @@ function installTermMenu(view) {
   };
   const closeMenu = () => { menu.hidden = true; };
   let searchEpoch = 0, searching = false;
-  let parsedVersion = 0, matchesRevision = null;
-  if (!view.grid) {
-    // These listeners belong to the terminal's event emitters and are released
-    // with that terminal. Parsing can trim scrollback without changing length.
-    term.onWriteParsed?.(() => { parsedVersion++; });
-    term.onResize?.(() => { parsedVersion++; });
-  }
-  const revision = () => ({model: view.grid ? term.model : null,
-    version: view.grid ? term.model.version : parsedVersion,
+  let matchesRevision = null;
+  const revision = () => ({model: term.model, version: term.model.version,
     buffer: term.buffer.active, cols: term.cols, rows: term.rows});
   const unchanged = before => {
     if (!before) return false;
@@ -112,8 +105,7 @@ function installTermMenu(view) {
           }
           const line = buffer.getLine(row);
           if (!line) continue;
-          if (!view.grid && !line.isWrapped) scan();
-          const raw = view.grid ? term.model.rowAt(row) : null;
+          const raw = term.model.rowAt(row);
           const cells = raw ? term.model.readCells(raw) : null;
           const rowCells = cells || [];
           positions.push({row, offset: text.length, cells: rowCells});
@@ -236,28 +228,22 @@ function installTermMenu(view) {
 }
 
 // Canvas text has no native browser selection. Long press starts a local
-// selection for either renderer; a swipe before the hold remains scrolling.
+// selection; a swipe before the hold remains scrolling.
 function installTermTouchSelection(view, begin) {
   const {host, term} = view;
   let gesture = null, suppressClickUntil = 0;
-  const screen = () => host.querySelector(view.grid ? '.grid-canvas' : '.xterm-screen');
+  const screen = () => host.querySelector('.grid-canvas');
   const cellAt = touch => {
     const rect = screen().getBoundingClientRect();
     const col = Math.max(0, Math.min(term.cols - 1, Math.floor((touch.clientX - rect.left) * term.cols / rect.width)));
     const y = Math.max(0, Math.min(term.rows - 1, Math.floor((touch.clientY - rect.top) * term.rows / rect.height)));
     const row = Math.min(term.buffer.active.length - 1, term.buffer.active.viewportY + y);
     // Snap wide-character spacer cells back to the character's first column.
-    if (view.grid) {
-      let x = 0;
-      for (const cell of term.model.cellsOf(term.model.rowAt(row))) {
-        const width = cell.width === 2 ? 2 : 1;
-        if (col < x + width) return {row, col: x, width};
-        x += width;
-      }
-    } else {
-      const line = term.buffer.active.getLine(row);
-      const x = line?.getCell(col)?.getWidth() === 0 ? Math.max(0, col - 1) : col;
-      return {row, col: x, width: line?.getCell(x)?.getWidth() || 1};
+    let x = 0;
+    for (const cell of term.model.cellsOf(term.model.rowAt(row))) {
+      const width = cell.width === 2 ? 2 : 1;
+      if (col < x + width) return {row, col: x, width};
+      x += width;
     }
     return {row, col, width: 1};
   };

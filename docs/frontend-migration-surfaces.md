@@ -76,7 +76,7 @@
 
 ### 机器
 
-机器名称、颜色、启用、顺序和控制台渲染存在中央服务端，不进本机 `localStorage`。单机没有注册表，「本机」的渲染器存在 `consoleRenderer`（默认 `grid`）。接入和移除机器仍是服务器操作，页面不提供。
+机器名称、颜色、启用和顺序存在中央服务端，不进本机 `localStorage`。接入和移除机器仍是服务器操作，页面不提供。
 
 Hub 每一行（`machineRow` / `renderMachineSettings`）：
 
@@ -84,7 +84,6 @@ Hub 每一行（`machineRow` / `renderMachineSettings`）：
 - 勾选启用。取消后这台机器不显示、不检查。`saveMachine`。
 - 名称输入，最长 80，回车失焦后保存。
 - 颜色：默认、蓝、紫、琥珀、青、玫红、青柠、天蓝、品红（`MACHINE_COLORS`）。
-- 控制台渲染：`服务端网格（默认）` 或 `xterm.js（浏览器解析）`。重新打开控制台后生效。旧宿主报 `grid:false` 时自动用 xterm。停用时下拉不可用；离线时悬停说明原因，保留中央展示属性的现有修改行为。
 
 AI 客户端矩阵（`renderClientMatrix` / `loadMachineClients` / `updateMachineClient`）：机器 × Claude/Codex/Grok/OpenCode。单元格显示版本、是否最新，以及「更新」。更新走该机器自己的 `api/clients/update`，页面每 2 秒轮询到结束。首次读取失败显示离线单元格，错误保留在悬停提示；更新失败显示在 `#machine-note`。
 
@@ -389,7 +388,7 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 
 ---
 
-## 6. 终端：归属、网格、xterm、键盘、触摸、剪贴板、录制
+## 6. 终端：归属、网格、键盘、触摸、剪贴板、录制
 
 实现在 [`legacy-web/term.js`](../legacy-web/term.js)，菜单在 [`legacy-web/term-menu.js`](../legacy-web/term-menu.js)。网格外观层 [`legacy-web/grid/facade.js`](../legacy-web/grid/facade.js) 导出 `GridTerm`，由 `index.html` 在 `term.js` 之前挂到 `globalThis.GridTerm`。
 
@@ -399,13 +398,13 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 
 吸附高度为 0 时保留对象和连接，但不 fit、不新连，避免把 tmux 压成很小。字体就绪后再 fit，连接前先定尺寸。
 
-浅色主题改写终端颜色（`lightTerminalAnsi` 等），并丢掉会把配色设回深色的 OSC。网格渲染器在宿主侧画，不走这层 SGR 改写。[`tests/terminal_grid_theme_browser.py`](../tests/terminal_grid_theme_browser.py)。
+浅色主题由网格渲染器按主题配色绘制。[`tests/terminal_grid_theme_browser.py`](../tests/terminal_grid_theme_browser.py)。
 
-### 两种渲染器
+### 渲染器
 
-默认网格。机器设置或单机 `consoleRenderer` 可选 xterm。`ensureTerm`：网格加 `mode=grid`，不用 xterm 的 fit/webgl/unicode 插件；xterm 路径才加载那些插件，并在符合条件时用 WebGL（`shouldUseTermWebgl`）。宿主太旧则强制 xterm。切换后要重新打开控制台。
+控制台只用服务端网格，页面不带 xterm.js。`ensureTerm` 创建 `GridTerm` 并在连接里加 `mode=grid`。运行中的旧宿主报 `grid:false` 时不打开控制台，说明「此会话的终端宿主不支持网格显示，重新启动会话后即可打开控制台。」；已结束的行照常回放录制或给出说明。
 
-网格在主控制台右侧留 12px 滚动条。拖动或点击轨道只改本地视口，不把滚轮发给 PTY。焦点在滚动条上时可用方向键、PgUp/PgDn、Home/End。新输出不抢走已上翻的位置；回到底部再跟随。备用屏幕上滚动条隐藏。xterm 用它自己的滚动条。[`tests/terminal_scrollback_browser.py`](../tests/terminal_scrollback_browser.py)。
+网格在主控制台右侧留 12px 滚动条。拖动或点击轨道只改本地视口，不把滚轮发给 PTY。焦点在滚动条上时可用方向键、PgUp/PgDn、Home/End。新输出不抢走已上翻的位置；回到底部再跟随。备用屏幕上滚动条隐藏。[`tests/terminal_scrollback_browser.py`](../tests/terminal_scrollback_browser.py)。
 
 独立 `grid.html` 见第 7 节。主控制台和它共用网格模型，但主控制台还有归属、租约和录制。
 
@@ -459,7 +458,7 @@ Codex 侧线程：终端视口里出现 side thread 时记下状态（`setCodexS
 
 ### 录制页 `records.html`
 
-[`legacy-web/records.html`](../legacy-web/records.html) + [`legacy-web/records.js`](../legacy-web/records.js)。标题「终端录制」。左列表、右 xterm。刷新、只看进行中、状态、大小、「适应窗口」（`records-fit`，默认关）、复制选区、回到底部。空态「选择左侧的录制」。嵌在主页面里（`embedded=1` 或 iframe）时去掉自己的标题栏。
+[`legacy-web/records.html`](../legacy-web/records.html) + [`legacy-web/records.js`](../legacy-web/records.js)。标题「终端录制」。左列表、右网格回放（`GridTerm`，`mode=grid`）。刷新、只看进行中、状态、大小、「适应窗口」（`records-fit`，默认关）、复制选区、回到底部。空态「选择左侧的录制」。嵌在主页面里（`embedded=1` 或 iframe）时去掉自己的标题栏。
 
 Hub：`?nodes=` 聚合多机，单条用 `?node=`。列表 `term/records`，观看 WebSocket `term/records/attach`。键盘：↑↓ Home End Enter/Space 在列表里移动。断线在可见时重连；`code === 1000` 或已经结束则不重连。缺口在画面里写成「（录制有缺口，已从下一个快照继续）」。能力关掉时状态是「此机器未启用终端录制」。
 
@@ -513,7 +512,6 @@ Hub：`?nodes=` 聚合多机，单条用 `?node=`。列表 `term/records`，观�
 - [`tests/hub_browser.py`](../tests/hub_browser.py)：Hub 与多节点。
 - [`tests/sessions_visibility_browser.py`](../tests/sessions_visibility_browser.py)：过时的测试注册表/URL 不藏起普通会话。
 - [`tests/opencode_mirror_browser.py`](../tests/opencode_mirror_browser.py)：OpenCode 镜像在真实页面上的交互。
-- [`tests/bench_term_echo_browser.py`](../tests/bench_term_echo_browser.py)：控制台按键回显。这是性能观察，不是功能清单的验收政策。
 
 ---
 
@@ -531,7 +529,6 @@ Hub：`?nodes=` 聚合多机，单条用 `?node=`。列表 `term/records`，观�
 | `cacheMb` | `256`；`0` 不限制 | 功能 |
 | `stopConcurrency` | `6` | 功能 |
 | `consolePasteFiles` | `false` | 功能 |
-| `consoleRenderer` | `grid` | 仅单机「本机」；Hub 用服务端 |
 | `view` | `tree` | 顶栏 |
 | `nest` | `false` | 顶栏 |
 | `nestClosed` | `[]` | 分层折叠；搜索态不写 |

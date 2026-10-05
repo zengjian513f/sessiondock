@@ -79,13 +79,11 @@ def main():
                 try:
                     context = browser.new_context(viewport={'width': 608, 'height': 761}, service_workers='block')
                     context.route(lambda url: not url.startswith((base+'/', slow_base+'/')), lambda route: route.abort())
-                    context.add_init_script("localStorage.setItem('sessiondock.consoleRenderer', JSON.stringify('grid'))")
                     page = context.new_page()
                     errors = []
                     page.on('pageerror', lambda e: errors.append(str(e)))
                     page.goto(base, wait_until='networkidle')
                     open_console(page, uid)
-                    assert page.evaluate('currentTermViewObject().grid')
                     keyboard = page.locator('#termpane .xterm-helper-textarea')
                     keyboard.fill('ping')
                     keyboard.press('Enter')

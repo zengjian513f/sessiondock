@@ -2,8 +2,8 @@
 """Legacy console raw HTTP input under the Rust `terminal_input` capability.
 
 One isolated ptyhost runs a fixed free shell with synthetic native metadata.
-Desktop: ptyhost wheel input stays in xterm and subsequent keystrokes use
-the WebSocket; the shell reply renders in the same xterm. Mobile 390px: the on-screen key bar sends
+Desktop: ptyhost wheel input stays in the grid console and subsequent keystrokes
+use the WebSocket; the shell reply renders in the same console. Mobile 390px: the on-screen key bar sends
 named keys over HTTP. After the shell exits, its final output arrives and the
 pane closes; no input or reclaim reaches the vanished instance (HTTP
 403/409/410 refusals are covered by the Rust `terminal_input` suite). The
@@ -12,7 +12,6 @@ while the 设置 › 功能 switch is off; enabled, a clipboard image and a two-
 paste land in `<cwd>/sessiondock_attachments/<batch>/` and their relative
 paths are typed into the shell as one bracketed paste.
 """
-from browser_runtime import wait_for_async
 from contextlib import contextmanager
 import base64
 import json
@@ -47,7 +46,6 @@ printf 'RS_SHELL_READY\\n'
 while IFS= read -r command; do
   case "$command" in
     ping) printf 'RS_PING_OK\\n' ;;
-    osc52) printf 'RS_OSC52_OK\\n' ;;
     "\t") printf 'RS_TAB_OK\\n' ;;
     *"[A") printf 'RS_UP_OK\\n' ;;
     ./sessiondock_attachments/*) printf 'RS_PASTE_PATH %s\\n' "$command" ;;
@@ -127,9 +125,6 @@ def main():
             browser = playwright.chromium.launch(**launch)
             try:
                 context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
-                # This suite exercises xterm's OSC parser and byte-input path;
-                # grid protocol input is covered by terminal_grid_browser.
-                context.add_init_script("localStorage.setItem('sessiondock.consoleRenderer', JSON.stringify('xterm'))")
                 context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
                 errors, dialogs, sends, scrolls = [], [], [], []
 
@@ -150,57 +145,13 @@ def main():
                 capabilities = page.evaluate("SessionDockCapabilities.config")
                 assert capabilities["terminal_input"] is True and capabilities["outbox"] is False, capabilities
                 open_console(page, uid)
-                # The byte console (not the grid) carries the OSC checks below.
-                assert page.evaluate("[...T.views.values()].every(view => !view.grid)")
                 expect(page.locator("#composer")).to_be_hidden()
 
-                # ---- Remote OSC 52 copy: Claude emits this after a mouse
-                # selection. The embedding page writes it to the browser
-                # clipboard, then ordinary Ctrl+V follows xterm's paste path.
                 origin = f"{urlsplit(base).scheme}://{urlsplit(base).netloc}"
                 context.grant_permissions(["clipboard-read", "clipboard-write"], origin=origin)
                 keyboard = page.locator("#termpane .xterm-helper-textarea")
                 # Edge's inline Compose button and text prediction stay off the IME textarea.
                 assert keyboard.get_attribute("writingsuggestions") == "false"
-                # Raw OSC bytes are a byte-console path; grid clipboard is in terminal_grid_browser.
-                page.evaluate("navigator.clipboard.writeText('sentinel')")
-                write_terminal = """payload => new Promise(resolve =>
-                  [...T.views.values()][0].term.write(payload, resolve))"""
-                page.evaluate(write_terminal, "\x1b]52;c;?\x07")
-                page.evaluate(write_terminal, "\x1b]52;c;not-base64!\x1b\\")
-                assert page.evaluate("navigator.clipboard.readText()") == "sentinel"
-                copied = "osc52"
-                encoded = base64.b64encode(copied.encode()).decode()
-                page.evaluate(write_terminal, f"\x1b]52;c;{encoded}\x1b\\")
-                wait_for_async(page, "expected => navigator.clipboard.readText().then(text => text === expected)", arg=copied)
-                keyboard.press("Control+V")
-                keyboard.press("Enter")
-                xterm_contains(page, "RS_OSC52_OK")
-
-                # A remote color query makes xterm emit an OSC reply through
-                # onData. It must be consumed before either input transport.
-                page.evaluate("""() => {
-                  const view = [...T.views.values()][0];
-                  window.oscReplies = [];
-                  window.oscSocketWrites = [];
-                  view.term.onData(data => {
-                    if (data.startsWith('\\x1b]')) window.oscReplies.push(data);
-                  });
-                  const send = view.ws.send.bind(view.ws);
-                  view.ws.send = data => {
-                    window.oscSocketWrites.push(data);
-                    return send(data);
-                  };
-                }""")
-                before_osc_sends = len(sends)
-                for query in ("\x1b]10;?\x07", "\x1b]11;?\x07", "\x1b]12;?\x07", "\x1b]4;1;?\x07"):
-                    page.evaluate(write_terminal, query)
-                page.wait_for_function("window.oscReplies.length >= 4")
-                replies = page.evaluate("window.oscReplies")
-                assert all(any(reply.startswith(prefix) for reply in replies)
-                           for prefix in ("\x1b]10;", "\x1b]11;", "\x1b]12;", "\x1b]4;1;")), replies
-                assert not page.evaluate("window.oscSocketWrites"), "OSC replies reached the PTY WebSocket"
-                assert len(sends) == before_osc_sends, "OSC replies reached term/send"
 
                 # ---- Desktop: ptyhost scrolling never enters the legacy HTTP path.
                 box = page.locator("#xterm").bounding_box()
@@ -332,7 +283,7 @@ def main():
                 page.set_viewport_size({"width": 390, "height": 844})
                 # A re-attached grid view starts from the host's current screen;
                 # output from before the reattach is not replayed into it.
-                open_console(page, uid, history=True)
+                open_console(page, uid, history=False)
                 keys = page.locator("#termpane .term-keys")
                 expect(keys).to_be_visible()
                 sends.clear()
