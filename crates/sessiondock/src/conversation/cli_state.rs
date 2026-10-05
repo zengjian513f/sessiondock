@@ -467,6 +467,40 @@ impl super::Conversations {
         }
         Ok(())
     }
+    /// Claude's interactive unknown-command warnings are not native JSONL
+    /// messages. Match new, exact warnings against the pre-SEND screen, not
+    /// against a command allowlist or an elapsed-time assumption.
+    fn observe_command_rejections(
+        &self,
+        key: &str,
+        capture: &crate::delivery::driver::ScreenCapture,
+    ) -> Result<(), Failure> {
+        let mut used = HashMap::<String, usize>::new();
+        let mut errors = Vec::new();
+        for row in self.store.queued(key) {
+            let Some(before) = row.command_rejections_before else {
+                continue;
+            };
+            let Some(command) = claude_command(&row.text) else {
+                continue;
+            };
+            let Some(warnings) = claude_command_rejections(capture, &row.text) else {
+                continue;
+            };
+            let next = used.entry(command.to_owned()).or_default();
+            *next = (*next).max(before);
+            if let Some(error) = warnings.get(*next) {
+                *next += 1;
+                if row.state == "queued" {
+                    errors.push((row.request_id, error.clone()));
+                }
+            }
+        }
+        if !errors.is_empty() {
+            self.store.mark_rejected(key, &errors)?;
+        }
+        Ok(())
+    }
     /// Persist positive TUI queue evidence, without retiring the send. A
     /// visible entry can match only one receipt, including already marked
     /// receipts, so repeated observations cannot confirm extra duplicates.
@@ -477,6 +511,9 @@ impl super::Conversations {
         capture: &crate::delivery::driver::ScreenCapture,
     ) -> Result<(), Failure> {
         use crate::delivery::driver;
+        if source == "claude" {
+            return self.observe_command_rejections(key, capture);
+        }
         if source != "codex" {
             return Ok(());
         }
@@ -526,6 +563,41 @@ impl super::Conversations {
         }
         Ok(())
     }
+}
+
+fn claude_command(text: &str) -> Option<&str> {
+    let command = text.split_whitespace().next()?;
+    let name = command.strip_prefix('/')?;
+    (!name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_:-".contains(&b)))
+    .then_some(command)
+}
+
+pub(super) fn claude_command_rejections(
+    capture: &crate::delivery::driver::ScreenCapture,
+    text: &str,
+) -> Option<Vec<String>> {
+    if capture.lag.is_some_and(|lag| lag > 0) {
+        return None;
+    }
+    let command = claude_command(text)?;
+    let transcript = crate::delivery::driver::transcript(capture)?;
+    let prefix = format!("Unknown command: {command}");
+    Some(
+        transcript
+            .lines()
+            .filter_map(|line| {
+                // Quoted/tool-output lines and the editor itself are not CLI warnings.
+                let line = line.trim();
+                let suffix = line.strip_prefix(&prefix)?;
+                (suffix.is_empty()
+                    || (suffix.starts_with(". Did you mean /") && suffix.ends_with('?')))
+                .then(|| line.to_owned())
+            })
+            .collect(),
+    )
 }
 
 /// A native record that answers a queued send: a user/command message

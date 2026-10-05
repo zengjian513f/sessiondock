@@ -110,6 +110,7 @@ def main():
                          "LANG": "C.UTF-8", "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude"),
                          "SESSIONDOCK_TEST_GATE":str(root / "gate"),"SESSIONDOCK_TEST_GATE_TRACE":str(root / "gate.trace"),
                          "SESSIONDOCK_TEST_PASTE_DELAY":str(root / "paste-delay"),
+                         "SESSIONDOCK_TEST_COMMAND_RESPONSE":str(root / "command-response"),
                          "SESSIONDOCK_TEST_CLAUDE_QUEUE":str(root / "claude-queue"),
                          "SESSIONDOCK_TEST_CLAUDE_ESC_RESTORE":str(root / "esc-restore")}}]}))
         initialize("--initialize-lifecycle", root / "ledger")
@@ -257,6 +258,48 @@ def main():
                     users=[json.loads(line)['message']['content'] for line in jsonl.read_text().splitlines() if json.loads(line)['type']=='user']
                     assert users.count('继续')==1,users
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
+                    # BUG-20261005-081802-e81d57: unknown commands emit a TUI
+                    # warning but no JSONL. Persist the rejection, including
+                    # across reloads, and leave the composer usable.
+                    bad=send('/mode')
+                    bad_bubble=page.locator('.queued-send[data-request-id="'+bad['request_id']+'"]')
+                    expect(bad_bubble).to_have_attribute('data-state','rejected',timeout=10000)
+                    expect(bad_bubble).to_contain_text('CLI 已拒绝命令：Unknown command: /mode. Did you mean /model?')
+                    assert '"/mode"' not in jsonl.read_text()
+                    checked=context.request.post(base+'/api/session/conversation/check',data={'uid':native,'_build':build}).json()
+                    assert any(r['request_id']==bad['request_id'] and r['state']=='rejected' for r in checked['cli']['queued']),checked
+                    page.reload(wait_until='networkidle')
+                    page.wait_for_function('composerUid && !composerDraft().loading')
+                    expect(bad_bubble).to_have_attribute('data-state','rejected')
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
+                    # Replayed SEND cannot write the command again; a new send
+                    # must match a new warning, even with an old warning visible.
+                    replay=context.request.post(base+'/api/session/conversation/send',data=bad)
+                    assert replay.status==200,replay.text()
+                    bad_bubble.locator('button').click()
+                    expect(bad_bubble).to_have_count(0)
+                    # Old warnings and quoted output do not reject a new send.
+                    # Unconfirmed older receipts can be dismissed without a
+                    # retry or claiming the CLI accepted/rejected the command.
+                    for mode in ('swallow','quote'):
+                        (root/'command-response').write_text(mode)
+                        pending=send('/mode')
+                        pending_bubble=page.locator('.queued-send[data-request-id="'+pending['request_id']+'"]')
+                        for _ in range(2):
+                            checked=context.request.post(base+'/api/session/conversation/check',data={'uid':native,'_build':build}).json()
+                            held=[r for r in checked['cli']['queued'] if r['request_id']==pending['request_id']]
+                            assert len(held)==1 and held[0]['state']=='queued',checked
+                        pending_bubble.locator('button').click()
+                        expect(pending_bubble).to_have_count(0)
+                    (root/'command-response').unlink()
+                    again=send('/mode')
+                    again_bubble=page.locator('.queued-send[data-request-id="'+again['request_id']+'"]')
+                    expect(again_bubble).to_have_attribute('data-state','rejected',timeout=10000)
+                    again_bubble.locator('button').click()
+                    expect(again_bubble).to_have_count(0)
+                    send('/model-custom ordinary skill input')
+                    wait_history(page,'/model-custom ordinary skill input')
+                    expect(page.locator('#queued-sends')).to_have_count(0)
                     # Esc right after Enter: Claude puts the prompt back into its
                     # editor and keeps the user record. The page must say so, and
                     # a SEND must not be appended to that text and submitted with
