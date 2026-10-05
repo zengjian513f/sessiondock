@@ -65,22 +65,21 @@ globalThis.SessionDockSleep = (() => {
   // returning to a tab isn't interaction and never dismisses the sleep dialog.
   for (const type of ['focus', 'pageshow', 'visibilitychange']) addEventListener(type, check, true);
 
-  function configure(value, persist = false) {
-    if (persist) {
-      store.set('sleepMinutes', normalized(value));
-      lastActivity = Date.now();
-    }
+  function configure(value) {
     minutes = normalized(value);
-    SessionDockSettings.update({sleep: minutes});
+    document.querySelector('#setting-sleep').value = String(minutes);
     check();
   }
+  document.querySelector('#setting-sleep').onchange = event => {
+    store.set('sleepMinutes', normalized(event.target.value));
+    lastActivity = Date.now();
+    configure(event.target.value);
+  };
   addEventListener('storage', event => {
     if (event.key === STORAGE_PREFIX + 'sleepMinutes' || event.key === null) {
       configure(store.get('sleepMinutes', 60));
     }
   });
   schedule();
-  return Object.freeze({configure, get lastActivity() {return lastActivity;}, get minutes() {return minutes;}, get sleeping() {return sleeping;}});
+  return Object.freeze({get lastActivity() {return lastActivity;}, get minutes() {return minutes;}, get sleeping() {return sleeping;}});
 })();
-
-mountSettings();

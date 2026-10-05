@@ -44,12 +44,10 @@ substitute. Docs-only and deploy-script-only work use the doc/deploy suites.
 **Never run unit tests on your own**; validate the changed surface with the
 headless browser suite that covers it.
 
-Browser runs now use the compiled Vue settings panes. The runner builds
-`legacy-web/framework/settings.js` once before running browser suites; `--list`
-and `--dry-run` do not build. Before invoking a browser script directly, run
-`npm --prefix web run build:legacy` after the final edits. The generated directory
-is ignored by Git. Builds and Chromium user actions are the frontend migration
-checks; no unit test is added or enabled by this migration.
+The production frontend `legacy-web/` is served as committed and needs no build.
+With `--web-dir web/dist-migration` (or another non-legacy directory and no
+prebuilt assets) the runner builds the Vue preview once before browser suites;
+`--list` and `--dry-run` do not build.
 
 The independent Vue entry uses `npm --prefix web run build:migration` (also
 `npm --prefix web run build`) and `SESSIONDOCK_TEST_WEB_DIR` pointing to
@@ -254,7 +252,7 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | popup_browser | `python3 tests/popup_browser.py` | No native alert/confirm: a delete asks in a centered `.app-popup` with the dialog look (取消/Esc keep, 确定 deletes); the stale-build card sits in the centered float stack and 稍后 retains its hidden identity; an HTTP login redirect and actual login button open the local app with no opener; desktop + 390px. Other browser suites answer popups through `tests/popups.py` `on_popup`. | binary, Chromium | n/a |
 | pick_drag_browser | `python3 tests/pick_drag_browser.py` | 多选 mode: dragging with the left mouse button from an unpicked row picks the run, from a picked row unpicks it; dragging back restores rows that left the run, the release does not re-toggle the pressed row, no text is selected, holding at the bottom edge auto-scrolls and extends the run; a plain click still toggles one row, a double click selects no text; entering/leaving 多选 keeps the existing row nodes (checkboxes patched in place). | binary, Chromium | n/a |
 | prefs_migration_browser | `python3 tests/prefs_migration_browser.py --binary target/release/sessiondock` | Seeds theme/font/layout/filter/cache/unread/selection and file-manager preferences under `sessiondock.*`; verifies they apply, changes persist across reload, `files.html` uses `sessiondock.files-*`, a fresh browser keeps defaults, and PWA identity is SessionDock. | binary, Chromium | 5s |
-| frontend_framework_browser | `python3 tests/frontend_framework_browser.py --binary target/release/sessiondock` | Desktop and phone settings operated through Chromium: appearance/features controls, close/reopen, reload persistence, Escape and continued access to Machines. | binary, Chromium, built Vue assets | n/a |
+| frontend_framework_browser | `python3 tests/frontend_framework_browser.py --binary target/release/sessiondock` | Desktop and phone settings operated through Chromium: appearance/features controls, close/reopen, reload persistence, Escape and continued access to Machines. | binary, Chromium | n/a |
 | frontend_cutover_browser | `python3 tests/frontend_cutover_browser.py --binary target/release/sessiondock` | Retired worker/cache cleanup, prefixed search/history/settings, HTML metadata injection and script availability for the selected legacy or Vue frontend. | binary, Chromium, built frontend | n/a |
 | composer_boundaries_browser | `python3 tests/composer_boundaries_browser.py --binary target/release/sessiondock` | Composer state boundaries, selected-session ownership and draft behavior through browser operations. | binary, Chromium, built frontend | n/a |
 | frontend_entry_browser | `python3 tests/frontend_entry_browser.py --binary target/release/sessiondock` | Real desktop/phone operation under a loopback `/sessiondock/` proxy: initial loading, late read isolation after a real session switch, manual 503 retry, session selection, theme/font/cache controls, restart of the private Rust fixture, restored conversation and preferences, browser history, and prefix-relative asset/API requests. Runs with either frontend via `SESSIONDOCK_TEST_WEB_DIR`. | binary, Chromium, built Vue assets | n/a |

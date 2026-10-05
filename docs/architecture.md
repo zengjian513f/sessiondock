@@ -12,9 +12,8 @@ Vue / Vite 工具链构建设置面板，生成资源随同一个静态快照发
 claim/WS传输。受控host匹配full SID/UID，缺少/冲突证据保留unknown；
 关联快照本身不授权控制，claim重新观察唯一关联并固定instance，随后只使用
 guarded attach。legacy已接手动控制台；受控创建需要额外显式配置，发送走服务端会话服务。
-生产 `legacy-web/` 的外观和功能设置面板使用现有 Vue 构建，保留其调用接口。
-`npm --prefix web run build:legacy` 将该面板打包到
-`legacy-web/framework/settings.js`，生成目录不提交。部署工具仍显式构建这一路径。
+生产 `legacy-web/` 是纯 JS 静态资源，按提交原样部署，不经过 Node 构建，也不依赖 `web/`；
+设置对话框的外观、功能页直接由 `app.js` 驱动 `index.html` 中的控件。
 
 ## 独立 Vue 前端
 

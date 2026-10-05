@@ -69,8 +69,10 @@ def main():
                     if scoped_frontend() or name not in ('file.html', 'files.html'):
                         assert 'name="sessiondock-capabilities"' in body, name
                     assert response.headers.get('cache-control') == 'no-store', name
-                for name in ('app.js', 'term.js', 'capabilities.js', 'framework/settings.js'):
+                for name in ('app.js', 'term.js', 'capabilities.js'):
                     assert context.request.get(base + name).status == (404 if scoped_frontend() else 200), name
+                # Neither frontend ships the retired Vue settings bundle.
+                assert context.request.get(base + 'framework/settings.js').status == 404
                 assert not errors, errors
                 context.close()
             finally:

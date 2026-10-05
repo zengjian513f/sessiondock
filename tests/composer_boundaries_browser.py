@@ -346,7 +346,10 @@ def main():
     from playwright.sync_api import sync_playwright
 
     assert REPO.resolve() == repo, f'helpers imported from wrong checkout: {REPO}'
-    assert frontend_html().modules, f'expected compiled Vue module entry in {web_dir}'
+    if not frontend_html().modules:
+        # The production frontend is plain classic scripts; these boundaries are the Vue composer's.
+        print(f'SKIP composer_boundaries_browser: {web_dir} has no Vue module entry', flush=True)
+        return
     entry_asset()
     html_assets(web_dir)
     binary = (args.binary or repo / 'target/debug/sessiondock').resolve(strict=True)

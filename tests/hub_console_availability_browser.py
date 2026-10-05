@@ -12,6 +12,11 @@ from popups import on_popup  # noqa: E402
 
 def main():
     """Exercise the composed page and real claim timeout over private HTTP."""
+    from browser_runtime import scoped_frontend
+    if not scoped_frontend():
+        # Drives the Vue runtime directly; the legacy console has its own suites.
+        print('SKIP hub_console_availability_browser: requires the Vue build', flush=True)
+        return
     from contextlib import ExitStack, suppress
     import tempfile
     from history_parity import BINARY

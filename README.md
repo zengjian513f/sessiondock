@@ -147,7 +147,7 @@ Rust 运行依赖，也不是所有历史格式已兼容的证明**。
 
 在 `web/` 执行 `npm ci && npm run build`，生成完整独立前端 `dist-migration/`。
 `npm run dev` 监听源码并重建静态资源；HTML 能力注入和资源快照仍由 Rust 服务提供，
-修改构建后重启自己的开发服务。生产部署继续显式使用 `build:legacy`。
+修改构建后重启自己的开发服务。生产前端 `legacy-web/` 不经过构建，也不依赖 `web/`。
 已移除未使用的演示页面及 Vue 单元测试依赖；验证采用 Chromium 用户操作。
 平台限制见对应合同。
 

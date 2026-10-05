@@ -10,7 +10,7 @@
 
 这是迁移开始时的行为基线，只盘点当时用户能看见、能操作的行为，当时已发布提交为 `2552436`。生产前端仍引用 `legacy-web/`，入口切换和旧入口退役属于迁移的最终阶段；其它并行任务已接受的修复也同步到迁移入口。独立迁移前端的当前实现见 [架构合同](architecture.md)，本文不把尚未验收的脚手架或过渡接线写成产品表面。
 
-`legacy-web/framework/settings.js` 只把「外观」「功能」两个设置页挂进现有对话框（`SessionDockSettings.mount`）。主会话页、侧栏、对话、终端和辅助页仍是现有 DOM。`tests/frontend_framework_browser.py` 覆盖的是这两页设置在现有页面里还能用，不是整站 Vue 替换。
+生产 `legacy-web/` 不包含任何 Vue 代码；设置对话框各页由 `app.js` 直接驱动现有 DOM。`tests/frontend_framework_browser.py` 通过用户操作覆盖这些设置在两种前端中的行为。
 
 浏览器套件是定位既有操作的锚点，不是完整覆盖统计。生产行为以列出的实际代码为准。
 
@@ -608,7 +608,7 @@ Hub：`?nodes=` 聚合多机，单条用 `?node=`。列表 `term/records`，观�
 
 `web/` 为完整 Vue 独立入口，组件和具名服务的当前接线见
 [架构合同](architecture.md#独立-vue-前端)。新入口已移除 `web/src/compat/`。
-生产仍使用 `legacy-web/` 及其 `framework/settings.js`；最终阶段完成验收后切换生产引用并退役旧入口。
+生产仍使用 `legacy-web/`，且不依赖 `web/` 的构建。
 `2552436` 记录目标开始时的行为基线，后续已接受的旧入口修复同步到独立入口。
 
 视觉复用现有 `style.css`、`typography.css`、`grid.css`、`records.css`、
