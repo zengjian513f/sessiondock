@@ -13,6 +13,17 @@ pub struct Request {
     pub uid: String,
     pub target_node: String,
     pub operation_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_ids: Option<bool>,
+}
+impl Request {
+    fn same_transfer(&self, other: &Self) -> bool {
+        self.uid == other.uid
+            && self.target_node == other.target_node
+            && self.operation_id == other.operation_id
+    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 struct Journal {
@@ -189,7 +200,7 @@ impl Transfers {
     ) -> Result<Value, TransferError> {
         let mut journal: Journal =
             serde_json::from_slice(&fs::read(self.path(&request.operation_id)?)?)?;
-        if journal.request != *request {
+        if !journal.request.same_transfer(request) {
             return Err(TransferError::new(
                 "move_conflict",
                 "操作已绑定其他迁移目标",
@@ -258,7 +269,7 @@ impl Transfers {
     }
     async fn record_error(&self, request: &Request, error: &TransferError) {
         if let Ok(mut journal) = self.load(&request.operation_id).await
-            && journal.request == *request
+            && journal.request.same_transfer(request)
         {
             journal.error = Some(error.message.clone());
             let _ = self.save(&journal).await;
@@ -280,7 +291,7 @@ impl Transfers {
         recovery: bool,
     ) -> Result<Value, TransferError> {
         let mut journal = self.load(&request.operation_id).await?;
-        if journal.request != request {
+        if !journal.request.same_transfer(&request) {
             return Err(TransferError::new(
                 "move_conflict",
                 "操作已绑定其他迁移目标",
@@ -519,9 +530,26 @@ impl Transfers {
         &self,
         registry: Arc<Registry>,
         client: Arc<Client>,
-        request: Request,
+        mut request: Request,
     ) -> Result<Value, TransferError> {
         let _guard = self.gates.acquire(vec![request.operation_id.clone()]).await;
+        // Older task drawers omit confirmation options. Reuse the durable
+        // choice; a conflicting retry must not cancel the original operation.
+        if self.path(&request.operation_id)?.exists() {
+            let previous = self.load(&request.operation_id).await?;
+            if request.mode.is_none() {
+                request.mode = previous.request.mode.clone();
+            }
+            if request.new_ids.is_none() {
+                request.new_ids = previous.request.new_ids;
+            }
+            if previous.request != request {
+                return Err(TransferError::new(
+                    "move_conflict",
+                    "操作已绑定其他迁移选项",
+                ));
+            }
+        }
         let cancellation = tokio_util::sync::CancellationToken::new();
         {
             let mut heartbeats = self.heartbeats.lock().unwrap_or_else(|e| e.into_inner());
@@ -610,12 +638,18 @@ impl Transfers {
         // any preparatory work is dispatched to either node.
         let reset = json!({"operation_id":request.operation_id,"reset":true});
         // Both resets finish before preparation; neither depends on the other.
+        let mut source_reset = reset.clone();
+        if let Some(mode) = &request.mode {
+            source_reset["mode"] = mode.clone().into();
+            source_reset["uid"] = local_uid.clone().into();
+            source_reset["new_ids"] = request.new_ids.into();
+        }
         tokio::try_join!(
             call(
                 &client,
                 &source_address,
                 "/api/session/transfer/interrupt",
-                &reset,
+                &source_reset,
                 false
             ),
             call(
@@ -647,6 +681,19 @@ impl Transfers {
         }
         if source_state["uid"] != local_uid {
             return Err(TransferError::new("move_plan_stale", "操作与源会话不符"));
+        }
+        if request
+            .mode
+            .as_ref()
+            .is_some_and(|mode| source_state["mode"] != *mode)
+            || request
+                .new_ids
+                .is_some_and(|new_ids| source_state["new_ids"] != new_ids)
+        {
+            return Err(TransferError::new(
+                "move_plan_stale",
+                "源节点未接受确认选项，请重新查看清单",
+            ));
         }
         journal.preview = Some(namespace::public_payload(
             source_state.clone(),
@@ -703,20 +750,23 @@ impl Transfers {
             ));
         }
         if current.1["phase"] != "complete" && current.1["phase"] != "ready" {
-            let reserved = call(
-                &client,
-                &source_address,
-                "/api/session/transfer/reserve",
-                &operation,
-                true,
-            )
-            .await?
-            .1;
-            if reserved["uid"] != local_uid {
-                return Err(TransferError::new(
-                    "move_plan_stale",
-                    "迁移操作与所选会话不符",
-                ));
+            let reserve_manifest = current.0 == 404 && source_state["reserve_manifest"] == true;
+            if !reserve_manifest {
+                let reserved = call(
+                    &client,
+                    &source_address,
+                    "/api/session/transfer/reserve",
+                    &operation,
+                    true,
+                )
+                .await?
+                .1;
+                if reserved["uid"] != local_uid {
+                    return Err(TransferError::new(
+                        "move_plan_stale",
+                        "迁移操作与所选会话不符",
+                    ));
+                }
             }
             if current.0 == 404 {
                 journal.phase = "preparing".into();
@@ -725,7 +775,7 @@ impl Transfers {
                     &client,
                     &source_address,
                     "/api/session/transfer/manifest",
-                    &operation,
+                    &json!({"operation_id":request.operation_id,"reserve":reserve_manifest}),
                     true,
                 )
                 .await?

@@ -83,16 +83,20 @@ fn private_dir(path: &Path) -> Result<(), TransferError> {
     Ok(())
 }
 impl TransferService {
-    pub fn reserve_export(&self, id: &str) -> Result<Operation, TransferError> {
+    pub fn reserve_export(
+        &self,
+        id: &str,
+    ) -> Result<(Operation, crate::sessions::SessionSnapshot), TransferError> {
         let mut op = self.load(id)?;
         if !matches!(op.phase.as_str(), "planned" | "exporting") || op.incoming_digest.is_some() {
             return Err(invalid("此操作不能导出"));
         }
-        self.recheck(&op)?;
+        let snapshot = self.inventory_snapshot()?;
+        self.recheck_in(&op, &snapshot)?;
         op.phase = "exporting".into();
         op.export_lease_until = now() + 3600;
         self.save(&op)?;
-        Ok(op)
+        Ok((op, snapshot))
     }
     pub fn release_export(&self, id: &str, completed: bool) -> Result<Operation, TransferError> {
         let mut op = self.load(id)?;
@@ -136,7 +140,11 @@ impl TransferService {
     pub fn bundle_manifest(&self, op: &Operation) -> Result<Manifest, TransferError> {
         self.build_manifest(op, true)
     }
-    fn build_manifest(&self, op: &Operation, recheck: bool) -> Result<Manifest, TransferError> {
+    pub(crate) fn build_manifest(
+        &self,
+        op: &Operation,
+        recheck: bool,
+    ) -> Result<Manifest, TransferError> {
         if !cfg!(target_os = "linux") {
             return Err(TransferError::new(
                 "move_platform",
@@ -240,7 +248,7 @@ impl TransferService {
         &self,
         op: &Operation,
         destination: &Path,
-    ) -> Result<Manifest, TransferError> {
+    ) -> Result<(Manifest, crate::sessions::SessionSnapshot), TransferError> {
         // The API holds the operation gate and has just reserved/rechecked
         // this export. Keep the post-archive recheck below, instead of scanning
         // the whole source group twice before reading any archive bytes.
@@ -280,18 +288,21 @@ impl TransferService {
             }
             archive.finish()?;
             archive.get_mut().sync_all()?;
-            self.recheck(op)?;
+            let snapshot = self.inventory_snapshot()?;
+            self.recheck_in(op, &snapshot)?;
             for snapshot in &manifest.environment {
                 snapshot.recheck()?;
             }
-            Ok::<_, TransferError>(())
+            Ok::<_, TransferError>(snapshot)
         })();
         drop(archive);
-        if let Err(error) = result {
-            let _ = fs::remove_file(destination);
-            return Err(error);
+        match result {
+            Ok(snapshot) => Ok((manifest, snapshot)),
+            Err(error) => {
+                let _ = fs::remove_file(destination);
+                Err(error)
+            }
         }
-        Ok(manifest)
     }
     pub fn verify_environment(&self, manifest: &Manifest) -> Result<Vec<Snapshot>, TransferError> {
         let source_hash = format!(

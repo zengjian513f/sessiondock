@@ -15,8 +15,8 @@
 //! ambiguous ids, ownership cycles and depth overflow stay visible
 //! `supported:false` rows with the same warning text as today. Healthy
 //! agents are reachable only as `agent_items` of their owner, each with
-//! `active` (Codex from its own turn state, Claude from the turn
-//! state and the owner's stop notices in `agent_stops`).
+//! `active` (native turn state reconciled with the owner's explicit
+//! stop evidence in `agent_stops`).
 //!
 //! A Claude main row whose tail names a `continued-in` session carries
 //! `continued_in` = the uid of the main Claude row with that sid (`by_sid`
@@ -315,7 +315,7 @@ struct Graph<'a> {
     agents: BTreeMap<String, Agent>,
     /// (uid, cut) → validation outcome, resolved once per build.
     cuts: BTreeMap<(String, u64), CutCheck>,
-    /// Owner uid → Claude subagent stop notices (only owners the index
+    /// Owner uid → subagent stop evidence (only owners the index
     /// scanned: those with a sidecar whose turn is open).
     stops: &'a BTreeMap<String, Stops>,
 }
@@ -621,6 +621,24 @@ impl<'a> Graph<'a> {
             .agent
             .as_ref()
             .is_some_and(|agent| agent.open_turn);
+        if entry.source == "codex" {
+            let agent = entry.summary.agent.as_ref().unwrap();
+            let parent = &entry.summary.codex.as_ref().unwrap().parent_thread_id;
+            let stopped_at = self
+                .sids
+                .get(&("codex", parent.as_str()))
+                .into_iter()
+                .flatten()
+                .filter_map(|uid| self.stops.get(uid)?.get(&agent.title))
+                .max();
+            return open_turn
+                && stopped_at.is_none_or(|stopped| {
+                    agent
+                        .turn_at
+                        .as_deref()
+                        .is_some_and(|at| super::agent_stops::ts_after(at, stopped))
+                });
+        }
         if entry.source != "claude" {
             return open_turn;
         }

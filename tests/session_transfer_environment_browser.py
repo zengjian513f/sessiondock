@@ -4,6 +4,7 @@
 import argparse
 from contextlib import ExitStack
 import json
+import re
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -111,16 +112,21 @@ def main():
         expect(dialog.locator('.clone-confirm')).to_be_enabled()
         # Delay the fleet refresh independently of the selected target history.
         delayed_lists=[]
-        page.route('**/api/sessions?**',lambda route:delayed_lists.append(route))
+        list_url=re.compile(r'/api/sessions(?:\?|$)')
+        page.route(list_url,lambda route:delayed_lists.append(route))
         with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone')) as copied:
             dialog.locator('.clone-confirm').click()
         assert copied.value.ok,copied.value.text()
         page.wait_for_function('(uid)=>S.sel===uid',arg=copied.value.json()['target_uid'])
         expect(page.locator('#msgs')).to_contain_text('Branch A current')
+        page.wait_for_function('!transferNavigationPending')
+        page.wait_for_timeout(100)
         assert pending_source and delayed_lists
+        assert len(delayed_lists)==1,'completion sent duplicate full-list refreshes'
+        assert 'force=1' not in delayed_lists[0].request.url
         for request in pending_source:request.fulfill(json={'clients':good})
         for request in delayed_lists:request.fulfill(response=request.fetch())
-        page.unroute('**/api/sessions?**')
+        page.unroute(list_url)
         page.unroute('**/api/clients')
         mode['delay']=False
         page.route('**/api/clients',clients)
@@ -129,13 +135,22 @@ def main():
             if response.url.endswith('/api/session/clone/plan') and response.ok else None)
         dialog=open_dialog()
         preview=plans[-1]
+        page.evaluate("""() => {
+          window.transferSideChanges = 0;
+          window.transferObserver = new MutationObserver(() => ++window.transferSideChanges);
+          transferObserver.observe(document.querySelector('#side'), {subtree:true, childList:true, attributes:true});
+          renderSide(); paintLive(); pollSessions();
+        }""")
         dialog.locator('#transfer-target').select_option(nodes[1].nid)
         dialog.locator('input[name="transfer-mode"][value="move"]').check()
         dialog.locator('#transfer-new-ids').check()
+        assert page.evaluate('transferSideChanges')==0,'inert sidebar redrawn during transfer dialog'
+        page.evaluate('transferObserver.disconnect()')
         with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=30000) as refused:
             dialog.locator('.clone-confirm').click()
         assert plans[-1]['operation_id']==preview['operation_id'],'mode change rebuilt the preview'
-        assert plans[-1]['mode']=='move'
+        assert len(plans)==1,'mode-only confirmation made an unnecessary plan request'
+        assert refused.value.request.post_data_json['mode']=='move'
         assert not refused.value.ok,'shared storage move must still be refused'
         print('PASS Chromium nonblocking CLI advice and fleet refresh, stale replies, fourteen-session copy, and same-identity preview reuse with execution checks',flush=True)
 

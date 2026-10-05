@@ -77,7 +77,7 @@ mod native_state;
 pub mod summary;
 mod titles;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -761,6 +761,28 @@ impl Index {
             .map(|entry| (entry.path.as_path(), entry))
             .collect();
         let mut needed: BTreeMap<&str, &CandidateRef> = BTreeMap::new();
+        let codex_parents: BTreeSet<&str> = entries
+            .values()
+            .filter_map(|entry| {
+                (entry.source == "codex"
+                    && entry.summary.agent.as_ref().is_some_and(|a| a.open_turn))
+                .then(|| {
+                    entry
+                        .summary
+                        .codex
+                        .as_ref()
+                        .map(|meta| meta.parent_thread_id.as_str())
+                })
+                .flatten()
+            })
+            .collect();
+        // Include every physical generation of the direct parent. A restored
+        // parent can report an unloaded agent whose old rollout is still open.
+        for entry in entries.values() {
+            if entry.source == "codex" && codex_parents.contains(entry.summary.sid.as_str()) {
+                needed.insert(entry.uid.as_str(), entry);
+            }
+        }
         for entry in entries.values() {
             if entry.source != "claude"
                 || !entry
@@ -802,7 +824,7 @@ impl Index {
             state.stops.insert(owner.data.clone(), scan);
         }
         for (path, scan) in previous {
-            if mains.contains_key(path.as_path()) {
+            if entries.values().any(|entry| entry.data == path) {
                 state.stops.insert(path, scan);
             }
         }
@@ -1477,6 +1499,7 @@ fn read_candidate(
                 if candidate.source == "codex" {
                     if let Some(agent) = &mut summary.agent {
                         agent.open_turn = matches!(scan.turn, Some("working" | "waiting"));
+                        agent.turn_at = scan.turn_at.clone();
                     } else {
                         summary.turn = scan.turn;
                     }

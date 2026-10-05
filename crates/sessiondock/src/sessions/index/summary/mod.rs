@@ -99,9 +99,11 @@ pub struct AgentMeta {
     /// The agent's last turn is not closed:
     /// Claude — the last user/assistant record is not
     /// an assistant `end_turn`; Codex — the last turn-boundary `event_msg` is
-    /// `task_started`/`turn_started`. A Codex item is `active` exactly then;
-    /// a Claude item also needs the owner's stop notices (`agent_stops`).
+    /// `task_started`/`turn_started`. Both sources also reconcile the
+    /// owner's explicit stop evidence (`agent_stops`).
     pub open_turn: bool,
+    /// Codex's latest turn boundary, unaffected by settings/token records.
+    pub turn_at: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

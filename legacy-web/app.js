@@ -2119,6 +2119,7 @@ async function runLivePoll(force) {
 
 /** 只改小圆点, 不重渲染整个列表 —— 否则每几秒就会打断滚动和选中。 */
 function paintLive() {
+  if (transferSidebarPaused()) { sidebarRenderDeferred = true; return; }
   for (const n of document.querySelectorAll('.item.agent')) paintAgentStatus(n);
   for (const n of document.querySelectorAll('.item[data-uid]')) {
     const pendingRunning = n.dataset.tmuxName
@@ -2651,7 +2652,15 @@ async function loadSessions(force, preserveList = false) {
 }
 
 /** 列表自动跟进磁盘变化。签名没变时服务端只回一个 unchanged, 成本为个位数毫秒。 */
+let transferNavigationPending = false;
+function transferSidebarPaused() { return transferNavigationPending || !!$('#clone-group-dialog')?.open; }
+function resumeTransferSidebar() {
+  scheduleDeferredSidebarRender();
+  // Reuse signature-based polling and its in-flight request coalescing.
+  void pollSessions();
+}
 function pollSessions() {
+  if (transferSidebarPaused()) return Promise.resolve(true);
   if (SessionDockNetwork.paused) return Promise.resolve();
   if (document.hidden) return Promise.resolve();
   if (!S.sig || sessionLoadActive) return Promise.resolve(false);
@@ -3441,13 +3450,13 @@ function sidebarTextSelectionActive() {
 const sidebarTextSelectionProtected = () => !!sidebarTextPointer || sidebarTextSelectionActive();
 
 function scheduleDeferredSidebarRender() {
-  if (!sidebarRenderDeferred || sidebarTextSelectionProtected() || sidebarRenderFlushTimer) return;
+  if (!sidebarRenderDeferred || sidebarTextSelectionProtected() || transferSidebarPaused() || sidebarRenderFlushTimer) return;
   sidebarRenderFlushTimer = setTimeout(flushDeferredSidebarRender, 0);
 }
 
 function flushDeferredSidebarRender() {
   sidebarRenderFlushTimer = 0;
-  if (!sidebarRenderDeferred || sidebarTextSelectionProtected()) return;
+  if (!sidebarRenderDeferred || sidebarTextSelectionProtected() || transferSidebarPaused()) return;
   const side = $('#side');
   const top = side?.scrollTop || 0;
   sidebarRenderDeferred = false;
@@ -4349,6 +4358,12 @@ function paintSidebarSelection(uid, agent = null) {
     ? side.querySelector(`.item.agent[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`)
     : side.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
   if (!row) {
+    // A newly published transfer target may open before its list event arrives.
+    // Rebuilding the old list cannot create that row.
+    if (!indexedSessions().byUid.has(uid)) {
+      side?.querySelectorAll('.item.sel').forEach(item => item.classList.remove('sel'));
+      return false;
+    }
     const top = side?.scrollTop || 0;
     renderSide();
     if (side) side.scrollTop = top;
@@ -4510,7 +4525,7 @@ function createSidebarRow(r, picked = pickedSessions) {
 }
 
 function renderSide(suppliedList = null) {
-  if (sidebarTextSelectionProtected()) {
+  if (sidebarTextSelectionProtected() || transferSidebarPaused()) {
     sidebarRenderDeferred = true;
     return;
   }
@@ -10335,6 +10350,8 @@ async function cloneSessionGroup(uid, resumed = null) {
   $d('#transfer-source').value = sourceName;
   let plan = resumed?.plan || null, busy = false, planning = false, uncertain = !!resumed;
   let operationStarted = !!resumed, progressTimer = null, progressLoading = false, aborting = false, executionSequence = 0;
+  let executionOptions = resumed?.request.mode
+    ? {mode:resumed.request.mode, new_ids:resumed.request.new_ids} : {};
   let environmentSequence = 0;
   const environmentClients = new Map();
   const identityChoices = {clone:true, move:false};
@@ -10381,7 +10398,10 @@ async function cloneSessionGroup(uid, resumed = null) {
   target.onchange = () => {renderSelection(); refreshEnvironment();};
   radios.forEach(r => r.onchange = renderSelection);
   newIds.onchange = () => {identityChoices[mode()] = newIds.checked; renderSelection();};
-  const close = () => {clearInterval(progressTimer); dialog.close(); dialog.remove(); refreshTransferTasks();};
+  const close = (refresh = true) => {
+    clearInterval(progressTimer); dialog.close(); dialog.remove(); refreshTransferTasks();
+    if (refresh) resumeTransferSidebar();
+  };
   const cancelAndClose = () => cancelTransfer(true);
   $d('.transfer-close').onclick = cancelAndClose; $d('.clone-cancel').onclick = cancelAndClose;
   dialog.addEventListener('cancel', e => {e.preventDefault(); cancelAndClose();});
@@ -10397,11 +10417,12 @@ async function cloneSessionGroup(uid, resumed = null) {
     // Either the execution response or a durable progress receipt can finish
     // the dialog. Fence the other response before awaiting list/navigation work.
     ++executionSequence; operationStarted = false; uncertain = false; busy = false;
-    close();
-    // Open the known target immediately; refreshing every machine's sidebar is
-    // independent of reading this session and must not delay the handoff.
-    void loadSessions(true, true);
-    await openSession(result.target_uid, null, {exact:true});
+    transferNavigationPending = true;
+    close(false);
+    // Read the known target first. A single signature-based list refresh then
+    // reconciles all changes accumulated while the modal was open.
+    try { await openSession(result.target_uid, null, {exact:true}); }
+    finally { transferNavigationPending = false; resumeTransferSidebar(); }
     showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
   };
   async function discardPreview(previous) {
@@ -10418,7 +10439,7 @@ async function cloneSessionGroup(uid, resumed = null) {
       if (result.phase === 'complete' && result.target_uid) {await finishTransfer(result); return;}
       uncertain = false; operationStarted = false; plan = null; busy = false;
       $d('.transfer-progress').hidden = true; refreshTransferTasks();
-      if (closing || result.phase === 'complete') {close(); await loadSessions(true);}
+      if (closing || result.phase === 'complete') {close();}
       else await refreshPlan();
     } catch (failure) {
       uncertain = operationStarted;
@@ -10501,7 +10522,10 @@ async function cloneSessionGroup(uid, resumed = null) {
     if ((!executing && busy) || planning || uncertain || (mode() === 'move' && !crossMachine())) return;
     const fresh = !crossMachine() || identityChoices[mode()];
     const selectedMode = mode();
-    if (plan && plan.new_ids === fresh && plan.mode === selectedMode) return true;
+    if (plan && plan.new_ids === fresh) {
+      if (plan.mode === selectedMode) return true;
+      if (executing && plan.confirm_mode && (!HUB_MODE || SessionDockCapabilities.config.transfer_confirm_mode)) return true;
+    }
     const previous = plan;
     planning = true; plan = null; error.hidden = true; renderSelection();
     status.textContent = '正在读取清单…';
@@ -10562,11 +10586,14 @@ async function cloneSessionGroup(uid, resumed = null) {
     const prepared = uncertain || await refreshPlan(true);
     if (!prepared || !plan || !dialog.isConnected) {busy = false; if (dialog.isConnected) renderSelection(); return;}
     const execution = ++executionSequence;
+    if (!uncertain) executionOptions = plan.confirm_mode && (!HUB_MODE || SessionDockCapabilities.config.transfer_confirm_mode)
+      ? {mode:mode(), new_ids:plan.new_ids} : {};
     operationStarted = true; error.hidden = true; renderSelection();
     if (HUB_MODE) paintProgress({phase:'planned'});
     try {
       const result = await request(crossMachine() ? 'api/session/transfer/clone' : 'api/session/clone', {
         uid, operation_id:plan.operation_id, ...(crossMachine() ? {target_node:target.value} : {}),
+        ...executionOptions,
       });
       if (execution !== executionSequence) return;
       if (result.phase !== 'complete' || !result.target_uid) throw new Error('复制未完成，请重试检查结果');

@@ -1,4 +1,4 @@
-//! Claude subagent stop points from the owner's main transcript.
+//! Subagent stop evidence from the owner's native transcript.
 //!
 //! A subagent that stops (finished, failed, killed, gone with its process)
 //! makes the parent write a `<task-notification>` or the foreground `Agent`
@@ -9,8 +9,11 @@
 //! incremental by byte offset per owner file and reads only new complete
 //! lines; a line is decoded only when it can name an agent. The index runs it
 //! only for owners that have a sidecar with an open turn (docs/read-model.md).
+//! Codex additionally matches collaboration.list_agents call/results by call
+//! id and agent path. An unloaded agent may have no closing rollout boundary;
+//! a newer start boundary supersedes the parent's stop evidence.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::LazyLock;
@@ -54,6 +57,8 @@ pub struct StopScan {
     /// sha1(block)[..20] → (agent id, first-seen time): the same notice text
     /// is written again on dequeue/re-enqueue/absorption with later times.
     notices: HashMap<String, (String, String)>,
+    /// Only matched collaboration.list_agents results are state evidence.
+    codex_calls: HashSet<String>,
 }
 
 impl StopScan {
@@ -78,7 +83,8 @@ impl StopScan {
 pub fn collect(raw: &[u8], scan: &mut StopScan) {
     let has_notice = HAS_TASK_ID.is_match(raw);
     let has_result = HAS_AGENT_ID.is_match(raw) && HAS_TOOL_RESULT.is_match(raw);
-    if !(has_notice || has_result) {
+    let codex = memchr::memmem::find(raw, b"function_call").is_some();
+    if !(has_notice || has_result || codex) {
         return;
     }
     let Ok(record) = serde_json::from_slice::<Value>(raw) else {
@@ -90,6 +96,45 @@ pub fn collect(raw: &[u8], scan: &mut StopScan) {
     let Some(ts) = norm_ts(&record["timestamp"]) else {
         return;
     };
+    if record["type"] == "response_item" {
+        let payload = &record["payload"];
+        if let Some(call) = payload["call_id"].as_str() {
+            if payload["type"] == "function_call"
+                && payload["namespace"] == "collaboration"
+                && payload["name"] == "list_agents"
+            {
+                scan.codex_calls.insert(call.to_owned());
+            } else if payload["type"] == "function_call_output"
+                && scan.codex_calls.remove(call)
+                && let Some(output) = payload["output"].as_str()
+                && let Ok(output) = serde_json::from_str::<Value>(output)
+                && let Some(agents) = output["agents"].as_array()
+            {
+                for agent in agents {
+                    let status = &agent["agent_status"];
+                    // pending_init is an unloaded/restored agent, not an
+                    // executing turn. Unknown statuses are not stop evidence.
+                    let stopped =
+                        matches!(status.as_str(), Some("pending_init" | "idle" | "shutdown"))
+                            || ["completed", "errored", "interrupted"]
+                                .iter()
+                                .any(|key| status.get(key).is_some());
+                    if stopped && let Some(name) = agent["agent_name"].as_str() {
+                        scan.stops
+                            .entry(name.to_owned())
+                            .and_modify(|at| {
+                                if ts > *at {
+                                    *at = ts.clone();
+                                }
+                            })
+                            .or_insert_with(|| ts.clone());
+                    }
+                }
+            }
+        }
+        // Never interpret quoted Claude notifications inside Codex tool data.
+        return;
+    }
     if has_notice {
         for block in NOTICE.find_iter(raw) {
             let Some(captures) = TASK_ID.captures(block.as_bytes()) else {
@@ -145,6 +190,9 @@ pub fn update(scan: &mut StopScan, root: &Path, data: &Path, stamp: Stamp) {
         .stamp
         .is_none_or(|known| (known.dev, known.ino) != (stamp.dev, stamp.ino))
         || stamp.size < scan.scanned
+        || scan
+            .stamp
+            .is_some_and(|known| known != stamp && known.size == stamp.size)
     {
         *scan = StopScan::default();
     }

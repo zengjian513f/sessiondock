@@ -14,6 +14,7 @@ pub(super) struct Scan {
     stamp: Stamp,
     committed: u64,
     pub turn: Option<&'static str>,
+    pub turn_at: Option<String>,
     pub model: Value,
 }
 
@@ -21,6 +22,8 @@ pub(super) struct Scan {
 struct Record {
     #[serde(rename = "type")]
     kind: String,
+    #[serde(default)]
+    timestamp: Value,
     #[serde(default)]
     payload: Payload,
     #[serde(default)]
@@ -60,6 +63,7 @@ pub(super) fn read(
     let mut pieces: Vec<Vec<u8>> = Vec::new();
     let mut asking = None;
     let mut boundary = None;
+    let mut turn_at = None;
     let mut model = None;
     'chunks: while position > floor {
         let start = position.saturating_sub(TAIL_BYTES).max(floor);
@@ -121,6 +125,9 @@ pub(super) fn read(
                                 "turn_aborted" => Some("aborted"),
                                 _ => None,
                             };
+                            if boundary.is_some() {
+                                turn_at = super::summary::norm_ts(&record.timestamp);
+                            }
                         }
                         if model.is_some() && (source != "codex" || boundary.is_some()) {
                             break 'chunks;
@@ -158,6 +165,11 @@ pub(super) fn read(
         stamp,
         committed,
         turn,
+        turn_at: if boundary.is_some() {
+            turn_at
+        } else {
+            previous.and_then(|scan| scan.turn_at.clone())
+        },
         model: model
             .or_else(|| previous.map(|scan| scan.model.clone()))
             .unwrap_or(Value::Null),

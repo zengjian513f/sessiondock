@@ -1,6 +1,7 @@
 //! Browser-facing clone orchestration. Paths and identity maps never come from
 //! the browser; the operation journal owns both between plan and confirmation.
 use crate::{
+    sessions::SessionSnapshot,
     state::AppState,
     transfer::{
         TransferError,
@@ -40,15 +41,22 @@ fn service(state: &AppState) -> Result<Arc<TransferService>, Box<Response>> {
         )))
     })
 }
-async fn stopped(state: &AppState, op: &Operation) -> Result<(), Box<Response>> {
+async fn stopped(
+    state: &AppState,
+    op: &Operation,
+    snapshot: Option<SessionSnapshot>,
+) -> Result<SessionSnapshot, Box<Response>> {
     let started = std::time::Instant::now();
     let service = service(state)?;
     // The transfer inventory was already used for planning/rechecks. Keep its
     // verified catalog, instead of building a second cold reader inventory.
-    let snapshot = tokio::task::spawn_blocking(move || service.store().search_snapshot())
-        .await
-        .map_err(|error| Box::new(failure(TransferError::new("move_io", error.to_string()))))?
-        .map_err(|error| Box::new(failure(TransferError::new("move_inventory", error.message))))?;
+    let snapshot = match snapshot {
+        Some(snapshot) => snapshot,
+        None => tokio::task::spawn_blocking(move || service.inventory_snapshot())
+            .await
+            .map_err(|error| Box::new(failure(TransferError::new("move_io", error.to_string()))))?
+            .map_err(|error| Box::new(failure(error)))?,
+    };
     let indexed = started.elapsed();
     let mut uids = std::collections::HashMap::new();
     for member in &op.group().members {
@@ -64,20 +72,17 @@ async fn stopped(state: &AppState, op: &Operation) -> Result<(), Box<Response>> 
         };
         uids.insert(uid, member.title.clone());
     }
-    let (rows, catalog) = (
-        snapshot.list["sessions"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default(),
-        snapshot.native_catalog(),
-    );
-    let rows: Vec<_> = rows
+    let catalog = snapshot.native_catalog();
+    let rows: Vec<_> = snapshot.list["sessions"]
+        .as_array()
         .into_iter()
+        .flatten()
         .filter(|row| {
             row["uid"]
                 .as_str()
                 .is_some_and(|uid| uids.contains_key(uid))
         })
+        .cloned()
         .collect();
     let live = super::trash::observe_liveness(state, &rows, &catalog)
         .await
@@ -95,7 +100,7 @@ async fn stopped(state: &AppState, op: &Operation) -> Result<(), Box<Response>> 
             ))));
         }
     }
-    Ok(())
+    Ok(snapshot)
 }
 #[derive(Deserialize)]
 pub struct PlanRequest {
@@ -111,6 +116,10 @@ pub struct PlanRequest {
 pub struct ExecuteRequest {
     uid: String,
     operation_id: String,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    new_ids: Option<bool>,
 }
 pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) -> Response {
     let service = match service(&state) {
@@ -132,17 +141,19 @@ pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
         ));
     }
     let new_ids = body.new_ids.unwrap_or(!moving);
-    let op = match tokio::task::spawn_blocking(move || {
+    let (op, snapshot) = match tokio::task::spawn_blocking(move || {
+        let snapshot = copy.inventory_snapshot()?;
         if let Some(id) = body.previous_operation_id
             && let Some(op) = copy.reuse_preview(&selected, &id, new_ids, moving)?
         {
-            return Ok(op);
+            return Ok((op, snapshot));
         }
-        if moving {
-            copy.plan_move(&selected, new_ids)
+        let op = if moving {
+            copy.plan_move(&selected, new_ids, &snapshot)?
         } else {
-            copy.plan_copy(&selected, new_ids)
-        }
+            copy.plan_copy(&selected, new_ids, &snapshot)?
+        };
+        Ok((op, snapshot))
     })
     .await
     {
@@ -150,7 +161,7 @@ pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
         Ok(Err(e)) => return failure(e),
         Err(e) => return failure(TransferError::new("move_io", e.to_string())),
     };
-    if let Err(e) = stopped(&state, &op).await {
+    if let Err(e) = stopped(&state, &op, Some(snapshot)).await {
         return *e;
     }
     Json(TransferService::public(&op)).into_response()
@@ -233,7 +244,7 @@ pub async fn abort_move(State(state): State<AppState>, Json(body): Json<AbortReq
             Err(e) => return failure(e),
         };
         if op.phase != "complete"
-            && let Err(e) = stopped(&state, &op).await
+            && let Err(e) = stopped(&state, &op, None).await
         {
             return *e;
         }
@@ -281,12 +292,13 @@ pub async fn switch_source(
         Ok(op) => op,
         Err(e) => return failure(e),
     };
-    if let Err(e) = stopped(&state, &op).await {
-        return *e;
-    }
+    let snapshot = match stopped(&state, &op, None).await {
+        Ok(snapshot) => snapshot,
+        Err(e) => return *e,
+    };
     match tokio::task::spawn_blocking(move || {
         let _guard = guard;
-        service.switch_source(&body.operation_id)
+        service.switch_source(&body.operation_id, &snapshot)
     })
     .await
     {
@@ -345,16 +357,17 @@ pub async fn retire_source(
     if op.phase == "retired" && op.moving && op.incoming_digest.is_none() {
         return Json(TransferService::public(&op)).into_response();
     }
-    if let Err(e) = stopped(&state, &op).await {
-        return *e;
-    }
+    let snapshot = match stopped(&state, &op, None).await {
+        Ok(snapshot) => snapshot,
+        Err(e) => return *e,
+    };
     // Keep both the journal gate and asynchronous receipt cleanup alive if
     // the Hub disconnects while source retirement is in flight.
     let task = tokio::spawn(async move {
         let _guard = guard;
         let copy = service.clone();
         let mut op = tokio::task::spawn_blocking(move || {
-            copy.retire_source(&body.operation_id, trash.directory())
+            copy.retire_source(&body.operation_id, trash.directory(), &snapshot)
         })
         .await
         .map_err(|e| TransferError::new("move_io", e.to_string()))??;
@@ -442,6 +455,42 @@ pub async fn retire_source(
         Err(e) => failure(TransferError::new("move_io", e.to_string())),
     }
 }
+async fn confirm_mode(
+    state: &AppState,
+    service: &Arc<TransferService>,
+    id: &str,
+    uid: Option<&str>,
+    mode: Option<&str>,
+    new_ids: Option<bool>,
+) -> Result<(), Box<Response>> {
+    let Some(mode) = mode else {
+        return Ok(());
+    };
+    if mode == "move" && state.trash.is_none() {
+        return Err(Box::new(failure(TransferError::new(
+            "move_group_unsupported",
+            "源机器未配置回收站",
+        ))));
+    }
+    let (Some(uid), Some(new_ids)) = (uid, new_ids) else {
+        return Err(Box::new(failure(TransferError::new(
+            "move_format",
+            "确认选项缺少会话或身份选择",
+        ))));
+    };
+    let (service, id, uid, mode) = (
+        service.clone(),
+        id.to_owned(),
+        uid.to_owned(),
+        mode.to_owned(),
+    );
+    tokio::task::spawn_blocking(move || service.confirm_mode(&uid, &id, new_ids, &mode))
+        .await
+        .map_err(|e| Box::new(failure(TransferError::new("move_io", e.to_string()))))?
+        .map_err(|e| Box::new(failure(e)))?;
+    Ok(())
+}
+
 pub async fn execute(State(state): State<AppState>, Json(body): Json<ExecuteRequest>) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
@@ -451,6 +500,18 @@ pub async fn execute(State(state): State<AppState>, Json(body): Json<ExecuteRequ
         Ok(guard) => guard,
         Err(e) => return failure(e),
     };
+    if let Err(e) = confirm_mode(
+        &state,
+        &service,
+        &body.operation_id,
+        Some(&body.uid),
+        body.mode.as_deref(),
+        body.new_ids,
+    )
+    .await
+    {
+        return *e;
+    }
     let op = match service.load(&body.operation_id) {
         Ok(op) if op.uid == body.uid => op,
         Ok(_) => {
@@ -461,15 +522,18 @@ pub async fn execute(State(state): State<AppState>, Json(body): Json<ExecuteRequ
         }
         Err(e) => return failure(e),
     };
-    if op.phase != "complete"
-        && let Err(e) = stopped(&state, &op).await
-    {
-        return *e;
-    }
+    let snapshot = if op.phase != "complete" {
+        match stopped(&state, &op, None).await {
+            Ok(snapshot) => Some(snapshot),
+            Err(e) => return *e,
+        }
+    } else {
+        None
+    };
     // The transaction and gate outlive a cancelled HTTP request.
     let result = tokio::task::spawn_blocking(move || {
         let _guard = guard;
-        service.execute(op)
+        service.execute(op, snapshot.as_ref())
     })
     .await;
     match result {
@@ -489,6 +553,14 @@ pub struct TransferId {
     operation_id: String,
     #[serde(default)]
     completed: bool,
+    #[serde(default)]
+    reserve: bool,
+    #[serde(default)]
+    uid: Option<String>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    new_ids: Option<bool>,
 }
 
 /// These routes are mounted only on the authenticated node listener.
@@ -500,18 +572,18 @@ pub async fn export_bundle(
         Ok(s) => s,
         Err(e) => return *e,
     };
-    let guard = match service.operation_guard(&body.operation_id).await {
+    let _guard = match service.operation_guard(&body.operation_id).await {
         Ok(guard) => guard,
         Err(e) => return failure(e),
     };
     let copy = service.clone();
-    let op =
+    let (op, snapshot) =
         match tokio::task::spawn_blocking(move || copy.reserve_export(&body.operation_id)).await {
             Ok(Ok(op)) => op,
             Ok(Err(e)) => return failure(e),
             Err(e) => return failure(TransferError::new("move_io", e.to_string())),
         };
-    if let Err(error) = stopped(&state, &op).await {
+    if let Err(error) = stopped(&state, &op, Some(snapshot)).await {
         let _ = service.release_export(&op.id, false);
         return *error;
     }
@@ -527,13 +599,12 @@ pub async fn export_bundle(
     let copy_op = op.clone();
     let copy_path = path.clone();
     let result = tokio::task::spawn_blocking(move || {
-        let _guard = guard;
         let _scope = crate::transfer::coordination::Scope::enter(copy.interrupts.flag(&copy_op.id));
         copy.export_bundle(&copy_op, &copy_path)
     })
     .await;
-    match result {
-        Ok(Ok(_)) => {}
+    let snapshot = match result {
+        Ok(Ok((_, snapshot))) => snapshot,
         Ok(Err(e)) => {
             let _ = service.release_export(&op.id, false);
             return failure(e);
@@ -542,8 +613,8 @@ pub async fn export_bundle(
             let _ = service.release_export(&op.id, false);
             return failure(TransferError::new("move_io", e.to_string()));
         }
-    }
-    if let Err(error) = stopped(&state, &op).await {
+    };
+    if let Err(error) = stopped(&state, &op, Some(snapshot)).await {
         let _ = service.release_export(&op.id, false);
         let _ = std::fs::remove_file(&path);
         return *error;
@@ -692,8 +763,8 @@ pub async fn reserve_export(
     let copy = service.clone();
     let result = tokio::task::spawn_blocking(move || copy.reserve_export(&body.operation_id)).await;
     match result {
-        Ok(Ok(op)) => {
-            if let Err(error) = stopped(&state, &op).await {
+        Ok(Ok((op, snapshot))) => {
+            if let Err(error) = stopped(&state, &op, Some(snapshot)).await {
                 let _ = service.release_export(&op.id, false);
                 return *error;
             }
@@ -738,14 +809,34 @@ pub async fn bundle_manifest(
         Ok(guard) => guard,
         Err(e) => return failure(e),
     };
+    let reserved = if body.reserve {
+        let copy = service.clone();
+        let id = body.operation_id.clone();
+        match tokio::task::spawn_blocking(move || copy.reserve_export(&id)).await {
+            Ok(Ok((op, snapshot))) => {
+                if let Err(e) = stopped(&state, &op, Some(snapshot)).await {
+                    let _ = service.release_export(&op.id, false);
+                    return *e;
+                }
+                Some(op)
+            }
+            Ok(Err(e)) => return failure(e),
+            Err(e) => return failure(TransferError::new("move_io", e.to_string())),
+        }
+    } else {
+        None
+    };
     let result = tokio::task::spawn_blocking(move || {
         let _guard = guard;
         let _scope = crate::transfer::coordination::Scope::enter(
             service.interrupts.flag(&body.operation_id),
         );
         crate::transfer::coordination::check()?;
-        let op = service.load(&body.operation_id)?;
-        service.bundle_manifest(&op)
+        if let Some(op) = reserved {
+            service.build_manifest(&op, false)
+        } else {
+            service.bundle_manifest(&service.load(&body.operation_id)?)
+        }
     })
     .await;
     match result {
@@ -798,6 +889,24 @@ pub async fn interrupt(State(state): State<AppState>, Json(body): Json<TransferI
         Ok(s) => s,
         Err(e) => return *e,
     };
+    if body.reset && body.mode.is_some() {
+        let _guard = match service.operation_guard(&body.operation_id).await {
+            Ok(guard) => guard,
+            Err(e) => return failure(e),
+        };
+        if let Err(e) = confirm_mode(
+            &state,
+            &service,
+            &body.operation_id,
+            body.uid.as_deref(),
+            body.mode.as_deref(),
+            body.new_ids,
+        )
+        .await
+        {
+            return *e;
+        }
+    }
     if body.reset {
         service.interrupts.reset(&body.operation_id);
     } else {
