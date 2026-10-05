@@ -165,14 +165,31 @@ Present fields are only the ones that changed.
 | --- | --- |
 | `t` | `"diff"` |
 | `seq` | next sequence number |
-| `scrolled` | rows that left the **primary** screen since the previous capture, oldest first. Absent when empty. Not collected while the next state is on the alt screen, and not collected across a resize snapshot (the browser recovers those rows, see [resize seam](#resize-seam)) |
+| `scrolled` | rows that left the **primary** screen since the previous capture, oldest first. Absent when empty. Not collected while the next state is on the alt screen, right after leaving it, and not collected across a resize snapshot (the browser recovers those rows, see [resize seam](#resize-seam)) |
+| `history_total` | present only with `scrolled`: absolute history length in the model after this diff. Once the host history is full it stays at `--history` while rows keep scrolling |
 | `rows` | `[y, row]` pairs; `y` is a viewport row |
 | `cursor` | `{x, y, visible}` when it moved or visibility changed |
 | `modes` | when any mode field changed |
 | `title` | OSC title string when it changed (including a reset to `""`) |
 
 The browser appends `scrolled` only when its **current** `modes.alt` is
-false (the value before this diff is applied).
+false (the value before this diff is applied). When the diff carries
+`history_total` and it is lower than the browser's host total estimate, the
+host has dropped that many of its oldest rows: the estimate and the host index
+of the oldest loaded row move down by the same amount (older hosts omit the
+field; `acceptHistory` then corrects the estimate on the next page).
+
+`scrolled` counts rows pushed into the model's history, not growth of the
+history length, so it stays exact when the history is at `--history` and every
+new row evicts the oldest one. alacritty does not expose a scroll counter;
+`Screen::take_scrolled` uses the primary grid's `display_offset`, which grows by
+the scrolled count whenever it is non-zero. Each capture reads it and puts it
+back to 1 (the host reads the grid only by absolute line, never by display
+offset). The counter saturates at `--history`; a capture that saw at least
+`--history - 1` new rows sends the whole retained history, except that exactly
+`--history - 1` rows is recognised by the previous newest row now being the
+oldest. A history clear (ED 3, RIS) or model rebuild zeroes the offset; the rows
+then in history are all new. Resize captures consume the counter and discard it.
 
 ### `modes`
 
@@ -403,12 +420,12 @@ Known gaps:
   change keeps an empty title until one arrives.
 - The host does not emit a snapshot because of a `seq` gap; only
   reconnect (or a live resize) produces one.
-- The screen thread derives `scrolled` from growth of the history length
-  (`next.history > prev.history` in `crates/ptyhost/src/session.rs`). Once
-  the host history reaches `--history` (10_000 by default) its length stays
-  constant, so newly scrolled rows are no longer sent to live grid clients
-  until a reconnect snapshot. This is a host-side gap and is not changed
-  here.
+- A height shrink while the host history is full moves rows from the screen
+  into the host history without changing `history_total`, so the browser
+  cannot see them in the `reset: false` snapshot; those rows are missing
+  locally until a reconnect snapshot.
+- Hosts already running keep their old binary until restarted; an old host
+  stops sending `scrolled` once its history is full.
 - Recording replay corrects a recorded height change locally, but a
   recorded width change cannot be aligned with the host history tail (replay
   has no lease), so rows moved across the seam by the recorded reflow may be
@@ -532,14 +549,18 @@ never pages.
 prints 5000 numbered rows before the console opens, then pages with a real
 scrollbar drag, wheel input and scrollbar Home until row 1, checking order,
 seams, viewport stability, live input afterwards, no idle requests, a reload,
-a width change and that a recording replay sends no history requests.
+a width change and that a recording replay sends no history requests. It also
+starts a host with `--history 60`, prints 600 numbered rows while the console is
+attached, and checks that rows 1..600 all arrive in order on the same
+connection and that the host total estimate stays at 60.
 
 ## Validation
 
 `cargo test -p ptyhost --test host_grid --locked` runs the Unix `/bin/sh`
 fixture in `crates/ptyhost/tests/host_grid.rs` with an explicit private
 `--dir`: first snapshot then row diffs, scrolled rows plus a second
-client's history snapshot, resize `reset: false` without history, alt
+client's history snapshot, scrolled rows that keep arriving after the
+`--history 100` cap is full, resize `reset: false` without history, alt
 screen / title / exit, and a byte client coexisting with a grid client
 (the byte stream is not JSON).
 

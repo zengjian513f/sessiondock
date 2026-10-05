@@ -292,6 +292,8 @@ impl GridReplay {
     /// Full snapshot (`reset` chooses whether the browser drops its scrollback).
     fn snapshot(&mut self, reset: bool) -> String {
         let next = grid::capture(&self.screen);
+        // 消耗滚动计数：快照之前滚出的行不再作为下一个 diff 的 scrolled。
+        let _ = grid::take_scrolled_rows(&mut self.screen);
         // 录制回放没有分页接口：reset 快照直接带上模型里的全部历史（≤ GRID_HISTORY）。
         let history = if reset {
             grid::history_rows(&self.screen, 0, next.history)
@@ -306,12 +308,11 @@ impl GridReplay {
 
     fn diff(&mut self) -> Option<String> {
         let next = grid::capture(&self.screen);
+        let mut scrolled = grid::take_scrolled_rows(&mut self.screen);
         let prev = self.last.take()?;
-        let scrolled = if !next.alt && next.history > prev.history {
-            grid::history_rows(&self.screen, prev.history, next.history)
-        } else {
-            Vec::new()
-        };
+        if prev.alt {
+            scrolled.clear();
+        }
         let title = self.screen.title();
         let line = grid::diff_json(&prev, &next, &scrolled, Some(title.as_str()), self.seq + 1);
         self.last = Some(next);
