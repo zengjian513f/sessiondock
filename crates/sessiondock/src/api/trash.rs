@@ -67,25 +67,35 @@ pub(super) async fn frozen_liveness(state: &AppState) -> Result<(Vec<Value>, Liv
             Ok((rows, catalog))
         })
         .await?;
-    let document = json!({"sessions": &rows});
-    let external = super::runtime::observe_external_all(state, &document).await?;
-    let mut liveness = if let Some(runtime) = &state.runtime {
-        let _permit = state
-            .runtime_probes
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| {
-                ApiError::new(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "runtime_closed",
-                    "进程观察服务已关闭",
-                )
-            })?;
-        let receipts = exit_receipts(state).await?;
-        let snapshot: RuntimeSnapshot =
-            runtime
-                .observe_with(&catalog, &receipts)
+    let liveness = observe_liveness(state, &rows, &catalog).await?;
+    Ok((rows, liveness))
+}
+
+/// Fresh external and managed observations share the caller's verified native
+/// snapshot. Independent process/host I/O can run concurrently.
+pub(super) async fn observe_liveness(
+    state: &AppState,
+    rows: &[Value],
+    catalog: &crate::runtime::NativeCatalog,
+) -> Result<Liveness, ApiError> {
+    let document = json!({"sessions": rows});
+    let managed = async {
+        Ok::<_, ApiError>(if let Some(runtime) = &state.runtime {
+            let _permit = state
+                .runtime_probes
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|_| {
+                    ApiError::new(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "runtime_closed",
+                        "进程观察服务已关闭",
+                    )
+                })?;
+            let receipts = exit_receipts(state).await?;
+            let snapshot: RuntimeSnapshot = runtime
+                .observe_with(catalog, &receipts)
                 .await
                 .map_err(|_| {
                     ApiError::new(
@@ -94,10 +104,15 @@ pub(super) async fn frozen_liveness(state: &AppState) -> Result<(Vec<Value>, Liv
                         "无法读取受管进程状态",
                     )
                 })?;
-        Liveness::from_runtime(Some(&snapshot))
-    } else {
-        Liveness::default()
+            Liveness::from_runtime(Some(&snapshot))
+        } else {
+            Liveness::default()
+        })
     };
+    let (external, mut liveness) = tokio::try_join!(
+        super::runtime::observe_external_all(state, &document),
+        managed
+    )?;
     liveness.configured = true;
     for (uid, running) in external {
         if running {
@@ -107,7 +122,7 @@ pub(super) async fn frozen_liveness(state: &AppState) -> Result<(Vec<Value>, Liv
             );
         }
     }
-    Ok((rows, liveness))
+    Ok(liveness)
 }
 
 /// Same receipt rule as `/api/live`: a confirmed lifecycle exit for one exact

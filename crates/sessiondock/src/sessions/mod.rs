@@ -687,6 +687,12 @@ impl SessionStore {
         Ok(document)
     }
 
+    /// Native writers announce a committed membership change without eagerly
+    /// rebuilding the entire list. The next list/history read refreshes it.
+    pub fn invalidate_inventory(&self) {
+        self.index.invalidate();
+    }
+
     /// The list for liveness pairing (`/api/live`, the spawner tick): rows
     /// up to `OPEN_TTL` old are good enough to pair processes with sessions,
     /// so the 3 s poll shares one walk with the SSE publisher instead of

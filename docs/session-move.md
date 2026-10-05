@@ -153,8 +153,8 @@ MCP 服务或权限。计划列出依赖及目标端检查结果；缺失时明�
 兼容旧平面定义和 namespace 定义。浏览器接口只返回名称，不返回描述、schema 或工具参数。
 这些定义没有可移植的执行器探测接口，页面明确标为“执行器未核验”；源节点或旧任务没有提供
 依赖清单时也显示未核验，不将缺字段解释为没有依赖。
-确认前通过两端各自的 `/api/clients` 检查已配置 CLI 的安装状态和版本，提示目标缺少 CLI、
-存在较旧版本或版本无法核验。切换机器后不采用前一个目标迟到的结果；检查失败仍允许迁移历史，
+打开清单后异步通过两端各自的 `/api/clients` 检查已配置 CLI 的安装状态和版本，提示目标缺少 CLI、
+存在较旧版本或版本无法核验。核对期间显示“尚未核验”，不禁用确认按钮；切换机器后不采用前一个目标迟到的结果。检查失败仍允许迁移历史，
 但不声明目标能够直接执行。版本提示不是格式兼容证明，原生数据库的 schema 核对仍独立执行。
 
 Codex 的 `thread_goals` 和 `thread_goal_continuation_deferrals` 已纳入按线程导入、
@@ -456,8 +456,10 @@ Hub：
 
 - `POST /api/session/clone/progress {uid, operation_id}`：读取预览/同机复制状态并续租。
 - `POST /api/session/clone/cancel {uid, operation_id}`：撤回预览或同机复制，清理完成后返回。
-- `POST /api/session/clone/plan {uid, mode, new_ids}`：从源节点取得整组清单及 `operation_id`。
+- `POST /api/session/clone/plan {uid, mode, new_ids, previous_operation_id?}`：从源节点取得整组清单及 `operation_id`。
   清单按逻辑会话显示；各代物理历史、固定身份映射及引用边界保存在操作记录中。
+  同一会话、身份选项不变且尚未暂存的预览，在切换复制/移动时复用原清单；执行仍核对原快照。
+  完成后立即打开目标会话，并行刷新侧栏；服务端使列表缓存失效，由下次读取更新，不在写入响应内重建全量列表。
 - `POST /api/session/clone {uid, operation_id}`：同机复制。
 - `POST /api/session/transfer/clone {uid, target_node, operation_id}`：跨机复制或移动，
   操作类型及身份选项以已保存的计划为准。重试同一入口恢复原操作，包括移动的待完成清理。

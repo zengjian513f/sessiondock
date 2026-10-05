@@ -10338,7 +10338,7 @@ async function cloneSessionGroup(uid, resumed = null) {
   $d('#transfer-source').value = sourceName;
   let plan = resumed?.plan || null, busy = false, planning = false, uncertain = !!resumed;
   let operationStarted = !!resumed, progressTimer = null, progressLoading = false, aborting = false, executionSequence = 0;
-  let environmentLoading = false, environmentSequence = 0;
+  let environmentSequence = 0;
   const environmentClients = new Map();
   const identityChoices = {clone:true, move:false};
   if (resumed) {
@@ -10369,7 +10369,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     newIds.checked = identityChoices[mode()];
     const reason = blockedReason(); notice.textContent = reason; notice.hidden = !reason;
     confirm.textContent = aborting ? '正在撤回…' : busy && operationStarted ? (moving ? '正在移动…' : '正在复制…') : uncertain ? (moving ? '重试同一次移动' : '重试同一次复制') : moving ? '移动整组' : '复制整组';
-    confirm.disabled = busy || planning || aborting || environmentLoading || !plan || !!reason;
+    confirm.disabled = busy || planning || aborting || !plan || !!reason;
     // Keep the chosen operation fixed while its publication result is uncertain.
     target.disabled = busy || aborting || uncertain;
     for (const radio of radios) radio.disabled = busy || aborting || uncertain;
@@ -10400,7 +10400,11 @@ async function cloneSessionGroup(uid, resumed = null) {
     // Either the execution response or a durable progress receipt can finish
     // the dialog. Fence the other response before awaiting list/navigation work.
     ++executionSequence; operationStarted = false; uncertain = false; busy = false;
-    close(); await loadSessions(true); await openSession(result.target_uid);
+    close();
+    // Open the known target immediately; refreshing every machine's sidebar is
+    // independent of reading this session and must not delay the handoff.
+    void loadSessions(true, true);
+    await openSession(result.target_uid, null, {exact:true});
     showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
   };
   async function discardPreview(previous) {
@@ -10458,7 +10462,7 @@ async function cloneSessionGroup(uid, resumed = null) {
   async function refreshEnvironment() {
     const sequence = ++environmentSequence;
     const note = $d('.transfer-environment');
-    if (!plan) {environmentLoading = false; note.hidden = true; renderSelection(); return;}
+    if (!plan) {note.hidden = true; renderSelection(); return;}
     const destinationId = target.value, currentPlan = plan;
     const clients = id => {
       if (!environmentClients.has(id)) environmentClients.set(id, (async () => {
@@ -10472,7 +10476,7 @@ async function cloneSessionGroup(uid, resumed = null) {
       })());
       return environmentClients.get(id);
     };
-    environmentLoading = true; note.hidden = false; note.textContent = '正在核对目标 CLI…'; note.title = '';
+    note.hidden = false; note.textContent = '正在核对目标 CLI，尚未核验；可先迁移历史。'; note.title = '';
     renderSelection();
     const [sourceClients, targetClients] = await Promise.all([clients(sourceId), clients(destinationId)]);
     if (!dialog.isConnected || sequence !== environmentSequence) return;
@@ -10494,7 +10498,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     if (!Array.isArray(currentPlan.dynamic_tools)) messages.push('未核验动态工具依赖');
     if (tools.length) messages.push(`${tools.length} 个动态工具执行器未核验`);
     note.textContent = messages.join('；'); note.title = tools.join('、'); note.hidden = !messages.length;
-    environmentLoading = false; renderSelection();
+    renderSelection();
   }
   async function refreshPlan(executing = false) {
     if ((!executing && busy) || planning || uncertain || (mode() === 'move' && !crossMachine())) return;
@@ -10505,7 +10509,8 @@ async function cloneSessionGroup(uid, resumed = null) {
     planning = true; plan = null; error.hidden = true; renderSelection();
     status.textContent = '正在读取清单…';
     try {
-      const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode});
+      const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode,
+        ...(previous ? {previous_operation_id:previous.operation_id} : {})});
       if (!fresh && next.new_ids !== false) throw new Error('源机器版本尚不支持保留 UID，请更新节点');
       if (selectedMode === 'move' && next.mode !== 'move') throw new Error('源机器版本尚不支持移动，请更新节点');
       if (previous && previous.operation_id !== next.operation_id) await discardPreview(previous);

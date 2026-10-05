@@ -38,9 +38,16 @@ fn service(state: &AppState) -> Result<Arc<TransferService>, Box<Response>> {
     })
 }
 async fn stopped(state: &AppState, op: &Operation) -> Result<(), Box<Response>> {
-    let (_, live) = super::trash::frozen_liveness(state)
+    let started = std::time::Instant::now();
+    let service = service(state)?;
+    // The transfer inventory was already used for planning/rechecks. Keep its
+    // verified catalog, instead of building a second cold reader inventory.
+    let snapshot = tokio::task::spawn_blocking(move || service.store().search_snapshot())
         .await
-        .map_err(|error| Box::new(error.into_response()))?;
+        .map_err(|error| Box::new(failure(TransferError::new("move_io", error.to_string()))))?
+        .map_err(|error| Box::new(failure(TransferError::new("move_inventory", error.message))))?;
+    let indexed = started.elapsed();
+    let mut uids = std::collections::HashMap::new();
     for member in &op.group().members {
         let uid = if op.incoming_digest.is_some() {
             match (&state.transfer, &op.staged) {
@@ -52,10 +59,36 @@ async fn stopped(state: &AppState, op: &Operation) -> Result<(), Box<Response>> 
         } else {
             member.uid.clone()
         };
+        uids.insert(uid, member.title.clone());
+    }
+    let (rows, catalog) = (
+        snapshot.list["sessions"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default(),
+        snapshot.native_catalog(),
+    );
+    let rows: Vec<_> = rows
+        .into_iter()
+        .filter(|row| {
+            row["uid"]
+                .as_str()
+                .is_some_and(|uid| uids.contains_key(uid))
+        })
+        .collect();
+    let live = super::trash::observe_liveness(state, &rows, &catalog)
+        .await
+        .map_err(|error| Box::new(error.into_response()))?;
+    eprintln!(
+        "sessiondock transfer stopped: inventory_ms={} runtime_ms={}",
+        indexed.as_millis(),
+        started.elapsed().saturating_sub(indexed).as_millis()
+    );
+    for (uid, title) in uids {
         if matches!(live.state(&uid), RunState::Running(_)) {
             return Err(Box::new(failure(TransferError::new(
                 "move_session_running",
-                format!("会话仍在运行：{}", member.title),
+                format!("会话仍在运行：{title}"),
             ))));
         }
     }
@@ -68,6 +101,8 @@ pub struct PlanRequest {
     new_ids: Option<bool>,
     #[serde(default)]
     mode: Option<String>,
+    #[serde(default)]
+    previous_operation_id: Option<String>,
 }
 #[derive(Deserialize)]
 pub struct ExecuteRequest {
@@ -95,6 +130,11 @@ pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
     }
     let new_ids = body.new_ids.unwrap_or(!moving);
     let op = match tokio::task::spawn_blocking(move || {
+        if let Some(id) = body.previous_operation_id
+            && let Some(op) = copy.reuse_preview(&selected, &id, new_ids, moving)?
+        {
+            return Ok(op);
+        }
         if moving {
             copy.plan_move(&selected, new_ids)
         } else {
@@ -209,7 +249,7 @@ pub async fn abort_move(State(state): State<AppState>, Json(body): Json<AbortReq
     .await;
     match result {
         Ok(Ok(op)) => {
-            let _ = state.reader.run(|store| store.list(true)).await;
+            state.reader.store.invalidate_inventory();
             Json(TransferService::public(&op)).into_response()
         }
         Ok(Err(e)) => failure(e),
@@ -390,7 +430,7 @@ pub async fn retire_source(
             .map_err(|e| TransferError::new("move_cleanup", e.message))?;
         }
         op = service.finish_retirement(op)?;
-        let _ = state.reader.run(|store| store.list(true)).await;
+        state.reader.store.invalidate_inventory();
         Ok::<_, TransferError>(op)
     });
     match task.await {
@@ -431,7 +471,7 @@ pub async fn execute(State(state): State<AppState>, Json(body): Json<ExecuteRequ
     .await;
     match result {
         Ok(Ok(op)) => {
-            let _ = state.reader.run(|store| store.list(true)).await;
+            state.reader.store.invalidate_inventory();
             Json(TransferService::public(&op)).into_response()
         }
         Ok(Err(e)) => failure(e),
