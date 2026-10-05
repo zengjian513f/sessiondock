@@ -165,7 +165,7 @@ Present fields are only the ones that changed.
 | --- | --- |
 | `t` | `"diff"` |
 | `seq` | next sequence number |
-| `scrolled` | rows that left the **primary** screen since the previous capture, oldest first. Absent when empty. Not collected while the next state is on the alt screen, and not collected across a resize snapshot |
+| `scrolled` | rows that left the **primary** screen since the previous capture, oldest first. Absent when empty. Not collected while the next state is on the alt screen, and not collected across a resize snapshot (the browser recovers those rows, see [resize seam](#resize-seam)) |
 | `rows` | `[y, row]` pairs; `y` is a viewport row |
 | `cursor` | `{x, y, visible}` when it moved or visibility changed |
 | `modes` | when any mode field changed |
@@ -244,6 +244,81 @@ Scrollback reflow happens only in the model, on `reset: false` when
 concatenated and rewrapped; a wide cell is never split. The viewport is
 replaced by the next snapshot/diff from the host.
 
+### Lazy reflow
+
+The main console creates its model with `lazyReflow: true`, so a width
+change does not block the main thread in proportion to the history. A width
+change stamps every scrollback row that has no width yet with the width it
+was wrapped at (`row.wcols`) and marks the model `reflowPending`. Reading a
+row (`cellsOf`, `readCells`, `textOf`, selection text, search) always
+materializes it at its own width, so text and copies are correct while rows
+of two widths coexist.
+
+`GridTerm` then reflows, right away, the logical lines covering the viewport
+and two screens above and below it (`reflowRange`); every paint repeats this
+for wherever the viewport is, so scrolling into a part not yet reflowed
+reflows it before drawing. The rest is reflowed from the newest end toward
+the oldest in `setTimeout` slices of at most 8 ms (`reflowStep(deadline)`).
+A newer width change only changes the target: logical lines already at the
+target are skipped and lines at an intermediate width are rewrapped from
+their own width, so an in-flight batch is effectively cancelled without
+losing or redoing finished lines. A single unwrapped row that certainly fits
+(UTF-16 length × cell width ≤ target) is only restamped, without
+materializing cells. Search (`term-menu.js`) finishes any pending reflow
+before it scans, so its row numbers stay stable; history paging waits until
+the reflow is done (`historyRequest` returns null meanwhile) and resumes when
+the last slice emits a scroll event.
+
+Each replacement of `[start, end)` by new rows calls
+`model.onLinesReplaced(start, end, count, map)`. `map` converts a position
+inside the logical line by its column offset in the joined line; positions
+after it shift by the row-count change. `GridTerm` maps the viewport top (when
+not following output), both selection ends and the drag anchor through it,
+so the logical line on top stays on top and a selection, even one held
+during the resize, still covers the same text and copies it on release.
+
+Measured by `tests/terminal_reflow_browser.py` in headless Chromium with
+9155 scrollback rows (9000 numbered rows, every 90th a 300-column line) and
+five width changes: the old whole-history reflow ran synchronously inside
+`term.resize` for up to 88 ms (longest main-thread task 92 ms); now the
+synchronous call takes at most about 20 ms (canvas fit and paint
+included), no main-thread task reaches 50 ms, and the whole scrollback is at
+the new width 30–46 ms after the resize. The suite asserts a 120 ms longest
+task and a 60 ms synchronous resize with slack.
+
+### Resize seam
+
+When the host resizes its model, alacritty moves rows between history and
+screen: a shorter screen scrolls the rows above the cursor that no longer
+fit into history (`shrink_lines`), a taller one pulls history rows back to
+the top of the screen (`grow_lines`), and a width change reflows the whole
+buffer and keeps the last rows as the screen. Those moves are not in any
+`diff.scrolled` (the screen thread resets its capture across a resize), so
+before this was handled the browser lost rows at the seam after a shorter
+window or a narrower one and could show them twice after a taller or wider
+one. The fix is entirely in the browser; the host protocol is unchanged.
+
+- Every `reset: false` snapshot carries `history_total`. When the width did
+  not change, the model compares it with its own estimate
+  (`historyBase + historyAppended`): a growth of `n` rows moves the top `n`
+  rows of the old viewport into the scrollback, a shrink of `n` rows drops
+  the last `n` scrollback rows (they are in the new screen). Absolute line
+  numbers do not change, so the viewport and selection stay put. After a
+  snapshot taken on the alternate screen the estimate is not trusted.
+- After a width change, or whenever `history_total` moved, the model records
+  `tailSync`. On a live connection `term.js` (`syncTermHistoryTail`) fetches
+  the host's newest 400 history rows ending at that snapshot's
+  `history_total` through `GET /api/term/grid/history` under the page's
+  lease; rows scrolled in after the snapshot are excluded from the
+  comparison. `acceptHistoryTail` reflows the comparison window, finds the
+  oldest 8 fetched rows in the local scrollback (the match nearest the
+  expected position; rows compare after merging equal spans and trimming
+  trailing default spaces), and replaces the local rows from there with the
+  host's. Without a match nothing changes. A failed request is dropped
+  quietly (`terminal.history_tail_failed` audit event); the local height
+  correction stands. Recording replay never fetches and keeps only the
+  local height correction.
+
 The grid renderer keeps its Canvas 2D path at every interface scale.
 
 On narrow screens, the overlaid terminal rounds its top toward the opaque
@@ -306,6 +381,8 @@ the byte console.
 | --- | --- | --- |
 | Snapshot history | 2000 rows (`SNAPSHOT_HISTORY_ROWS`) | Older rows come from `GET /api/term/grid/history` in pages of at most 2000 (`grid_rows`) |
 | Browser scrollback | 100_000 rows | Drop from the oldest; history paging stops filling at the cap |
+| Width-change reflow | viewport ± 2 screens at once, rest in ≤ 8 ms slices | A newer width change retargets the pending slices ([lazy reflow](#lazy-reflow)) |
+| Resize seam alignment | newest 400 host history rows, 8-row anchor | No anchor found: local rows stay unchanged ([resize seam](#resize-seam)) |
 | Scrolled-row flood | none | Every row that left the primary screen between captures is sent in `diff.scrolled` |
 | WebSocket host payload | 32 KiB chunks | Split only; lines are reassembled in the decoder |
 | Attach query size default | 120×32 | Browser fit replaces this on open |
@@ -326,6 +403,16 @@ Known gaps:
   change keeps an empty title until one arrives.
 - The host does not emit a snapshot because of a `seq` gap; only
   reconnect (or a live resize) produces one.
+- The screen thread derives `scrolled` from growth of the history length
+  (`next.history > prev.history` in `crates/ptyhost/src/session.rs`). Once
+  the host history reaches `--history` (10_000 by default) its length stays
+  constant, so newly scrolled rows are no longer sent to live grid clients
+  until a reconnect snapshot. This is a host-side gap and is not changed
+  here.
+- Recording replay corrects a recorded height change locally, but a
+  recorded width change cannot be aligned with the host history tail (replay
+  has no lease), so rows moved across the seam by the recorded reflow may be
+  missing or repeated there.
 
 ## Fifth span element, clipboard, history paging
 
@@ -428,6 +515,7 @@ host has dropped its oldest rows and the estimate moves down before retrying.
 A local scrollback reflow (width change) marks the model for a resync: the
 next request first probes `[0, 1)` for the host total, assumes the local
 scrollback is the host's newest rows, and the seam search corrects the rest.
+No page is requested while a [lazy reflow](#lazy-reflow) is still pending.
 Paging never grows the scrollback past `scrollbackLimit` (100_000).
 
 Requests are made only for a live connection: the view is still current,
@@ -473,7 +561,10 @@ the grid view before and after a viewport resize, clipboard text paste
 notified, no page errors. Selection/copy, scrollback, file paste and host
 exit are in `terminal_selection_browser`, `terminal_scrollback_browser`
 and `terminal_input_browser`; paging older host history is in
-`terminal_history_paging_browser`. Needs POSIX and the debug `sessiondock` and
+`terminal_history_paging_browser`; width/height changes over fully paged
+history (long-task budget, contiguous rows, selection and viewport anchor,
+resize seam with and without the tail request) are in
+`terminal_reflow_browser`. Needs POSIX and the debug `sessiondock` and
 `ptyhost` binaries already built; it does not build them.
 
 The two Node files are also in the `node_contracts` group of

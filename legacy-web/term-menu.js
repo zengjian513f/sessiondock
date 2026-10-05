@@ -45,6 +45,8 @@ function installTermMenu(view) {
     if (!rebuild && !searching && !unchanged(matchesRevision)) rebuild = true;
     if (rebuild) {
       const epoch = ++searchEpoch;
+      // 宽度变化后的后台重排做完再查，行号在查找期间不再移动。
+      term.flushReflow?.();
       const before = revision();
       const valid = () => epoch === searchEpoch && active() && unchanged(before);
       const interrupted = async () => {
