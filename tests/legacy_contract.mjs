@@ -101,7 +101,12 @@ function loadFunction(context, name, source = appSource) {
   assert.ok(match, `Function ${name} exists`);
   const end = source.indexOf('\n}\n', match.index);
   assert.ok(end > match.index, `Function ${name} ends`);
-  vm.runInContext(source.slice(match.index, end + 2), context);
+  const body = source.slice(match.index, end + 2);
+  // The shared app.js id helper is a real dependency of term.js callers too.
+  if (name !== 'requestId' && /\brequestId\(\)/.test(body) && typeof context.requestId !== 'function') {
+    loadFunction(context, 'requestId', appSource);
+  }
+  vm.runInContext(body, context);
   return context[name];
 }
 
@@ -605,7 +610,7 @@ test('Rust managed terminal polling is independent of global live and waits for 
     loadTermList: () => { calls++; return new Promise(done => { resolve = done; }); },
     setTimeout: (fn, delay) => timers.push(delay),
   });
-  const poll = loadFunction(context, 'pollRustTermList', read('term.js'));
+  const poll = loadFunction(context, 'pollTermList', read('term.js'));
   const task = poll();
   assert.equal(calls, 1);
   assert.deepEqual(timers, []);
@@ -621,7 +626,7 @@ test('Rust managed terminal polling is independent of global live and waits for 
       loadTermList: () => assert.fail('unexpected terminal list request'),
       setTimeout: () => assert.fail('unexpected independent poll'),
     });
-    await loadFunction(excluded, 'pollRustTermList', read('term.js'))();
+    await loadFunction(excluded, 'pollTermList', read('term.js'))();
   }
 });
 

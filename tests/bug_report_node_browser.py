@@ -157,7 +157,7 @@ def check_report_drag_selection(page):
     open_report(page)
     page.keyboard.press('Escape')
     assert not dialog.is_visible()
-    page.evaluate('clearBugReportDraft()')
+    clear_report_draft(page)
     wait_drafts(page)
 
 
@@ -224,8 +224,8 @@ def check_report_scroll(page):
         page.evaluate("""() => {
             document.querySelector('#bug-report-dialog').close();
             document.querySelector('#bug-report-description').style.height = '';
-            clearBugReportDraft();
         }""")
+        clear_report_draft(page)
     page.set_viewport_size({"width": 1280, "height": 900})
 
 
@@ -257,12 +257,30 @@ def check_send_busy_width(page, boundary):
     boundary.pending.clear()
     boundary.defer = False
     page.wait_for_function("!bugReportSending")
-    page.evaluate("""() => {
-      document.querySelector('#bug-report-dialog').close();
-      clearBugReportDraft();
-    }""")
+    page.evaluate("document.querySelector('#bug-report-dialog').close()")
+    clear_report_draft(page)
     wait_drafts(page)
     boundary.calls.clear()
+
+
+# Resets the shared bug-report draft between checks, mirroring what a user
+# does by removing every attachment and clearing the description.
+CLEAR_REPORT_DRAFT_JS = """() => {
+  const draft = bugReportDraftObject(), dropped = draft.attachments;
+  for (const attachment of dropped) {
+    if (attachment.preview) URL.revokeObjectURL(attachment.preview);
+    if (attachment.cancelUpload) attachment.cancelUpload();
+  }
+  draft.text = ''; draft.attachments = []; draft.quotes = []; draft.nextAttachmentNumber = 1;
+  delete draft.requestId; delete draft.requestText;
+  const saved = persistComposerDraft(BUG_REPORT_DRAFT_UID);
+  for (const attachment of dropped) discardStagedAttachment(attachment, saved);
+  renderBugReportItems();
+}"""
+
+
+def clear_report_draft(page):
+    page.evaluate(CLEAR_REPORT_DRAFT_JS)
 
 
 def wait_drafts(page):
@@ -422,10 +440,8 @@ def check_report_layout(page):
       };
     }""")
     assert phone["same_row"] and phone["gap"] >= 0 and not phone["overflow"] and phone["frac"] <= 0.55, phone
-    page.evaluate("""() => {
-      document.querySelector('#bug-report-dialog').close();
-      clearBugReportDraft();
-    }""")
+    page.evaluate("document.querySelector('#bug-report-dialog').close()")
+    clear_report_draft(page)
     wait_drafts(page)
     page.set_viewport_size({"width": 1280, "height": 900})
 

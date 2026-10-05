@@ -322,7 +322,7 @@ function sessionTermMeta(uid) {
     || null;
 }
 
-/** Rust 下 pane 与 view 绑定的是接管/启动时核验的 uid，Codex 回退后不变；
+/** pane 与 view 绑定的是接管/启动时核验的 uid，Codex 回退后不变；
  *  同一进程改写新分支后，分支叶子沿 forked_from_id 追溯到被绑定的祖先仍算同一
  *  控制台。 */
 function termBindingServes(boundUid, uid) {
@@ -390,7 +390,7 @@ function takenOver(uid) {
   return linkedTermSession(uid)?.name || null;
 }
 
-/** Rust `outbox`: the reliable-send routes act under this page's
+/** `outbox` capability: the reliable-send routes act under this page's
  *  own instance lease when the console is open here, so sending from the
  *  composer never conflicts with our own console. Without a lease the server
  *  claims for itself and reports any other page's lease as an ownership
@@ -419,7 +419,7 @@ function termRowBinding(name, uid) {
   return row.uid ? { uid: row.uid, instance_id: row.instance_id } : null;
 }
 
-/** Rust `terminal_input`: raw HTTP text/keys under this page's exact terminal
+/** `terminal_input` capability: raw HTTP text/keys under this page's exact terminal
  *  lease, or with an empty token plus the pane's pinned identity when the
  *  console is not open on this page (the composer's Esc and question cards,
  *  Grok text). Only the legacy HTTP shapes change (named keys, a bracketed
@@ -489,7 +489,7 @@ async function takeover(uid, btn) {
   try {
     // Takeover is an idempotent, server-resolved `resume` receipt; the
     // request ID keeps a retried click from starting a second CLI.
-    const request_id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const request_id = requestId();
     let d = await post('api/term/takeover', { uid, cols: 120, rows: termRows(), request_id });
     if (d.needs_confirm) {
       const n = (d.pids || []).length;
@@ -528,8 +528,7 @@ async function takeover(uid, btn) {
 }
 
 async function post(url, body, {timeoutMs = 0} = {}) {
-  const traceId = String(body?.request_id || globalThis.crypto?.randomUUID?.()
-    || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const traceId = String(body?.request_id || requestId());
   const payload = { ...body, _build: BUILD_ID, _trace_id: traceId,
     _page_id: TERM_PAGE_ID };
   browserAuditEvent?.('http.request.started', {url, method: 'POST'}, {
@@ -797,19 +796,6 @@ function addBugReportFiles(files) {
       stageComposerAttachment(attachment, BUG_REPORT_DRAFT_UID, {node: bugReportNode(), render: renderBugReportItems});
     }
   }
-  renderBugReportItems();
-}
-
-function clearBugReportDraft() {
-  const draft=bugReportDraftObject(), dropped=draft.attachments;
-  for (const attachment of dropped) {
-    if (attachment.preview) URL.revokeObjectURL(attachment.preview);
-    if (attachment.cancelUpload) attachment.cancelUpload();
-  }
-  draft.text='';draft.attachments=[];draft.quotes=[];draft.nextAttachmentNumber=1;
-  delete draft.requestId;delete draft.requestText;
-  const saved=persistComposerDraft(BUG_REPORT_DRAFT_UID);
-  for (const attachment of dropped) discardStagedAttachment(attachment, saved);
   renderBugReportItems();
 }
 
@@ -1768,7 +1754,7 @@ function pendingPhase(row) {
   return 'running';
 }
 
-/** Sidebar meta text of a Rust pending row (other rows keep "等待首条消息"). */
+/** Sidebar meta text of a receipt-backed pending row (other rows keep "等待首条消息"). */
 function pendingStateLabel(s) {
   if (!s.record_id) return '等待首条消息';
   if (s.kind === 'bug-report' && s.worker_status && s.worker_status !== 'starting'
@@ -2060,7 +2046,7 @@ function newSessionRequestId(source, cwd) {
   const key = JSON.stringify([newNodeId(), source, cwd, NewModels.model, NewModels.effort]);
   if (newCreateAttempt?.key !== key) newCreateAttempt = {key,
     rows: termRows(),
-    id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`};
+    id: requestId()};
   return newCreateAttempt.id;
 }
 
@@ -3367,8 +3353,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
   const wsUrl = new URL(appUrl('api/term/attach'));
   wsUrl.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const cols = view.term.cols || 120, rows = view.term.rows || termRows();
-  const connectionId = globalThis.crypto?.randomUUID?.()
-    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const connectionId = requestId();
   view.auditConnectionId = connectionId;
   view.auditConnectStarted = performance.now();
   browserAuditEvent('terminal.connecting', {name, cols, rows, renderer: 'grid'},
@@ -6035,16 +6020,16 @@ addEventListener('sessiondock-network-resumed', () => {
 });
 
 // Native/global process discovery and managed terminal transport are independent
-// Rust capabilities. The live poll normally refreshes this list; do not
-// lose discovery of new/replacement hosts just because Rust keeps live:false.
-async function pollRustTermList() {
+// server capabilities. The live poll normally refreshes this list; do not
+// lose discovery of new/replacement hosts just because the server keeps live:false.
+async function pollTermList() {
   if (!SessionDockCapabilities.allows('terminal') || SessionDockCapabilities.allows('live')) return;
   try {
     if (!document.hidden) await loadTermList();
   } catch { /* Keep the next observation available after a render/network error. */ }
-  finally { setTimeout(pollRustTermList, 3000); }
+  finally { setTimeout(pollTermList, 3000); }
 }
 
 loadTermList();
 if (SessionDockCapabilities.allows('terminal') && !SessionDockCapabilities.allows('live'))
-  setTimeout(pollRustTermList, 3000);
+  setTimeout(pollTermList, 3000);

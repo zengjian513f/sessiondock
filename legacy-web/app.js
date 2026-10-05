@@ -222,6 +222,11 @@ const AUDIT_PAGE_ID = globalThis.crypto?.randomUUID?.()
   || [...globalThis.crypto.getRandomValues(new Uint8Array(16))]
     .map(value => value.toString(16).padStart(2, '0')).join('');
 window.__sessiondockPageId = AUDIT_PAGE_ID;
+// Fresh id for one request, trace or connection; the fallback keeps insecure
+// (plain HTTP) contexts working where crypto.randomUUID is unavailable.
+function requestId() {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 let browserAuditQueue = [];
 let browserAuditTimer = 0;
@@ -1188,18 +1193,6 @@ const messageCount = msgs => msgs.filter(m => m.counted !== false).length;
 const entryTotal = entry => Number.isFinite(+entry?.total)
   ? +entry.total : messageCount(entry?.msgs || []);
 
-function queuedAfterTimestamp(uid) {
-  const entry = cache.get(viewKey(uid));
-  let latest = Date.parse(entry?.activity?.ts || '');
-  for (let i = (entry?.msgs?.length || 0) - 1; i >= 0; i--) {
-    const at = Date.parse(entry.msgs[i]?.ts || '');
-    if (!Number.isFinite(at)) continue;
-    latest = Number.isFinite(latest) ? Math.max(latest, at) : at;
-    break;
-  }
-  return Number.isFinite(latest) ? new Date(latest).toISOString() : null;
-}
-
 function cacheGet(uid) {
   const e = cache.get(uid);
   if (e) { cache.delete(uid); cache.set(uid, e); }   // 命中即移到队尾
@@ -1251,8 +1244,7 @@ async function fetchMessages(uid, opts = {}) {
   if (opts.agent) p.set('agent', opts.agent);
   if (opts.appendOnly) p.set('append', '1');
   if (opts.windowed) p.set('window', '1');
-  const traceId = globalThis.crypto?.randomUUID?.()
-    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const traceId = requestId();
   const url = `api/messages/${encodeURIComponent(uid)}?${p}`;
   const started = performance.now();
   browserAuditEvent('http.request.started', {
@@ -1813,8 +1805,7 @@ function watchSession(uid, agent = S.agent) {
   // watch 从当前缓存游标开始，建立过程中不需要 tickSync 立刻再发一条相同
   // 增量请求。否则 CONNECTING 尚未变 OPEN 的几百毫秒会产生一次竞争包。
   if (S.sel === uid && S.agent === agent) S.lastSync = Date.now();
-  const connectionId = globalThis.crypto?.randomUUID?.()
-    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const connectionId = requestId();
   const p = new URLSearchParams({ uid, start: e.end, head: e.version.head,
     anchor: e.anchor || '', page: AUDIT_PAGE_ID, connection: connectionId });
   if (agent) p.set('agent', agent);
@@ -2493,7 +2484,7 @@ function syncSidebarUpdates(sessions) {
       : null);
     if (!base) { S.cursors.set(key, latest); continue; }
     if (!S.cursors.has(key)) S.cursors.set(key, base);
-    // Rust 列表行的 cursor 只带物理部分 {end, head}；语义 anchor 只在该会话已被
+    // 列表行的 cursor 只带物理部分 {end, head}；语义 anchor 只在该会话已被
     // 打开（服务端缓存有视图）时出现。两边都有 anchor 才比较它，缺失时以
     // 已有的 anchor 为准（docs/history-pages.md "列表 cursor"）。
     const anchorSame = !base.anchor || !latest.anchor || base.anchor === latest.anchor;
@@ -3230,7 +3221,7 @@ async function deleteSessions(uids, button = null) {
         const result = await postDelete(recorded);
         d.deleted.push(...(result.deleted || []));
         let errors = result.errors || [];
-        // Rust 回收站：运行状态未知的会话先被跳过，用户确认后才带 force 重试。
+        // 回收站：运行状态未知的会话先被跳过，用户确认后才带 force 重试。
         const unknown = trashCapable() ? (result.skipped || []).filter(x => x.needs_force) : [];
         if (unknown.length && await confirmForceDelete(unknown.length, unknown[0].run_state?.detail)) {
           const forced = await postDelete(unknown.map(x => x.uid), true);
@@ -3720,7 +3711,7 @@ async function toggleSessionStar(uid) {
   }
 }
 
-/* ---------- Claude 时间线固定显示（Rust 只读迁移能力） ----------
+/* ---------- Claude 时间线固定显示（只读能力） ----------
  * 只改 SessionDock的显示时间线；不写原生记录，也不给 CLI 发任何回滚信号。
  * 没有这个能力声明的页面，保持原有双 Esc 原生回滚流程。 */
 function timelinePinEnabled() {
@@ -4265,11 +4256,11 @@ function groupBy(list, {skipClosed = false} = {}) {
 }
 
 /** 列表项的元信息行。子代理数不在这里显示：它们就是挂在会话下面的缩进行，收起时计入三角数字。 */
-// Rust pending rows carry the receipt state; a finished instance says so
+// Receipt-backed pending rows carry the receipt state; a finished instance says so
 // instead of "waiting" (its `stale` is the receipt flag, not a hub cache).
 const pendingMeta = s => `${fmtTime(s.updated)} · ${typeof pendingStateLabel === 'function'
   ? pendingStateLabel(s) : '等待首条消息'}`;
-const rustPendingRow = s => !!s.pending && !!s.record_id;
+const receiptPendingRow = s => !!s.pending && !!s.record_id;
 // Explicitly shown ancestors can share the leaf's title. Keep their native
 // relationship visible instead of making a fork chain look like duplicate rows.
 const forkMeta = s => {
@@ -4279,7 +4270,7 @@ const forkMeta = s => {
     : '';
   return s.fork_parent ? `父会话（${branch || '原始'}）` : branch;
 };
-const itemMeta = s => (s.stale && !rustPendingRow(s) ? '离线缓存 · ' : '') + (s.pending ? pendingMeta(s)
+const itemMeta = s => (s.stale && !receiptPendingRow(s) ? '离线缓存 · ' : '') + (s.pending ? pendingMeta(s)
   : [forkMeta(s), fmtTime(s.updated), fmtSize(s.size), s.model || '',
                        s.hits ? `命中 ${s.hits}${s.hits_capped ? '+' : ''}` : '']
                       .filter(Boolean).join(' · '));
@@ -5323,7 +5314,7 @@ async function fetchHistoryPage(uid, agent, cursor, signal, partial) {
     query.set('next', partial.head);
   }
   const url = `api/messages/${encodeURIComponent(uid)}/page`;
-  const traceId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const traceId = requestId();
   browserAuditEvent('http.request.started', {url, method: 'GET', agent: agent || '',
     page_start: partial?.head, page_remaining: partial?.omitted, resumable: !!partial?.resume}, {uid, traceId});
   let response;
@@ -5614,6 +5605,27 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
   }
 }
 
+/** Dropdown keyboard model shared by the session and header ⋯ menus:
+ *  ArrowDown/ArrowUp on the trigger opens the menu and focuses its first/last
+ *  item; inside the menu the arrows, Home and End rove among `items()`. */
+function bindMenuKeyboard(button, menu, items, open) {
+  button.onkeydown = event => {
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    event.preventDefault();
+    open();
+    const rows = items();
+    (event.key === 'ArrowUp' ? rows.at(-1) : rows[0])?.focus();
+  };
+  menu.onkeydown = event => {
+    const rows = items(), index = rows.indexOf(document.activeElement);
+    const next = {ArrowDown: (index + 1) % rows.length,
+      ArrowUp: (index - 1 + rows.length) % rows.length, Home: 0, End: rows.length - 1}[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    rows[next]?.focus();
+  };
+}
+
 function labelSessionAction(button) {
   if (!button?.classList.contains('session-menu-action')) return;
   let label = button.querySelector('span');
@@ -5663,23 +5675,9 @@ function bindSessionActions(heading) {
     closeForkChainMenu();
   };
   button.onclick = () => menu.hidden ? open() : closeSessionActions();
-  button.onkeydown = event => {
-    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
-    event.preventDefault();
-    open();
-    const rows = items();
-    (event.key === 'ArrowUp' ? rows.at(-1) : rows[0])?.focus();
-  };
+  bindMenuKeyboard(button, menu, items, open);
   menu.onclick = event => {
     if (event.target.closest('button')) closeSessionActions(true);
-  };
-  menu.onkeydown = event => {
-    const rows = items(), index = rows.indexOf(document.activeElement);
-    const next = {ArrowDown: (index + 1) % rows.length,
-      ArrowUp: (index - 1 + rows.length) % rows.length, Home: 0, End: rows.length - 1}[event.key];
-    if (next === undefined) return;
-    event.preventDefault();
-    rows[next]?.focus();
   };
   button.parentElement.addEventListener('focusout', event => {
     // 在菜单的元信息上按下鼠标选字时焦点落到 body（relatedTarget 为空），不算离开菜单；
@@ -5980,24 +5978,10 @@ function layoutHeader() {
   const items = () => [...menu.querySelectorAll('button:not(:disabled):not(.hidden)')];
   const open = () => { menu.hidden = false; button.setAttribute('aria-expanded', 'true'); };
   button.onclick = () => menu.hidden ? open() : closeHeaderMenu();
-  button.onkeydown = event => {
-    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
-    event.preventDefault();
-    open();
-    const rows = items();
-    (event.key === 'ArrowUp' ? rows.at(-1) : rows[0])?.focus();
-  };
+  bindMenuKeyboard(button, menu, items, open);
   menu.addEventListener('click', event => {
     if (event.target.closest('button')) closeHeaderMenu(true);
   });
-  menu.onkeydown = event => {
-    const rows = items(), index = rows.indexOf(document.activeElement);
-    const next = {ArrowDown: (index + 1) % rows.length,
-      ArrowUp: (index - 1 + rows.length) % rows.length, Home: 0, End: rows.length - 1}[event.key];
-    if (next === undefined) return;
-    event.preventDefault();
-    rows[next]?.focus();
-  };
   $('#header-more').addEventListener('focusout', event => {
     if (event.relatedTarget && !$('#header-more').contains(event.relatedTarget)) closeHeaderMenu();
   });
@@ -6344,7 +6328,7 @@ function renderSessionAction(m, button = $('#a-session-action')) {
   button.onclick = () => running ? stopSession(m, button) : del(m);
 }
 
-// Rust `session_stop`: the server stops only a managed host instance (Ctrl-D,
+// `session_stop` capability: the server stops only a managed host instance (Ctrl-D,
 // then the host's guarded stop); an unmanaged/external CLI is a typed refusal.
 // Without process detection `S.live` only holds sessions this page launched or
 // took over, so a listed managed instance also makes the session stoppable.
@@ -6414,8 +6398,7 @@ const STOP_STAGE_TEXT = {
 
 async function requestSessionStop(m) {
   const body = { uid: m.uid };
-  if (sessionStopCapable()) body.request_id = globalThis.crypto?.randomUUID?.()
-    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  if (sessionStopCapable()) body.request_id = requestId();
   const response = await fetch(appUrl('api/session/stop'), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -6446,7 +6429,7 @@ async function stopSession(m, button = null) {
   }
 }
 
-// Rust 回收站能力：文件进服务端显式配置的回收站目录。
+// 回收站能力：文件进服务端显式配置的回收站目录。
 const trashCapable = () => SessionDockCapabilities.config.trash === true;
 const trashLocationNote = () => '文件会移入服务端回收站，不会永久删除。';
 // 运行状态未知不等于已退出：只有用户明确确认 CLI 已退出，才带 force 重试。
@@ -7656,7 +7639,7 @@ function safeMediaSrc(src) {
   if (/^\/api\/media\/[0-9a-f]{32}$/.test(src)) return appUrl(src);
   if (SessionDockCapabilities.config.media_lazy === true) return '';
   if (HUB_MODE && /^\/api\/nodes\/[0-9a-f]{32}\/api\/media\/[0-9a-f]{32}$/.test(src)) return appUrl(src);
-  // Native history is untrusted: Rust's local media capability does not grant
+  // Native history is untrusted: the server's local media capability does not grant
   // permission for the browser to contact URLs mentioned in that history.
   if (!SessionDockCapabilities.allows('media_remote')) return '';
   if (!/^https?:\/\//i.test(src)) return '';
