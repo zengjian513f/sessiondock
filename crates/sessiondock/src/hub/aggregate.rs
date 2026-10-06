@@ -324,6 +324,18 @@ fn live_body(registry: &Registry, answers: &[Answer]) -> Value {
         }
     }
     result.insert("started_at".into(), Value::Object(started));
+    // Per node, so the Hub's event observer can relay a node's draft change.
+    let epochs: Map<String, Value> = answers
+        .iter()
+        .filter(|answer| answer.ok())
+        .filter_map(|answer| {
+            Some((
+                answer.node.id.clone(),
+                answer.data.get("draft_epoch")?.clone(),
+            ))
+        })
+        .collect();
+    result.insert("draft_epochs".into(), Value::Object(epochs));
     Value::Object(result)
 }
 

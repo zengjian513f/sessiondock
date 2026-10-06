@@ -9,7 +9,10 @@ use std::{
     collections::BTreeMap,
     convert::Infallible,
     future::Future,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use tokio::sync::broadcast;
@@ -19,6 +22,8 @@ pub struct Snapshot {
     live: Value,
     term: Value,
     cursors: BTreeMap<(String, String), Value>,
+    /// Hub only: each node's draft epoch (`/api/live` `draft_epochs`).
+    drafts: Value,
 }
 
 // Observation timestamps and diagnostics do not represent a UI change.
@@ -36,6 +41,7 @@ fn stable(value: &mut Value) {
                 "strikes",
                 "failed_since",
                 "offline_since",
+                "draft_epoch",
             ] {
                 object.remove(key);
             }
@@ -75,6 +81,10 @@ fn row_metadata(row: &mut Value) {
 }
 impl Snapshot {
     pub fn new(mut sessions: Value, mut live: Value, mut term: Value) -> Self {
+        let drafts = live
+            .as_object_mut()
+            .and_then(|live| live.remove("draft_epochs"))
+            .unwrap_or(Value::Null);
         let mut cursors = BTreeMap::new();
         if let Some(rows) = sessions["sessions"].as_array_mut() {
             for row in rows.iter_mut() {
@@ -116,6 +126,7 @@ impl Snapshot {
             live,
             term,
             cursors,
+            drafts,
         }
     }
     pub fn change(&self, previous: &Self) -> Option<Value> {
@@ -128,14 +139,28 @@ impl Snapshot {
         let sessions = self.sessions != previous.sessions;
         let live = self.live != previous.live;
         let term = self.term != previous.term;
-        (sessions || live || term || !cursors.is_empty())
-            .then(|| json!({"sessions":sessions,"live":live,"term":term,"cursors":cursors}))
+        // A node reporting a new draft epoch, or newly reachable, may hold a
+        // draft another page changed; a node that went away carries none.
+        let drafts = self.drafts.as_object().is_some_and(|now| {
+            now.iter()
+                .any(|(node, epoch)| previous.drafts.get(node) != Some(epoch))
+        });
+        (sessions || live || term || drafts || !cursors.is_empty()).then(|| {
+            let mut change = json!({"sessions":sessions,"live":live,"term":term,"cursors":cursors});
+            if drafts {
+                change["drafts"] = json!(true);
+            }
+            change
+        })
     }
 }
 
 #[derive(Default)]
 pub struct EventBus {
     sender: Mutex<Option<broadcast::Sender<Value>>>,
+    /// Draft changes so far; `/api/live` reports it so the Hub's observer
+    /// can relay a node's draft change to Hub pages.
+    draft_epoch: AtomicU64,
 }
 impl EventBus {
     /// Invalidate directory reads after a completed metadata write. Snapshot
@@ -150,10 +175,15 @@ impl EventBus {
     /// A draft revision changed: open composers read their draft at once
     /// instead of waiting for the next input CHECK.
     pub fn publish_drafts(&self) {
+        self.draft_epoch.fetch_add(1, Ordering::Relaxed);
         let sender_slot = self.sender.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(sender) = sender_slot.as_ref() {
             let _ = sender.send(json!({"drafts":true}));
         }
+    }
+
+    pub fn draft_epoch(&self) -> u64 {
+        self.draft_epoch.load(Ordering::Relaxed)
     }
 
     pub fn subscribe<F, Fut>(self: &Arc<Self>, observe: F) -> broadcast::Receiver<Value>

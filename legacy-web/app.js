@@ -2609,12 +2609,14 @@ function sessionListUrl(params = {}) {
 
 let sessionLoadRun = 0;
 let sessionLoadRetry = null;
-let sessionPollRequest = null, sessionPollController = null, sessionLoadActive = 0;
+let sessionPollRequest = null, sessionPollController = null, sessionLoadActive = 0, sessionLoadDone = null;
 
 async function loadSessions(force, preserveList = false) {
   if (SessionDockNetwork.paused) return false;
   const run = ++sessionLoadRun;
   sessionLoadActive = run;
+  let settle;
+  sessionLoadDone = new Promise(resolve => { settle = resolve; });
   sessionPollController?.abort();
   clearTimeout(sessionLoadRetry);
   const ac = new AbortController();
@@ -2638,6 +2640,7 @@ async function loadSessions(force, preserveList = false) {
   } finally {
     clearTimeout(timeout);
     if (sessionLoadActive === run) sessionLoadActive = 0;
+    settle();
   }
   if (run !== sessionLoadRun) return false;
   $('#stat').classList.remove('err');
@@ -2668,7 +2671,10 @@ function pollSessions() {
   if (transferSidebarPaused()) return Promise.resolve(true);
   if (SessionDockNetwork.paused) return Promise.resolve();
   if (document.hidden) return Promise.resolve();
-  if (!S.sig || sessionLoadActive) return Promise.resolve(false);
+  // An invalidation during the full load (the stream baseline at page start)
+  // reconciles once that load is done instead of counting as a failed read.
+  if (sessionLoadActive) return sessionLoadDone.then(() => pollSessions());
+  if (!S.sig) return Promise.resolve(false);
   if (sessionPollRequest) return sessionPollRequest;
   sessionPollRequest = runSessionPoll().finally(() => { sessionPollRequest = null; });
   return sessionPollRequest;
@@ -2739,7 +2745,9 @@ function queueUiChange(change) {
   // Side panels (groups, transfer tasks) refresh on list invalidations and
   // (re)connect baselines instead of keeping their own fast timers.
   if (change.initial || change.sessions) dispatchEvent(new CustomEvent('sessiondock-ui-sessions'));
-  if (change.drafts && typeof followPushedDraft === 'function') followPushedDraft();
+  // A (re)connect baseline also rereads: a draft change may have happened
+  // while the stream was down.
+  if ((change.drafts || change.initial) && typeof followPushedDraft === 'function') followPushedDraft();
 }
 async function applyUiChanges() {
   if (uiEventApplying) return;

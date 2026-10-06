@@ -186,8 +186,11 @@ A healthy stream replaces the periodic `/api/live`, `/api/term/list` and
 metadata; unsupported or disconnected streams retain polling as a fallback.
 
 The event contains invalidation flags and changed session/agent cursors, never
-conversation bodies. A `drafts` flag tells an open composer to reread its draft
-(see [conversation.md](conversation.md)). Cursor-only growth does not invalidate the full list.
+conversation bodies. A `drafts` flag, and every (re)connect baseline, tells an
+open composer to reread its draft (see [conversation.md](conversation.md)); the
+body's `draft_epoch` counts a node's draft changes so the Hub can relay them. An
+invalidation that arrives during the page's first full list load reconciles
+after that load instead of dropping the stream. Cursor-only growth does not invalidate the full list.
 Inactive views request only unread summaries, including previously cached
 views; opening one loads its detail. Only the selected conversation subscribes
 to the separate `/api/watch` body stream.
