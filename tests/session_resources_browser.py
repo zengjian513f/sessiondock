@@ -10,6 +10,67 @@ from playwright.sync_api import sync_playwright
 from history_parity import BINARY, Corpus, codex_row, isolated_server
 
 
+def assert_drawer_layout(page, case):
+    geometry = page.locator('.session-resources').evaluate('''dialog => {
+      const box = dialog.getBoundingClientRect(), issues = [];
+      const inside = (rect, parent) => rect.left >= parent.left - 1 && rect.right <= parent.right + 1;
+      for (const element of dialog.querySelectorAll('h2, h3, button, .sr-probe, .sr-summary-head, .sr-section-heading, .sr-metric')) {
+        if (!inside(element.getBoundingClientRect(), box)) issues.push(element.textContent);
+      }
+      for (const cell of dialog.querySelectorAll('.sr-metric')) {
+        const rect = cell.getBoundingClientRect(), label = cell.querySelector('dt'), value = cell.querySelector('dd');
+        const a = label.getBoundingClientRect(), b = value.getBoundingClientRect();
+        if (!inside(a, rect) || !inside(b, rect) || (b.top < a.bottom - 1 && b.left < a.right - 1)
+            || label.scrollWidth > label.clientWidth + 1 || value.scrollWidth > value.clientWidth + 1) {
+          issues.push(cell.textContent);
+        }
+      }
+      const title = dialog.querySelector('.sr-top > div').getBoundingClientRect();
+      const actions = dialog.querySelector('.sr-actions').getBoundingClientRect();
+      if (title.right > actions.left + 1) issues.push('title overlaps actions');
+      return {left:box.left, right:box.right, top:box.top, bottom:box.bottom,
+              width:innerWidth, height:innerHeight, overflow:dialog.scrollWidth-dialog.clientWidth, issues};
+    }''')
+    assert geometry['left'] >= -1 and abs(geometry['right'] - geometry['width']) <= 1, (case, geometry)
+    assert abs(geometry['top']) <= 1 and abs(geometry['bottom'] - geometry['height']) <= 1, (case, geometry)
+    assert geometry['overflow'] <= 1 and not geometry['issues'], (case, geometry)
+
+
+def check_responsive_drawer(page, screenshots):
+    # Exercise the app's real zoom setting, including the former clipped 600px/105% case.
+    viewports = [(600, 850), (320, 568), (360, 800), (390, 844), (412, 915),
+                 (520, 800), (521, 800), (640, 900), (768, 1024), (1024, 768),
+                 (844, 390), (1280, 960), (1920, 1080)]
+    for width, height in viewports:
+        page.set_viewport_size({'width': width, 'height': height})
+        for scale in (105, 50, 80, 100, 125, 150):
+            case = f'{width}x{height}-{scale}%'
+            page.evaluate('applyInterfaceScale', scale)
+            page.evaluate("document.documentElement.dataset.theme = 'light'")
+            page.locator('.sr-top').scroll_into_view_if_needed()
+            assert_drawer_layout(page, case)
+            page.get_by_role('button', name='仅当前会话', exact=True).click()
+            page.wait_for_function("resourceCalls.at(-1).scope === 'direct'")
+            page.get_by_role('button', name='包含子会话', exact=True).click()
+            page.wait_for_function("resourceCalls.at(-1).scope === 'inclusive'")
+            calls = page.evaluate('resourceCalls.length')
+            page.get_by_role('button', name='刷新资源').click()
+            page.wait_for_function('(count) => resourceCalls.length > count', arg=calls)
+            # The final metric must remain reachable in a short landscape viewport.
+            last = page.locator('.sr-node .sr-metric').last
+            last.focus()
+            rect = last.bounding_box()
+            assert rect['y'] >= -1 and rect['y'] + rect['height'] <= height + 1, (case, rect)
+            page.locator('.sr-top').scroll_into_view_if_needed()
+            page.evaluate("document.documentElement.dataset.theme = 'dark'")
+            assert_drawer_layout(page, case + '-dark')
+            if screenshots and scale in (100, 150):
+                page.screenshot(path=str(screenshots / f'resources-{width}x{height}-{scale}-dark.png'))
+        print(f'PASS resource layout {width}x{height}: 50/80/100/105/125/150%, light/dark, scope/refresh/scroll', flush=True)
+    page.evaluate('applyInterfaceScale', 100)
+    page.set_viewport_size({'width': 390, 'height': 844})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -19,7 +80,7 @@ def main():
         corpus = Corpus(Path(temporary))
         corpus.put('resources', 'codex', [
             codex_row('session_meta', {'id': 'resources', 'cwd': '/synthetic/resources', 'timestamp': '2026-09-11T10:00:00Z'}),
-            codex_row('response_item', {'type': 'message', 'role': 'user', 'content': '资源统计测试'})], [])
+            codex_row('response_item', {'type': 'message', 'role': 'user', 'content': '资源统计测试：长会话标题也不能挤出刷新和关闭按钮 / synthetic-session-' * 5})], [])
         launch = {'headless': True}
         if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
             launch['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
@@ -84,6 +145,23 @@ def main():
                 page.evaluate("document.documentElement.dataset.theme = 'dark'")
                 if args.screenshots:
                     page.screenshot(path=str(args.screenshots / 'resources-mobile-dark.png'))
+                # Realistic upper-end values and unavailable data must remain readable together.
+                page.evaluate('''() => SessionDockResources.setLoader(async (uid, scope) => {
+                  resourceCalls.push({uid, scope});
+                  const metrics = Object.fromEntries([
+                    ['cpu_cores', 256.75], ['gpu_count', 16], ['gpu_memory_bytes', 192 * 1024 ** 3],
+                    ['memory_pss_bytes', 1.9 * 1024 ** 4], ['process_count', 123456],
+                    ['memory_bandwidth_bytes_per_second', 999.9 * 1024 ** 3],
+                    ['disk_read_operations_per_second', 1234567.8],
+                    ['proc_storage_write_bytes_per_second', 999.9 * 1024 ** 2],
+                  ].map(([key, value]) => [key, {value, status:'ok'}]));
+                  return {sampled_at:1790812800, totals:metrics, nodes:[
+                    {node_id:'a', node_name:'compute-with-a-long-hostname-测试执行机器', status:'ok', metrics},
+                    {node_id:'b', node_name:'compute-offline', status:'offline', metrics:{}}]};
+                })''')
+                page.get_by_role('button', name='刷新资源').click()
+                page.get_by_text('compute-with-a-long-hostname-测试执行机器', exact=True).wait_for()
+                check_responsive_drawer(page, args.screenshots)
                 page.get_by_role('button', name='关闭资源面板').click()
                 page.evaluate("SessionDockResources.setLoader(async () => {throw new Error('测试采集端离线')})")
                 page.locator('#side .item-resources').first.click()
