@@ -250,10 +250,12 @@ def main():
                         task = '  ● [23:00:53] python3 -c background_fixture running'
                         footer = '? for shortcuts' + ' ' * 65 + 'Fixture model · medium · 1 task(s) · /tasks'
                         rows = ['Captured task-panel layout', rule, '> ', rule, task, rule, footer]
+                        statusline = 'G[5h:3% 7d:3%] C[5h:0% 7d:51%] Ctx:244k(22%)'
+                        idle = rows[:4] + ['? for shortcuts     Fixture model · medium']
 
-                        def task_frame(lines, cursor=(2, 2), expected=b''):
+                        def task_frame(lines, cursor=(2, 2), expected=b'', cols=160):
                             return fixture_frame(source, {'screen': '\n'.join(lines),
-                                'cursor': cursor, 'cols': 160}, expected, 'message sent')
+                                'cursor': cursor, 'cols': cols}, expected, 'message sent')
 
                         for label, lines, cursor, state, busy, text in [
                             ('background task', rows, (2, 2), 'ready', True, ''),
@@ -265,6 +267,22 @@ def main():
                              (2, 2), 'unknown', None, None),
                             ('missing task rule', rows[:5] + rows[6:], (2, 2), 'unknown', None, None),
                             ('task finished', rows[:4] + ['? for shortcuts'], (2, 2), 'ready', False, ''),
+                            # BUG-20261006-041817-f7cf23: a stacked statusline
+                            # must not be mistaken for a background task panel.
+                            ('statusline', idle + [statusline], (2, 2), 'ready', False, ''),
+                            ('multiline statusline', idle + [statusline, 'custom context details', ''],
+                             (2, 2), 'ready', False, ''),
+                            ('busy statusline', rows[:4] + ['esc to cancel', statusline],
+                             (2, 2), 'ready', True, ''),
+                            ('background statusline', rows + [statusline, 'custom details'],
+                             (2, 2), 'ready', True, ''),
+                            ('statusline native draft', rows[:2] + ['> keep native draft', rule,
+                             '                      Fixture model · medium', statusline],
+                             (19, 2), 'blocked', False, 'keep native draft'),
+                            ('statusline cursor outside', idle + [statusline],
+                             (2, 5), 'unknown', None, None),
+                            ('statusline mismatched border', idle[:3] + ['─' * 140] + idle[4:] + [statusline],
+                             (2, 2), 'unknown', None, None),
                         ]:
                             result = loaded(source, task_frame(lines, cursor))
                             subset(result['cli'], {'input': {'state': state},
@@ -280,15 +298,30 @@ def main():
                             print(f'PASS agy task panel: {label}', flush=True)
                         message = 'task panel browser message'
                         native = b'\x1b[200~' + message.encode() + b'\x1b[201~\r'
-                        loaded(source, task_frame(rows, expected=native))
-                        page.locator('#cinput').fill(message)
-                        with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
-                            page.locator('#csend').click()
-                        assert sent.value.status == 200, sent.value.text()
-                        expect(page.locator('#cinput')).to_have_value('')
-                        assert screens[source].with_suffix('.trace').read_bytes() == native
-                        assert screens[source].with_suffix('.outcome').read_text() == 'message sent'
-                        print('PASS agy task panel: browser SEND writes exactly one paste and Enter', flush=True)
+                        viewport = page.viewport_size
+                        narrow = ['Captured statusline layout', '─' * 70, '> ', '─' * 70,
+                                  '? for shortcuts                              Fixture model', statusline]
+                        for label, lines, cols, width in [
+                            ('task panel', rows, 160, viewport['width']),
+                            ('statusline', idle + [statusline], 160, viewport['width']),
+                            ('task panel with statusline', rows + [statusline], 160, viewport['width']),
+                            ('report narrow statusline', narrow, 70, 608),
+                            ('mobile wrapped statusline', [line.replace('─' * 70, '─' * 44)
+                                if line.startswith('─') else line for line in narrow], 44, 390),
+                        ]:
+                            page.set_viewport_size({'width': width, 'height': 493})
+                            if width <= 608:
+                                page.evaluate('showMobileDetail()')
+                            loaded(source, task_frame(lines, expected=native, cols=cols))
+                            page.locator('#cinput').fill(message)
+                            with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
+                                page.locator('#csend').click()
+                            assert sent.value.status == 200, sent.value.text()
+                            expect(page.locator('#cinput')).to_have_value('')
+                            assert screens[source].with_suffix('.trace').read_bytes() == native
+                            assert screens[source].with_suffix('.outcome').read_text() == 'message sent'
+                            print(f'PASS agy {label}: browser SEND writes exactly one paste and Enter', flush=True)
+                        page.set_viewport_size(viewport)
                     page.locator('#cinput').fill('Keep this message draft')
                     page.evaluate('async () => await composerDraftWrites')
                     for fixture in fixtures:
