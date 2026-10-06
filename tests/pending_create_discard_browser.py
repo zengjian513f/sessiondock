@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
-from history_parity import BINARY as DEBUG_BINARY, Corpus, REPO, isolated_server
+from history_parity import BINARY as DEBUG_BINARY, Corpus, REPO, claude_row, isolated_server
 from popups import on_popup
 
 RELEASE = REPO / "target/release" / DEBUG_BINARY.name
@@ -139,6 +139,57 @@ def discard_selected(page):
     action.click()
 
 
+def assert_pending_stop_disabled(page, context, base, receipt, uid, width):
+    requests = []
+    def watch(request):
+        if urlsplit(request.url).path in ("/api/term/kill", "/api/session/stop"):
+            requests.append(request.url)
+    page.on("request", watch)
+    page.set_viewport_size({"width": width, "height": 900})
+    page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+    row = page.locator(f'#side .item[data-uid="{uid}"]')
+    if not row.is_visible():
+        page.locator("#detail .mobile-back").click()
+    row.click()
+    action = page.locator("#a-session-toggle")
+    if not action.is_visible():
+        page.locator("#a-more").click()
+    expect(action).to_have_attribute("aria-label", "停止会话")
+    expect(action).to_have_attribute("aria-disabled", "true")
+    expect(action).to_have_attribute("title", re.compile("停止后无法续接"))
+    action.click(force=True)
+    action.focus()
+    page.keyboard.press("Enter")
+    page.keyboard.press("Space")
+    if width == 390:
+        page.locator("#detail .mobile-back").click()
+        box = row.bounding_box()
+        row.dispatch_event("pointerdown", {"pointerType": "touch", "clientX": box["x"] + 20,
+                                           "clientY": box["y"] + 10, "bubbles": True})
+        expect(page.locator("#item-menu")).to_be_visible()
+        row.dispatch_event("pointerup", {"pointerType": "touch", "bubbles": True})
+        row.dispatch_event("click", {"bubbles": True})
+    else:
+        row.click(button="right")
+    stop = page.locator('#item-menu [data-act="stop"]')
+    expect(stop).to_have_attribute("aria-disabled", "true")
+    expect(stop).to_have_attribute("title", re.compile("停止后无法续接"))
+    stop.click(force=True)
+    stop.focus()
+    page.keyboard.press("Enter")
+    page.locator('#item-menu [data-act="pick"]').click()
+    expect(page.locator("#side-pick-stop")).to_be_disabled()
+    page.locator("#side-pick-stop").click(force=True)
+    page.locator("#side-pick-cancel").click()
+    status = context.request.get(base + "/api/term/new-status", params={
+        "record_id": receipt["record_id"], "instance_id": receipt["instance_id"]})
+    assert status.status == 200 and status.json()["running"], status.text()
+    assert not requests, requests
+    page.remove_listener("request", watch)
+    row.click()
+    passed(f"{receipt['source']}: header/menu/bulk cannot stop an unsaved launch at {width}px")
+
+
 def run_source(page, context, base, source, work):
     receipt, pending_uid = create_source(page, source, work)
     passed(f"{source}: created running launch_kind={receipt.get('launch_kind')}")
@@ -161,7 +212,10 @@ def run_source(page, context, base, source, work):
         # including when it arrives after the native catalog on reload.
         for width in (1280, 390):
             page.set_viewport_size({"width": width, "height": 900})
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
             if width == 390:
+                if not page.locator(f'#side .item[data-uid="{pending_uid}"]').is_visible():
+                    page.locator("#detail .mobile-back").click()
                 page.locator(f'#side .item[data-uid="{pending_uid}"]').click()
             held = []
             def hold_term_list(route):
@@ -233,6 +287,10 @@ def run_source(page, context, base, source, work):
         passed(f"{source}: native row {native_uid} appeared before first send")
     else:
         passed(f"{source}: no native row before first send")
+        if source != "shell":
+            for width in (1280, 390):
+                assert_pending_stop_disabled(page, context, base, receipt, pending_uid, width)
+            page.set_viewport_size({"width": 1280, "height": 900})
 
     # SSH receipts survive exit for recording replay, so they first offer
     # stop. Unused native AI rows still offer direct discard after the merge.
@@ -253,10 +311,10 @@ def run_source(page, context, base, source, work):
         row.click(button="right")
         passed("shell: sidebar stop exits the session and retains its row")
     expect(menu_stop).to_be_visible()
-    if source == "shell":
+    if source == "shell" or not native_uid:
         expect(menu_stop).to_have_attribute("aria-disabled", "true")
     else:
-        # Running AI launches now expose the separate start/stop action.
+        # A persisted native identity can resume after stopping.
         expect(menu_stop).not_to_have_attribute("aria-disabled", "true")
     expect(menu_delete).to_be_visible()
     expect(menu_delete).to_have_text("删除会话" if source == "shell" else "丢弃会话")
@@ -291,6 +349,38 @@ def run_source(page, context, base, source, work):
     assert_gone(context, base, other, receipt, pending_uid, native_uid, f"{source} second page")
     other.close()
     passed(f"{source}: second page did not rebuild the row")
+
+
+def run_saved_transition(page, context, base, corpus, work):
+    receipt, pending_uid = create_source(page, "claude", work)
+    assert_pending_stop_disabled(page, context, base, receipt, pending_uid, 1280)
+    sid = receipt["declared_sid"]
+    corpus.put(sid, "claude", [
+        claude_row(sid, "user", "u1", None, "Saved conversation", cwd=str(work)),
+        claude_row(sid, "assistant", "a1", "u1", "Saved response", cwd=str(work)),
+    ], [])
+    native = wait_native(context, base, sid)
+    assert native, "new native record was not indexed"
+    uid = native["uid"]
+    row = page.locator(f'#side .item[data-uid="{uid}"]')
+    expect(row).to_be_visible(timeout=15000)
+    row.click()
+    action = page.locator("#a-session-toggle")
+    if not action.is_visible():
+        page.locator("#a-more").click()
+    expect(action).to_have_attribute("aria-label", "停止会话")
+    expect(action).not_to_have_attribute("aria-disabled", "true")
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as stopped:
+        action.click()
+    assert stopped.value.status == 200, stopped.value.text()
+    expect(action).to_have_attribute("aria-label", "启动会话")
+    expect(action).not_to_have_attribute("aria-disabled", "true")
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover") as started:
+        action.click()
+    assert started.value.status == 200, started.value.text()
+    assert started.value.json()["instance_id"] != receipt["instance_id"]
+    expect(action).to_have_attribute("aria-label", "停止会话")
+    passed("saved native record enables stop and resume of the same session")
 
 
 def main():
@@ -368,6 +458,7 @@ def main():
                 page.goto(base, wait_until="networkidle")
                 for source in SOURCES:
                     run_source(page, context, base, source, root / "work")
+                run_saved_transition(page, context, base, corpus, root / "work")
                 if errors:
                     fail("pageerror", errors)
             finally:

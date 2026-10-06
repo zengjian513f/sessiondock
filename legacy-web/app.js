@@ -2905,6 +2905,7 @@ function sessionStopConcurrency() {
 
 function pickedStopTargets() {
   return sidebarSessions().filter(s => pickedSessions.has(s.uid) && sessionPickable(s)
+    && !sessionStopUnavailable(s)
     && (s.pending ? sessionStopCapable() && !!s.record_id && !!s.instance_id
       && !s.stale && !['exited', 'failed'].includes(s.state) && s.running !== false
       : sessionStoppable(s.uid)));
@@ -6550,10 +6551,14 @@ function sessionRunRow(uid) {
 function sessionRunActive(row) {
   return !!row && (row.pending ? !!row.running && !row.stale : sessionStoppable(row.uid));
 }
+function sessionStopUnavailable(row) {
+  return row?.pending && row.source !== 'shell'
+    ? '新会话尚未保存会话记录，停止后无法续接。可继续使用或丢弃会话。' : '';
+}
 function sessionRunUnavailable(row) {
   if (!row) return '会话状态尚未读取。';
   if (typeof ConsoleUI !== 'undefined' && ConsoleUI.busy.has(row.uid)) return '正在启动或连接会话，请稍候。';
-  if (sessionRunActive(row)) return '';
+  if (sessionRunActive(row)) return sessionStopUnavailable(row);
   if (row.pending) return row.source === 'shell'
     ? '已结束的 SSH 会话不能续接，请新建 SSH 会话。'
     : '此启动记录尚无可续接的原生会话，请从新建会话重新启动。';
