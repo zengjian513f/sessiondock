@@ -69,7 +69,7 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
 - `crates/ptyhost-client/src/association.rs`：`Source` 增加一项。
 - `crates/ptyhost/src/guard.rs`、`native_binding.rs`：接受新名字。
 - `crates/ptyhost/src/session.rs`：`cmd_label`。
-- 这一层改动部署时要加 `--with-ptyhost`：`python3 deploy/deploy.py deploy --all --with-ptyhost`。正在运行的宿主保留旧进程与协议，验证新启动和旧宿主兼容性，见 [部署](deployment.md)。
+- 这一层改动随常规部署发布（ptyhost 默认随行）：`python3 deploy/deploy.py deploy --all`。正在运行的宿主保留旧进程与协议，验证新启动和旧宿主兼容性，见 [部署](deployment.md)。
 
 ### 生命周期与启动器
 
@@ -333,6 +333,6 @@ Agy 曾把 `SYSTEM_MESSAGE` 当工具结果，原样显示 `<SYSTEM_MESSAGE>`，
 
 - 仓库放在网络共享盘、在另一台机器上编译时，本机看到的 `target/debug` 可能还是重编前的旧文件，测试会悄悄跑旧二进制。重跑前先刷新目录，再对比两边 `stat` 的 inode。
 - 对 crate 根（`lib.rs`）跑 rustfmt 会顺带格式化别的模块，提交前检查有没有波及无关文件。
-- 工作区有并发改动时，只暂存本任务文件或修改块，不覆盖他人内容。交付使用当前工作区和官方 `python3 deploy/deploy.py deploy --all`；`--allow-dirty` 会包含已跟踪的并发修改，不能把它当作只部署本任务的开关。遵循 [部署合同](deployment.md) 与当前用户指令；快照变化或测试门失败时不手工绕过，报告尚未完成的步骤和目标。
+- 工作区有并发改动时，只暂存本任务文件或修改块，不覆盖他人内容。交付先提交，再用官方 `python3 deploy/deploy.py deploy --all`：构建只取 HEAD，他人的未提交修改不会进入 stage；确需带未提交文件时用 `--allow-dirty PATH` 逐个点名。遵循 [部署合同](deployment.md) 与当前用户指令；快照变化或测试门失败时不手工绕过，报告尚未完成的步骤和目标。
 - 数据库型 CLI 的助手记录在生成中会被原地更新。镜像只导出已结束的记录（有完成时间、有 `finish`，或后面已经有别的记录），避免历史里出现半截回复。OpenCode 按“一步”一行，粒度和 Claude/Codex 的“一条记录”基本相同，不需要逐字流式显示。
 - 画面识别规则写进文档时注明实测版本（例如“2.0.18 实测”），CLI 改了布局才能追溯。

@@ -93,7 +93,7 @@ launchctl kickstart -k gui/$(id -u)/<label>      # 只重启 sessiondock；ptyho
 ```sh
 python3 deploy/deploy.py build                    # 产出 source.tar（git archive HEAD）+ web 快照
 python3 deploy/deploy.py push --targets <name> --dry-run   # 只 probe 并打印计划
-python3 deploy/deploy.py push --targets <name>    # 完整一轮；--web-only 跳过构建；--with-ptyhost 一并构建 ptyhost
+python3 deploy/deploy.py push --targets <name>    # 完整一轮；--web-only 跳过构建；ptyhost 默认一并构建（--without-ptyhost 关闭）
 python3 deploy/deploy.py rollback --targets <name> --backup <PREFIX>/backup-deploy-<short>-<UTC stamp>
 ```
 
