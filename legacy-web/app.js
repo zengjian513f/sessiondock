@@ -5920,7 +5920,7 @@ function bindSessionActions(heading) {
 }
 
 // 会话头任何宽度都只占一行，且不因折叠留白。一行上的重要程度：标题 → 操作按钮（按菜单顺序：
-// 星标、折叠过程、搜索、冻结/恢复与报告、移动/复制、停止/删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
+// 停止、星标、折叠过程、搜索、冻结/恢复与报告、迁移会话树、删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
 // 模型、会话号、分支）。宽屏/中屏长标题让到标题行的 40%（不少于 8em）为止，窄屏标题不让位；
 // 标题之后先按顺序平铺操作，全放下了再把元信息按顺序跟在标题后面（.dbrief）；从放不下的那一项起
 // 后面的全部收进 ⋯ 菜单（放不下某个按钮时元信息也不放，免得次要的露着、重要的反而折了）；
@@ -5995,7 +5995,8 @@ function layoutSessionHead(heading = $('#detail .dhead')) {
     }
     list.appendChild(node);
   }
-  list.replaceChildren(...[...list.children].sort((a, b) => a.dataset.order - b.dataset.order));
+  const actionOrder = node => node.dataset.sessionStop === 'true' ? -1 : Number(node.dataset.order);
+  list.replaceChildren(...[...list.children].sort((a, b) => actionOrder(a) - actionOrder(b)));
   const more = wrap.querySelector('#a-more');
   if (more) more.hidden = false;   // 量宽度时按 ⋯ 在场算，免得它的显隐反过来改变放得下的项数
   const meta = menu.querySelector('.dmeta');
@@ -6296,7 +6297,7 @@ function head(m, total) {
           <button class="session-menu-action" data-report-bug title="报告当前会话问题"
             aria-label="报告当前会话问题">${uiIcon('bug')}</button>
         </div>
-        ${SessionDockCapabilities.config.session_clone_local_codex === true ? `<button class="session-menu-action" id="a-clone-group" type="button" title="移动 / 复制整组" aria-label="移动 / 复制整组">${uiIcon('transfer')}</button>` : ''}
+        ${SessionDockCapabilities.config.session_clone_local_codex === true ? `<button class="session-menu-action" id="a-clone-group" type="button" title="迁移会话树" aria-label="迁移会话树">${uiIcon('transfer')}</button>` : ''}
         ${SessionDockCapabilities.config.session_delete_tree === true ? `<button class="session-menu-action danger" id="a-delete-tree" type="button" title="删除会话树" aria-label="删除会话树">${uiIcon('trash')}</button>` : ''}
         ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action"></button>'}
         `, `
@@ -6536,6 +6537,14 @@ function renderSessionFreeze(m, button = $('#a-session-freeze')) {
 function renderSessionAction(m, button = $('#a-session-action')) {
   renderSessionFreeze(m, button?.closest('.dhead')?.querySelector('#a-session-freeze'));
   if (!button || m.uid !== S.sel) return;
+  const launch = m.fork_parent ? null : unusedNewAssignedLaunch(m);
+  const running = !m.fork_parent && !launch && sessionStoppable(m.uid);
+  const stopping = String(running);
+  if (button.dataset.sessionStop !== stopping) {
+    button.dataset.sessionStop = stopping;
+    const heading = button.closest('.dhead');
+    if (heading?.isConnected) layoutSessionHead(heading);
+  }
   if (m.fork_parent) {
     const shown = !!m.fork_parent_visible;
     const label = shown ? '隐藏父会话' : '显示父会话';
@@ -6545,7 +6554,6 @@ function renderSessionAction(m, button = $('#a-session-action')) {
     button.onclick = () => setForkParentVisibility([m.uid], !shown, button);
     return;
   }
-  const launch = unusedNewAssignedLaunch(m);
   if (launch && typeof deletePendingSession === 'function') {
     const label = '删除会话';
     button.innerHTML = uiIcon('trash');
@@ -6554,7 +6562,6 @@ function renderSessionAction(m, button = $('#a-session-action')) {
     button.onclick = () => deletePendingSession(launch, button);
     return;
   }
-  const running = sessionStoppable(m.uid);
   const label = running ? '停止会话' : '删除会话';
   button.innerHTML = uiIcon(running ? 'power' : 'trash');
   button.title = button.ariaLabel = label;
@@ -10558,14 +10565,14 @@ loadSessions(false).then(async ok => {
 /** Whole-group transfer preview. A confirmed local clone keeps its operation ID
  * across uncertain responses; unsupported selections never use the local API. */
 function transferUnavailableReason(uid) {
-  return uid && sessionStoppable(uid) ? '会话正在运行，请先停止后再移动或复制整组。' : '';
+  return uid && sessionStoppable(uid) ? '会话正在运行，请先停止后再迁移会话树。' : '';
 }
 function paintTransferAvailability(button, uid) {
   const row = button?.closest('#item-menu')
     ? sidebarSessions().find(session => session.uid === uid) : null;
   const unavailable = button?.closest('#item-menu') && (!row || row.pending
     || SessionDockCapabilities.config.session_clone_local_codex !== true);
-  setControlUnavailable(button, unavailable ? '此会话当前不支持移动或复制整组。' : transferUnavailableReason(uid));
+  setControlUnavailable(button, unavailable ? '此会话当前不支持迁移会话树。' : transferUnavailableReason(uid));
 }
 function setupTransferTarget(dialog, machines, sourceId, selectedId) {
   const button = dialog.querySelector('#transfer-target');
@@ -10696,7 +10703,7 @@ async function cloneSessionGroup(uid, resumed = null) {
   dialog.setAttribute('aria-labelledby', 'transfer-title');
   dialog.innerHTML = `
     <div class="transfer-head">
-      <div><h2 id="transfer-title">移动或复制会话组</h2></div>
+      <div><h2 id="transfer-title">迁移会话树</h2></div>
       <button class="transfer-close" type="button" aria-label="关闭">×</button>
     </div>
     <div class="transfer-body">

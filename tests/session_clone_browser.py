@@ -217,7 +217,7 @@ def main():
                     if not restart:
                         page.locator(f'#side .item[data-uid="{selected}"]').click()
                         expect(page.locator('#a-clone-group svg use')).to_have_attribute('href','#i-transfer')
-                        expect(page.locator('#a-clone-group')).to_have_attribute('aria-label','移动 / 复制整组')
+                        expect(page.locator('#a-clone-group')).to_have_attribute('aria-label','迁移会话树')
                         # Native title hints must retain input guards without a
                         # custom overlay, modal or clone-plan request.
                         plans=[]
@@ -234,7 +234,7 @@ def main():
                         if not action.is_visible():page.locator('#a-more').click()
                         action.hover()
                         tip=page.locator('#control-unavailable-tooltip')
-                        expect(action).to_have_attribute('title','会话正在运行，请先停止后再移动或复制整组。')
+                        expect(action).to_have_attribute('title','会话正在运行，请先停止后再迁移会话树。')
                         expect(tip).to_have_count(0)
                         assert float(action.evaluate("b => getComputedStyle(b).opacity"))==.55
                         page.mouse.move(0,0)
@@ -253,7 +253,7 @@ def main():
                         running['value']=False
                         page.evaluate('async () => await pollLive(true)')
                         expect(action).not_to_have_attribute('aria-disabled','true')
-                        expect(action).to_have_attribute('title','移动 / 复制整组')
+                        expect(action).to_have_attribute('title','迁移会话树')
                         expect(menu_action).not_to_have_attribute('aria-disabled','true')
                         expect(tip).to_have_count(0)
                         page.keyboard.press('Escape')
@@ -293,7 +293,7 @@ def main():
                             else:
                                 page.locator('#a-more').click()
                                 expect(button).to_be_visible()
-                                expect(button.locator('span')).to_have_text('移动 / 复制整组')
+                                expect(button.locator('span')).to_have_text('迁移会话树')
                                 page.locator('#a-more').click()
                         page.set_viewport_size({'width':440,'height':900})
                         page.evaluate(('() => { ' + 'showMobileDetail(); layoutSessionHead()' + ' }'))
@@ -310,6 +310,7 @@ def main():
                         page.locator(f'#side .item[data-uid="{selected}"]').click(button='right')
                         page.locator('#item-menu [data-act="clone"]').click()
                         dialog=page.locator('#clone-group-dialog')
+                        expect(dialog.locator('#transfer-title')).to_have_text('迁移会话树')
                         expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=20000)
                         expect(dialog.locator('#transfer-source')).to_be_disabled()
                         expect(dialog.locator('#transfer-source')).to_have_value(node.name)

@@ -139,6 +139,7 @@ def main():
                     page.wait_for_function("uid => (T.list || []).some(row => row.uid === uid && row.instance_id)", arg=codex_uid)
                     action = session_action(page)
                     expect(action).to_have_attribute("aria-label", "停止会话")
+                    expect(page.locator('.dhead-actions .session-menu-action').first).to_have_attribute('id','a-session-action')
                     page.evaluate('''() => {
                         window.stopAttentionFlashes=[];
                         window.stopAttentionObserver=new MutationObserver(() => {
@@ -174,6 +175,7 @@ def main():
                     page.wait_for_function("uid => !(T.list || []).some(row => row.uid === uid)", arg=codex_uid, timeout=15000)
                     assert page.evaluate("uid => S.live.has(uid)", codex_uid) is False
                     expect(session_action(page)).to_have_attribute("aria-label", "删除会话")
+                    expect(page.locator('.dhead-actions .session-menu-action').first).not_to_have_attribute('id','a-session-action')
                     page.wait_for_timeout(1200)
                     assert page.evaluate('stopAttentionFlashes') == [], page.evaluate('stopAttentionFlashes')
                     page.evaluate('stopAttentionObserver.disconnect()')
@@ -217,6 +219,7 @@ def main():
                     page.evaluate("uid => { S.live.add(uid); paintLive(); }", other_uid)
                     action = session_action(page)
                     expect(action).to_have_attribute("aria-label", "停止会话")
+                    expect(page.locator('.dhead-actions .session-menu-action').first).to_have_attribute('id','a-session-action')
                     before = len(dialogs)
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as stopped:
                         action.click()
@@ -436,7 +439,8 @@ def main():
                     delete_item.click(force=True)
                     expect(menu).to_be_visible()
                     expect(menu.locator('[data-act="group"]')).to_be_visible()
-                    expect(menu.locator('button:visible')).to_have_count(9)
+                    expect(menu.locator('button:visible')).to_have_count(10)
+                    expect(menu.locator('button:visible').first).to_have_attribute('data-act','stop')
                     bounds = menu.bounding_box()
                     assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 391, bounds
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as stopped:

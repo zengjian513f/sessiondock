@@ -59,6 +59,9 @@ def main():
                     def open_tree(context_menu=False):
                         if context_menu:
                             page.locator(f'#side .item[data-uid="{uid}"]').click(button="right")
+                            actions=page.locator('#item-menu button[data-act]').evaluate_all('(buttons) => buttons.map(b => b.dataset.act)')
+                            assert actions[0]=='stop' and actions[actions.index('clone')+1]=='delete-tree',actions
+                            expect(page.locator('#item-menu [data-act="clone"]')).to_have_text('迁移会话树…')
                             page.locator('#item-menu [data-act="delete-tree"]').click()
                         button=page.locator('#a-delete-tree')
                         if not context_menu:
