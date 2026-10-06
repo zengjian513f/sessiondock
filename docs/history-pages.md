@@ -303,6 +303,18 @@ bounded reload. It does not silently clear history or request unbounded history
 after a stale, evicted or expired grant. Responses from an old view/reset are
 discarded. Explicit reload must also avoid overwriting concurrent live updates.
 
+### Incident BUG-20261006-040019-6f5686
+
+The first open at 03:54:26 UTC returned 205 events, but 173 of the last 200
+were silent Claude queue operations. Native inputs were intact and on the
+projected timeline; 14 of the 15 user bubbles were pushed into the gap before
+the browser rendered anything. Counting visible events restores all 15 inputs
+in this incident's opening window while retaining queue evidence and the same
+byte checkpoint. This window-selection DELTA leaves the full native projection
+unchanged. [The browser regression](../tests/history_pages_browser.py) opens a
+synthetic queue-heavy conversation and fills its gap, checking visible input
+and reply, retained queue records, exact reconstruction and unchanged cursors.
+
 ### Page grouping targets
 
 - Each page selects at most `SESSIONDOCK_HISTORY_PAGE_EVENTS` events (default
@@ -311,7 +323,13 @@ discarded. Explicit reload must also avoid overwriting concurrent live updates.
   page normally groups as much as fits in 8 MiB, and the 51 MB / 7,426-message real
   Claude session fills its gap in a handful of pages. Initial head/tail
   windows use the same media budgets, a separate 2 MiB JSON target and at
-  most 205 events. Explicit pages retain their larger grouping targets.
+  most 205 visible events. Silent protocol events, including Claude queue
+  operations, remain in the selected contiguous ranges for CLI echo
+  reconciliation and still consume the byte budget, but do not consume the
+  visible-event count. Thus background queue traffic cannot crowd recent user
+  inputs and replies out of the opening tail (`BUG-20261006-040019-6f5686`).
+  Page indices and omitted counts still include these events, preserving exact
+  reconstruction and checkpoints. Explicit pages retain their larger grouping targets.
 - The legacy gap button chains pages: one click keeps requesting the next
   grant until the gap is filled (progress on the button, a second click
   aborts and keeps the pages already read), then renders once. Every page

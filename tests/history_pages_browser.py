@@ -19,7 +19,7 @@ from urllib.parse import urlsplit, parse_qs
 
 from browser_race_assets import install_small_render_batches
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, codex_row, encoded, get_json, isolated_server
+from history_parity import BINARY, Corpus, claude_row, codex_row, encoded, get_json, isolated_server
 from media_browser import PNG, image, native_bytes, uid
 
 
@@ -70,6 +70,32 @@ def build(root):
     latest.append(codex_row("response_item",{"type":"message","role":"assistant","phase":"final",
         "content":[{"type":"output_text","text":"LATEST TURN ANSWER"}]}))
     corpus.put("codex-latest-turn","codex",latest,[])
+    # BUG-20261006-040019-6f5686: invisible queue traffic used to occupy
+    # the entire opening tail and push even the latest user input into the gap.
+    sid = "claude-queue-window"
+    queued = []
+    parent = None
+    for index in range(300):
+        ident = f"old-{index}"
+        queued.append(claude_row(sid, "user", ident, parent, f"QUEUE OLDER {index:04d}"))
+        parent = ident
+    queued.append(claude_row(sid, "user", "latest-user", parent, "QUEUE LATEST QUESTION"))
+    parent = "latest-user"
+    for index in range(60):
+        call, result = f"call-{index}", f"result-{index}"
+        tool = claude_row(sid, "assistant", call, parent)
+        tool["message"] = {"role": "assistant", "stop_reason": "tool_use", "content": [
+            {"type": "tool_use", "id": call, "name": "Bash", "input": {"command": f"echo queue-{index}"}}]}
+        output = claude_row(sid, "user", result, call)
+        output["message"]["content"] = [{"type": "tool_result", "tool_use_id": call,
+                                           "content": f"QUEUE RESULT {index:04d}"}]
+        queued.extend([tool, output])
+        parent = result
+    queued.append(claude_row(sid, "assistant", "latest-answer", parent, "QUEUE LATEST ANSWER"))
+    queued.extend({"type": "queue-operation", "operation": "enqueue", "sessionId": sid,
+                   "content": f"QUEUE INTERNAL {index:04d}", "timestamp": "2026-09-11T10:00:00Z"}
+                  for index in range(250))
+    corpus.put(sid, "claude", queued, [])
     return corpus
 
 
@@ -201,6 +227,22 @@ def main():
                 expect(group).to_contain_text("LATEST TURN RESULT 0059")
                 assert not any("/page?" in url for url in requests[start:])
                 print("PASS latest turn: question, all 60 tool calls/results and answer available on opening",flush=True)
+
+                select("claude-queue-window", "QUEUE LATEST ANSWER")
+                expect(page.locator("#msgs")).to_contain_text("QUEUE LATEST QUESTION")
+                wire = get_json(opener, base, f'/api/messages/{uid(corpus,"claude-queue-window")}?window=1')
+                assert sum(not m.get("silent") for m in wire["messages"]) == 205
+                assert sum(m["role"] == "queue_operation" for m in wire["messages"]) == 250
+                assert not page.locator("#msgs .msg").filter(has_text="QUEUE INTERNAL").count()
+                checkpoint = snapshot()
+                full = get_json(opener, base, f'/api/messages/{uid(corpus,"claude-queue-window")}')
+                while snapshot()["partial"]:
+                    click_page()
+                    settled()
+                assert snapshot()["text"] == [m["text"] for m in full["messages"]]
+                assert snapshot()["end"] == checkpoint["end"] and snapshot()["anchor"] == checkpoint["anchor"]
+                expect(page.locator("#msgs")).to_contain_text("QUEUE OLDER 0150")
+                print("PASS Claude queue window: visible input/reply, retained enqueue evidence, exact page reconstruction", flush=True)
 
                 select("codex-pages","PAGE ROW 1399")
                 first=snapshot()
