@@ -61,7 +61,7 @@ def build(root):
         row("OVERSIZED LATEST " + "y" * (3 * 1024 * 1024))],[])
     latest = [codex_row("session_meta",{"id":"codex-latest-turn","cwd":"/synthetic/latest-turn"}),
         *[row(f"OLDER TURN {index:04d}") for index in range(300)],row("LATEST TURN QUESTION")]
-    for index in range(60):
+    for index in range(120):
         latest.extend([
             codex_row("response_item",{"type":"function_call","name":"shell_command",
                 "call_id":f"latest-{index}","arguments":json.dumps({"command":f"echo latest-{index}"})}),
@@ -69,33 +69,37 @@ def build(root):
                 "output":f"LATEST TURN RESULT {index:04d} " + "z" * 8192})])
     latest.append(codex_row("response_item",{"type":"message","role":"assistant","phase":"final",
         "content":[{"type":"output_text","text":"LATEST TURN ANSWER"}]}))
+    for record in latest[301:]:
+        record["payload"]["turn_id"] = "latest-turn"
     corpus.put("codex-latest-turn","codex",latest,[])
     # BUG-20261006-040019-6f5686: invisible queue traffic used to occupy
     # the entire opening tail and push even the latest user input into the gap.
-    sid = "claude-queue-window"
-    queued = []
-    parent = None
-    for index in range(300):
-        ident = f"old-{index}"
-        queued.append(claude_row(sid, "user", ident, parent, f"QUEUE OLDER {index:04d}"))
-        parent = ident
-    queued.append(claude_row(sid, "user", "latest-user", parent, "QUEUE LATEST QUESTION"))
-    parent = "latest-user"
-    for index in range(60):
-        call, result = f"call-{index}", f"result-{index}"
-        tool = claude_row(sid, "assistant", call, parent)
-        tool["message"] = {"role": "assistant", "stop_reason": "tool_use", "content": [
-            {"type": "tool_use", "id": call, "name": "Bash", "input": {"command": f"echo queue-{index}"}}]}
-        output = claude_row(sid, "user", result, call)
-        output["message"]["content"] = [{"type": "tool_result", "tool_use_id": call,
-                                           "content": f"QUEUE RESULT {index:04d}"}]
-        queued.extend([tool, output])
-        parent = result
-    queued.append(claude_row(sid, "assistant", "latest-answer", parent, "QUEUE LATEST ANSWER"))
-    queued.extend({"type": "queue-operation", "operation": "enqueue", "sessionId": sid,
-                   "content": f"QUEUE INTERNAL {index:04d}", "timestamp": "2026-09-11T10:00:00Z"}
-                  for index in range(250))
-    corpus.put(sid, "claude", queued, [])
+    for sid, tool_count, padding in (("claude-queue-window", 60, 0),
+                                     ("claude-long-turn", 140, 0),
+                                     ("claude-large-turn", 300, 12000)):
+        queued = []
+        parent = None
+        for index in range(300):
+            ident = f"old-{index}"
+            queued.append(claude_row(sid, "user", ident, parent, f"QUEUE OLDER {index:04d}"))
+            parent = ident
+        queued.append(claude_row(sid, "user", "latest-user", parent, "QUEUE LATEST QUESTION"))
+        parent = "latest-user"
+        for index in range(tool_count):
+            call, result = f"call-{index}", f"result-{index}"
+            tool = claude_row(sid, "assistant", call, parent)
+            tool["message"] = {"role": "assistant", "stop_reason": "tool_use", "content": [
+                {"type": "tool_use", "id": call, "name": "Bash", "input": {"command": f"echo queue-{index}"}}]}
+            output = claude_row(sid, "user", result, call)
+            output["message"]["content"] = [{"type": "tool_result", "tool_use_id": call,
+                                               "content": f"QUEUE RESULT {index:04d}" + "x" * padding}]
+            queued.extend([tool, output])
+            parent = result
+        queued.append(claude_row(sid, "assistant", "latest-answer", parent, "QUEUE LATEST ANSWER"))
+        queued.extend({"type": "queue-operation", "operation": "enqueue", "sessionId": sid,
+                       "content": f"QUEUE INTERNAL {index:04d}", "timestamp": "2026-09-11T10:00:00Z"}
+                      for index in range(250))
+        corpus.put(sid, "claude", queued, [])
     return corpus
 
 
@@ -215,18 +219,18 @@ def main():
                 select("codex-latest-turn","LATEST TURN ANSWER")
                 expect(page.locator("#msgs")).to_contain_text("LATEST TURN QUESTION")
                 latest=snapshot()
-                assert len(latest["text"])==205 and latest["partial"]["tail"]==200
-                assert sum(text.startswith("LATEST TURN RESULT") for text in latest["text"])==60
+                assert len(latest["text"])==247 and latest["partial"]["tail"]==242
+                assert sum(text.startswith("LATEST TURN RESULT") for text in latest["text"])==120
                 process=page.locator("#msgs .turn-process.folded .fold-toggle")
                 if process.count():
                     process.first.click()
                 group=page.locator("#msgs .grp").last
                 group.locator(":scope > .fold-preview .fold-toggle").click()
-                expect(group.locator(":scope > .tool-entry")).to_have_count(60)
+                expect(group.locator(":scope > .tool-entry")).to_have_count(120)
                 expect(group).to_contain_text("LATEST TURN RESULT 0000")
-                expect(group).to_contain_text("LATEST TURN RESULT 0059")
+                expect(group).to_contain_text("LATEST TURN RESULT 0119")
                 assert not any("/page?" in url for url in requests[start:])
-                print("PASS latest turn: question, all 60 tool calls/results and answer available on opening",flush=True)
+                print("PASS latest turn: question, all 120 tool calls/results and answer available on opening",flush=True)
 
                 select("claude-queue-window", "QUEUE LATEST ANSWER")
                 expect(page.locator("#msgs")).to_contain_text("QUEUE LATEST QUESTION")
@@ -243,6 +247,53 @@ def main():
                 assert snapshot()["end"] == checkpoint["end"] and snapshot()["anchor"] == checkpoint["anchor"]
                 expect(page.locator("#msgs")).to_contain_text("QUEUE OLDER 0150")
                 print("PASS Claude queue window: visible input/reply, retained enqueue evidence, exact page reconstruction", flush=True)
+
+                # BUG-20261006-133153-8673e6: a real turn exceeds the 200-event
+                # target. Opening/reloading must include its input, not just its
+                # folded tools and final answer; older turns remain pageable.
+                select("claude-long-turn", "QUEUE LATEST ANSWER")
+                expect(page.locator("#msgs")).to_contain_text("QUEUE LATEST QUESTION")
+                page.reload(wait_until="networkidle")
+                page.evaluate('HISTORY_PAGE_CHAIN=false')
+                expect(page.locator("#msgs")).to_contain_text("QUEUE LATEST QUESTION")
+                expect(page.locator("#msgs")).to_contain_text("QUEUE LATEST ANSWER")
+                checkpoint = snapshot()
+                assert checkpoint["partial"]["tail"] == 532
+                process = page.locator("#msgs .turn-process.folded .fold-toggle")
+                if process.count():
+                    process.last.click()
+                group = page.locator("#msgs .grp").last
+                group.locator(":scope > .fold-preview .fold-toggle").click()
+                expect(group.locator(":scope > .tool-entry")).to_have_count(140)
+                expect(group).to_contain_text("QUEUE RESULT 0000")
+                expect(group).to_contain_text("QUEUE RESULT 0139")
+                full = get_json(opener, base, f'/api/messages/{uid(corpus,"claude-long-turn")}')
+                while snapshot()["partial"]:
+                    click_page()
+                    settled()
+                assert snapshot()["text"] == [m["text"] for m in full["messages"]]
+                assert snapshot()["end"] == checkpoint["end"] and snapshot()["anchor"] == checkpoint["anchor"]
+                print("PASS long Claude turn: opening/reload retains input, 140 tool pairs, reply and exact paging", flush=True)
+
+                select("claude-large-turn", "QUEUE LATEST ANSWER")
+                bounded = snapshot()
+                assert "QUEUE LATEST QUESTION" not in bounded["text"]
+                # Extension still obeys the 2 MiB target, even when the turn
+                # exceeds it. The gap must recover its input and every event.
+                assert 200 < bounded["partial"]["tail"] - 250 < 602
+                wire = get_json(opener, base, f'/api/messages/{uid(corpus,"claude-large-turn")}?window=1')
+                assert len(json.dumps(wire).encode()) < 2 * 1024 * 1024
+                # This fixture deliberately exceeds the small-response helper's
+                # limit; the full read is only the oracle for browser paging.
+                with opener.open(base + f'/api/messages/{uid(corpus,"claude-large-turn")}', timeout=20) as response:
+                    full = json.load(response)
+                while snapshot()["partial"]:
+                    click_page()
+                    settled()
+                expect(page.locator("#msgs")).to_contain_text("QUEUE LATEST QUESTION")
+                assert snapshot()["text"] == [m["text"] for m in full["messages"]]
+                assert snapshot()["end"] == bounded["end"] and snapshot()["anchor"] == bounded["anchor"]
+                print("PASS oversized turn: bounded opening, exact gap recovery and unchanged checkpoint", flush=True)
 
                 select("codex-pages","PAGE ROW 1399")
                 first=snapshot()

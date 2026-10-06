@@ -229,8 +229,9 @@ No frontend framework is introduced.
 
 `GET /api/messages/{uid}?window=1&agent=...` keeps the existing live checkpoint
 fields. When history is omitted, `partial` contains `head`, `tail`, `omitted`
-and an opaque `cursor`. Initial windows prioritize up to 200 latest events, then
-up to 5 earliest events within a separate 2 MiB estimated JSON target
+and an opaque `cursor`. Initial windows target 200 latest visible events, extend
+backward to the start of the boundary turn when it has a `turn_id`, then add
+up to 5 earliest visible events within a separate 2 MiB estimated JSON target
 (including the 64 KiB metadata reserve). Large text or media can reduce either
 segment. The latest event is always included intact, even above that soft target;
 all omitted events remain available through history pages. This intentionally
@@ -315,6 +316,23 @@ unchanged. [The browser regression](../tests/history_pages_browser.py) opens a
 synthetic queue-heavy conversation and fills its gap, checking visible input
 and reply, retained queue records, exact reconstruction and unchanged cursors.
 
+### Incident BUG-20261006-133153-8673e6
+
+The 13:24:23 UTC opening response already omitted the latest user input; later
+append responses advanced normally. The native transcript and full projection
+retained all 74 user inputs. At the report checkpoint, the initial window held
+only the first input and a tail dominated by 86 tool call/result pairs. The
+latest input was 17 events before that tail, inside the 5,850-event history gap.
+The folded process made this look like missing conversation bubbles.
+
+The window now completes the turn crossing its 200-visible-event target, using
+the existing `turn_id` and the same JSON/media budget. This is an intentional
+window-selection DELTA; native lineage, full history, search and live checkpoints
+are unchanged. A turn exceeding the byte/media budget still spans the explicit
+history gap, and older turns remain pageable. The Chromium regression opens and
+reloads long Claude/Codex turns, expands their tool groups and fills older history
+without changing the live checkpoint.
+
 ### Page grouping targets
 
 - Each page selects at most `SESSIONDOCK_HISTORY_PAGE_EVENTS` events (default
@@ -322,8 +340,9 @@ and reply, retained queue records, exact reconstruction and unchanged cursors.
   references and 24 MiB estimated embedded compressed-image bytes — so a
   page normally groups as much as fits in 8 MiB, and the 51 MB / 7,426-message real
   Claude session fills its gap in a handful of pages. Initial head/tail
-  windows use the same media budgets, a separate 2 MiB JSON target and at
-  most 205 visible events. Silent protocol events, including Claude queue
+  windows use the same media budgets, a separate 2 MiB JSON target and a
+  205-visible-event target, extended to complete the tail's boundary turn.
+  Silent protocol events, including Claude queue
   operations, remain in the selected contiguous ranges for CLI echo
   reconciliation and still consume the byte budget, but do not consume the
   visible-event count. Thus background queue traffic cannot crowd recent user
