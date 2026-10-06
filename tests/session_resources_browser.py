@@ -7,7 +7,7 @@ import os
 import json
 import tempfile
 from playwright.sync_api import sync_playwright
-from history_parity import BINARY, Corpus, codex_row, isolated_server
+from history_fixtures import BINARY, Corpus, codex_row, isolated_server
 
 
 def assert_drawer_layout(page, case):

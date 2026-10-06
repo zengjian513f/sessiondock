@@ -10,7 +10,7 @@ import tempfile
 import time
 import uuid
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, claude_row, codex_row, codex_message, get_json, isolated_server
+from history_fixtures import BINARY, Corpus, claude_row, codex_row, codex_message, get_json, isolated_server
 from host_identity import host
 
 

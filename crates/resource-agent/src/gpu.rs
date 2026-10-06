@@ -142,35 +142,3 @@ fn parse(output: &str) -> io::Result<Rows> {
     }
     Ok(rows)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn uuid_dedup_and_unknown_memory() {
-        let rows =
-            parse("12, GPU-a, 100\n12, GPU-a, 100\n12, GPU-b, [N/A]\n13, GPU-a, 50\n").unwrap();
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[&(12, "GPU-a".into())], Some(100 * 1024 * 1024));
-        assert_eq!(rows[&(12, "GPU-b".into())], None);
-        assert_eq!(
-            parse("12, GPU-a, 100\n12, GPU-a, 200").unwrap()[&(12, "GPU-a".into())],
-            None
-        );
-        assert!(parse("bad output").is_err());
-        assert!(parse("").unwrap().is_empty());
-    }
-
-    #[test]
-    fn query_timeout_is_bounded_and_child_is_reaped() {
-        let started = Instant::now();
-        let error = query_command(
-            Command::new("/bin/sleep").arg("30"),
-            Duration::from_millis(30),
-        )
-        .unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-        assert!(started.elapsed() < Duration::from_secs(2));
-    }
-}

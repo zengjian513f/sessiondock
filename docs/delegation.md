@@ -39,13 +39,13 @@ timeout 1200 ~/.local/bin/grok \
 - 规格可以写完整，且验证是机械的（`--list` 输出、固定命令、精确断言）。
 - 只依赖标准库或仓库已有依赖，≤300 行，不需要理解多个 Rust 模块之间的约束。
 - 不与正在并行工作的子代理共享文件（尤其 `api/mod.rs`、`state.rs`、
-  `config.rs`、`legacy-web/app.js`、`tests/history_parity.py`）。
+  `config.rs`、`legacy-web/app.js`、`tests/history_fixtures.py`）。
 
 不适合：
 
 - 发送账本、授权/路径安全、原生分支语义、ptyhost 协议等正确性敏感模块。
 - 需要在共享文件上打补丁、需要和其他代理协调顺序的改动。
-- 需要跑长时间 `cargo test/build`（会和并行代理抢 `target/` 锁）或需要浏览器
+- 需要跑长时间 `cargo build`（会和并行代理抢 `target/` 锁）或需要浏览器
   联调才能判断对错的任务。
 - 需要产品语义判断（legacy UI 行为、Python 差异是 bug 还是安全差异）。
 
@@ -76,7 +76,7 @@ of the verification commands.
 2. 通读文件：无网络访问、无写仓库外路径、无 `subprocess` 调用未授权命令、
    无新增依赖；风格与相邻脚本一致。
 3. 跑任务书里的验证命令，再按改动选择文档检查或覆盖该路径的浏览器套件；
-   不自行运行单元测试。
+   仓库不含单元测试，也不新增。
 4. 在提交或 PR 说明中注明"grok-4.6 headless 产出，人工审阅"；只有确实尚未完成的
    后续工作才写入根目录 `TODO.md`。
 5. 出现 `Memory flush started` 之类 grok 自身日志属正常；`GROK_EXIT` 非 0 或

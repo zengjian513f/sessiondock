@@ -155,10 +155,6 @@ pub(in crate::sessions) fn scan_native_records(
             if !line.complete {
                 break;
             }
-            #[cfg(test)]
-            {
-                decoder.decoded += 1;
-            }
             match decoded {
                 Ok((row, sidecars)) if row.is_object() => {
                     // Saturating accounting; the cache applies its budget at
@@ -196,6 +192,3 @@ pub(in crate::sessions) fn scan_native_records(
     result?;
     index.finish()
 }
-
-#[cfg(test)]
-mod tests;

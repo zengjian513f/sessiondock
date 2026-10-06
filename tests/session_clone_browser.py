@@ -16,15 +16,15 @@ import tempfile
 from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, isolated_server, get_json
+from history_fixtures import BINARY, isolated_server, get_json
 from session_transfer_browser import fixture, ident
-from hub_http_suite import Hub, free_port, scoped
-from node_auth_suite import node_env, TOKEN
+from hub_fixtures import Hub, free_port, scoped
+from node_auth_fixtures import node_env, TOKEN
 
 
 def prepare_confirmed(page, node, operation):
     """Explicit execution preparation for publication fault injection only."""
-    from node_auth_suite import GOOD
+    from node_auth_fixtures import GOOD
     reply = page.request.post(f'http://127.0.0.1:{node.port}/api/session/transfer/manifest',
                               headers=GOOD, data={'operation_id': operation})
     assert reply.ok, reply.text()

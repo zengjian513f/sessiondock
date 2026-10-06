@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
-from hub_http_suite import REPO, FakeNode, Hub
+from hub_fixtures import REPO, FakeNode, Hub
 from hub_browser import CHROMIUM
 from popups import on_popup  # noqa: E402
 

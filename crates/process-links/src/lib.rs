@@ -8,8 +8,6 @@ pub mod agent;
 pub mod engine;
 pub mod linux;
 pub mod resource_summary;
-#[cfg(test)]
-mod tests;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Process {

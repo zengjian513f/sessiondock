@@ -62,7 +62,7 @@ impl Writer {
                 break;
             }
             match rx.recv_timeout(TICK) {
-                Ok(batch) => self.handle(batch, None),
+                Ok(batch) => self.handle(batch),
                 Err(RecvTimeoutError::Timeout) => self.idle_sync(),
                 Err(RecvTimeoutError::Disconnected) => break,
             }
@@ -79,7 +79,7 @@ impl Writer {
         let deadline = Instant::now() + DRAIN_DEADLINE;
         loop {
             match rx.try_recv() {
-                Ok(batch) if Instant::now() < deadline => self.handle(batch, Some(deadline)),
+                Ok(batch) if Instant::now() < deadline => self.handle(batch),
                 Ok(batch) => self.discard(&batch),
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
@@ -101,28 +101,7 @@ impl Writer {
         self.shared.release(batch.bytes.len());
     }
 
-    fn wait_gate(&self, mut deadline: Option<Instant>) -> bool {
-        let Some(gate) = &self.shared.limits.gate else {
-            return true;
-        };
-        loop {
-            if gate.wait(Duration::from_millis(50)) {
-                return true;
-            }
-            if deadline.is_none() && self.stopping() {
-                deadline = Some(Instant::now() + DRAIN_DEADLINE);
-            }
-            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                return false;
-            }
-        }
-    }
-
-    fn handle(&mut self, batch: Batch, deadline: Option<Instant>) {
-        if !self.wait_gate(deadline) {
-            self.discard(&batch);
-            return;
-        }
+    fn handle(&mut self, batch: Batch) {
         self.leave_queue(&batch);
         let length = batch.bytes.len() as u64;
         let today = utc_date(SystemTime::now());

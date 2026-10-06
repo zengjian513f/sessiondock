@@ -33,8 +33,8 @@ from types import SimpleNamespace
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeout, expect, sync_playwright
 
-from history_parity import REPO, BINARY, Corpus, isolated_server
-from hub_http_suite import FakeNode, Hub, free_port
+from history_fixtures import REPO, BINARY, Corpus, isolated_server
+from hub_fixtures import FakeNode, Hub, free_port
 
 HUB_BINARY = BINARY.parent / ("sessiondock-hub.exe" if os.name == "nt" else "sessiondock-hub")
 CODEX_ARGS = ["--enable", "default_mode_request_user_input", "-c", "suppress_unstable_features_warning=true"]

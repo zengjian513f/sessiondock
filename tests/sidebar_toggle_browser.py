@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 from playwright.sync_api import expect, sync_playwright
 from header_fold_browser import corpus
-from history_parity import BINARY, isolated_server
+from history_fixtures import BINARY, isolated_server
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)

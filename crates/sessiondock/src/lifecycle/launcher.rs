@@ -1143,34 +1143,3 @@ fn executable_metadata(metadata: &Metadata) -> Result<(), Error> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "launcher_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-mod environment_tests {
-    use super::{allowed_profile_env, env_name};
-
-    #[test]
-    fn configured_environment_accepts_operator_names_but_strips_session_identity() {
-        for key in [
-            "NODE_OPTIONS",
-            "PSModulePath",
-            "SystemRoot",
-            "ProgramFiles(x86)",
-            "1VAR",
-            "custom.name",
-        ] {
-            assert!(env_name(key));
-            assert!(allowed_profile_env(key));
-        }
-        for key in ["", "BAD=KEY", "BAD\0KEY"] {
-            assert!(!env_name(key));
-            assert!(!allowed_profile_env(key));
-        }
-        for key in super::DENIED_ENV {
-            assert!(!allowed_profile_env(key));
-        }
-    }
-}

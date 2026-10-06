@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, batch35_meta, codex_message, isolated_server
-from hub_http_suite import Hub, free_port
+from history_fixtures import BINARY, Corpus, batch35_meta, codex_message, isolated_server
+from hub_fixtures import Hub, free_port
 from hub_send_browser import prepare
 from pending_create_discard_browser import STAY
 from private_hosts import private_hosts

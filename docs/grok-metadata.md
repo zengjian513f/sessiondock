@@ -41,10 +41,7 @@ system` only for that preamble (always offset 0, no `synthetic_reason`).
 The projection skips it, same as `synthetic_reason` users and
 `timeline_protocol` envelopes; it is not a conversation turn and does not
 count toward the message total. Python still emits the record as role
-`system` (DELTA). Unit case:
-`sessions::providers::tests::grok_system_preamble_is_not_a_conversation_message`;
-`tests/advanced_parity.py` keeps a synthetic `Grok system notice` in the
-fixture and asserts it is absent from the Rust view.
+`system` (DELTA).
 
 ## The `user_query` envelope
 
@@ -61,9 +58,7 @@ user's text and it is stripped with the tags (`GROK_USER_QUERY` in
 whole-text and case-insensitive, one leading and one trailing newline of the
 body are removed and the user's indentation is kept; any other text outside
 the tags (or a tag quoted inside ordinary text) leaves the record verbatim.
-Unit cases: `sessions::providers::tests::grok_in_flight_user_query_envelope_is_removed`
-and `grok_user_query_prefix_suffix_and_image_blocks_are_independent`;
-`tests/grok_parity.py` compares the `inflight` session with the Python adapter.
+`tests/grok_metadata_browser.py` asserts the `inflight` session's user texts.
 
 ## Missing files, cursors and live updates
 
@@ -105,10 +100,9 @@ agent ownership semantics remain unchanged.
 
 ## Validation
 
-Build the server, then run
-`python3 tests/grok_parity.py --python-source PATH --browser`.
-The Python checkout is adapter-only and read-only. Tests create all data in a
-temporary directory and bind the server to loopback. They access no CLI homes,
+Build the server, then run `python3 tests/grok_metadata_browser.py`.
+It creates all data in a
+temporary directory and binds the server to loopback. It accesses no CLI homes,
 paid CLIs, production hosts, or active sessions.
 
 Grok `run_terminal_command` results start with an

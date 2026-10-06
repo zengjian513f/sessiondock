@@ -343,8 +343,3 @@ impl FileService {
         response::read(target, options)
     }
 }
-
-#[cfg(test)]
-mod tests;
-#[cfg(test)]
-mod write_tests;

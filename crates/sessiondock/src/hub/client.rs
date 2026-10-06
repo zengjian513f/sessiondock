@@ -15,9 +15,6 @@
 //! Failures carry a public code and a Chinese reason (`hub.py`
 //! `request_failure`) and never the URL, the token or upstream text.
 
-#[cfg(test)]
-mod tests;
-
 use std::{
     fmt, io,
     net::SocketAddr,
@@ -835,11 +832,4 @@ impl Body {
         }
         Ok(count > 0)
     }
-}
-
-#[cfg(test)]
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
 }

@@ -18,7 +18,7 @@ from urllib.error import HTTPError
 from urllib.request import Request
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, build_corpus, get_json, isolated_server
+from history_fixtures import BINARY, build_corpus, get_json, isolated_server
 
 MAX_LINE_BYTES = 16 * 1024
 AUDIT_ROUTE = "/api/audit/browser"

@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright, expect
 
-from history_parity import REPO, BINARY, Corpus, isolated_server
+from history_fixtures import REPO, BINARY, Corpus, isolated_server
 from popups import on_popup  # noqa: E402
 
 FAKE_CLI = REPO / "tests/fake_claude_cli.py"

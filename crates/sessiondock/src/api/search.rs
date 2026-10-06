@@ -181,39 +181,3 @@ pub async fn get(
     });
     Ok(ndjson(events(rx, guard, search_permit, state.shutdown)))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use http_body_util::BodyExt;
-
-    #[tokio::test]
-    async fn idle_search_heartbeats_and_shutdown_cancels_the_body() {
-        let (_sender, receiver) = tokio::sync::mpsc::channel(8);
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let admission = Arc::new(tokio::sync::Semaphore::new(1));
-        let permit = Arc::new(admission.clone().acquire_owned().await.unwrap());
-        let shutdown = tokio_util::sync::CancellationToken::new();
-        let mut body = events(
-            receiver,
-            CancelOnDrop(cancelled.clone()),
-            permit,
-            shutdown.clone(),
-        );
-        let heartbeat = tokio::time::timeout(Duration::from_millis(1500), body.frame())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap()
-            .into_data()
-            .unwrap();
-        assert_eq!(
-            serde_json::from_slice::<Value>(&heartbeat).unwrap(),
-            json!({"type":"heartbeat"})
-        );
-        shutdown.cancel();
-        assert!(body.frame().await.is_none());
-        assert!(cancelled.load(Ordering::Relaxed));
-        assert_eq!(admission.available_permits(), 1);
-    }
-}

@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 from playwright.sync_api import sync_playwright
-from history_parity import BINARY, Corpus, isolated_server
+from history_fixtures import BINARY, Corpus, isolated_server
 from hub_send_browser import prepare
 from private_hosts import private_hosts, running_identity
 from run_validation import run_one

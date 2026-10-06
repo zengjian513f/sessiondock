@@ -20,7 +20,7 @@ import threading
 
 from playwright.sync_api import expect, sync_playwright
 
-from history_parity import BINARY, Corpus, isolated_server
+from history_fixtures import BINARY, Corpus, isolated_server
 
 MODEL = 'gemini-3.1-pro-low-thinking'
 WIRE_MODEL = 'gemini-3.1-pro-preview'

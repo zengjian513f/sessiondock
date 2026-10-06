@@ -71,9 +71,6 @@ pub(crate) struct TextSpan {
     end: u64,
     decoded_len: u64,
     digest: Digest,
-    /// Whether the physical spelling used a JSON escape (tests only).
-    #[cfg(test)]
-    escaped: bool,
     prefix: Vec<u8>,
     data_suffix: Option<(u64, Digest)>,
 }
@@ -93,10 +90,6 @@ impl TextSpan {
     /// prefix. This content fingerprint is not by itself an authorization or MAC.
     pub(crate) fn digest(&self) -> &Digest {
         &self.digest
-    }
-    #[cfg(test)]
-    pub(crate) fn escaped(&self) -> bool {
-        self.escaped
     }
     /// Bounded decoded bytes, potentially ending inside a Unicode scalar.
     pub(crate) fn prefix(&self) -> &[u8] {
@@ -412,8 +405,6 @@ struct StringBuild {
     inline: Option<String>,
     decoded_len: u64,
     hash: Option<Box<SpanHash>>,
-    #[cfg(test)]
-    escaped: bool,
 }
 impl StringBuild {
     fn new() -> Self {
@@ -421,8 +412,6 @@ impl StringBuild {
             inline: Some(String::new()),
             decoded_len: 0,
             hash: None,
-            #[cfg(test)]
-            escaped: false,
         }
     }
     fn feed(
@@ -472,8 +461,6 @@ impl StringBuild {
         Text::Span(TextSpan {
             start,
             end,
-            #[cfg(test)]
-            escaped: self.escaped,
             decoded_len: self.decoded_len,
             digest: hash.full.finish(),
             prefix: hash.prefix,
@@ -649,10 +636,6 @@ impl<R: Read> Parser<R> {
                     return Ok(text);
                 }
                 Some(b'\\') => {
-                    #[cfg(test)]
-                    {
-                        build.escaped = true;
-                    }
                     self.input.advance(1);
                     let character = match self.input.next()? {
                         Some(b'"') => '"',
@@ -816,6 +799,3 @@ impl<R: Read> Parser<R> {
         Ok(value)
     }
 }
-
-#[cfg(test)]
-mod tests;

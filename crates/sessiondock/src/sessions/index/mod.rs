@@ -164,11 +164,6 @@ impl CandidateRef {
         }
         codex_rollout_id(&self.data, &self.summary.sid)
     }
-    /// The declared native session id when the records seen agree on one.
-    #[cfg(test)]
-    pub fn native_id(&self) -> Option<&str> {
-        self.summary.native_id.as_ref().ok().map(String::as_str)
-    }
     /// A Claude sidecar or Codex subagent rollout (owned or not).
     pub fn is_agent(&self) -> bool {
         self.agent_id.is_some()
@@ -223,11 +218,6 @@ pub struct IndexSnapshot {
 }
 
 impl IndexSnapshot {
-    /// The exact `/api/sessions` document: `{"sessions", "sig", "built_at"}`.
-    #[cfg(test)]
-    pub fn rows(&self) -> &Value {
-        &self.document
-    }
     pub fn sessions(&self) -> &[Value] {
         self.document["sessions"]
             .as_array()
@@ -236,10 +226,6 @@ impl IndexSnapshot {
     }
     pub fn sig(&self) -> &str {
         self.document["sig"].as_str().unwrap_or("")
-    }
-    #[cfg(test)]
-    pub fn built_at(&self) -> f64 {
-        self.document["built_at"].as_f64().unwrap_or_default()
     }
     pub fn candidate(&self, uid: &str) -> Option<&CandidateRef> {
         self.candidates.get(uid)
@@ -506,34 +492,6 @@ impl Index {
             workers: workers.max(1),
             state: Mutex::new(State::default()),
             invalidated: AtomicBool::new(false),
-        }
-    }
-
-    /// Number of files whose summary has been read since construction.
-    #[cfg(test)]
-    pub fn reads(&self) -> usize {
-        self.state.lock().map(|state| state.reads).unwrap_or(0)
-    }
-
-    /// Number of owner files whose stop-notice scan was advanced (opened
-    /// and read past the last consumed LF) since construction.
-    #[cfg(test)]
-    pub fn stop_scans(&self) -> usize {
-        self.state.lock().map(|state| state.stop_scans).unwrap_or(0)
-    }
-
-    /// The canonicalized roots this index walks.
-    #[cfg(test)]
-    pub fn roots(&self) -> &SessionRoots {
-        &self.roots
-    }
-
-    /// Test hook: make the next `refresh(false)` rescan without waiting for
-    /// the TTL (no wall-clock sleep in tests).
-    #[cfg(test)]
-    pub fn expire(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            state.checked = None;
         }
     }
 
@@ -1629,6 +1587,3 @@ fn check_cut(root: &Path, data: &Path, stamp: Stamp, cut: u64) -> CutCheck {
         _ => CutCheck::Unreadable,
     }
 }
-
-#[cfg(test)]
-mod tests;

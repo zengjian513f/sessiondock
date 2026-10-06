@@ -242,6 +242,3 @@ fn mcp(node: &Node) -> bool {
             || fields.contains_key("image_url")
     }))
 }
-
-#[cfg(test)]
-mod tests;

@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
-from history_parity import REPO, BINARY, Corpus, isolated_server
+from history_fixtures import REPO, BINARY, Corpus, isolated_server
 from private_hosts import private_hosts
 from send_browser import SETTINGS, create_claude, initialize, wait_history
 

@@ -330,20 +330,10 @@ service (the launcher `env_clear`s).
 
 ## Validation
 
-- `python3 tests/live_http_suite.py --binary … [--ptyhost …]` — scan over a
-  synthetic tree: uids/tmux_uids/started_at, envelope, cache hit and force
-  miss, no inferred sidebar parents, persistence across restart with
-  an empty tree, `SESSIONDOCK_GROK_ACTIVE`, a `grok -p` under a tmux pane's
-  claude (live, not in `tmux_uids`); with ptyhost
-  built, a real pane resuming the origin whose synthetic subtree runs the
-  continued session and a `grok -p`: `tmux_uids` = origin + continued only.
-- `python3 tests/metadata_suite.py` (seeded `nest_parent` row),
-  `python3 tests/check_config_suite.py` (the three variables) and
-  `python3 tests/spawned_by_suite.py` (six-session tree with a `node` CLI,
-  a companion Codex, a headless Grok holding `events.jsonl` under the Grok
-  root, an orphan helper and a tmux pane whose claude spawned a second
-  headless Grok — `tmux_uids` names the claude only; expectations verified
-  against `live.py`).
+- `python3 tests/live_browser.py` and the process-tree browser suites that use
+  `tests/spawned_by_fixtures.py` (synthetic proc trees); the former HTTP suites
+  `live_http_suite`, `metadata_suite`, `check_config_suite` and
+  `spawned_by_suite` were removed on 2026-10-06 with the non-browser suites.
 - Real roots, read-only: the debug binary with the real roots on a loopback
   port versus the deployed
   service's `/api/live`; the uid sets and the reasons for every difference are

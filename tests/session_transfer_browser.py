@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, batch35_meta, codex_message, isolated_server, get_json
+from history_fixtures import BINARY, Corpus, batch35_meta, codex_message, isolated_server, get_json
 
 
 def ident(n):

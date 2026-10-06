@@ -26,7 +26,7 @@ import uuid
 
 from playwright.sync_api import expect, sync_playwright
 
-from history_parity import BINARY, REPO, Corpus, codex_message, codex_row, isolated_server
+from history_fixtures import BINARY, REPO, Corpus, codex_message, codex_row, isolated_server
 from host_identity import request as host_request
 from terminal_browser import stop
 from popups import on_popup  # noqa: E402

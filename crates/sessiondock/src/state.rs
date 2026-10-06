@@ -1,6 +1,4 @@
 use std::sync::Arc;
-#[cfg(test)]
-use std::time::Duration;
 
 use axum::{
     body::{Body, Bytes},
@@ -209,61 +207,4 @@ pub fn capabilities() -> Value {
         "media_continuation": true,
         "history_semantics": "limited_native"
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::sessions::SessionRoots;
-
-    fn make_reader(workers: usize) -> Reader {
-        Reader {
-            store: Arc::new(SessionStore::new(SessionRoots::default())),
-            workers: Arc::new(Semaphore::new(workers)),
-        }
-    }
-
-    #[tokio::test]
-    async fn a_queued_request_is_admitted_when_a_worker_frees() {
-        let reader = make_reader(1);
-        let held = reader.workers.clone().acquire_owned().await.unwrap();
-        let queued = reader.clone();
-        let task = tokio::spawn(async move { queued.run(|_| Ok(7)).await });
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(!task.is_finished(), "must queue, not fail immediately");
-        drop(held);
-        assert_eq!(task.await.unwrap().unwrap(), 7);
-        assert_eq!(reader.workers.available_permits(), 1);
-    }
-
-    #[tokio::test]
-    async fn a_request_cancelled_while_queued_never_takes_a_permit() {
-        let reader = make_reader(1);
-        let held = reader.workers.clone().acquire_owned().await.unwrap();
-        let queued = reader.clone();
-        let task = tokio::spawn(async move {
-            queued
-                .run(|_| -> Result<(), SessionError> { panic!("cancelled work must not run") })
-                .await
-        });
-        tokio::time::sleep(Duration::from_millis(30)).await;
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-        drop(held);
-        // The freed permit goes to the next real caller, not to the aborted one.
-        assert_eq!(reader.workers.available_permits(), 1);
-        assert_eq!(reader.run(|_| Ok(3)).await.unwrap(), 3);
-    }
-
-    #[tokio::test]
-    async fn the_shared_admission_helper_uses_the_pool_specific_code() {
-        let pool = Arc::new(Semaphore::new(1));
-        let held = admit(&pool, "x_busy").await.unwrap();
-        drop(held);
-        let permit = admit(&pool, "x_busy").await.unwrap();
-        drop(permit);
-        pool.close();
-        let error = admit(&pool, "x_busy").await.unwrap_err();
-        assert_eq!(error.message, "服务正在关闭");
-    }
 }

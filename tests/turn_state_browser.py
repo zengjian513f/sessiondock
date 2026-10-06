@@ -32,7 +32,7 @@ import tempfile
 import threading
 import uuid
 from playwright.sync_api import sync_playwright, expect
-from history_parity import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, encoded, isolated_server
+from history_fixtures import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, encoded, isolated_server
 
 # Fresh ids per run: a host left by an aborted run must not look like an
 # outside instance of the next run's sessions.

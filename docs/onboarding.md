@@ -81,7 +81,8 @@ result; never delegate correctness-sensitive code.
 
 From the repo root. These are list/read-only: no build, no listener, no production
 data. Follow the shared-machine build rules in `AGENTS.md` before running Cargo
-or a full validation sweep. Unit tests require an explicit user request.
+or a full validation sweep. The repository has no unit tests; validation
+is by headless browser suites.
 
 ```sh
 python3 tests/run_validation.py --list

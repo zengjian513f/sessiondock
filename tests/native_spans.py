@@ -15,7 +15,7 @@ import tempfile
 import zlib
 from urllib.error import HTTPError
 
-from history_parity import BINARY, Corpus, claude_row, codex_row, encoded, isolated_server
+from history_fixtures import BINARY, Corpus, claude_row, codex_row, encoded, isolated_server
 from media_browser import PNG, image, uid
 
 MIB = 1024 * 1024

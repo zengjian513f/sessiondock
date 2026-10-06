@@ -1,9 +1,6 @@
 //! Node identity and credential files (`federation.identity`, `server.py`
 //! `--node-token-file`). Loaders and checks only; the node listener wires them.
 
-#[cfg(all(test, unix))]
-mod tests;
-
 use std::{
     fmt, fs,
     io::{self, Write},

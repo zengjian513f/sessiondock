@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 from frontend_framework_browser import launch_chromium, open_settings, select_tab
-from history_parity import BINARY, build_corpus, codex_message, codex_row, isolated_server
+from history_fixtures import BINARY, build_corpus, codex_message, codex_row, isolated_server
 
 PREFIX = "/sessiondock/"
 MAIN_SID = "frontend-entry-main"

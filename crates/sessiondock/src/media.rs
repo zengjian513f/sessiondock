@@ -8,22 +8,16 @@ mod formats;
 mod native_media;
 pub(crate) use descriptors::MediaTicket;
 pub(crate) use discovery::discover;
-#[cfg(test)]
-pub(crate) use file_media::FileTicket;
 pub(crate) use file_media::PreparedImage;
 pub(crate) use file_media::{failure, silent_failure};
 pub(crate) use native_media::NativeSpan;
 
-#[cfg(test)]
-use base64::engine::general_purpose::STANDARD;
 use base64::{
     Engine as _, alphabet,
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
 };
 use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
-#[cfg(test)]
-use std::collections::BTreeSet;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -315,11 +309,6 @@ impl Drop for Charge {
 pub struct MediaBlob {
     bytes: Vec<u8>,
     mime: Mime,
-    /// Validated dimensions, checked by tests; production only validates them.
-    #[cfg(test)]
-    width: u32,
-    #[cfg(test)]
-    height: u32,
     _charge: Charge,
 }
 impl MediaBlob {
@@ -377,178 +366,6 @@ impl MediaStore {
             }),
             maximum_items,
         }
-    }
-    /// Run off the reactor. The whole batch is protected from its own LRU
-    /// eviction; failed batches publish no partially registered new tokens.
-    #[cfg(test)]
-    pub fn project(&self, images: &[NativeImage]) -> Result<Vec<Value>, MediaError> {
-        let mut output = vec![Value::Null; images.len()];
-        let mut prepared = Vec::new();
-        let mut positions = Vec::new();
-        for (position, image) in images.iter().enumerate() {
-            if let Some(reference) = image.remote_ref() {
-                output[position] = remote_image(reference);
-            } else {
-                prepared.push(PreparedImage::embedded(image)?);
-                positions.push(position);
-            }
-        }
-        for (position, value) in positions.into_iter().zip(self.project_prepared(&prepared)?) {
-            output[position] = value;
-        }
-        Ok(output)
-    }
-    #[cfg(test)]
-    pub(crate) fn project_prepared(
-        &self,
-        images: &[PreparedImage],
-    ) -> Result<Vec<Value>, MediaError> {
-        if images.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut cache = self.cache.lock().map_err(|_| MediaError::Unavailable)?;
-        let mut requested = BTreeMap::new();
-        for image in images {
-            if let Some(prior) = requested.insert(image.token.as_str(), image)
-                && !image.same_source(prior)
-            {
-                return Err(MediaError::Unavailable);
-            }
-        }
-        let mut missing = Vec::new();
-        let mut required = 0usize;
-        for (&token, image) in &requested {
-            let length = image.length()?;
-            if let Some(entry) = cache.entries.get(token) {
-                if !image.matches_entry(entry) {
-                    return Err(MediaError::Unavailable);
-                }
-            } else {
-                required = required.checked_add(length).ok_or(MediaError::Limit)?;
-                missing.push((*image, length));
-            }
-        }
-        let protected: BTreeSet<_> = requested.keys().copied().collect();
-        while cache.entries.len() + missing.len() > self.maximum_items
-            || self
-                .budget
-                .used
-                .load(Ordering::Acquire)
-                .saturating_add(required)
-                > self.budget.maximum
-        {
-            let candidate = cache
-                .entries
-                .iter()
-                .filter(|(token, _)| !protected.contains(token.as_str()))
-                .min_by_key(|(_, entry)| entry.used)
-                .map(|(token, _)| token.clone());
-            let Some(candidate) = candidate else { break };
-            cache.entries.remove(&candidate);
-        }
-        // Only project increments the budget, under this lock. Blob destruction
-        // may decrement it concurrently, including after an entry was evicted.
-        self.budget.used.fetch_add(required, Ordering::AcqRel);
-        let mut reserved = Charge {
-            budget: self.budget.clone(),
-            bytes: required,
-        };
-        let mut staged = Vec::with_capacity(missing.len());
-        let mut failures = BTreeMap::new();
-        for (image, length) in missing {
-            let (bytes, mime, width, height) = match image.read_checked(length) {
-                Ok(value) => value,
-                Err(error) if image.grant.is_some() => {
-                    reserved.bytes -= length;
-                    self.budget.used.fetch_sub(length, Ordering::AcqRel);
-                    failures.insert(
-                        image.token.clone(),
-                        file_media::failure(
-                            error.status(),
-                            "media_file_invalid",
-                            &error.to_string(),
-                        ),
-                    );
-                    continue;
-                }
-                Err(error) => return Err(error),
-            };
-            reserved.bytes -= length;
-            let blob = Arc::new(MediaBlob {
-                bytes,
-                mime,
-                width,
-                height,
-                _charge: Charge {
-                    budget: self.budget.clone(),
-                    bytes: length,
-                },
-            });
-            staged.push((image, blob));
-        }
-        for (image, blob) in staged {
-            cache.entries.insert(
-                image.token.clone(),
-                Entry {
-                    source: image.source_weak(),
-                    grant: image.grant.clone(),
-                    native_scope: image.native_scope.clone(),
-                    blob,
-                    used: 0,
-                },
-            );
-        }
-        let mut projected = Vec::with_capacity(images.len());
-        for image in images {
-            if let Some(error) = failures.get(&image.token) {
-                projected.push(error.clone());
-                continue;
-            }
-            let used = tick(&mut cache);
-            let entry = cache
-                .entries
-                .get_mut(&image.token)
-                .ok_or(MediaError::Unavailable)?;
-            entry.used = used;
-            projected.push(json!({"src":format!("/api/media/{}", image.token),"mime":entry.blob.mime(),"alt":"会话图片","width":entry.blob.width,"height":entry.blob.height}));
-        }
-        Ok(projected)
-    }
-    /// Token lookup is bounded and performs no filesystem access. Call off the
-    /// reactor: projection may currently own the cache lock for decoding.
-    #[cfg(test)]
-    pub fn get(&self, token: &str) -> Option<Arc<MediaBlob>> {
-        if token.len() != 32
-            || !token
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return None;
-        }
-        let mut cache = self.cache.lock().ok()?;
-        let used = tick(&mut cache);
-        let entry = cache.entries.get_mut(token)?;
-        if entry.grant.is_some() || entry.native_scope.is_some() {
-            return None;
-        }
-        entry.used = used;
-        Some(entry.blob.clone())
-    }
-    #[cfg(test)]
-    pub(crate) fn file_ticket(&self, token: &str) -> Option<FileTicket> {
-        if token.len() != 32
-            || !token
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return None;
-        }
-        let mut cache = self.cache.lock().ok()?;
-        let used = tick(&mut cache);
-        let entry = cache.entries.get_mut(token)?;
-        let grant = entry.grant.clone()?;
-        entry.used = used;
-        Some(FileTicket::new(grant, entry.blob.clone()))
     }
 }
 
@@ -797,6 +614,3 @@ fn jpeg(bytes: &[u8]) -> Result<(u32, u32), MediaError> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

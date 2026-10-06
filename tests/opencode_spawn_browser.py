@@ -26,9 +26,9 @@ import tempfile
 import time
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import codex_row, get_json
-import spawned_by_suite as base_suite
-from spawned_by_suite import BINARY, BTIME, HZ, P_SID, build, proc_pid, server_with_env
+from history_fixtures import codex_row, get_json
+import spawned_by_fixtures as base_suite
+from spawned_by_fixtures import BINARY, BTIME, HZ, P_SID, build, proc_pid, server_with_env
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fake_opencode_composer as fake  # noqa: E402

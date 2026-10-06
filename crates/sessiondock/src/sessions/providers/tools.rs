@@ -1051,6 +1051,3 @@ fn edit_change(path: &str, old: &Value, new: &Value) -> Result<Value, String> {
         "before_available": true, "after_available": true, "before_complete": false, "after_complete": false,
     }))
 }
-
-#[cfg(test)]
-mod tests;

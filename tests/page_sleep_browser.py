@@ -8,7 +8,7 @@ import tempfile
 from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright, expect
-from history_parity import REPO, BINARY, Corpus, claude_row, isolated_server
+from history_fixtures import REPO, BINARY, Corpus, claude_row, isolated_server
 from send_browser import SETTINGS, initialize, create_claude
 from draft_sync_browser import wait_server_text
 

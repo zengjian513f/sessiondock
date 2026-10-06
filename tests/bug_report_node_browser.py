@@ -26,7 +26,7 @@ from urllib.parse import urlsplit, parse_qs
 
 from playwright.sync_api import expect, sync_playwright
 
-from hub_http_suite import REPO, FakeNode, Hub
+from hub_fixtures import REPO, FakeNode, Hub
 from hub_fake_node import PNG
 
 CHROMIUM = Path.home() / ".cache/ms-playwright/chromium-1234/chrome-linux64/chrome"

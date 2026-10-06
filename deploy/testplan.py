@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "tests" / "run_validation.py"
 MODES = ("none", "affected", "full")
 FULL = "<full>"                       # target sentinel: run the whole default sweep
-RUST = ["cargo_*"]                    # fmt/clippy/check/build; cargo_test is off the default --list
+RUST = ["cargo_*"]                    # fmt/clippy/check/build
 DOCS = ["tests/check_docs_links.py", "tests/check_agents_md.py"]
 PTYHOST = RUST + ["terminal*", "term_*", "lifecycle*", "cutover*", "host*", "native_*", "managed_*", "send_*",
                   "live_*", "session_stop_*", "session_freeze_*", "pending_*", "restart_state_*", "bug_report_*"]
@@ -63,11 +63,12 @@ def module_rule(path: str, names: list[str]) -> list[str]:
 def tests_rule(path: str, names: list[str]) -> list[str]:
     if path in SELF_SCRIPTS:
         return [path]
-    if path.startswith("tests/fixtures/") or not path.endswith((".py", ".mjs")):
+    if path.startswith("tests/fixtures/") or not path.endswith(".py"):
         return [FULL]
     stem = Path(path).stem
-    for patterns in (["node_contracts"] if path.endswith(".mjs") else [stem, f"{stem}_*"],
-                     [f"{stem.split('_')[0]}_*"]):
+    if stem.endswith("_fixtures"):    # shared helpers imported by many browser suites
+        return [FULL]
+    for patterns in ([stem, f"{stem}_*"], [f"{stem.split('_')[0]}_*"]):
         if matches(patterns, names):
             return patterns
     return [FULL]
@@ -80,11 +81,9 @@ RULES = [
     ("docs/", DOCS), ("*.md", DOCS),
     ("crates/ptyhost/", PTYHOST), ("crates/ptyhost-client/", PTYHOST),
     ("crates/sessiondock/src/", module_rule),
-    ("crates/sessiondock/tests/fixtures/", [FULL]), ("crates/sessiondock/tests/", RUST),
-    # Unit suites run only when the user asks (AGENTS.md), so a frontend edit
-    # selects its browser suites, not node_contracts.
+    ("crates/sessiondock/tests/fixtures/", [FULL]),
     ("legacy-web/", ["*_browser*", "brand_names_check"]),
-    ("deploy/", ["deploy_*"]),
+    ("deploy/", DOCS),
     ("tests/", tests_rule),
     ("Cargo.toml", [FULL]), ("Cargo.lock", [FULL]), (".github/", [FULL]),
 ]

@@ -11,7 +11,7 @@ import time
 from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import REPO, BINARY, Corpus, codex_message, codex_row, isolated_server
+from history_fixtures import REPO, BINARY, Corpus, codex_message, codex_row, isolated_server
 from send_browser import initialize, xterm_includes
 from hub_send_browser import cleanup_hosts
 from popups import on_popup  # noqa: E402

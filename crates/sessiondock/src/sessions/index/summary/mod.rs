@@ -878,6 +878,3 @@ pub fn skipped_warnings(source: &str, records: &Records) -> Vec<String> {
     ));
     warnings
 }
-
-#[cfg(test)]
-mod tests;

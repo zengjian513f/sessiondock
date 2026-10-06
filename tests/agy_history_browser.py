@@ -31,7 +31,7 @@ from playwright.sync_api import expect, sync_playwright
 
 
 from frontend_paths import frontend_dir
-from history_parity import BINARY, Corpus, codex_row, codex_message, encoded, get_json, isolated_server
+from history_fixtures import BINARY, Corpus, codex_row, codex_message, encoded, get_json, isolated_server
 
 
 SEEDED = 'a6000000-0000-4000-8000-000000000001'

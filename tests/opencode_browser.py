@@ -26,7 +26,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
-from history_parity import BINARY, REPO, Corpus, isolated_server
+from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from send_browser import initialize
 
 sys.path.insert(0, str(REPO / 'tests'))

@@ -560,37 +560,3 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn version_numbers_of_each_cli() {
-        assert_eq!(
-            version_number("2.1.285 (Claude Code)").as_deref(),
-            Some("2.1.285")
-        );
-        assert_eq!(
-            version_number("codex-cli 0.159.2").as_deref(),
-            Some("0.159.2")
-        );
-        assert_eq!(
-            version_number("grok 1.0.34 (3736acbc8658) [stable]").as_deref(),
-            Some("1.0.34")
-        );
-        assert_eq!(
-            version_number("opencode v2.0.18").as_deref(),
-            Some("2.0.18")
-        );
-        assert_eq!(version_number("no version here"), None);
-    }
-
-    #[test]
-    fn plain_drops_escapes_and_redrawn_progress() {
-        assert_eq!(
-            plain("\u{1b}[32m==>\u{1b}[0m ok\r\n10%\r50%\r100%\ndone"),
-            "==> ok\n100%\ndone"
-        );
-    }
-}

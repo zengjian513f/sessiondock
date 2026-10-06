@@ -114,14 +114,11 @@ earlier Info response do not replace the receiving process's envelope check.
 
 ## Validation
 
-`cargo test -p ptyhost --test host_launch_guard --locked` runs fixed free `/bin/sh` fixtures in
-private temporary `--dir` directories. It exercises real Info/attach/replay/send,
-rename with unchanged metadata, guarded cancellation, rejected side effects,
-missing metadata, and same-name replacement with stale instance or launch IDs.
-Cleanup addresses only its private socket and held `Child` process handle; it
-does not kill PIDs recovered from records. These tests exercise the current host;
-the old-host unknown-operation behavior is a protocol compatibility property,
-not a claim that historical host binaries were executed by this test.
+Guarded launch, attach and cancellation are exercised end to end by the
+lifecycle and terminal browser suites (`lifecycle_browser.py`,
+`terminal_*_browser.py`) against private ptyhost directories. The old-host
+unknown-operation behavior is a protocol compatibility property, not a claim
+that historical host binaries were executed.
 
-Linux host tests and Windows `x86_64-pc-windows-msvc` compilation are checked
-separately. Cross-compilation is not Windows or macOS runtime validation.
+Windows `x86_64-pc-windows-msvc` compilation is checked separately.
+Cross-compilation is not Windows or macOS runtime validation.

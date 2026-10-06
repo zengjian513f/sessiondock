@@ -14,8 +14,8 @@ from pathlib import Path
 import tempfile
 
 from playwright.sync_api import sync_playwright, expect
-from history_parity import encoded, get_json
-from spawned_by_suite import BINARY, build, server_with_env, G_SID, G2_SID, P_SID, Q_SID
+from history_fixtures import encoded, get_json
+from spawned_by_fixtures import BINARY, build, server_with_env, G_SID, G2_SID, P_SID, Q_SID
 
 OLD = "2026-09-01T10:00:00.000Z"
 END = "2026-09-01T10:05:00.000Z"

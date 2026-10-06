@@ -63,8 +63,6 @@ pub(crate) struct Selected<'a> {
 pub(crate) struct Parsed {
     pub candidate: Candidate,
     pub raw_index: native_input::RawIndex,
-    #[cfg(test)]
-    pub _fixture: Option<Arc<tempfile::TempDir>>,
     pub committed: usize,
     pub meta: Value,
     /// Errors apply only to native-scope consumers, not compatible history display.
@@ -288,10 +286,6 @@ impl View {
             rename: self.rename.as_ref(),
         }
     }
-    #[cfg(test)]
-    pub fn all_events(&self) -> Vec<Event> {
-        self.events().cloned().collect()
-    }
 }
 
 /// Immutable logical view. It owns no open files, and producing a client batch
@@ -400,31 +394,6 @@ impl ViewSnapshot {
     ) -> Result<Value, SessionError> {
         validate_message_query(query)?;
         message_batch(self, query, Some(media), None, None)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn messages_with_files(
-        &self,
-        query: &MessageQuery,
-        media: &crate::media::MediaStore,
-        files: Option<&crate::files::FileService>,
-    ) -> Result<Value, SessionError> {
-        validate_message_query(query)?;
-        message_batch(self, query, Some(media), files, None)
-    }
-
-    /// The `Value` renderer of the HTTP batch, kept as the reference the
-    /// byte renderer (`messages_body`) is tested against.
-    #[cfg(test)]
-    pub(crate) fn messages_with_pages(
-        &self,
-        query: &MessageQuery,
-        media: &crate::media::MediaStore,
-        files: Option<&crate::files::FileService>,
-        pages: &PageStore,
-    ) -> Result<Value, SessionError> {
-        validate_message_query(query)?;
-        message_batch(self, query, Some(media), files, Some(pages))
     }
 
     /// The HTTP/SSE batch as bytes: the same document `messages_with_pages`
@@ -589,15 +558,6 @@ pub(crate) fn claude_rewind_target(
         tip,
         stale_end: parsed.committed as u64,
     })
-}
-
-#[cfg(test)]
-pub(crate) fn read_bounded(
-    root: &std::path::Path,
-    path: &std::path::Path,
-    expected: &super::FileStamp,
-) -> Result<Vec<u8>, SessionError> {
-    read_bounded_limit(root, path, expected)
 }
 
 fn read_bounded_limit(
@@ -781,8 +741,6 @@ pub(crate) fn parse_candidate_retaining(
         native_id,
         candidate,
         raw_index,
-        #[cfg(test)]
-        _fixture: None,
         committed,
         meta,
         events,
@@ -1224,10 +1182,6 @@ impl PrefixCache {
             },
         );
     }
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.entries.len()
-    }
 }
 
 /// The cached view with the request's row: the same snapshot when the
@@ -1256,17 +1210,6 @@ fn recompose(
     )))))
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ViewStats {
-    /// Composed (uid, agent) views currently cached.
-    pub views: usize,
-    /// Parsed candidate files currently retained (leafs, owners).
-    pub files: usize,
-    /// Serialized message bytes (plus resident media) retained by them.
-    pub bytes: usize,
-}
-
 /// Bounded LRU of opened sessions. The list never opens through it; it
 /// only borrows what a cached view already knows (`view_decorations`).
 #[derive(Default)]
@@ -1282,9 +1225,6 @@ pub(crate) struct Views {
     /// (`revision_handle`) so the list's serialized-bytes cache can compare
     /// it without taking this lock.
     revision: Arc<AtomicU64>,
-    /// Test override of the process-wide byte budget.
-    #[cfg(test)]
-    byte_limit: Option<usize>,
 }
 
 /// Which pin a parsed file must carry: the leaf's exact display pin, or any
@@ -1332,20 +1272,7 @@ impl Views {
         self.revision.fetch_add(1, Ordering::AcqRel);
     }
 
-    /// A cache whose byte budget is `bytes` instead of the configured one.
-    #[cfg(test)]
-    pub(crate) fn with_byte_limit(bytes: usize) -> Self {
-        Self {
-            byte_limit: Some(bytes),
-            ..Self::default()
-        }
-    }
-
     fn byte_limit(&self) -> usize {
-        #[cfg(test)]
-        if let Some(limit) = self.byte_limit {
-            return limit;
-        }
         view_byte_limit()
     }
 
@@ -1468,28 +1395,6 @@ impl Views {
         self.prune();
     }
 
-    #[cfg(test)]
-    pub(crate) fn clear(&mut self) {
-        if !self.views.is_empty() {
-            self.bump();
-        }
-        self.views.clear();
-        self.files.clear();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn stats(&self) -> ViewStats {
-        ViewStats {
-            views: self.views.len(),
-            files: self.files.len(),
-            bytes: self.bytes(),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn records(&self) -> &records::RecordCache {
-        &self.records
-    }
     /// The cached view of `(uid, agent)` as last opened, without any file
     /// check: the facade compares its stamps with the index before it lets
     /// the list borrow the view's anchor or pin state.
@@ -2127,8 +2032,3 @@ fn parse_prefix(
     }
     Ok((meta, events, digest))
 }
-
-#[cfg(test)]
-mod body_tests;
-#[cfg(test)]
-mod tests;

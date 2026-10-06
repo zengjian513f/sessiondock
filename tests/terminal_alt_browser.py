@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, codex_message, codex_row, isolated_server
+from history_fixtures import BINARY, Corpus, codex_message, codex_row, isolated_server
 import terminal_input_browser as fixture
 
 CLI = r'''

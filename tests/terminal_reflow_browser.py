@@ -30,7 +30,7 @@ import uuid
 
 from playwright.sync_api import sync_playwright
 
-from history_parity import BINARY, Corpus, codex_message, codex_row, isolated_server
+from history_fixtures import BINARY, Corpus, codex_message, codex_row, isolated_server
 import terminal_input_browser as fixture
 
 ROWS = 9000

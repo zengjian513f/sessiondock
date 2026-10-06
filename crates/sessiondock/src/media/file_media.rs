@@ -11,33 +11,6 @@ pub(super) struct FileGrant {
     version: FileVersion,
 }
 
-#[cfg(test)]
-pub(crate) struct FileTicket {
-    grant: FileGrant,
-    blob: Arc<MediaBlob>,
-}
-#[cfg(test)]
-impl FileTicket {
-    pub(super) fn new(grant: FileGrant, blob: Arc<MediaBlob>) -> Self {
-        Self { grant, blob }
-    }
-    pub(crate) fn authorize(self, scope: &ScopedFiles<'_>) -> Result<Arc<MediaBlob>, FileError> {
-        if scope.identity() != (self.grant.uid.as_str(), self.grant.agent.as_deref()) {
-            return Err(FileError::new(403, "media_scope", "图片不属于当前所选会话"));
-        }
-        let current = scope.image(&self.grant.reference)?;
-        if current.version() != &self.grant.version {
-            return Err(FileError::new(
-                409,
-                "media_changed",
-                "图片文件已变化，请重新加载会话",
-            ));
-        }
-        current.verify()?;
-        Ok(self.blob)
-    }
-}
-
 impl FileGrant {
     pub(super) fn scope(&self) -> (&str, &str) {
         (&self.uid, self.agent.as_deref().unwrap_or(""))
@@ -137,21 +110,6 @@ impl PreparedImage {
             }
         }
     }
-    #[cfg(test)]
-    pub(super) fn matches_entry(&self, entry: &Entry) -> bool {
-        match &self.source {
-            PreparedSource::Embedded(source) => {
-                entry.grant.is_none()
-                    && entry.native_scope == self.native_scope
-                    && entry
-                        .source
-                        .as_ref()
-                        .and_then(Weak::upgrade)
-                        .is_some_and(|prior| Arc::ptr_eq(source, &prior))
-            }
-            PreparedSource::File(_) => self.grant == entry.grant,
-        }
-    }
     pub(super) fn source_weak(&self) -> Option<Weak<ImageSource>> {
         match &self.source {
             PreparedSource::Embedded(source) => Some(Arc::downgrade(source)),
@@ -241,6 +199,3 @@ pub(crate) fn silent_failure(error: &FileError) -> bool {
             | "file_absolute_path_required"
     )
 }
-
-#[cfg(test)]
-mod tests;

@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright, expect
 
-from history_parity import REPO, BINARY, Corpus, isolated_server
+from history_fixtures import REPO, BINARY, Corpus, isolated_server
 from send_browser import SETTINGS, create_claude, initialize, wait_history
 
 FIRST = "Please list the three largest request sources of the last week with their context sizes."

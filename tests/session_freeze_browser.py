@@ -14,10 +14,10 @@ import time
 from urllib.parse import urlsplit
 from types import SimpleNamespace
 from playwright.sync_api import sync_playwright, expect
-from history_parity import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server
+from history_fixtures import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server
 from session_stop_browser import CODEX_SID, session_action, wait_xterm
 from popups import on_popup
-from hub_http_suite import Hub, free_port, scoped
+from hub_fixtures import Hub, free_port, scoped
 
 CLI = '''import os, subprocess, sys, threading, time, tty
 from pathlib import Path

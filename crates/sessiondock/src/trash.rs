@@ -3,8 +3,6 @@
 
 pub mod manifest;
 mod plan;
-#[cfg(test)]
-mod tests;
 pub mod tree;
 
 use std::{
@@ -884,28 +882,8 @@ fn create_private_dir(path: &Path) -> Result<(), TrashError> {
 
 /// Move the named entry, including across filesystems.
 pub(crate) fn move_entry(from: &Path, to: &Path) -> Result<(), TrashError> {
-    #[cfg(test)]
-    if FAIL_AFTER_PUBLISH.with(|fail| fail.replace(false)) {
-        fs::copy(from, to)
-            .map_err(|_| TrashError::new(500, "restore_failed", "无法模拟已发布的恢复目标"))?;
-        return Err(TrashError::new(
-            503,
-            "file_move_source_cleanup",
-            "目标已完整发布，但无法移除源名称",
-        ));
-    }
     crate::files::move_recycle_entry(from, to)
         .map_err(|error| TrashError::new(error.status, error.code, error.message))
-}
-
-#[cfg(test)]
-thread_local! {
-    static FAIL_AFTER_PUBLISH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-#[cfg(test)]
-fn fail_next_move_after_publish() {
-    FAIL_AFTER_PUBLISH.with(|fail| fail.set(true));
 }
 
 fn ensure_parent(path: &Path) -> Result<(), TrashError> {

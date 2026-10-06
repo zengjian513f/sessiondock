@@ -23,8 +23,8 @@ from urllib.parse import urlsplit
 from frontend_paths import frontend_dir
 from playwright.sync_api import sync_playwright, expect
 
-from history_parity import REPO, BINARY, Corpus, isolated_server
-from hub_http_suite import Hub, free_port, scoped
+from history_fixtures import REPO, BINARY, Corpus, isolated_server
+from hub_fixtures import Hub, free_port, scoped
 from send_browser import (FAKE_CLI, SETTINGS, initialize, create_claude, claude_uid,
                           xterm_includes, wait_history)
 from popups import on_popup  # noqa: E402

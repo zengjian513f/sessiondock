@@ -8,7 +8,7 @@ from pathlib import Path
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, batch35_meta, build_corpus, codex_message, isolated_server
+from history_fixtures import BINARY, batch35_meta, build_corpus, codex_message, isolated_server
 
 
 def refresh_catalog(page):

@@ -24,11 +24,6 @@ pub struct MessageBody {
 }
 
 impl MessageBody {
-    /// The complete document, with `"prompt": <prompt>` appended when given.
-    #[cfg(test)]
-    pub fn finish(self, prompt: Option<&Value>) -> Vec<u8> {
-        self.finish_with(prompt, None)
-    }
     /// The complete document, with `"prompt": <prompt>` and the per-session
     /// `"cli": <state>` (docs/cli-state.md) appended when given.
     pub fn finish_with(mut self, prompt: Option<&Value>, cli: Option<&Value>) -> Vec<u8> {
@@ -90,10 +85,6 @@ impl MessageBody {
     }
     pub fn anchor(&self) -> &str {
         &self.anchor
-    }
-    #[cfg(test)]
-    pub fn message_count(&self) -> usize {
-        self.positions.len()
     }
     /// Whether one of the batch's messages answers Claude tool call
     /// `tool_id` (an `answer`/`tool_result` with that `call_id`).

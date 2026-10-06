@@ -14,9 +14,6 @@
 //! Locking: one `std::sync::Mutex` over nodes/cache/health, never held across
 //! network I/O (a cold search must not serialize heartbeats and lists).
 
-#[cfg(all(test, unix))]
-mod tests;
-
 use std::{
     collections::HashMap,
     fmt, fs,

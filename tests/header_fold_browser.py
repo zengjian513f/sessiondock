@@ -29,7 +29,7 @@ import tempfile
 
 from playwright.sync_api import expect, sync_playwright
 
-from history_parity import BINARY, Corpus, claude_row, isolated_server
+from history_fixtures import BINARY, Corpus, claude_row, isolated_server
 
 SID = "fold-sweep"
 OTHER_SID = "fold-switch"

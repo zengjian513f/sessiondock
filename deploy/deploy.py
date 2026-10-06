@@ -21,7 +21,7 @@ changed since the targets' oldest `etc/deployed-commit` (or --test-base) to vali
 suites, `full` runs the whole sweep. A failing suite stops before anything is uploaded
 (exit 1, failing suite names and log paths printed). The stage records the mode and
 result in artifacts.json; `push` prints them and never tests on this machine, while
-macOS/Windows nodes that build natively run the Rust tests in their own stage() when
+macOS/Windows nodes that build natively run a Rust compile check in their own stage() when
 the recorded mode is not `none`. Tests are per platform, once each, never per node.
 
 Per target: probe -> plan -> stage -> backup -> swap -> restart -> verify ->

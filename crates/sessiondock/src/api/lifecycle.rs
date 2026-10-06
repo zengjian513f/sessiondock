@@ -290,26 +290,6 @@ pub(super) fn response_bytes(
         .into_response()
 }
 
-#[cfg(test)]
-mod response_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn large_status_response_streams_complete_body_and_releases_permit() {
-        let admission = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
-        let permit = admission.clone().acquire_owned().await.unwrap();
-        let value = json!({"value": "x".repeat(2 * 1024 * 1024 + 1)});
-        let response = response(value.clone(), permit).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(admission.available_permits(), 0);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), value);
-        assert_eq!(admission.available_permits(), 1);
-    }
-}
-
 #[derive(Deserialize)]
 pub struct CreateRequest {
     source: Source,

@@ -7,7 +7,7 @@ import shutil
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, REPO, isolated_server
+from history_fixtures import BINARY, Corpus, REPO, isolated_server
 
 
 def main():

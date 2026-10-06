@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, claude_row, codex_row, codex_message, encoded, isolated_server
+from history_fixtures import BINARY, Corpus, claude_row, codex_row, codex_message, encoded, isolated_server
 
 CLAUDE_ID = '6cfb25b1-75dc-482f-a03f-94ab752210ca'
 CODEX_ID = '019ad384-b752-7200-861e-f0abea312456'

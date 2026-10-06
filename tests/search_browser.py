@@ -15,7 +15,7 @@ import tempfile
 
 from playwright.sync_api import expect, sync_playwright
 
-from history_parity import BINARY, Corpus, claude_row, codex_message, codex_row, isolated_server
+from history_fixtures import BINARY, Corpus, claude_row, codex_message, codex_row, isolated_server
 
 
 def corpus(root):

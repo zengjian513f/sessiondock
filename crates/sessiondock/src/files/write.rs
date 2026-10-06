@@ -153,10 +153,6 @@ pub struct WriteService {
     trash: Option<Arc<Root>>,
     limits: WriteLimits,
     registry: Registry,
-    /// Test seam invoked between path resolution and the filesystem change,
-    /// so races can be reproduced deterministically.
-    #[cfg(test)]
-    pub(super) before_write: std::sync::Mutex<Option<Box<dyn FnMut() + Send>>>,
 }
 impl WriteService {
     /// Nonempty existing roots enable compatibility with prior configurations.
@@ -192,17 +188,7 @@ impl WriteService {
             trash,
             registry: Registry::new(),
             limits,
-            #[cfg(test)]
-            before_write: std::sync::Mutex::new(None),
         })
-    }
-    fn before_write(&self) {
-        #[cfg(test)]
-        if let Ok(mut hook) = self.before_write.lock()
-            && let Some(hook) = hook.as_mut()
-        {
-            hook()
-        }
     }
 
     pub fn limits(&self) -> &WriteLimits {
@@ -487,7 +473,6 @@ impl WriteService {
         let mut job = Job::new(key, action, name.clone(), &destination.path, conflict, 1)?;
         let path = destination.path.join(&name);
         self.guard(&path)?;
-        self.before_write();
         let result = (|| {
             destination.target.verify_identity()?;
             let dir = destination.target.directory()?;
@@ -528,7 +513,6 @@ impl WriteService {
         let source = self.entry(anchor, &request.paths[0])?;
         self.guard(&source.dir.path.join(&name))?;
         let mut job = Job::new(key, "rename", name.clone(), &source.dir.path, conflict, 1)?;
-        self.before_write();
         let result = (|| {
             if source.name == name && conflict != Conflict::Keep {
                 return Err(FileError::new(400, "file_same_path", "源路径和目标相同"));
@@ -593,7 +577,6 @@ impl WriteService {
                     return Err(FileError::new(400, "file_same_path", "源路径和目标相同"));
                 }
                 self.guard(&destination.path.join(&source.name))?;
-                self.before_write();
                 source.dir.target.verify_identity()?;
                 destination.target.verify_identity()?;
                 let conflict = self.destination_conflict(
@@ -669,7 +652,6 @@ impl WriteService {
                         FileError::new(400, "file_path_encoding", "路径无法表示为 UTF-8")
                     })?,
                 )?;
-                self.before_write();
                 source.dir.target.verify_identity()?;
                 let trash = self.trash(&source, &key)?;
                 source.dir.target.verify_identity()?;
@@ -788,7 +770,6 @@ impl WriteService {
             required(request.destination.as_deref(), "destination")?,
         )?;
         self.guard(&destination.path.join(&name))?;
-        self.before_write();
         destination.target.verify_identity()?;
         let dir = destination.target.directory()?;
         if conflict == Conflict::Error && dir.symlink_metadata(&name).is_ok() {
@@ -882,7 +863,6 @@ impl WriteService {
         };
         // Root replaced, a component swapped for a link, or the destination
         // directory moved: refuse before touching the staging file.
-        self.before_write();
         upload.dest.verify_identity()?;
         let received = job.received;
         if offset == received {
@@ -1567,31 +1547,6 @@ fn copy_entry_publish(
     result
 }
 
-#[cfg(all(test, windows))]
-pub(super) fn copy_then_remove_entry_for_test(
-    source: &Path,
-    destination: &Path,
-) -> Result<(), FileError> {
-    let src = Dir::open_ambient_dir(
-        source.parent().unwrap_or_else(|| Path::new(".")),
-        cap_std::ambient_authority(),
-    )
-    .map_err(FileError::io)?;
-    let dst = Dir::open_ambient_dir(
-        destination.parent().unwrap_or_else(|| Path::new(".")),
-        cap_std::ambient_authority(),
-    )
-    .map_err(FileError::io)?;
-    let source = source
-        .file_name()
-        .ok_or_else(|| FileError::new(400, "file_path_invalid", "源路径缺少名称"))?;
-    let destination = destination
-        .file_name()
-        .ok_or_else(|| FileError::new(400, "file_path_invalid", "目标路径缺少名称"))?;
-    let copied = copy_entry(&src, source, &dst, destination)?;
-    copied.remove(&src, source)
-}
-
 /// Move a recycle-bin entry using the same retained-parent operations as the
 /// file manager. A complete copy is published before a cross-device source
 /// is removed; a failed removal leaves that recoverable copy in place.
@@ -2235,61 +2190,5 @@ impl WriteService {
             "kind": kind, "size": size, "reused": reused, "media": Value::Null,
             "path_style": if cfg!(windows) { "windows" } else { "posix" },
         }))
-    }
-}
-
-#[cfg(all(test, windows))]
-mod windows_rename_tests {
-    use super::*;
-    #[test]
-    fn kernel_no_replace_rejects_existing_files_and_directories() {
-        let temporary = tempfile::tempdir().unwrap();
-        let source = temporary.path().join("source");
-        let destination = temporary.path().join("destination");
-        std::fs::create_dir(&source).unwrap();
-        std::fs::create_dir(&destination).unwrap();
-        std::fs::write(source.join("entry"), b"new bytes").unwrap();
-        std::fs::write(destination.join("entry"), b"existing bytes").unwrap();
-        let src = Dir::open_ambient_dir(&source, cap_std::ambient_authority()).unwrap();
-        let dst = Dir::open_ambient_dir(&destination, cap_std::ambient_authority()).unwrap();
-        // Call the primitive directly: no preliminary existence check can hide
-        // accidental REPLACE_EXISTING behavior in the platform implementation.
-        assert_eq!(
-            rename_noreplace(&src, "entry", &dst, "entry")
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::AlreadyExists,
-        );
-        assert_eq!(std::fs::read(source.join("entry")).unwrap(), b"new bytes");
-        assert_eq!(
-            std::fs::read(destination.join("entry")).unwrap(),
-            b"existing bytes"
-        );
-        rename_noreplace(&src, "entry", &dst, "moved").unwrap();
-        assert!(!source.join("entry").exists());
-        assert_eq!(
-            std::fs::read(destination.join("moved")).unwrap(),
-            b"new bytes"
-        );
-        std::fs::create_dir(source.join("folder")).unwrap();
-        std::fs::create_dir(destination.join("folder")).unwrap();
-        assert_eq!(
-            rename_noreplace(&src, "folder", &dst, "folder")
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::AlreadyExists,
-        );
-        assert!(source.join("folder").is_dir() && destination.join("folder").is_dir());
-        rename_noreplace(&src, "folder", &dst, "moved-folder").unwrap();
-        assert!(destination.join("moved-folder").is_dir() && !source.join("folder").exists());
-        // Exercise the shortest tail as well as multi-byte / surrogate UTF-16 names.
-        for leaf in ["x", "中", "🦀"] {
-            std::fs::write(source.join("short-source"), b"short-name bytes").unwrap();
-            rename_noreplace(&src, "short-source", &dst, leaf).unwrap();
-            assert_eq!(
-                std::fs::read(destination.join(leaf)).unwrap(),
-                b"short-name bytes"
-            );
-        }
     }
 }

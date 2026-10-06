@@ -14,9 +14,9 @@ from types import SimpleNamespace
 from urllib.parse import urlencode
 
 from playwright.sync_api import sync_playwright
-from history_parity import BINARY, Corpus, codex_row, isolated_server
-from hub_http_suite import Hub, scoped
-from node_auth_suite import TOKEN, free_port
+from history_fixtures import BINARY, Corpus, codex_row, isolated_server
+from hub_fixtures import Hub, scoped
+from node_auth_fixtures import TOKEN, free_port
 from process_links_browser import wait_for
 
 

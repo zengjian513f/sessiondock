@@ -145,14 +145,9 @@ native-file mutation capability.
 
 ## Validation
 
-`cargo test -p ptyhost --test host_native_binding --locked` uses only built development ptyhost processes,
-fixed free POSIX shells, explicit private `--dir`/cwd, and a cleared environment.
-It checks simultaneous socket binds, complete Info snapshots, lost ACK recovery
-on a new connection, preservation of an already attached pending stream,
-native-guarded input, root-only projection, rename/record invariance, conflicts,
-wrong identity and old-entry-point rejection. Cleanup addresses only the private
-socket and the held test Child, not a PID loaded from a record. No native CLI,
-paid model, production session or real native history is used.
-
-Windows compilation is checked separately; Linux shell tests do not establish
-Windows or macOS runtime behavior.
+The host binding path is exercised end to end by
+`python3 tests/lifecycle_browser.py` (also run as
+`lifecycle_browser_native_binding` with `--native-binding`) with fake CLIs and
+private ptyhost directories; no native CLI, paid model, production session or
+real native history is used. Windows compilation is checked separately; Linux
+runs do not establish Windows or macOS runtime behavior.

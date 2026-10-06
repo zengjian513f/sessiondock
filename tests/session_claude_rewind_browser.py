@@ -15,11 +15,11 @@ import tempfile
 from types import SimpleNamespace
 import uuid
 from playwright.sync_api import sync_playwright, expect
-from history_parity import BINARY, Corpus, isolated_server
+from history_fixtures import BINARY, Corpus, isolated_server
 from session_files_browser import uid
-from session_files_claude_real import MODEL
-from hub_http_suite import Hub, free_port, scoped
-from node_auth_suite import node_env, TOKEN
+from claude_files_real_fixtures import MODEL
+from hub_fixtures import Hub, free_port, scoped
+from node_auth_fixtures import node_env, TOKEN
 
 
 def digest(path):

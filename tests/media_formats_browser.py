@@ -15,7 +15,7 @@ from pathlib import Path
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, claude_row, codex_row, encoded, get_json, isolated_server
+from history_fixtures import BINARY, Corpus, claude_row, codex_row, encoded, get_json, isolated_server
 from media_browser import TOKEN, image, native_bytes, route, uid
 from popups import on_popup  # noqa: E402
 

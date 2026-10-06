@@ -8,7 +8,7 @@ import tempfile
 from urllib.parse import quote
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, get_json, isolated_server
+from history_fixtures import BINARY, get_json, isolated_server
 from nest_tree_browser import corpus
 
 

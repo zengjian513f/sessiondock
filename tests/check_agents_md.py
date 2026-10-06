@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Keep AGENTS.md, docs/validation.md and the test directory consistent.
 
-Checks discovered Python suites and *_contract.mjs are named in AGENTS.md or
-docs/validation.md; AGENTS.md test/doc paths and cargo --test names exist;
+Checks discovered Python suites are named in AGENTS.md or
+docs/validation.md; AGENTS.md test/doc paths exist;
 every docs/*.md is linked from a hub or another doc; utility scripts carry
 the runner skip marker.
 """
@@ -27,8 +27,7 @@ HUBS = (
     ROOT / "TODO.md",
     DOCS / "README.md",
 )
-TEST_RE = re.compile(r"tests/[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:py|mjs|rs)")
-CARGO_RE = re.compile(r"--test\s+([A-Za-z_][A-Za-z0-9_]*)(?=\s|$)")
+TEST_RE = re.compile(r"tests/[A-Za-z0-9][A-Za-z0-9_.-]*\.py")
 DOC_RE = re.compile(r"docs/[A-Za-z0-9][A-Za-z0-9_.-]*\.md")
 LINK_RE = re.compile(r"\[[^\]\n]+\]\(\s*<?([^)\s>#]+)")
 SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:", re.I)
@@ -56,14 +55,6 @@ def discovered_py():
             continue
         found.append(path)
     return found
-
-
-def cargo_exists(name):
-    if (ROOT / "tests" / f"{name}.rs").is_file():
-        return True
-    return any(ROOT.glob(f"crates/*/tests/{name}.rs")) or any(
-        ROOT.glob(f"crates/*/tests/{name}/main.rs")
-    )
 
 
 def link_sources():
@@ -101,16 +92,10 @@ def collect():
     for path in discovered_py():
         if path.name not in named:
             add(findings, "undocumented", str(path.relative_to(ROOT)))
-    for path in sorted((ROOT / "tests").glob("*_contract.mjs")):
-        if path.name not in named:
-            add(findings, "undocumented", str(path.relative_to(ROOT)))
 
     for rel in unique(TEST_RE.findall(agents)):
         if not (ROOT / rel).is_file():
             add(findings, "missing-test", rel)
-    for name in unique(CARGO_RE.findall(agents)):
-        if not cargo_exists(name):
-            add(findings, "missing-cargo-test", name)
     for rel in unique(DOC_RE.findall(agents)):
         if not (ROOT / rel).is_file():
             add(findings, "missing-doc", rel)

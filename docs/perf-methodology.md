@@ -1,5 +1,12 @@
 # Performance measurement methodology
 
+> Historical method. The benchmark and probe scripts named below
+> (`append_benchmark.py`, `native_*_benchmark.py`, `read_benchmark.py`,
+> `perf_compare.py`, `bench_summary.py`, `rss_watch.py`) were removed on
+> 2026-10-06 together with every non-browser test script. This page records how
+> the measurements in [performance.md](performance.md) were taken; it is not a
+> runnable procedure.
+
 How this repository times native-history and native-media HTTP work, and how
 results must be reported. These scripts emit **observations**, not pass/fail
 thresholds; cursor/rewrite/image assertions are the only gates. Historical

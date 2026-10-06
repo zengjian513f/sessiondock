@@ -10,9 +10,9 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 from playwright.sync_api import sync_playwright, expect
-from history_parity import Corpus, BINARY, isolated_server, get_json
-from hub_http_suite import Hub, free_port, scoped
-from node_auth_suite import node_env, TOKEN
+from history_fixtures import Corpus, BINARY, isolated_server, get_json
+from hub_fixtures import Hub, free_port, scoped
+from node_auth_fixtures import node_env, TOKEN
 from session_files_browser import fixture, uid, claude_row, encoded
 from session_transfer_browser import ident
 from session_transfer_byte_fixtures import varied_layout, assert_identity_only

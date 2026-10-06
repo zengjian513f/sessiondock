@@ -274,10 +274,6 @@ impl MediaStore {
         let blob = Arc::new(MediaBlob {
             bytes,
             mime,
-            #[cfg(test)]
-            width: _width,
-            #[cfg(test)]
-            height: _height,
             _charge: charge,
         });
         let mut cache = self
@@ -301,5 +297,3 @@ impl MediaStore {
         Ok(blob)
     }
 }
-#[cfg(test)]
-mod tests;

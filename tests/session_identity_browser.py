@@ -7,8 +7,8 @@ from pathlib import Path
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, build_corpus, isolated_server
-from hub_http_suite import FakeNode, Hub, scoped
+from history_fixtures import BINARY, build_corpus, isolated_server
+from hub_fixtures import FakeNode, Hub, scoped
 
 
 def menu(page, uid, touch=False):

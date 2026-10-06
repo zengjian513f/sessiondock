@@ -1,8 +1,8 @@
 # Module map
 
 This file is produced by `tests/module_map.py`. It maps every `.rs` file under
-the crate `src` trees below with the first module doc line, line count, `#[test]`
-/ `#[tokio::test]` counts, and `mod` declarations. Regenerate:
+the crate `src` trees below with the first module doc line, line count and
+`mod` declarations. Regenerate:
 
 ```sh
 python3 tests/module_map.py --write
@@ -10,429 +10,333 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 238 files, 126979 lines, 915 tests, 40 undocumented.
+`crates/sessiondock/src`: 194 files, 86231 lines, 5 undocumented.
 
 - `api/`
-  - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines, 0 tests)
-  - `bug_report.rs` — `POST /api/bug-report`, `POST /api/bug-report/capture` and the (798 lines, 2 tests)
-  - `conversation.rs` — Thin HTTP transport for server-owned conversation drafts, staging and one-shot SEND. (652 lines, 0 tests)
-  - `events.rs` — Node UI invalidations share one cached observer. (37 lines, 0 tests)
-  - `files.rs` — File transport. Every request resolves the selected session; opening a (965 lines, 1 tests)
-  - `health.rs` — Local liveness JSON: version, `api_version` 1, and `stage: "read_only"`. (49 lines, 0 tests)
-  - `hub.rs` — The hub's HTTP surface (`hub.py` `HubHandler.dispatch`, 518–584), served (929 lines, 0 tests)
-  - `lifecycle.rs` — Explicit creation receipts; native identities and reliable send stay separate. (1368 lines, 1 tests)
-  - `media.rs` — Opaque media transport. File tokens require current native-scope authorization. (242 lines, 1 tests)
-  - `metadata.rs` — SessionDock-owned preferences only. No native session writes or CLI actions. (614 lines, 0 tests)
-  - `mod.rs` — Axum transport router nested at `/api`. Handlers stay in sibling modules; (416 lines, 0 tests)
-    - mods: `audit`, `bug_report`, `conversation`, `events`, `files`, `health`, `hub`, `lifecycle`, `media`, `metadata`, `node_auth`, `process_links`, `read`, `records`, `runtime`, `search`, `shell_env`, `terminal`, `transfer`, `trash`
-  - `node_auth.rs` — Node listener gate (`server.py` `_allowed` / `_hub_protocol` for hub (215 lines, 2 tests)
-  - `process_links.rs` — (no module doc) (130 lines, 0 tests)
-  - `read.rs` — Read-only session list, messages, grant pages, input history, and SSE watch. (717 lines, 0 tests)
-  - `records.rs` — `/api/term/records`: list session recordings; `/api/term/records/attach`: (110 lines, 0 tests)
-  - `runtime.rs` — Read-only live status; never upgrades observations into CLI authority. (732 lines, 4 tests)
-  - `search.rs` — JSON/NDJSON search transport queues work and applies stream backpressure. Search (219 lines, 1 tests)
-  - `shell_env.rs` — `GET /api/shell-env` and `POST /api/shell-env/restart` (`crate::shell_env`). (36 lines, 0 tests)
-  - `terminal.rs` — Explicit-directory development transport only; legacy CLI actions stay gated. (1190 lines, 0 tests)
-  - `transfer.rs` — Browser-facing clone orchestration. Paths and identity maps never come from (764 lines, 0 tests)
-  - `trash.rs` — Session recycle-bin HTTP routes, using delete protection. (628 lines, 0 tests)
-- `assets.rs` — Startup snapshot of regular frontend files. Requests never walk the disk. (384 lines, 3 tests)
-- `audit.rs` — Best-effort browser diagnostics intake. (413 lines, 0 tests)
-  - mods: `intake`, `query`, `writer`, `tests`
+  - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines)
+  - `bug_report.rs` — `POST /api/bug-report`, `POST /api/bug-report/capture` and the (774 lines)
+  - `conversation.rs` — Thin HTTP transport for server-owned conversation drafts, staging and one-shot SEND. (652 lines)
+  - `events.rs` — Node UI invalidations share one cached observer. (37 lines)
+  - `files.rs` — File transport. Every request resolves the selected session; opening a (900 lines)
+  - `health.rs` — Local liveness JSON: version, `api_version` 1, and `stage: "read_only"`. (49 lines)
+  - `hub.rs` — The hub's HTTP surface (`hub.py` `HubHandler.dispatch`, 518–584), served (939 lines)
+  - `lifecycle.rs` — Explicit creation receipts; native identities and reliable send stay separate. (1348 lines)
+  - `media.rs` — Opaque media transport. File tokens require current native-scope authorization. (150 lines)
+  - `metadata.rs` — SessionDock-owned preferences only. No native session writes or CLI actions. (644 lines)
+  - `mod.rs` — Axum transport router nested at `/api`. Handlers stay in sibling modules; (422 lines)
+    - mods: `audit`, `bug_report`, `conversation`, `events`, `files`, `health`, `hub`, `lifecycle`, `media`, `metadata`, `node_auth`, `process_links`, `read`, `records`, `runtime`, `search`, `shell_env`, `terminal`, `transfer`, `trash`, `trash_tree`
+  - `node_auth.rs` — Node listener gate (`server.py` `_allowed` / `_hub_protocol` for hub (103 lines)
+  - `process_links.rs` — (no module doc) (130 lines)
+  - `read.rs` — Read-only session list, messages, grant pages, input history, and SSE watch. (768 lines)
+  - `records.rs` — `/api/term/records`: list session recordings; `/api/term/records/attach`: (110 lines)
+  - `runtime.rs` — Read-only live status; never upgrades observations into CLI authority. (526 lines)
+  - `search.rs` — JSON/NDJSON search transport queues work and applies stream backpressure. Search (183 lines)
+  - `shell_env.rs` — `GET /api/shell-env` and `POST /api/shell-env/restart` (`crate::shell_env`). (36 lines)
+  - `terminal.rs` — Explicit-directory development transport only; legacy CLI actions stay gated. (1190 lines)
+  - `transfer.rs` — Browser-facing clone orchestration. Paths and identity maps never come from (937 lines)
+  - `trash.rs` — Session recycle-bin HTTP routes, using delete protection. (643 lines)
+  - `trash_tree.rs` — Preview and confirm the same connected component used by whole-group copy. (160 lines)
+- `assets.rs` — Startup snapshot of regular frontend files. Requests never walk the disk. (282 lines)
+- `audit.rs` — Best-effort browser diagnostics intake. (358 lines)
+  - mods: `intake`, `query`, `writer`
 - `audit/`
-  - `intake.rs` — Request-shape validation and structured-metadata sanitization. (265 lines, 0 tests)
-  - `query.rs` — Bug-report audit: server-side structured events into the same JSONL (319 lines, 2 tests)
-  - `tests.rs` — (no module doc) (65 lines, 3 tests)
-  - `writer.rs` — Dedicated writer thread: daily JSONL files with fourteen-day retention. (328 lines, 0 tests)
+  - `intake.rs` — Request-shape validation and structured-metadata sanitization. (265 lines)
+  - `query.rs` — Bug-report audit: server-side structured events into the same JSONL (204 lines)
+  - `writer.rs` — Dedicated writer thread: daily JSONL files with fourteen-day retention. (307 lines)
 - `bin/`
-  - `sessiondock-hub.rs` — The multi-machine hub. (201 lines, 0 tests)
-  - `sessiondock-transfer.rs` — Offline transfer inspection/staging tool. No native publish or source cleanup. (146 lines, 0 tests)
+  - `sessiondock-hub.rs` — The multi-machine hub. (201 lines)
+  - `sessiondock-transfer.rs` — Offline transfer inspection/staging tool. No native publish or source cleanup. (146 lines)
 - `bridge/`
-  - `claude.rs` — Claude question cards. (703 lines, 6 tests)
-  - `codex.rs` — Codex command approvals. (317 lines, 4 tests)
-  - `live.rs` — The live `prompt` of a session view. (299 lines, 2 tests)
+  - `claude.rs` — Claude question cards. (440 lines)
+  - `codex.rs` — Codex command approvals. (217 lines)
+  - `live.rs` — The live `prompt` of a session view. (239 lines)
   - `menus/`
-    - `agy.rs` — Agy 1.2.16 menus verified in an isolated real PTY. Unverified forms stay (125 lines, 0 tests)
-    - `claude.rs` — Claude Code 2.1.285's live selection surfaces. (653 lines, 0 tests)
-    - `codex.rs` — Screen-only Codex menus, audited against the installed rust-v0.159.2 release. (637 lines, 0 tests)
-    - `grok.rs` — Native Grok Build screen menus. Provenance and exceptions are in the menu inventory. (566 lines, 0 tests)
-    - `mod.rs` — Current-screen projection of native CLI menus. Parsing describes actions; (18 lines, 0 tests)
+    - `agy.rs` — Agy 1.2.16/1.2.17 menus verified in an isolated real PTY. Unverified forms stay (314 lines)
+    - `claude.rs` — Claude Code 2.1.285's live selection surfaces. (698 lines)
+    - `codex.rs` — Screen-only Codex menus, audited against the installed rust-v0.159.2 release. (637 lines)
+    - `grok.rs` — Native Grok Build screen menus. Provenance and exceptions are in the menu inventory. (566 lines)
+    - `mod.rs` — Current-screen projection of native CLI menus. Parsing describes actions; (18 lines)
       - mods: `agy`, `claude`, `codex`, `grok`, `opencode`
-    - `opencode.rs` — OpenCode v2.0.18 screen menus (official tag cd9a14a6b688d4021bee381dfd39d2cef9c0f862). (663 lines, 0 tests)
-  - `mod.rs` — CLI question cards and approvals shown live on the conversation page: (14 lines, 0 tests)
+    - `opencode.rs` — OpenCode v2.0.18 screen menus (official tag cd9a14a6b688d4021bee381dfd39d2cef9c0f862). (663 lines)
+  - `mod.rs` — CLI question cards and approvals shown live on the conversation page: (14 lines)
     - mods: `claude`, `codex`, `live`, `menus`
 - `bug_report/`
-  - `mod.rs` — Bug-report bundles and their CLI workers. (1039 lines, 0 tests)
-    - mods: `worker`, `tests`
-  - `tests.rs` — Semantics for the bundle, the (641 lines, 10 tests)
-  - `worker.rs` — The bug-report worker. (472 lines, 0 tests)
-- `config.rs` — SessionDock configuration. Paths come from explicit environment variables; (1085 lines, 11 tests)
+  - `mod.rs` — Bug-report bundles and their CLI workers. (1037 lines)
+    - mods: `worker`
+  - `worker.rs` — The bug-report worker. (472 lines)
+- `config.rs` — SessionDock configuration. Paths come from explicit environment variables; (660 lines)
 - `conversation/`
-  - `cli_state.rs` — Per-session CLI state that native history cannot tell (docs/cli-state.md): (655 lines, 4 tests)
-  - `input.rs` — Positive recognition of the CLI input surface, shared by CHECK and every (656 lines, 10 tests)
-  - `mod.rs` — One conversation send path: drafts are server-owned, successful SEND belongs to the CLI. (1207 lines, 4 tests)
+  - `cli_state.rs` — Per-session CLI state that native history cannot tell (docs/cli-state.md): (623 lines)
+  - `input.rs` — Positive recognition of the CLI input surface, shared by CHECK and every (476 lines)
+  - `mod.rs` — One conversation send path: drafts are server-owned, successful SEND belongs to the CLI. (1098 lines)
     - mods: `cli_state`, `input`, `report_name`, `rewind`, `store`
-  - `report_name.rs` — Name a report through the Codex TUI before sending its first model task. (149 lines, 0 tests)
-  - `rewind.rs` — A rewind made in Claude's own TUI (double Esc, restore the conversation) (210 lines, 3 tests)
-  - `store.rs` — Session-owned drafts and one-shot submission identities. No CLI acknowledgment queue. (1312 lines, 12 tests)
+  - `report_name.rs` — Name a report through the Codex TUI before sending its first model task. (149 lines)
+  - `rewind.rs` — A rewind made in Claude's own TUI (double Esc, restore the conversation) (134 lines)
+  - `store.rs` — Session-owned drafts and one-shot submission identities. No CLI acknowledgment queue. (899 lines)
 - `delivery/`
-  - `driver.rs` — Terminal driver for conversation SEND and the bug-report worker. (1211 lines, 0 tests)
-    - mods: `tests`
-  - `driver/`
-    - `tests.rs` — (no module doc) (462 lines, 20 tests)
-  - `mod.rs` — Server-side terminal writes for conversation SEND and the bug-report (6 lines, 0 tests)
+  - `driver.rs` — Terminal driver for conversation SEND and the bug-report worker. (1208 lines)
+  - `mod.rs` — Server-side terminal writes for conversation SEND and the bug-report (6 lines)
     - mods: `driver`, `target`
-  - `target.rs` — Managed-instance target resolution and the failure type shared by (163 lines, 0 tests)
-- `error.rs` — HTTP JSON error envelope `{error, code}` shared by Axum handlers. (63 lines, 0 tests)
+  - `target.rs` — Managed-instance target resolution and the failure type shared by (163 lines)
+- `error.rs` — HTTP JSON error envelope `{error, code}` shared by Axum handlers. (63 lines)
 - `files/`
-  - `boundary.rs` — (no module doc) (627 lines, 0 tests)
-  - `grants.rs` — An authenticated file browser keeps its directory grant after the original (355 lines, 2 tests)
-  - `info.rs` — Browser information describes the named leaf. (56 lines, 0 tests)
-  - `jobs.rs` — In-memory file-operation jobs, bound to the session scope that created them. (224 lines, 0 tests)
-  - `media.rs` — One trusted selected-view reference index shared by an entire media window. (132 lines, 0 tests)
-    - mods: `tests`
-  - `media/`
-    - `tests.rs` — Synthetic explicit-root image handles. These bytes need not be images: format (431 lines, 12 tests)
-  - `mod.rs` — Session-reference-scoped file reads and authenticated directory browsing. (350 lines, 0 tests)
-    - mods: `boundary`, `grants`, `info`, `jobs`, `media`, `references`, `response`, `write`, `tests`, `write_tests`
-  - `references.rs` — (no module doc) (281 lines, 0 tests)
-  - `response.rs` — (no module doc) (519 lines, 0 tests)
-  - `tests.rs` — (no module doc) (894 lines, 17 tests)
-  - `write.rs` — Authenticated operator file mutations through checked parent handles. (2292 lines, 1 tests)
-  - `write_tests.rs` — Synthetic-only write-side tests: authorization boundaries, TOCTOU, atomic (956 lines, 14 tests)
-- `fingerprint.rs` — 128-bit streaming content fingerprint of native bytes. (191 lines, 4 tests)
+  - `boundary.rs` — (no module doc) (627 lines)
+  - `grants.rs` — An authenticated file browser keeps its directory grant after the original (183 lines)
+  - `info.rs` — Browser information describes the named leaf. (56 lines)
+  - `jobs.rs` — In-memory file-operation jobs, bound to the session scope that created them. (224 lines)
+  - `media.rs` — One trusted selected-view reference index shared by an entire media window. (113 lines)
+  - `mod.rs` — Session-reference-scoped file reads and authenticated directory browsing. (345 lines)
+    - mods: `boundary`, `grants`, `info`, `jobs`, `media`, `references`, `response`, `write`
+  - `references.rs` — (no module doc) (281 lines)
+  - `response.rs` — (no module doc) (519 lines)
+  - `write.rs` — Authenticated operator file mutations through checked parent handles. (2194 lines)
+- `fingerprint.rs` — 128-bit streaming content fingerprint of native bytes. (126 lines)
 - `hub/`
-  - `aggregate.rs` — Hub aggregation (`hub.py` `HubHandler.selected/aggregate/search_aggregate/ (862 lines, 0 tests)
-    - mods: `tests`
-  - `aggregate/`
-    - `tests.rs` — (no module doc) (469 lines, 11 tests)
-  - `client.rs` — Hub → node HTTP/1.1 client: one connection per request over a plain or (845 lines, 0 tests)
-    - mods: `tests`
-  - `client/`
-    - `tests.rs` — Wire-level cases against in-process tokio listeners: framing, limits, (574 lines, 11 tests)
-  - `groups.rs` — Nodes own group catalogs. The Hub caches their union and sends it back; (143 lines, 0 tests)
-  - `identity.rs` — Node identity and credential files (`federation.identity`, `server.py` (115 lines, 0 tests)
-    - mods: `tests`
-  - `identity/`
-    - `tests.rs` — (no module doc) (72 lines, 4 tests)
-  - `mod.rs` — Hub federation (batches 38–40): node identity, the hub's node registry (31 lines, 0 tests)
-    - mods: `aggregate`, `client`, `groups`, `identity`, `namespace`, `nest`, `process_links`, `proxy`, `registry`, `resources`, `transfer`
-  - `namespace.rs` — The hub's wire namespace (`federation.py` 31–113): every reference a node (321 lines, 0 tests)
-    - mods: `tests`
-  - `namespace/`
-    - `tests.rs` — (no module doc) (238 lines, 10 tests)
-  - `nest.rs` — Validate a display edge against the fleet before routing the write to its child. (60 lines, 0 tests)
-  - `process_links.rs` — One fleet coordinator shared by session nesting and external CPU consumers. (121 lines, 0 tests)
-  - `proxy.rs` — The hub's pass-through to one node (`hub.py` `HubHandler.resolve` (896 lines, 0 tests)
-    - mods: `tests`
-  - `proxy/`
-    - `tests.rs` — `resolve`, `file_navigation`, the audit grouping and the SSE rewrite (513 lines, 10 tests)
-  - `registry.rs` — The hub's node registry (`hub.py` `Registry`): `hub-nodes.json`, node (1424 lines, 0 tests)
-    - mods: `tests`
-  - `registry/`
-    - `tests.rs` — Registry rules against an in-process fake node (tokio listener) so faults (1360 lines, 13 tests)
-  - `resources.rs` — Session resource views preserve execution nodes and incomplete observations. (389 lines, 3 tests)
-  - `transfer.rs` — Durable cross-node clone orchestration over the authenticated node channel. (972 lines, 0 tests)
-- `hub_config.rs` — Configuration of the `sessiondock-hub` binary. Separate from (180 lines, 2 tests)
-- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (584 lines, 0 tests)
-  - mods: `api`, `assets`, `audit`, `bridge`, `bug_report`, `config`, `conversation`, `delivery`, `error`, `files`, `fingerprint`, `hub`, `hub_config`, `lifecycle`, `list_sync`, `media`, `metadata`, `native_replay`, `observe`, `polls`, `runtime`, `search`, `security`, `sessions`, `shell_env`, `state`, `terminal`, `transfer`, `trash`, `ui_events`
+  - `aggregate.rs` — Hub aggregation (`hub.py` `HubHandler.selected/aggregate/search_aggregate/ (880 lines)
+  - `client.rs` — Hub → node HTTP/1.1 client: one connection per request over a plain or (835 lines)
+  - `groups.rs` — Nodes own group catalogs. The Hub caches their union and sends it back; (143 lines)
+  - `identity.rs` — Node identity and credential files (`federation.identity`, `server.py` (112 lines)
+  - `mod.rs` — Hub federation (batches 38–40): node identity, the hub's node registry (32 lines)
+    - mods: `aggregate`, `client`, `groups`, `identity`, `namespace`, `nest`, `process_links`, `proxy`, `registry`, `resources`, `session_links`, `transfer`
+  - `namespace.rs` — The hub's wire namespace (`federation.py` 31–113): every reference a node (318 lines)
+  - `nest.rs` — Validate a display edge against the fleet before routing the write to its child. (60 lines)
+  - `process_links.rs` — One fleet coordinator shared by session nesting and external CPU consumers. (121 lines)
+  - `proxy.rs` — The hub's pass-through to one node (`hub.py` `HubHandler.resolve` (916 lines)
+  - `registry.rs` — The hub's node registry (`hub.py` `Registry`): `hub-nodes.json`, node (1421 lines)
+  - `resources.rs` — Session resource views preserve execution nodes and incomplete observations. (324 lines)
+  - `session_links.rs` — Resolve saved links through completed transfer records, never by guessing IDs. (252 lines)
+  - `transfer.rs` — Durable cross-node clone orchestration over the authenticated node channel. (1296 lines)
+- `hub_config.rs` — Configuration of the `sessiondock-hub` binary. Separate from (119 lines)
+- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (595 lines)
+  - mods: `api`, `assets`, `audit`, `bridge`, `bug_report`, `config`, `conversation`, `delivery`, `error`, `files`, `fingerprint`, `hub`, `hub_config`, `lifecycle`, `list_sync`, `media`, `metadata`, `native_replay`, `observe`, `polls`, `runtime`, `search`, `security`, `sessions`, `shell_env`, `state`, `terminal`, `transfer`, `trash`, `ui_events`, `session_links`
 - `lifecycle/`
-  - `autobind.rs` — Process-evidence binding of pending Codex/Grok launches. (326 lines, 0 tests)
-  - `clients.rs` — Installed agent CLI versions and manual updates for the machine settings. (596 lines, 2 tests)
-  - `launcher.rs` — Configured adapters and one-authority process spawn. No discovery, (1168 lines, 1 tests)
-    - mods: `tests`
-  - `launcher_tests.rs` — (no module doc) (1193 lines, 20 tests)
-  - `mod.rs` — Isolated durable process-creation intent. No launcher or native-session binding. (8 lines, 0 tests)
+  - `autobind.rs` — Process-evidence binding of pending Codex/Grok launches. (326 lines)
+  - `clients.rs` — Installed agent CLI versions and manual updates for the machine settings. (562 lines)
+  - `launcher.rs` — Configured adapters and one-authority process spawn. No discovery, (1145 lines)
+  - `mod.rs` — Isolated durable process-creation intent. No launcher or native-session binding. (8 lines)
     - mods: `autobind`, `clients`, `launcher`, `model`, `models`, `service`, `store`
-  - `model.rs` — Private creation-intent types: `LaunchSpec`, `Record`, and `BindingSpec`. (620 lines, 0 tests)
-  - `models.rs` — Read-only model catalogs for the new-session picker. Each CLI's own list: (478 lines, 0 tests)
-  - `service.rs` — Isolated lifecycle coordinator. HTTP cancellation never owns a spawn. (1749 lines, 0 tests)
-    - mods: `tests`
-  - `service_tests.rs` — (no module doc) (1267 lines, 23 tests)
+  - `model.rs` — Private creation-intent types: `LaunchSpec`, `Record`, and `BindingSpec`. (620 lines)
+  - `models.rs` — Read-only model catalogs for the new-session picker. Each CLI's own list: (611 lines)
+  - `service.rs` — Isolated lifecycle coordinator. HTTP cancellation never owns a spawn. (1743 lines)
   - `store/`
-    - `disk.rs` — Adapted locally from delivery/store/disk.rs; keep its reviewed durability (247 lines, 0 tests)
-    - `json.rs` — Strict JSON grammar without duplicating the lifecycle receipt schema. (99 lines, 0 tests)
-    - `mod.rs` — Single-writer durable creation receipts. No process, native history or HTTP I/O. (801 lines, 0 tests)
-      - mods: `disk`, `json`, `tests`
-    - `tests.rs` — (no module doc) (1085 lines, 21 tests)
-- `list_sync.rs` — Opt-in list transport. Cached revisions only save bytes: eviction, restart, (353 lines, 0 tests)
-- `main.rs` — Loopback development binary. No option starts the Web service. (329 lines, 0 tests)
-- `media.rs` — Private image projection. File capabilities require an explicit selected scope; (802 lines, 0 tests)
-  - mods: `descriptors`, `discovery`, `file_media`, `formats`, `native_media`, `tests`
+    - `disk.rs` — Adapted locally from delivery/store/disk.rs; keep its reviewed durability (211 lines)
+    - `json.rs` — Strict JSON grammar without duplicating the lifecycle receipt schema. (99 lines)
+    - `mod.rs` — Single-writer durable creation receipts. No process, native history or HTTP I/O. (794 lines)
+      - mods: `disk`, `json`
+- `list_sync.rs` — Opt-in list transport. Cached revisions only save bytes: eviction, restart, (353 lines)
+- `main.rs` — Loopback development binary. No option starts the Web service. (329 lines)
+- `media.rs` — Private image projection. File capabilities require an explicit selected scope; (616 lines)
+  - mods: `descriptors`, `discovery`, `file_media`, `formats`, `native_media`
 - `media/`
-  - `descriptors.rs` — Bounded source capabilities, separate from decoded bytes. No snapshot or (303 lines, 0 tests)
-    - mods: `tests`
-  - `descriptors/`
-    - `tests.rs` — (no module doc) (348 lines, 11 tests)
-  - `discovery.rs` — Pure text discovery only. A candidate is not filesystem authority. (377 lines, 6 tests)
-  - `file_media.rs` — File capabilities are revalidated against the current selected native view. (246 lines, 0 tests)
-    - mods: `tests`
-  - `file_media/`
-    - `tests.rs` — (no module doc) (178 lines, 4 tests)
-  - `formats.rs` — Image decoding belongs to the client. SessionDock does not add container, (9 lines, 0 tests)
-  - `native_media.rs` — Private native-string descriptors. Paths are metadata, never open authority. (375 lines, 0 tests)
-    - mods: `tests`
-  - `native_media/`
-    - `tests.rs` — (no module doc) (600 lines, 14 tests)
-  - `tests.rs` — (no module doc) (368 lines, 13 tests)
+  - `descriptors.rs` — Bounded source capabilities, separate from decoded bytes. No snapshot or (299 lines)
+  - `discovery.rs` — Pure text discovery only. A candidate is not filesystem authority. (248 lines)
+  - `file_media.rs` — File capabilities are revalidated against the current selected native view. (201 lines)
+  - `formats.rs` — Image decoding belongs to the client. SessionDock does not add container, (9 lines)
+  - `native_media.rs` — Private native-string descriptors. Paths are metadata, never open authority. (370 lines)
 - `metadata/`
-  - `disk.rs` — Metadata reads and atomic replacement in the configured directory. (136 lines, 0 tests)
-  - `mod.rs` — SessionDock preferences with reads and atomic publication. (247 lines, 0 tests)
-    - mods: `disk`, `model`, `tests`
-  - `model.rs` — Pure, versioned metadata transformations. No process or native-file access. (846 lines, 0 tests)
+  - `disk.rs` — Metadata reads and atomic replacement in the configured directory. (112 lines)
+  - `mod.rs` — SessionDock preferences with reads and atomic publication. (244 lines)
+    - mods: `disk`, `model`
+  - `model.rs` — Pure, versioned metadata transformations. No process or native-file access. (846 lines)
     - mods: `transfer`
-  - `tests.rs` — (no module doc) (557 lines, 15 tests)
-  - `transfer.rs` — Atomic comparison and restoration of display rows during history imports. (63 lines, 0 tests)
-- `native_replay.rs` — Checked-source-independent replay of nested JSON string interiors. (222 lines, 0 tests)
-  - mods: `tests`
-- `native_replay/`
-  - `tests.rs` — (no module doc) (325 lines, 12 tests)
-- `observe.rs` — One bounded publisher per logical view. Subscribers keep their own cursor; (388 lines, 4 tests)
-- `polls.rs` — Response caches of the two liveness polls every open tab repeats every (299 lines, 4 tests)
+  - `transfer.rs` — Atomic comparison and restoration of display rows during history imports. (63 lines)
+- `native_replay.rs` — Checked-source-independent replay of nested JSON string interiors. (219 lines)
+- `observe.rs` — One bounded publisher per logical view. Subscribers keep their own cursor; (217 lines)
+- `polls.rs` — Response caches of the two liveness polls every open tab repeats every (200 lines)
 - `runtime/`
-  - `freeze.rs` — Linux diagnostic process-tree pause. The independent PTY host stays live. (146 lines, 0 tests)
-  - `mod.rs` — Read-only controlled-host observations against a frozen native inventory. (1432 lines, 0 tests)
-    - mods: `freeze`, `process`, `process_links`, `procscan`, `tests`, `native_binding_tests`, `spawn`
-  - `native_binding_tests.rs` — (no module doc) (353 lines, 7 tests)
-  - `process.rs` — Process identity evidence for host-managed instances. (676 lines, 6 tests)
-  - `process_links.rs` — Node adapter for the shared process-links protocol. Remote links are held (745 lines, 0 tests)
-  - `procscan.rs` — Read-only `/proc` scan for external CLI processes. (1117 lines, 0 tests)
-    - mods: `activity`, `tests`
+  - `freeze.rs` — Linux diagnostic process-tree pause. The independent PTY host stays live. (146 lines)
+  - `mod.rs` — Read-only controlled-host observations against a frozen native inventory. (1426 lines)
+    - mods: `freeze`, `process`, `process_links`, `procscan`, `spawn`
+  - `process.rs` — Process identity evidence for host-managed instances. (466 lines)
+  - `process_links.rs` — Node adapter for the shared process-links protocol. Remote links are held (745 lines)
+  - `procscan.rs` — Read-only `/proc` scan for external CLI processes. (1114 lines)
+    - mods: `activity`
   - `procscan/`
-    - `activity.rs` — Work that outlives a turn, including detached commands carrying a native (165 lines, 0 tests)
-    - `tests.rs` — Tests over a synthetic process tree (`FakeProc`): (781 lines, 13 tests)
-  - `spawn.rs` — Initialize the single sidebar parent from an observed local CLI launch. (320 lines, 0 tests)
-  - `tests.rs` — (no module doc) (1078 lines, 17 tests)
-- `search.rs` — Bounded on-demand search over semantic session views, never raw JSONL. (1432 lines, 12 tests)
+    - `activity.rs` — Work that outlives a turn, including detached commands carrying a native (165 lines)
+  - `spawn.rs` — Initialize the single sidebar parent from an observed local CLI launch. (320 lines)
+- `search.rs` — Bounded on-demand search over semantic session views, never raw JSONL. (897 lines)
   - mods: `cache`, `fold`, `prefilter`, `service`
 - `search/`
-  - `cache.rs` — Persistent search-text cache: one file per main session holding the exact (1214 lines, 8 tests)
-  - `fold.rs` — Case folding for the search prefilter, and the whole-word boundary class. (380 lines, 4 tests)
-  - `prefilter.rs` — The candidate filter of one query over the folded copies of the cached (291 lines, 4 tests)
-  - `service.rs` — Search-text production: where the body of one candidate comes from, in (383 lines, 0 tests)
-- `security.rs` — Loopback Host gate and same-origin API policy. Not authentication. (130 lines, 0 tests)
+  - `cache.rs` — Persistent search-text cache: one file per main session holding the exact (865 lines)
+  - `fold.rs` — Case folding for the search prefilter, and the whole-word boundary class. (208 lines)
+  - `prefilter.rs` — The candidate filter of one query over the folded copies of the cached (163 lines)
+  - `service.rs` — Search-text production: where the body of one candidate comes from, in (383 lines)
+- `security.rs` — Loopback Host gate and same-origin API policy. Not authentication. (130 lines)
+- `session_links.rs` — Durable transfer identities and read-only external-link resolution. (146 lines)
 - `sessions/`
-  - `agy.rs` — Read-only Agy catalog and complete transcript projection. The binary (331 lines, 0 tests)
-  - `grok_tests.rs` — (no module doc) (303 lines, 7 tests)
-  - `history.rs` — View identity helpers shared by `views` (`native_identity`, `history_link`, (1550 lines, 16 tests)
+  - `agy.rs` — Read-only Agy catalog and complete transcript projection. The binary (344 lines)
+  - `history.rs` — View identity helpers shared by `views` (`native_identity`, `history_link`, (87 lines)
   - `index/`
-    - `agent_stops.rs` — Claude subagent stop points from the owner's main transcript. (227 lines, 0 tests)
-      - mods: `tests`
-    - `agent_stops/`
-      - `tests.rs` — The ClaudeAgentItemTests mechanics at the scan level: notice (427 lines, 8 tests)
-    - `graph.rs` — Ownership and fork graph over row summaries. (835 lines, 0 tests)
-    - `mod.rs` — Lazy session index: directory walk + `stat` + bounded (1584 lines, 0 tests)
-      - mods: `agent_stops`, `graph`, `names`, `native_state`, `summary`, `titles`, `tests`
-    - `names.rs` — Codex `session_index.jsonl` names applied to summary rows. (203 lines, 0 tests)
-      - mods: `tests`
-    - `names/`
-      - `tests.rs` — (no module doc) (494 lines, 9 tests)
-    - `native_state.rs` — Scalar Codex turn and Claude/Codex model state, independent of head/tail windows. (165 lines, 0 tests)
+    - `agent_stops.rs` — Subagent stop evidence from the owner's native transcript. (267 lines)
+    - `graph.rs` — Ownership and fork graph over row summaries. (853 lines)
+    - `mod.rs` — Lazy session index: directory walk + `stat` + bounded (1589 lines)
+      - mods: `agent_stops`, `graph`, `names`, `native_state`, `summary`, `titles`
+    - `names.rs` — Codex `session_index.jsonl` names applied to summary rows. (200 lines)
+    - `native_state.rs` — Scalar Codex turn and Claude/Codex model state, independent of head/tail windows. (177 lines)
     - `summary/`
-      - `agy.rs` — Agy row summary from the SessionDock mirror (`sessions::agy`): (111 lines, 0 tests)
-      - `claude.rs` — Claude row summary: `ClaudeAdapter._meta` (main transcripts, including (470 lines, 0 tests)
-      - `codex.rs` — Codex row summary: `CodexAdapter._raw_meta` (120 head pieces) plus the (307 lines, 0 tests)
-      - `grok.rs` — Grok row summary: `GrokAdapter.session_meta` from `summary.json` plus the (164 lines, 0 tests)
-      - `mod.rs` — Bounded per-file row summaries. (881 lines, 0 tests)
-        - mods: `agy`, `claude`, `codex`, `grok`, `opencode`, `tests`
-      - `opencode.rs` — OpenCode row summary from the SessionDock mirror (`sessions::opencode`): (104 lines, 0 tests)
-      - `tests.rs` — (no module doc) (1276 lines, 25 tests)
-    - `tests.rs` — (no module doc) (2991 lines, 22 tests)
-    - `titles.rs` — Point reads of current display titles. Only initial discovery builds a full (164 lines, 0 tests)
-  - `media_projection.rs` — Window selection precedes file opens; authority uses the complete branch. (216 lines, 0 tests)
-  - `media_tests.rs` — Synthetic native inputs only; projection and cursor boundaries for media. (257 lines, 6 tests)
-  - `mod.rs` — Session read model: the lazy index (`index/`) is the only inventory, and (1454 lines, 0 tests)
-    - mods: `history`, `index`, `agy`, `native_input`, `native_media`, `opencode`, `pages`, `views`, `providers`, `records`, `scope`, `grok_tests`, `media_projection`, `media_tests`, `native_scope_tests`, `native_catalog_tests`, `tests`
-  - `native_catalog_tests.rs` — (no module doc) (240 lines, 5 tests)
-  - `native_input.rs` — Checked, chunked native input and a disposable raw-prefix index. (339 lines, 0 tests)
-    - mods: `tests`
-  - `native_input/`
-    - `tests.rs` — (no module doc) (650 lines, 22 tests)
-  - `native_media.rs` — Native span authority is the current full selected branch, not file_roots (89 lines, 0 tests)
-  - `native_scope_tests.rs` — (no module doc) (379 lines, 8 tests)
-  - `opencode.rs` — OpenCode session mirror. (625 lines, 0 tests)
-  - `pages.rs` — Finite history pages. Grants hold checkpoints, never retained native views. (670 lines, 0 tests)
-    - mods: `tests`
-  - `pages/`
-    - `tests.rs` — Synthetic pagination grants and semantic checkpoints; no native I/O or CLI. (1036 lines, 22 tests)
-  - `providers.rs` — Pure native-record projection. File discovery, inheritance cutoffs and (1409 lines, 0 tests)
-    - mods: `agy`, `claude`, `envelopes`, `grok`, `image_content`, `media_tests`, `opencode`, `tests`, `tools`
+      - `agy.rs` — Agy row summary from the SessionDock mirror (`sessions::agy`): (113 lines)
+      - `claude.rs` — Claude row summary: `ClaudeAdapter._meta` (main transcripts, including (471 lines)
+      - `codex.rs` — Codex row summary: `CodexAdapter._raw_meta` (120 head pieces) plus the (308 lines)
+      - `grok.rs` — Grok row summary: `GrokAdapter.session_meta` from `summary.json` plus the (164 lines)
+      - `mod.rs` — Bounded per-file row summaries. (880 lines)
+        - mods: `agy`, `claude`, `codex`, `grok`, `opencode`
+      - `opencode.rs` — OpenCode row summary from the SessionDock mirror (`sessions::opencode`): (104 lines)
+    - `titles.rs` — Point reads of current display titles. Only initial discovery builds a full (164 lines)
+  - `media_projection.rs` — Window selection precedes file opens; authority uses the complete branch. (216 lines)
+  - `mod.rs` — Session read model: the lazy index (`index/`) is the only inventory, and (1456 lines)
+    - mods: `history`, `index`, `agy`, `native_input`, `native_media`, `opencode`, `pages`, `views`, `providers`, `records`, `scope`, `sidebar`, `media_projection`
+  - `native_input.rs` — Checked, chunked native input and a disposable raw-prefix index. (336 lines)
+  - `native_media.rs` — Native span authority is the current full selected branch, not file_roots (89 lines)
+  - `opencode.rs` — OpenCode session mirror. (625 lines)
+  - `pages.rs` — Finite history pages. Grants hold checkpoints, never retained native views. (635 lines)
+  - `providers.rs` — Pure native-record projection. File discovery, inheritance cutoffs and (1354 lines)
+    - mods: `agy`, `claude`, `envelopes`, `grok`, `image_content`, `opencode`, `tools`
   - `providers/`
-    - `agy.rs` — Agy's complete, system-generated transcript (not the truncated transcript). (124 lines, 0 tests)
-    - `claude.rs` — Claude's append-only transcript is a tree, not a flat event log. (1007 lines, 0 tests)
-    - `envelopes.rs` — Source-specific display envelopes. Never interpret arbitrary HTML as protocol (275 lines, 0 tests)
-    - `grok.rs` — Summary-derived Grok metadata. The transcript never overrides these fields, (226 lines, 3 tests)
-    - `image_content.rs` — Typed image extraction before native content becomes public text or JSON. (195 lines, 0 tests)
-    - `media_tests.rs` — Synthetic embedded image records only; no paths, network or CLI are opened. (591 lines, 16 tests)
-    - `opencode.rs` — OpenCode 2 message rows from the SessionDock mirror (`sessions::opencode`). (178 lines, 0 tests)
-    - `tests.rs` — (no module doc) (1915 lines, 45 tests)
-    - `tools.rs` — Pure presentation of known tool arguments. A shell command is text here: (1056 lines, 0 tests)
-      - mods: `tests`
-    - `tools/`
-      - `tests.rs` — (no module doc) (447 lines, 16 tests)
-  - `records.rs` — Bounded, disposable JSON AST reuse. Never an incremental timeline parser. (404 lines, 0 tests)
-    - mods: `native_images`, `native_records`, `scanner`, `string_reader`, `tool_envelopes`, `scanner_contract_tests`, `tests`
+    - `agy.rs` — Agy's complete, system-generated transcript (not the truncated transcript). (207 lines)
+    - `claude.rs` — Claude's append-only transcript is a tree, not a flat event log. (1007 lines)
+    - `envelopes.rs` — Source-specific display envelopes. Never interpret arbitrary HTML as protocol (275 lines)
+    - `grok.rs` — Summary-derived Grok metadata. The transcript never overrides these fields, (166 lines)
+    - `image_content.rs` — Typed image extraction before native content becomes public text or JSON. (195 lines)
+    - `opencode.rs` — OpenCode 2 message rows from the SessionDock mirror (`sessions::opencode`). (178 lines)
+    - `tools.rs` — Pure presentation of known tool arguments. A shell command is text here: (1053 lines)
+  - `records.rs` — Bounded, disposable JSON AST reuse. Never an incremental timeline parser. (353 lines)
+    - mods: `native_images`, `native_records`, `scanner`, `string_reader`, `tool_envelopes`
   - `records/`
-    - `native_images.rs` — Private structural image authority. JSON paths only locate already-reviewed (550 lines, 0 tests)
-      - mods: `tests`
-    - `native_images/`
-      - `tests.rs` — (no module doc) (335 lines, 11 tests)
-    - `native_records.rs` — Pull-based complete-record scanning. Large strings stay private spans; the (201 lines, 0 tests)
-      - mods: `replay_source`, `tests`
+    - `native_images.rs` — Private structural image authority. JSON paths only locate already-reviewed (532 lines)
+    - `native_records.rs` — Pull-based complete-record scanning. Large strings stay private spans; the (194 lines)
+      - mods: `replay_source`
     - `native_records/`
-      - `replay_source.rs` — Replays only reviewed tool strings from the stamped current native record. (242 lines, 1 tests)
-      - `tests.rs` — (no module doc) (531 lines, 13 tests)
-    - `scanner.rs` — Private streaming JSON structure scanner. This is not a media classifier or (821 lines, 0 tests)
-      - mods: `tests`
-    - `scanner/`
-      - `tests.rs` — (no module doc) (709 lines, 17 tests)
-    - `scanner_contract_tests.rs` — Independent differential contract against serde_json, using only synthetic (427 lines, 11 tests)
-    - `string_reader.rs` — A bounded decoder for the physical INSIDE of one JSON string (no quotes). (258 lines, 0 tests)
-      - mods: `tests`
-    - `string_reader/`
-      - `tests.rs` — (no module doc) (327 lines, 12 tests)
-    - `tests.rs` — (no module doc) (544 lines, 19 tests)
-    - `tool_envelopes.rs` — Streaming discovery of a known Codex tool envelope inside ONE (247 lines, 0 tests)
-      - mods: `tests`
-    - `tool_envelopes/`
-      - `tests.rs` — (no module doc) (639 lines, 17 tests)
-  - `scope.rs` — Identity provenance captured once from already parsed, committed records. (108 lines, 0 tests)
-  - `tests.rs` — (no module doc) (1500 lines, 40 tests)
+      - `replay_source.rs` — Replays only reviewed tool strings from the stamped current native record. (184 lines)
+    - `scanner.rs` — Private streaming JSON structure scanner. This is not a media classifier or (801 lines)
+    - `string_reader.rs` — A bounded decoder for the physical INSIDE of one JSON string (no quotes). (255 lines)
+    - `tool_envelopes.rs` — Streaming discovery of a known Codex tool envelope inside ONE (244 lines)
+  - `scope.rs` — Identity provenance captured once from already parsed, committed records. (108 lines)
+  - `sidebar.rs` — Compact sidebar projections: child counts are cheap; child rows are opt-in. (92 lines)
   - `views/`
-    - `body.rs` — Byte rendering of message batches: the `/api/messages` document and the (282 lines, 0 tests)
-    - `body_tests.rs` — The byte renderer (`messages_body`, `history_page_body`) against the (786 lines, 10 tests)
-    - `encoded.rs` — Serialized message bytes of one projected file, kept next to its events (427 lines, 3 tests)
-    - `mod.rs` — Per-session views on demand: one opened session is (2134 lines, 0 tests)
-      - mods: `body`, `encoded`, `body_tests`, `tests`
-    - `tests.rs` — `Views` against private temporary roots: on-demand builds, incremental (954 lines, 17 tests)
-- `shell_env.rs` — Login-shell environment drift. (224 lines, 0 tests)
-- `state.rs` — (no module doc) (269 lines, 3 tests)
+    - `body.rs` — Byte rendering of message batches: the `/api/messages` document and the (273 lines)
+    - `encoded.rs` — Serialized message bytes of one projected file, kept next to its events (256 lines)
+    - `mod.rs` — Per-session views on demand: one opened session is (2034 lines)
+      - mods: `body`, `encoded`
+- `shell_env.rs` — Login-shell environment drift. (224 lines)
+- `state.rs` — (no module doc) (210 lines)
 - `terminal/`
-  - `device.rs` — Coarse device label from a browser `User-Agent` for ownership prompts. (101 lines, 2 tests)
-  - `input.rs` — Raw HTTP terminal input: named-key mapping and host protocol bounds. (279 lines, 4 tests)
-  - `mod.rs` — Pure browser ownership plus explicitly configured local PTY transport. (32 lines, 0 tests)
+  - `device.rs` — Coarse device label from a browser `User-Agent` for ownership prompts. (44 lines)
+  - `input.rs` — Raw HTTP terminal input: named-key mapping and host protocol bounds. (165 lines)
+  - `mod.rs` — Pure browser ownership plus explicitly configured local PTY transport. (32 lines)
     - mods: `device`, `input`, `ownership`, `receipts`, `records`, `service`
-  - `ownership.rs` — Exclusive browser terminal leases, independent of host and WebSocket I/O. (1677 lines, 24 tests)
-    - mods: `launch_tests`
-  - `ownership_launch_tests.rs` — (no module doc) (306 lines, 5 tests)
-  - `receipts.rs` — Per-connection terminal I/O receipts for the diagnostic audit. (134 lines, 1 tests)
-  - `records.rs` — Read-only access to ptyhost session recordings (`<ptyhost dir>/records/<id>/`). (985 lines, 2 tests)
-  - `service.rs` — Opt-in local transport: an explicit host directory, bounded forwarding, and (1378 lines, 3 tests)
-    - mods: `bound_tests`, `launch_tests`, `native_binding_tests`
-  - `service_bound_tests.rs` — (no module doc) (372 lines, 6 tests)
-  - `service_launch_tests.rs` — Synthetic local TCP peer only; no shell, CLI, or native history discovery. (614 lines, 9 tests)
-  - `service_native_binding_tests.rs` — No synthetic NativeBinding constructor: every target below comes from a (528 lines, 5 tests)
+  - `ownership.rs` — Exclusive browser terminal leases, independent of host and WebSocket I/O. (820 lines)
+  - `receipts.rs` — Per-connection terminal I/O receipts for the diagnostic audit. (96 lines)
+  - `records.rs` — Read-only access to ptyhost session recordings (`<ptyhost dir>/records/<id>/`). (927 lines)
+  - `service.rs` — Opt-in local transport: an explicit host directory, bounded forwarding, and (1244 lines)
 - `transfer/`
-  - `bundle.rs` — A manifest-first tar stream. Archive paths are numbered slots, never native (695 lines, 0 tests)
+  - `bundle.rs` — A manifest-first tar stream. Archive paths are numbered slots, never native (732 lines)
     - mods: `dependencies`
-  - `claude_tools.rs` — Native Claude agent destinations, scoped to calls in one transcript. (95 lines, 0 tests)
-  - `cleanup.rs` — Node-owned cleanup for abandoned previews and standalone foreground copies. (107 lines, 0 tests)
-  - `code_mode.rs` — Patch literal identity arguments of known agent calls. Executed code and (331 lines, 0 tests)
-  - `codex.rs` — Codex physical history cloning into a new private directory. This module (665 lines, 0 tests)
-  - `codex_ids.rs` — Typed native identity traversal, shared by rollout and projection adapters. (149 lines, 0 tests)
-  - `codex_tools.rs` — Native JSON agent tools only. Code-mode input and arbitrary output text need (236 lines, 0 tests)
-  - `coordination.rs` — Short registry locks; work is serialized only for overlapping identities. (102 lines, 0 tests)
-  - `dependencies.rs` — External native media and persisted-output files, checked in place. (204 lines, 0 tests)
-  - `environment.rs` — Cross-node evidence: compare contents, not Git status or machine-local inodes. (308 lines, 0 tests)
-  - `files.rs` — Native file bundles for Claude and Grok. Only structured native identity (1006 lines, 0 tests)
-  - `grok_tools.rs` — Grok agent requests across the chat/update streams of one native session. (167 lines, 0 tests)
-  - `group.rs` — Undirected connected components over logical and physical history edges. (334 lines, 0 tests)
+  - `claude_tools.rs` — Native Claude agent destinations, scoped to calls in one transcript. (95 lines)
+  - `cleanup.rs` — Node-owned cleanup for abandoned previews and standalone foreground copies. (107 lines)
+  - `code_mode.rs` — Patch literal identity arguments of known agent calls. Executed code and (331 lines)
+  - `codex.rs` — Codex physical history cloning into a new private directory. This module (682 lines)
+  - `codex_ids.rs` — Typed native identity traversal, shared by rollout and projection adapters. (149 lines)
+  - `codex_tools.rs` — Native JSON agent tools only. Code-mode input and arbitrary output text need (236 lines)
+  - `coordination.rs` — Short registry locks; work is serialized only for overlapping identities. (102 lines)
+  - `dependencies.rs` — External native media and persisted-output files, checked in place. (204 lines)
+  - `environment.rs` — Cross-node evidence: compare contents, not Git status or machine-local inodes. (308 lines)
+  - `files.rs` — Native file bundles for Claude and Grok. Only structured native identity (1022 lines)
+  - `grok_tools.rs` — Grok agent requests across the chat/update streams of one native session. (167 lines)
+  - `group.rs` — Undirected connected components over logical and physical history edges. (349 lines)
     - mods: `claude_tools`, `grok_tools`
-  - `json_bytes.rs` — Apply typed identity changes at their original JSON byte locations. (269 lines, 0 tests)
-  - `mod.rs` — Whole-group planning and durable same-node Codex cloning. (56 lines, 0 tests)
-    - mods: `bundle`, `cleanup`, `code_mode`, `codex`, `codex_ids`, `codex_tools`, `coordination`, `environment`, `files`, `group`, `json_bytes`, `moving`, `native`, `service`, `references`
-  - `moving.rs` — Persistent move handoff. A received group stays fenced until the source (511 lines, 0 tests)
-  - `native.rs` — Selected native rows for a same-store Codex clone. Schema is discovered and (1012 lines, 0 tests)
-  - `prefix.rs` — File proofs and retained originals for identity-preserving prefix imports. (238 lines, 0 tests)
-  - `references.rs` — Compact native relationship summaries. Cache file metadata, never transcripts. (386 lines, 0 tests)
-  - `service.rs` — Durable same-node clone transaction. Plans contain server-derived paths only; (1001 lines, 0 tests)
-    - mods: `prefix`, `tool_requirements`
-  - `tool_requirements.rs` — Persisted definitions identify executor dependencies, not runnable tools. (64 lines, 0 tests)
-- `trash.rs` — Session recycle bin. Native files move into recoverable entries; fork (888 lines, 0 tests)
-  - mods: `manifest`, `plan`, `tests`
+  - `journal.rs` — Disposable, demand-read summaries of the existing operation journals. (106 lines)
+  - `json_bytes.rs` — Apply typed identity changes at their original JSON byte locations. (269 lines)
+  - `mod.rs` — Whole-group planning and durable same-node Codex cloning. (57 lines)
+    - mods: `bundle`, `cleanup`, `code_mode`, `codex`, `codex_ids`, `codex_tools`, `coordination`, `environment`, `files`, `group`, `json_bytes`, `moving`, `native`, `progress`, `service`, `references`
+  - `moving.rs` — Persistent move handoff. A received group stays fenced until the source (588 lines)
+  - `names.rs` — Selected Codex rename records. Keep the append-only index's original bytes; (176 lines)
+  - `native.rs` — Selected native rows for a same-store Codex clone. Schema is discovered and (1029 lines)
+  - `prefix.rs` — File proofs and retained originals for identity-preserving prefix imports. (238 lines)
+  - `progress.rs` — Ephemeral work counters. No journal writes, timers, or background scanning. (126 lines)
+  - `references.rs` — Compact native relationship summaries. Cache file metadata, never transcripts. (388 lines)
+  - `service.rs` — Durable same-node clone transaction. Plans contain server-derived paths only; (1185 lines)
+    - mods: `journal`, `names`, `prefix`, `tool_requirements`
+  - `tool_requirements.rs` — Persisted definitions identify executor dependencies, not runnable tools. (64 lines)
+- `trash.rs` — Session recycle bin. Native files move into recoverable entries; fork (900 lines)
+  - mods: `manifest`, `plan`, `tree`
 - `trash/`
-  - `manifest.rs` — Per-entry manifest: the only record of where trashed files came from. (292 lines, 0 tests)
-  - `plan.rs` — Deletion planning from one published list snapshot. (182 lines, 0 tests)
-  - `tests.rs` — Pure unit coverage: protection topology, manifest round trip, planning and (573 lines, 10 tests)
-- `ui_events.rs` — Shared, subscriber-owned UI invalidations. No conversation bodies cross (220 lines, 0 tests)
+  - `manifest.rs` — Per-entry manifest: the only record of where trashed files came from. (294 lines)
+  - `plan.rs` — Deletion planning from one published list snapshot. (184 lines)
+  - `tree.rs` — Whole connected groups share one recoverable entry and one durable receipt. (265 lines)
+- `ui_events.rs` — Shared, subscriber-owned UI invalidations. No conversation bodies cross (229 lines)
 
 ## process-links
 
-`crates/process-links/src`: 6 files, 1510 lines, 9 tests, 1 undocumented.
+`crates/process-links/src`: 5 files, 1078 lines, 0 undocumented.
 
-- `agent.rs` — Local protocol shared by resource-agent and application adapters. (112 lines, 0 tests)
-- `engine.rs` — Attribution state independent of a session UI or transport. (305 lines, 0 tests)
-- `lib.rs` — Shared process identities, SSH lineage and resource aggregation. (207 lines, 0 tests)
-  - mods: `agent`, `engine`, `linux`, `resource_summary`, `tests`
-- `linux.rs` — Linux adapter: only the current uid's processes, selected environment keys, (262 lines, 0 tests)
-- `resource_summary.rs` — Shared per-session accounting. A process is selected once, even when several (286 lines, 4 tests)
-- `tests.rs` — (no module doc) (338 lines, 5 tests)
+- `agent.rs` — Local protocol shared by resource-agent and application adapters. (112 lines)
+- `engine.rs` — Attribution state independent of a session UI or transport. (305 lines)
+- `lib.rs` — Shared process identities, SSH lineage and resource aggregation. (205 lines)
+  - mods: `agent`, `engine`, `linux`, `resource_summary`
+- `linux.rs` — Linux adapter: only the current uid's processes, selected environment keys, (262 lines)
+- `resource_summary.rs` — Shared per-session accounting. A process is selected once, even when several (194 lines)
 
 ## resource-agent
 
-`crates/resource-agent/src`: 8 files, 2700 lines, 9 tests, 3 undocumented.
+`crates/resource-agent/src`: 8 files, 2452 lines, 3 undocumented.
 
-- `bandwidth.rs` — Low-frequency resctrl MBM monitoring. Only MON groups are created: no (266 lines, 1 tests)
-- `events.rs` — (no module doc) (73 lines, 0 tests)
-- `gpu.rs` — NVIDIA compute-process residency, not whole-device utilization attribution. (176 lines, 2 tests)
-- `io_bpf.rs` — Runtime libbpf loading; the object is compiled at build time and embedded. (334 lines, 0 tests)
-- `io_events.rs` — Bounded, read-only application I/O accounting. Values are deltas per completed (219 lines, 0 tests)
+- `bandwidth.rs` — Low-frequency resctrl MBM monitoring. Only MON groups are created: no (251 lines)
+- `events.rs` — (no module doc) (73 lines)
+- `gpu.rs` — NVIDIA compute-process residency, not whole-device utilization attribution. (144 lines)
+- `io_bpf.rs` — Runtime libbpf loading; the object is compiled at build time and embedded. (334 lines)
+- `io_events.rs` — Bounded, read-only application I/O accounting. Values are deltas per completed (219 lines)
   - mods: `bpf`
-- `main.rs` — (no module doc) (24 lines, 0 tests)
+- `main.rs` — (no module doc) (24 lines)
   - mods: `bandwidth`, `events`, `gpu`, `io_events`, `memory`, `server`
-- `memory.rs` — Proportional resident memory; unavailable rollups never fall back to RSS. (136 lines, 3 tests)
-- `server.rs` — (no module doc) (1472 lines, 3 tests)
+- `memory.rs` — Proportional resident memory; unavailable rollups never fall back to RSS. (53 lines)
+- `server.rs` — (no module doc) (1354 lines)
 
 ## ptyhost
 
-`crates/ptyhost/src`: 13 files, 4640 lines, 48 tests, 3 undocumented.
+`crates/ptyhost/src`: 10 files, 3429 lines, 0 undocumented.
 
-- `client.rs` — 宿主会话的客户端：扫描会话目录、发控制请求、建立 attach 流。 (313 lines, 0 tests)
-- `dsr.rs` — 从 pty 输出里切出设备状态查询（DSR），其余字节原样放行。 (241 lines, 8 tests)
-- `guard.rs` — Optional identity-checked envelope. An old host rejects this *operation* (402 lines, 6 tests)
-  - mods: `binding`, `launch_tests`
-- `launch_guard_tests.rs` — (no module doc) (191 lines, 5 tests)
-- `main.rs` — ptyhost：独立终端后端，tmux 的替代。 (435 lines, 0 tests)
+- `client.rs` — 宿主会话的客户端：扫描会话目录、发控制请求、建立 attach 流。 (313 lines)
+- `dsr.rs` — 从 pty 输出里切出设备状态查询（DSR），其余字节原样放行。 (146 lines)
+- `guard.rs` — Optional identity-checked envelope. An old host rejects this *operation* (285 lines)
+  - mods: `binding`
+- `main.rs` — ptyhost：独立终端后端，tmux 的替代。 (435 lines)
   - mods: `client`, `dsr`, `guard`, `output`, `protocol`, `record`, `session`, `transport`
-- `native_binding.rs` — One operator-declared association for the lifetime of one running host. (157 lines, 0 tests)
-  - mods: `tests`
-- `native_binding_tests.rs` — (no module doc) (247 lines, 4 tests)
-- `output.rs` — One bounded FIFO and one socket writer per attachment. Publishers never write (338 lines, 6 tests)
-- `protocol.rs` — 宿主与客户端之间的本地协议，与 Python 参考实现逐字节兼容。 (224 lines, 4 tests)
-- `record.rs` — 会话录制接线：把 pty 输出、尺寸变化和退出按模型消费顺序写进 (242 lines, 1 tests)
-- `session.rs` — 单个托管会话的宿主进程，与 Python 参考实现同协议、同线程结构。 (1619 lines, 11 tests)
-  - mods: `stop_tests`
-- `stop_tests.rs` — (no module doc) (109 lines, 3 tests)
-- `transport.rs` — 本地传输：POSIX 用 unix socket（0600），Windows 用 127.0.0.1 端口 + 随机 token。 (122 lines, 0 tests)
+- `native_binding.rs` — One operator-declared association for the lifetime of one running host. (153 lines)
+- `output.rs` — One bounded FIFO and one socket writer per attachment. Publishers never write (205 lines)
+- `protocol.rs` — 宿主与客户端之间的本地协议，与 Python 参考实现逐字节兼容。 (168 lines)
+- `record.rs` — 会话录制接线：把 pty 输出、尺寸变化和退出按模型消费顺序写进 (229 lines)
+- `session.rs` — 单个托管会话的宿主进程，与 Python 参考实现同协议、同线程结构。 (1373 lines)
+- `transport.rs` — 本地传输：POSIX 用 unix socket（0600），Windows 用 127.0.0.1 端口 + 随机 token。 (122 lines)
 
 ## ptyhost-client
 
-`crates/ptyhost-client/src`: 8 files, 2180 lines, 3 tests, 4 undocumented.
+`crates/ptyhost-client/src`: 8 files, 2128 lines, 4 undocumented.
 
-- `association.rs` — Reviewed immutable metadata only; arbitrary host metadata is never forwarded. (216 lines, 0 tests)
-- `bound.rs` — (no module doc) (244 lines, 0 tests)
-- `dto.rs` — (no module doc) (272 lines, 0 tests)
-- `launch.rs` — Guarded access to one explicit launch instance, including pending sessions (259 lines, 0 tests)
-- `lib.rs` — Bounded asynchronous access to explicitly selected local ptyhost records. (696 lines, 0 tests)
+- `association.rs` — Reviewed immutable metadata only; arbitrary host metadata is never forwarded. (216 lines)
+- `bound.rs` — (no module doc) (244 lines)
+- `dto.rs` — (no module doc) (272 lines)
+- `launch.rs` — Guarded access to one explicit launch instance, including pending sessions (259 lines)
+- `lib.rs` — Bounded asynchronous access to explicitly selected local ptyhost records. (696 lines)
   - mods: `association`, `bound`, `dto`, `launch`, `native_binding`, `transport`, `wire`
-- `native_binding.rs` — One-time host association declared by a trusted operator, not native CLI proof. (148 lines, 0 tests)
-- `transport.rs` — (no module doc) (57 lines, 0 tests)
-- `wire.rs` — (no module doc) (288 lines, 3 tests)
+- `native_binding.rs` — One-time host association declared by a trusted operator, not native CLI proof. (148 lines)
+- `transport.rs` — (no module doc) (57 lines)
+- `wire.rs` — (no module doc) (236 lines)
 
 ## ptyhost-record
 
-`crates/ptyhost-record/src`: 5 files, 3537 lines, 57 tests, 0 undocumented.
+`crates/ptyhost-record/src`: 4 files, 1409 lines, 0 undocumented.
 
-- `format.rs` — 录制分段的字节级编解码：段头与帧。 (599 lines, 12 tests)
-- `lib.rs` — ptyhost 会话录制（record）：每个会话一个目录，若干只追加的分段文件。 (152 lines, 0 tests)
+- `format.rs` — 录制分段的字节级编解码：段头与帧。 (306 lines)
+- `lib.rs` — ptyhost 会话录制（record）：每个会话一个目录，若干只追加的分段文件。 (152 lines)
   - mods: `format`, `reader`, `store`
-- `reader.rs` — 录制目录的只读读取器。 (1337 lines, 15 tests)
-- `store.rs` — 录制目录的只追加写入器。 (791 lines, 13 tests)
+- `reader.rs` — 录制目录的只读读取器。 (615 lines)
+- `store.rs` — 录制目录的只追加写入器。 (336 lines)
 
 ## ptyhost-screen
 
-`crates/ptyhost-screen/src`: 3 files, 1243 lines, 19 tests, 0 undocumented.
+`crates/ptyhost-screen/src`: 3 files, 1001 lines, 0 undocumented.
 
-- `grid.rs` — 服务端网格：把终端模型的画面抽成"行 → span"结构，和上一帧比较后产出 JSON 增量。 (482 lines, 7 tests)
-- `lib.rs` — 终端模型与服务端网格，宿主（ptyhost）和 Web 服务（sessiondock）共用： (8 lines, 0 tests)
+- `grid.rs` — 服务端网格：把终端模型的画面抽成"行 → span"结构，和上一帧比较后产出 JSON 增量。 (381 lines)
+- `lib.rs` — 终端模型与服务端网格，宿主（ptyhost）和 Web 服务（sessiondock）共用： (8 lines)
   - mods: `grid`, `screen`
-- `screen.rs` — alacritty_terminal 之上的薄封装，提供与 Python 参考实现同语义的截屏 / 光标 / 回放。 (753 lines, 12 tests)
+- `screen.rs` — alacritty_terminal 之上的薄封装，提供与 Python 参考实现同语义的截屏 / 光标 / 回放。 (612 lines)

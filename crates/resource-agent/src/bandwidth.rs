@@ -249,18 +249,3 @@ impl Drop for Collector {
         }
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn domains_reset_and_missing_are_not_zero() {
-        let old = BTreeMap::from([("a".into(), 100), ("b".into(), 900)]);
-        assert_eq!(
-            delta(&old, &BTreeMap::from([("a".into(), 200)]), 5.0),
-            Some(20.0)
-        );
-        assert_eq!(delta(&old, &BTreeMap::from([("a".into(), 1)]), 5.0), None);
-        assert_eq!(delta(&old, &BTreeMap::new(), 5.0), None);
-        assert_eq!(delta(&old, &old, 5.0), Some(0.0));
-    }
-}

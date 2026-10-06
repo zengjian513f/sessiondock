@@ -102,8 +102,7 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
 
 - `sessions/mod.rs`：
   - `SessionRoots` 增加字段，`data_stamp`、`index_cursor`、`restamp` 都要纳入；
-  - 所有 `SessionRoots` 字面量都要补字段：`src` 的测试里有，`crates/sessiondock/tests/*.rs` 有十几处；
-  - 编译检查必须用 `cargo check --tests`，否则漏掉的测试字面量要等到别人跑测试才暴露。
+  - 所有 `SessionRoots` 字面量都要补字段。
 - `config.rs`、`lib.rs`、`state.rs`：环境变量、镜像线程及供删除等操作使用的投影根。数据库与镜像根成对配置，原生数据库只读、私有投影目录可写。
 - `sessions/index/mod.rs`：`discover` 和 `Walk`。
 - `sessions/index/summary/<cli>.rs` 和 `summary/mod.rs`：
@@ -287,7 +286,7 @@ Agy 曾把 `SYSTEM_MESSAGE` 当工具结果，原样显示 `<SYSTEM_MESSAGE>`，
   - 选择器；新建后落到原生行；发送与回显；多行发送；
   - 弹层时拒发；
   - 停止、恢复、删除；图标；问题报告。
-- 写死 source 集合的旧测试要同步：`hub_browser`、`hub_pending_state_browser`、`lifecycle_browser`、`lifecycle_cli_browser`、`lifecycle_http_suite`、`meta_capabilities_suite`。
+- 写死 source 集合的旧测试要同步：`hub_browser`、`hub_pending_state_browser`、`lifecycle_browser`、`lifecycle_cli_browser`。
 
 基础流程之外，按改动覆盖下列浏览器路径；OpenCode 专用套件可作为新 CLI 的实现范例，不能只跑旧来源来代替新来源验收。套件命令和前提见 [验证清单](validation.md)。
 
@@ -311,7 +310,7 @@ Agy 曾把 `SYSTEM_MESSAGE` 当工具结果，原样显示 `<SYSTEM_MESSAGE>`，
 
 “未知内容仍可见”只证明未丢内容；“未知菜单拒发”只证明回退有效；二者都不等于已理解语义或支持交互。失败先用已有诊断找跨层链路的首个偏差，再修正对应适配层，并把新证据补回三份清单。
 
-实现改动在完成编辑后跑覆盖新路径的 headless Chromium，用临时数据和假 CLI；不自行运行单元测试。编译检查不等于执行单元测试。仅修改文档时运行 `python3 tests/check_docs_links.py` 与 `python3 tests/check_agents_md.py`，无需浏览器占位验证。记录本次实际结果，不把历史提交中的结果当作新改动的验证。
+实现改动在完成编辑后跑覆盖新路径的 headless Chromium，用临时数据和假 CLI；仓库不含单元测试，不要新增，覆盖不到就补浏览器套件。仅修改文档时运行 `python3 tests/check_docs_links.py` 与 `python3 tests/check_agents_md.py`，无需浏览器占位验证。记录本次实际结果，不把历史提交中的结果当作新改动的验证。
 
 ## 用真实 CLI 验证
 

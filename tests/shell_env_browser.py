@@ -26,9 +26,9 @@ from urllib.request import urlopen
 
 from frontend_paths import frontend_dir
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, REPO, Corpus, codex_row
-from hub_http_suite import Hub, free_port
-from node_auth_suite import node_env, TOKEN
+from history_fixtures import BINARY, REPO, Corpus, codex_row
+from hub_fixtures import Hub, free_port
+from node_auth_fixtures import node_env, TOKEN
 
 NID = "e" * 32
 RESTART_EXIT_CODE = 75

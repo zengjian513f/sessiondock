@@ -82,7 +82,7 @@ def fake():
 def main():
     import argparse
     from playwright.sync_api import expect, sync_playwright
-    from history_parity import REPO, BINARY, Corpus, isolated_server
+    from history_fixtures import REPO, BINARY, Corpus, isolated_server
     from send_browser import initialize, create_claude, wait_history
     from popups import on_popup
     parser = argparse.ArgumentParser()

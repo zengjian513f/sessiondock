@@ -247,8 +247,7 @@ bindings and local collection survive application/Hub outages; discovering new
 remote links requires both endpoint reports and a working coordinator. Kernel
 probes are local to each machine and do not remove that requirement.
 
-Validation: `tests/resource_agent_suite.py`, `tests/resource_agent_deploy.py`,
-and `tests/process_links_browser.py --with-agent` cover independent lifetime,
+Validation: `tests/process_links_browser.py --with-agent` covers independent lifetime,
 restart recovery, no workload termination, PID reuse, unavailable metrics and the
 browser-visible cross-machine relation. Live BPF validation additionally checks
 that a short child fork and exit are observed without changing its command.

@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 from playwright.sync_api import sync_playwright
-from history_parity import BINARY, Corpus, claude_row, encoded, isolated_server, batch35_meta, codex_message
+from history_fixtures import BINARY, Corpus, claude_row, encoded, isolated_server, batch35_meta, codex_message
 
 
 def main():

@@ -21,7 +21,7 @@ import tempfile
 
 from playwright.sync_api import sync_playwright
 
-from history_parity import (BINARY, Corpus, claude_row, codex_message, codex_row, encoded, get_json,
+from history_fixtures import (BINARY, Corpus, claude_row, codex_message, codex_row, encoded, get_json,
                             isolated_server)
 
 DAY = "2026-09-11T"
@@ -88,7 +88,7 @@ def corpus(root: Path) -> Corpus:
     (grok / "summary.json").write_text(json.dumps({
         "info": {"id": "nest-child-b", "cwd": "/proj/beta"}, "generated_title": "Child B",
         "created_at": stamp("08:45"), "last_active_at": stamp("11:00")}))
-    # spawned_by lives in the metadata document the process scan writes (metadata_suite seeds it the
+    # spawned_by lives in the metadata document the process scan writes (the former metadata_suite seeded it the
     # same way); uids are path hashes, so the continuation written mid-test is seeded before its file exists.
     data.paths["nest-new"] = root / "claude/project-history/nest-new.jsonl"
     uid = {sid: grok_uid(grok) if sid == "nest-child-b" else data.uid(sid) for sid in SPAWNED}

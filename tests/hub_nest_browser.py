@@ -10,10 +10,10 @@ import tempfile
 from types import SimpleNamespace
 
 from playwright.sync_api import sync_playwright
-from history_parity import BINARY, Corpus, codex_row, isolated_server
-from hub_http_suite import Hub, free_port, scoped
+from history_fixtures import BINARY, Corpus, codex_row, isolated_server
+from hub_fixtures import Hub, free_port, scoped
 from nest_tree_browser import open_item_menu
-from node_auth_suite import node_env, TOKEN
+from node_auth_fixtures import node_env, TOKEN
 
 
 def main():

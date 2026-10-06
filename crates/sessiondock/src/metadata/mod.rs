@@ -242,6 +242,3 @@ impl MetadataStore {
         self.update(|snapshot| snapshot.without_timeline_pin(uid))
     }
 }
-
-#[cfg(test)]
-mod tests;

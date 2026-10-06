@@ -16,22 +16,6 @@ pub(crate) struct ScopedFiles<'a> {
 }
 
 impl FileService {
-    #[cfg(test)]
-    pub(crate) fn scoped_media<'a>(
-        &'a self,
-        scope: &FileScope<'a>,
-        native_refs: &[&str],
-    ) -> Result<ScopedFiles<'a>, FileError> {
-        self.scoped_media_iter(
-            scope.uid,
-            scope.agent,
-            scope.cwd,
-            scope.messages,
-            native_refs,
-            None,
-        )
-    }
-
     /// `messages` and `native_refs` must come from the same complete, selected
     /// SessionStore branch/agent. Request parameters never establish references.
     /// `revision` is the immutable identity of that view (uid, agent, cursor,
@@ -127,6 +111,3 @@ impl ScopedFiles<'_> {
         CheckedImage::new(target)
     }
 }
-
-#[cfg(test)]
-mod tests;

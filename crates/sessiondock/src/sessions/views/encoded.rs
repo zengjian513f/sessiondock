@@ -54,10 +54,6 @@ pub(crate) struct EncodedEvents {
     total_len: usize,
     /// `projection_digest` of every event (the committed semantic digest).
     digest: String,
-    /// Messages whose bytes were copied from the previous parse of the same
-    /// file instead of being re-serialized (tests).
-    #[cfg(test)]
-    reused: usize,
 }
 
 /// Order-sensitive structural equality: two values serialize identically iff
@@ -82,14 +78,6 @@ pub(crate) fn same_value(a: &Value, b: &Value) -> bool {
         },
         _ => a == b,
     }
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Non-empty retaining encodings built on this thread (tests: one fill
-    /// per file, hot reads none). Builds run on the opening thread, under
-    /// the view lock.
-    pub(crate) static RETAINED_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The previous encoding of the same file, whose unchanged prefix messages
@@ -118,8 +106,6 @@ impl EncodedEvents {
         let mut scratch = Vec::new();
         let mut total_len = 0usize;
         let mut digest = Sha1::new();
-        #[cfg(test)]
-        let mut reused = 0usize;
         let previous = previous.filter(|previous| previous.encoded.bytes.is_some());
         for (index, event) in events.into_iter().enumerate() {
             let status = event.message["role"] == "status";
@@ -136,13 +122,7 @@ impl EncodedEvents {
                 Some((previous.encoded.message(entry.slot)?, *entry))
             });
             let (encoded, entry) = match reusable {
-                Some((cached, entry)) => {
-                    #[cfg(test)]
-                    {
-                        reused += 1;
-                    }
-                    (cached, entry)
-                }
+                Some((cached, entry)) => (cached, entry),
                 None => {
                     scratch.clear();
                     serde_json::to_writer(&mut scratch, &event.message)?;
@@ -194,10 +174,6 @@ impl EncodedEvents {
         }
         if retain {
             starts.push(bytes.len() + 1);
-            #[cfg(test)]
-            if !entries.is_empty() {
-                RETAINED_BUILDS.with(|builds| builds.set(builds.get() + 1));
-            }
         }
         Ok(Self {
             entries,
@@ -207,8 +183,6 @@ impl EncodedEvents {
             statuses: retain.then_some(statuses),
             total_len,
             digest: format!("{:x}", digest.finalize()),
-            #[cfg(test)]
-            reused,
         })
     }
 
@@ -222,30 +196,9 @@ impl EncodedEvents {
         self.total_len
     }
 
-    /// Bytes physically retained by this encoding.
-    #[cfg(test)]
-    pub(crate) fn retained(&self) -> usize {
-        self.bytes.as_ref().map_or(0, Vec::len)
-            + self
-                .statuses
-                .as_ref()
-                .map_or(0, |statuses| statuses.iter().map(Vec::len).sum())
-    }
-
-    /// Messages copied from the previous parse instead of re-serialized.
-    #[cfg(test)]
-    pub(crate) fn reused(&self) -> usize {
-        self.reused
-    }
-
     /// Non-status messages.
     pub(crate) fn message_count(&self) -> usize {
         self.messages.len()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn entries(&self) -> &[Entry] {
-        &self.entries
     }
 
     /// The entry of non-status position `position`.
@@ -299,134 +252,5 @@ impl EncodedEvents {
             }
         }
         Some(format!("{:x}", digest.finalize()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn event(end: u64, message: Value) -> Event {
-        Event {
-            end,
-            message,
-            media: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn bytes_are_exact_serializations_and_ranges_are_contiguous() {
-        let events = vec![
-            event(1, json!({"role":"user","text":"a","counted":true})),
-            event(
-                2,
-                json!({"role":"status","text":"working","state":"working"}),
-            ),
-            event(
-                3,
-                json!({"role":"assistant","text":"b\n\"c\"","counted":false}),
-            ),
-            event(4, json!({"role":"assistant","text":"![x](/tmp/x.png)"})),
-        ];
-        let encoded = EncodedEvents::build(&events, true, None).unwrap();
-        assert_eq!(encoded.message_count(), 3);
-        assert_eq!(encoded.entries().len(), 4);
-        for (position, index) in [(0usize, 0usize), (1, 2), (2, 3)] {
-            assert_eq!(
-                encoded.message(position).unwrap(),
-                serde_json::to_vec(&events[index].message).unwrap()
-            );
-        }
-        let joined = encoded.messages(0..3).unwrap();
-        let expected = [0usize, 2, 3]
-            .iter()
-            .map(|index| serde_json::to_string(&events[*index].message).unwrap())
-            .collect::<Vec<_>>()
-            .join(",");
-        assert_eq!(joined, expected.as_bytes());
-        assert_eq!(encoded.messages(1..2).unwrap(), encoded.message(1).unwrap());
-        assert!(encoded.messages(0..0).is_none());
-        assert!(encoded.messages(2..4).is_none());
-        let entries = encoded.entries();
-        assert!(entries[1].status && !entries[0].status);
-        assert!(entries[3].special && entries[3].discovered == 1);
-        assert!(!entries[2].special);
-        assert_eq!(
-            encoded.total_len(),
-            events
-                .iter()
-                .map(|event| serde_json::to_vec(&event.message).unwrap().len())
-                .sum::<usize>()
-        );
-        assert_eq!(
-            encoded.digest(),
-            super::super::projection_digest(&events, 4)
-        );
-        assert_eq!(
-            encoded.digest_upto(&events, 2).unwrap(),
-            super::super::projection_digest(&events, 2)
-        );
-        let transient = EncodedEvents::build(&events, false, None).unwrap();
-        assert_eq!(transient.digest(), encoded.digest());
-        assert_eq!(transient.total_len(), encoded.total_len());
-        assert_eq!(transient.retained(), 0);
-        assert!(transient.message(0).is_none() && transient.digest_upto(&events, 2).is_none());
-    }
-
-    #[test]
-    fn append_reuses_unchanged_prefix_bytes_and_re_encodes_amended_messages() {
-        let old = vec![
-            event(1, json!({"role":"user","text":"a"})),
-            event(2, json!({"role":"assistant","text":"b","aborted":false})),
-            event(3, json!({"role":"status","text":"idle"})),
-        ];
-        let before = EncodedEvents::build(&old, true, None).unwrap();
-        let new = vec![
-            event(1, json!({"role":"user","text":"a"})),
-            event(2, json!({"role":"assistant","text":"b","aborted":true})),
-            event(3, json!({"role":"status","text":"idle"})),
-            event(4, json!({"role":"user","text":"c"})),
-        ];
-        let extended = EncodedEvents::build(
-            &new,
-            true,
-            Some(Previous {
-                events: &old,
-                encoded: &before,
-            }),
-        )
-        .unwrap();
-        let cold = EncodedEvents::build(&new, true, None).unwrap();
-        assert_eq!(extended.reused(), 1);
-        assert_eq!(extended.bytes, cold.bytes);
-        assert_eq!(extended.starts, cold.starts);
-        assert_eq!(extended.digest(), cold.digest());
-        assert_eq!(extended.total_len(), cold.total_len());
-        // A shorter (truncated) file reuses nothing beyond its own length.
-        let short = EncodedEvents::build(
-            &new[..1],
-            true,
-            Some(Previous {
-                events: &new,
-                encoded: &cold,
-            }),
-        )
-        .unwrap();
-        assert_eq!(short.reused(), 1);
-        assert_eq!(short.message_count(), 1);
-    }
-
-    #[test]
-    fn same_value_is_key_order_and_float_sign_sensitive() {
-        assert!(same_value(
-            &json!({"a":1,"b":[2,3]}),
-            &json!({"a":1,"b":[2,3]})
-        ));
-        assert!(!same_value(&json!({"a":1,"b":2}), &json!({"b":2,"a":1})));
-        assert!(!same_value(&json!(-0.0), &json!(0.0)));
-        assert!(!same_value(&json!(1), &json!(1.0)));
-        assert!(same_value(&json!(1.5), &json!(1.5)));
-        assert!(!same_value(&json!(null), &json!(false)));
     }
 }

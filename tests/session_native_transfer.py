@@ -19,10 +19,10 @@ from types import SimpleNamespace
 
 def move_native(base, home, provider, selected, resume_ids, peer_name, binary, new_ids=False, return_before_resume=False, codex_data=None):
     from playwright.sync_api import sync_playwright, expect
-    from history_parity import Corpus, isolated_server
+    from history_fixtures import Corpus, isolated_server
     from session_bundle_browser import Peer, node_call
-    from hub_http_suite import Hub, free_port, scoped
-    from node_auth_suite import TOKEN, node_env
+    from hub_fixtures import Hub, free_port, scoped
+    from node_auth_fixtures import TOKEN, node_env
     binary=binary.resolve()
     for folder in ('claude','codex','grok','state','proc','ids','trash'):
         (base/folder).mkdir(exist_ok=True)
@@ -87,7 +87,7 @@ def move_native(base, home, provider, selected, resume_ids, peer_name, binary, n
             payload={'root':str(base),'home':str(home),'cwd':str(base/'cwd'),'provider':provider,'ids':mapped}
             if codex_data:
                 payload['unrelated']=peer.native_baseline
-                from session_clone_service_real import remap_pages
+                from clone_real_fixtures import remap_pages
                 identities=operation['plan']['identities']
                 outputs={f['source']:str(home/f['relative']) for f in operation['staged']['files']}
                 payload['expected']={identity_map[old]:{
@@ -222,7 +222,7 @@ def resume_worker():
 
 
 def resume_codex(payload,root,home,cwd):
-    from session_move_codex_real import AppServer, MODEL, EFFORT, digest, inventory, native_metadata
+    from codex_real_fixtures import AppServer, MODEL, EFFORT, digest, inventory, native_metadata
     settings=Path.home()/'.codex/config.toml';before=digest(settings)
     login=home/'auth.json';assert not os.path.lexists(login)
     login.symlink_to(Path.home()/'.codex/auth.json')
