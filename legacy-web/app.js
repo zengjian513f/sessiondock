@@ -2144,7 +2144,11 @@ function paintLive() {
     renderConversationTail(cache.get(viewKey(selected.uid, S.agent))?.activity, selected.uid);
   }
   paintTransferAvailability($('#a-clone-group'), S.sel);
-  if (menuUid) paintTransferAvailability($('#item-menu [data-act="clone"]'), menuUid);
+  paintTreeDeleteAvailability($('#a-delete-tree'), selected);
+  if (menuUid) {
+    paintTransferAvailability($('#item-menu [data-act="clone"]'), menuUid);
+    paintTreeDeleteAvailability($('#item-menu [data-act="delete-tree"]'), sidebarSessions().find(row => row.uid === menuUid));
+  }
   renderSessionCounts();
   syncActiveOnlyList();
   if (S.picking) renderPickBar();
@@ -2653,7 +2657,7 @@ async function loadSessions(force, preserveList = false) {
 
 /** 列表自动跟进磁盘变化。签名没变时服务端只回一个 unchanged, 成本为个位数毫秒。 */
 let transferNavigationPending = false;
-function transferSidebarPaused() { return transferNavigationPending || !!$('#clone-group-dialog')?.open; }
+function transferSidebarPaused() { return transferNavigationPending || !!$('#clone-group-dialog')?.open || !!$('#delete-tree-dialog')?.open; }
 function resumeTransferSidebar() {
   scheduleDeferredSidebarRender();
   // Reuse signature-based polling and its in-flight request coalescing.
@@ -3400,6 +3404,7 @@ function openItemMenu(uid, x, y) {
     hide: !parent ? '仅分叉父会话可隐藏。' : '',
     detach: !nestable || !nested ? '此会话当前没有附属关系。' : '',
     attach: !nestable ? '此会话当前不能设置附属关系。' : '',
+    'delete-tree': treeDeleteUnavailable(row),
     delete: parent ? '分叉父会话可隐藏，不能直接删除。'
       : ((!row?.pending && running && !unusedLaunch) || shellRunning)
         ? '请先停止会话再删除。' : '',
@@ -3567,6 +3572,7 @@ $('#item-menu').onclick = async e => {
     }
     return;
   }
+  if (button.dataset.act === 'delete-tree') { await deleteSessionTree(uid); return; }
   if (button.dataset.act === 'clone') { await cloneSessionGroup(uid); return; }
   if (button.dataset.act === 'hide') {
     await setForkParentVisibility([uid], false);
@@ -5918,7 +5924,7 @@ function bindSessionActions(heading) {
 }
 
 // 会话头任何宽度都只占一行，且不因折叠留白。一行上的重要程度：标题 → 操作按钮（按菜单顺序：
-// 星标、折叠过程、搜索、冻结/恢复与报告、移动/复制、停止/删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
+// 停止、星标、折叠过程、搜索、冻结/恢复与报告、迁移会话树、删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
 // 模型、会话号、分支）。宽屏/中屏长标题让到标题行的 40%（不少于 8em）为止，窄屏标题不让位；
 // 标题之后先按顺序平铺操作，全放下了再把元信息按顺序跟在标题后面（.dbrief）；从放不下的那一项起
 // 后面的全部收进 ⋯ 菜单（放不下某个按钮时元信息也不放，免得次要的露着、重要的反而折了）；
@@ -5993,7 +5999,8 @@ function layoutSessionHead(heading = $('#detail .dhead')) {
     }
     list.appendChild(node);
   }
-  list.replaceChildren(...[...list.children].sort((a, b) => a.dataset.order - b.dataset.order));
+  const actionOrder = node => node.dataset.sessionStop === 'true' ? -1 : Number(node.dataset.order);
+  list.replaceChildren(...[...list.children].sort((a, b) => actionOrder(a) - actionOrder(b)));
   const more = wrap.querySelector('#a-more');
   if (more) more.hidden = false;   // 量宽度时按 ⋯ 在场算，免得它的显隐反过来改变放得下的项数
   const meta = menu.querySelector('.dmeta');
@@ -6294,7 +6301,8 @@ function head(m, total) {
           <button class="session-menu-action" data-report-bug title="报告当前会话问题"
             aria-label="报告当前会话问题">${uiIcon('bug')}</button>
         </div>
-        ${SessionDockCapabilities.config.session_clone_local_codex === true ? `<button class="session-menu-action" id="a-clone-group" type="button" title="移动 / 复制整组" aria-label="移动 / 复制整组">${uiIcon('transfer')}</button>` : ''}
+        ${SessionDockCapabilities.config.session_clone_local_codex === true ? `<button class="session-menu-action" id="a-clone-group" type="button" title="迁移会话树" aria-label="迁移会话树">${uiIcon('transfer')}</button>` : ''}
+        ${SessionDockCapabilities.config.session_delete_tree === true ? `<button class="session-menu-action danger" id="a-delete-tree" type="button" title="删除会话树" aria-label="删除会话树">${uiIcon('trash')}</button>` : ''}
         ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action"></button>'}
         `, `
     <div class="dmeta">
@@ -6320,6 +6328,8 @@ function head(m, total) {
   h.querySelector('#a-star').onclick = () => toggleSessionStar(m.uid);
   h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
   paintTransferAvailability(h.querySelector('#a-clone-group'), m.uid);
+  const treeDelete = h.querySelector('#a-delete-tree');
+  if (treeDelete) {paintTreeDeleteAvailability(treeDelete, m); treeDelete.onclick = () => deleteSessionTree(m.uid);}
   const turnMode = h.querySelector('#a-turns');
   turnMode.onclick = () => {
     S.compactTurns = !S.compactTurns;
@@ -6531,6 +6541,14 @@ function renderSessionFreeze(m, button = $('#a-session-freeze')) {
 function renderSessionAction(m, button = $('#a-session-action')) {
   renderSessionFreeze(m, button?.closest('.dhead')?.querySelector('#a-session-freeze'));
   if (!button || m.uid !== S.sel) return;
+  const launch = m.fork_parent ? null : unusedNewAssignedLaunch(m);
+  const running = !m.fork_parent && !launch && sessionStoppable(m.uid);
+  const stopping = String(running);
+  if (button.dataset.sessionStop !== stopping) {
+    button.dataset.sessionStop = stopping;
+    const heading = button.closest('.dhead');
+    if (heading?.isConnected) layoutSessionHead(heading);
+  }
   if (m.fork_parent) {
     const shown = !!m.fork_parent_visible;
     const label = shown ? '隐藏父会话' : '显示父会话';
@@ -6540,7 +6558,6 @@ function renderSessionAction(m, button = $('#a-session-action')) {
     button.onclick = () => setForkParentVisibility([m.uid], !shown, button);
     return;
   }
-  const launch = unusedNewAssignedLaunch(m);
   if (launch && typeof deletePendingSession === 'function') {
     const label = '删除会话';
     button.innerHTML = uiIcon('trash');
@@ -6549,7 +6566,6 @@ function renderSessionAction(m, button = $('#a-session-action')) {
     button.onclick = () => deletePendingSession(launch, button);
     return;
   }
-  const running = sessionStoppable(m.uid);
   const label = running ? '停止会话' : '删除会话';
   button.innerHTML = uiIcon(running ? 'power' : 'trash');
   button.title = button.ariaLabel = label;
@@ -9674,10 +9690,12 @@ function renderTrash(info) {
 }
 
 
+function trashTreeSize(it) { return new Set((it.sessions || []).map(m => `${m.source}:${m.sid}`)).size; }
+
 function trashRow(it) {
   const badge = SOURCES[it.source] ? icon(it.source) : '';
   const where = it.restorable
-    ? `<div class="trash-origin" title="${esc(it.origin)}">恢复到 ${esc(shortCwd(it.origin, 200))}</div>`
+    ? `<div class="trash-origin" title="${esc(it.origin)}">${trashTreeSize(it) ? '恢复整棵树到各自原路径' : '恢复到 ' + esc(shortCwd(it.origin, 200))}</div>`
     : `<div class="trash-origin warn">${esc(it.reason || '无法恢复')}</div>`;
   return `<div class="trash-item" data-id="${esc(it.id)}">
     <div class="trash-main">
@@ -9685,12 +9703,13 @@ function trashRow(it) {
       <div class="trash-meta">
         <span>${esc(fmtTime(it.deleted_at))} 删除</span>
         <span>${fmtSize(it.size)}</span>
+        ${it.sessions?.length ? `<span>会话树 · ${trashTreeSize(it)} 个会话</span>` : ''}
         <span class="trash-cwd" title="${esc(it.cwd)}">${esc(nodeDirectory(it, 34))}</span>
       </div>
       ${where}
     </div>
     <div class="trash-acts">
-      <button type="button" class="btn" data-act="restore"${it.restorable ? '' : ' disabled'}>恢复</button>
+      <button type="button" class="btn" data-act="restore"${it.restorable ? '' : ' disabled'}>${it.sessions?.length ? '恢复整棵树' : '恢复'}</button>
       <button type="button" class="btn danger" data-act="purge">彻底删除</button>
     </div>
   </div>`;
@@ -9732,13 +9751,14 @@ $('#trash-list').onclick = async e => {
     const d = await trashPost('api/trash/restore', { id: item.id }, btn);
     if (!d) return;
     if (await loadTrash({ keepNote: true })) {
-      setTrashNote(`已恢复「${item.title}」到 ${d.path}`);
+      setTrashNote(trashTreeSize(item) ? `已恢复「${item.title}」整棵会话树，共 ${trashTreeSize(item)} 个会话。` : `已恢复「${item.title}」到 ${d.path}`);
     }
     cancelSearch(true);
     await loadSessions(true);       // 恢复的会话立即回到左侧列表
     return;
   }
-  if (!await appConfirm(`彻底删除「${item.title}」?\n\n文件将从磁盘移除, 不可恢复。`)) return;
+  const subject = trashTreeSize(item) ? `会话树「${item.title}」（${trashTreeSize(item)} 个会话）` : `「${item.title}」`;
+  if (!await appConfirm(`彻底删除${subject}?\n\n文件将从磁盘移除, 不可恢复。`)) return;
   const d = await trashPost('api/trash/purge', { id: item.id }, btn);
   if (!d) return;
   if (await loadTrash({ keepNote: true })) {
@@ -9748,7 +9768,7 @@ $('#trash-list').onclick = async e => {
 
 async function purgeAllTrash() {
   if (!trashItems.length || trashBusy) return;
-  if (!await appConfirm(`清空回收站?\n\n将从磁盘彻底删除 ${trashItems.length} 个会话, 不可恢复。`)) return;
+  if (!await appConfirm(`清空回收站?\n\n将从磁盘彻底删除 ${trashItems.length} 个${trashItems.some(trashTreeSize) ? '回收站条目（包含完整会话树）' : '会话'}, 不可恢复。`)) return;
   const d = await trashPost('api/trash/purge' + (HUB_MODE ? '?nodes=' + trashScope.join(',') : ''),
     { all: true }, $('#trash-purge-all'));
   if (!d) return;
@@ -10549,14 +10569,14 @@ loadSessions(false).then(async ok => {
 /** Whole-group transfer preview. A confirmed local clone keeps its operation ID
  * across uncertain responses; unsupported selections never use the local API. */
 function transferUnavailableReason(uid) {
-  return uid && sessionStoppable(uid) ? '会话正在运行，请先停止后再移动或复制整组。' : '';
+  return uid && sessionStoppable(uid) ? '会话正在运行，请先停止后再迁移会话树。' : '';
 }
 function paintTransferAvailability(button, uid) {
   const row = button?.closest('#item-menu')
     ? sidebarSessions().find(session => session.uid === uid) : null;
   const unavailable = button?.closest('#item-menu') && (!row || row.pending
     || SessionDockCapabilities.config.session_clone_local_codex !== true);
-  setControlUnavailable(button, unavailable ? '此会话当前不支持移动或复制整组。' : transferUnavailableReason(uid));
+  setControlUnavailable(button, unavailable ? '此会话当前不支持迁移会话树。' : transferUnavailableReason(uid));
 }
 function setupTransferTarget(dialog, machines, sourceId, selectedId) {
   const button = dialog.querySelector('#transfer-target');
@@ -10636,6 +10656,39 @@ function setupTransferTarget(dialog, machines, sourceId, selectedId) {
   });
   return close;
 }
+function renderSessionGroupMembers(dialog, data, uid) {
+  const $d = selector => dialog.querySelector(selector);
+  const status = $d(".clone-status");
+    const members = new Map();
+    for (const member of data.sessions) {
+      const key = `${member.source}:${member.sid}`;
+      if (!members.has(key)) members.set(key, {...member, files:0, bytes:0, selected:false, relations:new Set()});
+      const row = members.get(key);
+      row.files += member.file_count ?? 1; row.bytes += member.bytes ?? 0;
+      row.selected ||= member.uid === uid;
+      if (member.uid === uid) {row.title = member.title; row.cwd = member.cwd;}
+      for (const relation of member.relations || []) row.relations.add(relation);
+    }
+    const body = $d('.clone-members tbody'); body.replaceChildren();
+    const ordered = [...members.values()].sort((a,b) => Number(b.selected)-Number(a.selected) || Number(a.agent)-Number(b.agent));
+    for (const member of ordered) {
+      const tr = document.createElement('tr'); if (member.selected) tr.className = 'transfer-selected';
+      const title = document.createElement('td');
+      const name = document.createElement('div'); name.className = 'transfer-session-name'; name.textContent = member.title || member.sid; name.title = name.textContent;
+      title.append(name);
+      const detail = document.createElement('div'); detail.className = 'transfer-session-detail'; detail.textContent = member.cwd || member.sid; detail.title = `${member.sid}${member.cwd ? '\n'+member.cwd : ''}`; title.append(detail);
+      const source = document.createElement('td'); source.textContent = {codex:'Codex',claude:'Claude',grok:'Grok'}[member.source] || member.source;
+      const relation = document.createElement('td');
+      const badge = document.createElement('span'); badge.className = 'transfer-badge';
+      badge.textContent = member.selected ? '所选会话' : member.agent ? '子代理' : member.relations.has('fork') ? '分支关联' : '关联历史';
+      relation.append(badge);
+      const files = document.createElement('td'); files.className = 'transfer-number'; files.textContent = String(member.files);
+      const bytes = document.createElement('td'); bytes.className = 'transfer-number'; bytes.textContent = fmtSize(member.bytes);
+      tr.append(title,source,relation,files,bytes); body.append(tr);
+    }
+    status.textContent = `整组 ${data.session_count} 个会话 · ${data.file_count} 份历史 · ${fmtSize(data.bytes)}`;
+}
+
 async function cloneSessionGroup(uid, resumed = null) {
   const reason = resumed ? '' : transferUnavailableReason(uid);
   if (reason) {
@@ -10654,7 +10707,7 @@ async function cloneSessionGroup(uid, resumed = null) {
   dialog.setAttribute('aria-labelledby', 'transfer-title');
   dialog.innerHTML = `
     <div class="transfer-head">
-      <div><h2 id="transfer-title">移动或复制会话组</h2></div>
+      <div><h2 id="transfer-title">迁移会话树</h2></div>
       <button class="transfer-close" type="button" aria-label="关闭">×</button>
     </div>
     <div class="transfer-body">
@@ -10797,36 +10850,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     } finally {aborting = false; busy = false; if (dialog.isConnected) renderSelection();}
   }
   $d('.transfer-abort').onclick = () => cancelTransfer();
-  const renderMembers = data => {
-    const members = new Map();
-    for (const member of data.sessions) {
-      const key = `${member.source}:${member.sid}`;
-      if (!members.has(key)) members.set(key, {...member, files:0, bytes:0, selected:false, relations:new Set()});
-      const row = members.get(key);
-      row.files += member.file_count ?? 1; row.bytes += member.bytes ?? 0;
-      row.selected ||= member.uid === uid;
-      if (member.uid === uid) {row.title = member.title; row.cwd = member.cwd;}
-      for (const relation of member.relations || []) row.relations.add(relation);
-    }
-    const body = $d('.clone-members tbody'); body.replaceChildren();
-    const ordered = [...members.values()].sort((a,b) => Number(b.selected)-Number(a.selected) || Number(a.agent)-Number(b.agent));
-    for (const member of ordered) {
-      const tr = document.createElement('tr'); if (member.selected) tr.className = 'transfer-selected';
-      const title = document.createElement('td');
-      const name = document.createElement('div'); name.className = 'transfer-session-name'; name.textContent = member.title || member.sid; name.title = name.textContent;
-      title.append(name);
-      const detail = document.createElement('div'); detail.className = 'transfer-session-detail'; detail.textContent = member.cwd || member.sid; detail.title = `${member.sid}${member.cwd ? '\n'+member.cwd : ''}`; title.append(detail);
-      const source = document.createElement('td'); source.textContent = {codex:'Codex',claude:'Claude',grok:'Grok'}[member.source] || member.source;
-      const relation = document.createElement('td');
-      const badge = document.createElement('span'); badge.className = 'transfer-badge';
-      badge.textContent = member.selected ? '所选会话' : member.agent ? '子代理' : member.relations.has('fork') ? '分支关联' : '关联历史';
-      relation.append(badge);
-      const files = document.createElement('td'); files.className = 'transfer-number'; files.textContent = String(member.files);
-      const bytes = document.createElement('td'); bytes.className = 'transfer-number'; bytes.textContent = fmtSize(member.bytes);
-      tr.append(title,source,relation,files,bytes); body.append(tr);
-    }
-    status.textContent = `整组 ${data.session_count} 个会话 · ${data.file_count} 份历史 · ${fmtSize(data.bytes)}`;
-  };
+  const renderMembers = data => renderSessionGroupMembers(dialog, data, uid);
   async function refreshEnvironment() {
     const sequence = ++environmentSequence;
     const note = $d('.transfer-environment');
@@ -11125,4 +11149,129 @@ if (HUB_MODE) {
   }, TRANSFER_TASKS_MS);
   addEventListener('sessiondock-ui-sessions', () => refreshTransferTasks());
   addEventListener('sessiondock-network-resumed', () => refreshTransferTasks());
+}
+
+function treeDeleteUnavailable(row) {
+  if (SessionDockCapabilities.config.session_delete_tree !== true) return '此节点尚未启用删除会话树。';
+  if (!row || row.pending || !['claude','codex','grok'].includes(row.source)) return '此会话来源尚不支持整棵树移入回收站。';
+  if (sessionStoppable(row.uid)) return '会话正在运行，请先停止后再删除会话树。';
+  return '';
+}
+
+function paintTreeDeleteAvailability(button, row) {
+  setControlUnavailable(button, treeDeleteUnavailable(row));
+}
+
+async function deleteSessionTree(uid) {
+  if ($('#delete-tree-dialog')) return;
+  const row = sidebarSessions().find(m => m.uid === uid);
+  const reason = treeDeleteUnavailable(row);
+  if (reason) {await appAlert(reason); return;}
+  const dialog = document.createElement('dialog');
+  dialog.id = 'delete-tree-dialog'; dialog.className = 'app-dialog transfer-dialog';
+  dialog.setAttribute('aria-labelledby', 'delete-tree-title');
+  dialog.innerHTML = `<div class="transfer-head"><h2 id="delete-tree-title">删除会话树</h2><button class="transfer-close" type="button" aria-label="关闭">×</button></div>
+    <div class="transfer-body">
+      <p class="transfer-notice">范围与复制整组一致：包含关联祖先、兄弟分支、下级会话和子代理。确认后整组移入一个回收站条目，可整体恢复。</p>
+      <div class="transfer-progress" hidden>
+        <p id="delete-tree-progress-label" class="transfer-progress-label" role="status" aria-live="polite"></p>
+        <p class="transfer-progress-detail"></p>
+        <div class="search-progress-track transfer-progress-track" role="progressbar" aria-labelledby="delete-tree-progress-label" aria-valuemin="0" aria-valuemax="100"><i></i></div>
+      </div>
+      <div class="transfer-section-head"><h3>将删除的整组会话</h3><span class="clone-status" role="status">正在读取清单…</span></div>
+      <div class="transfer-table-scroll" tabindex="0" role="region" aria-label="会话树清单">
+        <table class="clone-members"><thead><tr><th scope="col">会话</th><th scope="col">来源</th><th scope="col">关联</th><th scope="col" class="transfer-number">历史文件</th><th scope="col" class="transfer-number">大小</th></tr></thead>
+        <tbody><tr><td colspan="5" class="transfer-empty">正在检查关联会话和历史依赖…</td></tr></tbody></table>
+      </div><p class="transfer-error" role="alert" hidden></p>
+    </div><div class="transfer-footer"><button type="button" class="btn tree-close">取消</button><button type="button" class="btn danger tree-confirm" disabled>删除整棵树</button></div>`;
+  const $d = selector => dialog.querySelector(selector);
+  const confirm = $d('.tree-confirm'), error = $d('.transfer-error');
+  const saved = store.get('treeDeleteRequest', null);
+  let requestId = saved?.uid === uid ? saved.request_id : null;
+  let plan = null, busy = !!requestId, finished = false, timer = null, polling = false, overall = 0;
+  const request = async (action, body) => {
+    const response = await fetch(appUrl(`api/session/tree/${action}`), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({uid,...body}), signal:AbortSignal.timeout(20000)});
+    const data = await response.json();
+    if (!response.ok) throw Object.assign(new Error(data.error?.message || data.error || '操作失败'), {status:response.status, code:data.code});
+    return data;
+  };
+  function close() {
+    clearTimeout(timer); dialog.close(); dialog.remove(); resumeTransferSidebar();
+  }
+  $d('.transfer-close').onclick = close; $d('.tree-close').onclick = close;
+  dialog.addEventListener('cancel', e => {e.preventDefault(); close();});
+  document.body.appendChild(dialog); dialog.showModal();
+  function paint(data) {
+    $d('.transfer-progress').hidden = false;
+    const tasks = data.work || [];
+    let next = tasks.find(t => t.label === '删除会话树')?.done || 0;
+    const files = tasks.find(t => t.label === '移入回收站');
+    const bytes = tasks.findLast(t => t.unit === 'bytes' && t.total > 0);
+    if (files?.total) next = Math.max(next, 25 + 70 * (files.done + (bytes ? bytes.done / bytes.total : 0)) / files.total);
+    if (data.phase === 'complete') next = 100;
+    overall = Math.max(overall, Math.min(next, data.phase === 'complete' ? 100 : 99));
+    const bar = $d('[role="progressbar"]'); bar.setAttribute('aria-valuenow', String(Math.floor(overall))); bar.querySelector('i').style.width = `${overall}%`;
+    $d('.transfer-progress-label').textContent = data.phase === 'complete' ? '整棵会话树已移入回收站' : data.phase === 'failed' ? '删除未完成' : `正在删除会话树 · ${Math.floor(overall)}%`;
+    const detail = tasks.filter(t => t.label !== '删除会话树').map(t => `${t.label} ${t.unit === 'bytes' ? fmtSize(t.done) : t.done}${t.total != null ? ' / '+(t.unit === 'bytes' ? fmtSize(t.total) : t.total) : ''}${t.unit === 'bytes' ? '' : ' '+t.unit}`).join(' · ');
+    $d('.transfer-progress-detail').textContent = detail;
+    $d('.transfer-progress-detail').title = detail;
+  }
+  function complete(data) {
+    if (finished) return;
+    finished = true; busy = false; store.set('treeDeleteRequest', null);
+    confirm.hidden = true; $d('.tree-close').textContent = '完成';
+    const removed = new Set((data.deleted || []).map(m => m.uid));
+    forgetDeletedReceipts(data.deleted || []);
+    if (removed.has(S.sel)) {
+      closeWatch(); S.sel = null; store.set('sel', null);
+      $('#detail').innerHTML = '<div class="empty">整棵会话树已移入回收站<br><button type="button" class="btn" id="detail-open-trash">打开回收站</button></div>';
+      $('#detail-open-trash').onclick = openTrash;
+      ensureConsolePlaceholder(); auditDetailRendered('trashed'); showMobileList();
+    }
+    S.sessions = S.sessions.filter(m => !removed.has(m.uid));
+    if (S.results) S.results = S.results.filter(m => !removed.has(m.uid));
+    renderChips(); renderSide();
+  }
+  function acceptStatus(data) {
+    paint(data);
+    if (data.phase === 'complete') complete(data);
+    if (data.phase === 'failed') {
+      finished = true; busy = false; store.set('treeDeleteRequest', null);
+      if (S.sel) watchSession(S.sel, S.agent);
+      error.textContent = data.error || '删除未完成，请检查回收站后重新预览。'; error.hidden = false;
+      confirm.hidden = true; $d('.tree-close').textContent = '关闭';
+    }
+  }
+  async function poll() {
+    if (!dialog.isConnected || !busy || polling) return;
+    polling = true;
+    try { const data = await request('progress', {request_id:requestId}); error.hidden = true; acceptStatus(data); }
+    catch (failure) {
+      if (failure.status === 404 && failure.code === 'not_found') acceptStatus({phase:'failed', error:'服务器尚无此删除记录，请关闭后重新预览。'});
+      else {error.textContent = `暂时无法读取删除进度：${failure.message}。关闭窗口不会中断删除，重新打开可继续查看。`; error.hidden = false;}
+    }
+    finally {polling = false; if (dialog.isConnected && busy) timer = setTimeout(poll, 250);}
+  }
+  confirm.onclick = async () => {
+    if (busy || !plan) return;
+    busy = true; confirm.disabled = true; confirm.textContent = '正在删除…'; error.hidden = true;
+    requestId = crypto.randomUUID(); store.set('treeDeleteRequest', {uid, request_id:requestId});
+    if (plan.sessions.some(m => m.uid === S.sel)) closeWatch();
+    paint({phase:'checking'}); $d('.tree-close').textContent = '关闭';
+    try {acceptStatus(await request('delete', {request_id:requestId, uids:plan.sessions.map(m => m.uid)}));}
+    catch (failure) {
+      if (failure.status >= 400 && failure.status < 500) acceptStatus({phase:'failed', error:failure.message});
+      else {error.textContent = `请求结果尚未确认：${failure.message}，正在查询同一次删除。`; error.hidden = false;}
+    }
+    if (busy) void poll();
+  };
+  if (requestId) {
+    $d('.clone-status').textContent = '正在读取上次删除记录…'; confirm.hidden = true; $d('.tree-close').textContent = '关闭'; void poll();
+  } else {
+    try {
+      plan = await request('plan', {});
+      if (!dialog.isConnected) return;
+      renderSessionGroupMembers(dialog, plan, uid); confirm.disabled = false;
+    } catch (failure) { if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false; $d('.clone-status').textContent = '清单读取失败';} }
+  }
 }

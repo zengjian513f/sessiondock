@@ -1499,7 +1499,10 @@ fn copy_entry(
             .open_with(destination, &options)
             .map_err(FileError::io)?;
         let count = io::copy(
-            &mut Read::by_ref(&mut input).take(before.len()),
+            &mut crate::transfer::progress::Io(
+                Read::by_ref(&mut input).take(before.len()),
+                crate::transfer::progress::Task::new("复制文件", "bytes", Some(before.len())),
+            ),
             &mut output,
         )
         .map_err(FileError::io)?;

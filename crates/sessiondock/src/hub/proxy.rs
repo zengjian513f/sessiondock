@@ -351,6 +351,13 @@ pub fn resolve(
                     map.insert(key.to_string(), Value::String(local));
                 }
             }
+            if path == "/api/session/tree/delete"
+                && let Some(Value::Array(uids)) = map.get_mut("uids")
+            {
+                for uid in uids {
+                    *uid = Value::String(decode(&reference_text(uid), true)?);
+                }
+            }
             if matches!(path.as_str(), "/api/bug-report" | "/api/bug-report/capture")
                 && let Some(value) = map
                     .get("terminal_name")

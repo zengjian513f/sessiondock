@@ -286,7 +286,7 @@ async fn delete_opencode(
 /// must drop that receipt and the conversation draft that would rebuild the
 /// pending row; otherwise the operator has to 删除 then 丢弃, and 丢弃 still
 /// keeps a draft aliased to the trashed UID.
-async fn retire_deleted_launches(
+pub(super) async fn retire_deleted_launches(
     state: &AppState,
     deleted: &[crate::trash::Deleted],
     rows: &[Value],

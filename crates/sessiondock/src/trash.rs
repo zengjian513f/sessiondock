@@ -5,6 +5,7 @@ pub mod manifest;
 mod plan;
 #[cfg(test)]
 mod tests;
+pub mod tree;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -187,6 +188,8 @@ pub struct TrashService {
     directory: PathBuf,
     roots: SessionRoots,
     lock: Mutex<()>,
+    pub tree_progress: crate::transfer::progress::Registry,
+    tree_jobs: Mutex<std::collections::BTreeMap<String, Value>>,
 }
 
 impl TrashService {
@@ -206,6 +209,8 @@ impl TrashService {
                 agy: freeze(roots.agy),
             },
             lock: Mutex::new(()),
+            tree_progress: Default::default(),
+            tree_jobs: Default::default(),
         })
     }
 
@@ -348,7 +353,20 @@ impl TrashService {
         run_state: RunStateNote,
         forced: bool,
     ) -> Result<Deleted, TrashError> {
-        let entry_id = self.new_entry_id(&plan.source, &plan.uid)?;
+        self.move_into_entry(plan, run_state, forced, None)
+    }
+
+    fn move_into_entry(
+        &self,
+        plan: &Plan,
+        run_state: RunStateNote,
+        forced: bool,
+        id: Option<&str>,
+    ) -> Result<Deleted, TrashError> {
+        let entry_id = match id {
+            Some(id) => id.to_owned(),
+            None => self.new_entry_id(&plan.source, &plan.uid)?,
+        };
         let entry_dir = self.directory.join(&entry_id);
         let files_dir = entry_dir.join(FILES_DIR);
         create_private_dir(&entry_dir)?;
@@ -358,6 +376,7 @@ impl TrashService {
         }
         let deleted_at_unix = now_unix();
         let mut manifest = Manifest {
+            sessions: plan.sessions.clone(),
             version: manifest::MANIFEST_VERSION,
             entry_id: entry_id.clone(),
             uid: plan.uid.clone(),
@@ -393,13 +412,27 @@ impl TrashService {
             let _ = fs::remove_dir(&entry_dir);
             return Err(error);
         }
+        let progress = crate::transfer::progress::Task::new(
+            "移入回收站",
+            "个文件",
+            Some(manifest.files.len() as u64),
+        );
         let mut failure = None;
         for index in 0..manifest.files.len() {
             let record = &manifest.files[index];
             let destination = files_dir.join(&record.name);
             let result = move_entry(&record.origin, &destination);
             match result {
-                Ok(()) => manifest.files[index].in_trash = true,
+                Ok(()) => {
+                    manifest.files[index].in_trash = true;
+                    progress.add(1);
+                    if !manifest.sessions.is_empty() {
+                        if let Err(error) = manifest.write(&entry_dir) {
+                            failure = Some(error);
+                            break;
+                        }
+                    }
+                }
                 Err(error) => {
                     // A cross-device source removal can fail after publishing
                     // its complete copy. Keep that copy in the recovery record.
@@ -519,6 +552,7 @@ impl TrashService {
             Ok(manifest) => {
                 let restorable = self.restorable(manifest);
                 let mut item = json!({
+                    "sessions": manifest.sessions,
                     "id": id, "entry_id": id, "uid": manifest.uid, "source": manifest.source,
                     "sid": manifest.sid, "name": manifest.origin.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
                     "title": manifest.title, "cwd": manifest.cwd, "updated": manifest.updated,

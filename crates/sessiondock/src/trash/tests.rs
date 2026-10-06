@@ -132,6 +132,7 @@ fn manifest_round_trips_and_rejects_foreign_shapes() {
     let entry = temp.path().join("entry");
     fs::create_dir(&entry).unwrap();
     let manifest = Manifest {
+        sessions: Vec::new(),
         version: 1,
         entry_id: "20260912T080000Z-claude-abcdef0123456789-01020304".into(),
         uid: "claude:abcdef0123456789".into(),
