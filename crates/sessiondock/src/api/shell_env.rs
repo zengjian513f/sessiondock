@@ -26,7 +26,10 @@ pub async fn restart(State(state): State<AppState>) -> Result<Json<Value>, ApiEr
         ));
     }
     crate::shell_env::request_restart();
-    eprintln!("SessionDock: restart requested from the page to reload the login-shell environment");
+    crate::log::info(
+        "server.restart_requested",
+        serde_json::json!({"reason": "shell_env"}),
+    );
     let shutdown = state.shutdown.clone();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(300)).await;

@@ -77,7 +77,10 @@ impl Transfers {
                 Err(error) => {
                     // A damaged transfer must not prevent the Hub from serving
                     // other sessions. Preserve its journal for repair.
-                    eprintln!("transfer recovery: cannot read {}: {error}", path.display());
+                    crate::log::warn(
+                        "transfer.recovery_unreadable",
+                        serde_json::json!({"path": path.display().to_string(), "error": error.to_string()}),
+                    );
                     continue;
                 }
             };
@@ -1222,7 +1225,10 @@ async fn call_work(
     // They are not ordinary catalog replies and can exceed the client's 64 MiB
     // JSON cap. Keep HTTP framing, authentication and idle timeouts unchanged.
     let failed = |error: super::ClientError| {
-        eprintln!("sessiondock transfer request {path}: {error}");
+        crate::log::warn(
+            "transfer.request_failed",
+            serde_json::json!({"path": path, "error": error.to_string()}),
+        );
         network(error)
     };
     let encoded = if let Some(work) = work {

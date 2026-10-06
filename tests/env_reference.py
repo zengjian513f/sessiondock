@@ -173,7 +173,12 @@ def render(rows, hub_rows):
               "With a synthetic proc root, the adapter does not contact the default",
               "production collector unless one of these paths is explicitly configured.",
               "An unavailable collector retains the polling attribution path; see",
-              "[process links](process-links.md#independent-linux-service)."]
+              "[process links](process-links.md#independent-linux-service).",
+              "", "## Server log", "",
+              "Read once by `log.rs` in both binaries; see [logging](logging.md).", "",
+              "| Variable | Default | Behavior |",
+              "| --- | --- | --- |",
+              "| `SESSIONDOCK_LOG_REQUESTS` | `errors` | `all`: one line per `/api` request; `errors`: only 5xx answers and requests of 2 s or more; `off`: none. Any other value is `errors`. |"]
     return "\n".join(lines).rstrip() + "\n"
 
 def main(argv=None):

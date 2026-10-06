@@ -585,7 +585,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - move_io
 - error
 - 节点迁移操作失败
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `remote_error` L1199
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `remote_error` L1202
 
 ### `draft_revision`
 
@@ -705,8 +705,8 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - 本次移动已撤回，请重新查看清单
 - 源会话已变化，本次移动已撤回，请重新查看清单
 - 操作已取消，源会话保留
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `execute` L741
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L856, L1029
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `execute` L744
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L859, L1032
 - [`transfer/coordination.rs`](../crates/sessiondock/src/transfer/coordination.rs) `check` L80
 
 ### `move_cleanup`
@@ -717,7 +717,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 - 移动已提交，服务端正在重试源端清理：{}
 - 目标已可继续；源端清理待重试：{}
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L1049, L1089
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L1052, L1092
 
 ### `move_conflict`
 
@@ -740,10 +740,10 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - 目标文件已存在
 - 目标会话显示设置不同且历史没有延长
 - 目标会话附属关系不同
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `cancel_inner` L472
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `execute` L724
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L358
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L775, L888, L926
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `cancel_inner` L475
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `execute` L727
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L361
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L778, L891, L929
 - [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `receive_bundle` L585
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L200
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `stage` L456
@@ -791,7 +791,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `abort_move` L264 → `POST /api/session/transfer/abort`
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `confirm_mode` L480
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `plan` L135 → `POST /api/session/clone/plan`
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `stream` L1141, L1145
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `stream` L1144, L1148
 - [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `invalid` L39
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L221, L236, L240
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `rewrite` L368, L389
@@ -840,7 +840,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `plan` L138 → `POST /api/session/clone/plan`
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `retire_source` L346 → `POST /api/session/transfer/retire`
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `service` L38
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L975
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L978
 - [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `bundle_roots` L135
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L180
 - [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `build` L572
@@ -892,11 +892,11 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - 源机器不可用
 - 迁移节点不可用
 - 目标机器不可用
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `abort` L581, L584
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `network` L1196
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L378, L381
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `reconcile` L546, L549
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L802, L805, L808, L811
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `abort` L584, L587
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `network` L1199
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L381, L384
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `reconcile` L549, L552
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L805, L808, L811, L814
 
 ### `move_path`
 
@@ -966,12 +966,12 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `cancel_clone` L207 → `POST /api/session/clone/cancel`
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `clone_progress` L187 → `POST /api/session/clone/progress`
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `execute` L522 → `POST /api/session/clone`
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `abort` L577, L599
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `cancel_inner` L504
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `path` L149
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L375, L398
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `reconcile` L543
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L799, L862, L872, L944
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `abort` L580, L602
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `cancel_inner` L507
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `path` L152
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L378, L401
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `reconcile` L546
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L802, L865, L875, L947
 - [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `build_manifest` L226
 - [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `export_bundle` L290
 - [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L223
@@ -1035,7 +1035,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - 复制操作需要恢复或重新发起
 - [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `send` L173 → `POST /api/session/conversation/send`
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `resolve_resume` L468
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L796, L905, L1065
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L799, L908, L1068
 - [`transfer/environment.rs`](../crates/sessiondock/src/transfer/environment.rs) `remove` L299
 - [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `abort_source` L127, L137
 - [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `abort_target` L167
@@ -1303,7 +1303,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 ### `live_failed`
 
-- 进程表配对失败 — [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `assemble` L363
+- 进程表配对失败 — [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `assemble` L366
 
 ### `metadata_worker_failed`
 
@@ -1327,8 +1327,8 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `retire_source` L377, L436, L449, L459 → `POST /api/session/transfer/retire`
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `stopped` L57
 - [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `switch_source` L311 → `POST /api/session/transfer/switch`
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `call_work` L1237
-- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `save` L203
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `call_work` L1243
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `save` L206
 - [`transfer/mod.rs`](../crates/sessiondock/src/transfer/mod.rs) `from` L47
 
 ### `move_native_database`
@@ -1445,7 +1445,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1117, L1165 → `POST /api/session/stop`
 - [`api/trash.rs`](../crates/sessiondock/src/api/trash.rs) `configured` L39
 - [`api/trash_tree.rs`](../crates/sessiondock/src/api/trash_tree.rs) `services` L27
-- [`error.rs`](../crates/sessiondock/src/error.rs) `unavailable` L31
+- [`error.rs`](../crates/sessiondock/src/error.rs) `unavailable` L32
 
 ### `terminal_disabled`
 
@@ -1625,7 +1625,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 - 受控 host 目录不可用或超出观察预算
 - 无法读取受管进程状态
-- [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `unavailable` L505
+- [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `unavailable` L508
 - [`api/trash.rs`](../crates/sessiondock/src/api/trash.rs) `observe_liveness` L101
 
 ### `search_cancelled`
@@ -1680,8 +1680,8 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `write_admission` L462
 - [`api/media.rs`](../crates/sessiondock/src/api/media.rs) `get` L79 → `GET /api/media/{token}`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `write` L128
-- [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `observe` L521
-- [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `shared` L464
+- [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `observe` L524
+- [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `shared` L467
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L335 → `GET /api/term/attach`
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `claim_inner` L195
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `send` L654 → `POST /api/term/send`

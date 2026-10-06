@@ -62,7 +62,10 @@ impl Cache {
             // Disposable acceleration only: unreadable/stale summaries fall back
             // to native files; a failed cache write must not fail a transfer.
             if let Err(error) = super::service::persist(path, &rows) {
-                eprintln!("transfer relationship cache: {}", error.message);
+                crate::log::warn(
+                    "transfer.relationship_cache_failed",
+                    serde_json::json!({"error": error.message}),
+                );
             } else {
                 self.dirty.store(false, Ordering::Relaxed);
             }

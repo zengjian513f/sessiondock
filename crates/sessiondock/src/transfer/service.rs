@@ -357,9 +357,9 @@ impl TransferService {
             .store()
             .search_snapshot()
             .map_err(|e| TransferError::new("move_inventory", e.message));
-        eprintln!(
-            "sessiondock transfer inventory: inventory_ms={}",
-            started.elapsed().as_millis()
+        crate::log::info(
+            "transfer.inventory",
+            serde_json::json!({"ms": started.elapsed().as_millis()}),
         );
         result
     }
@@ -381,9 +381,9 @@ impl TransferService {
             .unwrap_or_else(|e| e.into_inner());
         let started = std::time::Instant::now();
         let result = group::derive_cached(snapshot, selected, &self.references);
-        eprintln!(
-            "sessiondock transfer group: relationships_ms={}",
-            started.elapsed().as_millis()
+        crate::log::info(
+            "transfer.relationships",
+            serde_json::json!({"ms": started.elapsed().as_millis()}),
         );
         result
     }

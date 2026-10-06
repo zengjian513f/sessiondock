@@ -157,6 +157,7 @@ pub struct HubState {
 pub fn hub_router(state: HubState) -> Router {
     Router::new()
         .fallback(any(dispatch))
+        .layer(middleware::from_fn(crate::log::requests))
         .layer(middleware::from_fn_with_state(
             Arc::new(crate::list_sync::Store::default()),
             crate::list_sync::middleware,

@@ -145,7 +145,10 @@ impl Writer {
             .is_none_or(|last| last.elapsed() >= ERROR_LOG_INTERVAL)
         {
             self.last_error_log = Some(Instant::now());
-            eprintln!("audit writer: diagnostics dropped: {error}");
+            crate::log::warn(
+                "audit.diagnostics_dropped",
+                serde_json::json!({"error": error.to_string()}),
+            );
         }
     }
 

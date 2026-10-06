@@ -1,7 +1,8 @@
 //! HTTP JSON error envelope `{error, code}` shared by Axum handlers.
 //! `unavailable` is 501 `not_implemented` for capabilities not yet migrated.
 //! `SessionError` maps 501 to `unsupported_history`; other session failures
-//! stay `session_error`. This type does not log, redact, or persist.
+//! stay `session_error`. This type does not log, redact, or persist; it only
+//! tags its response with the code for the request log (`crate::log`).
 use axum::{
     Json,
     http::StatusCode,
@@ -54,10 +55,14 @@ impl From<SessionError> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
+        let mut response = (
             self.status,
             Json(json!({"error": self.message, "code": self.code})),
         )
-            .into_response()
+            .into_response();
+        response
+            .extensions_mut()
+            .insert(crate::log::ErrorCode(self.code));
+        response
     }
 }

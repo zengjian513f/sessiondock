@@ -73,7 +73,10 @@ pub async fn delete(
             if let Err(failure) =
                 job_trash.finish_tree(&job_request.request_id, result.map_err(|e| e.message))
             {
-                eprintln!("sessiondock tree delete receipt: {}", failure);
+                crate::log::warn(
+                    "trash.tree_delete_receipt_failed",
+                    serde_json::json!({"error": failure.to_string()}),
+                );
             }
         });
     }

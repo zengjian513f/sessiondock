@@ -22,6 +22,7 @@ pub mod hub;
 pub mod hub_config;
 pub mod lifecycle;
 pub mod list_sync;
+pub mod log;
 pub mod media;
 pub mod metadata;
 mod native_replay;
@@ -172,8 +173,14 @@ fn prepare_terminal(config: &Config) -> io::Result<Option<Arc<terminal::Terminal
         // Hosts no longer record; sweep what earlier hosts left once gone.
         match terminal::final_screen::remove_legacy_recordings(service.directory()) {
             Ok(0) => {}
-            Ok(removed) => eprintln!("sessiondock: removed {removed} legacy session recordings"),
-            Err(error) => eprintln!("sessiondock: legacy recording sweep failed: {error}"),
+            Ok(removed) => log::info(
+                "terminal.legacy_recordings_removed",
+                serde_json::json!({"count": removed}),
+            ),
+            Err(error) => log::warn(
+                "terminal.legacy_recordings_failed",
+                serde_json::json!({"error": error.to_string()}),
+            ),
         }
     }
     Ok(service.map(Arc::new))
@@ -352,7 +359,7 @@ fn build_app(
     // budgets are process-wide and fixed by the first app built.
     let pools = config.pools.clone();
     if !sessions::budgets::configure(pools.caches()) {
-        eprintln!("sessiondock: cache budgets already fixed by an earlier app; keeping them");
+        log::warn("cache.budgets_already_fixed", serde_json::Value::Null);
     }
     // OpenCode keeps sessions in SQLite. Its mirror directory must exist
     // before the index freezes its roots; the mirror runs until shutdown.
@@ -564,6 +571,7 @@ fn build_app(
     // Same state, own gate, no static fallback: everything the hub proxies.
     let node_router = state.node.as_ref().map(|_| {
         api::node_router()
+            .layer(middleware::from_fn(log::requests))
             .layer(DefaultBodyLimit::disable())
             .layer(middleware::from_fn_with_state(
                 state.clone(),
@@ -574,6 +582,7 @@ fn build_app(
     let router = Router::new()
         .nest("/api", api::router())
         .fallback(assets::serve)
+        .layer(middleware::from_fn(log::requests))
         .layer(DefaultBodyLimit::disable())
         .layer(middleware::from_fn_with_state(
             state.clone(),

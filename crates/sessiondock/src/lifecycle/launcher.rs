@@ -762,7 +762,10 @@ impl Launcher {
         if exists {
             return Ok(());
         }
-        eprintln!("lifecycle launcher: OpenCode session create failed: {detail}");
+        crate::log::warn(
+            "lifecycle.opencode_create_failed",
+            serde_json::json!({"detail": detail}),
+        );
         Err(Error::PrepareFailed)
     }
 
@@ -789,7 +792,10 @@ impl Launcher {
         if removed {
             return Ok(());
         }
-        eprintln!("lifecycle launcher: OpenCode session remove failed: {detail}");
+        crate::log::warn(
+            "lifecycle.opencode_remove_failed",
+            serde_json::json!({"detail": detail}),
+        );
         Err(Error::PrepareFailed)
     }
 
