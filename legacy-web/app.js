@@ -5200,10 +5200,15 @@ async function followSelectedFork() {
 /** One shareable route for sidebar navigation and external research links. */
 function sessionUrl(uid, agent = null) {
   const row = S.sessions.find(s => s.uid === uid);
-  if (!row?.sid) return null;
+  const pending = !row?.sid && typeof T !== 'undefined'
+    ? T.pending.find(item => pendingUid(item.name) === uid) : null;
+  if (!row?.sid && !pending) return null;
+  const node = (row || pending).node_id;
   const url = new URL(location.href);
-  url.searchParams.set('sid', `${row.source}:${row.sid}${agent ? '/agent:' + agent : ''}`);
-  if (row.node_id) url.searchParams.set('node', row.node_id);
+  url.searchParams.set('sid', pending
+    ? uid.replace(`tmux:${node}~`, 'tmux:')
+    : `${row.source}:${row.sid}${agent ? '/agent:' + agent : ''}`);
+  if (node) url.searchParams.set('node', node);
   else url.searchParams.delete('node');
   return url;
 }
@@ -10533,14 +10538,39 @@ function routeSession(spec) {
   return uid ? {uid, agent: null} : agentOfDeepLink(spec);
 }
 let deepLinkSequence = 0;
+async function waitForTermList() {
+  if (typeof T === 'undefined') await new Promise(resolve =>
+    document.addEventListener('DOMContentLoaded', resolve, {once: true}));
+  let request = T.listRequest || loadTermList();
+  do {
+    await request;
+    request = T.listRequest;
+  } while (request);
+}
 async function openExternalSession(spec, historyMode = 'replace') {
   if (!spec) return false;
+  const sequence = ++deepLinkSequence, href = location.href, selected = S.sel;
+  if (spec.startsWith('tmux:')) {
+    // Launch receipts precede native history and arrive on a separate request.
+    // A link must win over the saved selection, including on a fresh browser.
+    await waitForTermList();
+    if (sequence !== deepLinkSequence || href !== location.href || selected !== S.sel) return true;
+    const matches = T.pending.filter(row => (!deepNode() || row.node_id === deepNode())
+      && (pendingUid(row.name) === spec
+        || (row.node_id && pendingUid(row.name) === spec.replace('tmux:', `tmux:${row.node_id}~`))));
+    if (matches.length === 1) await openPendingSession(matches[0], {historyMode});
+    else {
+      showSessionStopNotice(matches.length ? '此链接对应多个启动记录，请选择要打开的会话。'
+        : '暂时无法找到此启动记录，请检查机器连接或会话是否已删除。', true);
+      leaveBootDetail();
+    }
+    return true;
+  }
   const route = routeSession(spec);
   if (route && !S.sessions.find(s => s.uid === route.uid)?.stale) {
     await openSession(route.uid, route.agent, {exact:true, historyMode}); return true;
   }
   if (!HUB_MODE || !SessionDockCapabilities.config.session_link_lineage) return false;
-  const sequence = ++deepLinkSequence, href = location.href, selected = S.sel;
   let result;
   try {
     const response = await fetch(appUrl('api/sessions/resolve'), {
@@ -10599,14 +10629,7 @@ loadSessions(false).then(async ok => {
     // New launches have no native history yet. Their durable identity comes
     // from term/list, which can arrive after the native catalog on reload.
     // app.js can receive its catalog before the later deferred term.js runs.
-    if (typeof T === 'undefined') await new Promise(resolve =>
-      document.addEventListener('DOMContentLoaded', resolve, {once: true}));
-    let request = T.listRequest || loadTermList();
-    do {
-      await request;
-      // Live polling may supersede an earlier request before it completes.
-      request = T.listRequest;
-    } while (request);
+    await waitForTermList();
     // A slow list must not undo navigation performed while it was loading.
     if (S.sel || store.get('sel', null) !== last
         || (MOBILE.matches && store.get('mobilePage', 'list') !== 'detail')) return;

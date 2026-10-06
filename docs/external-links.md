@@ -48,6 +48,15 @@ removing filters that would hide the target. Related-session links use this rout
 rather than a separate navigation scheme. Other query parameters and the proxy
 base path are preserved.
 
+Before a launch has native history, its URL uses `?sid=tmux:<host-name>`
+with `node=<node-id>` on the Hub. Reload, sharing to a fresh browser and
+Back/Forward wait for the terminal inventory and open that exact launch receipt,
+without falling back to another saved session. Once its native binding appears,
+the page replaces the URL with the native session link; the retained launch link
+still resolves through its receipt. Node-qualified legacy launch UIDs remain
+accepted. `tests/pending_session_link_browser.py` covers node/Hub navigation,
+delayed inventory, missing receipts and desktop/mobile reloads with a fake CLI.
+
 Selecting an already displayed session row preserves its folded children; only
 the row's triangle expands or collapses that subtree. Restoring a selected parent
 after reload also preserves its own fold. Revealing a hidden link target opens

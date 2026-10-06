@@ -1674,7 +1674,7 @@ function selectPendingSidebarRow(uid, added) {
   row.classList.add('sel');
 }
 
-function showNewSessionStage(info) {
+function showNewSessionStage(info, {historyMode = 'push'} = {}) {
   if (!T.pendingModes.has(info.name)) T.pendingModes.set(info.name, T.mode);
   // 临时会话也必须完整切换视图；列表或字体慢时不能继续显示/操作旧终端。
   inflight?.abort();
@@ -1691,6 +1691,7 @@ function showNewSessionStage(info) {
   S.agent = null;
   store.set('sel', S.sel);
   store.set('agent', null);
+  updateSessionUrl(S.sel, null, historyMode);
   // Clicking an existing pending row must reach term/claim immediately. A full
   // sidebar rebuild can take seconds for large histories and blocks attach.
   selectPendingSidebarRow(S.sel, added);
@@ -1938,9 +1939,9 @@ function sessionTerminalFirst(uid = S.sel) {
   return sessiondockCli(source)?.nativeHistory === false;
 }
 
-async function openPendingSession(info) {
+async function openPendingSession(info, {historyMode = 'push'} = {}) {
   const pending = { ...info, name: info.tmuxName || info.name };
-  showNewSessionStage(pending);
+  showNewSessionStage(pending, {historyMode});
   // Agent 会话留在对话页，直到用户打开控制台。SSH 运行中默认 PTY 在
   // 输入框上方；结束后有录制则全幅只读回放。记住的布局优先。
   const running = pending.running && !pending.stale;
