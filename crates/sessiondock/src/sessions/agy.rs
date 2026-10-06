@@ -93,7 +93,10 @@ impl Mirror {
                         Err(error) => {
                             let message = error.to_string();
                             if last_error.as_ref() != Some(&message) {
-                                eprintln!("agy mirror: {message}");
+                                crate::log::warn(
+                                    "agy.mirror_failed",
+                                    serde_json::json!({"error": message}),
+                                );
                             }
                             last_error = Some(message);
                             self.connection = None;

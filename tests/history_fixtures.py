@@ -488,7 +488,7 @@ def build_corpus(root: Path) -> Corpus:
 
 
 @contextmanager
-def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Path | None = None, file_roots: tuple[Path, ...] = (), file_write_roots: tuple[Path, ...] = (), host_dir: Path | None = None, lifecycle_dir: Path | None = None, launcher_config: Path | None = None, audit_dir: Path | None = None, trash_dir: Path | None = None, extra_env: dict[str, str] | None = None):
+def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Path | None = None, file_roots: tuple[Path, ...] = (), file_write_roots: tuple[Path, ...] = (), host_dir: Path | None = None, lifecycle_dir: Path | None = None, launcher_config: Path | None = None, audit_dir: Path | None = None, trash_dir: Path | None = None, extra_env: dict[str, str] | None = None, log_path: Path | None = None):
     executable = executable.resolve(strict=True)
     environment = {key: value for key, value in os.environ.items() if not key.startswith("SESSIONDOCK_")}
     with socket.socket() as reservation:
@@ -522,7 +522,8 @@ def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Pat
     opener = build_opener(ProxyHandler({}), NoRedirects())
     # Logs belong to this invocation; don't retain an unbounded PIPE or block
     # the child when diagnostics exceed a pipe's capacity.
-    with tempfile.TemporaryFile(mode="w+b") as log:
+    # `log_path` keeps the server's stdout/stderr (the structured log) for the caller.
+    with (open(log_path, "w+b") if log_path else tempfile.TemporaryFile(mode="w+b")) as log:
         process = subprocess.Popen([str(executable)], cwd=REPO, env=environment, stdout=log, stderr=log)
         try:
             for _ in range(150):

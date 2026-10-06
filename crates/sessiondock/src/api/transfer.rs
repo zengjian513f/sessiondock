@@ -87,10 +87,10 @@ async fn stopped(
     let live = super::trash::observe_liveness(state, &rows, &catalog)
         .await
         .map_err(|error| Box::new(error.into_response()))?;
-    eprintln!(
-        "sessiondock transfer stopped: inventory_ms={} runtime_ms={}",
-        indexed.as_millis(),
-        started.elapsed().saturating_sub(indexed).as_millis()
+    crate::log::info(
+        "transfer.stopped_check",
+        serde_json::json!({"inventory_ms": indexed.as_millis(),
+            "runtime_ms": started.elapsed().saturating_sub(indexed).as_millis()}),
     );
     for (uid, title) in uids {
         if matches!(live.state(&uid), RunState::Running(_)) {

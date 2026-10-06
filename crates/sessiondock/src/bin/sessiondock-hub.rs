@@ -157,13 +157,11 @@ async fn serve(config: HubConfig) -> Result<(), Box<dyn Error>> {
             return Err(error.into());
         }
     };
-    eprintln!(
-        "SessionDock hub: http://{} ({} nodes)",
-        listener.local_addr()?,
-        registry.all().len()
-    );
-    eprintln!(
-        "Multi-machine hub behind the authenticated reverse proxy; registration is the `register` subcommand. No session root is read here."
+    sessiondock::log::info(
+        "hub.listening",
+        serde_json::json!({"url": format!("http://{}", listener.local_addr()?),
+            "nodes": registry.all().len(),
+            "requests": format!("{:?}", sessiondock::log::RequestLog::from_env()).to_lowercase()}),
     );
     let signal_shutdown = shutdown.clone();
     tokio::spawn(async move {

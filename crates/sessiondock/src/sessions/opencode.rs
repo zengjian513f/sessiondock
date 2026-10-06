@@ -117,7 +117,10 @@ impl Mirror {
                         Err(error) => {
                             let text = error.to_string();
                             if self.last_error.as_deref() != Some(&text) {
-                                eprintln!("opencode mirror: {text}");
+                                crate::log::warn(
+                                    "opencode.mirror_failed",
+                                    serde_json::json!({"error": text}),
+                                );
                                 self.last_error = Some(text);
                             }
                             self.connection = None;

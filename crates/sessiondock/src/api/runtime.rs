@@ -304,7 +304,10 @@ async fn assemble(
                     && let Err(error) =
                         crate::runtime::spawn::record(&metadata, &scan, &sessions, &active.owned)
                 {
-                    eprintln!("nest discovery failed: {error}");
+                    crate::log::warn(
+                        "runtime.nest_discovery_failed",
+                        serde_json::json!({"error": error.to_string()}),
+                    );
                 }
                 let by_uid: HashMap<&str, &SessionRow> = sessions
                     .iter()

@@ -294,7 +294,10 @@ impl Conversations {
                 let work = service.clone();
                 let result = tokio::task::spawn_blocking(move || work.collect_uploads()).await;
                 if let Ok(Err(error)) = result {
-                    eprintln!("conversation staging cleanup failed: {}", error.code);
+                    crate::log::warn(
+                        "conversation.staging_cleanup_failed",
+                        serde_json::json!({"code": error.code}),
+                    );
                 }
                 tokio::select! { _=shutdown.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(3600))=>{} }
             }
@@ -772,7 +775,10 @@ impl Conversations {
             && let Err(error) = reports.conversation_status(record.record_id(), &result)
         {
             // SEND already succeeded: metadata failure cannot authorize another send.
-            eprintln!("conversation report status update failed: {error}");
+            crate::log::warn(
+                "conversation.report_status_failed",
+                serde_json::json!({"error": error.to_string()}),
+            );
         }
         self.driver.release(lease).await;
         result
@@ -794,7 +800,10 @@ impl Conversations {
         if let (Some(reports), Some(record)) = (&self.reports, &identity.record) {
             let result = Err(Failure::new(503, "cli_starting", message));
             if let Err(error) = reports.conversation_status(record.record_id(), &result) {
-                eprintln!("conversation report startup status update failed: {error}");
+                crate::log::warn(
+                    "conversation.report_startup_status_failed",
+                    serde_json::json!({"error": error.to_string()}),
+                );
             }
         }
     }

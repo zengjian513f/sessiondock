@@ -308,7 +308,12 @@ pub fn spawn(state: AppState) {
             tokio::select! {
                 _ = state.shutdown.cancelled() => return,
                 result = tick(&state) => {
-                    if let Err(error) = result { eprintln!("nest discovery failed: {error}"); }
+                    if let Err(error) = result {
+                        crate::log::warn(
+                            "runtime.nest_discovery_failed",
+                            serde_json::json!({"error": error.to_string()}),
+                        );
+                    }
                 }
             }
             tokio::select! {

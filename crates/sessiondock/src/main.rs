@@ -128,15 +128,15 @@ async fn run() -> Result<(), Box<dyn Error>> {
             return Err(error.into());
         }
     };
-    eprintln!("SessionDock: http://{}", listener.local_addr()?);
-    if let Some(node_listener) = &node_listener {
-        eprintln!(
-            "SessionDock node listener: http://{} (X-SessionDock-Node-Token + X-SessionDock-Protocol: 1 from configured peers only)",
-            node_listener.local_addr()?
-        );
-    }
-    eprintln!(
-        "Native history is read-only. Terminal transport requires an explicit isolated host directory. No implicit CLI discovery."
+    let node_address = match &node_listener {
+        Some(listener) => Some(listener.local_addr()?.to_string()),
+        None => None,
+    };
+    sessiondock::log::info(
+        "server.listening",
+        serde_json::json!({"url": format!("http://{}", listener.local_addr()?),
+            "node_url": node_address.map(|address| format!("http://{address}")),
+            "requests": format!("{:?}", sessiondock::log::RequestLog::from_env()).to_lowercase()}),
     );
     let signal_shutdown = shutdown.clone();
     tokio::spawn(async move {

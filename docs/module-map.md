@@ -10,7 +10,7 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 194 files, 85341 lines, 5 undocumented.
+`crates/sessiondock/src`: 195 files, 85533 lines, 5 undocumented.
 
 - `api/`
   - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines)
@@ -20,7 +20,7 @@ python3 tests/module_map.py --write
   - `files.rs` — File transport. Every request resolves the selected session; opening a (900 lines)
   - `final_screen.rs` — `GET /api/term/final?id=…`: the final screen an exited session left, as one (54 lines)
   - `health.rs` — Local liveness JSON: version, `api_version` 1, and `stage: "read_only"`. (49 lines)
-  - `hub.rs` — The hub's HTTP surface (`hub.py` `HubHandler.dispatch`, 518–584), served (952 lines)
+  - `hub.rs` — The hub's HTTP surface (`hub.py` `HubHandler.dispatch`, 518–584), served (953 lines)
   - `lifecycle.rs` — Explicit creation receipts; native identities and reliable send stay separate. (1348 lines)
   - `media.rs` — Opaque media transport. File tokens require current native-scope authorization. (150 lines)
   - `metadata.rs` — SessionDock-owned preferences only. No native session writes or CLI actions. (644 lines)
@@ -29,22 +29,22 @@ python3 tests/module_map.py --write
   - `node_auth.rs` — Node listener gate (`server.py` `_allowed` / `_hub_protocol` for hub (103 lines)
   - `process_links.rs` — (no module doc) (130 lines)
   - `read.rs` — Read-only session list, messages, grant pages, input history, and SSE watch. (768 lines)
-  - `runtime.rs` — Read-only live status; never upgrades observations into CLI authority. (530 lines)
+  - `runtime.rs` — Read-only live status; never upgrades observations into CLI authority. (533 lines)
   - `search.rs` — JSON/NDJSON search transport queues work and applies stream backpressure. Search (183 lines)
-  - `shell_env.rs` — `GET /api/shell-env` and `POST /api/shell-env/restart` (`crate::shell_env`). (36 lines)
+  - `shell_env.rs` — `GET /api/shell-env` and `POST /api/shell-env/restart` (`crate::shell_env`). (39 lines)
   - `terminal.rs` — Explicit-directory development transport only; legacy CLI actions stay gated. (1186 lines)
   - `transfer.rs` — Browser-facing clone orchestration. Paths and identity maps never come from (937 lines)
   - `trash.rs` — Session recycle-bin HTTP routes, using delete protection. (643 lines)
-  - `trash_tree.rs` — Preview and confirm the same connected component used by whole-group copy. (160 lines)
+  - `trash_tree.rs` — Preview and confirm the same connected component used by whole-group copy. (163 lines)
 - `assets.rs` — Startup snapshot of regular frontend files. Requests never walk the disk. (282 lines)
 - `audit.rs` — Best-effort browser diagnostics intake. (358 lines)
   - mods: `intake`, `query`, `writer`
 - `audit/`
   - `intake.rs` — Request-shape validation and structured-metadata sanitization. (265 lines)
   - `query.rs` — Bug-report audit: server-side structured events into the same JSONL (204 lines)
-  - `writer.rs` — Dedicated writer thread: daily JSONL files with fourteen-day retention. (307 lines)
+  - `writer.rs` — Dedicated writer thread: daily JSONL files with fourteen-day retention. (310 lines)
 - `bin/`
-  - `sessiondock-hub.rs` — The multi-machine hub. (201 lines)
+  - `sessiondock-hub.rs` — The multi-machine hub. (199 lines)
   - `sessiondock-transfer.rs` — Offline transfer inspection/staging tool. No native publish or source cleanup. (146 lines)
 - `bridge/`
   - `claude.rs` — Claude question cards. (440 lines)
@@ -68,7 +68,7 @@ python3 tests/module_map.py --write
 - `conversation/`
   - `cli_state.rs` — Per-session CLI state that native history cannot tell (docs/cli-state.md): (623 lines)
   - `input.rs` — Positive recognition of the CLI input surface, shared by CHECK and every (487 lines)
-  - `mod.rs` — One conversation send path: drafts are server-owned, successful SEND belongs to the CLI. (1098 lines)
+  - `mod.rs` — One conversation send path: drafts are server-owned, successful SEND belongs to the CLI. (1107 lines)
     - mods: `cli_state`, `input`, `report_name`, `rewind`, `store`
   - `report_name.rs` — Name a report through the Codex TUI before sending its first model task. (149 lines)
   - `rewind.rs` — A rewind made in Claude's own TUI (double Esc, restore the conversation) (134 lines)
@@ -78,7 +78,7 @@ python3 tests/module_map.py --write
   - `mod.rs` — Server-side terminal writes for conversation SEND and the bug-report (6 lines)
     - mods: `driver`, `target`
   - `target.rs` — Managed-instance target resolution and the failure type shared by (163 lines)
-- `error.rs` — HTTP JSON error envelope `{error, code}` shared by Axum handlers. (63 lines)
+- `error.rs` — HTTP JSON error envelope `{error, code}` shared by Axum handlers. (68 lines)
 - `files/`
   - `boundary.rs` — (no module doc) (627 lines)
   - `grants.rs` — An authenticated file browser keeps its directory grant after the original (183 lines)
@@ -105,14 +105,14 @@ python3 tests/module_map.py --write
   - `registry.rs` — The hub's node registry (`hub.py` `Registry`): `hub-nodes.json`, node (1421 lines)
   - `resources.rs` — Session resource views preserve execution nodes and incomplete observations. (340 lines)
   - `session_links.rs` — Resolve saved links through completed transfer records, never by guessing IDs. (252 lines)
-  - `transfer.rs` — Durable cross-node clone orchestration over the authenticated node channel. (1296 lines)
+  - `transfer.rs` — Durable cross-node clone orchestration over the authenticated node channel. (1302 lines)
 - `hub_config.rs` — Configuration of the `sessiondock-hub` binary. Separate from (119 lines)
-- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (591 lines)
-  - mods: `api`, `assets`, `audit`, `bridge`, `bug_report`, `config`, `conversation`, `delivery`, `error`, `files`, `fingerprint`, `hub`, `hub_config`, `lifecycle`, `list_sync`, `media`, `metadata`, `native_replay`, `observe`, `polls`, `runtime`, `search`, `security`, `sessions`, `shell_env`, `state`, `terminal`, `transfer`, `trash`, `ui_events`, `session_links`
+- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (600 lines)
+  - mods: `api`, `assets`, `audit`, `bridge`, `bug_report`, `config`, `conversation`, `delivery`, `error`, `files`, `fingerprint`, `hub`, `hub_config`, `lifecycle`, `list_sync`, `log`, `media`, `metadata`, `native_replay`, `observe`, `polls`, `runtime`, `search`, `security`, `sessions`, `shell_env`, `state`, `terminal`, `transfer`, `trash`, `ui_events`, `session_links`
 - `lifecycle/`
   - `autobind.rs` — Process-evidence binding of pending Codex/Grok launches. (326 lines)
   - `clients.rs` — Installed agent CLI versions and manual updates for the machine settings. (562 lines)
-  - `launcher.rs` — Configured adapters and one-authority process spawn. No discovery, (1144 lines)
+  - `launcher.rs` — Configured adapters and one-authority process spawn. No discovery, (1150 lines)
   - `mod.rs` — Isolated durable process-creation intent. No launcher or native-session binding. (8 lines)
     - mods: `autobind`, `clients`, `launcher`, `model`, `models`, `service`, `store`
   - `model.rs` — Private creation-intent types: `LaunchSpec`, `Record`, and `BindingSpec`. (620 lines)
@@ -124,6 +124,7 @@ python3 tests/module_map.py --write
     - `mod.rs` — Single-writer durable creation receipts. No process, native history or HTTP I/O. (782 lines)
       - mods: `disk`, `json`
 - `list_sync.rs` — Opt-in list transport. Cached revisions only save bytes: eviction, restart, (353 lines)
+- `log.rs` — Structured server log: one JSON object per line on stderr (journald keeps (132 lines)
 - `main.rs` — Loopback development binary. No option starts the Web service. (329 lines)
 - `media.rs` — Private image projection. File capabilities require an explicit selected scope; (616 lines)
   - mods: `descriptors`, `discovery`, `file_media`, `formats`, `native_media`
@@ -153,7 +154,7 @@ python3 tests/module_map.py --write
     - mods: `activity`
   - `procscan/`
     - `activity.rs` — Work that outlives a turn, including detached commands carrying a native (165 lines)
-  - `spawn.rs` — Initialize the single sidebar parent from an observed local CLI launch. (320 lines)
+  - `spawn.rs` — Initialize the single sidebar parent from an observed local CLI launch. (325 lines)
 - `search.rs` — Bounded on-demand search over semantic session views, never raw JSONL. (874 lines)
   - mods: `cache`, `fold`, `prefilter`, `service`
 - `search/`
@@ -164,7 +165,7 @@ python3 tests/module_map.py --write
 - `security.rs` — Loopback Host gate and same-origin API policy. Not authentication. (130 lines)
 - `session_links.rs` — Durable transfer identities and read-only external-link resolution. (146 lines)
 - `sessions/`
-  - `agy.rs` — Read-only Agy catalog and complete transcript projection. The binary (344 lines)
+  - `agy.rs` — Read-only Agy catalog and complete transcript projection. The binary (347 lines)
   - `history.rs` — View identity helpers shared by `views` (`native_identity`, `history_link`, (87 lines)
   - `index/`
     - `agent_stops.rs` — Subagent stop evidence from the owner's native transcript. (267 lines)
@@ -187,7 +188,7 @@ python3 tests/module_map.py --write
     - mods: `history`, `index`, `agy`, `native_input`, `native_media`, `opencode`, `pages`, `views`, `providers`, `records`, `scope`, `sidebar`, `media_projection`
   - `native_input.rs` — Checked, chunked native input and a disposable raw-prefix index. (336 lines)
   - `native_media.rs` — Native span authority is the current full selected branch, not file_roots (89 lines)
-  - `opencode.rs` — OpenCode session mirror. (625 lines)
+  - `opencode.rs` — OpenCode session mirror. (628 lines)
   - `pages.rs` — Finite history pages. Grants hold checkpoints, never retained native views. (662 lines)
   - `providers.rs` — Pure native-record projection. File discovery, inheritance cutoffs and (1354 lines)
     - mods: `agy`, `claude`, `envelopes`, `grok`, `image_content`, `opencode`, `tools`
@@ -253,7 +254,7 @@ python3 tests/module_map.py --write
   - `native.rs` — Selected native rows for a same-store Codex clone. Schema is discovered and (1029 lines)
   - `prefix.rs` — File proofs and retained originals for identity-preserving prefix imports. (238 lines)
   - `progress.rs` — Ephemeral work counters. No journal writes, timers, or background scanning. (126 lines)
-  - `references.rs` — Compact native relationship summaries. Cache file metadata, never transcripts. (388 lines)
+  - `references.rs` — Compact native relationship summaries. Cache file metadata, never transcripts. (391 lines)
   - `service.rs` — Durable same-node clone transaction. Plans contain server-derived paths only; (1185 lines)
     - mods: `journal`, `names`, `prefix`, `tool_requirements`
   - `tool_requirements.rs` — Persisted definitions identify executor dependencies, not runnable tools. (64 lines)
