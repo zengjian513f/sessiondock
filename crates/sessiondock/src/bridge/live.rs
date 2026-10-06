@@ -93,10 +93,6 @@ impl LivePrompts {
         })
     }
 
-    pub fn claude_store(&self) -> Option<&PromptStore> {
-        self.claude.as_ref()
-    }
-
     /// The file stamp the SSE loop polls.
     pub fn claude_revision(&self, sid: &str) -> Option<Revision> {
         self.claude.as_ref()?.revision(sid)

@@ -53,7 +53,7 @@ begin_start(authority) --durable--> Starting + StartAuthority
                             | mark_running(authority) --> Running
                             | mark_failed(authority, typed reason) --> Failed
                             | mark_uncertain(authority) --> Uncertain
-Running --mark_exited(record_id)--> Exited
+Running --observed host exit--> Exited
 Prepared --cancel_prepared(record_id)--> Failed
 ```
 

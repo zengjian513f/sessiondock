@@ -201,33 +201,6 @@ impl MetadataStore {
 
     // Domain-only hooks for a future authenticated, verified terminal workflow.
     // These methods do not perform the native action or establish confirmation.
-    pub fn stop_activity(
-        &self,
-        uid: &str,
-        stop: ActivityStop,
-    ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
-        self.update(|snapshot| snapshot.with_activity_stop(uid, stop))
-    }
-    pub fn clear_inferred_activity_stop(
-        &self,
-        uid: &str,
-    ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
-        self.update(|snapshot| snapshot.without_inferred_activity_stop(uid))
-    }
-    pub fn begin_timeline_rewind(
-        &self,
-        uid: &str,
-        pending: PendingRewind,
-    ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
-        self.update(|snapshot| snapshot.with_pending_rewind(uid, pending))
-    }
-    pub fn finish_timeline_rewind(
-        &self,
-        uid: &str,
-        confirmed_tip: &str,
-    ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
-        self.update(|snapshot| snapshot.with_confirmed_rewind(uid, confirmed_tip))
-    }
 
     /// Persist a validated display pin. The caller must have verified the
     /// target against the frozen native inventory; this is not a native rewind.

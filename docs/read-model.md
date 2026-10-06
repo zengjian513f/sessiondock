@@ -266,7 +266,7 @@ HTTP/SSE 的响应（`views/body.rs`）按字节拼接：
   `/api/live` 与 spawner tick 用同样的 3 s 窗口（`list_recent`）。目录遍历后如果
   每个文件的 stamp 都与上次相同（且名称索引未变），直接复用上一份快照，不重建
   行 / 图 / 签名。`/api/sessions?sig=` 命中时不克隆、不装饰、不序列化文档。
-- **列表响应字节缓存**（`SessionStore::list_view_bytes`，2026-09-15）：`sig` 短路之后、
+- **列表响应字节缓存**（`SessionStore::list_view_bytes`，2026-09-15；2026-10-06 因已无调用方删除，以下为历史记录）：`sig` 短路之后、
   `sig` 变了或没带 `sig` 的热请求也不再"克隆文档 → 借视图装饰 → 去警告 → 序列化"
   （真实根 480 行 / 438 KB 一次约 10 ms），而是留一份最终响应
   字节（`Bytes`），键是 **已发布文档的 `Arc` 身份**

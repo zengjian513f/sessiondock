@@ -732,29 +732,6 @@ pub enum Scanned {
     Error(SessionError),
 }
 
-/// Match the body of an opened view (or carry its open error): the direct
-/// path without the search-text cache, for callers that hold views.
-pub fn scan_view(
-    view: Result<std::sync::Arc<ViewSnapshot>, SessionError>,
-    query: &PreparedSearch,
-    cancelled: &AtomicBool,
-) -> Scanned {
-    match view {
-        Ok(view) => {
-            let text = body(&view);
-            drop(view);
-            match matches(query, &text, cancelled) {
-                Ok(outcome) => Scanned::Matched(outcome),
-                Err(error) => Scanned::Error(SessionError {
-                    status: error.status,
-                    message: error.message,
-                }),
-            }
-        }
-        Err(error) => Scanned::Error(error),
-    }
-}
-
 /// Runs on an admitted blocking worker. `rows` is the frozen candidate list
 /// in published order; `scan` matches one candidate's body (cached, borrowed
 /// or projected, see `service`) with the worker's reusable chunk buffer, and

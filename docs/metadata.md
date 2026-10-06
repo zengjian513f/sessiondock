@@ -46,8 +46,8 @@ entry atomically and preserve unrelated files in the directory.
 ## Snapshot and preference semantics
 
 `MetadataStore::snapshot()` returns an immutable `Arc<MetadataSnapshot>`.
-One snapshot provides a consistent `revision()`, `row(uid)`, `enrich_one` and
-`enrich` view. Missing fields are absent; callers can supply explicit `false`
+One snapshot provides a consistent `revision()`, `row(uid)` and `enrich`
+view. Missing fields are absent; callers can supply explicit `false`
 values for mutation responses. Enrichment replaces stale decoration fields,
 never native message data, and needs the full topology even for a search subset.
 
