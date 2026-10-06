@@ -3,9 +3,8 @@
 The host keeps one VT emulator (alacritty_terminal behind `Screen`). A grid
 client receives cells, not escape sequences, and the browser only paints.
 Byte-console clients still get the raw PTY stream and parse it in xterm.js.
-Recordings stay a byte log of that same PTY
-([terminal session recordings](terminal-records.md)): they are not this
-protocol, and this protocol is not a recording.
+An exited SSH session's [final screen](terminal-final-screen.md) is saved as
+one snapshot of this protocol.
 
 The client is the main console (`term.js` through `legacy-web/grid/facade.js`,
 see [Main console](#main-console)); the former standalone `grid.html` page was
@@ -27,7 +26,7 @@ its own scrollback on resize, and sends keystrokes as raw PTY bytes —
 the same inbound path the byte console uses.
 
 The model is shared with attach-replay reconstruction, `capture` /
-`cursor`, and recording checkpoints. Live byte traffic does not pass
+`cursor`, and the final screen saved at exit. Live byte traffic does not pass
 through it ([host attachment output](host-output.md)).
 
 ## Attach
@@ -149,7 +148,7 @@ a resize (or when the screen thread has no previous grid state) with
 | `reset` | `true`: replace the browser scrollback with `history`. `false`: replace the viewport only; if `cols` changed, the browser reflows its existing scrollback |
 | `cols`, `rows` | viewport size |
 | `grid` | `rows` row objects, index 0 = top of the visible screen |
-| `history` | recent scrollback rows. For `reset: true`, the last `SNAPSHOT_HISTORY_ROWS` (2000) rows, oldest first (a recording replay sends all of its history instead). For a live resize snapshot, `[]` |
+| `history` | recent scrollback rows. For `reset: true`, the last `SNAPSHOT_HISTORY_ROWS` (2000) rows, oldest first (a final screen sends all of its history instead). For a live resize snapshot, `[]` |
 | `history_total` | absolute history length in the model (may exceed `history.length`) |
 | `cursor` | `{x, y, visible}` in the viewport, 0-based |
 | `modes` | see below |
@@ -240,8 +239,8 @@ dark palette in the host (the browser theme is not available there).
 | DA, DECRQM, XTGETTCAP, OSC colour queries, other `Event::PtyWrite` | **Byte client present:** left to xterm.js (the host does not write the model's responses). **No byte client** (grid-only or nobody attached): the screen thread writes `take_responses()` to the PTY |
 | DSR / DECXCPR (`ESC[5n`, `ESC[6n`, `ESC[?6n`) | **Always the host.** The read thread strips them before any client sees the bytes and the screen thread replies from the model cursor. Behaviour does not depend on who is attached |
 
-Stripping DSR on the read path is the same rule recordings use: those
-queries never reach a client and are not stored.
+Stripping DSR on the read path means those queries never reach a client and
+never enter the model's saved state.
 
 ## Browser modules
 
@@ -333,8 +332,7 @@ one. The fix is entirely in the browser; the host protocol is unchanged.
   trailing default spaces), and replaces the local rows from there with the
   host's. Without a match nothing changes. A failed request is dropped
   quietly (`terminal.history_tail_failed` audit event); the local height
-  correction stands. Recording replay never fetches and keeps only the
-  local height correction.
+  correction stands. A final screen has no host and never fetches.
 
 The grid renderer keeps its Canvas 2D path at every interface scale.
 
@@ -426,10 +424,6 @@ Known gaps:
   locally until a reconnect snapshot.
 - Hosts already running keep their old binary until restarted; an old host
   stops sending `scrolled` once its history is full.
-- Recording replay corrects a recorded height change locally, but a
-  recorded width change cannot be aligned with the host history tail (replay
-  has no lease), so rows moved across the seam by the recorded reflow may be
-  missing or repeated there.
 
 ## Fifth span element, clipboard, history paging
 
@@ -457,25 +451,16 @@ both unsigned); it waits for the model to catch up like `capture`, clamps
 `to` to `total` and to `from + 2000`. The main console uses it; see
 [history paging in the main console](#history-paging-in-the-main-console).
 
-## Recordings and the shared model
+## Final screen and the shared model
 
 `ptyhost-screen` is the crate that holds `Screen` (the alacritty_terminal
 wrapper) and `grid` (span extraction, diffing, `FlushPolicy`). ptyhost
-uses it for live sessions; sessiondock uses the same crate to replay a
-recording: `GET /api/term/records/attach?id=…` (the page adds `mode=grid`;
-replay is grid-only and the parameter is otherwise ignored) feeds the
-checkpoint and every later output frame through a fresh `Screen`
-(scrollback 10_000) and streams `snapshot` / `diff` lines; a recorded
-resize becomes a `reset:false` snapshot, a gap checkpoint becomes
-`{"t":"gap"}` plus a `reset:true` snapshot, a timeline `seek` answers with
-a `record` frame and a `reset:true` snapshot of the model as of that
-instant, and the `timeline` / `record` / `clock` / `exit` / `end` text
-frames and the `seek` / `play` / `pause` / `live` controls are described
-in [terminal session recordings](terminal-records.md#browser-wire). The main
-console opens that stream read-only (no claim, no input, no pty resize) to
-replay an exited session in place (see [recordings](terminal-records.md)). The checkpoint serializer
-positions and erases each row (`ESC[r;1H ESC[2K`) instead of `ESC[2J`,
-because alacritty's ED 2 would push the cleared rows into scrollback.
+uses it for live sessions and, at exit, to save an exited session's
+[final screen](terminal-final-screen.md) as one `reset:true` snapshot with all
+retained history; `GET /api/term/final?id=…` serves it as saved and the main
+console shows it read-only (no claim, no input, no pty resize). The attach
+replay serializer positions and erases each row (`ESC[r;1H ESC[2K`) instead of
+`ESC[2J`, because alacritty's ED 2 would push the cleared rows into scrollback.
 
 ## Main console
 
@@ -483,7 +468,7 @@ The legacy console (`term.js`) renders only through the grid; the page ships
 no xterm.js. A running host started before the grid protocol existed reports
 `grid:false`: its console stays closed with the explanation
 「此会话的终端宿主不支持网格显示，重新启动会话后即可打开控制台。」 An exited
-row has no host and still replays its recording or explains itself. The hub
+row has no host and shows its final screen or explains itself. The hub
 registry has no per-machine renderer attribute ([hub](hub.md)).
 `legacy-web/grid/facade.js` exports `GridTerm`, an xterm.js-compatible
 object (`write` of JSON-line text, `resize`, `buffer.active`, selection,
@@ -493,8 +478,8 @@ built on the grid modules; `index.html` publishes it as
 `ensureTerm` creates it and adds `mode=grid` to the attach URL;
 `writeTermOutput` hands each JSON-line chunk straight to it. Claim, lease,
 resize, revoke, exit and the Codex side-thread scan through `buffer.active`
-work on that object. Recording replay goes through the same facade with
-`mode=grid`, reading each snapshot's recorded size.
+work on that object. A final screen goes through the same facade at the size
+the host had at exit.
 
 The main console's grid renderer reserves a 12-pixel right gutter for a vertical
 history scrollbar. Dragging the thumb or clicking the track changes the same
@@ -537,19 +522,19 @@ Paging never grows the scrollback past `scrollbackLimit` (100_000).
 
 Requests are made only for a live connection: the view is still current,
 its socket and lease are the ones that issued the request, and it is not a
-recording replay, ended, revoked or retired. A response for a replaced
+final screen, ended, revoked or retired. A response for a replaced
 model (reconnect calls `term.reset()`, and every `reset: true` snapshot
 bumps the model's history epoch) is ignored. Any failure, including a 409
 stale token, stops paging for the connection quietly
 (`terminal.history_page_failed` audit event); the next reconnect snapshot
-starts again. Recording replay sends all model history in its snapshot and
+starts again. A final screen sends all model history in its snapshot and
 never pages.
 
 [`tests/terminal_history_paging_browser.py`](../tests/terminal_history_paging_browser.py)
 prints 5000 numbered rows before the console opens, then pages with a real
 scrollbar drag, wheel input and scrollbar Home until row 1, checking order,
 seams, viewport stability, live input afterwards, no idle requests, a reload,
-a width change and that a recording replay sends no history requests. It also
+a width change and that a final screen sends no history requests. It also
 starts a host with `--history 60`, prints 600 numbered rows while the console is
 attached, and checks that rows 1..600 all arrive in order on the same
 connection and that the host total estimate stays at 60.

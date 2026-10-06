@@ -1023,15 +1023,15 @@ pub async fn discard(
             ),
             other => failure(other),
         })?;
-    // An SSH session's recordings belong to its receipt: 删除 removes them
-    // (a live one, which a discardable receipt no longer has, is left alone).
+    // An SSH session's final screen (and recordings from older hosts) belong
+    // to its receipt: 删除 removes them.
     if record.spec().source() == crate::lifecycle::model::Source::Shell
         && let Some(terminal) = &state.terminal
     {
         let root = terminal.directory().to_path_buf();
         let name = record.host_name().to_owned();
         let _ = tokio::task::spawn_blocking(move || {
-            crate::terminal::records::remove_for_host(&root, &name)
+            crate::terminal::final_screen::remove_for_host(&root, &name)
         })
         .await;
     }

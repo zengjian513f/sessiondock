@@ -169,11 +169,11 @@ fn prepare_terminal(config: &Config) -> io::Result<Option<Arc<terminal::Terminal
         .transpose()
         .map_err(io::Error::other)?;
     if let Some(service) = &service {
-        // Agent hosts no longer record; sweep what earlier hosts left behind.
-        match terminal::records::remove_agent_leftovers(service.directory()) {
+        // Hosts no longer record; sweep what earlier hosts left once gone.
+        match terminal::final_screen::remove_legacy_recordings(service.directory()) {
             Ok(0) => {}
-            Ok(removed) => eprintln!("sessiondock: removed {removed} agent session recordings"),
-            Err(error) => eprintln!("sessiondock: agent recording sweep failed: {error}"),
+            Ok(removed) => eprintln!("sessiondock: removed {removed} legacy session recordings"),
+            Err(error) => eprintln!("sessiondock: legacy recording sweep failed: {error}"),
         }
     }
     Ok(service.map(Arc::new))
@@ -253,7 +253,6 @@ fn build_app(
     );
     capabilities["terminal_transport"] = serde_json::json!(terminal.is_some());
     capabilities["terminal"] = serde_json::json!(terminal.is_some());
-    capabilities["terminal_records"] = serde_json::json!(terminal.is_some());
     capabilities["terminal_create"] = serde_json::json!(lifecycle.is_some());
     capabilities["terminal_pending"] = serde_json::json!(lifecycle.is_some());
     capabilities["terminal_bind"] = serde_json::json!(lifecycle.is_some());

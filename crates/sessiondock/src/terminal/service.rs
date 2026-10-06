@@ -153,7 +153,7 @@ fn input_error(error: ptyhost_client::Error) -> TerminalError {
 }
 
 pub struct TerminalService {
-    /// The explicit, canonical ptyhost directory (recordings live under it).
+    /// The explicit, canonical ptyhost directory (final screens live under it).
     directory: PathBuf,
     client: HostClient,
     registry: Arc<Registry>,

@@ -7,8 +7,8 @@ wheel input and scrollbar keys reach the oldest loaded row; the console fetches
 `GET /api/term/grid/history` under its own lease, prepends each page without
 moving the visible rows, and ends with rows 1..5000 in order with no gap or
 duplicate at any seam. Live input still works afterwards, idle pages issue no
-history requests, a page reload pages again from a fresh snapshot, and a
-recording replay never requests history. A stale lease token answered with the
+history requests, a page reload pages again from a fresh snapshot, and an
+exited session's final screen never requests history. A stale lease token answered with the
 server's real 409 stops paging quietly for that connection (no retry, no error,
 audit event `terminal.history_page_failed`), and paging resumes once the
 network returns and the console reconnects with a fresh snapshot. A host started with a small
@@ -28,7 +28,7 @@ from playwright.sync_api import sync_playwright
 
 from history_fixtures import BINARY, REPO, Corpus, codex_message, codex_row, isolated_server
 from private_hosts import private_hosts
-from draft_sync_browser import SHELL as REPLAY_SHELL, initialize
+from draft_sync_browser import SHELL as FINAL_SHELL, initialize
 import terminal_input_browser as fixture
 
 ROWS = 5000
@@ -409,13 +409,13 @@ def full_history_live(pw, root, corpus, uid):
             browser.close()
 
 
-def replay_never_pages(pw, root):
+def final_screen_never_pages(pw, root):
     cfg = root / 'launcher.json'
     cfg.touch(mode=0o600)
     cfg.write_text(json.dumps({
         'schema': 2, 'host_binary': str(REPO / 'target/debug/ptyhost'), 'host_dir': str(root / 'host'),
         'adapters': [{'id': 'synthetic-shell-v1', 'source': 'shell', 'executable': str(Path('/bin/sh').resolve()),
-                      'args': ['-c', REPLAY_SHELL], 'env': {'PATH': '/usr/bin:/bin', 'TERM': 'xterm-256color'}}],
+                      'args': ['-c', FINAL_SHELL], 'env': {'PATH': '/usr/bin:/bin', 'TERM': 'xterm-256color'}}],
         'profiles': []}))
     initialize('--initialize-lifecycle', root / 'ledger')
     with isolated_server(Corpus(root), BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
@@ -429,7 +429,7 @@ def replay_never_pages(pw, root):
         try:
             page.goto(base, wait_until='networkidle')
             shell = context.request.post(base + '/api/term/create', data={
-                'source': 'shell', 'cwd': str(root / 'work'), 'request_id': 'history-paging-replay'}).json()
+                'source': 'shell', 'cwd': str(root / 'work'), 'request_id': 'history-paging-final'}).json()
             page.evaluate('info => openPendingSession(info)', shell)
             page.wait_for_function('T.ws?.readyState === WebSocket.OPEN', timeout=10000)
             keyboard = page.locator('#termpane .xterm-helper-textarea')
@@ -439,11 +439,11 @@ def replay_never_pages(pw, root):
             fixture.xterm_contains(page, 'RS_UNKNOWN')
             keyboard.press_sequentially('quit')
             keyboard.press('Enter')
-            page.wait_for_function("document.querySelector('#termpane').classList.contains('replay')"
-                                   " && [...T.views.values()].some(v => v.replay && v.ws?.readyState === 1)",
+            page.wait_for_function("document.querySelector('#termpane').classList.contains('final-screen')"
+                                   " && currentTermViewObject()?.finalScreenSize",
                                    timeout=15000)
             page.wait_for_function('currentTermViewObject().term.model.scrollback.length > 0', timeout=15000)
-            # Even if a replay model claimed older host rows, the console must not ask.
+            # Even if the final screen's model claimed older host rows, the console must not ask.
             page.evaluate('(() => { const m = currentTermViewObject().term.model;'
                           ' m.historyOlder = 500; m.historyPaging = true; })()')
             page.locator('.grid-canvas').hover()
@@ -454,9 +454,9 @@ def replay_never_pages(pw, root):
                 bar.press('Home')
             page.wait_for_timeout(600)
             assert page.evaluate('currentTermViewObject().term.buffer.active.viewportY') == 0
-            assert not requests, ('replay requested host history', requests)
+            assert not requests, ('final screen requested host history', requests)
             assert not errors, errors
-            print('PASS recording replay never requests host history', flush=True)
+            print('PASS an exited session\'s final screen never requests host history', flush=True)
         finally:
             context.close()
             browser.close()
@@ -464,14 +464,14 @@ def replay_never_pages(pw, root):
 
 def main():
     with tempfile.TemporaryDirectory(prefix='sessiondock-history-paging-') as tmp, \
-            private_hosts(Path(tmp), hosts=('live/host', 'replay/host', 'capped/host')), sync_playwright() as pw:
+            private_hosts(Path(tmp), hosts=('live/host', 'final/host', 'capped/host')), sync_playwright() as pw:
         root = Path(tmp)
         live = root / 'live'
-        replay = root / 'replay'
+        final = root / 'final'
         capped = root / 'capped'
         for parent, names in ((live, ['host', 'work', 'audit', 'claude', 'codex', 'grok']),
                               (capped, ['host', 'work', 'claude', 'codex', 'grok']),
-                              (replay, ['host', 'work', 'ledger', 'state', 'claude', 'codex', 'grok'])):
+                              (final, ['host', 'work', 'ledger', 'state', 'claude', 'codex', 'grok'])):
             parent.mkdir(mode=0o700)
             for name in names:
                 (parent / name).mkdir(mode=0o700)
@@ -481,7 +481,7 @@ def main():
                                   codex_message('user', 'Synthetic history paging')], [])
         fixture.SHELL = SHELL
         live_paging(pw, live, corpus, corpus.uid(sid))
-        replay_never_pages(pw, replay)
+        final_screen_never_pages(pw, final)
         capped_corpus = Corpus(capped)
         capped_corpus.put(sid, 'codex', [codex_row('session_meta', {'id': sid, 'cwd': str(capped / 'work')}),
                                          codex_message('user', 'Synthetic full host history')], [])

@@ -45,7 +45,7 @@ NFS，也可以是各自本地的目录；工作目录共享与会话存储共�
   只保证记录和关系完整，历史中的 shell session ID、工具句柄不代表目标端存在可继续使用的对象。
   Claude 后台任务的 `claude-<uid>/…/tasks/*.output` 临时日志同样不作为外部历史依赖；
   已过期的任务日志不阻止复制，记录中的原路径保持原文。
-- 迁移终端录像：agent 行本身不带录像（[terminal-records.md](terminal-records.md)）。
+- 迁移终端最终画面：agent 行本身不带（[terminal-final-screen.md](terminal-final-screen.md)）。
 
 ## 操作单元：整个连通组
 

@@ -2262,7 +2262,7 @@ function pendingTmuxSessions() {
       uid: pendingUid(t.name), pending: true, name: t.name, tmuxName: t.name, source,
       record_id:t.record_id, launch_id:t.launch_id,
       instance_id:t.instance_id, running:t.running, state:t.state, unavailable_reason:t.unavailable_reason,
-      native_binding:t.native_binding, binding:t.binding, recording:t.recording, grid:t.grid,
+      native_binding:t.native_binding, binding:t.binding, final_screen:t.final_screen, grid:t.grid,
       title: t.title || `新建 ${SOURCES[source].name} 会话`,
       kind: t.kind || '', report_id: t.report_id || '', cwd: t.cwd || '(未知)',
       created: new Date(pendingDraftStartedAt(pendingUid(t.name), t) * 1000).toISOString(),

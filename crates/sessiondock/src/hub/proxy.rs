@@ -712,8 +712,7 @@ pub async fn proxy(
     shutdown: CancellationToken,
     forward: Forward<'_>,
 ) -> Result<Response, ProxyError> {
-    let websocket =
-        forward.path == "/api/term/attach" || forward.path == "/api/term/records/attach";
+    let websocket = forward.path == "/api/term/attach";
     let idle = if forward.path == "/api/watch" {
         WATCH_TIMEOUT
     } else if forward.path.starts_with("/api/session/clone") {

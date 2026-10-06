@@ -10,7 +10,7 @@ button (`/api/term/takeover`), whose fake CLI echoes `resume <sid>`. Before the
 second creation the configured Claude executable is rewritten in place, the way
 the Windows Claude installer overwrites `claude.exe` while the service runs;
 creation must keep working and launch the rewritten file. A second server
-then runs with a host binary from before recordings (a wrapper that rejects
+then runs with a host binary from before `--no-record` (a wrapper that rejects
 `--no-record` with status 2 and otherwise runs the real ptyhost, the Cetus
 shape of 2026-09-19): an agent session must still be created through it. No
 model binary, native CLI home or production host is touched.
@@ -217,7 +217,7 @@ def main():
         for name, body in [("fake-claude", FAKE_CLAUDE), ("fake-codex", FAKE_CODEX),
                            ("service-env-tool", "#!/bin/sh\nprintf 'SERVICE_PATH_OK\\n'\n"),
                            ("cli-wrapper", '#!/bin/sh\nexport SESSIONDOCK_TEST_WRAPPER=loaded\nexec "$@"\n'),
-                           # A host binary from before recordings: it rejects the option
+                           # A host binary from before `--no-record`: it rejects the option
                            # with status 2 like the real one did, then runs the real host.
                            ("stale-host", '#!/bin/sh\nfor arg in "$@"; do case "$arg" in --no-record) '
                             'echo "未知参数: $arg" >&2; exit 2;; esac; done\n'
@@ -370,7 +370,7 @@ def main():
                     mobile.close()
                     assert corpus.paths[CODEX_SID].read_bytes() == native
 
-                # ---- A host binary from before recordings still creates agent
+                # ---- A host binary from before `--no-record` still creates agent
                 # sessions: the launcher probes it and drops `--no-record`.
                 with isolated_server(corpus, server_wrapper, host_dir=root / "host-stale", lifecycle_dir=root / "ledger-stale",
                                      launcher_config=stale_configuration, trash_dir=root / "trash-stale") as (base, _):
