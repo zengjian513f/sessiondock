@@ -96,10 +96,10 @@ def answer(page, root, sid, tool, questions, choices, menu, *, layout=False):
     if layout:
         expect(page.locator('#composer-question')).to_be_hidden()
         expect(page.locator('.live-question:visible')).to_have_count(1)
-        expect(card.locator('.question-option small')).to_have_count(6)
+        expect(card.locator('.question-option small')).to_have_count(sum(len(q['descriptions']) for q in questions))
     for index, choice in enumerate(choices):
         card.locator(f'[data-question-index="{index}"][data-question-option="{choice}"]').click()
-        if layout:
+        if layout and len(questions) > 1:
             page.evaluate('async () => await probeComposerInput(composerUid)')
             expect(card.locator(f'[data-question-index="{index}"][data-question-option="{choice}"]')).to_have_attribute('aria-pressed', 'true')
             expect(page.locator('.live-question:visible')).to_have_count(1)
@@ -193,6 +193,9 @@ def main():
                         if width == 390:
                             page.evaluate('showMobileDetail()')
                         answer(page, root, sid, f"toolu-described-{width}", DESCRIBED, [0, 1], {}, layout=True)
+                        # A single native question has a checkbox header, no
+                        # arrows/Submit tab, and an Up/Down navigation footer.
+                        answer(page, root, sid, f"toolu-single-described-{width}", DESCRIBED[:1], [0], {}, layout=True)
                     assert not errors and not dialogs, (errors, dialogs)
             finally:
                 browser.close()

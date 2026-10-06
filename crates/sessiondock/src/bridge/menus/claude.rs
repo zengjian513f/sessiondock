@@ -422,12 +422,17 @@ pub fn screen_prompt(screen: &str) -> Option<Value> {
         anchor_index -= 1;
     }
     let anchor = rows[anchor_index].line;
+    // A single AskUserQuestion hides the arrows and Submit tab, and uses the
+    // Up/Down guide. Its checkbox header is still navigation, not question
+    // text; including it breaks reconciliation with the native/hook question.
     let question_tabs = lower
-        .contains("tab/arrow keys to navigate")
+        .contains("navigate")
         .then(|| {
             (0..anchor).rfind(|&i| {
                 let s = lines[i].trim();
-                s.starts_with('←') && s.contains("Submit") && s.ends_with('→')
+                (s.starts_with('←') && s.contains("Submit") && s.ends_with('→'))
+                    || (s.starts_with(['☐', '☑', '☒'])
+                        && lines.get(i + 1).is_some_and(|line| line.trim().is_empty()))
             })
         })
         .flatten();
