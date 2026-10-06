@@ -44,9 +44,10 @@ substitute. Docs-only and deploy-script-only work use the doc/deploy suites.
 **Do not run any unit test unless the user explicitly asks** (`cargo test`,
 `tests/*_contract.mjs`, Python `unittest` suites); validate the changed surface
 with the headless browser suite that covers it. History: a 2026-10-06 audit
-found these suites had silently drifted — all 15 Node contract failures and
-most of the 21 `cargo test` failures were tests not updated after intentional
-changes, while the regressions that mattered were caught by browser suites.
+found these suites had silently drifted — all 15 Node contract failures, all 21
+`cargo test` failures and the one Python unittest failure were tests not updated
+after intentional changes (none was a product bug), while the regressions that
+mattered were caught by browser suites.
 
 The frontend `legacy-web/` is served as committed and needs no build.
 `--web-dir` (or `SESSIONDOCK_TEST_WEB_DIR`) points the browser suites at another

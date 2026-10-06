@@ -112,9 +112,10 @@
   `unittest` suites) unless the user explicitly asks for it; validate the
   changed surface with the headless browser suite that covers it. History: a
   2026-10-06 audit found the unit suites had silently drifted — all 15 Node
-  contract failures and most of the 21 `cargo test` failures were tests not
-  updated after intentional changes, while the regressions that mattered were
-  caught by browser suites. When the user does ask, fix the drift found.
+  contract failures, all 21 `cargo test` failures and the one Python unittest
+  failure were tests not updated after intentional changes (none was a product
+  bug), while the regressions that mattered were caught by browser suites.
+  When the user does ask, fix the drift found.
 - Docs-only and deploy-script-only changes use the doc/deploy suites, not a
   token browser run. Anything the page can show still needs the browser path.
 - Full sweep: `python3 tests/run_validation.py`. Use `--list`, `--dry-run`,
