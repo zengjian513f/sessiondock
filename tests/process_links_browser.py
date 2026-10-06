@@ -24,7 +24,7 @@ from node_auth_fixtures import node_env, TOKEN, free_port
 from spawned_by_fixtures import START, proc_pid
 
 WORKING = re.compile(r'\bturn-working\b')
-START.update({900: 90_000, 910: 91_000, 920: 92_000})
+START.update({900: 90_000, 910: 91_000, 920: 92_000, 930: 93_000, 940: 94_000})
 
 
 def wait_for(function, timeout=20):
@@ -358,6 +358,17 @@ def main():
                         print('PASS stable polls skip publish, read recovery republishes and new descendant retries failed publication', flush=True)
                         older = scoped(nodes[0].nid, corpora[0].uid('older'))
                         older_badge = page.locator(f'#side .item[data-uid="{older}"] > .ico > .item-status')
+                        # BUG-20261006-231836-0d5270: an SSH test run left
+                        # a detached ptyhost and an idle fake CLI. Attribution
+                        # remains valid, but neither is remote command work.
+                        proc_pid(procs[1], 930, 'ptyhost',
+                            ['/synthetic/ptyhost', '--dir', '/synthetic/hosts', 'run'], 1,
+                            env=[('SSH_CONNECTION', '10.0.0.1 50002 10.0.0.2 50022')])
+                        proc_pid(procs[1], 940, 'python', ['python', 'fake_claude_cli.py'], 930)
+                        wait_for(lambda: all(any(b['process']['pid'] == pid
+                            and all(b['session'].get(k) == v for k, v in owner.items())
+                            for b in get_json(opener, base, '/api/process-links')['bindings'])
+                            for pid in (930, 940)))
                         shutil.rmtree(procs[0] / '910')
                         hub_live = lambda: get_json(opener, f'http://127.0.0.1:{hub.port}', '/api/live?force=1')
                         wait_for(lambda: older not in hub_live()['working_uids'] and owner in hub_live()['remote_working'])
@@ -367,7 +378,14 @@ def main():
                         wait_for(lambda: owner not in hub_live()['remote_working'])
                         page.evaluate('refreshLive(true)')
                         expect(older_badge).not_to_have_class(WORKING)
-                        print('PASS remote job lights its owner through Hub after SSH client exit and clears on exit', flush=True)
+                        page.locator(f'#side .item[data-uid="{older}"]').click()
+                        expect(page.locator('#msgs')).to_contain_text('a older')
+                        expect(page.locator('#dlive')).not_to_have_class(WORKING)
+                        page.reload(wait_until='networkidle')
+                        page.wait_for_function('uid => S.sel === uid && S.live.has(uid)', arg=older)
+                        expect(page.locator('#dlive')).not_to_have_class(WORKING)
+                        expect(older_badge).not_to_have_class(WORKING)
+                        print('PASS remote job clears on exit despite a retained terminal host and idle CLI, including reload', flush=True)
                         # Persisted per-process identity survives no live SSH evidence.
                         late_stat = procs[1] / '700/stat'
                         late_stat.write_text(late_stat.read_text().replace('S 100 ', 'S 1 '))
@@ -375,6 +393,8 @@ def main():
                         (procs[1] / '100/environ').write_bytes(b'')
                         print('PASS remote CLI attribution and automatic nesting, chronology and browser gates', flush=True)
                     else:
+                        owner = {'node_id': nodes[0].nid, 'source': 'codex', 'sid': 'older'}
+                        assert owner not in get_json(opener, base, '/api/live?force=1')['remote_working']
                         assert any(b['process']['pid'] == 700 and b['session']['sid'] == 'parent'
                             for b in bindings), 'late descendant must retain its own persisted link'
                         # Reusing PID 300 must not inherit its predecessor's saved link.

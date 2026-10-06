@@ -7,7 +7,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 fn infrastructure(cmd: &str) -> bool {
     let name = cli_name(argv0_of(cmd));
     let args: Vec<_> = cmd.split_ascii_whitespace().collect();
-    name == "codex-code-mode-host"
+    name == "ptyhost"
+        || name == "codex-code-mode-host"
         || (name == "codex" && args.get(1) == Some(&"app-server"))
         || (name == "opencode" && args.get(1) == Some(&"serve"))
         || args.windows(2).any(|pair| pair == ["mcp", "serve"])
@@ -119,6 +120,8 @@ impl ProcTree {
             // Nearest positively owned CLI wins over inherited root identity.
             // A code-mode host is transparent to commands it launches; an MCP
             // server's own descendants belong to its persistent transport.
+            // A terminal host is likewise a boundary: its idle shell/CLI
+            // must not keep the session that launched the host working.
             while current > 1 && seen.insert(current) {
                 if let Some(uid) = by_pid.get(&current) {
                     owner = Some(*uid);
