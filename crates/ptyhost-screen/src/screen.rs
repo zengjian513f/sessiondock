@@ -119,6 +119,9 @@ pub struct Screen {
     scroll_armed: bool,
     scroll_seen: usize,
     scroll_mark: Option<Row<Cell>>,
+    /// 见 [`Screen::take_resize_moved`]：上次取数后 resize 前后进出主屏历史的行数；
+    /// 期间有过宽度重排、备用屏幕上的 resize 或模型重建时为 None。
+    resize_moved: Option<i64>,
 }
 
 fn new_term(cols: u16, rows: u16, history: usize, responder: Responder) -> Term<Responder> {
@@ -150,6 +153,7 @@ impl Screen {
             scroll_armed: false,
             scroll_seen: 0,
             scroll_mark: None,
+            resize_moved: Some(0),
         }
     }
 
@@ -190,6 +194,13 @@ impl Screen {
 
     pub fn resize(&mut self, cols: u16, rows: u16) {
         let (cols, rows) = (cols.max(1), rows.max(1));
+        let (old_cols, old_rows) = (self.cols, self.rows);
+        // 先结清 resize 前已滚进历史、还没被取走的行：resize 会挪动滚动计数，
+        // 而 resize 之后的那帧快照不带 scrolled。
+        let pending = self.take_scrolled();
+        let alt = self.alt();
+        let before = self.history_len();
+        let cursor_line = self.term.grid().cursor.point.line.0.max(0) as usize;
         self.cols = cols;
         self.rows = rows;
         let ok = catch_unwind(AssertUnwindSafe(|| {
@@ -201,7 +212,32 @@ impl Screen {
         .is_ok();
         if !ok {
             self.recover();
+            return;
         }
+        if alt || cols != old_cols {
+            // 宽度变化整体重排，备用屏幕上的主屏也会被重排：算不出搬了哪些行。
+            self.resize_moved = None;
+        } else if let Some(moved) = self.resize_moved {
+            // 变矮：光标以上放不下的行被推进历史（历史满时最旧的行同时被挤掉，
+            // 行数照样计入）；变高：历史最后几行被拉回屏幕顶部。
+            let pushed = (cursor_line + 1).saturating_sub(rows as usize);
+            let pulled = if rows > old_rows {
+                before.saturating_sub(self.history_len())
+            } else {
+                0
+            };
+            self.resize_moved =
+                Some(moved + pending.unwrap_or(0) as i64 + pushed as i64 - pulled as i64);
+        }
+        // resize 之后重新起算滚动计数。
+        let _ = self.take_scrolled();
+    }
+
+    /// 上次取数以来 resize 前后进入（正）或离开（负）主屏历史的行数，包括 resize
+    /// 前已滚进历史、尚未取走的输出行。宿主历史满了以后 history_total 不再变化，
+    /// 浏览器靠它在 resize 快照里补上这些行。有过宽度重排等算不出的情况时为 None。
+    pub fn take_resize_moved(&mut self) -> Option<i64> {
+        self.resize_moved.replace(0)
     }
 
     /// 模型因 panic 被重建的次数；capture 应答里带上，调用方可据此判断画面是否可信。
@@ -244,6 +280,7 @@ impl Screen {
         self.term = new_term(cols, rows, history, self.responder.clone());
         self.parser = Processor::new();
         self.resets += 1;
+        self.resize_moved = None;
         eprintln!(
             "screen model reset #{} ({}x{}, blank)",
             self.resets, cols, rows

@@ -649,10 +649,16 @@ export class GridModel {
       this._historyBaseStale = true;
       return;
     }
-    const delta = total - (this.historyBase + this.historyAppended);
+    const expected = this.historyBase + this.historyAppended;
+    // 宿主给出 history_moved 时以它为准：宿主历史满了以后行数不再变化，
+    // 按 history_total 的增减算不出变矮推进历史的行（同 _applyDiff 的 dropped）。
+    const moved = typeof msg.history_moved === 'number' ? msg.history_moved : null;
+    const delta = moved ?? total - expected;
     // 宽度变了或基数不可信时本地算不出搬了哪些行，只能和宿主历史末尾对齐。
     const local = !widthChanged && !this._historyBaseStale;
     this._historyBaseStale = false;
+    const dropped = moved == null ? 0 : expected + moved - total;
+    if (local && dropped > 0) this.historyOlder = Math.max(0, this.historyOlder - dropped);
     if (local && delta > 0 && delta <= this.viewport.length) {
       // 变矮：原屏幕最上面 delta 行进了宿主历史；绝对行号不变。
       for (let y = 0; y < delta; y++) this.scrollback.push(this.viewport[y]);

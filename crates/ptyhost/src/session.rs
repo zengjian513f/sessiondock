@@ -1269,11 +1269,20 @@ impl Session {
             state.need_snapshot = false;
             return;
         }
-        let (next, scrolled, history, title) = {
+        let (next, scrolled, history, title, moved) = {
             let mut screen = lock(&self.screen);
             let next = grid::capture(&screen);
             // 每次捕获都消耗滚动计数；resize 快照、刚离开备用屏幕或没有上一帧时丢弃。
             let mut scrolled = grid::take_scrolled_rows(&mut screen);
+            // resize 快照不带 scrolled：resize 之后又滚进的行并入 history_moved。
+            // 新客户端的 reset:true 快照本身就是基准，同样把累计清零。
+            let moved = if state.need_snapshot || !pending.is_empty() {
+                screen
+                    .take_resize_moved()
+                    .map(|moved| moved + scrolled.len() as i64)
+            } else {
+                None
+            };
             if !matches!(&state.last, Some(prev) if !state.need_snapshot && !prev.alt) {
                 scrolled.clear();
             }
@@ -1283,7 +1292,7 @@ impl Session {
                 let from = next.history.saturating_sub(grid::SNAPSHOT_HISTORY_ROWS);
                 grid::history_rows(&screen, from, next.history)
             };
-            (next, scrolled, history, screen.title())
+            (next, scrolled, history, screen.title(), moved)
         };
         // OSC 52：xterm.js 客户端自己处理该序列；网格客户端收到解码后的文本。
         let clipboard = lock(&self.screen).take_clipboard();
@@ -1291,7 +1300,8 @@ impl Session {
         if !live.is_empty() {
             if state.need_snapshot || state.last.is_none() {
                 state.seq += 1;
-                let line = grid::snapshot_json(&next, &[], next.history, state.seq, false);
+                let line =
+                    grid::snapshot_json_moved(&next, &[], next.history, state.seq, false, moved);
                 Self::send_grid(&live, &line);
             } else if let Some(prev) = &state.last {
                 let title = title_changed.then_some(title.as_str());
