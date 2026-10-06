@@ -395,6 +395,27 @@ pub(super) fn window(
         stop -= 1;
         tail_visible += usize::from(selected[stop].event.message["silent"] != true);
     }
+    // The event target can land inside a long tool-heavy turn, leaving its
+    // user input in the gap and only a folded process/reply on the page.
+    // Complete that boundary turn when the existing byte/media budget allows.
+    // Do not cross into an older turn or infer a turn for untagged records.
+    if tail_visible == WINDOW_TAIL_EVENTS
+        && let Some(turn) = selected[stop].event.message["turn_id"]
+            .as_str()
+            .filter(|turn| !turn.is_empty())
+    {
+        while stop > 0
+            && selected[stop - 1].event.message["turn_id"] == turn
+            && budget.take_at(
+                snapshot,
+                selected[stop - 1].index,
+                selected[stop - 1].event,
+                usize::MAX,
+            )?
+        {
+            stop -= 1;
+        }
+    }
     let mut start = 0;
     let mut head_visible = 0;
     while start < stop
