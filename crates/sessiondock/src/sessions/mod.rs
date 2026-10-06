@@ -1281,20 +1281,20 @@ pub(crate) fn hash(bytes: &[u8]) -> String {
 pub(crate) fn path_text(path: &Path) -> std::borrow::Cow<'_, str> {
     let text = path.to_string_lossy();
     #[cfg(windows)]
-    {
+    let text: std::borrow::Cow<'_, str> = {
         // `str(Path.resolve())` uses an ordinary drive/UNC spelling,
         // while Rust canonicalize returns the Win32 verbatim `\\?\` form.
         // UIDs are a hash of that spelling and must stay identical whether
         // the caller passes a configured path or its canonicalized equivalent.
-        if let Some(rest) = text.strip_prefix("\\\\?\\UNC\\") {
-            return format!("\\\\{rest}").replace('/', "\\").into();
-        }
-        if let Some(rest) = text.strip_prefix("\\\\?\\") {
-            return rest.replace('/', "\\").into();
-        }
-        return text.replace('/', "\\").into();
-    }
-    #[cfg(not(windows))]
+        let spelled = if let Some(rest) = text.strip_prefix("\\\\?\\UNC\\") {
+            format!("\\\\{rest}").replace('/', "\\")
+        } else if let Some(rest) = text.strip_prefix("\\\\?\\") {
+            rest.replace('/', "\\")
+        } else {
+            text.replace('/', "\\")
+        };
+        spelled.into()
+    };
     text
 }
 

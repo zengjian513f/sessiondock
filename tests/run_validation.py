@@ -209,6 +209,8 @@ def main(argv=None):
                         help="parallel browser (Chromium) suites; kept low to avoid render contention")
     parser.add_argument("--include-real", action="store_true",
                         help="also run the *_real paid-CLI operator suites (excluded by default)")
+    parser.add_argument("--real-only", action="store_true",
+                        help="run only the *_real paid-CLI suites: the release acceptance step (docs/release.md)")
     args = parser.parse_args(argv)
     env = os.environ.copy()
     prebuilt_web = args.web_dir or env.get("SESSIONDOCK_TEST_WEB_DIR")
@@ -226,7 +228,9 @@ def main(argv=None):
             continue
         if suite["name"] in skipped:
             continue
-        if suite.get("real") and not args.include_real:
+        if suite.get("real") and not (args.include_real or args.real_only):
+            continue
+        if args.real_only and not suite.get("real"):
             continue
         plan.append(suite)
 

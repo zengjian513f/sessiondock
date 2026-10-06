@@ -77,20 +77,21 @@ pub(crate) fn normalize_media_ref(raw: &str) -> Result<String, FileError> {
         &decoded
     };
     #[cfg(windows)]
-    {
+    let value = {
         let value = value
             .strip_prefix("\\\\?\\UNC\\")
             .map(|rest| format!("//{rest}"))
             .or_else(|| value.strip_prefix("\\\\?\\").map(str::to_owned))
             .unwrap_or_else(|| value.to_owned());
-        let value = value
+        value
             .strip_prefix('/')
             .filter(|value| value.as_bytes().get(1) == Some(&b':'))
-            .unwrap_or(&value);
-        return Ok(value.replace('\\', "/"));
-    }
+            .unwrap_or(&value)
+            .replace('\\', "/")
+    };
     #[cfg(not(windows))]
-    Ok(value.to_owned())
+    let value = value.to_owned();
+    Ok(value)
 }
 
 pub fn clean_ref(value: &str) -> Result<String, FileError> {

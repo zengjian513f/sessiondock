@@ -81,7 +81,8 @@ keep its activity dot breathing after the turn ends (BUG-20261004-070702-c1ac6b)
   the fleet under `AGENTS.md`, without asking for confirmation again.
 - **Paid CLI checks** — the `*_real` suites spawn real Claude/Codex/Grok and are
   excluded by default; run them deliberately with `--include-real`, per batch,
-  not unattended.
+  not unattended. `--real-only` runs just those suites: the release acceptance
+  step ([release](release.md#release-acceptance)).
 
 ## Prerequisites
 

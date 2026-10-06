@@ -98,6 +98,9 @@ def main():
                     page.locator('#report-bug').click()
                     page.locator('#bug-report-description').fill(DESCRIPTION)
                     page.locator('input[name="bug-report-source"][value="codex"]').check()
+                    # The picker defaults to high effort; choose low as a user would.
+                    page.wait_for_function("[...document.querySelectorAll('#bug-report-effort option')].some(o => o.value === 'low' && !o.disabled)")
+                    page.locator('#bug-report-effort').select_option('low')
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/bug-report') as created:
                         page.locator('#bug-report-go').click()
                     assert created.value.status == 202, created.value.text()

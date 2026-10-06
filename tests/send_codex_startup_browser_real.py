@@ -84,6 +84,9 @@ def main():
                     page.locator('#new-session').click()
                     page.locator('input[name="new-source"][value="codex"]').check()
                     page.locator('#new-cwd').fill(str(root / 'work'))
+                    # The picker defaults to high effort; choose low as a user would.
+                    page.wait_for_function("[...document.querySelectorAll('#new-effort option')].some(o => o.value === 'low' && !o.disabled)")
+                    page.locator('#new-effort').select_option('low')
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/term/create') as created:
                         page.locator('#new-session-go').click()
                     assert created.value.status == 200, created.value.text()
@@ -107,7 +110,8 @@ def main():
                         if contexts and matches and replies:
                             break
                         page.wait_for_timeout(200)
-                    assert contexts and len(matches) == 1 and replies, 'native submission/reply missing or duplicated'
+                    assert contexts and len(matches) == 1 and replies, ('native submission/reply missing or duplicated',
+                        len(contexts), [c.get('text', '')[:80] for r in users for c in r.get('content', [])], len(replies))
                     assert any(c.get('text', '').strip() == 'OK' for r in replies for c in r['payload'].get('content', []))
                     print('PASS real Codex cold-start browser SEND: one exact native user message, Luna low, reply OK')
                 finally:

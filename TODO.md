@@ -32,7 +32,5 @@
 - [ ] 评估是否仍需独立合成语料统计工具，以及由源码生成的预算参考表；仅维护
   仍有效的性能/协议数字，不恢复已删除的输入拒绝规则。
 
-- [ ] 产出可复现发布包和 Linux/Windows/macOS CI 矩阵；Windows OpenSSH 原生构建遵循
-  `docs/deploy-windows.md`。
-- [ ] 将真实 Claude/Codex/Grok CLI 套件纳入明确的发布验收步骤；继续使用临时配置和
-  `AGENTS.md` 规定的低成本测试模型，不进入默认验证清扫。
+- [ ] 为 Grok、Agy 补可运行的真实 CLI 套件，纳入 `--real-only` 发布验收
+  （`docs/release.md`）；继续使用 `AGENTS.md` 规定的低成本测试模型。

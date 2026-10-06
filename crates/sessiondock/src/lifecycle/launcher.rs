@@ -34,13 +34,23 @@ pub const SID_PLACEHOLDER: &str = "{sid}";
 /// (`CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CLAUDE_PID`)
 /// are refused too: a web-created session must not be
 /// recorded as the child of whatever session started this service.
-pub const DENIED_ENV: [&str; 6] = [
+pub const DENIED_ENV: [&str; 13] = [
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_COMPANION_SESSION_ID",
     "GROK_SESSION_ID",
     "CODEX_THREAD_ID",
     "CODEX_SESSION_ID",
     "CLAUDE_PID",
+    // Claude Code's markers for a process running inside one of its
+    // sessions. Inherited, `CLAUDE_CODE_CHILD_SESSION` turns transcript
+    // saving off, so the new session would leave no native record.
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
 ];
 fn default_schema() -> u32 {
     1

@@ -144,7 +144,13 @@ binary they started with; new launches resolve the executable again.
 The child inherits the service environment, then applies `env` and
 `env_remove`. Session-lineage variables are cleared:
 `CLAUDE_CODE_SESSION_ID`, `CODEX_COMPANION_SESSION_ID`,
-`GROK_SESSION_ID`, `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, and `CLAUDE_PID`.
+`GROK_SESSION_ID`, `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CLAUDE_PID`, and
+Claude Code's in-session markers `CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`,
+`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_CODE_EXECPATH`,
+`CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN` (an inherited
+`CLAUDE_CODE_CHILD_SESSION` turns transcript saving off, so a service started
+from inside a Claude Code session would launch Claude sessions with no native
+record). Other `CLAUDE_CODE_*` settings pass through.
 Ordinary values such as `TMUX`, custom variables, system paths, proxy settings,
 and provider credentials are accepted. Operating-system NUL and environment
 name rules still apply.
