@@ -407,7 +407,7 @@ def main():
                     action = page.locator("#a-session-action")
                     if not action.is_visible():
                         page.locator("#a-more").click()
-                    expect(action).to_have_attribute("aria-label", "删除会话", timeout=15000)
+                    expect(action).to_have_attribute("aria-label", "删除当前会话", timeout=15000)
                     with page.expect_response(lambda response: response.request.method == "DELETE"
                                               and urlsplit(response.url).path.startswith("/api/session/")) as deleted:
                         action.click()

@@ -68,10 +68,10 @@ def open_session(page, corpus, sid, text):
 
 
 def click_delete(page, narrow):
-    if narrow:
+    if not page.locator("#a-session-action").is_visible():
         page.locator("#a-more").click()
     button = page.locator("#a-session-action")
-    expect(button).to_have_attribute("title", "删除会话")
+    expect(button).to_have_attribute("title", "删除当前会话")
     button.click()
 
 

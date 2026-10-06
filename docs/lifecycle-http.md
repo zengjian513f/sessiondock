@@ -94,6 +94,11 @@ migration and is unavailable while an ordinary session is running. Controls
 refresh from native liveness and managed terminal observations. Sources without
 a resume-capable profile, and exited SSH/pending receipts without a native
 session to resume, show a disabled start action with the reason.
+Running AI launches without a native session record show a disabled stop action
+in both the detail header and sidebar menu, explaining that they cannot resume
+after stopping. Bulk stop excludes these launches. They can still be used or
+explicitly discarded; once a native record appears, normal stop/resume applies.
+SSH receipts retain their existing stop and recording-replay behavior.
 
 ### Installed CLIs
 
