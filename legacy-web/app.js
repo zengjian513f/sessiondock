@@ -6034,6 +6034,8 @@ function layoutSessionHead(heading = $('#detail .dhead')) {
     // 操作按钮先放：按菜单顺序逐个平铺，到放不下的那一个为止，它和后面的都留在菜单里
     const actionsGap = parseFloat(getComputedStyle(actions).columnGap) || 0;
     for (const node of [...list.children]) {
+      // Deletion scope must stay readable; never flatten these actions to icons.
+      if (node.hasAttribute('data-menu-only')) continue;
       node.dataset.fromMenu = '1';
       actions.insertBefore(node, wrap);
       const width = node.getBoundingClientRect().width + actionsGap;
@@ -6046,7 +6048,7 @@ function layoutSessionHead(heading = $('#detail .dhead')) {
       for (const item of menuButtons(node)) item.removeAttribute('role');
     }
     // 操作全放下了，元信息再按固定顺序往标题后放，放不下的留在菜单里
-    if (brief && !list.children.length) {
+    if (brief && !list.querySelector(':scope > :not([data-menu-only])')) {
       brief.hidden = false;
       for (const item of items) brief.appendChild(item);
       const briefGap = parseFloat(getComputedStyle(brief).columnGap) || 0;
@@ -6308,8 +6310,8 @@ function head(m, total) {
             aria-label="报告当前会话问题">${uiIcon('bug')}</button>
         </div>
         ${SessionDockCapabilities.config.session_clone_local_codex === true ? `<button class="session-menu-action" id="a-clone-group" type="button" title="迁移会话树" aria-label="迁移会话树">${uiIcon('transfer')}</button>` : ''}
-        ${SessionDockCapabilities.config.session_delete_tree === true ? `<button class="session-menu-action danger" id="a-delete-tree" type="button" title="删除会话树" aria-label="删除会话树">${uiIcon('trash')}</button>` : ''}
-        ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action"></button>'}
+        ${SessionDockCapabilities.config.session_delete_tree === true ? `<button class="session-menu-action danger" id="a-delete-tree" data-menu-only type="button" title="删除会话树" aria-label="删除会话树">${uiIcon('tree')}</button>` : ''}
+        ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action" data-menu-only></button>'}
         `, `
     <div class="dmeta">
       <span id="mcount-total">${total} 条消息</span>
@@ -6627,7 +6629,7 @@ function renderSessionAction(m, button = $('#a-session-action')) {
   }
   const launch = unusedNewAssignedLaunch(m);
   button.innerHTML = uiIcon('trash');
-  button.title = button.ariaLabel = '删除会话';
+  button.title = button.ariaLabel = '删除当前会话';
   labelSessionAction(button);
   if (launch && typeof deletePendingSession === 'function') {
     button.onclick = () => deletePendingSession(launch, button);

@@ -131,11 +131,11 @@ def create_source(page, source, work):
     return receipt, pending_uid
 
 
-def discard_selected(page):
+def discard_selected(page, native=False):
     action = page.locator("#a-session-action")
     if not action.is_visible():
         page.locator("#a-more").click()
-    expect(action).to_have_attribute("aria-label", "删除会话")
+    expect(action).to_have_attribute("aria-label", "删除当前会话" if native else "删除会话")
     action.click()
 
 
@@ -319,7 +319,7 @@ def run_source(page, context, base, source, work):
     expect(menu_delete).to_be_visible()
     expect(menu_delete).to_have_text("删除会话" if source == "shell" else "丢弃会话")
     page.keyboard.press("Escape")
-    discard_selected(page)
+    discard_selected(page, native=bool(native_uid))
     deadline = time.monotonic() + 8
     last = None
     while time.monotonic() < deadline:

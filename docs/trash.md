@@ -45,6 +45,12 @@ session is running, with the same unavailable styling and input guard as tree
 migration. Both the detail action and an open sidebar menu update when liveness
 changes; execution still checks every member on the server.
 
+Detail deletion actions stay in the **更多会话操作** menu at every screen width,
+with visible scope labels: **删除当前会话** uses the trash icon and
+**删除会话树** uses the existing tree icon. They never flatten into adjacent
+unlabelled trash buttons. The global **回收站** entry opens deleted items;
+the deletion confirmations and tree member preview keep their existing scope.
+
 - `POST /api/session/tree/plan` with `{uid}` previews the exact member list,
   logical session count and owned file sizes. It reuses the transfer relationship
   inventory; it does not stage a copy, rewrite identities or snapshot native DBs.

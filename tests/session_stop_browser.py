@@ -139,7 +139,7 @@ def main():
                     page.wait_for_function("uid => (T.list || []).some(row => row.uid === uid && row.instance_id)", arg=codex_uid)
                     action = session_action(page)
                     expect(action).to_have_attribute("aria-label", "停止会话")
-                    expect(page.locator("#a-session-action")).to_have_attribute("aria-label", "删除会话")
+                    expect(page.locator("#a-session-action")).to_have_attribute("aria-label", "删除当前会话")
                     expect(page.locator("#a-session-action")).to_have_attribute("aria-disabled", "true")
                     expect(page.locator('.dhead-actions .session-menu-action').first).to_have_attribute('id','a-session-toggle')
                     page.evaluate('''() => {

@@ -55,7 +55,35 @@ def main():
                     page=context.new_page();page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
                     on_popup(page,lambda d:d.accept())
                     uid=scoped(node.nid,corpus.uid('a'))
+                    if not restart:
+                        leaf_uid=scoped(node.nid,corpus.uid('unrelated'))
+                        page.locator(f'#side .item[data-uid="{leaf_uid}"]').click()
+                        expect(page.locator('#a-session-action')).to_have_attribute('aria-label','删除当前会话')
+                        # BUG-20261006-044032: deletion scopes remain labelled in the
+                        # menu even when a wide header could fit two bare icons.
+                        for width in (2400, 1280, 424, 390):
+                            page.set_viewport_size({'width':width,'height':900})
+                            if not page.locator('#a-more').is_visible():
+                                page.locator(f'#side .item[data-uid="{leaf_uid}"]').click()
+                            expect(page.locator('#session-actions-menu')).to_be_hidden()
+                            page.locator('#a-more').click()
+                            menu_actions=page.locator('#session-actions-menu')
+                            for selector,label,icon in (
+                                ('#a-delete-tree','删除会话树','#i-tree'),
+                                ('#a-session-action','删除当前会话','#i-trash'),
+                            ):
+                                entry=menu_actions.locator(selector)
+                                expect(entry.locator('span')).to_be_visible()
+                                expect(entry).to_have_text(label)
+                                expect(entry.locator('use')).to_have_attribute('href',icon)
+                            expect(menu_actions.locator('use[href="#i-trash"]')).to_have_count(1)
+                            page.keyboard.press('Escape')
+                            expect(page.locator('#a-more')).to_be_focused()
+                        page.set_viewport_size({'width':1280,'height':900})
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    expect(page.locator('#a-session-action')).to_have_attribute('aria-label','隐藏父会话')
+                    page.set_viewport_size({'width':390 if restart else 1280,'height':900})
+                    print('PASS deletion scopes labelled with distinct icons at desktop and mobile widths',flush=True)
                     # Real process observations disable both entry points, including
                     # a menu already open when a native session starts or stops.
                     attempts=[]

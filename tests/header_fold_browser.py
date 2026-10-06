@@ -181,12 +181,13 @@ def check_head(page, width, tier, tiers, key, meta_order):
     state = page.evaluate(HEAD_STATE_JS)
     where = f"{key}@{width}"
     action_order = state["globals"] + ACTION_ORDER
-    priority = action_order + meta_order
+    priority = [i for i in action_order if i != 'a-session-action'] + meta_order
     inline_actions = [i for i in state["inline"] if i not in ("a-term", "a-more", "session-resources")]
     placed = inline_actions + state["brief"]
     assert placed == priority[:len(placed)], (where, placed, priority, state)
     assert state["brief"] + state["menu_meta"] == meta_order, (where, state)
     assert inline_actions + state["menu_actions"] == action_order, (where, state)
+    assert 'a-session-action' in state['menu_actions'], (where, state)
     remaining = bool(state["menu_meta"] or state["menu_actions"])
     assert state["more"] == remaining, (where, state)
     assert ("a-more" in state["inline"]) == remaining, (where, state)
@@ -427,7 +428,7 @@ def run(page, uid):
     mobile_actions = ["a-global-settings"]
     if page.evaluate("appDisplayMode.matches || navigator.standalone === true"):
         mobile_actions.append("a-global-page-reload")
-    priority_of = lambda tier: (mobile_actions if tier == "narrow" else []) + ACTION_ORDER + meta_order  # noqa: E731
+    priority_of = lambda tier: (mobile_actions if tier == "narrow" else []) + [i for i in ACTION_ORDER if i != 'a-session-action'] + meta_order  # noqa: E731
     header_rows, head_rows, heights, header_tiers, head_tiers, chrome_tiers = [], [], [], {}, {}, {}
     chrome_events = []
     previous_chrome = None
@@ -457,7 +458,7 @@ def run(page, uid):
             page.evaluate("showMobileDetail()")
             settle(page)
         state = check_head(page, width, tier, head_tiers, "viewport", meta_order)
-        head_rows.append((width, state["menu_meta"] + state["menu_actions"], tier))
+        head_rows.append((width, state["menu_meta"] + [i for i in state["menu_actions"] if i != 'a-session-action'], tier))
     check_scope_scrolls(page)
     header_events = fold_events(header_rows, lambda tier: header_actions)
     head_events = fold_events(head_rows, priority_of)
@@ -489,7 +490,7 @@ def run(page, uid):
             page.evaluate("w => setSideWidth(w, true)", side)
             settle(page)
             state = check_head(page, side, tier, drag_tiers, f"drag{width}", meta_order)
-            drag_rows.append((width - side, state["menu_meta"] + state["menu_actions"], tier))
+            drag_rows.append((width - side, state["menu_meta"] + [i for i in state["menu_actions"] if i != 'a-session-action'], tier))
         page.evaluate("setSideWidth(340, true)")
     drag_events = fold_events(drag_rows, priority_of)
     assert drag_events, drag_rows
