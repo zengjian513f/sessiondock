@@ -30,18 +30,23 @@ Linux 节点及 Hub 可在 `extra.expected_hostname` 填写目标 `hostname` 的
 ## 命令
 
 ```sh
-python3 deploy/deploy.py build    [--allow-dirty] [--web-from-head] [--with-ptyhost] [--web-only]
+python3 deploy/deploy.py build    [--allow-dirty PATH ...] [--without-ptyhost] [--web-only]
                                   [--test none|affected|full] [--test-base REF] [--test-timeout S]
 python3 deploy/deploy.py push     [--targets a,b | --all] [--stage DIR] [--web-only | --bin-only]
-                                  [--with-ptyhost] [--dry-run] [--parallel N] [--keep-backups N]
+                                  [--without-ptyhost] [--dry-run] [--parallel N] [--keep-backups N]
                                   [--health-timeout S] [--targets-file PATH] [-v]
 python3 deploy/deploy.py deploy   # build → test → push，标志相同；--test 在这里默认 affected
 python3 deploy/deploy.py rollback --targets X [--backup DIR]
 ```
 
-- `build`：`git status --porcelain -- crates legacy-web Cargo.toml Cargo.lock` 非空即拒绝并列出文件；
-  `--allow-dirty` 才继续（此时 web 快照来自工作树，`--web-from-head` 可改回 HEAD，用于共享
-  checkout 里别人的未提交前端改动）。`--web-only` 完全不跑 cargo。默认 `--targets-file` 是
+- `build`：源码是 HEAD，外加 `--allow-dirty` 点名的未提交文件或目录（点名的路径必须确有改动，
+  否则拒绝）。共享 checkout 里其他未提交改动（别的会话尚未完成的工作）既不阻止构建也不进入
+  stage，构建只列出它们。源码树检出到私有构建 worktree `target/deploy/tree`，在那里用独立的
+  `--target-dir target/deploy/cargo-target` 编译，web 快照也取自同一棵树；固定路径让增量缓存在
+  多次部署间有效。历史：2026-10-06 之前构建直接编译共享工作区，任何会话的未提交改动都会挡住
+  部署，`--allow-dirty` 只能整体放行，结果把另一会话未完成的改动发上了线。
+  ptyhost 默认一并构建和发布（`--without-ptyhost` 关闭；`--with-ptyhost` 仍可用，要求 stage 带
+  ptyhost）。`--web-only` 完全不跑 cargo。默认 `--targets-file` 是
   `deploy/targets.local.json`（缺省时退回 `targets.example.json`），其中 `build` 段给出 cargo
   路径与包名；`sessiondock-hub` 是 `sessiondock` 包里的第二个 bin，工具用 `cargo metadata` 解析。
   前端 `legacy-web/` 按快照原样进入 stage，不执行任何 Node 构建。
@@ -79,18 +84,17 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 | 产物 | 内容 | 用途 |
 | --- | --- | --- |
 | `bin/<name>` + `artifacts.json` 里的 `sha256` | `cargo build --release --locked` 的 glibc 二进制，从 `target/release/` 拷进 stage | `linux-node`、`hub` 直接上传；stage 一旦生成就不再受后续构建影响 |
-| `web/` | `git archive HEAD legacy-web` 解出的快照（或 `--allow-dirty` 的工作树，排除 `node_modules`、`.DS_Store`、`*.swp`），原样发布 | 所有 kind 的 `web/` |
-| `source.tar` | 默认 `git archive --format=tar HEAD`；`--allow-dirty` 使用所有已跟踪文件的工作区快照 | `build_on_target` 的 kind（macOS、Windows）在节点上原生构建，与本机构建使用相同源码 |
+| `web/` | 源码树（HEAD 加点名文件）里 `legacy-web` 的快照，原样发布 | 所有 kind 的 `web/` |
+| `source.tar` | 源码树（HEAD 加 `--allow-dirty` 点名文件）的 `git archive` | `build_on_target` 的 kind（macOS、Windows）在节点上原生构建，与本机构建使用相同源码 |
 
 `artifacts.json` 还记录 commit、`dirty`、`built_at`、web 来源和 cargo 命令，以及测试门的结果
 （`test_mode`、`test_base`、`test_full`、`test_suites`、`test_result`、`test_log`）；`logs/` 放 cargo 日志、
 测试门的 `tests.log` / `tests.json` / `validation/<suite>.log` 和每台目标的 `<name>.log`；每次 push/rollback
 写一份 `report-<stamp>.json`。
 
-`--allow-dirty` 的源码快照通过临时 Git index 生成，不改变共享工作区的暂存区，
-也不包含未跟踪的本地配置、凭据或运行数据。新增源码应先用 `git add` 纳入暂存区，使快照包含新增文件；无需为了部署提交。
-`source_tree` 与 `source_source` 记录源码树及来源；构建期间已跟踪文件变化会中止本次
-stage，须重新构建，避免不同平台部署不同版本。
+`--allow-dirty` 的源码树通过临时 Git index（从 HEAD 读入，再加入点名路径，含新增文件）生成，
+不改变共享工作区的暂存区，只包含点名的文件。`dirty_files` 记录带入的文件，
+`ignored_dirty_files` 记录被排除的其他未提交改动，`source_tree` 与 `source_source` 记录源码树及来源。
 
 ## 测试门（build → test → push）
 
@@ -99,7 +103,7 @@ stage，须重新构建，避免不同平台部署不同版本。
 | 模式 | 含义 | 跑什么 |
 | --- | --- | --- |
 | `none` | **1 不测试直接上线** | 打印 `tests skipped by --test none` 后继续；`build` 的默认值 |
-| `affected` | **2 只测本次改动影响到的组件** | 把 `git diff --name-only <base>..HEAD`（`--allow-dirty` 时并上未提交文件）按下表映射到套件，`python3 tests/run_validation.py --only <names> --binary <stage 的 bin/sessiondock，web-only 时退回 target/release/sessiondock>`；`deploy` 的默认值 |
+| `affected` | **2 只测本次改动影响到的组件** | 把 `git diff --name-only <base>..HEAD`（并上 `--allow-dirty` 点名的文件）按下表映射到套件，`python3 tests/run_validation.py --only <names> --binary <stage 的 bin/sessiondock，web-only 时退回 target/release/sessiondock>`；`deploy` 的默认值 |
 | `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描（全部为浏览器套件）；付费 `*_real` 套件默认排除 |
 
 `--web-only --test affected` 不纳入未随页面更新发布的 `crates/`、`Cargo.toml` 与
@@ -196,7 +200,7 @@ kind 的处理模块缺失或坏掉记 `UNSUPPORTED`，不会让整轮崩溃。
 - swap：`mv -f bin/<name>.new bin/<name>`；在目标机上 `rsync -a --delete web.staging/ web/` 后删掉 staging。
 - restart：`systemctl --user restart <unit>`；节点单元是 `KillMode=process`，分离的 ptyhost 不受影响。
 - 备份始终同时拷 `bin/` 里声明的二进制和整个 `web/`；rollback 用同一条 `.new` + `mv` 路径恢复二进制、
-  `rsync -a --delete` 恢复 web，再重启。ptyhost 只在 `--with-ptyhost` 时随行，同样走 `.new` + rename，
+  `rsync -a --delete` 恢复 web，再重启。ptyhost 默认随行（`--without-ptyhost` 除外），同样走 `.new` + rename，
   正在跑的宿主继续用旧 inode 直到退出。
 - prune 只删匹配 `^backup-deploy-[0-9a-f]+-[0-9]{8}-[0-9]{6}$` 的目录，按 mtime 保留最新 N 份。
 - Hub 是同一处理器的子类：`sessiondock-hub.service`、二进制 `sessiondock-hub`、没有 `host/` 也不发

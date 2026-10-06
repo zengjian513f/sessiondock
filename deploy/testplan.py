@@ -161,10 +161,11 @@ def resolve_base(explicit: str | None, markers: dict[str, str | None]) -> tuple[
     raise ValueError("no deployed-commit marker, no origin/main and no HEAD~1: pass --test-base REF")
 
 
-def changed_files(base: str, include_dirty: bool) -> list[str]:
+def changed_files(base: str, included: list[str]) -> list[str]:
+    """Files changed since `base` in the stage: committed ones plus the
+    uncommitted files the build named with --allow-dirty."""
     files = set(git("diff", "--name-only", f"{base}..HEAD").splitlines())
-    status = git("status", "--porcelain", "--untracked-files=all") if include_dirty else ""
-    files.update(line[3:].split(" -> ")[-1].strip() for line in status.splitlines())
+    files.update(included)
     return sorted(f for f in files if f)
 
 

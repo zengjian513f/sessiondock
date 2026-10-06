@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """SessionDock fleet deployment: build once on this machine, test, push to every target, roll back.
 
-    deploy.py build    [--allow-dirty] [--web-from-head] [--with-ptyhost] [--web-only]
+    deploy.py build    [--allow-dirty PATH ...] [--without-ptyhost] [--web-only]
                        [--test none|affected|full] [--test-base REF] [--test-timeout S]
     deploy.py push     [--targets a,b | --all] [--stage DIR] [--web-only | --bin-only]
-                       [--with-ptyhost] [--dry-run] [--parallel N] [--keep-backups N]
+                       [--without-ptyhost] [--dry-run] [--parallel N] [--keep-backups N]
                        [--health-timeout S] [--targets-file PATH] [-v]
     deploy.py deploy   (build, then test, then push, with the same flags; --test defaults
                         to `affected` here and to `none` for a bare build)
     deploy.py rollback --targets X [--backup DIR] [--targets-file PATH]
 
+The build never reads the shared checkout's uncommitted edits: it checks the commit
+(plus only the files named with --allow-dirty) out into the private build worktree
+target/deploy/tree and compiles there, so another session's unfinished work neither
+blocks a deploy nor ships with it. ptyhost is built and shipped by default
+(--without-ptyhost opts out); running hosts keep their old binary until they exit.
 Targets come from deploy/targets.local.json (gitignored, the real fleet);
 deploy/targets.example.json shows the shape with placeholders. Per-kind steps live
 in deploy/sdtargets/<kind>.py; the shared contract and the invariants every handler
@@ -58,6 +63,10 @@ from deployment_lock import DeploymentLock, repository_lock  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_DIR = ROOT / "deploy"
 STAGE_ROOT = ROOT / "target" / "deploy"
+# Private build checkout and its own Cargo target dir: fixed paths keep the
+# incremental cache valid between deploys.
+BUILD_TREE = STAGE_ROOT / "tree"
+BUILD_TARGET = STAGE_ROOT / "cargo-target"
 # The frontend is legacy-web/, served exactly as committed.
 DIRTY_SCOPE = ["crates", "legacy-web", "Cargo.toml", "Cargo.lock"]
 WEB_EXCLUDES = ["node_modules", ".DS_Store", "*.swp"]
@@ -92,31 +101,34 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def source_tree(worktree: bool) -> str:
-    """Snapshot tracked working files without changing the shared Git index."""
-    if not worktree:
+def source_tree(paths: list[str]) -> str:
+    """HEAD's tree with `paths` taken from the working tree, without touching
+    the shared Git index (a private index file is used)."""
+    if not paths:
         return git("rev-parse", "HEAD^{tree}")
     with tempfile.TemporaryDirectory(prefix="sessiondock-source-index-") as temporary:
         env = dict(os.environ, GIT_INDEX_FILE=str(Path(temporary) / "index"))
-        # Copy the index so staged new source files are included. Even
-        # write-tree may refresh its cache, so never run it on the shared index.
-        index = Path(git("rev-parse", "--git-path", "index"))
-        if not index.is_absolute():
-            index = ROOT / index
-        if index.is_file():
-            shutil.copyfile(index, env["GIT_INDEX_FILE"])
-        else:
-            subprocess.run(["git", "read-tree", "HEAD"], cwd=ROOT, env=env, check=True, timeout=300)
-        subprocess.run(["git", "add", "--update", "--", "."], cwd=ROOT, env=env, check=True, timeout=300)
+        subprocess.run(["git", "read-tree", "HEAD"], cwd=ROOT, env=env, check=True, timeout=300)
+        subprocess.run(["git", "add", "--all", "--", *paths], cwd=ROOT, env=env, check=True, timeout=300)
         return subprocess.run(["git", "write-tree"], cwd=ROOT, env=env,
                               capture_output=True, text=True, check=True, timeout=300).stdout.strip()
 
 
-def archive_source(path: Path, worktree: bool) -> str:
-    tree = source_tree(worktree)
-    subprocess.run(["git", "archive", "--format=tar", tree if worktree else "HEAD", "-o", str(path)],
-                   cwd=ROOT, check=True, timeout=300)
-    return tree
+def checkout_build_tree(tree: str) -> None:
+    """Make BUILD_TREE hold exactly `tree` (a detached worktree of this repo)."""
+    if not (BUILD_TREE / ".git").exists():
+        shutil.rmtree(BUILD_TREE, ignore_errors=True)
+        subprocess.run(["git", "worktree", "prune"], cwd=ROOT, check=True, timeout=120)
+        subprocess.run(["git", "worktree", "add", "--detach", str(BUILD_TREE), "HEAD"], cwd=ROOT,
+                       check=True, timeout=600, capture_output=True)
+    run = lambda *a: subprocess.run(["git", *a], cwd=BUILD_TREE, check=True, timeout=600, capture_output=True)
+    run("checkout", "--detach", "--quiet", "HEAD")
+    run("read-tree", "-u", "--reset", tree)
+    run("clean", "-fdq")
+
+
+def dirty_paths(dirty: list[str]) -> list[str]:
+    return [line[3:].split(" -> ")[-1].strip() for line in dirty]
 
 
 class Log:
@@ -161,14 +173,16 @@ def build_config(args) -> dict:
 
 # -- build ---------------------------------------------------------------------------------
 def dirty_files() -> list[str]:
-    out = git("status", "--porcelain", "--", *DIRTY_SCOPE)
+    # Not `git()`: its strip() would eat the first line's leading status space.
+    out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", *DIRTY_SCOPE],
+                         cwd=ROOT, capture_output=True, text=True, timeout=60, check=True).stdout
     return [line for line in out.splitlines() if line.strip()]
 
 
 def cargo_bins(cargo: str) -> dict[str, str]:
     """bin target name -> package name, from `cargo metadata --no-deps`."""
     p = subprocess.run([cargo, "metadata", "--no-deps", "--format-version", "1", "--locked"],
-                       cwd=ROOT, capture_output=True, text=True, timeout=120)
+                       cwd=BUILD_TREE, capture_output=True, text=True, timeout=120)
     if p.returncode != 0:
         die(f"cargo metadata failed:\n{p.stderr.strip()}")
     bins: dict[str, str] = {}
@@ -205,12 +219,19 @@ def resolve_build(cfg: dict, with_ptyhost: bool) -> tuple[list[str], list[str]]:
 
 def cmd_build(args) -> Path:
     dirty = dirty_files()
-    if dirty and not args.allow_dirty:
-        print("refusing to build: working tree differs from HEAD in the build scope "
-              "(pass --allow-dirty to build the working tree anyway):", file=sys.stderr)
-        for line in dirty:
-            print("  " + line, file=sys.stderr)
-        sys.exit(2)
+    named = [path.rstrip("/") for path in args.allow_dirty or []]
+    covered = lambda path: any(path == n or path.startswith(n + "/") for n in named)
+    included = [line for line in dirty if covered(dirty_paths([line])[0])]
+    unmatched = [n for n in named
+                 if not any(p == n or p.startswith(n + "/") for p in dirty_paths(included))]
+    if unmatched:
+        die("--allow-dirty names paths with no uncommitted change in the build scope: " + ", ".join(unmatched))
+    ignored = [line for line in dirty if line not in included]
+    if ignored:
+        print(f"building without {len(ignored)} uncommitted file(s) of the shared checkout "
+              "(name them with --allow-dirty to include):")
+        for line in ignored[:20]:
+            print("  " + line)
     cfg = build_config(args)
     commit, short = git("rev-parse", "HEAD"), git("rev-parse", "--short", "HEAD")
     started = utc_now()
@@ -223,22 +244,20 @@ def cmd_build(args) -> Path:
         (stage / sub).mkdir(parents=True, exist_ok=True)
     print(f"stage {stage}")
 
-    snapshot_tree = archive_source(stage / "source.tar", args.allow_dirty)
-    print(f"source: {'tracked working tree' if args.allow_dirty else 'HEAD'} ({snapshot_tree})")
-    web_from_worktree = args.allow_dirty and not args.web_from_head
-    if web_from_worktree:
-        argv = ["rsync", "-a", "--delete", *(f"--exclude={e}" for e in WEB_EXCLUDES),
-                str(ROOT / "legacy-web") + "/", str(stage / "web") + "/"]
-        subprocess.run(argv, check=True, timeout=300)
-        print("web: working tree legacy-web/ (dirty allowed)")
-    else:
-        with subprocess.Popen(["git", "archive", "--format=tar", "HEAD", "legacy-web"], cwd=ROOT,
-                              stdout=subprocess.PIPE) as ga:
-            subprocess.run(["tar", "-x", "--strip-components=1", "-C", str(stage / "web")],
-                           stdin=ga.stdout, check=True, timeout=300)
-        if ga.returncode != 0:
-            die("git archive HEAD legacy-web failed")
-        print("web: git archive HEAD legacy-web")
+    snapshot_tree = source_tree(dirty_paths(included))
+    subprocess.run(["git", "archive", "--format=tar", snapshot_tree, "-o", str(stage / "source.tar")],
+                   cwd=ROOT, check=True, timeout=300)
+    print(f"source: HEAD{' + ' + str(len(included)) + ' named uncommitted file(s)' if included else ''}"
+          f" ({snapshot_tree})")
+    for line in included:
+        print("  + " + line)
+    checkout_build_tree(snapshot_tree)
+    with subprocess.Popen(["git", "archive", "--format=tar", snapshot_tree, "legacy-web"], cwd=ROOT,
+                          stdout=subprocess.PIPE) as ga:
+        subprocess.run(["tar", "-x", "--strip-components=1", "-C", str(stage / "web")],
+                       stdin=ga.stdout, check=True, timeout=300)
+    if ga.returncode != 0:
+        die("git archive legacy-web failed")
     if not (stage / "web" / "index.html").is_file():
         die("web snapshot has no index.html")
 
@@ -246,13 +265,14 @@ def cmd_build(args) -> Path:
     sha256: dict[str, str] = {}
     cargo_argv: list[str] = []
     if not args.web_only:
-        cargo_argv, names = resolve_build(cfg, args.with_ptyhost)
+        cargo_argv, names = resolve_build(cfg, args.ptyhost is not False)
+        cargo_argv += ["--target-dir", str(BUILD_TARGET)]
         log_path = stage / "logs" / "cargo-build.log"
         print(f"cargo: {' '.join(cargo_argv)}  (log {log_path.relative_to(ROOT)})")
         t0 = time.monotonic()
         with log_path.open("w", encoding="utf-8") as log:
             try:
-                p = subprocess.run(cargo_argv, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                p = subprocess.run(cargo_argv, cwd=BUILD_TREE, stdout=log, stderr=subprocess.STDOUT,
                                    timeout=args.build_timeout)
             except subprocess.TimeoutExpired:
                 die(f"cargo build exceeded --build-timeout {args.build_timeout:.0f}s (see {log_path})", 1)
@@ -261,30 +281,27 @@ def cmd_build(args) -> Path:
             die("cargo build failed (rc=%d):\n%s" % (p.returncode, "\n".join(tail)), 1)
         print(f"cargo: done in {time.monotonic() - t0:.0f}s")
         for name in names:
-            src = ROOT / "target" / "release" / name
+            src = BUILD_TARGET / "release" / name
             if not src.is_file():
                 die(f"expected binary missing: {src}", 1)
             dst = stage / "bin" / name
             shutil.copy2(src, dst)
             binaries[name], sha256[name] = dst, sha256_file(dst)
 
-    if args.allow_dirty and source_tree(True) != snapshot_tree:
-        die("tracked working files changed during build; rerun to produce a consistent stage", 1)
-
-    crates_dirty = any(not line[3:].startswith(("legacy-web/", "web/")) for line in dirty)
-    web_dirty = any(line[3:].startswith(("legacy-web/", "web/")) for line in dirty)
+    crates_dirty = any(not path.startswith("legacy-web/") for path in dirty_paths(included))
+    web_dirty = any(path.startswith("legacy-web/") for path in dirty_paths(included))
     art = Artifacts(commit=commit, short=short,
-                    dirty=(crates_dirty and not args.web_only) or (web_dirty and web_from_worktree),
+                    dirty=(crates_dirty and not args.web_only) or web_dirty,
                     built_at=started.isoformat(timespec="seconds"), web_dir=stage / "web",
                     binaries=binaries, sha256=sha256, source_archive=stage / "source.tar",
                     web_only=args.web_only)
     doc = {"commit": art.commit, "short": art.short, "dirty": art.dirty, "built_at": art.built_at,
            "web_dir": "web", "binaries": {n: f"bin/{n}" for n in binaries}, "sha256": sha256,
            "source_archive": "source.tar", "web_only": art.web_only, "stage": str(stage),
-           "web_source": "worktree" if web_from_worktree else "HEAD", "frontend": "legacy",
-           "dirty_files": dirty,
-           "cargo": cargo_argv, "with_ptyhost": args.with_ptyhost,
-           "source_tree": snapshot_tree, "source_source": "worktree" if args.allow_dirty else "HEAD"}
+           "web_source": "snapshot", "frontend": "legacy",
+           "dirty_files": included, "ignored_dirty_files": ignored,
+           "cargo": cargo_argv, "with_ptyhost": "ptyhost" in binaries,
+           "source_tree": snapshot_tree, "source_source": "HEAD+named" if included else "HEAD"}
     (stage / "artifacts.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     print(f"commit {commit} ({short}) dirty={art.dirty} built_at={art.built_at}")
     for name, digest in sha256.items():
@@ -292,6 +309,11 @@ def cmd_build(args) -> Path:
     print(f"  web              {sum(1 for _ in (stage / 'web').rglob('*') if _.is_file())} files"
           f"  source.tar {(stage / 'source.tar').stat().st_size} bytes")
     return stage
+
+
+def load_dirty_included(stage: Path) -> list[str]:
+    doc = json.loads((stage / "artifacts.json").read_text(encoding="utf-8"))
+    return list(doc.get("dirty_files") or [])
 
 
 # -- stage loading -----------------------------------------------------------------------
@@ -596,7 +618,7 @@ def run_test_gate(args, stage: Path, targets: list[Target] | None) -> None:
             base, how = testplan.resolve_base(args.test_base, probe_markers(targets, stage, args) if targets else {})
         except ValueError as e:
             die(str(e))
-        changed, names = testplan.changed_files(base, args.allow_dirty), testplan.list_suites(binary)
+        changed, names = testplan.changed_files(base, dirty_paths(load_dirty_included(stage))), testplan.list_suites(binary)
         if args.web_only:
             # This stage ships no Rust sources or binaries. Concurrent backend
             # edits must not force their Cargo validation into a page update.
@@ -629,8 +651,10 @@ def cmd_push(args, stage: Path | None = None) -> int:
     art = load_stage(stage)
     if art.web_only and not args.web_only:
         die(f"stage {stage.name} was built --web-only; push it with --web-only")
-    if args.with_ptyhost and "ptyhost" not in art.binaries and not args.web_only:
-        die(f"stage {stage.name} has no ptyhost binary; build with --with-ptyhost")
+    if args.ptyhost and "ptyhost" not in art.binaries and not args.web_only:
+        die(f"stage {stage.name} has no ptyhost binary; build it without --without-ptyhost")
+    # Default: ship ptyhost whenever the stage has it.
+    with_ptyhost = args.ptyhost is not False and "ptyhost" in art.binaries
     try:
         targets = load_targets(targets_file(args))
     except (OSError, ValueError, TypeError, KeyError) as e:
@@ -644,11 +668,11 @@ def cmd_push(args, stage: Path | None = None) -> int:
     else:
         print("stage tests: unknown (stage predates the test gate)")
     opts = DeployOptions(dry_run=args.dry_run, web_only=args.web_only, bin_only=args.bin_only,
-                         with_ptyhost=args.with_ptyhost, keep_backups=args.keep_backups,
+                         with_ptyhost=with_ptyhost, keep_backups=args.keep_backups,
                          health_timeout=args.health_timeout, log_dir=stage / "logs",
                          test_mode=info.get("test_mode") or "none")
     print(f"{'DRY RUN: ' if args.dry_run else ''}push {art.short} ({'web only' if args.web_only else 'bin only' if args.bin_only else 'bin+web'}"
-          f"{', +ptyhost' if args.with_ptyhost else ''}) from {stage} to {[t.name for t in chosen]} "
+          f"{', +ptyhost' if with_ptyhost else ''}) from {stage} to {[t.name for t in chosen]} "
           f"(targets {targets_file(args)}, parallel {args.parallel})")
     rows = run_all(lambda t: run_push(t, art, opts, opts.log_dir / f"{t.name}.log", args.verbose),
                    chosen, args.parallel)
@@ -704,10 +728,9 @@ def main(argv: list[str] | None = None) -> int:
     common.add_argument("--lock-timeout", type=float, metavar="SECONDS",
                         help="wait for the repository deployment lock (default: indefinitely; 0: fail immediately)")
     build_flags = argparse.ArgumentParser(add_help=False)
-    build_flags.add_argument("--allow-dirty", action="store_true",
-                             help="build although crates/, legacy-web/ or Cargo.* differ from HEAD (web then comes from the working tree)")
-    build_flags.add_argument("--web-from-head", action="store_true",
-                             help="with --allow-dirty: still snapshot legacy-web/ from HEAD, not the working tree")
+    build_flags.add_argument("--allow-dirty", nargs="+", metavar="PATH",
+                             help="also build these uncommitted files or directories of the working tree; "
+                                  "every other uncommitted change (another session's work) stays out")
     build_flags.add_argument("--build-timeout", type=float, default=3600, help="seconds for cargo build")
 
     def test_flags(default: str) -> argparse.ArgumentParser:   # a fresh parent per command: its own default
@@ -721,7 +744,10 @@ def main(argv: list[str] | None = None) -> int:
         tf.add_argument("--test-timeout", type=float, default=2400, help="seconds for the whole test run")
         return tf
     ship_flags = argparse.ArgumentParser(add_help=False)
-    ship_flags.add_argument("--with-ptyhost", action="store_true", help="also build/ship the ptyhost binary")
+    ship_flags.add_argument("--with-ptyhost", dest="ptyhost", action="store_true", default=None,
+                            help="require the ptyhost binary (it is built and shipped by default)")
+    ship_flags.add_argument("--without-ptyhost", dest="ptyhost", action="store_false",
+                            help="do not build or ship the ptyhost binary")
     ship_flags.add_argument("--web-only", action="store_true", help="no cargo build / no binary steps")
     push_flags = argparse.ArgumentParser(add_help=False)
     push_flags.add_argument("--targets", help="comma-separated target names")

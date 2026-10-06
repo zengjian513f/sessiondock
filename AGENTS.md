@@ -40,7 +40,8 @@
   for later delivery; they do not block engineering completion or its goal.
   Do not require every machine to succeed or keep polling remaining targets.
   If the minimum is not yet met, continue other actionable engineering work.
-  Deploy the current workspace unless the user names another source.
+  Deploy the committed HEAD unless the user names another source; the build
+  ignores other sessions' uncommitted edits (`--allow-dirty PATH` names extras).
   Preserve sessions, state and concurrent changes; keep a rollback.
   Use `python3 deploy/deploy.py deploy --all` (build once, push every target,
   verify, auto-rollback; `docs/deployment.md`) and `deploy/fleet_status.py`
