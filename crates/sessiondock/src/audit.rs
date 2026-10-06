@@ -24,15 +24,12 @@ mod intake;
 pub mod query;
 mod writer;
 
-#[cfg(test)]
-mod tests;
-
 use std::{
     io,
     net::IpAddr,
     path::{Path, PathBuf},
     sync::{
-        Arc, Condvar, Mutex,
+        Arc,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc,
     },
@@ -59,9 +56,6 @@ pub struct Limits {
     pub queue_batches: usize,
     /// How long graceful shutdown waits for the writer to drain.
     pub shutdown_deadline: Duration,
-    /// Fault injection: while held, the writer does not write. Tests use it to
-    /// saturate the queue deterministically.
-    pub gate: Option<Arc<Gate>>,
 }
 
 impl Default for Limits {
@@ -71,56 +65,7 @@ impl Default for Limits {
             max_events: 100,
             queue_batches: 20_000,
             shutdown_deadline: Duration::from_secs(2),
-            gate: None,
         }
-    }
-}
-
-/// Writer hold for fault injection. Open by default.
-pub struct Gate {
-    open: Mutex<bool>,
-    changed: Condvar,
-}
-
-impl Default for Gate {
-    fn default() -> Self {
-        Self {
-            open: Mutex::new(true),
-            changed: Condvar::new(),
-        }
-    }
-}
-
-impl Gate {
-    pub fn hold(&self) {
-        *self
-            .open
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = false;
-    }
-
-    pub fn release(&self) {
-        *self
-            .open
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
-        self.changed.notify_all();
-    }
-
-    /// Returns whether the gate is open after waiting at most `timeout`.
-    fn wait(&self, timeout: Duration) -> bool {
-        let guard = self
-            .open
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if *guard {
-            return true;
-        }
-        let (guard, _) = self
-            .changed
-            .wait_timeout(guard, timeout)
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *guard
     }
 }
 

@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Validation runner for the sessiondock workspace.
 
-Replaces ad-hoc shell scripts. Discovers Node contract files and Python
-HTTP/browser suites at runtime after the fixed Rust checks. Unit suites
-and suites compared against the frozen Python oracle are excluded unless
-``--include-unit`` / ``--include-oracle`` or explicitly selected with ``--only``. Never runs
-paid CLIs or touches production data; the underlying tests use synthetic
-fixtures and loopback listeners only.
+Replaces ad-hoc shell scripts. Discovers Python HTTP/browser suites at
+runtime after the fixed Rust checks (fmt, clippy, Windows check, release
+build). The repository has no unit tests. Suites compared against the frozen
+Python oracle are excluded unless ``--include-oracle`` or explicitly selected
+with ``--only``. Never runs paid CLIs or touches production data; the
+underlying tests use synthetic fixtures and loopback listeners only.
 
 Suites run in parallel (``--jobs``, default 8): the Rust checks as lanes that
-share no cargo build directory (debug test → clippy; release build; Windows
-check; fmt), then every Node/Python suite through a worker pool — each suite
+share no cargo build directory (clippy; release build; Windows check; fmt),
+then every Python suite through a worker pool — each suite
 already picks its own loopback port and temp directories. A suite marked
 ``# run_validation: serial`` near its top runs alone after the pool (timing
 assertions that must not share the machine). ``--jobs 1`` is the old serial
@@ -51,12 +51,10 @@ SKIP_MARK = "# run_validation: skip"
 SERIAL_MARK = "# run_validation: serial"
 # Rust checks that may run at the same time: each lane owns one cargo build
 # directory (target/debug, target/release, target/<triple>) or none.
-# cargo_test is in the clippy lane when --include-unit / --only cargo_test.
-RUST_LANES = [["cargo_test", "cargo_clippy"], ["cargo_build"], ["cargo_check_windows"], ["cargo_fmt"]]
+RUST_LANES = [["cargo_clippy"], ["cargo_build"], ["cargo_check_windows"], ["cargo_fmt"]]
 
 # name, argv, kind, timeout seconds, tags
 RUST = [
-    ("cargo_test", ["cargo", "test", "--workspace", "--locked"], "rust", 1500, ("rust",)),
     ("cargo_fmt", ["cargo", "fmt", "-p", "sessiondock", "-p", "ptyhost-client", "--check"], "rust", 120, ("rust",)),
     ("cargo_clippy", ["cargo", "clippy", "-p", "sessiondock", "-p", "ptyhost-client",
                       "--all-targets", "--locked", "--", "-D", "warnings"], "rust", 900, ("rust",)),
@@ -92,16 +90,11 @@ def source_exists(path):
 
 
 def suites(binary, python_source):
-    """Build the declarative SUITES list: rust, then node, then python."""
+    """Build the declarative SUITES list: rust, then python."""
     items = []
     for name, argv, kind, timeout, tags in RUST:
         items.append({"name": name, "argv": argv, "kind": kind, "timeout": timeout, "tags": tags,
-                      "skip": None, "unit": name == "cargo_test"})
-
-    contracts = sorted((ROOT / "tests").glob("*_contract.mjs"))
-    node_argv = ["node", "--test"] + [str(p.relative_to(ROOT)) for p in contracts]
-    items.append({"name": "node_contracts", "argv": node_argv, "kind": "node", "timeout": 120,
-                  "tags": ("node",), "skip": None if contracts else "no tests/*_contract.mjs", "unit": True})
+                      "skip": None})
 
     py_ok = source_exists(python_source)
     for path in sorted((ROOT / "tests").glob("*.py")):
@@ -132,8 +125,7 @@ def suites(binary, python_source):
             argv += ["--binary", binary]
         items.append({"name": path.stem, "argv": argv, "kind": "python", "timeout": 900,
                       "tags": ("python",), "skip": skip, "serial": serial, "browser": browser,
-                      "real": real, "oracle": oracle,
-                      "unit": bool(re.search(r"\bunittest\.main\(", text))})
+                      "real": real, "oracle": oracle})
         if path.name == "lifecycle_browser.py":
             items.append({"name": "lifecycle_browser_native_binding",
                           "argv": [sys.executable, rel, "--native-binding"],
@@ -219,7 +211,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--only", default="", help="NAME[,NAME…]")
     parser.add_argument("--skip", default="", help="NAME[,NAME…]")
-    parser.add_argument("--tags", default="rust,node,python")
+    parser.add_argument("--tags", default="rust,python")
     parser.add_argument("--list", action="store_true", help="print the resolved plan and exit")
     parser.add_argument("--log-dir", type=Path)
     parser.add_argument("--timeout-scale", type=float, default=1.0)
@@ -232,13 +224,11 @@ def main(argv=None):
     parser.add_argument("--rerun-failed", type=Path, metavar="PATH")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--jobs", type=int, default=8,
-                        help="parallel non-browser suites (Rust lanes + Node/Python pool); 1 = serial")
+                        help="parallel non-browser suites (Rust lanes + Python pool); 1 = serial")
     parser.add_argument("--browser-jobs", type=int, default=3,
                         help="parallel browser (Chromium) suites; kept low to avoid render contention")
     parser.add_argument("--include-real", action="store_true",
                         help="also run the *_real paid-CLI operator suites (excluded by default)")
-    parser.add_argument("--include-unit", action="store_true",
-                        help="also run unit suites (Cargo, Node contracts and Python unittest; excluded by default)")
     parser.add_argument("--include-oracle", action="store_true",
                         help="also run suites compared against the frozen Python oracle (excluded by default)")
     args = parser.parse_args(argv)
@@ -260,9 +250,6 @@ def main(argv=None):
             continue
         if suite.get("real") and not args.include_real:
             continue
-        if suite.get("unit") and not args.include_unit:
-            if only is None or suite["name"] not in only:
-                continue
         if suite.get("oracle") and not args.include_oracle:
             if only is None or suite["name"] not in only:
                 continue

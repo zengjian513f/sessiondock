@@ -36,4 +36,4 @@
 - [ ] 产出可复现发布包和 Linux/Windows/macOS CI 矩阵；Windows OpenSSH 原生构建遵循
   `docs/deploy-windows.md`。
 - [ ] 将真实 Claude/Codex/Grok CLI 套件纳入明确的发布验收步骤；继续使用临时配置和
-  `AGENTS.md` 规定的低成本测试模型，不进入普通 `cargo test`。
+  `AGENTS.md` 规定的低成本测试模型，不进入默认验证清扫。

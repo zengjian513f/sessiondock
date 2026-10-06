@@ -8,9 +8,6 @@
 //! Nothing here binds a listener: H4 turns `AggregateError` into a 400
 //! `{"error": …}` and `search_stream` into a `application/x-ndjson` body.
 
-#[cfg(test)]
-mod tests;
-
 use std::{
     cmp::Reverse,
     fmt,

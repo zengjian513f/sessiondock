@@ -104,18 +104,17 @@
 - After every feature or bug fix, run a headless Chromium suite that actually
   exercises the changed path the way a user would: click, type, submit, open
   the affected page. Pick the `*_browser.py` (or `--browser` parity) that
-  covers the surface; if none exists, add or extend one. HTTP, node, and
-  `--test` integration suites may accompany that run — they do not replace it.
+  covers the surface; if none exists, add or extend one. Python HTTP and
+  integration suites may accompany that run — they do not replace it.
   Playwright Chromium is required; fixtures are temporary. A screenshot of a
   render is not enough.
-- Do not run any unit test (`cargo test`, Node `tests/*_contract.mjs`, Python
-  `unittest` suites) unless the user explicitly asks for it; validate the
-  changed surface with the headless browser suite that covers it. History: a
-  2026-10-06 audit found the unit suites had silently drifted — all 15 Node
-  contract failures, all 21 `cargo test` failures and the one Python unittest
-  failure were tests not updated after intentional changes (none was a product
-  bug), while the regressions that mattered were caught by browser suites.
-  When the user does ask, fix the drift found.
+- Validation is by headless Chromium browser suites. The repository has no
+  unit tests: Rust `#[test]` modules and `crates/*/tests`, Node
+  `*_contract.mjs` and Python `unittest` suites were removed on 2026-10-06
+  after an audit found every failing unit test (15 Node contract, 21
+  `cargo test`, 1 Python unittest) was stale, never a product bug, while real
+  regressions were caught by browser suites. Do not add unit tests; add or
+  extend a browser suite instead.
 - Docs-only and deploy-script-only changes use the doc/deploy suites, not a
   token browser run. Anything the page can show still needs the browser path.
 - Full sweep: `python3 tests/run_validation.py`. Use `--list`, `--dry-run`,

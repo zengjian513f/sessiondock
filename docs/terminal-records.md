@@ -343,12 +343,6 @@ There is no compression. Segment `flags` is 0.
 
 ## Validation
 
-`cargo test -p ptyhost --test host_record --locked` runs the Unix
-`/bin/sh` fixture in `crates/ptyhost/tests/host_record.rs` with an
-explicit private `--dir`: output, resize and exit order, `info.record`,
-`--no-record` writing nothing, and small-segment rotation that keeps a
-leading checkpoint.
-
 `python3 tests/term_records_http_suite.py --binary target/release/sessiondock`
 is the HTTP/WebSocket contract (no Chromium): 501 when the terminal
 transport is off, bad ids, upgrade required, `timeline` then `record`

@@ -264,16 +264,6 @@ impl PageStore {
             result => result,
         }
     }
-    #[cfg(test)]
-    fn len(&self) -> usize {
-        self.grants.lock().unwrap().len()
-    }
-    #[cfg(test)]
-    fn age(&self, token: &str, by: Duration) {
-        let mut grants = self.grants.lock().unwrap();
-        let issued = grants.get_mut(token).unwrap().issued_mut();
-        *issued = Instant::now() - by;
-    }
 }
 
 struct Budget {
@@ -510,28 +500,6 @@ impl ViewSnapshot {
             .filter(|event| event.message["role"] != "status" && event.end <= checkpoint.start)
             .collect()
     }
-    /// The `Value` renderer of one history page, the reference
-    /// `history_page_body` is tested against.
-    #[cfg(test)]
-    pub(crate) fn history_page(
-        &self,
-        grant: PageGrant,
-        token: &str,
-        media: &MediaStore,
-        files: Option<&FileService>,
-        pages: &PageStore,
-    ) -> Result<Value, SessionError> {
-        self.validate_grant_scope(&grant.uid, &grant.agent, &grant.checkpoint)?;
-        let events = self.checkpoint_events(&grant.checkpoint);
-        if events.len() != grant.total || grant.next >= grant.stop || grant.stop > events.len() {
-            return Err(SessionError::new(409, "历史页范围已变化，请重新载入会话"));
-        }
-        let (selected, page) = self.page_selection(&grant, token, &events, pages)?;
-        let messages = super::project_selected(self, &selected, Some(media), files, Some(pages))?;
-        let response = json!({"messages":messages,"page":page});
-        validate_response(&response)?;
-        Ok(response)
-    }
 
     /// `history_page` as bytes: the messages spliced from the view's
     /// retained serialization (docs/read-model.md "视图字节缓存").
@@ -665,6 +633,3 @@ impl ViewSnapshot {
         Ok(response)
     }
 }
-
-#[cfg(test)]
-mod tests;

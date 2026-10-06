@@ -80,11 +80,6 @@ pub(super) struct Disk {
     directory_identity: Identity,
     #[cfg(unix)]
     directory_handle: File,
-    #[cfg(test)]
-    pub(super) failpoint: std::sync::atomic::AtomicU8,
-    /// Ledger reads so far; tests pin how many a batch operation needs.
-    #[cfg(test)]
-    pub(super) reads: std::sync::atomic::AtomicUsize,
 }
 
 impl Disk {
@@ -114,18 +109,11 @@ impl Disk {
                 .map_err(|error| io_error("open directory handle", error))?,
             directory,
             directory_identity,
-            #[cfg(test)]
-            failpoint: std::sync::atomic::AtomicU8::new(0),
-            #[cfg(test)]
-            reads: std::sync::atomic::AtomicUsize::new(0),
         };
         Ok(disk)
     }
 
     pub(super) fn read(&self) -> Result<Option<Vec<u8>>, Error> {
-        #[cfg(test)]
-        self.reads
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let path = self.directory.join(LEDGER_FILENAME);
         match fs::read(&path) {
             Ok(bytes) => Ok(Some(bytes)),
@@ -137,17 +125,11 @@ impl Disk {
     pub(super) fn persist(&self, bytes: &[u8], expected: Option<&str>) -> Result<String, Error> {
         let _ = expected;
         let mut temporary = self.create_temp()?;
-        if self.fail(1) {
-            return Err(Error::Io("injected before write", io::ErrorKind::Other));
-        }
         let file = temporary.file.as_mut().expect("owned temp handle");
         file.write_all(bytes)
             .map_err(|error| io_error("write lifecycle temp", error))?;
         file.sync_all()
             .map_err(|error| io_error("sync lifecycle temp", error))?;
-        if self.fail(2) {
-            return Err(Error::Io("injected before rename", io::ErrorKind::Other));
-        }
         // Verify that the temporary pathname still names the file we wrote.
         let meta = fs::symlink_metadata(&temporary.path)
             .map_err(|error| io_error("check temp path", error))?;
@@ -158,16 +140,10 @@ impl Disk {
         temporary.file.take();
         fs::rename(&temporary.path, self.directory.join(LEDGER_FILENAME))
             .map_err(|error| io_error("replace lifecycle ledger", error))?;
-        if self.fail(3) {
-            return Err(Error::Uncertain);
-        }
         #[cfg(unix)]
         self.directory_handle
             .sync_all()
             .map_err(|_| Error::Uncertain)?;
-        if self.fail(4) {
-            return Err(Error::Uncertain);
-        }
         // Verify the actual installed bytes before acknowledging memory. Any
         // post-rename failure is uncertain, never a safe-before-write error.
         let fingerprint = hash(bytes);
@@ -203,18 +179,6 @@ impl Disk {
             "lifecycle temp collision",
             io::ErrorKind::AlreadyExists,
         ))
-    }
-
-    fn fail(&self, point: u8) -> bool {
-        #[cfg(test)]
-        {
-            self.failpoint.load(std::sync::atomic::Ordering::Relaxed) == point
-        }
-        #[cfg(not(test))]
-        {
-            let _ = point;
-            false
-        }
     }
 }
 

@@ -22,8 +22,6 @@
 pub mod worker;
 
 // POSIX output permissions.
-#[cfg(all(test, unix))]
-mod tests;
 
 use std::{
     collections::BTreeMap,

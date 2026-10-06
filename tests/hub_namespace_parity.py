@@ -9,11 +9,12 @@ opaque subtrees (data/content/input/arguments/raw/resolved), and the per-path
 row decoration (sessions/search rows, live keys, terminal names, term/create
 session, bug-report worker, trash ids, messages/watch meta).
 
-The Rust side is `crates/sessiondock/tests/hub_namespace.rs`, which replays
-`tests/fixtures/hub_namespace_cases.json` against `hub::namespace` and reports
-DIFF. This script keeps that fixture honest: without `--write` it regenerates
-the expectations from the oracle and fails when the committed fixture differs
-(the Python source moved, or the corpus changed without a rewrite).
+The committed expectations live in `tests/fixtures/hub_namespace_cases.json`.
+Without `--write` this script regenerates them from the oracle and fails when
+the committed fixture differs (the Python source moved, or the corpus changed
+without a rewrite). The Rust replay of this fixture was removed with all unit
+tests on 2026-10-06; Hub rewriting is exercised by `hub_http_suite.py` and
+`hub_browser.py`.
 
     python3 tests/hub_namespace_parity.py --python-source PATH [--write]
 """
@@ -225,7 +226,7 @@ def main():
     for name in diff:
         print(f"  DIFF {name}")
     if diff:
-        print("fixture is out of date with the oracle; rerun with --write and re-run cargo test --test hub_namespace")
+        print("fixture is out of date with the oracle; rerun with --write")
         return 1
     return 0
 

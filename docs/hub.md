@@ -170,8 +170,7 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
 （节点不是 Hub）。`main.rs` 先绑定两个 socket 再开始服务：节点监听绑定失败即启动失败，不会
 退化成只有 loopback 的服务；两个监听共用同一个关停信号。
 
-验证：`cargo test -p sessiondock --lib -- config:: api::node_auth`、
-`cargo test -p sessiondock --test node_auth --locked`、`python3 tests/node_auth_suite.py`
+验证：`python3 tests/node_auth_suite.py`
 （两个监听都绑 127.0.0.1，`PEERS=127.0.0.0/8` 时三缺一 / 错 token 403、正确头 `/api/sessions`
 与 loopback 列表一致、静态页 404，`PEERS=10.100.100.0/24` 时同一请求 403 `node_peer_denied`，
 三缺一的环境拒绝启动）、`tests/check_config_suite.py` 的 `node_*` 用例，
@@ -209,9 +208,8 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
   不透明的子树、媒体 src、epoch、终端名、回收站 id、每条装饰路径、顶层标量/数组、
   非 ASCII，含 5 例 Python 抛错）跑过 oracle 写成
   `tests/fixtures/hub_namespace_cases.json`（`--write`），默认模式重新生成并比对已提交
-  的夹具，漂移即失败。`cargo test -p sessiondock --test hub_namespace` 回放夹具：
-  成功例要求 `try_public_payload` 与 `public_payload` 都与 oracle 相等，抛错例要求
-  `try_public_payload` 以相同文案拒绝；打印 `DIFF 0`。
+  的夹具，漂移即失败。原先回放该夹具的 Rust 集成测试已随全部单元测试于
+  2026-10-06 删除；Hub 改写行为由 `hub_http_suite.py` 与 `hub_browser.py` 覆盖。
 
 ## 聚合（`aggregate.rs`）
 
@@ -367,48 +365,7 @@ WebSocket 用裸 TCP 双向拷贝（101 后不解帧），HTTP 客户端手写�
 
 ## 验证
 
-- `cargo test -p sessiondock --lib hub:: --locked`（26 例）：identity 4 例、client 10 例
-  （请求头、POST 正文、Content-Length/chunked/读到关闭/204、NDJSON 逐行与 100 跳过、超限、
-  不跟重定向、超时/拒绝/中断/坏状态行/非 JSON、失败文案、101 交还 socket、坏请求拒绝）、
-  registry 12 例（CIDR、URL 校验、urlencode、stale 形状、注册与主键、显示/停用/顺序/
-  持久化、strikes 与恢复、首次失败即离线与失败类别、快照 0600/重启/过期行、条件 sig/
-  缓存上界、搜索事件/失败/保留命中、监控轮询与 nudge）。
-- `cargo test -p sessiondock --test hub_registry --locked`（10 例）：对
-  `tests/hub_fake_node.py`（`hub_fixture.NodeHandler` 的 stdlib 移植，由 `python3` 启动，
-  `/__control`/`/__state` 控制离线、慢答、删除、凭据、搜索脚本、超大响应）复刻
-  `test_hub.py` 的注册表用例：注册与公开行、条件 sig/force/列表变化、快照跨重启与过期行、
-  离线节点不等待 + recheck 恢复、安全失败文案（503/403）与恢复清空、一次慢答不置灰、
-  首次失败即离线、搜索流进度跨空闲超时 + JSON 兼容、搜索失败不改健康并保留命中、
-  64 MiB 上限。
-- `cargo test -p sessiondock --lib hub::namespace --locked`（10 例）：qualify/split
-  往返与错误文案、resolve-files 不改引用名、载荷边界（input/text/native id/media src）、
-  continued_in、live 三键、终端名/回收站 id 只在对应路径加前缀、epoch/src 不进不透明
-  子树、严格/宽松两种改写、顶层标量与数组。
-- `cargo test -p sessiondock --lib hub::aggregate --locked`（11 例，不联网）：机器
-  筛选与 400、upstream 分组、行排序、求和、sig 只跟行与 `{id,name,online}` 走、
-  `unchanged` 形状与键序、live 只算成功机器、term/list capabilities 与 sources 并集、
-  trash 合计、progress 行、bulk uid 分组与错误文案。
-- `tests/hub_namespace_parity.py --python-source <pyhead>` + `cargo test -p sessiondock
-  --test hub_namespace --locked`：51 例 0 DIFF（见上）。
-- `cargo test -p sessiondock --test hub_aggregate --locked`（13 例）：对两台
-  `tests/hub_fake_node.py` 复刻 `test_hub.py` 的聚合用例：跨机 uid 唯一与 sig/unchanged/
-  变化、`nodes` 筛选与未注册 400、离线机器 partial + 过期缓存行且不等待、term/list
-  capabilities（每机 backend/backends、sources 并集、离线机器的失败文案与空 backends、
-  stale 终端行）、trash 合计与筛选、搜索流的 progress/matches/heartbeat/result 顺序、
-  等齐 totals 与截断扫描（3/11、limited 2/10）、搜索失败不改健康且保留已流出的命中、
-  空选择/离线机器/JSON 旧节点、丢弃流即取消扫描、bulk delete / fork-visibility 按机
-  分组与逐 uid 报错、purge_all 求和与前缀。
-- `cargo test -p sessiondock --lib -- hub::proxy hub_config`（proxy 9 例 + hub_config 2 例）：
-  parse_qs/quote/unquote 往返、显式/display 路由、resolve 唯一节点与去限定、mixed/foreign/missing
-  拒绝、`_node`/`node` 与显式路由、file_navigation 三种放行/拦截、`_page_nodes` LRU 与 browser
-  audit 分组（含 pending uid 落最近机器）、上游头/`display_ip`/SSE `data:` 改写、ClientError 映射；
-  hub_config loopback bind、前端目录检查，以及注册表/缓存/审计的路径语义。
-- `cargo test -p sessiondock --test hub_http --locked`（8 例）：对两台 `tests/hub_fake_node.py`
-  复刻 `test_hub.py` 的 dispatch/proxy 用例——hub 模式页面 + 命名空间脚本、`/api/meta`、`/api/nodes`
-  无凭据、网关（Host/hub 头/跨源/无注册路由）、resolve 唯一节点与 400/404、`_build` 409、
-  离线 503 形状 + 过期行 + recheck 恢复、messages/media 改写与显式后端、SSE `data:` 改写、
-  分块附件上传（含 bug-report `?node=`、越限拒绝）、display/order 校验与审计记录、bulk
-  delete/restore/audit 按机分组、NDJSON 搜索、WebSocket 双向裸转发（含网关仍生效）。
+- `tests/hub_namespace_parity.py --python-source <pyhead>`：51 例 oracle 夹具比对（见上）。
 - `tests/hub_http_suite.py`（Python 全程走 HTTP）：`--check-config` 与 fail-closed、register/list/remove
   子命令（注册表私有、凭据不入输出）、上面全部用例含 NDJSON 搜索进度。
 - `tests/hub_browser.py`（Playwright，≤300 行，Chromium

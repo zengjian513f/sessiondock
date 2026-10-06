@@ -372,12 +372,8 @@ are disabled while the batch runs. Pending launches use their existing
 `term/kill` receipt and instance identity (plus node routing on the Hub).
 Stopping preserves records, drafts and selection for a later explicit delete.
 
-Validation: `cargo test -p sessiondock --test session_stop --locked`
-(temporary ptyhost + fake CLIs: graceful stop with `/api/live` exited,
-`already_exited`, replay, request conflict, external stop, 400/404, and a
-shell that ignores EOF escalating to the guarded stop within the bound;
-skips when ptyhost is unbuilt) and `python3 tests/session_stop_browser.py`
-(desktop + 390 px).
+Validation: `python3 tests/session_stop_browser.py` (desktop + 390 px), with
+`python3 tests/session_stop_http_suite.py` alongside.
 
 ## Pending terminal identity and cancellation
 

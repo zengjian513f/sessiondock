@@ -73,9 +73,7 @@ comparison from the first differing message on, so nothing stale survives, and
 a view whose bytes were not retained (a transient search projection) lends
 nothing. The hot-read responses (full, `window=1`, increments, history pages)
 then splice those bytes instead of cloning and re-serializing; the committed
-semantic digest and the LRU accounting come from the same single pass. Unit
-tests (`views/body_tests.rs`, `views/encoded.rs`) assert the reused count and
-that the extended bytes equal a cold projection's.
+semantic digest and the LRU accounting come from the same single pass.
 
 ## Resource tradeoff and measurement
 

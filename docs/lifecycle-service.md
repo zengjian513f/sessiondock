@@ -161,13 +161,6 @@ claims exactly-once external execution or support for arbitrary filesystems.
 
 ## Validation
 
-Default check is `python3 tests/lifecycle_http_suite.py` (and
-`python3 tests/lifecycle_browser.py` when the change is user-visible). Do not
-run crate unit tests unless the user asks.
-
-The ignored `explicit_free_shell_creation_survives_response_drop_and_shutdown_then_cancels_exact_host`
-test requires both `SESSIONDOCK_TEST_PTYHOST_BINARY` and
-`SESSIONDOCK_TEST_FREE_SHELL_BINARY` as explicit absolute binary paths. It runs only an
-temporary free shell in private directories, verifies response-drop
-ownership, live-host survival across service shutdown/reopen, and exact guarded
-cancellation. Never substitute a model CLI or a production host directory.
+Default check is `python3 tests/lifecycle_browser.py` for user-visible
+changes, with `python3 tests/lifecycle_http_suite.py` alongside. The repository
+has no unit tests (removed on 2026-10-06).

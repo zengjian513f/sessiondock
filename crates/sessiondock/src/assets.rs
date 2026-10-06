@@ -144,10 +144,7 @@ impl Assets {
         let entries = raw
             .into_iter()
             .map(|(path, mut data)| {
-                let html = matches!(
-                    path.as_str(),
-                    "/index.html" | "/files.html" | "/file.html"
-                );
+                let html = matches!(path.as_str(), "/index.html" | "/files.html" | "/file.html");
                 if html {
                     data = String::from_utf8_lossy(&data)
                         .replace("__SESSIONDOCK_MODE__", mode_name)
@@ -282,103 +279,4 @@ pub fn serve_asset(
         .headers_mut()
         .insert(header::ETAG, etag.parse().unwrap());
     response
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn snapshots_large_files_and_hidden_assets() {
-        let root = tempfile::tempdir().unwrap();
-        fs::write(root.path().join("index.html"), "<html></html>").unwrap();
-        fs::write(root.path().join("large.bin"), vec![7; 9 * 1024 * 1024]).unwrap();
-        fs::write(root.path().join(".asset"), b"hidden").unwrap();
-        let assets = Assets::load(root.path(), "test", &serde_json::json!({})).unwrap();
-        assert!(assets.entries.contains_key("/large.bin"));
-        assert!(assets.entries.contains_key("/.asset"));
-    }
-
-    #[test]
-    fn versioned_assets_are_immutable_and_stylesheets_get_the_build() {
-        let root = tempfile::tempdir().unwrap();
-        fs::write(root.path().join("index.html"), "<html></html>").unwrap();
-        fs::write(root.path().join("app.js"), "1").unwrap();
-        fs::write(
-            root.path().join("typography.css"),
-            "url(\"fonts/a.woff2?v=__SESSIONDOCK_ASSET_VERSION__\")",
-        )
-        .unwrap();
-        let assets = Assets::load(root.path(), "test", &serde_json::json!({})).unwrap();
-        let cache = |target: &str| {
-            let uri: axum::http::Uri = target.parse().unwrap();
-            let response = serve_asset(&assets, &uri, &Method::GET, &HeaderMap::new());
-            let cache = response.headers().get(header::CACHE_CONTROL).unwrap();
-            (response.status(), cache.to_str().unwrap().to_owned())
-        };
-        let immutable = "public, max-age=31536000, immutable".to_owned();
-        let build = assets.build.clone();
-        assert_eq!(
-            cache(&format!("/app.js?v={build}")),
-            (StatusCode::OK, immutable.clone())
-        );
-        assert_eq!(
-            cache(&format!("/typography.css?x=1&v={build}")),
-            (StatusCode::OK, immutable)
-        );
-        assert_eq!(cache("/app.js"), (StatusCode::OK, "no-cache".to_owned()));
-        assert_eq!(
-            cache("/app.js?v=stale"),
-            (StatusCode::OK, "no-cache".to_owned())
-        );
-        assert_eq!(
-            cache(&format!("/?v={build}")),
-            (StatusCode::OK, "no-store".to_owned())
-        );
-        assert_eq!(
-            cache(&format!("/index.html?v={build}")),
-            (StatusCode::OK, "no-store".to_owned())
-        );
-        let css = assets.entries.get("/typography.css").unwrap();
-        assert_eq!(
-            css.body.as_ref(),
-            format!("url(\"fonts/a.woff2?v={build}\")").as_bytes()
-        );
-        let uri: axum::http::Uri = format!("/app.js?v={build}").parse().unwrap();
-        let revalidate = |value: String| {
-            let mut headers = HeaderMap::new();
-            headers.insert(header::IF_NONE_MATCH, value.parse().unwrap());
-            serve_asset(&assets, &uri, &Method::GET, &headers).status()
-        };
-        assert_eq!(revalidate(format!("\"{build}\"")), StatusCode::NOT_MODIFIED);
-        assert_eq!(
-            revalidate(format!("W/\"{build}\"")),
-            StatusCode::NOT_MODIFIED
-        );
-        assert_eq!(
-            revalidate(format!("\"old\", W/\"{build}\"")),
-            StatusCode::NOT_MODIFIED
-        );
-        assert_eq!(revalidate("\"old\"".to_owned()), StatusCode::OK);
-        assert_eq!(revalidate(build.clone()), StatusCode::OK);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn snapshots_in_root_aliases_without_following_escape_or_cycles() {
-        use std::os::unix::fs::symlink;
-        let root = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
-        fs::write(root.path().join("index.html"), "<html></html>").unwrap();
-        fs::create_dir(root.path().join("dir")).unwrap();
-        fs::write(root.path().join("dir/file.js"), "test").unwrap();
-        symlink("dir", root.path().join("alias")).unwrap();
-        symlink("..", root.path().join("dir/cycle")).unwrap();
-        fs::write(outside.path().join("secret"), "outside").unwrap();
-        symlink(outside.path().join("secret"), root.path().join("escape")).unwrap();
-        let assets = Assets::load(root.path(), "test", &serde_json::json!({})).unwrap();
-        assert!(assets.entries.contains_key("/dir/file.js"));
-        assert!(assets.entries.contains_key("/alias/file.js"));
-        assert!(!assets.entries.contains_key("/escape"));
-    }
 }

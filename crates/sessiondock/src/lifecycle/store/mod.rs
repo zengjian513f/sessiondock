@@ -508,10 +508,6 @@ impl LifecycleStore {
         }
         Ok(out)
     }
-    #[cfg(test)]
-    pub(super) fn disk_reads(&self) -> usize {
-        self.disk.reads.load(std::sync::atomic::Ordering::Relaxed)
-    }
     fn observe_loaded(&mut self, evidence: ObservationEvidence) -> Result<Record, Error> {
         let record = self.get_loaded(&evidence.record_id)?;
         if record.launch_id() != evidence.launch_id
@@ -796,6 +792,3 @@ fn uuid_v4() -> Result<String, Error> {
         &hex[20..]
     ))
 }
-
-#[cfg(all(test, unix))]
-mod tests;

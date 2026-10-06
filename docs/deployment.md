@@ -72,8 +72,7 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 锁由操作系统管理，正常退出、异常和进程终止都会释放；文件保留，里面的旧 PID 只供
 诊断。**不要删除锁文件来解锁**，删除会让不同进程锁住不同 inode，破坏互斥。
 锁覆盖同一 Git 仓库及 worktree；独立 clone 或不同构建机之间仍须协调部署。
-只读的 `fleet_status.py` 不持锁。离线回归见 `tests/deploy_lock.py`；部署自检使用临时
-仓库或临时锁，避免与运行自检的外层部署互锁。
+只读的 `fleet_status.py` 不持锁。部署自检使用临时仓库或临时锁，避免与运行自检的外层部署互锁。
 
 ## 三种产物（`target/deploy/<UTC 时间戳>-<short>/`，同一秒内再建则加 `-2`、`-3` 后缀）
 
@@ -101,7 +100,7 @@ stage，须重新构建，避免不同平台部署不同版本。
 | --- | --- | --- |
 | `none` | **1 不测试直接上线** | 打印 `tests skipped by --test none` 后继续；`build` 的默认值 |
 | `affected` | **2 只测本次改动影响到的组件** | 把 `git diff --name-only <base>..HEAD`（`--allow-dirty` 时并上未提交文件）按下表映射到套件，`python3 tests/run_validation.py --only <names> --binary <stage 的 bin/sessiondock，web-only 时退回 target/release/sessiondock>`；`deploy` 的默认值 |
-| `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描；付费 CLI 与单元测试（Cargo、Node contracts、Python unittest）默认排除 |
+| `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描；付费 CLI 与 oracle 比对套件默认排除（仓库不含单元测试） |
 
 `--web-only --test affected` 不纳入未随页面更新发布的 `crates/`、`Cargo.toml` 与
 `Cargo.lock` 改动；前端及对应浏览器测试仍走测试门。
@@ -145,18 +144,16 @@ stem 恰好是套件名则按套件跑；某条改动触发全量时这些脚本
 | --- | --- |
 | `.gitignore`、`.gitattributes`、`.editorconfig` | 不测（不影响产物） |
 | `docs/**`、任何 `*.md` | 只跑文档检查：`tests/check_docs_links.py`、`tests/check_agents_md.py` |
-| `crates/ptyhost/**`、`crates/ptyhost-client/**` | `cargo_*`（run_validation 没有按 crate 的 Rust 车道；默认 `--list` 不含 `cargo_test`，所以这里是 fmt/clippy/check/build）+ 依赖 ptyhost 的 Python 套件：`terminal*`、`term_*`、`lifecycle*`、`cutover*`、`host*`、`native_*`、`managed_*`、`send_*`、`live_*`、`session_stop_*`、`pending_*`、`restart_state_*`、`bug_report_*`、`grok_raw_send_*` |
+| `crates/ptyhost/**`、`crates/ptyhost-client/**` | `cargo_*`（run_validation 没有按 crate 的 Rust 车道，这里是 fmt/clippy/check/build）+ 依赖 ptyhost 的 Python 套件：`terminal*`、`term_*`、`lifecycle*`、`cutover*`、`host*`、`native_*`、`managed_*`、`send_*`、`live_*`、`session_stop_*`、`pending_*`、`restart_state_*`、`bug_report_*`、`grok_raw_send_*` |
 | `crates/sessiondock/src/<module>/**`、`src/<module>.rs` | `cargo_*` + 模块别名：`sessions` → `history_*`、`sessions_*`、`messages_*`、`native_*`、`*_parity`、`codex_*`、`claude_*`、`grok_*`、`agent_*`、`orphan_*`、`continued_*`、`fork_*`、`list_rows_*`、`input_history_*`、`inventory_*`、`symlink_*`、`unicode_*`、`names_*`、`budget_*`、`reader_pool_*`、`sse_*`、`rewind_*`；`terminal` → `terminal_*`、`term_*`、`managed_*`、`session_stop_*`、`grok_raw_send_*`；`lifecycle` → `lifecycle_*`、`send_*`、`outbox*`、`pending_*`、`restart_state_*`、`live_*`、`session_stop_*`；`hub`/`hub_config`/`bin` → `hub_*`（`hub` 另加 `node_auth_*`）；`search` → `search_*`；`media` → `media_*`、`native_*`；`files` → `file*`；`delivery` → `delivery_*`、`send_*`、`outbox*`；`bug_report` → `bug_report_*`；`audit` → `audit_*`；`metadata` → `metadata_*`、`prefs_*`；`trash` → `trash_*`；`runtime` → `live_*`、`spawned_by_*`、`managed_*`、`restart_state_*`、`lifecycle_*`；`bridge` → `claude_prompt_*`、`prompt_*`、`live_*`；`native_replay` → `native_*`；`assets` → `static_assets_*`、`meta_*`、`prefs_*`。表里没有的模块用 `<module>*`，一个都匹配不上就全量 |
 | `crates/sessiondock/src/api/**`、`main.rs`、`lib.rs`、`config.rs`、`security.rs`、`state.rs`、`error.rs` | 横切面 → 全量 |
 | `crates/sessiondock/tests/fixtures/**` | 全量（Python 套件也用这些 fixture） |
-| `crates/sessiondock/tests/**`（其它） | `cargo_*` |
-| `legacy-web/**` | 所有 `*_browser*` + `brand_names_check`（Node 单元测试不自动运行） |
-| `deploy/**` | `deploy_*`（默认只含 `deploy_native_handlers`；单元测试 `deploy_lock`、`deploy_testplan` 不自动运行） |
-| `tests/<stem>.py` | 若 `<stem>` 是套件 → 该套件及 `<stem>_*`（如 `lifecycle_browser` 带上 `lifecycle_browser_native_binding`）；否则取同前缀的套件（`hub_fake_node.py` → `hub_*`）；仍没有（`fake_claude_cli.py`、`python_oracle.py`）→ 全量；`*.mjs` → 默认列出的同前缀套件（Node 单元测试不自动运行）；`tests/fixtures/**` → 全量；`check_docs_links.py`、`check_agents_md.py` 改自己就跑自己 |
+| `legacy-web/**` | 所有 `*_browser*` + `brand_names_check` |
+| `deploy/**` | `deploy_*`（即 `deploy_native_handlers`） |
+| `tests/<stem>.py` | 若 `<stem>` 是套件 → 该套件及 `<stem>_*`（如 `lifecycle_browser` 带上 `lifecycle_browser_native_binding`）；否则取同前缀的套件（`hub_fake_node.py` → `hub_*`）；仍没有（`fake_claude_cli.py`、`python_oracle.py`）→ 全量；其它非 `.py` 文件与 `tests/fixtures/**` → 全量；`check_docs_links.py`、`check_agents_md.py` 改自己就跑自己 |
 | `Cargo.toml`、`Cargo.lock`、`.github/**`、其它任何未命中路径（`reference/**` …） | 全量 |
 
-离线回归：`tests/deploy_testplan.py`（映射、base 规则、三种模式的 CLI 行为，runner 被替身替换）；
-`tests/deploy_native_handlers.py` 钉住 macOS / Windows 处理器里原生测试一步的命令序列。
+离线回归：`tests/deploy_native_handlers.py` 钉住 macOS / Windows 处理器里原生测试一步的命令序列。
 
 ## 每台目标的步骤与不变量
 

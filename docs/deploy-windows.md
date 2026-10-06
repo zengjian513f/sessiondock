@@ -7,7 +7,7 @@
 
 Windows SSH 可能拒绝 rustup shim，并返回 OS error 448。因此直接调用稳定
 MSVC 工具链中的 `cargo.exe`，并把 `RUSTC`、`RUSTDOC` 都指向该工具链；
-默认部署使用 `cargo check --all-targets`，不执行单元测试。
+默认部署使用 `cargo check --all-targets` 做编译检查（仓库不含单元测试）。
 
 ```bat
 set "SD_TOOLCHAIN=%USERPROFILE%\.rustup\toolchains\stable-x86_64-pc-windows-msvc"

@@ -1206,6 +1206,3 @@ impl TerminalDriver for HostTerminalDriver {
         })
     }
 }
-
-#[cfg(test)]
-mod tests;

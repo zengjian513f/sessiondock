@@ -134,5 +134,4 @@ when the host remains alive and the Web process restarts with an empty registry.
 
 Default check is `python3 tests/lifecycle_http_suite.py` (and
 `python3 tests/lifecycle_browser.py` / `python3 tests/lifecycle_browser.py --native-binding`
-when the change is user-visible). Do not run crate unit tests unless the user
-asks. These suites do not start a model CLI or alter native history.
+when the change is user-visible). The repository has no unit tests (removed on 2026-10-06). These suites do not start a model CLI or alter native history.

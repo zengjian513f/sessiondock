@@ -10,8 +10,6 @@ use std::{
 
 pub(super) struct Disk {
     directory: PathBuf,
-    #[cfg(test)]
-    pub(super) failpoint: std::sync::atomic::AtomicU8,
 }
 
 fn io_error(error: io::Error) -> MetadataError {
@@ -34,8 +32,6 @@ impl Disk {
         fs::create_dir_all(directory).map_err(io_error)?;
         Ok(Self {
             directory: directory.canonicalize().map_err(io_error)?,
-            #[cfg(test)]
-            failpoint: std::sync::atomic::AtomicU8::new(0),
         })
     }
     pub(super) fn directory(&self) -> &Path {
@@ -99,20 +95,11 @@ impl Disk {
                 options.mode(0o600);
             }
             let mut file = options.open(&path).map_err(io_error)?;
-            if self.fail(1) {
-                return Err(io_error(io::Error::other("模拟写入失败")));
-            }
             file.write_all(&bytes)
                 .and_then(|()| file.sync_all())
                 .map_err(io_error)?;
             drop(file);
-            if self.fail(2) {
-                return Err(io_error(io::Error::other("模拟替换失败")));
-            }
             fs::rename(&path, self.directory.join(METADATA_FILENAME)).map_err(io_error)?;
-            if self.fail(3) {
-                return Err(MetadataError::uncertain());
-            }
             #[cfg(unix)]
             fs::File::open(&self.directory)
                 .and_then(|dir| dir.sync_all())
@@ -121,16 +108,5 @@ impl Disk {
         })();
         let _ = fs::remove_file(&path);
         result
-    }
-    fn fail(&self, point: u8) -> bool {
-        #[cfg(test)]
-        {
-            self.failpoint.load(std::sync::atomic::Ordering::Relaxed) == point
-        }
-        #[cfg(not(test))]
-        {
-            let _ = point;
-            false
-        }
     }
 }

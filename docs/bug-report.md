@@ -339,10 +339,6 @@ window's dates line by line (≤ 100 000 rows).
 - `python3 tests/bug_report_upload_browser.py`: real Hub and authenticated Rust
   node, 831 KiB image, lost upload replies after durable staging, bounded retries
   and manual recovery, followed by one report with the exact published bytes.
-- `cargo test -p sessiondock --test bug_report_http --locked` (fake Claude:
-  501 unconfigured, 503 for a source without a CLI, raw attachment upload, 202 shape, bundle
-  files, `submitted` from the synthetic native record, second report sees the
-  first in its window, the capture route's answer and the `captured` validation).
 - `python3 tests/bug_report_http_suite.py` (binary, fake Claude + fake Codex:
   9 scenarios including Codex SEND without a native rollout and the audit trail).
 - `python3 tests/bug_report_node_browser.py` (hub page over three fake nodes:

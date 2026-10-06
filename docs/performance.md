@@ -222,7 +222,7 @@ fixture_gen 语料 1500 会话 / 1 GiB（三家来源，最后一对 user/assist
 128 个文件（每个约 7 MB），使“打开 20 个”对应真实分布（真实根最新 20 个共约
 45 MB），巨文件单独打开并报告常驻。
 
-索引单元基准（`cargo test -p sessiondock --lib sessions::index::tests::benchmark -- --ignored --nocapture`，
+索引单元基准（历史记录：当时的 `sessions::index::tests::benchmark`，已随全部单元测试于 2026-10-06 删除；
 2000 会话 / 1.05 GB，16 路）：冷 327 ms，热（stat-only）33 ms。视图基准：
 258 MB / 40k 行 Codex 文件全量解析 1.98 s，热打开 0.06 s。
 
@@ -488,7 +488,7 @@ python3 tests/bench_polls_real.py --claude-root ~/.claude/projects --codex-root 
 | 空增量 p50 / p95（10次） | 0.41 / 0.45 | 0.70 / 0.81 |
 | 追加后重解析并返回增量（单次） | 24.95 | 101.69 |
 
-共享观察的确定性证据来自 `observe.rs` 单测：20 订阅共用一次初始版本读取；慢读者
+共享观察的确定性证据当时来自 `observe.rs` 单测（已随全部单元测试于 2026-10-06 删除）：20 订阅共用一次初始版本读取；慢读者
 跳过中间快照后仍能按自己的游标得到完整新增消息；最后订阅取消后回收。这证明读取
 合并机制，不替代 50/1000 长连接的 CPU/RSS 负载测试。
 

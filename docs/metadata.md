@@ -111,9 +111,7 @@ A pin written because the CLI rewound on its own screen carries `cli: true`
 (persisted and published on the row and view meta; see
 [CLI state](cli-state.md)): its notice says the terminal rewind was followed,
 offers no unpin, and disappears once the pin retires.
-Validation: metadata/provider/session unit tests,
-`cargo test -p sessiondock --test rewind_http --locked` and
-`python3 tests/rewind_browser.py` (pin → trimmed history + explanation,
+Validation: `python3 tests/rewind_browser.py` (pin → trimmed history + explanation,
 SSE retirement `native_advanced`, reload keeps state, 390 px pin/unpin, Web
 restart persists, native file only appended).
 

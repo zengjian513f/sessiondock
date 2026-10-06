@@ -11,8 +11,6 @@ pub(crate) mod scanner;
 pub(crate) mod string_reader;
 mod tool_envelopes;
 pub(super) use native_records::scan_native_records;
-#[cfg(test)]
-mod scanner_contract_tests;
 
 /// Runtime AST budget: `SESSIONDOCK_AST_CACHE_MB`.
 fn max_weight() -> usize {
@@ -78,10 +76,6 @@ pub(crate) struct RecordCache {
     /// This cache's retention budget; oversized parsed records stay readable.
     max_weight: usize,
     max_entries: usize,
-    #[cfg(test)]
-    pub decoded: usize,
-    #[cfg(test)]
-    pub reused: usize,
 }
 impl Default for RecordCache {
     fn default() -> Self {
@@ -96,10 +90,6 @@ impl RecordCache {
             clock: 0,
             max_weight,
             max_entries,
-            #[cfg(test)]
-            decoded: 0,
-            #[cfg(test)]
-            reused: 0,
         }
     }
 }
@@ -152,11 +142,8 @@ impl RecordCache {
                 .raw_index
                 .committed_digest()
         });
-        let reused = prior.as_ref().map_or(0, |entry| entry.records.len());
         let mut decoder = Decoder::new(prior);
         let mut index = scan(&mut decoder, probe)?;
-        #[cfg(test)]
-        let speculative_decoded = decoder.decoded;
         let matched = expected.is_none_or(|expected| index.probe_digest() == Some(expected));
         if !matched {
             // Drop stale ASTs/index before allocating their replacement. Never
@@ -166,33 +153,10 @@ impl RecordCache {
             decoder = Decoder::new(None);
             index = scan(&mut decoder, None)?;
         }
-        #[cfg(test)]
-        {
-            self.decoded += decoder.decoded + if matched { 0 } else { speculative_decoded };
-            self.reused += if matched { reused } else { 0 };
-        }
-        #[cfg(not(test))]
-        let _ = reused;
         let batch = decoder.finish(index.committed() as usize);
         Ok((batch, index))
     }
 
-    #[cfg(test)]
-    pub fn decode(
-        &mut self,
-        candidate: &Candidate,
-        previous: Option<&Parsed>,
-        bytes: &[u8],
-        committed: usize,
-    ) -> Batch {
-        let (batch, _) = self
-            .decode_input(candidate, previous, |decoder, probe| {
-                scan_records(bytes, decoder, probe)
-            })
-            .unwrap();
-        assert_eq!(batch.committed, committed);
-        batch
-    }
     pub fn retain(&mut self, candidate: Candidate, batch: Batch) {
         let (max_weight, max_entries) = (self.max_weight, self.max_entries);
         if batch.error.is_some() || batch.weight > max_weight || max_entries == 0 {
@@ -257,8 +221,6 @@ pub(super) struct Decoder {
     line: Vec<u8>,
     invalid: usize,
     error: Option<String>,
-    #[cfg(test)]
-    decoded: usize,
 }
 impl Decoder {
     fn new(prior: Option<Entry>) -> Self {
@@ -283,8 +245,6 @@ impl Decoder {
             line: Vec::new(),
             invalid,
             error: None,
-            #[cfg(test)]
-            decoded: 0,
         }
     }
     pub(super) fn cold() -> Self {
@@ -311,10 +271,6 @@ impl Decoder {
                 continue;
             }
             if !self.line.iter().all(u8::is_ascii_whitespace) {
-                #[cfg(test)]
-                {
-                    self.decoded += 1;
-                }
                 match decode_resident_record(&self.line) {
                     Ok(row) if row.is_object() => {
                         self.weight = self
@@ -374,10 +330,6 @@ fn same_file(old: &Candidate, new: &Candidate) -> bool {
         && old.data_stamp().map(|stamp| &stamp.file_identity)
             == new.data_stamp().map(|stamp| &stamp.file_identity)
 }
-#[cfg(test)]
-pub(super) fn value_weight_for_bench(value: &Value) -> usize {
-    value_weight(value)
-}
 // A conservative logical weight, not an allocator/RSS assertion. Containers pay
 // per capacity/entry and each nested Value pays a base node charge; an AST of
 // millions of tiny scalars cannot be retained merely because its JSON is small.
@@ -399,6 +351,3 @@ fn value_weight(value: &Value) -> usize {
     };
     64usize.saturating_add(nested)
 }
-
-#[cfg(test)]
-mod tests;

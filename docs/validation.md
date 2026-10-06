@@ -1,26 +1,26 @@
 # Validation suites
 
 Tables of the default checks in `python3 tests/run_validation.py`, explicit
-unit/real-CLI/SSH-peer suites and opt-in benchmarks. A documented direct command
+real-CLI/SSH-peer suites and opt-in benchmarks. A documented direct command
 does not imply inclusion in the default sweep. Narrative rules stay in `AGENTS.md`.
 
 ```sh
 python3 tests/run_validation.py            # --jobs 8, --browser-jobs 3 by default
 python3 tests/run_validation.py --jobs 1   # fully serial (browser jobs forced to 1)
 python3 tests/run_validation.py --list
-python3 tests/run_validation.py --tags rust,node
+python3 tests/run_validation.py --tags rust
 python3 tests/run_validation.py --only legacy_browser
 ```
 
-`--tags` defaults to `rust,node,python`. Unit suites (Cargo, Node contracts and
-Python unittest) are opt-in via `--include-unit` or an explicit `--only NAME`;
-default sweeps and deployment gates exclude them. Suites compared against the
+`--tags` defaults to `rust,python`. The repository has no unit tests (Rust
+`#[test]` modules, `crates/*/tests`, Node `*_contract.mjs` and Python `unittest`
+suites were removed on 2026-10-06). Suites compared against the
 frozen Python oracle (`*_parity.py` and any suite taking `--python-source`) are
-likewise opt-in via `--include-oracle` or an explicit `--only NAME`. `--only NAME[,NAME…]` and `--skip`
+opt-in via `--include-oracle` or an explicit `--only NAME`. `--only NAME[,NAME…]` and `--skip`
 filter by suite name. `--keep-going` continues after a failure. Per-suite logs
 go under `target/validation/<stamp>/`. Rust runs first as parallel lanes that
-share no cargo build directory (`cargo_clippy` with optional `cargo_test`;
-`cargo_build`; `cargo_check_windows`; `cargo_fmt`), then Node and Python (`tests/*.py` with
+share no cargo build directory (`cargo_clippy`; `cargo_build`;
+`cargo_check_windows`; `cargo_fmt`), then Python (`tests/*.py` with
 `if __name__ == "__main__"`, sorted) — every suite already owns its loopback
 port and temp directories. Non-browser suites run through a pool of `--jobs`
 workers; suites that drive Chromium (any that import `playwright`) run through a
@@ -38,16 +38,16 @@ Historical timings below describe their dated runs, not today's full-sweep durat
 **Headless browser is the default gate for a feature or bug fix.** After
 the change, run the `*_browser.py` (or `--browser` parity) that covers the
 affected path end to end in Chromium. If no suite covers it, add or extend
-one. HTTP / `--test` / node suites may run alongside; they are not a
+one. Python HTTP suites may run alongside; they are not a
 substitute. Docs-only and deploy-script-only work use the doc/deploy suites.
 
-**Do not run any unit test unless the user explicitly asks** (`cargo test`,
-`tests/*_contract.mjs`, Python `unittest` suites); validate the changed surface
-with the headless browser suite that covers it. History: a 2026-10-06 audit
-found these suites had silently drifted — all 15 Node contract failures, all 21
-`cargo test` failures and the one Python unittest failure were tests not updated
-after intentional changes (none was a product bug), while the regressions that
-mattered were caught by browser suites.
+**The repository has no unit tests; do not add any.** A 2026-10-06 audit
+found every failing unit test — 15 Node contract, 21 `cargo test` and one Python
+unittest failure — was a test not updated after intentional changes (none was a
+product bug), while the regressions that mattered were caught by browser
+suites. All Rust `#[test]` modules and `crates/*/tests/*.rs`, the
+`tests/*_contract.mjs` files and the Python `unittest` suites were then removed.
+Cover new behavior by adding or extending a browser suite.
 
 The frontend `legacy-web/` is served as committed and needs no build.
 `--web-dir` (or `SESSIONDOCK_TEST_WEB_DIR`) points the browser suites at another
@@ -120,12 +120,10 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 
 | Suite | Command | Covers | Needs | Typical time |
 | --- | --- | --- | --- | --- |
-| cargo_test | `cargo test --workspace --locked` | Workspace unit and integration tests. Opt-in only (`--include-unit` / `--only cargo_test`). Opt-in ignored `launch_host` needs `SESSIONDOCK_TEST_PTYHOST_BINARY` | cargo | n/a |
 | cargo_fmt | `cargo fmt -p sessiondock -p ptyhost-client --check` | rustfmt on those two packages | cargo | n/a |
 | cargo_clippy | `cargo clippy -p sessiondock -p ptyhost-client --all-targets --locked -- -D warnings` | clippy, warnings denied | cargo | n/a |
 | cargo_check_windows | `cargo xwin check --workspace --all-targets --target x86_64-pc-windows-msvc --locked` | Linux/macOS cross-compile to MSVC with bundled C dependencies; native Windows uses `cargo check`; not a Windows run | cargo, cargo-xwin, LLVM, cached/downloadable CRT/SDK | n/a |
 | cargo_build | `cargo build --release -p sessiondock --locked` | Release server used by `--binary` Python suites | cargo | n/a |
-| node_contracts | `node --test tests/grid_facade_contract.mjs tests/grid_input_contract.mjs tests/grid_model_contract.mjs tests/grid_render_contract.mjs` | `grid_facade_contract.mjs` (xterm-compatible `GridTerm` surface: write of JSON lines, buffer shim, selection, modes, resize/title events); `grid_model_contract.mjs` (grid wire decoder, snapshot/diff application, scrollback reflow, selection text); `grid_render_contract.mjs` (every row clipped to its own box, cell size on whole device pixels for fractional dpr); `grid_input_contract.mjs` (xterm-compatible key/mouse/paste/focus encoding). The legacy-web contracts that loaded single functions out of `app.js`/`term.js` source text were removed on 2026-10-06: they had drifted (15 failures, none a product bug) and their behavior is covered by browser suites | node (unit; only when the user asks) | 0s |
 | agy_browser | `python3 tests/agy_browser.py --binary target/debug/sessiondock` | Legacy Agy pending launch, effort argv, terminal typing, reconnect, discard, unavailable CLI, 390 px and themes; fake CLI only, not native resume evidence. | binary, ptyhost, Chromium | n/a |
 | agy_clients_browser | `python3 tests/agy_clients_browser.py --binary target/debug/sessiondock` | Private fake CLI and manifest: local/Hub model TSV, default and explicit effort argv, version/update success and failure, closed stdin, missing CLI and offline-node gates. | binary, hub, ptyhost, Chromium | n/a |
 | agy_history_browser | `python3 tests/agy_history_browser.py --binary target/debug/sessiondock` | Native-schema synthetic catalog/transcript seeds: Chromium list, search, pagination, append, old-row rewrite, rewind, atomic DB replacement, restart, missing/restored transcript with retained history notice, catalog-row removal, image/raw-tool/error rendering, and unsupported deletion/mixed-group transfer refusal; native bytes/mtime preserved. Schema fixtures do not establish real CLI media/tool output. | binary, Chromium | n/a |
@@ -152,10 +150,7 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | codex_legacy_fork_suite | `python3 tests/codex_legacy_fork_suite.py --binary target/release/sessiondock` | HTTP contract: legacy self-contained forks with copied `session_meta` records (parent present/absent): `跳过重复的Codex session_meta ×N`, root_sid/fork_depth/created/title/size, own records readable (grok-4.6 headless draft, reviewed) | binary | n/a |
 | continued_in_suite | `python3 tests/continued_in_suite.py --binary target/release/sessiondock` | Claude `continued_in` row field from the tail `continued-in` record, resolved within the list only, equal to Python `finalize_sessions`; record produces no message (grok-4.6 headless draft, reviewed) | binary | n/a |
 | sessions_visibility_browser | `python3 tests/sessions_visibility_browser.py --binary target/release/sessiondock` | Chromium node/Hub list, open, search and SSE with obsolete registry/URL parameters; all data temporary. | binary, hub binary, Playwright | n/a |
-| deploy_dry_run | `python3 tests/deploy_dry_run.py` | Offline regression for `deploy/deploy.py`: temporary checkout, `build --web-only`, `push --dry-run` against a private prefix (PLANNED / SKIPPED / UNSUPPORTED rows, plan lines, JSON report, fixture untouched), unknown target and refused rollback dir; tracked workspace archive preserves the real index and excludes untracked files; no ssh, no cargo (grok-4.6 headless draft, reviewed) | git checkout | 2s |
-| deploy_lock | `python3 tests/deploy_lock.py` | Temporary-process contention and owner diagnostics, latest state after waiting, timeout, crash release without unlink, shared worktree lock and all four deployment commands locking before target reads | git | 1s |
 | deploy_native_handlers | `python3 tests/deploy_native_handlers.py` | Offline command-sequence pins for the `macos-node` and `windows-node` deploy handlers with a recording fake Shell (stage/backup/swap/restart/verify/rollback, rendered `.cmd` templates, the per-platform native test step driven by `DeployOptions.test_mode`: absent for `none`, between extraction and build otherwise, a failing run stops before anything is staged); the Windows path has no real-machine run yet | none | <1s |
-| deploy_testplan | `python3 tests/deploy_testplan.py` | Offline pins for the deploy test gate (`deploy/testplan.py`, `deploy.py --test`): changed-path → suite-pattern mapping against a stubbed `--list` plus the alias table against the real `--list`, base commit from `--test-base` / the OLDEST `etc/deployed-commit` marker / origin/main / HEAD~1, `build --test none` skipping, `--test affected` printing the plan and handing `--only`/`--binary`/`--log-dir`/`--json` to a stubbed runner, `test_*` recorded in artifacts.json, exit 1 with failing suite names and log paths before push, unmatched path → full sweep, `push --dry-run` echoing the recorded mode | git checkout | 3s |
 | files_browser | `python3 tests/files_browser.py --binary target/release/sessiondock` | Conversation references open FileDock with the exact node/path; missing-reference errors and direct directory entry, desktop/mobile. | binary, Chromium | n/a |
 | files_grants_suite | `python3 tests/files_grants_suite.py --binary target/release/sessiondock` | File-browser grants across rename, deletion, restart and session scopes. | binary | n/a |
 | files_read_suite | `python3 tests/files_read_suite.py --binary target/release/sessiondock` | HTTP contract of the read-only file service (resolve-files, file, files). | binary | n/a |
@@ -378,22 +373,20 @@ Frontend performance regressions also run as ordinary browser suites:
 
 `tests/run_validation.py` discovers suites after the fixed Rust checks:
 
-1. Every `tests/*_contract.mjs` is passed to one `node --test` suite named
-   `node_contracts`.
-2. Every `tests/*.py` with `if __name__ == "__main__"` becomes a Python suite,
+1. Every `tests/*.py` with `if __name__ == "__main__"` becomes a Python suite,
    except `run_validation.py`, `provider_parity.py`, and `*_benchmark.py`.
-3. `*_parity.py` and suites taking `--python-source` are oracle suites, outside
+2. `*_parity.py` and suites taking `--python-source` are oracle suites, outside
    the default plan. When selected they get `--python-source` from the explicit
    setting or `SESSIONDOCK_PYTHON_SOURCE`; no sibling checkout is discovered;
    otherwise the suite is SKIP.
-4. If argparse text contains `--browser`, `--browser` is appended.
-5. If argparse text contains `--binary`, `--binary target/release/sessiondock`
+3. If argparse text contains `--browser`, `--browser` is appended.
+4. If argparse text contains `--binary`, `--binary target/release/sessiondock`
    is appended (override with the runner's `--binary`).
-6. `lifecycle_browser.py` is also run as `lifecycle_browser_native_binding` with
+5. `lifecycle_browser.py` is also run as `lifecycle_browser_native_binding` with
    `--native-binding`.
 
-Name HTTP+Chromium checks `*_browser.py`, adapter differentials `*_parity.py`,
-and the grid module tests `*_contract.mjs`. Print `PASS …` lines on success. Exit
+Name HTTP+Chromium checks `*_browser.py` and adapter differentials
+`*_parity.py`. Print `PASS …` lines on success. Exit
 non-zero on failure. Copy fixtures into temporary directories only; never write
 into the repo, native homes, or production paths.
 

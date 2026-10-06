@@ -34,13 +34,12 @@ def workspace_crates():
 
 
 MOD_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
-TEST_RE = re.compile(r"#\[(?:tokio::)?test\b")
 ATTR_RE = re.compile(r"^\s*#!?\[")
 INTRO = """# Module map
 
 This file is produced by `tests/module_map.py`. It maps every `.rs` file under
-the crate `src` trees below with the first module doc line, line count, `#[test]`
-/ `#[tokio::test]` counts, and `mod` declarations. Regenerate:
+the crate `src` trees below with the first module doc line, line count and
+`mod` declarations. Regenerate:
 
 ```sh
 python3 tests/module_map.py --write
@@ -76,7 +75,6 @@ def parse_file(path: Path, src: Path) -> dict:
         "rel": path.relative_to(src).as_posix(),
         "doc": first_doc(rows),
         "lines": len(rows),
-        "tests": len(TEST_RE.findall(text)),
         "mods": [m.group(1) for raw in rows if (m := MOD_RE.match(raw))],
     }
 
@@ -113,7 +111,7 @@ def sort_names(node: dict) -> list[str]:
 
 def file_line(name: str, item: dict) -> str:
     doc = item["doc"] or "(no module doc)"
-    return f"`{name}` — {doc} ({item['lines']} lines, {item['tests']} tests)"
+    return f"`{name}` — {doc} ({item['lines']} lines)"
 
 
 def render_tree(node: dict, depth: int) -> list[str]:
@@ -135,11 +133,7 @@ def render_tree(node: dict, depth: int) -> list[str]:
 def render_crate(title: str, rel: str, items: list[dict]) -> list[str]:
     undocumented = sum(1 for item in items if not item["doc"])
     n_lines = sum(item["lines"] for item in items)
-    n_tests = sum(item["tests"] for item in items)
-    summary = (
-        f"`{rel}`: {len(items)} files, {n_lines} lines, "
-        f"{n_tests} tests, {undocumented} undocumented."
-    )
+    summary = f"`{rel}`: {len(items)} files, {n_lines} lines, {undocumented} undocumented."
     return [f"## {title}", "", summary, ""] + render_tree(nest(items), 0) + [""]
 
 

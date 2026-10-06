@@ -183,40 +183,11 @@ draft/submission service and CLI echo tracking; see [conversation.md](../../docs
 The old delivery dispatcher is retired. Dropping an
 attach connection is separate from terminating its host/CLI process.
 
-## Tests and remaining work
+## Validation and remaining work
 
-Do not run these crate tests as a default bug/feature gate; only when asked.
-
-`cargo test -p ptyhost-client` uses temporary directories, fake
-TCP/Unix listeners, and synthetic metadata only. No ptyhost binary, shell, paid
-CLI, home-directory session discovery, or production service is started.
-
-Tests cover privacy/read-only discovery, path/name/size constraints, token
-authentication, typed control replies, split/coalesced JSON and frames, exact
-bytes, resize, exit/EOF, deadlines, cancelled reads, cancelled/failed writes,
-frame budgets, and symlinks.
-Launch tests additionally exercise pending probe/control/attach, metadata
-independence/redaction, exact capabilities/nonces/ACK, changed records, stale
-or legacy peer rejection, coalesced replay, and ambiguous writes without retry.
-Linux test success is not Windows/macOS runtime validation.
-
-An ignored Unix interoperability test explicitly starts a built ptyhost with a
-fixed free `/bin/sh` in a private temporary directory, with both working
-directories explicit and its inherited environment cleared (only a fixed PATH
-and TERM are supplied). Build the host, then set
-`SESSIONDOCK_TEST_PTYHOST_BINARY` to its exact absolute executable path and run:
-
-```sh
-cargo build -p ptyhost --locked
-SESSIONDOCK_TEST_PTYHOST_BINARY=/absolute/build/path/ptyhost \
-  cargo test -p ptyhost-client --test launch_host --locked -- --ignored
-```
-
-It does not guess a binary from cwd or discover native sessions. It checks typed
-pending observation/control/attach, exact byte input and complete exit, host-side
-rejection of a forged synthetic launch record without kill/resize effects, and
-same-name replacement rejecting the old target. This is not native CLI startup
-or binding validation.
+The crate has no unit tests (all repository unit tests were removed on
+2026-10-06). Its protocol is exercised end to end by SessionDock's lifecycle and
+terminal browser suites against private ptyhost directories.
 
 Application-owned concerns remain process startup/platform lifetimes, leases,
 WebSocket bridging/backpressure, terminal/session UID association, provider

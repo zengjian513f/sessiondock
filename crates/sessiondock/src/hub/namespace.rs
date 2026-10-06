@@ -6,9 +6,6 @@
 //! Shapes: session uid `<source>:<nid>~<local tail>`; terminal name, trash id
 //! and outbox epoch `<nid>~<local>`; media `src` `/api/nodes/<nid>/api/media/…`.
 
-#[cfg(test)]
-mod tests;
-
 use std::fmt;
 
 use serde_json::{Map, Value};

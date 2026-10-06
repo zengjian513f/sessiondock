@@ -183,4 +183,4 @@ policy (a leftover `bug_report_profiles` key is ignored).
 
 Default check is `python3 tests/check_config_suite.py` and
 `python3 tests/lifecycle_http_suite.py` when the launcher argv or environment
-changes. Do not run crate unit tests unless the user asks.
+changes. The repository has no unit tests (removed on 2026-10-06).

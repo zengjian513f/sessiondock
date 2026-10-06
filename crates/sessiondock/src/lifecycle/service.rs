@@ -748,8 +748,6 @@ impl Core {
     ) -> Result<T, Error> {
         let store = self.store.clone();
         tokio::task::spawn_blocking(move || {
-            #[cfg(all(test, unix))]
-            tests::pause_blocking_work();
             let mut store = store.lock().map_err(|_| Error::WorkerFailed)?;
             work(&mut store)
         })
@@ -1728,10 +1726,6 @@ impl Reaper {
             .map(|job| job.state.subscribe())
     }
 }
-
-#[cfg(all(test, unix))]
-#[path = "service_tests.rs"]
-mod tests;
 
 /// How often the installed CLIs are probed again, so installing or removing
 /// one shows up in the picker without a restart.

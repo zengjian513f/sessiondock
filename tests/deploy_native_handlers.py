@@ -7,7 +7,7 @@ command sequence of stage/backup/swap/restart/verify/rollback is asserted for bo
 kinds and the verify invariants are shown to fail when ptyhost pids vanish, the
 on-disk hash differs, the build hash does not move with web, or the Windows service
 lands in session 0 instead of a desktop session. The per-platform test step (DeployOptions.test_mode:
-Rust tests on the node between extraction and build) is pinned for both kinds: absent
+Rust compile check on the node between extraction and build) is pinned for both kinds: absent
 with `none`, present with `affected`/`full`, and a failing run stops stage() before
 anything is staged. No network, no subprocess, < 5 s.
 

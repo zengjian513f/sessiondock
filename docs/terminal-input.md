@@ -120,10 +120,6 @@ the list.
 
 ## Validation
 
-`cargo test -p sessiondock --test terminal_input --locked` (temporary
-ptyhost running a private `/bin/sh`: text + Enter echoed through capture,
-refusal without lease, after revoke and after exit, size limits and input bursts,
-the lease-less page written through its pinned instance even with a PTY holder; skips when ptyhost is not built) and
 `python3 tests/terminal_scrollback_browser.py` (real wheel up/down over PTY history
 in the grid console, stable history position, subsequent live input, no HTTP scroll);
 `python3 tests/terminal_input_browser.py` (desktop local wheel and WebSocket input,
