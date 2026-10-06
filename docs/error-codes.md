@@ -74,7 +74,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - 请选择目录浏览
 - 目标必须是目录
 - [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `directory` L298
-- [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `list` L519
+- [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `list` L518
 - [`files/write.rs`](../crates/sessiondock/src/files/write.rs) `directory` L294
 
 ### `file_field_required`
@@ -95,7 +95,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 ### `file_list_options`
 
-- 无效的目录分页或排序参数 — [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `list` L511
+- 无效的目录分页或排序参数 — [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `list` L510
 
 ### `file_media_reference_invalid`
 
@@ -122,7 +122,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - 目录含非 UTF-8 名称，不能安全导航
 - 目录路径不是 UTF-8
 - 链接目标无法表示为 UTF-8
-- [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `list` L530
+- [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `list` L529
 - [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `open` L133
 - [`files/boundary.rs`](../crates/sessiondock/src/files/boundary.rs) `wire_path` L483
 - [`files/grants.rs`](../crates/sessiondock/src/files/grants.rs) `browser_anchor` L180
@@ -160,7 +160,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 - 文件引用为空、过长或包含空字符
 - 文件引用不能为空
-- [`files/references.rs`](../crates/sessiondock/src/files/references.rs) `clean_ref` L98, L108
+- [`files/references.rs`](../crates/sessiondock/src/files/references.rs) `clean_ref` L99, L109
 
 ### `file_reference_limit`
 
@@ -185,7 +185,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 ### `file_scope_invalid`
 
-- 文件访问需要已解析的有效会话视图 — [`files/references.rs`](../crates/sessiondock/src/files/references.rs) `validate_scope` L118
+- 文件访问需要已解析的有效会话视图 — [`files/references.rs`](../crates/sessiondock/src/files/references.rs) `validate_scope` L119
 
 ### `file_sha256_invalid`
 
@@ -752,7 +752,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_copy` L498, L515
 - [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_prefix` L557, L578
 - [`transfer/prefix.rs`](../crates/sessiondock/src/transfer/prefix.rs) `conflict` L20
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L855, L903, L912, L951, L959
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L858, L906, L915, L954, L962
 
 ### `move_cwd_mismatch`
 
@@ -994,7 +994,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_prefix` L543
 - [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `retire` L638
 - [`transfer/prefix.rs`](../crates/sessiondock/src/transfer/prefix.rs) `prepare` L176
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L985, L994, L1031
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L988, L997, L1034
 - [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `load` L322
 - [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `progress_status` L347
 - [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `recheck_in` L631, L638, L650, L670, L674
@@ -1005,10 +1005,11 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - 迁移链接要求 Unix
 - 此平台不支持迁移符号链接
 - [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `build_manifest` L152
-- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `receive_bundle` L673, L706
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `publish_noreplace` L725
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `receive_bundle` L675
 - [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `validate_bundle` L343
 - [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `stage` L976
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L1003
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L1006
 
 ### `move_recovery_required`
 
@@ -1045,10 +1046,10 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `rollback` L818, L829, L864, L879, L885
 - [`transfer/prefix.rs`](../crates/sessiondock/src/transfer/prefix.rs) `check_restore` L199, L213
 - [`transfer/prefix.rs`](../crates/sessiondock/src/transfer/prefix.rs) `restore` L230
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `cleanup_markers` L768
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L847
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `cleanup_markers` L771
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L850
 - [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `plan_copy` L416
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `rollback` L802
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `rollback` L805
 
 ### `move_reference_unsupported`
 
@@ -1085,7 +1086,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 - 克隆后的历史关系不完整
 - 克隆仍引用源组身份
-- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L1069, L1085
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L1072, L1088
 
 ### `nest_parent_cycle`
 

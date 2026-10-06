@@ -74,11 +74,10 @@ fn host_gone(info: &Value) -> bool {
             return std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
         }
         #[cfg(target_os = "macos")]
-        {
-            return macos_zombie(pid);
-        }
+        let gone = macos_zombie(pid);
         #[cfg(not(target_os = "macos"))]
-        false
+        let gone = false;
+        gone
     }
     #[cfg(not(unix))]
     {

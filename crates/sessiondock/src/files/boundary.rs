@@ -482,16 +482,15 @@ pub(super) fn wire_path(path: &Path) -> Result<String, FileError> {
         .to_str()
         .ok_or_else(|| FileError::new(400, "file_path_encoding", "路径无法表示为 UTF-8"))?;
     #[cfg(windows)]
-    {
-        let value = value
-            .strip_prefix("\\\\?\\UNC\\")
-            .map(|rest| format!("//{rest}"))
-            .or_else(|| value.strip_prefix("\\\\?\\").map(str::to_owned))
-            .unwrap_or_else(|| value.to_owned());
-        return Ok(value.replace('\\', "/"));
-    }
+    let value = value
+        .strip_prefix("\\\\?\\UNC\\")
+        .map(|rest| format!("//{rest}"))
+        .or_else(|| value.strip_prefix("\\\\?\\").map(str::to_owned))
+        .unwrap_or_else(|| value.to_owned())
+        .replace('\\', "/");
     #[cfg(not(windows))]
-    Ok(value.into())
+    let value = value.to_owned();
+    Ok(value)
 }
 pub(super) fn modified(metadata: &Metadata) -> Option<f64> {
     metadata

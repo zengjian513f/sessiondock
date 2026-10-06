@@ -10,7 +10,7 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 195 files, 85533 lines, 5 undocumented.
+`crates/sessiondock/src`: 195 files, 85558 lines, 5 undocumented.
 
 - `api/`
   - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines)
@@ -80,14 +80,14 @@ python3 tests/module_map.py --write
   - `target.rs` — Managed-instance target resolution and the failure type shared by (163 lines)
 - `error.rs` — HTTP JSON error envelope `{error, code}` shared by Axum handlers. (68 lines)
 - `files/`
-  - `boundary.rs` — (no module doc) (627 lines)
+  - `boundary.rs` — (no module doc) (626 lines)
   - `grants.rs` — An authenticated file browser keeps its directory grant after the original (183 lines)
   - `info.rs` — Browser information describes the named leaf. (56 lines)
   - `jobs.rs` — In-memory file-operation jobs, bound to the session scope that created them. (224 lines)
   - `media.rs` — One trusted selected-view reference index shared by an entire media window. (113 lines)
   - `mod.rs` — Session-reference-scoped file reads and authenticated directory browsing. (345 lines)
     - mods: `boundary`, `grants`, `info`, `jobs`, `media`, `references`, `response`, `write`
-  - `references.rs` — (no module doc) (281 lines)
+  - `references.rs` — (no module doc) (282 lines)
   - `response.rs` — (no module doc) (519 lines)
   - `write.rs` — Authenticated operator file mutations through checked parent handles. (2194 lines)
 - `fingerprint.rs` — 128-bit streaming content fingerprint of native bytes. (126 lines)
@@ -112,7 +112,7 @@ python3 tests/module_map.py --write
 - `lifecycle/`
   - `autobind.rs` — Process-evidence binding of pending Codex/Grok launches. (326 lines)
   - `clients.rs` — Installed agent CLI versions and manual updates for the machine settings. (562 lines)
-  - `launcher.rs` — Configured adapters and one-authority process spawn. No discovery, (1150 lines)
+  - `launcher.rs` — Configured adapters and one-authority process spawn. No discovery, (1160 lines)
   - `mod.rs` — Isolated durable process-creation intent. No launcher or native-session binding. (8 lines)
     - mods: `autobind`, `clients`, `launcher`, `model`, `models`, `service`, `store`
   - `model.rs` — Private creation-intent types: `LaunchSpec`, `Record`, and `BindingSpec`. (620 lines)
@@ -136,7 +136,7 @@ python3 tests/module_map.py --write
   - `native_media.rs` — Private native-string descriptors. Paths are metadata, never open authority. (370 lines)
 - `metadata/`
   - `disk.rs` — Metadata reads and atomic replacement in the configured directory. (112 lines)
-  - `mod.rs` — SessionDock preferences with reads and atomic publication. (217 lines)
+  - `mod.rs` — SessionDock preferences with reads and atomic publication. (219 lines)
     - mods: `disk`, `model`
   - `model.rs` — Pure, versioned metadata transformations. No process or native-file access. (745 lines)
     - mods: `transfer`
@@ -230,7 +230,7 @@ python3 tests/module_map.py --write
   - `receipts.rs` — Per-connection terminal I/O receipts for the diagnostic audit. (96 lines)
   - `service.rs` — Opt-in local transport: an explicit host directory, bounded forwarding, and (1244 lines)
 - `transfer/`
-  - `bundle.rs` — A manifest-first tar stream. Archive paths are numbered slots, never native (732 lines)
+  - `bundle.rs` — A manifest-first tar stream. Archive paths are numbered slots, never native (742 lines)
     - mods: `dependencies`
   - `claude_tools.rs` — Native Claude agent destinations, scoped to calls in one transcript. (95 lines)
   - `cleanup.rs` — Node-owned cleanup for abandoned previews and standalone foreground copies. (107 lines)
@@ -255,7 +255,7 @@ python3 tests/module_map.py --write
   - `prefix.rs` — File proofs and retained originals for identity-preserving prefix imports. (238 lines)
   - `progress.rs` — Ephemeral work counters. No journal writes, timers, or background scanning. (126 lines)
   - `references.rs` — Compact native relationship summaries. Cache file metadata, never transcripts. (391 lines)
-  - `service.rs` — Durable same-node clone transaction. Plans contain server-derived paths only; (1185 lines)
+  - `service.rs` — Durable same-node clone transaction. Plans contain server-derived paths only; (1188 lines)
     - mods: `journal`, `names`, `prefix`, `tool_requirements`
   - `tool_requirements.rs` — Persisted definitions identify executor dependencies, not runnable tools. (64 lines)
 - `trash.rs` — Session recycle bin. Native files move into recoverable entries; fork (889 lines)
@@ -268,14 +268,14 @@ python3 tests/module_map.py --write
 
 ## process-links
 
-`crates/process-links/src`: 6 files, 1546 lines, 0 undocumented.
+`crates/process-links/src`: 6 files, 1549 lines, 0 undocumented.
 
 - `agent.rs` — Local protocol shared by resource-agent and application adapters. (114 lines)
 - `connections.rs` — Durable, boot-scoped connection evidence. No commands or credentials. (326 lines)
 - `engine.rs` — Attribution state independent of a session UI or transport. (321 lines)
 - `lib.rs` — Shared process identities, SSH lineage and resource aggregation. (268 lines)
   - mods: `agent`, `connections`, `engine`, `linux`, `resource_summary`
-- `linux.rs` — Linux adapter: only the current uid's processes, selected environment keys, (262 lines)
+- `linux.rs` — Linux adapter: only the current uid's processes, selected environment keys, (265 lines)
 - `resource_summary.rs` — Shared per-session accounting. A process is selected once, even when several (255 lines)
 
 ## resource-agent
@@ -295,9 +295,9 @@ python3 tests/module_map.py --write
 
 ## ptyhost
 
-`crates/ptyhost/src`: 10 files, 3278 lines, 0 undocumented.
+`crates/ptyhost/src`: 10 files, 3277 lines, 0 undocumented.
 
-- `client.rs` — 宿主会话的客户端：扫描会话目录、发控制请求、建立 attach 流。 (313 lines)
+- `client.rs` — 宿主会话的客户端：扫描会话目录、发控制请求、建立 attach 流。 (312 lines)
 - `dsr.rs` — 从 pty 输出里切出设备状态查询（DSR），其余字节原样放行。 (146 lines)
 - `final_screen.rs` — 会话最终画面：宿主退出时把终端模型的最后画面写成一份网格快照（带全部回滚 (98 lines)
 - `guard.rs` — Optional identity-checked envelope. An old host rejects this *operation* (285 lines)

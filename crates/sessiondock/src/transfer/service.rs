@@ -726,6 +726,9 @@ impl TransferService {
         ))
     }
     fn owns(id: &str, target: &Path) -> bool {
+        // Ownership is the marker's device/inode identity, Unix only.
+        #[cfg(not(unix))]
+        let _ = (id, target);
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;

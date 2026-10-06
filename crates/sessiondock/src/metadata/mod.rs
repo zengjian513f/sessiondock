@@ -32,6 +32,8 @@ impl MetadataError {
         }
     }
 
+    // Only Unix syncs the directory after the rename.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(super) fn uncertain() -> Self {
         Self::new(
             503,

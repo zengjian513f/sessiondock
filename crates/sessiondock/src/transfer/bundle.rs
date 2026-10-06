@@ -670,7 +670,10 @@ impl TransferService {
                     #[cfg(unix)]
                     std::os::unix::fs::symlink(link, &staged)?;
                     #[cfg(not(unix))]
-                    return Err(TransferError::new("move_platform", "迁移链接要求 Unix"));
+                    {
+                        let _ = link;
+                        return Err(TransferError::new("move_platform", "迁移链接要求 Unix"));
+                    }
                 } else {
                     fs::rename(&slot, &staged)?;
                     #[cfg(unix)]
@@ -693,20 +696,7 @@ impl TransferService {
             )?;
             fs::write(scratch.join("operation.json"), serde_json::to_vec(&op)?)?;
             sync_tree(&scratch)?;
-            #[cfg(target_os = "linux")]
-            rustix::fs::renameat_with(
-                rustix::fs::CWD,
-                &scratch,
-                rustix::fs::CWD,
-                &directory,
-                rustix::fs::RenameFlags::NOREPLACE,
-            )
-            .map_err(std::io::Error::from)?;
-            #[cfg(not(target_os = "linux"))]
-            return Err(TransferError::new(
-                "move_platform",
-                "跨机器迁移目前只支持 Linux",
-            ));
+            publish_noreplace(&scratch, &directory)?;
             fs::File::open(&self.directory)?.sync_all()?;
             Ok(op)
         })();
@@ -717,6 +707,26 @@ impl TransferService {
     }
 }
 
+/// Publish a prepared journal directory without replacing an existing one.
+#[cfg(target_os = "linux")]
+fn publish_noreplace(from: &Path, to: &Path) -> Result<(), TransferError> {
+    rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        from,
+        rustix::fs::CWD,
+        to,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(std::io::Error::from)?;
+    Ok(())
+}
+#[cfg(not(target_os = "linux"))]
+fn publish_noreplace(_from: &Path, _to: &Path) -> Result<(), TransferError> {
+    Err(TransferError::new(
+        "move_platform",
+        "跨机器迁移目前只支持 Linux",
+    ))
+}
 fn sync_tree(path: &Path) -> Result<(), TransferError> {
     for entry in fs::read_dir(path)? {
         let entry = entry?;

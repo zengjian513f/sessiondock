@@ -149,6 +149,9 @@ pub fn collect(root: &Path) -> Snapshot {
 }
 
 pub fn collect_uid(root: &Path, uid: u32) -> Snapshot {
+    // Only Unix compares owners; elsewhere there is no uid to match.
+    #[cfg(not(unix))]
+    let _ = uid;
     let mut entries = BTreeMap::new();
     let sockets = socket_table(root);
     let listeners = unix_listeners(root);
