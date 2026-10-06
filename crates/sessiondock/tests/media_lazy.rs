@@ -195,12 +195,15 @@ async fn history_and_search_preserve_text_while_get_validates_only_base64_and_it
 
 #[tokio::test]
 async fn windows_pages_and_watch_register_decoded_images_without_materializing_them() {
+    // Opening windows hold the 5 earliest and 200 latest events
+    // (docs/history-pages.md, 860660ed / dcc985dc): images 2 and 1450 are in
+    // the window, image 150 in the first 200-event history page.
     let fixture = Fixture::new(
         (0..1500)
             .map(|i| {
                 row(
                     i,
-                    [20, 150, 1450]
+                    [2, 150, 1450]
                         .contains(&i)
                         .then(|| image("AAAA", "image/png")),
                 )
@@ -209,7 +212,7 @@ async fn windows_pages_and_watch_register_decoded_images_without_materializing_t
     );
     let uid = fixture.uid().await;
     let history = ok(&fixture.app, &format!("/api/messages/{uid}?window=1")).await;
-    assert_eq!(history["messages"].as_array().unwrap().len(), 600);
+    assert_eq!(history["messages"].as_array().unwrap().len(), 205);
     let images = descriptors(&history);
     assert_eq!(images.len(), 2);
     for item in images {
@@ -250,7 +253,7 @@ async fn windows_pages_and_watch_register_decoded_images_without_materializing_t
     )
     .unwrap();
     assert_eq!(packet["reset"], true);
-    assert_eq!(packet["messages"].as_array().unwrap().len(), 600);
+    assert_eq!(packet["messages"].as_array().unwrap().len(), 205);
     let images = descriptors(&packet);
     assert_eq!(images.len(), 2);
     for item in images {

@@ -345,13 +345,27 @@ async fn pending_codex_launch_binds_by_process_evidence_and_finished_receipts_ar
     assert_eq!(status, StatusCode::CONFLICT, "{wrong}");
     shutdown.cancel();
     service.shutdown().await.unwrap();
+    // The launcher leaves its empty private `--no-record` probe directory
+    // (`.probe`, 5725da4c, docs/terminal-records.md); it is not a host record.
+    let records = || {
+        fs::read_dir(&host)
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.file_name() != ".probe")
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>()
+    };
     let deadline = Instant::now() + Duration::from_secs(6);
-    while fs::read_dir(&host).unwrap().count() > 0 && Instant::now() < deadline {
+    while !records().is_empty() && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(
-        fs::read_dir(&host).unwrap().count(),
-        0,
+        records(),
+        Vec::<std::path::PathBuf>::new(),
         "host records cleaned"
+    );
+    assert!(
+        fs::read_dir(host.join(".probe")).unwrap().next().is_none(),
+        "the probe directory stays empty"
     );
 }

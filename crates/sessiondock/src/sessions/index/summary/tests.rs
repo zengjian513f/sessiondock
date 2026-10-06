@@ -489,7 +489,9 @@ fn claude_first_record_over_head_bytes_uses_head_limit_rules() {
         summary.sid, "claude-session-one",
         "no head record: file stem"
     );
-    assert_eq!(summary.title, "claude-s");
+    // No head prompt: the pending-session label, not Python's stem[:8]
+    // (docs/read-model.md DELTA, c3f9a747).
+    assert_eq!(summary.title, "新建 Claude 会话");
     assert_eq!(
         summary.cwd, "/synthetic/history",
         "tail records still count cwd"

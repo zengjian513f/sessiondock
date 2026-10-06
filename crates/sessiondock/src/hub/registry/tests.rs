@@ -31,6 +31,8 @@ struct Fake {
     mode: Arc<Mutex<Mode>>,
     /// Request targets in order.
     hits: Arc<Mutex<Vec<String>>>,
+    /// `X-SessionDock-List` header per request, in the same order as `hits`.
+    list_headers: Arc<Mutex<Vec<Option<String>>>>,
     rows: Arc<Mutex<Vec<Value>>>,
 }
 
@@ -44,16 +46,19 @@ impl Fake {
         let addr = listener.local_addr().unwrap();
         let mode = Arc::new(Mutex::new(Mode::Online));
         let hits = Arc::new(Mutex::new(Vec::new()));
+        let list_headers = Arc::new(Mutex::new(Vec::new()));
         let rows = Arc::new(Mutex::new(vec![
             json!({"uid": "claude:same-file-hash", "title": "session", "updated": "2026-09-07T00:00:00Z"}),
         ]));
         let (mode2, hits2, rows2) = (mode.clone(), hits.clone(), rows.clone());
+        let headers2 = list_headers.clone();
         tokio::spawn(async move {
             loop {
                 let Ok((mut stream, _)) = listener.accept().await else {
                     break;
                 };
                 let (mode, hits, rows) = (mode2.clone(), hits2.clone(), rows2.clone());
+                let list_headers = headers2.clone();
                 tokio::spawn(async move {
                     let mut buffer = Vec::new();
                     let mut scratch = [0u8; 4096];
@@ -68,6 +73,14 @@ impl Fake {
                     let token_ok = head.contains("X-SessionDock-Node-Token: ")
                         && head.contains("X-SessionDock-Protocol: 1\r\n");
                     hits.lock().unwrap().push(target.clone());
+                    list_headers
+                        .lock()
+                        .unwrap()
+                        .push(head.lines().find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case(crate::list_sync::HEADER)
+                                .then(|| value.trim().to_string())
+                        }));
                     let (path, query) = target.split_once('?').unwrap_or((&target, ""));
                     let mode = mode.lock().unwrap().clone();
                     let (status, body): (u16, Vec<u8>) = match mode {
@@ -134,6 +147,7 @@ impl Fake {
             addr,
             mode,
             hits,
+            list_headers,
             rows,
         }
     }
@@ -502,9 +516,7 @@ async fn register_validates_then_asks_meta_and_keys_by_node_id() {
     let public = registry.public();
     assert_eq!(
         public,
-        vec![
-            json!({"id": NID_A, "name": "Renamed", "color": "teal", "online": null})
-        ]
+        vec![json!({"id": NID_A, "name": "Renamed", "color": "teal", "online": null})]
     );
     assert!(!public[0].to_string().contains("token") && public[0].get("url").is_none());
     let reopened = open(dir.path());
@@ -1039,14 +1051,18 @@ async fn session_polls_are_conditional_and_served_from_cache_when_unchanged() {
     let fetched = registry
         .fetch(&client, &node, "/api/sessions", &[], None)
         .await;
+    // The list transport revision (`X-SessionDock-List`, docs/hub.md
+    // `list_delta`) supersedes the node's conditional `sig` (068deaef): the
+    // Hub strips `sig` and declares its known list version instead. This fake
+    // node ignores the header, like an old node, so it answers in full and the
+    // version stays `new`.
     let probes: Vec<String> = fake.hits()[seen..].to_vec();
-    assert_eq!(probes.len(), 2);
-    assert!(
-        probes
-            .iter()
-            .all(|target| target.starts_with("/api/sessions?sig=fixture-1")),
-        "{probes:?}"
+    assert_eq!(probes, ["/api/sessions", "/api/sessions"]);
+    assert_eq!(
+        fake.list_headers.lock().unwrap()[seen..],
+        [Some("new".to_string()), Some("new".to_string())]
     );
+    assert_eq!(registry.sessions_sig(NID_A).as_deref(), Some("fixture-1"));
     assert!(fetched.ok());
     assert_eq!(fetched.data["sessions"].as_array().unwrap().len(), 1);
     assert!(fetched.data["sessions"][0].get("stale").is_none());
@@ -1070,14 +1086,16 @@ async fn session_polls_are_conditional_and_served_from_cache_when_unchanged() {
     let fetched = registry
         .fetch(&client, &node, "/api/sessions", &[], None)
         .await;
-    assert!(fake.hits().last().unwrap().contains("sig=fixture-1"));
+    assert_eq!(fake.hits().last().unwrap(), "/api/sessions");
     assert_eq!(fetched.data["sessions"], json!([]));
     assert_eq!(fetched.data["sig"], "fixture-0");
     registry.check_all(&client).await;
-    assert!(
-        fake.hits().last().unwrap().contains("sig=fixture-0"),
-        "the new signature is what the next probe sends"
+    assert_eq!(
+        fake.hits().last().unwrap(),
+        "/api/sessions",
+        "the cached signature is never forwarded to the node"
     );
+    assert_eq!(registry.sessions_sig(NID_A).as_deref(), Some("fixture-0"));
 
     // Offline: a cached variant answer is served for term/list, the plain list
     // for any sessions variant, nothing for /api/live.
