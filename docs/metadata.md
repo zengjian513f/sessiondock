@@ -243,7 +243,11 @@ New group. Clicking it edits the name inline; Enter or Create commits it, and
 Escape cancels. Existing session tree/time views still show ungrouped sessions.
 
 The session right-click/hold menu has a second-level group menu. Its first item
-is Ungrouped, followed by named groups, and a click assigns immediately. Desktop
+is Ungrouped, followed by named groups, and a click assigns immediately. The final
+New group item opens an inline name input; Enter creates the trimmed name and
+assigns the current session or multi-selection to it. Escape cancels editing and
+returns focus to New group; closing the menu discards the draft. Empty input
+stays in the editor, and a failed creation preserves the name for retry. Desktop
 hover and ArrowRight open the submenu; ArrowLeft or Escape returns to the parent.
 Multi-select uses the same immediate assignment menu. Groups are browsed through
 the top-right Group view; there is no group filter dropdown. Previous browser
@@ -266,6 +270,8 @@ reads the groups from its previous `labels.json` cache if the new cache is absen
 Tags are never converted into groups. Old tag API routes are no longer served.
 
 Validation: `python3 tests/groups_browser.py --binary target/release/sessiondock` exercises two independent nodes
-and a real Hub, inline creation/cancellation, immediate assignment and batches,
+and a real Hub, sidebar and menu inline creation/cancellation, Enter creation and
+assignment for single sessions, cross-node batches and touch menus, creation
+failure/retry, draft focus, immediate assignment and batches,
 empty groups, removal without a dialog, hover/keyboard/mobile submenus, offline
 deletion/rejoin, same-name recreation, restarts, and unchanged native records.

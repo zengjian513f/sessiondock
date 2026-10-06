@@ -2432,6 +2432,8 @@ header .btn[data-session-docked] { display: none; }
 #item-menu [data-act="group"] { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
 #session-group-menu { min-width: 170px; max-width: min(280px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow-y: auto; }
 #session-group-menu button { display: flex; gap: 8px; align-items: baseline; overflow-wrap: anywhere; }
+#session-group-menu [role="separator"] { border-top: 1px solid var(--border); margin: 4px 6px; }
+#session-group-menu form { display: flex; margin: 4px 6px; }
 .group-menu-check { flex: 0 0 16px; color: var(--accent); }
 .session-group-delete { flex: 0 0 28px; width: 28px; height: 28px; margin-left: 6px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 18px; cursor: pointer; }
 .session-group-delete:hover { color: #e5484d; background: var(--hover); }
@@ -2439,9 +2441,9 @@ header .btn[data-session-docked] { display: none; }
 #session-group-create-row > button { width: 100%; text-align: left; padding: 10px 12px; border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); background: transparent; font: inherit; cursor: pointer; }
 #session-group-create-row > button:hover { background: var(--hover); color: var(--text); }
 #session-group-create-row form { display: flex; gap: 6px; }
-#session-group-create-row input { flex: 1; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--panel); font: inherit; }
+#session-group-create-row input, #session-group-menu-name { flex: 1; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--panel); font: inherit; }
 #session-group-create-row form button { padding: 8px 12px; border: 1px solid var(--border); border-radius: 7px; color: var(--accent); background: var(--panel); font: inherit; cursor: pointer; }
-#session-group-create-row input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#session-group-create-row input:focus-visible, #session-group-menu-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* Optional three-row resource column; normal metadata keeps its full row. */
 #sidebar-resources-toggle { display:flex; align-items:center; gap:4px; }
