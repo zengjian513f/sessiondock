@@ -95,7 +95,6 @@ scope 三种范围选择，沿用 `screen_menu` 与当前焦点的 Up/Down/Enter
 | 范围 | 文件 |
 | --- | --- |
 | 画面夹具 | [composer_input_frames.json](../tests/fixtures/composer_input_frames.json) |
-| 合同脚本 | [composer_input_contract.mjs](../tests/composer_input_contract.mjs) |
 | 登录/未知拒绝、恢复、粘贴后再检、不明写入不重试、软键盘不改 PTY 行列 | [send_readiness_browser.py](../tests/send_readiness_browser.py) |
 | Codex 两张图片与文字、`.txt` 与文字连续发送 | [send_codex_attachments_browser.py](../tests/send_codex_attachments_browser.py) |
 | 忙碌发送、选择题拒绝、草稿与 SEND、编辑区已有文字与 Esc 退回时拒发 | [send_browser.py](../tests/send_browser.py) |

@@ -485,9 +485,11 @@ async fn resolve_routes_writes_and_rejects_mixed_targets() {
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["reload"], true);
     assert_eq!(body["build"], hub.build);
+    // The retired `/api/session/send` (b3835183) is replaced by conversation
+    // SEND, whose terminal `name` the Hub unscopes like before.
     let (status, body) = hub
         .post(
-            "/api/session/send",
+            "/api/session/conversation/send",
             json!({"uid": a, "name": format!("{NID_A}~same-terminal"), "text": "keep exact text",
                 "request_id": "request-123", "_build": hub.build,
                 "media": [{"src": format!("/api/nodes/{NID_A}/api/media/{}", "d".repeat(32))}]}),
@@ -505,7 +507,7 @@ async fn resolve_routes_writes_and_rejects_mixed_targets() {
     assert!(forwarded.get("_node").is_none());
     let (status, body) = hub
         .post(
-            "/api/session/send",
+            "/api/session/conversation/send",
             json!({"uid": a, "_build": hub.build,
             "media": [{"src": format!("/api/nodes/{NID_B}/api/media/{}", "d".repeat(32))}]}),
         )

@@ -29,6 +29,20 @@ fn cases() -> Vec<Value> {
     serde_json::from_slice(&raw).expect("fixture is JSON")
 }
 
+/// Documented additions over the frozen oracle corpus. `/api/live` gained
+/// `working_uids` (605f12c0, docs/liveness.md), scoped and always present like
+/// `uids`/`tmux_uids`; the corpus was generated before it existed and the
+/// retired Python oracle cannot regenerate it, so an absent key means `[]`.
+fn with_deltas(mut expected: Value, path: &str) -> Value {
+    if path == "/api/live"
+        && let Some(map) = expected.as_object_mut()
+    {
+        map.entry("working_uids")
+            .or_insert_with(|| Value::Array(Vec::new()));
+    }
+    expected
+}
+
 #[test]
 fn public_payload_matches_the_python_oracle_on_every_case() {
     let cases = cases();
@@ -57,7 +71,7 @@ fn public_payload_matches_the_python_oracle_on_every_case() {
                 assert!(!lenient.is_null() || case["input"].is_null(), "{name}");
             }
             None => {
-                let expected = &case["expected"];
+                let expected = &with_deltas(case["expected"].clone(), path);
                 match try_public_payload(input.clone(), &node, path) {
                     Ok(value) if &value == expected => {}
                     Ok(value) => {

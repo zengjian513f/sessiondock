@@ -781,6 +781,10 @@ fn argv_metadata_and_kind_rules_follow_the_fixed_per_source_contract() {
             "default_mode_request_user_input".into(),
             "-c".into(),
             "suppress_unstable_features_warning=true".into(),
+            // Managed Codex launches never run the interactive startup update
+            // (docs/lifecycle-launcher.md).
+            "-c".into(),
+            "check_for_update_on_startup=false".into(),
         ]
     );
     let metadata = Launcher::metadata(&record);
@@ -802,8 +806,10 @@ fn argv_metadata_and_kind_rules_follow_the_fixed_per_source_contract() {
     launcher.validate_spec(&spec).unwrap();
     let record = fixture.record(&spec);
     let argv = strings(&launcher.argv(&record).unwrap());
-    assert_eq!(&argv[5..], ["resume", SID]);
-    assert_eq!(argv.len(), 7);
+    assert_eq!(
+        &argv[5..],
+        ["resume", SID, "-c", "check_for_update_on_startup=false"]
+    );
     let metadata = Launcher::metadata(&record);
     assert_eq!(metadata["sid"], SID);
     assert_eq!(metadata["uid"], CODEX_UID);

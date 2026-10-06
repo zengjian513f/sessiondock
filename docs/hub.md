@@ -84,7 +84,7 @@ WebSocket 后仍在同一 TLS 流上双向转发。HTTP 与 HTTPS 都继续受�
 （401/403/404/429/503 各有中文说明，其余 `节点返回错误响应（HTTP n）`）；200 非对象 →
 `invalid_response`。`/api/sessions` 的 `{unchanged:true,sig}` 不改缓存。失败返回
 `Fetched{data: stale_payload(...), failure: {node_id,name,error,error_code,last_seen}}`。
-`check(node)` = 带缓存 `sig` 的条件请求；`check_all()` 最多 16 路并发；
+`check(node)` = 带 `X-SessionDock-List` 头的条件请求（见下文 `list_delta`，不再转发 `sig`）；`check_all()` 最多 16 路并发；
 `fetch()` 是聚合入口：已知离线的节点不等待，直接给失败记录（含 `offline_since`）和
 过期缓存；空 query 的 `/api/sessions` 先条件探测，`unchanged` 则回最新缓存。
 `recheck(node)` 用 `client.recheck`（5 s）探 `/api/live` 后 `nudge()`，返回是否在线。

@@ -449,7 +449,9 @@ fn windows_and_history_pages_are_spliced_from_the_cached_view() {
     let body = snapshot
         .messages_body(&window(), &media, None, &pages)
         .unwrap();
-    assert_eq!(body.message_count(), 600);
+    // Opening windows: up to 200 latest then 5 earliest events
+    // (docs/history-pages.md, 860660ed / dcc985dc).
+    assert_eq!(body.message_count(), 205);
     let body = body.finish(Some(&Value::Null));
     assert_eq!(
         without_tokens(&body),
@@ -457,15 +459,12 @@ fn windows_and_history_pages_are_spliced_from_the_cached_view() {
     );
     assert_eq!(encoded::RETAINED_BUILDS.get(), builds);
     let value: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(value["partial"]["head"], 100);
-    assert_eq!(value["partial"]["tail"], 500);
+    assert_eq!(value["partial"]["head"], 5);
+    assert_eq!(value["partial"]["tail"], 200);
+    assert_eq!(value["messages"][4]["text"], "message 4 \"quoted\"\n第二行");
     assert_eq!(
-        value["messages"][99]["text"],
-        "message 99 \"quoted\"\n第二行"
-    );
-    assert_eq!(
-        value["messages"][100]["text"],
-        "message 200 \"quoted\"\n第二行"
+        value["messages"][5]["text"],
+        "message 500 \"quoted\"\n第二行"
     );
     // History pages through the grant: the byte page equals the Value page
     // (its continuation grant differs, everything else is identical).
@@ -482,12 +481,9 @@ fn windows_and_history_pages_are_spliced_from_the_cached_view() {
         without_tokens(&serde_json::to_vec(&reference).unwrap())
     );
     let page: Value = serde_json::from_slice(&page).unwrap();
-    assert_eq!(page["page"]["start"], 100);
-    assert_eq!(page["messages"].as_array().unwrap().len(), 100);
-    assert_eq!(
-        page["messages"][0]["text"],
-        "message 100 \"quoted\"\n第二行"
-    );
+    assert_eq!(page["page"]["start"], 5);
+    assert_eq!(page["messages"].as_array().unwrap().len(), 200);
+    assert_eq!(page["messages"][0]["text"], "message 5 \"quoted\"\n第二行");
     assert_eq!(encoded::RETAINED_BUILDS.get(), builds);
 }
 

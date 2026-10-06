@@ -273,10 +273,11 @@ async fn session_polls_are_conditional_and_served_from_cache_when_unchanged() {
             .collect::<Vec<_>>(),
         ["/api/sessions", "/api/sessions"]
     );
+    // The `X-SessionDock-List` transport revision supersedes the node's
+    // conditional `sig` (docs/hub.md `list_delta`, 068deaef): the Hub strips
+    // `sig`, and this header-unaware fixture node answers in full.
     assert!(
-        probes.iter().all(|(_, query)| query["sig"][0]
-            .as_str()
-            .is_some_and(|sig| sig.starts_with("fixture-"))),
+        probes.iter().all(|(_, query)| query.get("sig").is_none()),
         "{probes:?}"
     );
     assert!(fetched.ok());
@@ -293,7 +294,7 @@ async fn session_polls_are_conditional_and_served_from_cache_when_unchanged() {
     hub.b.set(json!({"deleted": true}));
     let fetched = hub.fetch(NID_B, "/api/sessions", &[]).await;
     assert_eq!(fetched.data["sessions"], json!([]));
-    assert!(hub.b.gets().last().unwrap().1.get("sig").is_some());
+    assert!(hub.b.gets().last().unwrap().1.get("sig").is_none());
     hub.b.pop(&["deleted"]);
     let fetched = hub.fetch(NID_B, "/api/sessions", &[]).await;
     assert_eq!(fetched.data["sessions"].as_array().unwrap().len(), 1);

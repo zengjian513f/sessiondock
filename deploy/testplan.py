@@ -81,7 +81,9 @@ RULES = [
     ("crates/ptyhost/", PTYHOST), ("crates/ptyhost-client/", PTYHOST),
     ("crates/sessiondock/src/", module_rule),
     ("crates/sessiondock/tests/fixtures/", [FULL]), ("crates/sessiondock/tests/", RUST),
-    ("legacy-web/", ["node_contracts", "*_browser*", "brand_names_check"]),
+    # Unit suites run only when the user asks (AGENTS.md), so a frontend edit
+    # selects its browser suites, not node_contracts.
+    ("legacy-web/", ["*_browser*", "brand_names_check"]),
     ("deploy/", ["deploy_*"]),
     ("tests/", tests_rule),
     ("Cargo.toml", [FULL]), ("Cargo.lock", [FULL]), (".github/", [FULL]),

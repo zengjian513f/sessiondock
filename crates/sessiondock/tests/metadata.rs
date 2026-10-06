@@ -139,11 +139,13 @@ async fn preferences_persist_without_changing_native_bytes_or_cursor() {
     let caps = json(call(&restarted, "/api/meta", None).await).await;
     assert_eq!(caps["capabilities"]["metadata"], true);
     assert_eq!(caps["capabilities"]["mutations"], false);
+    // Metadata never enables a send path: the retired reliable-send route
+    // (b3835183) only matches `DELETE /api/session/{uid}` now.
     assert_eq!(
         call(&restarted, "/api/session/send", Some(json!({})))
             .await
             .status(),
-        StatusCode::NOT_IMPLEMENTED
+        StatusCode::METHOD_NOT_ALLOWED
     );
 }
 

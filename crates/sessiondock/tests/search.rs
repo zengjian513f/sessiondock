@@ -360,10 +360,12 @@ async fn empty_query_never_touches_missing_native_source() {
         serde_json::from_slice::<Value>(&bytes).unwrap()["type"],
         "result"
     );
-    assert_eq!(
-        get(&app, "/api/search?q=cat").await.status(),
-        StatusCode::BAD_REQUEST
-    );
+    // A configured root that does not exist is an empty source, not an error
+    // (docs/read-model.md, 2fed5ec7), so a real query searches nothing.
+    let response = get(&app, "/api/search?q=cat").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(json_body(response).await["total_pool"], 0);
+    assert!(!temp.path().join("absent").exists());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -411,13 +411,15 @@ async fn watch_initial_and_rewrite_resets_keep_windows_then_append_advances_only
         assert!(!text.contains("event: migration-error"), "{text}");
         serde_json::from_str(text.trim().strip_prefix("data: ").unwrap()).unwrap()
     }
+    // Opening and reset windows: up to 200 latest, then 5 earliest events
+    // (docs/history-pages.md, 860660ed / dcc985dc).
     fn window(value: &Value) -> String {
         assert_eq!(value["reset"], true);
         assert_eq!(value["message_total"], 1500);
-        assert_eq!(value["partial"]["head"], 100);
-        assert_eq!(value["partial"]["tail"], 500);
-        assert_eq!(value["partial"]["omitted"], 900);
-        assert_eq!(value["messages"].as_array().unwrap().len(), 600);
+        assert_eq!(value["partial"]["head"], 5);
+        assert_eq!(value["partial"]["tail"], 200);
+        assert_eq!(value["partial"]["omitted"], 1295);
+        assert_eq!(value["messages"].as_array().unwrap().len(), 205);
         token(&value["partial"]["cursor"])
     }
 
@@ -435,12 +437,13 @@ async fn watch_initial_and_rewrite_resets_keep_windows_then_append_advances_only
     let initial = packet(&mut stream).await;
     let old_gap = window(&initial);
 
-    // Same-size committed-prefix rewrite beyond the small head fingerprint.
+    // Same-size committed-prefix rewrite beyond the small head fingerprint,
+    // inside the visible tail window.
     // This reset uses packet()'s successor query, not ViewQuery::cursor again.
     let mut changed = fs::read(&path).unwrap();
     let at = changed
-        .windows(b"before:0050".len())
-        .position(|bytes| bytes == b"before:0050")
+        .windows(b"before:1400".len())
+        .position(|bytes| bytes == b"before:1400")
         .unwrap();
     assert!(at > 4096);
     changed[at] = b'B';
@@ -450,11 +453,11 @@ async fn watch_initial_and_rewrite_resets_keep_windows_then_append_advances_only
     assert_ne!(current_gap, old_gap);
     assert_eq!(reset["end"], initial["end"]);
     assert_ne!(reset["anchor"], initial["anchor"]);
-    let expected: Vec<_> = (0..100)
-        .chain(1000..1500)
+    let expected: Vec<_> = (0..5)
+        .chain(1300..1500)
         .map(|i| {
-            if i == 50 {
-                "Before:0050".to_owned()
+            if i == 1400 {
+                "Before:1400".to_owned()
             } else {
                 format!("before:{i:04}")
             }
@@ -484,11 +487,11 @@ async fn watch_initial_and_rewrite_resets_keep_windows_then_append_advances_only
     // checkpoint update and must not include either newly appended message.
     let page = ok(&app, &page_uri(&uid, &current_gap, "")).await;
     assert_eq!(page["page"]["cursor"], current_gap);
-    assert_eq!(page["page"]["start"], 100);
-    assert_eq!(page["page"]["stop"], 1000);
+    assert_eq!(page["page"]["start"], 5);
+    assert_eq!(page["page"]["stop"], 1300);
     assert_eq!(
         texts(page["messages"].as_array().unwrap()),
-        (100..300)
+        (5..205)
             .map(|i| format!("before:{i:04}"))
             .collect::<Vec<_>>()
     );

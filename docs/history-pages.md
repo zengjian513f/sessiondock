@@ -362,7 +362,6 @@ and actual page interaction using synthetic records.
 
 ```sh
 cargo test -p sessiondock --test history_pages --locked
-node --test tests/legacy_contract.mjs tests/history_pages_contract.mjs
 cargo build -p sessiondock --locked
 python3 tests/sessions_list_suite.py
 python3 tests/inventory_scale_suite.py --quick

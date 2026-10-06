@@ -131,7 +131,7 @@ class MappingTest(unittest.TestCase):
     def test_frontend_deploy_docs_tests(self) -> None:
         s, sc, full = suites_of("legacy-web/app.js")
         self.assertFalse(full)
-        self.assertEqual(s, BROWSERS | {"node_contracts", "brand_names_check"})
+        self.assertEqual(s, BROWSERS | {"brand_names_check"})
         self.assertTrue(s.isdisjoint(CARGO))
         s, sc, full = suites_of("deploy/deploy.py")
         self.assertEqual((s, sc, full), ({"deploy_lock", "deploy_native_handlers", "deploy_testplan"}, set(), False))
@@ -329,7 +329,8 @@ class GateCliTest(unittest.TestCase):
         self.assertEqual(rc, 0, out + err)
         art = self.artifacts()
         self.assertFalse(art["test_full"])
-        self.assertTrue(set(art["test_suites"]) >= BROWSERS | {"node_contracts"})
+        self.assertTrue(set(art["test_suites"]) >= BROWSERS)
+        self.assertNotIn("node_contracts", art["test_suites"])
         self.assertFalse(set(art["test_suites"]) & CARGO)
         self.assertNotIn("Cargo.lock", out)
 
@@ -341,7 +342,7 @@ class GateCliTest(unittest.TestCase):
         self.assertIn("changed files (2):", out)
         self.assertIn("  legacy-web/app.js  [legacy-web/]", out)
         self.assertIn("  docs/deployment.md  [docs/]", out)
-        expected = sorted(BROWSERS | {"node_contracts", "brand_names_check"})
+        expected = sorted(BROWSERS | {"brand_names_check"})
         self.assertIn(f"selected suites ({len(expected)}): {', '.join(expected)}", out)
         self.assertIn("extra scripts: tests/check_agents_md.py, tests/check_docs_links.py", out)
         self.assertIn("[  1/1] START stub", out, "runner output is streamed to the console")
