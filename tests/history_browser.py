@@ -2,7 +2,7 @@
 """Free Chromium check of advanced native history through the unchanged legacy UI.
 
 Requires a prebuilt Rust server and Python Playwright/Chromium. All transcripts
-are generated in temporary directories by history_parity; no real CLI state or
+are generated in temporary directories by history_fixtures; no real CLI state or
 paid commands are accessed. No frontend private method is used to switch views.
 """
 
@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from playwright.sync_api import expect, sync_playwright
 
-from history_parity import batch35_meta, batch35_agent_meta, BINARY, build_corpus, claude_row, codex_message, encoded, get_json, isolated_server
+from history_fixtures import batch35_meta, batch35_agent_meta, BINARY, build_corpus, claude_row, codex_message, encoded, get_json, isolated_server
 
 
 def main():

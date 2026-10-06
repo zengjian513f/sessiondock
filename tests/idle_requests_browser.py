@@ -20,9 +20,9 @@ from types import SimpleNamespace
 from urllib.parse import unquote, urlsplit
 
 from playwright.sync_api import sync_playwright
-from history_parity import REPO, BINARY, Corpus, claude_row, isolated_server
-from hub_http_suite import Hub, free_port
-from node_auth_suite import node_env, TOKEN
+from history_fixtures import REPO, BINARY, Corpus, claude_row, isolated_server
+from hub_fixtures import Hub, free_port
+from node_auth_fixtures import node_env, TOKEN
 from send_browser import initialize
 
 IDLE_SECONDS = 15

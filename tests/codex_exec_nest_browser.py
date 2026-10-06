@@ -12,9 +12,9 @@ import time
 from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright, expect
-from history_parity import Corpus, claude_row, codex_row, get_json
-import spawned_by_suite as fixture
-from spawned_by_suite import BINARY, BTIME, proc_pid, server_with_env
+from history_fixtures import Corpus, claude_row, codex_row, get_json
+import spawned_by_fixtures as fixture
+from spawned_by_fixtures import BINARY, BTIME, proc_pid, server_with_env
 
 
 def stamp(seconds):

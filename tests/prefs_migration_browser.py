@@ -22,7 +22,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, build_corpus, claude_row, isolated_server
+from history_fixtures import BINARY, build_corpus, claude_row, isolated_server
 
 LS_DUMP = "() => Object.fromEntries(Object.keys(localStorage).sort().map(k => [k, localStorage.getItem(k)]))"
 

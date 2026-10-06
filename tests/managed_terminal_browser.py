@@ -7,9 +7,9 @@ import tempfile
 import uuid
 from types import SimpleNamespace
 from playwright.sync_api import expect, sync_playwright
-from history_parity import REPO, BINARY, Corpus, codex_row, codex_message, isolated_server
+from history_fixtures import REPO, BINARY, Corpus, codex_row, codex_message, isolated_server
 from host_identity import host
-from hub_http_suite import Hub, free_port, scoped
+from hub_fixtures import Hub, free_port, scoped
 from popups import on_popup  # noqa: E402
 
 

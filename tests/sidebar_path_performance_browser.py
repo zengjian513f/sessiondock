@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 import tempfile
 from playwright.sync_api import sync_playwright
-from history_parity import BINARY, isolated_server
+from history_fixtures import BINARY, isolated_server
 from header_fold_browser import corpus
 from sidebar_closed_groups_browser import fixture, seed
 

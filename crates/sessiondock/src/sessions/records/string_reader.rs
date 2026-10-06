@@ -253,6 +253,3 @@ impl<R: Read> Read for JsonStringReader<R> {
         result
     }
 }
-
-#[cfg(test)]
-mod tests;

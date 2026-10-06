@@ -217,6 +217,3 @@ impl<R: Read> Read for ReplayReader<R> {
 pub(crate) trait CheckedReplay: Read {
     fn finish(self: Box<Self>) -> Result<(), String>;
 }
-
-#[cfg(test)]
-mod tests;

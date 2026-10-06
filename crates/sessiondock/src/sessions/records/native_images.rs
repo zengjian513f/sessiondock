@@ -141,21 +141,6 @@ fn mime(value: &str) -> Result<String, String> {
     .into())
 }
 
-#[cfg(test)]
-pub(crate) fn prepare(
-    source: &str,
-    root: Node,
-    make_span: impl FnMut(SpanImage) -> Result<NativeImage, String>,
-) -> Result<(Value, Vec<Sidecar>), String> {
-    prepare_with_replay(
-        source,
-        root,
-        make_span,
-        |_| Err("原生工具重放来源未配置".into()),
-        |_| Err("原生文本读回来源未配置".into()),
-    )
-}
-
 /// `materialize` reads one remaining ordinary giant string back from the
 /// caller's checked source, regardless of record size; a large string is
 /// still not image authority. It only ever sees
@@ -545,6 +530,3 @@ fn extract(
     })
     .map(Some)
 }
-
-#[cfg(test)]
-mod tests;

@@ -85,7 +85,7 @@ cargo run -p sessiondock --locked
 
 ## 构建与检查
 
-用户不主动要求时，不跑任何单元测试（`cargo test`、`tests/*_contract.mjs`、Python unittest）；改动用覆盖该功能的 headless 浏览器测试验证（没有就补）。历史原因：2026-10-06 核查发现单元测试长期无人维护，15 项 Node 合同、21 项 `cargo test` 和 1 项 Python unittest 失败全是测试没跟上有意的改动，没有一项是程序 bug，真正的问题都由浏览器测试发现。
+仓库只用 headless Chromium 浏览器测试验证：改动用覆盖该功能的浏览器测试验证（没有就补），不要新增单元测试或非浏览器测试。2026-10-06 核查发现 15 项 Node 合同、21 项 `cargo test` 和 1 项 Python unittest 失败全是测试没跟上有意的改动，没有一项是程序 bug，真正的问题都由浏览器测试发现；随后全部单元测试（Rust `#[test]`/`crates/*/tests`、`tests/*_contract.mjs`、Python unittest）、只走 HTTP 的 `*_suite.py`、Python oracle 差分工具（`*_parity.py`）以及基准和探针脚本均已删除。共享夹具在 `tests/*_fixtures.py`。
 全量清扫是 `python3 tests/run_validation.py`。
 
 ```sh
@@ -96,41 +96,29 @@ cargo build -p sessiondock --locked
 python3 tests/legacy_browser.py
 
 # 历史回归：自行创建人工历史和临时 Rust 服务。
-python3 tests/history_parity.py --python-source PATH
 python3 tests/history_browser.py
 python3 tests/history_pages_browser.py
 python3 tests/media_browser.py
 python3 tests/media_lazy_browser.py
 python3 tests/media_formats_browser.py
 python3 tests/media_files_browser.py
-python3 tests/media_parity.py --python-source PATH
 
-# 真实搜索UI与工具渲染/可选Python差分。
+# 真实搜索UI与工具渲染。
 python3 tests/search_browser.py
-python3 tests/tool_parity.py --python-source PATH --browser
+python3 tests/rich_tools_browser.py
 python3 tests/metadata_browser.py
 python3 tests/files_browser.py
 python3 tests/terminal_browser.py
-python3 tests/host_identity.py
 python3 tests/managed_terminal_browser.py
 python3 tests/terminal_exit_browser.py
 python3 tests/lifecycle_browser.py
 python3 tests/lifecycle_browser.py --native-binding
-python3 tests/names_parity.py --python-source PATH --browser
-python3 tests/grok_parity.py --python-source PATH --browser
+python3 tests/codex_names_browser.py
+python3 tests/grok_metadata_browser.py
 ```
 
 浏览器路径可用 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定。测试不调用模型、
-或原项目服务；上述读取/偏好工具只启动临时 Rust 子进程，验证后停止。
-
-可选的 Python 差分检查（先按上面的仓库 fixture 目录启动 Rust）：
-
-```sh
-python3 tests/provider_parity.py --python-source PATH --base-url http://127.0.0.1:8741
-```
-
-此工具只读取三个人工 fixture 并调用原 Python adapter；是开发验证，**不是
-Rust 运行依赖，也不是所有历史格式已兼容的证明**。
+或原项目服务；上述测试只启动临时 Rust 子进程，验证后停止。
 
 ## 当前范围
 

@@ -14,11 +14,11 @@ import threading
 import time
 from types import SimpleNamespace
 from playwright.sync_api import sync_playwright, expect
-from history_parity import BINARY, Corpus, isolated_server
+from history_fixtures import BINARY, Corpus, isolated_server
 from session_files_browser import fixture, uid
 from session_transfer_browser import ident
-from hub_http_suite import Hub, free_port, scoped
-from node_auth_suite import node_env, TOKEN
+from hub_fixtures import Hub, free_port, scoped
+from node_auth_fixtures import node_env, TOKEN
 from session_bundle_browser import node_call
 
 

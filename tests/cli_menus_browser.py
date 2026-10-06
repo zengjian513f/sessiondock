@@ -97,7 +97,7 @@ def subset(actual, expected, path='prompt'):
 
 def main():
     from playwright.sync_api import expect, sync_playwright
-    from history_parity import REPO, BINARY, Corpus, isolated_server
+    from history_fixtures import REPO, BINARY, Corpus, isolated_server
     import send_browser
     from host_identity import request as host_request
     from popups import on_popup

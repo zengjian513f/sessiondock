@@ -19,7 +19,7 @@ import tempfile
 
 from playwright.sync_api import sync_playwright
 
-from history_parity import BINARY, build_corpus, isolated_server
+from history_fixtures import BINARY, build_corpus, isolated_server
 
 PHONE_LANDSCAPE = {"width": 814, "height": 380}   # iPhone 15 Pro Max, CSS px
 DESKTOP = {"width": 1280, "height": 900}

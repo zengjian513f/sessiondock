@@ -122,7 +122,7 @@ location <HUB_PATH>/ {
   并关闭正文及 Content-Length 透传。否则上传正文虽不交给鉴权服务，子请求仍会先按默认
   1 MiB 限制返回 413，`auth_request` 再将异常状态转换为页面的 HTTP 500。
   共享代理可为 SessionDock 使用专用鉴权位置；保留同一个鉴权服务、Cookie 和登录处理。
-  回归：`python3 tests/nginx_upload_auth.py`，使用私有 Nginx 与假鉴权/上传服务。
+  原先的私有 Nginx 回归脚本 `nginx_upload_auth.py` 已于 2026-10-06 随非浏览器测试删除。
 - 读写超时给长连接（终端、SSE）留足。
 - 反代把 Host 原样传给 Hub（Hub 的同源检查按 Host 核对 Origin）；Hub 只 loopback，不直接对外。
 

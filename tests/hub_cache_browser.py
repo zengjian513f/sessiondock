@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 from playwright.sync_api import sync_playwright, expect
-from hub_http_suite import REPO, FakeNode, Hub
+from hub_fixtures import REPO, FakeNode, Hub
 
 
 def rss(pid):

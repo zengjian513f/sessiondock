@@ -8,7 +8,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 from PIL import Image
-from history_parity import BINARY, build_corpus, claude_row, isolated_server
+from history_fixtures import BINARY, build_corpus, claude_row, isolated_server
 
 DIAGRAM = ('  y\n'
            '  │    ┌─┐\n'

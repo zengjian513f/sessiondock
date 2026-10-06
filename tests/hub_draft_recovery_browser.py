@@ -9,8 +9,8 @@ import tempfile
 import time
 from urllib.parse import urlsplit, parse_qs
 from playwright.sync_api import sync_playwright
-from history_parity import BINARY
-from hub_http_suite import FakeNode, Hub
+from history_fixtures import BINARY
+from hub_fixtures import FakeNode, Hub
 
 
 def main():

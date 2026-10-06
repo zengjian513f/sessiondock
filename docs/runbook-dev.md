@@ -22,12 +22,9 @@ when selecting that binary alone for Hub federation.
 
 ## 2. Synthetic corpus
 
-```sh
-python3 tests/fixture_gen.py .runtime/dev/corpus --sessions 3 --records 50 \
-  --images 4 --forks 1 --agents 1 --print-env
-```
-
-The generator prints explicit Claude, Codex and Grok roots plus a loopback bind.
+Point the read roots at the checked-in synthetic fixtures (see the README):
+`crates/sessiondock/tests/fixtures/{claude,codex,grok}`. Copy them into a
+private directory first when exercising writes.
 
 ## 3. Minimal environment
 
@@ -87,13 +84,13 @@ service rather than an old migration stub.
 ## 7. Watch a session
 
 ```sh
-python3 tests/sse_probe.py --base http://127.0.0.1:8741 --uid 'codex:…' --duration 30
+curl -N 'http://127.0.0.1:8741/api/watch?uid=codex:…'
 ```
 
 ## 8. Sample memory
 
 ```sh
-python3 tests/rss_watch.py --pid "$SERVER_PID" --interval 0.5 --duration 60 --children
+grep -E 'VmRSS|VmHWM' "/proc/$SERVER_PID/status"
 ```
 
 ## 9. Shut down

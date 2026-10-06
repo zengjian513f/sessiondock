@@ -19,9 +19,9 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright, expect
 
-from history_parity import REPO, BINARY, Corpus, isolated_server
+from history_fixtures import REPO, BINARY, Corpus, isolated_server
 from send_browser import SETTINGS, initialize, create_claude
-from lifecycle_http_suite import SHELL
+from lifecycle_fixtures import SHELL
 from popups import on_popup  # noqa: E402
 
 

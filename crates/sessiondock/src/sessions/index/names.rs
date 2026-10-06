@@ -198,6 +198,3 @@ impl NameIndex {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

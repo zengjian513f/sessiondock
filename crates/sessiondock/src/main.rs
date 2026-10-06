@@ -196,7 +196,7 @@ fn claude_hook(arguments: &[std::ffi::OsString]) -> Result<(), Box<dyn Error>> {
     };
     if let Some(directory) = state_dir {
         let mut stdin = std::io::stdin().lock();
-        let _ = sessiondock::bridge::claude::run_hook(&directory, &mut stdin);
+        sessiondock::bridge::claude::run_hook(&directory, &mut stdin);
     }
     Ok(())
 }

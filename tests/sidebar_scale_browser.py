@@ -24,7 +24,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from frontend_framework_browser import launch_chromium
 from header_fold_browser import SID, corpus
-from history_parity import BINARY, isolated_server
+from history_fixtures import BINARY, isolated_server
 
 GROUPS = 40
 PER_GROUP = 100

@@ -11,8 +11,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import sync_playwright, expect
 
-from history_parity import REPO, Corpus, isolated_server
-from hub_http_suite import Hub, free_port
+from history_fixtures import REPO, Corpus, isolated_server
+from hub_fixtures import Hub, free_port
 from hub_send_browser import prepare, cleanup_hosts
 from bug_report_node_browser import open_report, wait_drafts
 from hub_fake_node import PNG

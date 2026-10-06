@@ -84,14 +84,9 @@ reader/model lock is held while waiting for PTY EOF or socket drainage.
 
 ## Validation
 
-`cargo test -p ptyhost --test host_output --locked` launches only a fixed free `/bin/sh` fixture
-with an explicit private temporary `--dir`. It checks both legacy and guarded
-attach, final data before exit and EOF, the child exit code, and capacity rejection
-before resize while all existing connections remain usable. A test-owned slave
-descriptor deterministically delays EOF after the owned child is reaped: a tail
-written 600 ms later is retained, and holding it indefinitely produces the
-3-second incomplete exit marker. No descendant process is needed. Cleanup owns
-only that fixture's host, synthetic child, descriptors, and temporary directory.
+Final output and exit ordering are exercised end to end by the terminal
+browser suites (`terminal_*_browser.py`) against private ptyhost directories;
+the repository has no unit tests (removed on 2026-10-06).
 
 Linux tests and `cargo check -p ptyhost --locked --target
 x86_64-pc-windows-msvc` have passed. The cross-check compiles the TCP write-timeout

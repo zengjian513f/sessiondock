@@ -1,6 +1,6 @@
 @echo off
 rem Template rendered by deploy/sdtargets/windows.py (ASCII only, CRLF on upload).
-rem Extract the source zip into the build directory keeping target, run the Rust tests
+rem Extract the source zip into the build directory keeping target, run the Rust check
 rem when TEST=1 (docs/deploy-windows.md section 2; a failure stops before anything is
 rem staged), build with the toolchain's real cargo.exe (the rustup shims in .cargo\bin are
 rem reparse points that an elevated SSH session cannot execute) and stage the fresh

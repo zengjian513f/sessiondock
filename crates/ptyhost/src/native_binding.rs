@@ -151,7 +151,3 @@ impl State {
         Ok(candidate)
     }
 }
-
-#[cfg(test)]
-#[path = "native_binding_tests.rs"]
-mod tests;

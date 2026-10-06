@@ -17,7 +17,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright, expect
 
-from history_parity import REPO, BINARY, Corpus, isolated_server
+from history_fixtures import REPO, BINARY, Corpus, isolated_server
 from send_browser import SETTINGS, claude_uid, create_claude, initialize
 
 NOTICE = "agents-md: no CLAUDE.md found; AGENTS.md loaded: /synthetic/AGENTS.md"

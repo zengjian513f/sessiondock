@@ -218,9 +218,8 @@ HTTP/SSE 的响应（`views/body.rs`）按字节拼接：
   历史页（`/page?cursor=`，按非 status 位置切片）都走这条路；分页预算
   （`pages::Budget`）用缓存里记下的消息长度与文本引用数，不再为了称重再序列化 600 条。
 - **逐字节相同**：可缓存的消息就是它自己的 `to_vec` 输出，周围字段由同一个
-  `json!` 值序列化，`Value` 渲染器（`messages_with_pages`，只在测试里保留）与字节渲染器
-  的文档逐字节相等（`views/body_tests.rs` 三家来源冷/热、窗口、增量、追加、
-  重命名事件、媒体）。
+  `json!` 值序列化，字节渲染器的输出与原 `Value` 渲染器逐字节相等（原
+  `Value` 渲染器只为测试保留，已随单元测试于 2026-10-06 删除）。
 - **不是纯函数的消息每次照旧投影**：带类型化图片的事件（描述符注册是每次请求的
   副作用，超过 16 张还要签发 `media_more` grant）和正文里发现了图片引用的事件
   （文件 token 每次随机）在编码时标为 `special`，请求时克隆 + 投影 + 序列化，与
@@ -279,7 +278,7 @@ HTTP/SSE 的响应（`views/body.rs`）按字节拼接：
   不递增）。命中返回同一块共享缓冲，8 个并发全列表请求排队在缓存锁后依次命中
   而不是各自重建。`force=1` 仍然重扫并重新渲染（与前身一致），结果替换缓存项；
   渲染时视图锁被正在进行的打开占住则照旧无装饰返回且不缓存。缓存与非缓存
-  路径字节相同（`sessions::tests::list_bytes_*` 断言）。
+  路径字节相同（当时由已删除的 `sessions::tests::list_bytes_*` 断言）。
 
 `GET /api/sessions?children=hidden` 用于「按需展开」：初次只传主会话与 `child_count`，
 省去子会话行和 `agent_items`。点击箭头时追加 `expanded` JSON 数组，每项是
@@ -363,7 +362,7 @@ Enter 匹配正文，正文未命中或不可读时也按同一查询匹配该�
   绝不信任旧投影。元数据 sidecar、名字索引、行装饰不影响正文，不进版本键。
   解析前后各取一次版本，期间变化的结果只用不存。每次搜索仍为每个候选 `stat`
   一次（899 个候选 ≈ 17 ms CPU，8 个 worker 摊到 2–3 ms 墙钟）：这是"追加后的
-  下一次搜索就能搜到"（`tests/search_cache_suite.py`）的代价——索引快照 ≤ 500 ms
+  下一次搜索就能搜到"（当时由 `search_cache_suite` 验证（已于 2026-10-06 随非浏览器测试删除））的代价——索引快照 ≤ 500 ms
   一刷，改用它的戳会让刚追加的会话在下一次刷新前搜到上一版正文，实测被该套件
   拒绝。
 - **折叠副本与预筛**（`search/fold.rs`、`search/prefilter.rs`，2026-09-15）：
@@ -410,8 +409,8 @@ Enter 匹配正文，正文未命中或不可读时也按同一查询匹配该�
   字面量预扫，原来 19 MB 要 3 s CPU）；多词各用一个字面匹配器，在扫描器里跨块
   保留每个词的命中状态，AND 必须找到所有词才返回结果（即使某个词已达计数上限），
   不合成为回溯正则；不含换行的词和短语仍分块读取。`regex=1` 的查询仍由 `fancy-regex`
-  提供 lookaround 与 backreference。`search::tests::matchers_equal_the_reference_pattern…`
-  用改前的单一 `fancy-regex` 模式作参照，对每种查询形状、整体与分块逐一断言
+  提供 lookaround 与 backreference。当时的 `search::tests::matchers_equal_the_reference_pattern…`
+  （已随单元测试于 2026-10-06 删除）用改前的单一 `fancy-regex` 模式作参照，对每种查询形状、整体与分块逐一断言
   命中数、上限与片段相同。未知 `source` 是
   空筛选，`flags` 只有数值等于 `1` 时启用。
 - **按需构建**：仅搜索请求为候选检查版本并构建或复用正文缓存；启动和空闲期间
@@ -441,10 +440,9 @@ Enter 匹配正文，正文未命中或不可读时也按同一查询匹配该�
 | 一次全文搜索（无命中、扫全部 800 会话）后 RSS 净增 | ≈ 0（折叠副本常驻一次，≤ `SESSIONDOCK_SEARCH_FOLD_BYTES`） |
 | 活跃 CLI 持续追加时连续 30 次列表 | 0 失败 |
 
-验收套件：`tests/inventory_scale_suite.py`（合成 ≥ 1500 会话 / ≥ 1 GB）、
-`tests/inventory_live_append_suite.py`（并发追加）、`tests/list_rows_parity.py`
-（行字段与 Python `list_sessions` 逐字段对照）、`tests/real_roots_bench.py`
-（操作者手动、只读真实根）；既有 73 套（含六套差分与真实 CLI）保持通过。
+当时的验收套件 `inventory_scale_suite`、`inventory_live_append_suite`、
+`list_rows_parity` 与 `real_roots_bench` 已于 2026-10-06 随非浏览器测试删除；
+现在的列表行为由 `sidebar_scale_browser.py`、`list_delta_browser.py` 等浏览器套件覆盖。
 
 ## 历史容量与读取边界
 

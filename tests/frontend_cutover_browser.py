@@ -12,7 +12,7 @@ from playwright.sync_api import expect, sync_playwright
 from browser_runtime import wait_for_async
 from frontend_entry_browser import PREFIX, prefixed_proxy
 from frontend_framework_browser import launch_chromium, open_settings
-from history_parity import BINARY, build_corpus, isolated_server
+from history_fixtures import BINARY, build_corpus, isolated_server
 
 
 def main():

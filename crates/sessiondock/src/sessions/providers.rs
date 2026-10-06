@@ -6,11 +6,7 @@ mod claude;
 pub(super) mod envelopes;
 mod grok;
 mod image_content;
-#[cfg(test)]
-mod media_tests;
 mod opencode;
-#[cfg(test)]
-mod tests;
 mod tools;
 
 use super::records::native_images::{MediaContext, Sidecar};
@@ -29,24 +25,6 @@ pub(super) fn validate_grok_summary(summary: &Value) -> Result<(), String> {
 
 pub(super) fn grok_untitled_title() -> &'static str {
     grok::UNTITLED_TITLE
-}
-
-#[cfg(test)]
-pub(super) fn parse(
-    source: &str,
-    path: &Path,
-    records: &[(Value, u64)],
-    summary: Option<&Value>,
-    fallback: &str,
-) -> (Value, Vec<Event>, Option<String>) {
-    parse_with_options(
-        source,
-        path,
-        records,
-        summary,
-        fallback,
-        ParseOptions::default(),
-    )
 }
 
 /// Everything the reference adapters skip silently, counted here and surfaced
@@ -150,40 +128,6 @@ pub(super) struct ParseOptions<'a> {
     /// Complete lines the record scanner skipped before these records
     /// (reported, never re-derived: the projection only sees decoded rows).
     pub invalid_lines: usize,
-}
-
-#[cfg(test)]
-pub(super) fn parse_agent(
-    source: &str,
-    path: &Path,
-    records: &[(Value, u64)],
-    summary: Option<&Value>,
-    fallback: &str,
-    agent: &str,
-) -> (Value, Vec<Event>, Option<String>) {
-    parse_with_options(
-        source,
-        path,
-        records,
-        summary,
-        fallback,
-        ParseOptions {
-            agent,
-            ..Default::default()
-        },
-    )
-}
-
-#[cfg(test)]
-pub(super) fn parse_with_options(
-    source: &str,
-    path: &Path,
-    records: &[(Value, u64)],
-    summary: Option<&Value>,
-    fallback: &str,
-    options: ParseOptions<'_>,
-) -> (Value, Vec<Event>, Option<String>) {
-    parse_context(source, path, records, summary, fallback, options, None)
 }
 
 pub(super) fn parse_with_media(

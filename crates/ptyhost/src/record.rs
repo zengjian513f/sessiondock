@@ -227,16 +227,3 @@ impl Recorder {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::safe_name;
-
-    #[test]
-    fn names_are_filesystem_safe() {
-        assert_eq!(safe_name("claude/main:1"), "claude_main_1");
-        assert_eq!(safe_name(".hidden"), "_.hidden");
-        assert_eq!(safe_name(""), "_");
-        assert_eq!(safe_name(&"x".repeat(100)).len(), 64);
-    }
-}

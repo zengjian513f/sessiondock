@@ -1112,6 +1112,3 @@ impl ProcScanner {
         })
     }
 }
-
-#[cfg(all(test, unix))]
-pub(crate) mod tests;

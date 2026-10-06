@@ -10,8 +10,7 @@
 2. 原生 CLI 根与 SessionDock 的 state、host、lifecycle、audit、trash 等目录
    保持当前配置；普通读取不修改原生历史。
 3. 用临时 fixture 和回环监听验证改动，页面行为必须经过 Chromium 的真实操作。
-4. 可选 Python 差分只能使用显式提供的备份源码（`--python-source PATH` 或
-   `SESSIONDOCK_PYTHON_SOURCE`），不自动搜索邻接项目，不依赖旧生产服务。
+4. Python oracle 差分工具已于 2026-10-06 删除；验证不依赖旧生产服务或备份源码。
 
 ## 2. 发布与验收
 

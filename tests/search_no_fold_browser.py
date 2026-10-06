@@ -9,7 +9,7 @@ import tempfile
 from urllib.request import Request
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, batch35_agent_meta, claude_row, codex_message, codex_row, encoded, isolated_server
+from history_fixtures import BINARY, batch35_agent_meta, claude_row, codex_message, codex_row, encoded, isolated_server
 from search_browser import corpus
 
 

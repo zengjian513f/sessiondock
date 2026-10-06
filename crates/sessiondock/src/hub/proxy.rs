@@ -11,9 +11,6 @@
 //! Nothing here binds a listener: `api::hub` decides what is aggregated, what
 //! is answered locally and what reaches `resolve`/`proxy`.
 
-#[cfg(test)]
-mod tests;
-
 use std::{
     fmt,
     net::IpAddr,

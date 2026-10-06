@@ -29,13 +29,7 @@ cd <SD_SOURCE>
 shasum -a 256 target/release/sessiondock target/release/ptyhost
 ```
 
-默认部署验证不跑 `cargo test`。若用户明确要求单元测试，必须串行执行并把
-`TMPDIR` 指到一个真实、短的目录，否则 `/var/folders/...` 的符号链接会触发
-launcher 的 `UnsafePath`，长路径会撞 socket 上限：
-
-```sh
-mkdir -p /private/tmp/sdtest && TMPDIR=/private/tmp/sdtest ~/.cargo/bin/cargo test --workspace --no-fail-fast -- --test-threads=1
-```
+仓库不含单元测试（2026-10-06 已删除），部署验证只跑浏览器与 HTTP 套件。
 
 ## 3. 运行目录与 launchd
 

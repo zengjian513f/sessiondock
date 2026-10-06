@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 from playwright.sync_api import sync_playwright, expect
-from history_parity import Corpus, BINARY, claude_row, encoded, isolated_server, get_json
+from history_fixtures import Corpus, BINARY, claude_row, encoded, isolated_server, get_json
 from session_transfer_browser import command, ident, fingerprint
 
 

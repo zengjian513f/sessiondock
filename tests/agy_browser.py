@@ -18,7 +18,7 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, REPO, Corpus, isolated_server
+from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from popups import on_popup
 from send_browser import initialize
 

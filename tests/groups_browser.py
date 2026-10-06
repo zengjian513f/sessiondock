@@ -12,9 +12,9 @@ from types import SimpleNamespace
 
 from PIL import Image
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, codex_row, isolated_server
-from hub_http_suite import Hub, free_port, scoped
-from node_auth_suite import node_env, TOKEN
+from history_fixtures import BINARY, Corpus, codex_row, isolated_server
+from hub_fixtures import Hub, free_port, scoped
+from node_auth_fixtures import node_env, TOKEN
 
 
 def main():

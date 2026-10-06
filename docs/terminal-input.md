@@ -120,10 +120,6 @@ the list.
 
 ## Validation
 
-`cargo test -p sessiondock --test terminal_input --locked` (temporary
-ptyhost running a private `/bin/sh`: text + Enter echoed through capture,
-refusal without lease, after revoke and after exit, size limits and input bursts,
-the lease-less page written through its pinned instance even with a PTY holder; skips when ptyhost is not built) and
 `python3 tests/terminal_scrollback_browser.py` (real wheel up/down over PTY history
 in the grid console, stable history position, subsequent live input, no HTTP scroll);
 `python3 tests/terminal_input_browser.py` (desktop local wheel and WebSocket input,
@@ -150,6 +146,6 @@ never writes to the CLI, takes a lease or acknowledges delivery. Hook files and
 generated settings are private and atomic. Codex prompt recognition must match
 the frozen bridge. See [lifecycle-launcher.md](lifecycle-launcher.md).
 
-Validate with `tests/claude_prompt_suite.py`. Run the
-real Claude and Codex prompt suites only under the real-CLI policy in
+Validate with `tests/question_browser.py`. Run the real
+`prompt_claude_real.py` browser suite only under the real-CLI policy in
 `AGENTS.md`.

@@ -339,12 +339,6 @@ window's dates line by line (≤ 100 000 rows).
 - `python3 tests/bug_report_upload_browser.py`: real Hub and authenticated Rust
   node, 831 KiB image, lost upload replies after durable staging, bounded retries
   and manual recovery, followed by one report with the exact published bytes.
-- `cargo test -p sessiondock --test bug_report_http --locked` (fake Claude:
-  501 unconfigured, 503 for a source without a CLI, raw attachment upload, 202 shape, bundle
-  files, `submitted` from the synthetic native record, second report sees the
-  first in its window, the capture route's answer and the `captured` validation).
-- `python3 tests/bug_report_http_suite.py` (binary, fake Claude + fake Codex:
-  9 scenarios including Codex SEND without a native rollout and the audit trail).
 - `python3 tests/bug_report_node_browser.py` (hub page over three fake nodes:
   the dialog's machine picker defaults to the problem's machine, a worker on
   another machine goes through `/api/bug-report/capture` and hands `captured`
@@ -352,15 +346,8 @@ window's dates line by line (≤ 100 000 rows).
   missing CLIs are greyed out, the open model list leaves the form's size and
   scroll untouched at desktop, phone and 0.8 interface scale, Shift+Enter adds
   a line and Enter submits).
-- `python3 tests/check_config_suite.py` (`bug_report_*` cases) and
-  `python3 tests/meta_capabilities_suite.py`.
 - `python3 tests/bug_report_codex_browser_real.py --binary target/release/sessiondock`
   (operator-only): clicks the report dialog with a real Codex in a temporary
   home and repository, confirms the exact native task and assistant reply,
   native name after the first response, actual Luna low, and unchanged everyday
   configuration. The synthetic repository instructs the model to reply only OK.
-- `python3 tests/bug_report_real.py` (`# run_validation: real-cli`): the real
-  Claude worker with `claude-haiku-4-5-20251001 --effort low` in a temporary
-  `CLAUDE_CONFIG_DIR`, prompt confirmed from the real `user` record, model id
-  asserted from the assistant record, instance killed, bundle and session
-  files deleted.

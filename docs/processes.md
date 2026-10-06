@@ -200,19 +200,8 @@ timeout/unknown rows. The HTTP service uses a client with the host protocol's
 4 MiB control-line/metadata allowance; directory enumeration has no entry cap.
 
 Validation uses artificial native catalog rows, copied synthetic JSONL fixtures,
-and loopback fake peers. Tests cover exact matches and ambiguity, duplicates,
-subagent rejection, source/UID conflict, empty legacy metadata, exited versus
-unreachable, identity replacement, redaction, deadlines, HTTP admission, and
-shutdown. The earlier temporary free-shell smoke test validates the
-independent transport; this catalog does not execute a paid or real native CLI.
-
-An opt-in Unix smoke test also runs one fixed free shell with synthetic metadata,
-checks the real host's Info response through two fresh Web app instances, and
-exits/reaps that shell. After building the local ptyhost, run it explicitly with
-`SESSIONDOCK_TEST_PTYHOST_BINARY=$PWD/target/debug/ptyhost cargo test -p sessiondock
---test runtime --test runtime_live --locked -- --ignored`; `runtime_live` walks a
-real instance from `running` (PID equals the record) through `quit` to
-`exited`/`identity_gone`. `python3 tests/live_browser.py` checks in Chromium that
+and loopback fake peers; it does not execute a paid or real native CLI.
+`python3 tests/live_browser.py` checks in Chromium that
 a managed instance's console works, turns into the grey exit explanation after
 `quit`, and that sessions without an instance keep "运行状态未知" (the active
 filter refuses to hide them), on desktop and 390 px widths; legacy never

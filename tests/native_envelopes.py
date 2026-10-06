@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from history_parity import BINARY, Corpus, codex_message, codex_row, encoded, isolated_server
+from history_fixtures import BINARY, Corpus, codex_message, codex_row, encoded, isolated_server
 from media_browser import image
 from native_spans import MIB, check_bytes, get, images, padded_png, status
 

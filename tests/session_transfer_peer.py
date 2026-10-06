@@ -37,7 +37,7 @@ def serve(config,root):
     for database,schema in config['schemas'].items():
         with sqlite3.connect(database) as db:db.executescript(schema)
     if config.get('native_codex'):
-        from session_move_codex_real import AppServer, MODEL, EFFORT, digest, inventory, native_metadata
+        from codex_real_fixtures import AppServer, MODEL, EFFORT, digest, inventory, native_metadata
         home=Path(config['roots']['codex']);login=home/'auth.json'
         defaults=Path.home()/'.codex/config.toml';before=digest(defaults)
         login.symlink_to(Path.home()/'.codex/auth.json')

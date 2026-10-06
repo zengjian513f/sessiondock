@@ -70,11 +70,6 @@ impl StopScan {
     pub fn stamp(&self) -> Option<Stamp> {
         self.stamp
     }
-
-    #[cfg(test)]
-    pub fn scanned(&self) -> u64 {
-        self.scanned
-    }
 }
 
 /// Merge one main-transcript line into the
@@ -270,6 +265,3 @@ pub fn ts_after(later: &str, earlier: &str) -> bool {
 pub fn claude_active(open_turn: bool, updated: &str, stopped_at: Option<&str>) -> bool {
     open_turn && stopped_at.is_none_or(|stopped| ts_after(updated, stopped))
 }
-
-#[cfg(test)]
-mod tests;

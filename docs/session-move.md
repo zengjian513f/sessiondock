@@ -192,7 +192,7 @@ Codex `thread_attachments`（旧表名 `thread_artifacts`）按线程迁移；�
 `gpt-5.6-luna`、`low`；B 在运行后自行创建了状态库。此结果仅证明这个版本和样本按 ID 恢复成功，
 没有验证原生列表、名称/归档/置顶/项目关联、分页 fork、多代 rollout 和工具恢复，不构成上线依据。
 
-随后新增 [session_move_codex_real.py](../tests/session_move_codex_real.py)，使用 Codex 0.159.0
+随后新增 `session_move_codex_real.py`（已于 2026-10-06 随非浏览器测试删除），使用 Codex 0.159.0
 的 app-server 在临时 home 中创建分页父线程、两个 fork、同 ID revert、从回退版本再次 fork、
 真实子代理和归档兄弟线程。全部真实 turn 的模型/强度都从 rollout 断言为 Luna / low；
 日常配置哈希前后不变。首轮结果：
@@ -424,7 +424,7 @@ Hub 按操作加锁，节点按相关会话身份加锁。其他会话的发送�
 回收站字节、源锁重启保持、再次移回，以及目标 ready 重启、部分清理中断和新增外部引用保护。
 去掉 `--preserve` 验证移动同时改身份；去掉 `--peer` 验证共享存储拒绝。
 
-`session_clone_service_real.py --production-peer <SSH 别名>` 从真实 Codex 的可见孙分支经 Chromium
+`session_clone_service_real.py --production-peer <SSH 别名>`（已于 2026-10-06 随非浏览器测试删除）当时从真实 Codex 的可见孙分支经 Chromium
 迁移整个五会话组；加 `--new-ids` 验证身份重写。Codex 0.159.2 / Luna low 实测包含分页 fork、
 归档兄弟、revert 多代 rollout 和 code-mode 子代理，两种身份模式均通过目标原生列表、完整
 分页历史、当前文件、名称/置顶/项目/归档元数据及分支/子代理续聊检查。目标 CLI 自行初始化
@@ -560,7 +560,7 @@ Grok 的 `compaction_checkpoints/*.json` 是原生历史，不是普通附件。
 
 | 要求 | 已核对证据与结果 |
 |---|---|
-| 同机整组复制，Codex 分页 fork、多代 rollout、归档和 code-mode 子代理 | [session_clone_browser.py](../tests/session_clone_browser.py) 页面操作通过；[session_clone_service_real.py](../tests/session_clone_service_real.py) 原生完整分页、列表、当前版本、元数据及新旧组分别续聊通过 |
+| 同机整组复制，Codex 分页 fork、多代 rollout、归档和 code-mode 子代理 | [session_clone_browser.py](../tests/session_clone_browser.py) 页面操作通过；`session_clone_service_real.py`（已于 2026-10-06 随非浏览器测试删除） 原生完整分页、列表、当前版本、元数据及新旧组分别续聊通过 |
 | Claude/Grok 分支、子代理、跨父会话代理引用 | [session_files_clone_browser.py](../tests/session_files_clone_browser.py) 页面整组复制、历史打开、源文件不变、失败补偿和重启重试通过；最后一次包含 Grok 检查点依赖，共 9 项 PASS |
 | 混合来源连通组、同 SID 不同来源、跨来源归属 | [session_mixed_clone_browser.py](../tests/session_mixed_clone_browser.py) 十四会话组、发布失败补偿和重启重试通过 |
 | 跨机移动/复制 × 保留/改变身份 | [session_mixed_bundle_browser.py](../tests/session_mixed_bundle_browser.py) 在两台主机的独立临时存储完成四种组合；目标三种历史与关系、源端保留/清理、Codex 同 SID 两代 rollout 均通过 |

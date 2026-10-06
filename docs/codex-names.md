@@ -62,11 +62,8 @@ refresh policy.
 
 ## Validation
 
-After building the server, run
-`python3 tests/names_parity.py --python-source PATH --browser` for
-synthetic adapter differential checks and real legacy Chromium behavior.
-The Python checkout is imported only as adapter code, with every native root,
-name-index path, and cross-session lookup explicitly restricted to this tool's
-temporary corpus. No Python index/state store, paid CLI, or real native data
+After building the server, run `python3 tests/codex_names_browser.py` for
+synthetic HTTP checks and real legacy Chromium behavior. Every native root and
+name-index path lives in its temporary corpus; no paid CLI or real native data
 is read. Linux runtime checks and any Windows cross-compilation results are
 reported separately; neither implies Windows/macOS runtime acceptance.

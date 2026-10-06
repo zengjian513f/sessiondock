@@ -556,24 +556,6 @@ connection and that the host total estimate stays at 60.
 
 ## Validation
 
-`cargo test -p ptyhost --test host_grid --locked` runs the Unix `/bin/sh`
-fixture in `crates/ptyhost/tests/host_grid.rs` with an explicit private
-`--dir`: first snapshot then row diffs, scrolled rows plus a second
-client's history snapshot, scrolled rows that keep arriving after the
-`--history 100` cap is full, resize `reset: false` without history, alt
-screen / title / exit, and a byte client coexisting with a grid client
-(the byte stream is not JSON).
-
-`node --test tests/grid_model_contract.mjs` covers `LineDecoder`
-(split/merge, UTF-8 across pushes, dropped bad lines), `encodeResize`,
-grapheme splits, snapshot `reset: true` padding, wide cells, diff
-scrolled/row/cursor/modes/title, `seq` gaps, scrollback reflow, and
-selection text across wrapped lines.
-
-`node --test tests/grid_input_contract.mjs` covers `InputEncoder`
-keys, paste, focus, mouse encodings, and alt-screen wheel-as-arrows
-(≥ 40 cases).
-
 `python3 tests/terminal_grid_browser.py` is the main-console grid
 acceptance (Playwright Chromium, temporary fixtures): the console button
 claims and attaches `mode=grid`, typing, the shell's `stty size` equals
@@ -588,6 +570,5 @@ resize seam with and without the tail request) are in
 `terminal_reflow_browser`. Needs POSIX and the debug `sessiondock` and
 `ptyhost` binaries already built; it does not build them.
 
-The two Node files are also in the `node_contracts` group of
-[validation.md](validation.md). The browser file is the
-`terminal_grid_browser` suite.
+The browser file is the `terminal_grid_browser` suite in
+[validation.md](validation.md).

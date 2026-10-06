@@ -97,7 +97,7 @@ Claude 恢复已有子代理使用 `SendMessage.to`，该结构化目标随子�
 
 ### 新身份隔离实验
 
-`tests/session_clone_codex_real.py` 使用真实 Rust 计划/暂存器和**仅供测试的同 schema SQL
+`session_clone_codex_real.py`（已于 2026-10-06 随非浏览器测试删除）当时使用真实 Rust 计划/暂存器和**仅供测试的同 schema SQL
 导入器**，在临时 CLI home 验证 Codex 0.159.0、Luna low：父会话、分页 fork、归档兄弟、
 revert 的多代 rollout、fork of revert；新 ID 的完整分页内容、原生列表、当前文件指针、
 名称/置顶/项目关联，以及新旧两组分别续聊。目标无关会话保持不变，克隆期间源历史保持
@@ -207,7 +207,7 @@ Hub 页面上的同机复制也进入持久任务列表，显示节点实际的�
 兄弟、两层子代理、code-mode 引用、原生及显示元数据；还验证发布中断重启、第二数据库
 失败补偿、成功后续写再重试，以及外部工具的 `agent_id` 不被当作原生关联。
 
-`tests/session_clone_service_real.py` 直接调用生产接口，在临时 home 使用 Codex 0.159.0、
+`session_clone_service_real.py`（已于 2026-10-06 随非浏览器测试删除）当时直接调用生产接口，在临时 home 使用 Codex 0.159.0、
 `gpt-5.6-luna` low，创建真实分页分支、revert、归档兄弟和 code-mode 子代理。验证完整分页
 内容、原生列表、当前 rollout、名称/置顶/项目关联，随后分别继续克隆分支、克隆子代理和
 原分支，确认新旧互不追加。日常配置保持原样。该脚本只在显式直接调用或真实 CLI 验证时运行。

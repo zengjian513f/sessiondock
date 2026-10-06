@@ -23,7 +23,7 @@ import time
 from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
 from pending_create_discard_browser import create_source
-from history_parity import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server
+from history_fixtures import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server
 from popups import on_popup
 
 CODEX_SID = "8f3c1d2e-4a5b-4c6d-8e7f-90a1b2c3d4e5"

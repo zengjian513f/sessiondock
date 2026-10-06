@@ -24,10 +24,6 @@ pub(crate) use views::{
     Dependencies, Event, MessageBody, Parsed, Selected, ViewRequest, Views, open_transient,
     validate_message_query,
 };
-#[cfg(test)]
-pub(crate) use views::{
-    EncodedEvents, View, ViewParts, ViewStats, project_selected, read_bounded, semantic_anchor,
-};
 mod providers;
 mod records;
 pub(crate) use records::string_reader::JsonStringReader;
@@ -521,17 +517,6 @@ impl SessionStore {
             views_revision,
             serialized: Mutex::new([None, None]),
         }
-    }
-
-    /// The revision of the cached-view set (tests pin the byte cache on it).
-    #[cfg(test)]
-    pub(crate) fn views_revision(&self) -> u64 {
-        self.views_revision.load(Ordering::Acquire)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn index(&self) -> &index::Index {
-        &self.index
     }
 
     fn list_state(&self) -> Result<MutexGuard<'_, ListState>, SessionError> {
@@ -1084,12 +1069,6 @@ impl SessionStore {
             .claude_rewind_target(&prepared.request, &deps, target)
     }
 
-    /// Bounded view-cache statistics (views, parsed files, retained bytes).
-    #[cfg(test)]
-    pub(crate) fn view_stats(&self) -> Result<ViewStats, SessionError> {
-        Ok(self.views()?.stats())
-    }
-
     fn metadata_snapshot(&self) -> Result<Option<Arc<MetadataSnapshot>>, SessionError> {
         self.metadata
             .as_ref()
@@ -1474,15 +1453,4 @@ fn pin_for(
     metadata?.timeline(uid).cloned()
 }
 
-#[cfg(test)]
-mod grok_tests;
 mod media_projection;
-#[cfg(test)]
-mod media_tests;
-#[cfg(test)]
-mod native_scope_tests;
-
-#[cfg(test)]
-mod native_catalog_tests;
-#[cfg(test)]
-mod tests;

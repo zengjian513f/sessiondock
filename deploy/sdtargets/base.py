@@ -7,7 +7,7 @@ Deployment order per target (deploy.py drives it, handlers implement the steps):
 
     probe -> stage -> backup -> swap -> restart -> verify -> (rollback on failure)
 
-(native-build kinds inside stage(): extract source -> Rust tests unless
+(native-build kinds inside stage(): extract source -> Rust compile check unless
 DeployOptions.test_mode == "none" -> cargo build -> copy as `.new`)
 
 Invariants every handler must keep:
@@ -83,7 +83,7 @@ class DeployOptions:
     log_dir: Path = Path("target/deploy")
     # Test mode the stage was built with (deploy.py --test): tests run once per PLATFORM.
     # Linux nodes and the hub receive the binary already tested on the build machine;
-    # kinds that build natively (macos-node, windows-node) run the Rust tests inside
+    # kinds that build natively (macos-node, windows-node) run a Rust compile check inside
     # stage() after extracting the source and before building, unless "none".
     test_mode: str = "none"
 

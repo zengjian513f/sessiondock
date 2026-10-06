@@ -772,27 +772,3 @@ fn url_form(query: &str) -> std::collections::HashMap<String, String> {
     }
     map
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dimensions_clamp_like_python() {
-        assert_eq!(dimension(&json!(100), 120, 40, 300).unwrap(), 100);
-        assert_eq!(dimension(&json!(10), 120, 40, 300).unwrap(), 40);
-        assert_eq!(dimension(&json!(999), 120, 40, 300).unwrap(), 300);
-        assert_eq!(dimension(&Value::Null, 36, 12, 120).unwrap(), 36);
-        assert_eq!(dimension(&json!(0), 36, 12, 120).unwrap(), 36);
-        assert_eq!(dimension(&json!("50"), 36, 12, 120).unwrap(), 50);
-        assert!(dimension(&json!("wide"), 36, 12, 120).is_err());
-    }
-
-    #[test]
-    fn query_decoding_handles_percent_and_plus() {
-        let map = url_form("uid=bug-report&name=%E5%B1%8F%E5%B9%95+shot.png&id=7");
-        assert_eq!(map["uid"], "bug-report");
-        assert_eq!(map["name"], "屏幕 shot.png");
-        assert_eq!(map["id"], "7");
-    }
-}

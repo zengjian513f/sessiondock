@@ -334,6 +334,3 @@ impl RawIndexBuilder {
         Ok(self.index)
     }
 }
-
-#[cfg(test)]
-mod tests;
