@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod agent;
+pub mod connections;
 pub mod engine;
 pub mod linux;
 pub mod resource_summary;
@@ -106,6 +107,9 @@ pub struct Incoming {
     pub process: Process,
     pub started_at: f64,
     pub connection: Connection,
+    /// First successful SSH exec in this inherited connection lineage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_at: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -118,6 +122,10 @@ pub struct Report {
     pub outgoing: Vec<Outgoing>,
     pub incoming: Vec<Incoming>,
     pub bindings: Vec<Binding>,
+    /// Event evidence is separate so old coordinators cannot mistake an exited
+    /// client's retained connection for a currently established socket.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connections: Vec<connections::ConnectionRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collector: Option<agent::CollectorStatus>,
 }
@@ -142,13 +150,57 @@ pub struct Published {
 /// Exactly one launching process must explain a connection. Never choose by
 /// directory, timestamps, machine suffix or the nearest-looking session.
 pub fn correlate(reports: &[Report]) -> BTreeMap<String, Published> {
-    let mut outgoing: BTreeMap<&Connection, Vec<(&Report, &Outgoing)>> = BTreeMap::new();
+    struct Candidate<'a> {
+        source: &'a Report,
+        process: &'a Process,
+        session: Option<&'a Session>,
+        chain: &'a [Launch],
+        start: f64,
+        end: Option<f64>,
+        eligible: bool,
+    }
+    let mut outgoing: BTreeMap<&Connection, Vec<Candidate<'_>>> = BTreeMap::new();
     for report in reports.iter().filter(|r| r.version == 1 && r.supported) {
         for edge in &report.outgoing {
+            if report
+                .connections
+                .iter()
+                .any(|r| r.process == edge.process && r.connection == edge.connection)
+            {
+                continue;
+            }
             outgoing
                 .entry(&edge.connection)
                 .or_default()
-                .push((report, edge));
+                .push(Candidate {
+                    source: report,
+                    process: &edge.process,
+                    session: Some(&edge.session),
+                    chain: &edge.launch_chain,
+                    start: edge.started_at,
+                    end: None,
+                    eligible: true,
+                });
+        }
+        for record in &report.connections {
+            let live_exclusive = report
+                .outgoing
+                .iter()
+                .any(|edge| edge.process == record.process && edge.connection == record.connection);
+            outgoing
+                .entry(&record.connection)
+                .or_default()
+                .push(Candidate {
+                    source: report,
+                    process: &record.process,
+                    session: record.session.as_ref(),
+                    chain: &record.launch_chain,
+                    start: record.opened_at,
+                    end: record.closed_at,
+                    eligible: record.ssh
+                        && !record.shared
+                        && (record.closed_at.is_some() || live_exclusive),
+                });
         }
     }
     reports
@@ -159,16 +211,27 @@ pub fn correlate(reports: &[Report]) -> BTreeMap<String, Published> {
                 .incoming
                 .iter()
                 .filter_map(|incoming| {
-                    let candidates = outgoing.get(&incoming.connection)?;
-                    if candidates.len() != 1 {
+                    let at = incoming.connection_at.unwrap_or(incoming.started_at);
+                    if !at.is_finite() {
                         return None;
                     }
-                    let (source, edge) = candidates[0];
-                    // An old detached command may still carry a tuple that has been
-                    // reused by a newer connection. Allow two seconds of clock skew.
-                    if incoming.started_at + 2.0 < edge.started_at {
+                    let mut candidates =
+                        outgoing.get(&incoming.connection)?.iter().filter(|edge| {
+                            edge.start.is_finite()
+                                && at + 2.0 >= edge.start
+                                && edge
+                                    .end
+                                    .is_none_or(|end| end.is_finite() && at <= end + 2.0)
+                        });
+                    let edge = candidates.next()?;
+                    // Ambiguous/unknown clients also participate in this check.
+                    // A reused tuple cannot revive a closed launch, and clock-skew
+                    // overlap is left unassigned rather than choosing a session.
+                    if candidates.next().is_some() || !edge.eligible {
                         return None;
                     }
+                    let source = edge.source;
+                    let session = edge.session?;
                     let launcher = ProcessKey {
                         node_id: source.node_id.clone(),
                         boot_id: source.boot_id.clone(),
@@ -176,9 +239,9 @@ pub fn correlate(reports: &[Report]) -> BTreeMap<String, Published> {
                     };
                     let mut launch_chain = vec![Launch {
                         process: launcher.clone(),
-                        session: edge.session.clone(),
+                        session: session.clone(),
                     }];
-                    for launch in &edge.launch_chain {
+                    for launch in edge.chain {
                         if !launch_chain.iter().any(|v| v.process == launch.process) {
                             launch_chain.push(launch.clone());
                         }
@@ -186,7 +249,7 @@ pub fn correlate(reports: &[Report]) -> BTreeMap<String, Published> {
                     Some(Link {
                         launch_chain,
                         process: incoming.process.clone(),
-                        session: edge.session.clone(),
+                        session: session.clone(),
                         launcher,
                         observed_at: report.sampled_at,
                         connection: incoming.connection.clone(),

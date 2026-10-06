@@ -16,6 +16,8 @@ pub struct Saved {
     pub bindings: Vec<Binding>,
     #[serde(default)]
     pub forked_from: Vec<(Process, Session)>,
+    #[serde(default)]
+    pub connections: crate::connections::Saved,
 }
 pub struct Engine {
     pub node_id: String,
@@ -26,6 +28,7 @@ pub struct Engine {
     /// Session of the bound process each process was forked from; lets a CLI
     /// whose launcher already exited still name the session that started it.
     pub forked_from: BTreeMap<Process, Session>,
+    pub connections: crate::connections::Tracker,
     incoming: BTreeMap<Process, crate::Connection>,
 }
 impl Engine {
@@ -48,6 +51,7 @@ impl Engine {
                 .map(|l| (l.process.clone(), l))
                 .collect(),
             forked_from: saved.forked_from.into_iter().collect(),
+            connections: crate::connections::Tracker::restore(saved.connections),
             incoming: BTreeMap::new(),
         }
     }
@@ -63,6 +67,7 @@ impl Engine {
             node_id: self.node_id.clone(),
             boot_id: self.boot_id.clone(),
             catalog: self.catalog.clone(),
+            connections: self.connections.saved(),
             links: self.links.values().cloned().collect(),
             bindings: self.bindings.values().cloned().collect(),
             forked_from: self
@@ -73,6 +78,7 @@ impl Engine {
         }
     }
     pub fn fork(&mut self, parent: &Process, child: Process, at: f64) {
+        self.connections.fork(parent, &child);
         if let Some(mut binding) = self.bindings.get(parent).cloned() {
             binding.process = child.clone();
             binding.first_observed_at = at;
@@ -82,7 +88,10 @@ impl Engine {
             self.bindings.insert(child, binding);
         }
     }
-    pub fn exit(&mut self, process: &Process) {
+    pub fn exit(&mut self, process: &Process, at: f64) {
+        self.connections
+            .attribute_exiting(process, &self.bindings, &self.catalog);
+        self.connections.exit(process, at);
         self.bindings.remove(process);
         self.links.remove(process);
         self.forked_from.remove(process);
@@ -129,6 +138,7 @@ impl Engine {
             self.links.clear();
             self.forked_from.clear();
             self.catalog = Catalog::default();
+            self.connections = crate::connections::Tracker::default();
         }
         let live = |p: &Process| {
             snapshot
@@ -155,6 +165,8 @@ impl Engine {
         let mut outgoing = Vec::new();
         let mut incoming = Vec::new();
         let mut bindings = BTreeMap::new();
+        self.connections
+            .update(snapshot, &self.bindings, &self.catalog);
         self.incoming.clear();
         for entry in snapshot.entries.values() {
             let mut current = entry.process.pid;
@@ -193,13 +205,15 @@ impl Engine {
                 }
                 current = ancestor.parent;
             }
-            if let Some(connection) = connection {
+            let origin = self.connections.origin(&entry.process);
+            if let Some(connection) = origin.map(|o| o.connection.clone()).or(connection) {
                 self.incoming
                     .insert(entry.process.clone(), connection.clone());
                 incoming.push(Incoming {
                     process: entry.process.clone(),
                     started_at: entry.started_at,
                     connection,
+                    connection_at: origin.map(|o| o.at),
                 });
             }
             let session = local
@@ -268,6 +282,7 @@ impl Engine {
             }
         }
         self.bindings = bindings;
+        self.connections.attribute(&self.bindings, &self.catalog);
         Report {
             version: 1,
             node_id: self.node_id.clone(),
@@ -277,6 +292,7 @@ impl Engine {
             bindings: self.bindings.values().cloned().collect(),
             outgoing,
             incoming,
+            connections: self.connections.records(),
             collector: Some(status),
         }
     }

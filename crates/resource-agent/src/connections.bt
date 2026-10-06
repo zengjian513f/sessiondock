@@ -1,0 +1,78 @@
+// Only selected identity metadata is exported, never commands or other env.
+tracepoint:syscalls:sys_enter_execve,tracepoint:syscalls:sys_enter_execveat
+/uid == TARGET_UID/
+{
+    delete(@ssh_env[tid]);
+    delete(@ssh_has[tid]);
+    $i = (uint64)0;
+    while ($i < 512) {
+        $p = *(uptr((uint64 *)args->envp) + $i);
+        if ($p == 0) { break; }
+        if (strncmp(str(uptr($p), 16), "SSH_CONNECTION=", 15) == 0) {
+            @ssh_env[tid] = str(uptr($p + 15), 96);
+            @ssh_has[tid] = 1;
+            break;
+        }
+        $i++;
+    }
+}
+tracepoint:sched:sched_process_exec
+/uid == TARGET_UID && @ssh_has[tid]/
+{
+    printf("R %d %llu %llu %s\n", pid, curtask->group_leader->start_boottime, nsecs, @ssh_env[tid]);
+    delete(@ssh_env[tid]);
+    delete(@ssh_has[tid]);
+}
+tracepoint:syscalls:sys_exit_execve,tracepoint:syscalls:sys_exit_execveat
+/uid == TARGET_UID/
+{ delete(@ssh_env[tid]); delete(@ssh_has[tid]); }
+
+// A listener makes the SSH transport shared (including ControlMaster from
+// configuration, which need not appear in argv). Never attribute its channels
+// to the master process's session.
+tracepoint:syscalls:sys_enter_listen
+/uid == TARGET_UID/
+{ printf("M %d %llu\n", pid, curtask->group_leader->start_boottime); }
+
+kprobe:tcp_v4_connect,kprobe:tcp_v6_connect
+/uid == TARGET_UID/
+{ @connecting[tid] = arg0; }
+kretprobe:tcp_v4_connect,kretprobe:tcp_v6_connect
+/@connecting[tid]/
+{
+    $sk = (struct sock *)@connecting[tid];
+    if (retval == 0) {
+        @socket_owner[(uint64)$sk] = (pid, curtask->group_leader->start_boottime);
+        $port = $sk->__sk_common.skc_dport;
+        $remote = (($port & 255) << 8) | ($port >> 8);
+        if ($sk->__sk_common.skc_family == 2) {
+            printf("C %d %llu %llu %d %s %d %s %d\n", pid, curtask->group_leader->start_boottime, nsecs,
+                comm == "ssh", ntop($sk->__sk_common.skc_rcv_saddr), $sk->__sk_common.skc_num,
+                ntop($sk->__sk_common.skc_daddr), $remote);
+        } else if ($sk->__sk_common.skc_family == 10) {
+            printf("C %d %llu %llu %d %s %d %s %d\n", pid, curtask->group_leader->start_boottime, nsecs,
+                comm == "ssh", ntop(10, $sk->__sk_common.skc_v6_rcv_saddr.in6_u.u6_addr8), $sk->__sk_common.skc_num,
+                ntop(10, $sk->__sk_common.skc_v6_daddr.in6_u.u6_addr8), $remote);
+        }
+    }
+    delete(@connecting[tid]);
+}
+kprobe:tcp_close
+/@socket_owner[arg0].0/
+{
+    $sk = (struct sock *)arg0;
+    $owner = @socket_owner[arg0];
+    $port = $sk->__sk_common.skc_dport;
+    $remote = (($port & 255) << 8) | ($port >> 8);
+    if ($sk->__sk_common.skc_family == 2) {
+        printf("D %d %llu %llu %s %d %s %d\n", $owner.0, $owner.1, nsecs,
+            ntop($sk->__sk_common.skc_rcv_saddr), $sk->__sk_common.skc_num,
+            ntop($sk->__sk_common.skc_daddr), $remote);
+    } else if ($sk->__sk_common.skc_family == 10) {
+        printf("D %d %llu %llu %s %d %s %d\n", $owner.0, $owner.1, nsecs,
+            ntop(10, $sk->__sk_common.skc_v6_rcv_saddr.in6_u.u6_addr8), $sk->__sk_common.skc_num,
+            ntop(10, $sk->__sk_common.skc_v6_daddr.in6_u.u6_addr8), $remote);
+    }
+    delete(@socket_owner[arg0]);
+}
+END { clear(@ssh_env); clear(@ssh_has); clear(@connecting); clear(@socket_owner); }

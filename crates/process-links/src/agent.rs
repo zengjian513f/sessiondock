@@ -13,6 +13,8 @@ pub struct CollectorStatus {
     pub service: String,
     pub events: String,
     pub lost_events: u64,
+    #[serde(default)]
+    pub ssh_connections: bool,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Owner {

@@ -49,7 +49,13 @@ process ownership.
 - `bindings`: process identity, direct session, optional initiator, `launch_chain`,
   `first_observed_at`, and `spawner` on owning CLI processes;
 - `outgoing`: SSH client process, start time, full TCP tuple, owning session and inherited launch chain;
-- `incoming`: process identity/start time and inherited SSH connection tuple.
+- `incoming`: process identity/start time, inherited SSH connection tuple and
+  optional `connection_at` (original successful remote exec, retained by descendants);
+- `connections`: boot-scoped TCP connect/close evidence, source process, time
+  interval, owning session/launch chain and SSH/shared flags. Closed records are
+  separate from live `outgoing`, so older coordinators safely ignore them;
+- `collector.ssh_connections`: whether kernel connection evidence is available.
+  Event loss or collector failure clears it; polling remains a partial fallback.
 
 An external resource sampler joins its own process observations to `bindings`
 using the full process incarnation. It must validate boot and start identities;
@@ -63,7 +69,15 @@ the destination's authenticated node listener. Browser forwarding of
 `POST /api/process-links` is refused. Node Status needs only the local read API;
 it neither holds fleet credentials nor duplicates the connection matcher.
 
-The Hub still polls every two seconds. It skips an empty publication, and skips
+The Hub still delivers reports every two seconds; connection capture is event-driven
+when the Linux collector is present. A short SSH client need not survive until
+a poll. The matcher uses the original remote exec time against the recorded
+connection interval, with two seconds of clock skew tolerance on each boundary.
+Unknown owners and shared/reused tuples participate in ambiguity checks; an
+ambiguous interval never selects a session. Live exclusive sockets retain the
+compatibility path.
+
+The Hub polls every two seconds. It skips an empty publication, and skips
 an unchanged publication only after a successful send and a current destination
 report confirming every process's initiator and launch chain. Observation time
 alone is not a change. A new process, boot or launch-chain hop triggers a publish;
@@ -140,6 +154,14 @@ Counted private node proxies also check unchanged polls produce no publications,
 read failure recovers by republishing, and a new descendant's failed publication
 retries and survives detachment/restart. Run again with `--with-agent` to exercise
 the independent collector path and browser resource panels.
+`python3 tests/ssh_events_browser.py --binary target/release/sessiondock` covers
+closed connection evidence, late descendants before first Hub contact, collector
+and Hub restarts, tuple/PID reuse, unknown/shared/ambiguous candidates and actual
+sidebar/detail interactions. Its optional `--kernel --ssh-user USER` mode runs
+as root with a non-root fixture user, private loopback sshd and temporary keys.
+It checks real BPF IPv4/IPv6 short clients, delayed orphan grandchildren, persisted
+evidence before Hub startup and ControlMaster exclusion. Both modes use private
+runtime/process views; they never use production sessions.
 The Node Status resolver has a separate consumer regression for start-time checks.
 
 Related contracts: [liveness](liveness.md#spawned_by),
@@ -227,7 +249,9 @@ UUIDs but no session bindings. The jobs used short SSH launches of detached
 workers; their launch clients had exited before diagnosis. Polling can miss
 that connection evidence, and historical prose cannot safely recreate it.
 This correction preserves the observed attribution gap in server aggregation;
-it does not retroactively restore missing launch links. The browser regression
+it does not retroactively restore missing launch links. The event-driven connection
+mechanism described below closes the short-client capture gap for new observed
+launches; it cannot recreate already-missing historical evidence. The browser regression
 in `tests/resource_probe_browser.py` covers missing remote bindings, process
 incarnation mismatches, positive subtotals, verified recovery and genuine zero.
 
@@ -258,9 +282,27 @@ metric definitions, sampling cadence and partial coverage appear in Chinese tool
 verified process identities, never sidebar nesting or summed child totals.
 GPU UUIDs are deduplicated within each machine. The local agent also publishes
 `sessions` using the same direct aggregation for Node Status consumers.
-Lifecycle events preserve inherited attribution after a parent exits. Polling
-repairs the live snapshot every two seconds; short-lived processes and SSH
-connections can still have gaps. Missing coverage does not affect workloads.
+Lifecycle events preserve inherited attribution after a parent exits. The default
+Linux tracer also captures IPv4/IPv6 TCP connect/close, successful exec's selected
+`SSH_CONNECTION` value, and fork/exit identities. A boot-scoped parent graph
+retains the original connection time through double forks, reparenting and
+parents that exit before their first sample. Sender connection records retain
+ownership and launch chains after SSH exits; both sides persist the evidence
+so a Hub outage or restart can delay matching without losing it. No full command
+or environment dump is collected. The exec scan examines up to 512 environment
+entries; absent evidence falls back to live snapshots.
+
+A TCP socket inherited by an SSH client's child or a client opening a listener
+is shared evidence (including ControlMaster/ControlPersist). Its channels are
+not assigned to the master's session. Event loss invalidates unconfirmed
+connection exclusivity; unfinished spans restored across a collector outage
+remain ambiguous. Closed spans and verified process bindings survive a restart
+within the same boot; a boot change discards them. Evidence is kept for the boot,
+so storage grows with observed SSH launches, not with an arbitrary expiry that
+would silently break delayed matching. Collector downtime, unobserved earlier
+launches, shared SSH channels and tuples changed by NAT/proxies still leave gaps.
+Polling repairs live resources every two seconds; short-lived resource counters
+are not a complete historical ledger. Missing coverage does not affect workloads.
 
 The Hub still coordinates new cross-machine matches using node APIs. Existing
 bindings and local collection survive application/Hub outages; discovering new
