@@ -41,8 +41,12 @@ affected path end to end in Chromium. If no suite covers it, add or extend
 one. HTTP / `--test` / node suites may run alongside; they are not a
 substitute. Docs-only and deploy-script-only work use the doc/deploy suites.
 
-**Never run unit tests on your own**; validate the changed surface with the
-headless browser suite that covers it.
+**Do not run any unit test unless the user explicitly asks** (`cargo test`,
+`tests/*_contract.mjs`, Python `unittest` suites); validate the changed surface
+with the headless browser suite that covers it. History: a 2026-10-06 audit
+found these suites had silently drifted — all 15 Node contract failures and
+most of the 21 `cargo test` failures were tests not updated after intentional
+changes, while the regressions that mattered were caught by browser suites.
 
 The frontend `legacy-web/` is served as committed and needs no build.
 `--web-dir` (or `SESSIONDOCK_TEST_WEB_DIR`) points the browser suites at another
@@ -120,7 +124,7 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | cargo_clippy | `cargo clippy -p sessiondock -p ptyhost-client --all-targets --locked -- -D warnings` | clippy, warnings denied | cargo | n/a |
 | cargo_check_windows | `cargo xwin check --workspace --all-targets --target x86_64-pc-windows-msvc --locked` | Linux/macOS cross-compile to MSVC with bundled C dependencies; native Windows uses `cargo check`; not a Windows run | cargo, cargo-xwin, LLVM, cached/downloadable CRT/SDK | n/a |
 | cargo_build | `cargo build --release -p sessiondock --locked` | Release server used by `--binary` Python suites | cargo | n/a |
-| node_contracts | `node --test tests/composer_input_contract.mjs tests/grid_facade_contract.mjs tests/grid_input_contract.mjs tests/grid_model_contract.mjs tests/grid_render_contract.mjs tests/history_pages_contract.mjs tests/legacy_contract.mjs tests/legacy_pure_contract.mjs tests/media_continuation_contract.mjs tests/media_lazy_contract.mjs` | `composer_input_contract.mjs` (PTY editor classification: ready/starting/blocked/unknown over the frame fixtures); `grid_facade_contract.mjs` (xterm-compatible `GridTerm` surface: write of JSON lines, buffer shim, selection, modes, resize/title events); `grid_model_contract.mjs` (grid wire decoder, snapshot/diff application, scrollback reflow, selection text); `grid_render_contract.mjs` (every row clipped to its own box, cell size on whole device pixels for fractional dpr); `grid_input_contract.mjs` (xterm-compatible key/mouse/paste/focus encoding); `legacy_contract.mjs` (capabilities, media tokens, terminal identity, SSE retry, `SessionDockNetwork` pause gates incl. stale build and draft follow, sidebar selection without rebuild, console availability against the frozen `reference/legacy-web/nodes.js` with registered deltas, batched audit flush via `auditPayload` / beacon gate); `legacy_pure_contract.mjs` (pure helpers incl. `consoleUnavailableReason` order (missing CLI before the no-guess rule), the nest tree `nestParentOf`/`nestTree`/`expandRows`/`agentRunning` rules in nested, flat and on-demand child modes, continued-in hiding with attached children following the visible continuation, unread badge state classes); `history_pages_contract.mjs` (gap cursor vs live checkpoint); `media_continuation_contract.mjs` (per-message pages); `media_lazy_contract.mjs` (lazy GET/diagnostics) | node (unit; opt-in only) | 0s |
+| node_contracts | `node --test tests/grid_facade_contract.mjs tests/grid_input_contract.mjs tests/grid_model_contract.mjs tests/grid_render_contract.mjs` | `grid_facade_contract.mjs` (xterm-compatible `GridTerm` surface: write of JSON lines, buffer shim, selection, modes, resize/title events); `grid_model_contract.mjs` (grid wire decoder, snapshot/diff application, scrollback reflow, selection text); `grid_render_contract.mjs` (every row clipped to its own box, cell size on whole device pixels for fractional dpr); `grid_input_contract.mjs` (xterm-compatible key/mouse/paste/focus encoding). The legacy-web contracts that loaded single functions out of `app.js`/`term.js` source text were removed on 2026-10-06: they had drifted (15 failures, none a product bug) and their behavior is covered by browser suites | node (unit; only when the user asks) | 0s |
 | agy_browser | `python3 tests/agy_browser.py --binary target/debug/sessiondock` | Legacy Agy pending launch, effort argv, terminal typing, reconnect, discard, unavailable CLI, 390 px and themes; fake CLI only, not native resume evidence. | binary, ptyhost, Chromium | n/a |
 | agy_clients_browser | `python3 tests/agy_clients_browser.py --binary target/debug/sessiondock` | Private fake CLI and manifest: local/Hub model TSV, default and explicit effort argv, version/update success and failure, closed stdin, missing CLI and offline-node gates. | binary, hub, ptyhost, Chromium | n/a |
 | agy_history_browser | `python3 tests/agy_history_browser.py --binary target/debug/sessiondock` | Native-schema synthetic catalog/transcript seeds: Chromium list, search, pagination, append, old-row rewrite, rewind, atomic DB replacement, restart, missing/restored transcript with retained history notice, catalog-row removal, image/raw-tool/error rendering, and unsupported deletion/mixed-group transfer refusal; native bytes/mtime preserved. Schema fixtures do not establish real CLI media/tool output. | binary, Chromium | n/a |
@@ -388,7 +392,7 @@ Frontend performance regressions also run as ordinary browser suites:
    `--native-binding`.
 
 Name HTTP+Chromium checks `*_browser.py`, adapter differentials `*_parity.py`,
-and legacy-web vm tests `*_contract.mjs`. Print `PASS …` lines on success. Exit
+and the grid module tests `*_contract.mjs`. Print `PASS …` lines on success. Exit
 non-zero on failure. Copy fixtures into temporary directories only; never write
 into the repo, native homes, or production paths.
 

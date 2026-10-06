@@ -85,7 +85,7 @@ cargo run -p sessiondock --locked
 
 ## 构建与检查
 
-绝不自行跑单元测试；改动用覆盖该功能的 headless 浏览器测试验证（没有就补）。
+用户不主动要求时，不跑任何单元测试（`cargo test`、`tests/*_contract.mjs`、Python unittest）；改动用覆盖该功能的 headless 浏览器测试验证（没有就补）。历史原因：2026-10-06 核查发现单元测试长期无人维护，失败几乎都是测试没跟上有意的改动，真正的问题都由浏览器测试发现。
 全量清扫是 `python3 tests/run_validation.py`。
 
 ```sh
