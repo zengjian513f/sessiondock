@@ -21,9 +21,10 @@ from playwright.sync_api import sync_playwright, expect
 from history_fixtures import BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server, get_json
 from hub_fixtures import Hub, scoped
 from node_auth_fixtures import node_env, TOKEN, free_port
-from spawned_by_fixtures import proc_pid
+from spawned_by_fixtures import START, proc_pid
 
 WORKING = re.compile(r"\bturn-working\b")
+START.update({702: 70_200, 703: 70_300})
 
 
 def main(binary):
@@ -67,6 +68,13 @@ def main(binary):
                  env=[("CLAUDE_CODE_SESSION_ID", claude_sid)])
         proc_pid(proc, 701, "python", ["python", "transport.py"], 700,
                  env=[("CLAUDE_CODE_SESSION_ID", claude_sid)])
+        proc_pid(proc, 702, "ptyhost", ["/synthetic/ptyhost", "--dir", "/synthetic/hosts", "run"], 1,
+                 env=[("CLAUDE_CODE_SESSION_ID", claude_sid)])
+        proc_pid(proc, 703, "python", ["python", "fake_claude_cli.py"], 702,
+                 env=[("CLAUDE_CODE_SESSION_ID", claude_sid)])
+        # A separately identified CLI inside a terminal still owns its work.
+        stat = proc / "100/stat"
+        stat.write_text(stat.read_text().replace(") S 1 ", ") S 702 "))
         (proc / "200/environ").write_bytes(b"CODEX_SESSION_ID=busy\0")
         node = SimpleNamespace(name="synthetic", nid=nid, port=free_port(), token=TOKEN)
         env = node_env(corpus.root, node.port, "127.0.0.0/8")

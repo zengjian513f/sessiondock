@@ -67,10 +67,18 @@ Agy 1.2.16 提取已识别编辑区正文，并用只读镜像中的 native user
 - 前端拒绝较旧 `observed_at` 的推送覆盖较新的 CLI 状态。只带 `cli.input` 的推送不表示 CHECK 题卡消失：状态仍为 `cli_question` 时保留现有 composer 题卡与待处理答案；CHECK 显式返回 `prompt: null` 或输入状态离开选择界面时才撤下。回答控件仍必须自行再检当前画面。
 - `cli` 只随数据包变化时推送（`{"cli_only": true, "cli": …}`），页面不轮询它；没有该字段的旧节点退化为只看 CHECK 响应。
 
+终端宿主 `ptyhost` 及仅继承它归属的后代也不作为启动者的命令活动
+（BUG-20261006-231836-0d5270）：SSH 测试留下的终端宿主和等待输入的假 CLI
+不能让已结束的发起会话持续呼吸。该排除同时用于本机 `working_uids` 与
+跨机 `remote_working`，不撤销进程归属或改变宿主寿命。终端内另有明确归属的
+CLI 时，它自己启动的命令仍按最近的 CLI 归属计入。相对原先只排除 MCP 等
+常驻服务，这是活动判定的 **DELTA**。回归覆盖本机、Hub、刷新和服务重启。
+
 ## 测试
 
 | 范围 | 文件 |
 | --- | --- |
+| 命令活动、终端宿主隔离、SSH 远端归属与刷新/重启恢复 | [process_activity_browser.py](../tests/process_activity_browser.py)、[process_links_browser.py](../tests/process_links_browser.py) |
 | 忙碌 SEND 排队气泡、CHECK 响应携带 `cli.queued`、回显退掉 | [send_browser.py](../tests/send_browser.py) |
 | 原生输入在读屏期间落盘，现有 SSE 在模型回复前结清队列；后续回复同样不丢通知 | [send_echo_browser.py](../tests/send_echo_browser.py) |
 | Codex TUI 入队确认、折行与同文多次发送、引用画面不误认、中断后未确认处理、离屏与旧中断不误判、刷新恢复与迟到原生回显退掉、Esc 合并回显及重复快照隔离 | [send_native_codex_browser.py](../tests/send_native_codex_browser.py) |
