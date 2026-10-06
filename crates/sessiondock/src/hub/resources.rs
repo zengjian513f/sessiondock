@@ -204,10 +204,21 @@ pub async fn get(
         .collect()
         .await;
     rows.sort_by_key(|(index, _)| *index);
-    Ok(response(related.filter(
-        &session,
-        rows.into_iter().map(|(_, row)| row).collect(),
-    )))
+    // An unassigned remote workload cannot establish participation, but it
+    // must not disappear from coverage when unrelated node rows are hidden.
+    let gpu_incomplete = rows
+        .iter()
+        .any(|(_, row)| row["metrics"]["gpu_count"]["attribution_incomplete"] == true);
+    let mut result =
+        response(related.filter(&session, rows.into_iter().map(|(_, row)| row).collect()));
+    if gpu_incomplete {
+        process_links::resource_summary::mark_gpu_attribution_incomplete(
+            &mut result["totals"]["metrics"],
+        );
+        result["partial"] = json!(true);
+        result["totals"]["partial"] = json!(true);
+    }
+    Ok(result)
 }
 
 /// Only the owner and verified execution participants can be targeted by a session action.
@@ -242,6 +253,7 @@ pub async fn probe(
 /// request for each historical session. Rows use native identities, never UIDs.
 pub fn list_summary(documents: Vec<(String, Value)>, mut partial: bool) -> Value {
     let mut sessions: BTreeMap<(String, String, String), (Session, Vec<Value>)> = BTreeMap::new();
+    let mut gpu_incomplete = false;
     for (node_id, document) in documents {
         let Ok(resources) = serde_json::from_value::<Resources>(document) else {
             partial = true;
@@ -257,6 +269,7 @@ pub fn list_summary(documents: Vec<(String, Value)>, mut partial: bool) -> Value
             partial = true;
             continue;
         }
+        gpu_incomplete |= process_links::resource_summary::gpu_attribution_incomplete(&resources);
         for row in process_links::resource_summary::sessions(&resources) {
             let Ok(session) = serde_json::from_value::<Session>(row["session"].clone()) else {
                 continue;
@@ -275,7 +288,10 @@ pub fn list_summary(documents: Vec<(String, Value)>, mut partial: bool) -> Value
     let rows: Vec<_> = sessions
         .into_values()
         .map(|(session, rows)| {
-            let all = process_links::resource_summary::totals(&rows);
+            let mut all = process_links::resource_summary::totals(&rows);
+            if gpu_incomplete {
+                process_links::resource_summary::mark_gpu_attribution_incomplete(&mut all);
+            }
             let metrics: serde_json::Map<_, _> = [
                 "cpu_cores",
                 "process_count",
@@ -290,7 +306,7 @@ pub fn list_summary(documents: Vec<(String, Value)>, mut partial: bool) -> Value
             json!({"session":session,"metrics":metrics})
         })
         .collect();
-    json!({"sampled_at":now(),"scope":"direct","partial":partial,"sessions":rows})
+    json!({"sampled_at":now(),"scope":"direct","partial":partial || gpu_incomplete,"sessions":rows})
 }
 
 pub async fn get_list_summary(registry: &Registry, client: &Client) -> Value {

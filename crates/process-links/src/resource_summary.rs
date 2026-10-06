@@ -30,6 +30,52 @@ fn same(a: &Session, b: &Session) -> bool {
 fn unknown(reason: &str) -> Value {
     json!({"value":null,"status":"unavailable","reason":reason})
 }
+
+/// Unowned compute processes are evidence of incomplete attribution, never
+/// evidence that any particular session owns those devices.
+pub fn gpu_attribution_incomplete(resources: &Resources) -> bool {
+    let bound: BTreeSet<_> = resources.bindings.iter().map(|b| &b.process).collect();
+    resources.samples.iter().any(|sample| {
+        !bound.contains(&sample.process)
+            && sample.metrics.get("gpu_devices").is_some_and(|metric| {
+                matches!(metric["status"].as_str(), Some("ok" | "partial"))
+                    && metric["value"]
+                        .as_array()
+                        .is_some_and(|devices| !devices.is_empty())
+            })
+    })
+}
+
+pub fn mark_gpu_attribution_incomplete(metrics: &mut Value) {
+    for key in ["gpu_count", "gpu_memory_bytes"] {
+        let Some(metric) = metrics.get_mut(key) else {
+            continue;
+        };
+        mark_incomplete(metric);
+    }
+}
+
+fn mark_incomplete(metric: &mut Value) {
+    if !metric.is_object() {
+        return;
+    }
+    if metric["attribution_incomplete"] != true {
+        let reason = metric["reason"].as_str().unwrap_or_default();
+        metric["reason"] = json!(format!(
+            "{reason}；存在未归属会话的 GPU 进程，仅统计已确认部分，不能据此确认零占用"
+        ));
+    }
+    metric["attribution_incomplete"] = json!(true);
+    if metric["value"].as_f64() == Some(0.0) {
+        metric["value"] = Value::Null;
+    }
+    metric["status"] = json!(if metric["value"].is_null() {
+        "unavailable"
+    } else {
+        "partial"
+    });
+}
+
 fn sum<'a>(items: impl Iterator<Item = &'a Value>, fallback: &Value, devices: bool) -> Value {
     let mut count = 0;
     let mut observed = 0;
@@ -38,7 +84,9 @@ fn sum<'a>(items: impl Iterator<Item = &'a Value>, fallback: &Value, devices: bo
     let mut partial = false;
     let mut reasons = BTreeSet::new();
     let mut sampled_at: Option<f64> = None;
+    let mut attribution_incomplete = false;
     for item in items {
+        attribution_incomplete |= item["attribution_incomplete"] == true;
         count += 1;
         if !item["value"].is_null()
             && let Some(at) = item["sampled_at"].as_f64().filter(|at| at.is_finite())
@@ -72,12 +120,21 @@ fn sum<'a>(items: impl Iterator<Item = &'a Value>, fallback: &Value, devices: bo
         return value;
     }
     if observed == 0 {
-        return json!({"value":null,"status":"unavailable","reason":reasons.into_iter().collect::<Vec<_>>().join("; ")});
+        let mut value = json!({"value":null,"status":"unavailable","reason":reasons.into_iter().collect::<Vec<_>>().join("; ")});
+        if attribution_incomplete {
+            value["attribution_incomplete"] = json!(true);
+        }
+        return value;
     }
     if devices {
         total = uuids.len() as f64;
     }
-    json!({"value":total,"sampled_at":sampled_at,"status":if partial || observed < count {"partial"}else{"ok"},"reason":reasons.into_iter().collect::<Vec<_>>().join("; ")})
+    let mut value = json!({"value":total,"sampled_at":sampled_at,"status":if partial || observed < count {"partial"}else{"ok"},"reason":reasons.into_iter().collect::<Vec<_>>().join("; ")});
+    if attribution_incomplete {
+        value["attribution_incomplete"] = json!(true);
+        mark_incomplete(&mut value);
+    }
+    value
 }
 
 pub fn metrics(resources: &Resources, session: &Session, inclusive: bool) -> Value {
@@ -99,7 +156,7 @@ pub fn metrics(resources: &Resources, session: &Session, inclusive: bool) -> Val
         .map(|s| (&s.process, s))
         .collect();
     let absent = unknown("collector does not support this metric");
-    FIELDS
+    let mut result = FIELDS
         .iter()
         .map(|field| {
             if *field == "process_count" {
@@ -159,7 +216,11 @@ pub fn metrics(resources: &Resources, session: &Session, inclusive: bool) -> Val
             ((*field).to_owned(), value)
         })
         .collect::<serde_json::Map<_, _>>()
-        .into()
+        .into();
+    if gpu_attribution_incomplete(resources) {
+        mark_gpu_attribution_incomplete(&mut result);
+    }
+    result
 }
 
 /// Totals keep missing machines visible through partial status; cards are
