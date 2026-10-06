@@ -56,6 +56,42 @@ def main():
                     on_popup(page,lambda d:d.accept())
                     uid=scoped(node.nid,corpus.uid('a'))
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    # Real process observations disable both entry points, including
+                    # a menu already open when a native session starts or stops.
+                    attempts=[]
+                    page.on('request',lambda r: attempts.append(r.url) if '/api/session/tree/' in r.url else None)
+                    action=page.locator('#a-delete-tree')
+                    expect(action).not_to_have_attribute('aria-disabled','true')
+                    proc=corpus.root/'proc';(proc/'stat').write_text('btime 1700000000\n')
+                    proc_pid(proc,100,'codex',['codex'],1,fds={3:str(corpus.paths['a'])})
+                    page.evaluate('async () => await pollLive(true)')
+                    expect(action).to_have_attribute('aria-disabled','true')
+                    expect(action).to_have_attribute('title','会话正在运行，请先停止后再删除会话树。')
+                    if not action.is_visible():page.locator('#a-more').click()
+                    assert float(action.evaluate('b => getComputedStyle(b).opacity'))==.55
+                    action.click(force=True);action.tap(force=True);action.focus();page.keyboard.press('Enter')
+                    expect(page.locator('#delete-tree-dialog')).to_have_count(0)
+                    page.keyboard.press('Escape')
+                    if restart:page.locator('.mobile-back').first.click()
+                    sidebar=page.locator(f'#side .item[data-uid="{uid}"]')
+                    sidebar.click(button='right')
+                    menu=page.locator('#item-menu [data-act="delete-tree"]')
+                    expect(menu).to_have_attribute('aria-disabled','true')
+                    menu.click(force=True);menu.tap(force=True);menu.focus();page.keyboard.press('Enter')
+                    expect(page.locator('#delete-tree-dialog')).to_have_count(0)
+                    assert not attempts,attempts
+                    shutil.rmtree(proc/'100');page.evaluate('async () => await pollLive(true)')
+                    expect(menu).not_to_have_attribute('aria-disabled','true')
+                    expect(action).not_to_have_attribute('aria-disabled','true')
+                    expect(action).to_have_attribute('title','删除会话树')
+                    proc_pid(proc,100,'codex',['codex'],1,fds={3:str(corpus.paths['a'])})
+                    page.evaluate('async () => await pollLive(true)')
+                    expect(menu).to_have_attribute('aria-disabled','true')
+                    expect(action).to_have_attribute('aria-disabled','true')
+                    shutil.rmtree(proc/'100');page.evaluate('async () => await pollLive(true)')
+                    expect(menu).not_to_have_attribute('aria-disabled','true')
+                    page.keyboard.press('Escape');sidebar.click()
+                    print('PASS active tree-delete entry disabled in detail/sidebar; mouse, touch and keyboard blocked; live stop/start refreshes both controls',flush=True)
                     def open_tree(context_menu=False):
                         if context_menu:
                             page.locator(f'#side .item[data-uid="{uid}"]').click(button="right")

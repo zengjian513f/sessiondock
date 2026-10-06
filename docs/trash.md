@@ -40,7 +40,10 @@ and detail actions. Its scope is the same connected component as whole-group
 copy: ancestors, sibling branches, descendants, subagents, manually nested
 sessions and every physical history generation. Claude, Codex and Grok may
 coexist in one tree. Ordinary single-session and batch deletion keep their
-existing parent protections.
+existing parent protections. The tree-delete entry is disabled while the selected
+session is running, with the same unavailable styling and input guard as tree
+migration. Both the detail action and an open sidebar menu update when liveness
+changes; execution still checks every member on the server.
 
 - `POST /api/session/tree/plan` with `{uid}` previews the exact member list,
   logical session count and owned file sizes. It reuses the transfer relationship

@@ -2144,7 +2144,11 @@ function paintLive() {
     renderConversationTail(cache.get(viewKey(selected.uid, S.agent))?.activity, selected.uid);
   }
   paintTransferAvailability($('#a-clone-group'), S.sel);
-  if (menuUid) paintTransferAvailability($('#item-menu [data-act="clone"]'), menuUid);
+  paintTreeDeleteAvailability($('#a-delete-tree'), selected);
+  if (menuUid) {
+    paintTransferAvailability($('#item-menu [data-act="clone"]'), menuUid);
+    paintTreeDeleteAvailability($('#item-menu [data-act="delete-tree"]'), sidebarSessions().find(row => row.uid === menuUid));
+  }
   renderSessionCounts();
   syncActiveOnlyList();
   if (S.picking) renderPickBar();
@@ -6325,7 +6329,7 @@ function head(m, total) {
   h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
   paintTransferAvailability(h.querySelector('#a-clone-group'), m.uid);
   const treeDelete = h.querySelector('#a-delete-tree');
-  if (treeDelete) {setControlUnavailable(treeDelete, treeDeleteUnavailable(m)); treeDelete.onclick = () => deleteSessionTree(m.uid);}
+  if (treeDelete) {paintTreeDeleteAvailability(treeDelete, m); treeDelete.onclick = () => deleteSessionTree(m.uid);}
   const turnMode = h.querySelector('#a-turns');
   turnMode.onclick = () => {
     S.compactTurns = !S.compactTurns;
@@ -11150,7 +11154,12 @@ if (HUB_MODE) {
 function treeDeleteUnavailable(row) {
   if (SessionDockCapabilities.config.session_delete_tree !== true) return '此节点尚未启用删除会话树。';
   if (!row || row.pending || !['claude','codex','grok'].includes(row.source)) return '此会话来源尚不支持整棵树移入回收站。';
+  if (sessionStoppable(row.uid)) return '会话正在运行，请先停止后再删除会话树。';
   return '';
+}
+
+function paintTreeDeleteAvailability(button, row) {
+  setControlUnavailable(button, treeDeleteUnavailable(row));
 }
 
 async function deleteSessionTree(uid) {
