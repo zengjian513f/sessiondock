@@ -198,8 +198,22 @@ def check_browser(browser, root, config):
                 page.locator("#cinput").fill(text)
                 other.wait_for_function("text => document.querySelector('#cinput').value === text",
                                         arg=text, timeout=3000)
+            # A draft written directly on the node reaches the Hub page through
+            # the Hub's event observer (node draft epoch), still without CHECK.
+            page.evaluate("async () => await composerDraftWrites")
+            current = ctx.request.get(local + "/api/session/conversation?uid=" + uid).json()["draft"]
+            written = ctx.request.post(local + "/api/session/conversation", data={
+                "uid": uid, "revision": current["revision"],
+                "value": {**(current["value"] or {}), "text": "written on the node"}})
+            assert written.status == 200, written.text()
+            other.wait_for_function("document.querySelector('#cinput').value === 'written on the node'",
+                                    timeout=6000)
+            page.wait_for_function("document.querySelector('#cinput').value === 'written on the node'",
+                                   timeout=6000)
+            page.locator("#cinput").fill("")
+            other.wait_for_function("document.querySelector('#cinput').value === ''", timeout=3000)
             other_ctx.close()
-            print("PASS hub draft push: a second page follows edits without its input CHECK", flush=True)
+            print("PASS hub draft push: a second page follows edits through the Hub and on the node without its input CHECK", flush=True)
 
             # BUG-20260927-034648-a00708: a cached collapsed view must not
             # reuse the input lease of a disconnected terminal for Esc.

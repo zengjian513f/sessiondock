@@ -110,6 +110,7 @@ fn seed_managed_status(response: &mut Value, running: &[String], started: &BTree
 struct Volatile {
     managed: Option<Value>,
     scan: Option<Value>,
+    draft_epoch: u64,
 }
 
 fn cache_report(hit: bool, age: std::time::Duration, ttl: std::time::Duration) -> Value {
@@ -129,6 +130,7 @@ fn finish(mut response: Value, volatile: Volatile) -> Response {
     {
         scan.insert("cache".into(), report);
     }
+    response["draft_epoch"] = json!(volatile.draft_epoch);
     ([(header::CACHE_CONTROL, "no-store")], Json(response)).into_response()
 }
 
@@ -206,6 +208,7 @@ pub async fn live(
             Volatile {
                 managed: managed_report,
                 scan: scan_report,
+                draft_epoch: state.ui_events.draft_epoch(),
             },
         ));
     }
@@ -217,6 +220,7 @@ pub async fn live(
         Volatile {
             managed: managed_report,
             scan: scan_report,
+            draft_epoch: state.ui_events.draft_epoch(),
         },
     ))
 }

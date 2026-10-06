@@ -10,7 +10,7 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 194 files, 85274 lines, 5 undocumented.
+`crates/sessiondock/src`: 194 files, 85341 lines, 5 undocumented.
 
 - `api/`
   - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines)
@@ -29,7 +29,7 @@ python3 tests/module_map.py --write
   - `node_auth.rs` — Node listener gate (`server.py` `_allowed` / `_hub_protocol` for hub (103 lines)
   - `process_links.rs` — (no module doc) (130 lines)
   - `read.rs` — Read-only session list, messages, grant pages, input history, and SSE watch. (768 lines)
-  - `runtime.rs` — Read-only live status; never upgrades observations into CLI authority. (526 lines)
+  - `runtime.rs` — Read-only live status; never upgrades observations into CLI authority. (530 lines)
   - `search.rs` — JSON/NDJSON search transport queues work and applies stream backpressure. Search (183 lines)
   - `shell_env.rs` — `GET /api/shell-env` and `POST /api/shell-env/restart` (`crate::shell_env`). (36 lines)
   - `terminal.rs` — Explicit-directory development transport only; legacy CLI actions stay gated. (1186 lines)
@@ -92,7 +92,7 @@ python3 tests/module_map.py --write
   - `write.rs` — Authenticated operator file mutations through checked parent handles. (2194 lines)
 - `fingerprint.rs` — 128-bit streaming content fingerprint of native bytes. (126 lines)
 - `hub/`
-  - `aggregate.rs` — Hub aggregation (`hub.py` `HubHandler.selected/aggregate/search_aggregate/ (880 lines)
+  - `aggregate.rs` — Hub aggregation (`hub.py` `HubHandler.selected/aggregate/search_aggregate/ (892 lines)
   - `client.rs` — Hub → node HTTP/1.1 client: one connection per request over a plain or (835 lines)
   - `groups.rs` — Nodes own group catalogs. The Hub caches their union and sends it back; (143 lines)
   - `identity.rs` — Node identity and credential files (`federation.identity`, `server.py` (112 lines)
@@ -188,7 +188,7 @@ python3 tests/module_map.py --write
   - `native_input.rs` — Checked, chunked native input and a disposable raw-prefix index. (336 lines)
   - `native_media.rs` — Native span authority is the current full selected branch, not file_roots (89 lines)
   - `opencode.rs` — OpenCode session mirror. (625 lines)
-  - `pages.rs` — Finite history pages. Grants hold checkpoints, never retained native views. (641 lines)
+  - `pages.rs` — Finite history pages. Grants hold checkpoints, never retained native views. (662 lines)
   - `providers.rs` — Pure native-record projection. File discovery, inheritance cutoffs and (1354 lines)
     - mods: `agy`, `claude`, `envelopes`, `grok`, `image_content`, `opencode`, `tools`
   - `providers/`
@@ -263,7 +263,7 @@ python3 tests/module_map.py --write
   - `manifest.rs` — Per-entry manifest: the only record of where trashed files came from. (294 lines)
   - `plan.rs` — Deletion planning from one published list snapshot. (184 lines)
   - `tree.rs` — Whole connected groups share one recoverable entry and one durable receipt. (265 lines)
-- `ui_events.rs` — Shared, subscriber-owned UI invalidations. No conversation bodies cross (235 lines)
+- `ui_events.rs` — Shared, subscriber-owned UI invalidations. No conversation bodies cross (265 lines)
 
 ## process-links
 

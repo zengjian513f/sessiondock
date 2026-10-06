@@ -242,7 +242,10 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
   后也发布，部分成功只要已有确认写入就通知。失败不通知。这样星标等状态在两次
   定时观察之间改变又恢复时，已经读到中间状态的页面仍会重新读取最终状态。
   草稿同理：节点在草稿修订号变化后发布 `drafts` 通知；Hub 代理的草稿保存、SEND、
-  导入成功后也发布。直接写到节点页面的草稿不转发给 Hub 页面，后者靠 CHECK 兜底跟随。
+  导入成功后也立即发布。节点 `/api/live` 带 `draft_epoch`（该节点草稿变化次数），Hub
+  聚合为 `draft_epochs:{node:epoch}`；观察器发现某节点的值变化（或节点新出现）时发布
+  `drafts`，因此直接写在节点页面上的草稿也会在一次观察周期（约 2 秒）内到达 Hub 页面。
+  `draft_epochs` 不计入 `live` 变化。
 - `term_list`：`enabled = any`（含过期缓存里的 `enabled:false`）、`home:""`、
   `sessions/pending` 全部拼接（含 stale 行）、`capabilities[nid] = {enabled: 真值且未失败,
   unavailable_reason: 失败文案或节点的, sources, home, backend, backends（失败为 []）}`、

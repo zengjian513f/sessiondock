@@ -1146,9 +1146,9 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`sessions/native_input.rs`](../crates/sessiondock/src/sessions/native_input.rs) `invalid_range` L20
 - [`sessions/native_media.rs`](../crates/sessiondock/src/sessions/native_media.rs) `authorized_reader` L62, L64, L75, L84
 - [`sessions/native_media.rs`](../crates/sessiondock/src/sessions/native_media.rs) `finish` L29, L32
-- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `history_page_body` L523
-- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `media_page` L584, L587, L593, L599
-- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `validate_grant_scope` L495
+- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `history_page_body` L544
+- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `media_page` L605, L608, L614, L620
+- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `validate_grant_scope` L516
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `materialize_text` L68, L86
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `prepare` L161, L170
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `replay_changed` L21
@@ -1256,8 +1256,8 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - 此图片分页无法在读取预算内推进
 - 图片分页响应超过 8 MiB 预算
 - 继承历史预算溢出
-- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `media_page` L604, L638
-- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `page_selection` L551
+- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `media_page` L625, L659
+- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `page_selection` L572
 - [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `inherit` L1932
 
 ### `terminal_input_too_large`
@@ -1303,7 +1303,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 ### `live_failed`
 
-- 进程表配对失败 — [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `assemble` L359
+- 进程表配对失败 — [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `assemble` L363
 
 ### `metadata_worker_failed`
 
@@ -1343,7 +1343,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 ### `runtime_encoding`
 
-- 受控进程观察无法编码 — [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `assemble` L274
+- 受控进程观察无法编码 — [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `assemble` L278
 
 ### `search_failed`
 
@@ -1364,7 +1364,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `list_state` L525
 - [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `published_view_bytes` L770
 - [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `views` L535
-- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `history_page_body` L531
+- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `history_page_body` L552
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `take` L310
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `validate_response` L367
 - [`sessions/views/body.rs`](../crates/sessiondock/src/sessions/views/body.rs) `serialize_error` L160
@@ -1625,7 +1625,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 - 受控 host 目录不可用或超出观察预算
 - 无法读取受管进程状态
-- [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `unavailable` L501
+- [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `unavailable` L505
 - [`api/trash.rs`](../crates/sessiondock/src/api/trash.rs) `observe_liveness` L101
 
 ### `search_cancelled`
@@ -1680,8 +1680,8 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `write_admission` L462
 - [`api/media.rs`](../crates/sessiondock/src/api/media.rs) `get` L79 → `GET /api/media/{token}`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `write` L128
-- [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `observe` L517
-- [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `shared` L460
+- [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `observe` L521
+- [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `shared` L464
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L335 → `GET /api/term/attach`
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `claim_inner` L195
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `send` L654 → `POST /api/term/send`
