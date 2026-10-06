@@ -25,10 +25,10 @@ def menu(page, uid, touch=False):
         row.dispatch_event("click")
     else:
         row.click(button="right")
-    expect(page.locator('#item-menu [role="menuitem"]')).to_have_count(9)
+    expect(page.locator('#item-menu [role="menuitem"]')).to_have_count(10)
     assert page.locator('#item-menu').evaluate("el => Array.from(el.children, child => child.dataset.act || child.getAttribute('role'))") == [
-        'copy-identity', 'pick', 'separator', 'group', 'attach', 'detach',
-        'clone', 'hide', 'separator', 'stop', 'delete',
+        'stop', 'copy-identity', 'pick', 'separator', 'group', 'attach', 'detach',
+        'hide', 'separator', 'clone', 'delete-tree', 'delete',
     ], "session actions must stay grouped in the same order, including unavailable actions"
     box = page.locator('#item-menu').bounding_box()
     viewport = page.viewport_size
