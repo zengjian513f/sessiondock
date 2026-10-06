@@ -236,7 +236,8 @@ class Fake:
             rows = question["options"] + [menu["texts"][menu["tab"]] or "Type something.", "Chat about this"]
             described = question.get("descriptions")
             if described:
-                lines += ["─" * 60, "←  ☐ Criterion  ☐ Scope  ✔ Submit  →", ""]
+                tabs = "☐ Criterion" if count == 1 else "←  ☐ Criterion  ☐ Scope  ✔ Submit  →"
+                lines += ["─" * 60, tabs, ""]
             lines.append(question["question"])
             for i, row in enumerate(rows):
                 if described and i == len(rows) - 1:
@@ -245,7 +246,8 @@ class Fake:
                 if described and i < len(described):
                     lines += ["     " + text for text in described[i].splitlines()]
             if described:
-                lines += ["", "Enter to select · Tab/Arrow keys to navigate · Esc to cancel"]
+                navigation = "↑/↓ to navigate" if count == 1 else "Tab/Arrow keys to navigate"
+                lines += ["", f"Enter to select · {navigation} · Esc to cancel"]
         self.write("\x1b[2J\x1b[H" + "\r\n".join(lines))
 
     def finish_menu(self, outcome):
