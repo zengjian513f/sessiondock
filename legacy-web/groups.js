@@ -3,7 +3,7 @@
 // Nodes own groups and assignments; the Hub distributes catalog changes.
 globalThis.SessionDockGroups = (() => {
   let catalog = [], available = false, refreshTask = null, busy = false;
-  let menuUids = [], menuAnchor = null, editing = false;
+  let menuUids = [], menuAnchor = null, editing = false, menuEditing = false;
   const menu = $('#session-group-menu'), status = $('#session-group-status');
   const row = uid => indexedSessions().byUid.get(uid);
   const enabled = SessionDockCapabilities.allows('metadata');
@@ -50,17 +50,26 @@ globalThis.SessionDockGroups = (() => {
     busy = value; paintPickBar(!!S.nestAttach);
     for (const button of document.querySelectorAll('.session-group-delete, #session-group-create-row button, #session-group-menu button')) button.disabled = value;
     const input = $('#session-group-name'); if (input) input.disabled = value;
+    const menuInput = $('#session-group-menu-name'); if (menuInput) menuInput.disabled = value;
   }
-  async function create(input) {
+  async function create(input, uids = null) {
     if (busy) return;
     const name = input.value.trim(); if (!name) { input.focus(); return; }
     setBusy(true); message('');
+    let created = false, syncMessage = '';
     try {
       const data = await request('api/groups', {create_groups: [name]});
-      editing = false; absorb(data); renderSide();
-      message(data.sync_errors?.length ? '已创建；离线节点恢复连接后同步。' : '');
+      created = true;
+      if (uids) menuEditing = false; else editing = false;
+      absorb(data); renderSide();
+      syncMessage = data.sync_errors?.length ? '已创建；离线节点恢复连接后同步。' : '';
+      message(syncMessage);
     } catch (error) { message(error.message); }
     finally { setBusy(false); }
+    if (created && uids) {
+      await assign(name, uids);
+      if (syncMessage && !status.textContent) message(syncMessage);
+    } else if (!created && input.isConnected) input.focus();
   }
   async function remove(name) {
     if (busy) return;
@@ -102,9 +111,9 @@ globalThis.SessionDockGroups = (() => {
     for (const session of [...S.sessions, ...(S.results || [])]) if (session.uid === uid) session.group = data.group || null;
     for (const entry of cache.values()) if (entry.meta.uid === uid && !entry.meta.agent_id) entry.meta.group = data.group || null;
   }
-  async function assign(group) {
+  async function assign(group, uids = menuUids) {
     if (busy) return;
-    const selected = [...menuUids]; closeItemMenu(); closeMenu(); setBusy(true); message('');
+    const selected = [...uids]; closeItemMenu(); closeMenu(); setBusy(true); message('');
     const failed = [];
     try {
       for (const uid of selected) {
@@ -117,6 +126,8 @@ globalThis.SessionDockGroups = (() => {
   }
   function paintMenu() {
     const active = document.activeElement?.dataset.groupName;
+    const createFocused = document.activeElement === $('#session-group-menu-add');
+    const form = menu.querySelector('form'), inputFocused = form?.contains(document.activeElement);
     menu.replaceChildren();
     for (const name of ['', ...catalog]) {
       const button = document.createElement('button'); button.type = 'button'; button.dataset.groupName = name;
@@ -127,21 +138,53 @@ globalThis.SessionDockGroups = (() => {
       button.append(mark, document.createTextNode(name || '未分组')); button.onclick = () => void assign(name);
       menu.append(button);
     }
+    const separator = document.createElement('div'); separator.setAttribute('role', 'separator');
+    menu.append(separator);
+    if (menuEditing) {
+      if (form) menu.append(form);
+      else {
+        const form = document.createElement('form'), input = document.createElement('input');
+        input.id = 'session-group-menu-name'; input.placeholder = '分组名称'; input.setAttribute('aria-label', '新分组名称'); input.autocomplete = 'off'; input.disabled = busy;
+        form.append(input);
+        form.onsubmit = event => { event.preventDefault(); void create(input, [...menuUids]); };
+        input.onkeydown = event => {
+          event.stopPropagation();
+          if (event.key === 'Enter' && event.isComposing) event.preventDefault();
+          if (event.key === 'Escape') {
+            event.preventDefault(); menuEditing = false; paintMenu(); $('#session-group-menu-add').focus();
+          }
+        };
+        menu.append(form);
+      }
+    } else {
+      const button = document.createElement('button'); button.id = 'session-group-menu-add'; button.type = 'button'; button.setAttribute('role', 'menuitem'); button.disabled = busy;
+      const mark = document.createElement('span'); mark.className = 'group-menu-check'; mark.setAttribute('aria-hidden', 'true'); mark.textContent = '＋';
+      button.append(mark, document.createTextNode('新建分组'));
+      button.onclick = () => { menuEditing = true; paintMenu(); positionMenu(); $('#session-group-menu-name').focus(); };
+      menu.append(button);
+    }
     if (active !== undefined) [...menu.children].find(button => button.dataset.groupName === active)?.focus();
+    else if (createFocused) $('#session-group-menu-add')?.focus();
+    else if (inputFocused) $('#session-group-menu-name')?.focus();
+  }
+  function positionMenu() {
+    if (!menuAnchor) return;
+    const box = menuAnchor.getBoundingClientRect(), width = menu.offsetWidth, height = menu.offsetHeight;
+    const right = box.right + 5, left = box.left - width - 5;
+    menu.style.left = `${Math.max(8, Math.min(right + width <= innerWidth - 8 ? right : left, innerWidth - width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(box.top, innerHeight - height - 8))}px`;
   }
   function showMenu(uids, anchor, focus = true) {
     if (!available || busy || anchor.getAttribute('aria-disabled') === 'true') return;
+    menuEditing = false;
     menuUids = [...new Set(uids)].filter(uid => row(uid) && !row(uid).pending);
     if (!menuUids.length) return;
     menuAnchor?.setAttribute('aria-expanded', 'false'); menuAnchor = anchor;
     anchor.setAttribute('aria-expanded', 'true'); paintMenu(); menu.hidden = false;
-    const box = anchor.getBoundingClientRect(), width = menu.offsetWidth, height = menu.offsetHeight;
-    const right = box.right + 5, left = box.left - width - 5;
-    menu.style.left = `${Math.max(8, Math.min(right + width <= innerWidth - 8 ? right : left, innerWidth - width - 8))}px`;
-    menu.style.top = `${Math.max(8, Math.min(box.top, innerHeight - height - 8))}px`;
+    positionMenu();
     if (focus) (menu.querySelector('[aria-checked="true"]') || menu.firstElementChild)?.focus();
   }
-  function closeMenu() { menu.hidden = true; menuAnchor?.setAttribute('aria-expanded', 'false'); menuAnchor = null; menuUids = []; }
+  function closeMenu() { menu.hidden = true; menuEditing = false; menuAnchor?.setAttribute('aria-expanded', 'false'); menuAnchor = null; menuUids = []; }
   function escapeMenu() { if (menu.hidden) return false; const anchor = menuAnchor; closeMenu(); anchor?.focus(); return true; }
   menu.onkeydown = event => {
     if (event.key === 'ArrowLeft' || event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); escapeMenu(); }
@@ -162,7 +205,7 @@ globalThis.SessionDockGroups = (() => {
   // a node without one, so keep a slow read while events flow and the old
   // 10 s cadence while they are down. Page sleep and hidden tabs read nothing.
   let refreshedAt = Date.now();
-  const due = () => !document.hidden && !busy && !editing && !SessionDockNetwork.paused;
+  const due = () => !document.hidden && !busy && !editing && !menuEditing && !SessionDockNetwork.paused;
   const reread = () => { refreshedAt = Date.now(); void refresh(); };
   void refresh();
   setInterval(() => {

@@ -112,6 +112,16 @@ def main():
             expect(page.locator('#side-pick-group')).to_be_enabled() if page.locator('#side-pick-group').is_visible() else None
             page.wait_for_function('!document.querySelector(".session-group-delete:disabled")')
             page.wait_for_function('document.querySelector("#session-group-status").textContent === ""')
+        def create_from_menu(page, name):
+            page.locator('#session-group-menu-add').click()
+            input = page.locator('#session-group-menu-name')
+            expect(input).to_be_focused()
+            input.fill(f'  {name}  ')
+            input.press('Enter')
+            expect(page.locator('#session-group-menu')).to_be_hidden()
+            expect(input).to_have_count(0)
+            page.wait_for_function('document.querySelector("#session-group-status").textContent === ""')
+            if page.locator('#side-pick-group').is_visible(): expect(page.locator('#side-pick-group')).to_be_enabled()
         def remove(page, name):
             page.locator('#view [data-v="group"]').click()
             page.get_by_role('button', name=f'删除分组 {name}', exact=True).click()
@@ -185,6 +195,46 @@ def main():
             expect(local[0].locator('#session-group-menu [aria-checked="true"]')).to_contain_text('历史分组')
             assign(local[0], '待办')
             expect(local[0].locator(f'#side .item[data-uid="{uid_a}"] .session-row-group')).to_contain_text('待办')
+            # Create from the assignment menu without switching to Group view.
+            other = corpora[0].uid('other')
+            edit(local[0], other)
+            local[0].locator('#session-group-menu-add').focus()
+            local[0].keyboard.press('Enter')
+            input = local[0].locator('#session-group-menu-name')
+            expect(input).to_be_focused()
+            input.fill('   '); input.press('Enter')
+            expect(input).to_be_focused()
+            input.fill('取消菜单创建')
+            for key in ('ArrowLeft', 'ArrowDown', 'Home', 'End'):
+                input.press(key); expect(input).to_be_focused()
+            local[0].dispatch_event('body', 'sessiondock-ui-sessions')
+            local[0].clock.fast_forward(60000)
+            expect(input).to_have_value('取消菜单创建')
+            expect(input).to_be_focused()
+            input.press('Escape')
+            expect(input).to_have_count(0)
+            expect(local[0].locator('#session-group-menu')).to_be_visible()
+            expect(local[0].locator('#session-group-menu-add')).to_be_focused()
+            assert '取消菜单创建' not in stored(0)['group_catalog']['groups']
+            local[0].locator('#session-group-menu-add').click()
+            input.fill('菜单新组')
+            input.dispatch_event('keydown', {'key': 'Enter', 'isComposing': True})
+            assert '菜单新组' not in stored(0)['group_catalog']['groups']
+            # A failed write keeps the draft and focus so Enter can retry.
+            def fail_create(route):
+                if route.request.method == 'POST': route.fulfill(status=503, json={'error': '暂时无法创建'})
+                else: route.continue_()
+            local[0].route('**/api/groups', fail_create)
+            input.press('Enter')
+            expect(local[0].locator('#session-group-status')).to_have_text('暂时无法创建')
+            expect(input).to_have_value('菜单新组'); expect(input).to_be_focused()
+            local[0].unroute('**/api/groups', fail_create)
+            input.press('Enter')
+            expect(local[0].locator('#session-group-menu')).to_be_hidden()
+            expect(local[0].locator(f'#side .item[data-uid="{other}"] .session-row-group')).to_contain_text('菜单新组')
+            assert stored(0)['sessions'][other]['group'] == '菜单新组'
+            assert stored(0)['sessions'][uid_a]['group'] == '待办'
+            remove(local[0], '菜单新组')
             create(local[1], '稍后', enter=False); tree(local[1]); edit(local[1], uid_b); assign(local[1], '稍后')
             assert stored(0)['sessions'][uid_a]['starred'] is True
             assert '待办' not in stored(1)['group_catalog']['groups']
@@ -212,7 +262,7 @@ def main():
             page.evaluate("store.set('labelFilter', ['旧标签'])")
             page.reload(wait_until='networkidle'); page.wait_for_function('SessionDockGroups.available')
             expect(page.locator('#side .item')).to_have_count(4)
-            create(page, '搁置'); tree(page)
+            tree(page)
             # The second level opens with keyboard and closes independently.
             page.locator(f'#side .item[data-uid="{a}"]').click(button='right')
             trigger = page.locator('#item-menu [data-act="group"]'); trigger.focus(); trigger.press('ArrowRight')
@@ -226,14 +276,27 @@ def main():
             page.locator(f'#side .item[data-uid="{a}"]').click(button='right')
             page.locator('#item-menu [data-act="pick"]').click()
             page.locator(f'#side .item[data-uid="{b}"]').click()
-            page.locator('#side-pick-group').click(); assign(page, '搁置')
+            page.locator('#side-pick-group').click(); create_from_menu(page, '搁置')
             for i, uid in enumerate((uid_a, uid_b)): assert stored(i)['sessions'][uid]['group'] == '搁置'
             page.locator('#side-pick-cancel').click()
             mobile = page_at(bases[0], mobile=True); mobile.emulate_media(color_scheme='dark')
             check_group_icon(mobile)
             edit(mobile, uid_a, hold=True)
+            create_from_menu(mobile, '手机新组')
+            expect(mobile.locator(f'#side .item[data-uid="{uid_a}"] .session-row-group')).to_contain_text('手机新组')
+            assert stored(0)['sessions'][uid_a]['group'] == '手机新组'
+            remove(mobile, '手机新组'); tree(mobile); edit(mobile, uid_a, hold=True)
+            mobile.locator('#session-group-menu-add').click()
             bounds = mobile.locator('#session-group-menu').bounding_box()
             assert bounds['x'] >= 0 and bounds['x'] + bounds['width'] <= 390
+            input_bounds = mobile.locator('#session-group-menu-name').bounding_box()
+            assert input_bounds['x'] >= bounds['x'] and input_bounds['x'] + input_bounds['width'] <= bounds['x'] + bounds['width']
+            mobile.locator('#session-group-menu-name').fill('关闭丢弃草稿')
+            mobile.locator('#view [data-v="tree"]').click()
+            expect(mobile.locator('#session-group-menu')).to_be_hidden()
+            edit(mobile, uid_a, hold=True)
+            expect(mobile.locator('#session-group-menu-name')).to_have_count(0)
+            assert '关闭丢弃草稿' not in stored(0)['group_catalog']['groups']
             if args.screenshots_dir: mobile.screenshot(path=str(args.screenshots_dir / 'mobile.png'))
             assign(mobile, '')
             expect(mobile.locator(f'#side .item[data-uid="{uid_a}"] .session-row-group')).to_be_hidden()
@@ -271,8 +334,8 @@ def main():
             remove(solo, '搁置')
             assert 'group' not in stored(1)['sessions'][uid_b]
             tree(solo); edit(solo, uid_b)
-            assert solo.locator('#session-group-menu button').evaluate_all('(buttons) => buttons.map(button => button.dataset.groupName)')[0] == ''
-            assert set(solo.locator('#session-group-menu button').evaluate_all('(buttons) => buttons.map(button => button.dataset.groupName)')) == {'', '历史分组', '缓存分组', '待办', '稍后'}
+            assert solo.locator('#session-group-menu [data-group-name]').evaluate_all('(buttons) => buttons.map(button => button.dataset.groupName)')[0] == ''
+            assert set(solo.locator('#session-group-menu [data-group-name]').evaluate_all('(buttons) => buttons.map(button => button.dataset.groupName)')) == {'', '历史分组', '缓存分组', '待办', '稍后'}
             solo.locator('#session-group-menu button').first.press('Escape')
             solo.locator('#item-menu [data-act="group"]').press('Escape')
             remaining = solo.evaluate('SessionDockGroups.names')
@@ -285,7 +348,7 @@ def main():
             create(solo, '空列表新建')
             assert all(p.read_bytes() == raw for p, raw in native.items())
             assert not errors, errors
-            print('PASS groups browser: no dropdown, obsolete filter ignored across views/reload, inline create/cancel/delete, no dialog/ungrouped section, submenus hover/click/keyboard/touch, keyboard focus survives catalog refresh, immediate assignment, batch, offline deletion/rejoin, same-name recreation, restarts, standalone deletion, native files unchanged')
+            print('PASS groups browser: no filter dropdown, obsolete filter ignored across views/reload, inline create/cancel/delete, menu create on Enter with single/batch/mobile assignment, blank/cancel/IME/retry/draft focus, no dialog/ungrouped section, submenus hover/click/keyboard/touch, keyboard focus survives catalog refresh, immediate assignment, offline deletion/rejoin, same-name recreation, restarts, standalone deletion, native files unchanged')
         finally:
             for context in contexts: context.close()
             if hub: hub.stop()
