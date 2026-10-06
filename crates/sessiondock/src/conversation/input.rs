@@ -376,8 +376,8 @@ fn opencode_editor(capture: &ScreenCapture) -> bool {
 }
 
 /// Agy 1.2.16/1.2.17: a `> ` editor between full horizontal rules, followed
-/// by an optional running-task panel and a footer. Menus move the cursor out
-/// of the editor; arbitrary output below it is not a task panel.
+/// by an optional running-task panel, a footer and custom statusline rows.
+/// Menus move the cursor out of the editor; statusline text is not a task panel.
 fn agy_editor_layout(capture: &ScreenCapture) -> Option<(String, String, bool)> {
     let text = driver::strip_ansi(&capture.text);
     let rows: Vec<&str> = text.lines().collect();
@@ -397,7 +397,7 @@ fn agy_editor_layout(capture: &ScreenCapture) -> Option<(String, String, bool)> 
         .copied()
         .filter(|row| !row.trim().is_empty())
         .collect();
-    let background = tail.len() > 1;
+    let background = tail.first().is_some_and(|row| row.starts_with("  ● ["));
     let footer = if background {
         // Captured 1.2.17 panel: one or more `  ● [HH:MM:SS] … running`
         // rows, the same full rule, then the normal footer with /tasks.
@@ -417,19 +417,30 @@ fn agy_editor_layout(capture: &ScreenCapture) -> Option<(String, String, bool)> 
                     .strip_suffix(" running")
                     .is_some_and(|s| !s.is_empty())
         };
-        if tail.len() < 3
-            || tail[tail.len() - 2].trim() != rows[bottom].trim()
-            || !tail[..tail.len() - 2].iter().all(|row| task(row))
-        {
+        let end = tail.iter().take_while(|row| task(row)).count();
+        if end == 0 || tail.get(end)?.trim() != rows[bottom].trim() {
             return None;
         }
-        let footer = tail[tail.len() - 1];
+        let footer = *tail.get(end + 1)?;
         if !footer.trim_end().ends_with(" · /tasks") {
             return None;
         }
         footer
     } else {
-        tail.first().copied().unwrap_or("")
+        let footer = tail.first().copied().unwrap_or("");
+        // Stacked custom statuslines can wrap or contain several rows. The
+        // native footer anchors them; their user-defined text is opaque.
+        // Keep rejecting unrelated output and malformed task panels.
+        if tail.len() > 1
+            && !(footer == "? for shortcuts"
+                || footer.starts_with("? for shortcuts ")
+                || footer == "esc to cancel"
+                || footer.starts_with("esc to cancel ")
+                || footer.starts_with(' '))
+        {
+            return None;
+        }
+        footer
     };
     let mut lines = Vec::new();
     for (i, row) in rows[top + 1..bottom].iter().enumerate() {
