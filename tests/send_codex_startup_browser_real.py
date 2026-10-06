@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright
 
 from history_fixtures import REPO, BINARY, Corpus, isolated_server
+from private_hosts import private_hosts
 from send_browser import initialize
 
 MODEL = 'gpt-5.6-luna'
@@ -43,7 +44,7 @@ def main():
     before = hashlib.sha256(config.read_bytes()).hexdigest() if config.exists() else None
     assert (real_home / 'auth.json').is_file(), 'existing login required'
     try:
-        with tempfile.TemporaryDirectory(prefix='sessiondock-codex-startup-') as tmp:
+        with tempfile.TemporaryDirectory(prefix='sessiondock-codex-startup-') as tmp, private_hosts(Path(tmp)):
             root = Path(tmp)
             for name in ('host', 'work', 'ledger', 'delivery', 'state', 'home', 'claude', 'codex', 'grok'):
                 (root / name).mkdir(mode=0o700)

@@ -2,7 +2,7 @@
 
 Directory browsing, standalone file previews, downloads, uploads and file-manager
 operations are provided by the independent **FileDock** service. Its entry points
-use `?node=ID&path=ABS` at the configured file-service base URL, for example
+use `?node=ID&path=ABS` at the file-service base `/files/` on the same origin:
 `/files/?node=ID&path=ABS`. Both files and directories use this entry. A file is
 identified by its machine and absolute path; URL-encode query values.
 
@@ -20,9 +20,10 @@ and immediate children of recorded directories. Multiple distinct fallback
 targets remain ambiguous and require an explicit path; directories are not
 searched recursively. Filesystem permission and access errors are preserved.
 
-The default file-service base is `/files/` on the current origin. A deployment may
-supply `filedock_url` in the capabilities declaration for a different origin.
-The authenticated public proxy routes `/sessiondock/` and `/files/` independently.
+The file-service base is fixed at `/files/` on the current origin; there is no
+configuration, environment variable or capability field that changes it (the
+adapter pages carry no capability declaration). The authenticated public proxy
+routes `/sessiondock/` and `/files/` independently.
 FileDock has its own binary, private state, node tokens and deployment lifecycle.
 
 Conversation-specific responsibilities remain here:

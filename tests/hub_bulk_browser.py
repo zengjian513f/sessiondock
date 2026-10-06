@@ -25,6 +25,7 @@ from types import SimpleNamespace
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, REPO, Corpus, codex_row, isolated_server
 from hub_fixtures import Hub, free_port, scoped
+from private_hosts import private_hosts
 from nest_tree_browser import open_item_menu
 from node_auth_fixtures import node_env, TOKEN
 from send_browser import initialize
@@ -64,7 +65,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="sessiondock-hub-bulk-") as temporary, sync_playwright() as pw:
+    with tempfile.TemporaryDirectory(prefix="sessiondock-hub-bulk-") as temporary, private_hosts(Path(temporary)), sync_playwright() as pw:
         root = Path(temporary).resolve()
         corpus = Corpus(root)
         for name in ("host", "work", "ledger", "state", "home", "ids"):

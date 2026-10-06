@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 from types import SimpleNamespace
 from playwright.sync_api import sync_playwright, expect
 from history_fixtures import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server
+from private_hosts import private_hosts
 from session_stop_browser import CODEX_SID, session_action, wait_xterm
 from popups import on_popup
 from hub_fixtures import Hub, free_port, scoped
@@ -145,7 +146,7 @@ def check_freeze_overlay(page):
 def main():
     if not sys.platform.startswith('linux'):
         raise SystemExit('Linux process freeze suite')
-    with tempfile.TemporaryDirectory(prefix='sessiondock-freeze-') as directory:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-freeze-') as directory, private_hosts(Path(directory)):
         root = Path(directory)
         for folder in ['host', 'ledger', 'bin', 'work', 'audit', 'reports', 'hub']:
             (root / folder).mkdir(mode=0o700)
