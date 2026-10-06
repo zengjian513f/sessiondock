@@ -5200,7 +5200,10 @@ async function followSelectedFork() {
 
 /** One shareable route for sidebar navigation and external research links. */
 function sessionUrl(uid, agent = null) {
-  const row = S.sessions.find(s => s.uid === uid);
+  // A launch can follow its native history before the catalog lists that row;
+  // its terminal row already names the native SID.
+  const row = S.sessions.find(s => s.uid === uid)
+    || (typeof T !== 'undefined' ? (T.list || []).find(item => item.uid === uid && item.sid) : null);
   const pending = !row?.sid && typeof T !== 'undefined'
     ? T.pending.find(item => pendingUid(item.name) === uid) : null;
   if (!row?.sid && !pending) return null;

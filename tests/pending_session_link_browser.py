@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import Error as PlaywrightError, expect, sync_playwright
 from history_fixtures import BINARY, Corpus, batch35_meta, codex_message, isolated_server
 from hub_fixtures import Hub, free_port
 from hub_send_browser import prepare
@@ -150,10 +150,22 @@ def check_binding(browser, base, root):
     pending_link = page.url
     assert parse_qs(urlsplit(pending_link).query)['sid'][0].startswith('tmux:')
     history_length = page.evaluate('history.length')
+    # Hold the native catalog so the launch binds before its row is listed:
+    # the link must still switch to the native SID at once.
+    held = []
+    page.route('**/api/sessions**', lambda route: held.append(route) if held is not None else route.continue_())
     notice.write_text('Synthetic startup notice')
+    page.wait_for_function("String(S.sel).startsWith('claude:')", timeout=20000)
+    assert not page.evaluate('S.sessions.some(row => row.uid === S.sel)')
+    assert parse_qs(urlsplit(page.url).query)['sid'] == ['claude:' + receipt['declared_sid']]
+    routes, held = held, None
+    for route in routes:
+        try:
+            route.continue_()
+        except PlaywrightError:
+            pass  # The page already aborted this poll.
     expect(page.locator('#msgs')).to_contain_text('Synthetic startup notice', timeout=20000)
     native = page.evaluate('S.sel')
-    assert native.startswith('claude:')
     assert page.evaluate('history.length') == history_length
     assert parse_qs(urlsplit(page.url).query)['sid'] == ['claude:' + receipt['declared_sid']]
     fresh = browser.new_context(service_workers='block')
