@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
+from private_hosts import private_hosts
 from popups import on_popup
 from send_browser import initialize
 
@@ -246,7 +247,7 @@ def main():
     if args.frontend:
         os.environ['SESSIONDOCK_TEST_WEB_DIR'] = str(Path(args.frontend).resolve())
     host_binary = args.ptyhost.resolve(strict=True)
-    with tempfile.TemporaryDirectory(prefix='sessiondock-agy-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-agy-') as tmp, private_hosts(Path(tmp)):
         root = Path(tmp).resolve()
         for name in ('home', 'host', 'ledger', 'state', 'work', 'bin', 'claude', 'codex', 'grok', 'opencode'):
             (root / name).mkdir(mode=0o700)

@@ -98,6 +98,7 @@ def subset(actual, expected, path='prompt'):
 def main():
     from playwright.sync_api import expect, sync_playwright
     from history_fixtures import REPO, BINARY, Corpus, isolated_server
+    from private_hosts import private_hosts
     import send_browser
     from host_identity import request as host_request
     from popups import on_popup
@@ -108,7 +109,7 @@ def main():
     args = parser.parse_args()
     send_browser.BINARY = args.binary.resolve()
     cases, exercised = 0, 0
-    with tempfile.TemporaryDirectory(prefix='sessiondock-cli-menus-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-cli-menus-') as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         for name in ['host', 'work', 'ledger', 'state', 'home', 'claude', 'codex', 'grok', 'opencode', 'agy']:
             (root / name).mkdir(mode=0o700)

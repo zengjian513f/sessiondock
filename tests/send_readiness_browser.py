@@ -13,12 +13,13 @@ from urllib.parse import urlsplit
 from browser_runtime import wait_for_async
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import REPO, BINARY, Corpus, isolated_server
+from private_hosts import private_hosts
 from send_browser import initialize, xterm_includes
 from popups import on_popup  # noqa: E402
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix='sessiondock-readiness-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-readiness-') as temporary, private_hosts(Path(temporary)):
         root = Path(temporary)
         for name in ['host', 'work', 'ledger', 'delivery', 'state', 'home', 'claude', 'codex', 'grok']:
             (root / name).mkdir(mode=0o700)

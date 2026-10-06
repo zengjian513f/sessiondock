@@ -28,6 +28,7 @@ import time
 from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
 from history_fixtures import REPO, BINARY, Corpus, codex_row, codex_message, isolated_server
+from private_hosts import private_hosts
 from popups import on_popup  # noqa: E402
 
 CODEX_SID = "8f3c1d2e-4a5b-4c6d-8e7f-90a1b2c3d4e5"
@@ -176,7 +177,7 @@ def create_claude(page, context, base, work, expect_completion, full_argv=True, 
 def main():
     if os.name != "posix":
         raise SystemExit("Real launch acceptance currently requires POSIX; no Windows/macOS claim.")
-    with tempfile.TemporaryDirectory(prefix="sessiondock-lifecycle-cli-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sessiondock-lifecycle-cli-") as temporary, private_hosts(Path(temporary), hosts=('host', 'host-stale')):
         root = Path(temporary).resolve()
         for name in ["host", "host-stale", "work", "work/claude-area", "work/codex-area", "ledger", "ledger-stale",
                      "bin", "claude", "codex", "grok", "trash-stale"]:

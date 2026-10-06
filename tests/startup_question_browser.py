@@ -72,13 +72,14 @@ def fake():
 def main():
     from playwright.sync_api import expect, sync_playwright
     from history_fixtures import REPO, BINARY, Corpus, isolated_server
+    from private_hosts import private_hosts
     from send_browser import initialize
     from popups import on_popup
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=BINARY)
     BINARY = parser.parse_args().binary.resolve()
-    with tempfile.TemporaryDirectory(prefix='sessiondock-startup-question-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-startup-question-') as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         for name in ['host', 'work', 'ledger', 'state', 'home', 'claude', 'codex', 'grok']:
             (root / name).mkdir(mode=0o700)
