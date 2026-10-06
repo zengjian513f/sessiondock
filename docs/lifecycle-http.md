@@ -98,7 +98,7 @@ Running AI launches without a native session record show a disabled stop action
 in both the detail header and sidebar menu, explaining that they cannot resume
 after stopping. Bulk stop excludes these launches. They can still be used or
 explicitly discarded; once a native record appears, normal stop/resume applies.
-SSH receipts retain their existing stop and recording-replay behavior.
+SSH receipts retain their existing stop and final-screen behavior.
 
 ### Installed CLIs
 
@@ -197,8 +197,8 @@ terminal list while running, and support the same guarded attach, reconnect,
 kill and discard as other launch receipts without native binding.
 Shell receipts stay in the sidebar after exit or launch failure until explicitly
 discarded; the minimal lifecycle receipt stays queryable for idempotency. An
-exited shell's console replays its [recording](terminal-records.md) read-only,
-or explains that no recording exists. Discard also deletes its recordings.
+exited shell's console shows its [final screen](terminal-final-screen.md)
+read-only, or explains that none exists. Discard also deletes it.
 An existing running shell can be reattached; an exited shell cannot be resumed.
 
 Receipt replies include record/request IDs, routing name, declared source/cwd,

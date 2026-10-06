@@ -23,7 +23,7 @@ function installTermMenu(view) {
   const status = search.querySelector('[role="status"]');
   let matches = [], current = -1;
   const active = () => T.views.get(view.name) === view && T.name === view.name && host.isConnected;
-  const writable = () => active() && !view.replay && !view.ended && !view.revoked
+  const writable = () => active() && !view.finalScreen && !view.ended && !view.revoked
     && !view.retired && view.ws?.readyState === 1;
   const clearSelection = () => {
     view.selectionLocked = false;

@@ -1,6 +1,6 @@
 //! alacritty_terminal 之上的薄封装，提供与 Python 参考实现同语义的截屏 / 光标 / 回放。
 //!
-//! 只服务 capture / cursor 查询、attach 回放、录制 checkpoint 和服务端网格：
+//! 只服务 capture / cursor 查询、attach 回放、最终画面和服务端网格：
 //! 实时字节由读线程直接转发，不经过这里。
 //!
 //! 模型会自己应答终端查询（DA、DECRQM、XTGETTCAP、颜色查询……），应答字节先攒在
@@ -349,7 +349,7 @@ impl Screen {
         finish(rows, join)
     }
 
-    /// attach 回放 / 录制 checkpoint：历史文本 + 完整终端状态（含模式与光标）。
+    /// attach 回放 / 最终画面：历史文本 + 完整终端状态（含模式与光标）。
     pub fn replay_bytes(&self, history: usize) -> Vec<u8> {
         let available = self.history_len();
         let from = available - history.min(available);

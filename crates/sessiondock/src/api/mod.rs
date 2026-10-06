@@ -9,6 +9,7 @@ mod bug_report;
 mod conversation;
 mod events;
 mod files;
+mod final_screen;
 mod health;
 pub mod hub;
 mod lifecycle;
@@ -17,7 +18,6 @@ mod metadata;
 pub(crate) mod node_auth;
 mod process_links;
 mod read;
-mod records;
 pub(crate) mod runtime;
 mod search;
 mod shell_env;
@@ -261,9 +261,8 @@ pub fn router() -> Router<AppState> {
         .route("/term/attach", get(terminal::attach))
         // Grid-protocol scrollback paging under the page's own lease.
         .route("/term/grid/history", get(terminal::grid_history))
-        // Session recordings: list, and a read-only replay WebSocket (no lease).
-        .route("/term/records", get(records::list))
-        .route("/term/records/attach", get(records::attach))
+        // The final screen an exited session left (read-only, no lease).
+        .route("/term/final", get(final_screen::get))
         // The host applies its decoded-input protocol limit after JSON parsing.
         .route(
             "/term/send",

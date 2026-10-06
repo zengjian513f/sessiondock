@@ -830,9 +830,8 @@ impl Launcher {
             .arg(record.spec().cwd())
             .arg("--meta")
             .arg(metadata.to_string());
-        // Only a shell session is recorded: the recording is its archive. An
-        // agent session's record is its native transcript, so its host writes
-        // no `records/` directory (docs/terminal-records.md).
+        // Only a shell session keeps its final screen: an agent session's
+        // record is its native transcript (docs/terminal-final-screen.md).
         if no_record {
             command.arg("--no-record");
         }
@@ -842,9 +841,9 @@ impl Launcher {
 }
 
 /// Whether this host binary accepts `--no-record`. A node keeps running the
-/// host binary its configuration names, which may predate recordings; such a
+/// host binary its configuration names, which may predate the option; such a
 /// host rejects the unknown option with status 2 before starting the CLI, and
-/// it never records anyway, so it is simply not told. The probe is `list`
+/// it keeps nothing after exit anyway, so it is simply not told. The probe is `list`
 /// over an empty private directory: no session file is read or removed. A
 /// host that cannot be probed keeps the option; its launch fails on its own.
 fn host_accepts_no_record(host_binary: &Path, host_dir: &Path) -> bool {

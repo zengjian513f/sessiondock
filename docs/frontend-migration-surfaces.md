@@ -447,11 +447,11 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 
 Codex 侧线程：终端视口里出现 side thread 时记下状态（`setCodexSideThreadState`）。用户用 Ctrl+/ 在 CLI 里切回 main。页面不替用户发送这个切换。
 
-### 录制回放
+### 最终画面
 
-会话结束后，主控制台用同一条录制流在原地回放（`startShellRecordingReplay` / `renderTimeline`）。条上：状态「会话已结束 · 只读回放」、播放、进度、时间、倍速 1/2/4/8/16、跳到最新并跟随。`timelineSeekTo` 不把按键发给已退出的 PTY。进行中的录制可跟随。原先未链接的独立录制页 `records.html` 已删除。
+SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最终画面（`startShellFinalScreen` / `showFinalScreen`，`GET api/term/final`），含回滚历史；终端下方一行状态写明退出码。不 claim、不发输入、不建 WebSocket。刷新或从别处打开已结束的行也显示它，直到删除。原先的录像回放和时间轴已于 2026-10-06 删除（[terminal-final-screen.md](terminal-final-screen.md)）。
 
-[`tests/terminal_timeline_browser.py`](../tests/terminal_timeline_browser.py) 覆盖主控制台的只读回放：退出后原地切到回放、时间轴点击/拖动/键盘、倍速播放、跳到开头与末尾、按键不改画面。
+[`tests/terminal_final_screen_browser.py`](../tests/terminal_final_screen_browser.py) 覆盖：退出后原地切换、新页面经节点和 Hub 打开、只读、窄窗口适配。
 
 ---
 
@@ -567,7 +567,7 @@ Codex 侧线程：终端视口里出现 side thread 时记下状态（`setCodexS
 
 对话：`api/session/conversation`、`.../attachment`、`.../attachment/discard`、`.../check`、`.../send`、`.../queued/dismiss`、`.../restart`、`api/session/input-history`、`api/session/conversation/drafts`。
 
-终端：`api/term/list`、`api/term/claim`、`api/term/attach`、`api/term/send`、`api/term/scroll`、`api/term/models`、`api/term/complete-dir`、`api/term/new-status`、`api/term/grid/history`、`api/term/records`、`api/term/records/attach`。
+终端：`api/term/list`、`api/term/claim`、`api/term/attach`、`api/term/send`、`api/term/scroll`、`api/term/models`、`api/term/complete-dir`、`api/term/new-status`、`api/term/grid/history`、`api/term/final`。
 
 转移与回收站：`api/session/clone/plan`、`api/session/clone`、`api/session/clone/progress`、`api/session/clone/cancel`、`api/session/transfer/clone`、`api/session/transfer/progress`、`api/session/transfer/cancel`、`api/session/transfers`、`api/trash`、`api/trash/restore`、`api/trash/purge`。
 

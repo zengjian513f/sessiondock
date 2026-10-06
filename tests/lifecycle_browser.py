@@ -134,7 +134,7 @@ def main(bind_native=False, bare_shell=False):
                             # console toggle and one session action: delete (discard of
                             # an unpersisted agent launch) or, for a running SSH shell,
                             # stop (like an agent session: 停止 while running, 删除 once
-                            # exited; the exited row stays listed with its recording).
+                            # exited; the exited row stays listed with its final screen).
                             expect(page.locator(".new-session-wait")).to_have_text("")
                             expect(page.locator(".new-session-wait")).to_be_hidden()
                             # Back from the phone width, the header returns its global buttons.
@@ -263,7 +263,7 @@ def main(bind_native=False, bare_shell=False):
                                 # The durable receipt stays queryable; the pending row leaves.
                                 # A running SSH shell first offers stop (confirmed, via
                                 # term/kill); the exited row then stays listed with its
-                                # recording and offers delete.
+                                # final screen and offers delete.
                                 action=action_page.locator("#a-session-toggle" if bare_shell else "#a-session-action")
                                 if not action.is_visible():
                                     action_page.locator("#a-more").click()
@@ -275,7 +275,7 @@ def main(bind_native=False, bare_shell=False):
                                     assert killed.value.status==200,killed.value.text()
                                     # The shell exits on the Ctrl-D the stop sends first; no HUP needed.
                                     assert killed.value.json()["state"]=="exited",killed.value.text()
-                                    action_page.wait_for_function("id => T.pending.some(row => row.record_id === id && row.running === false && row.recording?.id)",arg=receipt["record_id"],timeout=15000)
+                                    action_page.wait_for_function("id => T.pending.some(row => row.record_id === id && row.running === false && row.final_screen?.id)",arg=receipt["record_id"],timeout=15000)
                                     action=action_page.locator("#a-session-action")
                                     if not action.is_visible():
                                         action_page.locator("#a-more").click()
@@ -313,23 +313,23 @@ def main(bind_native=False, bare_shell=False):
                                 expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话",timeout=3000)
                                 expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"] .m')).to_contain_text("已结束",timeout=3000)
                                 # The receipt is the session: a naturally exited SSH stays
-                                # listed (not running) until 删除, with its recording
-                                # (opening it replays read-only) ...
-                                wait_for_async(page, "async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && row.recording?.id); }",arg=natural["record_id"])
+                                # listed (not running) until 删除, with its final screen
+                                # (opening it shows the last content read-only) ...
+                                wait_for_async(page, "async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && row.final_screen?.id); }",arg=natural["record_id"])
                                 expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]')).to_have_count(1)
                                 final = context.request.get(base+"/api/term/new-status",params={"record_id":natural["record_id"],"instance_id":natural["instance_id"]})
                                 assert final.status == 200 and final.json()["state"] == "exited", final.text()
                                 # ... and equally without one (an old host, a pruned
                                 # store): the row stays and the console says so.
-                                recording_id = page.evaluate("id => T.pending.find(row => row.record_id === id).recording.id",natural["record_id"])
-                                shutil.rmtree(root/"host"/"records"/recording_id)
-                                wait_for_async(page, "async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && !row.recording); }",arg=natural["record_id"])
+                                screen_id = page.evaluate("id => T.pending.find(row => row.record_id === id).final_screen.id",natural["record_id"])
+                                shutil.rmtree(root/"host"/"screens"/screen_id)
+                                wait_for_async(page, "async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && !row.final_screen); }",arg=natural["record_id"])
                                 expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]')).to_have_count(1)
                                 expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话")
                                 # A fresh console view (the retained one keeps the last
-                                # output) is told there is nothing to replay.
+                                # output) is told there is no final screen.
                                 page.evaluate("name => { disposeTermView(name); return attachTerm(name); }",natural["name"])
-                                page.wait_for_function("uid => (ConsoleUI.errors.get(uid) || '').includes('没有留下录制')",arg="tmux:"+natural["name"])
+                                page.wait_for_function("uid => (ConsoleUI.errors.get(uid) || '').includes('没有留下最后画面')",arg="tmux:"+natural["name"])
                                 page.set_viewport_size({"width":1280,"height":900})
                                 page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]').click(button="right")
                                 expect(page.locator('#item-menu [data-act="stop"]')).to_be_visible()
@@ -367,9 +367,9 @@ def main(bind_native=False, bare_shell=False):
                                     action.click()
                                 assert discarded.value.status==200,discarded.value.text()
                                 expect(page.locator(f'#side .item[data-uid="tmux:{drafted["name"]}"]')).to_have_count(0)
-                                # 删除 of an SSH session removes its recordings too.
-                                listed = context.request.get(base+"/api/term/records").json()["records"]
-                                assert not any(row["name"] == drafted["name"] for row in listed), listed
+                                # 删除 of an SSH session removes its final screen too.
+                                left = [path.name for path in (root/"host"/"screens").glob("*") if path.name.endswith("-"+drafted["name"])]
+                                assert not left, left
                         assert not errors,errors
                         context.close()
                 assert corpus.paths["fixture"].read_bytes()==native

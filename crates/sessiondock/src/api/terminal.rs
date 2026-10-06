@@ -788,8 +788,8 @@ pub const PENDING_ARCHIVE_AFTER: u64 = 600;
 /// its native transcript; the receipt is only the launch, and its host is
 /// started with `--no-record`). A finished shell receipt is the SSH session
 /// itself, so it stays listed until 删除 exactly like an agent session's
-/// row: with its recording (open = read-only replay) or without one (open =
-/// "no recording"). A finished agent receipt with no recorded time (an
+/// row: with its final screen (open = read-only last content) or without one
+/// (open = "no final screen"). A finished agent receipt with no recorded time (an
 /// older ledger) is archived at once.
 fn pending_listed(record: &crate::lifecycle::model::Record, now: u64) -> bool {
     use crate::lifecycle::model::State;
@@ -836,10 +836,10 @@ pub async fn list(
     // Which host names accept grid attachments; pending rows get it too so the
     // console picks a renderer the host understands.
     let mut grid_hosts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    // Newest recording per host name (shell hosts only: agent hosts run with
-    // `--no-record`); rows carry it so the console can replay an exited
-    // session instead of showing an empty pane.
-    let recorded: std::collections::BTreeMap<String, crate::terminal::records::RecordEntry> =
+    // Newest final screen per host name (shell hosts only: agent hosts run
+    // with `--no-record`); an exited row carries it so its console shows the
+    // last content instead of an empty pane.
+    let final_screens: std::collections::BTreeMap<String, crate::terminal::final_screen::Entry> =
         match state
             .terminal
             .as_ref()
@@ -847,7 +847,7 @@ pub async fn list(
         {
             Some(root) => tokio::task::spawn_blocking(move || {
                 let mut map = std::collections::BTreeMap::new();
-                for entry in crate::terminal::records::list(&root).unwrap_or_default() {
+                for entry in crate::terminal::final_screen::list(&root).unwrap_or_default() {
                     map.entry(entry.name.clone()).or_insert(entry);
                 }
                 map
@@ -856,10 +856,9 @@ pub async fn list(
             .unwrap_or_default(),
             None => Default::default(),
         };
-    let recording_json = |name: &str| {
-        recorded.get(name).map(|entry| {
-            json!({"id": entry.id, "live": entry.live, "bytes": entry.bytes,
-                   "ended_ms": entry.ended_ms, "created_ms": entry.created_ms})
+    let final_screen_json = |name: &str| {
+        final_screens.get(name).map(|entry| {
+            json!({"id": entry.id, "ended_ms": entry.ended_ms, "created_ms": entry.created_ms})
         })
     };
     let mut response = json!({"enabled":false, "transport_enabled":state.terminal.is_some(),
@@ -923,9 +922,6 @@ pub async fn list(
                     }
                     row["instance_id"] = json!(target.instance_id());
                     row["origin_launch_id"] = json!(target.origin_launch_id());
-                    if let Some(recording) = recording_json(&host.summary.name) {
-                        row["recording"] = recording;
-                    }
                     if let Some(uids) = current.get(&host.summary.name)
                         && let [uid] = uids.as_slice()
                     {
@@ -966,8 +962,8 @@ pub async fn list(
                 .map(|record| {
                     let mut row = super::lifecycle::project(record);
                     row["grid"] = json!(grid_hosts.contains(record.host_name()));
-                    if let Some(recording) = recording_json(record.host_name()) {
-                        row["recording"] = recording;
+                    if let Some(screen) = final_screen_json(record.host_name()) {
+                        row["final_screen"] = screen;
                     }
                     if let Some(extra) = state
                         .bug_report

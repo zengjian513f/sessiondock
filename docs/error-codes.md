@@ -6,7 +6,7 @@ This file is produced by `tests/error_codes.py`. Handlers return JSON `{"error":
 python3 tests/error_codes.py --write
 ```
 
-Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
+Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 ## 400 Bad Request
 
@@ -242,6 +242,10 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 
 - 需要有效的会话、分支和文件参数 — [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `invalid` L47
 
+### `invalid_final_screen`
+
+- 最终画面参数无效 — [`api/final_screen.rs`](../crates/sessiondock/src/api/final_screen.rs) `get` L36 → `GET /api/term/final`
+
 ### `invalid_history`
 
 - 历史行参数无效
@@ -283,10 +287,6 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 - [`api/read.rs`](../crates/sessiondock/src/api/read.rs) `query_error` L45
 - [`api/trash.rs`](../crates/sessiondock/src/api/trash.rs) `delete_session` L413, L415
 - [`api/trash.rs`](../crates/sessiondock/src/api/trash.rs) `list` L532 → `GET /api/trash`
-
-### `invalid_record`
-
-- 录制参数无效 — [`api/records.rs`](../crates/sessiondock/src/api/records.rs) `attach` L66 → `GET /api/term/records/attach`
 
 ### `invalid_rewind_target`
 
@@ -370,9 +370,7 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 
 ### `websocket_required`
 
-- 需要有效的 WebSocket 升级请求
-- [`api/records.rs`](../crates/sessiondock/src/api/records.rs) `attach` L90 → `GET /api/term/records/attach`
-- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L326 → `GET /api/term/attach`
+- 需要有效的 WebSocket 升级请求 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L326 → `GET /api/term/attach`
 
 ## 403 Forbidden
 
@@ -498,6 +496,10 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 - [`files/media.rs`](../crates/sessiondock/src/files/media.rs) `image` L89
 - [`files/mod.rs`](../crates/sessiondock/src/files/mod.rs) `resolve_reference` L196
 
+### `final_screen_not_found`
+
+- 没有这份最终画面 — [`api/final_screen.rs`](../crates/sessiondock/src/api/final_screen.rs) `get` L48 → `GET /api/term/final`
+
 ### `launch_missing`
 
 - 没有这个创建回执 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `failure` L90
@@ -514,12 +516,8 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 
 - node listener serves /api only
 - API route not found
-- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `node_not_found` L413
-- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `not_found` L421 → `ANY (fallback)`
-
-### `record_not_found`
-
-- 没有这个录制 — [`api/records.rs`](../crates/sessiondock/src/api/records.rs) `attach` L76, L83 → `GET /api/term/records/attach`
+- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `node_not_found` L412
+- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `not_found` L420 → `ANY (fallback)`
 
 ### `session_error`
 
@@ -1452,7 +1450,7 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 ### `terminal_disabled`
 
 - 终端传输未启用：必须显式配置隔离的 ptyhost 目录
-- [`api/records.rs`](../crates/sessiondock/src/api/records.rs) `root` L26
+- [`api/final_screen.rs`](../crates/sessiondock/src/api/final_screen.rs) `get` L29 → `GET /api/term/final`
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `enabled` L40
 
 ### `unsupported_history`
@@ -1619,10 +1617,6 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 
 - 读取服务已关闭 — [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L126
 
-### `records_unreadable`
-
-- 无法读取录制目录 — [`api/records.rs`](../crates/sessiondock/src/api/records.rs) `unreadable` L35
-
 ### `runtime_closed`
 
 - 进程观察服务已关闭 — [`api/trash.rs`](../crates/sessiondock/src/api/trash.rs) `observe_liveness` L90
@@ -1686,7 +1680,6 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `write_admission` L462
 - [`api/media.rs`](../crates/sessiondock/src/api/media.rs) `get` L79 → `GET /api/media/{token}`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `write` L128
-- [`api/records.rs`](../crates/sessiondock/src/api/records.rs) `attach` L97 → `GET /api/term/records/attach`
 - [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `observe` L517
 - [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `shared` L460
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L335 → `GET /api/term/attach`

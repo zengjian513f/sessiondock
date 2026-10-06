@@ -19,7 +19,6 @@ crates/
   resource-agent/   独立 Linux 资源采集服务
   ptyhost-client/    独立异步 host 客户端，显式开发目录才接入传输
   ptyhost/           独立 Rust PTY host，保留旧协议并增加可选实例校验
-  ptyhost-record/    终端录像格式、存储与读取
   ptyhost-screen/    服务端终端画面模型
 legacy-web/          前端（纯 JS 静态资源，无构建步骤）
 reference/

@@ -284,10 +284,9 @@ async function fetchTermList() {
     // 必须连同草稿和终端归属一起跟进，不能继续向已消失的 uid 请求接管。
     await rebindSelectedTermSession();
     const view = currentTermViewObject();
-    if (view && !view.replay && (view.ended || view.keepOutput)
-        && !$('#termpane')?.classList.contains('hidden')
-        && typeof startShellRecordingReplay === 'function')
-      startShellRecordingReplay(view, view.bindingUid || T.uid);
+    if (view && !view.finalScreen && (view.ended || view.keepOutput)
+        && !$('#termpane')?.classList.contains('hidden'))
+      startShellFinalScreen(view, view.bindingUid || T.uid);
   }
   const create = $('#new-session');
   const createEnabled = T.enabled && SessionDockCapabilities.allows('terminal_create');
@@ -1783,7 +1782,7 @@ function pendingStageMessage(info) {
   if (worker) return worker;
   switch (pendingPhase(info)) {
     case 'starting': return '正在启动…';
-    case 'exited': return info.source === 'shell' && !info.recording?.id ? '会话已结束，没有留下录制。' : '会话已结束。';
+    case 'exited': return info.source === 'shell' && !info.final_screen?.id ? '会话已结束，没有留下最后画面。' : '会话已结束。';
     case 'failed': return '启动失败。';
     case 'stopping': return '正在停止…';
     case 'uncertain': return '暂时无法确认会话状态。';
@@ -1816,7 +1815,7 @@ function pendingSessionRow(name) {
 }
 
 /** SSH 会话和代理会话同一套结构：运行中是"停止"（先 Ctrl-D，再宿主停止；行保留、
- *  录制可回放），结束后是"删除"（discard，录制一并删）。其它待定行沿用"删除"（先停再丢弃）。 */
+ *  结束后留有最终画面），结束后是"删除"（discard，最终画面一并删）。其它待定行沿用"删除"（先停再丢弃）。 */
 function pendingShellRunning(row) {
   return row?.source === 'shell' && pendingPhase(row) === 'running';
 }
@@ -1891,7 +1890,7 @@ async function stopPendingSession(info, button) {
 
 async function deletePendingSession(info, button) {
   if (info.source === 'shell'
-      && !await appConfirm(`删除会话「${pendingTitle(info)}」?\n\n会话记录和它的录制会一并删除，无法恢复。`)) return;
+      && !await appConfirm(`删除会话「${pendingTitle(info)}」?\n\n会话记录和它的最终画面会一并删除，无法恢复。`)) return;
   if (button) button.disabled = true;
   try {
     await discardPendingSession(info);
@@ -1943,15 +1942,15 @@ async function openPendingSession(info, {historyMode = 'push'} = {}) {
   const pending = { ...info, name: info.tmuxName || info.name };
   showNewSessionStage(pending, {historyMode});
   // Agent 会话留在对话页，直到用户打开控制台。SSH 运行中默认 PTY 在
-  // 输入框上方；结束后有录制则全幅只读回放。记住的布局优先。
+  // 输入框上方；结束后有最终画面则全幅只读显示。记住的布局优先。
   const running = pending.running && !pending.stale;
   const retained = T.views?.get(pending.name)?.keepOutput || T.views?.get(pending.name)?.ended;
   const remembered = T.openViews.has(pending.name) && running;
-  const replay = pending.source === 'shell' && pending.recording && !running;
-  // 已结束但有录制的 SSH 会话：控制台面板里只读回放它的录制。
+  const finalScreen = pending.source === 'shell' && pending.final_screen && !running;
+  // 已结束但留有最终画面的 SSH 会话：控制台面板里只读显示它。
   if ((pending.source === 'shell' || sessiondockCli(pending.source)?.nativeHistory === false)
-      && (running || retained || pending.recording))
-    await openTermPane(pending.name, true, remembered ? null : (replay ? 'full' : 'collapsed'));
+      && (running || retained || pending.final_screen))
+    await openTermPane(pending.name, true, remembered ? null : (finalScreen ? 'full' : 'collapsed'));
   else if (remembered)
     await openTermPane(pending.name);
   resolveNewSession(pending);
@@ -2209,7 +2208,7 @@ function activateTermView(view) {
   T.name = view.name;
   syncTermAliases(view);
   setScrollPos(view.scrollPos);
-  renderTimeline(view);
+  renderFinalScreenMode(view);
   renderTermOutputNotice(view);
 }
 
@@ -2439,7 +2438,7 @@ function ensureTerm(name) {
     return true;
   });
   term.onData(d => {
-    if (T.name !== name || view.replay) return;   // 录制回放只读
+    if (T.name !== name || view.finalScreen) return;   // 最终画面只读
     d = applyTermAlt(applyTermCtrl(d));
     if (!d) return;
     if (view.ws?.readyState !== 1) return;
@@ -2468,8 +2467,8 @@ function ensureTerm(name) {
   // 改造前遗留在默认 tmux server 的会话仍走旧兼容路径。
   term.attachCustomWheelEventHandler(e => {
     if (T.name !== name) return true;
-    // 录制回放和已退出的画面没有宿主 copy-mode；滚轮留给网格的历史。
-    if (view.replay || view.ended || view.revoked) return true;
+    // 最终画面和已退出的画面没有宿主 copy-mode；滚轮留给网格的历史。
+    if (view.finalScreen || view.ended || view.revoked) return true;
     const server = T.list?.find(x => x.name === name)?.server;
     if (server === 'ptyhost' || server === 'sessiondock') return true;
     wheelBy(e.deltaY);
@@ -2480,14 +2479,14 @@ function ensureTerm(name) {
 
 // reset 快照只带最近 2000 行历史；宿主（--history）留着更多。滚到离本地最旧
 // 一行 40 行以内时，在本页租约下按 500 行一页往前取，插到最前面且画面不跳。
-// 只在活的连接上取：回放、已结束、被接管或连接/租约已换时都不发请求。
+// 只在活的连接上取：最终画面、已结束、被接管或连接/租约已换时都不发请求。
 const TERM_HISTORY_PAGE_ROWS = 500;
 const TERM_HISTORY_MARGIN = 40;
 
 function termHistoryLive(view, ws, lease) {
   return T.views.get(view.name) === view && view.ws === ws && ws?.readyState === 1
     && view.inputLease === lease && !!lease?.token
-    && !view.replay && !view.ended && !view.revoked && !view.retired
+    && !view.finalScreen && !view.ended && !view.revoked && !view.retired
     && !SessionDockNetwork.paused;
 }
 
@@ -2510,7 +2509,7 @@ async function syncTermHistoryTail(view) {
   const ws = view.ws, lease = view.inputLease, term = view.term;
   if (typeof term?.historyTailRequest !== 'function') return;
   if (!termHistoryLive(view, ws, lease)) {
-    // 回放和已结束的连接不取宿主历史；本地按 history_total 的补齐已经做过。
+    // 最终画面和已结束的连接不取宿主历史；本地按 history_total 的补齐已经做过。
     term.dropHistoryTail();
     return;
   }
@@ -2655,7 +2654,7 @@ function positionTermViewport(view) {
   if (!termPaneRenderable(view)) return;
   const host = view.host, term = view.term, buffer = term.buffer?.active;
   let offset = 0;
-  if (!view.replay && visualKeyboardOpen() && buffer) {
+  if (!view.finalScreen && visualKeyboardOpen() && buffer) {
     const screen = host.querySelector('canvas');
     const zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
     const height = (screen?.getBoundingClientRect().height || 0) / zoom;
@@ -2699,12 +2698,10 @@ function repaintTermView(view) {
 function performTermFit(view, forceSync = false) {
   if (!termPaneRenderable(view)) return;
   positionTermViewport(view);
-  // 录制回放按录制时的尺寸呈现，不随面板大小重排（服务端也不接受 resize）。
-  if (view.replay) {
-    const size = view.replaySize;
+  // 最终画面按宿主退出时的尺寸呈现，不随面板大小重排；面板较窄时缩小字号。
+  if (view.finalScreen) {
+    const size = view.finalScreenSize;
     if (size && (view.term.cols !== size.cols || view.term.rows !== size.rows)) view.term.resize(size.cols, size.rows);
-    // Older grid recordings included container padding in their column count.
-    // Fit their pixels to the available width without changing recorded cells.
     if (size) {
       const box = $('#xterm'), css = getComputedStyle(box);
       const width = box.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight);
@@ -2855,7 +2852,7 @@ function restoreTermPane(uid, agent = null) {
 
 /** Only hosts with the server-side screen model serve a live console. A running
  *  host that predates it says `grid:false`; its session opens after a restart.
- *  An exited row has no host at all and goes on to replay or explain itself. */
+ *  An exited row has no host at all and goes on to its final screen or explains itself. */
 function terminalSupported(name) {
   const row = (T.list || []).find(x => x.name === name) || (T.pending || []).find(x => x.name === name);
   if (row?.grid !== false || row.running === false) return true;
@@ -3131,20 +3128,17 @@ function recordHostExit(view, uid, event) {
     if (T.name === view.name) renderTermOutputNotice(view);
   } else {
     // AI sessions close the pane and return to the conversation. SSH/shell
-    // keeps the console and, when a recording exists, switches it to
-    // read-only replay with the timeline — the live tail is not the archive.
+    // keeps the console and switches it to the final screen the host left,
+    // which also carries the history above the live tail.
     view.keepOutput = shell;
     if (!shell) disposeTermView(view.name);
     else if (keepPane) {
       T.mode = 'full';
       if (typeof rememberTermLayout === 'function') rememberTermLayout(view.name);
       if (typeof layoutTermPane === 'function') layoutTermPane();
-      if (!(typeof startShellRecordingReplay === 'function' && startShellRecordingReplay(view, uid))
-          && typeof loadTermList === 'function') {
+      if (!startShellFinalScreen(view, uid) && typeof loadTermList === 'function') {
         void Promise.resolve(loadTermList()).then(() => {
-          if (T.views.get(view.name) === view && !view.replay
-              && typeof startShellRecordingReplay === 'function')
-            startShellRecordingReplay(view, uid);
+          if (T.views.get(view.name) === view && !view.finalScreen) startShellFinalScreen(view, uid);
         });
       }
     }
@@ -3156,227 +3150,72 @@ function recordHostExit(view, uid, event) {
   return true;
 }
 
-/** 在控制台面板里只读回放一段录制：不 claim、不发输入；网格视图收 JSON 行。 */
-function startShellRecordingReplay(view, uid) {
-  if (typeof attachRecordingReplay !== 'function' || !view) return false;
-  if (view.replay && view.ws && view.ws.readyState < 2) return true;
+/** 已退出的 SSH 会话：控制台面板里只读显示它留下的最终画面，不 claim、不发输入。 */
+function startShellFinalScreen(view, uid) {
+  if (!view) return false;
+  if (view.finalScreen) return true;
   const row = (T.pending || []).find(item => item.name === view.name);
-  if (!row?.recording?.id) return false;
+  if (!row?.final_screen?.id) return false;
   if (T.name === view.name) T.mode = 'full';
-  attachRecordingReplay(view, row, uid);
+  showFinalScreen(view, row, uid);
   if (T.name === view.name) {
     if (typeof rememberTermLayout === 'function') rememberTermLayout(view.name);
     if (typeof layoutTermPane === 'function') layoutTermPane();
-    renderTimeline(view);
+    renderFinalScreenMode(view);
   }
   return true;
 }
 
-function sessionRecordingReplayable(uid) {
+function sessionFinalScreenShown(uid) {
   if (!uid || typeof T === 'undefined') return false;
   const name = String(uid).startsWith('tmux:')
     ? String(uid).slice(5)
     : (typeof takenOver === 'function' ? takenOver(uid) : '');
   const view = name ? T.views?.get(name) : null;
-  if (view?.replay) return true;
+  if (view?.finalScreen) return true;
   const row = (T.pending || []).find(item =>
     item.name === name
     || (typeof pendingUid === 'function' && pendingUid(item.name) === uid));
-  return !!(row?.recording?.id && typeof pendingPhase === 'function'
+  return !!(row?.final_screen?.id && typeof pendingPhase === 'function'
     && (pendingPhase(row) === 'exited' || pendingPhase(row) === 'failed'));
 }
 
-/** 录制回放的时间轴：进度条、播放/暂停、倍速、跳到最新。只对当前视图画。 */
-function replayTimeElapsed(ms) {
-  const total = Math.max(0, Math.round(ms / 1000));
-  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), sec = total % 60;
-  const mm = String(m).padStart(2, '0'), ss = String(sec).padStart(2, '0');
-  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+function renderFinalScreenMode(view = currentTermViewObject()) {
+  $('#termpane')?.classList.toggle('final-screen', !!view?.finalScreen);
+  const status = $('#term-final-status');
+  if (status && view?.finalScreen) status.textContent = view.finalScreenStatus || '会话已结束 · 最后画面（只读）';
 }
 
-function renderTimeline(view = currentTermViewObject()) {
-  const pane = $('#termpane');
-  const bar = $('#term-timeline');
-  if (!pane || !bar) return;
-  const tl = view?.replay ? view.timeline : null;
-  pane.classList.toggle('replay', !!tl);
-  if (!tl) return;
-  const span = Math.max(0, tl.end - tl.start);
-  const seek = $('#tl-seek');
-  if (!tl.scrubbing) seek.value = span ? String(Math.round((tl.clock - tl.start) / span * 1000)) : '1000';
-  const at = tl.scrubbing ? tl.start + Number(seek.value) / 1000 * span : tl.clock;
-  $('#tl-time').textContent = `${replayTimeElapsed(at - tl.start)} / ${replayTimeElapsed(span)}`;
-  seek.setAttribute('aria-valuetext', replayTimeElapsed(at - tl.start));
-  seek.title = new Date(at).toLocaleTimeString();
-  $('#tl-status').textContent = tl.live ? '只读回放' : '会话已结束 · 只读回放';
-  const ticks = $('#tl-ticks');
-  const tickKey = `${tl.start}:${tl.end}`;
-  if (ticks.dataset.bounds !== tickKey) {
-    ticks.dataset.bounds = tickKey;
-    ticks.replaceChildren(...[0, .25, .5, .75, 1].map(fraction => {
-      const tick = document.createElement('span');
-      tick.textContent = replayTimeElapsed(span * fraction);
-      return tick;
-    }));
-  }
-  const play = $('#tl-play');
-  play.textContent = tl.playing ? '❚❚' : '▶';
-  play.title = play.ariaLabel = tl.playing ? '暂停' : (tl.atEnd ? '从头播放' : '播放');
-  $('#tl-speed').value = String(tl.speed);
-  $('#tl-live').hidden = !tl.live;
-}
-
-function timelineSend(view, message) {
-  const ws = view?.ws;
-  if (!view?.replay || ws?.readyState !== 1) return false;
-  ws.send(JSON.stringify(message));
-  return true;
-}
-
-function timelineSeekTo(view, unixMs) {
-  const tl = view.timeline;
-  tl.playing = false;
-  tl.clock = unixMs;
-  timelineSend(view, { t: 'seek', unix_ms: Math.round(unixMs) });
-}
-
-function bindTimeline() {
-  const seek = $('#tl-seek');
-  if (!seek) return;
-  const view = () => { const v = currentTermViewObject(); return v?.replay && v.timeline ? v : null; };
-  const target = v => v.timeline.start + Number(seek.value) / 1000 * Math.max(0, v.timeline.end - v.timeline.start);
-  seek.addEventListener('pointerdown', () => { const v = view(); if (v) v.timeline.scrubbing = true; });
-  seek.addEventListener('input', () => {
-    const v = view();
-    if (!v) return;
-    v.timeline.scrubbing = true;
-    renderTimeline(v);
-  });
-  seek.addEventListener('change', () => {
-    const v = view();
-    if (!v) return;
-    v.timeline.scrubbing = false;
-    timelineSeekTo(v, target(v));
-    renderTimeline(v);
-  });
-  // A drag previews locally and submits once on release; intermediate seek
-  // responses cannot pull the thumb back while the user is choosing a time.
-  seek.addEventListener('pointerup', () => setTimeout(() => {
-    const v = view();
-    if (v?.timeline.scrubbing) {
-      v.timeline.scrubbing = false;
-      renderTimeline(v);
-    }
-  }, 0));
-  seek.addEventListener('pointercancel', () => {
-    const v = view();
-    if (v) { v.timeline.scrubbing = false; renderTimeline(v); }
-  });
-  $('#tl-play').addEventListener('click', () => {
-    const v = view();
-    if (!v) return;
-    const tl = v.timeline;
-    if (tl.playing) { tl.playing = false; timelineSend(v, { t: 'pause' }); }
-    else { tl.playing = true; tl.atEnd = false; timelineSend(v, { t: 'play', speed: tl.speed }); }
-    renderTimeline(v);
-  });
-  $('#tl-speed').addEventListener('change', e => {
-    const v = view();
-    if (!v) return;
-    v.timeline.speed = Number(e.target.value) || 1;
-    if (v.timeline.playing) timelineSend(v, { t: 'play', speed: v.timeline.speed });
-    renderTimeline(v);
-  });
-  $('#tl-live').addEventListener('click', () => {
-    const v = view();
-    if (!v) return;
-    v.timeline.playing = false;
-    timelineSend(v, { t: 'live' });
-    renderTimeline(v);
-  });
-}
-bindTimeline();
-
-function attachRecordingReplay(view, row, uid) {
-  let restoreTimeline = view.resumeTimeline;
-  view.resumeTimeline = null;
-  const name = view.name;
-  view.replay = true;
+function showFinalScreen(view, row, uid) {
+  view.finalScreen = true;
   view.revoked = true;               // 绝不能自动 claim 一个已退出的实例
   view.keepOutput = true;
   cancelTermReconnect(view);
   dropTermSocket(view);
   const url = (HUB_MODE && row.node_id)
-    ? new URL(`api/nodes/${encodeURIComponent(row.node_id)}/api/term/records/attach`, APP_BASE)
-    : new URL(appUrl('api/term/records/attach'));
-  url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.search = new URLSearchParams({id: row.recording.id, mode: 'grid'});
-  const ws = new WebSocket(url.href);
-  ws.binaryType = 'arraybuffer';
-  view.ws = ws;
-  if (T.name === name) T.ws = ws;
-  const dec = new TextDecoder();
-  view.term.reset();
-  view.timeline = { start: 0, end: 0, clock: 0, live: !!row.recording.live, playing: false,
-    speed: view.timeline?.speed || 1, atEnd: false, scrubbing: false };
-  renderTimeline(view);
-  ws.onmessage = e => {
-    if (view.ws !== ws) return;
-    if (typeof e.data === 'string') {
-      let message = null;
-      try { message = JSON.parse(e.data); } catch {}
-      if (!message) return;
-      const tl = view.timeline;
-      if (message.t === 'timeline') {
-        tl.start = message.start_ms || 0; tl.end = message.end_ms || tl.start; tl.clock = tl.end;
-        tl.live = !!message.live;
-      } else if (message.t === 'clock') {
-        tl.clock = message.unix_ms || tl.clock;
-        if (message.end_ms) tl.end = Math.max(tl.end, message.end_ms);
-      } else if (message.t === 'record') {
-        // 每个 record 帧都是一份完整画面（打开、seek、跨缺口），先清屏再画。
-        if (message.cols && message.rows) {
-          view.replaySize = { cols: message.cols, rows: message.rows };
-          view.term.resize(message.cols, message.rows);
-          fitTerm(true);
-        }
-        tl.clock = message.unix_ms || tl.clock;
-        tl.atEnd = false;
-      } else if (message.t === 'exit') {
-        const code = message.exit?.code;
-        ConsoleUI.errors.set(uid, `会话已结束（退出码 ${code}），这是它的录制回放，只读。`);
-        renderTakeoverBtn();
-      } else if (message.t === 'end') {
-        tl.atEnd = true; tl.playing = false;
-        // The initial replay opens at its tail. Once that snapshot is complete,
-        // restore the position saved when the page detached for sleep/background.
-        if (restoreTimeline) {
-          const saved = restoreTimeline; restoreTimeline = null;
-          timelineSeekTo(view, saved.clock);
-          if (saved.playing) {
-            tl.playing = true; tl.atEnd = false;
-            timelineSend(view, {t:'play', speed:saved.speed});
-          }
-        }
-      }
-      renderTimeline(view);
-      return;
-    }
-    writeTermOutput(view, dec.decode(e.data, {stream: true}));
-  };
-  ws.onclose = () => {
-    if (view.ws !== ws) return;
-    view.ws = null;
-    if (T.name === name) T.ws = null;
-    view.ended = true;
-    if (!ConsoleUI.errors.get(uid)) ConsoleUI.errors.set(uid, '录制回放结束（只读）。');
+    ? new URL(`api/nodes/${encodeURIComponent(row.node_id)}/api/term/final`, APP_BASE)
+    : new URL(appUrl('api/term/final'));
+  url.search = new URLSearchParams({id: row.final_screen.id});
+  // 读取失败时保留本页已有的终端内容，只提示原因。
+  void fetch(url.href, {cache: 'no-store'}).then(async response => {
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.snapshot) throw new Error(data?.error || `HTTP ${response.status}`);
+    if (T.views.get(view.name) !== view) return;
+    view.finalScreenSize = {cols: data.cols, rows: data.rows};
+    view.term.reset();
+    view.term.resize(data.cols, data.rows);
+    writeTermOutput(view, JSON.stringify(data.snapshot) + '\n');
+    if (T.name === view.name) fitTerm(true);
+    const code = data.exit?.code;
+    view.finalScreenStatus = `会话已结束（退出码 ${code ?? '未知'}）· 最后画面（只读）`;
+    ConsoleUI.errors.set(uid, view.finalScreenStatus);
+    if (T.name === view.name) renderFinalScreenMode(view);
     renderTakeoverBtn();
-  };
-  ws.onerror = () => {
-    if (view.ws !== ws) return;
-    ConsoleUI.errors.set(uid, '录制回放连接失败。');
+  }).catch(error => {
+    if (T.views.get(view.name) !== view) return;
+    ConsoleUI.errors.set(uid, '最终画面读取失败：' + (error.message || error));
     renderTakeoverBtn();
-  };
+  });
   return true;
 }
 
@@ -3403,22 +3242,21 @@ async function attachTerm(name, auto = false, directClaim = false) {
 async function attachOwnedTerm(view, allowRefresh = true, auto = false, directClaim = false) {
   if (SessionDockNetwork.paused) return false;
   if (view.retired) return false;
-  if (view.replay && view.ws && view.ws.readyState < 2) return true;
+  if (view.finalScreen) return true;
   const name = view.name;
   const wantedUid = view.bindingUid || T.uid;
   const row = (String(wantedUid || '').startsWith('tmux:') ? (T.pending || []) : (T.list || []))
     .find(row => row.name === name);
   const uid = row?.uid || T.uid;
-  // 进程已退出但有录制：不 claim，直接只读回放录制（会话列表就是录制的索引）。
-  // 本页刚观察到的宿主退出（view.ended / pendingPhase）也走这条路，不能
-  // 被 ended 提前 return 挡住，否则直播尾帧既没有时间轴也滚不动。
+  // 进程已退出但留有最终画面：不 claim，直接只读显示。本页刚观察到的宿主
+  // 退出（view.ended / pendingPhase）也走这条路，不能被 ended 提前 return 挡住。
   // 只有启动型（pending）行才有 running 字段；原生会话行是活的，永远走 claim。
-  if (row?.recording?.id
+  if (row?.final_screen?.id
       && (view.ended || pendingPhase(row) === 'exited' || pendingPhase(row) === 'failed'))
-    return attachRecordingReplay(view, row, uid);
+    return showFinalScreen(view, row, uid);
   if (view.ended) return false;
-  if (row?.record_id && pendingPhase(row) !== 'running' && pendingPhase(row) !== 'starting' && !row.recording?.id) {
-    ConsoleUI.errors.set(uid, row.source === 'shell' ? '会话已结束，没有留下录制。' : '实例已退出。');
+  if (row?.record_id && pendingPhase(row) !== 'running' && pendingPhase(row) !== 'starting' && !row.final_screen?.id) {
+    ConsoleUI.errors.set(uid, row.source === 'shell' ? '会话已结束，没有留下最后画面。' : '实例已退出。');
     renderTakeoverBtn();
     return false;
   }
@@ -3791,7 +3629,7 @@ function deactivateTermView() {
   setTermCtrl(false);
   setTermAlt(false);
   setTermShiftSelection(false);
-  renderTimeline(null);
+  renderFinalScreenMode(null);
   renderTermOutputNotice(null);
 }
 
@@ -5372,7 +5210,7 @@ function consolePasteFiles(view, name, e) {
   }
   e.preventDefault();
   e.stopPropagation();
-  if (T.name !== name || view.replay || view.ended || view.revoked) return;
+  if (T.name !== name || view.finalScreen || view.ended || view.revoked) return;
   whenPasteConfirmed(files, () => {
     const uid = view.bindingUid || T.uid || '';
     if (!uid) { appAlert('粘贴文件失败：这个终端还没有会话目录'); return; }
@@ -6149,7 +5987,6 @@ function backgroundTerm() {
   termWasBackgrounded = true;
   for (const view of T.views.values()) {
     view.resumeFocus = !!document.activeElement && view.host.contains(document.activeElement);
-    if (view.replay && view.ws && !view.resumeTimeline) view.resumeTimeline = {...view.timeline};
   }
   suspendTerm();
 }
@@ -6160,8 +5997,7 @@ function foregroundTerm(force = false) {
   for (const view of T.views.values()) {
     if (view.resumeFocus) requestTermFocus(view, document.body);
     view.resumeFocus = false;
-    if (view.replay && view.resumeTimeline) void attachTerm(view.name, true);
-    else reconnectTerm(view);
+    if (!view.finalScreen) reconnectTerm(view);
   }
 }
 document.addEventListener('visibilitychange', () => {

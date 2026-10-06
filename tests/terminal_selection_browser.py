@@ -256,7 +256,7 @@ def check_surface(pw, surface, mobile=False):
             while time.monotonic() < deadline and (root / 'work/input.bin').read_bytes() == before:
                 page.wait_for_timeout(50)
             assert (root / 'work/input.bin').read_bytes()[len(before):] == b'\x1b[200~PASTE_MENU_SENTINEL\x1b[201~'
-            page.evaluate("[...T.views.values()][0].replay = true")
+            page.evaluate("[...T.views.values()][0].finalScreen = true")
             menu()
             assert page.get_by_role('menuitem', name='粘贴', exact=True).is_disabled()
             assert page.get_by_role('menuitem', name='查找', exact=True).evaluate('e => e === document.activeElement')

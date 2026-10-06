@@ -39,9 +39,6 @@ fn stable(value: &mut Value) {
             ] {
                 object.remove(key);
             }
-            if let Some(Value::Object(recording)) = object.get_mut("recording") {
-                recording.remove("bytes");
-            }
             for value in object.values_mut() {
                 stable(value);
             }

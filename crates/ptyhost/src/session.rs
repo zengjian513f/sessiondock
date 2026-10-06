@@ -15,12 +15,12 @@ use portable_pty::{CommandBuilder, MasterPty, PtySize};
 use serde_json::{Value, json};
 
 use crate::dsr::{self, Piece};
+use crate::final_screen::FinalScreen;
 use crate::guard;
 use crate::output::{Client, DRAIN_TIMEOUT};
 use crate::protocol::{
     FRAME_DATA, FRAME_EXIT, FRAME_RESIZE, key_bytes, pack_frame, read_frames, recv_json, send_json,
 };
-use crate::record::{RecordConfig, Recorder};
 use crate::transport::{Listener, Stream};
 use ptyhost_screen::Screen;
 use ptyhost_screen::grid;
@@ -201,8 +201,9 @@ pub struct Session {
     boot_id: Option<String>,
     token: String,
     history: usize,
-    /// 录制器；打开失败或写盘失败后为 None / 内部 failed，会话照常运行。
-    record: Mutex<Option<Recorder>>,
+    /// 退出时是否保存最终画面（`--no-record` 关闭）。
+    keep_final_screen: bool,
+    created_ms: u64,
     size: Mutex<(u16, u16)>,
     screen: Mutex<Screen>,
     backlog: Mutex<Backlog>,
@@ -295,7 +296,7 @@ impl Session {
         meta: Value,
         directory: PathBuf,
         history: usize,
-        record: Option<RecordConfig>,
+        keep_final_screen: bool,
     ) -> std::io::Result<Arc<Self>> {
         if argv.is_empty() {
             return Err(std::io::Error::new(
@@ -357,25 +358,6 @@ impl Session {
         } else {
             String::new()
         };
-        let recorder = record.and_then(|config| {
-            match Recorder::open(
-                &directory,
-                &name,
-                crate::record::now_unix_ms(),
-                &argv,
-                cwd.as_deref(),
-                &meta,
-                cols.max(1),
-                rows.max(1),
-                config,
-            ) {
-                Ok(recorder) => Some(recorder),
-                Err(error) => {
-                    eprintln!("ptyhost: 无法打开录制目录，本会话不录制: {error}");
-                    None
-                }
-            }
-        });
         let session = Arc::new(Self {
             name: Mutex::new(name),
             argv,
@@ -387,7 +369,8 @@ impl Session {
             boot_id: current_boot_id(),
             token,
             history,
-            record: Mutex::new(recorder),
+            keep_final_screen,
+            created_ms: crate::final_screen::now_unix_ms(),
             size: Mutex::new((cols.max(1), rows.max(1))),
             screen: Mutex::new(Screen::new(cols.max(1), rows.max(1), history)),
             backlog: Mutex::new(Backlog::default()),
@@ -509,9 +492,6 @@ impl Session {
             "grid": true,
         });
         let map = info.as_object_mut().unwrap();
-        if let Some(recorder) = lock(&self.record).as_ref() {
-            map.insert("record".into(), recorder.info());
-        }
         if let Some(boot_id) = &self.boot_id {
             map.insert("boot_id".into(), json!(boot_id));
         }
@@ -666,27 +646,7 @@ impl Session {
                 self.maybe_grid_flush(&mut sync);
                 continue;
             };
-            // 录制锁跨越"喂模型 + 写帧"：finish 等 pending 归零后再取这把锁写 Exit，
-            // 于是 Exit 一定排在最后一段输出之后。checkpoint 必须取喂入之前的画面，
-            // 否则这段字节会既在快照里又被回放一遍。
-            let mut record = lock(&self.record);
-            if let Some(recorder) = record.as_mut()
-                && recorder.needs_checkpoint()
-            {
-                let state = lock(&self.screen).replay_bytes(self.history);
-                let (cols, rows) = *lock(&self.size);
-                recorder.checkpoint(cols, rows, state);
-            }
             let answer = apply_screen_piece(&self.screen, &self.backlog, &piece);
-            if let Some(recorder) = record.as_mut() {
-                match &piece {
-                    Piece::Data(bytes) => recorder.output(bytes),
-                    Piece::Resize { cols, rows } => recorder.resize(*cols, *rows),
-                    _ => {}
-                }
-                recorder.maybe_sync();
-            }
-            drop(record);
             self.backlog_cv.notify_all();
             if let Some(answer) = answer {
                 self.write_pty(&answer);
@@ -817,8 +777,32 @@ impl Session {
         if let Some(reason) = reason {
             exit["reason"] = json!(reason);
         }
-        if let Some(recorder) = lock(&self.record).as_mut() {
-            recorder.exit(&exit);
+        // 模型已排空：此刻的画面就是最后内容。先落盘再发 Exit，看到退出的页面
+        // 立即就能读到它。
+        if self.keep_final_screen {
+            let snapshot = {
+                let screen = lock(&self.screen);
+                let capture = grid::capture(&screen);
+                let history = grid::history_rows(&screen, 0, capture.history);
+                grid::snapshot_json(&capture, &history, capture.history, 1, true)
+            };
+            let (cols, rows) = *lock(&self.size);
+            let name = lock(&self.name).clone();
+            let written = FinalScreen {
+                name: &name,
+                created_ms: self.created_ms,
+                argv: &self.argv,
+                cwd: self.cwd.as_deref(),
+                meta: &self.meta,
+                cols,
+                rows,
+                snapshot: &snapshot,
+                exit: &exit,
+            }
+            .write(&self.directory);
+            if let Err(error) = written {
+                eprintln!("ptyhost: 最终画面保存失败: {error}");
+            }
         }
         let frame: Arc<[u8]> = pack_frame(FRAME_EXIT, exit.to_string().as_bytes()).into();
         let deadline = Instant::now() + DRAIN_TIMEOUT;
@@ -1087,7 +1071,7 @@ impl Session {
         }
         lock(&self.screen).resize(cols, rows);
         {
-            // 录制按队列顺序记尺寸变化；模型本身已在上面即时改过。
+            // 网格快照按队列顺序跟上尺寸变化；模型本身已在上面即时改过。
             let mut backlog = lock(&self.backlog);
             if !self.finishing.load(Ordering::Acquire) {
                 backlog.queue.push_back(Piece::Resize { cols, rows });
@@ -1126,9 +1110,6 @@ impl Session {
             *lock(&self.listener) = Some(Arc::new(fresh));
         }
         *lock(&self.name) = new.to_string();
-        if let Some(recorder) = lock(&self.record).as_mut() {
-            recorder.rename(new);
-        }
         self.write_info();
         #[cfg(unix)]
         {

@@ -292,7 +292,7 @@ def run_source(page, context, base, source, work):
                 assert_pending_stop_disabled(page, context, base, receipt, pending_uid, width)
             page.set_viewport_size({"width": 1280, "height": 900})
 
-    # SSH receipts survive exit for recording replay, so they first offer
+    # SSH receipts survive exit to show their final screen, so they first offer
     # stop. Unused native AI rows still offer direct discard after the merge.
     row = page.locator(f'#side .item[data-uid="{native_uid or pending_uid}"]')
     row.click(button="right")

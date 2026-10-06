@@ -21,22 +21,21 @@ profile overrides this default. Shell launches have `launch_kind: fixed`, no
 native SID/UID, and no resume or native binding. They remain reopenable terminal
 rows without waiting for an AI conversation record. A node with only host
 configuration can offer this terminal without an AI CLI installation.
-An exited shell row stays listed until 删除, replaying its recording read-only
-([terminal records](terminal-records.md)); terminal scrollback itself is
+An exited shell row stays listed until 删除, showing its final screen read-only
+([terminal final screen](terminal-final-screen.md)); terminal scrollback itself is
 bounded and held in the host's memory, and an exited shell has no resume
 operation. Shell-managed history files still follow the selected machine's
 shell configuration.
 
 The host command line is `--dir <host dir> run --name <host name> --cwd <cwd>
---meta <json> [--no-record] -- <argv>`. Only a shell session's host records its
-terminal ([terminal records](terminal-records.md)): every other source gets
-`--no-record`, because an agent session's record is its native transcript and
-the recording would be a second copy of the same output with no reader. A node
-keeps running the host binary its configuration names, which may predate
-recordings and rejects the unknown option with status 2 before the CLI starts;
+--meta <json> [--no-record] -- <argv>`. Only a shell session's host keeps its
+final screen ([terminal final screen](terminal-final-screen.md)): every other
+source gets `--no-record`, because an agent session's record is its native
+transcript. A node keeps running the host binary its configuration names, which
+may predate the option and rejects it with status 2 before the CLI starts;
 before every launch the launcher probes the host (`--dir <host dir>/.probe
 --no-record list`, an empty private directory, so no session file is read or
-removed) and such a host, which never records anyway, is simply not told.
+removed) and such a host, which keeps nothing after exit anyway, is simply not told.
 
 The host and CLI executable paths must be usable absolute executable files, and
 the host directory must be usable by `ptyhost`. Executable symlinks are
@@ -69,7 +68,7 @@ Fixed profile arguments stay before those identity arguments.
 
 OpenCode is an AI CLI source like the others: native UID `opencode:<hash>`,
 `new_assigned` launches whose id the launcher creates in OpenCode first,
-a resume profile, and no terminal recording. Its sessions come from
+a resume profile, and no final screen. Its sessions come from
 OpenCode's SQLite store through SessionDock's mirror ([OpenCode](opencode.md)).
 A node offers OpenCode only when its launcher configuration names exactly one
 `opencode` profile, for example `{"id": "opencode-cli-v1", "source":
