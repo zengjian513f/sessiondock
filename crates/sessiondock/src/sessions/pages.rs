@@ -387,30 +387,36 @@ pub(super) fn window(
         json_target: WINDOW_JSON_BYTES,
         ..Budget::default()
     };
-    // Prioritize the latest tail. Large messages may reduce either segment;
-    // the newest event always fits and every omitted event remains reachable.
+    // Silent protocol events (Claude queue operations) must not displace
+    // conversation bubbles. Keep them in the contiguous wire range for CLI
+    // echo reconciliation, but count only visible events toward the window.
+    // Byte/media budgets still bound the response, including silent events.
     let mut stop = total;
+    let mut tail_visible = 0;
     while stop > 0
-        && total - stop < WINDOW_TAIL_EVENTS
+        && tail_visible < WINDOW_TAIL_EVENTS
         && budget.take_at(
             snapshot,
             selected[stop - 1].index,
             selected[stop - 1].event,
-            WINDOW_HEAD_EVENTS + WINDOW_TAIL_EVENTS,
+            usize::MAX,
         )?
     {
         stop -= 1;
+        tail_visible += usize::from(selected[stop].event.message["silent"] != true);
     }
     let mut start = 0;
+    let mut head_visible = 0;
     while start < stop
-        && start < WINDOW_HEAD_EVENTS
+        && head_visible < WINDOW_HEAD_EVENTS
         && budget.take_at(
             snapshot,
             selected[start].index,
             selected[start].event,
-            WINDOW_HEAD_EVENTS + WINDOW_TAIL_EVENTS,
+            usize::MAX,
         )?
     {
+        head_visible += usize::from(selected[start].event.message["silent"] != true);
         start += 1;
     }
     if start == stop {
