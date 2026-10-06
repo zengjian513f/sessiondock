@@ -32,6 +32,11 @@ PNG = base64.b64decode(
     '0gAAAABJRU5ErkJggg==')
 
 
+# An idle page reads another page's draft revision from its input CHECK, which
+# backs off to one per 6 s while the screen is unchanged (composer-input.md).
+IDLE_FOLLOW_MS = 10000
+
+
 def draft(context, base, uid):
     row = context.request.get(base + '/api/session/conversation?uid=' + uid).json()['draft']
     return row['revision'], row['value']
@@ -126,7 +131,7 @@ def main():
 
                     # 2. A refused save rebases: another writer bumps the revision
                     #    behind page A; A's next keystroke still lands, A wins.
-                    a.wait_for_function("document.querySelector('#cinput').value === 'from A late B'", timeout=6000)
+                    a.wait_for_function("document.querySelector('#cinput').value === 'from A late B'", timeout=IDLE_FOLLOW_MS)
                     revision, value = draft(context, base, uid)
                     bumped = context.request.post(base + '/api/session/conversation',
                         data={'uid': uid, 'revision': revision, 'value': {**value, 'text': 'phone wrote this'}})
@@ -139,12 +144,12 @@ def main():
 
                     # 3. The idle page follows within the poll, then typing there
                     #    continues from the followed text and A follows back.
-                    b.wait_for_function("document.querySelector('#cinput').value === 'from A late B +A'", timeout=6000)
+                    b.wait_for_function("document.querySelector('#cinput').value === 'from A late B +A'", timeout=IDLE_FOLLOW_MS)
                     assert not b.locator('.draft-save-error').count()
                     b.type('#cinput', ' +B')
                     b.evaluate('async () => await composerDraftWrites')
                     wait_server_text(context, base, uid, 'from A late B +A +B')
-                    a.wait_for_function("document.querySelector('#cinput').value === 'from A late B +A +B'", timeout=6000)
+                    a.wait_for_function("document.querySelector('#cinput').value === 'from A late B +A +B'", timeout=IDLE_FOLLOW_MS)
 
                     # 4. An attachment staged on A is listed and sent from B; the
                     #    SEND on B empties A.
@@ -155,7 +160,7 @@ def main():
                         chooser.value.set_files([{'name': 'shared.txt', 'mimeType': 'text/plain', 'buffer': b'staged on A'}])
                     assert staged.value.status == 200, staged.value.text()
                     a.evaluate('async () => await composerDraftWrites')
-                    b.wait_for_function("composerDraft().attachments.length === 1 && composerDraft().attachments[0].uploaded?.upload_id", timeout=6000)
+                    b.wait_for_function("composerDraft().attachments.length === 1 && composerDraft().attachments[0].uploaded?.upload_id", timeout=IDLE_FOLLOW_MS)
                     assert not b.evaluate('composerDraft().attachments[0].file instanceof File')
                     expect(b.locator('#compose-items .draft-card')).to_have_count(1)
                     with b.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=20000) as sent:
@@ -165,7 +170,7 @@ def main():
                     published = list((root / 'work/claude-area/sessiondock_attachments').glob('*/shared.txt'))
                     assert len(published) == 1 and published[0].read_bytes() == b'staged on A'
                     expect(b.locator('#cinput')).to_have_value('')
-                    a.wait_for_function("document.querySelector('#cinput').value === '' && composerDraft().attachments.length === 0", timeout=6000)
+                    a.wait_for_function("document.querySelector('#cinput').value === '' && composerDraft().attachments.length === 0", timeout=IDLE_FOLLOW_MS)
                     assert not a.locator('.draft-save-error').count() and not b.locator('.draft-save-error').count()
 
                     # 4b. An image staged on A is previewed on B from the
@@ -179,7 +184,7 @@ def main():
                     assert picture.value.status == 200, picture.value.text()
                     upload_id = picture.value.json()['upload_id']
                     a.evaluate('async () => await composerDraftWrites')
-                    b.wait_for_function("composerDraft().attachments.length === 1 && !!composerDraft().attachments[0].uploaded?.upload_id", timeout=6000)
+                    b.wait_for_function("composerDraft().attachments.length === 1 && !!composerDraft().attachments[0].uploaded?.upload_id", timeout=IDLE_FOLLOW_MS)
                     assert not b.evaluate('composerDraft().attachments[0].file instanceof File')
                     b.wait_for_function("document.querySelector('#compose-items .draft-card .draft-thumb img')?.src.startsWith('blob:') || false", timeout=6000)
                     served = context.request.get(base + '/api/session/conversation/attachment?uid=' + uid + '&id=' + upload_id)
@@ -191,7 +196,7 @@ def main():
                     assert context.request.get(base + '/api/session/conversation/attachment?uid=' + uid + '&id=absent').status == 404
                     b.evaluate('removeComposerAttachment(composerDraft().attachments[0].id)')
                     b.wait_for_function('composerDraft().attachments.length === 0', timeout=6000)
-                    a.wait_for_function('composerDraft().attachments.length === 0', timeout=6000)
+                    a.wait_for_function('composerDraft().attachments.length === 0', timeout=IDLE_FOLLOW_MS)
 
                     # Failed writes recover without another keystroke or SEND.
                     def fail_draft(route):
