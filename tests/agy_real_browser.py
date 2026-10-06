@@ -348,13 +348,13 @@ def run(browser, base, root, agy, records, evidence, holds):
         assert page.evaluate('S.sel') == uid
         history(page, marker)
         evidence.pass_('refresh reconnects the same live native session')
-        if not page.locator('#a-session-action').is_visible():
+        if not page.locator('#a-session-toggle').is_visible():
             page.locator('#a-more').click()
-        expect(page.locator('#a-session-action')).to_have_attribute('aria-label', '停止会话')
-        page.locator('#a-session-action').click()
+        expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')
+        page.locator('#a-session-toggle').click()
         expect(page.locator('dialog.app-popup[open]')).to_be_visible()
         page.locator('dialog.app-popup[open] [data-popup-action="ok"]').click()
-        page.wait_for_function("() => document.querySelector('#a-session-action')?.getAttribute('aria-label') === '删除会话'", timeout=25000)
+        page.wait_for_function("() => document.querySelector('#a-session-toggle')?.getAttribute('aria-label') === '启动会话'", timeout=25000)
         with page.expect_response(lambda r: urlsplit(r.url).path == '/api/term/takeover', timeout=25000) as resumed:
             page.locator('#a-term').click()
         assert resumed.value.status == 200, resumed.value.text()

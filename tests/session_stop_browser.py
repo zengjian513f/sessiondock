@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Legacy stop control under the Rust `session_stop` capability.
 
-A synthetic Codex session is resumed through the existing console button
+A synthetic Codex session is resumed through the explicit start action
 (`/api/term/takeover`, fake CLI = free shell that exits on Ctrl-D). The header
 "停止会话" action then posts `/api/session/stop` with a `request_id`, the page
 shows which stage ended the instance (graceful), the console turns into the
-exit explanation and the action flips to "删除会话". A session that has no
+exit explanation and the action flips back to "启动会话". A session that has no
 running instance succeeds as a no-op, and being idle it asks no confirmation. The
 mobile (390 px) sidebar long-press menu stops a fresh resume the same way. No
 model binary, native CLI home or production host is touched.
@@ -48,7 +48,7 @@ while True:
             stream.write(str(time.monotonic()) + '\\n')
 """
 def session_action(page):
-    button = page.locator("#a-session-action")
+    button = page.locator("#a-session-toggle")
     if not button.is_visible():
         page.locator("#a-more").click()
     expect(button).to_be_visible()
@@ -126,11 +126,11 @@ def main():
                     page = watch(context)
                     page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic managed stop target")
-                    # Before any instance exists the action is delete, never stop.
-                    expect(session_action(page)).to_have_attribute("aria-label", "删除会话")
+                    # Before any instance exists the first action starts this native session.
+                    expect(session_action(page)).to_have_attribute("aria-label", "启动会话")
                     page.keyboard.press("Escape")
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover") as taken:
-                        page.locator("#a-term").click()
+                        session_action(page).click()
                     resumed = taken.value.json()
                     assert taken.value.status == 200 and resumed["launch_kind"] == "resume", resumed
                     expect(page.locator("#termpane")).to_be_visible()
@@ -139,7 +139,9 @@ def main():
                     page.wait_for_function("uid => (T.list || []).some(row => row.uid === uid && row.instance_id)", arg=codex_uid)
                     action = session_action(page)
                     expect(action).to_have_attribute("aria-label", "停止会话")
-                    expect(page.locator('.dhead-actions .session-menu-action').first).to_have_attribute('id','a-session-action')
+                    expect(page.locator("#a-session-action")).to_have_attribute("aria-label", "删除会话")
+                    expect(page.locator("#a-session-action")).to_have_attribute("aria-disabled", "true")
+                    expect(page.locator('.dhead-actions .session-menu-action').first).to_have_attribute('id','a-session-toggle')
                     page.evaluate('''() => {
                         window.stopAttentionFlashes=[];
                         window.stopAttentionObserver=new MutationObserver(() => {
@@ -174,8 +176,9 @@ def main():
                     expect(page.locator("#a-term")).to_have_attribute("data-unavailable", "false", timeout=15000)
                     page.wait_for_function("uid => !(T.list || []).some(row => row.uid === uid)", arg=codex_uid, timeout=15000)
                     assert page.evaluate("uid => S.live.has(uid)", codex_uid) is False
-                    expect(session_action(page)).to_have_attribute("aria-label", "删除会话")
-                    expect(page.locator('.dhead-actions .session-menu-action').first).not_to_have_attribute('id','a-session-action')
+                    expect(session_action(page)).to_have_attribute("aria-label", "启动会话")
+                    expect(page.locator("#a-session-action")).not_to_have_attribute("aria-disabled", "true")
+                    expect(page.locator('.dhead-actions .session-menu-action').first).to_have_attribute('id','a-session-toggle')
                     page.wait_for_timeout(1200)
                     assert page.evaluate('stopAttentionFlashes') == [], page.evaluate('stopAttentionFlashes')
                     page.evaluate('stopAttentionObserver.disconnect()')
@@ -214,12 +217,12 @@ def main():
                     # stop control can still be reached for such a session.
                     page.locator(f'#side .item[data-uid="{other_uid}"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic session without instance")
-                    expect(session_action(page)).to_have_attribute("aria-label", "删除会话")
+                    expect(session_action(page)).to_have_attribute("aria-label", "启动会话")
                     page.keyboard.press("Escape")
                     page.evaluate("uid => { S.live.add(uid); paintLive(); }", other_uid)
                     action = session_action(page)
                     expect(action).to_have_attribute("aria-label", "停止会话")
-                    expect(page.locator('.dhead-actions .session-menu-action').first).to_have_attribute('id','a-session-action')
+                    expect(page.locator('.dhead-actions .session-menu-action').first).to_have_attribute('id','a-session-toggle')
                     before = len(dialogs)
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as stopped:
                         action.click()
@@ -407,13 +410,15 @@ def main():
                     print("PASS duplicate stop: two browser pages, one EOF/escalation sequence for the same instance", flush=True)
                     context.close()
 
-                    # ---- Mobile: a fresh resume, stopped from the sidebar long-press menu.
+                    # ---- Mobile: start through the sidebar, then stop from long press.
                     mobile = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="block", has_touch=True)
                     page = watch(mobile)
-                    page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
-                    expect(page.locator("#a-term")).to_have_attribute("data-unavailable", "false")
+                    page.locator(f'#side .item[data-uid="{codex_uid}"]').click(button="right")
+                    start_item=page.locator('#item-menu [data-act="stop"]')
+                    expect(start_item).to_have_text('启动会话')
+                    expect(start_item).not_to_have_attribute('aria-disabled','true')
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover") as taken:
-                        page.locator("#a-term").click()
+                        start_item.click()
                     second = taken.value.json()
                     assert taken.value.status == 200 and second["action"] == "started", second
                     assert second["instance_id"] != resumed["instance_id"]
@@ -499,7 +504,7 @@ def main():
                 while list((root / "host").glob("*.sock")) and time.monotonic() < deadline:
                     time.sleep(.05)
     print("PASS session stop browser: session_stop capability, desktop header action stops a resumed managed "
-          "instance (graceful, request_id, exit explanation, action flips to delete, /api/live exited), "
+          "instance (graceful, request_id, exit explanation, action flips back to start with independent delete, /api/live exited), "
           "no-op, bulk partial failure/retry/uncertainty, concurrent stop and duplicate serialization, pending shell retained, "
           "390px long-press menu and toolbar, native bytes unchanged")
 

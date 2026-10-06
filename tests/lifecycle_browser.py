@@ -138,8 +138,9 @@ def main(bind_native=False, bare_shell=False):
                             expect(page.locator(".new-session-wait")).to_be_hidden()
                             # Back from the phone width, the header returns its global buttons.
                             expect(page.locator(".dhead-actions #a-global-new-session")).to_have_count(0)
-                            assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : b.hasAttribute('data-session-resources') ? 'session-resources' : ''))"))==["a-more","a-session-action","a-term","report-bug"]
-                            expect(page.locator("#a-session-action")).to_have_attribute("aria-label","停止会话" if source == "shell" else "删除会话")
+                            assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : b.hasAttribute('data-session-resources') ? 'session-resources' : ''))"))==["a-more","a-session-action","a-session-toggle","a-term","report-bug"]
+                            expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话")
+                            expect(page.locator("#a-session-toggle")).to_have_attribute("aria-label","停止会话")
                             if bare_shell:
                                 assert receipt["source"] == "shell" and receipt["launch_kind"] == "fixed", receipt
                                 assert not receipt.get("declared_sid"), receipt
@@ -235,7 +236,7 @@ def main(bind_native=False, bare_shell=False):
                                 # bound session; the durable cancel itself is issued
                                 # through `term/kill` (the shell ignores HUP, so the
                                 # host must survive for the restart check below).
-                                action=page.locator("#a-session-action")
+                                action=page.locator("#a-session-toggle")
                                 if not action.is_visible():
                                     page.locator("#a-more").click()
                                 expect(action).to_have_attribute("aria-label","停止会话")
@@ -262,7 +263,7 @@ def main(bind_native=False, bare_shell=False):
                                 # A running SSH shell first offers stop (confirmed, via
                                 # term/kill); the exited row then stays listed with its
                                 # recording and offers delete.
-                                action=action_page.locator("#a-session-action")
+                                action=action_page.locator("#a-session-toggle" if bare_shell else "#a-session-action")
                                 if not action.is_visible():
                                     action_page.locator("#a-more").click()
                                 before_cancel_claims=len(claims)
@@ -345,7 +346,7 @@ def main(bind_native=False, bare_shell=False):
                                 drafted = drafted.json()
                                 page.evaluate("info => openPendingSession(info)",drafted)
                                 expect(page.locator("#composer")).to_be_visible()
-                                expect(page.locator("#a-session-action")).to_have_attribute("aria-label","停止会话")
+                                expect(page.locator("#a-session-toggle")).to_have_attribute("aria-label","停止会话")
                                 page.locator("#cinput").fill("ls")
                                 page.wait_for_function("composerDrafts.get(S.sel)?.text === 'ls'")
                                 expect(page.locator("#termpane")).to_be_visible()
@@ -359,6 +360,8 @@ def main(bind_native=False, bare_shell=False):
                                 if not action.is_visible():
                                     page.locator("#a-more").click()
                                 expect(action).to_have_attribute("aria-label","删除会话")
+                                expect(page.locator("#a-session-toggle")).to_have_attribute("aria-label","启动会话")
+                                expect(page.locator("#a-session-toggle")).to_have_attribute("aria-disabled","true")
                                 with page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/discard") as discarded:
                                     action.click()
                                 assert discarded.value.status==200,discarded.value.text()

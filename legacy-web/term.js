@@ -1703,6 +1703,7 @@ function showNewSessionStage(info) {
     <div class="dhead-actions" aria-label="会话操作">
       <button class="iconbtn" id="a-term" title="切换到终端" aria-label="切换到终端">${uiIcon('terminal')}</button>
       ${sessionActionsMarkup(`
+      <button class="session-menu-action" id="a-session-toggle" type="button"></button>
       <button class="session-menu-action" data-report-bug title="报告当前会话问题"
         aria-label="报告当前会话问题">${uiIcon('bug')}</button>
       <button class="session-menu-action danger" id="a-session-action"></button>
@@ -1825,14 +1826,14 @@ function pendingTitle(info) {
 
 function renderPendingSessionAction(info, button = $('#a-session-action')) {
   if (!button || S.sel !== pendingUid(info.name)) return;
-  // 行已不在列表里（别的页面删了、或已归档）：按已结束处理，绝不按旧 receipt 显示"停止"。
   const current = pendingSessionRow(info.name) || { ...info, running: false, stale: true, state: 'exited' };
-  const stop = pendingShellRunning(current);
-  const label = stop ? '停止会话' : '删除会话';
-  button.innerHTML = uiIcon(stop ? 'power' : 'trash');
-  button.title = button.ariaLabel = label;
-  if (typeof labelSessionAction === 'function') labelSessionAction(button);
-  button.onclick = () => stop ? stopPendingSession(current, button) : deletePendingSession(current, button);
+  paintSessionRunControl(button.closest('.dhead')?.querySelector('#a-session-toggle'),
+    {...current, uid:pendingUid(info.name), pending:true});
+  button.innerHTML = uiIcon('trash');
+  button.title = button.ariaLabel = '删除会话';
+  labelSessionAction(button);
+  setControlUnavailable(button, pendingShellRunning(current) ? '请先停止会话再删除。' : '');
+  button.onclick = () => deletePendingSession(current, button);
 }
 
 function refreshPendingStage(name) {
@@ -2154,6 +2155,7 @@ const termRows = () => Math.max(10, Math.floor(T.height / (termFontSize() * 1.31
 
 /** 详情页头部那个按钮的文案随状态变。 */
 function renderTakeoverBtn() {
+  if (typeof refreshSessionRunControls === 'function') refreshSessionRunControls();
   const b = $('#a-term');
   if (!b) return;
   const name = takenOver(S.sel);

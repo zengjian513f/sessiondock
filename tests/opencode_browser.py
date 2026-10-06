@@ -348,7 +348,7 @@ def main():
                 assert page.evaluate('uid => cache.get(viewKey(uid,null)).meta.cursor.end', uid) == 0
 
                 # ---- Stop, then resume from the native row with --session.
-                action = page.locator('#a-session-action')
+                action = page.locator('#a-session-toggle')
                 if not action.is_visible():
                     page.locator('#a-more').click()
                 expect(action).to_have_attribute('aria-label', '停止会话')
@@ -356,7 +356,7 @@ def main():
                 # avoids unroute handing that same route a second time.
                 stale_cursor['enabled'] = False
                 action.click()
-                page.wait_for_function("() => document.querySelector('#a-session-action')?.getAttribute('aria-label') === '删除会话'", timeout=30000)
+                page.wait_for_function("() => document.querySelector('#a-session-toggle')?.getAttribute('aria-label') === '启动会话'", timeout=30000)
                 page.wait_for_function('uid => !S.live.has(uid) && !takenOver(uid)', arg=uid, timeout=30000)
                 shot('stopped')
                 with page.expect_response(lambda response: urlsplit(response.url).path == '/api/term/takeover', timeout=30000) as resumed:
@@ -369,14 +369,16 @@ def main():
 
                 # ---- Delete: stop, confirm the irreversible OpenCode delete.
                 page.locator('#a-term').click()
-                action = page.locator('#a-session-action')
+                action = page.locator('#a-session-toggle')
                 if not action.is_visible():
                     page.locator('#a-more').click()
                 if action.get_attribute('aria-label') == '停止会话':
                     action.click()
-                    page.wait_for_function("() => document.querySelector('#a-session-action')?.getAttribute('aria-label') === '删除会话'", timeout=30000)
+                    page.wait_for_function("() => document.querySelector('#a-session-toggle')?.getAttribute('aria-label') === '启动会话'", timeout=30000)
                     if not action.is_visible():
                         page.locator('#a-more').click()
+                action = page.locator('#a-session-action')
+                if not action.is_visible():page.locator('#a-more').click()
                 with page.expect_response(lambda response: response.request.method == 'DELETE', timeout=30000) as removed:
                     action.click()
                 assert removed.value.status == 200 and removed.value.json()['entry_id'] == '', removed.value.text()
