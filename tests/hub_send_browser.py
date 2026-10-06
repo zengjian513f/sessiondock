@@ -189,6 +189,18 @@ def check_browser(browser, root, config):
             wait_history(page, "OK: after refresh hub send")
             print("PASS desktop: different hub/node builds send and survive refresh", flush=True)
 
+            # Another Hub page follows a draft edit from the pushed draft event;
+            # its input CHECK, the fallback route to the revision, is blocked.
+            other_ctx, other = open_page(1280)
+            other.wait_for_function("uid => composerUid === uid && !composerDraft().loading", arg=hub_uid)
+            other.route("**/api/session/conversation/check*", lambda route: route.abort())
+            for text in ("draft pushed through hub", ""):
+                page.locator("#cinput").fill(text)
+                other.wait_for_function("text => document.querySelector('#cinput').value === text",
+                                        arg=text, timeout=3000)
+            other_ctx.close()
+            print("PASS hub draft push: a second page follows edits without its input CHECK", flush=True)
+
             # BUG-20260927-034648-a00708: a cached collapsed view must not
             # reuse the input lease of a disconnected terminal for Esc.
             for disconnect in ("background", "close"):

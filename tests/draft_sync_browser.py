@@ -32,8 +32,8 @@ PNG = base64.b64decode(
     '0gAAAABJRU5ErkJggg==')
 
 
-# An idle page reads another page's draft revision from its input CHECK, which
-# backs off to one per 6 s while the screen is unchanged (composer-input.md).
+# Draft changes are pushed to other pages; the input CHECK fallback backs off
+# to one per 6 s while the screen is unchanged (composer-input.md).
 IDLE_FOLLOW_MS = 10000
 
 
@@ -146,10 +146,14 @@ def main():
                     #    continues from the followed text and A follows back.
                     b.wait_for_function("document.querySelector('#cinput').value === 'from A late B +A'", timeout=IDLE_FOLLOW_MS)
                     assert not b.locator('.draft-save-error').count()
+                    # A follows back from the pushed draft event: its input
+                    # CHECK, the fallback route to the revision, is blocked.
+                    a.route('**/api/session/conversation/check*', lambda route: route.abort())
                     b.type('#cinput', ' +B')
                     b.evaluate('async () => await composerDraftWrites')
                     wait_server_text(context, base, uid, 'from A late B +A +B')
-                    a.wait_for_function("document.querySelector('#cinput').value === 'from A late B +A +B'", timeout=IDLE_FOLLOW_MS)
+                    a.wait_for_function("document.querySelector('#cinput').value === 'from A late B +A +B'", timeout=3000)
+                    a.unroute('**/api/session/conversation/check*')
 
                     # 4. An attachment staged on A is listed and sent from B; the
                     #    SEND on B empties A.

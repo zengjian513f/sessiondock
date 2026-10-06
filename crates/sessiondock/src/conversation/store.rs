@@ -77,6 +77,7 @@ pub struct Upload {
 pub struct Store {
     directory: PathBuf,
     state: Mutex<Document>,
+    draft_listener: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 pub fn fingerprint(value: &Value) -> Value {
     use sha2::{Digest, Sha256};
@@ -205,6 +206,7 @@ impl Store {
         let store = Self {
             directory,
             state: Mutex::new(state),
+            draft_listener: Mutex::new(None),
         };
         if repair {
             store.update(|doc| {
@@ -222,10 +224,20 @@ impl Store {
     pub fn directory(&self) -> &Path {
         &self.directory
     }
+    /// Called after every committed write that changed a draft revision.
+    pub fn on_draft_change(&self, listener: impl Fn() + Send + Sync + 'static) {
+        *self
+            .draft_listener
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(Box::new(listener));
+    }
     fn update<T>(&self, work: impl FnOnce(&mut Document) -> Result<T>) -> Result<T> {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let mut next = state.clone();
         let result = work(&mut next)?;
+        let drafts_changed = next.drafts.iter().any(|(key, draft)| {
+            state.drafts.get(key).map_or(0, |old| old.revision) != draft.revision
+        });
         let bytes = serde_json::to_vec(&next)
             .map_err(|_| Failure::new(503, "conversation_storage", "会话记录无法序列化"))?;
         let temporary = self
@@ -255,6 +267,16 @@ impl Store {
             return Err(io(error));
         }
         *state = next;
+        drop(state);
+        if drafts_changed
+            && let Some(listener) = self
+                .draft_listener
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .as_ref()
+        {
+            listener();
+        }
         Ok(result)
     }
     pub fn draft(&self, key: &str) -> Draft {
