@@ -463,7 +463,7 @@ Codex 侧线程：终端视口里出现 side thread 时记下状态（`setCodexS
 
 两页标记相同，都加载 [`legacy-web/file.js`](../legacy-web/file.js)。它们不浏览目录、不预览，只解析后跳到 FileDock。
 
-- 有 `node` 和绝对 `path`：直接 `location.replace` 到 `filedock_url`（默认 `/files/`）的 `?node&path`，并带上原来的 hash。
+- 有 `node` 和绝对 `path`：直接 `location.replace` 到同源固定的 `/files/?node&path`，并带上原来的 hash。
 - 只有会话 `uid` 和 `ref`：先 `POST api/session/resolve-files`。相对名先对当前 cwd，不行再看记录里的路径和这些目录的直接子项。多个不同目标保持不确定。
 - 失败停在本页：标题「无法打开文件」，正文是实际错误，按钮「刷新」。未登录时：「请登录后刷新页面」。
 
@@ -573,7 +573,7 @@ Codex 侧线程：终端视口里出现 side thread 时记下状态（`setCodexS
 
 机器与其它：`api/nodes`、`api/nodes/order`、`api/clients`、`api/clients/update`、`api/shell-env`、`api/shell-env/restart`、`api/resources/summary`、`api/session/resources`、`api/session/resources/probe`、`api/audit/browser`、`api/bug-report`。
 
-文件跳转目标默认 `/files/?node&path`，可由 `filedock_url` 换源。
+文件跳转目标固定为同源 `/files/?node&path`，没有换源配置。
 
 ## 基线盘点时的浏览器覆盖核对项
 
