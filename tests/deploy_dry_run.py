@@ -84,9 +84,11 @@ class DeployDryRunTest(unittest.TestCase):
         cls.source = Path(cls.checkout.name)
         shutil.copytree(ROOT / "deploy", cls.source / "deploy",
                         ignore=shutil.ignore_patterns("*.local.*", "__pycache__"))
-        shutil.copytree(ROOT / "web", cls.source / "web",
-                        ignore=shutil.ignore_patterns("node_modules", "dist-migration", "dist-pages"))
-        for args in (["init", "-q"], ["add", "deploy", "web"],
+        # deploy.py snapshots the production frontend from legacy-web/ (the
+        # former web/ tree was removed in 697718b8).
+        shutil.copytree(ROOT / "legacy-web", cls.source / "legacy-web",
+                        ignore=shutil.ignore_patterns("node_modules", "__pycache__"))
+        for args in (["init", "-q"], ["add", "deploy", "legacy-web"],
                      ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
                       "commit", "-qm", "Fixture"]):
             subprocess.run(["git", *args], cwd=cls.source, check=True, capture_output=True)

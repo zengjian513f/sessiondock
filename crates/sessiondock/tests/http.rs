@@ -141,11 +141,16 @@ async fn static_snapshot_replaces_templates_and_prevents_traversal() {
         assert!(!html.contains("__SESSIONDOCK_"));
         assert!(!html.contains("<script>not executable</script>"));
         assert!(html.contains(meta["build"].as_str().unwrap()));
-        assert!(html.contains("sessiondock-capabilities"));
-        assert!(
-            html.find("sessiondock-capabilities").unwrap()
-                < html.find("<script>").unwrap_or(html.len())
-        );
+        // file.html/files.html are FileDock entry adapters without the mode
+        // marker that carries the capabilities declaration (27f745a1,
+        // docs/files.md); capabilities.js then reports `declared:false`.
+        if uri == "/" || uri == "/index.html" {
+            assert!(html.contains("sessiondock-capabilities"));
+            assert!(
+                html.find("sessiondock-capabilities").unwrap()
+                    < html.find("<script>").unwrap_or(html.len())
+            );
+        }
     }
     for uri in [
         "/../Cargo.toml",
@@ -176,7 +181,6 @@ async fn static_snapshot_replaces_templates_and_prevents_traversal() {
 async fn unsupported_and_unknown_routes_are_not_fake_success() {
     let app = sessiondock::app(config()).unwrap();
     for (path, code) in [
-        ("/api/session/send", "delivery_send_disabled"),
         ("/api/audit/browser", "not_implemented"),
         ("/api/session/star", "metadata_disabled"),
         ("/api/term/create", "not_implemented"),
@@ -190,9 +194,18 @@ async fn unsupported_and_unknown_routes_are_not_fake_success() {
     let response = get(&app, "/api/does-not-exist").await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert_eq!(json_body(response).await["code"], "not_found");
+    // The reliable-send route and the ledger archive were retired (b3835183,
+    // fb008cb2). Their paths now only match `DELETE /api/session/{uid}`
+    // (docs/route-ledger.md), so other methods are rejected, never served.
+    let mut req = request("/api/session/send");
+    *req.method_mut() = axum::http::Method::POST;
+    assert_eq!(
+        app.clone().oneshot(req).await.unwrap().status(),
+        StatusCode::METHOD_NOT_ALLOWED
+    );
     assert_eq!(
         get(&app, "/api/session/outbox?uid=test").await.status(),
-        StatusCode::NOT_IMPLEMENTED
+        StatusCode::METHOD_NOT_ALLOWED
     );
 }
 

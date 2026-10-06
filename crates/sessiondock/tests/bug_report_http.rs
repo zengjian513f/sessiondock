@@ -394,7 +394,8 @@ async fn capture_route_answers_the_local_context_and_is_gated_like_the_report() 
         );
         assert_eq!(body["uid"], "claude:none");
         assert_eq!(body["session"], json!({}));
-        assert_eq!(body["outbox"], json!({}));
+        // The delivery-ledger snapshot was retired (docs/bug-report.md, fb008cb2).
+        assert!(body.get("outbox").is_none(), "{body}");
         assert_eq!(body["terminal_capture"], "");
         let rows = body["events"].as_array().unwrap().clone();
         if rows
@@ -591,7 +592,8 @@ async fn report_uses_common_send_and_native_history_matches_independently() {
     }
     assert_eq!(worker["source"], "claude");
     assert_eq!(worker["kind"], "bug-report");
-    assert_eq!(worker["title"], format!("处理 {report_id}"));
+    // `BUG: <first nonempty description line>` (docs/bug-report.md, 0cf0d617).
+    assert_eq!(worker["title"], "BUG: 点了按钮没反应，见 [附件1]");
     assert_eq!(worker["report_id"], report_id);
     assert_eq!(worker["cwd"], fixture.repo.to_str().unwrap());
     let sid = worker["sid"].as_str().unwrap().to_owned();
@@ -620,7 +622,13 @@ async fn report_uses_common_send_and_native_history_matches_independently() {
     );
     let prompt = fs::read_to_string(path.join("worker-prompt.md")).unwrap();
     assert!(prompt.contains("附件1: ./sessiondock_attachments/1/屏幕截图.png"));
-    assert!(prompt.contains("不要 push"));
+    // Validated fixes are pushed and deployed immediately (57edef54).
+    assert!(prompt.contains("随后立即 push"));
+    assert!(!prompt.contains("不要 push"));
+    assert!(
+        prompt.starts_with("BUG: 点了按钮没反应，见 [附件1]"),
+        "{prompt}"
+    );
     let events: Vec<Value> = fs::read_to_string(path.join("events.jsonl"))
         .unwrap()
         .lines()
@@ -685,7 +693,7 @@ async fn report_uses_common_send_and_native_history_matches_independently() {
         .find(|row| row["record_id"] == record_id)
         .unwrap_or_else(|| panic!("worker row missing: {listing}"));
     assert_eq!(pending["kind"], "bug-report");
-    assert_eq!(pending["title"], format!("处理 {report_id}"));
+    assert_eq!(pending["title"], "BUG: 点了按钮没反应，见 [附件1]");
     assert_eq!(pending["report_id"], report_id);
     assert_eq!(pending["name"], worker["name"]);
     let (status, plain) = post(

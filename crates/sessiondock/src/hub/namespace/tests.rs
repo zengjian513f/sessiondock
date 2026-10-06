@@ -123,7 +123,7 @@ fn live_keys_are_always_present_and_scoped() {
     assert_eq!(
         out,
         json!({
-            "uids": [format!("claude:{NID}~a")], "tmux_uids": [],
+            "uids": [format!("claude:{NID}~a")], "tmux_uids": [], "working_uids": [],
             "started_at": {format!("claude:{NID}~a"): 1.5},
         })
     );

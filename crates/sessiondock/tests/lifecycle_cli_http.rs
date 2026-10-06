@@ -471,7 +471,7 @@ async fn real_cli_profiles_launch_exact_argv_declare_identity_and_stay_pending_f
         "FAKE_CODEX_CWD",
     )
     .await;
-    assert!(text.contains("FAKE_CODEX_ARGV [--enable] [default_mode_request_user_input] [-c] [suppress_unstable_features_warning=true]\n"), "{text}");
+    assert!(text.contains("FAKE_CODEX_ARGV [--enable] [default_mode_request_user_input] [-c] [suppress_unstable_features_warning=true] [-c] [check_for_update_on_startup=false]\n"), "{text}");
     assert!(!text.contains("resume"), "{text}");
     let meta = fixture.host_meta(codex_new["name"].as_str().unwrap());
     assert!(
@@ -496,7 +496,7 @@ async fn real_cli_profiles_launch_exact_argv_declare_identity_and_stay_pending_f
         "FAKE_CODEX_CWD",
     )
     .await;
-    assert!(text.contains(&format!("FAKE_CODEX_ARGV [--enable] [default_mode_request_user_input] [-c] [suppress_unstable_features_warning=true] [resume] [{CODEX_SID}]\n")), "{text}");
+    assert!(text.contains(&format!("FAKE_CODEX_ARGV [--enable] [default_mode_request_user_input] [-c] [suppress_unstable_features_warning=true] [resume] [{CODEX_SID}] [-c] [check_for_update_on_startup=false]\n")), "{text}");
     assert!(
         text.contains("HOME=[/synthetic/codex-home] TERM=[xterm-256color]"),
         "{text}"

@@ -73,13 +73,19 @@ fn no_roots_means_empty_not_home_discovery() {
 }
 
 #[test]
-fn configured_invalid_root_is_not_silently_an_empty_library() {
+fn configured_missing_root_is_an_empty_source_and_is_never_created() {
+    // docs/read-model.md: a configured native root that does not exist is an
+    // empty source for now; it neither blocks other sources nor is created,
+    // and later scans rediscover it (2fed5ec7).
     let temp = TempDir::new().unwrap();
+    let missing = temp.path().join("missing");
     let store = SessionStore::new(SessionRoots {
-        claude: Some(temp.path().join("missing")),
+        claude: Some(missing.clone()),
         ..Default::default()
     });
-    assert_eq!(store.list(false).unwrap_err().status, 400);
+    let list = store.list(false).unwrap();
+    assert_eq!(list["sessions"], serde_json::json!([]), "{list}");
+    assert!(!missing.exists());
 }
 
 #[test]

@@ -2054,7 +2054,10 @@ fn documented_row_fields_are_exactly_todays_set() {
             "source",
             "path",
             "size",
-            "supported"
+            "supported",
+            // Main-session turn state from the transcript tail
+            // (docs/read-model.md, 0b684dc8).
+            "turn"
         ]
     );
     assert_eq!(
@@ -2868,7 +2871,13 @@ fn codex_subagent_items_carry_turn_state_and_last_record_time() {
     assert_eq!(items["running"]["updated"], "2026-09-12T01:03:00.000Z");
     assert_eq!(items["done"]["created"], "2026-09-12T01:00:00.000Z");
     assert!(rows.values().all(|row| row.get("active").is_none()));
-    assert_eq!(index.stop_scans(), 0, "Codex needs no owner scan");
+    // Open Codex subagent turns make the direct parent's rollout eligible for
+    // the incremental `list_agents` reconciliation scan (docs/read-model.md,
+    // 34c6183e): one parent generation is scanned once, and an unchanged
+    // parent is served from the stamp-keyed cache on the next refresh.
+    assert_eq!(index.stop_scans(), 1, "one direct Codex parent scanned");
+    index.refresh(true).unwrap();
+    assert_eq!(index.stop_scans(), 1, "unchanged parent is not rescanned");
 }
 
 #[test]
