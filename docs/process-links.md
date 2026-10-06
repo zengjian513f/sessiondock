@@ -211,6 +211,26 @@ metric timestamps retain the oldest contributing sample through aggregation.
 GPU queries also run independently, about every 10 seconds; values older than
 30 seconds are unavailable. PSS cache entries expire after 60 seconds.
 
+GPU aggregation also checks sampled compute processes without a binding for
+their exact process incarnation. When any exist, GPU count and memory metrics
+carry `attribution_incomplete: true`: positive values are confirmed subtotals,
+while a zero subtotal becomes unavailable (`null`), with a coverage explanation.
+The Hub propagates this uncertainty across the fleet, including from nodes that
+have no verified relationship to the selected session; it does not add those
+nodes to the execution list or assign their devices to a guessed session. The
+sidebar, detail view and independent collector session summaries use the same
+rule. Confirmed device sets still deduplicate within each execution node.
+
+BUG-20261006-072955-02f968 exposed this distinction: native command results
+confirmed GPU workloads, while live collector samples contained their device
+UUIDs but no session bindings. The jobs used short SSH launches of detached
+workers; their launch clients had exited before diagnosis. Polling can miss
+that connection evidence, and historical prose cannot safely recreate it.
+This correction preserves the observed attribution gap in server aggregation;
+it does not retroactively restore missing launch links. The browser regression
+in `tests/resource_probe_browser.py` covers missing remote bindings, process
+incarnation mismatches, positive subtotals, verified recovery and genuine zero.
+
 Local file and NFS read/write rates are successful synchronous VFS application
 bytes, distinguished by filesystem; they are not physical disk operations or
 NFS RPC traffic. The temporary probe also exports `disk_read_operations_per_second`,
