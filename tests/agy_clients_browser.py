@@ -28,6 +28,7 @@ from playwright.sync_api import expect, sync_playwright
 from frontend_paths import frontend_dir
 from client_update_browser import matrix_row, open_machines
 from history_parity import BINARY, REPO, Corpus, isolated_server
+from private_hosts import private_hosts
 from hub_http_suite import Hub, free_port
 from new_session_model_browser import choose_model, open_dialog
 
@@ -518,7 +519,7 @@ def run(args):
     browser_cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", str(
         Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "ms-playwright"))
     chromium = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
-    with tempfile.TemporaryDirectory(prefix="sessiondock-agy-clients-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sessiondock-agy-clients-") as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         (root / "home").mkdir(mode=0o700)
         (root / "bin").mkdir(mode=0o700)

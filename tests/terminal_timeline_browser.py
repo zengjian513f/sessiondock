@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 from history_parity import REPO, BINARY, Corpus, isolated_server  # noqa: E402
+from private_hosts import private_hosts
 from draft_sync_browser import SHELL, initialize  # noqa: E402
 
 XTERM_TEXT = """() => [...T.views.values()].map(view => {
@@ -182,7 +183,7 @@ def run(browser, base, root):
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix="sessiondock-timeline-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sessiondock-timeline-") as temporary, private_hosts(Path(temporary)):
         root = Path(temporary)
         for name in ["host", "work", "ledger", "delivery", "state", "bin", "home", "claude", "codex", "grok"]:
             (root / name).mkdir(mode=0o700)

@@ -21,6 +21,7 @@ from urllib.parse import unquote, urlsplit
 
 from playwright.sync_api import sync_playwright
 from history_parity import REPO, BINARY, Corpus, claude_row, isolated_server
+from private_hosts import private_hosts
 from hub_http_suite import Hub, free_port
 from node_auth_suite import node_env, TOKEN
 from send_browser import initialize
@@ -186,7 +187,7 @@ def main():
     parser.add_argument('--report-only', action='store_true', help='print counts without asserting the budget')
     args = parser.parse_args()
     args.binary = args.binary.resolve()
-    with tempfile.TemporaryDirectory(prefix='sessiondock-idle-requests-') as tmp, sync_playwright() as pw:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-idle-requests-') as tmp, private_hosts(Path(tmp), hosts=('composer/host',)), sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
         try:
             for hub_mode in (False, True):

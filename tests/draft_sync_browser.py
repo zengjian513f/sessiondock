@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
 
 from history_parity import REPO, BINARY, Corpus, isolated_server
+from private_hosts import private_hosts
 from send_browser import SETTINGS, initialize, create_claude
 from lifecycle_http_suite import SHELL
 from popups import on_popup  # noqa: E402
@@ -54,7 +55,7 @@ def open_session(page, uid):
 def main():
     if os.name != 'posix':
         raise SystemExit('Draft sync browser acceptance currently requires POSIX.')
-    with tempfile.TemporaryDirectory(prefix='sessiondock-draft-sync-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-draft-sync-') as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         for name in ['host', 'work', 'work/claude-area', 'ledger', 'delivery', 'state', 'bin', 'home', 'claude', 'codex', 'grok']:
             (root / name).mkdir(mode=0o700)

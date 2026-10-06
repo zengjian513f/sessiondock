@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright, expect
 from history_parity import REPO, BINARY, Corpus, claude_row, isolated_server
+from private_hosts import private_hosts
 from send_browser import SETTINGS, initialize, create_claude
 from draft_sync_browser import wait_server_text
 
@@ -21,7 +22,7 @@ def settings(page):
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix='sessiondock-page-sleep-') as tmp, sync_playwright() as pw:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-page-sleep-') as tmp, private_hosts(Path(tmp)), sync_playwright() as pw:
         root = Path(tmp)
         for name in ['host', 'work', 'work/claude-area', 'ledger', 'state', 'bin', 'home', 'claude', 'codex', 'grok']:
             (root / name).mkdir(mode=0o700)

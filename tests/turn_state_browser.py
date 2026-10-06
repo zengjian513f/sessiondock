@@ -33,6 +33,7 @@ import threading
 import uuid
 from playwright.sync_api import sync_playwright, expect
 from history_parity import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, encoded, isolated_server
+from private_hosts import private_hosts
 
 # Fresh ids per run: a host left by an aborted run must not look like an
 # outside instance of the next run's sessions.
@@ -120,7 +121,7 @@ def row_turn(opener, base, uid, size):
 def main(binary=BINARY):
     if os.name != "posix":
         raise SystemExit("Real launch acceptance currently requires POSIX; no Windows/macOS claim.")
-    with tempfile.TemporaryDirectory(prefix="sessiondock-turn-state-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sessiondock-turn-state-") as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         for name in ["host", "work", "ledger", "state", "bin", "claude", "codex", "grok"]:
             (root / name).mkdir(mode=0o700)

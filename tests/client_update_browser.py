@@ -34,6 +34,7 @@ from types import SimpleNamespace
 from playwright.sync_api import TimeoutError as PlaywrightTimeout, expect, sync_playwright
 
 from history_parity import REPO, BINARY, Corpus, isolated_server
+from private_hosts import private_hosts
 from hub_http_suite import FakeNode, Hub, free_port
 
 HUB_BINARY = BINARY.parent / ("sessiondock-hub.exe" if os.name == "nt" else "sessiondock-hub")
@@ -170,7 +171,7 @@ def check_phone(page, base):
 def main():
     if os.name != "posix":
         raise SystemExit("Fake CLI scripts need POSIX sh.")
-    with tempfile.TemporaryDirectory(prefix="sessiondock-client-update-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sessiondock-client-update-") as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         for name in ["host", "ledger", "bin", "state", "hub", "home"]:
             (root / name).mkdir(mode=0o700)

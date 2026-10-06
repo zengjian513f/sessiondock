@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, REPO, Corpus, isolated_server
+from private_hosts import private_hosts
 from hub_http_suite import FakeNode, Hub
 
 OPENCODE_MODELS = [f"prov/model-{index:02d}" for index in range(12)] + ["prov/zeta-1", "other/deep/nested-2"]
@@ -233,7 +234,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="sessiondock-model-picker-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sessiondock-model-picker-") as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         for name in ("host", "work", "ledger", "state", "home", "codex-home", "grok-home"):
             (root / name).mkdir(mode=0o700)

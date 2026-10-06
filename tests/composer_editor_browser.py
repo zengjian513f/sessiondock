@@ -23,6 +23,7 @@ from playwright.sync_api import expect, sync_playwright
 
 
 from history_parity import BINARY, REPO, Corpus, isolated_server
+from private_hosts import private_hosts
 from popups import on_popup
 from send_browser import FAKE_CLI, initialize, wait_history
 
@@ -337,7 +338,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
     binary = parser.parse_args().binary.resolve(strict=True)
-    with tempfile.TemporaryDirectory(prefix='sessiondock-composer-editor-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-composer-editor-') as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         launcher = fixture(root, binary)
         with isolated_server(Corpus(root), binary, host_dir=root / 'host',

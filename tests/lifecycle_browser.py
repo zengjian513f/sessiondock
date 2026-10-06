@@ -14,6 +14,7 @@ import time
 from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
 from history_parity import REPO, BINARY, Corpus, codex_row, codex_message, isolated_server
+from private_hosts import private_hosts
 from terminal_browser import SHELL_SCRIPT
 from terminal_exit_browser import XTERM_TEXT
 from popups import on_popup  # noqa: E402
@@ -44,7 +45,7 @@ def main(bind_native=False, bare_shell=False):
     source = "shell" if bare_shell else "codex"
     if os.name != "posix":
         raise SystemExit("Real launch acceptance currently requires POSIX; no Windows/macOS claim.")
-    with tempfile.TemporaryDirectory(prefix="sessiondock-lifecycle-ui-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sessiondock-lifecycle-ui-") as temporary, private_hosts(Path(temporary)):
         root=Path(temporary)
         for name in ["host","work","ledger","claude","codex","grok"]:
             (root/name).mkdir(mode=0o700)

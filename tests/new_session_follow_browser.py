@@ -18,6 +18,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 
 from history_parity import REPO, BINARY, Corpus, isolated_server
+from private_hosts import private_hosts
 from send_browser import SETTINGS, claude_uid, create_claude, initialize
 
 NOTICE = "agents-md: no CLAUDE.md found; AGENTS.md loaded: /synthetic/AGENTS.md"
@@ -67,7 +68,7 @@ def main():
     if os.name != "posix":
         print("SKIP new_session_follow_browser: POSIX required", flush=True)
         return
-    with tempfile.TemporaryDirectory(prefix="sessiondock-follow-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sessiondock-follow-") as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         for name in ["host", "work", "work/claude-area", "ledger", "state", "bin", "home", "claude", "codex", "grok"]:
             (root / name).mkdir(mode=0o700)

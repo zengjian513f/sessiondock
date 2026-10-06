@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
 from pending_create_discard_browser import create_source
 from history_parity import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server
+from private_hosts import private_hosts
 from popups import on_popup
 
 CODEX_SID = "8f3c1d2e-4a5b-4c6d-8e7f-90a1b2c3d4e5"
@@ -65,7 +66,7 @@ def wait_xterm(page, text):
 def main():
     if os.name != "posix":
         raise SystemExit("Real launch acceptance currently requires POSIX; no Windows/macOS claim.")
-    with tempfile.TemporaryDirectory(prefix="sessiondock-session-stop-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sessiondock-session-stop-") as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         for name in ["host", "work", "work/codex-area", "ledger", "bin", "claude", "codex", "grok", "events"]:
             (root / name).mkdir(mode=0o700)
