@@ -8,7 +8,10 @@ wheel input and scrollbar keys reach the oldest loaded row; the console fetches
 moving the visible rows, and ends with rows 1..5000 in order with no gap or
 duplicate at any seam. Live input still works afterwards, idle pages issue no
 history requests, a page reload pages again from a fresh snapshot, and a
-recording replay never requests history. A host started with a small
+recording replay never requests history. A stale lease token answered with the
+server's real 409 stops paging quietly for that connection (no retry, no error,
+audit event `terminal.history_page_failed`), and paging resumes once the
+network returns and the console reconnects with a fresh snapshot. A host started with a small
 `--history` keeps streaming every scrolled row to the attached page after its
 history is full, without a reconnect.
 """
@@ -24,6 +27,7 @@ import uuid
 from playwright.sync_api import sync_playwright
 
 from history_parity import BINARY, REPO, Corpus, codex_message, codex_row, isolated_server
+from private_hosts import private_hosts
 from draft_sync_browser import SHELL as REPLAY_SHELL, initialize
 import terminal_input_browser as fixture
 
@@ -100,14 +104,25 @@ def assert_contiguous(page, first_expected=None):
 
 def live_paging(pw, root, corpus, uid):
     with fixture.host(root, 'synthetic-' + uuid.uuid4().hex, uid), \
-         isolated_server(corpus, BINARY, host_dir=root / 'host') as (base, _):
+         isolated_server(corpus, BINARY, host_dir=root / 'host', audit_dir=root / 'audit') as (base, _):
         browser = launch_browser(pw)
         context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
         started = []
         requests = track(context, base, started)
-        errors = []
+        audits = []
+
+        def on_audit(request):
+            if request.method == 'POST' and '/api/audit/browser' in request.url:
+                try:
+                    audits.extend(request.post_data_json.get('events', []))
+                except (TypeError, ValueError, AttributeError):
+                    pass  # A beacon body Playwright cannot decode.
+        context.on('request', on_audit)
+        errors, dialogs, sockets = [], [], []
         page = context.new_page()
         page.on('pageerror', lambda e: errors.append(str(e)))
+        page.on('dialog', lambda d: (dialogs.append(d.message), d.dismiss()))
+        page.on('websocket', lambda ws: sockets.append(ws.url))
         try:
             page.goto(base, wait_until='networkidle')
             fixture.open_console(page, uid)
@@ -248,7 +263,81 @@ def live_paging(pw, root, corpus, uid):
             assert breaks(paged) == seams, (breaks(paged), seams)
             assert paged[len(paged) - loaded - 1] + 1 == numbers[0], 'seam after reflow'
             print('PASS width change re-aligns with the host and keeps paging contiguous rows', flush=True)
-            assert not errors, errors
+
+            # 7. A stale lease token: the server answers one page request with
+            #    its real 409. Paging stops quietly for this connection (no
+            #    retry, no error shown, no reconnect) and the audit event is
+            #    recorded; a reconnect resumes from a fresh snapshot.
+            # The first connection's lease ended with the reload in step 5.
+            expired = re.search(r'[?&]token=([^&]+)', requests[0]['url']).group(1)
+            stale = []
+
+            def stale_token_once(route):
+                if stale:
+                    route.continue_()
+                    return
+                stale.append(route.request.url)
+                assert 'token=' + expired not in route.request.url
+                route.continue_(url=re.sub(r'([?&]token=)[^&]*', lambda m: m.group(1) + expired, route.request.url))
+            page.route('**/api/term/grid/history?*', stale_token_once)
+            bar = page.get_by_role('scrollbar', name='终端历史')
+            assert page.evaluate(f'{TERM}.model.historyPaging && {TERM}.model.historyOlder > 0')
+            page.evaluate('window.staleSocket = T.ws')
+            before, opened, seen = page.evaluate(NUMBERS), len(sockets), len(requests)
+            page.locator('.grid-canvas').hover()
+            for _ in range(400):
+                if stale:
+                    break
+                page.mouse.wheel(0, -120)
+            wait_requests(page, requests, seen + 1)
+            settle(page)
+            assert len(stale) == 1 and requests[seen]['status'] == 409, (stale, requests[seen:])
+            assert 'token=' + expired in requests[seen]['url'], requests[seen]
+            assert page.evaluate(f'{TERM}.model.historyPaging') is False
+            assert page.evaluate(NUMBERS) == before, 'a refused page changed the loaded rows'
+            # Quiet: more wheel input and scrollbar Home do not fetch, the socket
+            # stays open and the console shows no error for this connection.
+            for _ in range(20):
+                page.mouse.wheel(0, -600)
+            bar.focus()
+            bar.press('Home')
+            page.wait_for_timeout(600)
+            assert len(requests) == seen + 1, ('paging retried after 409', requests[seen:])
+            assert len(sockets) == opened and page.evaluate('T.ws === window.staleSocket && T.ws.readyState === 1')
+            assert not page.evaluate('ConsoleUI.errors.get(S.sel) || ""'), page.evaluate('ConsoleUI.errors.get(S.sel)')
+            assert not dialogs and not errors, (dialogs, errors)
+            deadline = time.monotonic() + 15
+            while not any(event['event'] == 'terminal.history_page_failed' for event in audits):
+                assert time.monotonic() < deadline, ('audit event missing', [event['event'] for event in audits])
+                page.wait_for_timeout(100)
+            failed = [event for event in audits if event['event'] == 'terminal.history_page_failed']
+            assert len(failed) == 1, failed
+            assert failed[0]['data']['status'] == 409 and failed[0]['data']['name'], failed
+            assert failed[0]['data']['error'], failed  # the server's error code
+            assert failed[0]['severity'] == 'info' and failed[0]['connection_id'], failed
+            print(f"PASS stale token 409 stops paging quietly without retry; audit {failed[0]['data']}", flush=True)
+
+            # The network drops and returns: the console reconnects with a
+            # fresh snapshot and paging resumes under the new lease.
+            context.set_offline(True)
+            page.wait_for_timeout(300)
+            context.set_offline(False)
+            page.wait_for_function('T.ws && T.ws !== window.staleSocket && T.ws.readyState === WebSocket.OPEN',
+                                   timeout=15000)
+            page.wait_for_function(f'{TERM}.model.historyPaging && {TERM}.model.historyOlder > 0', timeout=10000)
+            assert len(sockets) > opened, sockets
+            fresh = page.evaluate(NUMBERS)
+            assert fresh and not breaks(fresh) and fresh[-1] == ROWS, (fresh[:3], fresh[-3:], breaks(fresh)[:5])
+            seen = len(requests)
+            page.get_by_role('scrollbar', name='终端历史').press('Home')
+            wait_requests(page, requests, seen + 1)
+            settle(page)
+            assert requests[seen]['status'] == 200 and 'token=' + expired not in requests[seen]['url'], requests[seen:]
+            resumed = assert_contiguous(page)
+            assert resumed[0] < fresh[0] and resumed[len(resumed) - len(fresh):] == fresh, (resumed[0], fresh[0])
+            assert len(stale) == 1, stale
+            print('PASS reconnect after the stale token pages again from the fresh snapshot', flush=True)
+            assert not errors and not dialogs, (errors, dialogs)
         finally:
             context.close()
             browser.close()
@@ -374,12 +463,13 @@ def replay_never_pages(pw, root):
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix='sessiondock-history-paging-') as tmp, sync_playwright() as pw:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-history-paging-') as tmp, \
+            private_hosts(Path(tmp), hosts=('live/host', 'replay/host', 'capped/host')), sync_playwright() as pw:
         root = Path(tmp)
         live = root / 'live'
         replay = root / 'replay'
         capped = root / 'capped'
-        for parent, names in ((live, ['host', 'work', 'claude', 'codex', 'grok']),
+        for parent, names in ((live, ['host', 'work', 'audit', 'claude', 'codex', 'grok']),
                               (capped, ['host', 'work', 'claude', 'codex', 'grok']),
                               (replay, ['host', 'work', 'ledger', 'state', 'claude', 'codex', 'grok'])):
             parent.mkdir(mode=0o700)
