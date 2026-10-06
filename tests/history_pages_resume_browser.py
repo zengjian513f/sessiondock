@@ -15,10 +15,10 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 from history_pages_browser import build, row
-from history_parity import BINARY, encoded, get_json, isolated_server
+from history_fixtures import BINARY, encoded, get_json, isolated_server
 from media_browser import uid
-from hub_http_suite import Hub, free_port, scoped
-from node_auth_suite import node_env, TOKEN
+from hub_fixtures import Hub, free_port, scoped
+from node_auth_fixtures import node_env, TOKEN
 
 
 def run(binary, through_hub):

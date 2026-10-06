@@ -23,7 +23,7 @@ import uuid
 
 from playwright.sync_api import sync_playwright
 
-from history_parity import BINARY, REPO, Corpus, codex_message, codex_row, isolated_server
+from history_fixtures import BINARY, REPO, Corpus, codex_message, codex_row, isolated_server
 from draft_sync_browser import SHELL as REPLAY_SHELL, initialize
 import terminal_input_browser as fixture
 

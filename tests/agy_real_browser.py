@@ -30,7 +30,7 @@ import uuid
 from playwright.sync_api import expect, sync_playwright
 from agy_browser import check_phone, open_picker, wait_screen
 from agy_test_gateway import MODELS, THINKING, gateway
-from history_parity import BINARY, REPO, Corpus, isolated_server
+from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from send_browser import initialize
 
 

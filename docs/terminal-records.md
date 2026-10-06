@@ -343,16 +343,6 @@ There is no compression. Segment `flags` is 0.
 
 ## Validation
 
-`python3 tests/term_records_http_suite.py --binary target/release/sessiondock`
-is the HTTP/WebSocket contract (no Chromium): 501 when the terminal
-transport is off, bad ids, upgrade required, `timeline` then `record`
-(`mode:"grid"`, also when the query asks for another mode), live follow,
-a resize snapshot, ignored inbound frames, exit/end with the socket
-kept open, replay of an ended recording, and the timeline (seek to the
-start shows nothing later, play at 16x reaches the end, seek to the end
-shows the final screen, pause accepted). Needs POSIX, a built
-`sessiondock`, and a built `ptyhost`.
-
 `python3 tests/terminal_timeline_browser.py` is the console timeline
 acceptance for both console renderers (Playwright Chromium, temporary
 fixtures): an exited SSH row opens its recording read-only with the

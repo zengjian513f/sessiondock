@@ -18,10 +18,10 @@ from types import SimpleNamespace
 from urllib.parse import urlencode
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, codex_row, isolated_server, get_json
-from hub_http_suite import Hub, scoped
-from node_auth_suite import node_env, TOKEN, free_port
-from spawned_by_suite import START, proc_pid
+from history_fixtures import BINARY, Corpus, codex_row, isolated_server, get_json
+from hub_fixtures import Hub, scoped
+from node_auth_fixtures import node_env, TOKEN, free_port
+from spawned_by_fixtures import START, proc_pid
 
 WORKING = re.compile(r'\bturn-working\b')
 START.update({900: 90_000, 910: 91_000, 920: 92_000})

@@ -19,7 +19,7 @@ import tempfile
 
 from playwright.sync_api import expect, sync_playwright
 
-from hub_http_suite import REPO, FakeNode, Hub
+from hub_fixtures import REPO, FakeNode, Hub
 
 CHROMIUM = Path.home() / ".cache/ms-playwright/chromium-1234/chrome-linux64/chrome"
 NID = {"a": "a" * 32, "b": "b" * 32, "c": "c" * 32}

@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
-from history_parity import BINARY as DEBUG_BINARY, Corpus, REPO, isolated_server
+from history_fixtures import BINARY as DEBUG_BINARY, Corpus, REPO, isolated_server
 from popups import on_popup
 
 RELEASE = REPO / "target/release" / DEBUG_BINARY.name

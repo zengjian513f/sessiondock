@@ -17,8 +17,8 @@ import urllib.request
 from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, REPO, Corpus, isolated_server
-from hub_http_suite import FakeNode, Hub
+from history_fixtures import BINARY, REPO, Corpus, isolated_server
+from hub_fixtures import FakeNode, Hub
 
 OPENCODE_MODELS = [f"prov/model-{index:02d}" for index in range(12)] + ["prov/zeta-1", "other/deep/nested-2"]
 CODEX_CACHE = {"models": [

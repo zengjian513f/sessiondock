@@ -27,8 +27,8 @@ from playwright.sync_api import expect, sync_playwright
 
 from frontend_paths import frontend_dir
 from client_update_browser import matrix_row, open_machines
-from history_parity import BINARY, REPO, Corpus, isolated_server
-from hub_http_suite import Hub, free_port
+from history_fixtures import BINARY, REPO, Corpus, isolated_server
+from hub_fixtures import Hub, free_port
 from new_session_model_browser import choose_model, open_dialog
 
 OLD, NEW = "1.2.16", "1.2.17"

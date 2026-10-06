@@ -91,7 +91,7 @@ def test_hits():
         if label not in hits[var]:
             hits[var].append(label)
 
-    text = (ROOT / "tests/history_parity.py").read_text(encoding="utf-8")
+    text = (ROOT / "tests/history_fixtures.py").read_text(encoding="utf-8")
     match = re.search(r"^def isolated_server\b.*?(?=\n\ndef |\Z)", text, re.M | re.S)
     body = match.group(0) if match else ""
     for var in IDENT.findall(body):
@@ -101,9 +101,6 @@ def test_hits():
     if "source.upper()" in body:
         for src in re.findall(r'"(claude|codex|grok)"', body):
             add(f"SESSIONDOCK_{src.upper()}_ROOT", "isolated_server")
-    for path in sorted((ROOT / "crates/sessiondock/tests").glob("*.rs")):
-        for var in IDENT.findall(path.read_text(encoding="utf-8")):
-            add(var, path.name)
     return hits
 
 def collect():
@@ -115,7 +112,7 @@ def collect():
 def collect_hub():
     """Rows of the hub (`sessiondock-hub`, `HubConfig`)."""
     src = HUB_CONFIG.read_text(encoding="utf-8")
-    return rows_of(src, "pub struct HubConfig", validate_map(section(src, "pub fn validate", "\n#[cfg(test)]")))
+    return rows_of(src, "pub struct HubConfig", validate_map(section(src, "pub fn validate", "\n    }\n")))
 
 def rows_of(src, struct, vmap):
     from_env = section(src, "pub fn from_env", "\n    pub fn validate")

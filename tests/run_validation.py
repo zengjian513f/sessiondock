@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Validation runner for the sessiondock workspace.
 
-Replaces ad-hoc shell scripts. Discovers Python HTTP/browser suites at
-runtime after the fixed Rust checks (fmt, clippy, Windows check, release
-build). The repository has no unit tests. Suites compared against the frozen
-Python oracle are excluded unless ``--include-oracle`` or explicitly selected
-with ``--only``. Never runs paid CLIs or touches production data; the
-underlying tests use synthetic fixtures and loopback listeners only.
+Replaces ad-hoc shell scripts. Discovers the headless Chromium browser
+suites (plus the source-tree brand check) at runtime after the fixed Rust
+checks (fmt, clippy, Windows check, release build). The repository has no
+unit tests, HTTP-only suites or Python-oracle tools; validation is by browser
+suites. Never runs paid CLIs (``*_real`` needs ``--include-real``) or touches
+production data; the underlying tests use synthetic fixtures and loopback
+listeners only.
 
 Suites run in parallel (``--jobs``, default 8): the Rust checks as lanes that
 share no cargo build directory (clippy; release build; Windows check; fmt),
@@ -32,18 +33,10 @@ import threading
 import time
 from datetime import datetime
 
-from python_oracle import discover_source
 from frontend_paths import frontend_dir
 
 ROOT = Path(__file__).resolve().parents[1]
-SKIP_PY = {
-    "append_benchmark.py",
-    "read_benchmark.py",
-    "native_spans_benchmark.py",
-    "native_envelopes_benchmark.py",
-    "run_validation.py",
-    "provider_parity.py",
-}
+SKIP_PY = {"run_validation.py"}
 MAIN_RE = re.compile(r"""if\s+__name__\s*==\s*['"]__main__['"]""")
 # Report/utility scripts opt out with this exact comment line near their top.
 SKIP_MARK = "# run_validation: skip"
@@ -84,19 +77,13 @@ def find_chromium():
     return str(max(found)[1]) if found else None
 
 
-def source_exists(path):
-    p = Path(path)
-    return (p if p.is_absolute() else ROOT / p).exists()
-
-
-def suites(binary, python_source):
+def suites(binary):
     """Build the declarative SUITES list: rust, then python."""
     items = []
     for name, argv, kind, timeout, tags in RUST:
         items.append({"name": name, "argv": argv, "kind": kind, "timeout": timeout, "tags": tags,
                       "skip": None})
 
-    py_ok = source_exists(python_source)
     for path in sorted((ROOT / "tests").glob("*.py")):
         if path.name in SKIP_PY:
             continue
@@ -113,19 +100,13 @@ def suites(binary, python_source):
         # routine sweep unless --include-real (they cost money and are timing
         # sensitive; the bench_*_real ones already opt out with SKIP_MARK).
         real = path.stem.endswith("_real")
-        oracle = path.name.endswith("_parity.py") or has_flag(text, "--python-source")
-        if oracle:
-            if py_ok:
-                argv += ["--python-source", python_source]
-            else:
-                skip = f"{python_source} not found"
         if has_flag(text, "--browser"):
             argv.append("--browser")
         if has_flag(text, "--binary"):
             argv += ["--binary", binary]
         items.append({"name": path.stem, "argv": argv, "kind": "python", "timeout": 900,
                       "tags": ("python",), "skip": skip, "serial": serial, "browser": browser,
-                      "real": real, "oracle": oracle})
+                      "real": real})
         if path.name == "lifecycle_browser.py":
             items.append({"name": "lifecycle_browser_native_binding",
                           "argv": [sys.executable, rel, "--native-binding"],
@@ -219,7 +200,6 @@ def main(argv=None):
     parser.add_argument("--binary", default="target/release/sessiondock")
     parser.add_argument("--web-dir", type=Path,
                         help="validate this already-built frontend without rebuilding workspace assets")
-    parser.add_argument("--python-source", default=str(discover_source(ROOT)))
     parser.add_argument("--json", type=Path, metavar="PATH")
     parser.add_argument("--rerun-failed", type=Path, metavar="PATH")
     parser.add_argument("--dry-run", action="store_true")
@@ -229,8 +209,6 @@ def main(argv=None):
                         help="parallel browser (Chromium) suites; kept low to avoid render contention")
     parser.add_argument("--include-real", action="store_true",
                         help="also run the *_real paid-CLI operator suites (excluded by default)")
-    parser.add_argument("--include-oracle", action="store_true",
-                        help="also run suites compared against the frozen Python oracle (excluded by default)")
     args = parser.parse_args(argv)
     env = os.environ.copy()
     prebuilt_web = args.web_dir or env.get("SESSIONDOCK_TEST_WEB_DIR")
@@ -241,7 +219,7 @@ def main(argv=None):
     only = set(csv(args.only)) or None
     skipped = set(csv(args.skip))
     plan = []
-    for suite in suites(args.binary, args.python_source):
+    for suite in suites(args.binary):
         if wanted.isdisjoint(suite["tags"]):
             continue
         if only is not None and suite["name"] not in only:
@@ -250,9 +228,6 @@ def main(argv=None):
             continue
         if suite.get("real") and not args.include_real:
             continue
-        if suite.get("oracle") and not args.include_oracle:
-            if only is None or suite["name"] not in only:
-                continue
         plan.append(suite)
 
     if args.rerun_failed:

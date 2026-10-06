@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real Claude CLI question-card acceptance, cheapest configuration.
 
-Like `send_claude_real.py` (isolated `CLAUDE_CONFIG_DIR` reusing the login
+Like the former `send_claude_real.py` (isolated `CLAUDE_CONFIG_DIR` reusing the login
 read-only, throwaway cwd, `claude-haiku-4-5-20251001 --effort low`, everything
 deleted afterwards) but the launch profile additionally passes
 `--settings <bridge settings>` written by `sessiondock --write-bridge-settings`
@@ -39,11 +39,11 @@ from pathlib import Path
 from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from history_parity import REPO, BINARY, Corpus, isolated_server  # noqa: E402
-import send_claude_real as base_suite  # noqa: E402
-from send_claude_real import (  # noqa: E402
+from history_fixtures import REPO, BINARY, Corpus, isolated_server  # noqa: E402
+import claude_real_fixtures as base_suite  # noqa: E402
+from claude_real_fixtures import (  # noqa: E402
     MODEL, isolated_config, logged_in, passthrough, request, trust_project)
-from sse_suite import open_watch, sse_next  # noqa: E402
+from sse_fixtures import open_watch, sse_next  # noqa: E402
 from popups import on_popup  # noqa: E402
 
 RELEASE = REPO / "target/release" / BINARY.name

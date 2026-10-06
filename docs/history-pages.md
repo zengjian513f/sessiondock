@@ -362,11 +362,8 @@ and actual page interaction using synthetic records.
 
 ```sh
 cargo build -p sessiondock --locked
-python3 tests/sessions_list_suite.py
-python3 tests/inventory_scale_suite.py --quick
-python3 tests/inventory_live_append_suite.py
-python3 tests/list_rows_parity.py --python-source PATH
 python3 tests/history_pages_browser.py
+python3 tests/sidebar_scale_browser.py
 ```
 
 Fixtures cover multi-page reconstruction, shared offsets, inherited end-zero

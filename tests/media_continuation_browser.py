@@ -21,7 +21,7 @@ from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, claude_row, codex_message, codex_row, encoded, get_json, isolated_server
+from history_fixtures import BINARY, Corpus, claude_row, codex_message, codex_row, encoded, get_json, isolated_server
 from media_browser import GREEN, PNG, TOKEN, image, native_bytes, uid
 
 # PNG decodes to 2x3, GREEN to 4x1: alternating data proves order and decoding.

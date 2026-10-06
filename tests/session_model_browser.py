@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import (BINARY, Corpus, batch35_meta, claude_row, codex_message,
+from history_fixtures import (BINARY, Corpus, batch35_meta, claude_row, codex_message,
                             codex_row, encoded, isolated_server)
 
 

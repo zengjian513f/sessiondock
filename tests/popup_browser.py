@@ -17,7 +17,7 @@ from pathlib import Path
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, build_corpus, isolated_server
+from history_fixtures import BINARY, build_corpus, isolated_server
 from trash_browser import click_delete, listed_uids, open_session
 
 

@@ -179,8 +179,7 @@ This applies to the stored `nest_parent` relation.
 Missing or filtered parents without a visible successor leave their children as
 roots. These display decisions never rewrite the stored relationship.
 
-Validation: `python3 tests/metadata_suite.py`,
-`python3 tests/nest_tree_browser.py`, `python3 tests/codex_exec_nest_browser.py`,
+Validation: `python3 tests/nest_tree_browser.py`, `python3 tests/codex_exec_nest_browser.py`,
 `python3 tests/hub_nest_browser.py`
 (two actual nodes and Hub, cross-machine click attach, same-SID isolation, cycle
 checks, node/Hub restart, detach and explicit local reattachment).

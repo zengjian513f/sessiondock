@@ -66,6 +66,8 @@ def tests_rule(path: str, names: list[str]) -> list[str]:
     if path.startswith("tests/fixtures/") or not path.endswith(".py"):
         return [FULL]
     stem = Path(path).stem
+    if stem.endswith("_fixtures"):    # shared helpers imported by many browser suites
+        return [FULL]
     for patterns in ([stem, f"{stem}_*"], [f"{stem.split('_')[0]}_*"]):
         if matches(patterns, names):
             return patterns
@@ -81,7 +83,7 @@ RULES = [
     ("crates/sessiondock/src/", module_rule),
     ("crates/sessiondock/tests/fixtures/", [FULL]),
     ("legacy-web/", ["*_browser*", "brand_names_check"]),
-    ("deploy/", ["deploy_*"]),
+    ("deploy/", DOCS),
     ("tests/", tests_rule),
     ("Cargo.toml", [FULL]), ("Cargo.lock", [FULL]), (".github/", [FULL]),
 ]

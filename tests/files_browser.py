@@ -4,7 +4,7 @@ import argparse,json,os,tempfile
 from pathlib import Path
 from urllib.parse import urlsplit,parse_qs,urlencode
 from playwright.sync_api import expect,sync_playwright
-from history_parity import BINARY,build_corpus,claude_row,codex_row,codex_message,isolated_server
+from history_fixtures import BINARY,build_corpus,claude_row,codex_row,codex_message,isolated_server
 NODE='a'*32
 
 def main():

@@ -9,9 +9,9 @@ from types import SimpleNamespace
 from urllib.parse import unquote, urlsplit
 
 from playwright.sync_api import sync_playwright
-from history_parity import BINARY, Corpus, claude_row, encoded, isolated_server
-from hub_http_suite import Hub, free_port
-from node_auth_suite import node_env, TOKEN
+from history_fixtures import BINARY, Corpus, claude_row, encoded, isolated_server
+from hub_fixtures import Hub, free_port
+from node_auth_fixtures import node_env, TOKEN
 
 
 def main():

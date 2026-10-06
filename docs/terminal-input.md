@@ -146,6 +146,6 @@ never writes to the CLI, takes a lease or acknowledges delivery. Hook files and
 generated settings are private and atomic. Codex prompt recognition must match
 the frozen bridge. See [lifecycle-launcher.md](lifecycle-launcher.md).
 
-Validate with `tests/claude_prompt_suite.py`. Run the
-real Claude and Codex prompt suites only under the real-CLI policy in
+Validate with `tests/question_browser.py`. Run the real
+`prompt_claude_real.py` browser suite only under the real-CLI policy in
 `AGENTS.md`.

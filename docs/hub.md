@@ -170,11 +170,9 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
 （节点不是 Hub）。`main.rs` 先绑定两个 socket 再开始服务：节点监听绑定失败即启动失败，不会
 退化成只有 loopback 的服务；两个监听共用同一个关停信号。
 
-验证：`python3 tests/node_auth_suite.py`
-（两个监听都绑 127.0.0.1，`PEERS=127.0.0.0/8` 时三缺一 / 错 token 403、正确头 `/api/sessions`
-与 loopback 列表一致、静态页 404，`PEERS=10.100.100.0/24` 时同一请求 403 `node_peer_denied`，
-三缺一的环境拒绝启动）、`tests/check_config_suite.py` 的 `node_*` 用例，
-`tests/security_suite.py` / `tests/meta_capabilities_suite.py` 的新增断言。
+验证：`python3 tests/hub_browser.py` 与其它 Hub 浏览器套件经节点监听（`tests/node_auth_fixtures.py`
+提供带凭据的节点环境）打开真实页面；原先的 HTTP 套件 `node_auth_suite`、`check_config_suite`、
+`security_suite`、`meta_capabilities_suite` 已于 2026-10-06 随非浏览器测试删除。
 
 ## 线上命名空间（`namespace.rs`）
 
@@ -203,13 +201,9 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
   `public_payload` 把这样的引用原样保留、其余照常改写；要让整个节点答复按
   `invalid_response` 失败，用 `try_public_payload`（返回 `Result`）。非字符串的终端名
   Rust 不动；真实节点只发字符串。
-- 奇偶校验：`tests/hub_namespace_parity.py --python-source <pyhead>` 在进程内
-  `importlib` 加载 `federation.py`，把固定语料（51 例：每个改写键、嵌套但
-  不透明的子树、媒体 src、epoch、终端名、回收站 id、每条装饰路径、顶层标量/数组、
-  非 ASCII，含 5 例 Python 抛错）跑过 oracle 写成
-  `tests/fixtures/hub_namespace_cases.json`（`--write`），默认模式重新生成并比对已提交
-  的夹具，漂移即失败。原先回放该夹具的 Rust 集成测试已随全部单元测试于
-  2026-10-06 删除；Hub 改写行为由 `hub_http_suite.py` 与 `hub_browser.py` 覆盖。
+- 奇偶校验（历史）：曾由 `hub_namespace_parity.py` 用 Python oracle 生成 51 例夹具、
+  再由 Rust 集成测试回放；二者及夹具已于 2026-10-06 删除。Hub 改写行为由
+  `hub_browser.py` 等 Hub 浏览器套件覆盖。
 
 ## 聚合（`aggregate.rs`）
 
@@ -365,9 +359,6 @@ WebSocket 用裸 TCP 双向拷贝（101 后不解帧），HTTP 客户端手写�
 
 ## 验证
 
-- `tests/hub_namespace_parity.py --python-source <pyhead>`：51 例 oracle 夹具比对（见上）。
-- `tests/hub_http_suite.py`（Python 全程走 HTTP）：`--check-config` 与 fail-closed、register/list/remove
-  子命令（注册表私有、凭据不入输出）、上面全部用例含 NDJSON 搜索进度。
 - `tests/hub_browser.py`（Playwright，≤300 行，Chromium
   `$HOME/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome`）：hub 页对三台假节点——机器筛选
   单/多选、按机器分层（同原生 id 不跨机嵌套）、NDJSON 搜索进度 + 单机失败、经代理打开同一原生 id

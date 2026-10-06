@@ -160,6 +160,5 @@ HTTP cancellation.
 
 ## Validation
 
-Default check is `python3 tests/lifecycle_http_suite.py` (and
-`python3 tests/lifecycle_browser.py` when the change is user-visible).
+Default check is `python3 tests/lifecycle_browser.py`.
 The repository has no unit tests (removed on 2026-10-06).

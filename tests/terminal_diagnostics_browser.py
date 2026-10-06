@@ -13,7 +13,7 @@ import uuid
 
 from playwright.sync_api import expect, sync_playwright
 from audit_browser import audit_lines, wait_for_events
-from history_parity import BINARY, Corpus, codex_message, codex_row, isolated_server
+from history_fixtures import BINARY, Corpus, codex_message, codex_row, isolated_server
 from terminal_input_browser import host, open_console, xterm_contains
 
 

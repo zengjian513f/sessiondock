@@ -253,8 +253,7 @@ after the page's first Enter it says only that the record has not been found.
 `POST /api/term/bind` is the sole operator path; the page offers no binding
 or release control. The legacy page follows a confirmed binding exactly like a
 declared Claude identity: it releases its launch-kind console, opens the native
-session and reclaims the console through the native lease. Legacy `tests/lifecycle_http_suite.py`
-keeps its fake-CLI expectations by injecting an empty synthetic process tree.
+session and reclaims the console through the native lease.
 
 HTTP response permits (`max(read_workers * 2, 8)`) cover queued work through serialization and retained
 response bodies, including never-polled responses. Serialization runs off the
@@ -372,8 +371,7 @@ are disabled while the batch runs. Pending launches use their existing
 `term/kill` receipt and instance identity (plus node routing on the Hub).
 Stopping preserves records, drafts and selection for a later explicit delete.
 
-Validation: `python3 tests/session_stop_browser.py` (desktop + 390 px), with
-`python3 tests/session_stop_http_suite.py` alongside.
+Validation: `python3 tests/session_stop_browser.py` (desktop + 390 px).
 
 ## Pending terminal identity and cancellation
 

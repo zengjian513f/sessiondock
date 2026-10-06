@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright, expect
 
-from history_parity import REPO, BINARY, Corpus, isolated_server
+from history_fixtures import REPO, BINARY, Corpus, isolated_server
 from send_browser import create_claude, initialize
 from popups import on_popup  # noqa: E402
 

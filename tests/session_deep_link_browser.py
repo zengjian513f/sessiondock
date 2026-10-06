@@ -9,7 +9,7 @@ import argparse,json,os,tempfile
 from pathlib import Path
 from urllib.parse import urlencode, urlparse, parse_qs
 from playwright.sync_api import sync_playwright,expect
-from history_parity import BINARY,build_corpus,isolated_server,batch35_meta,codex_message,encoded
+from history_fixtures import BINARY,build_corpus,isolated_server,batch35_meta,codex_message,encoded
 NODE='a'*32
 
 def add_sidebar_overflow(corpus):

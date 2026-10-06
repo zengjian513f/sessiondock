@@ -18,10 +18,10 @@ import tempfile
 from types import SimpleNamespace
 
 from playwright.sync_api import sync_playwright, expect
-from history_parity import BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server, get_json
-from hub_http_suite import Hub, scoped
-from node_auth_suite import node_env, TOKEN, free_port
-from spawned_by_suite import proc_pid
+from history_fixtures import BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server, get_json
+from hub_fixtures import Hub, scoped
+from node_auth_fixtures import node_env, TOKEN, free_port
+from spawned_by_fixtures import proc_pid
 
 WORKING = re.compile(r"\bturn-working\b")
 

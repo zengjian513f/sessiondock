@@ -2,6 +2,9 @@
 
 本文中的旧品牌查询词与 Python 对照读数是迁移时的历史测量样本，保留原始口径；
 它们不表示当前源码、部署或验证依赖。当前服务只使用 SessionDock。
+文中出现的基准、探针与合成规模脚本（`real_roots_bench.py`、`bench_polls_real.py`、
+`inventory_scale_suite.py`、`read_benchmark.py`、`fixture_gen.py` 等）以及单元基准已于
+2026-10-06 随全部非浏览器测试删除；命令行保留为当时的测量方法记录，不能再直接运行。
 
 读模型设计以 [read-model.md](read-model.md) 为准（惰性索引 + 按需视图）。
 本文记录 2026-09-12 在开发机（Linux、Rust 1.98.1、release 构建、页缓存热）上的
@@ -54,7 +57,7 @@ c0d2f28，隔离实例、只读真实根、页缓存热）：
 设计变更见 [read-model.md](read-model.md#大文件的读取代价2026-09-15)：指纹代替
 SHA-1/SHA-256、64 KiB 以上字符串一律 span、小记录先走 serde_json、字符串内 SIMD
 跳过、逐行读取器不再二次扫描、继承前缀跨视图与搜索共享。分阶段计时
-（`sessions::views::tests::benchmark_parse_phases`，本机 EPYC 7763 单核、release、
+（当时的 `sessions::views::tests::benchmark_parse_phases`，已随单元测试于 2026-10-06 删除；本机 EPYC 7763 单核、release、
 页缓存热；合成文件按 Orion 那份的行长分布生成）：
 
 | 文件 | 阶段 | 改前 | 改后 |
@@ -177,7 +180,7 @@ load average 13–15：
 `malloc_trim`，改后只在解析过时才 trim）。折叠副本记账 19.3 MB + 900 × 256 B，
 上限 `SESSIONDOCK_SEARCH_FOLD_BYTES`（默认 128 MiB）。
 
-折叠的正确性由 `search::fold::tests` 证明：枚举全部 0x110000 个码点，断言折叠值 =
+折叠的正确性当时由 `search::fold::tests`（已随单元测试于 2026-10-06 删除）证明：枚举全部 0x110000 个码点，断言折叠值 =
 `regex-syntax` simple case folding 等价类的最小码点、类内成员折叠相同且类封闭、
 `regex`/`fancy-regex` 的 `(?i)c` 恰接受该类；`search::tests::matchers_equal_the_reference_pattern…`
 以改前的单一 `fancy-regex` 模式为参照，对 38 个查询 × 17 个正文（İ/ı/ſ/K/Σσς/ß、
@@ -204,7 +207,7 @@ RSS 目标是对真实根"最新 20 个"的承诺，不是对任意 400 MB 已�
 没有父链时，228 MB 的 fork 叶（`history_base` 指向未索引的线程）按设计列为
 `supported:false`（"父线程不在已配置索引中"），打开 501（2.3 s 用于流式解析后拒绝）。
 
-## 合成规模（`tests/inventory_scale_suite.py`，进入 `run_validation`）
+## 合成规模（历史：`inventory_scale_suite.py`，已于 2026-10-06 删除）
 
 fixture_gen 语料 1500 会话 / 1 GiB（三家来源，最后一对 user/assistant 填充到目标字节）：
 
@@ -378,7 +381,7 @@ VmRSS，MB：
   立即失效；服务背后的变化（别的后端起的 host、被追加的文件）随各来源自己的 TTL
   （扫描 3 s、观察 2 s、列表 3 s）在一个轮询周期内可见。`force=1` 全部绕过并回填。
 
-隔离实例基准（`tests/bench_polls_real.py`，只读真实根 + 部署的 `debug-runs.json`
+隔离实例基准（`tests/bench_polls_real.py`，已于 2026-10-06 删除；只读真实根 + 部署的 `debug-runs.json`
 的只读拷贝 → 483 行 / 435 KB，临时 state/host/lifecycle 目录，26 个
 `/api/term/create` 起的 free-shell ptyhost 实例，loopback，urllib + `perf_counter`
 5 次取中位数；"修改前"是同一台机器上从 `main` 构建的二进制，同一配置先后运行）：
@@ -476,8 +479,8 @@ python3 tests/bench_polls_real.py --claude-root ~/.claude/projects --codex-root 
 
 ## 旧的合成读取基准（供对照）
 
-`python3 tests/read_benchmark.py --binary target/release/sessiondock --samples 10`
-创建临时合成记录（每份 2000 条正文）与 loopback 服务；2026-09-12 一次采样（ms）：
+已删除的 `tests/read_benchmark.py --binary target/release/sessiondock --samples 10`
+当时创建临时合成记录（每份 2000 条正文）与 loopback 服务；2026-09-12 一次采样（ms）：
 
 | 场景 | 1,039,032 字节 | 10,475,032 字节 |
 | --- | ---: | ---: |

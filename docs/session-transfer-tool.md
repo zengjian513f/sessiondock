@@ -143,7 +143,7 @@ Claude 保留 API 响应的 `message.id`，仅重写本地记录身份；改写�
 以及 Grok 父子分支、updates 和压缩文件；验证整组范围与源数据不变，再用 Chromium
 打开移动/复制暂存后的各分支和 Claude 子代理。全部数据与服务使用私有临时目录。
 
-`python3 tests/session_files_grok_real.py` 是显式运行的原生隔离实验：使用 `grok-4.6` low
+`session_files_grok_real.py`（已于 2026-10-06 随非浏览器测试删除）曾是显式运行的原生隔离实验：使用 `grok-4.6` low
 创建父会话、fork 和子代理，将暂存输出实验性导入同一个临时 home，验证克隆后的父会话及
 子代理按新 ID 续聊，再继续原组并核对两组互不追加。断言原生 chat 记录中的实际模型
 `grok-4.6-build` 和 low 强度、原生关系以及日常配置不变。结果写入

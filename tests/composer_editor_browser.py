@@ -2,7 +2,7 @@
 """Local composer user paths against a private fake Claude PTY, never a model.
 
 Requires an already-built sessiondock binary and target/debug/ptyhost.
-Uses send_browser's lifecycle/history helpers and history_parity's loopback
+Uses send_browser's lifecycle/history helpers and history_fixtures' loopback
 server. Two ordinary UI sends populate native input history. Delayed real
 draft/SEND replies and an intercepted meta build exercise stale completion;
 no injected product state. Only IME events are explicitly simulated
@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlsplit
 from playwright.sync_api import expect, sync_playwright
 
 
-from history_parity import BINARY, REPO, Corpus, isolated_server
+from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from popups import on_popup
 from send_browser import FAKE_CLI, initialize, wait_history
 

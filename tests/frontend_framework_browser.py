@@ -24,7 +24,7 @@ import tempfile
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, build_corpus, isolated_server
+from history_fixtures import BINARY, build_corpus, isolated_server
 
 VIEWPORTS = ((1280, 900), (390, 844))
 TABS = {"appearance": "外观", "features": "功能", "machines": "机器"}

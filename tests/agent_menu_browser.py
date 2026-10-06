@@ -19,7 +19,7 @@ import tempfile
 
 from playwright.sync_api import sync_playwright
 
-from history_parity import BINARY, Corpus, claude_row, encoded, get_json, isolated_server
+from history_fixtures import BINARY, Corpus, claude_row, encoded, get_json, isolated_server
 
 SID = "menu-owner"
 # Served out of order on purpose; early ends first, late ends last, worker is still running (its last

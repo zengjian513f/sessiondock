@@ -19,7 +19,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, claude_row, codex_row, encoded, get_json, isolated_server
+from history_fixtures import BINARY, Corpus, claude_row, codex_row, encoded, get_json, isolated_server
 
 # Generated with Pillow from solid RGB pixels; Chromium below independently
 # checks actual decoding and exact dimensions, not just signature/header bytes.

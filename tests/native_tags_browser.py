@@ -14,7 +14,7 @@ import tempfile
 from urllib.parse import urlencode
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, claude_row, codex_row, encoded, get_json, isolated_server
+from history_fixtures import BINARY, Corpus, claude_row, codex_row, encoded, get_json, isolated_server
 
 PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAIAAAA2iEnWAAAAE0lEQVR4nGP8z8DAwMDAxIBMAQAUQAEF3SN5DgAAAABJRU5ErkJggg=='
 PLUGINS = '<recommended_plugins>\nHere is a list of plugins that are available but not installed.\nPluginInjectionSentinel\n</recommended_plugins>'

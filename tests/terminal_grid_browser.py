@@ -22,7 +22,7 @@ import uuid
 
 from playwright.sync_api import expect, sync_playwright
 
-from history_parity import BINARY, Corpus, codex_message, codex_row, isolated_server
+from history_fixtures import BINARY, Corpus, codex_message, codex_row, isolated_server
 from host_identity import host
 from popups import on_popup
 from terminal_exit_browser import XTERM_TEXT

@@ -39,7 +39,7 @@ timeout 1200 ~/.local/bin/grok \
 - 规格可以写完整，且验证是机械的（`--list` 输出、固定命令、精确断言）。
 - 只依赖标准库或仓库已有依赖，≤300 行，不需要理解多个 Rust 模块之间的约束。
 - 不与正在并行工作的子代理共享文件（尤其 `api/mod.rs`、`state.rs`、
-  `config.rs`、`legacy-web/app.js`、`tests/history_parity.py`）。
+  `config.rs`、`legacy-web/app.js`、`tests/history_fixtures.py`）。
 
 不适合：
 

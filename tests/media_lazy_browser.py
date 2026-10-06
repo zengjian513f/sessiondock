@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 from browser_race_assets import install_small_render_batches
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, Corpus, codex_row, encoded, isolated_server
+from history_fixtures import BINARY, Corpus, codex_row, encoded, isolated_server
 from history_pages_browser import HOOK
 from media_browser import PNG, image, native_bytes, uid
 

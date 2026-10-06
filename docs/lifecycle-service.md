@@ -161,6 +161,5 @@ claims exactly-once external execution or support for arbitrary filesystems.
 
 ## Validation
 
-Default check is `python3 tests/lifecycle_browser.py` for user-visible
-changes, with `python3 tests/lifecycle_http_suite.py` alongside. The repository
+Default check is `python3 tests/lifecycle_browser.py`. The repository
 has no unit tests (removed on 2026-10-06).

@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
-from history_parity import BINARY, build_corpus, isolated_server
+from history_fixtures import BINARY, build_corpus, isolated_server
 
 SECONDS = 30
 MAX_GROWTH_PER_BATCH = 0.1

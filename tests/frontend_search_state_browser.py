@@ -14,7 +14,7 @@ import tempfile
 from urllib.parse import parse_qs, urlsplit
 
 from playwright.async_api import expect, async_playwright
-from history_parity import BINARY, Corpus, claude_row, get_json, isolated_server
+from history_fixtures import BINARY, Corpus, claude_row, get_json, isolated_server
 
 VIEWPORTS = ((1280, 900), (390, 844))
 MAIN = "search-state-main"

@@ -13,7 +13,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
-from history_parity import REPO, BINARY, Corpus, codex_row, codex_message, isolated_server
+from history_fixtures import REPO, BINARY, Corpus, codex_row, codex_message, isolated_server
 from terminal_browser import SHELL_SCRIPT
 from terminal_exit_browser import XTERM_TEXT
 from popups import on_popup  # noqa: E402

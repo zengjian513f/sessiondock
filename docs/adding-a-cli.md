@@ -286,7 +286,7 @@ Agy 曾把 `SYSTEM_MESSAGE` 当工具结果，原样显示 `<SYSTEM_MESSAGE>`，
   - 选择器；新建后落到原生行；发送与回显；多行发送；
   - 弹层时拒发；
   - 停止、恢复、删除；图标；问题报告。
-- 写死 source 集合的旧测试要同步：`hub_browser`、`hub_pending_state_browser`、`lifecycle_browser`、`lifecycle_cli_browser`、`lifecycle_http_suite`、`meta_capabilities_suite`。
+- 写死 source 集合的旧测试要同步：`hub_browser`、`hub_pending_state_browser`、`lifecycle_browser`、`lifecycle_cli_browser`。
 
 基础流程之外，按改动覆盖下列浏览器路径；OpenCode 专用套件可作为新 CLI 的实现范例，不能只跑旧来源来代替新来源验收。套件命令和前提见 [验证清单](validation.md)。
 

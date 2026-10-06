@@ -20,7 +20,7 @@
   its original default directory: always pass an explicit `--dir` when invoking
   it. Never use the deployed service's directories or production sessions for
   smoke tests.
-- Real-CLI tests run only with `--include-real` or direct invocation. Use
+- Real-CLI browser suites (`*_real`) run only with `--include-real` or direct invocation. Use
   Claude `claude-haiku-4-5-20251001`, Codex `gpt-5.6-luna`, or Grok `grok-4.6`
   at low effort. Pass the model on the command line, assert the actual model,
   and use temporary homes. Never change everyday defaults or fall back to a
@@ -96,37 +96,38 @@
   fixes or deployments.
 - Target parity with the frozen Python behavioral baseline, not more. The
   production replacement is complete; do not introduce extra rejection policies
-  absent from that baseline. Oracle comparisons use an explicitly supplied
-  backup checkout and do not require a running predecessor service.
+  absent from that baseline. The Python-oracle comparison tools were removed on
+  2026-10-06; the baseline is enforced through the contracts in `docs/` and the
+  browser suites that exercise them.
 
 ## Validation
 
 - After every feature or bug fix, run a headless Chromium suite that actually
   exercises the changed path the way a user would: click, type, submit, open
-  the affected page. Pick the `*_browser.py` (or `--browser` parity) that
-  covers the surface; if none exists, add or extend one. Python HTTP and
-  integration suites may accompany that run — they do not replace it.
+  the affected page. Pick the `*_browser.py` that covers the surface; if none
+  exists, add or extend one.
   Playwright Chromium is required; fixtures are temporary. A screenshot of a
   render is not enough.
-- Validation is by headless Chromium browser suites. The repository has no
-  unit tests: Rust `#[test]` modules and `crates/*/tests`, Node
+- Validation is by headless Chromium browser suites only. The repository has
+  no unit tests: Rust `#[test]` modules and `crates/*/tests`, Node
   `*_contract.mjs` and Python `unittest` suites were removed on 2026-10-06
   after an audit found every failing unit test (15 Node contract, 21
   `cargo test`, 1 Python unittest) was stale, never a product bug, while real
-  regressions were caught by browser suites. Do not add unit tests; add or
-  extend a browser suite instead.
-- Docs-only and deploy-script-only changes use the doc/deploy suites, not a
-  token browser run. Anything the page can show still needs the browser path.
+  regressions were caught by browser suites. The HTTP-only `*_suite.py`
+  scripts, the Python-oracle `*_parity.py` tools, benchmarks and probes were
+  removed the same day. Do not add unit tests or non-browser suites; add or
+  extend a browser suite instead. Shared helpers live in `tests/*_fixtures.py`.
+- Docs-only and deploy-script-only changes run the doc checks
+  (`check_docs_links.py`, `check_agents_md.py`), not a token browser run. Anything the page can show still needs the browser path.
 - Full sweep: `python3 tests/run_validation.py`. Use `--list`, `--dry-run`,
   `--tags` or `--only` to narrow it. See `docs/validation.md` for every suite.
 - Before committing docs, run `python3 tests/check_docs_links.py`.
-- History changes: `python3 tests/history_parity.py` and
-  `python3 tests/history_browser.py`; optionally pass `--python-source PATH`
-  to the parity tool for adapter-only comparison against synthetic data.
-  `python3 tests/advanced_parity.py --python-source PATH` covers multi-level
-  compaction/rewind/sidechains, fork-of-fork with subagents, rich tool cases and
-  Grok envelopes; every difference must be a documented DELTA, never UNVERIFIED.
-- Behavioral authority: match the frozen Python oracle for this batch. Remove
+- History changes: `python3 tests/history_browser.py` and
+  `python3 tests/history_pages_browser.py` (plus `rich_tools_browser.py`,
+  `grok_metadata_browser.py` or `codex_names_browser.py` when those surfaces
+  change). Every intentional difference from the frozen Python behavior must be
+  a documented DELTA in the affected contract.
+- Behavioral authority: match the frozen Python behavior. Remove
   Rust-only input, path, size, depth, capacity, format and queue rejection rules
   from implementation, tests and documentation. Do not retain an override switch
   that can restore a removed rule. Preserve actual Python/host protocol limits,

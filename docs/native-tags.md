@@ -55,7 +55,6 @@ normalized text without introducing another interpretation of the tags.
 ```sh
 cargo build -p sessiondock --locked
 python3 tests/native_tags_browser.py
-python3 tests/history_parity.py
 python3 tests/history_browser.py
 ```
 

@@ -87,7 +87,8 @@ output or become an HTTP error. An individual record must also
 pass the scanner's separate structural/resident limits; physically small but
 enormous node trees are explicitly rejected before cache admission.
 
-`tests/append_benchmark.py` creates fresh synthetic Claude/Codex/Grok servers for
+The former `tests/append_benchmark.py` (removed on 2026-10-06 with the
+non-browser scripts) created fresh synthetic Claude/Codex/Grok servers for
 1k/5k/10k records, measures first window/idle/single append/same-length rewrite,
 and verifies cursor behavior and reloaded text. Rewrites are beyond 4 KiB and
 preserve mtime. Timings include loopback HTTP and Python JSON decoding, exclude
@@ -98,7 +99,7 @@ the HTTP timing windows. These process figures include all server allocations,
 not only the record cache; they cannot prove a cross-platform or whole-workload
 memory bound. Further timing and memory observations are in [native input](native-input.md).
 
-Run the same script against saved pre-change and post-change release binaries:
+It was run against saved pre-change and post-change release binaries:
 
 ```sh
 python3 tests/append_benchmark.py --binary target/sessiondock-before13 --samples 3
