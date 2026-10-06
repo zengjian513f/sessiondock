@@ -340,6 +340,14 @@ fn build_app(
     capabilities["conversation_send"] = serde_json::json!(
         metadata.is_some() && terminal.is_some() && lifecycle.is_some() && files_write.is_some()
     );
+    capabilities["session_delete_tree"] = serde_json::json!(
+        trash.is_some()
+            && cfg!(target_os = "linux")
+            && config.state_dir.is_some()
+            && (config.roots.codex.is_some()
+                || config.roots.claude.is_some()
+                || config.roots.grok.is_some())
+    );
     let capabilities = Arc::new(capabilities);
     let assets = Arc::new(assets::Assets::load(
         &config.web_dir,

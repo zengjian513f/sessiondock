@@ -204,7 +204,7 @@ pub fn capabilities() -> Value {
         "sessions": true, "watch": true, "search": true, "live": false,
         "terminal": false, "outbox": false, "audit": false, "files": false,
         "mutations": false, "hub": false, "trash": false, "timeline_pin": false,
-        "bug_report": false, "session_clone_local_codex": false,
+        "session_delete_tree": false, "bug_report": false, "session_clone_local_codex": false,
         "media": true, "media_remote": true, "media_lazy": true, "history_pages": true, "unread_batch": true, "ui_events": true, "list_delta": true,
         "media_continuation": true,
         "history_semantics": "limited_native"

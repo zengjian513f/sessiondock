@@ -366,7 +366,7 @@ impl TransferService {
     fn group(&self, selected: &str) -> Result<group::Group, TransferError> {
         self.group_in(selected, &self.inventory_snapshot()?)
     }
-    fn group_in(
+    pub(crate) fn group_in(
         &self,
         selected: &str,
         snapshot: &SessionSnapshot,
@@ -386,6 +386,16 @@ impl TransferService {
             started.elapsed().as_millis()
         );
         result
+    }
+    pub(crate) fn any_locked(
+        &self,
+        uids: &std::collections::BTreeSet<String>,
+    ) -> Result<bool, TransferError> {
+        let now = super::bundle::now();
+        Ok(self.journal_summaries()?.iter().any(|op| {
+            (op.phase != "exporting" || op.export_lease_until > now)
+                && op.locked_uids.iter().any(|uid| uids.contains(uid))
+        }))
     }
     pub fn locked(&self, uid: &str) -> Result<bool, TransferError> {
         Ok(self.journal_summaries()?.iter().any(|op| {

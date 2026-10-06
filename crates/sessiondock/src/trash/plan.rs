@@ -78,6 +78,7 @@ pub struct Plan {
     pub origin: PathBuf,
     pub root: PathBuf,
     pub files: Vec<PlannedFile>,
+    pub sessions: Vec<Value>,
 }
 
 impl Plan {
@@ -177,6 +178,7 @@ impl Plan {
             root: root.clone(),
             source,
             files,
+            sessions: Vec::new(),
         })
     }
 }

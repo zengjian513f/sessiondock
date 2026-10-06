@@ -191,6 +191,8 @@ pub struct Manifest {
     /// Sum of the named files' sizes at inventory time.
     pub bytes: u64,
     pub files: Vec<FileRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<serde_json::Value>,
 }
 
 impl Manifest {

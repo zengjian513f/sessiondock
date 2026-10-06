@@ -297,6 +297,8 @@ def main():
                                 page.locator('#a-more').click()
                         page.set_viewport_size({'width':440,'height':900})
                         page.evaluate(('() => { ' + 'showMobileDetail(); layoutSessionHead()' + ' }'))
+                        # Let the viewport resize and its header observer finish before opening the menu.
+                        page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
                         page.screenshot(path='target/transfer-toolbar-mobile.png')
                         button=page.locator('#a-clone-group')
                         if not button.is_visible():page.locator('#a-more').click()

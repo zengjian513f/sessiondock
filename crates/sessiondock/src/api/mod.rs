@@ -24,6 +24,7 @@ mod shell_env;
 mod terminal;
 mod transfer;
 mod trash;
+mod trash_tree;
 
 use axum::{
     Json, Router,
@@ -186,6 +187,9 @@ pub fn router() -> Router<AppState> {
                 "/api/session/rewind",
             ))),
         )
+        .route("/session/tree/plan", post(trash_tree::plan))
+        .route("/session/tree/delete", post(trash_tree::delete))
+        .route("/session/tree/progress", post(trash_tree::progress))
         .route("/session/clone/plan", post(transfer::plan))
         .route("/session/clone", post(transfer::execute))
         .route("/session/clone/cancel", post(transfer::cancel_clone))
