@@ -418,18 +418,6 @@ impl LifecycleStore {
             Some(Failure::PreparationCancelled),
         )
     }
-    /// Caller must correlate the actual process instance before reporting exit.
-    /// The store performs no process discovery and never guesses a native UID/SID.
-    pub fn mark_exited(&mut self, record_id: &str) -> Result<Record, Error> {
-        let record = self.get(record_id)?;
-        if record.state == State::Exited {
-            return Ok(record);
-        }
-        if record.state != State::Running {
-            return Err(Error::WrongState);
-        }
-        self.transition(record_id, State::Exited, None)
-    }
     pub fn request_cancel(
         &mut self,
         record_id: &str,

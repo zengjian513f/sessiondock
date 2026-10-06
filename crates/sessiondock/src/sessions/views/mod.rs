@@ -384,18 +384,6 @@ impl ViewSnapshot {
             "anchor": self.anchor, "incoming": incoming}))
     }
 
-    /// HTTP-only media projection. Select the validated branch/window first;
-    /// search and other text consumers never decode/register image payloads.
-    /// Run on the same bounded blocking reader as ordinary message encoding.
-    pub fn messages_with_media(
-        &self,
-        query: &MessageQuery,
-        media: &crate::media::MediaStore,
-    ) -> Result<Value, SessionError> {
-        validate_message_query(query)?;
-        message_batch(self, query, Some(media), None, None)
-    }
-
     /// The HTTP/SSE batch as bytes: the same document `messages_with_pages`
     /// produces, with every cacheable message spliced from the view's
     /// retained serialization instead of cloned and re-serialized

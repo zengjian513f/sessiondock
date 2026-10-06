@@ -365,8 +365,8 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 - [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `refresh_within` L537
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `find` L194
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `lookup_or_resume` L245, L258
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L539
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_message_query` L499
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L527
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_message_query` L487
 
 ### `websocket_required`
 
@@ -457,13 +457,13 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 - 工具解码范围不属于当前原生记录
 - 工具解码范围无效
 - 图片缺少当前原生来源授权
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `file_stamp` L1342
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `trusted_path` L1397
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `file_stamp` L1329
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `trusted_path` L1384
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `find` L204
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `lookup_or_resume` L247
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `materialize_text` L71
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `prepare` L154, L158
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_source` L491
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_source` L479
 
 ### `terminal_disabled`
 
@@ -533,14 +533,14 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 - [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `select_main` L682
 - [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `physical_chain` L313
 - [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `agent_uid` L355
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `prepare` L365, L1089, L1094, L1100
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `search_version` L924, L929
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `prepare` L365, L1076, L1081, L1087
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `search_version` L911, L916
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `find` L202
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `lookup` L220
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `lookup_media` L231
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L547
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_request` L1596, L1599
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `view_meta` L1640
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L535
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_request` L1584, L1587
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `view_meta` L1628
 
 ### `session_missing`
 
@@ -1148,17 +1148,17 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 - [`sessions/native_input.rs`](../crates/sessiondock/src/sessions/native_input.rs) `invalid_range` L20
 - [`sessions/native_media.rs`](../crates/sessiondock/src/sessions/native_media.rs) `authorized_reader` L62, L64, L75, L84
 - [`sessions/native_media.rs`](../crates/sessiondock/src/sessions/native_media.rs) `finish` L29, L32
-- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `history_page_body` L517
-- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `media_page` L578, L581, L587, L593
-- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `validate_grant_scope` L489
+- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `history_page_body` L523
+- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `media_page` L584, L587, L593, L599
+- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `validate_grant_scope` L495
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `materialize_text` L68, L86
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `prepare` L161, L170
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `replay_changed` L21
 - [`sessions/scope.rs`](../crates/sessiondock/src/sessions/scope.rs) `native_identity` L97
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L550, L553
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_scope` L1839
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_source` L482
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_request` L1604
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L538, L541
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_scope` L1827
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_source` L470
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_request` L1592
 
 ### `shell_env_unconfigured`
 
@@ -1258,9 +1258,9 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 - 此图片分页无法在读取预算内推进
 - 图片分页响应超过 8 MiB 预算
 - 继承历史预算溢出
-- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `media_page` L598, L632
-- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `page_selection` L545
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `inherit` L1944
+- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `media_page` L604, L638
+- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `page_selection` L551
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `inherit` L1932
 
 ### `terminal_input_too_large`
 
@@ -1364,14 +1364,14 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 - [`sessions/index/titles.rs`](../crates/sessiondock/src/sessions/index/titles.rs) `codex_name` L14
 - [`sessions/index/titles.rs`](../crates/sessiondock/src/sessions/index/titles.rs) `titles` L28, L39
 - [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `list_state` L525
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `published_view_bytes` L783
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `published_view_bytes` L770
 - [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `views` L535
-- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `history_page_body` L525
+- [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `history_page_body` L531
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `take` L310
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `validate_response` L367
 - [`sessions/views/body.rs`](../crates/sessiondock/src/sessions/views/body.rs) `serialize_error` L160
 - [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `encode_events` L118
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `view_meta` L1625
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `view_meta` L1613
 
 ### `trash_encoding`
 
@@ -1493,12 +1493,12 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 - [`sessions/scope.rs`](../crates/sessiondock/src/sessions/scope.rs) `grok_native_identity` L31
 - [`sessions/scope.rs`](../crates/sessiondock/src/sessions/scope.rs) `native_identity` L65, L91, L104
 - [`sessions/scope.rs`](../crates/sessiondock/src/sessions/scope.rs) `summary_native_identity` L50
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `build` L1729, L1737
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L542, L555
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `committed_records` L525
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `inherit` L1938
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_scope` L1829, L1833
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `parse_prefix` L1985
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `build` L1717, L1725
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L530, L543
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `committed_records` L513
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `inherit` L1926
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_scope` L1817, L1821
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `parse_prefix` L1973
 
 ## 503 Service Unavailable
 
@@ -1663,9 +1663,9 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 - [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `check_cut` L512
 - [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `discover` L814, L821
 - [`sessions/index/names.rs`](../crates/sessiondock/src/sessions/index/names.rs) `error` L23
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `file_stamp` L1336, L1340
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `prepare` L1106
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `stamp` L1329
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `file_stamp` L1323, L1327
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `prepare` L1093
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `stamp` L1316
 - [`sessions/native_input.rs`](../crates/sessiondock/src/sessions/native_input.rs) `allocation_error` L23
 - [`sessions/native_input.rs`](../crates/sessiondock/src/sessions/native_input.rs) `changed` L14
 - [`sessions/native_input.rs`](../crates/sessiondock/src/sessions/native_input.rs) `read_error` L17
@@ -1674,9 +1674,9 @@ Scanned `crates/sessiondock/src`: **233** (status, code) pairs.
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `link_media` L176
 - [`sessions/records/native_records.rs`](../crates/sessiondock/src/sessions/records/native_records.rs) `io_error` L76
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `materialize_text` L89, L94, L96, L100
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `committed_records` L521
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `parse_candidate_retaining` L629, L634, L637
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `read_bounded_limit` L572
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `committed_records` L509
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `parse_candidate_retaining` L617, L622, L625
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `read_bounded_limit` L560
 
 ### `shutdown`
 

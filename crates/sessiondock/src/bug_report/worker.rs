@@ -299,13 +299,6 @@ impl Probe {
         }
     }
 
-    pub fn note_paste_frame(&mut self, capture: &ScreenCapture) {
-        match self {
-            Self::Composer { pre_paste, .. } => *pre_paste = Some(capture.text.clone()),
-            Self::Screen(probe) => probe.pre_paste = Some(capture.text.clone()),
-        }
-    }
-
     /// Evidence that the paste reached the editor: the composer shows the
     /// exact text (soft wraps ignored) or the TUI's collapsed-paste
     /// placeholder; when the block cannot be located (a screen too small for

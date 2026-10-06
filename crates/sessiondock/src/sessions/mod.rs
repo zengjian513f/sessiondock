@@ -725,19 +725,6 @@ impl SessionStore {
         Ok(self.render_view(&published, &document).0)
     }
 
-    /// `list_view_unless` as the response bytes, served from the shared
-    /// byte cache: a hot request whose `sig` differs (or is absent) is a
-    /// lookup, not clone-decorate-serialize. An entry is reused while the
-    /// view document is the same `Arc` (so `sig` and `built_at` are
-    /// unchanged) and no cached view was inserted, replaced or evicted
-    /// (`Views::revision`, which is what the decorations depend on).
-    /// `force=1` rescans and re-renders like the predecessor; a render
-    /// while an open holds the view lock is undecorated and not kept.
-    pub fn list_view_bytes(&self, force: bool, sig: &str) -> Result<Bytes, SessionError> {
-        let published = self.publish(force)?;
-        self.published_view_bytes(published, force, sig, None)
-    }
-
     /// Run topology preparation once per newly listed native identity, before
     /// metadata enrichment/signing. The inventory cannot advance between preparation
     /// and rendering; process discovery itself belongs to the caller.

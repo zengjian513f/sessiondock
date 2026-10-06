@@ -10,7 +10,7 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 194 files, 86231 lines, 5 undocumented.
+`crates/sessiondock/src`: 194 files, 86032 lines, 5 undocumented.
 
 - `api/`
   - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines)
@@ -49,7 +49,7 @@ python3 tests/module_map.py --write
 - `bridge/`
   - `claude.rs` — Claude question cards. (440 lines)
   - `codex.rs` — Codex command approvals. (217 lines)
-  - `live.rs` — The live `prompt` of a session view. (239 lines)
+  - `live.rs` — The live `prompt` of a session view. (235 lines)
   - `menus/`
     - `agy.rs` — Agy 1.2.16/1.2.17 menus verified in an isolated real PTY. Unverified forms stay (314 lines)
     - `claude.rs` — Claude Code 2.1.285's live selection surfaces. (698 lines)
@@ -63,11 +63,11 @@ python3 tests/module_map.py --write
 - `bug_report/`
   - `mod.rs` — Bug-report bundles and their CLI workers. (1037 lines)
     - mods: `worker`
-  - `worker.rs` — The bug-report worker. (472 lines)
+  - `worker.rs` — The bug-report worker. (465 lines)
 - `config.rs` — SessionDock configuration. Paths come from explicit environment variables; (660 lines)
 - `conversation/`
   - `cli_state.rs` — Per-session CLI state that native history cannot tell (docs/cli-state.md): (623 lines)
-  - `input.rs` — Positive recognition of the CLI input surface, shared by CHECK and every (476 lines)
+  - `input.rs` — Positive recognition of the CLI input surface, shared by CHECK and every (487 lines)
   - `mod.rs` — One conversation send path: drafts are server-owned, successful SEND belongs to the CLI. (1098 lines)
     - mods: `cli_state`, `input`, `report_name`, `rewind`, `store`
   - `report_name.rs` — Name a report through the Codex TUI before sending its first model task. (149 lines)
@@ -107,7 +107,7 @@ python3 tests/module_map.py --write
   - `session_links.rs` — Resolve saved links through completed transfer records, never by guessing IDs. (252 lines)
   - `transfer.rs` — Durable cross-node clone orchestration over the authenticated node channel. (1296 lines)
 - `hub_config.rs` — Configuration of the `sessiondock-hub` binary. Separate from (119 lines)
-- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (595 lines)
+- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (589 lines)
   - mods: `api`, `assets`, `audit`, `bridge`, `bug_report`, `config`, `conversation`, `delivery`, `error`, `files`, `fingerprint`, `hub`, `hub_config`, `lifecycle`, `list_sync`, `media`, `metadata`, `native_replay`, `observe`, `polls`, `runtime`, `search`, `security`, `sessions`, `shell_env`, `state`, `terminal`, `transfer`, `trash`, `ui_events`, `session_links`
 - `lifecycle/`
   - `autobind.rs` — Process-evidence binding of pending Codex/Grok launches. (326 lines)
@@ -121,7 +121,7 @@ python3 tests/module_map.py --write
   - `store/`
     - `disk.rs` — Adapted locally from delivery/store/disk.rs; keep its reviewed durability (211 lines)
     - `json.rs` — Strict JSON grammar without duplicating the lifecycle receipt schema. (99 lines)
-    - `mod.rs` — Single-writer durable creation receipts. No process, native history or HTTP I/O. (794 lines)
+    - `mod.rs` — Single-writer durable creation receipts. No process, native history or HTTP I/O. (782 lines)
       - mods: `disk`, `json`
 - `list_sync.rs` — Opt-in list transport. Cached revisions only save bytes: eviction, restart, (353 lines)
 - `main.rs` — Loopback development binary. No option starts the Web service. (329 lines)
@@ -135,9 +135,9 @@ python3 tests/module_map.py --write
   - `native_media.rs` — Private native-string descriptors. Paths are metadata, never open authority. (370 lines)
 - `metadata/`
   - `disk.rs` — Metadata reads and atomic replacement in the configured directory. (112 lines)
-  - `mod.rs` — SessionDock preferences with reads and atomic publication. (244 lines)
+  - `mod.rs` — SessionDock preferences with reads and atomic publication. (217 lines)
     - mods: `disk`, `model`
-  - `model.rs` — Pure, versioned metadata transformations. No process or native-file access. (846 lines)
+  - `model.rs` — Pure, versioned metadata transformations. No process or native-file access. (745 lines)
     - mods: `transfer`
   - `transfer.rs` — Atomic comparison and restoration of display rows during history imports. (63 lines)
 - `native_replay.rs` — Checked-source-independent replay of nested JSON string interiors. (219 lines)
@@ -154,7 +154,7 @@ python3 tests/module_map.py --write
   - `procscan/`
     - `activity.rs` — Work that outlives a turn, including detached commands carrying a native (165 lines)
   - `spawn.rs` — Initialize the single sidebar parent from an observed local CLI launch. (320 lines)
-- `search.rs` — Bounded on-demand search over semantic session views, never raw JSONL. (897 lines)
+- `search.rs` — Bounded on-demand search over semantic session views, never raw JSONL. (874 lines)
   - mods: `cache`, `fold`, `prefilter`, `service`
 - `search/`
   - `cache.rs` — Persistent search-text cache: one file per main session holding the exact (865 lines)
@@ -183,12 +183,12 @@ python3 tests/module_map.py --write
       - `opencode.rs` — OpenCode row summary from the SessionDock mirror (`sessions::opencode`): (104 lines)
     - `titles.rs` — Point reads of current display titles. Only initial discovery builds a full (164 lines)
   - `media_projection.rs` — Window selection precedes file opens; authority uses the complete branch. (216 lines)
-  - `mod.rs` — Session read model: the lazy index (`index/`) is the only inventory, and (1456 lines)
+  - `mod.rs` — Session read model: the lazy index (`index/`) is the only inventory, and (1443 lines)
     - mods: `history`, `index`, `agy`, `native_input`, `native_media`, `opencode`, `pages`, `views`, `providers`, `records`, `scope`, `sidebar`, `media_projection`
   - `native_input.rs` — Checked, chunked native input and a disposable raw-prefix index. (336 lines)
   - `native_media.rs` — Native span authority is the current full selected branch, not file_roots (89 lines)
   - `opencode.rs` — OpenCode session mirror. (625 lines)
-  - `pages.rs` — Finite history pages. Grants hold checkpoints, never retained native views. (635 lines)
+  - `pages.rs` — Finite history pages. Grants hold checkpoints, never retained native views. (641 lines)
   - `providers.rs` — Pure native-record projection. File discovery, inheritance cutoffs and (1354 lines)
     - mods: `agy`, `claude`, `envelopes`, `grok`, `image_content`, `opencode`, `tools`
   - `providers/`
@@ -215,7 +215,7 @@ python3 tests/module_map.py --write
   - `views/`
     - `body.rs` — Byte rendering of message batches: the `/api/messages` document and the (273 lines)
     - `encoded.rs` — Serialized message bytes of one projected file, kept next to its events (256 lines)
-    - `mod.rs` — Per-session views on demand: one opened session is (2034 lines)
+    - `mod.rs` — Per-session views on demand: one opened session is (2022 lines)
       - mods: `body`, `encoded`
 - `shell_env.rs` — Login-shell environment drift. (224 lines)
 - `state.rs` — (no module doc) (210 lines)
@@ -257,7 +257,7 @@ python3 tests/module_map.py --write
   - `service.rs` — Durable same-node clone transaction. Plans contain server-derived paths only; (1185 lines)
     - mods: `journal`, `names`, `prefix`, `tool_requirements`
   - `tool_requirements.rs` — Persisted definitions identify executor dependencies, not runnable tools. (64 lines)
-- `trash.rs` — Session recycle bin. Native files move into recoverable entries; fork (900 lines)
+- `trash.rs` — Session recycle bin. Native files move into recoverable entries; fork (889 lines)
   - mods: `manifest`, `plan`, `tree`
 - `trash/`
   - `manifest.rs` — Per-entry manifest: the only record of where trashed files came from. (294 lines)
@@ -324,13 +324,13 @@ python3 tests/module_map.py --write
 
 ## ptyhost-record
 
-`crates/ptyhost-record/src`: 4 files, 1409 lines, 0 undocumented.
+`crates/ptyhost-record/src`: 4 files, 1382 lines, 0 undocumented.
 
 - `format.rs` — 录制分段的字节级编解码：段头与帧。 (306 lines)
 - `lib.rs` — ptyhost 会话录制（record）：每个会话一个目录，若干只追加的分段文件。 (152 lines)
   - mods: `format`, `reader`, `store`
-- `reader.rs` — 录制目录的只读读取器。 (615 lines)
-- `store.rs` — 录制目录的只追加写入器。 (336 lines)
+- `reader.rs` — 录制目录的只读读取器。 (593 lines)
+- `store.rs` — 录制目录的只追加写入器。 (331 lines)
 
 ## ptyhost-screen
 

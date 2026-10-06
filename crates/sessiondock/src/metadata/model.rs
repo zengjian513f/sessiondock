@@ -595,69 +595,6 @@ impl MetadataSnapshot {
         })
     }
 
-    pub fn with_activity_stop(&self, uid: &str, stop: ActivityStop) -> Result<Self, MetadataError> {
-        validate_uid(uid)?;
-        self.change(|rows| {
-            let row = rows.entry(uid.to_owned()).or_default();
-            row.stopped = Some(stop);
-            row.activity_revision = increment(row.activity_revision)?;
-            Ok(())
-        })
-    }
-
-    pub fn without_inferred_activity_stop(&self, uid: &str) -> Result<Self, MetadataError> {
-        validate_uid(uid)?;
-        self.change(|rows| {
-            if let Some(row) = rows.get_mut(uid)
-                && row
-                    .stopped
-                    .as_ref()
-                    .is_some_and(|stop| stop.inferred || stop.reason == "终端已结束或中断")
-            {
-                row.stopped = None;
-                row.activity_revision = increment(row.activity_revision)?;
-            }
-            Ok(())
-        })
-    }
-
-    pub fn with_pending_rewind(
-        &self,
-        uid: &str,
-        pending: PendingRewind,
-    ) -> Result<Self, MetadataError> {
-        validate_uid(uid)?;
-        self.change(|rows| {
-            rows.entry(uid.to_owned()).or_default().rewind_pending = Some(pending);
-            Ok(())
-        })
-    }
-
-    /// Call only after native/terminal confirmation. Pending selection itself
-    /// never changes the confirmed timeline and never authorizes native writes.
-    pub fn with_confirmed_rewind(&self, uid: &str, tip: &str) -> Result<Self, MetadataError> {
-        validate_uid(uid)?;
-        field(tip)?;
-        self.change(|rows| {
-            let row = rows
-                .get_mut(uid)
-                .ok_or_else(|| MetadataError::new(409, "rewind_not_pending", "没有待确认的回滚"))?;
-            let pending = row
-                .rewind_pending
-                .take()
-                .ok_or_else(|| MetadataError::new(409, "rewind_not_pending", "没有待确认的回滚"))?;
-            row.timeline = Some(TimelinePin {
-                tip: tip.to_owned(),
-                stale_end: pending.stale_end,
-                target: None,
-                pinned_at: None,
-                cli: false,
-            });
-            row.timeline_revision = increment(row.timeline_revision)?;
-            Ok(())
-        })
-    }
-
     /// Replace the display pin. Re-pinning the identical tip/target/boundary
     /// is a no-op that keeps the original `pinned_at` and revision. This is a
     /// read-model preference only: no native write, no CLI signal.
@@ -706,44 +643,6 @@ impl MetadataSnapshot {
             .sessions
             .get(uid)
             .map_or(0, |row| row.timeline_revision)
-    }
-    pub fn pending_rewind(&self, uid: &str) -> Option<&PendingRewind> {
-        self.document.sessions.get(uid)?.rewind_pending.as_ref()
-    }
-
-    pub fn resolve_activity(&self, uid: &str, activity: &Value) -> Value {
-        if !matches!(activity["state"].as_str(), Some("working" | "waiting")) {
-            return activity.clone();
-        }
-        let Some(stop) = self
-            .document
-            .sessions
-            .get(uid)
-            .and_then(|row| row.stopped.as_ref())
-        else {
-            return activity.clone();
-        };
-        let at = activity["ts"].as_f64().or_else(|| {
-            activity["ts"]
-                .as_str()
-                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-                .map(|value| value.timestamp_millis() as f64 / 1000.0)
-        });
-        if at.is_some_and(|at| at > stop.at) {
-            return activity.clone();
-        }
-        let state = match stop.state {
-            StopState::Idle => "idle",
-            StopState::Aborted => "aborted",
-        };
-        let timestamp = chrono::DateTime::from_timestamp_millis((stop.at * 1000.0) as i64)
-            .expect("validated epoch")
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        json!({"role":"status", "state":state, "text":state, "ts":timestamp, "reason":stop.reason})
-    }
-
-    pub fn enrich_one(&self, row: &mut Value, topology: &[Value]) {
-        self.decorate(row, &fork_parent_uids(topology));
     }
 
     pub fn enrich(&self, rows: &mut [Value]) {

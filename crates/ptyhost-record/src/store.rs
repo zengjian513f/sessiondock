@@ -303,11 +303,6 @@ impl Store {
         self.segments.iter().map(|segment| segment.len).sum()
     }
 
-    /// 打开着的分段的 `base_unix_ms`。
-    pub fn open_segment_base_ms(&self) -> Option<u64> {
-        Some(self.open_info()?.header.base_unix_ms)
-    }
-
     fn open_info(&self) -> Option<&SegmentInfo> {
         self.open.as_ref()?;
         self.segments.last()

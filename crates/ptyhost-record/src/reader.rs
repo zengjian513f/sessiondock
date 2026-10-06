@@ -158,28 +158,6 @@ pub fn latest_checkpoint(dir: &Path) -> io::Result<Option<Replay>> {
     Ok(None)
 }
 
-/// 最新分段有效帧的末尾位置（耗尽 [`FrameIter`] 后的 [`FrameIter::offset`]）。
-/// 没有任何分段时返回 `None`。
-pub fn newest_position(dir: &Path) -> io::Result<Option<Position>> {
-    let segments = list_segments(dir)?;
-    let Some(info) = segments.last() else {
-        return Ok(None);
-    };
-    let Some((_, bytes)) = load_segment(&info.path)? else {
-        return Ok(Some(Position {
-            segment: info.index,
-            offset: 0,
-        }));
-    };
-    let body = &bytes[SEGMENT_HEADER_LEN..];
-    let mut iter = FrameIter::new(body);
-    while iter.next().is_some() {}
-    Ok(Some(Position {
-        segment: info.index,
-        offset: iter.offset() as u64,
-    }))
-}
-
 /// 从 `from` 起按序读取事件，可跨后续分段，直到累计载荷达到 `max_payload_bytes`
 /// 或没有更多数据。
 ///

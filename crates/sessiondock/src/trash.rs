@@ -334,17 +334,6 @@ impl TrashService {
         Plan::derive(row, &self.roots)
     }
 
-    /// Execute a plan against the current contents of its inventory paths.
-    pub fn move_planned(
-        &self,
-        plan: &Plan,
-        run_state: RunStateNote,
-        forced: bool,
-    ) -> Result<Deleted, TrashError> {
-        let _guard = self.guard();
-        self.move_into_trash(plan, run_state, forced)
-    }
-
     fn move_into_trash(
         &self,
         plan: &Plan,

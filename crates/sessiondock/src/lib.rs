@@ -53,12 +53,6 @@ pub fn app(config: Config) -> io::Result<Router> {
     app_with_shutdown(config, tokio_util::sync::CancellationToken::new())
 }
 
-/// Both listeners' routers from the synchronous factory: the loopback router
-/// and, only with the node identity configured, the node listener's.
-pub fn app_pair(config: Config) -> io::Result<(Router, Option<Router>)> {
-    app_pair_with_shutdown(config, tokio_util::sync::CancellationToken::new())
-}
-
 pub fn app_with_shutdown(
     config: Config,
     shutdown: tokio_util::sync::CancellationToken,
