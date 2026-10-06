@@ -78,6 +78,29 @@ class Collector:
         self.socket.close()
 
 
+
+def assert_resource_spacing(sidebar):
+    """The last column hugs its content, while titles and star retain their space."""
+    geometry = sidebar.evaluate('''e => {
+        const panel=e.querySelector('.item-resources'), box=panel.getBoundingClientRect();
+        const cells=[...panel.children], second=[1,3,5].map(i=>cells[i]);
+        const values=second.map(c=>c.querySelector('.item-resource-value').getBoundingClientRect());
+        return {
+            trailing:box.right-Math.max(...values.map(r=>r.right)),
+            starGap:e.querySelector('.item-star').getBoundingClientRect().left-box.right,
+            titleGap:box.left-e.querySelector('.body').getBoundingClientRect().right,
+            aligned:second.every(c=>Math.abs(c.getBoundingClientRect().left-second[0].getBoundingClientRect().left)<1),
+            overflow:cells.some(c=>c.scrollWidth>c.clientWidth),
+            clipped:cells.some(c=>{const v=c.querySelector('.item-resource-value');return v.scrollWidth>v.clientWidth;}),
+        };
+    }''')
+    assert 0 <= geometry['trailing'] <= 1, geometry
+    assert 2 <= geometry['starGap'] <= 4, geometry
+    assert 8 <= geometry['titleGap'] <= 12, geometry
+    assert geometry['aligned'] and not geometry['overflow'], geometry
+    assert not geometry['clipped'], geometry
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -157,10 +180,32 @@ def main():
         assert sidebar.locator('[data-resource="memory_pss_bytes"] .item-resource-value').inner_text() == '64M'
         assert sidebar.locator('[data-resource="proc_storage_read_bytes_per_second"] .item-resource-value').inner_text() == '2K/s'
         assert sidebar.locator('[data-resource="proc_storage_write_bytes_per_second"] .item-resource-value').inner_text() == '4K/s'
+        assert_resource_spacing(sidebar)
         assert sidebar.locator('.item-resources [title], .item-resources[title]').count() == 0
         assert sidebar.locator('.body > :nth-child(2)').get_attribute('class') == 'm'
         assert sidebar.locator('.m').inner_text() == original_meta
         assert sidebar.evaluate("e => e.querySelector('.item-resources').getBoundingClientRect().left >= e.querySelector('.body').getBoundingClientRect().right")
+        # Reported short values must not leave an empty second-column tail;
+        # larger values must still fit without moving the title or separator.
+        sample = context.request.get(base + '/api/resources/summary').json()
+        page.route('**/api/resources/summary', lambda route: route.fulfill(json=sample))
+        for viewport in ({'width':1724,'height':1040}, {'width':390,'height':844}):
+            page.set_viewport_size(viewport)
+            title_width = sidebar.locator('.body').bounding_box()['width']
+            boundary = sidebar.locator('.item-resources').bounding_box()['x']
+            for values in ((.02, 2, 154*1024**2, 0, 0, 0),
+                           (123.45, 123, 9.9*1024**3, 16, 9.9*1024**3, 9.9*1024**3)):
+                for row in sample['sessions']:
+                    for key, value in zip(('cpu_cores', 'process_count', 'memory_pss_bytes', 'gpu_count',
+                                           'proc_storage_read_bytes_per_second', 'proc_storage_write_bytes_per_second'), values):
+                        row['metrics'][key] = {'value':value, 'status':'ok'}
+                page.evaluate('SessionDockSidebarResources.refresh()')
+                assert_resource_spacing(sidebar)
+                assert abs(sidebar.locator('.body').bounding_box()['width']-title_width)<1
+                assert abs(sidebar.locator('.item-resources').bounding_box()['x']-boundary)<1
+        page.unroute('**/api/resources/summary')
+        page.set_viewport_size({'width':1280,'height':960})
+        page.evaluate('SessionDockSidebarResources.refresh()')
         toggle.click()
         assert not sidebar.locator('.item-resources').is_visible()
         assert page.locator('#left').bounding_box()['width'] == original_width
@@ -206,6 +251,7 @@ def main():
         assert sidebar.is_visible()
         assert sidebar.evaluate('(e) => e.clientWidth > 0 && e.scrollWidth <= e.clientWidth')
         assert sidebar.locator('.item-resources').is_visible()
+        assert_resource_spacing(sidebar)
         page.screenshot(path='/tmp/sidebar-resources-mobile.png')
         page.set_viewport_size({'width':1280,'height':960})
 
