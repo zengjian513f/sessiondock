@@ -196,10 +196,13 @@ def run_source(page, context, base, source, work):
             expect(page.locator("#termpane")).to_be_hidden()
             assert page.evaluate("T.pending.find(row => 'tmux:' + row.name === S.sel).record_id") == receipt["record_id"]
             passed(f"codex: reload restores pending receipt and draft at {width}px")
-        # Returning to the mobile list is a saved choice, not a request to
-        # reopen the last detail when the delayed receipt finally arrives.
+        # An explicit launch URL wins over the saved mobile list choice,
+        # just like a native deep link. The bare entry still restores the list.
         page.locator("#detail .mobile-back").click()
         page.reload(wait_until="networkidle")
+        page.wait_for_function("uid => S.sel === uid", arg=pending_uid)
+        page.locator("#detail .mobile-back").click()
+        page.goto(base, wait_until="networkidle")
         assert page.evaluate("S.sel") is None
         page.locator(f'#side .item[data-uid="{pending_uid}"]').click()
         page.wait_for_function("uid => S.sel === uid", arg=pending_uid)
@@ -250,7 +253,11 @@ def run_source(page, context, base, source, work):
         row.click(button="right")
         passed("shell: sidebar stop exits the session and retains its row")
     expect(menu_stop).to_be_visible()
-    expect(menu_stop).to_have_attribute("aria-disabled", "true")
+    if source == "shell":
+        expect(menu_stop).to_have_attribute("aria-disabled", "true")
+    else:
+        # Running AI launches now expose the separate start/stop action.
+        expect(menu_stop).not_to_have_attribute("aria-disabled", "true")
     expect(menu_delete).to_be_visible()
     expect(menu_delete).to_have_text("删除会话" if source == "shell" else "丢弃会话")
     page.keyboard.press("Escape")
