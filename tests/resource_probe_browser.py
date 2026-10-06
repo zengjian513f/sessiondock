@@ -26,6 +26,8 @@ class Collector:
         self.path, self.node_id, self.bindings = path, node_id, bindings
         self.calls, self.fail, self.enabled = [], False, False
         self.cpu = 2
+        self.gpu_devices = ['GPU-fixture']
+        self.extra_samples = []
         self.socket = socket.socket(socket.AF_UNIX)
         self.socket.bind(str(path))
         self.socket.listen()
@@ -57,13 +59,15 @@ class Collector:
                         samples = [{'process': b['process'], 'cpu_seconds': 0, 'rss_bytes': 0, 'threads': 1,
                                     'read_bytes': None, 'write_bytes': None, 'metrics': {
                                         'cpu_cores': {'value':self.cpu,'status':'ok'},
-                                        'gpu_devices': {'value':['GPU-fixture'],'status':'partial'},
+                                        'gpu_devices': {'value':self.gpu_devices,'status':'partial'},
+                                        'gpu_memory_bytes': {'value':32*1024**2 if self.gpu_devices else 0,'status':'partial'},
                                         'memory_pss_bytes': {'value':32*1024**2,'status':'ok'},
                                         'proc_storage_read_bytes_per_second': {'value':1024,'status':'partial'},
                                         'proc_storage_write_bytes_per_second': {'value':2048,'status':'partial'},
                                         'disk_read_operations_per_second': {'value': 12.5 if self.enabled else None, 'status': 'partial' if self.enabled else 'unavailable'}}}
                                    for b in self.bindings]
                         samples += samples[:1]  # Repeated records must not inflate process/GPU counts.
+                        samples += self.extra_samples
                         result = {**report, 'availability': 'observed', 'method': 'fixture', 'samples': samples,
                                   'unavailable': [], 'metric_availability': {}, 'sessions': [], 'diagnostic': diagnostic,
                                   'session_measurements': [{'session': self.bindings[0]['session'], 'metrics': {
@@ -173,6 +177,59 @@ def main():
         assert sidebar.locator('.item-resources .ui-icon').count() == 6
         assert sidebar.locator('[data-resource="process_count"] .item-resource-value').inner_text() == '2'
         assert sidebar.locator('[data-resource="gpu_count"] .item-resource-value').inner_text() == '2'
+        # A detached SSH workload can outlive all launch evidence. The GPU
+        # sampler still sees it, but it must neither be assigned by guesswork
+        # nor disappear as zero when Hub hides its unverified execution node.
+        for collector in collectors[:3]:
+            collector.gpu_devices = []
+        unassigned = {'process': {'pid':100, 'start':1001}, 'cpu_seconds':0,
+                      'rss_bytes':0, 'threads':1, 'read_bytes':None, 'write_bytes':None,
+                      'metrics': {'gpu_devices': {'value':['GPU-detached-1','GPU-detached-2'],'status':'partial'},
+                                  'gpu_memory_bytes': {'value':64*1024**2,'status':'partial'}}}
+        collectors[2].extra_samples = [unassigned, unassigned]
+        # Same PID, different incarnation: the existing binding is not evidence.
+        page.evaluate('SessionDockSidebarResources.refresh()')
+        assert sidebar.locator('[data-resource="gpu_count"] .item-resource-value').inner_text() == '—'
+        summary = context.request.get(base + '/api/resources/summary').json()
+        metric = next(r for r in summary['sessions'] if r['session']['node_id'] == nodes[0].nid)['metrics']['gpu_count']
+        assert metric['value'] is None and metric['attribution_incomplete'] is True, metric
+        view = context.request.get(resource_url).json()
+        assert {n['node_id'] for n in view['nodes']} == {nodes[0].nid,nodes[1].nid}, view
+        assert view['totals']['metrics']['gpu_count']['value'] is None, view
+        assert view['totals']['metrics']['gpu_memory_bytes']['value'] is None, view
+        sidebar.locator('.item-resources').click()
+        gpu = page.locator('.sr-totals .sr-metric').nth(1)
+        wait_for(lambda: gpu.locator('dd').inner_text() == '—')
+        gpu.hover()
+        assert '未归属' in gpu.get_attribute('title')
+        for scope in ('direct', 'inclusive'):
+            page.locator(f'.session-resources [data-scope="{scope}"]').click()
+            wait_for(lambda: gpu.locator('dd').inner_text() == '—')
+        page.get_by_role('button', name='关闭资源面板').click()
+        # Keep a confirmed positive subtotal, with explicit incomplete coverage.
+        collectors[0].gpu_devices = ['GPU-confirmed']
+        page.evaluate('SessionDockSidebarResources.refresh()')
+        assert sidebar.locator('[data-resource="gpu_count"] .item-resource-value').inner_text() == '1'
+        view = context.request.get(resource_url).json()
+        metric = view['totals']['metrics']['gpu_count']
+        assert metric['value'] == 1 and metric['status'] == 'partial' and metric['attribution_incomplete'], metric
+        # Once full process identity is verified, count remote devices once.
+        collectors[2].bindings.append({'process': unassigned['process'], 'session':owner,
+                                      'first_observed_at':time.time(), 'launch_chain':[]})
+        page.evaluate('SessionDockSidebarResources.refresh()')
+        assert sidebar.locator('[data-resource="gpu_count"] .item-resource-value').inner_text() == '3'
+        summary = context.request.get(base + '/api/resources/summary').json()
+        metric = next(r for r in summary['sessions'] if r['session']['node_id'] == nodes[0].nid)['metrics']['gpu_count']
+        assert metric['value'] == 3 and not metric.get('attribution_incomplete'), metric
+        collectors[2].bindings.pop()
+        collectors[2].extra_samples = []
+        collectors[0].gpu_devices = []
+        page.evaluate('SessionDockSidebarResources.refresh()')
+        assert sidebar.locator('[data-resource="gpu_count"] .item-resource-value').inner_text() == '0'
+        for collector in collectors[:3]:
+            collector.gpu_devices = ['GPU-fixture']
+        page.evaluate('SessionDockSidebarResources.refresh()')
+        print('PASS unassigned remote GPU coverage, PID incarnation, known subtotal, verified recovery and true zero', flush=True)
         assert sidebar.locator('.item-resources').evaluate('''e => {
             const cells=[...e.children];
             const names=cells.map(c=>c.dataset.resource);
