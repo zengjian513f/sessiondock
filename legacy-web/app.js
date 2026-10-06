@@ -2144,6 +2144,7 @@ function paintLive() {
     renderConversationTail(cache.get(viewKey(selected.uid, S.agent))?.activity, selected.uid);
   }
   paintTransferAvailability($('#a-clone-group'), S.sel);
+  refreshSessionRunControls();
   paintTreeDeleteAvailability($('#a-delete-tree'), selected);
   if (menuUid) {
     paintTransferAvailability($('#item-menu [data-act="clone"]'), menuUid);
@@ -3399,8 +3400,7 @@ function openItemMenu(uid, x, y) {
   // other controls. The shared capture handler blocks mouse, touch and keyboard clicks.
   const unavailable = {
     'copy-identity': !row?.sid ? '此会话尚无原生会话标识。' : '',
-    stop: parent || (row?.pending ? !shellRunning : !running || !!unusedLaunch)
-      ? '此会话当前没有可停止的进程。' : '',
+    stop: sessionRunUnavailable(row),
     hide: !parent ? '仅分叉父会话可隐藏。' : '',
     detach: !nestable || !nested ? '此会话当前没有附属关系。' : '',
     attach: !nestable ? '此会话当前不能设置附属关系。' : '',
@@ -3417,6 +3417,7 @@ function openItemMenu(uid, x, y) {
     if (button.dataset.act !== 'clone') setControlUnavailable(button, unavailable[button.dataset.act]);
   }
   menu.querySelector('[data-act="delete"]').textContent = ((row?.pending && row?.source !== 'shell') || unusedLaunch) ? '丢弃会话' : '删除会话';
+  paintSessionRunControl(menu.querySelector('[data-act="stop"]'), row);
   paintTransferAvailability(menu.querySelector('[data-act="clone"]'), uid);
   menu.hidden = false;
   const box = menu.getBoundingClientRect();
@@ -3593,8 +3594,7 @@ $('#item-menu').onclick = async e => {
   }
   if (button.dataset.act === 'stop') {
     const row = S.sessions.find(x => x.uid === uid) || sidebarSessions().find(x => x.uid === uid);
-    if (row?.pending) { if (typeof stopPendingSession === 'function') await stopPendingSession(row); return; }
-    if (row) await stopSession(row);
+    if (row) await toggleSessionRun(row);
     return;
   }
   const row = sidebarSessions().find(session => session.uid === uid);
@@ -5924,7 +5924,7 @@ function bindSessionActions(heading) {
 }
 
 // 会话头任何宽度都只占一行，且不因折叠留白。一行上的重要程度：标题 → 操作按钮（按菜单顺序：
-// 停止、星标、折叠过程、搜索、冻结/恢复与报告、迁移会话树、删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
+// 启动/停止、星标、折叠过程、搜索、冻结/恢复与报告、迁移会话树、删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
 // 模型、会话号、分支）。宽屏/中屏长标题让到标题行的 40%（不少于 8em）为止，窄屏标题不让位；
 // 标题之后先按顺序平铺操作，全放下了再把元信息按顺序跟在标题后面（.dbrief）；从放不下的那一项起
 // 后面的全部收进 ⋯ 菜单（放不下某个按钮时元信息也不放，免得次要的露着、重要的反而折了）；
@@ -5999,8 +5999,7 @@ function layoutSessionHead(heading = $('#detail .dhead')) {
     }
     list.appendChild(node);
   }
-  const actionOrder = node => node.dataset.sessionStop === 'true' ? -1 : Number(node.dataset.order);
-  list.replaceChildren(...[...list.children].sort((a, b) => actionOrder(a) - actionOrder(b)));
+  list.replaceChildren(...[...list.children].sort((a, b) => a.dataset.order - b.dataset.order));
   const more = wrap.querySelector('#a-more');
   if (more) more.hidden = false;   // 量宽度时按 ⋯ 在场算，免得它的显隐反过来改变放得下的项数
   const meta = menu.querySelector('.dmeta');
@@ -6288,6 +6287,7 @@ function head(m, total) {
         ${forkChainButtonMarkup(m)}
         ${consoleButtonMarkup()}
         ${sessionActionsMarkup(`
+        ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-toggle" type="button"></button>'}
         ${starButtonMarkup(m.uid, !!m.starred, 'session-menu-action', 'a-star')}
         <button class="session-menu-action turn-mode${S.compactTurns ? '' : ' on'}" id="a-turns"
           title="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
@@ -6538,17 +6538,74 @@ function renderSessionFreeze(m, button = $('#a-session-freeze')) {
   };
 }
 
-function renderSessionAction(m, button = $('#a-session-action')) {
-  renderSessionFreeze(m, button?.closest('.dhead')?.querySelector('#a-session-freeze'));
-  if (!button || m.uid !== S.sel) return;
-  const launch = m.fork_parent ? null : unusedNewAssignedLaunch(m);
-  const running = !m.fork_parent && !launch && sessionStoppable(m.uid);
-  const stopping = String(running);
-  if (button.dataset.sessionStop !== stopping) {
-    button.dataset.sessionStop = stopping;
-    const heading = button.closest('.dhead');
-    if (heading?.isConnected) layoutSessionHead(heading);
+function sessionRunRow(uid) {
+  return sidebarSessions().find(row => row.uid === uid)
+    || (typeof sessionTermMeta === 'function' ? sessionTermMeta(uid) : null);
+}
+function sessionRunActive(row) {
+  return !!row && (row.pending ? !!row.running && !row.stale : sessionStoppable(row.uid));
+}
+function sessionRunUnavailable(row) {
+  if (!row) return '会话状态尚未读取。';
+  if (typeof ConsoleUI !== 'undefined' && ConsoleUI.busy.has(row.uid)) return '正在启动或连接会话，请稍候。';
+  if (sessionRunActive(row)) return '';
+  if (row.pending) return row.source === 'shell'
+    ? '已结束的 SSH 会话不能续接，请新建 SSH 会话。'
+    : '此启动记录尚无可续接的原生会话，请从新建会话重新启动。';
+  const reason = consoleUnavailableReason(row.uid, row.agent_id || null, false);
+  if (reason) return reason;
+  const capabilities = HUB_MODE ? Nodes.capabilities[nodeOf(row.uid)] : T;
+  if (!capabilities?.resume_sources?.[row.source]) return '此会话没有可用的原生续接启动项。';
+  return '';
+}
+function paintSessionRunControl(button, row) {
+  if (!button) return;
+  const running = sessionRunActive(row), label = running ? '停止会话' : '启动会话';
+  // Restore the normal label before the shared unavailable hint is reapplied.
+  setControlUnavailable(button, '');
+  button.title = button.ariaLabel = label;
+  if (button.closest('#item-menu')) button.textContent = label;
+  else {
+    button.innerHTML = uiIcon(running ? 'power' : 'play');
+    button.classList.toggle('danger', running);
+    labelSessionAction(button);
+    button.onclick = () => toggleSessionRun(sessionRunRow(row?.uid) || row, button);
   }
+  setControlUnavailable(button, sessionRunUnavailable(row));
+}
+function refreshSessionRunControls() {
+  paintSessionRunControl($('#a-session-toggle'), sessionRunRow(S.sel));
+  if (menuUid) paintSessionRunControl($('#item-menu [data-act="stop"]'), sessionRunRow(menuUid));
+}
+async function toggleSessionRun(row, button = null) {
+  if (sessionRunUnavailable(row)) {paintSessionRunControl(button, row); return;}
+  if (sessionRunActive(row)) {
+    if (row.pending) await stopPendingSession(row, button);
+    else await stopSession(row, button);
+    return;
+  }
+  ConsoleUI.busy.add(row.uid);
+  ConsoleUI.errors.delete(row.uid);
+  refreshSessionRunControls();
+  try {
+    if (S.sel !== row.uid || S.agent) await openSession(row.uid);
+    // Reuse the existing exact-UID resume and its idempotent launch receipt.
+    await takeover(row.uid, null);
+  } catch (error) {
+    showSessionStopNotice(`启动失败：${error.message || error}`, true, row.uid);
+  } finally {
+    ConsoleUI.busy.delete(row.uid);
+    refreshSessionRunControls();
+    renderTakeoverBtn();
+  }
+}
+
+function renderSessionAction(m, button = $('#a-session-action')) {
+  const heading = button?.closest('.dhead');
+  renderSessionFreeze(m, heading?.querySelector('#a-session-freeze'));
+  paintSessionRunControl(heading?.querySelector('#a-session-toggle'), m);
+  if (!button || m.uid !== S.sel) return;
+  setControlUnavailable(button, '');
   if (m.fork_parent) {
     const shown = !!m.fork_parent_visible;
     const label = shown ? '隐藏父会话' : '显示父会话';
@@ -6558,19 +6615,16 @@ function renderSessionAction(m, button = $('#a-session-action')) {
     button.onclick = () => setForkParentVisibility([m.uid], !shown, button);
     return;
   }
+  const launch = unusedNewAssignedLaunch(m);
+  button.innerHTML = uiIcon('trash');
+  button.title = button.ariaLabel = '删除会话';
+  labelSessionAction(button);
   if (launch && typeof deletePendingSession === 'function') {
-    const label = '删除会话';
-    button.innerHTML = uiIcon('trash');
-    button.title = button.ariaLabel = label;
-    labelSessionAction(button);
     button.onclick = () => deletePendingSession(launch, button);
     return;
   }
-  const label = running ? '停止会话' : '删除会话';
-  button.innerHTML = uiIcon(running ? 'power' : 'trash');
-  button.title = button.ariaLabel = label;
-  labelSessionAction(button);
-  button.onclick = () => running ? stopSession(m, button) : del(m);
+  setControlUnavailable(button, sessionStoppable(m.uid) ? '请先停止会话再删除。' : '');
+  button.onclick = () => del(m);
 }
 
 // `session_stop` capability: the server stops only a managed host instance (Ctrl-D,

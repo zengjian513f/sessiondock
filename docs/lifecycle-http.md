@@ -86,6 +86,15 @@ immutable launch specification. Missing working directories return
 `needs_create`; `create_cwd:true` creates the confirmed absolute path. Executable,
 argv, environment, SID, and legacy adapter fields cannot choose the command.
 
+The first sidebar/detail action is **启动会话 / 停止会话**. A stopped native
+session starts through the same exact-UID `/api/term/takeover` resume flow as the
+console, with a launch receipt and duplicate-click protection. Running sessions
+show stop in the same position; deletion remains a separate action after tree
+migration and is unavailable while an ordinary session is running. Controls
+refresh from native liveness and managed terminal observations. Sources without
+a resume-capable profile, and exited SSH/pending receipts without a native
+session to resume, show a disabled start action with the reason.
+
 ### Installed CLIs
 
 A configured profile does not prove its CLI exists: nodes launch through a
