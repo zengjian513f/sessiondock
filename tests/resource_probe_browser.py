@@ -78,15 +78,17 @@ class Collector:
         self.socket.close()
 
 
-
 def assert_resource_spacing(sidebar):
-    """The last column hugs its content, while titles and star retain their space."""
+    """Both columns align across sessions, without crowding titles or the star."""
     geometry = sidebar.evaluate('''e => {
         const panel=e.querySelector('.item-resources'), box=panel.getBoundingClientRect();
         const cells=[...panel.children], second=[1,3,5].map(i=>cells[i]);
-        const values=second.map(c=>c.querySelector('.item-resource-value').getBoundingClientRect());
+        const panels=[...document.querySelectorAll('#side .item-resources')].filter(p=>p.getClientRects().length);
+        const positions=p=>[...p.children].map(c=>c.querySelector('.ui-icon').getBoundingClientRect().left);
+        const expected=positions(panel);
         return {
-            trailing:box.right-Math.max(...values.map(r=>r.right)),
+            columns:expected,
+            acrossRows:panels.every(p=>positions(p).every((x,i)=>Math.abs(x-expected[i])<1)),
             starGap:e.querySelector('.item-star').getBoundingClientRect().left-box.right,
             titleGap:box.left-e.querySelector('.body').getBoundingClientRect().right,
             aligned:second.every(c=>Math.abs(c.getBoundingClientRect().left-second[0].getBoundingClientRect().left)<1),
@@ -94,11 +96,12 @@ def assert_resource_spacing(sidebar):
             clipped:cells.some(c=>{const v=c.querySelector('.item-resource-value');return v.scrollWidth>v.clientWidth;}),
         };
     }''')
-    assert 0 <= geometry['trailing'] <= 1, geometry
+    assert geometry['acrossRows'], geometry
     assert 2 <= geometry['starGap'] <= 4, geometry
     assert 8 <= geometry['titleGap'] <= 12, geometry
     assert geometry['aligned'] and not geometry['overflow'], geometry
     assert not geometry['clipped'], geometry
+    return geometry['columns']
 
 
 def main():
@@ -185,7 +188,7 @@ def main():
         assert sidebar.locator('.body > :nth-child(2)').get_attribute('class') == 'm'
         assert sidebar.locator('.m').inner_text() == original_meta
         assert sidebar.evaluate("e => e.querySelector('.item-resources').getBoundingClientRect().left >= e.querySelector('.body').getBoundingClientRect().right")
-        # Reported short values must not leave an empty second-column tail;
+        # Mixed short/long/unknown values must align across sessions and refreshes;
         # larger values must still fit without moving the title or separator.
         sample = context.request.get(base + '/api/resources/summary').json()
         page.route('**/api/resources/summary', lambda route: route.fulfill(json=sample))
@@ -193,14 +196,17 @@ def main():
             page.set_viewport_size(viewport)
             title_width = sidebar.locator('.body').bounding_box()['width']
             boundary = sidebar.locator('.item-resources').bounding_box()['x']
+            columns = assert_resource_spacing(sidebar)
             for values in ((.02, 2, 154*1024**2, 0, 0, 0),
                            (123.45, 123, 9.9*1024**3, 16, 9.9*1024**3, 9.9*1024**3)):
                 for row in sample['sessions']:
+                    if row['session']['node_id'] != nodes[0].nid:
+                        continue
                     for key, value in zip(('cpu_cores', 'process_count', 'memory_pss_bytes', 'gpu_count',
                                            'proc_storage_read_bytes_per_second', 'proc_storage_write_bytes_per_second'), values):
                         row['metrics'][key] = {'value':value, 'status':'ok'}
                 page.evaluate('SessionDockSidebarResources.refresh()')
-                assert_resource_spacing(sidebar)
+                assert assert_resource_spacing(sidebar) == columns
                 assert abs(sidebar.locator('.body').bounding_box()['width']-title_width)<1
                 assert abs(sidebar.locator('.item-resources').bounding_box()['x']-boundary)<1
         page.unroute('**/api/resources/summary')
