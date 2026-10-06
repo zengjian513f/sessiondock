@@ -164,7 +164,7 @@ impl Names {
                 "目标名称索引已变化，保留现场等待恢复",
             ));
         }
-        let file = fs::OpenOptions::new().write(true).open(&path)?;
+        let file = fs::OpenOptions::new().write(true).open(path)?;
         file.set_len(append.offset)?;
         file.sync_all()?;
         if !append.existed && append.offset == 0 {

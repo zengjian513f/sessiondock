@@ -424,11 +424,11 @@ impl TrashService {
                 Ok(()) => {
                     manifest.files[index].in_trash = true;
                     progress.add(1);
-                    if !manifest.sessions.is_empty() {
-                        if let Err(error) = manifest.write(&entry_dir) {
-                            failure = Some(error);
-                            break;
-                        }
+                    if !manifest.sessions.is_empty()
+                        && let Err(error) = manifest.write(&entry_dir)
+                    {
+                        failure = Some(error);
+                        break;
                     }
                 }
                 Err(error) => {
