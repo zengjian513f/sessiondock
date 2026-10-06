@@ -2739,6 +2739,7 @@ function queueUiChange(change) {
   // Side panels (groups, transfer tasks) refresh on list invalidations and
   // (re)connect baselines instead of keeping their own fast timers.
   if (change.initial || change.sessions) dispatchEvent(new CustomEvent('sessiondock-ui-sessions'));
+  if (change.drafts && typeof followPushedDraft === 'function') followPushedDraft();
 }
 async function applyUiChanges() {
   if (uiEventApplying) return;

@@ -4235,7 +4235,7 @@ function adoptServerDraft(draft, row, uid) {
     savedVersion: draft.editVersion, storageError: ''});
   return draft;
 }
-let composerFollowBusy = false, composerFollowedAt = 0;
+let composerFollowBusy = false, composerFollowedAt = 0, composerFollowPushed = false;
 /** An idle page follows a newer server draft: the device that is typing wins
  *  and the others catch up. Nothing is adopted over unsaved local edits.
  *  `revision` is the server revision a poll reported; null forces a read,
@@ -4262,7 +4262,15 @@ async function followServerDraft(uid, revision = null) {
     return false; // The next poll, focus or switch reads again.
   } finally {
     composerFollowBusy = false;
+    if (composerFollowPushed) { composerFollowPushed = false; void followPushedDraft(); }
   }
+}
+/** A draft changed on the server (UI event): read it now instead of at the
+ *  next input CHECK. A read already in flight may predate that write. */
+function followPushedDraft() {
+  if (!composerUid) return;
+  if (composerFollowBusy) { composerFollowPushed = true; return; }
+  void followServerDraft(composerUid, Infinity);
 }
 function refreshComposerDraft(uid) {
   if (composerUid === uid) {

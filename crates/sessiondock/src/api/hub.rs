@@ -799,6 +799,19 @@ async fn handle(
         }
         return Ok(Response::from_parts(parts, Body::from(bytes)));
     }
+    // Composers on other Hub pages read their draft at once; drafts written
+    // directly on a node reach them through the input CHECK instead.
+    if method == Method::POST
+        && response.status().is_success()
+        && matches!(
+            resolved.path.as_str(),
+            "/api/session/conversation"
+                | "/api/session/conversation/send"
+                | "/api/session/conversation/import"
+        )
+    {
+        state.ui_events.publish_drafts();
+    }
     Ok(response)
 }
 

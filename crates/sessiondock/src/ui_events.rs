@@ -150,6 +150,15 @@ impl EventBus {
         }
     }
 
+    /// A draft revision changed: open composers read their draft at once
+    /// instead of waiting for the next input CHECK.
+    pub fn publish_drafts(&self) {
+        let sender_slot = self.sender.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(sender) = sender_slot.as_ref() {
+            let _ = sender.send(json!({"drafts":true}));
+        }
+    }
+
     pub fn subscribe<F, Fut>(self: &Arc<Self>, observe: F) -> broadcast::Receiver<Value>
     where
         F: Fn() -> Fut + Send + Sync + 'static,

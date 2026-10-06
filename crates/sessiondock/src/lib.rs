@@ -474,6 +474,7 @@ fn build_app(
         bridge::LivePrompts::new(config.state_dir.as_deref(), config.ptyhost_dir.as_deref())
             .map_err(io::Error::other)?,
     );
+    let ui_events = Arc::new(ui_events::EventBus::default());
     let conversations = match (&metadata, &terminal, &runtime, &lifecycle, &files_write) {
         (Some(metadata), Some(terminal), Some(runtime), Some(lifecycle), Some(writer)) => {
             let directory = metadata.directory().join("conversations");
@@ -481,6 +482,8 @@ fn build_app(
                 conversation::store::Store::open(&directory)
                     .map_err(|e| io::Error::other(e.message))?,
             );
+            let events = ui_events.clone();
+            store.on_draft_change(move || events.publish_drafts());
             Some(Arc::new(conversation::Conversations::new(
                 store,
                 reader.clone(),
@@ -555,7 +558,7 @@ fn build_app(
         bug_report,
         prompts,
         polls: Arc::new(polls::PollCache::default()),
-        ui_events: Arc::new(ui_events::EventBus::default()),
+        ui_events,
     };
     runtime::process_links::spawn(state.clone());
     runtime::spawn::spawn(state.clone());
