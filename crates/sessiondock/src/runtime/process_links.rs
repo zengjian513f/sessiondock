@@ -60,6 +60,7 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
             outgoing: vec![],
             incoming: vec![],
             bindings: vec![],
+            connections: vec![],
             collector: None,
         });
     };
@@ -207,6 +208,7 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
                 }
                 if let Some(connection) = &ancestor.connection {
                     incoming.push(Incoming {
+                        connection_at: None,
                         process: entry.process.clone(),
                         started_at: entry.started_at,
                         connection: connection.clone(),
@@ -287,6 +289,7 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
             }
         }
         let report = Report {
+            connections: vec![],
             version: 1,
             node_id,
             boot_id: snapshot.boot_id,

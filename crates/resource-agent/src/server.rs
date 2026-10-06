@@ -1045,6 +1045,7 @@ pub fn run() -> io::Result<()> {
         }
         .into(),
         lost_events: 0,
+        ssh_connections: false,
     };
     let io_enabled = config.events && config.io_events && config.proc_root == Path::new("/proc");
     let diagnostic = Arc::new(Mutex::new(Diagnostic {
@@ -1247,8 +1248,15 @@ pub fn run() -> io::Result<()> {
             for event in first.into_iter().chain(receiver.try_iter()) {
                 let mut s = worker_state.lock().unwrap_or_else(|e| e.into_inner());
                 match event {
-                    Event::Ready => s.status.events = "bpf".into(),
-                    Event::Failed => s.status.events = "unavailable".into(),
+                    Event::Ready => {
+                        s.status.events = "bpf".into();
+                        s.status.ssh_connections = true;
+                    }
+                    Event::Failed => {
+                        s.status.events = "unavailable".into();
+                        s.status.ssh_connections = false;
+                        s.engine.connections.gap();
+                    }
                     Event::Fork(parent, child) => {
                         s.engine.fork(&parent, child, now());
                         s.forks += 1;
@@ -1257,10 +1265,20 @@ pub fn run() -> io::Result<()> {
                         let _ = process;
                         s.execs += 1;
                     }
-                    Event::Exit(process) => {
-                        s.engine.exit(&process);
+                    Event::Exit(process, at) => {
+                        s.engine.exit(&process, at);
                         s.exits += 1;
                     }
+                    Event::Opened(process, connection, at, ssh) => {
+                        s.engine.connections.opened(process, connection, at, ssh);
+                    }
+                    Event::Closed(process, connection, at) => {
+                        s.engine.connections.closed(&process, &connection, at);
+                    }
+                    Event::Received(process, connection, at) => {
+                        s.engine.connections.received(process, connection, at);
+                    }
+                    Event::Shared(process) => s.engine.connections.shared(&process),
                 }
             }
             if sampled.elapsed() >= Duration::from_secs(2) {
@@ -1283,6 +1301,10 @@ pub fn run() -> io::Result<()> {
                 );
                 let mut s = worker_state.lock().unwrap_or_else(|e| e.into_inner());
                 s.status.lost_events = lost.load(Ordering::Relaxed);
+                if s.status.lost_events > 0 {
+                    s.status.ssh_connections = false;
+                    s.engine.connections.gap();
+                }
                 s.update(snapshot, data);
                 sampled = Instant::now();
             }
