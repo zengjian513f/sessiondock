@@ -265,13 +265,25 @@ fn raw_rows(rows: &[String]) -> Vec<Value> {
 
 /// 完整快照：可见行、光标、模式，以及最近的历史行。`reset` 为真表示新模型
 /// （首次 attach / 重连），浏览器要用 `history` 替换自己的回滚区；为假（resize 后）
-/// 只换视口。
+/// 只换视口，`history_moved` 给出 resize 前后进出历史的行数（见
+/// [`crate::Screen::take_resize_moved`]）。
 pub fn snapshot_json(
     state: &GridState,
     history: &[String],
     history_total: usize,
     seq: u64,
     reset: bool,
+) -> String {
+    snapshot_json_moved(state, history, history_total, seq, reset, None)
+}
+
+pub fn snapshot_json_moved(
+    state: &GridState,
+    history: &[String],
+    history_total: usize,
+    seq: u64,
+    reset: bool,
+    history_moved: Option<i64>,
 ) -> String {
     let mut value = json!({
         "t": "snapshot",
@@ -285,6 +297,9 @@ pub fn snapshot_json(
         "cursor": cursor_json(state.cursor),
     });
     value["modes"] = serde_json::from_str(&state.modes).unwrap_or(Value::Null);
+    if let Some(moved) = history_moved {
+        value["history_moved"] = json!(moved);
+    }
     value.to_string()
 }
 

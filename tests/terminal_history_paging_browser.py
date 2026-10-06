@@ -13,7 +13,8 @@ server's real 409 stops paging quietly for that connection (no retry, no error,
 audit event `terminal.history_page_failed`), and paging resumes once the
 network returns and the console reconnects with a fresh snapshot. A host started with a small
 `--history` keeps streaming every scrolled row to the attached page after its
-history is full, without a reconnect.
+history is full, without a reconnect, and keeps every row through a shorter
+then taller window (the host's `history_moved`).
 """
 
 import json
@@ -402,8 +403,25 @@ def full_history_live(pw, root, corpus, uid):
             fixture.xterm_contains(page, 'CAP_PING_OK')
             assert page.evaluate(CAP_NUMBERS) == numbers
             assert not requests, ('full history fetched host history', requests)
-            assert not errors, errors
             print(f'PASS rows 1..{CAP_ROWS} stream live past a {CAP_HISTORY}-row host history', flush=True)
+            # A shorter window pushes screen rows into the full host history
+            # without changing history_total; history_moved keeps them.
+            rows_before = page.evaluate(f'{TERM}.rows')
+            page.set_viewport_size({'width': 1280, 'height': 560})
+            page.wait_for_function(f'{TERM}.rows < {rows_before} && {TERM}.model.rows === {TERM}.rows', timeout=10000)
+            page.wait_for_timeout(800)
+            shrunk = page.evaluate(CAP_NUMBERS)
+            assert shrunk == list(range(1, CAP_ROWS + 1)), \
+                ('rows lost after a shorter window', len(shrunk), breaks(shrunk)[:5], shrunk[-3:])
+            page.set_viewport_size({'width': 1280, 'height': 900})
+            page.wait_for_function(f'{TERM}.rows === {rows_before}', timeout=10000)
+            page.wait_for_timeout(800)
+            grown = page.evaluate(CAP_NUMBERS)
+            assert grown == list(range(1, CAP_ROWS + 1)), \
+                ('rows repeated or lost after a taller window', len(grown), breaks(grown)[:5], grown[-3:])
+            assert len(sockets) == opened, ('console reconnected', sockets)
+            assert not errors, errors
+            print(f'PASS a shorter then taller window keeps rows 1..{CAP_ROWS} with a full host history', flush=True)
         finally:
             context.close()
             browser.close()

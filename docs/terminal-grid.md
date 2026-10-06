@@ -150,6 +150,7 @@ a resize (or when the screen thread has no previous grid state) with
 | `grid` | `rows` row objects, index 0 = top of the visible screen |
 | `history` | recent scrollback rows. For `reset: true`, the last `SNAPSHOT_HISTORY_ROWS` (2000) rows, oldest first (a final screen sends all of its history instead). For a live resize snapshot, `[]` |
 | `history_total` | absolute history length in the model (may exceed `history.length`) |
+| `history_moved` | `reset: false` only: rows that entered (positive) or left (negative) the host's main-screen history since the previous snapshot or diff, counting rows output scrolled in before and after the resize and rows a shorter screen pushed in or a taller one pulled back, even when a full history dropped as many old rows. `null` when it cannot be known (a width change, a resize on the alternate screen, a model rebuild); absent from older hosts |
 | `cursor` | `{x, y, visible}` in the viewport, 0-based |
 | `modes` | see below |
 
@@ -314,13 +315,20 @@ before this was handled the browser lost rows at the seam after a shorter
 window or a narrower one and could show them twice after a taller or wider
 one. The fix is entirely in the browser; the host protocol is unchanged.
 
-- Every `reset: false` snapshot carries `history_total`. When the width did
-  not change, the model compares it with its own estimate
-  (`historyBase + historyAppended`): a growth of `n` rows moves the top `n`
+- Every `reset: false` snapshot carries `history_total` and, from current
+  hosts, `history_moved`. When the width did not change, the model takes `n`
+  from `history_moved` (else from `history_total` minus its own estimate
+  `historyBase + historyAppended`): a growth of `n` rows moves the top `n`
   rows of the old viewport into the scrollback, a shrink of `n` rows drops
-  the last `n` scrollback rows (they are in the new screen). Absolute line
-  numbers do not change, so the viewport and selection stay put. After a
-  snapshot taken on the alternate screen the estimate is not trusted.
+  the last `n` scrollback rows (they are in the new screen). With a full host
+  history `history_total` does not move, so only `history_moved` reveals the
+  rows a shorter screen pushed in; the rows the host dropped from its oldest
+  end leave `historyOlder` (as for `diff.scrolled`). Absolute line numbers do
+  not change, so the viewport and selection stay put. After a snapshot taken
+  on the alternate screen the estimate is not trusted. The host
+  (`Screen::resize`, `take_resize_moved`) counts the rows from the cursor row
+  before the resize and settles its scroll counter around it; a reset
+  snapshot to a new client restarts the count.
 - After a width change, or whenever `history_total` moved, the model records
   `tailSync`. On a live connection `term.js` (`syncTermHistoryTail`) fetches
   the host's newest 400 history rows ending at that snapshot's
@@ -418,10 +426,6 @@ Known gaps:
   change keeps an empty title until one arrives.
 - The host does not emit a snapshot because of a `seq` gap; only
   reconnect (or a live resize) produces one.
-- A height shrink while the host history is full moves rows from the screen
-  into the host history without changing `history_total`, so the browser
-  cannot see them in the `reset: false` snapshot; those rows are missing
-  locally until a reconnect snapshot.
 - Hosts already running keep their old binary until restarted; an old host
   stops sending `scrolled` once its history is full.
 

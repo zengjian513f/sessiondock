@@ -294,7 +294,7 @@ python3 tests/module_map.py --write
 
 ## ptyhost
 
-`crates/ptyhost/src`: 10 files, 3268 lines, 0 undocumented.
+`crates/ptyhost/src`: 10 files, 3278 lines, 0 undocumented.
 
 - `client.rs` — 宿主会话的客户端：扫描会话目录、发控制请求、建立 attach 流。 (313 lines)
 - `dsr.rs` — 从 pty 输出里切出设备状态查询（DSR），其余字节原样放行。 (146 lines)
@@ -306,7 +306,7 @@ python3 tests/module_map.py --write
 - `native_binding.rs` — One operator-declared association for the lifetime of one running host. (153 lines)
 - `output.rs` — One bounded FIFO and one socket writer per attachment. Publishers never write (205 lines)
 - `protocol.rs` — 宿主与客户端之间的本地协议，与 Python 参考实现逐字节兼容。 (168 lines)
-- `session.rs` — 单个托管会话的宿主进程，与 Python 参考实现同协议、同线程结构。 (1354 lines)
+- `session.rs` — 单个托管会话的宿主进程，与 Python 参考实现同协议、同线程结构。 (1364 lines)
 - `transport.rs` — 本地传输：POSIX 用 unix socket（0600），Windows 用 127.0.0.1 端口 + 随机 token。 (122 lines)
 
 ## ptyhost-client
@@ -325,9 +325,9 @@ python3 tests/module_map.py --write
 
 ## ptyhost-screen
 
-`crates/ptyhost-screen/src`: 3 files, 1001 lines, 0 undocumented.
+`crates/ptyhost-screen/src`: 3 files, 1053 lines, 0 undocumented.
 
-- `grid.rs` — 服务端网格：把终端模型的画面抽成"行 → span"结构，和上一帧比较后产出 JSON 增量。 (381 lines)
+- `grid.rs` — 服务端网格：把终端模型的画面抽成"行 → span"结构，和上一帧比较后产出 JSON 增量。 (396 lines)
 - `lib.rs` — 终端模型与服务端网格，宿主（ptyhost）和 Web 服务（sessiondock）共用： (8 lines)
   - mods: `grid`, `screen`
-- `screen.rs` — alacritty_terminal 之上的薄封装，提供与 Python 参考实现同语义的截屏 / 光标 / 回放。 (612 lines)
+- `screen.rs` — alacritty_terminal 之上的薄封装，提供与 Python 参考实现同语义的截屏 / 光标 / 回放。 (649 lines)
