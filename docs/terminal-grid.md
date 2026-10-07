@@ -417,9 +417,6 @@ Known gaps:
 - Underline *style* (double, curly, dotted, dashed) collapses to the
   single underline bit; hyperlinks and underline colour travel in the
   span's fifth element (see below).
-- Alt-screen scrollback is not recorded: `scrolled` is empty while the
-  next state is alt, and the browser ignores `scrolled` while it is
-  already on alt.
 - A flood of output sends **all** newly scrolled rows, not a sampled
   tail.
 - `title` travels only on diffs, so a client that never sees a title
