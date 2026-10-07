@@ -2711,16 +2711,11 @@ async function runSessionPoll() {
           ...a, ...agents.get(a.id), hits: a.hits, hits_capped: a.hits_capped, snippet: a.snippet,
         }))};
       });
-      if (!patchSide(visible())) renderSide();
+      patchSide(visible());
       return true;
     }
     showSessionCount(sidebarSessions().length);
-    if (patchSide(visible())) return true;   // 能就地更新就不重建, 否则会一直闪
-    const side = $('#side');
-    const top = side.scrollTop;
-    renderSide();                       // 选中态由 S.sel 恢复
-    side.scrollTop = top;               // 别打断正在看的位置
-    paintLive();
+    patchSide(visible());
     return true;
   } catch { return false; }
   finally {
@@ -3199,17 +3194,23 @@ function renderPickBar() {
 
 async function deleteSessions(uids, button = null) {
   if (!uids.length || sessionDeleteBusy || sessionStopBusy) return null;
-  const pending = pendingTmuxSessions().filter(s => uids.includes(s.uid));
-  const pendingIds = new Set(pending.map(s => s.uid));
+  // `.find` keeps the first row when a uid is listed twice; a Map built from
+  // the array would keep the last one instead.
+  const sessionsByUid = new Map();
+  for (const session of sidebarSessions()) {
+    if (!sessionsByUid.has(session.uid)) sessionsByUid.set(session.uid, session);
+  }
+  const requested = new Set(uids);
+  const pending = pendingTmuxSessions().filter(session => requested.has(session.uid));
+  const pendingIds = new Set(pending.map(session => session.uid));
   const recorded = uids.filter(uid => !pendingIds.has(uid));
   const action = pending.length ? (recorded.length ? '删除 / 丢弃' : '丢弃') : '删除';
-  const only = uids.length === 1
-    ? (sidebarSessions().find(x => x.uid === uids[0])?.title || '') : '';
+  const only = uids.length === 1 ? (sessionsByUid.get(uids[0])?.title || '') : '';
   const running = recorded.filter(uid => S.live.has(uid)).length;
   // OpenCode keeps sessions in its own database: they are deleted there,
   // with their child sessions, and never reach the recycle bin.
-  const opencode = recorded.filter(uid => sidebarSessions().find(x => x.uid === uid)?.source === 'opencode');
-  const agy = recorded.filter(uid => sidebarSessions().find(x => x.uid === uid)?.source === 'agy');
+  const opencode = recorded.filter(uid => sessionsByUid.get(uid)?.source === 'opencode');
+  const agy = recorded.filter(uid => sessionsByUid.get(uid)?.source === 'agy');
   // Unpersisted launches discard immediately. Recorded sessions still confirm
   // because they move into the recycle bin.
   if (recorded.length && !await appConfirm((uids.length === 1
@@ -4221,7 +4222,7 @@ const itemMeta = s => (s.stale && !receiptPendingRow(s) ? '离线缓存 · ' : '
                        s.hits ? `命中 ${s.hits}${s.hits_capped ? '+' : ''}` : '']
                       .filter(Boolean).join(' · '));
 
-/** Share keyed reconciliation for explicit renders and background list updates. */
+/** Sidebar render used by list updates. There is no failed-patch result. */
 function patchSide(list) {
   renderSide(list);
   return true;

@@ -136,6 +136,41 @@ def main():
         meta["ordinal"] = 16
         native_file("native-fork", fork_sid, fork_sid, 9, [meta,
             codex_message("user", "Native fork of reverted thread", 17)])
+        # Owners share a name prefix and one contains a dot. Their files and
+        # sidecar directories must remain distinct filesystem entries, and a
+        # sidecar without an owner file must stay unlisted.
+        def claude_owner_transcript(sid, question, answer):
+            corpus.put(sid, "claude", [
+                claude_row(sid, "user", "u0", None, question),
+                claude_row(sid, "assistant", "a0", "u0", answer),
+            ], [question, answer])
+
+        def claude_sidecar(owner, agent, question, answer, description):
+            path = corpus.paths[owner].with_suffix("") / "subagents" / f"agent-{agent}.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"".join(encoded(row) for row in [
+                claude_row(owner, "user", f"{agent}-u", None, question, isSidechain=True, agentId=agent),
+                claude_row(owner, "assistant", f"{agent}-a", f"{agent}-u", answer, isSidechain=True, agentId=agent),
+            ]))
+            path.with_suffix(".meta.json").write_text(json.dumps({
+                "description": description, "agentType": "reviewer"}, ensure_ascii=False))
+            corpus.paths[agent] = path
+
+        claude_owner_transcript("stem", "Stem owner question", "Stem owner answer")
+        claude_owner_transcript("stem-more", "Stem-more owner question", "Stem-more owner answer")
+        claude_owner_transcript("stem.extra", "Stem.extra owner question", "Stem.extra owner answer")
+        claude_sidecar("stem", "stem-child-one", "Stem child one question", "Stem child one answer", "Stem child one")
+        claude_sidecar("stem", "stem-child-two", "Stem child two question", "Stem child two answer", "Stem child two")
+        claude_sidecar("stem-more", "stem-more-child", "Stem-more child question", "Stem-more child answer", "Stem-more child")
+        claude_sidecar("stem.extra", "stem-jsonl-child", "Stem dot jsonl child question", "Stem dot jsonl child answer", "Stem dot jsonl child")
+        ghost = corpus.root / "claude/project-history/unindexed-owner/subagents/agent-ghost.jsonl"
+        ghost.parent.mkdir(parents=True)
+        ghost.write_bytes(b"".join(encoded(row) for row in [
+            claude_row("unindexed-owner", "user", "ghost-u", None, "Ghost sidecar question", isSidechain=True, agentId="ghost"),
+            claude_row("unindexed-owner", "assistant", "ghost-a", "ghost-u", "Ghost sidecar must stay unlisted", isSidechain=True, agentId="ghost"),
+        ]))
+        ghost.with_suffix(".meta.json").write_text(json.dumps({
+            "description": "Ghost child title", "agentType": "reviewer"}, ensure_ascii=False))
         with isolated_server(corpus, args.binary) as (base, opener), sync_playwright() as playwright:
             launch = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
@@ -306,6 +341,78 @@ def main():
                 renamed_agent.click()
                 expect(page.locator("#msgs")).to_contain_text("Claude agent answer")
                 agent("", "Claude selected answer")
+
+                # Several Claude owners with confusable paths. Open each owner
+                # and each sidecar from the sidebar and the view menu; a child
+                # stays on its own owner, and the ownerless sidecar stays out.
+                owner_groups = (
+                    ("stem", "Stem owner question", "Stem owner answer", (
+                        ("stem-child-one", "Stem child one", "Stem child one answer"),
+                        ("stem-child-two", "Stem child two", "Stem child two answer"),
+                    )),
+                    ("stem-more", "Stem-more owner question", "Stem-more owner answer", (
+                        ("stem-more-child", "Stem-more child", "Stem-more child answer"),
+                    )),
+                    ("stem.extra", "Stem.extra owner question", "Stem.extra owner answer", (
+                        ("stem-jsonl-child", "Stem dot jsonl child", "Stem dot jsonl child answer"),
+                    )),
+                )
+                needles = ["Ghost sidecar must stay unlisted"]
+                for _sid, _question, answer, agents in owner_groups:
+                    needles.append(answer)
+                    needles.extend(text for _agent, _title, text in agents)
+
+                def only(text):
+                    expect(page.locator("#msgs")).to_contain_text(text)
+                    for other in needles:
+                        if other != text:
+                            expect(page.locator("#msgs")).not_to_contain_text(other)
+                    expect(page.locator("#a-term")).to_be_visible()
+                    expect(page.locator("#a-term")).to_be_enabled()
+                    expect(page.locator("#migration-read-error")).to_have_count(0)
+
+                listed = get_json(opener, base, "/api/sessions")["sessions"]
+                by_uid = {row["uid"]: row for row in listed}
+                assert all(row.get("title") != "Ghost child title" for row in listed)
+                assert all(item.get("id") != "ghost" and item.get("title") != "Ghost child title"
+                           and "agent-ghost" not in item.get("path", "")
+                           for row in listed for item in row.get("agent_items") or [])
+                expect(page.locator("#side")).not_to_contain_text("Ghost child title")
+                for sid, question, answer, agents in owner_groups:
+                    row = by_uid[corpus.uid(sid)]
+                    assert row["path"] == str(corpus.paths[sid])
+                    assert {item["id"]: item["path"] for item in row["agent_items"]} == {
+                        agent: str(corpus.paths[agent]) for agent, _title, _text in agents}
+                    select(sid, answer)
+                    expect(page.locator(".dtitle h2")).to_contain_text(question)
+                    only(answer)
+                    owner_uid = corpus.uid(sid)
+                    for agent_id, title, text in agents:
+                        side = page.locator(
+                            f'#side .item.agent[data-owner="{owner_uid}"][data-agent="{agent_id}"]')
+                        expect(side).to_have_count(1)
+                        expect(page.locator(f'#side .item.agent[data-agent="{agent_id}"]')).to_have_count(1)
+                        expect(side.locator(".t")).to_have_text(title)
+                        side.locator(".t").click()
+                        expect(page.locator(".dtitle h2")).to_contain_text(title)
+                        only(text)
+                    page.locator("#a-view-switch").click()
+                    shown = page.locator("#session-view-menu button[data-agent]").evaluate_all(
+                        "nodes => nodes.map(node => node.dataset.agent)")
+                    assert shown[0] == "" and "ghost" not in shown and len(shown) == 1 + len(agents) and set(
+                        shown[1:]) == {agent_id for agent_id, _title, _text in agents}, shown
+                    for agent_id, title, text in agents:
+                        if page.locator("#session-view-menu").is_hidden():
+                            page.locator("#a-view-switch").click()
+                        page.locator(f'#session-view-menu button[data-agent="{agent_id}"]').click()
+                        expect(page.locator(".dtitle h2")).to_contain_text(title)
+                        only(text)
+                    page.locator("#a-view-switch").click()
+                    page.locator('#session-view-menu button[data-agent=""]').click()
+                    expect(page.locator(".dtitle h2")).to_contain_text(question)
+                    only(answer)
+                print("PASS Claude sidecar owners: prefix and nested-suffix paths stay apart, ownerless sidecar stays unlisted")
+
                 select("claude-compact", "Claude post compact answer")
                 expect(page.locator("#msgs")).to_contain_text("Claude selected answer")
                 expect(page.locator("#msgs")).to_contain_text("已压缩")

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Component, Path, PathBuf},
     time::Duration,
 };
@@ -13,6 +13,9 @@ use std::{
 pub const FORMAT: &str = "sessiondock-agy-mirror";
 pub const SUMMARY_FILE: &str = "summary.json";
 pub const MESSAGES_FILE: &str = "messages.jsonl";
+/// Fixed buffer for comparing an existing mirror file with the new snapshot.
+/// This is not a file-size limit; comparison reads through EOF.
+const COMPARE_CHUNK: usize = 8 * 1024;
 pub fn transcript_warning(summary: &Value, has_history: bool) -> Option<&'static str> {
     (summary["transcript_missing"] == true).then_some(if has_history {
         "未找到 Agy 的完整正文文件；保留上次读取的历史。正文文件可读取后会自动更新。"
@@ -255,18 +258,20 @@ impl Mirror {
             if current.is_some() && stamp(&native).ok() != current {
                 return Ok(());
             }
+            // created_at comes only from the first complete line. Empty, invalid
+            // and later lines do not supply it. The exported prefix stops at the
+            // last LF, so a trailing partial line stays out of the mirror.
             let mut complete = 0;
-            for line in bytes.split_inclusive(|byte| *byte == b'\n') {
-                if !line.ends_with(b"\n") {
-                    break;
-                }
+            if let Some(end) = bytes.iter().position(|byte| *byte == b'\n') {
+                let line = &bytes[..=end];
                 let row = serde_json::from_slice::<Value>(line).ok();
-                if complete == 0
-                    && let Some(created) = row.as_ref().and_then(|v| v.get("created_at"))
-                {
+                if let Some(created) = row.as_ref().and_then(|v| v.get("created_at")) {
                     value["time_created"] = created.clone();
                 }
-                complete += line.len();
+                complete = end + 1;
+                if let Some(last) = bytes[complete..].iter().rposition(|byte| *byte == b'\n') {
+                    complete += last + 1;
+                }
             }
             publish(&messages, &bytes[..complete], true)?;
             self.exported.insert(sid.to_owned(), current);
@@ -301,20 +306,60 @@ fn private_dir(path: &Path) -> io::Result<()> {
     }
     builder.create(path)
 }
+struct Existing {
+    /// Matched byte count. This is the whole previous file only when `prefix` is set.
+    length: usize,
+    /// Every byte of the previous file occurs at the start of `bytes`.
+    prefix: bool,
+}
+
+/// Read `path` through a fixed buffer and compare it with `bytes` one chunk at a time.
+/// The previous file is not retained. A read continues to EOF so a late IO error
+/// still fails the publish. A missing file is not handled here.
+fn compare_existing(path: &Path, bytes: &[u8]) -> io::Result<Existing> {
+    let mut file = fs::File::open(path)?;
+    let mut buffer = [0u8; COMPARE_CHUNK];
+    let mut length = 0usize;
+    let mut prefix = true;
+    loop {
+        let read = match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        if !prefix {
+            continue;
+        }
+        if bytes[length..].starts_with(&buffer[..read]) {
+            length += read;
+        } else {
+            prefix = false;
+        }
+    }
+    Ok(Existing { length, prefix })
+}
+
 fn publish(path: &Path, bytes: &[u8], append: bool) -> io::Result<()> {
-    let previous = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+    // Identical bytes keep the inode and mtime. Append mode writes only the
+    // suffix when the old file is a byte-for-byte prefix. Same-length edits,
+    // rollbacks and a missing file replace the path atomically.
+    let existing = match compare_existing(path, bytes) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Existing {
+            length: 0,
+            prefix: true,
+        },
         Err(error) => return Err(error),
     };
-    if previous == bytes && path.is_file() {
+    if existing.prefix && existing.length == bytes.len() && path.is_file() {
         return Ok(());
     }
-    if append && path.is_file() && bytes.starts_with(&previous) {
+    if append && path.is_file() && existing.prefix {
         fs::OpenOptions::new()
             .append(true)
             .open(path)?
-            .write_all(&bytes[previous.len()..])?;
+            .write_all(&bytes[existing.length..])?;
         return Ok(());
     }
     let temporary = path.with_extension("tmp");

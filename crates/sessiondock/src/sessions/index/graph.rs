@@ -24,6 +24,7 @@
 //! the last one wins, a self-reference is dropped); absent when unindexed.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use serde_json::{Value, json};
 
@@ -304,6 +305,45 @@ fn inherited_size(entry: &CandidateRef, chain: &[&CandidateRef]) -> u64 {
     total
 }
 
+/// Claude candidates grouped by transcript path.
+///
+/// The key uses `Path`'s `Eq`, the same comparison as
+/// `candidate.path == owner_path`. That is lexical component equality,
+/// not a canonicalized filesystem path: `..` and symlinks stay as
+/// written. Every uid for a path is kept, in `entries` order (the order
+/// the per-agent scan collected). Callers still treat one uid as the
+/// owner, none as missing, and more than one as ambiguous.
+fn claude_path_index(entries: &BTreeMap<String, CandidateRef>) -> BTreeMap<&Path, Vec<&str>> {
+    let mut paths: BTreeMap<&Path, Vec<&str>> = BTreeMap::new();
+    for (uid, entry) in entries {
+        if entry.source == "claude" {
+            paths
+                .entry(entry.path.as_path())
+                .or_default()
+                .push(uid.as_str());
+        }
+    }
+    paths
+}
+
+/// Owner of one Claude sidecar: the indexed Claude row whose path equals
+/// `owner_path` of the sidecar. Codex ownership is not resolved here.
+fn claude_owner(paths: &BTreeMap<&Path, Vec<&str>>, sidecar: &Path) -> Result<String, Unowned> {
+    let expected = owner_path(sidecar);
+    let matches = expected
+        .as_ref()
+        .and_then(|owner| paths.get(owner.as_path()).map(|uids| uids.as_slice()));
+    match matches {
+        Some([owner]) => Ok((*owner).to_owned()),
+        None | Some([]) => Err(Unowned::Missing(unsupported(
+            "Claude 子代理的主会话不在已配置索引中",
+        ))),
+        Some(_) => Err(Unowned::Broken(unsupported(
+            "Claude 子代理的主会话路径存在歧义",
+        ))),
+    }
+}
+
 struct Graph<'a> {
     entries: &'a BTreeMap<String, CandidateRef>,
     sids: BTreeMap<(&'a str, &'a str), Vec<String>>,
@@ -359,31 +399,13 @@ impl<'a> Graph<'a> {
                     .insert(entry.summary.sid.as_str(), entry.uid.as_str());
             }
         }
+        let claude_paths = claude_path_index(entries);
         for (uid, entry) in entries {
             let Some(agent) = &entry.summary.agent else {
                 continue;
             };
             let owner = if entry.source == "claude" {
-                let owner_path = owner_path(&entry.path);
-                let matches: Vec<_> = entries
-                    .iter()
-                    .filter(|(_, candidate)| {
-                        candidate.source == "claude"
-                            && owner_path
-                                .as_ref()
-                                .is_some_and(|owner| candidate.path == *owner)
-                    })
-                    .map(|(uid, _)| uid.clone())
-                    .collect();
-                match matches.as_slice() {
-                    [owner] => Ok(owner.clone()),
-                    [] => Err(Unowned::Missing(unsupported(
-                        "Claude 子代理的主会话不在已配置索引中",
-                    ))),
-                    _ => Err(Unowned::Broken(unsupported(
-                        "Claude 子代理的主会话路径存在歧义",
-                    ))),
-                }
+                claude_owner(&claude_paths, &entry.path)
             } else {
                 graph.agent_owner(entry)
             };

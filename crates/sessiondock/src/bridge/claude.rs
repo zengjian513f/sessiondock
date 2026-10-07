@@ -20,6 +20,8 @@ use regex::Regex;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::json_compat::truthy;
+
 /// Claude's workspace trust runs before hooks or native history exist. Read
 /// both option rows and the selection from the current screen, not a saved
 /// hook question. The two-row menu needs at most one arrow before Enter.
@@ -183,18 +185,6 @@ pub fn questions(tool_input: &Value) -> Vec<Value> {
         }));
     }
     out
-}
-
-/// JSON truthiness: null, false, 0, and empty string/array/object are false.
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(number) => number.as_f64().is_some_and(|number| number != 0.0),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(fields) => !fields.is_empty(),
-    }
 }
 
 /// Unchanged content is not rewritten (its mtime is the

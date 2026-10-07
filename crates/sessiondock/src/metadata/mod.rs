@@ -64,7 +64,7 @@ impl MetadataStore {
     /// Open the configured metadata directory, creating it when needed.
     pub fn open(directory: &Path) -> Result<Self, MetadataError> {
         let disk = disk::Disk::open(directory)?;
-        let (snapshot, fingerprint) = disk.load()?;
+        let (snapshot, fingerprint) = disk.load();
         Ok(Self {
             disk,
             state: Mutex::new(State {
@@ -84,12 +84,29 @@ impl MetadataStore {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let (snapshot, fingerprint) = self.disk.load()?;
-        if state.fingerprint != fingerprint {
-            state.snapshot = Arc::new(snapshot);
-            state.fingerprint = fingerprint;
-        }
+        self.reload(&mut state);
         Ok(state.snapshot.clone())
+    }
+
+    /// Re-read the file and keep the current `Arc` when the content hash matches.
+    /// Decoding runs only after that hash differs. Missing and unreadable files
+    /// still replace a fingerprinted snapshot with an empty one and clear the
+    /// fingerprint; a repeated miss keeps the empty `Arc`.
+    fn reload(&self, state: &mut State) {
+        match self.disk.read() {
+            None => {
+                if state.fingerprint.is_some() {
+                    state.snapshot = Arc::new(MetadataSnapshot::empty());
+                    state.fingerprint = None;
+                }
+            }
+            Some(file) => {
+                if state.fingerprint.as_deref() != Some(file.fingerprint.as_str()) {
+                    state.snapshot = Arc::new(disk::Disk::decode(&file.bytes));
+                    state.fingerprint = Some(file.fingerprint);
+                }
+            }
+        }
     }
 
     fn update(
@@ -100,11 +117,7 @@ impl MetadataStore {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let (snapshot, fingerprint) = self.disk.load()?;
-        if state.fingerprint != fingerprint {
-            state.snapshot = Arc::new(snapshot);
-            state.fingerprint = fingerprint;
-        }
+        self.reload(&mut state);
         let next = transform(&state.snapshot)?;
         if next.revision() == state.snapshot.revision() {
             return Ok(state.snapshot.clone());

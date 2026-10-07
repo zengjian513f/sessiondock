@@ -40,6 +40,7 @@ use super::{
     },
     identity::{PROTOCOL, is_node_id, is_token},
 };
+use crate::json_compat::truthy;
 
 pub const PROBE_INTERVAL: Duration = Duration::from_secs(10);
 /// A node that is currently online is only painted offline after this many
@@ -1301,18 +1302,6 @@ fn merge_health(row: &mut Map<String, Value>, health: Option<&Health>) {
 
 fn sessions_key(nid: &str) -> CacheKey {
     (nid.to_string(), "/api/sessions".to_string(), String::new())
-}
-
-/// Truthiness of a JSON value.
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(number) => number.as_f64().is_some_and(|number| number != 0.0),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(map) => !map.is_empty(),
-    }
 }
 
 fn number(value: &Value) -> Option<f64> {

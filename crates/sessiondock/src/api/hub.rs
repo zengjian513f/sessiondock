@@ -38,6 +38,7 @@ use crate::{
         },
     },
     hub_config::HubConfig,
+    json_compat::truthy,
     ui_events::{EventBus, Snapshot},
 };
 
@@ -413,18 +414,6 @@ async fn read_body(request: Request) -> Result<Map<String, Value>, Reply> {
         Ok(Value::Object(map)) => Ok(map),
         Ok(_) => Err(Reply::Invalid("expected JSON object".into())),
         Err(error) => Err(Reply::Invalid(error.to_string())),
-    }
-}
-
-/// Truthiness of a JSON value.
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(map) => !map.is_empty(),
     }
 }
 

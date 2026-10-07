@@ -20,6 +20,7 @@ pub mod files;
 pub mod fingerprint;
 pub mod hub;
 pub mod hub_config;
+pub(crate) mod json_compat;
 pub mod lifecycle;
 pub mod list_sync;
 pub mod log;

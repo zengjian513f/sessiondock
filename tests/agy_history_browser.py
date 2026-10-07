@@ -8,6 +8,8 @@ fixtures follow the CLI's documented full-transcript fields; they do not
 claim a real model/tool round trip.
 All runtime files are under /tmp/sessiondock-agy-history-*. The server uses
 Corpus/isolated_server with private HOME, native root, mirror and loopback.
+Chunked mirror coverage opens a multi-chunk transcript and, through the page,
+appends, rewrites, finishes a partial line and restores a missing file.
 """
 from __future__ import annotations
 
@@ -39,7 +41,18 @@ PAGES = 'a6000000-0000-4000-8000-000000000002'
 DECOY = 'a6000000-0000-4000-8000-000000000003'
 ORPHAN = 'a6000000-0000-4000-8000-000000000004'
 INDEX_ONLY = 'a6000000-0000-4000-8000-000000000006'
+MIRROR = 'a6000000-0000-4000-8000-000000000007'
+FALLBACK = 'a6000000-0000-4000-8000-000000000008'
+TORN = 'a6000000-0000-4000-8000-000000000009'
 TITLE = '已有的 Agy 中文会话'
+CATALOG_UPDATED = '2026-10-04T00:08:00Z'
+MIRROR_CREATED = '2026-10-04T00:00:01Z'
+LATER_CREATED = '2026-10-04T00:00:59Z'
+FALLBACK_CREATED = '2026-10-04T00:00:44Z'
+TORN_CREATED = '2026-10-04T00:00:17Z'
+# Longer than publish's fixed 8 KiB compare buffer, so equality and prefix
+# checks have to cross a chunk. Not a product limit.
+CHUNK_SPAN = 96 * 1024
 USER = '请阅读原生历史，保留正文中的 <USER_REQUEST>literal</USER_REQUEST>。'
 ANSWER = '原生正文 agyzebracorn REWRITE_A'
 THINKING = '先核对完整投影 agyquokkaridge'
@@ -61,6 +74,12 @@ def system_record(index, text, sender='system', priority='MESSAGE_PRIORITY_LOW')
     return record(index, 'SYSTEM_MESSAGE', SYSTEM_INTRO + '<SYSTEM_MESSAGE>\n'
                   + f'[Message] timestamp=2026-10-04T00:00:00Z sender={sender} priority={priority} content={text}'
                   + '\n</SYSTEM_MESSAGE>')
+
+
+def with_created(index, kind, text, created_at):
+    value = record(index, kind, text)
+    value['created_at'] = created_at
+    return value
 
 
 def record(index, kind, text, *, thinking=None):
@@ -93,9 +112,12 @@ def seed_catalog(db, work, *, title=TITLE):
         connection.execute(SCHEMA)
         for sid, label, steps in ((SEEDED, title, 2), (PAGES, 'Agy 分页历史', 480),
                                   (DECOY, '另一条 Agy 会话', 2),
-                                  (INDEX_ONLY, '只有索引的 Agy 会话', 1)):
+                                  (INDEX_ONLY, '只有索引的 Agy 会话', 1),
+                                  (MIRROR, 'Agy 分块镜像', 4),
+                                  (FALLBACK, 'Agy 首行回退', 1),
+                                  (TORN, 'Agy 半行会话', 1)):
             connection.execute('INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                               (sid, label, '2026-10-04T00:08:00Z',
+                               (sid, label, CATALOG_UPDATED,
                                 json.dumps([work.as_uri()]), '', 'DONE', steps, 'synthetic-agent'))
 
 
@@ -130,6 +152,45 @@ def mirror_stamps(directory):
     return {name: (directory.joinpath(name).stat().st_mtime_ns,
                    directory.joinpath(name).read_bytes())
             for name in ('summary.json', 'messages.jsonl')}
+
+
+def file_identity(path):
+    stat = path.stat()
+    return stat.st_ino, stat.st_mtime_ns, stat.st_size
+
+
+def complete_lines(payload):
+    """Bytes through the last LF. A file with no LF exports nothing."""
+    end = payload.rfind(b'\n')
+    if end < 0:
+        return b''
+    return payload[:end + 1]
+
+
+def summary_value(directory):
+    return json.loads(directory.joinpath('summary.json').read_text())
+
+
+def millis(stamp):
+    """Index normalization of a whole-second UTC fixture stamp."""
+    if stamp.endswith('Z') and '.' not in stamp:
+        return stamp[:-1] + '.000Z'
+    return stamp
+
+
+def visible_times(page):
+    meta = page.locator('#detail .meta-secondary').filter(has_text='→')
+    expect(meta).to_have_count(1)
+    text = meta.text_content() or ''
+    created, updated = (part.strip() for part in text.split('→', 1))
+    return created, updated
+
+
+def write_native(native, sid, payload):
+    path = transcript(native, sid)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.write_bytes(payload)
+    return path
 
 
 @contextmanager
@@ -214,6 +275,26 @@ def run(binary):
         page_records = [record(index, 'USER_INPUT' if index % 2 == 0 else 'PLANNER_RESPONSE',
                                f'AGY PAGE {index:04d}') for index in range(480)]
         page_path = write_transcript(native, PAGES, page_records)
+        # First line carries created_at. An empty line and a long invalid line
+        # follow, then later records whose created_at must not replace it.
+        # The invalid line is longer than the compare buffer, and the marker
+        # that a same-length rewrite changes sits after it.
+        mirror_initial = b''.join((
+            encoded(with_created(0, 'USER_INPUT', 'AGY MIRROR OPEN', MIRROR_CREATED)),
+            b'\n',
+            b'{not-json agybadline' + (b'z' * CHUNK_SPAN) + b'}\n',
+            encoded(with_created(1, 'PLANNER_RESPONSE', 'AGYCHUNKMARKER', LATER_CREATED)),
+            encoded(with_created(2, 'PLANNER_RESPONSE', 'AGY MIRROR TAIL', '2026-10-04T00:00:58Z')),
+        ))
+        mirror_native = write_native(native, MIRROR, mirror_initial)
+        # The first complete line is empty, the next is invalid, and only a
+        # later line has created_at. That later value must not become created.
+        fallback_initial = b'\n{not-json agybadline}\n' + encoded(
+            with_created(1, 'USER_INPUT', 'AGY FALLBACK BODY', FALLBACK_CREATED))
+        fallback_native = write_native(native, FALLBACK, fallback_initial)
+        torn_record = with_created(0, 'USER_INPUT', 'AGY TORN COMPLETE', TORN_CREATED)
+        torn_initial = encoded(torn_record)[:-1]
+        torn_native = write_native(native, TORN, torn_initial)
         directory = mirror / 'cli' / SEEDED
         expected_native = native_snapshot(native)
         corpus = Corpus(root)
@@ -464,6 +545,251 @@ def run(binary):
                         assert messages(opener, base, uid, **checkpoint(before))['reset']
                         assert_native(native, expected_native, 'append/rewrite/rewind')
                         progress('live native append, same-size old-row rewrite and truncation reset')
+
+                        # Open the multi-chunk transcript and read it on the page.
+                        # created_at is the first line only; the long invalid line stays
+                        # in the mirror and is counted, not shown as a message.
+                        mirror_dir = mirror / 'cli' / MIRROR
+                        mirror_messages = mirror_dir / 'messages.jsonl'
+                        mirror_summary = mirror_dir / 'summary.json'
+                        mirror_uid = open_row(MIRROR, 'AGY MIRROR OPEN')
+                        expect(page.locator('#msgs')).to_contain_text('AGYCHUNKMARKER')
+                        expect(page.locator('#msgs')).to_contain_text('AGY MIRROR TAIL')
+                        expect(page.locator('#msgs')).not_to_contain_text('not-json')
+                        expect(page.locator('.native-history-warning')).to_contain_text('跳过无效的JSONL 记录 ×1')
+                        created, updated = visible_times(page)
+                        assert created and created != updated, (created, updated)
+                        mirror_summary_json = summary_value(mirror_dir)
+                        assert mirror_summary_json['session']['time_created'] == MIRROR_CREATED, mirror_summary_json
+                        assert mirror_summary_json['session']['time_updated'] == CATALOG_UPDATED
+                        assert mirror_summary_json['transcript_missing'] is False
+                        mirror_detail = messages(opener, base, mirror_uid)
+                        assert [m['text'] for m in mirror_detail['messages']] == [
+                            'AGY MIRROR OPEN', 'AGYCHUNKMARKER', 'AGY MIRROR TAIL'], mirror_detail
+                        assert mirror_detail['meta']['created'] == millis(MIRROR_CREATED), mirror_detail['meta']
+                        assert mirror_detail['meta']['updated'] == millis(CATALOG_UPDATED)
+                        assert mirror_messages.read_bytes() == complete_lines(mirror_native.read_bytes()) == mirror_initial
+                        mirror_inode = file_identity(mirror_messages)[0]
+                        summary_identity = file_identity(mirror_summary)
+                        assert_native(native, expected_native, 'multi-chunk open/read')
+                        progress('opened multi-chunk transcript; created_at is the first line and the invalid line stays stored')
+
+                        # An empty first line and a following invalid line do not
+                        # take created_at from a later record. The page shows the
+                        # later body and the catalog time on both sides.
+                        fallback_dir = mirror / 'cli' / FALLBACK
+                        fallback_uid = open_row(FALLBACK, 'AGY FALLBACK BODY')
+                        expect(page.locator('#msgs')).not_to_contain_text('not-json')
+                        expect(page.locator('.native-history-warning')).to_contain_text('跳过无效的JSONL 记录 ×1')
+                        created, updated = visible_times(page)
+                        assert created and created == updated, (created, updated)
+                        fallback_summary = summary_value(fallback_dir)
+                        assert fallback_summary['session']['time_created'] == CATALOG_UPDATED, fallback_summary
+                        assert fallback_summary['session']['time_created'] == fallback_summary['session']['time_updated']
+                        assert fallback_summary['session']['time_created'] != FALLBACK_CREATED
+                        fallback_detail = messages(opener, base, fallback_uid)
+                        assert [m['text'] for m in fallback_detail['messages']] == ['AGY FALLBACK BODY'], fallback_detail
+                        assert fallback_detail['meta']['created'] == millis(CATALOG_UPDATED), fallback_detail['meta']
+                        assert fallback_detail['meta']['created'] == fallback_detail['meta']['updated']
+                        assert (fallback_dir / 'messages.jsonl').read_bytes() == fallback_native.read_bytes() == fallback_initial
+                        assert_native(native, expected_native, 'empty/bad first line fallback')
+                        progress('empty and invalid first lines keep the catalog created time and still show the later record')
+
+                        # A transcript with no LF is not a message yet. Completing
+                        # that one byte publishes the line and reads its created_at.
+                        torn_dir = mirror / 'cli' / TORN
+                        torn_messages = torn_dir / 'messages.jsonl'
+                        torn_summary = torn_dir / 'summary.json'
+                        torn_uid, torn_item = row(TORN)
+                        expect(torn_item).to_be_visible()
+                        torn_item.click()
+                        expect(page.locator('#detail h2')).to_contain_text('Agy 半行会话')
+                        expect(page.locator('#detail .meta-source')).to_have_text('Agy')
+                        expect(page.locator('#msgs .msg')).to_have_count(0)
+                        expect(page.locator('#msgs')).not_to_contain_text('AGY TORN COMPLETE')
+                        expect(page.locator('.native-history-warning')).to_have_count(0)
+                        created, updated = visible_times(page)
+                        assert created and created == updated, (created, updated)
+                        torn_summary_json = summary_value(torn_dir)
+                        assert torn_summary_json['transcript_missing'] is False
+                        assert torn_summary_json['session']['time_created'] == CATALOG_UPDATED, torn_summary_json
+                        assert torn_summary_json['session']['time_created'] != TORN_CREATED
+                        assert torn_messages.read_bytes() == b''
+                        torn_inode = file_identity(torn_messages)[0]
+                        assert_native(native, expected_native, 'partial transcript before LF')
+                        with torn_native.open('ab') as stream:
+                            stream.write(b'\n')
+                        expected_native = native_snapshot(native)
+                        expect(page.locator('#msgs')).to_contain_text('AGY TORN COMPLETE')
+                        # Body appends and header metadata refresh independently.
+                        # Reopen the page after the mirror has published its summary.
+                        wait_for(lambda: summary_value(torn_dir)['session']['time_created'] == TORN_CREATED,
+                                 'completed first-line created_at')
+                        page.reload(wait_until='domcontentloaded')
+                        open_row(TORN, 'AGY TORN COMPLETE')
+                        created, updated = visible_times(page)
+                        assert created and created != updated, (created, updated)
+                        torn_summary_json = summary_value(torn_dir)
+                        assert torn_summary_json['session']['time_created'] == TORN_CREATED, torn_summary_json
+                        assert torn_messages.read_bytes() == encoded(torn_record)
+                        assert file_identity(torn_messages)[0] == torn_inode, 'completing the LF replaced the empty mirror'
+                        torn_detail = messages(opener, base, torn_uid)
+                        assert [m['text'] for m in torn_detail['messages']] == ['AGY TORN COMPLETE'], torn_detail
+                        assert torn_detail['meta']['created'] == millis(TORN_CREATED), torn_detail['meta']
+                        assert_native(native, expected_native, 'partial line completed')
+                        # A later export whose new first line has no created_at keeps
+                        # the value already stored. It does not fall back or read the
+                        # following record.
+                        torn_summary_identity = file_identity(torn_summary)
+                        torn_rewritten = b'\n' + torn_native.read_bytes()
+                        torn_native.write_bytes(torn_rewritten)
+                        expected_native = native_snapshot(native)
+                        wait_for(lambda: torn_messages.read_bytes() == torn_rewritten,
+                                 'empty first line republish')
+                        page.wait_for_timeout(2300)  # Summary is published after the message bytes.
+                        assert file_identity(torn_summary) == torn_summary_identity, 'empty first line replaced created_at'
+                        assert summary_value(torn_dir)['session']['time_created'] == TORN_CREATED
+                        expect(page.locator('#msgs')).to_contain_text('AGY TORN COMPLETE')
+                        created, updated = visible_times(page)
+                        assert created and created != updated, (created, updated)
+                        assert file_identity(torn_messages)[0] != torn_inode, 'prepended line appended instead of rewriting'
+                        assert_native(native, expected_native, 'empty first line keeps created_at')
+                        progress('partial line stays hidden until its LF; an empty first line does not replace created_at')
+
+                        # Continuous appends on the already open multi-chunk session.
+                        # Each one extends the same mirror inode. Summary bytes stay
+                        # identical because the first line did not change.
+                        open_row(MIRROR, 'AGY MIRROR OPEN')
+                        assert file_identity(mirror_summary) == summary_identity
+                        assert mirror_messages.read_bytes() == mirror_initial
+                        appended_native = mirror_initial
+                        before = messages(opener, base, mirror_uid)
+                        for index, text in enumerate(('AGY APPEND ONE', 'AGY APPEND TWO', 'AGY APPEND THREE'), start=3):
+                            line = encoded(with_created(index, 'PLANNER_RESPONSE', text, LATER_CREATED))
+                            with mirror_native.open('ab') as stream:
+                                stream.write(line)
+                            appended_native += line
+                            expected_native = native_snapshot(native)
+                            expect(page.locator('#msgs')).to_contain_text(text)
+                            assert file_identity(mirror_messages)[0] == mirror_inode, text
+                            assert mirror_messages.read_bytes() == appended_native, text
+                            assert file_identity(mirror_summary) == summary_identity, text
+                            assert summary_value(mirror_dir)['session']['time_created'] == MIRROR_CREATED
+                            assert_native(native, expected_native, 'continuous append ' + text)
+                        grown = messages(opener, base, mirror_uid, **checkpoint(before))
+                        assert not grown['reset'], grown
+                        assert [m['text'] for m in grown['messages']] == [
+                            'AGY APPEND ONE', 'AGY APPEND TWO', 'AGY APPEND THREE'], grown
+                        progress('three live appends kept the mirror inode, summary mtime and first-line created_at')
+
+                        # A native mtime change with the same bytes must not republish.
+                        identical = file_identity(mirror_messages), file_identity(mirror_summary)
+                        os.utime(mirror_native, None)
+                        expected_native = native_snapshot(native)
+                        page.wait_for_timeout(2300)  # Cross two real 1-second mirror polls.
+                        assert (file_identity(mirror_messages), file_identity(mirror_summary)) == identical, (
+                            'identical transcript rewrote the mirror')
+                        expect(page.locator('#msgs')).to_contain_text('AGY APPEND THREE')
+                        assert_native(native, expected_native, 'identical bytes retouch')
+                        progress('same transcript bytes keep messages and summary mtime')
+
+                        # Same-length change past the first compare chunk. The old
+                        # file is not a prefix, so the mirror is replaced in place
+                        # of the previous inode. created_at stays on the first line.
+                        replaced = appended_native.replace(b'AGYCHUNKMARKER', b'AGYCHUNKCHANGE', 1)
+                        assert len(replaced) == len(appended_native)
+                        assert replaced != appended_native
+                        mirror_native.write_bytes(replaced)
+                        expected_native = native_snapshot(native)
+                        expect(page.locator('#msgs')).to_contain_text('AGYCHUNKCHANGE')
+                        expect(page.locator('#msgs')).not_to_contain_text('AGYCHUNKMARKER')
+                        rewritten_inode = file_identity(mirror_messages)[0]
+                        assert rewritten_inode != mirror_inode, 'same-length rewrite appended or skipped the write'
+                        assert mirror_messages.read_bytes() == replaced
+                        assert file_identity(mirror_summary) == summary_identity
+                        assert summary_value(mirror_dir)['session']['time_created'] == MIRROR_CREATED
+                        rewritten = messages(opener, base, mirror_uid, **checkpoint(before))
+                        assert rewritten['reset'], rewritten
+                        assert_native(native, expected_native, 'same-length rewrite past first chunk')
+                        # Rollback drops the last record. The shorter snapshot is
+                        # not a prefix append, so this is another atomic replace.
+                        before_rollback = messages(opener, base, mirror_uid)
+                        last_newline = replaced.rfind(b'\n', 0, len(replaced) - 1)
+                        shorter = replaced[:last_newline + 1]
+                        assert shorter.endswith(b'\n') and len(shorter) < len(replaced)
+                        assert not shorter.endswith(encoded(with_created(5, 'PLANNER_RESPONSE', 'AGY APPEND THREE', LATER_CREATED)))
+                        mirror_native.write_bytes(shorter)
+                        expected_native = native_snapshot(native)
+                        expect(page.locator('#msgs')).to_contain_text('AGY APPEND TWO')
+                        expect(page.locator('#msgs')).not_to_contain_text('AGY APPEND THREE')
+                        assert file_identity(mirror_messages)[0] != rewritten_inode, 'rollback appended instead of rewriting'
+                        assert mirror_messages.read_bytes() == shorter
+                        assert file_identity(mirror_summary) == summary_identity
+                        rolled = messages(opener, base, mirror_uid, **checkpoint(before_rollback))
+                        assert rolled['reset'], rolled
+                        assert_native(native, expected_native, 'rollback rewrite')
+                        progress('same-length rewrite past the compare chunk and a shorter rollback both replace the mirror')
+
+                        # A long unfinished tail is invisible and does not change the
+                        # mirror. The completing LF appends that one line.
+                        partial_text = 'AGY PARTIAL HIDDEN ' + ('p' * CHUNK_SPAN)
+                        partial_line = encoded(with_created(9, 'USER_INPUT', partial_text, LATER_CREATED))
+                        partial_tail = partial_line[:-1]
+                        assert len(partial_tail) > CHUNK_SPAN and not partial_tail.endswith(b'\n')
+                        held = file_identity(mirror_messages)
+                        with mirror_native.open('ab') as stream:
+                            stream.write(partial_tail)
+                        expected_native = native_snapshot(native)
+                        page.wait_for_timeout(2300)  # Cross two real 1-second mirror polls.
+                        expect(page.locator('#msgs')).not_to_contain_text('AGY PARTIAL HIDDEN')
+                        assert file_identity(mirror_messages) == held, 'unfinished tail republished the mirror'
+                        assert mirror_messages.read_bytes() == shorter
+                        assert file_identity(mirror_summary) == summary_identity
+                        assert_native(native, expected_native, 'long partial tail')
+                        before_partial = messages(opener, base, mirror_uid)
+                        with mirror_native.open('ab') as stream:
+                            stream.write(b'\n')
+                        expected_native = native_snapshot(native)
+                        expect(page.locator('#msgs')).to_contain_text('AGY PARTIAL HIDDEN')
+                        assert file_identity(mirror_messages)[0] == held[0], 'completed partial line replaced the mirror'
+                        assert mirror_messages.read_bytes() == shorter + partial_line
+                        assert file_identity(mirror_summary) == summary_identity
+                        assert summary_value(mirror_dir)['session']['time_created'] == MIRROR_CREATED
+                        completed = messages(opener, base, mirror_uid, **checkpoint(before_partial))
+                        assert not completed['reset'], completed
+                        assert completed['messages'][-1]['text'].startswith('AGY PARTIAL HIDDEN'), completed
+                        assert_native(native, expected_native, 'long partial line completed')
+                        progress('long unfinished tail stays out of the mirror until its LF appends it')
+
+                        # Removing the transcript keeps the cached mirror bytes and
+                        # mtime. Putting the same bytes back clears the notice
+                        # without rewriting that mirror.
+                        saved_mirror = mirror_messages.read_bytes()
+                        saved_identity = file_identity(mirror_messages)
+                        saved_native = mirror_native.read_bytes()
+                        mirror_native.unlink()
+                        expected_native = native_snapshot(native)
+                        wait_for(lambda: summary_value(mirror_dir).get('transcript_missing') is True,
+                                 'multi-chunk transcript missing')
+                        expect(page.locator('.native-history-warning').filter(has_text='保留上次读取的历史')).to_be_visible()
+                        expect(page.locator('#msgs')).to_contain_text('AGY MIRROR OPEN')
+                        expect(page.locator('#msgs')).to_contain_text('AGY PARTIAL HIDDEN')
+                        assert mirror_messages.read_bytes() == saved_mirror
+                        assert file_identity(mirror_messages) == saved_identity
+                        assert_native(native, expected_native, 'multi-chunk transcript missing')
+                        mirror_native.write_bytes(saved_native)
+                        expected_native = native_snapshot(native)
+                        wait_for(lambda: summary_value(mirror_dir).get('transcript_missing') is False,
+                                 'multi-chunk transcript restored')
+                        expect(page.locator('.native-history-warning').filter(has_text='保留上次读取的历史')).to_have_count(0)
+                        expect(page.locator('.native-history-warning')).to_contain_text('跳过无效的JSONL 记录 ×1')
+                        expect(page.locator('#msgs')).to_contain_text('AGYCHUNKCHANGE')
+                        expect(page.locator('#msgs')).to_contain_text('AGY PARTIAL HIDDEN')
+                        assert mirror_messages.read_bytes() == saved_mirror
+                        assert file_identity(mirror_messages) == saved_identity
+                        assert summary_value(mirror_dir)['session']['time_created'] == MIRROR_CREATED
+                        assert_native(native, expected_native, 'multi-chunk transcript restored')
+                        progress('missing multi-chunk transcript keeps the mirror; restoring the same bytes does not rewrite it')
 
                         # Real history-gap clicks; HTTP checks only supplement visible rows.
                         pages_uid = open_row(PAGES, 'AGY PAGE 0479')

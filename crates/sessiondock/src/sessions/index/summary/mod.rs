@@ -415,16 +415,7 @@ pub fn native_identity<'a>(
 // ---------------------------------------------------------------------------
 
 /// Truthiness of a JSON value.
-pub fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(value) => *value,
-        Value::Number(value) => value.as_f64().is_some_and(|number| number != 0.0),
-        Value::String(value) => !value.is_empty(),
-        Value::Array(value) => !value.is_empty(),
-        Value::Object(value) => !value.is_empty(),
-    }
-}
+pub use crate::json_compat::truthy;
 
 /// String form of a scalar JSON value that reaches a row field.
 pub fn py_str(value: &Value) -> String {
@@ -756,32 +747,7 @@ pub fn is_codex_protocol_injection(text: &str, native_meta: &Value) -> bool {
 
 /// `urllib.parse.unquote`: percent UTF-8 decoding with replacement for invalid
 /// bytes, malformed escapes retained, `+` literal.
-pub fn unquote(name: &str) -> String {
-    fn hex(byte: u8) -> Option<u8> {
-        match byte {
-            b'0'..=b'9' => Some(byte - b'0'),
-            b'a'..=b'f' => Some(byte - b'a' + 10),
-            b'A'..=b'F' => Some(byte - b'A' + 10),
-            _ => None,
-        }
-    }
-    let bytes = name.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut offset = 0;
-    while offset < bytes.len() {
-        if bytes[offset] == b'%'
-            && offset + 2 < bytes.len()
-            && let (Some(high), Some(low)) = (hex(bytes[offset + 1]), hex(bytes[offset + 2]))
-        {
-            decoded.push((high << 4) | low);
-            offset += 3;
-        } else {
-            decoded.push(bytes[offset]);
-            offset += 1;
-        }
-    }
-    String::from_utf8_lossy(&decoded).into_owned()
-}
+pub use crate::json_compat::unquote;
 
 /// Last record (file order) whose timestamp normalizes, tail first, then the
 /// head as the bounded stand-in for the backward whole-file scan.
