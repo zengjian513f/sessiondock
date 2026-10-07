@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# run_validation: skip
-"""Explicit --agy operator test: real native approvals/questions and commands.
+"""Operator real Agy test (`run_validation --real-only` or direct): native approvals/questions and commands.
 
 Private HOME, temporary files, loopback synthetic model, no account or paid
 requests. Reuse the real-browser lifecycle/isolation harness; all answers use
@@ -122,8 +121,9 @@ def run(browser, base, root, agy, records, evidence, holds):
         page.wait_for_function('T.listLoaded && T.sources.agy === true')
         harness.open_picker(page)
         page.locator('label:has(input[name="new-source"][value="agy"])').click()
+        # The picker lists reasoning variants as one model plus an effort.
         page.locator('#new-model').click()
-        page.locator(f'#new-model-options [data-model-option][title="{MODEL}"]').click()
+        page.locator('#new-model-options [data-model-option][title="gemini-3.1-pro"]').click()
         page.locator('#new-effort').select_option('low')
         page.locator('#new-cwd').fill(str(root / 'work'))
         with page.expect_response(lambda r: urlsplit(r.url).path == '/api/term/create') as created:

@@ -96,10 +96,11 @@ def suites(binary):
         head = text.splitlines()[:40]
         serial = SERIAL_MARK in head
         browser = "playwright" in text
-        # A "*_real" suite spawns a real paid CLI: operator tier, out of the
-        # routine sweep unless --include-real (they cost money and are timing
-        # sensitive; the bench_*_real ones already opt out with SKIP_MARK).
-        real = path.stem.endswith("_real")
+        # A "*_real" (or "*_real_browser") suite spawns a real CLI: operator
+        # tier, out of the routine sweep unless --include-real (they need the
+        # operator's CLI installs or logins, may cost money and are timing
+        # sensitive).
+        real = path.stem.endswith(("_real", "_real_browser"))
         if has_flag(text, "--browser"):
             argv.append("--browser")
         if has_flag(text, "--binary"):

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# run_validation: skip
 """Operator-only real Agy tools and media, using a loopback synthetic model.
 
-Invoke explicitly with --agy PATH. No account, credentials, paid model or
+Runs under `run_validation --real-only` or directly; `--agy` defaults to the
+installed `agy`. No account, credentials, paid model or
 production sessions. The gateway emits only view_file calls for two temporary
 fixtures. The real CLI creates native records that Chromium then opens.
 """
@@ -20,6 +20,7 @@ import threading
 
 from playwright.sync_api import expect, sync_playwright
 
+from agy_real_browser import installed_agy
 from history_fixtures import BINARY, Corpus, isolated_server
 
 MODEL = 'gemini-3.1-pro-low-thinking'
@@ -83,7 +84,7 @@ def gateway(root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--agy', type=Path, required=True)
+    parser.add_argument('--agy', type=Path, default=installed_agy())
     parser.add_argument('--binary', type=Path, default=BINARY)
     args = parser.parse_args()
     agy, binary = args.agy.resolve(strict=True), args.binary.resolve(strict=True)

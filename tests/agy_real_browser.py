@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# run_validation: skip
-"""Operator-only real AGY + Chromium test; invoke directly with --agy PATH.
+"""Operator-only real AGY + Chromium test (`run_validation --real-only`, or directly).
 
-Excluded from the default validation sweep. No installation, everyday HOME,
+Excluded from the default validation sweep. `--agy` defaults to the installed
+`agy` (PATH, then ~/.local/bin). No installation, everyday HOME,
 credentials, production sessions, or paid model. Build SessionDock separately.
 The real binary uses --model sessiondock-fake, no effort, and a temporary
 loopback synthetic gateway. The selected compiled frontend is served. Every input,
@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -415,11 +416,16 @@ def run(browser, base, root, agy, records, evidence, holds):
         context.close()
 
 
+def installed_agy():
+    found = shutil.which('agy') or Path.home() / '.local/bin/agy'
+    return Path(found)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--agy', required=True, type=Path, help='explicit real binary; operator-only')
+    parser.add_argument('--agy', type=Path, default=installed_agy(), help='real binary; operator-only')
     parser.add_argument('--binary', type=Path, default=BINARY)
-    parser.add_argument('--ptyhost', required=True, type=Path)
+    parser.add_argument('--ptyhost', type=Path, default=REPO / 'target/debug/ptyhost')
     parser.add_argument('--report', type=Path, default=Path(tempfile.gettempdir()) / 'sessiondock-agy-real-browser-report.md')
     args = parser.parse_args()
     agy, binary, host = (path.resolve(strict=True) for path in (args.agy, args.binary, args.ptyhost))
