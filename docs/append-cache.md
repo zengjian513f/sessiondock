@@ -1,8 +1,9 @@
 # Reusing native JSON records on append
 
-The session store now has a disposable JSON-record cache. It avoids reparsing
-unchanged JSON strings; it is **not an incremental timeline parser** and does not
-turn history reads into constant-time operations.
+The session store has a disposable JSON-record cache. It avoids reparsing
+unchanged JSON strings. A separate, conservative Agy projection continuation
+can also avoid reducing old records again; neither cache turns history reads
+into constant-time operations.
 
 ## Reuse boundary
 
@@ -86,22 +87,41 @@ match is dropped.
 
 ## Semantics deliberately recalculated
 
-Provider metadata, native identity provenance, Claude lineage and the complete
-provider projection still run against all validated records. Claude last-prompt
+Provider metadata, native identity provenance and Claude lineage still run
+against all validated records. Claude last-prompt
 may remove an old visible branch; Codex turn_aborted may change an old assistant
 message. Summary changes can alter metadata without adding a JSONL row. Appending
-old Event vectors would be incorrect for these cases.
+old Event vectors would be incorrect for these cases. Claude, Codex, Grok and
+OpenCode therefore retain complete provider projection.
+
+Agy alone can continue its forward reducer when the previous projection
+succeeded, its summary stamp and options match, and RecordCache has reused
+the exact previous AST after verifying the entire old committed prefix. A
+missing AST entry, rewrite, truncation, changed summary or options falls back
+to complete projection. The retained state contains only the record count,
+current turn and bounded skipped-kind counts; its weight is charged to the
+view LRU. It does not retain another copy of the AST. Invalid-line counts and
+summary warnings are computed afresh, so appends cannot duplicate them.
+
+Only prefixes without media entries or private sidecars can continue. An
+appended media record is parsed normally and prevents later continuation;
+batches with sidecars use the existing complete media-context path. Any
+provider error discards the whole event result, including the reused prefix.
+Even a qualifying append still reads and verifies all source bytes, copies
+the old events, recalculates metadata and compares encoded events. This is
+not constant-time append and has no claimed measured speedup.
 
 Inherited fixed prefixes, semantic digests, byte/head/anchor cursor validation,
 window selection, search and file/media selected-view authority remain unchanged.
-Full native reads, timeline projection and inherited-prefix parsing can still
+Full native reads, complete or partial timeline projection and inherited-prefix parsing can still
 dominate large-history latency. Further optimization must measure these costs
 and preserve their separate invariants. This page does not add a current timing.
 
 ## Serialized bytes on append (2026-09-15)
 
-The projection is still recomputed from every validated record, but its
-serialized form is not: `Parsed.encoded` (docs/read-model.md "视图字节缓存")
+Outside the Agy continuation above, projection is recomputed from every
+validated record, but its serialized form is not: `Parsed.encoded`
+(docs/read-model.md "视图字节缓存")
 keeps the exact `serde_json::to_vec` bytes of every projected message, and the
 encoder of the new parse walks the old and new event lists side by side. Each
 index is compared on its own. Status events are stored separately and are

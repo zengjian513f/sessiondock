@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 pub(super) mod native_images;
 mod native_records;
 pub(crate) mod scanner;
+mod summary_projection;
+pub(super) use summary_projection::decode as decode_summary_record;
 pub(crate) mod string_reader;
 mod tool_envelopes;
 pub(super) use native_records::scan_native_records;
@@ -93,6 +95,77 @@ impl RecordCache {
         }
     }
 }
+impl RecordCache {
+    /// Lend exclusive AST ownership to a lock-free parse. The lender stops
+    /// charging it immediately; only the shared cache retains idle batches.
+    pub(crate) fn checkout(&mut self, key: &str) -> Self {
+        let mut local = Self::with_budget(self.max_weight, self.max_entries);
+        if let Some(entry) = self.entries.remove(key) {
+            self.weight -= entry.weight;
+            local.weight = entry.weight;
+            local.entries.insert(key.to_owned(), entry);
+        }
+        local
+    }
+
+    pub(crate) fn evict(&mut self, key: &str) -> Self {
+        self.checkout(key)
+    }
+
+    /// Return completed batches to the one global budget. Displaced ASTs
+    /// move into the return value so their destruction happens after unlock.
+    pub(crate) fn absorb(&mut self, mut local: Self) -> RetiredRecords {
+        let mut discarded = RetiredRecords::default();
+        for (key, mut entry) in std::mem::take(&mut local.entries) {
+            if entry.weight > self.max_weight || self.max_entries == 0 {
+                discarded.entries.push(entry);
+                continue;
+            }
+            if let Some(old) = self.entries.remove(&key) {
+                self.weight -= old.weight;
+                discarded.entries.push(old);
+            }
+            while self.entries.len() >= self.max_entries
+                || self.weight.saturating_add(entry.weight) > self.max_weight
+            {
+                let oldest = self
+                    .entries
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.used)
+                    .map(|(key, _)| key.clone())
+                    .expect("retained entries exceed budget");
+                let old = self.entries.remove(&oldest).expect("selected entry");
+                self.weight -= old.weight;
+                discarded.entries.push(old);
+            }
+            // Keep the same LRU clock rollover behavior as retain.
+            if self.clock == u64::MAX {
+                let mut order = self
+                    .entries
+                    .iter()
+                    .map(|(key, entry)| (entry.used, key.clone()))
+                    .collect::<Vec<_>>();
+                order.sort();
+                for (index, (_, key)) in order.into_iter().enumerate() {
+                    self.entries.get_mut(&key).unwrap().used = index as u64;
+                }
+                self.clock = self.entries.len() as u64;
+            }
+            self.clock += 1;
+            entry.used = self.clock;
+            self.weight += entry.weight;
+            self.entries.insert(key, entry);
+        }
+        discarded
+    }
+}
+
+/// Deferred destruction of cache replacements, outside the shared lock.
+#[derive(Default)]
+pub(crate) struct RetiredRecords {
+    entries: Vec<Entry>,
+}
+
 pub(crate) struct Batch {
     pub records: Vec<(Value, u64)>,
     pub sidecars: BTreeMap<u64, Vec<native_images::Sidecar>>,

@@ -1,7 +1,114 @@
 //! Agy's complete, system-generated transcript (not the truncated transcript).
 use serde_json::{Value, json};
 
-use super::{Parser, clip, envelopes, normalized, string};
+use super::{ParseOptions, Parser, Skipped, clip, envelopes, normalized, string};
+use crate::sessions::Event;
+
+/// Resume only the forward Agy reducer, never retain native records here.
+/// Media-bearing prefixes and structural sidecars cannot resume this reducer.
+/// Summary metadata (including transcript availability) is derived afresh.
+pub(in crate::sessions) struct AppendProjection {
+    records: usize,
+    turn: String,
+    skipped: Skipped,
+}
+
+impl AppendProjection {
+    pub(in crate::sessions) fn retained_weight(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(self.turn.capacity())
+            .saturating_add(
+                self.skipped
+                    .kinds
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<(String, usize)>()),
+            )
+            .saturating_add(
+                self.skipped
+                    .kinds
+                    .iter()
+                    .map(|(kind, _)| kind.capacity())
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.skipped
+                    .notes
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<String>()),
+            )
+            .saturating_add(
+                self.skipped
+                    .notes
+                    .iter()
+                    .map(String::capacity)
+                    .sum::<usize>(),
+            )
+    }
+}
+
+/// Supplied only after RecordCache has reused and verified the exact published
+/// committed prefix, with matching file identity, summary stamp and options.
+pub(in crate::sessions) struct ProjectionPrefix<'a> {
+    pub state: &'a AppendProjection,
+    pub events: &'a [Event],
+    pub committed: u64,
+}
+
+pub(in crate::sessions) fn parse_append(
+    records: &[(Value, u64)],
+    summary: Option<&Value>,
+    fallback: &str,
+    options: ParseOptions<'_>,
+    prefix: Option<ProjectionPrefix<'_>>,
+) -> (Value, Vec<Event>, Option<String>, Option<AppendProjection>) {
+    let mut meta = metadata(summary.unwrap_or(&Value::Null), records, fallback);
+    // The validated record ends are monotone, including across skipped lines.
+    // Do not walk the old ASTs to find the first new record.
+    let prefix = prefix.filter(|prefix| {
+        records.partition_point(|(_, end)| *end <= prefix.committed) == prefix.state.records
+    });
+    let start = prefix.as_ref().map_or(0, |prefix| prefix.state.records);
+    let mut parser = match prefix {
+        Some(prefix) => Parser {
+            events: prefix.events.to_vec(),
+            turn: prefix.state.turn.clone(),
+            skipped: prefix.state.skipped.clone(),
+            source: "agy".to_owned(),
+            ..Default::default()
+        },
+        None => Parser {
+            source: "agy".to_owned(),
+            ..Default::default()
+        },
+    };
+    let mut media_free = true;
+    for (record, end) in &records[start..] {
+        // Even ignored/invalid URI media stays on the complete projection path:
+        // do not carry a possibly omitted descriptor into a later append.
+        media_free &= !record["media"]
+            .as_array()
+            .is_some_and(|media| !media.is_empty());
+        if let Err(reason) = parser.agy(record, *end) {
+            // A suffix error invalidates the whole projection, including its
+            // otherwise valid prefix. Never publish a partial successful view.
+            return (meta, Vec::new(), Some(reason), None);
+        }
+    }
+    let state = media_free.then(|| AppendProjection {
+        records: records.len(),
+        turn: parser.turn,
+        // Record-only notes: never keep an old summary availability warning.
+        skipped: parser.skipped.clone(),
+    });
+    parser.skipped.invalid_lines(options.invalid_lines);
+    if let Some(warning) = summary
+        .and_then(|summary| crate::sessions::agy::transcript_warning(summary, !records.is_empty()))
+    {
+        parser.skipped.warn(warning.to_owned());
+    }
+    meta["migration_warnings"] = json!(parser.skipped.warnings());
+    (meta, parser.events, None, state)
+}
 
 /// Agy's exact system injection envelope; ordinary user/code tags are never
 /// passed here. Unrecognized or incomplete layouts stay verbatim.

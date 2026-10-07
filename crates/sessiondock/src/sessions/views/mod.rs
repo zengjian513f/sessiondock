@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::time::Instant;
 
 use serde_json::{Value, json};
@@ -32,7 +32,7 @@ mod encoded;
 pub(crate) use body::MessageBody;
 pub(crate) use encoded::EncodedEvents;
 
-/// LRU bounds of the view cache (docs/read-model.md: 视图缓存 64 项 / 2 GiB).
+/// LRU bounds of the view cache (default 16 entries / 128 MiB; docs/read-model.md).
 /// Runtime view budgets: `SESSIONDOCK_CACHE_ENTRIES` /
 /// `SESSIONDOCK_VIEW_CACHE_MB`.
 fn view_limit() -> usize {
@@ -77,6 +77,9 @@ pub(crate) struct Parsed {
     /// The persisted Claude display pin these events were projected with
     /// (main sessions only). A different pin means a different logical view.
     pub pin: Option<TimelinePin>,
+    /// Small forward-reducer state, charged to the view LRU. Native ASTs stay
+    /// exclusively in RecordCache; eviction there prevents projection reuse.
+    append_projection: Option<providers::AppendProjection>,
 }
 
 impl Parsed {
@@ -96,7 +99,11 @@ impl Parsed {
     /// budgets (the retained JSON bytes are the same figure, so a view is
     /// charged once for both its tree and its bytes; see docs/read-model.md).
     fn encoded_bytes(&self) -> usize {
-        accounted_bytes(&self.encoded, self.events.iter())
+        accounted_bytes(&self.encoded, self.events.iter()).saturating_add(
+            self.append_projection
+                .as_ref()
+                .map_or(0, providers::AppendProjection::retained_weight),
+        )
     }
 }
 
@@ -645,26 +652,60 @@ pub(crate) fn parse_candidate_retaining(
     let outcome = pin
         .as_ref()
         .map(|pin| providers::claude_pin(records, &pin.tip, pin.stale_end));
-    let (mut meta, events, provider_error) = providers::parse_options_with_media(
-        candidate.source,
-        &candidate.path,
-        records,
-        summary.as_ref(),
-        &fallback,
-        providers::ParseOptions {
-            agent: &agent,
-            declared_tip: outcome
-                .as_ref()
-                .and_then(|outcome| outcome.declared_tip.as_deref()),
-            abandoned_after: outcome
-                .as_ref()
-                .map_or(0, |outcome| outcome.abandoned_after),
-            // Lines the scanner skipped are a whole-file note the
-            // projection cannot see in `records`.
-            invalid_lines: record_batch.invalid,
-        },
-        &record_batch.sidecars,
-    );
+    let options = providers::ParseOptions {
+        agent: &agent,
+        declared_tip: outcome
+            .as_ref()
+            .and_then(|outcome| outcome.declared_tip.as_deref()),
+        abandoned_after: outcome
+            .as_ref()
+            .map_or(0, |outcome| outcome.abandoned_after),
+        // Lines the scanner skipped are a whole-file note the
+        // projection cannot see in `records`.
+        invalid_lines: record_batch.invalid,
+    };
+    let (mut meta, events, provider_error, append_projection) = if candidate.source == "agy"
+        && record_batch.sidecars.is_empty()
+        && options.agent.is_empty()
+        && options.declared_tip.is_none()
+        && options.abandoned_after == 0
+    {
+        // A probe survives decode_input only if an exact published AST entry
+        // was reused and the entire committed prefix matched. A failed probe
+        // is discarded by RecordCache's cold restart; no new fingerprint or
+        // sampled-header evidence is needed here. Metadata/options changes
+        // conservatively rebuild even when the native bytes did not change.
+        let prefix = previous
+            .filter(|previous| {
+                previous.unsupported.is_none()
+                    && previous.raw_error.is_none()
+                    && previous.pin == pin
+                    && previous.candidate.summary_stamp() == candidate.summary_stamp()
+                    && raw_index.probe_digest() == Some(previous.raw_index.committed_digest())
+            })
+            .and_then(|previous| {
+                previous
+                    .append_projection
+                    .as_ref()
+                    .map(|state| providers::ProjectionPrefix {
+                        state,
+                        events: &previous.events,
+                        committed: previous.committed as u64,
+                    })
+            });
+        providers::parse_agy_append(records, summary.as_ref(), &fallback, options, prefix)
+    } else {
+        let (meta, events, error) = providers::parse_options_with_media(
+            candidate.source,
+            &candidate.path,
+            records,
+            summary.as_ref(),
+            &fallback,
+            options,
+            &record_batch.sidecars,
+        );
+        (meta, events, error, None)
+    };
     if let (Some(pin), Some(outcome)) = (&pin, &outcome) {
         meta["timeline_pin"] = json!({
             "target": pin.target, "tip": pin.tip, "stale_end": pin.stale_end,
@@ -725,6 +766,11 @@ pub(crate) fn parse_candidate_retaining(
         scope::native_identity(candidate.source, records)
     };
     cache.retain(candidate.clone(), record_batch);
+    let append_projection = if retain && unsupported.is_none() {
+        append_projection
+    } else {
+        None
+    };
     let mut parsed = Parsed {
         native_id,
         candidate,
@@ -736,6 +782,7 @@ pub(crate) fn parse_candidate_retaining(
         unsupported,
         raw_error,
         pin,
+        append_projection,
     };
     parsed.meta["cursor"] = json!({
         "end": committed, "head": parsed.head(committed),
@@ -1019,6 +1066,7 @@ pub(crate) trait Dependencies {
     }
 }
 
+#[derive(Clone)]
 struct FileEntry {
     parsed: Arc<Parsed>,
     encoded: usize,
@@ -1027,6 +1075,7 @@ struct FileEntry {
 
 /// One inherited fixed prefix, with the stamp of the parent file it was read
 /// from: an unchanged stamp lets a rebuild of the child skip re-reading it.
+#[derive(Clone)]
 struct Prefix {
     child: String,
     base: Value,
@@ -1037,6 +1086,7 @@ struct Prefix {
     digest: Value,
 }
 
+#[derive(Clone)]
 struct CachedView {
     snapshot: Arc<ViewSnapshot>,
     owner: Option<Arc<Parsed>>,
@@ -1101,6 +1151,8 @@ struct PrefixEntry {
 #[derive(Default)]
 pub(crate) struct PrefixCache {
     entries: BTreeMap<(String, usize), PrefixEntry>,
+    eviction: u64,
+    view_bytes: usize,
 }
 
 /// Retained inherited prefixes: a handful of parents, within the view byte
@@ -1108,6 +1160,45 @@ pub(crate) struct PrefixCache {
 const PREFIX_ENTRIES: usize = 8;
 
 impl PrefixCache {
+    fn evict(&mut self, uid: &str, retired: &mut Retired) {
+        self.eviction = self.eviction.wrapping_add(1);
+        let keys = self
+            .entries
+            .keys()
+            .filter(|(parent, _)| parent == uid)
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in keys {
+            retired
+                .prefixes
+                .push(self.entries.remove(&key).expect("selected prefix"));
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        self.entries
+            .values()
+            .map(|entry| entry.encoded)
+            .fold(0, usize::saturating_add)
+    }
+
+    fn reserve_views(&mut self, bytes: usize, retired: &mut Retired) {
+        self.view_bytes = bytes;
+        while self.bytes().saturating_add(bytes) > view_byte_limit() {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.used)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            retired
+                .prefixes
+                .push(self.entries.remove(&oldest).expect("selected prefix"));
+        }
+    }
+
     fn get(
         &mut self,
         candidate: &Candidate,
@@ -1116,7 +1207,6 @@ impl PrefixCache {
         let key = (uid_for(candidate.source, &candidate.path), cut);
         let entry = self.entries.get_mut(&key)?;
         if entry.candidate != *candidate {
-            self.entries.remove(&key);
             return None;
         }
         entry.used = Instant::now();
@@ -1126,17 +1216,11 @@ impl PrefixCache {
             entry.digest.clone(),
         ))
     }
-    fn insert(
-        &mut self,
-        candidate: Candidate,
-        cut: usize,
-        meta: Value,
-        events: Arc<Vec<Event>>,
-        digest: String,
-        encoded: usize,
-    ) {
-        let limit = view_byte_limit();
+    fn insert(&mut self, cut: usize, entry: PrefixEntry, retired: &mut Retired) {
+        let encoded = entry.encoded;
+        let limit = view_byte_limit().saturating_sub(self.view_bytes);
         if encoded > limit {
+            retired.prefixes.push(entry);
             return;
         }
         let bytes = |entries: &BTreeMap<(String, usize), PrefixEntry>| {
@@ -1155,20 +1239,14 @@ impl PrefixCache {
                 .min_by_key(|(_, entry)| entry.used)
                 .map(|(key, _)| key.clone())
                 .expect("nonempty");
-            self.entries.remove(&oldest);
+            retired
+                .prefixes
+                .push(self.entries.remove(&oldest).expect("selected prefix"));
         }
-        let key = (uid_for(candidate.source, &candidate.path), cut);
-        self.entries.insert(
-            key,
-            PrefixEntry {
-                candidate,
-                meta,
-                events,
-                digest,
-                encoded,
-                used: Instant::now(),
-            },
-        );
+        let key = (uid_for(entry.candidate.source, &entry.candidate.path), cut);
+        if let Some(old) = self.entries.insert(key, entry) {
+            retired.prefixes.push(old);
+        }
     }
 }
 
@@ -1213,6 +1291,11 @@ pub(crate) struct Views {
     /// (`revision_handle`) so the list's serialized-bytes cache can compare
     /// it without taking this lock.
     revision: Arc<AtomicU64>,
+    /// Only active opens have a gate. No idle per-UID cache or lock table.
+    flights: BTreeMap<String, Weak<Flight>>,
+    /// An eviction prevents overlapping builds from repopulating the cache,
+    /// including dependencies not yet resolved when the eviction occurred.
+    eviction: u64,
 }
 
 /// Which pin a parsed file must carry: the leaf's exact display pin, or any
@@ -1264,132 +1347,165 @@ impl Views {
         view_byte_limit()
     }
 
-    /// Open (or refresh) the view for `request`. Cheap when nothing changed:
-    /// one `stat` per involved file. Run on the bounded blocking reader.
-    pub(crate) fn open(
-        &mut self,
+    /// File I/O, version checks, metadata recomposition and provider work
+    /// run outside the shared cache lock. The lease serializes only opens of
+    /// this owner; a dependency never acquires another owner's gate.
+    pub(crate) fn open<'a>(
+        shared: &'a Mutex<Self>,
         request: &ViewRequest,
         deps: &dyn Dependencies,
-    ) -> Result<Arc<ViewSnapshot>, SessionError> {
+    ) -> Result<PendingView<'a>, SessionError> {
         validate_request(request)?;
+        let lease = OpenLease::acquire(shared, &request.uid)?;
         let key = (request.uid.clone(), request.agent.clone());
+        let (previous, prefixes, eviction) = {
+            let cache = lock_views(shared)?;
+            (
+                cache.views.get(&key).cloned(),
+                cache.prefixes.clone(),
+                cache.eviction,
+            )
+        };
         let owner = restamp(&request.owner)?;
         let selected = request.selected.as_ref().map(restamp).transpose()?;
         let leaf = selected.clone().unwrap_or_else(|| owner.clone());
         let pin = leaf_pin(request, &leaf);
-        if let Some(cached) = self.views.get(&key)
+        let mut files = CachedFiles {
+            shared,
+            eviction,
+            files: BTreeMap::new(),
+            records: Vec::new(),
+            fresh: false,
+        };
+        let cached = if let Some(cached) = previous.as_ref()
             && cached.is_current(&leaf, &owner, pin.as_ref(), deps)?
         {
-            let now = Instant::now();
-            let snapshot = recompose(request, &cached.snapshot)?;
-            let cached = self.views.get_mut(&key).expect("checked above");
-            let replaced = !Arc::ptr_eq(&cached.snapshot, &snapshot);
-            cached.snapshot = snapshot.clone();
-            cached.used = now;
-            if replaced {
-                self.bump();
-            }
-            for id in snapshot.view.dependencies.clone() {
-                if let Some(entry) = self.files.get_mut(&id) {
-                    entry.used = now;
-                }
-            }
-            return Ok(snapshot);
-        }
-        let previous = self.views.remove(&key);
-        let prefixes = self.prefixes.clone();
-        let built = build(
-            request,
-            deps,
-            &mut CachedFiles { views: self },
-            Some(&prefixes),
-            owner,
-            selected,
-            pin.clone(),
-            previous.as_ref().map(|cached| cached.prefixes.as_slice()),
-            previous.as_ref().map(|cached| {
-                (
-                    cached.snapshot.view.inherited.clone(),
-                    cached.snapshot.view.inherited_encoded.clone(),
-                )
-            }),
-            true,
-        )?;
-        let snapshot = Arc::new(ViewSnapshot::new(Arc::new(built.view)));
-        self.views.insert(
-            key,
+            let mut cached = cached.clone();
+            cached.snapshot = recompose(request, &cached.snapshot)?;
+            cached.used = Instant::now();
+            cached
+        } else {
+            let built = build(
+                request,
+                deps,
+                &mut files,
+                Some(&prefixes),
+                owner,
+                selected,
+                pin.clone(),
+                previous.as_ref().map(|cached| cached.prefixes.as_slice()),
+                previous.as_ref().map(|cached| {
+                    (
+                        cached.snapshot.view.inherited.clone(),
+                        cached.snapshot.view.inherited_encoded.clone(),
+                    )
+                }),
+                true,
+            )?;
             CachedView {
-                snapshot: snapshot.clone(),
+                snapshot: Arc::new(ViewSnapshot::new(Arc::new(built.view))),
                 owner: built.owner,
                 prefixes: built.prefixes,
                 pin,
                 inherited_encoded: built.inherited_encoded,
                 used: Instant::now(),
-            },
-        );
-        self.bump();
-        self.prune();
-        Ok(snapshot)
+            }
+        };
+        Ok(PendingView {
+            retired: Retired::default(),
+            lease,
+            key,
+            cached,
+            files,
+        })
     }
 
-    /// A view for one bounded scan (search): the cached view when it is
-    /// still current, otherwise a cold projection that is neither retained
-    /// nor allowed to charge the shared AST cache. `Views` is borrowed only
-    /// for the cheap cache probe; callers stream the miss outside any lock.
+    /// Clone a bounded cache entry under lock, then stat/resolve/recompose
+    /// without blocking independent opens or list decorations.
     pub(crate) fn cached_current(
-        &mut self,
+        shared: &Mutex<Self>,
         request: &ViewRequest,
         deps: &dyn Dependencies,
     ) -> Result<Option<Arc<ViewSnapshot>>, SessionError> {
         validate_request(request)?;
         let key = (request.uid.clone(), request.agent.clone());
-        let Some(cached) = self.views.get_mut(&key) else {
+        let (cached, eviction) = {
+            let cache = lock_views(shared)?;
+            (cache.views.get(&key).cloned(), cache.eviction)
+        };
+        let Some(cached) = cached else {
             return Ok(None);
         };
         let owner = restamp(&request.owner)?;
-        let leaf = match &request.selected {
-            Some(selected) => restamp(selected)?,
-            None => owner.clone(),
-        };
+        let leaf = request
+            .selected
+            .as_ref()
+            .map(restamp)
+            .transpose()?
+            .unwrap_or_else(|| owner.clone());
         if !cached.is_current(&leaf, &owner, leaf_pin(request, &leaf).as_ref(), deps)? {
             return Ok(None);
         }
-        cached.used = Instant::now();
-        // The caller's row (a frozen search pool) wins over the cached
-        // meta; the cache itself is not rewritten by a scan.
-        Ok(Some(recompose(request, &cached.snapshot)?))
-    }
-
-    /// Ensure the leaf of `request` is parsed (through the cache) and resolve
-    /// a Claude rewind target against it.
-    pub(crate) fn claude_rewind_target(
-        &mut self,
-        request: &ViewRequest,
-        deps: &dyn Dependencies,
-        target: &str,
-    ) -> Result<RewindTarget, SessionError> {
-        let snapshot = self.open(request, deps)?;
-        claude_rewind_target(&snapshot.view.parsed, target)
+        let snapshot = recompose(request, &cached.snapshot)?;
+        let mut cache = lock_views(shared)?;
+        if cache.eviction != eviction {
+            return Ok(None);
+        }
+        let Some(current) = cache.views.get_mut(&key) else {
+            return Ok(None);
+        };
+        if !Arc::ptr_eq(&current.snapshot, &cached.snapshot) {
+            return Ok(None);
+        }
+        current.used = Instant::now();
+        Ok(Some(snapshot))
     }
 
     /// Drop every view of this owner UID and the parsed files behind them.
-    pub(crate) fn evict(&mut self, uid: &str) {
-        let before = self.views.len();
-        self.views.retain(|key, _| key.0 != uid);
-        if self.views.len() != before {
+    pub(crate) fn evict(&mut self, uid: &str) -> Retired {
+        let mut retired = Retired::default();
+        self.eviction = self.eviction.wrapping_add(1);
+        let keys = self
+            .views
+            .iter()
+            .filter(|(key, cached)| {
+                key.0 == uid
+                    || cached
+                        .snapshot
+                        .view
+                        .dependencies
+                        .iter()
+                        .any(|dependency| dependency == uid)
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        if !keys.is_empty() {
             self.bump();
         }
-        self.files.remove(uid);
-        self.prune();
+        for key in keys {
+            retired
+                .views
+                .push(self.views.remove(&key).expect("selected view"));
+        }
+        self.flights.remove(uid);
+        retired.records.push(self.records.evict(uid));
+        if let Ok(mut prefixes) = self.prefixes.lock() {
+            prefixes.evict(uid, &mut retired);
+        }
+        if let Some(file) = self.files.remove(uid) {
+            retired.files.push(file);
+        }
+        self.prune(&mut retired);
+        retired
     }
 
-    /// The cached view of `(uid, agent)` as last opened, without any file
-    /// check: the facade compares its stamps with the index before it lets
-    /// the list borrow the view's anchor or pin state.
-    pub(crate) fn cached(&self, uid: &str, agent: &str) -> Option<&Arc<ViewSnapshot>> {
+    /// The bounded set of immutable snapshots borrowed by list rendering.
+    /// Decorations and row cloning run after releasing the cache lock.
+    pub(crate) fn decorations(&self) -> BTreeMap<(String, String), Arc<ViewSnapshot>> {
         self.views
-            .get(&(uid.to_owned(), agent.to_owned()))
-            .map(|cached| &cached.snapshot)
+            .iter()
+            .map(|(key, cached)| (key.clone(), cached.snapshot.clone()))
+            .collect()
     }
 
     fn bytes(&self) -> usize {
@@ -1400,93 +1516,42 @@ impl Views {
             .fold(0, usize::saturating_add)
     }
 
-    /// A parsed file for `candidate`, reusing the exact retained parse or the
-    /// caller's, else extending/rebuilding from the last parse of that file.
-    fn file(
-        &mut self,
-        candidate: Candidate,
-        pin: Pin<'_>,
-        deps: &dyn Dependencies,
-    ) -> Result<(Arc<Parsed>, usize), SessionError> {
-        let id = uid_for(candidate.source, &candidate.path);
-        let now = Instant::now();
-        if let Some(entry) = self.files.get_mut(&id)
-            && entry.parsed.candidate == candidate
-            && match pin {
-                Pin::Exact(pin) => entry.parsed.pin.as_ref() == pin,
-                Pin::Any => true,
-            }
-        {
-            entry.used = now;
-            return Ok((entry.parsed.clone(), entry.encoded));
-        }
-        let pin = match pin {
-            Pin::Exact(pin) => pin,
-            Pin::Any => None,
-        };
-        let mut fresh = false;
-        let parsed = match deps.parsed(&candidate, pin) {
-            Some(parsed) => parsed,
-            None => {
-                let previous = self.files.get(&id).map(|entry| entry.parsed.clone());
-                fresh = true;
-                Arc::new(parse_candidate(
-                    candidate,
-                    previous.as_deref(),
-                    &mut self.records,
-                    pin.cloned(),
-                )?)
-            }
-        };
-        let encoded = parsed.encoded_bytes();
-        // The cap is serialized event bytes, not a promise about RSS.
-        self.files.remove(&id);
-        let (view_limit, view_byte_limit) = (view_limit(), self.byte_limit());
-        let mut evicted = fresh;
-        while self.files.len() >= view_limit
-            || self.bytes().saturating_add(encoded) > view_byte_limit
-        {
-            let oldest = self
+    /// Views whose files were evicted or replaced are stale; drop them, then
+    /// keep the view count within its bound (files are bounded on insert).
+    fn prune(&mut self, retired: &mut Retired) {
+        while self.files.len() > view_limit() || self.bytes() > self.byte_limit() {
+            let Some(oldest) = self
                 .files
                 .iter()
                 .min_by_key(|(_, entry)| entry.used)
-                .map(|(key, _)| key.clone());
-            let Some(oldest) = oldest else { break };
-            self.files.remove(&oldest);
-            evicted = true;
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            retired
+                .files
+                .push(self.files.remove(&oldest).expect("selected file"));
         }
-        self.files.insert(
-            id,
-            FileEntry {
-                parsed: parsed.clone(),
-                encoded,
-                used: now,
-            },
-        );
-        if evicted {
-            // A fresh parse leaves its line buffers, the previous AST and an
-            // over-budget decoded tree free but still mapped; an evicted parse
-            // may still be referenced by a snapshot in flight. The trim only
-            // returns what is already free.
-            crate::sessions::memory::release();
-        }
-        Ok((parsed, encoded))
-    }
-
-    /// Views whose files were evicted or replaced are stale; drop them, then
-    /// keep the view count within its bound (files are bounded on insert).
-    fn prune(&mut self) {
         let before = self.views.len();
         let files = &self.files;
-        self.views.retain(|_, cached| {
-            let leaf = &cached.snapshot.view.parsed;
-            let current = |parsed: &Arc<Parsed>| {
-                files
-                    .get(&uid_for(parsed.candidate.source, &parsed.candidate.path))
-                    .is_some_and(|entry| Arc::ptr_eq(&entry.parsed, parsed))
-            };
-            current(leaf) && cached.owner.as_ref().is_none_or(current)
-        });
+        let stale = self
+            .views
+            .iter()
+            .filter(|(_, cached)| {
+                let current = |parsed: &Arc<Parsed>| {
+                    files
+                        .get(&uid_for(parsed.candidate.source, &parsed.candidate.path))
+                        .is_some_and(|entry| Arc::ptr_eq(&entry.parsed, parsed))
+                };
+                !current(&cached.snapshot.view.parsed) || !cached.owner.as_ref().is_none_or(current)
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        for key in stale {
+            retired
+                .views
+                .push(self.views.remove(&key).expect("selected view"));
+        }
         while self.views.len() > view_limit() {
             let oldest = self
                 .views
@@ -1494,16 +1559,197 @@ impl Views {
                 .min_by_key(|(_, cached)| cached.used)
                 .map(|(key, _)| key.clone());
             let Some(oldest) = oldest else { break };
-            self.views.remove(&oldest);
+            retired
+                .views
+                .push(self.views.remove(&oldest).expect("selected view"));
         }
         if self.views.len() != before {
             self.bump();
         }
+        if let Ok(mut prefixes) = self.prefixes.lock() {
+            prefixes.reserve_views(self.bytes(), retired);
+        }
+    }
+}
+
+/// Cache payloads unlinked under lock and destroyed after unlock.
+#[derive(Default)]
+pub(crate) struct Retired {
+    files: Vec<FileEntry>,
+    views: Vec<CachedView>,
+    prefixes: Vec<PrefixEntry>,
+    records: Vec<records::RecordCache>,
+    asts: Vec<records::RetiredRecords>,
+}
+
+fn lock_views(shared: &Mutex<Views>) -> Result<MutexGuard<'_, Views>, SessionError> {
+    shared
+        .lock()
+        .map_err(|_| SessionError::new(500, "会话视图锁不可用"))
+}
+
+#[derive(Default)]
+struct Flight {
+    busy: Mutex<bool>,
+    ready: Condvar,
+}
+
+struct OpenLease<'a> {
+    shared: &'a Mutex<Views>,
+    uid: String,
+    flight: Arc<Flight>,
+}
+impl<'a> OpenLease<'a> {
+    fn acquire(shared: &'a Mutex<Views>, uid: &str) -> Result<Self, SessionError> {
+        let flight = {
+            let mut cache = lock_views(shared)?;
+            match cache.flights.get(uid).and_then(Weak::upgrade) {
+                Some(flight) => flight,
+                None => {
+                    let flight = Arc::new(Flight::default());
+                    cache
+                        .flights
+                        .insert(uid.to_owned(), Arc::downgrade(&flight));
+                    flight
+                }
+            }
+        };
+        let mut busy = flight
+            .busy
+            .lock()
+            .map_err(|_| SessionError::new(500, "会话构建锁不可用"))?;
+        while *busy {
+            busy = flight
+                .ready
+                .wait(busy)
+                .map_err(|_| SessionError::new(500, "会话构建锁不可用"))?;
+        }
+        *busy = true;
+        drop(busy);
+        Ok(Self {
+            shared,
+            uid: uid.to_owned(),
+            flight,
+        })
+    }
+}
+impl Drop for OpenLease<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut busy) = self.flight.busy.lock() {
+            *busy = false;
+            self.flight.ready.notify_all();
+        }
+        if let Ok(mut cache) = self.shared.lock()
+            && Arc::strong_count(&self.flight) == 1
+            && cache
+                .flights
+                .get(&self.uid)
+                .is_some_and(|flight| Weak::ptr_eq(flight, &Arc::downgrade(&self.flight)))
+        {
+            cache.flights.remove(&self.uid);
+        }
+    }
+}
+
+/// A result awaiting the facade's current-index/pin check. Uncommitted work
+/// owns its ASTs and parsed files; eviction or a failed build drops it all.
+pub(crate) struct PendingView<'a> {
+    retired: Retired,
+    lease: OpenLease<'a>,
+    key: (String, String),
+    cached: CachedView,
+    files: CachedFiles<'a>,
+}
+impl PendingView<'_> {
+    pub(crate) fn refresh(
+        &mut self,
+        request: &ViewRequest,
+        deps: &dyn Dependencies,
+    ) -> Result<(), SessionError> {
+        validate_request(request)?;
+        let owner = restamp(&request.owner)?;
+        let leaf = request
+            .selected
+            .as_ref()
+            .map(restamp)
+            .transpose()?
+            .unwrap_or_else(|| owner.clone());
+        if !self
+            .cached
+            .is_current(&leaf, &owner, leaf_pin(request, &leaf).as_ref(), deps)?
+        {
+            return Err(SessionError::new(503, "会话在读取期间变化，请重试"));
+        }
+        self.cached.snapshot = recompose(request, &self.cached.snapshot)?;
+        Ok(())
+    }
+
+    /// Called only while the facade holds its short publication guard. No
+    /// filesystem or provider work is performed here; displaced ASTs leave
+    /// with PendingView and are freed after the shared locks are released.
+    pub(crate) fn publish(&mut self, cache: &mut Views) -> Result<Arc<ViewSnapshot>, SessionError> {
+        if !cache
+            .flights
+            .get(&self.key.0)
+            .is_some_and(|flight| Weak::ptr_eq(flight, &Arc::downgrade(&self.lease.flight)))
+        {
+            return Err(SessionError::new(503, "会话视图已失效，请重试"));
+        }
+        if cache.eviction != self.files.eviction {
+            // The facade just validated this snapshot against the latest
+            // published owner, pin and dependency graph. An unrelated deletion
+            // must not make that valid read fail. Return it without retaining
+            // any overlapping work, so an evicted entry cannot come back.
+            return Ok(self.cached.snapshot.clone());
+        }
+        let now = Instant::now();
+        for (id, mut entry) in std::mem::take(&mut self.files.files) {
+            entry.used = now;
+            if let Some(old) = cache.files.insert(id, entry) {
+                self.retired.files.push(old);
+            }
+        }
+        // AST cache admission remains globally bounded, not per owner.
+        for records in std::mem::take(&mut self.files.records) {
+            self.retired.asts.push(cache.records.absorb(records));
+        }
+        let snapshot = self.cached.snapshot.clone();
+        for id in &snapshot.view.dependencies {
+            if let Some(entry) = cache.files.get_mut(id) {
+                entry.used = now;
+            }
+        }
+        let changed = cache
+            .views
+            .get(&self.key)
+            .is_none_or(|old| !Arc::ptr_eq(&old.snapshot, &snapshot));
+        self.cached.used = now;
+        if let Some(old) = cache.views.insert(self.key.clone(), self.cached.clone()) {
+            self.retired.views.push(old);
+        }
+        if changed {
+            cache.bump();
+        }
+        cache.prune(&mut self.retired);
+        Ok(snapshot)
     }
 }
 
 struct CachedFiles<'a> {
-    views: &'a mut Views,
+    shared: &'a Mutex<Views>,
+    eviction: u64,
+    files: BTreeMap<String, FileEntry>,
+    records: Vec<records::RecordCache>,
+    fresh: bool,
+}
+impl Drop for CachedFiles<'_> {
+    fn drop(&mut self) {
+        self.records.clear();
+        self.files.clear();
+        if self.fresh {
+            crate::sessions::memory::release();
+        }
+    }
 }
 impl FileSource for CachedFiles<'_> {
     fn file(
@@ -1512,7 +1758,53 @@ impl FileSource for CachedFiles<'_> {
         pin: Pin<'_>,
         deps: &dyn Dependencies,
     ) -> Result<(Arc<Parsed>, usize), SessionError> {
-        self.views.file(candidate, pin, deps)
+        let id = uid_for(candidate.source, &candidate.path);
+        let matches = |entry: &FileEntry| {
+            entry.parsed.candidate == candidate
+                && match pin {
+                    Pin::Exact(pin) => entry.parsed.pin.as_ref() == pin,
+                    Pin::Any => true,
+                }
+        };
+        if let Some(entry) = self.files.get(&id).filter(|entry| matches(entry)) {
+            return Ok((entry.parsed.clone(), entry.encoded));
+        }
+        let (previous, mut records) = {
+            let mut cache = lock_views(self.shared)?;
+            let previous = cache.files.get(&id).cloned();
+            if let Some(entry) = previous.as_ref().filter(|entry| matches(entry)) {
+                self.files.insert(id, entry.clone());
+                return Ok((entry.parsed.clone(), entry.encoded));
+            }
+            (previous, cache.records.checkout(&id))
+        };
+        let pin = match pin {
+            Pin::Exact(pin) => pin,
+            Pin::Any => None,
+        };
+        let parsed = match deps.parsed(&candidate, pin) {
+            Some(parsed) => parsed,
+            None => {
+                self.fresh = true;
+                Arc::new(parse_candidate(
+                    candidate,
+                    previous.as_ref().map(|entry| entry.parsed.as_ref()),
+                    &mut records,
+                    pin.cloned(),
+                )?)
+            }
+        };
+        let encoded = parsed.encoded_bytes();
+        self.records.push(records);
+        self.files.insert(
+            id,
+            FileEntry {
+                parsed: parsed.clone(),
+                encoded,
+                used: Instant::now(),
+            },
+        );
+        Ok((parsed, encoded))
     }
     fn retains(&self) -> bool {
         true
@@ -1880,12 +2172,17 @@ impl Chain<'_> {
         sid: &str,
         cut: usize,
     ) -> Result<(Value, Arc<Vec<Event>>, String), SessionError> {
-        if let Some(cache) = self.cache
-            && let Ok(mut cache) = cache.lock()
-            && let Some(hit) = cache.get(candidate, cut)
-        {
-            return Ok(hit);
-        }
+        let eviction = if let Some(cache) = self.cache {
+            let mut cache = cache
+                .lock()
+                .map_err(|_| SessionError::new(500, "继承历史缓存锁不可用"))?;
+            if let Some(hit) = cache.get(candidate, cut) {
+                return Ok(hit);
+            }
+            Some(cache.eviction)
+        } else {
+            None
+        };
         let (meta, events, digest) = parse_prefix(candidate, sid, cut)?;
         let events = Arc::new(
             events
@@ -1900,15 +2197,23 @@ impl Chain<'_> {
         if let Some(cache) = self.cache {
             // Byte accounting only: the prefix cache keeps events, not their bytes.
             let encoded = accounted_bytes(&encode_events(&events, false, None)?, events.iter());
-            if let Ok(mut cache) = cache.lock() {
-                cache.insert(
-                    candidate.clone(),
-                    cut,
-                    meta.clone(),
-                    events.clone(),
-                    digest.clone(),
-                    encoded,
-                );
+            // Restamp outside the lock; an eviction during the read also
+            // vetoes admission, even if the path was recreated with old bytes.
+            let current = restamp(candidate)? == *candidate;
+            let entry = PrefixEntry {
+                candidate: candidate.clone(),
+                meta: meta.clone(),
+                events: events.clone(),
+                digest: digest.clone(),
+                encoded,
+                used: Instant::now(),
+            };
+            let mut retired = Retired::default();
+            if let Ok(mut cache) = cache.lock()
+                && current
+                && Some(cache.eviction) == eviction
+            {
+                cache.insert(cut, entry, &mut retired);
             }
         }
         Ok((meta, events, digest))

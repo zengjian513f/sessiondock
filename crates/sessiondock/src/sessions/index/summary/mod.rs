@@ -300,7 +300,7 @@ fn decode_line(line: &Line<'_>, index: usize, region: &mut Region) {
     if trimmed.is_empty() {
         return;
     }
-    match crate::sessions::records::decode_record(trimmed) {
+    match crate::sessions::records::decode_summary_record(trimmed) {
         Ok(value) if value.is_object() => region.records.push(Record {
             start: line.start,
             line: index,

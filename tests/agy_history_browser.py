@@ -241,7 +241,7 @@ def progress(text):
     print('PASS ' + text, flush=True)
 
 
-def run(binary):
+def run(binary, ast_cache_mb=64, view_cache_mb=128):
     print('Frontend: ' + ('legacy')
           + ' (' + str(frontend_dir()) + ')', flush=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-agy-history-', dir='/tmp') as temporary:
@@ -305,6 +305,8 @@ def run(binary):
         mixed_before = mixed_path.read_bytes()
         extra_env = {'SESSIONDOCK_AGY_HOME': str(native), 'SESSIONDOCK_AGY_ROOT': str(mirror),
                      'SESSIONDOCK_PROC_ROOT': str(root / 'proc'),
+                     'SESSIONDOCK_AST_CACHE_MB': str(ast_cache_mb),
+                     'SESSIONDOCK_VIEW_CACHE_MB': str(view_cache_mb),
                      'SESSIONDOCK_HISTORY_PAGE_EVENTS': '80'}
 
         def server():
@@ -680,7 +682,28 @@ def run(binary):
                         assert not grown['reset'], grown
                         assert [m['text'] for m in grown['messages']] == [
                             'AGY APPEND ONE', 'AGY APPEND TWO', 'AGY APPEND THREE'], grown
+                        full_grown = messages(opener, base, mirror_uid)
+                        assert full_grown['messages'][:len(before['messages'])] == before['messages']
+                        assert all(m['turn_id'] == 'step:0' for m in full_grown['messages'])
                         progress('three live appends kept the mirror inode, summary mtime and first-line created_at')
+
+                        # Mutate this private fixture mirror in place: unlike the
+                        # native exporter, this keeps dev/ino and then grows the
+                        # file. A sampled head or length alone cannot authorize
+                        # reusing the old projection past the long invalid line.
+                        in_place = appended_native.replace(b'AGYCHUNKMARKER', b'AGYCHUNKCHANGE', 1)
+                        mirror_messages.write_bytes(in_place + encoded(record(
+                            6, 'PLANNER_RESPONSE', 'AGY INPLACE SUFFIX')))
+                        expect(page.locator('#msgs')).to_contain_text('AGY INPLACE SUFFIX')
+                        expect(page.locator('#msgs')).to_contain_text('AGYCHUNKCHANGE')
+                        expect(page.locator('#msgs')).not_to_contain_text('AGYCHUNKMARKER')
+                        assert file_identity(mirror_messages)[0] == mirror_inode
+                        assert messages(opener, base, mirror_uid, **checkpoint(full_grown))['reset']
+                        mirror_messages.write_bytes(appended_native)
+                        expect(page.locator('#msgs')).to_contain_text('AGYCHUNKMARKER')
+                        expect(page.locator('#msgs')).not_to_contain_text('AGY INPLACE SUFFIX')
+                        assert_native(native, expected_native, 'private mirror in-place rewrite/append')
+                        progress('same-inode rewritten prefix plus append rebuilds the visible history')
 
                         # A native mtime change with the same bytes must not republish.
                         identical = file_identity(mirror_messages), file_identity(mirror_summary)
@@ -790,6 +813,102 @@ def run(binary):
                         assert summary_value(mirror_dir)['session']['time_created'] == MIRROR_CREATED
                         assert_native(native, expected_native, 'multi-chunk transcript restored')
                         progress('missing multi-chunk transcript keeps the mirror; restoring the same bytes does not rewrite it')
+
+                        # Empty user input changes the reducer turn without
+                        # emitting a user event. Unknown kinds and bad lines must
+                        # accumulate exactly once across later successful appends.
+                        before_empty = messages(opener, base, mirror_uid)
+                        with mirror_native.open('ab') as stream:
+                            stream.write(encoded(record(10, 'USER_INPUT', '')))
+                            stream.write(encoded(record(11, 'INCREMENTAL_UNKNOWN', '')))
+                            stream.write(b'42\n{not-json incremental}\n')
+                        expected_native = native_snapshot(native)
+                        expect(page.locator('.native-history-warning').filter(has_text='跳过无效的JSONL 记录 ×3')).to_have_count(1)
+                        expect(page.locator('.native-history-warning').filter(has_text='Agy 记录类型：INCREMENTAL_UNKNOWN ×1')).to_have_count(1)
+                        empty_append = messages(opener, base, mirror_uid, **checkpoint(before_empty))
+                        assert not empty_append['reset'] and empty_append['messages'] == [], empty_append
+                        before_tools = messages(opener, base, mirror_uid)
+                        tools = record(12, 'PLANNER_RESPONSE', 'AGY REDUCER PROGRESS',
+                                       thinking='AGY REDUCER THINKING agyresumethinking')
+                        tools['tool_calls'] = [{'name': 'fixture_incremental_read', 'args': {'path': 'private.txt'}},
+                                               {'name': 'fixture_incremental_list', 'args': {'directory': '.'}}]
+                        with mirror_native.open('ab') as stream:
+                            stream.write(encoded(record(13, 'INCREMENTAL_UNKNOWN', '')))
+                            stream.write(encoded(tools))
+                            stream.write(encoded(record(14, 'GENERIC', 'AGY REDUCER TOOL RESULT')))
+                            stream.write(encoded(record(15, 'PLANNER_RESPONSE', 'AGY REDUCER FINAL agyresumefinal')))
+                        expected_native = native_snapshot(native)
+                        expect(page.locator('#msgs')).to_contain_text('AGY REDUCER FINAL agyresumefinal')
+                        process = page.locator('#msgs > .turn-process').filter(has_text='1 段思考')
+                        expect(process).to_have_count(1)
+                        if not process.locator('.turn-process-body').is_visible():
+                            process.locator('.fold-toggle').click()
+                        page.get_by_role('button', name='展开工具调用组', exact=True).last.click()
+                        expect(page.locator('#msgs .msg[data-role=thinking]')).to_contain_text('agyresumethinking')
+                        expect(page.locator('#msgs')).to_contain_text('fixture_incremental_read')
+                        expect(page.locator('#msgs')).to_contain_text('fixture_incremental_list')
+                        expect(page.locator('#msgs')).to_contain_text('AGY REDUCER TOOL RESULT')
+                        expect(page.locator('.native-history-warning').filter(has_text='INCREMENTAL_UNKNOWN ×2')).to_have_count(1)
+                        tool_delta = messages(opener, base, mirror_uid, **checkpoint(before_tools))
+                        assert not tool_delta['reset'], tool_delta
+                        assert [m['role'] for m in tool_delta['messages']] == [
+                            'thinking', 'assistant', 'tool', 'tool', 'tool_result', 'assistant'], tool_delta
+                        assert all(m['turn_id'] == 'step:10' for m in tool_delta['messages']), tool_delta
+                        full_tools = messages(opener, base, mirror_uid)
+                        assert full_tools['messages'][:len(before_tools['messages'])] == before_tools['messages']
+                        assert full_tools['meta']['migration_warnings'] == [
+                            '跳过未知的Agy 记录类型：INCREMENTAL_UNKNOWN ×2', '跳过无效的JSONL 记录 ×3']
+                        search('agyresumefinal', mirror_uid, decoy_uid)
+                        expect(page.locator('#msgs')).to_contain_text('AGY REDUCER FINAL agyresumefinal')
+                        clear_search()
+                        open_row(MIRROR, 'AGY REDUCER FINAL agyresumefinal')
+                        assert_native(native, expected_native, 'empty turn/tool/warning append and search')
+                        progress('empty input carries turn into appended thinking/tools; prefix, tool order, warning counts and UI search remain correct')
+
+                        # Media ends the conservative forward-only reuse path.
+                        # The actual selected page loads its file descriptor;
+                        # rewriting that URI must invalidate the old projection.
+                        image_record = record(16, 'USER_INPUT', 'AGY REDUCER IMAGE agyresumeimage')
+                        image_record['media'] = [{'mime_type': 'image/png', 'uri': pixel.as_uri()}]
+                        with mirror_native.open('ab') as stream:
+                            stream.write(encoded(image_record))
+                            stream.write(encoded(record(17, 'PLANNER_RESPONSE', 'AGY AFTER MEDIA')))
+                        expected_native = native_snapshot(native)
+                        expect(page.locator('#msgs')).to_contain_text('AGY AFTER MEDIA')
+                        media_message = page.locator('#msgs .msg[data-role=user]').filter(has_text='agyresumeimage')
+                        expect(media_message.locator('img')).to_have_count(1)
+                        media_message.locator('img').scroll_into_view_if_needed()
+                        page.wait_for_function('() => [...document.querySelectorAll("#msgs .msg[data-role=user]")].some(m => m.textContent.includes("agyresumeimage") && m.querySelector("img")?.naturalWidth === 1)')
+                        before_media_append = messages(opener, base, mirror_uid)
+                        with mirror_native.open('ab') as stream:
+                            stream.write(encoded(record(18, 'PLANNER_RESPONSE', 'AGY MEDIA FOLLOWUP')))
+                        expected_native = native_snapshot(native)
+                        expect(page.locator('#msgs')).to_contain_text('AGY MEDIA FOLLOWUP')
+                        expect(media_message.locator('img')).to_have_count(1)
+                        media_followup = messages(opener, base, mirror_uid, **checkpoint(before_media_append))
+                        assert not media_followup['reset'], media_followup
+                        assert [m['text'] for m in media_followup['messages']] == ['AGY MEDIA FOLLOWUP']
+                        assert media_followup['messages'][0]['turn_id'] == 'step:16', media_followup
+                        before_media_rewrite = messages(opener, base, mirror_uid)
+                        saved_with_media = mirror_native.read_bytes()
+                        missing_uri = pixel.as_uri().replace('%E5%9B%BE%E7%89%87', '%E7%BC%BA%E5%9B%BE')
+                        assert missing_uri != pixel.as_uri() and len(missing_uri) == len(pixel.as_uri())
+                        changed_media = saved_with_media.replace(pixel.as_uri().encode(), missing_uri.encode())
+                        assert changed_media != saved_with_media and len(changed_media) == len(saved_with_media)
+                        mirror_native.write_bytes(changed_media)
+                        expected_native = native_snapshot(native)
+                        expect(media_message.locator('.media-error')).to_contain_text('图片不可用')
+                        expect(media_message.locator('img')).to_have_count(0)
+                        assert messages(opener, base, mirror_uid, **checkpoint(before_media_rewrite))['reset']
+                        mirror_native.write_bytes(saved_with_media)
+                        expected_native = native_snapshot(native)
+                        expect(media_message.locator('img')).to_have_count(1)
+                        expect(media_message.locator('.media-error')).to_have_count(0)
+                        search('agyresumeimage', mirror_uid, decoy_uid)
+                        expect(page.locator('#msgs')).to_contain_text('AGY REDUCER IMAGE agyresumeimage')
+                        clear_search()
+                        assert_native(native, expected_native, 'media append, same-length URI rewrite/restore and search')
+                        progress('media append uses selected-view file authorization; same-length URI rewrite replaces old descriptors and search still opens the right session')
 
                         # Real history-gap clicks; HTTP checks only supplement visible rows.
                         pages_uid = open_row(PAGES, 'AGY PAGE 0479')
@@ -919,8 +1038,12 @@ def run(binary):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--ast-cache-mb', type=int, default=64,
+                        help='Private server AST retention budget; use 0 to exercise full decode fallback')
+    parser.add_argument('--view-cache-mb', type=int, default=128,
+                        help='Private server view retention budget; use 0 to exercise full projection fallback')
     args = parser.parse_args()
-    run(args.binary)
+    run(args.binary, args.ast_cache_mb, args.view_cache_mb)
     progress('Agy native read-only history browser complete; no native writes and no CLI launches')
 
 

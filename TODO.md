@@ -26,13 +26,12 @@
 
 ## Read-path optimization follow-up
 
-- [ ] 为大 JSONL 的列表/搜索提供按需字段投影，减少短摘要读取时构建完整 AST 的
-  开销。先保持 [read-model](docs/read-model.md) 的坏行、分页与源字节语义，
-  再用 Chromium 大会话场景验证；不以新增输入限制代替优化。
-- [ ] 缩小视图缓存全局锁的持有范围，避免不同会话的解析互相阻塞；同时维持
-  缓存发布、重置和活跃 checkpoint 的一致性。
-- [ ] 评估追加读取后 provider 投影的增量化，区分可追加状态与必须重建的重写/
-  截断路径，保持历史、列表与搜索结果一致。
+- [ ] 评估搜索正文与独立模型/回合扫描的按需字段投影。列表头/尾的大记录投影
+  已接入；后续仍须保持 [read-model](docs/read-model.md) 的坏行、分页与源字节语义，
+  不以新增输入限制代替优化。
+- [ ] 评估 Grok 等来源的追加投影，处理跨记录工具状态并证明等价。Agy 无媒体且
+  summary 未变的已验证前缀已支持续算，边界见 [append-cache](docs/append-cache.md)；
+  Claude/Codex 可能回改旧消息，继续完整投影，不直接拼接旧事件。
 
 ## Validation stability
 
