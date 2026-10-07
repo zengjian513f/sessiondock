@@ -133,8 +133,6 @@ pub struct Refused {
     pub title: String,
     pub code: &'static str,
     pub error: String,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub needs_force: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_state: Option<RunStateNote>,
 }
@@ -257,25 +255,23 @@ impl TrashService {
                 .and_then(|row| row["title"].as_str())
                 .unwrap_or("")
                 .to_owned();
-            let refused = |code, error: String, needs_force, run_state| Refused {
+            let refused = |code, error: String, run_state| Refused {
                 uid: uid.clone(),
                 title: title.clone(),
                 code,
                 error,
-                needs_force,
                 run_state,
             };
             let Some(row) = row else {
                 outcome
                     .failed
-                    .push(refused("not_found", "会话不存在".into(), false, None));
+                    .push(refused("not_found", "会话不存在".into(), None));
                 continue;
             };
             if protected.contains(uid) {
                 outcome.skipped.push(refused(
                     "fork_parent_protected",
                     "父会话只能隐藏，不能删除".into(),
-                    false,
                     None,
                 ));
                 continue;
@@ -285,7 +281,6 @@ impl TrashService {
                     outcome.skipped.push(refused(
                         "session_running",
                         "会话仍在运行，请先停止".into(),
-                        false,
                         Some(RunStateNote {
                             state: "running".into(),
                             detail: evidence,
@@ -313,17 +308,15 @@ impl TrashService {
                 Err(error) => {
                     outcome
                         .failed
-                        .push(refused(error.code, error.message, false, Some(note)));
+                        .push(refused(error.code, error.message, Some(note)));
                     continue;
                 }
             };
             match self.move_into_trash(&plan, note.clone(), forced) {
                 Ok(deleted) => outcome.deleted.push(deleted),
-                Err(error) => {
-                    outcome
-                        .failed
-                        .push(refused(error.code, error.message, false, Some(note)))
-                }
+                Err(error) => outcome
+                    .failed
+                    .push(refused(error.code, error.message, Some(note))),
             }
         }
         outcome

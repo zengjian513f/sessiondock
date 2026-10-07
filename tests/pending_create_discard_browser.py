@@ -181,9 +181,9 @@ def assert_pending_stop_disabled(page, context, base, receipt, uid, width):
     expect(page.locator("#side-pick-stop")).to_be_disabled()
     page.locator("#side-pick-stop").click(force=True)
     page.locator("#side-pick-cancel").click()
-    status = context.request.get(base + "/api/term/new-status", params={
-        "record_id": receipt["record_id"], "instance_id": receipt["instance_id"]})
-    assert status.status == 200 and status.json()["running"], status.text()
+    listed = context.request.get(base + "/api/term/list").json()
+    launch = next(row for row in listed["pending"] if row.get("record_id") == receipt["record_id"])
+    assert launch.get("running") is not False, launch
     assert not requests, requests
     page.remove_listener("request", watch)
     row.click()
@@ -330,12 +330,6 @@ def run_source(page, context, base, source, work):
     else:
         fail(f"{source} discard", "still present after header action", last)
     assert_gone(context, base, page, receipt, pending_uid, native_uid, f"{source} after discard")
-    status = context.request.get(
-        base + "/api/term/new-status",
-        params={"record_id": receipt["record_id"], "instance_id": receipt["instance_id"]})
-    body = status.json()
-    if status.status != 200 or body.get("discarded") is not True:
-        fail(f"{source} discard", "receipt not discarded", body)
     passed(f"{source}: header action removed pending, drafts and native files")
 
     page.reload(wait_until="networkidle")

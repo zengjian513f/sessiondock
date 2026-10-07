@@ -4,8 +4,8 @@
 two HTTP input paths it used, under exactly the
 same authority as the WebSocket input path. This is raw keystroke delivery:
 success means the host acknowledged the write, never that the CLI processed
-it. The reliable-send composer, outbox and native confirmation stay
-unavailable (`outbox:false`), and no send ledger is involved.
+it. No send ledger or native confirmation is involved; the composer's
+reliable SEND is a separate path ([conversation](conversation.md)).
 
 ## Authority
 

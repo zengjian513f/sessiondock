@@ -8,7 +8,7 @@ linked from [the documentation index](README.md).
 | Area | Interfaces | Status |
 | --- | --- | --- |
 | Base | GET `/api/health`, `/api/meta`, `/api/nodes`; static pages | current |
-| Sessions | GET `/api/sessions`, `/api/sessions/titles`, `/api/messages/{uid}`, `/api/messages/{uid}/page`, `/api/messages/{uid}/media-page`, `/api/session/input-history` | current |
+| Sessions | GET `/api/sessions`, `/api/messages/{uid}`, `/api/messages/{uid}/page`, `/api/messages/{uid}/media-page`, `/api/session/input-history` | current |
 | Retained session links | POST `/api/sessions/resolve` (node point lookup; Hub completed-transfer lineage) | current |
 | Background unread | POST `/api/sessions/unread` (read-only cursor summaries, node-scoped through Hub) | current |
 | Sync and search | GET `/api/events` (lightweight UI changes), `/api/watch`, `/api/search` (including `progress=1` NDJSON) | current |
@@ -18,11 +18,11 @@ linked from [the documentation index](README.md).
 | Group copies | POST `/api/session/clone/plan`, `/api/session/clone`, `/api/session/clone/cancel`, `/api/session/clone/progress`; Hub POST `/api/session/transfer/clone`, `/api/session/transfer/cancel`, `/api/session/transfer/progress`; GET `/api/session/transfers` | capability-gated |
 | Private transfer channel | POST `/api/session/transfer/manifest`, `/api/session/transfer/check`, `/api/session/transfer/reserve`, `/api/session/transfer/export`, `/api/session/transfer/receive`, `/api/session/transfer/status`, `/api/session/transfer/release` | authenticated node listener only |
 | Private move handoff | POST `/api/session/transfer/abort`, `/api/session/transfer/switch`, `/api/session/transfer/activate`, `/api/session/transfer/retire` | authenticated node listener only |
-| Creation and control | POST `/api/term/create`, `/api/term/takeover`, `/api/term/kill`, `/api/term/bind`, `/api/term/discard`, `/api/term/backend`, `/api/session/stop`, `/api/session/freeze`; GET `/api/term/new-status`, `/api/term/complete-dir`, `/api/term/models` | capability-gated |
+| Creation and control | POST `/api/term/create`, `/api/term/takeover`, `/api/term/kill`, `/api/term/bind`, `/api/term/discard`, `/api/session/stop`, `/api/session/freeze`; GET `/api/term/complete-dir`, `/api/term/models` | capability-gated |
 | Agent CLI versions | GET `/api/clients`; POST `/api/clients/update` (machine settings) | capability-gated |
 | Terminal transport | POST `/api/term/claim`, `/api/term/send`, `/api/term/scroll`; WS `/api/term/attach` (`mode=grid` streams the server grid); GET `/api/term/grid/history` | capability-gated |
 | Terminal final screen | GET `/api/term/final` (an exited session's last screen, read-only, no lease) | capability-gated |
-| Files and media | POST `/api/session/resolve-files`, `/api/session/attachment`, `/api/session/files/action`, `/api/session/files/upload`; GET `/api/session/file`, `/api/session/files`, `/api/media/{token}` | capability-gated |
+| Files and media | POST `/api/session/resolve-files`, `/api/session/attachment`; GET `/api/session/file`, `/api/media/{token}` | capability-gated |
 | Conversation drafts | GET/POST `/api/session/conversation`; POST `/api/session/conversation/{send,check,restart,attachment,attachment/discard,queued/dismiss,import}`; GET `/api/session/conversation/drafts` | capability-gated |
 | Trash | DELETE `/api/session/{uid}`; POST `/api/sessions/delete`, `/api/trash/restore`, `/api/trash/purge`; GET `/api/trash` | capability-gated |
 | Diagnostics | POST `/api/audit/browser`, `/api/bug-report` | capability-gated |

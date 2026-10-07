@@ -3237,27 +3237,14 @@ async function deleteSessions(uids, button = null) {
     }
     if (recorded.length) {
       try {
-        const postDelete = async (uids, force = false) => {
-          const r = await fetch(appUrl('api/sessions/delete'), {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(force ? { uids, force: true } : { uids }),
-          });
-          const result = await r.json();
-          if (!r.ok || result.error) throw new Error(result.error || `HTTP ${r.status}`);
-          return result;
-        };
-        const result = await postDelete(recorded);
+        const r = await fetch(appUrl('api/sessions/delete'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uids: recorded }),
+        });
+        const result = await r.json();
+        if (!r.ok || result.error) throw new Error(result.error || `HTTP ${r.status}`);
         d.deleted.push(...(result.deleted || []));
-        let errors = result.errors || [];
-        // 回收站：运行状态未知的会话先被跳过，用户确认后才带 force 重试。
-        const unknown = trashCapable() ? (result.skipped || []).filter(x => x.needs_force) : [];
-        if (unknown.length && await confirmForceDelete(unknown.length, unknown[0].run_state?.detail)) {
-          const forced = await postDelete(unknown.map(x => x.uid), true);
-          d.deleted.push(...(forced.deleted || []));
-          const retried = new Set(unknown.map(x => x.uid));
-          errors = errors.filter(x => !retried.has(x.uid)).concat(forced.errors || []);
-        }
-        d.errors.push(...errors);
+        d.errors.push(...(result.errors || []));
       } catch (e) {
         d.errors.push(...recorded.map(uid => ({ uid, error: e.message })));
       }
@@ -6685,16 +6672,8 @@ async function stopSession(m, button = null) {
 // 回收站能力：文件进服务端显式配置的回收站目录。
 const trashCapable = () => SessionDockCapabilities.config.trash === true;
 const trashLocationNote = () => '文件会移入服务端回收站，不会永久删除。';
-// 运行状态未知不等于已退出：只有用户明确确认 CLI 已退出，才带 force 重试。
-function confirmForceDelete(count, detail) {
-  return appConfirm(`${count === 1 ? '该会话' : `${count} 个会话`}的运行状态未知${detail ? `（${detail}）` : ''}，`
-    + '后端无法确认 CLI 已经退出；未知不代表已停止。\n\n'
-    + '请先确认这些会话的 CLI 都已退出。仍要删除吗?');
-}
-
-async function requestSessionDelete(uid, force = false) {
-  const response = await fetch(appUrl('api/session/' + encodeURIComponent(uid) + (force ? '?force=1' : '')),
-    { method: 'DELETE' });
+async function requestSessionDelete(uid) {
+  const response = await fetch(appUrl('api/session/' + encodeURIComponent(uid)), { method: 'DELETE' });
   return { response, data: await response.json().catch(() => ({})) };
 }
 
@@ -6707,11 +6686,7 @@ async function del(m) {
   if (m.source === 'agy') { await appAlert(agyDeleteNote()); return; }
   if (!await appConfirm(`删除会话「${m.title}」?\n\n${opencode ? opencodeDeleteNote() : trashLocationNote()}`)) return;
   closeWatch();                         // 先停 SSE，避免文件移走后 EventSource 自动重连 404
-  let { response, data } = await requestSessionDelete(m.uid);
-  if (!response.ok && trashCapable() && data.code === 'run_state_unknown' && data.needs_force
-      && await confirmForceDelete(1, data.run_state?.detail)) {
-    ({ response, data } = await requestSessionDelete(m.uid, true));
-  }
+  const { response, data } = await requestSessionDelete(m.uid);
   if (!response.ok) {
     watchSession(m.uid);                // 删除失败，会话仍在，恢复实时同步
     return appAlert('删除失败: ' + (data.error || response.status));

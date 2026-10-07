@@ -11,7 +11,7 @@ flags after opening optional services. `assets.rs` injects the JSON as
 the permissive fallback (`declared:false`) while retaining the SessionDock
 storage namespace. A present tag must
 `JSON.parse` to a non-array object; otherwise it **fails closed**:
-`{read_only:true, live:false, outbox:false, audit:false, search:false,
+`{read_only:true, live:false, audit:false, search:false,
 files:false, configuration_error:true}` so the page does not start unsupported
 background work. Only then does `#backend-notice` appear, saying
 “能力配置无效，请检查服务配置。” — a healthy SessionDock page has no
@@ -123,17 +123,13 @@ before publishing.
 | `terminal_bind` | same as `terminal_create` | none — `POST /api/term/bind` is API-only; the pending page follows a confirmed binding by itself | [lifecycle-http.md](lifecycle-http.md) |
 | `terminal_takeover` | same as `terminal_create` | resume via `resume_sources`, never name-guess | [lifecycle-http.md](lifecycle-http.md) |
 | `terminal_complete_dir` | same as `terminal_create` | enables cwd directory suggestions | [lifecycle-http.md](lifecycle-http.md) |
-| `session_stop` | true when `terminal_create` and `terminal` are both true | stop control for listed managed instances and inline outcome/refusal notice | [lifecycle-http.md](lifecycle-http.md#stopping-a-session) |
+| `session_stop` | node: true when `terminal_create` and `terminal` are both true; Hub: true (each stop names its machine) | stop control for listed managed instances and inline outcome/refusal notice | [lifecycle-http.md](lifecycle-http.md#stopping-a-session) |
 | `session_freeze` | true on Linux when `terminal_create` and `terminal` are both true | freeze/resume button; otherwise a gray pause button with a hover reason | [lifecycle-http.md](lifecycle-http.md#freeze-a-diagnostic-scene-linux) |
-| `outbox` | always false (the legacy send routes, browser outbox and delivery ledger are retired; SEND is `conversation_send`) | kept so older pages read the outbox as disabled | [conversation.md](conversation.md) |
 | `conversation_send` | node: metadata, terminal, lifecycle and file writes configured; Hub forwards to node | server-owned drafts, SEND and CLI echo tracking | [conversation.md](conversation.md) |
 | `audit` | true when `SESSIONDOCK_AUDIT_DIR` is configured | queues `POST /api/audit/browser`; else no posts | [diagnostics.md](diagnostics.md) |
 | `bug_report` | true when `SESSIONDOCK_BUG_REPORT_DIR`/`REPO`, the audit directory, the terminal transport, the lifecycle service, the metadata store and file writes are all configured | no `config`/`allows` gate yet (the report dialog posts and shows the `501 bug_report_disabled` error); `POST /api/bug-report` and the `uid=bug-report` upload answer 501 while false | [bug-report.md](bug-report.md) |
 | `metadata` | true when `SESSIONDOCK_STATE_DIR` opens MetadataStore | enables stars and display preferences | [metadata.md](metadata.md) |
 | `files` | `true`; paths resolve from the selected session/cwd | opens referenced paths through the file browser | [files.md](files.md) |
-| `files_jobs` | true when file writes are configured or terminal transport is available | enables the file job dialog | [files.md](files.md) |
-| `file_thumbnails` | `false` | skips grid `mode=thumbnail` `<img>` | [files.md](files.md) |
-| `mutations` | `false` | no `config`/`allows` gate | [metadata.md](metadata.md) |
 | `hub` | `false` | no `config`/`allows` gate (`sessiondock-mode` is `local`) | [hub.md](hub.md) |
 | `media` | `true` | no `config`/`allows` gate (local tokens still render) | [media.md](media.md) |
 | `media_remote` | `true` | browser renders HTTP(S) image references directly | [media.md](media.md) |
@@ -154,13 +150,8 @@ list. Dialog actions share the original controls and preferences.
 ## Optional services
 
 Node responses keep `hub:false`; the separate Hub server provides federation.
-`mutations:false` is not a gate for the separately advertised trash, file-write,
-timeline-pin, or conversation endpoints. `file_thumbnails:false` means thumbnail
-rendering is not implemented.
 
-`files_write` contains the configured chunk size and supported operations when
-file writes are available, and is false otherwise. `trash` requires a trash
-directory. These flags describe available
+`trash` requires a trash directory. These flags describe available
 services; file roots do not restrict where a session can read or run.
 
 HTTP(S) image references are returned with `external:true`; the browser loads

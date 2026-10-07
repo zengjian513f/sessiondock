@@ -894,76 +894,6 @@ pub async fn client_update(
 }
 
 #[derive(Deserialize)]
-pub struct BackendRequest {
-    backend: String,
-    #[serde(default)]
-    _build: String,
-    #[serde(default)]
-    _trace_id: String,
-    #[serde(default)]
-    _page_id: String,
-}
-pub fn backends() -> Value {
-    json!([
-        {"name":"ptyhost","label":"默认宿主","available":true,"current":true,"unavailable_reason":""},
-        {"name":"tmux","label":"tmux","available":false,"current":false,
-         "unavailable_reason":"Rust 后端不支持 tmux 会话托管；新建会话只能由 ptyhost 托管。"}
-    ])
-}
-/// Only ptyhost exists. Selecting it is idempotent and persists nothing; tmux
-/// is an explicit error rather than a silently ignored preference.
-pub async fn backend(
-    State(state): State<AppState>,
-    body: Result<Json<BackendRequest>, JsonRejection>,
-) -> Result<Response, ApiError> {
-    if state.terminal.is_none() {
-        return Err(ApiError::unavailable("终端后端选择"));
-    }
-    let permit = admit(&state).await?;
-    let body = parse_body(body)?;
-    diagnostics([&body._build, &body._trace_id, &body._page_id])?;
-    match body.backend.trim().to_ascii_lowercase().as_str() {
-        "ptyhost" | "host" => {
-            response(
-                json!({"ok":true,"backend":"ptyhost","backends":backends()}),
-                permit,
-            )
-            .await
-        }
-        "tmux" => Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "backend_unsupported",
-            "Rust 后端不支持 tmux；新建会话只能由 ptyhost 托管",
-        )),
-        _ => Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "backend_unknown",
-            "未知终端后端",
-        )),
-    }
-}
-
-#[derive(Deserialize)]
-pub struct StatusQuery {
-    record_id: String,
-    instance_id: String,
-}
-pub async fn status(
-    State(state): State<AppState>,
-    query: Result<Query<StatusQuery>, QueryRejection>,
-) -> Result<Response, ApiError> {
-    let service = enabled(&state)?;
-    let permit = admit(&state).await?;
-    let Query(query) = query.map_err(|_| invalid())?;
-    if query.record_id.len() != 32 || query.instance_id.len() != 32 {
-        return Err(invalid());
-    }
-    let record = service.get(query.record_id).await.map_err(failure)?;
-    check_instance(&record, &query.instance_id)?;
-    response(project(&record), permit).await
-}
-
-#[derive(Deserialize)]
 pub struct CancelRequest {
     record_id: String,
     instance_id: String,
@@ -994,8 +924,7 @@ pub async fn cancel(
 
 /// Discard for the Rust receipt ledger: a finished
 /// (Exited/Failed) or durably cancelled receipt leaves the sidebar's pending
-/// list. The receipt itself stays queryable through `term/new-status`; a
-/// receipt whose instance may still run is 409 and must be stopped first.
+/// list. A receipt whose instance may still run is 409 and must be stopped first.
 /// The input the conversation service retained for the receipt goes with
 /// it (`Store::forget_launch_unshared`): otherwise `conversation/drafts`
 /// keeps advertising the deleted session and the sidebar rebuilds its row.

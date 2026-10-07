@@ -79,7 +79,7 @@ launchctl kickstart -k gui/$(id -u)/<label>      # 只重启 sessiondock；ptyho
   只在私网地址上监听。
 - Hub 侧 `sessiondock-hub register`（注册表在 Hub 启动时读取，注册后重启 Hub），`/api/nodes` 里
   `online: true`，`/api/sessions?nodes=<id>` 能列出本机会话。
-- `POST /api/term/create {source: claude, cwd}` → `new-status` `running: true` → `POST /api/term/kill`。
+- `POST /api/term/create {source: claude, cwd}` → `term/list` 的 `pending` 行 `running: true` → `POST /api/term/kill`。
 - 机器不能休眠（`pmset -g` 里 `sleep 0`），WireGuard 需随开机自启，否则节点随之离线。
 
 ## 6. 用 deploy.py 部署

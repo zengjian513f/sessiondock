@@ -226,13 +226,14 @@ def main(bind_native=False, bare_shell=False):
                             if mixed.status==200:
                                 # Another page took the native console; ours reports it.
                                 page.wait_for_function("uid => !T.ws || T.ws.readyState !== WebSocket.OPEN",arg=native_uid)
-                        status=context.request.get(base+"/api/term/new-status",params={"record_id":receipt["record_id"],"instance_id":receipt["instance_id"]})
-                        assert status.status==200 and status.json()["running"],status.text()
+                        listed=context.request.get(base+"/api/term/list").json()
+                        launch=next(row for row in listed["pending"]+listed["sessions"] if row.get("record_id")==receipt["record_id"])
+                        assert launch.get("running") is not False,launch
                         if restarted:
                             action_page=page
                             action_context=None
                             if bind_native:
-                                assert status.json()["native_binding"]=="confirmed",status.text()
+                                assert launch.get("native_binding")=="confirmed",launch
                                 # The header action offers the ordinary stop of the
                                 # bound session; the durable cancel itself is issued
                                 # through `term/kill` (the shell ignores HUP, so the
@@ -285,10 +286,7 @@ def main(bind_native=False, bare_shell=False):
                                 assert discarded.value.status==200,discarded.value.text()
                                 action_page.wait_for_function("id => !T.pending.some(row=>row.record_id===id)",arg=receipt["record_id"])
                                 expect(action_page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]')).to_have_count(0)
-                                final = context.request.get(base+"/api/term/new-status",params={"record_id":receipt["record_id"],"instance_id":receipt["instance_id"]})
-                                assert final.status == 200 and not final.json().get("running"), final.text()
                                 if bare_shell:
-                                    assert final.json()["state"] == "exited", final.text()
                                     replay = context.request.post(base+"/api/term/create",data=original_request)
                                     assert replay.status == 200 and replay.json()["record_id"] == receipt["record_id"] and not replay.json()["running"], replay.text()
                                 again=context.request.post(base+"/api/term/kill",data={"record_id":receipt["record_id"],"instance_id":receipt["instance_id"]})
@@ -317,8 +315,6 @@ def main(bind_native=False, bare_shell=False):
                                 # (opening it shows the last content read-only) ...
                                 wait_for_async(page, "async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && row.final_screen?.id); }",arg=natural["record_id"])
                                 expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]')).to_have_count(1)
-                                final = context.request.get(base+"/api/term/new-status",params={"record_id":natural["record_id"],"instance_id":natural["instance_id"]})
-                                assert final.status == 200 and final.json()["state"] == "exited", final.text()
                                 # ... and equally without one (an old host, a pruned
                                 # store): the row stays and the console says so.
                                 screen_id = page.evaluate("id => T.pending.find(row => row.record_id === id).final_screen.id",natural["record_id"])

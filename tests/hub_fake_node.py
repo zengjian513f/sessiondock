@@ -18,7 +18,7 @@ Test control (never token-checked, unaffected by `offline`):
 State keys mirror the fixture: offline, deleted, slow (seconds added to every
 /api answer), pad (filler bytes in each session row), token (what the node
 expects), term_delay, search_* (steps/delay/stop/prepare_delay/matches/
-incomplete/error/json/pool/scanned/truncated), backend, pause_stream, stopped.
+incomplete/error/json/pool/scanned/truncated), pause_stream, stopped.
 """
 from __future__ import annotations
 
@@ -37,14 +37,6 @@ PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j0i8AAAAASUVORK5CYII=")
 BUILD = "fake-node-build"
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-BACKENDS = (("ptyhost", "默认宿主"), ("tmux", "tmux"))
-
-
-def backends(current):
-    return [{"name": n, "label": label, "available": True, "current": n == current,
-             "unavailable_reason": ""} for n, label in BACKENDS]
-
-
 class NodeHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
 
@@ -139,13 +131,11 @@ class NodeHandler(BaseHTTPRequestHandler):
             if s.get("term_error"):
                 return self._json({"error": "terminal list temporarily unavailable"}, 503)
             time.sleep(s.get("term_delay", 0))
-            current = s.get("backend", "tmux")
             return self._json({"enabled": s.get("term_enabled", True),
                                "unavailable_reason": s.get("term_reason", ""),
                                "sources": s.get("term_sources", {"claude": True, "codex": True}),
                                "home": "/home/" + s["name"], "sessions": s.get("term_sessions", []),
-                               "pending": s["pending"], "backend": current,
-                               "backends": backends(current)})
+                               "pending": s["pending"]})
         if u.path == "/api/term/models":
             model = s["name"] + "-" + q.get("source", [""])[0]
             return self._json({"models": [{"id": model, "name": model, "efforts": ["low", "high"]}],
@@ -161,8 +151,6 @@ class NodeHandler(BaseHTTPRequestHandler):
                 path = q.get("path", [""])[0]
                 return self._json({"directories": [d + "/" for d in s["dirs"] if d.startswith(path)]})
             return self._json({"directories": ["/home/" + s["name"] + "/work/"]})
-        if u.path == "/api/term/new-status":
-            return self._json({"waiting": True, "running": True})
         if u.path == "/api/session/conversation":
             draft = s.get("drafts", {}).get(q["uid"][0], {"revision": 0, "value": None})
             return self._json({"draft": draft})
@@ -323,12 +311,6 @@ class NodeHandler(BaseHTTPRequestHandler):
             info.update(s.get("create_info", {}))
             s["pending"].append(info)
             return self._json(info)
-        if u.path == "/api/term/backend":
-            wanted = str(body.get("backend") or "")
-            if wanted not in ("tmux", "ptyhost"):
-                return self._json({"error": f"未知终端后端: {wanted}"}, 400)
-            s["backend"] = wanted
-            return self._json({"ok": True, "backend": wanted, "backends": backends(wanted)})
         if u.path == "/api/term/claim":
             return self._json({"ok": True, "token": "fixture-lease"})
         if u.path == "/api/sessions/delete":

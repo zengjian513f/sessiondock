@@ -12,7 +12,7 @@ globalThis.SessionDockCapabilities = (() => {
       config = value;
     } catch {
       // A malformed declaration must not start unsupported background work.
-      config = {read_only: true, live: false, outbox: false, audit: false,
+      config = {read_only: true, live: false, audit: false,
         search: false, files: false, configuration_error: true};
     }
   }

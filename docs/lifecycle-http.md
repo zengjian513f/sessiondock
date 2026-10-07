@@ -68,7 +68,6 @@ bodies ignore unrelated dictionary members. The local-only middleware applies.
 | Route | Input | Meaning |
 | --- | --- | --- |
 | POST `/api/term/create` | `source`, `cwd`; optional `request_id`, `create_cwd`, `model`, `effort`, `cols`, `rows` | Persist/replay a creation receipt, request confirmation before creating a missing directory, start at most once, verify guarded readiness |
-| GET `/api/term/new-status` | `record_id`, `instance_id` | Refresh status of that exact recorded instance |
 | POST `/api/term/kill` | `record_id`, `instance_id` | Persist cancellation, retire input authority, for a shell receipt EOF (`C-d`) then up to 1.2 s for the shell's own exit, guarded stop, verify exit |
 | POST `/api/term/discard` | `record_id`, `instance_id` | Drop a finished (Exited/Failed) or durably cancelled receipt from `term/list.pending` together with the input the conversation service retained for it (a draft shared with a native session still in the catalog stays; an alias to a trashed UID does not keep it). A `new_assigned` launch also moves the matching empty native session into trash, so Grok's startup `summary.json` cannot rebuild the row; a shell receipt's recordings are deleted with it; 409 `launch_not_finished` while the instance may still run; the receipt stays queryable |
 | POST `/api/session/stop` | `uid` | Stop a managed instance through guarded host control or terminate process IDs attributed to this exact external native session; an already-stopped session succeeds with `stopped:false` |
@@ -77,7 +76,6 @@ bodies ignore unrelated dictionary members. The local-only middleware applies.
 | POST `/api/term/takeover` | `uid`; optional `force`, `cols`, `rows` | Reuse a managed console, start a stopped session, or return `needs_confirm` for a running external CLI; confirmed force terminates only exact native-session process matches before resume |
 | GET `/api/term/complete-dir` | `path`, optional `limit` | Absolute/`~/` completion without a configured root gate; directory symlinks are followed, ≤50 (default 24) |
 | GET `/api/term/models` | `source` | The source's one CLI profile's model catalog for the new-session picker: `{models:[{id,name,efforts,default_effort?}], efforts, default_model?}`; empty when the source has no unique profile or the CLI keeps no list ([below](#model-and-effort)) |
-| POST `/api/term/backend` | `backend` | `{ok, backend:"ptyhost", backends}` for `ptyhost`/`host`, not persisted; `tmux` is 400 `backend_unsupported`, unknown 400 `backend_unknown` |
 
 The limited legacy diagnostics `_build`, `_trace_id`, `_page_id` are accepted but
 confer no authority and are not forwarded. `cols`/`rows` are validated display
@@ -218,7 +216,7 @@ do not limit which new launches or bound terminals appear in this snapshot.
 Shell receipts stay listed until discarded, including after Exited/Failed.
 Finished AI receipts stay for at most 600 s after `finished_at`; a finished
 AI receipt migrated from an older ledger without that time is archived at
-once. Archived receipts still answer `term/new-status`.
+once.
 
 ## Automatic binding by process evidence
 

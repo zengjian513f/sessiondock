@@ -298,7 +298,6 @@ def main():
                     row = next(row for row in listed["sessions"] if row["uid"] == uid)
                     assert row["name"] == receipt["name"] and row["instance_id"] == receipt["instance_id"] and row["sid"] == receipt["declared_sid"], row
                     assert listed["resume_sources"] == {"claude": True, "codex": True, "grok": False, "opencode": False, "agy": False}, listed
-                    assert listed["backends"][0]["name"] == "ptyhost" and listed["backends"][1]["available"] is False
 
                     # ---- Resume the synthetic Codex session with the existing console button.
                     page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
@@ -334,8 +333,6 @@ def main():
                     assert old_link.status == 200 and old_link.json()["record_id"] == resumed["record_id"] and old_link.json()["action"] == "reused", old_link.text()
                     forced = context.request.post(base + "/api/term/takeover", data={"uid": codex_uid, "request_id": "browser-force-request", "force": True})
                     assert forced.status == 200 and forced.json()["record_id"] == resumed["record_id"] and forced.json()["action"] == "reused", forced.text()
-                    tmux = context.request.post(base + "/api/term/backend", data={"backend": "tmux"})
-                    assert tmux.status == 400, tmux.text()
                     assert len([path for path in (root / "host").glob("*.json")]) == 2
                     assert not errors, errors
                     context.close()

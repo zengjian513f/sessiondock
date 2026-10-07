@@ -237,12 +237,8 @@ fn build_app(
     ));
     let files_write = if terminal.is_some() || !config.file_write_roots.is_empty() {
         Some(Arc::new(
-            files::WriteService::open(
-                config.file_write_roots,
-                config.file_write_limits.clone(),
-                config.state_dir.clone(),
-            )
-            .map_err(io::Error::other)?,
+            files::WriteService::open(config.file_write_roots, config.state_dir.clone())
+                .map_err(io::Error::other)?,
         ))
     } else {
         None
@@ -275,11 +271,6 @@ fn build_app(
     capabilities["terminal_input"] = serde_json::json!(terminal.is_some());
     capabilities["metadata"] = serde_json::json!(metadata.is_some());
     capabilities["files"] = serde_json::json!(files.is_some());
-    capabilities["files_jobs"] = serde_json::json!(files_write.is_some());
-    capabilities["files_write"] = files_write
-        .as_ref()
-        .map_or(serde_json::json!(false), |service| service.capabilities());
-    capabilities["file_thumbnails"] = serde_json::json!(false);
     capabilities["audit"] = serde_json::json!(audit.is_some());
     // Explicit private trash directory only; routes stay 501 without it.
     let trash = config

@@ -108,7 +108,7 @@ Hub 顶栏另有机器 chip，见第 2 节。节点离线、列表/运行状态/
 ### 三种列表
 
 - **项目树**（默认）：按目录分组。同名目录用颜色区分（`timelineDirectoryColors`，会写回存储）。路径过长时 `fitTimelineDirectories` 压缩。
-- **时间轴**：按时间分组，标题可钉住显示（`session_titles` 的点查，不是热发现）。[`tests/session_titles_browser.py`](../tests/session_titles_browser.py)。
+- **时间轴**：按时间分组。
 - **会话分组**：只有 `metadata` 能力允许时 `#view [data-v=group]` 才出现。否则若存的是 `group` 会退回 `tree`。见下文分组。
 
 分组头可折叠。普通浏览的折叠在 `closed`（持久）。搜索态用另一套 `searchClosed`，不写回 `closed`。[`tests/search_no_fold_browser.py`](../tests/search_no_fold_browser.py)。大量同名目录下点击折叠和筛选：[`tests/sidebar_path_performance_browser.py`](../tests/sidebar_path_performance_browser.py)。
@@ -379,7 +379,7 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 - OpenCode：「会从 OpenCode 直接删除（连同子会话），不进回收站，无法恢复。」删除后空状态是「会话已从 OpenCode 删除」。
 - 未落盘的新建：停止并丢弃，未发送草稿清除；若已经生成记录，记录保留。未落盘项可以不经确认直接丢弃；只要选择里有已记录会话，仍弹确认。
 - 运行中的已记录会话会被跳过，需要先停止。
-- 运行状态未知且后端返回 `run_state_unknown` / `needs_force` 时，再问一次：未知不等于已停止，确认 CLI 已退出才 `DELETE ?force=1`。
+- 运行状态未知不阻止删除，服务端在回收站记录里写明当时的运行状态。
 
 成功后详情显示回收站路径和「打开回收站」。`DELETE api/session/{uid}`，批量 `POST api/sessions/delete`。
 
@@ -567,7 +567,7 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 对话：`api/session/conversation`、`.../attachment`、`.../attachment/discard`、`.../check`、`.../send`、`.../queued/dismiss`、`.../restart`、`api/session/input-history`、`api/session/conversation/drafts`。
 
-终端：`api/term/list`、`api/term/claim`、`api/term/attach`、`api/term/send`、`api/term/scroll`、`api/term/models`、`api/term/complete-dir`、`api/term/new-status`、`api/term/grid/history`、`api/term/final`。
+终端：`api/term/list`、`api/term/claim`、`api/term/attach`、`api/term/send`、`api/term/scroll`、`api/term/models`、`api/term/complete-dir`、`api/term/grid/history`、`api/term/final`。
 
 转移与回收站：`api/session/clone/plan`、`api/session/clone`、`api/session/clone/progress`、`api/session/clone/cancel`、`api/session/transfer/clone`、`api/session/transfer/progress`、`api/session/transfer/cancel`、`api/session/transfers`、`api/trash`、`api/trash/restore`、`api/trash/purge`。
 

@@ -381,9 +381,6 @@ fn term_list_body(registry: &Registry, answers: &[Answer]) -> Value {
                 "sources": get("sources", json!({})),
                 "resume_sources": if answer.ok() { get("resume_sources", json!({})) } else { json!({}) },
                 "home": get("home", json!("")),
-                // 终端后端是每台机器各自的设置，网页按机器分别展示和切换。
-                "backend": get("backend", json!("")),
-                "backends": if answer.ok() { get("backends", json!([])) } else { json!([]) },
             }),
         );
         if answer.ok()

@@ -15,7 +15,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use axum::{
     Extension, Json,
     body::to_bytes,
-    extract::{ConnectInfo, FromRequest, Request, State, rejection::JsonRejection},
+    extract::{ConnectInfo, Request, State, rejection::JsonRejection},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -637,8 +637,7 @@ async fn terminal_capture(state: &AppState, ctx: &worker::WorkerContext, name: &
 /// `POST /api/session/attachment`: the raw upload for `uid=bug-report`
 /// (query `name`, optional `id`, the file as the body) writes into the
 /// repository's attachment directory through the write service; every other
-/// native uid uses the conversation upload route of `api/files.rs`.
-/// Requests without a query uid retain the JSON upload-completion contract.
+/// uid uses the conversation upload route of `api/files.rs`.
 pub async fn attachment(
     State(state): State<AppState>,
     request: Request,
@@ -646,11 +645,7 @@ pub async fn attachment(
     let query: std::collections::HashMap<String, String> =
         request.uri().query().map(url_form).unwrap_or_default();
     if query.get("uid").map(String::as_str) != Some(UPLOAD_UID) {
-        if query.contains_key("uid") {
-            return super::files::upload_attachment(State(state), request).await;
-        }
-        let body = Json::<super::files::AttachmentRequest>::from_request(request, &state).await;
-        return super::files::attachment(State(state), body).await;
+        return super::files::upload_attachment(State(state), request).await;
     }
     if state.terminal.is_none() {
         return Err(terminal_off("终端未启用，无法上传报告附件"));

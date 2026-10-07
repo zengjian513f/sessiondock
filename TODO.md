@@ -15,7 +15,6 @@
   Windows 的受管 ptyhost 路径已经过实机验证，不应与此外部进程缺口混为一谈。
 - [ ] 在 macOS 实机验证 sessiondock、ptyhost、文件原子替换、进程身份和终端生命周期；
   Linux 测试或 MSVC 交叉编译不能代替该验证。
-- [ ] 为外部会话实现原生 rename；现有历史中的 `/rename` 展示不等于进程控制操作。
 
 ## Native interaction semantics
 
@@ -24,5 +23,3 @@
 
 ## Operations and release engineering
 
-- [ ] 评估是否仍需独立合成语料统计工具，以及由源码生成的预算参考表；仅维护
-  仍有效的性能/协议数字，不恢复已删除的输入拒绝规则。

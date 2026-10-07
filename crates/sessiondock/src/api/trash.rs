@@ -210,7 +210,6 @@ async fn delete_opencode(
             title: title.clone(),
             code,
             error: error.to_owned(),
-            needs_force: false,
             run_state,
         };
         let Some(row) = row else {

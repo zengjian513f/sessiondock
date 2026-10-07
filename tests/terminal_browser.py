@@ -156,7 +156,6 @@ def main():
                     # CLI creation or a native association for this raw host.
                     assert page.evaluate("SessionDockCapabilities.allows('terminal')") is True
                     assert page.evaluate("SessionDockCapabilities.allows('terminal_create')") is False
-                    assert page.evaluate("SessionDockCapabilities.allows('outbox')") is False
                     listing = page.evaluate("fetch('/api/term/list').then(response=>response.json())")
                     assert listing["enabled"] is False and listing["sessions"] == []
                     page.evaluate(INSTALL)

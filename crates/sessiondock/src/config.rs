@@ -27,7 +27,6 @@ pub struct Config {
     /// compatibility; they do not authorize or confine target paths.
     pub file_write_roots: Vec<PathBuf>,
     /// Write budgets (jobs, bytes, chunk, expiry); production defaults.
-    pub file_write_limits: crate::files::WriteLimits,
     /// Directory for browser diagnostics JSONL.
     /// Unset keeps the audit capability disabled and its route `501`.
     pub audit_dir: Option<PathBuf>,
@@ -263,7 +262,6 @@ impl Default for Config {
             launcher_config: None,
             file_roots: Vec::new(),
             file_write_roots: Vec::new(),
-            file_write_limits: Default::default(),
             audit_dir: None,
             audit_limits: Default::default(),
             trash_dir: None,

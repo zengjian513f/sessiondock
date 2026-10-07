@@ -657,10 +657,6 @@ impl SessionStore {
         self.index.codex_name(sid)
     }
 
-    pub fn titles(&self, ids: &[String]) -> Result<Value, SessionError> {
-        self.index.titles(ids)
-    }
-
     pub fn list(&self, force: bool) -> Result<Value, SessionError> {
         let published = self.publish(force)?;
         let mut document = (*published.document).clone();
