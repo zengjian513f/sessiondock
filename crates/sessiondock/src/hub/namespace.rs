@@ -153,10 +153,7 @@ fn rewrite(data: Value, node: &Node, path: &str, strict: bool) -> Result<Value, 
             }
         }
     }
-    if matches!(
-        path,
-        "/api/term/create" | "/api/term/takeover" | "/api/term/new-status"
-    ) {
+    if matches!(path, "/api/term/create" | "/api/term/takeover") {
         decorate_row(&mut result, node, true, false)?;
         if let Some(session) = result
             .get_mut("session")

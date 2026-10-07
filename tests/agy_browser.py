@@ -217,9 +217,6 @@ def run(browser, base, root):
         assert discarded.value.status == 200, discarded.value.text()
         expect(item).to_have_count(0)
         assert not pending(page, base, receipt['record_id'])
-        status = page.request.get(base + '/api/term/new-status', params={
-            'record_id': receipt['record_id'], 'instance_id': receipt['instance_id']}).json()
-        assert status['discarded'] and status['state'] == 'exited' and not status['running'], status
         deadline = time.monotonic() + 5
         while process_alive(launch['pid']) and time.monotonic() < deadline:
             page.wait_for_timeout(50)

@@ -863,7 +863,7 @@ pub async fn list(
     };
     let mut response = json!({"enabled":false, "transport_enabled":state.terminal.is_some(),
         "unavailable_reason":"没有通过完整会话 UID 和实例校验的运行中终端；创建和 CLI 接管尚未启用。",
-        "sources":{},"home":home,"backend":"ptyhost","backends":[],"sessions":[],"pending":[],"hosts":[]});
+        "sources":{},"home":home,"sessions":[],"pending":[],"hosts":[]});
     if let Some(service) = &state.terminal {
         response["hosts"] = json!(service.hosts().await?);
         if let Some(runtime) = &state.runtime {
@@ -1026,7 +1026,6 @@ pub async fn list(
                     json!(installed && service.entry_for(source, true).is_some());
             }
         }
-        response["backends"] = super::lifecycle::backends();
         response["enabled"] = json!(true);
         response["unavailable_reason"] = json!("");
     } else if let Some(sessions) = response["sessions"].as_array_mut() {

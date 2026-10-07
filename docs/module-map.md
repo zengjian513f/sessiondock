@@ -10,31 +10,31 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 195 files, 85558 lines, 5 undocumented.
+`crates/sessiondock/src`: 193 files, 82999 lines, 5 undocumented.
 
 - `api/`
   - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines)
-  - `bug_report.rs` — `POST /api/bug-report`, `POST /api/bug-report/capture` and the (774 lines)
+  - `bug_report.rs` — `POST /api/bug-report`, `POST /api/bug-report/capture` and the (769 lines)
   - `conversation.rs` — Thin HTTP transport for server-owned conversation drafts, staging and one-shot SEND. (652 lines)
   - `events.rs` — Node UI invalidations share one cached observer. (37 lines)
-  - `files.rs` — File transport. Every request resolves the selected session; opening a (900 lines)
+  - `files.rs` — File transport. Every request resolves the selected session; opening a (522 lines)
   - `final_screen.rs` — `GET /api/term/final?id=…`: the final screen an exited session left, as one (54 lines)
   - `health.rs` — Local liveness JSON: version, `api_version` 1, and `stage: "read_only"`. (49 lines)
   - `hub.rs` — The hub's HTTP surface (`hub.py` `HubHandler.dispatch`, 518–584), served (953 lines)
-  - `lifecycle.rs` — Explicit creation receipts; native identities and reliable send stay separate. (1348 lines)
+  - `lifecycle.rs` — Explicit creation receipts; native identities and reliable send stay separate. (1277 lines)
   - `media.rs` — Opaque media transport. File tokens require current native-scope authorization. (150 lines)
-  - `metadata.rs` — SessionDock-owned preferences only. No native session writes or CLI actions. (644 lines)
-  - `mod.rs` — Axum transport router nested at `/api`. Handlers stay in sibling modules; (421 lines)
+  - `metadata.rs` — SessionDock-owned preferences only. No native session writes or CLI actions. (542 lines)
+  - `mod.rs` — Axum transport router nested at `/api`. Handlers stay in sibling modules; (390 lines)
     - mods: `audit`, `bug_report`, `conversation`, `events`, `files`, `final_screen`, `health`, `hub`, `lifecycle`, `media`, `metadata`, `node_auth`, `process_links`, `read`, `runtime`, `search`, `shell_env`, `terminal`, `transfer`, `trash`, `trash_tree`
   - `node_auth.rs` — Node listener gate (`server.py` `_allowed` / `_hub_protocol` for hub (103 lines)
   - `process_links.rs` — (no module doc) (130 lines)
-  - `read.rs` — Read-only session list, messages, grant pages, input history, and SSE watch. (768 lines)
+  - `read.rs` — Read-only session list, messages, grant pages, input history, and SSE watch. (745 lines)
   - `runtime.rs` — Read-only live status; never upgrades observations into CLI authority. (533 lines)
   - `search.rs` — JSON/NDJSON search transport queues work and applies stream backpressure. Search (183 lines)
   - `shell_env.rs` — `GET /api/shell-env` and `POST /api/shell-env/restart` (`crate::shell_env`). (39 lines)
-  - `terminal.rs` — Explicit-directory development transport only; legacy CLI actions stay gated. (1186 lines)
+  - `terminal.rs` — Explicit-directory development transport only; legacy CLI actions stay gated. (1185 lines)
   - `transfer.rs` — Browser-facing clone orchestration. Paths and identity maps never come from (937 lines)
-  - `trash.rs` — Session recycle-bin HTTP routes, using delete protection. (643 lines)
+  - `trash.rs` — Session recycle-bin HTTP routes, using delete protection. (642 lines)
   - `trash_tree.rs` — Preview and confirm the same connected component used by whole-group copy. (163 lines)
 - `assets.rs` — Startup snapshot of regular frontend files. Requests never walk the disk. (282 lines)
 - `audit.rs` — Best-effort browser diagnostics intake. (358 lines)
@@ -64,7 +64,7 @@ python3 tests/module_map.py --write
   - `mod.rs` — Bug-report bundles and their CLI workers. (1037 lines)
     - mods: `worker`
   - `worker.rs` — The bug-report worker. (465 lines)
-- `config.rs` — SessionDock configuration. Paths come from explicit environment variables; (660 lines)
+- `config.rs` — SessionDock configuration. Paths come from explicit environment variables; (658 lines)
 - `conversation/`
   - `cli_state.rs` — Per-session CLI state that native history cannot tell (docs/cli-state.md): (623 lines)
   - `input.rs` — Positive recognition of the CLI input surface, shared by CHECK and every (487 lines)
@@ -80,34 +80,32 @@ python3 tests/module_map.py --write
   - `target.rs` — Managed-instance target resolution and the failure type shared by (163 lines)
 - `error.rs` — HTTP JSON error envelope `{error, code}` shared by Axum handlers. (68 lines)
 - `files/`
-  - `boundary.rs` — (no module doc) (626 lines)
-  - `grants.rs` — An authenticated file browser keeps its directory grant after the original (183 lines)
-  - `info.rs` — Browser information describes the named leaf. (56 lines)
-  - `jobs.rs` — In-memory file-operation jobs, bound to the session scope that created them. (224 lines)
+  - `boundary.rs` — (no module doc) (467 lines)
+  - `grants.rs` — An authenticated file browser keeps its directory grant after the original (168 lines)
   - `media.rs` — One trusted selected-view reference index shared by an entire media window. (113 lines)
-  - `mod.rs` — Session-reference-scoped file reads and authenticated directory browsing. (345 lines)
-    - mods: `boundary`, `grants`, `info`, `jobs`, `media`, `references`, `response`, `write`
+  - `mod.rs` — Session-reference-scoped file reads and authenticated directory browsing. (317 lines)
+    - mods: `boundary`, `grants`, `media`, `references`, `response`, `write`
   - `references.rs` — (no module doc) (282 lines)
   - `response.rs` — (no module doc) (519 lines)
-  - `write.rs` — Authenticated operator file mutations through checked parent handles. (2194 lines)
+  - `write.rs` — Authenticated operator file mutations through checked parent handles. (949 lines)
 - `fingerprint.rs` — 128-bit streaming content fingerprint of native bytes. (126 lines)
 - `hub/`
-  - `aggregate.rs` — Hub aggregation (`hub.py` `HubHandler.selected/aggregate/search_aggregate/ (892 lines)
+  - `aggregate.rs` — Hub aggregation (`hub.py` `HubHandler.selected/aggregate/search_aggregate/ (889 lines)
   - `client.rs` — Hub → node HTTP/1.1 client: one connection per request over a plain or (835 lines)
   - `groups.rs` — Nodes own group catalogs. The Hub caches their union and sends it back; (143 lines)
   - `identity.rs` — Node identity and credential files (`federation.identity`, `server.py` (112 lines)
   - `mod.rs` — Hub federation (batches 38–40): node identity, the hub's node registry (32 lines)
     - mods: `aggregate`, `client`, `groups`, `identity`, `namespace`, `nest`, `process_links`, `proxy`, `registry`, `resources`, `session_links`, `transfer`
-  - `namespace.rs` — The hub's wire namespace (`federation.py` 31–113): every reference a node (318 lines)
+  - `namespace.rs` — The hub's wire namespace (`federation.py` 31–113): every reference a node (315 lines)
   - `nest.rs` — Validate a display edge against the fleet before routing the write to its child. (60 lines)
   - `process_links.rs` — One fleet coordinator shared by session nesting and external CPU consumers. (121 lines)
-  - `proxy.rs` — The hub's pass-through to one node (`hub.py` `HubHandler.resolve` (915 lines)
+  - `proxy.rs` — The hub's pass-through to one node (`hub.py` `HubHandler.resolve` (912 lines)
   - `registry.rs` — The hub's node registry (`hub.py` `Registry`): `hub-nodes.json`, node (1421 lines)
   - `resources.rs` — Session resource views preserve execution nodes and incomplete observations. (340 lines)
   - `session_links.rs` — Resolve saved links through completed transfer records, never by guessing IDs. (252 lines)
   - `transfer.rs` — Durable cross-node clone orchestration over the authenticated node channel. (1302 lines)
 - `hub_config.rs` — Configuration of the `sessiondock-hub` binary. Separate from (119 lines)
-- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (600 lines)
+- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (589 lines)
   - mods: `api`, `assets`, `audit`, `bridge`, `bug_report`, `config`, `conversation`, `delivery`, `error`, `files`, `fingerprint`, `hub`, `hub_config`, `lifecycle`, `list_sync`, `log`, `media`, `metadata`, `native_replay`, `observe`, `polls`, `runtime`, `search`, `security`, `sessions`, `shell_env`, `state`, `terminal`, `transfer`, `trash`, `ui_events`, `session_links`
 - `lifecycle/`
   - `autobind.rs` — Process-evidence binding of pending Codex/Grok launches. (326 lines)
@@ -136,9 +134,9 @@ python3 tests/module_map.py --write
   - `native_media.rs` — Private native-string descriptors. Paths are metadata, never open authority. (370 lines)
 - `metadata/`
   - `disk.rs` — Metadata reads and atomic replacement in the configured directory. (112 lines)
-  - `mod.rs` — SessionDock preferences with reads and atomic publication. (219 lines)
+  - `mod.rs` — SessionDock preferences with reads and atomic publication. (214 lines)
     - mods: `disk`, `model`
-  - `model.rs` — Pure, versioned metadata transformations. No process or native-file access. (745 lines)
+  - `model.rs` — Pure, versioned metadata transformations. No process or native-file access. (712 lines)
     - mods: `transfer`
   - `transfer.rs` — Atomic comparison and restoration of display rows during history imports. (63 lines)
 - `native_replay.rs` — Checked-source-independent replay of nested JSON string interiors. (219 lines)
@@ -153,7 +151,7 @@ python3 tests/module_map.py --write
   - `procscan.rs` — Read-only `/proc` scan for external CLI processes. (1114 lines)
     - mods: `activity`
   - `procscan/`
-    - `activity.rs` — Work that outlives a turn, including detached commands carrying a native (165 lines)
+    - `activity.rs` — Work that outlives a turn, including detached commands carrying a native (168 lines)
   - `spawn.rs` — Initialize the single sidebar parent from an observed local CLI launch. (325 lines)
 - `search.rs` — Bounded on-demand search over semantic session views, never raw JSONL. (874 lines)
   - mods: `cache`, `fold`, `prefilter`, `service`
@@ -170,7 +168,7 @@ python3 tests/module_map.py --write
   - `index/`
     - `agent_stops.rs` — Subagent stop evidence from the owner's native transcript. (267 lines)
     - `graph.rs` — Ownership and fork graph over row summaries. (853 lines)
-    - `mod.rs` — Lazy session index: directory walk + `stat` + bounded (1589 lines)
+    - `mod.rs` — Lazy session index: directory walk + `stat` + bounded (1582 lines)
       - mods: `agent_stops`, `graph`, `names`, `native_state`, `summary`, `titles`
     - `names.rs` — Codex `session_index.jsonl` names applied to summary rows. (200 lines)
     - `native_state.rs` — Scalar Codex turn and Claude/Codex model state, independent of head/tail windows. (177 lines)
@@ -182,9 +180,9 @@ python3 tests/module_map.py --write
       - `mod.rs` — Bounded per-file row summaries. (880 lines)
         - mods: `agy`, `claude`, `codex`, `grok`, `opencode`
       - `opencode.rs` — OpenCode row summary from the SessionDock mirror (`sessions::opencode`): (104 lines)
-    - `titles.rs` — Point reads of current display titles. Only initial discovery builds a full (164 lines)
+    - `titles.rs` — Codex native names read on demand, before the first rollout exists. (19 lines)
   - `media_projection.rs` — Window selection precedes file opens; authority uses the complete branch. (216 lines)
-  - `mod.rs` — Session read model: the lazy index (`index/`) is the only inventory, and (1443 lines)
+  - `mod.rs` — Session read model: the lazy index (`index/`) is the only inventory, and (1439 lines)
     - mods: `history`, `index`, `agy`, `native_input`, `native_media`, `opencode`, `pages`, `views`, `providers`, `records`, `scope`, `sidebar`, `media_projection`
   - `native_input.rs` — Checked, chunked native input and a disposable raw-prefix index. (336 lines)
   - `native_media.rs` — Native span authority is the current full selected branch, not file_roots (89 lines)
@@ -258,7 +256,7 @@ python3 tests/module_map.py --write
   - `service.rs` — Durable same-node clone transaction. Plans contain server-derived paths only; (1188 lines)
     - mods: `journal`, `names`, `prefix`, `tool_requirements`
   - `tool_requirements.rs` — Persisted definitions identify executor dependencies, not runnable tools. (64 lines)
-- `trash.rs` — Session recycle bin. Native files move into recoverable entries; fork (889 lines)
+- `trash.rs` — Session recycle bin. Native files move into recoverable entries; fork (882 lines)
   - mods: `manifest`, `plan`, `tree`
 - `trash/`
   - `manifest.rs` — Per-entry manifest: the only record of where trashed files came from. (294 lines)

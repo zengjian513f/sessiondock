@@ -389,7 +389,7 @@ function takenOver(uid) {
   return linkedTermSession(uid)?.name || null;
 }
 
-/** `outbox` capability: the reliable-send routes act under this page's
+/** `conversation_send`: the reliable-send routes act under this page's
  *  own instance lease when the console is open here, so sending from the
  *  composer never conflicts with our own console. Without a lease the server
  *  claims for itself and reports any other page's lease as an ownership

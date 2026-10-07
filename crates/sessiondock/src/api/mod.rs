@@ -39,8 +39,6 @@ use crate::{error::ApiError, state::AppState};
 /// Match each handler's request-body policy, including raw uploads.
 pub(crate) fn request_body_limit(path: &str) -> usize {
     match path {
-        "/api/session/files/upload" => files::UPLOAD_BODY_LIMIT,
-        "/api/session/files/action" => crate::files::DEFAULT_UPLOAD_CHUNK_BYTES,
         "/api/session/attachment" => bug_report::ATTACHMENT_BODY_LIMIT,
         "/api/bug-report" => bug_report::REPORT_BODY_LIMIT,
         "/api/session/star"
@@ -83,7 +81,6 @@ pub fn router() -> Router<AppState> {
         .route("/session/group", post(metadata::session_group))
         .route("/sessions", get(read::list))
         .route("/events", get(events::events))
-        .route("/sessions/titles", get(read::titles))
         .route("/sessions/resolve", post(read::resolve_links))
         .route(
             "/sessions/unread",
@@ -140,20 +137,6 @@ pub fn router() -> Router<AppState> {
             ))),
         )
         .route("/session/file", get(files::file))
-        .route("/session/files", get(files::directory))
-        // Write routes require the file-writing service.
-        .route(
-            "/session/files/action",
-            post(files::action).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
-                "/api/session/files/action",
-            ))),
-        )
-        .route(
-            "/session/files/upload",
-            post(files::upload).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
-                "/api/session/files/upload",
-            ))),
-        )
         // Raw attachments target a native session cwd or the bug-report repo.
         // Without a query uid, retain JSON upload completion.
         .route(
@@ -194,7 +177,6 @@ pub fn router() -> Router<AppState> {
                 request_body_limit("/api/term/create"),
             )),
         )
-        .route("/term/new-status", get(lifecycle::status))
         .route(
             "/term/takeover",
             post(lifecycle::takeover).layer(axum::extract::DefaultBodyLimit::max(
@@ -209,12 +191,6 @@ pub fn router() -> Router<AppState> {
             "/clients/update",
             post(lifecycle::client_update).layer(axum::extract::DefaultBodyLimit::max(
                 request_body_limit("/api/clients/update"),
-            )),
-        )
-        .route(
-            "/term/backend",
-            post(lifecycle::backend).layer(axum::extract::DefaultBodyLimit::max(
-                request_body_limit("/api/term/backend"),
             )),
         )
         .route(

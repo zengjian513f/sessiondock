@@ -178,7 +178,7 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
 
 节点交出去的每个引用在到达浏览器前带上节点 id，回到节点前再去掉；原生 CLI id、
 消息文本、工具参数和文件内容永远不动。形状：会话 uid `<source>:<nid>~<local tail>`；
-终端名、回收站条目 id、outbox epoch `<nid>~<local>`；媒体 `src`
+终端名、回收站条目 id `<nid>~<local>`；媒体 `src`
 `/api/nodes/<nid>/api/media/…`。
 
 - `qualify(node, value, uid)` / `split(value, uid)`：`federation.qualify/split` 逐字。
@@ -194,7 +194,7 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
   `terminal` 时非空 `name` 加前缀，`trash` 时非空 `id` 加前缀）：
   `/api/sessions`、`/api/search` 的 `sessions`（无则 `results`）行；`/api/live` 总是重写
   `uids/tmux_uids/started_at` 三键（缺则补空）；`/api/term/list` 的 `sessions/pending`
-  行（terminal）；`/api/term/create|takeover|new-status` 顶层（terminal）+ 真值
+  行（terminal）；`/api/term/create|takeover` 顶层（terminal）+ 真值
   `session`；`/api/bug-report` 真值 `worker`（terminal）；`/api/trash` 的 `items`
   （trash）；`/api/messages/*`、`/api/watch` 的真值 `meta`。
 - 无法加前缀的 uid（缺 `<source>:`）：注册表钩子是不可失败的函数，
@@ -248,7 +248,7 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
   `draft_epochs` 不计入 `live` 变化。
 - `term_list`：`enabled = any`（含过期缓存里的 `enabled:false`）、`home:""`、
   `sessions/pending` 全部拼接（含 stale 行）、`capabilities[nid] = {enabled: 真值且未失败,
-  unavailable_reason: 失败文案或节点的, sources, home, backend, backends（失败为 []）}`、
+  unavailable_reason: 失败文案或节点的, sources, resume_sources（失败为 {}）, home}`、
   `sources` 是成功机器的并集（`prev or available`：已为真不覆盖）。
 - `list_delta: true` 声明列表增量传输。浏览器与 Hub→节点的 `/api/sessions`、
   `/api/term/list` 读取可带 `X-SessionDock-List: <list_version>`（首次为 `new`）。
@@ -356,7 +356,7 @@ X-SessionDock-Build,Range,User-Agent`（后者只供终端 ownership 的设备�
 `hyper_util::rt::TokioIo` 拿到浏览器连接，和 H2 客户端 `Body::into_raw` 交还的节点 TCP/TLS 流做
 `tokio::io::copy_bidirectional` 裸转发（预读字节先发）；其它正文流式透传并保留
 `Content-Length/Content-Disposition/X-Content-Type-Options/Cache-Control/CSP/Content-Range/
-Accept-Ranges`；附件上传（`attachment`/`files/upload`）按 `Content-Length` 分块转发（≤
+Accept-Ranges`；附件上传（`attachment`、`conversation/attachment`）按 `Content-Length` 分块转发（≤
 `ATTACHMENT_MAX_BYTES` = 512 MiB），超限先拒。
 
 WebSocket 用裸 TCP 双向拷贝（101 后不解帧），HTTP 客户端手写、

@@ -144,21 +144,6 @@ impl FileService {
         target.verify()?;
         self.grants.insert(key, target.path().to_path_buf())
     }
-    pub fn browser_target(
-        &self,
-        scope: &FileScope<'_>,
-        reference: &str,
-        navigation: Option<&str>,
-    ) -> Result<ResolvedTarget, FileError> {
-        self.directory_grant(scope, reference)?;
-        match navigation.filter(|value| !value.is_empty()) {
-            Some(path) => self.navigation(path),
-            // The grant survives a renamed/deleted entry, but it is not a
-            // cached resolution of that reference. A fresh click is resolved
-            // against the current selected session cwd and filesystem.
-            None => self.target(scope, reference, None),
-        }
-    }
     /// A writer's request paths are independent of the initial directory after
     /// the grant. Keep a checked volume-root handle even if that directory no
     /// longer exists; writer-side OS/private-data guards apply to each target.

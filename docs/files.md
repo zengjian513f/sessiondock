@@ -34,7 +34,14 @@ Conversation-specific responsibilities remain here:
 - Uploading/recording conversation and bug-report attachments, and the
   console file paste that publishes straight into `sessiondock_attachments`
   ([terminal-input.md](terminal-input.md#console-file-paste)).
-- Serving existing file API consumers during the node/client migration.
+- Serving one referenced file (`GET /api/session/file`: raw, `mode=info`,
+  `mode=preview`, `download=1`) for the conversation's own links.
+
+DELTA: SessionDock's directory listing, file-manager actions and chunked
+uploads (`GET /api/session/files`, `POST /api/session/files/action`,
+`POST /api/session/files/upload`, the JSON upload-completion form of
+`POST /api/session/attachment` and the `files_jobs`/`files_write`
+capabilities) were removed on 2026-10-07; FileDock owns them.
 
 Conversation links recognize absolute Windows drive paths (`X:\project\file.md`
 and `X:/project`) in code spans, Markdown links and parenthesized prose. Drive

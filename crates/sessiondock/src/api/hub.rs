@@ -84,13 +84,14 @@ const AUDIT_TIMEOUT: Duration = Duration::from_secs(2);
 const NOT_REGISTERED: &str = "机器未注册或已移除";
 
 /// What the hub page declares. Per-machine features (terminal, files,
-/// trash, live, audit) stay undeclared so the page degrades per request.
+/// trash, live, audit) stay undeclared so the page degrades per request;
+/// session stop is declared because each stop names its machine.
 /// The hub page declares nothing; the read-model pages every Rust
 /// node serves are declared. `media_lazy` is left out: the page blanks a
 /// `/api/nodes/<nid>/api/media/…` source before its hub check when set.
 pub fn hub_capabilities() -> Value {
     json!({
-        "backend": "rust", "hub": true, "session_delete_tree": true, "session_clone_local_codex": true, "session_clone_remote": true, "session_move_remote": true, "transfer_confirm_mode": true, "session_link_lineage": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
+        "backend": "rust", "hub": true, "session_stop": true, "session_delete_tree": true, "session_clone_local_codex": true, "session_clone_remote": true, "session_move_remote": true, "transfer_confirm_mode": true, "session_link_lineage": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
         "history_pages": true, "unread_batch": true, "media_continuation": true, "ui_events": true, "list_delta": true,
         "history_semantics": "limited_native"
     })

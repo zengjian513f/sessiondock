@@ -133,7 +133,7 @@ aliases. Historical names belong only in migration records.
 
 ## Flags and parity
 
-**Capability flags.** HTML/`/api/meta` booleans such as `history_pages`, `media_lazy`, `media_continuation`, platform-dependent `live`, and the always-false `outbox`. Ptyhost Info uses integer `instance_guard` / `launch_guard` / `launch_bind`. See [capabilities](capabilities.md).
+**Capability flags.** HTML/`/api/meta` booleans such as `history_pages`, `media_lazy`, `media_continuation`, and platform-dependent `live`. Ptyhost Info uses integer `instance_guard` / `launch_guard` / `launch_bind`. See [capabilities](capabilities.md).
 
 **DELTA.** A named, asserted Python/Rust difference in a parity tool. Disappearance or a different result fails. See [validation](validation.md).
 

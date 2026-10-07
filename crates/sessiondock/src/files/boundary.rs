@@ -1,10 +1,9 @@
-use super::{FileError, ListOptions, MAX_PATH_BYTES};
+use super::{FileError, MAX_PATH_BYTES};
 use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt, OpenOptionsSyncExt};
 use cap_std::{
     ambient_authority,
     fs::{Dir, Metadata, OpenOptions},
 };
-use serde_json::{Value, json};
 use std::{
     ffi::OsString,
     fs::File,
@@ -442,41 +441,6 @@ pub(super) fn absolute_path(raw: &str, cwd: &str) -> Result<PathBuf, FileError> 
     base.join(path).canonicalize().map_err(FileError::io)
 }
 
-/// Normpath first, resolve parents, retain a final symlink.
-pub(super) fn mutation_path(raw: &str) -> Result<PathBuf, FileError> {
-    validate_path_text(raw)?;
-    #[cfg(windows)]
-    let normalized = raw.replace('/', "\\");
-    #[cfg(windows)]
-    let raw = normalized.as_str();
-    let path = Path::new(raw);
-    if !path.is_absolute() {
-        return Err(FileError::new(
-            400,
-            "file_absolute_path_required",
-            "需要绝对路径",
-        ));
-    }
-    let mut normalized = PathBuf::new();
-    for part in path.components() {
-        match part {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            _ => normalized.push(part.as_os_str()),
-        }
-    }
-    let Some(name) = normalized.file_name() else {
-        return Ok(normalized);
-    };
-    Ok(normalized
-        .parent()
-        .unwrap()
-        .canonicalize()
-        .map_err(FileError::io)?
-        .join(name))
-}
 pub(super) fn wire_path(path: &Path) -> Result<String, FileError> {
     let value = path
         .to_str()
@@ -500,127 +464,4 @@ pub(super) fn modified(metadata: &Metadata) -> Option<f64> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .map(|duration| duration.as_secs_f64())
-}
-
-pub(super) fn list(target: &ResolvedTarget, options: &ListOptions) -> Result<Value, FileError> {
-    if !(1..=500).contains(&options.limit)
-        || !matches!(options.sort.as_str(), "name" | "size" | "modified" | "type")
-        || !matches!(options.order.as_str(), "asc" | "desc")
-    {
-        return Err(FileError::new(
-            400,
-            "file_list_options",
-            "无效的目录分页或排序参数",
-        ));
-    }
-    target.verify()?;
-    let OpenTarget::Directory(directory) = &target.opened else {
-        return Err(FileError::new(
-            400,
-            "file_directory_required",
-            "请选择目录浏览",
-        ));
-    };
-    let mut rows = Vec::new();
-    let mut errors = Vec::new();
-    for entry in directory.entries().map_err(FileError::io)? {
-        let entry = entry.map_err(FileError::io)?;
-        let name = entry.file_name().into_string().map_err(|_| {
-            FileError::new(
-                400,
-                "file_path_encoding",
-                "目录含非 UTF-8 名称，不能安全导航",
-            )
-        })?;
-        if !options.hidden && name.starts_with('.') {
-            continue;
-        }
-        let path = target.path.join(&name);
-        let mut kind = "unavailable";
-        let mut size = None;
-        let mut timestamp = None;
-        let mut symlink = false;
-        match directory.symlink_metadata(&name) {
-            Ok(metadata) => {
-                symlink = link(&metadata);
-                let metadata = if symlink {
-                    path.canonicalize()
-                        .map_err(FileError::io)
-                        .and_then(|resolved| {
-                            open_target(volume_root(&resolved)?, resolved)
-                                .map(|target| target.metadata)
-                        })
-                } else {
-                    Ok(metadata)
-                };
-                match metadata.and_then(|metadata| { ordinary(&metadata)?; Ok(metadata) }) {
-                    Ok(metadata) => { kind = if metadata.is_dir() { "directory" } else { "file" }; size = metadata.is_file().then_some(metadata.len()); timestamp = modified(&metadata); }
-                    Err(error) => errors.push(json!({"name":name,"status":error.status,"code":error.code,"error":error.message})),
-                }
-            }
-            Err(error) => {
-                let error = FileError::io(error);
-                errors.push(json!({"name":name,"status":error.status,"code":error.code,"error":error.message}));
-            }
-        }
-        let extension = path
-            .extension()
-            .and_then(|value| value.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        let file_type = if extension.is_empty() {
-            if kind == "directory" {
-                "文件夹"
-            } else {
-                "文件"
-            }
-        } else {
-            &extension
-        };
-        rows.push(json!({"name":name,"path":wire_path(&path)?,"kind":kind,"size":size,"modified":timestamp,"symlink":symlink,"type":file_type}));
-    }
-    target.verify()?;
-    rows.sort_by(|left, right| {
-        let group = (left["kind"] != "directory").cmp(&(right["kind"] != "directory"));
-        if !group.is_eq() {
-            return group;
-        }
-        let primary = match options.sort.as_str() {
-            "size" | "modified" => left[&options.sort]
-                .as_f64()
-                .unwrap_or(-1.0)
-                .total_cmp(&right[&options.sort].as_f64().unwrap_or(-1.0)),
-            "type" => left["type"]
-                .as_str()
-                .unwrap_or("")
-                .to_lowercase()
-                .cmp(&right["type"].as_str().unwrap_or("").to_lowercase()),
-            _ => left["name"]
-                .as_str()
-                .unwrap_or("")
-                .to_lowercase()
-                .cmp(&right["name"].as_str().unwrap_or("").to_lowercase()),
-        }
-        .then_with(|| left["name"].as_str().cmp(&right["name"].as_str()));
-        if options.order == "desc" {
-            primary.reverse()
-        } else {
-            primary
-        }
-    });
-    let total = rows.len();
-    let entries: Vec<_> = rows
-        .into_iter()
-        .skip(options.offset)
-        .take(options.limit)
-        .collect();
-    let end = options.offset.saturating_add(entries.len());
-    let parent = if target.path == target.root.path {
-        None
-    } else {
-        target.path.parent().map(wire_path).transpose()?
-    };
-    Ok(
-        json!({"path":wire_path(&target.path)?,"root":wire_path(&target.root.path)?,"parent":parent,"entries":entries,"total":total,"offset":options.offset,"next_offset":if end < total {Some(end)} else {None},"writable":false,"errors":errors,"incomplete":!errors.is_empty()}),
-    )
 }

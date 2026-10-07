@@ -92,8 +92,8 @@ checkpoint仍核对投影。
 文件读取由当前会话引用或已签发路径引用确定目标；兼容配置中的 file roots
 不充当授权边界。路径解析保留目录能力句柄，读响应保留已检查文件；按 HTTP 消费者
 需求每次只在blocking任务读取64KiB。未轮询Body不开始读，取消后尚未结束的
-读取继续持有permit，避免慢下载挤占普通历史worker。文件浏览及独立预览由
-[FileDock](files.md) 提供；SessionDock 保留兼容文件作业 API，`file_thumbnails` 为 false。
+读取继续持有permit，避免慢下载挤占普通历史worker。目录浏览、文件管理及独立预览由
+[FileDock](files.md) 提供；SessionDock 只保留会话引用文件的读取和附件写入。
 
 可选的 `MetadataStore`：每次操作重读当前文件，并以原子替换持久化。
 列表、详情、搜索和 SSE 从同一元数据版本装饰读模型；偏好变化不修改消息 anchor。

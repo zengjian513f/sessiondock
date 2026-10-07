@@ -198,6 +198,38 @@ def node_switch_cwd(browser, hub, node, other):
     other.pop("dirs")
 
 
+def native_stop(browser, hub, node, other):
+    """A session whose console is open on its machine but not in live state
+    is stoppable from the hub page; the stop names that session."""
+    uid = f"claude:{node.nid}~same-file-hash"
+    node.set(term_sessions=[{"name": "native-term", "uid": "claude:same-file-hash", "source": "claude",
+        "sid": "same-native-id", "instance_id": "n" * 32, "cwd": "/synthetic/work", "state": "running"}])
+    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+    page = context.new_page()
+    errors, dialogs, stops = [], [], []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
+
+    def stop(route):
+        stops.append(route.request.post_data_json)
+        route.fulfill(json={"ok": True, "stopped": True, "stage": "graceful"})
+    context.route("**/api/session/stop", stop)
+    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
+    page.wait_for_function("uid => T.listLoaded && T.list.some(row => row.uid === uid)", arg=uid)
+    assert not page.evaluate("uid => S.live.has(uid)", uid)
+    row = page.locator(f'#side .item[data-uid="{uid}"]')
+    row.click(button="right")
+    page.locator('#item-menu [data-act="pick"]').click()
+    expect(page.locator("#side-pick-stop")).to_be_enabled()
+    page.locator("#side-pick-stop").click()
+    page.wait_for_function("() => !sessionStopBusy")
+    assert len(stops) == 1 and stops[0]["uid"] == uid and stops[0].get("request_id"), stops
+    page.locator("#side-pick-cancel").click()
+    assert not errors, errors
+    context.close()
+    node.pop("term_sessions")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", default=str(REPO / "target/release/sessiondock"))
@@ -224,6 +256,7 @@ def main():
                     browser = playwright.chromium.launch(**launch)
                     node_source_picker(browser, hub, *nodes)
                     node_switch_cwd(browser, hub, *nodes)
+                    native_stop(browser, hub, *nodes)
                     scenario(browser, hub, *nodes)
                     browser.close()
             finally:
@@ -231,7 +264,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS hub_pending_state_browser: per-node OpenCode picker, machine select on the first row, steady cwd list while typing, node switch keeps existing cwd, create, partial list, draft/reload, recovery, confirmed exit")
+    print("PASS hub_pending_state_browser: per-node OpenCode picker, multi-select stop of a console-only session, machine select on the first row, steady cwd list while typing, node switch keeps existing cwd, create, partial list, draft/reload, recovery, confirmed exit")
 
 
 if __name__ == "__main__":

@@ -10,8 +10,8 @@ use std::{
 use crate::{
     error::ApiError,
     files::{
-        ActionRequest, FileBody, FileError, FileResponse, FileScope, FileService, ListOptions,
-        Outcome, ReadOptions, STREAM_CHUNK_BYTES, WriteService,
+        FileBody, FileError, FileResponse, FileScope, FileService, ReadOptions, STREAM_CHUNK_BYTES,
+        WriteService,
     },
     sessions::{MessageQuery, SessionStore},
     state::{AppState, JsonBytes},
@@ -29,10 +29,6 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::OwnedSemaphorePermit;
-
-/// Route body cap for one upload chunk: the 8 MiB chunk limit plus
-/// one byte so an oversized chunk reaches the handler's explicit 413.
-pub const UPLOAD_BODY_LIMIT: usize = crate::files::DEFAULT_UPLOAD_CHUNK_BYTES + 1;
 
 impl From<FileError> for ApiError {
     fn from(error: FileError) -> Self {
@@ -158,106 +154,19 @@ pub struct FileQuery {
     path: Option<String>,
     mode: String,
     download: String,
-    offset: String,
-    limit: Option<String>,
-    sort: String,
-    order: String,
-    hidden: String,
 }
 impl FileQuery {
-    fn validate(&mut self, directory: bool) -> Result<(), ApiError> {
+    fn validate(&mut self) -> Result<(), ApiError> {
         validate_scope(&self.uid, &self.agent)?;
         crate::files::clean_ref(&self.r#ref)?;
-        if directory && self.mode == "jobs" {
-            // Jobs are returned before reading navigation or pagination.
-            self.path = None;
-            return Ok(());
-        }
-        if directory && matches!(self.mode.as_str(), "trash" | "artifact") {
-            return Err(FileError::unsupported(&self.mode).into());
-        }
-        if self.download == "1" {
-            self.mode.clear();
-        } else if directory && self.mode == "thumbnail" {
-            return Err(FileError::unsupported(&self.mode).into());
-        } else if !matches!(self.mode.as_str(), "" | "info" | "preview") {
-            // Unknown modes are ordinary file reads/listings.
+        if self.download == "1" || !matches!(self.mode.as_str(), "" | "info" | "preview") {
+            // Unknown modes are ordinary file reads.
             self.mode.clear();
         }
-        if !directory {
-            // The direct-reference route ignores any browser navigation field.
-            self.path = None;
-        }
-        if self
-            .path
-            .as_ref()
-            .is_some_and(|s| s.chars().count() > 4096 || s.contains('\0'))
-        {
-            return Err(invalid());
-        }
+        // The direct-reference route ignores any browser navigation field.
+        self.path = None;
         Ok(())
     }
-    fn listing_offset(&self) -> Result<usize, ApiError> {
-        if self.offset.is_empty() {
-            return Ok(0);
-        }
-        let mut raw = self.offset.trim();
-        let negative = raw.starts_with('-');
-        if raw.starts_with(['+', '-']) {
-            raw = &raw[1..];
-        }
-        let mut value = 0usize;
-        let mut digit_before = false;
-        for character in raw.chars() {
-            if character == '_' {
-                if !digit_before {
-                    return Err(invalid());
-                }
-                digit_before = false;
-                continue;
-            }
-            let digit = decimal_digit(character).ok_or_else(invalid)?;
-            // Integer offsets are unbounded. Any offset past usize is already
-            // past every possible listing, so admit it as an empty page.
-            value = value.saturating_mul(10).saturating_add(digit);
-            digit_before = true;
-        }
-        if !digit_before || (negative && value != 0) {
-            return Err(invalid());
-        }
-        Ok(value)
-    }
-    fn listing_limit(&self) -> usize {
-        // The HTTP route ignores limit. Preserve our existing valid small
-        // pages, but ignore other values instead of adding an input rejection.
-        self.limit
-            .as_deref()
-            .and_then(|raw| raw.parse::<usize>().ok())
-            .filter(|limit| (1..=500).contains(limit))
-            .unwrap_or(500)
-    }
-}
-
-fn decimal_digit(character: char) -> Option<usize> {
-    if character.is_ascii_digit() {
-        return Some((character as u8 - b'0') as usize);
-    }
-    static DECIMAL: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| regex::Regex::new(r"^\p{Nd}$").unwrap());
-    let is_decimal = |character: char| {
-        let mut bytes = [0; 4];
-        DECIMAL.is_match(character.encode_utf8(&mut bytes))
-    };
-    if !is_decimal(character) {
-        return None;
-    }
-    // Unicode decimal sets consist of consecutive 0..9 digits; adjacent sets
-    // (such as the mathematical styles) repeat that sequence.
-    let mut first = character as u32;
-    while first > 0 && char::from_u32(first - 1).is_some_and(is_decimal) {
-        first -= 1;
-    }
-    Some(((character as u32 - first) % 10) as usize)
 }
 
 enum Prepared {
@@ -271,26 +180,17 @@ pub async fn file(
     headers: HeaderMap,
     query: Result<Query<FileQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    get(state, method, headers, query, false).await
-}
-pub async fn directory(
-    State(state): State<AppState>,
-    method: Method,
-    headers: HeaderMap,
-    query: Result<Query<FileQuery>, QueryRejection>,
-) -> Result<Response, ApiError> {
-    get(state, method, headers, query, true).await
+    get(state, method, headers, query).await
 }
 async fn get(
     state: AppState,
     method: Method,
     headers: HeaderMap,
     query: Result<Query<FileQuery>, QueryRejection>,
-    directory: bool,
 ) -> Result<Response, ApiError> {
     let files = configured(&state)?;
     let Query(mut query) = query.map_err(|_| invalid())?;
-    query.validate(directory)?;
+    query.validate()?;
     // This service deliberately emits no stable validator. An If-Range request
     // cannot prove continuity across filesystem versions, so send the complete
     // representation instead of helping a client splice different versions.
@@ -302,13 +202,7 @@ async fn get(
         None => None,
     };
     let head = method == Method::HEAD;
-    // Jobs listing stays 501 (same code as before) without write roots.
-    if query.mode == "jobs" && state.files_write.is_none() {
-        return Err(FileError::unsupported("jobs").into());
-    }
     let lease = admission(&state).await?;
-    let hostname = state.hostname.clone();
-    let writer = state.files_write.clone();
     let prepared = work(&state, lease.clone(), move |store| {
         let view = store.messages(
             &query.uid,
@@ -318,55 +212,9 @@ async fn get(
             },
         )?;
         let scope = scope(&view, &query.uid, &query.agent)?;
-        if directory && query.mode == "info" {
-            return Ok(Prepared::Json(JsonBytes::new(&files.browser_info(
-                &scope,
-                &query.r#ref,
-                query.path.as_deref(),
-            )?)));
-        }
-        let target = if query.mode == "jobs" {
-            files.browser_anchor(&scope, &query.r#ref)?
-        } else if directory {
-            files.browser_target(&scope, &query.r#ref, query.path.as_deref())?
-        } else {
-            files.target(&scope, &query.r#ref, query.path.as_deref())?
-        };
-        if query.mode == "jobs" {
-            let writer = writer.ok_or_else(|| FileError::unsupported("jobs"))?;
-            if target.kind() != "directory" {
-                return Err(invalid());
-            }
-            return Ok(Prepared::Json(JsonBytes::new(&writer.jobs(&scope))));
-        }
+        let target = files.target(&scope, &query.r#ref, query.path.as_deref())?;
         if query.mode == "info" {
             return Ok(Prepared::Json(JsonBytes::new(&files.describe(&target)?)));
-        }
-        if directory && query.mode.is_empty() && query.download != "1" {
-            let mut listing = files.list(
-                &target,
-                &ListOptions {
-                    offset: query.listing_offset()?,
-                    limit: query.listing_limit(),
-                    sort: if query.sort.is_empty() {
-                        "name".into()
-                    } else {
-                        query.sort
-                    },
-                    order: if query.order.is_empty() {
-                        "asc".into()
-                    } else {
-                        query.order
-                    },
-                    hidden: query.hidden != "0",
-                },
-            )?;
-            listing["hostname"] = serde_json::json!(&*hostname);
-            listing["node_id"] = Value::Null;
-            // Display hint only; each mutation re-authorizes independently.
-            listing["writable"] =
-                serde_json::json!(writer.is_some_and(|writer| writer.writable(target.path())));
-            return Ok(Prepared::Json(JsonBytes::new(&listing)));
         }
         Ok(Prepared::File(files.read(
             target,
@@ -483,157 +331,6 @@ fn write_error(error: FileError) -> Response {
     )
         .into_response()
 }
-fn outcome(outcome: Outcome) -> Response {
-    (
-        StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
-        Json(outcome.body),
-    )
-        .into_response()
-}
-fn anchor<'a>(
-    files: &FileService,
-    view: &'a Value,
-    uid: &'a str,
-    agent: &'a str,
-    reference: &str,
-) -> Result<(FileScope<'a>, crate::files::ResolvedTarget), ApiError> {
-    let scope = scope(view, uid, agent)?;
-    let target = files.browser_anchor(&scope, reference)?;
-    if target.kind() != "directory" {
-        return Err(FileError::new(
-            400,
-            "file_directory_anchor_required",
-            "文件操作入口必须是会话提及的目录",
-        )
-        .into());
-    }
-    Ok((scope, target))
-}
-
-pub async fn action(
-    State(state): State<AppState>,
-    body: Result<Json<ActionRequest>, JsonRejection>,
-) -> Result<Response, ApiError> {
-    let (files, writer) = write_configured(&state)?;
-    let Json(request) = body.map_err(|error| {
-        if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
-            ApiError::new(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "body_too_large",
-                "文件操作请求体最多 512 KiB",
-            )
-        } else {
-            invalid()
-        }
-    })?;
-    validate_scope(&request.uid, &request.agent)?;
-    crate::files::clean_ref(&request.r#ref)?;
-    let lease = write_admission(&state).await?;
-    work(&state, lease, move |store| {
-        let view = store.messages(
-            &request.uid,
-            &MessageQuery {
-                agent: request.agent.clone(),
-                ..Default::default()
-            },
-        )?;
-        let (uid, agent, reference) = (
-            request.uid.clone(),
-            request.agent.clone(),
-            request.r#ref.clone(),
-        );
-        let (scope, anchor) = anchor(&files, &view, &uid, &agent, &reference)?;
-        Ok(match writer.action(&anchor, &scope, request) {
-            Ok(result) => outcome(result),
-            Err(error) => write_error(error),
-        })
-    })
-    .await
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default)]
-pub struct UploadQuery {
-    uid: String,
-    agent: String,
-    r#ref: String,
-    job: String,
-    offset: String,
-}
-
-pub async fn upload(
-    State(state): State<AppState>,
-    query: Result<Query<UploadQuery>, QueryRejection>,
-    headers: HeaderMap,
-    body: Body,
-) -> Result<Response, ApiError> {
-    let (files, writer) = write_configured(&state)?;
-    let Query(query) = query.map_err(|_| invalid())?;
-    validate_scope(&query.uid, &query.agent)?;
-    crate::files::clean_ref(&query.r#ref)?;
-    let offset: u64 = query.offset.parse().map_err(|_| {
-        ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "file_upload_offset_invalid",
-            "offset 必须是非负整数",
-        )
-    })?;
-    if headers
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.split(';').next().unwrap_or("").trim())
-        != Some("application/octet-stream")
-    {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "file_upload_content_type",
-            "上传分块必须使用 application/octet-stream",
-        ));
-    }
-    let limit = writer.limits().max_chunk_bytes;
-    // Admit before buffering; the chunk is bounded by the explicit limit.
-    let lease = write_admission(&state).await?;
-    let chunk: Bytes = match to_bytes(body, limit).await {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            return Ok(write_error(
-                FileError::new(
-                    413,
-                    "file_upload_chunk_too_large",
-                    format!("单个分块最多 {limit} 字节"),
-                )
-                .with_details(json!({"limit": limit})),
-            ));
-        }
-    };
-    work(&state, lease, move |store| {
-        let view = store.messages(
-            &query.uid,
-            &MessageQuery {
-                agent: query.agent.clone(),
-                ..Default::default()
-            },
-        )?;
-        let (scope, anchor) = anchor(&files, &view, &query.uid, &query.agent, &query.r#ref)?;
-        Ok(
-            match writer.upload(&anchor, &scope, &query.job, offset, &chunk) {
-                Ok(result) => outcome(result),
-                Err(error) => write_error(error),
-            },
-        )
-    })
-    .await
-}
-
-#[derive(Deserialize)]
-pub struct AttachmentRequest {
-    uid: String,
-    #[serde(default)]
-    agent: String,
-    r#ref: String,
-    job: String,
-}
-
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct AttachmentQuery {
@@ -820,81 +517,6 @@ pub async fn upload_attachment(
         }
         upload["recorded"] = json!(record_metadata && metadata.is_some());
         Ok(([(header::CACHE_CONTROL, "no-store")], Json(upload)).into_response())
-    })
-    .await
-}
-
-/// Records a completed upload's final path for the session. Without a
-/// metadata store the path is returned with `recorded: false`.
-pub async fn attachment(
-    State(state): State<AppState>,
-    body: Result<Json<AttachmentRequest>, JsonRejection>,
-) -> Result<Response, ApiError> {
-    let (files, writer) = write_configured(&state)?;
-    let Json(request) = body.map_err(|_| invalid())?;
-    validate_scope(&request.uid, &request.agent)?;
-    crate::files::clean_ref(&request.r#ref)?;
-    let lease = write_admission(&state).await?;
-    let metadata = state.metadata.clone();
-    work(&state, lease, move |store| {
-        let view = store.messages(
-            &request.uid,
-            &MessageQuery {
-                agent: request.agent.clone(),
-                ..Default::default()
-            },
-        )?;
-        let (scope, _anchor) = anchor(&files, &view, &request.uid, &request.agent, &request.r#ref)?;
-        let mut upload = match writer.completed_upload(&scope, &request.job) {
-            Ok(value) => value,
-            Err(error) => return Ok(write_error(error)),
-        };
-        let path = upload["path"].as_str().unwrap_or("").to_owned();
-        let name = upload["name"].as_str().unwrap_or("").to_owned();
-        let mime = mime_guess::from_path(&name)
-            .first_raw()
-            .unwrap_or("application/octet-stream");
-        let kind = match mime.split('/').next().unwrap_or("") {
-            kind @ ("image" | "video" | "audio") => kind,
-            _ => "file",
-        };
-        let recorded = match &metadata {
-            Some(store) => {
-                store
-                    .record_attachment(
-                        &request.uid,
-                        crate::metadata::Attachment {
-                            path: path.clone(),
-                            name: name.clone(),
-                            size: upload["size"].as_u64().unwrap_or(0),
-                            sha256: upload["sha256"].as_str().map(str::to_owned),
-                            agent: scope.agent.map(str::to_owned),
-                            at: std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs_f64())
-                                .unwrap_or(0.0),
-                        },
-                    )
-                    .map_err(|error| {
-                        ApiError::new(
-                            StatusCode::from_u16(error.status)
-                                .unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
-                            error.code,
-                            error.message,
-                        )
-                    })?;
-                true
-            }
-            None => false,
-        };
-        upload["ok"] = json!(true);
-        upload["original_name"] = json!(name);
-        upload["attachment_id"] = json!(request.job);
-        upload["mime"] = json!(mime);
-        upload["kind"] = json!(kind);
-        upload["recorded"] = json!(recorded);
-        upload["media"] = Value::Null;
-        Ok(Json(upload).into_response())
     })
     .await
 }

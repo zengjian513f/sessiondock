@@ -207,8 +207,6 @@ def main():
                 with corpus.paths["rotation-new"].open("ab") as stream:
                     stream.write(encoded(codex_message("assistant", "Rotation live appended answer", 15)))
                 expect(page.locator("#msgs")).to_contain_text("Rotation live appended answer", timeout=15000)
-                titles = get_json(opener, base, "/api/sessions/titles?ids=codex:codex-rotation")
-                assert not titles.get("missing"), titles
                 # An unrelated duplicate is still a real conflict; removing it
                 # restores the explicit continuation without touching transcripts.
                 duplicate = corpus.put("rotation-conflict", "codex", [

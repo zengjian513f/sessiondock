@@ -5,8 +5,6 @@
 
 mod boundary;
 mod grants;
-mod info;
-mod jobs;
 mod media;
 mod references;
 mod response;
@@ -27,10 +25,7 @@ pub(crate) use references::normalize_media_ref;
 pub(crate) use response::{CheckedImage, disposition};
 pub use response::{CheckedReader, FileBody, FileResponse, ReadOptions};
 pub(crate) use write::move_recycle_entry;
-pub use write::{
-    ActionRequest, Conflict, DEFAULT_UPLOAD_CHUNK_BYTES, FILE_TRASH_DIR, MAX_WRITE_ITEMS, Outcome,
-    ScopeKey, UPLOAD_DIR, WriteLimits, WriteService, validate_name,
-};
+pub use write::{WriteService, validate_name};
 
 pub const MAX_PATH_BYTES: usize = 4096;
 pub const MAX_PREVIEW_BYTES: usize = 1024 * 1024;
@@ -94,26 +89,6 @@ pub struct FileScope<'a> {
     pub agent: Option<&'a str>,
     pub cwd: &'a str,
     pub messages: &'a [Value],
-}
-
-#[derive(Debug, Clone)]
-pub struct ListOptions {
-    pub offset: usize,
-    pub limit: usize,
-    pub sort: String,
-    pub order: String,
-    pub hidden: bool,
-}
-impl Default for ListOptions {
-    fn default() -> Self {
-        Self {
-            offset: 0,
-            limit: 500,
-            sort: "name".into(),
-            order: "asc".into(),
-            hidden: true,
-        }
-    }
 }
 
 pub struct FileService {
@@ -329,9 +304,6 @@ impl FileService {
         )
     }
 
-    pub fn list(&self, target: &ResolvedTarget, options: &ListOptions) -> Result<Value, FileError> {
-        boundary::list(target, options)
-    }
     pub fn describe(&self, target: &ResolvedTarget) -> Result<Value, FileError> {
         response::describe(target)
     }

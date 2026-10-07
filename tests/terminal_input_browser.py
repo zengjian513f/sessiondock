@@ -144,7 +144,7 @@ def main():
                                                   dialog.accept() if dialog_action["accept"] else dialog.dismiss()))
                 page.goto(base, wait_until="networkidle")
                 capabilities = page.evaluate("SessionDockCapabilities.config")
-                assert capabilities["terminal_input"] is True and capabilities["outbox"] is False, capabilities
+                assert capabilities["terminal_input"] is True and "outbox" not in capabilities, capabilities
                 open_console(page, uid)
                 expect(page.locator("#composer")).to_be_hidden()
 

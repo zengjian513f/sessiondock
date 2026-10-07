@@ -430,7 +430,6 @@ struct Cached {
 #[derive(Default)]
 struct State {
     cache: HashMap<PathBuf, Cached>,
-    title_cache: HashMap<PathBuf, Cached>,
     title_names: Option<Arc<names::NameIndex>>,
     /// (parent data path, parent stamp, cut) → boundary check outcome.
     cuts: HashMap<(PathBuf, Stamp, u64), CutCheck>,
@@ -493,12 +492,6 @@ impl Index {
             state: Mutex::new(State::default()),
             invalidated: AtomicBool::new(false),
         }
-    }
-
-    /// Publish the current list. Runs directory walks and bounded file reads:
-    /// call it on a blocking executor, never on a reactor thread.
-    pub fn refresh(&self, force: bool) -> Result<Arc<IndexSnapshot>, SessionError> {
-        self.refresh_within(force, CHECK_TTL)
     }
 
     /// Seed a separate on-demand inventory with already parsed file summaries.

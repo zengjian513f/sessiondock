@@ -42,9 +42,8 @@ pub const ATTACHMENT_MAX_BYTES: u64 = 512 * 1024 * 1024;
 /// its machine with `?node=` instead of a scoped uid.
 pub const BUG_REPORT_UPLOAD_UID: &str = "bug-report";
 /// Raw-body uploads the hub streams instead of parsing as JSON.
-pub const ATTACHMENT_PATHS: [&str; 3] = [
+pub const ATTACHMENT_PATHS: [&str; 2] = [
     "/api/session/attachment",
-    "/api/session/files/upload",
     "/api/session/conversation/attachment",
 ];
 /// Writes that must carry the page's build (`_build`) or answer 409.
