@@ -309,7 +309,7 @@ pub enum SearchEvent {
 /// aggregate lists under `errors`, if any.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fetched {
-    pub data: Value,
+    pub data: Arc<Value>,
     pub failure: Option<Value>,
 }
 
@@ -324,7 +324,7 @@ type CacheKey = (String, String, String);
 struct Inner {
     nodes: Vec<Node>,
     /// Insertion-ordered so the variant bound evicts the oldest entry.
-    cache: IndexMap<CacheKey, (f64, Value)>,
+    cache: IndexMap<CacheKey, (f64, Arc<Value>)>,
     health: HashMap<String, Health>,
     snapshot_sigs: HashMap<String, Value>,
 }
@@ -430,7 +430,9 @@ impl Registry {
         if !data.is_object() || !data["sessions"].is_array() {
             return;
         }
-        inner.cache.insert(sessions_key(&node.id), (stamp, data));
+        inner
+            .cache
+            .insert(sessions_key(&node.id), (stamp, Arc::new(data)));
         inner.health.entry(node.id.clone()).or_insert(Health {
             online: None,
             last_seen: Some(stamp),
@@ -452,7 +454,7 @@ impl Registry {
         true
     }
 
-    async fn write_snapshot(&self, nid: &str, stamp: f64, data: &Value) {
+    async fn write_snapshot(&self, nid: &str, stamp: f64, data: &Arc<Value>) {
         let dir = self.snapshot_dir.clone();
         let nid = nid.to_string();
         let data = data.clone();
@@ -840,15 +842,20 @@ impl Registry {
                 .await?;
             let status = response.status;
             let raw = response.into_body().read_to_end(JSON_LIMIT).await?;
-            let data = serde_json::from_slice(&raw)
-                .map_err(|_| ClientError::Invalid("body is not JSON"))?;
-            if status != 200 {
-                return Ok((status, data));
-            }
-            let data = crate::list_sync::expand(data, baseline.as_ref())
-                .ok_or(ClientError::Invalid("invalid list delta"))?;
-            self.list_responses.put(scope, data.clone());
-            return Ok((status, data));
+            let responses = self.list_responses.clone();
+            return client
+                .work(move || {
+                    let data = serde_json::from_slice(&raw)
+                        .map_err(|_| ClientError::Invalid("body is not JSON"))?;
+                    if status != 200 {
+                        return Ok((status, data));
+                    }
+                    let data = crate::list_sync::expand(data, baseline.as_deref())
+                        .ok_or(ClientError::Invalid("invalid list delta"))?;
+                    responses.put(scope, Arc::new(data.clone()));
+                    Ok((status, data))
+                })
+                .await?;
         }
         client.json(&target, method, path, body, timeout).await
     }
@@ -1022,17 +1029,31 @@ impl Registry {
             self.request(client, node, &target, "GET", None, timeout)
                 .await
         };
+        let outcome = match outcome {
+            Ok((status, data)) => {
+                let node = node.clone();
+                let path = path.to_owned();
+                let public_payload = self.public_payload;
+                client
+                    .work(move || {
+                        let unchanged = path == "/api/sessions" && truthy(&data["unchanged"]);
+                        let data = if status == 200 && data.is_object() && !unchanged {
+                            public_payload(data, &node, &path)
+                        } else {
+                            data
+                        };
+                        (status, Arc::new(data))
+                    })
+                    .await
+            }
+            Err(error) => Err(error),
+        };
         let (status, error) = match outcome {
             Ok((status, data)) if status == 200 => {
                 if !data.is_object() {
                     (Some(status), ClientError::Invalid("body is not an object"))
                 } else {
                     let unchanged = path == "/api/sessions" && truthy(&data["unchanged"]);
-                    let data = if unchanged {
-                        data
-                    } else {
-                        (self.public_payload)(data, node, path)
-                    };
                     let snapshot = {
                         let mut inner = self.lock();
                         if !search && !unchanged {
@@ -1107,7 +1128,7 @@ impl Registry {
             data["results"] = Value::Array(found.into_values().collect());
         }
         Fetched {
-            data,
+            data: Arc::new(data),
             failure: Some(json!({
                 "node_id": node.id, "name": node.name,
                 "error": reason, "error_code": code, "last_seen": prior.last_seen,
@@ -1115,7 +1136,13 @@ impl Registry {
         }
     }
 
-    fn cached(&self, inner: &Inner, nid: &str, path: &str, key: &CacheKey) -> Option<(f64, Value)> {
+    fn cached(
+        &self,
+        inner: &Inner,
+        nid: &str,
+        path: &str,
+        key: &CacheKey,
+    ) -> Option<(f64, Arc<Value>)> {
         let mut cached = if CACHED_PATHS.contains(&path) {
             inner.cache.get(key).cloned()
         } else {
@@ -1161,7 +1188,9 @@ impl Registry {
                 let inner = self.lock();
                 let latest = inner.cache.get(&sessions_key(nid)).cloned().or(cached);
                 return Fetched {
-                    data: latest.map(|(_, data)| data).unwrap_or_else(|| json!({})),
+                    data: latest
+                        .map(|(_, data)| data)
+                        .unwrap_or_else(|| Arc::new(json!({}))),
                     failure: None,
                 };
             }
@@ -1170,7 +1199,7 @@ impl Registry {
                 .await;
         }
         Fetched {
-            data: stale_payload(path, cached.as_ref()),
+            data: Arc::new(stale_payload(path, cached.as_ref())),
             failure: Some(json!({
                 "node_id": nid, "name": node.name,
                 "error": health.error.clone().unwrap_or_else(|| "节点暂时离线".to_string()),
@@ -1268,9 +1297,9 @@ impl Registry {
 
 /// Deep copy of the last good answer with rows marked stale;
 /// a terminal list additionally reports itself disabled.
-pub fn stale_payload(path: &str, cached: Option<&(f64, Value)>) -> Value {
+pub fn stale_payload(path: &str, cached: Option<&(f64, Arc<Value>)>) -> Value {
     let mut data = cached
-        .map(|(_, data)| data.clone())
+        .map(|(_, data)| data.as_ref().clone())
         .unwrap_or_else(|| json!({}));
     if let Some((stamp, _)) = cached {
         for key in ["sessions", "pending"] {

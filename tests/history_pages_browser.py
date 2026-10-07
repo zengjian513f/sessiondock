@@ -181,7 +181,7 @@ def main():
                     page.locator(f'#side .item[data-uid="{uid(corpus,name)}"]').click()
                     expect(page.locator("#msgs")).to_contain_text(marker)
                     expect(page.locator("#a-term")).to_be_visible()
-                    expect(page.locator("#a-term")).to_be_enabled()
+                    expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
 
                 def append(text):
                     path=corpus.paths["codex-pages"]
@@ -415,14 +415,14 @@ def main():
                 assert snapshot()["text"]==previous["text"] and snapshot()["partial"]==previous["partial"]
                 expect(page.locator(".history-page-error")).to_contain_text("历史分页响应与当前缺口不匹配")
                 expect(page.locator("#msgs")).to_contain_text("APPEND DURING PAGE RENDER")
-                expect(page.locator("#a-term")).to_be_enabled()
+                expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
                 for code in (404,409,410):
                     previous=snapshot();start=len(requests);mode["error"]=code
                     click_page();settled()
                     expect(page.locator(".history-page-error")).to_contain_text(f"Synthetic page failure {code}")
                     assert snapshot()["text"]==previous["text"] and snapshot()["cursor"]==previous["cursor"]
                     expect(page.locator(".history-gap-reload")).to_be_visible()
-                    expect(page.locator("#a-term")).to_be_enabled()
+                    expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
                     assert all("/page?" in url for url in requests[start:] if "/api/messages/" in url)
                 start=len(requests)
                 page.evaluate("window.__deferNextPageRender=true")

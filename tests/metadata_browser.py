@@ -330,7 +330,7 @@ def main():
                     if not first.locator("#a-term").is_visible():
                         first.locator(f'#side .item[data-uid="{corpus.uid("codex-grandchild")}"]').click()
                     expect(first.locator("#a-term")).to_be_visible()
-                    expect(first.locator("#a-term")).to_be_enabled()
+                    expect(first.locator("#a-term")).to_have_attribute("aria-disabled", "true")
                     expect(first.locator(f'#side .item[data-uid="{corpus.uid("shown-fork-3")}"] .m')).to_contain_text('父会话（分叉 3）')
                     assert not errors, errors
                     context.close()  # Release SSE before shutting down the writer.

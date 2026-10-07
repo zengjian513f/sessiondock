@@ -19,6 +19,7 @@ use std::{
     fmt, io,
     net::SocketAddr,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -208,6 +209,9 @@ pub struct Client {
     pub search_idle: Duration,
     /// The inline re-check before refusing an action on an offline node.
     pub recheck: Duration,
+    /// Shared admission for JSON decoding and fleet aggregation. The permit
+    /// belongs to the actual blocking job, including after HTTP cancellation.
+    jobs: Arc<tokio::sync::Semaphore>,
 }
 
 impl Default for Client {
@@ -216,6 +220,11 @@ impl Default for Client {
             timeout: REQUEST_TIMEOUT,
             search_idle: SEARCH_IDLE_TIMEOUT,
             recheck: RECHECK_TIMEOUT,
+            jobs: Arc::new(tokio::sync::Semaphore::new(
+                std::thread::available_parallelism()
+                    .map_or(4, usize::from)
+                    .clamp(2, 8),
+            )),
         }
     }
 }
@@ -224,6 +233,25 @@ impl Default for Client {
 pub const RECHECK_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Client {
+    pub(crate) async fn work<T, F>(&self, work: F) -> Result<T, ClientError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
+        let permit = self
+            .jobs
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| ClientError::Invalid("hub worker pool closed"))?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            work()
+        })
+        .await
+        .map_err(|_| ClientError::Invalid("hub worker failed"))
+    }
+
     /// `Registry.request`: one JSON round trip, `timeout` for connect and every
     /// read, body capped at `JSON_LIMIT`. Any status is returned with its
     /// parsed body; the caller decides what a non-200 means.
@@ -270,8 +298,11 @@ impl Client {
             .await?;
         let status = response.status;
         let raw = response.into_body().read_to_end(JSON_LIMIT).await?;
-        let value =
-            serde_json::from_slice(&raw).map_err(|_| ClientError::Invalid("body is not JSON"))?;
+        let value = self
+            .work(move || {
+                serde_json::from_slice(&raw).map_err(|_| ClientError::Invalid("body is not JSON"))
+            })
+            .await??;
         Ok((status, value))
     }
 

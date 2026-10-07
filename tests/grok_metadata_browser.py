@@ -206,7 +206,7 @@ def browser_check(corpus, cases, base):
             item.click()
             expect(page.locator(".dtitle h2")).to_contain_text("Grok browser initial")
             expect(page.locator("#a-term")).to_be_visible()
-            expect(page.locator("#a-term")).to_be_enabled()
+            expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
             page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
             page.evaluate("window.__grokPackets = []")
             chat.write_bytes(b"")

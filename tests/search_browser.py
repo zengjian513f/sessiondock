@@ -162,7 +162,7 @@ def main():
                 page.locator(f'#side .item[data-uid="{data.uid("codex-search")}"]').click()
                 expect(page.locator("#msgs")).to_contain_text("Needle from another provider")
                 expect(page.locator("#a-term")).to_be_visible()
-                expect(page.locator("#a-term")).to_be_enabled()
+                expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
 
                 # Session-level AND spans messages; both terms are highlighted.
                 search("Needle Synthetic")
@@ -244,12 +244,17 @@ def main():
                     status=200, content_type="application/x-ndjson", body=payload))
                 page.evaluate(r"""() => {
                     window.searchPaints = 0;
-                    const original = showSearchMatches;
-                    showSearchMatches = rows => { window.searchPaints++; original(rows); };
+                    // Each streamed result render updates the visible status.
+                    // Count records, even if one callback batches many updates.
+                    window.searchPaintObserver = new MutationObserver(records => {
+                        window.searchPaints += records.length;
+                    });
+                    window.searchPaintObserver.observe(document.querySelector('#stat'), {childList:true});
                 }""")
                 search("Needle")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(2)
                 paints = page.evaluate("window.searchPaints")
+                page.evaluate("window.searchPaintObserver.disconnect()")
                 assert 1 <= paints < 20, paints
                 page.unroute("**/api/search?**")
 
@@ -288,7 +293,7 @@ def main():
                 page.wait_for_timeout(100)
                 expect(page.locator("#side-search-label")).to_have_text("筛选结果")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(0)
-                print(f"PASS buffered search: 2000 NDJSON records, {paints} result paints; Backspace cancels late results")
+                print(f"PASS buffered search: 2000 NDJSON records, {paints} status updates; Backspace cancels late results")
 
                 # Reloading the page clears the search;
                 # the next search still uses the independently namespaced flags.

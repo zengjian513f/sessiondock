@@ -208,7 +208,10 @@ def main():
                     page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]').click()
                     expect(page.locator("#msgs")).to_contain_text(text)
                     expect(page.locator("#a-term")).to_be_visible()
-                    expect(page.locator("#a-term")).to_be_enabled()
+                    # This private read-only fixture has no terminal service.
+                    # Keep the reason discoverable on a focusable unavailable control.
+                    expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
+                    expect(page.locator("#a-term")).not_to_have_attribute("disabled", "")
                     expect(page.locator("#migration-read-error")).to_have_count(0)
 
                 def agent(sid, text):
@@ -216,7 +219,8 @@ def main():
                     page.locator(f'#session-view-menu button[data-agent="{sid}"]').click()
                     expect(page.locator("#msgs")).to_contain_text(text)
                     expect(page.locator("#a-term")).to_be_visible()
-                    expect(page.locator("#a-term")).to_be_enabled()
+                    expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
+                    expect(page.locator("#a-term")).not_to_have_attribute("disabled", "")
 
                 fresh_item = page.locator(f'#side .item[data-uid="{corpus.uid(fresh)}"]')
                 expect(fresh_item.locator(".t")).to_have_text("新建 Claude 会话")
@@ -368,7 +372,7 @@ def main():
                         if other != text:
                             expect(page.locator("#msgs")).not_to_contain_text(other)
                     expect(page.locator("#a-term")).to_be_visible()
-                    expect(page.locator("#a-term")).to_be_enabled()
+                    expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
                     expect(page.locator("#migration-read-error")).to_have_count(0)
 
                 listed = get_json(opener, base, "/api/sessions")["sessions"]

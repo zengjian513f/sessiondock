@@ -60,6 +60,26 @@ def add_rotated_sessions(corpus):
             codex_message('user', 'Independent copy ' + label)], [])
 
 
+def check_fresh_inventory(browser, base, corpus):
+    # Recreating a native file can happen while the node's list TTL still
+    # contains its absence. An explicit link must request a fresh inventory.
+    with browser.new_context() as context:
+        context.add_init_script('window.EventSource=undefined;')
+        target = corpus.uid('codex-parent')
+        def sessions(route):
+            response = route.fetch()
+            data = response.json()
+            if parse_qs(urlparse(route.request.url).query).get('force') != ['1']:
+                data['sessions'] = [row for row in data['sessions'] if row['uid'] != target]
+            route.fulfill(response=response, json=data)
+        context.route('**/api/sessions*', sessions)
+        page = context.new_page()
+        page.goto(base + '/?sid=codex:codex-parent')
+        expect(page.locator('#msgs')).to_contain_text(corpus.expected['codex-parent'][-1])
+        expect(page.locator('#side .item.sel')).to_have_attribute('data-uid', target)
+    print('PASS explicit link refreshes stale native inventory', flush=True)
+
+
 def check_rotated_links(browser, base, corpus):
     old, current = corpus.uid('rotation-old'), corpus.uid('rotation-current')
     cases = [
@@ -189,6 +209,7 @@ def main():
 
       assert not errors,errors
       ctx.unroute_all(behavior='ignoreErrors');ctx.close();print('PASS native sid deep link',width,'nest' if nest else 'flat',sid,flush=True)
+   check_fresh_inventory(browser,base,corpus)
    check_rotated_links(browser,base,corpus)
    browser.close()
   assert all(p.read_bytes()==v for p,v in before.items())

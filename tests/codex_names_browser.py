@@ -184,7 +184,7 @@ def browser_check(corpus, base, index, rows):
             expect(page.locator("#migration-read-error")).to_have_count(0)
             expect(page.locator("#msgs")).to_contain_text("standalone synthetic searchable message")
             expect(page.locator("#a-term")).to_be_visible()
-            expect(page.locator("#a-term")).to_be_enabled()
+            expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
             write_index(index, rows)
             expect(page.locator(".dtitle h2")).to_contain_text("SSE renamed title", timeout=10000)
             page.wait_for_function("_es && _es.readyState === EventSource.OPEN")

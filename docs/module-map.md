@@ -10,7 +10,7 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 195 files, 83875 lines, 5 undocumented.
+`crates/sessiondock/src`: 195 files, 84027 lines, 5 undocumented.
 
 - `api/`
   - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines)
@@ -20,7 +20,7 @@ python3 tests/module_map.py --write
   - `files.rs` — File transport. Every request resolves the selected session; opening a (522 lines)
   - `final_screen.rs` — `GET /api/term/final?id=…`: the final screen an exited session left, as one (54 lines)
   - `health.rs` — Local liveness JSON: version, `api_version` 1, and `stage: "read_only"`. (49 lines)
-  - `hub.rs` — The hub's HTTP surface (`hub.py` `HubHandler.dispatch`, 518–584), served (942 lines)
+  - `hub.rs` — The hub's HTTP surface (`hub.py` `HubHandler.dispatch`, 518–584), served (949 lines)
   - `lifecycle.rs` — Explicit creation receipts; native identities and reliable send stay separate. (1277 lines)
   - `media.rs` — Opaque media transport. File tokens require current native-scope authorization. (150 lines)
   - `metadata.rs` — SessionDock-owned preferences only. No native session writes or CLI actions. (542 lines)
@@ -90,8 +90,8 @@ python3 tests/module_map.py --write
   - `write.rs` — Authenticated operator file mutations through checked parent handles. (949 lines)
 - `fingerprint.rs` — 128-bit streaming content fingerprint of native bytes. (126 lines)
 - `hub/`
-  - `aggregate.rs` — Hub aggregation (`hub.py` `HubHandler.selected/aggregate/search_aggregate/ (889 lines)
-  - `client.rs` — Hub → node HTTP/1.1 client: one connection per request over a plain or (835 lines)
+  - `aggregate.rs` — Hub aggregation (`hub.py` `HubHandler.selected/aggregate/search_aggregate/ (925 lines)
+  - `client.rs` — Hub → node HTTP/1.1 client: one connection per request over a plain or (866 lines)
   - `groups.rs` — Nodes own group catalogs. The Hub caches their union and sends it back; (143 lines)
   - `identity.rs` — Node identity and credential files (`federation.identity`, `server.py` (112 lines)
   - `mod.rs` — Hub federation (batches 38–40): node identity, the hub's node registry (32 lines)
@@ -100,7 +100,7 @@ python3 tests/module_map.py --write
   - `nest.rs` — Validate a display edge against the fleet before routing the write to its child. (60 lines)
   - `process_links.rs` — One fleet coordinator shared by session nesting and external CPU consumers. (121 lines)
   - `proxy.rs` — The hub's pass-through to one node (`hub.py` `HubHandler.resolve` (893 lines)
-  - `registry.rs` — The hub's node registry (`hub.py` `Registry`): `hub-nodes.json`, node (1410 lines)
+  - `registry.rs` — The hub's node registry (`hub.py` `Registry`): `hub-nodes.json`, node (1439 lines)
   - `resources.rs` — Session resource views preserve execution nodes and incomplete observations. (340 lines)
   - `session_links.rs` — Resolve saved links through completed transfer records, never by guessing IDs. (252 lines)
   - `transfer.rs` — Durable cross-node clone orchestration over the authenticated node channel. (1302 lines)
@@ -122,7 +122,7 @@ python3 tests/module_map.py --write
     - `json.rs` — Strict JSON grammar without duplicating the lifecycle receipt schema. (99 lines)
     - `mod.rs` — Single-writer durable creation receipts. No process, native history or HTTP I/O. (782 lines)
       - mods: `disk`, `json`
-- `list_sync.rs` — Opt-in list transport. Cached revisions only save bytes: eviction, restart, (353 lines)
+- `list_sync.rs` — Opt-in list transport. Cached revisions only save bytes: eviction, restart, (390 lines)
 - `log.rs` — Structured server log: one JSON object per line on stderr (journald keeps (132 lines)
 - `main.rs` — Loopback development binary. No option starts the Web service. (329 lines)
 - `media.rs` — Private image projection. File capabilities require an explicit selected scope; (616 lines)
@@ -148,7 +148,7 @@ python3 tests/module_map.py --write
   - `mod.rs` — Read-only controlled-host observations against a frozen native inventory. (1426 lines)
     - mods: `freeze`, `process`, `process_links`, `procscan`, `spawn`
   - `process.rs` — Process identity evidence for host-managed instances. (466 lines)
-  - `process_links.rs` — Node adapter for the shared process-links protocol. Remote links are held (748 lines)
+  - `process_links.rs` — Node adapter for the shared process-links protocol. Remote links are held (760 lines)
   - `procscan.rs` — Read-only `/proc` scan for external CLI processes. (1114 lines)
     - mods: `activity`
   - `procscan/`
@@ -268,12 +268,12 @@ python3 tests/module_map.py --write
 
 ## process-links
 
-`crates/process-links/src`: 6 files, 1549 lines, 0 undocumented.
+`crates/process-links/src`: 6 files, 1668 lines, 0 undocumented.
 
 - `agent.rs` — Local protocol shared by resource-agent and application adapters. (114 lines)
-- `connections.rs` — Durable, boot-scoped connection evidence. No commands or credentials. (326 lines)
-- `engine.rs` — Attribution state independent of a session UI or transport. (321 lines)
-- `lib.rs` — Shared process identities, SSH lineage and resource aggregation. (268 lines)
+- `connections.rs` — Durable, boot-scoped connection evidence. No commands or credentials. (354 lines)
+- `engine.rs` — Attribution state independent of a session UI or transport. (410 lines)
+- `lib.rs` — Shared process identities, SSH lineage and resource aggregation. (270 lines)
   - mods: `agent`, `connections`, `engine`, `linux`, `resource_summary`
 - `linux.rs` — Linux adapter: only the current uid's processes, selected environment keys, (265 lines)
 - `resource_summary.rs` — Shared per-session accounting. A process is selected once, even when several (255 lines)
