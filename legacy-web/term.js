@@ -32,7 +32,7 @@ const T = {
   unavailable_reason: '',
   height: store.get('termh', 320),
   mode: store.get('termmode', 'full'), // normal(手动分屏) | collapsed(对话：PTY+输入) | full(纯终端)
-  shiftSelect: false,                       // 手机 Shift：锁定本地拖动选字，不发送到 CLI
+  shiftSelect: false,                       // 手机 Shift：拖动选字，或修饰下一次快捷键
   altArmed: false,                          // 手机 Alt：只修饰下一次输入
   ctrlArmed: false,                         // 手机 Ctrl / 桌面右 Ctrl：只修饰下一次输入
   sources: {},
@@ -5922,15 +5922,17 @@ $('.term-keys').onclick = e => {
   const b = e.target.closest('[data-term-key]');
   if (!b) return;
   let key = T.ctrlArmed ? `C-${b.dataset.termKey}` : b.dataset.termKey;
-  if (T.altArmed) {
+  if (T.altArmed || T.shiftSelect) {
     const navigation = {Up:'A', Down:'B', Right:'C', Left:'D'};
     const final = navigation[b.dataset.termKey];
-    const m = T.ctrlArmed ? 7 : 3;
+    const m = 1 + (T.shiftSelect ? 1 : 0) + (T.altArmed ? 2 : 0) + (T.ctrlArmed ? 4 : 0);
     if (final) key = `\x1b[1;${m}${final}`;
     else if (['PPage', 'NPage'].includes(b.dataset.termKey)) {
       key = `\x1b[${b.dataset.termKey === 'PPage' ? 5 : 6};${m}~`;
-    } else key = `M-${key}`;
+    } else if (T.shiftSelect && b.dataset.termKey === 'Tab') key = '\x1b[Z';
+    else if (T.altArmed) key = `M-${key}`;
   }
+  setTermShiftSelection(false);
   setTermAlt(false);
   setTermCtrl(false);
   sendToSession(null, [key]);
