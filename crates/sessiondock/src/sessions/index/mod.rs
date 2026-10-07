@@ -1457,7 +1457,13 @@ fn read_candidate(
                 }
                 turn_scan = Some(scan);
             }
-            Err(_) => {
+            Err(error) => {
+                crate::log::warn(
+                    "native_state.read_failed",
+                    serde_json::json!({
+                        "source": candidate.source, "error": error.to_string(),
+                    }),
+                );
                 summary = unreadable(candidate);
                 transient = true;
             }

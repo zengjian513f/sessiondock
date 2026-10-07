@@ -253,7 +253,9 @@ def main():
                     codex_message("user", "Unrelated duplicate")], [])
                 page.reload(wait_until="networkidle")
                 page.locator(f'#side .item[data-uid="{corpus.uid("rotation-new")}"]').click()
-                expect(page.locator("#migration-read-error")).to_contain_text("父线程 ID 在已配置索引中存在歧义", timeout=15000)
+                # A fresh page has no cached conversation: its read error is
+                # in the body; an already loaded view uses the retained banner.
+                expect(page.locator("#detail")).to_contain_text("父线程 ID 在已配置索引中存在歧义", timeout=15000)
                 duplicate.unlink()
                 page.reload(wait_until="networkidle")
                 select("rotation-new", "Rotation live appended answer")

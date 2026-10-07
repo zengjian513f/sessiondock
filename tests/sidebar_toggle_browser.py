@@ -21,6 +21,9 @@ def main():
             browser=pw.chromium.launch(**launch)
             try:
                 page=browser.new_page(viewport={'width':1400,'height':900})
+                # Give asynchronous layout/visibility callbacks scheduling
+                # room comparable to a slower client.
+                page.context.new_cdp_session(page).send('Emulation.setCPUThrottlingRate', {'rate': 4})
                 errors=[]
                 page.on('pageerror',lambda e:errors.append(str(e)))
                 page.goto(base,wait_until='networkidle')
@@ -51,11 +54,28 @@ def main():
                 page.evaluate("document.querySelector('#side').scrollTop=document.querySelector('#side').scrollHeight")
                 last.locator('.item-resource-value').first.wait_for()
                 assert page.locator('.item-resources').count() < 100
-                resource.click()
-                assert page.locator('.item-resources:visible').count()==0
-                resource.click()
-                last.locator('.item-resource-value').first.wait_for()
+                for cycle in range(12):
+                    resource.click()
+                    assert page.locator('.item-resources:visible').count()==0
+                    page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+                    resource.click()
+                    try:
+                        # Turning the column on changes row heights. The last
+                        # logical row can now lie beyond the observer's margin;
+                        # scroll it into view before expecting lazy resource DOM.
+                        last.scroll_into_view_if_needed()
+                        expect(last).to_be_in_viewport()
+                        last.locator('.item-resource-value').first.wait_for()
+                    except Exception:
+                        print('RESOURCE DIAGNOSTICS', cycle, page.evaluate('''uid => {
+                            const side=document.querySelector('#side'), row=side.querySelector(`[data-uid="${uid}"]`);
+                            return {sessions:S.sessions.length, last:S.sessions.at(-1)?.uid,
+                                top:side.scrollTop,height:side.scrollHeight,client:side.clientHeight,
+                                row:row?.getBoundingClientRect().toJSON(), box:side.getBoundingClientRect().toJSON(),
+                                html:row?.outerHTML, windows:[...side.querySelectorAll('.group')].map(g=>g._window)};
+                        }''',last_uid), flush=True)
+                        raise
                 assert not errors,errors
-                print('PASS 1200 rows: windowed rows, viewport-only resource DOM, scroll hydration, nesting identity/depth and resource toggle reuse',flush=True)
+                print('PASS 1200 rows: windowed rows, viewport-only resource DOM, scroll hydration, nesting identity/depth and 12 resource toggle cycles',flush=True)
             finally:browser.close()
 if __name__=='__main__':main()

@@ -46,6 +46,11 @@ Requests rejected before routing (the local-only and Hub gates) are not
 logged. The startup line (`server.listening`, `hub.listening`) reports the
 listening URLs and the request mode.
 
+The native list index emits `native_state.read_failed` at `warn` when its
+model/turn scan encounters a real I/O failure or short read. It includes the
+provider `source` and the service/OS error text, never native records or paths.
+An mtime update alone does not produce this event or make a readable row fail.
+
 ## Validation
 
 [`tests/server_log_browser.py`](../tests/server_log_browser.py) drives the page on

@@ -99,6 +99,11 @@ Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，�
   **DELTA**。回归见 `tests/session_model_browser.py`。
 - **并发变化**：读头/尾前后各 `stat` 一次；不一致则重读（最多 3 次），仍不一致
   就按已读字节发布并带上读取时的 stamp。删除的文件在下一次刷新消失。
+  模型/回合标量同样发布已读出的完整记录，沿用读取起点的 stamp；读取期间的
+  mtime 更新不把有效会话降级成不可读。下一次刷新仍按 stamp 对同尺寸重写、
+  截断和 inode 替换重建；真正的 I/O 错误或短读仍走不可读分支，并记录
+  `native_state.read_failed` 元数据日志。块内的记录直接借用读取缓冲区，只有跨块
+  记录才拼接。浏览器回归见 [`index_append_browser.py`](../tests/index_append_browser.py)。
 - **归属图**（`index/graph`）：Claude sidecar 归属主会话（目录 + 文件名 +
   头部 `sessionId`）；Codex 子代理 rollout 归属（头部元数据）；fork 父子
   （`history_base`/`forked_from`）。规则与 [history-pages.md](history-pages.md)
