@@ -274,6 +274,14 @@ def main():
         expect(row(NID2).locator("td").nth(1)).to_have_text("正在重启…")
         restart_node("shellnode")
         restart_node("shellnode2")
+        # Both restarted nodes need a baseline before the next edit. A vanished
+        # notice alone can also mean the Hub temporarily sees an offline node.
+        for name in ("shellnode", "shellnode2"):
+            fresh, _ = shell_env(locals_[name])
+            assert fresh["configured"] and not fresh["stale"], fresh
+        hub_page.wait_for_function(
+            "Nodes.list.length === 2 && Nodes.list.every(node => node.online === true)"
+            " && shellEnvRestarting.size === 0", timeout=40000)
         expect(notice).to_have_count(0, timeout=40000)
         assert not first_notice.evaluate("d => d.isConnected")
         # Another edit, one machine at a time: the other row stays, no 全部重启 for a single one.
