@@ -137,26 +137,7 @@ fn first<'a>(query: &'a Query, key: &str) -> Option<&'a str> {
 }
 
 /// `urllib.parse.unquote`: percent-decoding, invalid UTF-8 replaced.
-pub fn unquote(value: &str) -> String {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%'
-            && index + 2 < bytes.len()
-            && bytes[index + 1].is_ascii_hexdigit()
-            && bytes[index + 2].is_ascii_hexdigit()
-        {
-            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).expect("ASCII hex");
-            out.push(u8::from_str_radix(hex, 16).expect("ASCII hex"));
-            index += 3;
-            continue;
-        }
-        out.push(bytes[index]);
-        index += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+pub use crate::json_compat::unquote;
 
 /// `parse_qs` value decoding: `+` is a space, then percent-decoding.
 fn unquote_plus(value: &str) -> String {

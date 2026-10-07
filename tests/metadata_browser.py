@@ -22,6 +22,114 @@ def assert_same_focused_header(page, header, button, selector):
     pass
 
 
+def replace_metadata(path, payload):
+    temporary = path.with_name('.metadata-browser-rewrite')
+    temporary.write_bytes(payload)
+    try:
+        os.replace(temporary, path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def fit_metadata(document, size):
+    """Compact JSON padded with trailing spaces to exactly `size` bytes."""
+    payload = json.dumps(document, separators=(',', ':'), ensure_ascii=True).encode()
+    if len(payload) > size:
+        raise AssertionError(
+            f'external metadata document is {len(payload)} bytes, larger than the {size}-byte file'
+        )
+    fitted = payload + b' ' * (size - len(payload))
+    assert json.loads(fitted) == document
+    return fitted
+
+
+def reopen_session(page, base, uid, message):
+    page.goto(base, wait_until='networkidle')
+    expect(page.locator('#backend-notice')).to_be_hidden()
+    row = page.locator(f'#side .item[data-uid="{uid}"]')
+    expect(row).to_be_visible()
+    row.click()
+    expect(page.locator('#msgs')).to_contain_text(message)
+
+
+def check_external_metadata_edits(page, corpus, base, state):
+    """After real preference edits, reload same-length external bytes, then invalid bytes, then the original file.
+
+    The file seeded before startup and the later process restart never reload a
+    live snapshot. Each replacement here is followed by opening the page and
+    clicking a session, which reads the metadata through the list.
+    """
+    path = state / 'session-metadata.json'
+    original = path.read_bytes()
+    size = len(original)
+    if size < 2:
+        raise AssertionError(f'metadata file is {size} bytes')
+    document = json.loads(original)
+    starred = document['sessions'].pop(corpus.uid('claude-branch'))
+    parent_row = document['sessions'].pop(corpus.uid('codex-parent'))
+    assert starred.get('starred') is True, starred
+    assert parent_row.get('fork_parent_visible') is True, parent_row
+    for index in range(4):
+        row = document['sessions'][corpus.uid(f'shown-fork-{index}')]
+        assert row.get('fork_parent_visible') is True, row
+    # The session list republishes when the metadata revision changes. Bump it
+    # so this same-length byte change is observable; the hash, not the length,
+    # is what the store uses to notice the rewrite.
+    document['revision'] = int(document['revision']) + 1000
+    assert document['revision'] != 0
+    rewritten = fit_metadata(document, size)
+    malformed = b'{' + b'x' * (size - 1)
+    try:
+        json.loads(malformed)
+    except json.JSONDecodeError:
+        pass
+    else:
+        raise AssertionError('malformed metadata payload parsed as JSON')
+    assert len(rewritten) == len(malformed) == len(original) == size
+    assert len({rewritten, malformed, original}) == 3
+
+    star = f'#side .star-toggle[data-star-uid="{corpus.uid("claude-branch")}"]'
+    parent = f'#side .item[data-uid="{corpus.uid("codex-parent")}"]'
+    shown = [f'#side .item[data-uid="{corpus.uid(f"shown-fork-{index}")}"]' for index in range(4)]
+    claude = corpus.uid('claude-branch')
+    expect(page.locator(star)).to_have_attribute('aria-pressed', 'true')
+    expect(page.locator(parent)).to_be_visible()
+    for selector in shown:
+        expect(page.locator(selector)).to_be_visible()
+
+    replace_metadata(path, rewritten)
+    reopen_session(page, base, claude, 'Claude selected answer')
+    expect(page.locator(star)).to_have_attribute('aria-pressed', 'false')
+    expect(page.locator('#a-star')).to_have_attribute('aria-pressed', 'false')
+    expect(page.locator(parent)).to_have_count(0)
+    for selector in shown:
+        expect(page.locator(selector)).to_be_visible()
+    page.locator(shown[3]).click()
+    expect(page.locator('#msgs')).to_contain_text('Generation 3 answer')
+    expect(page.locator(shown[3] + ' .m')).to_contain_text('父会话（分叉 3）')
+
+    replace_metadata(path, malformed)
+    reopen_session(page, base, claude, 'Claude selected answer')
+    expect(page.locator(star)).to_have_attribute('aria-pressed', 'false')
+    expect(page.locator('#a-star')).to_have_attribute('aria-pressed', 'false')
+    expect(page.locator(parent)).to_have_count(0)
+    for selector in shown:
+        expect(page.locator(selector)).to_have_count(0)
+
+    replace_metadata(path, original)
+    assert path.read_bytes() == original
+    reopen_session(page, base, claude, 'Claude selected answer')
+    expect(page.locator(star)).to_have_attribute('aria-pressed', 'true')
+    expect(page.locator('#a-star')).to_have_attribute('aria-pressed', 'true')
+    expect(page.locator(parent)).to_be_visible()
+    for selector in shown:
+        expect(page.locator(selector)).to_be_visible()
+    page.locator(shown[3]).click()
+    expect(page.locator('#msgs')).to_contain_text('Generation 3 answer')
+    expect(page.locator(shown[3] + ' .m')).to_contain_text('父会话（分叉 3）')
+
+
 def check_header_metadata_refresh(page, corpus, base):
     """Open menus survive accepted metadata, while UID/agent changes replace them."""
     uid, agent = corpus.uid('claude-branch'), 'claude-agent-one'
@@ -216,6 +324,7 @@ def main():
                     toggle.click()
                     expect(first.locator(parent)).to_be_visible()
                     expect(toggle).to_have_text("隐藏")
+                    check_external_metadata_edits(first, corpus, base, state)
                     first.set_viewport_size({"width":390,"height":844})
                     # Narrow layout may return to the sidebar; follow normal navigation.
                     if not first.locator("#a-term").is_visible():
@@ -236,7 +345,7 @@ def main():
                         expect(page.locator(f'#side .item[data-uid="{corpus.uid(f"shown-fork-{i}")}"]')).to_be_visible()
                     context.close()
                 assert all(path.read_bytes() == before for path, before in native_before.items())
-                print("PASS preferences browser: main/agent and fork menus across metadata refresh (DOM/focus identity), session switches, five same-title fork generations, open/hide/restore, cross-tab SSE star/unstar, parent visibility, mobile console, writer restart, native files unchanged")
+                print("PASS preferences browser: main/agent and fork menus across metadata refresh (DOM/focus identity), session switches, five same-title fork generations, open/hide/restore, cross-tab SSE star/unstar, parent visibility, external same-length rewrite, invalid metadata then recovery, mobile console, writer restart, native files unchanged")
             finally:
                 browser.close()
 

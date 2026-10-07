@@ -10,7 +10,7 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 193 files, 82999 lines, 5 undocumented.
+`crates/sessiondock/src`: 194 files, 83043 lines, 5 undocumented.
 
 - `api/`
   - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines)
@@ -20,7 +20,7 @@ python3 tests/module_map.py --write
   - `files.rs` — File transport. Every request resolves the selected session; opening a (522 lines)
   - `final_screen.rs` — `GET /api/term/final?id=…`: the final screen an exited session left, as one (54 lines)
   - `health.rs` — Local liveness JSON: version, `api_version` 1, and `stage: "read_only"`. (49 lines)
-  - `hub.rs` — The hub's HTTP surface (`hub.py` `HubHandler.dispatch`, 518–584), served (953 lines)
+  - `hub.rs` — The hub's HTTP surface (`hub.py` `HubHandler.dispatch`, 518–584), served (942 lines)
   - `lifecycle.rs` — Explicit creation receipts; native identities and reliable send stay separate. (1277 lines)
   - `media.rs` — Opaque media transport. File tokens require current native-scope authorization. (150 lines)
   - `metadata.rs` — SessionDock-owned preferences only. No native session writes or CLI actions. (542 lines)
@@ -47,7 +47,7 @@ python3 tests/module_map.py --write
   - `sessiondock-hub.rs` — The multi-machine hub. (199 lines)
   - `sessiondock-transfer.rs` — Offline transfer inspection/staging tool. No native publish or source cleanup. (146 lines)
 - `bridge/`
-  - `claude.rs` — Claude question cards. (440 lines)
+  - `claude.rs` — Claude question cards. (430 lines)
   - `codex.rs` — Codex command approvals. (217 lines)
   - `live.rs` — The live `prompt` of a session view. (235 lines)
   - `menus/`
@@ -96,17 +96,18 @@ python3 tests/module_map.py --write
   - `identity.rs` — Node identity and credential files (`federation.identity`, `server.py` (112 lines)
   - `mod.rs` — Hub federation (batches 38–40): node identity, the hub's node registry (32 lines)
     - mods: `aggregate`, `client`, `groups`, `identity`, `namespace`, `nest`, `process_links`, `proxy`, `registry`, `resources`, `session_links`, `transfer`
-  - `namespace.rs` — The hub's wire namespace (`federation.py` 31–113): every reference a node (315 lines)
+  - `namespace.rs` — The hub's wire namespace (`federation.py` 31–113): every reference a node (306 lines)
   - `nest.rs` — Validate a display edge against the fleet before routing the write to its child. (60 lines)
   - `process_links.rs` — One fleet coordinator shared by session nesting and external CPU consumers. (121 lines)
-  - `proxy.rs` — The hub's pass-through to one node (`hub.py` `HubHandler.resolve` (912 lines)
-  - `registry.rs` — The hub's node registry (`hub.py` `Registry`): `hub-nodes.json`, node (1421 lines)
+  - `proxy.rs` — The hub's pass-through to one node (`hub.py` `HubHandler.resolve` (893 lines)
+  - `registry.rs` — The hub's node registry (`hub.py` `Registry`): `hub-nodes.json`, node (1410 lines)
   - `resources.rs` — Session resource views preserve execution nodes and incomplete observations. (340 lines)
   - `session_links.rs` — Resolve saved links through completed transfer records, never by guessing IDs. (252 lines)
   - `transfer.rs` — Durable cross-node clone orchestration over the authenticated node channel. (1302 lines)
 - `hub_config.rs` — Configuration of the `sessiondock-hub` binary. Separate from (119 lines)
-- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (589 lines)
-  - mods: `api`, `assets`, `audit`, `bridge`, `bug_report`, `config`, `conversation`, `delivery`, `error`, `files`, `fingerprint`, `hub`, `hub_config`, `lifecycle`, `list_sync`, `log`, `media`, `metadata`, `native_replay`, `observe`, `polls`, `runtime`, `search`, `security`, `sessions`, `shell_env`, `state`, `terminal`, `transfer`, `trash`, `ui_events`, `session_links`
+- `json_compat.rs` — JSON truthiness and `urllib.parse.unquote`, shared by call sites that had (69 lines)
+- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (590 lines)
+  - mods: `api`, `assets`, `audit`, `bridge`, `bug_report`, `config`, `conversation`, `delivery`, `error`, `files`, `fingerprint`, `hub`, `hub_config`, `json_compat`, `lifecycle`, `list_sync`, `log`, `media`, `metadata`, `native_replay`, `observe`, `polls`, `runtime`, `search`, `security`, `sessions`, `shell_env`, `state`, `terminal`, `transfer`, `trash`, `ui_events`, `session_links`
 - `lifecycle/`
   - `autobind.rs` — Process-evidence binding of pending Codex/Grok launches. (326 lines)
   - `clients.rs` — Installed agent CLI versions and manual updates for the machine settings. (562 lines)
@@ -133,8 +134,8 @@ python3 tests/module_map.py --write
   - `formats.rs` — Image decoding belongs to the client. SessionDock does not add container, (9 lines)
   - `native_media.rs` — Private native-string descriptors. Paths are metadata, never open authority. (370 lines)
 - `metadata/`
-  - `disk.rs` — Metadata reads and atomic replacement in the configured directory. (112 lines)
-  - `mod.rs` — SessionDock preferences with reads and atomic publication. (214 lines)
+  - `disk.rs` — Metadata reads and atomic replacement in the configured directory. (137 lines)
+  - `mod.rs` — SessionDock preferences with reads and atomic publication. (227 lines)
     - mods: `disk`, `model`
   - `model.rs` — Pure, versioned metadata transformations. No process or native-file access. (712 lines)
     - mods: `transfer`
@@ -163,11 +164,11 @@ python3 tests/module_map.py --write
 - `security.rs` — Loopback Host gate and same-origin API policy. Not authentication. (130 lines)
 - `session_links.rs` — Durable transfer identities and read-only external-link resolution. (146 lines)
 - `sessions/`
-  - `agy.rs` — Read-only Agy catalog and complete transcript projection. The binary (347 lines)
+  - `agy.rs` — Read-only Agy catalog and complete transcript projection. The binary (392 lines)
   - `history.rs` — View identity helpers shared by `views` (`native_identity`, `history_link`, (87 lines)
   - `index/`
     - `agent_stops.rs` — Subagent stop evidence from the owner's native transcript. (267 lines)
-    - `graph.rs` — Ownership and fork graph over row summaries. (853 lines)
+    - `graph.rs` — Ownership and fork graph over row summaries. (875 lines)
     - `mod.rs` — Lazy session index: directory walk + `stat` + bounded (1582 lines)
       - mods: `agent_stops`, `graph`, `names`, `native_state`, `summary`, `titles`
     - `names.rs` — Codex `session_index.jsonl` names applied to summary rows. (200 lines)
@@ -177,7 +178,7 @@ python3 tests/module_map.py --write
       - `claude.rs` — Claude row summary: `ClaudeAdapter._meta` (main transcripts, including (471 lines)
       - `codex.rs` — Codex row summary: `CodexAdapter._raw_meta` (120 head pieces) plus the (308 lines)
       - `grok.rs` — Grok row summary: `GrokAdapter.session_meta` from `summary.json` plus the (164 lines)
-      - `mod.rs` — Bounded per-file row summaries. (880 lines)
+      - `mod.rs` — Bounded per-file row summaries. (846 lines)
         - mods: `agy`, `claude`, `codex`, `grok`, `opencode`
       - `opencode.rs` — OpenCode row summary from the SessionDock mirror (`sessions::opencode`): (104 lines)
     - `titles.rs` — Codex native names read on demand, before the first rollout exists. (19 lines)
@@ -188,13 +189,13 @@ python3 tests/module_map.py --write
   - `native_media.rs` — Native span authority is the current full selected branch, not file_roots (89 lines)
   - `opencode.rs` — OpenCode session mirror. (628 lines)
   - `pages.rs` — Finite history pages. Grants hold checkpoints, never retained native views. (662 lines)
-  - `providers.rs` — Pure native-record projection. File discovery, inheritance cutoffs and (1354 lines)
+  - `providers.rs` — Pure native-record projection. File discovery, inheritance cutoffs and (1344 lines)
     - mods: `agy`, `claude`, `envelopes`, `grok`, `image_content`, `opencode`, `tools`
   - `providers/`
     - `agy.rs` — Agy's complete, system-generated transcript (not the truncated transcript). (207 lines)
     - `claude.rs` — Claude's append-only transcript is a tree, not a flat event log. (1007 lines)
     - `envelopes.rs` — Source-specific display envelopes. Never interpret arbitrary HTML as protocol (275 lines)
-    - `grok.rs` — Summary-derived Grok metadata. The transcript never overrides these fields, (166 lines)
+    - `grok.rs` — Summary-derived Grok metadata. The transcript never overrides these fields, (139 lines)
     - `image_content.rs` — Typed image extraction before native content becomes public text or JSON. (195 lines)
     - `opencode.rs` — OpenCode 2 message rows from the SessionDock mirror (`sessions::opencode`). (178 lines)
     - `tools.rs` — Pure presentation of known tool arguments. A shell command is text here: (1053 lines)

@@ -18,6 +18,7 @@ use std::sync::LazyLock;
 use serde_json::{Value, json};
 
 use super::Event;
+use crate::json_compat::truthy;
 
 pub(super) fn validate_grok_summary(summary: &Value) -> Result<(), String> {
     grok::validate(summary)
@@ -305,17 +306,6 @@ fn string(value: &Value) -> String {
         Value::Null => String::new(),
         Value::String(text) => text.clone(),
         _ => serde_json::to_string_pretty(value).unwrap_or_default(),
-    }
-}
-
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(value) => *value,
-        Value::Number(value) => value.as_f64().is_some_and(|number| number != 0.0),
-        Value::String(value) => !value.is_empty(),
-        Value::Array(value) => !value.is_empty(),
-        Value::Object(value) => !value.is_empty(),
     }
 }
 

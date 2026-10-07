@@ -12,6 +12,12 @@ pub(super) struct Disk {
     directory: PathBuf,
 }
 
+/// Bytes from one metadata read, plus the existing content hash of those bytes.
+pub(super) struct ReadBytes {
+    pub(super) bytes: Vec<u8>,
+    pub(super) fingerprint: String,
+}
+
 fn io_error(error: io::Error) -> MetadataError {
     MetadataError::new(
         if error.kind() == io::ErrorKind::PermissionDenied {
@@ -37,14 +43,27 @@ impl Disk {
     pub(super) fn directory(&self) -> &Path {
         &self.directory
     }
-    pub(super) fn load(&self) -> Result<(MetadataSnapshot, Option<String>), MetadataError> {
+
+    /// Read the metadata file on every call.
+    ///
+    /// `None` is a missing or unreadable file: an empty document with no
+    /// fingerprint. Present bytes carry the existing content hash, computed
+    /// before any decode, so an unchanged snapshot can be kept without
+    /// parsing. The hash covers the bytes just read; a same-length rewrite
+    /// still differs. This is not a size, mtime, or TTL cache.
+    pub(super) fn read(&self) -> Option<ReadBytes> {
         let Ok(bytes) = fs::read(self.directory.join(METADATA_FILENAME)) else {
-            return Ok((MetadataSnapshot::empty(), None));
+            return None;
         };
-        // An unavailable, malformed or unsupported document is treated
-        // as empty. Deserialize through Value so repeated
-        // JSON keys have last-value behavior.
-        let document = serde_json::from_slice::<serde_json::Value>(&bytes)
+        let fingerprint = hash(&bytes);
+        Some(ReadBytes { bytes, fingerprint })
+    }
+
+    /// Parse bytes from [`Self::read`]. Malformed and unsupported documents
+    /// are empty. Deserialize through `Value` so repeated JSON keys keep the
+    /// last value, then apply the one-way nest migration.
+    pub(super) fn decode(bytes: &[u8]) -> MetadataSnapshot {
+        let document = serde_json::from_slice::<serde_json::Value>(bytes)
             .ok()
             .and_then(|mut value| {
                 if let Some(rows) = value["sessions"].as_object_mut() {
@@ -72,10 +91,16 @@ impl Disk {
                 serde_json::from_value::<Document>(value).ok()
             })
             .filter(|document| document.schema_version == SCHEMA_VERSION);
-        let snapshot = document
+        document
             .map(|document| MetadataSnapshot { document })
-            .unwrap_or_else(MetadataSnapshot::empty);
-        Ok((snapshot, Some(hash(&bytes))))
+            .unwrap_or_else(MetadataSnapshot::empty)
+    }
+
+    pub(super) fn load(&self) -> (MetadataSnapshot, Option<String>) {
+        match self.read() {
+            Some(file) => (Self::decode(&file.bytes), Some(file.fingerprint)),
+            None => (MetadataSnapshot::empty(), None),
+        }
     }
     pub(super) fn persist(&self, snapshot: &MetadataSnapshot) -> Result<String, MetadataError> {
         let mut bytes = serde_json::to_vec(&snapshot.document)

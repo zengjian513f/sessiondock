@@ -5,6 +5,8 @@ use chrono::Timelike;
 use serde_json::{Value, json};
 use std::path::Path;
 
+use crate::json_compat::unquote;
+
 /// Sidebar title when Grok has not written `generated_title` or
 /// `session_summary`. Matches the pending-session label so a freshly
 /// launched native session does not jump to the first eight characters
@@ -93,35 +95,6 @@ fn clip(title: &str) -> String {
     } else {
         normalized
     }
-}
-
-/// urllib.parse.unquote semantics: percent UTF-8 decoding with replacement for
-/// invalid bytes, malformed percent escapes retained, and '+' stays literal.
-fn unquote(name: &str) -> String {
-    fn hex(byte: u8) -> Option<u8> {
-        match byte {
-            b'0'..=b'9' => Some(byte - b'0'),
-            b'a'..=b'f' => Some(byte - b'a' + 10),
-            b'A'..=b'F' => Some(byte - b'A' + 10),
-            _ => None,
-        }
-    }
-    let bytes = name.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut offset = 0;
-    while offset < bytes.len() {
-        if bytes[offset] == b'%'
-            && offset + 2 < bytes.len()
-            && let (Some(high), Some(low)) = (hex(bytes[offset + 1]), hex(bytes[offset + 2]))
-        {
-            decoded.push((high << 4) | low);
-            offset += 3;
-        } else {
-            decoded.push(bytes[offset]);
-            offset += 1;
-        }
-    }
-    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 pub(super) fn metadata(path: &Path, summary: &Value, fallback: &str) -> Value {

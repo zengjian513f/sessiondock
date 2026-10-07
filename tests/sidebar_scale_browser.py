@@ -9,8 +9,12 @@ long tasks and DOM size, then exercises the user paths windowing must keep:
 wheel scrolling, a deep link to a row far below the window, a drag range that
 crosses unrendered rows, a group checkbox, search filtering, group and branch
 collapse/expand, text selection inside a rendered row, and scroll restoration
-across list updates. Budgets are generous; ``--report-only`` prints timings
-without enforcing them (used for the pre-windowing baseline).
+across list updates. Native fixture activity invalidates the list while
+the selection and scroll stay put. A small synthetic mix then checks multi-select
+delete confirmation, cancel, and request order; those requests are answered in
+the browser and never delete fixture files. Budgets are generous;
+``--report-only`` prints timings without enforcing them (used for the
+pre-windowing baseline).
 """
 
 import argparse
@@ -24,7 +28,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from frontend_framework_browser import launch_chromium
 from header_fold_browser import SID, corpus
-from history_fixtures import BINARY, isolated_server
+from history_fixtures import BINARY, claude_row, isolated_server
 
 GROUPS = 40
 PER_GROUP = 100
@@ -309,6 +313,173 @@ def check_selection_and_restore(page):
     assert abs(after['top'] - before['top']) <= 1 and abs(after['height'] - before['height']) <= 400, (before, after)
 
 
+def check_poll_keeps_selection_and_scroll(page, listed, data):
+    """Native activity triggers the real SSE/poll path around the selected row."""
+    page.evaluate("document.querySelector('#side').scrollTop = 60000")
+    frame(page)
+    uid = page.evaluate('''() => {
+      const side = document.querySelector('#side'), top = side.getBoundingClientRect().top + 80;
+      const node = [...side.querySelectorAll('.item[data-uid]')].find(row => row.getBoundingClientRect().top >= top);
+      return node ? node.dataset.uid : '';
+    }''')
+    assert uid, 'no visible row to select before the list refresh'
+    row(page, uid).locator('.t').click()
+    page.wait_for_function('selected => S.sel === selected', arg=uid)
+    expect(row(page, uid)).to_have_class(re.compile(r'\bsel\b'))
+    frame(page)
+    before = side_state(page)
+    sessions = page.evaluate('S.sessions')
+    target = next(session for session in sessions
+                  if session.get('uid') != uid and str(session.get('title', '')).startswith('Scale row'))
+    target['title'] = 'Poll refresh sentinel'
+    listed['sessions'] = sessions
+    listed['sig'] = 'scale-poll-1'
+    with page.expect_response(lambda response: response.request.method == 'GET'
+                               and '/api/sessions' in response.url, timeout=15000) as caught:
+        # Membership changes invalidate the list; appends only update unread
+        # summaries and intentionally do not request the full list.
+        data.put('scale-new', 'claude',
+                 [claude_row('scale-new', 'user', 'u0', None, 'New scale fixture')], [])
+    payload = caught.value.json()
+    page.wait_for_function("S.sig === 'scale-poll-1'")
+    assert payload['sig'] == 'scale-poll-1', payload.get('sig')
+    frame(page)
+    after = side_state(page)
+    assert abs(after['top'] - before['top']) <= 1 and abs(after['height'] - before['height']) <= 400, (before, after)
+    expect(row(page, uid)).to_have_class(re.compile(r'\bsel\b'))
+    page.locator('#q').fill('"Poll refresh sentinel"')
+    page.wait_for_function("document.querySelector('#side-search-count')?.textContent === '1 条'")
+    expect(page.locator('#side .item .t', has_text='Poll refresh sentinel')).to_be_visible()
+
+
+def confirm_dialog(page):
+    dialog = page.locator('dialog.app-popup')
+    expect(dialog).to_be_visible()
+    return dialog
+
+
+def cancel_confirm(page, title, body):
+    dialog = confirm_dialog(page)
+    expect(dialog.locator('h2')).to_have_text(title)
+    expect(dialog.locator('.app-popup-message')).to_have_text(body)
+    dialog.locator('[data-popup-action="cancel"]').click()
+    expect(page.locator('dialog.app-popup')).to_have_count(0)
+
+
+def menu_delete(page, uid):
+    row(page, uid).click(button='right')
+    delete = page.locator('#item-menu [data-act="delete"]')
+    expect(delete).to_be_visible()
+    expect(delete).to_have_text('删除会话')
+    expect(delete).not_to_have_attribute('aria-disabled', 'true')
+    delete.click()
+
+
+def check_pick_delete_confirm_cancel(page, listed):
+    """Mixed multi-select: confirmation copy, cancel, then blocked request order."""
+    stamp = '2026-10-01T00:00:00+00:00'
+    def recorded(source, sid, title):
+        return dict(uid=f'{source}:{sid}', sid=sid, source=source, title=title,
+                    cwd='/synthetic/mix', created=stamp, updated=stamp, size=10)
+    rows = [
+        recorded('claude', 'mix-a', '普通会话甲'),
+        recorded('opencode', 'mix-c', 'OpenCode 丙'),
+        recorded('agy', 'mix-d', 'Agy 丁'),
+        recorded('codex', 'mix-e', '运行中戊'),
+    ]
+    # Pending discard follows this list, not the order the rows are picked.
+    pending = [
+        dict(name='mix-pending-b', source='claude', title='新建乙', cwd='/synthetic/mix',
+             record_id='rec-b', instance_id='inst-b', running=False, stale=True, state='exited'),
+        dict(name='mix-pending-a', source='codex', title='新建甲', cwd='/synthetic/mix',
+             record_id='rec-a', instance_id='inst-a', running=False, stale=True, state='exited'),
+    ]
+    listed['sessions'] = rows
+    listed['sig'] = 'mix-delete'
+    terms = page.evaluate('''() => ({
+      enabled: true, sessions: T.list || [], sources: T.sources || {},
+      resume_sources: T.resume_sources || {}, home: T.home || '', errors: [],
+    })''')
+    terms['pending'] = pending
+    calls = []
+
+    def fulfill_live(route):
+        route.fulfill(json={'uids': ['codex:mix-e'], 'tmux_uids': [], 'working_uids': []})
+
+    def fulfill_terms(route):
+        route.fulfill(json=terms)
+
+    def blocked(kind):
+        def handler(route):
+            calls.append((kind, route.request.post_data_json or {}))
+            route.fulfill(json={'error': 'blocked'})
+        return handler
+
+    block_delete = blocked('delete')
+    block_discard = blocked('discard')
+    block_kill = blocked('kill')
+    page.route('**/api/live*', fulfill_live)
+    page.route('**/api/term/list*', fulfill_terms)
+    page.route('**/api/sessions/delete', block_delete)
+    page.route('**/api/term/discard', block_discard)
+    page.route('**/api/term/kill', block_kill)
+    try:
+        page.reload(wait_until='domcontentloaded')
+        page.wait_for_function('''() => T.listLoaded && S.live.has("codex:mix-e")
+          && ["claude:mix-a", "opencode:mix-c", "agy:mix-d", "tmux:mix-pending-a", "tmux:mix-pending-b"]
+            .every(uid => !!document.querySelector('#side .item[data-uid="' + uid + '"]'))''')
+        menu_delete(page, 'claude:mix-a')
+        cancel_confirm(page, '删除会话「普通会话甲」?', '文件会移入服务端回收站，不会永久删除。')
+        menu_delete(page, 'opencode:mix-c')
+        cancel_confirm(page, '删除会话「OpenCode 丙」?',
+                       'OpenCode 会话会从 OpenCode 直接删除（连同子会话），不进回收站，无法恢复。')
+        menu_delete(page, 'agy:mix-d')
+        cancel_confirm(page, '删除会话「Agy 丁」?',
+                       '其中 1 个 Agy 会话将跳过：请在 agy 的 /resume 菜单删除原生会话，SessionDock 会自动更新列表。')
+        assert calls == [], calls
+        row(page, 'claude:mix-a').click(button='right')
+        page.locator('#item-menu [data-act="pick"]').click()
+        for uid in ('tmux:mix-pending-a', 'opencode:mix-c', 'agy:mix-d', 'codex:mix-e', 'tmux:mix-pending-b'):
+            row(page, uid).locator('.t').click()
+        expect(page.locator('#side-picked')).to_have_text('已选 6 项')
+        expect(page.locator('#side-pick-delete')).to_have_text('删除 / 丢弃 (6)')
+        page.locator('#side-pick-delete').click()
+        cancel_confirm(
+            page, '删除 / 丢弃选中的 6 个会话?',
+            '2 个新建会话将停止并丢弃，未发送的草稿也会清除；若已生成会话记录，记录会保留。\n'
+            '文件会移入服务端回收站，不会永久删除。\n'
+            '其中 1 个 Agy 会话将跳过：请在 agy 的 /resume 菜单删除原生会话，SessionDock 会自动更新列表。\n'
+            '其中 1 个 OpenCode 会话会从 OpenCode 直接删除（连同子会话），不进回收站，无法恢复。\n'
+            '其中 1 个还在运行，会被跳过，需要先停止。')
+        expect(page.locator('#side-picked')).to_have_text('已选 6 项')
+        for uid in ('claude:mix-a', 'opencode:mix-c', 'agy:mix-d', 'codex:mix-e',
+                    'tmux:mix-pending-a', 'tmux:mix-pending-b'):
+            expect(row(page, uid)).to_be_visible()
+        assert calls == [], calls
+        page.locator('#side-pick-delete').click()
+        confirm_dialog(page).locator('[data-popup-action="ok"]').click()
+        alert = page.locator('dialog.app-popup')
+        expect(alert.locator('h2')).to_have_text('已删除 / 丢弃 0 个，6 个操作失败:')
+        expect(alert.locator('.app-popup-message')).to_have_text(
+            '· 新建乙: blocked\n· 新建甲: blocked\n· claude:mix-a: blocked\n'
+            '· opencode:mix-c: blocked\n· agy:mix-d: blocked\n…')
+        alert.locator('[data-popup-action="ok"]').click()
+        expect(page.locator('dialog.app-popup')).to_have_count(0)
+        assert [kind for kind, _ in calls] == ['discard', 'discard', 'delete'], calls
+        assert calls[0][1]['record_id'] == 'rec-b' and calls[1][1]['record_id'] == 'rec-a', calls
+        assert calls[2][1]['uids'] == ['claude:mix-a', 'opencode:mix-c', 'agy:mix-d', 'codex:mix-e'], calls
+        expect(page.locator('#side-picked')).to_have_text('已选 6 项')
+        for uid in ('claude:mix-a', 'opencode:mix-c', 'agy:mix-d', 'codex:mix-e',
+                    'tmux:mix-pending-a', 'tmux:mix-pending-b'):
+            expect(row(page, uid)).to_be_visible()
+    finally:
+        page.unroute('**/api/live*', fulfill_live)
+        page.unroute('**/api/term/list*', fulfill_terms)
+        page.unroute('**/api/sessions/delete', block_delete)
+        page.unroute('**/api/term/discard', block_discard)
+        page.unroute('**/api/term/kill', block_kill)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -349,10 +520,14 @@ def main():
                     check_search_and_folds(page)
                     check_date_view(page)
                     check_selection_and_restore(page)
+                    check_poll_keeps_selection_and_scroll(page, listed, data)
+                    check_pick_delete_confirm_cancel(page, listed)
                 assert not errors, errors
                 print(f'PASS sidebar_scale_browser: {len(rows) + len(real)} sessions, all groups open'
                       + ('' if args.report_only else '; window bounded, deep link, cross-window drag range, '
-                         'group pick, search, folds, date view, text selection and scroll restore'), flush=True)
+                         'group pick, search, folds, date view, text selection and scroll restore, '
+                         'SSE refresh keeps the selection and scroll, '
+                         'multi-select delete confirms, cancels, and keeps request order'), flush=True)
             finally:
                 context.close()
                 browser.close()
