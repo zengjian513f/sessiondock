@@ -72,6 +72,8 @@ WebSocket 后仍在同一 TLS 流上双向转发。HTTP 与 HTTPS 都继续受�
 
 **缓存与快照**：`cache` 键 `(nid, path, urlencode(query))`，只存 200 且经
 `public_payload` 改写后的载荷，上限 128 条（先进先出，`/api/search` 不缓存）。
+内存载荷通过不可变 `Arc<Value>` 在注册表、聚合请求和磁盘快照写入任务之间共享；
+注册表锁内只复制引用。上游列表增量缓存也共享不可变基线；离线标记只修改答复副本。
 `/api/sessions` 且 query 只含 `force`/`sig` 的完整答复统一存为 `(nid,"/api/sessions","")`，
 签名变化替换当前列表，不保留每个旧签名对应的完整列表，
 并按 `sig` 变化写 `hub-cache/<nid>.sessions.json`（`{stamp,data}`，0600，`.tmp`+rename，
@@ -206,6 +208,21 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
   `hub_browser.py` 等 Hub 浏览器套件覆盖。
 
 ## 聚合（`aggregate.rs`）
+
+跨节点子会话计数先按 `(node_id, source, sid)` 汇总，再查找每个父会话，避免
+每行重扫全部计数。签名仍使用相同的排序 JSON 字节，但直接送入既有 digest，
+不再复制整份结果或保留完整的签名字符串。
+
+每个 Hub `Client` 共享 `clamp(核数, 2, 8)` 个 blocking 工作许可：普通 JSON 解码、
+上游列表增量重建、命名空间投影、五条聚合读路由、聚合答复编码和 UI 观察快照
+在取得许可后执行。浏览器列表增量中间件另有同样大小的工作池，负责解码、差分与编码。
+请求排队期间取消不会启动工作；已经启动的任务持有许可直到实际结束。许可仅调度
+工作，不增加输入或列表大小限制。网络等待不占这些许可。
+
+`tests/hub_scale_browser.py` 在三个隔离节点上生成 4,800 个原生会话，通过真实页面
+折叠、重载、过滤、展开和打开历史，验证 2,400 个父会话的计数、跨节点汇总和
+同 SID 的节点/来源隔离；输出列表可用时间与 Hub RSS/HWM。五个时间样本的 p95
+是最大值，首次包含页面切换为折叠模式，后四次为重载；不是冷磁盘或生产 SLA。
 
 输入统一是浏览器 query 的键值对 `&[(String, String)]`（`Params`，wire 顺序）；输出
 `serde_json::Value`；被拒绝的输入是 `AggregateError`（`message()` =

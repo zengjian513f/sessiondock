@@ -69,7 +69,7 @@ def browser(corpus, base):
             page.locator('#msgs img').first.scroll_into_view_if_needed()
             page.wait_for_function("() => [...document.querySelectorAll('#msgs img')].some(i=>i.complete&&i.naturalWidth===2&&i.naturalHeight===3)", timeout=90000)
             expect(page.locator('#a-term')).to_be_visible()
-            expect(page.locator('#a-term')).to_be_enabled()
+            expect(page.locator('#a-term')).to_have_attribute('aria-disabled', 'true')
             page.set_viewport_size({'width':390,'height':844})
             # Responsive navigation opens the mobile list; explicitly enter
             # the same chat before checking its console, as a user would.

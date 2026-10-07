@@ -104,7 +104,7 @@ def browser(corpus, base):
                 picture.scroll_into_view_if_needed()
                 page.wait_for_function("() => [...document.querySelectorAll('#msgs img')].some(i => i.complete && i.naturalWidth===2 && i.naturalHeight===3)", timeout=90000)
                 expect(page.locator('#a-term')).to_be_visible()
-                expect(page.locator('#a-term')).to_be_enabled()
+                expect(page.locator('#a-term')).to_have_attribute('aria-disabled', 'true')
             page.set_viewport_size({'width':390,'height':844})
             page.locator(f'#side .item[data-uid="{uid(corpus,"claude-native-span")}"]').click()
             expect(page.locator('#a-term')).to_be_visible()

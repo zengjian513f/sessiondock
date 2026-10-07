@@ -250,7 +250,7 @@ def browser(corpus, base, expected_native):
                 page.locator(f'#side .item[data-uid="{uid(corpus, name)}"]').click()
                 expect(page.locator("#msgs")).to_contain_text(marker)
                 expect(page.locator("#a-term")).to_be_visible()
-                expect(page.locator("#a-term")).to_be_enabled()
+                expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
 
             def unfold():
                 for toggle in page.locator("#msgs .turn-process.folded .fold-toggle").all():
@@ -395,7 +395,7 @@ def browser(corpus, base, expected_native):
             expect(page.locator("#msgs img")).to_have_count(16)
             expect(button).to_be_enabled()
             expect(page.locator("#a-term")).to_be_visible()
-            expect(page.locator("#a-term")).to_be_enabled()
+            expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
             assert state() == before
             assert_identity(saved)
             saved.dispose()

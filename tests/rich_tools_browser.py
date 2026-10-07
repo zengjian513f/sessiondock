@@ -187,7 +187,7 @@ def browser_check(corpus, base):
                 card.locator('[data-diff-view="split"]').click()
                 expect(card.locator('[data-diff-view="split"]')).to_have_attribute("aria-pressed", "true")
                 expect(page.locator("#a-term")).to_be_visible()
-                expect(page.locator("#a-term")).to_be_enabled()
+                expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
                 expect(page.locator("#migration-read-error")).to_have_count(0)
                 print(f"PASS Chromium {source}: existing legacy diff cards and split view")
             page.set_viewport_size({"width": 390, "height": 844})

@@ -129,14 +129,31 @@ struct Snapshot {
     rows: BTreeMap<String, Rows>,
 }
 
-#[derive(Default)]
-pub struct Store(Mutex<VecDeque<Snapshot>>);
+pub struct Store {
+    snapshots: Mutex<VecDeque<Snapshot>>,
+    jobs: Arc<tokio::sync::Semaphore>,
+}
 
-#[derive(Default)]
-pub struct RemoteCache(Mutex<VecDeque<(String, Value)>>);
+impl Default for Store {
+    fn default() -> Self {
+        Self {
+            snapshots: Mutex::new(VecDeque::new()),
+            jobs: Arc::new(tokio::sync::Semaphore::new(
+                std::thread::available_parallelism()
+                    .map_or(4, usize::from)
+                    .clamp(2, 8),
+            )),
+        }
+    }
+}
+
+type RemoteSnapshots = VecDeque<(String, Arc<Value>)>;
+
+#[derive(Clone, Default)]
+pub struct RemoteCache(Arc<Mutex<RemoteSnapshots>>);
 
 impl RemoteCache {
-    pub fn get(&self, scope: &str) -> Option<Value> {
+    pub fn get(&self, scope: &str) -> Option<Arc<Value>> {
         self.0
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -145,7 +162,7 @@ impl RemoteCache {
             .map(|(_, data)| data.clone())
     }
 
-    pub fn put(&self, scope: String, data: Value) {
+    pub fn put(&self, scope: String, data: Arc<Value>) {
         if !data["list_version"].is_string() {
             return;
         }
@@ -160,7 +177,7 @@ impl RemoteCache {
 
 impl Store {
     pub fn reply(&self, scope: &str, known: &str, mut data: Value) -> Value {
-        let mut cache = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.snapshots.lock().unwrap_or_else(|e| e.into_inner());
         let previous = cache.iter().rev().find(|entry| entry.scope == scope);
         let terminal = scope
             .split('?')
@@ -337,17 +354,37 @@ pub async fn middleware(State(store): State<Arc<Store>>, request: Request, next:
                 .unwrap();
         }
     };
-    let Ok(data) = serde_json::from_slice::<Value>(&bytes) else {
-        return Response::from_parts(parts, Body::from(bytes));
+    // Delta transport decodes and re-encodes whole lists, even when only one
+    // field changed. Keep that CPU work off the HTTP/SSE/WS reactor. A cancelled
+    // request retains its permit until the blocking closure actually finishes.
+    let permit = store
+        .jobs
+        .clone()
+        .acquire_owned()
+        .await
+        .expect("list worker pool is never closed");
+    let input = bytes.clone();
+    let transformed = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let data = serde_json::from_slice::<Value>(&input).ok()?;
+        let data = store.reply(&scope, &known, data);
+        Some(serde_json::to_vec(&data).expect("JSON serializes"))
+    })
+    .await;
+    let bytes = match transformed {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return Response::from_parts(parts, Body::from(bytes)),
+        Err(_) => {
+            return Response::builder()
+                .status(500)
+                .body(Body::from("列表同步任务失败"))
+                .unwrap();
+        }
     };
-    let data = store.reply(&scope, &known, data);
     parts.headers.remove(header::CONTENT_LENGTH);
     parts
         .headers
         .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
     parts.headers.append(header::VARY, HEADER.parse().unwrap());
-    Response::from_parts(
-        parts,
-        Body::from(serde_json::to_vec(&data).expect("JSON serializes")),
-    )
+    Response::from_parts(parts, Body::from(bytes))
 }

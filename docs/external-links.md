@@ -8,6 +8,11 @@ the last saved selection. `tests/session_deep_link_browser.py` covers root, chil
 nested-child navigation on desktop/mobile with synthetic native histories, in both
 sidebar modes.
 
+DELTA: opening an explicit session link refreshes the initial inventory with
+`force=1`. A newly created or restored native file must not be missed because
+the node's short-lived list cache still contains its absence. The Chromium
+deep-link suite models that stale inventory and verifies the selected conversation.
+
 When several rows match a native ID, they resolve only if all candidates converge
 on one current row through explicit `continued_in` links within the same machine
 and source. Independent copies, broken links or cycles that leave those candidates

@@ -10,6 +10,7 @@
 
 use std::{
     cmp::Reverse,
+    collections::HashMap,
     fmt,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -128,7 +129,7 @@ pub fn upstream(query: &Params) -> Vec<(String, String)> {
 #[derive(Clone, Debug, PartialEq)]
 struct Answer {
     node: Node,
-    data: Value,
+    data: Arc<Value>,
     failure: Option<Value>,
 }
 
@@ -173,7 +174,7 @@ async fn gather(
 }
 
 /// `{"errors", "partial", "nodes"}` — the start of every aggregate body.
-fn envelope(registry: &Registry, answers: &[Answer]) -> Map<String, Value> {
+fn envelope(nodes: Vec<Value>, answers: &[Answer]) -> Map<String, Value> {
     let errors: Vec<Value> = answers
         .iter()
         .filter_map(|answer| answer.failure.clone())
@@ -182,7 +183,7 @@ fn envelope(registry: &Registry, answers: &[Answer]) -> Map<String, Value> {
     let mut result = Map::new();
     result.insert("errors".into(), Value::Array(errors));
     result.insert("partial".into(), Value::Bool(partial));
-    result.insert("nodes".into(), Value::Array(registry.public()));
+    result.insert("nodes".into(), Value::Array(nodes));
     result
 }
 
@@ -232,32 +233,35 @@ pub async fn sessions(
 ) -> Result<Value, AggregateError> {
     let nodes = selected(registry, query)?;
     let answers = gather(registry, client, nodes, "/api/sessions", &upstream(query)).await;
-    Ok(sessions_body(
-        registry,
-        &answers,
-        first(query, "sig").unwrap_or(""),
-    ))
+    let nodes = registry.public();
+    let known = first(query, "sig").unwrap_or("").to_owned();
+    client
+        .work(move || sessions_body(nodes, &answers, &known))
+        .await
+        .map_err(|_| invalid("Hub 聚合任务失败"))
 }
 
-fn sessions_body(registry: &Registry, answers: &[Answer], known: &str) -> Value {
-    let mut result = envelope(registry, answers);
+fn sessions_body(nodes: Vec<Value>, answers: &[Answer], known: &str) -> Value {
+    let mut result = envelope(nodes, answers);
     merge_rows(&mut result, answers, "sessions");
     // Nodes omit deferred rows, but still publish counts for remote owners.
-    let counts = answers
+    let mut counts: HashMap<(&Value, &Value, &Value), u64> = HashMap::new();
+    for count in answers
         .iter()
-        .flat_map(|answer| answer.rows("child_counts"))
-        .collect::<Vec<_>>();
+        .flat_map(|answer| answer.data["child_counts"].as_array().into_iter().flatten())
+    {
+        // Borrow the original JSON keys: missing/null and non-string fields
+        // retain their previous equality semantics without cloning counts.
+        *counts
+            .entry((&count["node_id"], &count["source"], &count["sid"]))
+            .or_default() += count["count"].as_u64().unwrap_or(0);
+    }
     if let Some(rows) = result.get_mut("sessions").and_then(Value::as_array_mut) {
         for row in rows {
             let remote = counts
-                .iter()
-                .filter(|count| {
-                    count["node_id"] == row["node_id"]
-                        && count["source"] == row["source"]
-                        && count["sid"] == row["sid"]
-                })
-                .filter_map(|count| count["count"].as_u64())
-                .sum::<u64>();
+                .get(&(&row["node_id"], &row["source"], &row["sid"]))
+                .copied()
+                .unwrap_or(0);
             if remote > 0 {
                 row["child_count"] = json!(row["child_count"].as_u64().unwrap_or(0) + remote);
             }
@@ -284,11 +288,15 @@ pub async fn search(
 ) -> Result<Value, AggregateError> {
     let nodes = selected(registry, query)?;
     let answers = gather(registry, client, nodes, "/api/search", &upstream(query)).await;
-    Ok(Value::Object(search_body(registry, &answers)))
+    let nodes = registry.public();
+    client
+        .work(move || Value::Object(search_body(nodes, &answers)))
+        .await
+        .map_err(|_| invalid("Hub 聚合任务失败"))
 }
 
-fn search_body(registry: &Registry, answers: &[Answer]) -> Map<String, Value> {
-    let mut result = envelope(registry, answers);
+fn search_body(nodes: Vec<Value>, answers: &[Answer]) -> Map<String, Value> {
+    let mut result = envelope(nodes, answers);
     merge_rows(&mut result, answers, "results");
     result
 }
@@ -301,11 +309,15 @@ pub async fn live(
 ) -> Result<Value, AggregateError> {
     let nodes = selected(registry, query)?;
     let answers = gather(registry, client, nodes, "/api/live", &upstream(query)).await;
-    Ok(live_body(registry, &answers))
+    let nodes = registry.public();
+    client
+        .work(move || live_body(nodes, &answers))
+        .await
+        .map_err(|_| invalid("Hub 聚合任务失败"))
 }
 
-fn live_body(registry: &Registry, answers: &[Answer]) -> Value {
-    let mut result = envelope(registry, answers);
+fn live_body(nodes: Vec<Value>, answers: &[Answer]) -> Value {
+    let mut result = envelope(nodes, answers);
     // `remote_working` names sessions by native node/source/sid, unscoped.
     for key in ["uids", "tmux_uids", "working_uids", "remote_working"] {
         let rows: Vec<Value> = answers
@@ -349,11 +361,15 @@ pub async fn term_list(
 ) -> Result<Value, AggregateError> {
     let nodes = selected(registry, query)?;
     let answers = gather(registry, client, nodes, "/api/term/list", &upstream(query)).await;
-    Ok(term_list_body(registry, &answers))
+    let nodes = registry.public();
+    client
+        .work(move || term_list_body(nodes, &answers))
+        .await
+        .map_err(|_| invalid("Hub 聚合任务失败"))
 }
 
-fn term_list_body(registry: &Registry, answers: &[Answer]) -> Value {
-    let mut result = envelope(registry, answers);
+fn term_list_body(nodes: Vec<Value>, answers: &[Answer]) -> Value {
+    let mut result = envelope(nodes, answers);
     result.insert(
         "enabled".into(),
         Value::Bool(answers.iter().any(|answer| answer.flag("enabled"))),
@@ -407,11 +423,15 @@ pub async fn trash(
 ) -> Result<Value, AggregateError> {
     let nodes = selected(registry, query)?;
     let answers = gather(registry, client, nodes, "/api/trash", &upstream(query)).await;
-    Ok(trash_body(registry, &answers))
+    let nodes = registry.public();
+    client
+        .work(move || trash_body(nodes, &answers))
+        .await
+        .map_err(|_| invalid("Hub 聚合任务失败"))
 }
 
-fn trash_body(registry: &Registry, answers: &[Answer]) -> Value {
-    let mut result = envelope(registry, answers);
+fn trash_body(nodes: Vec<Value>, answers: &[Answer]) -> Value {
+    let mut result = envelope(nodes, answers);
     let items: Vec<Value> = answers
         .iter()
         .flat_map(|answer| answer.rows("items"))
@@ -565,7 +585,7 @@ pub fn search_stream(
                 }
             }
         }
-        yield line(&json!({"type": "result", "data": search_body(&registry, &answers)}));
+        yield line(&json!({"type": "result", "data": search_body(registry.public(), &answers)}));
     })
 }
 
@@ -803,7 +823,6 @@ pub async fn purge_all(
 /// node rows reduced to `{id, name, online}`, first 24 hex digits. Only ever
 /// compared with a value this hub produced.
 fn signature(result: &Map<String, Value>) -> String {
-    let mut stable = result.clone();
     let nodes: Vec<Value> = result
         .get("nodes")
         .and_then(Value::as_array)
@@ -816,10 +835,27 @@ fn signature(result: &Map<String, Value>) -> String {
                 .collect()
         })
         .unwrap_or_default();
-    stable.insert("nodes".into(), Value::Array(nodes));
-    let mut text = String::new();
-    sorted_json(&Value::Object(stable), &mut text);
-    let digest = Sha256::digest(text.as_bytes());
+    let nodes = Value::Array(nodes);
+    let mut digest = Sha256::new();
+    let mut keys: Vec<&str> = result.keys().map(String::as_str).collect();
+    if !result.contains_key("nodes") {
+        keys.push("nodes");
+    }
+    keys.sort_unstable();
+    digest.update(b"{");
+    for (index, key) in keys.into_iter().enumerate() {
+        if index > 0 {
+            digest.update(b",");
+        }
+        digest.update(serde_json::to_vec(key).expect("string serializes"));
+        digest.update(b":");
+        sorted_json(
+            if key == "nodes" { &nodes } else { &result[key] },
+            &mut digest,
+        );
+    }
+    digest.update(b"}");
+    let digest = digest.finalize();
     let mut hex = String::with_capacity(24);
     for byte in &digest[..12] {
         hex.push_str(&format!("{byte:02x}"));
@@ -829,33 +865,33 @@ fn signature(result: &Map<String, Value>) -> String {
 
 /// `json.dumps(value, sort_keys=True)`-shaped text: object keys sorted at
 /// every level, compact separators.
-fn sorted_json(value: &Value, out: &mut String) {
+fn sorted_json(value: &Value, out: &mut Sha256) {
     match value {
         Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
             keys.sort();
-            out.push('{');
+            out.update(b"{");
             for (index, key) in keys.iter().enumerate() {
                 if index > 0 {
-                    out.push(',');
+                    out.update(b",");
                 }
-                out.push_str(&serde_json::to_string(key).expect("string serializes"));
-                out.push(':');
+                out.update(serde_json::to_vec(key).expect("string serializes"));
+                out.update(b":");
                 sorted_json(&map[*key], out);
             }
-            out.push('}');
+            out.update(b"}");
         }
         Value::Array(items) => {
-            out.push('[');
+            out.update(b"[");
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
-                    out.push(',');
+                    out.update(b",");
                 }
                 sorted_json(item, out);
             }
-            out.push(']');
+            out.update(b"]");
         }
-        other => out.push_str(&serde_json::to_string(other).expect("scalar serializes")),
+        other => out.update(serde_json::to_vec(other).expect("scalar serializes")),
     }
 }
 

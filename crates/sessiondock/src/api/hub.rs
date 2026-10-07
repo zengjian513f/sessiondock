@@ -540,7 +540,11 @@ async fn handle(
                     aggregate::live(&registry, &client, &params),
                     aggregate::term_list(&registry, &client, &params),
                 );
-                Some(Snapshot::new(sessions.ok()?, live.ok()?, term.ok()?))
+                let (sessions, live, term) = (sessions.ok()?, live.ok()?, term.ok()?);
+                client
+                    .work(move || Snapshot::new(sessions, live, term))
+                    .await
+                    .ok()
             }
         });
         return Ok(crate::ui_events::stream(receiver, state.shutdown.clone()));
@@ -834,7 +838,10 @@ async fn aggregated(state: &HubState, path: &str, query: &Params) -> Result<Resp
         "/api/term/list" => aggregate::term_list(registry, client, query).await?,
         _ => aggregate::trash(registry, client, query).await?,
     };
-    ok(&value)
+    client
+        .work(move || json_response(StatusCode::OK, &value))
+        .await
+        .map_err(|_| Reply::Upstream)
 }
 
 /// 网页只改机器的名称、配色和是否启用；接机器、下机器、地址和凭据仍是服务器端操作。

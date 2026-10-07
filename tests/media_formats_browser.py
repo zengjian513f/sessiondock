@@ -172,6 +172,7 @@ def main():
                     button = page.locator("#a-term")
                     expect(button).to_be_visible()
                     expect(button).to_have_attribute("data-unavailable", "true")
+                    expect(button).to_have_attribute("aria-disabled", "true")
                     assert button.get_attribute("disabled") is None
                     reason = page.evaluate("consoleUnavailableReason(S.sel, S.agent, false)")
                     assert reason and "尚未加载" not in reason and "正在读取" not in reason, reason
@@ -180,8 +181,11 @@ def main():
                         dialogs.append(dialog.message)
                         dialog.accept()
                     on_popup(page, accept_dialog, once=True)
-                    button.click()
-                    assert dialogs == ["控制台不可用：\n" + reason]
+                    expect(button).to_have_attribute("title", reason)
+                    button.focus()
+                    page.keyboard.press("Enter")
+                    expect(page.locator("#float-stack > :visible")).to_have_count(0)
+                    assert not dialogs
                 assert not errors, errors
                 assert all(url.startswith(base + "/") for url in requests), requests
                 assert native_bytes(corpus.root) == original, "native fixture bytes changed"

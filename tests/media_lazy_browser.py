@@ -132,7 +132,7 @@ def main():
                 expect(page.locator(".media-load-error")).to_contain_text("Synthetic media failure 503")
                 expect(page.locator(".media-load-retry")).to_be_visible()
                 expect(page.locator("#a-term")).to_be_visible()
-                expect(page.locator("#a-term")).to_be_enabled()
+                expect(page.locator("#a-term")).to_have_attribute("aria-disabled", "true")
                 images=page.locator("#msgs img")
                 expect(images).to_have_count(2)
                 head_src=images.nth(0).get_attribute("src");tail_src=images.nth(1).get_attribute("src")
@@ -341,7 +341,7 @@ def main():
                 assert abs(page.locator('.history-gap').bounding_box()["y"]-top)<12
                 assert state()["cursor"]==previous
                 expect(page.locator('#a-term')).to_be_visible()
-                expect(page.locator('#a-term')).to_be_enabled()
+                expect(page.locator('#a-term')).to_have_attribute("aria-disabled", "true")
                 assert page.evaluate("document.documentElement.scrollWidth<=innerWidth")
                 assert not errors,errors
                 assert all(url.startswith(base+'/') for url in requests)
