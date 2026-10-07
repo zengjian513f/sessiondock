@@ -117,6 +117,8 @@ Hub 顶栏另有机器 chip，见第 2 节。节点离线、列表/运行状态/
 
 全部展开后行数超过 400（`SIDE_WINDOW_MIN`）时，每个展开组的 `.glist` 只放视口及上下各 600px 内的行，其余由首尾两个 `aria-hidden` 占位块（`.glist-spacer`）撑住高度；组标题全部保留。滚动和尺寸变化时 `layoutSidebarWindow` 只增删进出窗口的行，未变化的行沿用原元素（`placeSidebarRows`，与全量渲染同一套签名对账，离开窗口的行先删，保留下来的行不移动）。行高按行键记住实测值，未渲染过的行用同类行均值估计；`#side` 关闭了 `overflow-anchor`，窗口更新后按视口顶部的那一行补偿滚动位置。
 
+时间轴路径必须先完成缩写，再测量并缓存行高；否则长路径的临时换行高度会被当成实际行高，滚动时只渲染少量行并露出占位空白。窄屏、资源列切换和跨日期分组滚动由 [`tests/sidebar_flat_scroll_browser.py`](../tests/sidebar_flat_scroll_browser.py) 覆盖。
+
 逻辑行序始终是每组的 `group._rows`，不依赖 DOM：多选拖选的范围按 `sidebarPickOrder` 计算，可以跨过未渲染的行；整组勾选、全选、计数照旧。深链、父会话链「显示」和选中都走 `sidebarRowNode(uid, agent, true)`，按估计位置滚过去再渲染并 `scrollIntoView`。侧栏里有文字选区或焦点时，所在行在滚动中保留在窗口内，选区不丢。层叠三角在窗口模式下只改 `group._rows` 再重排窗口。行数不超过阈值时仍全部渲染，行为与以前相同。[`tests/sidebar_scale_browser.py`](../tests/sidebar_scale_browser.py)。
 
 左栏宽度 `width`，默认 340，最小 200。拖 `#drag`，双击回到默认。资源列打开时视觉宽度再加 144，存的仍是不含这 144 的值（`setSideWidth`）。

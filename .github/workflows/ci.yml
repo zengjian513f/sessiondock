@@ -79,7 +79,7 @@ jobs:
       - name: browser regression suites
         run: >-
           python3 tests/run_validation.py --keep-going --browser-jobs 2
-          --only legacy_browser,server_log_browser,terminal_final_screen_browser,history_browser,index_append_browser,hub_nest_browser,hub_scale_browser,hub_cache_browser,list_delta_browser,ui_events_browser,draft_sync_browser,conversation_performance_browser,frontend_search_state_browser
+          --only legacy_browser,server_log_browser,terminal_final_screen_browser,history_browser,index_append_browser,sidebar_flat_scroll_browser,hub_nest_browser,hub_scale_browser,hub_cache_browser,list_delta_browser,ui_events_browser,draft_sync_browser,conversation_performance_browser,frontend_search_state_browser
           --json target/validation/ci.json
       - if: always()
         uses: actions/upload-artifact@v4
