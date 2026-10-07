@@ -509,29 +509,26 @@ def main():
                         clear(source)
                         loaded(source, fixture_frame(source, positive))
                         pause_background()
-                        # Hold the real click's completed CHECK. Replace only this
-                        # test's host before allowing the bound answer to continue.
-                        page.evaluate('''() => {
-                            window.__heldMenuCheck = null;
-                            const probe = probeComposerInput;
-                            window.__resumeMenuCheck = null;
-                            probeComposerInput = async uid => {
-                                const result = await probe(uid);
-                                __heldMenuCheck = result;
-                                await new Promise(resolve => { __resumeMenuCheck = resolve; });
-                                return result;
-                            };
-                            window.__restoreMenuProbe = () => { probeComposerInput = probe; };
-                        }''')
+                        # Hold the actual browser send after CHECK has built
+                        # its instance-bound request. Pausing CHECK instead lets
+                        # background lifecycle updates cancel the click before
+                        # any request exists, racing this backend rejection test.
+                        held_sends = []
+                        def hold_send(route):
+                            held_sends.append(route)
+                        page.route('**/api/term/send', hold_send)
                         replacement = None
                         host_binary = REPO / 'target/debug/ptyhost'
                         kill = [str(host_binary), '--dir', str(root / 'host'), 'kill', receipt['name'], '--force']
                         count, dialog_count = len(writes), len(dialogs)
                         try:
                             card.locator('.question-option:enabled').first.click()
-                            page.wait_for_function('!!__resumeMenuCheck && !!__heldMenuCheck?.prompt')
-                            held = page.evaluate('__heldMenuCheck.prompt.id')
-                            assert held == page.evaluate('composerDraft().inputPrompt.id')
+                            deadline = time.monotonic() + 10
+                            while not held_sends:
+                                assert time.monotonic() < deadline, 'Menu click did not issue its bound send'
+                                page.wait_for_timeout(10)
+                            assert len(held_sends) == 1
+                            assert held_sends[0].request.post_data_json['instance_id'] == receipt['instance_id']
                             subprocess.run(kill, check=True, capture_output=True, timeout=5)
                             record_path = root / 'host' / (receipt['name'] + '.json')
                             deadline = time.monotonic() + 5
@@ -559,7 +556,7 @@ def main():
                                 page.wait_for_timeout(20)
                             assert current['meta']['instance_id'] == replacement_id
                             with page.expect_response(lambda response: urlsplit(response.url).path == '/api/term/send') as refused:
-                                page.evaluate('__resumeMenuCheck()')
+                                held_sends.pop().continue_()
                             response = refused.value
                             assert response.status >= 400 and response.json().get('error'), (response.status, response.json())
                             page.wait_for_function('!composerDraft()?.inputAnswer')
@@ -571,7 +568,10 @@ def main():
                             del dialogs[dialog_count:]
                             print('PASS agy: same-name instance replacement refused; no PTY keys or retry', flush=True)
                         finally:
-                            page.evaluate(('() => { ' + '__restoreMenuProbe(); __resumeMenuCheck?.(); composerInputProbeBusy = false; __pauseMenuWatch = false' + ' }'))
+                            for route in held_sends:
+                                route.abort()
+                            page.unroute('**/api/term/send', hold_send)
+                            page.evaluate('() => { composerInputProbeBusy = false; __pauseMenuWatch = false; }')
                             if replacement is not None:
                                 subprocess.run(kill, check=True, capture_output=True, timeout=5)
                                 try:
