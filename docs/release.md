@@ -42,7 +42,8 @@ Fleet deployment does not use this package; it keeps using
 ## Release acceptance
 
 Before tagging `v*`, on a development node with Playwright and the CLIs logged
-in (cygnus has Claude and Codex):
+in (cygnus has Claude and Codex; lyra has Grok and Agy, with Playwright in its
+`p311` Conda environment):
 
 1. Commit everything and run the full sweep: `python3 tests/run_validation.py`
    (the Cargo lanes on lyra).
@@ -64,10 +65,17 @@ credits and need the operator's CLI logins.
 | `prompt_claude_real` | Claude (`claude-haiku-4-5-20251001`) | AskUserQuestion card pushed to the page, answered in the browser, answer in the native record, card cleared |
 | `send_codex_startup_browser_real` | Codex (`gpt-5.6-luna`) | cold-start SEND from a new session: one exact native user message and a reply |
 | `bug_report_codex_browser_real` | Codex (`gpt-5.6-luna`) | report dialog, native rename and the worker's first task |
+| `send_grok_browser_real` | Grok (`grok-4.6`, low) | model and effort chosen in the picker, one composer SEND, one native user query and a reply |
+| `agy_real_browser` | Agy, loopback synthetic gateway | models/argv, composer, native binding and history, menu guards, stopped-session continuation |
+| `agy_interactions_real_browser` | Agy, loopback synthetic gateway | native approvals, questions, write-in answers and menu commands |
+| `agy_tools_real_browser` | Agy, loopback synthetic gateway | native `view_file` text and PNG results opened in Chromium |
 
-Grok and Agy have no runnable real suite yet (the Agy ones are marked
-`run_validation: skip`); their coverage stays with the synthetic browser
-suites.
+The Agy suites run the installed real CLI against a local synthetic model, so
+they need no login and spend no credits; they still need the CLI installed.
+A suite on a machine without its CLI fails rather than skipping.
+
+Run on 2026-10-07 on lyra: `send_grok_browser_real` and the three Agy suites
+passed (Agy 1.3.0, Grok 1.0.44).
 
 Run on 2026-10-06: `prompt_claude_real` passed after the launcher began
 clearing Claude Code's in-session markers (`CLAUDE_CODE_CHILD_SESSION` from a

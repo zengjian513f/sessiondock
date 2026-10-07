@@ -200,11 +200,11 @@ composer 路径；真实 CLI 浏览器核对了处理会话、完整报告提示
 | --- | --- | --- |
 | [agy_browser.py](../tests/agy_browser.py) | `python3 tests/agy_browser.py --binary target/debug/sessiondock`；fake CLI pending，新建、effort argv、终端键入、刷新重连、清理、未安装与 390 px 深浅主题 | 不证明 native history 或真实 CLI 恢复 |
 | [agy_history_browser.py](../tests/agy_history_browser.py) | `python3 tests/agy_history_browser.py --binary target/debug/sessiondock`；native schema seeds，Chromium 列表/搜索/分页/增量/旧记录改写/回退/DB 替换/重启/transcript 缺失与恢复/目录行删除/图片/原始工具字段/错误、删除提示及混合组移动克隆拒绝，检查原生字节及 mtime 不被修改 | 合成 schema，图片路径已有通过记录；不证明真实工具或媒体产出，不是原生删除 API 测试 |
-| [agy_real_browser.py](../tests/agy_real_browser.py) | 直接显式运行 `python3 tests/agy_real_browser.py --agy <absolute CLI path> --binary target/debug/sessiondock --ptyhost target/debug/ptyhost`；临时 HOME/XDG、私有目录和 loopback 合成 gateway，真实 CLI + Chromium | operator only，`run_validation: skip`；验证发送、多行、绑定、思考、网页发送菜单命令不等待原生回显、菜单阻发/回答/取消、停止恢复、问题报告与窄屏；不调用付费模型 |
-| [agy_tools_real_browser.py](../tests/agy_tools_real_browser.py) | 直接显式运行并提供 `--agy <absolute CLI path> --binary target/debug/sessiondock`；真实 CLI 读取临时文本和 PNG，再由 Chromium 展开原生工具历史和加载图片 | operator only，`run_validation: skip`；loopback 合成模型，核对实际请求模型；不证明跨步骤配对或其他工具语义 |
+| [agy_real_browser.py](../tests/agy_real_browser.py) | `python3 tests/agy_real_browser.py`（`run_validation --real-only` 发布验收；`--agy` 默认取已安装的 `agy`）；临时 HOME/XDG、私有目录和 loopback 合成 gateway，真实 CLI + Chromium | operator only，`--real-only`；验证发送、多行、绑定、思考、网页发送菜单命令不等待原生回显、菜单阻发/回答/取消、停止恢复、问题报告与窄屏；不调用付费模型 |
+| [agy_tools_real_browser.py](../tests/agy_tools_real_browser.py) | `python3 tests/agy_tools_real_browser.py`（`--real-only`）；真实 CLI 读取临时文本和 PNG，再由 Chromium 展开原生工具历史和加载图片 | operator only，`--real-only`；loopback 合成模型，核对实际请求模型；不证明跨步骤配对或其他工具语义 |
 | [agy_clients_browser.py](../tests/agy_clients_browser.py) | 本机与 Hub 的模型、强度 argv、版本、官方 manifest、更新成功/失败、未安装与离线门控 | 仅运行私有假 CLI/curl，不修改已安装客户端 |
 | [cli_menus_browser.py](../tests/cli_menus_browser.py) | `--sources agy`；28 个捕获/边界夹具，含本次脱敏报告画面 | Chromium 点击选项、操作和文本提交，验证过期画面、命令/信任路径变化及同名宿主实例替换不写入；回放保留捕获列宽 |
-| [agy_interactions_real_browser.py](../tests/agy_interactions_real_browser.py) | 显式 `--agy PATH --binary PATH --ptyhost PATH`；真实 1.2.17、私有 HOME 和 loopback 模型；审批、问卷、自填及五个菜单命令 | 实际 wire 模型为 `gemini-3.1-pro-preview`；验证单次/拒绝/取消/补充说明、会话/持久授权及后续命令、创建文件、多选和前后题；无账号或付费请求 |
+| [agy_interactions_real_browser.py](../tests/agy_interactions_real_browser.py) | `python3 tests/agy_interactions_real_browser.py`（`--real-only`）；真实 CLI、私有 HOME 和 loopback 模型；审批、问卷、自填及五个菜单命令 | 实际 wire 模型为 `gemini-3.1-pro-preview`；验证单次/拒绝/取消/补充说明、会话/持久授权及后续命令、创建文件、多选和前后题；无账号或付费请求 |
 
 能力限制：可靠工具配对、回合三态、原生子代理及非交互删除能力尚未证实。
 历史工具/媒体验收覆盖 `view_file` 的文本和 PNG；交互验收另覆盖临时命令、创建文件

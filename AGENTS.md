@@ -59,8 +59,8 @@
   identity configured; push from lyra. Do not describe GitHub credentials as
   a requirement for committing.
 - Run Playwright Chromium validation on a machine where it is installed
-  (currently cygnus). Lyra currently lacks Playwright, while cygnus lacks
-  Cargo. The deploy test gate may need both, so arrange access to both tools
+  (cygnus; lyra only in its `p311` Conda Python, used for the Grok and Agy
+  real-CLI suites). Cygnus lacks Cargo. The deploy test gate may need both, so arrange access to both tools
   before using it. If a gate cannot run, record which checks actually ran;
   `--test none` is not itself validation.
 
