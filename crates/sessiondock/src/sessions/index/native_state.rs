@@ -2,7 +2,7 @@
 //! Cold reads walk backwards to the latest model/turn boundary; appends
 //! inspect only new complete lines. No message projection is retained.
 
-use std::io;
+use std::{borrow::Cow, io};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -76,12 +76,17 @@ pub(super) fn read(
             let lf = memchr::memrchr(b'\n', &bytes[..end]);
             let begin = lf.map_or(0, |offset| offset + 1);
             if terminated {
-                pieces.push(bytes[begin..end].to_vec());
                 if lf.is_some() || start == floor {
-                    // Join a cross-chunk record once, avoiding quadratic copies
-                    // for long native records. Only scalar fields are decoded.
-                    let raw: Vec<u8> = pieces.iter().rev().flatten().copied().collect();
-                    pieces.clear();
+                    // Most records fit in this chunk: inspect those bytes in
+                    // place. Join only records that cross chunk boundaries.
+                    let raw = if pieces.is_empty() {
+                        Cow::Borrowed(&bytes[begin..end])
+                    } else {
+                        pieces.push(bytes[begin..end].to_vec());
+                        let raw: Vec<u8> = pieces.iter().rev().flatten().copied().collect();
+                        pieces.clear();
+                        Cow::Owned(raw)
+                    };
                     if (memchr::memmem::find(&raw, b"event_msg").is_some()
                         || memchr::memmem::find(&raw, b"response_item").is_some()
                         || memchr::memmem::find(&raw, b"assistant").is_some()
@@ -133,6 +138,8 @@ pub(super) fn read(
                             break 'chunks;
                         }
                     }
+                } else {
+                    pieces.push(bytes[begin..end].to_vec());
                 }
             } else if let Some(lf) = lf {
                 // Ignore the trailing partial line until its LF is appended.
@@ -152,15 +159,10 @@ pub(super) fn read(
             None => turn,
         };
     }
-    // Appends do not invalidate the prefix just scanned. Cache the original
-    // stamp/committed LF so the next observation reads the new suffix. A
-    // rewrite, truncation or replacement still invalidates this observation.
-    if !file.stamp().is_some_and(|after| {
-        (after.dev, after.ino) == (stamp.dev, stamp.ino)
-            && (after == stamp || after.size > stamp.size)
-    }) {
-        return Err(io::Error::other("Native state scan changed during read"));
-    }
+    // As with head/tail summaries, publish complete bytes already read with
+    // their starting stamp. A concurrent mtime update is not an I/O failure.
+    // The next refresh sees the changed stamp; the filter above rebuilds on
+    // same-size rewrites, truncation and inode changes, or scans a new suffix.
     Ok(Scan {
         stamp,
         committed,

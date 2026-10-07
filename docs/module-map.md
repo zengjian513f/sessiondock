@@ -10,7 +10,7 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 195 files, 84027 lines, 5 undocumented.
+`crates/sessiondock/src`: 195 files, 84035 lines, 5 undocumented.
 
 - `api/`
   - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines)
@@ -169,10 +169,10 @@ python3 tests/module_map.py --write
   - `index/`
     - `agent_stops.rs` — Subagent stop evidence from the owner's native transcript. (267 lines)
     - `graph.rs` — Ownership and fork graph over row summaries. (875 lines)
-    - `mod.rs` — Lazy session index: directory walk + `stat` + bounded (1582 lines)
+    - `mod.rs` — Lazy session index: directory walk + `stat` + bounded (1588 lines)
       - mods: `agent_stops`, `graph`, `names`, `native_state`, `summary`, `titles`
     - `names.rs` — Codex `session_index.jsonl` names applied to summary rows. (200 lines)
-    - `native_state.rs` — Scalar Codex turn and Claude/Codex model state, independent of head/tail windows. (177 lines)
+    - `native_state.rs` — Scalar Codex turn and Claude/Codex model state, independent of head/tail windows. (179 lines)
     - `summary/`
       - `agy.rs` — Agy row summary from the SessionDock mirror (`sessions::agy`): (113 lines)
       - `claude.rs` — Claude row summary: `ClaudeAdapter._meta` (main transcripts, including (471 lines)

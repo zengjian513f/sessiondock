@@ -169,7 +169,7 @@ def main(binary=BINARY):
             browser = playwright.chromium.launch(**options)
             try:
                 with isolated_server(corpus, binary, host_dir=root / "host", lifecycle_dir=root / "ledger",
-                                     launcher_config=configuration, state_dir=root / "state") as (base, opener):
+                                     launcher_config=configuration, state_dir=root / "state", log_path=root / 'server.log') as (base, opener):
                     errors = []
                     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
                     context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
@@ -387,6 +387,9 @@ def main(binary=BINARY):
                             page.evaluate("async () => await loadSessions(true)")
                             expect(page.locator(f'#side .item[data-uid="{codex_uid}"]:not(.agent)')).to_have_count(1)
                             row = page.evaluate("uid => S.sessions.find(row => row.uid === uid)", codex_uid)
+                            if not row or row.get('sid') != CODEX_SID or row.get('turn') != 'working':
+                                print('NATIVE READ DIAGNOSTICS', '\n'.join(line for line in (root / 'server.log').read_text().splitlines()
+                                    if 'native_state.read_failed' in line), flush=True)
                             assert row and row["sid"] == CODEX_SID and row["turn"] == "working", row
                     finally:
                         stop_append.set(); writer.join(timeout=5)
