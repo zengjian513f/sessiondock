@@ -74,7 +74,8 @@ def check_unavailable_pause(page, reason):
         button = freeze_button(page)
         expect(button.locator('use')).to_have_attribute('href', '#i-pause')
         # SVG geometry catches an empty/invisible glyph, not just button layout.
-        assert button.locator('use').evaluate('e => e.getBBox().height') > 0
+        page.wait_for_function(
+            "document.querySelector('#a-session-freeze use')?.getBBox().height > 0")
         expect(button).to_have_attribute('aria-disabled', 'true')
         expect(button).to_have_attribute('aria-label', '冻结现场')
         expect(button).to_have_attribute('title', re.compile(reason))

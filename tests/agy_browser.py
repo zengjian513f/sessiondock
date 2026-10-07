@@ -44,8 +44,10 @@ for line in sys.stdin:
 
 
 def open_picker(page):
-    # Resolve the visible control at click time: responsive header relayout
-    # can move New between this check and Playwright's click retry.
+    # Let media-query and ResizeObserver work settle before choosing a control.
+    # A click retry keeps its attached element even after header relayout moves
+    # New into the hidden overflow menu.
+    page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
     page.locator('#new-session:visible, #header-more-btn:visible').first.click()
     if not page.locator('#new-session-dialog').is_visible():
         page.locator('#new-session').click()

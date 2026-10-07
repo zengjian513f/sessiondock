@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 import json
 import tempfile
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, Corpus, codex_row, isolated_server
 
 
@@ -59,8 +59,9 @@ def check_responsive_drawer(page, screenshots):
             # The final metric must remain reachable in a short landscape viewport.
             last = page.locator('.sr-node .sr-metric').last
             last.focus()
-            rect = last.bounding_box()
-            assert rect['y'] >= -1 and rect['y'] + rect['height'] <= height + 1, (case, rect)
+            # Background refresh can replace the metric between focus and
+            # measurement. Resolve the current node and retry its visibility.
+            expect(last).to_be_in_viewport(ratio=1)
             page.locator('.sr-top').scroll_into_view_if_needed()
             page.evaluate("document.documentElement.dataset.theme = 'dark'")
             assert_drawer_layout(page, case + '-dark')

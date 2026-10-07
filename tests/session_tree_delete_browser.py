@@ -183,12 +183,19 @@ def main():
                     page.evaluate('''() => {const bar=document.querySelector('#delete-tree-dialog [role=progressbar]'); new MutationObserver(()=>window.treeProgress(Number(bar.getAttribute('aria-valuenow')))).observe(bar,{attributes:true,attributeFilter:['aria-valuenow']});}''')
                     if restart:
                         def lose_reply(route):
-                            route.fetch();route.abort('failed')
+                            response = route.fetch()
+                            print(f'INFO simulated lost delete response: HTTP {response.status}', flush=True)
+                            route.abort('failed')
                         page.route('**/api/session/tree/delete',lose_reply,times=1)
                     started=time.monotonic()
                     with page.expect_request('**/api/session/tree/delete') as outgoing:dialog.locator('.tree-confirm').click()
                     receipts.append(outgoing.value.post_data_json)
-                    expect(dialog.locator('.transfer-progress-label')).to_have_text('整棵会话树已移入回收站',timeout=20000)
+                    try:
+                        expect(dialog.locator('.transfer-progress-label')).to_have_text('整棵会话树已移入回收站',timeout=20000)
+                    except AssertionError:
+                        print('DELETE diagnostic: ' + dialog.inner_text(), flush=True)
+                        print('DELETE requests: ' + json.dumps(attempts), flush=True)
+                        raise
                     elapsed=time.monotonic()-started
                     print(f'INFO confirmed tree delete to completed UI: {elapsed:.3f}s',flush=True)
                     assert values and values==sorted(values) and values[-1]==100,values
@@ -204,7 +211,9 @@ def main():
                     repeat=page.request.post(f'http://127.0.0.1:{hub.port}/api/session/tree/delete',data=receipts[-1]);assert repeat.ok,repeat.text()
                     assert repeat.json()['phase']=='complete'
                     dialog.locator('.tree-close').click()
-                    # Open trash through the page and restore the whole tree in one click.
+                    # Open trash after list/heading layout settles; otherwise a
+                    # ResizeObserver callback can close the mobile overflow menu.
+                    page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
                     if restart:page.locator('#header-more-btn').click()
                     page.locator('#trash').click()
                     item=page.locator('.trash-item');expect(item).to_have_count(1)

@@ -349,6 +349,8 @@ def main():
                             peak[0] = max(peak[0], len(outstanding))
                     def on_stop_response(response):
                         outstanding.discard(response.request)
+                        if urlsplit(response.url).path == "/api/session/stop" and not response.ok:
+                            print(f"STOP response {response.status}: {response.text()}", flush=True)
                     context.on("request", on_stop_request)
                     context.on("response", on_stop_response)
                     started = time.monotonic()
