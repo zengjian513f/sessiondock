@@ -10,8 +10,8 @@ use std::{
 };
 
 pub use model::{
-    ActivityStop, Attachment, GroupCatalog, GroupCatalogUpdate, MetadataSnapshot, NestParent,
-    PendingRewind, SCHEMA_VERSION, StopState, TimelinePin, fork_parent_uids,
+    Attachment, GroupCatalog, GroupCatalogUpdate, MetadataSnapshot, NestParent, SCHEMA_VERSION,
+    TimelinePin, fork_parent_uids,
 };
 
 pub const METADATA_FILENAME: &str = "session-metadata.json";
@@ -200,9 +200,6 @@ impl MetadataStore {
     ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
         self.update(|snapshot| snapshot.with_nest_display(uid, parent))
     }
-
-    // Domain-only hooks for a future authenticated, verified terminal workflow.
-    // These methods do not perform the native action or establish confirmation.
 
     /// Persist a pin that follows a rewind the CLI made on its own screen. The
     /// caller must have verified the target against the frozen native

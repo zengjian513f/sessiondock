@@ -142,12 +142,6 @@ pub(super) struct Row {
     #[serde(skip_serializing_if = "no")]
     fork_parent_visible: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    stopped: Option<ActivityStop>,
-    #[serde(skip_serializing_if = "zero")]
-    activity_revision: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    rewind_pending: Option<PendingRewind>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     timeline: Option<TimelinePin>,
     #[serde(skip_serializing_if = "zero")]
     timeline_revision: u64,
@@ -182,28 +176,6 @@ pub struct Attachment {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     pub at: f64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StopState {
-    Idle,
-    Aborted,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ActivityStop {
-    pub at: f64,
-    pub reason: String,
-    pub state: StopState,
-    pub inferred: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PendingRewind {
-    pub from_tip: String,
-    pub stale_end: u64,
-    pub started_at: f64,
 }
 
 /// A persisted display pin: the read model shows the Claude tree as if `tip`

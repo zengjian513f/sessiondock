@@ -22,9 +22,6 @@
 - [ ] 部署补发（不阻塞 [Agy](docs/agy.md) 接入）：Linux、macOS、Windows
   各一个节点网络不可达，恢复联机后用官方部署工具补发并验证。
 
-- [ ] 若仍需要 activity stop 覆盖，先定义原生确认和退役语义，再接入读模型；不得仅凭
-  HTTP 或终端写入成功声明完成。
-
 ## Operations and release engineering
 
 - [ ] 评估是否仍需独立合成语料统计工具，以及由源码生成的预算参考表；仅维护

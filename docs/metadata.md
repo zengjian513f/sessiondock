@@ -67,13 +67,10 @@ so inherited titles do not make distinct generations look like duplicate rows.
 The fork-chain menu still opens, shows and hides each ancestor independently;
 labels never change saved visibility or native transcripts.
 
-Activity-stop and timeline structures are domain hooks for later verified
-terminal integration, not authorization to perform native operations. An
-activity stop can replace older working/waiting status but not a newer turn.
-Only inferred stops can be cleared by inferred-stop cleanup. A pending rewind
-survives restart without changing the confirmed display leaf; confirming it
-requires a pending operation and must happen only after external native
-confirmation. These methods themselves do not establish that confirmation.
+DELTA: the Python baseline stored activity stops (`网页发送 Escape`, inferred
+terminal-exit or idle stops) and pending rewinds per session. SessionDock never
+applied them; their structures were removed on 2026-10-07 and such fields in an
+existing metadata file are ignored and dropped by the next metadata write.
 
 ## Timeline pins
 

@@ -91,7 +91,7 @@ def main():
                     source_doc['sessions'][selected]={'group':'source-group','fork_parent_visible':True}
                     source_metadata.write_text(json.dumps(source_doc))
                     target_metadata=root/'destination/state/session-metadata.json'
-                    target_before={'starred':True,'starred_at':123,'group':'target-group','activity_revision':7}
+                    target_before={'starred':True,'starred_at':123,'group':'target-group','timeline_revision':7}
                     unrelated='claude:ffffffffffffffff'
                     peer.write(target_metadata,json.dumps({'schema_version':1,'revision':1,'sessions':{
                         selected:target_before,unrelated:{'starred':True}}}).encode())
@@ -166,7 +166,7 @@ def main():
                         assert operation['metadata_replaced'][selected]==target_before
                         published_metadata=json.loads(peer.read(target_metadata))['sessions'][selected]
                         assert published_metadata=={**source_doc['sessions'][selected],
-                            'activity_revision':7,'clone_operation':result['operation_id']},published_metadata
+                            'timeline_revision':7,'clone_operation':result['operation_id']},published_metadata
                         if provider=='codex':
                             receipt=peer.call('receipt',path=str(database),operation_id=result['operation_id'])['receipt']
                             old_rows=[r for t in receipt['replaced']['tables'] if t['name']=='threads' for r in t['rows']]
