@@ -4621,6 +4621,12 @@ function layoutSidebarWindow({force = false, top = null} = {}) {
       placeSidebarRows(ul, rows.slice(start, end), context, {before, after});
       group._window = {start, end};
     }
+    // Abbreviating a timeline path can remove many wrapped lines. Measure
+    // only its final layout, otherwise the window treats empty space as rows.
+    if (S.view === 'date' && changed.length) {
+      fitTimelineDirectories(changed.flatMap(plan => [...plan.ul.querySelectorAll('.cwd-path')]),
+        force ? null : timelineFitContext);
+    }
     // Remember real heights; a hidden sidebar has none to measure.
     if (side.clientHeight) {
       for (const plan of changed) {
@@ -4643,9 +4649,6 @@ function layoutSidebarWindow({force = false, top = null} = {}) {
     if (anchor?.isConnected && anchorTop !== undefined) {
       const delta = anchor.getBoundingClientRect().top - anchorTop;
       if (Math.abs(delta) >= 1) side.scrollTop += delta;
-    }
-    if (S.view === 'date' && changed.length) {
-      fitTimelineDirectories(changed.flatMap(plan => [...plan.ul.querySelectorAll('.cwd-path')]), timelineFitContext);
     }
     return changed.map(plan => plan.group);
   } finally {
