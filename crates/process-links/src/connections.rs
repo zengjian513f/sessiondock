@@ -185,6 +185,34 @@ impl Tracker {
         None
     }
 
+    /// Fork events can arrive before their parent's binding, or while a
+    /// snapshot/catalog refresh still predates that fork. Resolve the retained
+    /// incarnation graph again instead of depending on immediate inheritance.
+    pub fn ancestor_binding<'a>(
+        &self,
+        process: &Process,
+        snapshot: &Snapshot,
+        bindings: &'a BTreeMap<Process, Binding>,
+    ) -> Option<&'a Binding> {
+        let mut current = self.parents.get(process)?;
+        let mut seen = BTreeSet::new();
+        while seen.insert(current) {
+            if self.shared.contains(current)
+                || snapshot
+                    .entries
+                    .get(&current.pid)
+                    .is_some_and(|e| e.process == *current && e.shared_parent)
+            {
+                return None;
+            }
+            if let Some(binding) = bindings.get(current) {
+                return Some(binding);
+            }
+            current = self.parents.get(current)?;
+        }
+        None
+    }
+
     pub fn update(
         &mut self,
         snapshot: &Snapshot,

@@ -156,6 +156,10 @@ def synthetic(fixture,pw):
                 saved['connections']['origins'].append([proc(pid+2000),{'connection':conn(port),'at':now+at}])
         else:
             proc_pid(fixture.procs[0],100,'codex',['codex'],1,fds={3:str(fixture.corpora[0].paths['parent'])})
+            # The fork graph can precede attribution; no inherited environment,
+            # live parent, or immediate fork-time binding remains to help.
+            proc_pid(fixture.procs[0],300,'python',['python','preprocess.py'],1)
+            saved['connections']['parents'] = [[proc(300),proc(200)],[proc(200),proc(100)]]
         for entry in fixture.procs[index].iterdir():
             if entry.name.isdigit():
                 stat=entry/'stat'
@@ -167,7 +171,9 @@ def synthetic(fixture,pw):
     wait_for(lambda: {b['process']['pid'] for b in fixture.bindings()} == {500,501})
     bindings = {b['process']['pid']:b for b in fixture.bindings()}
     assert bindings[500]['session']['sid']=='parent' and bindings[501]['session']['sid']=='other', bindings
-    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='2')
+    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='3')
+    assert any(b['process']['pid']==300 and b['session']['sid']=='parent'
+               for b in fixture.report(0)['bindings'])
     item.locator('.item-resources').click()
     page.wait_for_function("document.querySelectorAll('.session-resources .sr-node').length===2")
     page.get_by_role('button',name='关闭资源面板').click()
@@ -181,7 +187,13 @@ def synthetic(fixture,pw):
     stat.write_text(stat.read_text().replace(' 50000 ',' 50001 '))
     wait_for(lambda: not any(b['process']['pid']==500 for b in fixture.bindings()))
     page.evaluate('SessionDockSidebarResources.refresh()')
+    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='2')
+    stat=fixture.procs[0]/'300/stat'
+    stat.write_text(stat.read_text().replace(' 30000 ',' 30001 '))
+    wait_for(lambda: not any(b['process']['pid']==300 for b in fixture.report(0)['bindings']))
+    page.evaluate('SessionDockSidebarResources.refresh()')
     wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='1')
+    print('PASS late local fork attribution recovers through exited parents, survives restart and rejects PID reuse',flush=True)
     print('PASS closed IPv6 SSH evidence, late descendants, collector/Hub restart, tuple reuse, unknown/ambiguous/shared rejection, PID reuse and browser resources',flush=True)
 
 
@@ -288,7 +300,8 @@ for line in sys.stdin:
     assert not fixture.report(0)['outgoing'], 'SSH clients must never appear in a polling snapshot'
     incoming=wait_for(lambda: {r['process']['pid']:r for r in fixture.report(1)['incoming']} if
                       {first,second} <= {r['process']['pid'] for r in fixture.report(1)['incoming']} else None)
-    assert all(incoming[pid]['started_at']>incoming[pid]['connection_at']+3 for pid in (first,second)),incoming
+    # /proc/stat btime has integer-second precision; BPF event time does not.
+    assert all(incoming[pid]['started_at']>incoming[pid]['connection_at']+2 for pid in (first,second)),incoming
     fixture.restart_agents()  # No Hub correlation has happened yet.
     page,item=fixture.browser(pw)
     wait_for(lambda:{first,second} <= {b['process']['pid'] for b in fixture.bindings()})
@@ -311,6 +324,118 @@ for line in sys.stdin:
     for index in (0,1):
         assert fixture.report(index)['collector']['lost_events']==0,fixture.report(index)['collector']
     print('PASS real ControlMaster/ControlPersist fork/listener exclusion; no attribution by shared transport',flush=True)
+    local_launch_matrix(fixture, page, item, run)
+
+
+def local_launch_matrix(fixture, page, item, run):
+    """Real kernel launches, with only this fixture's PIDs visible to samplers."""
+    root = fixture.root
+    jobs = root / 'local-jobs'
+    jobs.mkdir()
+    worker = jobs / 'worker.py'
+    worker.write_text('''import os,sys,time
+from pathlib import Path
+root=Path(sys.argv[1]); tag=sys.argv[2]
+if tag=='double-fork':
+    if os.fork(): os._exit(0)
+    os.setsid()
+    if os.fork(): os._exit(0)
+# Ensure the launch shell is gone before exposing this PID to polling.
+time.sleep(.5)
+(root/(tag+'.pid')).write_text(str(os.getpid()))
+while not (root/'stop').exists(): time.sleep(.05)
+''')
+    spawned = []
+    def cleanup():
+        (jobs / 'stop').touch()
+        for pid in spawned:
+            wait_for(lambda p=pid: not Path(f'/proc/{p}/stat').exists()
+                     or Path(f'/proc/{p}/stat').read_text().rsplit(')',1)[1].split()[0]=='Z')
+    fixture.stack.callback(cleanup)
+    def expose(tag):
+        wait_for(lambda: (jobs / (tag + '.pid')).exists())
+        pid = int((jobs / (tag + '.pid')).read_text())
+        print('LAUNCH', tag, pid, flush=True)
+        spawned.append(pid)
+        (fixture.procs[0] / str(pid)).symlink_to(Path('/proc') / str(pid))
+        return pid
+    tracked = []
+    for tag, prefix in (('background', ''), ('nohup', 'nohup '),
+                        ('setsid', 'setsid nohup '), ('env-clear', 'env -i '),
+                        ('double-fork', '')):
+        command = prefix + shlex.join(['/usr/bin/python3', str(worker), str(jobs), tag])
+        run(['/bin/sh', '-c', command + ' </dev/null >/dev/null 2>&1 &'])
+        tracked.append(expose(tag))
+    spawner = jobs / 'spawn.py'
+    spawner.write_text('''import subprocess,sys,multiprocessing
+def launch():
+    subprocess.run(sys.argv[2:],check=True)
+if __name__=='__main__':
+    if sys.argv[1]=='pool':
+        multiprocessing.set_start_method('spawn')
+        child=multiprocessing.Process(target=launch); child.start(); child.join()
+    else:
+        subprocess.Popen(sys.argv[2:],start_new_session=True,env={},
+                         stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+''')
+    run(['/usr/bin/python3', str(spawner), 'popen', '/usr/bin/python3', str(worker), str(jobs), 'popen'])
+    tracked.append(expose('popen'))
+    command = shlex.join(['/usr/bin/python3', str(spawner), 'pool', '/usr/bin/python3', str(worker), str(jobs), 'pool'])
+    run(['/bin/sh', '-c', command + ' </dev/null >/dev/null 2>&1 &'])
+    tracked.append(expose('pool'))
+    wait_for(lambda: set(tracked) <= {b['process']['pid'] for b in fixture.report(0)['bindings']
+                                    if b['session']['sid']=='parent'})
+    page.evaluate('SessionDockSidebarResources.refresh()')
+    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text() == str(3 + len(tracked)))
+    item.locator('.item-resources').click()
+    page.get_by_role('button', name='仅当前会话', exact=True).click()
+    page.get_by_role('button', name='刷新资源').click()
+    page.get_by_role('button', name='关闭资源面板').click()
+    print('PASS real background/nohup/setsid/double-fork/env-clear/Popen/multiprocessing launch attribution', flush=True)
+
+    # Daemon-mediated requests are not process ancestry. An existing private
+    # tmux server and systemd create controls without session identity variables.
+    tmux_socket = str(jobs / 'tmux.sock')
+    clean_env = {k:v for k,v in os.environ.items() if not k.startswith(('CODEX_', 'CLAUDE_', 'GROK_'))}
+    subprocess.run(['tmux','-S',tmux_socket,'new-session','-d','-s','control','sleep 120'],
+                   env=clean_env, check=True, timeout=10)
+    fixture.stack.callback(lambda: subprocess.run(['tmux','-S',tmux_socket,'kill-server'],
+                                                  capture_output=True,timeout=10))
+    run(['tmux','-S',tmux_socket,'new-window','-t','control',
+         shlex.join(['/usr/bin/python3',str(worker),str(jobs),'tmux-control'])])
+    controls = [expose('tmux-control')]
+    unit = 'sessiondock-launch-fixture-' + str(os.getpid())
+    fixture.stack.callback(lambda: subprocess.run(['systemctl','stop',unit],capture_output=True,timeout=10))
+    run(['systemd-run','--quiet','--collect','--unit='+unit,
+         '/usr/bin/python3',str(worker),str(jobs),'systemd-control'])
+    controls.append(expose('systemd-control'))
+    sampled = fixture.report(0)['sampled_at']
+    wait_for(lambda: fixture.report(0)['sampled_at'] > sampled + 3)
+    assert not set(controls) & {b['process']['pid'] for b in fixture.report(0)['bindings']}
+    page.evaluate('SessionDockSidebarResources.refresh()')
+    assert item.locator('[data-resource="process_count"] .item-resource-value').inner_text() == str(3 + len(tracked))
+    print('PASS measured coverage gap: shared tmux and systemd requests remain unassigned', flush=True)
+    run(['tmux','-S',tmux_socket,'new-window','-t','control',
+         shlex.join(['env','CODEX_THREAD_ID=parent','/usr/bin/python3',str(worker),str(jobs),'tmux-identity'])])
+    tracked.append(expose('tmux-identity'))
+    identified_unit = unit + '-identity'
+    fixture.stack.callback(lambda: subprocess.run(['systemctl','stop',identified_unit],capture_output=True,timeout=10))
+    run(['systemd-run','--quiet','--collect','--unit='+identified_unit,'--setenv=CODEX_THREAD_ID=parent',
+         '/usr/bin/python3',str(worker),str(jobs),'systemd-identity'])
+    tracked.append(expose('systemd-identity'))
+    wait_for(lambda: set(tracked) <= {b['process']['pid'] for b in fixture.report(0)['bindings']
+                                    if b['session']['sid']=='parent'})
+    fixture.restart_agents()
+    wait_for(lambda: set(tracked) <= {b['process']['pid'] for b in fixture.report(0)['bindings']
+                                    if b['session']['sid']=='parent'})
+    page.evaluate('SessionDockSidebarResources.refresh()')
+    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text() == str(3 + len(tracked)))
+    print('PASS explicit per-job identity across tmux/systemd and detached workers after collector restart', flush=True)
+    cleanup()
+    wait_for(lambda: not set(spawned) & {b['process']['pid'] for b in fixture.report(0)['bindings']})
+    page.evaluate('SessionDockSidebarResources.refresh()')
+    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text() == '3')
+    print('PASS actual worker exit releases browser process counts; no production process was signalled', flush=True)
 
 
 def main():

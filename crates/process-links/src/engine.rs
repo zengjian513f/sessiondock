@@ -1,6 +1,6 @@
 //! Attribution state independent of a session UI or transport.
 use crate::{
-    Binding, Incoming, Link, Outgoing, Process, Published, Report, Session,
+    Binding, Incoming, Launch, Link, Outgoing, Process, ProcessKey, Published, Report, Session,
     agent::{Catalog, CollectorStatus},
     linux::Snapshot,
 };
@@ -206,6 +206,12 @@ impl Engine {
                 current = ancestor.parent;
             }
             let origin = self.connections.origin(&entry.process);
+            if inherited.is_none() {
+                inherited = self
+                    .connections
+                    .ancestor_binding(&entry.process, snapshot, &self.bindings)
+                    .cloned();
+            }
             if let Some(connection) = origin.map(|o| o.connection.clone()).or(connection) {
                 self.incoming
                     .insert(entry.process.clone(), connection.clone());
@@ -281,7 +287,18 @@ impl Engine {
                 binding.spawner = spawner;
             }
         }
-        self.bindings = bindings;
+        let mut bindings: Vec<_> = bindings.into_values().collect();
+        local_launch_chains(
+            &self.node_id,
+            snapshot,
+            &mut bindings,
+            self.bindings.values(),
+            &mut outgoing,
+        );
+        self.bindings = bindings
+            .into_iter()
+            .map(|b| (b.process.clone(), b))
+            .collect();
         self.connections.attribute(&self.bindings, &self.catalog);
         Report {
             version: 1,
@@ -294,6 +311,78 @@ impl Engine {
             incoming,
             connections: self.connections.records(),
             collector: Some(status),
+        }
+    }
+}
+
+/// Carry observed local CLI launches through workers and subsequent SSH hops.
+/// A local edge uses the launched CLI incarnation, whose kept spawner remains
+/// evidence after reparenting. Never expand a session-wide/UI nesting graph:
+/// another concurrent resume of the same session has its own process lineage.
+pub fn local_launch_chains<'a>(
+    node_id: &str,
+    snapshot: &Snapshot,
+    bindings: &mut [Binding],
+    previous: impl Iterator<Item = &'a Binding>,
+    outgoing: &mut [Outgoing],
+) {
+    let previous: BTreeMap<_, _> = previous.map(|b| (&b.process, b)).collect();
+    let current: BTreeMap<_, _> = bindings
+        .iter()
+        .map(|b| (b.process.clone(), b.clone()))
+        .collect();
+    for binding in bindings.iter_mut() {
+        let mut pid = binding.process.pid;
+        let mut visited = HashSet::new();
+        let mut local = Vec::new();
+        let mut inherited = Vec::new();
+        while pid > 1 && visited.insert(pid) {
+            let Some(entry) = snapshot.entries.get(&pid) else {
+                break;
+            };
+            if entry.shared_parent {
+                break;
+            }
+            if let Some(ancestor) = current.get(&entry.process) {
+                if let Some(spawner) = &ancestor.spawner
+                    && !ancestor
+                        .initiator
+                        .as_ref()
+                        .is_some_and(|s| same(s, spawner))
+                {
+                    local.push(Launch {
+                        process: ProcessKey {
+                            node_id: node_id.to_owned(),
+                            boot_id: snapshot.boot_id.clone(),
+                            process: entry.process.clone(),
+                        },
+                        session: spawner.clone(),
+                    });
+                }
+                inherited.extend(ancestor.launch_chain.iter().cloned());
+            }
+            if let Some(kept) = previous.get(&entry.process) {
+                inherited.extend(kept.launch_chain.iter().cloned());
+            }
+            pid = entry.parent;
+        }
+        let mut seen = HashSet::new();
+        binding.launch_chain = local
+            .into_iter()
+            .chain(inherited)
+            .filter(|launch| {
+                seen.insert((
+                    launch.process.node_id.clone(),
+                    launch.process.boot_id.clone(),
+                    launch.process.process.pid,
+                    launch.process.process.start,
+                ))
+            })
+            .collect();
+    }
+    for edge in outgoing {
+        if let Some(binding) = bindings.iter().find(|b| b.process == edge.process) {
+            edge.launch_chain.clone_from(&binding.launch_chain);
         }
     }
 }

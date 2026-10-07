@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import os
 import re
@@ -109,6 +110,52 @@ def counted_node(node):
         worker.join(timeout=5)
 
 
+@contextmanager
+def gpu_collector(root):
+    """Keep real collector attribution/lifetimes; inject only GPU measurements.
+
+    The production collector intentionally disables NVIDIA reads for synthetic
+    proc roots. This private socket models its separately refreshed GPU cache.
+    """
+    listener = socket.socket(socket.AF_UNIX)
+    listener.bind(str(root / 'gpu.sock'))
+    listener.listen()
+
+    def serve():
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return
+            with conn:
+                try:
+                    request = conn.makefile('rb').readline()
+                    with socket.socket(socket.AF_UNIX) as upstream:
+                        upstream.settimeout(5)
+                        upstream.connect(str(root / 'agent.sock'))
+                        upstream.sendall(request)
+                        response = json.loads(upstream.makefile('rb').readline())
+                    if json.loads(request)['op'] == 'resources' and response['ok']:
+                        rows = [line.split(', ') for line in (root / 'gpu.csv').read_text().splitlines()]
+                        data = response['result']
+                        for sample in data['samples']:
+                            devices = [row for row in rows if int(row[0]) == sample['process']['pid']]
+                            sample['metrics']['gpu_devices'] = {'value':[r[1] for r in devices], 'status':'partial'}
+                            sample['metrics']['gpu_memory_bytes'] = {'value':sum(int(r[2]) for r in devices)*1024**2, 'status':'partial'}
+                        for key in ('gpu_devices', 'gpu_memory_bytes'):
+                            data['metric_availability'][key] = {'value':None, 'status':'partial'}
+                    conn.sendall(json.dumps(response).encode() + b'\n')
+                except (OSError, ValueError):
+                    pass
+
+    worker = Thread(target=serve, daemon=True)
+    worker.start()
+    try:
+        yield
+    finally:
+        listener.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -147,6 +194,14 @@ def main():
                          env=[('CODEX_THREAD_ID', 'parent')], fds={3: str(corpus.paths['child'])})
                 proc_pid(proc, 601, 'codex-code-mode-host', ['codex-code-mode-host'], 800,
                          env=[('CODEX_THREAD_ID', 'parent')])
+                proc_pid(proc, 940, 'codex', ['codex', 'exec'], 800,
+                         fds={3: str(corpus.paths['grand'])})
+                proc_pid(proc, 930, 'python', ['python', 'preprocess.py'], 940)
+                # The same child session independently resumed elsewhere must
+                # not lend its workers to the parent's inclusive accounting.
+                proc_pid(proc, 700, 'codex', ['codex', 'resume'], 1,
+                         fds={3: str(corpus.paths['child'])})
+                proc_pid(proc, 300, 'python', ['python', 'generate.py'], 700)
             else:
                 proc_pid(proc, 100, 'sh', ['sh'], 1, env=[('SSH_CONNECTION', '10.0.0.1 50000 10.0.0.2 50022')])
                 stat = proc / '100/stat'
@@ -172,13 +227,16 @@ def main():
             procs.append(proc)
             nodes.append(SimpleNamespace(name=name, nid=name * 32, port=free_port(), token=TOKEN))
         if args.with_agent:
-            for corpus, proc in zip(corpora, procs):
+            for index, (corpus, proc) in enumerate(zip(corpora, procs)):
+                (corpus.root / 'gpu.csv').write_text('601, GPU-local, 32\n930, GPU-local, 64\n300, GPU-independent, 16\n'
+                                                   if index == 0 else '800, GPU-remote, 32\n')
                 agent = subprocess.Popen([str(args.binary.resolve().with_name('resource-agent')),
                     '--uid', str(os.getuid()), '--node-id-file', str(corpus.root / 'ids/node-id'),
                     '--socket', str(corpus.root / 'agent.sock'), '--state', str(corpus.root / 'agent-state.json'),
                     '--proc-root', str(proc), '--events', 'off'])
                 agents.callback(lambda p=agent: (p.terminate(), p.wait(timeout=10)))
                 wait_for(lambda: (corpus.root / 'agent.sock').exists())
+                agents.enter_context(gpu_collector(corpus.root))
         hubroot = root / 'hub'
         hubroot.mkdir()
         hub = None
@@ -191,7 +249,7 @@ def main():
                         environment = node_env(corpus.root, node.port, '127.0.0.0/8')
                         environment['SESSIONDOCK_PROC_ROOT'] = str(proc)
                         if args.with_agent:
-                            environment['SESSIONDOCK_RESOURCE_AGENT_SOCKET'] = str(corpus.root / 'agent.sock')
+                            environment['SESSIONDOCK_RESOURCE_AGENT_SOCKET'] = str(corpus.root / 'gpu.sock')
                         local.append(stack.enter_context(isolated_server(corpus, args.binary,
                             state_dir=corpus.root / 'state', extra_env=environment)))
                     if not restarted:
@@ -236,9 +294,15 @@ def main():
                     rows = get_json(opener, base, '/api/sessions?force=1')['sessions']
                     assert 'nest_parent' not in next(r for r in rows if r['sid'] == 'stale'), 'SSH resume must not nest'
                     local_base, local_opener = local[0]
-                    helper = wait_for(lambda: next((b for b in get_json(local_opener, local_base, '/api/process-links')['bindings']
-                        if b['process']['pid'] == 601), None))
-                    assert helper['session']['sid'] == 'child', helper
+                    if not restarted:
+                        helper = wait_for(lambda: next((b for b in get_json(local_opener, local_base, '/api/process-links')['bindings']
+                            if b['process']['pid'] == 601), None))
+                        assert helper['session']['sid'] == 'child', helper
+                        local_links = get_json(local_opener, local_base, '/api/process-links')['bindings']
+                        launched_work = next(b for b in local_links if b['process']['pid'] == 930)
+                        assert {l['session']['sid'] for l in launched_work['launch_chain']} >= {'parent', 'child'}, launched_work
+                        independent = next(b for b in local_links if b['process']['pid'] == 300)
+                        assert independent['session']['sid'] == 'child' and not independent['launch_chain'], independent
                     print('PASS inherited launcher identity yields to nearer child CLI; SSH resume not nested', flush=True)
                     if not restarted:
                         # The owning CLI names its nearest launching session: an SSH
@@ -305,6 +369,8 @@ def main():
                             inclusive = get_json(opener, hubbase, resource_url.replace('scope=direct', 'scope=inclusive'))
                             remote = next(row for row in inclusive['nodes'] if row['node_id'] == nodes[1].nid)
                             assert remote['metrics']['memory_pss_bytes']['value'] == 2501 * 1024, inclusive
+                            wait_for(lambda: get_json(opener, hubbase, resource_url.replace('scope=direct', 'scope=inclusive'))
+                                     ['totals']['metrics']['gpu_count']['value'] == 2)
                             assert all(row['status'] == 'ok' for row in direct['nodes']), direct
                             assert {row['node_id'] for row in direct['nodes']} == {node.nid for node in nodes}
                             assert direct['partial'] is False, 'unrelated offline node must not taint totals'
@@ -318,6 +384,37 @@ def main():
                                 page.get_by_role('button', name='列表资源', exact=True).click()
                             page.locator('#side .item.sel .item-resources').click()
                             page.locator('.session-resources .sr-node').first.wait_for()
+                            gpu = page.locator('.sr-totals .sr-metric').nth(1).locator('dd')
+                            expect(gpu).to_have_text('2 张')
+                            page.get_by_role('button', name='仅当前会话', exact=True).click()
+                            expect(gpu).to_have_text('0 张')
+                            page.get_by_role('button', name='包含子会话', exact=True).click()
+                            expect(gpu).to_have_text('2 张')
+                            # Exited preprocessing workers disappear even while
+                            # the slower NVIDIA query still returns their PIDs.
+                            shutil.rmtree(procs[0] / '601')
+                            shutil.rmtree(procs[0] / '930')
+                            page.get_by_role('button', name='刷新资源').click()
+                            wait_for(lambda: get_json(opener, hubbase, resource_url.replace('scope=direct', 'scope=inclusive'))
+                                     ['totals']['metrics']['gpu_count']['value'] == 1)
+                            page.get_by_role('button', name='刷新资源').click()
+                            expect(gpu).to_have_text('1 张')
+                            # Reused PID without the original parent or identity
+                            # must not revive the exited worker's launch chain.
+                            proc_pid(procs[0], 930, 'python', ['python', 'unrelated.py'], 1)
+                            stat = procs[0] / '930/stat'
+                            stat.write_text(stat.read_text().replace('93000', '93001'))
+                            wait_for(lambda: not any(b['process']['pid'] == 930 for b in
+                                     get_json(local_opener, local_base, '/api/process-links')['bindings']))
+                            # CUDA context release without process exit follows
+                            # the independent GPU observation, not CLI liveness.
+                            (corpora[0].root / 'gpu.csv').write_text('300, GPU-independent, 16\n')
+                            (corpora[1].root / 'gpu.csv').write_text('')
+                            wait_for(lambda: get_json(opener, hubbase, resource_url.replace('scope=direct', 'scope=inclusive'))
+                                     ['totals']['metrics']['gpu_count']['value'] == 0, timeout=30)
+                            page.get_by_role('button', name='刷新资源').click()
+                            expect(gpu).to_have_text('0 张')
+                            print('PASS local child/grandchild GPU union, independent resume exclusion, worker exit, PID reuse and live-process CUDA release', flush=True)
                             assert page.locator('.session-resources .sr-node').count() == 2
                             assert page.locator('.session-resources [data-scope]').count() == 2
                             page.get_by_role('button', name='关闭资源面板').click()

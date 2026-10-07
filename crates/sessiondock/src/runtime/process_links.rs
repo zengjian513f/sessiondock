@@ -24,6 +24,7 @@ struct Cache {
     first_seen: BTreeMap<Process, f64>,
     /// Owning CLI process → (its session, the session that launched it).
     spawners: BTreeMap<Process, (Session, Session)>,
+    bindings: BTreeMap<Process, Binding>,
 }
 static CACHES: OnceLock<Mutex<HashMap<String, Cache>>> = OnceLock::new();
 fn caches() -> &'static Mutex<HashMap<String, Cache>> {
@@ -288,6 +289,17 @@ async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
                 );
             }
         }
+        process_links::engine::local_launch_chains(
+            &node_id,
+            &snapshot,
+            &mut bindings,
+            cache.bindings.values(),
+            &mut outgoing,
+        );
+        cache.bindings = bindings
+            .iter()
+            .map(|b| (b.process.clone(), b.clone()))
+            .collect();
         let report = Report {
             connections: vec![],
             version: 1,

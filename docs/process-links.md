@@ -25,6 +25,16 @@ and after an upstream launcher exits. An established attribution stays attached 
 that process incarnation; a later connection reusing the same ports cannot
 reassign old work.
 
+Local CLI launches also enter this chain. A local edge identifies the launched
+CLI's process incarnation and names its observed `spawner`; an SSH edge retains
+the launching SSH client's identity. The collector and polling adapter propagate
+these edges along actual process ancestry, into outgoing SSH evidence, and retain
+them on observed descendants after reparenting. They do not expand all processes
+of a session merely because one concurrent resume was launched by another session.
+Existing collector bindings with a kept spawner can recover the local edge while
+that CLI or an observed ancestor is still present. Missing historical process
+evidence cannot be reconstructed from the sidebar or transcript.
+
 A session's owning CLI process also names its `spawner`, the nearest session
 that launched it: the session of its bound parent process; when that parent is
 gone, the session of the bound process it was forked from (lifecycle events,
@@ -282,8 +292,19 @@ metric definitions, sampling cadence and partial coverage appear in Chinese tool
 verified process identities, never sidebar nesting or summed child totals.
 GPU UUIDs are deduplicated within each machine. The local agent also publishes
 `sessions` using the same direct aggregation for Node Status consumers.
+BUG-20261007-083559-acc010 exposed a local CLI spawner that was present in
+attribution but absent from `launch_chain`: child GPU samples existed, while
+the parent's inclusive view omitted them. The correction above fixes the
+causal chain, preserving the sidebar's direct ownership scope. The accompanying
+[historical launch audit](process-launch-audit.md) covers other program launches
+and resource-release boundaries.
 Lifecycle events preserve inherited attribution after a parent exits. The default
-Linux tracer also captures IPv4/IPv6 TCP connect/close, successful exec's selected
+collector rechecks retained fork edges against confirmed ancestor bindings when
+immediate fork-time inheritance was unavailable. Those edges are scoped to exact
+process incarnations, survive exited intermediate parents, and do not traverse
+known shared ancestors. This also recovers delayed local work without inherited
+session environment variables; it does not infer daemon/RPC request causality.
+The default Linux tracer also captures IPv4/IPv6 TCP connect/close, successful exec's selected
 `SSH_CONNECTION` value, and fork/exit identities. A boot-scoped parent graph
 retains the original connection time through double forks, reparenting and
 parents that exit before their first sample. Sender connection records retain
