@@ -336,9 +336,7 @@ pub fn resolve(
                         || path.starts_with("/api/term/")
                         || matches!(
                             path.as_str(),
-                            "/api/session/rewind"
-                                | "/api/session/conversation/send"
-                                | "/api/session/conversation/check"
+                            "/api/session/conversation/send" | "/api/session/conversation/check"
                         ))
                 {
                     let local = decode(

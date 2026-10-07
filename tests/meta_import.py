@@ -13,13 +13,12 @@ from urllib.request import ProxyHandler, build_opener
 
 REPO = Path(__file__).resolve().parents[1]
 UID_RE = re.compile(r"^[A-Za-z0-9:._-]{1,256}$")
-MAX_ROWS, MAX_BYTES, REASON_MAX, TIP_MAX = 10_000, 4 * 1024 * 1024, 2048, 256
+MAX_ROWS, MAX_BYTES = 10_000, 4 * 1024 * 1024
 EPOCH_MAX = 253_402_300_799.0
-DEFAULT_REASON, INFERRED_REASON = "网页发送 Escape", "终端已结束或中断"
 KNOWN = {"starred", "starred_at", "fork_parent_visible", "activity_stopped_at",
          "activity_stop_reason", "activity_stop_state", "activity_stop_inferred",
          "timeline_tip", "timeline_stale_end", "timeline_rewind", "spawned_by", "nest_parent", "nest_independent", "nest_initialized"}
-ORDER = ("starred", "starred_at", "fork_parent_visible", "stopped", "rewind_pending", "timeline", "nest_parent", "nest_initialized")
+ORDER = ("starred", "starred_at", "fork_parent_visible", "nest_parent", "nest_initialized")
 SPAWN_SOURCE_MAX, SPAWN_SID_MAX = 32, 256
 HOME_SHARE = Path.home() / ".local" / "share" / "sessiondock"
 
@@ -42,15 +41,7 @@ def as_int(value):
     except (TypeError, ValueError):
         return -1
 
-def clip_reason(text):
-    raw, cut = text.encode(), text.encode()[:REASON_MAX]
-    while True:
-        try:
-            return cut.decode(), len(raw) > REASON_MAX
-        except UnicodeDecodeError:
-            cut = cut[:-1]
-
-def convert_row(uid, src, keep, warns):
+def convert_row(uid, src, warns):
     if not isinstance(src, dict):
         return None, "not an object"
     out = {}
@@ -81,37 +72,8 @@ def convert_row(uid, src, keep, warns):
             out["nest_initialized"] = src.get("nest_initialized", "nest_parent" in src) is True
             if spawned.get("node_id"):
                 out["nest_parent"]["node_id"] = spawned["node_id"]
-    if src.get("activity_stopped_at") is not None:
-        at, state = epoch(src.get("activity_stopped_at")), src.get("activity_stop_state") or "aborted"
-        if at is None:
-            warns.append((uid, "unparseable activity_stopped_at"))
-        elif state not in ("idle", "aborted"):
-            warns.append((uid, "invalid activity_stop_state"))
-        else:
-            original = str(src.get("activity_stop_reason") or DEFAULT_REASON)
-            reason, truncated = clip_reason(original)
-            if truncated:
-                warns.append((uid, "activity_stop_reason truncated"))
-            out["stopped"] = {"at": at, "reason": reason, "state": state,
-                              "inferred": bool(src.get("activity_stop_inferred")) or original == INFERRED_REASON}
-    tip = src.get("timeline_tip")
-    if isinstance(tip, str) and tip:
-        stale = as_int(src.get("timeline_stale_end"))
-        if len(tip.encode()) > TIP_MAX or stale < 0:
-            warns.append((uid, "timeline_tip too long" if len(tip.encode()) > TIP_MAX else "invalid timeline_stale_end"))
-        else:
-            out["timeline"] = {"tip": tip, "stale_end": stale}
-    pending = src.get("timeline_rewind")
-    if pending is None:
-        return (out or None), None
-    if not keep or not isinstance(pending, dict):
-        warns.append((uid, "dropped pending rewind" if not keep else "invalid timeline_rewind"))
-        return (out or None), None
-    from_tip, started, stale = str(pending.get("from_tip") or "").strip(), epoch(pending.get("started_at")), as_int(pending.get("stale_end"))
-    if not from_tip or len(from_tip.encode()) > TIP_MAX or stale < 0 or started is None:
-        warns.append((uid, "invalid timeline_rewind"))
-    else:
-        out["rewind_pending"] = {"from_tip": from_tip, "stale_end": stale, "started_at": started}
+    # Activity stops, display pins and pending rewinds are not applied by
+    # SessionDock (docs/metadata.md); they are known fields, not imported.
     return (out or None), None
 
 def lmode(path):
@@ -229,7 +191,6 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--python-meta", type=Path, required=True)
     p.add_argument("--out-dir", type=Path, required=True)
-    p.add_argument("--keep-pending", action="store_true")
     p.add_argument("--json", type=Path, dest="json_out")
     p.add_argument("--verify", action="store_true"); p.add_argument("--binary", type=Path)
     for src in ("claude", "codex", "grok"):
@@ -248,7 +209,7 @@ def main(argv=None):
     for uid, src in data["sessions"].items():
         if not isinstance(uid, str) or not UID_RE.fullmatch(uid):
             skips.append((uid, "invalid uid")); continue
-        converted, reason = convert_row(uid, src, args.keep_pending, warns)
+        converted, reason = convert_row(uid, src, warns)
         if reason:
             skips.append((uid, reason)); continue
         if converted:

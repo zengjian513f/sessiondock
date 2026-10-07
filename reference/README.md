@@ -68,3 +68,6 @@ python3 tests/legacy_text_diff.py --legacy-dir BACKUP_LEGACY --reference-dir BAC
   `legacy-web/grid/facade.js` 在主控制台使用；录制与网格的 HTTP/WebSocket 接口保留。
 - 不再保留非 Rust 后端的页面分支：按 tmux 名称猜测终端关联、新建会话按文件名轮询
   `api/term/new-status?name=` 和按名称停止/丢弃的旧路径一并删除；浏览器审计只发送元数据。
+- 删除了用户消息下的「回到此处」和固定显示通知里的「取消固定」：它们只改网页显示，
+  CLI 不回滚，容易误解。`POST api/session/rewind` 一并移除；已存的这类固定不再生效。
+  Claude 在终端里自己回滚后，对话仍跟随显示到回滚点。

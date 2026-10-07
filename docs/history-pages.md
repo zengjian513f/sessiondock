@@ -83,7 +83,7 @@ file, never a full parse — with the persisted metadata applied and re-signed:
   reset (no unread increment for that one event); once opened, rows carry the
   anchor. A Grok session without a chat file
   publishes `{end: 0, head: <hash of nothing>}`.
-- **Timeline pins.** A Claude main session with a persisted pin publishes
+- **Timeline pins.** A Claude main session with an active CLI-followed pin publishes
   `timeline_pin: {target, tip, stale_end, pinned_at, native_rewind:false}`;
   `retired:false` is added while the file has not grown past `stale_end`
   (physical fact), and the full `retired`/`retired_reason`/`retired_message`

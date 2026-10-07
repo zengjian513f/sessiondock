@@ -274,8 +274,6 @@ fn build_app(
     // Raw HTTP text/key input under the page's terminal lease; not a send ledger.
     capabilities["terminal_input"] = serde_json::json!(terminal.is_some());
     capabilities["metadata"] = serde_json::json!(metadata.is_some());
-    // Display-only Claude timeline pins; never a native rewind of the CLI.
-    capabilities["timeline_pin"] = serde_json::json!(metadata.is_some());
     capabilities["files"] = serde_json::json!(files.is_some());
     capabilities["files_jobs"] = serde_json::json!(files_write.is_some());
     capabilities["files_write"] = files_write

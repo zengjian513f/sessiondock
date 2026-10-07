@@ -6,7 +6,7 @@ This file is produced by `tests/error_codes.py`. Handlers return JSON `{"error":
 python3 tests/error_codes.py --write
 ```
 
-Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
+Scanned `crates/sessiondock/src`: **230** (status, code) pairs.
 
 ## 400 Bad Request
 
@@ -258,18 +258,17 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 ### `invalid_metadata_batch`
 
-- 需要有效会话 uid — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `visibility` L270 → `POST /api/sessions/fork-visibility`
+- 需要有效会话 uid — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `visibility` L257 → `POST /api/sessions/fork-visibility`
 
 ### `invalid_metadata_request`
 
-- 需要有效的偏好 JSON 请求和布尔状态 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `invalid` L116
+- 需要有效的偏好 JSON 请求和布尔状态 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `invalid` L103
 
 ### `invalid_metadata_uid`
 
 - 需要有效的会话 uid
-- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L359 → `POST /api/session/nest`
-- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `rewind` L478 → `POST /api/session/rewind`
-- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `star` L233 → `POST /api/session/star`
+- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L346 → `POST /api/session/nest`
+- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `star` L220 → `POST /api/session/star`
 
 ### `invalid_path`
 
@@ -287,10 +286,6 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`api/read.rs`](../crates/sessiondock/src/api/read.rs) `query_error` L45
 - [`api/trash.rs`](../crates/sessiondock/src/api/trash.rs) `delete_session` L413, L415
 - [`api/trash.rs`](../crates/sessiondock/src/api/trash.rs) `list` L532 → `GET /api/trash`
-
-### `invalid_rewind_target`
-
-- target 必须是 Claude 记录节点 ID，或 null 表示取消固定 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `rewind` L485 → `POST /api/session/rewind`
 
 ### `invalid_scope`
 
@@ -336,19 +331,19 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 ### `nest_conflict`
 
-- 跨机器父会话信息无效 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L395 → `POST /api/session/nest`
+- 跨机器父会话信息无效 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L382 → `POST /api/session/nest`
 
 ### `nest_parent_missing`
 
-- 目标会话缺少来源或会话 id — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L429 → `POST /api/session/nest`
+- 目标会话缺少来源或会话 id — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L416 → `POST /api/session/nest`
 
 ### `nest_parent_node`
 
-- 只能附属到同一台机器上的会话 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L420 → `POST /api/session/nest`
+- 只能附属到同一台机器上的会话 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L407 → `POST /api/session/nest`
 
 ### `nest_parent_self`
 
-- 不能附属到自己下面 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L404 → `POST /api/session/nest`
+- 不能附属到自己下面 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L391 → `POST /api/session/nest`
 
 ### `no_sessions`
 
@@ -430,7 +425,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 ### `nest_remote_hub`
 
-- 跨机器附属需要通过 Hub 验证 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L372 → `POST /api/session/nest`
+- 跨机器附属需要通过 Hub 验证 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L359 → `POST /api/session/nest`
 
 ### `node_auth_required`
 
@@ -510,14 +505,14 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 ### `nest_parent_missing`
 
-- 目标会话不存在 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L411 → `POST /api/session/nest`
+- 目标会话不存在 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L398 → `POST /api/session/nest`
 
 ### `not_found`
 
 - node listener serves /api only
 - API route not found
-- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `node_not_found` L412
-- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `not_found` L420 → `ANY (fallback)`
+- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `node_not_found` L405
+- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `not_found` L413 → `ANY (fallback)`
 
 ### `session_error`
 
@@ -545,10 +540,9 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - 会话不存在
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `external_processes` L526
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1149 → `POST /api/session/stop`
-- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L382 → `POST /api/session/nest`
-- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `rewind` L523 → `POST /api/session/rewind`
-- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `session_group` L214 → `POST /api/session/group`
-- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `star` L245 → `POST /api/session/star`
+- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L369 → `POST /api/session/nest`
+- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `session_group` L201 → `POST /api/session/group`
+- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `star` L232 → `POST /api/session/star`
 
 ### `session_not_found`
 
@@ -1090,7 +1084,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 ### `nest_parent_cycle`
 
-- 不能附属到自己的子会话下面 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L437 → `POST /api/session/nest`
+- 不能附属到自己的子会话下面 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L424 → `POST /api/session/nest`
 
 ### `not_found`
 
@@ -1210,7 +1204,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `resolve` L125 → `POST /api/session/resolve-files`
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `parse_body` L103
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1122 → `POST /api/session/stop`
-- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `invalid` L110
+- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `invalid` L97
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `claim_inner` L167
 - [`security.rs`](../crates/sessiondock/src/security.rs) `api_policy` L107
 
@@ -1308,7 +1302,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 ### `metadata_worker_failed`
 
-- 偏好工作异常退出，请重新读取状态确认结果 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `write` L145
+- 偏好工作异常退出，请重新读取状态确认结果 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `write` L132
 
 ### `move_io`
 
@@ -1428,7 +1422,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 ### `metadata_disabled`
 
-- 偏好保存未配置状态目录 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `configured` L100
+- 偏好保存未配置状态目录 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `configured` L87
 
 ### `not_implemented`
 
@@ -1598,10 +1592,6 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 
 - 图片服务暂不可用 — [`media/file_media.rs`](../crates/sessiondock/src/media/file_media.rs) `file` L71
 
-### `metadata_clock_invalid`
-
-- 系统时钟无效，不能记录固定时间 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `rewind` L499 → `POST /api/session/rewind`
-
 ### `process_control_unavailable`
 
 - 无法结束外部会话进程：{error:?}
@@ -1680,7 +1670,7 @@ Scanned `crates/sessiondock/src`: **232** (status, code) pairs.
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `admission` L64
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `write_admission` L462
 - [`api/media.rs`](../crates/sessiondock/src/api/media.rs) `get` L79 → `GET /api/media/{token}`
-- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `write` L128
+- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `write` L115
 - [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `observe` L524
 - [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `shared` L467
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L335 → `GET /api/term/attach`

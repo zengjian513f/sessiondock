@@ -180,13 +180,6 @@ pub fn router() -> Router<AppState> {
                 "/api/session/nest",
             ))),
         )
-        // Read-model display pin only; 501 when no metadata directory is configured.
-        .route(
-            "/session/rewind",
-            post(metadata::rewind).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
-                "/api/session/rewind",
-            ))),
-        )
         .route("/session/tree/plan", post(trash_tree::plan))
         .route("/session/tree/delete", post(trash_tree::delete))
         .route("/session/tree/progress", post(trash_tree::progress))
