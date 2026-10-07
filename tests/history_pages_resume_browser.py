@@ -173,6 +173,9 @@ def run(binary, through_hub):
                 rejected(resume, 409)
                 print("PASS recovery scope/checkpoint/range and actual prefix rewrite rejection", flush=True)
 
+                # The deliberate prefix rewrite also resets the visible history
+                # through SSE. Wait for that render before opening its menu.
+                expect(page.locator("#msgs")).to_contain_text("EDIT ROW 0000")
                 page.locator("#a-view-switch").click()
                 page.locator('#session-view-menu button[data-agent="codex-page-agent"]').click()
                 expect(page.locator("#msgs")).to_contain_text("AGENT ROW 0749")
