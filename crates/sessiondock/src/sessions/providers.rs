@@ -9,6 +9,8 @@ mod image_content;
 mod opencode;
 mod tools;
 
+pub(super) use agy::{AppendProjection, ProjectionPrefix, parse_append as parse_agy_append};
+
 use super::records::native_images::{MediaContext, Sidecar};
 use regex::Regex;
 use std::collections::{BTreeMap, HashMap};
@@ -35,7 +37,7 @@ pub(super) fn grok_untitled_title() -> &'static str {
 /// walk that stops short of a root (`_active_lineage`). Hard failures
 /// (scalar `content`, non-string text, invalid media, record/LF/file budgets)
 /// still make the whole session `supported:false`.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Skipped {
     /// Distinct labels in first-seen file order with their counts.
     kinds: Vec<(String, usize)>,

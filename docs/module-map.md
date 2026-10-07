@@ -10,7 +10,7 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 194 files, 83043 lines, 5 undocumented.
+`crates/sessiondock/src`: 195 files, 83875 lines, 5 undocumented.
 
 - `api/`
   - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines)
@@ -183,39 +183,40 @@ python3 tests/module_map.py --write
       - `opencode.rs` — OpenCode row summary from the SessionDock mirror (`sessions::opencode`): (104 lines)
     - `titles.rs` — Codex native names read on demand, before the first rollout exists. (19 lines)
   - `media_projection.rs` — Window selection precedes file opens; authority uses the complete branch. (216 lines)
-  - `mod.rs` — Session read model: the lazy index (`index/`) is the only inventory, and (1439 lines)
+  - `mod.rs` — Session read model: the lazy index (`index/`) is the only inventory, and (1491 lines)
     - mods: `history`, `index`, `agy`, `native_input`, `native_media`, `opencode`, `pages`, `views`, `providers`, `records`, `scope`, `sidebar`, `media_projection`
   - `native_input.rs` — Checked, chunked native input and a disposable raw-prefix index. (336 lines)
   - `native_media.rs` — Native span authority is the current full selected branch, not file_roots (89 lines)
   - `opencode.rs` — OpenCode session mirror. (628 lines)
   - `pages.rs` — Finite history pages. Grants hold checkpoints, never retained native views. (662 lines)
-  - `providers.rs` — Pure native-record projection. File discovery, inheritance cutoffs and (1344 lines)
+  - `providers.rs` — Pure native-record projection. File discovery, inheritance cutoffs and (1346 lines)
     - mods: `agy`, `claude`, `envelopes`, `grok`, `image_content`, `opencode`, `tools`
   - `providers/`
-    - `agy.rs` — Agy's complete, system-generated transcript (not the truncated transcript). (207 lines)
+    - `agy.rs` — Agy's complete, system-generated transcript (not the truncated transcript). (314 lines)
     - `claude.rs` — Claude's append-only transcript is a tree, not a flat event log. (1007 lines)
     - `envelopes.rs` — Source-specific display envelopes. Never interpret arbitrary HTML as protocol (275 lines)
     - `grok.rs` — Summary-derived Grok metadata. The transcript never overrides these fields, (139 lines)
     - `image_content.rs` — Typed image extraction before native content becomes public text or JSON. (195 lines)
     - `opencode.rs` — OpenCode 2 message rows from the SessionDock mirror (`sessions::opencode`). (178 lines)
     - `tools.rs` — Pure presentation of known tool arguments. A shell command is text here: (1053 lines)
-  - `records.rs` — Bounded, disposable JSON AST reuse. Never an incremental timeline parser. (353 lines)
-    - mods: `native_images`, `native_records`, `scanner`, `string_reader`, `tool_envelopes`
+  - `records.rs` — Bounded, disposable JSON AST reuse. Never an incremental timeline parser. (426 lines)
+    - mods: `native_images`, `native_records`, `scanner`, `summary_projection`, `string_reader`, `tool_envelopes`
   - `records/`
     - `native_images.rs` — Private structural image authority. JSON paths only locate already-reviewed (532 lines)
     - `native_records.rs` — Pull-based complete-record scanning. Large strings stay private spans; the (194 lines)
       - mods: `replay_source`
     - `native_records/`
       - `replay_source.rs` — Replays only reviewed tool strings from the stamped current native record. (184 lines)
-    - `scanner.rs` — Private streaming JSON structure scanner. This is not a media classifier or (801 lines)
+    - `scanner.rs` — Private streaming JSON structure scanner. This is not a media classifier or (1003 lines)
     - `string_reader.rs` — A bounded decoder for the physical INSIDE of one JSON string (no quotes). (255 lines)
+    - `summary_projection.rs` — JSONL fields consumed by index/summary, including shared provider predicates. (91 lines)
     - `tool_envelopes.rs` — Streaming discovery of a known Codex tool envelope inside ONE (244 lines)
   - `scope.rs` — Identity provenance captured once from already parsed, committed records. (108 lines)
   - `sidebar.rs` — Compact sidebar projections: child counts are cheap; child rows are opt-in. (92 lines)
   - `views/`
     - `body.rs` — Byte rendering of message batches: the `/api/messages` document and the (273 lines)
     - `encoded.rs` — Serialized message bytes of one projected file, kept next to its events (256 lines)
-    - `mod.rs` — Per-session views on demand: one opened session is (2022 lines)
+    - `mod.rs` — Per-session views on demand: one opened session is (2327 lines)
       - mods: `body`, `encoded`
 - `shell_env.rs` — Login-shell environment drift. (224 lines)
 - `state.rs` — (no module doc) (210 lines)

@@ -212,6 +212,61 @@ pub(crate) fn scan_value<R: Read>(reader: R, limits: Limits) -> Result<Value, Sc
     scan_into::<_, Value>(reader, limits).map(|(value, _)| value)
 }
 
+/// A caller-specific read model. Only actual object members are projected;
+/// selected scalars and arrays at unexpected schema positions stay complete.
+#[derive(Clone, Copy)]
+pub(crate) enum Projection {
+    All,
+    Fields(&'static [(&'static str, Projection)]),
+}
+
+/// Validate every byte with the scanner's lexical grammar while retaining
+/// selected fields. Discarded strings are UTF-8/escape checked without decoded
+/// buffers, spans or fingerprints. Container nesting uses an explicit stack.
+/// This is a read-model projection, never a replacement for native records.
+pub(crate) fn scan_projected(line: &[u8], projection: Projection) -> Result<Value, ScanError> {
+    let mut parser = Parser {
+        input: Input {
+            reader: line,
+            bytes: [0; BUFFER],
+            position: 0,
+            filled: 0,
+            offset: 0,
+        },
+        resident: Resident { used: 0, peak: 0 },
+        stats: ScanStats::default(),
+        // Retained row fields stay resident even when unusually large.
+        limits: Limits {
+            inline_string_bytes: line.len(),
+        },
+    };
+    parser.whitespace()?;
+    let value = parser.projected(projection)?;
+    parser.whitespace()?;
+    if parser.input.peek()?.is_some() {
+        return Err(parser.error(ErrorKind::Syntax));
+    }
+    Ok(value)
+}
+
+// None means validation-only: no Value, key buffer or entries are retained.
+enum ProjectionFrame {
+    Array(Option<Vec<Value>>),
+    Object {
+        projection: Option<Projection>,
+        values: Option<serde_json::Map<String, Value>>,
+        key: Option<String>,
+    },
+}
+impl ProjectionFrame {
+    fn finish(self) -> Option<Value> {
+        match self {
+            Self::Array(values) => values.map(Value::Array),
+            Self::Object { values, .. } => values.map(Value::Object),
+        }
+    }
+}
+
 // Output construction is the only variable part of parsing. Statistics remain
 // based on the conservative Node shape even when Value is lighter.
 trait Build: Sized {
@@ -543,6 +598,144 @@ impl<R: Read> Parser<R> {
         }
         Ok(())
     }
+    fn projected_key(
+        &mut self,
+        frame: &mut ProjectionFrame,
+    ) -> Result<Option<Projection>, ScanError> {
+        let ProjectionFrame::Object {
+            projection, key, ..
+        } = frame
+        else {
+            unreachable!("object key on an array")
+        };
+        *key = self
+            .selected_string(true, projection.is_some())?
+            .map(Text::into_string)
+            .transpose()?;
+        self.whitespace()?;
+        self.expect(b':')?;
+        self.whitespace()?;
+        Ok(match projection {
+            Some(Projection::All) => Some(Projection::All),
+            Some(Projection::Fields(fields)) => fields
+                .iter()
+                .find(|(name, _)| Some(*name) == key.as_deref())
+                .map(|(_, child)| *child),
+            None => None,
+        })
+    }
+
+    fn projected(&mut self, projection: Projection) -> Result<Value, ScanError> {
+        let mut selected = Some(projection);
+        let mut stack = Vec::<ProjectionFrame>::new();
+        'node: loop {
+            let mut value = match self.input.peek()? {
+                Some(b'{') => {
+                    self.input.advance(1);
+                    self.whitespace()?;
+                    let mut frame = ProjectionFrame::Object {
+                        projection: selected,
+                        values: selected.map(|_| serde_json::Map::new()),
+                        key: None,
+                    };
+                    if self.input.peek()? == Some(b'}') {
+                        self.input.advance(1);
+                        frame.finish()
+                    } else {
+                        selected = self.projected_key(&mut frame)?;
+                        stack.push(frame);
+                        continue 'node;
+                    }
+                }
+                Some(b'[') => {
+                    self.input.advance(1);
+                    self.whitespace()?;
+                    let frame = ProjectionFrame::Array(selected.map(|_| Vec::new()));
+                    if self.input.peek()? == Some(b']') {
+                        self.input.advance(1);
+                        frame.finish()
+                    } else {
+                        selected = selected.map(|_| Projection::All);
+                        stack.push(frame);
+                        continue 'node;
+                    }
+                }
+                Some(b'"') => self
+                    .selected_string(false, selected.is_some())?
+                    .map(Text::into_string)
+                    .transpose()?
+                    .map(Value::String),
+                Some(b'-' | b'0'..=b'9') => {
+                    // Discarded numbers receive the same representability
+                    // verdict as retained numbers, through the same parser.
+                    let number = self.number()?;
+                    selected.map(|_| Value::Number(number))
+                }
+                Some(b'n') => {
+                    for byte in b"null" {
+                        self.expect(*byte)?;
+                    }
+                    selected.map(|_| Value::Null)
+                }
+                Some(b't') => {
+                    for byte in b"true" {
+                        self.expect(*byte)?;
+                    }
+                    selected.map(|_| Value::Bool(true))
+                }
+                Some(b'f') => {
+                    for byte in b"false" {
+                        self.expect(*byte)?;
+                    }
+                    selected.map(|_| Value::Bool(false))
+                }
+                _ => return Err(self.error(ErrorKind::Syntax)),
+            };
+            loop {
+                let Some(frame) = stack.last_mut() else {
+                    return Ok(value.expect("root is selected"));
+                };
+                match frame {
+                    ProjectionFrame::Array(values) => {
+                        if let Some(values) = values {
+                            values.push(value.take().expect("selected array element"));
+                        }
+                    }
+                    ProjectionFrame::Object { values, key, .. } => {
+                        if let Some(value) = value.take() {
+                            values
+                                .as_mut()
+                                .expect("selected object")
+                                .insert(key.take().expect("selected object key"), value);
+                        }
+                        *key = None;
+                    }
+                }
+                self.whitespace()?;
+                let close = match frame {
+                    ProjectionFrame::Array(_) => b']',
+                    ProjectionFrame::Object { .. } => b'}',
+                };
+                match self.input.next()? {
+                    Some(byte) if byte == close => {
+                        value = stack.pop().expect("container frame").finish();
+                    }
+                    Some(b',') => {
+                        self.whitespace()?;
+                        selected = match frame {
+                            ProjectionFrame::Array(values) => {
+                                values.as_ref().map(|_| Projection::All)
+                            }
+                            ProjectionFrame::Object { .. } => self.projected_key(frame)?,
+                        };
+                        continue 'node;
+                    }
+                    _ => return Err(self.error(ErrorKind::Syntax)),
+                }
+            }
+        }
+    }
+
     fn node<T: Build>(&mut self) -> Result<T, ScanError> {
         self.stats.nodes += 1;
         self.resident.add(NODE_WEIGHT, self.input.offset)?;
@@ -616,6 +809,9 @@ impl<R: Read> Parser<R> {
         }
     }
     fn string(&mut self, key: bool) -> Result<Text, ScanError> {
+        Ok(self.selected_string(key, true)?.expect("retained string"))
+    }
+    fn selected_string(&mut self, key: bool, retain: bool) -> Result<Option<Text>, ScanError> {
         self.expect(b'"')?;
         let start = self.input.offset;
         let threshold = if key {
@@ -623,14 +819,14 @@ impl<R: Read> Parser<R> {
         } else {
             self.limits.inline_string_bytes
         };
-        let mut build = StringBuild::new();
+        let mut build = retain.then(StringBuild::new);
         loop {
             match self.input.peek()? {
                 Some(b'"') => {
                     let end = self.input.offset;
                     self.input.advance(1);
-                    let text = build.finish(start, end);
-                    if matches!(text, Text::Span(_)) {
+                    let text = build.map(|build| build.finish(start, end));
+                    if matches!(text, Some(Text::Span(_))) {
                         self.stats.span_count += 1;
                     }
                     return Ok(text);
@@ -650,13 +846,15 @@ impl<R: Read> Parser<R> {
                         _ => return Err(self.error(ErrorKind::Syntax)),
                     };
                     let mut bytes = [0; 4];
-                    build.feed(
-                        character.encode_utf8(&mut bytes).as_bytes(),
-                        threshold,
-                        key,
-                        &mut self.resident,
-                        self.input.offset,
-                    )?;
+                    if let Some(build) = &mut build {
+                        build.feed(
+                            character.encode_utf8(&mut bytes).as_bytes(),
+                            threshold,
+                            key,
+                            &mut self.resident,
+                            self.input.offset,
+                        )?;
+                    }
                 }
                 Some(0..=0x1f) | None => return Err(self.error(ErrorKind::Syntax)),
                 Some(_) => {
@@ -678,13 +876,15 @@ impl<R: Read> Parser<R> {
                         Err(_) => 0,
                     };
                     if count > 0 {
-                        build.feed(
-                            &chunk[..count],
-                            threshold,
-                            key,
-                            &mut self.resident,
-                            self.input.offset,
-                        )?;
+                        if let Some(build) = &mut build {
+                            build.feed(
+                                &chunk[..count],
+                                threshold,
+                                key,
+                                &mut self.resident,
+                                self.input.offset,
+                            )?;
+                        }
                         self.input.advance(count);
                     } else {
                         // Only a scalar split by the fixed input buffer gets
@@ -709,13 +909,15 @@ impl<R: Read> Parser<R> {
                         }
                         std::str::from_utf8(&scalar[..width])
                             .map_err(|_| self.error(ErrorKind::Utf8))?;
-                        build.feed(
-                            &scalar[..width],
-                            threshold,
-                            key,
-                            &mut self.resident,
-                            self.input.offset,
-                        )?;
+                        if let Some(build) = &mut build {
+                            build.feed(
+                                &scalar[..width],
+                                threshold,
+                                key,
+                                &mut self.resident,
+                                self.input.offset,
+                            )?;
+                        }
                     }
                 }
             }

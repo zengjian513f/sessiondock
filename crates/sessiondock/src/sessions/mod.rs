@@ -475,7 +475,7 @@ pub struct SessionStore {
     metadata: Option<Arc<MetadataStore>>,
     list: Mutex<ListState>,
     views: Mutex<Views>,
-    /// `Views::revision`, readable while an open holds the view lock.
+    /// `Views::revision`, readable without the view cache lock.
     views_revision: Arc<AtomicU64>,
     /// Serialized list body; its lock also makes
     /// concurrent renders of one view single-flight (the second waits and
@@ -525,18 +525,27 @@ impl SessionStore {
             .map_err(|_| SessionError::new(500, "会话索引锁不可用"))
     }
 
-    /// The view cache, with the evictions of vanished sessions applied. The
-    /// list lock is never held while waiting for this one.
+    /// The view cache, with the evictions of vanished sessions applied.
+    /// Briefly uses list -> views order, shared with final view admission.
     fn views(&self) -> Result<MutexGuard<'_, Views>, SessionError> {
-        let pending = std::mem::take(&mut self.list_state()?.evictions);
+        let mut state = self.list_state()?;
         let mut views = self
             .views
             .lock()
             .map_err(|_| SessionError::new(500, "会话视图锁不可用"))?;
-        for uid in pending {
-            views.evict(&uid);
+        let retired = std::mem::take(&mut state.evictions)
+            .into_iter()
+            .map(|uid| views.evict(&uid))
+            .collect::<Vec<_>>();
+        drop(state);
+        if retired.is_empty() {
+            return Ok(views);
         }
-        Ok(views)
+        drop(views);
+        drop(retired);
+        self.views
+            .lock()
+            .map_err(|_| SessionError::new(500, "会话视图锁不可用"))
     }
 
     /// Publish the list: the index rows (TTL-cached unless `force`) with the
@@ -662,7 +671,8 @@ impl SessionStore {
         let mut document = (*published.document).clone();
         // Never wait for an open in progress: a list is independent of the
         // sessions being parsed; their anchors simply stay absent.
-        if let Ok(views) = self.views.try_lock() {
+        let decorations = self.views.try_lock().ok().map(|views| views.decorations());
+        if let Some(views) = decorations {
             view_decorations(&mut document, &views, &published);
         }
         Ok(document)
@@ -687,7 +697,8 @@ impl SessionStore {
     pub fn list_recent(&self) -> Result<Value, SessionError> {
         let published = self.publish_within(false, OPEN_TTL)?;
         let mut document = (*published.document).clone();
-        if let Ok(views) = self.views.try_lock() {
+        let decorations = self.views.try_lock().ok().map(|views| views.decorations());
+        if let Some(views) = decorations {
             view_decorations(&mut document, &views, &published);
         }
         Ok(document)
@@ -796,13 +807,15 @@ impl SessionStore {
     /// the non-fatal row warnings stripped.
     fn render_view(&self, published: &Published, document: &Value) -> (Value, Option<u64>) {
         let mut value = document.clone();
-        let revision = match self.views.try_lock() {
-            Ok(views) => {
-                view_decorations(&mut value, &views, published);
-                Some(views.revision())
-            }
-            Err(_) => None,
-        };
+        let cached = self
+            .views
+            .try_lock()
+            .ok()
+            .map(|views| (views.decorations(), views.revision()));
+        let revision = cached.map(|(views, revision)| {
+            view_decorations(&mut value, &views, published);
+            revision
+        });
         strip_row_warnings(&mut value);
         (value, revision)
     }
@@ -872,7 +885,8 @@ impl SessionStore {
         let deps = IndexDeps {
             index: &prepared.published.index,
         };
-        self.views()?.cached_current(&prepared.request, &deps)
+        drop(self.views()?);
+        Views::cached_current(&self.views, &prepared.request, &deps)
     }
 
     /// A one-off projection of the main view outside every lock; nothing is
@@ -972,7 +986,50 @@ impl SessionStore {
         let deps = IndexDeps {
             index: &prepared.published.index,
         };
-        let opened = self.views()?.open(&prepared.request, &deps);
+        drop(self.views()?);
+        let opened = Views::open(&self.views, &prepared.request, &deps).and_then(|mut pending| {
+            loop {
+                // A request may have waited behind another open. Resolve the
+                // newest published row, pin and dependency graph before admitting
+                // its result; recomposition and all stats run outside cache locks.
+                // Metadata can change while no other request has published a
+                // list yet. Refresh its snapshot here as well as the index TTL.
+                let published = self.publish_within(false, OPEN_TTL)?;
+                let latest = prepare(&published, uid, agent)?;
+                let deps = IndexDeps {
+                    index: &published.index,
+                };
+                pending.refresh(&latest.request, &deps)?;
+                // Publication takes list -> views briefly. No views-locked path
+                // acquires list, file gates or does I/O, so this cannot form a
+                // dependency-lock cycle. It also drains deletions atomically with
+                // admission, preventing an evicted build from coming back.
+                let mut state = self.list_state()?;
+                if !state
+                    .published
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &published))
+                {
+                    // Reconcile the existing build again; unrelated list changes
+                    // do not invalidate the bytes already checked for this owner.
+                    drop(state);
+                    continue;
+                }
+                let mut views = self
+                    .views
+                    .lock()
+                    .map_err(|_| SessionError::new(500, "会话视图锁不可用"))?;
+                let retired = std::mem::take(&mut state.evictions)
+                    .into_iter()
+                    .map(|uid| views.evict(&uid))
+                    .collect::<Vec<_>>();
+                let result = pending.publish(&mut views);
+                drop(views);
+                drop(state);
+                drop(retired);
+                break result;
+            }
+        });
         match opened {
             // The view read a newer version of its file than the index
             // published (an append, rewrite or a Grok chat created between
@@ -994,11 +1051,6 @@ impl SessionStore {
             }
             Err(error) => Err(error),
         }
-    }
-
-    /// The view request for `(uid, agent)` from the current published list.
-    fn prepare(&self, uid: &str, agent: &str, force: bool) -> Result<Prepared, SessionError> {
-        self.prepare_within(uid, agent, force, OPEN_TTL)
     }
 
     fn prepare_within(
@@ -1044,12 +1096,8 @@ impl SessionStore {
         uid: &str,
         target: &str,
     ) -> Result<RewindTarget, SessionError> {
-        let prepared = self.prepare(uid, "", true)?;
-        let deps = IndexDeps {
-            index: &prepared.published.index,
-        };
-        self.views()?
-            .claude_rewind_target(&prepared.request, &deps, target)
+        let snapshot = self.open(uid, "", true)?;
+        views::claude_rewind_target(&snapshot.view.parsed, target)
     }
 
     fn metadata_snapshot(&self) -> Result<Option<Arc<MetadataSnapshot>>, SessionError> {
@@ -1220,7 +1268,11 @@ pub(crate) fn strip_row_warnings(document: &mut Value) {
 /// Borrow from the view cache what the list cannot derive itself, for every
 /// row whose cached view is exactly the file version (and pin) the index
 /// published: the semantic `cursor.anchor` and the pin's retirement state.
-fn view_decorations(document: &mut Value, views: &Views, published: &Published) {
+fn view_decorations(
+    document: &mut Value,
+    views: &BTreeMap<(String, String), Arc<ViewSnapshot>>,
+    published: &Published,
+) {
     let index = &published.index;
     let Some(rows) = document["sessions"].as_array_mut() else {
         return;
@@ -1230,7 +1282,7 @@ fn view_decorations(document: &mut Value, views: &Views, published: &Published) 
             continue;
         };
         if let Some(entry) = index.candidate(&uid)
-            && let Some(view) = views.cached(&uid, "")
+            && let Some(view) = views.get(&(uid.clone(), String::new()))
             && view.view.parsed.candidate.is_version_of(entry)
             && view.view.parsed.pin
                 == pin_for(
@@ -1252,7 +1304,7 @@ fn view_decorations(document: &mut Value, views: &Views, published: &Published) 
         for item in items {
             if let Some(id) = item["id"].as_str()
                 && let Some(entry) = index.agent(&uid, id)
-                && let Some(view) = views.cached(&uid, id)
+                && let Some(view) = views.get(&(uid.clone(), id.to_owned()))
                 && view.view.parsed.candidate.is_version_of(entry)
                 && item["cursor"].is_object()
             {
