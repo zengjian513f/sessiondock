@@ -5,6 +5,11 @@
 
 ## Runtime and platform coverage
 
+- [ ] 根据 [外部程序启动审计](docs/process-launch-audit.md) 补足共享 tmux/systemd、
+  容器/调度器/常驻 RPC 服务的每作业身份或因果证据；无证据时保持未归属。
+  不能把启动请求、业务租约释放或自然语言“完成”当作 OS 资源归属/释放证明。
+  本次未访问的节点及历史坏行仍有审计覆盖缺口。
+
 - [ ] 扩展公共进程归属层的平台覆盖与完整计量：Linux `resource-agent` 已提供
   生命周期事件、CPU/PSS/GPU/proc storage 指标及可选 60 秒 VFS/TCP/NFS 诊断。
   macOS/Windows 采集器、短命任务无遗漏的累计账本仍待实现；连接复用、跳板、NAT
