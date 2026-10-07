@@ -97,7 +97,7 @@ Hub 顶栏另有机器 chip，见第 2 节。节点离线、列表/运行状态/
 
 ### 弹窗外观
 
-`appAlert` / `appConfirm`（[`legacy-web/popup.js`](../legacy-web/popup.js)）用与新建会话、回收站相同的居中 `dialog.app-dialog`。消息含空行时第一行当标题。Esc 或 × 等于取消。浮动卡（版本更新、登录环境、操作状态）进 `#float-stack`，不抢焦点。[`tests/popup_browser.py`](../tests/popup_browser.py)。
+`appAlert` / `appConfirm`（[`legacy-web/popup.js`](../legacy-web/popup.js)）用与新建会话、回收站相同的居中 `dialog.app-dialog`。消息含空行时第一行当标题。Esc 或 × 等于取消。带操作按钮的浮动卡（版本更新、登录环境、登录失效、缺陷报告回执、链接候选选择）进 `#float-stack`，不抢焦点。[`tests/popup_browser.py`](../tests/popup_browser.py)。
 
 ---
 
@@ -336,14 +336,14 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 - 手机返回列表。
 - 有子代理时，标题是下拉，切换主会话/子代理。
 - 父会话链或子会话菜单。
-- 控制台按钮（`bindConsoleButton`）。不可用时 toast 说明原因（`showConsoleToast`），不打开空终端。Hub 上按节点能力灰掉：[`tests/hub_console_availability_browser.py`](../tests/hub_console_availability_browser.py)。
+- 控制台按钮（`bindConsoleButton`）。不可用时用原生 tooltip 和 `aria-description` 说明原因，不弹浮层、不打开空终端。Hub 上按节点能力灰掉：[`tests/hub_console_availability_browser.py`](../tests/hub_console_availability_browser.py)。
 - 星标、展开/折叠过程、搜索导航。
 - 冻结现场 / 恢复运行（`renderSessionFreeze`）。需要 `session_freeze`、已加载的终端列表、以及可验证的 `instance_id`。否则按钮在，但是不可用，原因分别是：正在读取、当前节点不支持、状态已失效、没有可验证实例。成功后会话区覆盖「会话已暂停」和恢复按钮，不放进全局浮层。`POST api/session/freeze`。[`tests/session_freeze_browser.py`](../tests/session_freeze_browser.py)。
 - 报告当前会话问题。
 - 移动/复制整组。仅当 `session_clone_local_codex === true` 才出现。运行中灰色，原因：「会话正在运行，请先停止后再移动或复制整组。」待落盘行或没有该旗标：「此会话当前不支持移动或复制整组。」
 - 停止或删除。运行中（`S.live` 或列表里有未过期的托管 `instance_id`）是停止，否则是删除。父会话行这里是显示/隐藏父会话。尚未被对话占用的新建启动是删除这次启动。
 
-停止：`POST api/session/stop`。结果写在会话内通知（`showSessionStopNotice`），不是浏览器 `alert`。停止失败保留会话。
+停止：`POST api/session/stop`。成功只更新运行状态；失败及结果不确定使用 `appAlert` 的「知道了」框，停止失败保留会话。
 
 删除确认见下。
 
@@ -366,7 +366,7 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 - 环境行：核对目标 CLI 是否安装、版本是否更旧、动态工具是否未核验。未核验会写出来，不伪装成已通过。
 - 按钮随状态变成「复制整组 / 移动整组 / 正在复制… / 重试同一次复制 / 撤回本次移动」。结果不确定时不能改目标、操作和 UID 选择。
 - 计划 `POST api/session/clone/plan`，执行同机 `api/session/clone`、跨机 `api/session/transfer/clone`，进度 `api/session/clone/progress` 或 `api/session/transfer/progress`，取消 `api/session/clone/cancel` 或 `api/session/transfer/cancel`。
-- 完成后关闭对话框，打开目标会话，通知「整组复制完成，原会话已保留。」或「整组移动完成。」
+- 完成后关闭对话框并打开目标会话，不另弹成功通知。
 - 顶栏 `#transfer-tasks` 列出未完成任务，可继续。`GET api/session/transfers`，`refreshTransferTasks`。有未完成任务或任务面板打开时每 5 秒刷新；没有未完成任务且事件通道正常时只在 `sessiondock-ui-sessions`、本页操作、休眠恢复和约 60 秒一次的兜底读取时刷新；事件通道断开时仍每 5 秒；休眠或隐藏时不读。
 
 [`tests/session_clone_browser.py`](../tests/session_clone_browser.py)、[`tests/session_transfer_browser.py`](../tests/session_transfer_browser.py)、[`tests/session_transfer_cache_browser.py`](../tests/session_transfer_cache_browser.py)、[`tests/session_transfer_environment_browser.py`](../tests/session_transfer_environment_browser.py)、[`tests/session_transfer_isolation_browser.py`](../tests/session_transfer_isolation_browser.py)、[`tests/session_files_clone_browser.py`](../tests/session_files_clone_browser.py)、[`tests/session_mixed_clone_browser.py`](../tests/session_mixed_clone_browser.py)、[`tests/session_mixed_bundle_browser.py`](../tests/session_mixed_bundle_browser.py)、[`tests/session_local_recovery_browser.py`](../tests/session_local_recovery_browser.py)、[`tests/session_prefix_browser.py`](../tests/session_prefix_browser.py)、[`tests/session_files_browser.py`](../tests/session_files_browser.py)、[`tests/session_grok_checkpoint_browser.py`](../tests/session_grok_checkpoint_browser.py)、[`tests/session_goals_native_browser.py`](../tests/session_goals_native_browser.py)。
@@ -601,3 +601,11 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 `session-resources.css`；不引入像素补偿。验收锚点为本文中的浏览器操作与临时 loopback，
 不增加单元测试或产品检查。FileDock、ptyhost 线协议及克隆/移动的字节身份改写
 继续按各自合同执行；已注销的 Service Worker 离线壳不会因重构恢复。
+
+### DELTA：纯文字反馈不再悬浮（2026-10-07）
+
+按用户要求，正常 CLI 退出（含 Ctrl+D）、停止成功、此前已退出、整组复制／移动完成只更新原界面。停止／冻结／恢复／启动失败、单次停止结果不确定、主动打开／接管终端失败用现有 `appAlert` 确认框；后台自动重连不弹框。批量停止继续用按钮旁的进度和展开错误详情。
+
+控制台结构性不可用和筛选不可用复用原生 tooltip。终端连接状态、输出错误、文件粘贴进度放在终端内 `#term-output-notice`，按终端视图隔离；禁用文件粘贴和剪贴板读取失败显示四秒，上传完成或连接恢复后清除相应状态。输入就绪说明沿用 composer 上方行内提示，占正常布局，不盖正文、终端和发送按钮。已结束且可重新启动的草稿说明阻塞发送的原因，其他已结束会话沿用原来的 composer 隐藏行为。
+
+无按钮的链接异常／移动／副本说明在详情标题下显示，切换会话清除；有候选按钮时保留全局浮层。版本更新、登录环境变化、登录失效、缺陷报告回执、冻结／休眠的恢复交互保持原样。

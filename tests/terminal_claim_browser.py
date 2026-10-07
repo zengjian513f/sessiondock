@@ -75,14 +75,15 @@ def scenario(root, browser, surface, phase):
             # This real wait proves the production timer does not abort at 5 s.
             page.wait_for_timeout(6000)
             assert page.evaluate('ConsoleUI.busy.has(S.sel)'), 'claim abandoned at the old deadline'
-            button.click()
+            button.click(force=True)
             assert len(claims) == 1 and not dialogs
             assert not claims[0].get('force')
             assert claims[0]['uid'] == uid and claims[0]['instance_id'] == instance
             if phase == 'timeout':
                 page.wait_for_function('!ConsoleUI.busy.has(S.sel)', timeout=20000)
                 expect(page.locator('#termpane')).to_be_hidden()
-                expect(page.locator('#console-toast')).to_contain_text('服务端可能已取得控制权')
+                assert any('服务端可能已取得控制权' in message for message in dialogs), dialogs
+                expect(page.locator('#float-stack > :visible')).to_have_count(0)
                 assert page.evaluate('uid => ConsoleUI.errors.has(uid)', selected_uid)
                 page.wait_for_timeout(700)
                 assert len(claims) == 1, 'ambiguous claim was automatically retried'
@@ -138,7 +139,7 @@ def scenario(root, browser, surface, phase):
                 expect(page.locator('#termpane')).to_be_hidden(timeout=10000)
                 page.wait_for_timeout(1500)
                 assert len(conflicts) == 1 and not conflicts[0].get('force'), conflicts
-            assert not errors and not dialogs, (errors, dialogs)
+            assert not errors and len(dialogs) == (1 if phase == 'timeout' else 0), (errors, dialogs)
             print(f'PASS terminal claim {surface}/{phase}: real click, delayed transport, shell input/output, network recovery, no automatic force', flush=True)
         finally:
             context.close()

@@ -167,7 +167,7 @@ function installTermMenu(view) {
         const data = new DataTransfer();
         data.setData('text/plain', text);
         term.textarea.dispatchEvent(new ClipboardEvent('paste', {clipboardData: data, bubbles: true, cancelable: true}));
-      } catch { showConsoleToast('无法读取剪贴板，请聚焦终端后按 Ctrl+V（macOS 使用 ⌘V）。'); }
+      } catch { showTermInputNotice('无法读取剪贴板，请聚焦终端后按 Ctrl+V（macOS 使用 ⌘V）。', view, 4000); }
     }],
     ['查找', () => { search.hidden = false; query.focus(); query.select(); find(1, true); }],
   ]) {

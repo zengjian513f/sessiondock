@@ -953,7 +953,7 @@ function showMobileList() {
   if (MOBILE.matches) store.set('mobilePage', 'list');
   layoutSessionHead();
   layoutHeader();
-  syncSessionStopNotice();
+  syncSessionNotices();
 }
 
 function fmtSize(n) {
@@ -2168,7 +2168,7 @@ function syncActiveOnlyList() {
 
 function selectSessionScope(activeOnly) {
   if (activeOnly && !SessionDockCapabilities.allows('live')) {
-    showConsoleToast('运行状态未知：Rust 后端尚未实现进程探测，不能按活跃状态筛选。');
+    setControlUnavailable($('#livecount'), '运行状态未知，不能按活跃状态筛选。');
     return;
   }
   S.activeOnly = activeOnly;
@@ -3306,7 +3306,6 @@ async function stopPickedSessions() {
   sessionStopBusy = true;
   const progress = sessionStopProgress = {total: targets.length, stopped: 0, settled: 0,
     failed: 0, uncertain: 0, details: [], refreshError: false};
-  showSessionStopNotice('');
   $('#side-stop-details').open = false;
   renderPickBar();
   let next = 0;
@@ -5067,7 +5066,6 @@ function ensureConsolePlaceholder() {
   heading.querySelector('.mobile-back').onclick = showMobileList;
   $('#detail').prepend(heading);
   bindConsoleButton(heading.querySelector('#a-term'), S.sel, S.agent);
-  showConsoleToast('');
 }
 
 function followContinuedSession(uid) {
@@ -5215,7 +5213,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   }
   S.sel = uid;
   S.agent = selectedAgent;
-  syncSessionStopNotice();
+  syncSessionNotices();
   clearUnread(uid);
   store.set('sel', uid);
   store.set('agent', S.agent ? { uid, id: S.agent } : null);
@@ -5706,6 +5704,7 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
   d.innerHTML = '';
   const entry = cache.get(viewKey(uid, agent));
   d.appendChild(head(meta, entryTotal(entry || {msgs})));
+  syncSessionNotices();
   layoutSessionHead();
   renderTimelinePinNotice(meta);
   const box = el('div', 'msgs');
@@ -5826,7 +5825,7 @@ function closeSessionActions(restoreFocus = false) {
 }
 
 function bindSessionActions(heading) {
-  syncSessionStopNotice();
+  syncSessionNotices();
   const button = heading.querySelector('#a-more');
   const menu = heading.querySelector('#session-actions-menu');
   if (!button || !menu) return;
@@ -6309,7 +6308,6 @@ function head(m, total) {
   bindForkChainMenu(h, m);
   const tb = h.querySelector('#a-term');
   bindConsoleButton(tb, m.uid, m.agent_id);
-  showConsoleToast('');
   if (typeof renderTakeoverBtn === 'function') setTimeout(renderTakeoverBtn, 0);
   renderSessionAction(m, h.querySelector('#a-session-action'));
   bindSessionActions(h);
@@ -6466,7 +6464,7 @@ function renderSessionFreeze(m, button = $('#a-session-freeze')) {
         frozen:result.frozen, process_count:result.process_count});
       syncSessionFreezeOverlay();
     } catch (error) {
-      showSessionStopNotice(`冻结 / 恢复失败：${error.message || error}`, true, m.uid);
+      await appAlert(`冻结 / 恢复失败：${error.message || error}`);
     } finally {
       await loadTermList();
       paintTurn(m.uid);
@@ -6534,7 +6532,7 @@ async function toggleSessionRun(row, button = null) {
     // Reuse the existing exact-UID resume and its idempotent launch receipt.
     await takeover(row.uid, null);
   } catch (error) {
-    showSessionStopNotice(`启动失败：${error.message || error}`, true, row.uid);
+    await appAlert(`启动失败：${error.message || error}`);
   } finally {
     ConsoleUI.busy.delete(row.uid);
     refreshSessionRunControls();
@@ -6579,7 +6577,7 @@ function sessionStoppable(uid) {
   return sessionStopCapable() && typeof T !== 'undefined'
     && (T.list || []).some(row => row.uid === uid && !!row.instance_id && !row.stale);
 }
-let sessionStopNoticeTimer = 0;
+let sessionLinkNotice = null;
 // Keep the frozen scene inside the selected session pane, never in global floats.
 function syncSessionFreezeOverlay() {
   const right = $('#right');
@@ -6602,33 +6600,47 @@ function syncSessionFreezeOverlay() {
     overlay.dataset.uid = visible ? S.sel : '';
   }
 }
-function syncSessionStopNotice() {
+function syncSessionNotices() {
   syncSessionFreezeOverlay();
-  const notice = $('#session-stop-notice');
-  if (notice?.dataset.uid && (notice.dataset.uid !== S.sel
-      || (MOBILE.matches && !document.body.classList.contains('mobile-detail')))) {
-    clearTimeout(sessionStopNoticeTimer);
-    notice.hidden = true;
+  if (!sessionLinkNotice) return;
+  const {node, uid, selection, actionable} = sessionLinkNotice;
+  if ((uid && uid !== S.sel) || (!uid && selection !== S.sel)) {
+    node.remove();
+    sessionLinkNotice = null;
+    return;
   }
+  if (!actionable) {
+    const heading = $('#detail > .dhead');
+    if (heading) heading.after(node);
+    else $('#detail').prepend(node);
+  }
+  node.hidden = !!uid && MOBILE.matches && !document.body.classList.contains('mobile-detail');
 }
-function showSessionStopNotice(text, sticky = false, uid = '') {
-  // Batch progress owns stop feedback, including asynchronous terminal-exit
-  // notices that arrive after an individual HTTP response.
-  if (text && (sessionStopBusy || (S.picking && sessionStopProgress))) return;
-  let notice = $('#session-stop-notice');
-  if (!notice) {
-    notice = el('div', 'app-float');
-    notice.id = 'session-stop-notice';
-    notice.setAttribute('role', 'status');
-    notice.setAttribute('aria-live', 'polite');
-    floatStack().appendChild(notice);
+function showSessionLinkNotice(text, uid = '', actions = []) {
+  sessionLinkNotice?.node.remove();
+  sessionLinkNotice = null;
+  if (!text) return;
+  const node = el('div', actions.length ? 'app-float' : 'session-link-notice');
+  node.id = 'session-link-notice';
+  node.setAttribute('role', 'status');
+  node.setAttribute('aria-live', 'polite');
+  node.append(document.createTextNode(text));
+  for (const {label, open} of actions) {
+    const button = el('button', 'btn', label);
+    button.type = 'button'; button.onclick = open;
+    node.append(button);
   }
-  const show = visible => { notice.hidden = !visible; };
-  clearTimeout(sessionStopNoticeTimer);
-  notice.textContent = text;
-  notice.dataset.uid = uid;
-  show(!!text && (!uid || uid === S.sel));
-  if (text && !sticky) sessionStopNoticeTimer = setTimeout(() => show(false), 8000);
+  sessionLinkNotice = {node, uid, selection:S.sel, actionable:!!actions.length};
+  if (actions.length) floatStack().append(node);
+  // A failed deep link still needs a readable detail page and mobile back navigation.
+  if (!actions.length && !S.sel) {
+    const heading = el('div', 'dhead');
+    heading.innerHTML = '<div class="dtitle"><button class="mobile-back" type="button" title="返回会话列表" aria-label="返回会话列表">←</button><h2>会话链接</h2></div>';
+    heading.querySelector('button').onclick = showMobileList;
+    $('#detail').replaceChildren(heading);
+  }
+  if (!actions.length && MOBILE.matches) showMobileDetail();
+  syncSessionNotices();
 }
 const STOP_STAGE_TEXT = {
   graceful: 'CLI 已在收到 Ctrl-D 后退出',
@@ -6656,15 +6668,14 @@ async function stopSession(m, button = null) {
   if (button) button.disabled = true;
   try {
     const d = await requestSessionStop(m);
-    if (sessionStopCapable()) {
-      showSessionStopNotice(`「${m.title}」${STOP_STAGE_TEXT[d.stage] || d.explanation || '停止请求已处理'}`);
+    if (sessionStopCapable() && d.stage === 'uncertain') {
+      await appAlert(`停止结果不确定\n\n「${m.title}」${STOP_STAGE_TEXT.uncertain}`);
     }
     await refreshLive(true);
     if (typeof loadTermList === 'function') await loadTermList();
     paintLive();
   } catch (error) {
-    if (sessionStopCapable()) showSessionStopNotice(`停止失败：${error.message || error}`, true);
-    else await appAlert(`停止失败：${error.message || error}`);
+    await appAlert(`停止失败：${error.message || error}`);
   } finally {
     if (button) button.disabled = false;
   }
@@ -9358,7 +9369,7 @@ MOBILE.addEventListener?.('change', e => {
   } else {
     document.body.classList.remove('mobile-detail');
   }
-  syncSessionStopNotice();
+  syncSessionNotices();
   syncMobileViewport();
   setSideWidth(store.get('width', SIDE_DEFAULT) + sideResourceExtra());
   setSideCollapsed(store.get('sideCollapsed', false), false);
@@ -10484,9 +10495,8 @@ async function openExternalSession(spec, historyMode = 'replace') {
         || (row.node_id && pendingUid(row.name) === spec.replace('tmux:', `tmux:${row.node_id}~`))));
     if (matches.length === 1) await openPendingSession(matches[0], {historyMode});
     else {
-      showSessionStopNotice(matches.length ? '此链接对应多个启动记录，请选择要打开的会话。'
-        : '暂时无法找到此启动记录，请检查机器连接或会话是否已删除。', true);
-      leaveBootDetail();
+      showSessionLinkNotice(matches.length ? '此链接对应多个启动记录，请选择要打开的会话。'
+        : '暂时无法找到此启动记录，请检查机器连接或会话是否已删除。');
     }
     return true;
   }
@@ -10509,22 +10519,18 @@ async function openExternalSession(spec, historyMode = 'replace') {
     await openSession(session.uid, session.agent || null, {exact:true, historyMode});
     const url = new URL(location.href); url.searchParams.set('sid',session.sid); url.searchParams.set('node',session.node);
     history.replaceState(history.state,'',url);
-    if (session.via?.length) showSessionStopNotice(session.copied
+    if (session.via?.length) showSessionLinkNotice(session.copied
       ? `原会话已不可用，当前打开其副本 · ${session.node_name}。`
-      : `此会话已移动到 ${session.node_name}。`, true, session.uid);
+      : `此会话已移动到 ${session.node_name}。`, session.uid);
   };
   if (result.status === 'found') { await open(result.session); return true; }
   const text = result.status === 'missing' ? '原会话及已记录的后继均不存在。'
     : result.status === 'ambiguous' ? '此链接对应多个会话，请选择要打开的记录。'
     : '原位置暂不可达，尚不能确认会话是否已删除。';
-  showSessionStopNotice(text,true);
-  const notice = $('#session-stop-notice');
-  for (const session of result.alternatives || []) {
-    const button = el('button','btn',`${session.copied ? '打开副本' : '打开后继'} · ${session.node_name || session.node}`);
-    button.type = 'button'; button.onclick = () => open(session);
-    notice.append(' ',button);
-  }
-  leaveBootDetail();
+  showSessionLinkNotice(text, '', (result.alternatives || []).map(session => ({
+    label:`${session.copied ? '打开副本' : '打开后继'} · ${session.node_name || session.node}`,
+    open:() => open(session),
+  })));
   return true;
 }
 addEventListener('popstate', () => {
@@ -10826,7 +10832,6 @@ async function cloneSessionGroup(uid, resumed = null) {
     // reconciles all changes accumulated while the modal was open.
     try { await openSession(result.target_uid, null, {exact:true}); }
     finally { transferNavigationPending = false; resumeTransferSidebar(); }
-    showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
   };
   async function discardPreview(previous) {
     if (previous) await request('api/session/clone/cancel', {uid, operation_id:previous.operation_id});

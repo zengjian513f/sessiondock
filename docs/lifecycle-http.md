@@ -358,10 +358,11 @@ to finish so they cannot invalidate in-flight cancellation evidence.
 Legacy (`session_stop:true`): the header "停止会话"/"删除会话" action and the
 sidebar menu treat a session as stoppable when `S.live` has it **or** a
 managed instance with this UID is listed (`S.live` is not polled under
-`live:false`); the request carries a `request_id`; the outcome or the
-server's refusal (unmanaged/external explanation, unknown host state) is
-shown inline in `#session-stop-notice` instead of a bare alert, and a
-confirmed stop drops the UID from `S.live`.
+`live:false`); the request carries a `request_id`; a confirmed stop drops the UID from
+`S.live` and updates the existing controls without a success notice.
+DELTA (2026-10-07, requested feedback redesign): single-stop failures and
+uncertain outcomes use the existing acknowledgement dialog (`appAlert`,
+“知道了”); no text-only floating notice remains.
 
 The sidebar multi-select toolbar also offers “停止”, with the count of selected
 stoppable sessions. One confirmation starts concurrent stop requests using the

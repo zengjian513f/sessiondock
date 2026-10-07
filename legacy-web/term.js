@@ -2176,6 +2176,7 @@ function renderTakeoverBtn() {
   b.classList.toggle('on', !!name);
   paintConsoleAvailability(b, S.sel, S.agent);
   renderComposer();
+  renderTermOutputNotice(currentTermViewObject());
   if (typeof auditConsoleButton === 'function') auditConsoleButton('takeover-btn');
 }
 
@@ -2853,14 +2854,14 @@ function restoreTermPane(uid, agent = null) {
 /** Only hosts with the server-side screen model serve a live console. A running
  *  host that predates it says `grid:false`; its session opens after a restart.
  *  An exited row has no host at all and goes on to its final screen or explains itself. */
-function terminalSupported(name) {
+function terminalSupported(name, notify = false) {
   const row = (T.list || []).find(x => x.name === name) || (T.pending || []).find(x => x.name === name);
   if (row?.grid !== false || row.running === false) return true;
   const uid = T.views.get(name)?.bindingUid || row.uid || T.uid || S.sel;
   const message = '此会话的终端宿主不支持网格显示，重新启动会话后即可打开控制台。';
   ConsoleUI.errors.set(uid, message);
   renderTakeoverBtn();
-  if (typeof showConsoleToast === 'function' && uid === S.sel) showConsoleToast(message);
+  if (notify) void appAlert(message);
   return false;
 }
 
@@ -2902,7 +2903,7 @@ async function openTermPane(name, autoFocus = true, requestedMode = null, auto =
   layoutTermPane();
   renderTakeoverBtn();
   try { await terminalFontReady; } catch { /* 字体失败时继续用 Consola/monospace */ }
-  if (!terminalSupported(name)) {
+  if (!terminalSupported(name, !auto)) {
     if (openEpoch === termOpenEpoch) {
       pane.classList.add('hidden');
       $('#right').classList.remove('term-full');
@@ -3069,7 +3070,7 @@ async function claimTermOwnership(name, uid = T.uid, binding = {}, auto = false,
   if (result.error || !result.token) {
     ConsoleUI.errors.set(uid, result.error || '无法取得终端控制权');
     renderTakeoverBtn();
-    if (!auto && !result.timeout) await appAlert('打开终端失败：' + (result.error || '无法取得终端控制权'));
+    if (!auto) await appAlert('打开终端失败：' + (result.error || '无法取得终端控制权'));
     return null;
   }
   ConsoleUI.errors.delete(uid);
@@ -3097,10 +3098,24 @@ function handleTermRevoked(view, ip = '', by = '') {
 function renderTermOutputNotice(view) {
   const notice = $('#term-output-notice');
   if (!notice) return;
-  const text = view?.outputNotice || '';
+  const uid = view && (T.name === view.name ? T.uid : view.bindingUid);
+  const error = uid && (ConsoleUI.errors.get(uid) || ConsoleUI.errors.get(view.bindingUid));
+  const status = view?.outputNotice || (view?.finalScreen ? view.finalScreenError : error) || '';
+  const text = [status, view?.inputNotice].filter(Boolean).join('\n');
   notice.textContent = text;
   notice.hidden = !text;
-  $('#termpane')?.classList.toggle('output-incomplete', !!text);
+  $('#termpane')?.classList.toggle('output-incomplete', !!view?.outputNotice);
+}
+
+function showTermInputNotice(message, view = currentTermViewObject(), duration = 0) {
+  if (!view) return;
+  clearTimeout(view.inputNoticeTimer);
+  view.inputNotice = message;
+  if (currentTermViewObject() === view) renderTermOutputNotice(view);
+  if (message && duration) view.inputNoticeTimer = setTimeout(() => {
+    view.inputNotice = '';
+    if (currentTermViewObject() === view) renderTermOutputNotice(view);
+  }, duration);
 }
 
 function recordHostExit(view, uid, event) {
@@ -3142,9 +3157,6 @@ function recordHostExit(view, uid, event) {
         });
       }
     }
-    const stopNotice = document.querySelector('#session-stop-notice');
-    if (!shell && uid === S.sel && typeof showSessionStopNotice === 'function'
-        && (!stopNotice || stopNotice.hidden)) showSessionStopNotice(reason);
   }
   renderTakeoverBtn();
   return true;
@@ -3207,13 +3219,15 @@ function showFinalScreen(view, row, uid) {
     writeTermOutput(view, JSON.stringify(data.snapshot) + '\n');
     if (T.name === view.name) fitTerm(true);
     const code = data.exit?.code;
+    view.finalScreenError = '';
     view.finalScreenStatus = `会话已结束（退出码 ${code ?? '未知'}）· 最后画面（只读）`;
     ConsoleUI.errors.set(uid, view.finalScreenStatus);
     if (T.name === view.name) renderFinalScreenMode(view);
     renderTakeoverBtn();
   }).catch(error => {
     if (T.views.get(view.name) !== view) return;
-    ConsoleUI.errors.set(uid, '最终画面读取失败：' + (error.message || error));
+    view.finalScreenError = '最终画面读取失败：' + (error.message || error);
+    ConsoleUI.errors.set(uid, view.finalScreenError);
     renderTakeoverBtn();
   });
   return true;
@@ -3221,7 +3235,7 @@ function showFinalScreen(view, row, uid) {
 
 async function attachTerm(name, auto = false, directClaim = false) {
   if (SessionDockNetwork.paused) return;
-  if (!terminalSupported(name)) return false;
+  if (!terminalSupported(name, !auto)) return false;
   const view = ensureTerm(name);
   if (view.attachPromise) return view.attachPromise;
   const job = attachOwnedTerm(view, true, auto, directClaim).catch(error => {
@@ -3258,6 +3272,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
   if (row?.record_id && pendingPhase(row) !== 'running' && pendingPhase(row) !== 'starting' && !row.final_screen?.id) {
     ConsoleUI.errors.set(uid, row.source === 'shell' ? '会话已结束，没有留下最后画面。' : '实例已退出。');
     renderTakeoverBtn();
+    if (!auto) await appAlert('打开终端失败：' + ConsoleUI.errors.get(uid));
     return false;
   }
   const launch = row?.record_id && row?.launch_id && !row?.stale;
@@ -3273,6 +3288,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
     }
     ConsoleUI.errors.set(uid, '终端实例关联已失效，请刷新控制台状态。');
     renderTakeoverBtn();
+    if (!auto) await appAlert('打开终端失败：' + ConsoleUI.errors.get(uid));
     return false;
   }
   // Capture once: claim and attachment must never silently follow replacement.
@@ -3429,9 +3445,6 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
       view.keepOutput = (T.pending || []).some(row => row.name === name && row.source === 'shell')
         || (typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(uid));
       if (T.name === name && !view.keepOutput) closeTermPane();
-      const stopNotice = document.querySelector('#session-stop-notice');
-      if (uid === S.sel && typeof showSessionStopNotice === 'function'
-          && (!stopNotice || stopNotice.hidden)) showSessionStopNotice(reason);
       const wait = document.querySelector('.new-session-wait');
       if (wait && pending && S.sel === pendingUid(name)) wait.textContent = reason;
       renderTakeoverBtn();
@@ -3637,6 +3650,7 @@ function disposeTermView(name) {
   const view = T.views.get(name);
   if (!view) return;
   clearTimeout(view.fitFrame);
+  clearTimeout(view.inputNoticeTimer);
   if (view.outputLayoutFrame) cancelAnimationFrame(view.outputLayoutFrame);
   const active = T.name === name;
   setCodexSideThreadState(view, false);
@@ -4562,7 +4576,7 @@ function renderComposer() {
   $('#right')?.classList.toggle('shell-session', !!shell);
   $('#right')?.classList.toggle('terminal-first', !!first);
   switchComposerDraft(show ? S.sel : null);
-  if (show) syncComposerMode();
+  if (show) { syncComposerMode(); renderComposerInputStatus(); }
   if (first && typeof layoutTermPane === 'function') layoutTermPane();
 }
 
@@ -4823,9 +4837,14 @@ function composerInputNotice(status) {
 function renderComposerInputStatus() {
   const node = $('#composer-input-status');
   const draft = composerDrafts.get(composerDraftOwner(composerUid));
-  const status = draft && composerUsesInputStatus()
+  const receipt = (T.pending || []).find(row => pendingUid(row.name) === composerUid);
+  const lifecycle = sessionComposerEnded(composerUid)
+    ? {state:'starting', message:'会话已结束，重新启动后可继续发送；输入已保留'}
+    : receipt && pendingPhase(receipt) === 'starting' && !takenOver(composerUid)
+      ? {state:'starting', message:'会话正在启动；输入已保留'} : null;
+  const status = lifecycle || (draft && composerUsesInputStatus()
     && !composerInputAllowsSend(draft.inputStatus)
-    ? draft.inputStatus || composerInputStatus(null) : null;
+    ? draft.inputStatus || composerInputStatus(null) : null);
   const blocking = status && (status.state === 'blocked'
     || (status.state === 'unknown' && status.code !== 'input_check_pending'));
   node.classList.toggle('blocked', !!blocking);
@@ -5202,10 +5221,7 @@ function consolePasteFiles(view, name, e) {
   const files = clipboardAttachmentFiles(e.clipboardData);
   if (!files.length) return;
   if (!consolePasteFilesEnabled()) {
-    showConsoleToast('已忽略粘贴的文件；在 设置 › 功能 开启「控制台粘贴文件」后会存入会话目录');
-    setTimeout(() => {
-      if ($('#console-toast')?.textContent.startsWith('已忽略粘贴的文件')) showConsoleToast('');
-    }, 6000);
+    showTermInputNotice('已忽略粘贴的文件；在 设置 › 功能 开启「控制台粘贴文件」后会存入会话目录', view, 4000);
     return;
   }
   e.preventDefault();
@@ -5236,7 +5252,8 @@ function consoleAttachmentPath(document) {
 async function publishConsolePaste(view, name, uid, files) {
   const paths = [];
   let attachmentId = null;
-  showConsoleToast(files.length === 1 ? `正在保存 ${files[0].name || '附件'}…` : `正在保存 ${files.length} 个文件…`);
+  const progress = files.length === 1 ? `正在保存 ${files[0].name || '附件'}…` : `正在保存 ${files.length} 个文件…`;
+  showTermInputNotice(progress, view);
   try {
     for (const file of files) {
       if (!file.size) throw new Error(`「${file.name || '附件'}」为空`);
@@ -5256,11 +5273,11 @@ async function publishConsolePaste(view, name, uid, files) {
       paths.push(consoleAttachmentPath(data));
     }
   } catch (error) {
-    showConsoleToast('');
+    showTermInputNotice('', view);
     await appAlert('粘贴文件失败：' + (error.message || error));
     return;
   } finally {
-    if ($('#console-toast')?.textContent.startsWith('正在保存')) showConsoleToast('');
+    if (view.inputNotice === progress) showTermInputNotice('', view);
   }
   if (T.name !== name || view.ended || view.revoked) return;
   const text = paths.join(' ') + ' ';

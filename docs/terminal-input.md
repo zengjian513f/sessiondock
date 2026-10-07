@@ -82,8 +82,10 @@ relative paths as one bracketed `{paste}` over `/api/term/send` under the
 console lease, followed by a space and no Enter: `./sessiondock_attachments/3/shot.png `
 (`.\…` on Windows nodes, spaces escaped). The CLI sees a typed path exactly
 as a dropped file and reads it on submit. Text pastes never enter this path.
-With the switch off a file paste is ignored and the console toast says where
-to enable it. Every paste surface (console, composer, report form) asks once
+DELTA (2026-10-07): with the switch off a file paste is ignored and a four-second
+inline notice inside its console says where to enable it. Upload progress also
+stays inside that console and clears when the upload finishes; it never floats
+over the page. Every paste surface (console, composer, report form) asks once
 before staging more than five files or more than 50 MB in one paste; a
 dismissed confirm stages nothing. Failures stay browser alerts; nothing is
 retried.

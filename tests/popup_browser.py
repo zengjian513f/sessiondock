@@ -106,15 +106,13 @@ def main():
                 assert stale_card.evaluate("d => d.isConnected && d === document.querySelector('.version-stale')")
                 stale_card.dispose()
 
-                # All operation notices use the update card's panel and vertical layout.
+                # Actionable receipts retain the update card layout; text-only floats are gone.
                 reference = card.evaluate("""d => { const s = getComputedStyle(d);
                     return [s.width, s.borderRadius, s.backgroundColor, s.boxShadow,
                             s.padding, s.fontSize, s.flexDirection]; }""")
                 for selector, trigger, clear in (
                     ('#bug-report-toast', "showBugReportToast('BUG-' + '1234567890'.repeat(8), {source:'codex', name:'fixture'})",
                      None),
-                    ('#console-toast', "showConsoleToast('合成控制台通知')", "showConsoleToast('')"),
-                    ('#session-stop-notice', "showSessionStopNotice('合成会话停止通知', true)", "showSessionStopNotice('')"),
                 ):
                     page.evaluate(trigger)
                     notice = page.locator(selector)

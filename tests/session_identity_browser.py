@@ -43,9 +43,9 @@ def copy(page, uid, expected, touch=False, notice=""):
     expect(page.locator("#item-menu")).to_be_hidden()
     assert page.evaluate("navigator.clipboard.readText()") == expected
     if notice:
-        expect(page.locator("#session-stop-notice")).to_have_text(notice)
+        expect(page.locator("#session-link-notice")).to_have_text(notice)
     else:
-        expect(page.locator("#session-stop-notice")).to_be_hidden()
+        expect(page.locator("#session-link-notice")).to_be_hidden()
     assert page.evaluate("S.sel") == selected, "copy must not open another session"
 
 
@@ -85,10 +85,11 @@ def main():
                 # Denied Clipboard API falls back to the browser's actual copy command.
                 page.evaluate("() => { navigator.clipboard.writeText = async () => { throw new Error('denied'); }; }")
                 copy(page, uid, expected, width == 390)
-                # Copying must also leave an existing lifecycle notice untouched.
-                page.evaluate("showSessionStopNotice('已有停止结果')")
-                copy(page, uid, expected, width == 390, notice="已有停止结果")
-                page.evaluate("showSessionStopNotice('')")
+                # Copying must also leave an existing inline link notice untouched.
+                page.evaluate("showSessionLinkNotice('已有会话链接说明')")
+                if width == 390: page.locator('.mobile-back').click()
+                copy(page, uid, expected, width == 390, notice="已有会话链接说明")
+                page.evaluate("showSessionLinkNotice('')")
                 # If both browser paths fail, report the failure visibly.
                 page.evaluate("() => { document.execCommand = () => false; }")
                 menu(page, uid, width == 390).click()

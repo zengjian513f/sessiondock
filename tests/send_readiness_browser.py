@@ -18,6 +18,13 @@ from send_browser import initialize, xterm_includes
 from popups import on_popup  # noqa: E402
 
 
+def composer_layout(page):
+    return page.evaluate("""() => ['#detail', '#composer', '#cinput'].map(selector => {
+        const node=document.querySelector(selector), rect=node.getBoundingClientRect();
+        return [rect.top, rect.bottom, node.scrollTop];
+    })""")
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix='sessiondock-readiness-') as temporary, private_hosts(Path(temporary)):
         root = Path(temporary)
@@ -235,7 +242,7 @@ def main():
                         && quote.selectionStart===3;
                     input.focus(); input.setSelectionRange(4, 4);
                     updateComposerInputStatus(composerUid, {ok:false,
-                        input:{state:'unknown',code:'cli_not_ready',message:'PTY '+ '长提示'.repeat(90)}});
+                        input:{state:'unknown',code:'test_long_notice',message:'PTY '+ '长提示'.repeat(90)}});
                     const bubble=status.getBoundingClientRect();
                     const style=getComputedStyle(status);
                     const shown=[composer.getBoundingClientRect().top,
@@ -245,7 +252,7 @@ def main():
                     const hidden=[composer.getBoundingClientRect().top,
                         input.getBoundingClientRect().top];
                     return {quoteRetained, inputFocused:document.activeElement===input,
-                        selection:input.selectionStart, inside:status.parentElement===composer,
+                        selection:input.selectionStart, inside:composer.contains(status),
                         bubbleHeight:bubble.height, border:style.borderTopWidth,
                         radius:style.borderTopLeftRadius, background:style.backgroundColor,
                         before, shown, hidden, bubbleBottom:bubble.bottom};
@@ -253,14 +260,13 @@ def main():
                 assert stable['quoteRetained'] and stable['inputFocused'] and stable['selection'] == 4, stable
                 assert stable['inside'] and stable['bubbleHeight'] > 18, stable
                 assert stable['before'] == stable['shown'] == stable['hidden'], stable
-                assert stable['bubbleBottom'] <= stable['shown'][0], stable
+                assert stable['bubbleBottom'] < stable['shown'][0], stable
                 assert (stable['border'], stable['radius'], stable['background']) == (
-                    '1px', '6px', 'color(srgb 1 1 1 / 0.88)'), stable
+                    '1px', '6px', 'color(srgb 1 1 1 / 0.82)'), stable
                 # Exercise the real settings controls and composer in both
                 # themes, including the report's narrow keyboard-sized viewport.
-                for width, height in [(1280, 720), (424, 259)]:
-                    for theme, background in [('dark', 'color(srgb 0.109804 0.121569 0.14902 / 0.88)'),
-                                              ('light', 'color(srgb 1 1 1 / 0.88)')]:
+                for width, height in [(1280, 720), (390, 844), (424, 259)]:
+                    for theme in ['dark', 'light']:
                         page.set_viewport_size({'width': 1280, 'height': 720})
                         page.locator('#settings').click()
                         page.locator('#setting-theme').select_option(theme)
@@ -271,19 +277,41 @@ def main():
                         page.locator('#cinput').fill('keep this message')
                         page.wait_for_function("composerDraft()?.inputStatus?.state === 'unknown'")
                         expect(page.locator('#composer-input-status')).to_be_visible()
-                        expect(page.locator('#composer-input-status')).to_have_css('background-color', background)
+                        expect(page.locator('#composer-input-status')).to_have_css('backdrop-filter', 'blur(6px)')
+                        background = page.locator('#composer-input-status').evaluate('el => getComputedStyle(el).backgroundColor')
+                        assert background.endswith('/ 0.82)'), background
                         bounds = page.locator('#composer-input-status').bounding_box()
                         assert bounds and bounds['x'] >= 0 and bounds['y'] >= 0, bounds
                         assert bounds['x'] + bounds['width'] <= width, bounds
                         composer = page.locator('#composer').bounding_box()
+                        assert bounds['y'] + bounds['height'] < composer['y'], (bounds, composer)
+                        # The notice contributes no empty row to the composer.
+                        items = page.locator('#compose-items').bounding_box()
+                        assert items['y'] - composer['y'] < 12, (items, composer)
                         inset = 8 if width < 600 else 18
                         assert abs(bounds['x'] - composer['x'] - inset) < 2, (bounds, composer)
                         assert abs(bounds['width'] - composer['width'] + 2 * inset) < 2, (bounds, composer)
                         expect(page.locator('#composer-input-status')).not_to_contain_text('SessionDock')
+                        capture = os.environ.get('SESSIONDOCK_TEST_SCREENSHOTS')
+                        if capture:
+                            Path(capture).mkdir(parents=True, exist_ok=True)
+                            page.screenshot(path=str(Path(capture) / f'composer-{width}-{height}-{theme}.png'))
+                        # Real CHECK transitions must leave the conversation and
+                        # editor in place, including in a keyboard-sized viewport.
+                        before = composer_layout(page)
+                        screen.write_text('custom')
+                        expect(page.locator('#composer-input-status')).to_be_hidden(timeout=10000)
+                        assert composer_layout(page) == before, (before, composer_layout(page))
+                        if capture:
+                            page.screenshot(path=str(Path(capture) / f'composer-{width}-{height}-{theme}-ready.png'))
+                        screen.write_text('login')
+                        expect(page.locator('#composer-input-status')).to_be_visible(timeout=10000)
+                        assert composer_layout(page) == before, (before, composer_layout(page))
                         page.locator('#cinput').press('End')
                         page.locator('#cinput').press('!')
                         expect(page.locator('#cinput')).to_have_value('keep this message!')
                         page.locator('#cinput').fill('keep this message')
+                        print(f'PASS floating composer notice {width}x{height} {theme}: stable layout, no reserved row', flush=True)
                 page.set_viewport_size({'width': 390, 'height': 844})
                 page.evaluate('showMobileDetail()')
                 if page.locator('#termpane').is_visible():
@@ -298,8 +326,11 @@ def main():
                     const before=[composer.getBoundingClientRect().top,
                         input.getBoundingClientRect().top];
                     updateComposerInputStatus(composerUid, {ok:false,
-                        input:{state:'unknown',code:'cli_not_ready',message:'PTY '+ '长提示'.repeat(90)}});
-                    const bubble=document.querySelector('#composer-input-status').getBoundingClientRect();
+                        input:{state:'unknown',code:'test_long_notice',message:'PTY '+ '长提示'.repeat(90)}});
+                    const status=document.querySelector('#composer-input-status');
+                    const bubble=status.getBoundingClientRect();
+                    status.scrollTop=status.scrollHeight;
+                    const scrollable=status.scrollTop>0;
                     const shown=[composer.getBoundingClientRect().top,
                         input.getBoundingClientRect().top];
                     updateComposerInputStatus(composerUid, {ok:true,
@@ -310,12 +341,13 @@ def main():
                         active:document.activeElement?.id, disabled:input.disabled,
                         visible:input.getClientRects().length>0,
                         inside:bubble.height>0 && composer.contains(document.querySelector('#composer-input-status')),
-                        before, shown, hidden, bubbleBottom:bubble.bottom};
+                        before, shown, hidden, scrollable, bubbleBottom:bubble.bottom};
                 }""")
                 assert mobile['focused'] and mobile['selection'] == 2, mobile
                 assert mobile['inside'], mobile
                 assert mobile['before'] == mobile['shown'] == mobile['hidden'], mobile
-                assert mobile['bubbleBottom'] <= mobile['shown'][0], mobile
+                assert mobile['scrollable'], mobile
+                assert mobile['bubbleBottom'] < mobile['shown'][0], mobile
                 page.set_viewport_size({'width': 1280, 'height': 720})
                 page.evaluate('removeComposerQuote(composerDraft().quotes[0].id)')
                 page.evaluate('async () => await composerDraftWrites')

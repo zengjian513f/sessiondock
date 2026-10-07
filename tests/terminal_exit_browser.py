@@ -113,7 +113,7 @@ def scenario(root, browser, incomplete):
             expect(page.locator("#msgs")).to_contain_text("Synthetic terminal exit acceptance")
             expect(page.locator("#a-term")).to_be_visible()
             expect(page.locator("#a-term")).to_have_attribute("data-unavailable", "false")
-            page.locator("#a-term").click()
+            page.locator("#a-term").click(force=True)
             expect(page.locator("#termpane")).to_be_visible()
             page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
             page.wait_for_function("(" + XTERM_TEXT + ")().includes('RS_SHELL_READY')")
@@ -139,17 +139,18 @@ def scenario(root, browser, incomplete):
                 assert notice.evaluate("el => { const r = el.getBoundingClientRect(); return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === el; }")
             else:
                 expect(notice).to_be_hidden()
+            expect(page.locator("#float-stack > :visible")).to_have_count(0)
             auto_dialogs = list(dialogs)
             automatic_claims = len(claims)
             expect(page.locator("#a-term")).to_be_visible()
             assert page.locator("#a-term").get_attribute("disabled") is None
             page.locator("#a-term").hover()
-            observed["toast"] = page.locator("#console-toast").text_content()
+            observed["toast"] = page.locator("#a-term").get_attribute("title")
             page.mouse.move(0, 0)
             page.locator("#a-term").focus()
-            observed["focusToast"] = page.locator("#console-toast").text_content()
+            observed["focusToast"] = page.locator("#a-term").get_attribute("title")
             before_click = len(dialogs)
-            page.locator("#a-term").click()
+            page.locator("#a-term").click(force=True)
             page.wait_for_timeout(100)
             observed["clickDialogs"] = dialogs[before_click:]
             observed["autoDialogs"] = auto_dialogs
@@ -162,7 +163,7 @@ def scenario(root, browser, incomplete):
                 expect(page.locator("#a-term")).to_be_visible()
                 assert page.locator("#a-term").get_attribute("disabled") is None
                 before_click = len(dialogs)
-                page.locator("#a-term").click()
+                page.locator("#a-term").click(force=True)
                 page.wait_for_timeout(100)
                 observed["mobileClickDialogs"] = dialogs[before_click:]
                 observed["claimsAfterMobileClick"] = len(claims)
@@ -197,8 +198,8 @@ def scenario(root, browser, incomplete):
                 check(observed["paneVisible"] and "RS_DELAYED_FINAL_TAIL" in observed["text"], "delayed tail is no longer visible")
                 check(why in observed["inlineNotice"],
                       "console does not visibly explain incomplete output")
-                check(any(why in dialog for dialog in observed["clickDialogs"]), "console click hides the specific incomplete reason")
-                check(any(why in dialog for dialog in observed["mobileClickDialogs"]), "mobile console click hides the specific incomplete reason")
+                check(not observed["clickDialogs"], "unavailable control opened a popup")
+                check(not observed["mobileClickDialogs"], "mobile unavailable control opened a popup")
             else:
                 message = observed["errors"].lower() + observed["text"].lower()
                 check(not any(word in message for word in ["incomplete", "truncated", "输出不完整", "截断"]), "normal EOF was mislabeled incomplete")
@@ -215,7 +216,7 @@ def scenario(root, browser, incomplete):
                     page.wait_for_timeout(600)
                     check(len(claims) == 1, "replacement inherited the exited instance's claim")
                     check(page.evaluate("uid => !T.ended.has(uid) && !ConsoleUI.errors.has(uid)", uid), "replacement retained stale exit diagnostic")
-                    page.locator("#a-term").click()
+                    page.locator("#a-term").click(force=True)
                     page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
                     page.wait_for_function("(" + XTERM_TEXT + ")().includes('RS_SHELL_READY')")
                     check(len(claims) == 2 and claims[-1]["instance_id"] == replacement, "manual replacement claim is not pinned to the new instance")

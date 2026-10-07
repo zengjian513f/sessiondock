@@ -201,7 +201,8 @@ def main():
                     page = context.new_page()
                     errors = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
-                    on_popup(page, lambda dialog: dialog.accept())
+                    dialogs = []
+                    on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
                     # Windows/macOS standalone capability: no Linux freeze support.
                     def unsupported_page(route):
                         response = route.fetch()
@@ -234,6 +235,15 @@ def main():
                         page.keyboard.press('Escape')
                     button = freeze_button(page)
                     expect(button).to_have_attribute('aria-label', '冻结现场')
+                    page.route('**/api/session/freeze', lambda route:
+                               route.fulfill(status=500, json={'error':'synthetic freeze refused'}))
+                    button.click()
+                    page.wait_for_function("!document.querySelector('#a-session-freeze').disabled")
+                    assert any('冻结 / 恢复失败' in text and 'synthetic freeze refused' in text for text in dialogs), dialogs
+                    expect(page.locator('#float-stack > :visible')).to_have_count(0)
+                    expect(page.locator('#session-freeze-overlay')).to_be_hidden()
+                    page.unroute('**/api/session/freeze')
+                    button = freeze_button(page)
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/freeze') as response:
                         button.click()
                     answer = response.value.json()
@@ -241,10 +251,10 @@ def main():
                     expect(button).to_have_attribute('aria-label', '恢复运行')
                     check_pause_badges(page, uid)
                     check_freeze_overlay(page)
-                    expect(page.locator('#session-stop-notice')).to_be_hidden()
+                    expect(page.locator('#float-stack > :visible')).to_have_count(0)
                     page.locator(f'#side .item[data-uid="{other_uid}"]').click()
                     page.wait_for_function('uid => S.sel === uid', arg=other_uid)
-                    expect(page.locator('#session-stop-notice')).to_be_hidden()
+                    expect(page.locator('#float-stack > :visible')).to_have_count(0)
                     expect(page.locator('#session-freeze-overlay')).to_be_hidden()
                     expect(page.locator('#dlive.frozen')).to_have_count(0)
                     # The paused session retains its own marker and unread count.
@@ -257,7 +267,7 @@ def main():
                     expect(paused_side).to_have_attribute('title', re.compile('3 条新内容.*已暂停'))
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
                     check_pause_badges(page, uid)
-                    expect(page.locator('#session-stop-notice')).to_be_hidden()
+                    expect(page.locator('#float-stack > :visible')).to_have_count(0)
                     assert all(state(pid) == 'T' for pid in pids), [(pid, state(pid)) for pid in pids]
                     ticks = [(root / name).read_text() for name in ['main-tick', 'child-tick']]
                     time.sleep(.2)
