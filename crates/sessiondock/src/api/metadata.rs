@@ -82,19 +82,6 @@ pub struct NestRequest {
     diagnostics: Diagnostics,
 }
 
-/// `target` is the Claude node (a message `turn_id`) to rewind the display to
-/// before; `null` clears the pin. This never rewinds the CLI.
-#[derive(Deserialize)]
-pub struct RewindRequest {
-    uid: String,
-    #[serde(default)]
-    target: Option<String>,
-    #[serde(default)]
-    request_id: Option<String>,
-    #[serde(flatten)]
-    diagnostics: Diagnostics,
-}
-
 fn configured(state: &AppState) -> Result<Arc<MetadataStore>, ApiError> {
     state.metadata.clone().ok_or_else(|| {
         ApiError::new(
@@ -457,95 +444,6 @@ pub async fn nest(
             "uid": body.uid,
             "nest_parent": nest_parent,
             "metadata_revision": snapshot.revision(),
-        }))
-    })
-    .await
-}
-
-/// Persist a Claude display pin ("rewind" of the read model only). The target
-/// is validated against the frozen native inventory; native files are never
-/// written and the CLI is never signalled, so the response says
-/// `native_rewind:false`. Later native records retire the pin explicitly.
-pub async fn rewind(
-    State(state): State<AppState>,
-    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
-    body: Result<Json<RewindRequest>, JsonRejection>,
-) -> Result<JsonBytes, ApiError> {
-    let metadata = configured(&state)?;
-    let Json(body) = body.map_err(invalid)?;
-    body.diagnostics.validate(&state, hub.is_some())?;
-    if body.uid.is_empty() {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_metadata_uid",
-            "需要有效的会话 uid",
-        ));
-    }
-    if body.target.as_ref().is_some_and(|target| target.is_empty()) {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_rewind_target",
-            "target 必须是 Claude 记录节点 ID，或 null 表示取消固定",
-        ));
-    }
-    write(state, move |store, events| {
-        let uid = body.uid;
-        let snapshot = update(&metadata, events, |metadata| Ok(match &body.target {
-            Some(target) => {
-                let resolved = store.claude_rewind_target(&uid, target)?;
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|_| {
-                        ApiError::new(
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            "metadata_clock_invalid",
-                            "系统时钟无效，不能记录固定时间",
-                        )
-                    })?
-                    .as_secs_f64();
-                metadata.set_timeline_pin(
-                    &uid,
-                    crate::metadata::TimelinePin {
-                        tip: resolved.tip,
-                        stale_end: resolved.stale_end,
-                        target: Some(target.clone()),
-                        pinned_at: Some(now),
-                        cli: false,
-                    },
-                )?
-            }
-            None => {
-                let list = store.list(true)?;
-                if !list["sessions"]
-                    .as_array()
-                    .is_some_and(|rows| rows.iter().any(|row| row["uid"] == uid))
-                {
-                    return Err(ApiError::new(
-                        StatusCode::NOT_FOUND,
-                        "session_missing",
-                        "会话不存在",
-                    ));
-                }
-                metadata.clear_timeline_pin(&uid)?
-            }
-        }))?;
-        // Report the row exactly as `/api/sessions` now publishes it, including
-        // an immediate retirement if native records already moved past the pin.
-        let list = store.list(true)?;
-        let row = list["sessions"]
-            .as_array()
-            .and_then(|rows| rows.iter().find(|row| row["uid"] == uid))
-            .cloned()
-            .unwrap_or(Value::Null);
-        let pin = row["timeline_pin"].clone();
-        Ok(json!({
-            "ok": true, "uid": uid, "pinned": pin.is_object(),
-            "target": pin["target"], "tip": pin["tip"], "stale_end": pin["stale_end"],
-            "timeline_pin": pin, "native_rewind": false,
-            "request_id": body.request_id, "metadata_revision": snapshot.revision(),
-            "message": if pin.is_object() {
-                if pin["retired"] == true { "固定显示已失效；CLI 未回滚" } else { "已固定显示；CLI 未回滚" }
-            } else { "已取消固定显示；CLI 未回滚" },
         }))
     })
     .await

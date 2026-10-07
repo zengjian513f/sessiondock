@@ -623,20 +623,15 @@ impl MetadataSnapshot {
         })
     }
 
-    pub fn without_timeline_pin(&self, uid: &str) -> Result<Self, MetadataError> {
-        validate_uid(uid)?;
-        self.change(|rows| {
-            if let Some(row) = rows.get_mut(uid)
-                && row.timeline.take().is_some()
-            {
-                row.timeline_revision = increment(row.timeline_revision)?;
-            }
-            Ok(())
-        })
-    }
-
+    /// Only pins that follow a rewind the CLI made itself apply. Display-only
+    /// pins from the removed "回到此处" action stay stored but are ignored.
     pub fn timeline(&self, uid: &str) -> Option<&TimelinePin> {
-        self.document.sessions.get(uid)?.timeline.as_ref()
+        self.document
+            .sessions
+            .get(uid)?
+            .timeline
+            .as_ref()
+            .filter(|pin| pin.cli)
     }
     pub fn timeline_revision(&self, uid: &str) -> u64 {
         self.document

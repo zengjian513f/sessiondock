@@ -90,6 +90,9 @@ def main():
                     page.wait_for_function("S.sel && !S.sel.startsWith('tmux:')", timeout=20000)
                     native = page.evaluate("S.sel")
                     send(SECOND)
+                    # The page offers no display-only pin of its own.
+                    expect(user_bubbles(page, SECOND)).to_have_count(1)
+                    expect(page.locator("#msgs .timeline-pin-action")).to_have_count(0)
                     jsonl = root / "claude/project-history" / f"{receipt['declared_sid']}.jsonl"
                     before = jsonl.read_bytes()
 

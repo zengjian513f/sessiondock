@@ -281,9 +281,9 @@ Markdown（`md` / `blocks` / `inline`）和公式（`renderFormulae`，按需加
 
 ### Claude 时间线固定
 
-仅 Claude、非子代理、用户消息带 `turn_id`，且 `timeline_pin` 能力开时，消息上有「回到此处」（`timelinePinAction`）。`POST api/session/rewind`。固定后标题下通知：「已固定显示到所选输入之前，CLI 未回滚」。可「取消固定」。失效时说明原因，按钮变成「清除记录」。终端里做出的回滚若已同步，通知是「已同步终端里的回滚」，没有取消按钮。失败写在左栏 `#stat`，约 2.4 秒后恢复计数。
+Claude 在终端里双 Esc 回滚后，对话跟着显示到回滚点，标题下通知「已同步终端里的回滚，显示到回滚点为止」，没有取消按钮；下一条原生输入后通知消失。页面上没有发起回滚或固定显示的入口（原「回到此处」已于 2026-10-07 删除）。
 
-[`tests/rewind_browser.py`](../tests/rewind_browser.py) 覆盖桌面和 390px。[`tests/rewind_cli_browser.py`](../tests/rewind_cli_browser.py) 覆盖 CLI 自己回滚后对话跟着变。
+[`tests/rewind_cli_browser.py`](../tests/rewind_cli_browser.py) 覆盖 CLI 自己回滚后对话跟着变。
 
 ---
 
@@ -563,7 +563,7 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 只列现有前端实际请求的路径。Hub 对节点的转发是 `api/nodes/{id}/api/...`。搜索和回收站在 Hub 上附加当前选中的 `nodes`。
 
-会话与列表：`api/meta`、`api/sessions`、`api/sessions?sig=`、`api/sessions/unread`、`api/sessions/delete`、`api/sessions/fork-visibility`、`api/events`、`api/live`、`api/watch`、`api/messages/{uid}`、`api/messages/{uid}/page`、`api/messages/{uid}/media-page`、`api/search`、`api/session/star`、`api/session/nest`、`api/session/stop`、`api/session/freeze`、`api/session/{uid}` DELETE、`api/session/rewind`、`api/session/file`、`api/session/resolve-files`、`api/groups`、`api/session/group`。
+会话与列表：`api/meta`、`api/sessions`、`api/sessions?sig=`、`api/sessions/unread`、`api/sessions/delete`、`api/sessions/fork-visibility`、`api/events`、`api/live`、`api/watch`、`api/messages/{uid}`、`api/messages/{uid}/page`、`api/messages/{uid}/media-page`、`api/search`、`api/session/star`、`api/session/nest`、`api/session/stop`、`api/session/freeze`、`api/session/{uid}` DELETE、`api/session/file`、`api/session/resolve-files`、`api/groups`、`api/session/group`。
 
 对话：`api/session/conversation`、`.../attachment`、`.../attachment/discard`、`.../check`、`.../send`、`.../queued/dismiss`、`.../restart`、`api/session/input-history`、`api/session/conversation/drafts`。
 

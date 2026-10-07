@@ -77,16 +77,16 @@ confirmation. These methods themselves do not establish that confirmation.
 
 ## Timeline pins
 
-`POST /api/session/rewind {uid, target, request_id?}` persists a display pin
-for a Claude main session (`target` is the record node whose *preceding*
-state should be shown — the pin's `tip` is its parent, matching Claude's own
-"resume before this input" selector; `target: null` clears the pin).
-The target is validated against the freshly opened main view (404 unknown node, 409
-when it exists but is not on the current active timeline or nothing precedes
-it); the store applies `with_timeline_pin` through the same atomic update
-(a repeated identical pin is a no-op that keeps `pinned_at` and revision).
-Without a state directory the route is 501 `metadata_disabled` and the
-`timeline_pin` capability is false.
+A timeline pin follows a rewind Claude made on its own screen
+([CLI state](cli-state.md)): the watcher validates the target against the
+freshly opened main view (`target` is the record node whose *preceding* state
+is shown; the pin's `tip` is its parent, matching Claude's own "resume before
+this input" selector) and stores it with `cli: true` through
+`with_timeline_pin` (a repeated identical pin is a no-op that keeps
+`pinned_at` and revision). There is no HTTP route that sets or clears a pin.
+DELTA: the operator's display-only "回到此处" pin and `POST
+/api/session/rewind` were removed on 2026-10-07; pins stored without `cli`
+by that action stay in the metadata file but are no longer applied.
 
 The read model applies a pin purely as parser options — `declared_tip = tip`,
 `abandoned_after = stale_end` (the committed byte length frozen at pin time) —
@@ -101,19 +101,12 @@ authoritative again and the row reports `timeline_pin.retired: true` with
 `native_continued` (the first new node's parent is the tip — the CLI really
 rewound), `native_advanced` (the CLI went past the pin — "CLI 未回滚"),
 `native_diverged` (a new leaf that does not contain the tip), `tip_missing`.
-Pins never write native files and never signal the CLI; every response says
+Pins never write native files and never signal the CLI; the published pin says
 `native_rewind: false`. Subagent views drop `timeline_pin`.
 
-Legacy, under `timeline_pin: true`, offers a "回到此处" action under user
-messages and a notice explaining that only the display is pinned and the CLI
-was not rewound, plus the retirement reason when present.
-A pin written because the CLI rewound on its own screen carries `cli: true`
-(persisted and published on the row and view meta; see
-[CLI state](cli-state.md)): its notice says the terminal rewind was followed,
-offers no unpin, and disappears once the pin retires.
-Validation: `python3 tests/rewind_browser.py` (pin → trimmed history + explanation,
-SSE retirement `native_advanced`, reload keeps state, 390 px pin/unpin, Web
-restart persists, native file only appended).
+Legacy shows a notice that the terminal rewind was followed while the pin is
+active; it offers no unpin and disappears once the pin retires.
+Validation: `python3 tests/rewind_cli_browser.py`.
 
 ## Sidebar parent
 

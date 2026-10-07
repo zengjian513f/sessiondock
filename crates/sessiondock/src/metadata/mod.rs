@@ -204,16 +204,14 @@ impl MetadataStore {
     // Domain-only hooks for a future authenticated, verified terminal workflow.
     // These methods do not perform the native action or establish confirmation.
 
-    /// Persist a validated display pin. The caller must have verified the
-    /// target against the frozen native inventory; this is not a native rewind.
+    /// Persist a pin that follows a rewind the CLI made on its own screen. The
+    /// caller must have verified the target against the frozen native
+    /// inventory; this writes no native file.
     pub fn set_timeline_pin(
         &self,
         uid: &str,
         pin: TimelinePin,
     ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
         self.update(|snapshot| snapshot.with_timeline_pin(uid, pin))
-    }
-    pub fn clear_timeline_pin(&self, uid: &str) -> Result<Arc<MetadataSnapshot>, MetadataError> {
-        self.update(|snapshot| snapshot.without_timeline_pin(uid))
     }
 }

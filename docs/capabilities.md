@@ -160,7 +160,7 @@ rendering is not implemented.
 
 `files_write` contains the configured chunk size and supported operations when
 file writes are available, and is false otherwise. `trash` requires a trash
-directory. `timeline_pin` uses the metadata store. These flags describe available
+directory. These flags describe available
 services; file roots do not restrict where a session can read or run.
 
 HTTP(S) image references are returned with `external:true`; the browser loads

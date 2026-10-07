@@ -22,8 +22,6 @@
 - [ ] 部署补发（不阻塞 [Agy](docs/agy.md) 接入）：Linux、macOS、Windows
   各一个节点网络不可达，恢复联机后用官方部署工具补发并验证。
 
-- [ ] 决定并实现真正的 native rewind/rollback。现有 timeline pin 只改变 SessionDock
-  的展示视图，不改 CLI 原生历史，也不向 CLI 发送回滚动作。
 - [ ] 若仍需要 activity stop 覆盖，先定义原生确认和退役语义，再接入读模型；不得仅凭
   HTTP 或终端写入成功声明完成。
 

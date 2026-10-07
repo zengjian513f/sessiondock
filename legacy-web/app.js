@@ -3740,100 +3740,30 @@ async function toggleSessionStar(uid) {
   }
 }
 
-/* ---------- Claude 时间线固定显示（只读能力） ----------
- * 只改 SessionDock的显示时间线；不写原生记录，也不给 CLI 发任何回滚信号。
- * 没有这个能力声明的页面，保持原有双 Esc 原生回滚流程。 */
-function timelinePinEnabled() {
-  return SessionDockCapabilities.config.timeline_pin === true;
-}
-
-function timelinePinFailed(message) {
-  const stat = $('#stat');
-  if (!stat) return;
-  stat.textContent = ` ${message}`;
-  stat.classList.add('err');
-  setTimeout(() => { stat.classList.remove('err'); showSessionCount(sidebarSessions().length); }, 2400);
-}
-
-const timelinePinBusy = new Set();
-async function pinTimeline(uid, target) {
-  if (!timelinePinEnabled() || !uid || timelinePinBusy.has(uid)) return false;
-  timelinePinBusy.add(uid);
-  try {
-    const response = await fetch(appUrl('api/session/rewind'), {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({uid, target: target ?? null}),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    // 固定/取消固定改变逻辑时间线：即便 JSONL 一个字节没变，服务端也会给
-    // reset；用现有增量接口原子替换缓存和 DOM。
-    S.lastSync = 0;
-    await syncSession(uid, null);
-    return true;
-  } catch (error) {
-    timelinePinFailed(`${target ? '固定显示失败' : '取消固定失败'}: ${error.message}`);
-    console.error('时间线固定失败', error);
-    return false;
-  } finally {
-    timelinePinBusy.delete(uid);
-  }
-}
-
+/* ---------- 跟随终端里的回滚 ----------
+ * Claude 在自己的画面上回滚后，服务端固定显示到回滚点并在会话上标记 `cli`；
+ * 下一条原生输入写入后自动失效。不写原生记录，也不给 CLI 发任何信号。 */
 function renderTimelinePinNotice(meta) {
   $('#timeline-pin-notice')?.remove();
-  if (!timelinePinEnabled() || !meta || meta.agent_id || !meta.timeline_pin
+  if (!meta || meta.agent_id || !meta.timeline_pin
       || typeof meta.timeline_pin !== 'object') return;
   const detail = $('#detail');
   if (!detail) return;
   const pin = meta.timeline_pin;
-  // A rewind made in the terminal: the next native input settles it, so a
-  // retired one needs no notice and an active one offers nothing to undo.
-  if (pin.cli && pin.retired) return;
+  // The next native input settles a terminal rewind, so a retired one needs
+  // no notice and an active one offers nothing to undo.
+  if (!pin.cli || pin.retired) return;
   const notice = document.createElement('div');
   notice.id = 'timeline-pin-notice';
   notice.setAttribute('role', 'status');
-  notice.dataset.retired = String(!!pin.retired);
-  if (pin.retired_reason) notice.dataset.retiredReason = String(pin.retired_reason);
+  notice.dataset.cli = 'true';
   notice.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;'
     + 'padding:8px 12px;flex:none;border-bottom:1px solid var(--border);font-size:13px';
   const text = document.createElement('span');
+  text.textContent = '已同步终端里的回滚，显示到回滚点为止';
+  notice.append(text);
   const heading = detail.querySelector(':scope > .dhead');
-  const place = () => { if (heading) heading.after(notice); else detail.prepend(notice); };
-  if (pin.cli) {
-    notice.dataset.cli = 'true';
-    text.textContent = '已同步终端里的回滚，显示到回滚点为止';
-    notice.append(text);
-    place();
-    return;
-  }
-  text.textContent = pin.retired
-    ? `固定显示已失效：${pin.retired_message || pin.retired_reason || '原生记录已变化'}。CLI 未回滚。`
-    : '已固定显示到所选输入之前，CLI 未回滚；原生记录继续后自动失效。';
-  const clear = document.createElement('button');
-  clear.type = 'button'; clear.className = 'btn';
-  clear.id = 'timeline-pin-clear';
-  clear.textContent = pin.retired ? '清除记录' : '取消固定';
-  clear.title = '只移除 SessionDock 的显示固定，不会回滚 CLI';
-  clear.onclick = () => { clear.disabled = true; void pinTimeline(meta.uid, null).finally(() => { clear.disabled = false; }); };
-  notice.append(text, clear);
-  place();
-}
-
-function timelinePinAction(n, m) {
-  if (!timelinePinEnabled() || m.role !== 'user' || m.turn_id == null || S.agent) return;
-  const session = S.sessions.find(s => s.uid === S.sel)
-    || cache.get(viewKey(S.sel, null))?.meta;
-  if (session?.source !== 'claude') return;
-  const uid = S.sel, target = String(m.turn_id);
-  const action = el('button', 'more disclosure timeline-pin-action');
-  action.type = 'button';
-  action.textContent = '回到此处';
-  action.title = action.ariaLabel = '固定显示到这条输入之前；只改网页显示，CLI 不会回滚';
-  action.dataset.pinTarget = target;
-  action.style.cssText = 'width:auto;margin:2px 8px 6px auto;padding:2px 8px;font-size:11px';
-  action.onclick = () => { action.disabled = true; void pinTimeline(uid, target).finally(() => { action.disabled = false; }); };
-  n.appendChild(action);
+  if (heading) heading.after(notice); else detail.prepend(notice);
 }
 
 function applySourceFilterChange() {
@@ -8400,7 +8330,6 @@ function msgNode(m) {
       m.system_timestamp].filter(Boolean).join('\n');
     n.appendChild(state);
   }
-  timelinePinAction(n, m);
   return n;
 }
 

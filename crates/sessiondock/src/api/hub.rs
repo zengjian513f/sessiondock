@@ -773,7 +773,6 @@ async fn handle(
             "/api/session/star"
                 | "/api/session/group"
                 | "/api/session/nest"
-                | "/api/session/rewind"
                 | "/api/sessions/fork-visibility"
                 | "/api/groups"
         )
