@@ -375,7 +375,26 @@ The mobile key bar also provides a latched **Shift** selection button. While
 on, a single-finger drag starts local selection immediately, bypassing CLI mouse
 capture without sending Shift or mouse bytes and without focusing its keyboard.
 A pinch cancels the selection but keeps Shift latched; tap Shift again to return
-to ordinary touch behavior. Closing the terminal clears the latch.
+to ordinary touch behavior. The latch also modifies the next key-bar arrow,
+Page Up/Down or Tab: navigation uses the physical keyboard's CSI modifier bits
+(including Ctrl/Alt combinations), and Shift+Tab sends back-tab. Any key-bar
+key consumes the latch; closing the terminal also clears it. Drag selection
+alone keeps the latch, and toggling it alone still sends no CLI input.
+
+DELTA (`BUG-20261007-093311-6ffc3f`): the former selection-only mobile Shift
+ignored the key bar. Audit clicks at 09:32:19 UTC showed Shift then Left,
+followed by a successful HTTP key send; the captured Codex screen still showed
+a queued question with `shift+← to answer`. The adjacent 3-byte WebSocket
+input receipts do not identify the HTTP key payload and may be focus reports.
+The pre-fix browser regression confirms that the key bar sends plain Left.
+Native history
+confirmed the asynchronous question, and the lifecycle binding matched the
+connected terminal. The first divergence was key-bar encoding, before transport:
+Shift+Left now sends `ESC [ 1 ; 2 D` (6 bytes). The report dialog covering the
+header accounted for the later console-button audit errors, not this failure.
+Validate with `tests/terminal_shift_browser.py` (touch clicks, PTY bytes and fake
+CLI question/answer) and `tests/terminal_selection_browser.py` (retained local
+selection and pinch behavior).
 Touch long press does not open the terminal menu; use the visible `⋯` button.
 A real mouse right-click opens the menu immediately, including after a touch
 selection or pinch. Compatibility mouse events from touch do not become remote
