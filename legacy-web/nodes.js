@@ -85,27 +85,12 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
   return lastError ? ConsoleUI.errors.get(uid) || '' : '';
 }
 
-function showConsoleToast(reason) {
-  const toast = document.querySelector('#console-toast');
-  if (!toast) return;
-  toast.textContent = reason;
-  toast.hidden = !reason;
-}
-
 function paintConsoleAvailability(button, uid, agent = null) {
-  // 只有结构性不可用（离线机器 / 缺 CLI / 终端禁用 / 子代理 / 列表出错）才把按钮
-  // 打成灰色并给出解释。上一次连接失败是可重试状态：按钮保持正常，点击直接重连，
-  // 失败原因写进终端本身，不再用灰按钮 + 悬停问号 + 确认框拦住用户。
   const reason = consoleUnavailableReason(uid, agent, false);
   button.classList.toggle('console-unavailable', !!reason);
   button.dataset.unavailable = String(!!reason);
-  button.disabled = false; // The explanation must remain reachable by mouse and keyboard.
-  if (reason) {
-    button.title = '';
-    button.ariaLabel = '控制台不可用：' + reason;
-  }
-  if (button.matches(':hover') || document.activeElement === button)
-    showConsoleToast(consoleUnavailableReason(uid, agent));
+  button.disabled = false;
+  setControlUnavailable(button, reason);
 }
 
 function consoleButtonMarkup() {
@@ -114,15 +99,10 @@ function consoleButtonMarkup() {
 
 function bindConsoleButton(button, uid, agent = null) {
   if (!button) return;
-  button.onmouseenter = button.onfocus = () => showConsoleToast(consoleUnavailableReason(uid, agent));
-  button.onmouseleave = button.onblur = () => showConsoleToast('');
   button.onclick = async () => {
-    showConsoleToast('');
     const reason = consoleUnavailableReason(uid, agent, false);
-    // 重复点击等待中的连接只呈现提示；原生 alert 会阻塞响应回调和超时清理。
-    if (ConsoleUI.busy.has(uid)) return showConsoleToast(reason);
-    if (reason) return appAlert('控制台不可用：\n' + reason);
-    // 上次连接失败不再拦一道确认框：点击直接重新接入并显示 pty，失败原因由终端呈现。
+    if (reason) { paintConsoleAvailability(button, uid, agent); return; }
+    // 上次连接失败不再拦一道确认框：点击直接重新接入并显示 pty，失败时明确提示原因。
     ConsoleUI.busy.add(uid);
     ConsoleUI.errors.delete(uid);
     paintConsoleAvailability(button, uid, agent);
@@ -136,7 +116,6 @@ function bindConsoleButton(button, uid, agent = null) {
     } finally {
       ConsoleUI.busy.delete(uid);
       if (typeof renderTakeoverBtn === 'function') renderTakeoverBtn();
-      if (ConsoleUI.errors.has(uid)) showConsoleToast(ConsoleUI.errors.get(uid));
     }
   };
   paintConsoleAvailability(button, uid, agent);

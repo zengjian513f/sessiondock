@@ -4,8 +4,7 @@
 A synthetic Codex session is resumed through the explicit start action
 (`/api/term/takeover`, fake CLI = free shell that exits on Ctrl-D). The header
 "停止会话" action then posts `/api/session/stop` with a `request_id`, the page
-shows which stage ended the instance (graceful), the console turns into the
-exit explanation and the action flips back to "启动会话". A session that has no
+updates the existing running state without a success toast, the console closes and the action flips back to "启动会话". A session that has no
 running instance succeeds as a no-op, and being idle it asks no confirmation. The
 mobile (390 px) sidebar long-press menu stops a fresh resume the same way. No
 model binary, native CLI home or production host is touched.
@@ -130,6 +129,14 @@ def main():
                     # Before any instance exists the first action starts this native session.
                     expect(session_action(page)).to_have_attribute("aria-label", "启动会话")
                     page.keyboard.press("Escape")
+                    page.route("**/api/term/takeover", lambda route:
+                               route.fulfill(status=500, json={"error":"synthetic start refused"}))
+                    before_start = len(dialogs)
+                    session_action(page).click()
+                    page.wait_for_function("!ConsoleUI.busy.has(S.sel)")
+                    assert any(kind == "alert" and "synthetic start refused" in message
+                               for kind, message in dialogs[before_start:]), dialogs[before_start:]
+                    page.unroute("**/api/term/takeover")
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover") as taken:
                         session_action(page).click()
                     resumed = taken.value.json()
@@ -153,6 +160,20 @@ def main():
                         });
                         stopAttentionObserver.observe(document.body,{subtree:true,childList:true,attributes:true});
                     }''')
+                    # A user-initiated failure or uncertain result requires acknowledgement.
+                    for status, payload, expected in (
+                        (500, {"error":"synthetic stop refused"}, "停止失败"),
+                        (200, {"ok":True,"stopped":False,"stage":"uncertain"}, "停止结果不确定"),
+                    ):
+                        page.route("**/api/session/stop", lambda route, request, status=status, payload=payload:
+                                   route.fulfill(status=status, json=payload))
+                        before_errors = len(dialogs)
+                        session_action(page).click()
+                        page.wait_for_function("!document.querySelector('#a-session-toggle').disabled")
+                        assert any(kind == "alert" and expected in message
+                                   for kind, message in dialogs[before_errors:]), dialogs[before_errors:]
+                        expect(page.locator("#float-stack > :visible")).to_have_count(0)
+                        page.unroute("**/api/session/stop")
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as stopped:
                         action.click()
                     # No turn event yet (state unknown): the stop still asks first.
@@ -162,9 +183,9 @@ def main():
                     assert reply["stage"] == "graceful" and reply["stopped"] is True and reply["tmux"] is False, reply
                     assert reply["instance_id"] == resumed["instance_id"] and reply["record_id"] == resumed["record_id"], reply
                     assert stops[-1]["uid"] == codex_uid and stops[-1].get("request_id"), stops[-1]
-                    notice = page.locator("#session-stop-notice")
-                    expect(notice).to_be_visible()
-                    expect(notice).to_contain_text("CLI 已在收到 Ctrl-D 后退出")
+                    notice = page.locator("#float-stack > :visible")
+                    expect(notice).to_have_count(0)
+                    expect(page.locator("#float-stack > :visible")).to_have_count(0)
                     # The pane closes on exit and the console
                     # button stays usable as "接管会话" because the source has a
                     # resume-capable profile; the exit explanation is remembered,
@@ -184,9 +205,8 @@ def main():
                     assert page.evaluate('stopAttentionFlashes') == [], page.evaluate('stopAttentionFlashes')
                     page.evaluate('stopAttentionObserver.disconnect()')
                     page.keyboard.press("Escape")
-                    # The notice really hides (the shared toast class forces display:flex).
-                    page.evaluate("showSessionStopNotice('')")
-                    expect(notice).to_be_hidden()
+                    # Successful stop does not add any floating status card.
+                    expect(notice).to_have_count(0)
                     deadline = time.monotonic() + 10
                     while list((root / "host").glob("*.json")) and time.monotonic() < deadline:
                         time.sleep(0.05)
@@ -195,7 +215,7 @@ def main():
                     assert live["managed"]["sessions"][codex_uid]["state"] == "exited", live["managed"]["sessions"]
 
                     # Exit from the actual terminal, as in the diagnostic audit:
-                    # no /session/stop response can overwrite the host-exit notice.
+                    # normal EOF must also stay silent without a /session/stop response.
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover") as taken:
                         page.locator("#a-term").click()
                     direct = taken.value.json()
@@ -204,13 +224,12 @@ def main():
                     page.keyboard.type("quit")
                     page.keyboard.press("Enter")
                     page.wait_for_function("name => !T.views.has(name)", arg=direct["name"])
-                    expect(notice).to_contain_text("CLI 已退出，终端已关闭")
-                    expect(notice).not_to_contain_text("保留")
+                    expect(notice).to_have_count(0)
+                    expect(page.locator("#float-stack > :visible")).to_have_count(0)
                     expect(page.locator("#termpane")).to_be_hidden()
                     assert page.evaluate("name => !T.openViews.has(name)", direct["name"])
                     page.wait_for_function("uid => !(T.list || []).some(row => row.uid === uid)", arg=codex_uid)
                     page.evaluate("refreshLive(true)")
-                    page.evaluate("showSessionStopNotice('')")
 
                     # ---- A session without any running instance:
                     # stopping succeeds as a no-op and the stale live marker clears.
@@ -231,8 +250,7 @@ def main():
                     result = stopped.value.json()
                     assert result.get("ok") is True and result.get("stopped") is False, result
                     assert result.get("external_detection") == "proc_scan", result
-                    expect(notice).to_be_visible()
-                    expect(notice).to_contain_text("停止请求已处理")
+                    expect(notice).to_have_count(0)
                     # Its transcript ends with a finished turn: stopping an idle session asks nothing.
                     assert page.evaluate("uid => sessionTurn(uid)", other_uid) == "idle"
                     assert len(dialogs) == before, dialogs[before:]
@@ -261,7 +279,7 @@ def main():
                     context.route("**/api/session/stop", fail_other)
                     bulk.click()
                     expect(bulk).to_have_text("已停止 1/2")
-                    expect(notice).to_be_hidden()
+                    expect(notice).to_have_count(0)
                     page.locator("#side-stop-summary").click()
                     expect(page.locator("#side-stop-errors")).to_contain_text("synthetic unknown host state")
                     page.wait_for_function("!sessionStopBusy")
@@ -282,14 +300,14 @@ def main():
                     bulk.click()
                     expect(bulk).to_have_text("已停止 0/1")
                     expect(page.locator("#side-stop-summary")).to_have_text("未确认 1")
-                    expect(notice).to_be_hidden()
+                    expect(notice).to_have_count(0)
                     page.wait_for_function("!sessionStopBusy")
                     assert len(stops) == before_stops + 3, "uncertain stop must not retry itself"
                     context.unroute("**/api/session/stop", uncertain_stop)
                     page.evaluate("uid => { S.live.add(uid); paintLive(); }", other_uid)
                     bulk.click()
                     expect(bulk).to_have_text("已停止 1/1")
-                    expect(notice).to_be_hidden()
+                    expect(notice).to_have_count(0)
                     assert len(stops) == before_stops + 4 and stops[-1]["uid"] == other_uid
                     page.evaluate("() => { S.live.clear(); paintLive(); }")
                     expect(bulk).to_be_disabled()
@@ -311,7 +329,7 @@ def main():
                     assert killed.value.status == 200 and result["state"] == "exited", result
                     assert result["record_id"] == receipt["record_id"] and result["instance_id"] == receipt["instance_id"]
                     expect(bulk).to_have_text("已停止 1/1")
-                    expect(notice).to_be_hidden()
+                    expect(notice).to_have_count(0)
                     page.wait_for_function("!sessionStopBusy")
                     expect(bulk).to_be_disabled()
                     expect(page.locator(f'#side .item[data-uid="{pending_uid}"]')).to_be_visible()
@@ -358,7 +376,7 @@ def main():
                     expect(bulk).to_have_text("已停止 0/8")
                     expect(bulk).to_have_attribute("aria-busy", "true")
                     expect(page.locator("#side-pick-cancel")).to_be_disabled()
-                    expect(notice).to_be_hidden()
+                    expect(notice).to_have_count(0)
                     # Observe the rendered UI, not an earlier state mutation.
                     expect(bulk).to_have_text(re.compile(r"已停止 [1-7]/8"), timeout=15000)
                     expect(bulk).to_have_text("已停止 8/8", timeout=15000)
@@ -373,7 +391,7 @@ def main():
                     assert ordered[1][0] < ordered[0][1], events
                     assert elapsed < 16, elapsed  # Serial escalation requires at least 8 * 2.4 seconds.
                     expect(bulk).to_be_disabled()
-                    expect(notice).to_be_hidden()
+                    expect(notice).to_have_count(0)
                     expect(page.locator("#side-stop-details")).to_be_hidden()
                     expect(page.locator("#side-picked")).to_have_text("已选 8 项")
                     page.locator(f'#side .item[data-uid="{slow_uids[0]}"]').click()
@@ -456,7 +474,7 @@ def main():
                     reply = stopped.value.json()
                     assert stopped.value.status == 200 and reply["stage"] == "graceful", reply
                     assert reply["instance_id"] == second["instance_id"], reply
-                    expect(page.locator("#session-stop-notice")).to_contain_text("CLI 已在收到 Ctrl-D 后退出")
+                    expect(page.locator("#float-stack > :visible")).to_have_count(0)
                     page.wait_for_function("uid => !(T.list || []).some(row => row.uid === uid)", arg=codex_uid, timeout=15000)
                     assert not errors, errors
                     # Wait for the stop refresh before opening another menu;
@@ -480,7 +498,7 @@ def main():
                     page.locator("#side-pick-stop").click()
                     expect(page.locator("#side-pick-stop")).to_have_text("已停止 1/1")
                     page.wait_for_function("!sessionStopBusy")
-                    expect(page.locator("#session-stop-notice")).to_be_hidden()
+                    expect(page.locator("#float-stack > :visible")).to_have_count(0)
                     for selector in ("#side-pick-stop", "#side-pick-delete", "#side-pick-cancel"):
                         bounds = page.locator(selector).bounding_box()
                         assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 391, bounds

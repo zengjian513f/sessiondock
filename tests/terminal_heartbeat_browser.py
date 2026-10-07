@@ -9,7 +9,7 @@ import time
 import tempfile
 import uuid
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 from audit_browser import audit_lines, wait_for_events
 from history_fixtures import BINARY, Corpus, codex_message, codex_row, isolated_server
 import terminal_input_browser as fixture
@@ -75,7 +75,10 @@ def run(browser, binary):
                 # HTTP/UI remain alive while only this WebSocket direction stalls.
                 assert page.request.get(base + '/api/meta').ok
                 page.wait_for_function('currentTermViewObject().heartbeat === null', timeout=16000)
+                expect(page.locator('#term-output-notice')).to_contain_text('控制台连接无响应')
+                expect(page.locator('#float-stack > :visible, dialog.app-popup')).to_have_count(0)
                 page.wait_for_function('!!currentTermViewObject().heartbeat && T.ws.readyState === 1', timeout=10000)
+                expect(page.locator('#term-output-notice')).to_be_hidden()
                 assert len(sockets) == count + 1, (direction, len(sockets))
                 assert host.poll() is None, 'recovery restarted/stopped the host'
                 if direction == 'down':

@@ -116,7 +116,12 @@ def check(browser, base, root, node_id, width):
     expect(other.locator('#msgs')).to_contain_text('Older conversation')
     missing = base + '/?' + urlencode({'sid': 'tmux:sessiondock-missing', **({'node': node_id} if node_id else {})})
     other.goto(missing)
-    expect(other.locator('#session-stop-notice')).to_contain_text('暂时无法找到此启动记录')
+    expect(other.locator('#session-link-notice')).to_contain_text('暂时无法找到此启动记录')
+    expect(other.locator('#detail > #session-link-notice')).to_be_visible()
+    expect(other.locator('#float-stack > :visible')).to_have_count(0)
+    if width == 390:
+        other.get_by_role('button', name='返回会话列表', exact=True).click()
+        expect(other.locator('#left')).to_be_visible()
     assert other.evaluate('S.sel') is None
     # A delayed link lookup cannot undo a later explicit sidebar selection.
     held.clear()

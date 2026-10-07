@@ -50,7 +50,10 @@ def main():
             page.goto(base+'/?'+urlencode({'sid':spec,'node':node.nid}),wait_until='networkidle')
             expect(page.locator('#msgs')).to_contain_text('Agent answer' if agent_view else 'Branch A final')
             page.wait_for_function('uid=>S.sel===uid',arg=expected)
-            if copied:expect(page.locator('#session-stop-notice')).to_contain_text('副本')
+            if copied:
+                expect(page.locator('#detail > #session-link-notice')).to_contain_text('副本')
+                expect(page.locator('#detail > #session-link-notice')).to_be_visible()
+                expect(page.locator('#float-stack > :visible')).to_have_count(0)
         def clone(source,target=None):
             page.goto(base+'/?'+urlencode({'sid':source,'node':node.nid}),wait_until='networkidle')
             expect(page.locator('#msgs')).to_contain_text('Branch A final')
@@ -113,8 +116,9 @@ def main():
         result=resolve(original)
         assert result['status']=='unavailable' and any(s['node']==peer.nid for s in result['alternatives']),result
         page.goto(base+'/?'+urlencode({'sid':original,'node':node.nid}),wait_until='networkidle')
-        expect(page.locator('#session-stop-notice')).to_contain_text('尚不能确认')
-        page.locator('#session-stop-notice button').filter(has_text='打开副本').first.click()
+        expect(page.locator('#session-link-notice')).to_contain_text('尚不能确认')
+        expect(page.locator('#float-stack > #session-link-notice')).to_be_visible()
+        page.locator('#session-link-notice button').filter(has_text='打开副本').first.click()
         page.wait_for_function('uid=>S.sel===uid',arg=e['target_uid'])
         expect(page.locator('#msgs')).to_contain_text('Branch A final')
         print('PASS offline origin offers accessible copy without silently redirecting',flush=True)
@@ -133,10 +137,11 @@ def main():
         hub.start()
         assert resolve(original)['status']=='missing'
         page.goto(base+'/?'+urlencode({'sid':original,'node':node.nid}),wait_until='networkidle')
-        expect(page.locator('#session-stop-notice')).to_contain_text('后继均不存在')
+        expect(page.locator('#detail > #session-link-notice')).to_contain_text('后继均不存在')
+        expect(page.locator('#float-stack > :visible')).to_have_count(0)
         servers.close()
         page.reload(wait_until='networkidle')
-        expect(page.locator('#session-stop-notice')).to_contain_text('尚不能确认')
+        expect(page.locator('#session-link-notice')).to_contain_text('尚不能确认')
         assert not errors,errors
         print('PASS cycles terminate, aborted edges ignored, deleted chain and offline origin distinguished',flush=True)
 

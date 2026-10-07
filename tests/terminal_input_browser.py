@@ -207,8 +207,25 @@ def main():
                 paste(None)
                 page.wait_for_timeout(400)
                 assert not uploads and not dialogs, (uploads, dialogs)
-                expect(page.locator("#console-toast")).to_contain_text("控制台粘贴文件")
+                expect(page.locator("#term-output-notice")).to_contain_text("控制台粘贴文件")
                 assert not (root / "work" / "sessiondock_attachments").exists()
+                expect(page.locator('#float-stack > :visible')).to_have_count(0)
+                assert page.locator('#term-output-notice').evaluate("""node => {
+                  const notice = node.getBoundingClientRect();
+                  const screen = document.querySelector('#xterm').getBoundingClientRect();
+                  return notice.top >= screen.bottom - 1;
+                }""")
+                expect(page.locator('#term-output-notice')).to_be_hidden(timeout=5000)
+                # A denied clipboard read stays beside terminal input and clears on its own.
+                page.evaluate("() => { window.savedClipboardRead = navigator.clipboard.readText; navigator.clipboard.readText = async () => { throw new Error('fixture denied'); }; }")
+                page.locator('.grid-canvas:visible').click(button='right', position={'x':30, 'y':12})
+                page.get_by_role('menuitem', name='粘贴', exact=True).click()
+                expect(page.locator('#term-output-notice')).to_contain_text('无法读取剪贴板')
+                expect(page.locator('#float-stack > :visible')).to_have_count(0)
+                expect(page.locator('dialog.app-popup')).to_have_count(0)
+                expect(page.locator('#term-output-notice')).to_be_hidden(timeout=5000)
+                page.evaluate('() => { navigator.clipboard.readText = savedClipboardRead; }')
+
 
                 page.locator("#settings").click()
                 page.locator('.settings-tab[data-tab="features"]').click()
@@ -234,7 +251,7 @@ def main():
                 assert wrote is True or saved.read_bytes() == base64.b64decode(PNG_B64), saved
                 keyboard.press("Enter")
                 xterm_contains(page, "RS_PASTE_PATH ./sessiondock_attachments/1/image.png")
-                expect(page.locator("#console-toast")).to_be_hidden()
+                expect(page.locator("#term-output-notice")).to_be_hidden()
 
                 sends.clear()
                 paste([["shot 2.png", "image/png", PNG_B64],

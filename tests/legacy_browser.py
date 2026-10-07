@@ -84,7 +84,7 @@ def main():
                     page.locator(f'#side .item[data-uid^="{source}:"]').click()
                     expect(page.locator("#msgs")).to_contain_text(answer)
                     expect(page.locator("#a-term")).to_be_visible()
-                    expect(page.locator("#a-term")).to_be_enabled()
+                    expect(page.locator("#a-term")).not_to_have_attribute("disabled", "")
 
                 # A Codex side thread can exist only in the live TUI while this
                 # conversation remains bound to its main native record. The UI
@@ -113,14 +113,15 @@ def main():
                 page.locator('#side .item[data-uid^="claude:"]').click()
                 page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
                 page.locator("#a-term").hover()
-                expect(page.locator("#console-toast")).to_contain_text("只读")
+                expect(page.locator("#a-term")).to_have_attribute("title", re.compile("只读"))
+                expect(page.locator("#float-stack > :visible")).to_have_count(0)
                 dialogs = []
                 def accept_dialog(dialog):
                     dialogs.append(dialog.message)
                     dialog.accept()
                 on_popup(page, accept_dialog)
-                page.locator("#a-term").click()
-                assert dialogs and "只读" in dialogs[-1]
+                page.locator("#a-term").click(force=True)
+                assert not dialogs
 
                 path = data / "claude/project-demo/synthetic-claude.jsonl"
                 original = path.read_bytes()
@@ -165,7 +166,7 @@ def main():
                 # Legacy switches to its mobile list page on the first narrow viewport.
                 page.locator('#side .item[data-uid^="claude:"]').click()
                 expect(page.locator("#a-term")).to_be_visible()
-                expect(page.locator("#a-term")).to_be_enabled()
+                expect(page.locator("#a-term")).not_to_have_attribute("disabled", "")
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
                 # Reloading on the mobile conversation page starts there, both

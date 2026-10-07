@@ -100,3 +100,7 @@ scope 三种范围选择，沿用 `screen_menu` 与当前焦点的 Up/Down/Enter
 | 登录/未知拒绝、恢复、粘贴后再检、不明写入不重试、软键盘不改 PTY 行列 | [send_readiness_browser.py](../tests/send_readiness_browser.py) |
 | Codex 两张图片与文字、`.txt` 与文字连续发送 | [send_codex_attachments_browser.py](../tests/send_codex_attachments_browser.py) |
 | 忙碌发送、选择题拒绝、草稿与 SEND、编辑区已有文字与 Esc 退回时拒发 | [send_browser.py](../tests/send_browser.py) |
+
+## DELTA：半透明悬浮提示（2026-10-07）
+
+按用户要求，`#composer-input-status` 脱离正常布局，以半透明背景悬浮在 composer 上方，不预留空白，不改变正文、终端和输入框的位置。沿用现有字体、边框和主题颜色，长提示限制高度并可滚动查看；就绪后撤掉提示。桌面与手机均保留紧凑输入区，提示不覆盖输入框或发送按钮。就绪状态和草稿保存规则不变。可重新启动的已结束草稿显示「会话已结束，重新启动后可继续发送；输入已保留」，不借此重新展示原本隐藏的已结束会话输入区。

@@ -559,7 +559,7 @@ def main():
                             page.goto(f'http://127.0.0.1:{hub.port}/?sid={source_uid}&node={a.nid}',wait_until='networkidle')
                             page.wait_for_function('uid=>S.sel===uid',arg=completed['target_uid'])
                             expect(page.locator('#msgs')).to_contain_text({'codex':'Branch A current','claude':'Branch A final','grok':'Grok answer 10'}[provider])
-                            expect(page.locator('#session-stop-notice')).to_contain_text('已移动')
+                            expect(page.locator('#session-link-notice')).to_contain_text('已移动')
                             print('PASS '+provider+' retained original link opens moved session in Chromium',flush=True)
                         if external:
                             environment=json.loads(read_target(destination.root/'state/transfers'/completed['operation_id']/'incoming-environment.json'))

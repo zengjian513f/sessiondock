@@ -45,6 +45,7 @@ def shows_final_screen(page):
     expect(page.locator('#term-final-status')).to_contain_text('退出码 3')
     assert page.locator('#term-timeline, #tl-seek').count() == 0
     assert page.locator('.new-session-wait').is_hidden()
+    expect(page.locator('#term-output-notice')).to_be_hidden()
     assert page.evaluate("getComputedStyle(document.querySelector('#xterm')).overflow") in ("auto", "scroll")
     assert page.locator("#a-term").get_attribute("data-unavailable") == "false"
     # Read-only: typing changes nothing and opens no terminal socket.
@@ -60,8 +61,16 @@ def open_row(browser, base, uid, errors):
     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
     page = context.new_page()
     page.on("pageerror", lambda e: errors.append(str(e)))
+    page.route('**/api/term/final?*', lambda route:
+               route.fulfill(status=500, json={'error':'synthetic final screen failure'}))
     page.goto(base, wait_until="domcontentloaded")
     page.wait_for_function("uid => !!document.querySelector(`#side .item[data-uid=\"${uid}\"]`)", arg=uid, timeout=15000)
+    page.locator(f'#side .item[data-uid="{uid}"]').first.click()
+    expect(page.locator('#term-output-notice')).to_be_visible()
+    expect(page.locator('#term-output-notice')).to_contain_text('最终画面读取失败')
+    expect(page.locator('#float-stack > :visible, dialog.app-popup')).to_have_count(0)
+    page.unroute('**/api/term/final?*')
+    page.reload(wait_until='networkidle')
     page.locator(f'#side .item[data-uid="{uid}"]').first.click()
     shows_final_screen(page)
     # The final screen keeps the host's columns; a narrow window shrinks the font.
