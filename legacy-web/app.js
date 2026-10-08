@@ -2290,8 +2290,11 @@ function pendingTmuxSessions() {
   return pending.flatMap(t => {
     // A receipt whose binding the server confirmed is represented by
     // the native row it binds, exactly like a declared Claude identity.
+    // A compact child catalog may omit that row. Its absence here is not
+    // evidence that this confirmed launch is still waiting for history.
     const native = pendingNativeKey(t);
-    if (!SOURCES[t.source] || (native && indexedSessions().byNative.has(native))) return [];
+    if (!SOURCES[t.source] || (native && (t.binding?.state === 'confirmed'
+        || indexedSessions().byNative.has(native)))) return [];
     const source = t.source;
     return [{
       node_id: t.node_id, node_name: t.node_name, stale: t.stale,
