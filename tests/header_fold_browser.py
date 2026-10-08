@@ -33,7 +33,7 @@ from history_fixtures import BINARY, Corpus, claude_row, isolated_server
 
 SID = "fold-sweep"
 OTHER_SID = "fold-switch"
-HEADER_PRIORITY = ["new-session", "page-reload", "trash", "report-bug", "settings"]
+HEADER_PRIORITY = ["new-session", "page-reload", "session-cleanup", "trash", "report-bug", "settings"]
 ACTION_ORDER = ["a-session-toggle", "a-star", "a-turns", "a-session-freeze", "report-bug", "a-clone-group", "a-session-action"]
 # The branch is an API field the title bar no longer shows.
 META_PRIORITY = ["mcount-total", "size", "time", "meta-node", "cwd", "meta-source", "model", "session-id"]

@@ -2174,6 +2174,8 @@ function paintLive() {
     paintTreeDeleteAvailability($('#item-menu [data-act="delete-tree"]'), sidebarSessions().find(row => row.uid === menuUid));
   }
   renderSessionCounts();
+  renderChips();
+  renderNodes();
   syncActiveOnlyList();
   if (S.picking) renderPickBar();
 }
@@ -2221,7 +2223,7 @@ document.addEventListener('visibilitychange', () => {
 // ---------------------------------------------------------------- 数据加载
 function renderSessionCounts() {
   const pool = sidebarSessions().filter(s => !S.off.has(s.source) && nodeSelected(s));
-  const active = pool.filter(s => s.pending || S.live.has(s.uid)).length;
+  const active = pool.filter(sessionScopeActive).length;
   const known = SessionDockCapabilities.allows('live');
   $('#session-active').textContent = known ? active : '?';
   if (!known) {
@@ -2373,6 +2375,8 @@ function forkLeafUid(uid) {
 }
 const sidebarSessions = () => [...pendingTmuxSessions(), ...S.sessions]
   .filter(s => !sessionHidden(s) && sidebarChildVisible(s));
+const sessionScopeActive = s => s.pending || S.live.has(s.uid);
+const sessionInScope = s => !S.activeOnly || sessionScopeActive(s);
 
 function cursorViews(sessions) {
   const rows = [];
@@ -2931,7 +2935,7 @@ function visible() {
     && nodeSelected(s) && (globalThis.SessionDockGroups?.matches(s) ?? true);
   let pool = (S.results || sidebarSessions()).filter(eligible);
   if (S.activeOnly) {
-    const active = s => s.pending || S.live.has(s.uid);
+    const active = sessionScopeActive;
     const children = sidebarNested() && S.view !== 'group' && !S.term
       ? nestEdges(pool).children : new Map();
     pool = pool.filter(active).map(s => {
@@ -3377,11 +3381,16 @@ async function stopPickedSessions() {
   // 全部停在输入框（空闲）时直接停；有在轮转、等回答或状态未知的才确认。
   if (!targets.every(s => !s.pending && sessionTurn(s.uid) === 'idle')
       && !await appConfirm(`停止所选的 ${targets.length} 个运行中会话?\n\n会话记录和草稿会保留，已结束的会话会跳过。`)) return;
+  await stopSessionTargets(targets);
+}
+
+async function stopSessionTargets(targets, onProgress = () => {}) {
   sessionStopBusy = true;
   const progress = sessionStopProgress = {total: targets.length, stopped: 0, settled: 0,
     failed: 0, uncertain: 0, details: [], refreshError: false};
   $('#side-stop-details').open = false;
   renderPickBar();
+  onProgress(progress);
   let next = 0;
   const stopNext = async () => {
     while (next < targets.length) {
@@ -3413,6 +3422,7 @@ async function stopPickedSessions() {
       } finally {
         progress.settled++;
         renderPickBar();
+        onProgress(progress);
       }
     }
   };
@@ -3427,6 +3437,7 @@ async function stopPickedSessions() {
   } finally {
     sessionStopBusy = false;
     renderPickBar();
+    onProgress(progress);
   }
 }
 
@@ -3435,6 +3446,100 @@ $('#side-pick-all').onclick = pickAllVisible;
 $('#side-pick-delete').onclick = deletePickedSessions;
 $('#side-pick-stop').onclick = stopPickedSessions;
 $('#side-pick-attach').onclick = () => setNestAttach(pickedNestable());
+
+// Read the complete catalog independently of lazy children, search and filters.
+// Pending launches lack a last-update timestamp and remain outside this action.
+let sessionCleanupBusy = false;
+let sessionCleanupTargets = [];
+async function staleActiveSessions() {
+  const [response] = await Promise.all([
+    fetch(appUrl('api/sessions?force=1'), {signal: AbortSignal.timeout(15000)}),
+    refreshLive(true),
+  ]);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const data = await response.json();
+  if (!Array.isArray(data.sessions)) throw new Error('会话列表格式错误');
+  applyNodeState(data, 'sessions');
+  const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+  return data.sessions.filter(row => !row.agent_id && !row.stale && S.live.has(row.uid)
+    && Date.parse(row.updated) < cutoff
+    && !['sessions', 'live'].some(kind => Nodes.errors.get(kind)?.some(error => error.node_id === row.node_id))
+    && (!HUB_MODE || Nodes.list.some(node => node.id === row.node_id && node.online !== false)));
+}
+function paintCleanupList(lines) {
+  $('#session-cleanup-list').replaceChildren(...lines.map(text => {
+    const row = document.createElement('div');
+    row.className = 'trash-item';
+    const main = document.createElement('div');
+    main.className = 'trash-main';
+    main.style.overflowWrap = 'anywhere';
+    main.textContent = text;
+    row.append(main);
+    return row;
+  }));
+}
+function cleanupUnavailableNote() {
+  const unavailable = HUB_MODE ? Nodes.list.filter(node => node.online === false
+    || ['sessions', 'live'].some(kind => Nodes.errors.get(kind)?.some(error => error.node_id === node.id))) : [];
+  return unavailable.length ? ` 无法读取的机器已跳过：${unavailable.map(node => node.name).join('、')}。` : '';
+}
+$('#session-cleanup').onclick = async () => {
+  if (sessionCleanupBusy || sessionStopBusy || sessionDeleteBusy) return;
+  const dialog = $('#session-cleanup-dialog'), status = $('#session-cleanup-status');
+  sessionCleanupTargets = [];
+  sessionCleanupBusy = true;
+  $('#session-cleanup-start').disabled = true;
+  $('#session-cleanup-close').disabled = true;
+  $('#session-cleanup-close').textContent = '取消';
+  status.textContent = '正在检查活跃会话及最后更新时间…';
+  paintCleanupList([]);
+  dialog.showModal();
+  try {
+    if (!SessionDockCapabilities.allows('live')) throw new Error('运行状态未知，无法清扫会话。');
+    sessionCleanupTargets = await staleActiveSessions();
+    status.textContent = (sessionCleanupTargets.length
+      ? `找到 ${sessionCleanupTargets.length} 个超过两天未更新的活跃会话。`
+      : '没有超过两天未更新的活跃会话。') + cleanupUnavailableNote();
+    paintCleanupList(sessionCleanupTargets.map(row =>
+      `${row.node_name ? row.node_name + ' · ' : ''}${SOURCES[row.source]?.name || row.source} · ${row.title || row.sid} · ${fmtTime(row.updated)}`));
+    $('#session-cleanup-start').disabled = !sessionCleanupTargets.length;
+  } catch (error) {
+    status.textContent = `检查失败：${error.message || error}`;
+  } finally {
+    sessionCleanupBusy = false;
+    $('#session-cleanup-close').disabled = false;
+  }
+};
+$('#session-cleanup-close').onclick = () => {
+  if (!sessionCleanupBusy) $('#session-cleanup-dialog').close();
+};
+$('#session-cleanup-dialog').addEventListener('cancel', event => {
+  if (sessionCleanupBusy) event.preventDefault();
+});
+$('#session-cleanup-start').onclick = async () => {
+  if (sessionCleanupBusy || sessionStopBusy || sessionDeleteBusy) return;
+  sessionCleanupBusy = true;
+  $('#session-cleanup-start').disabled = true;
+  $('#session-cleanup-close').disabled = true;
+  const status = $('#session-cleanup-status');
+  status.textContent = '正在复查会话状态…';
+  try {
+    const confirmed = new Set(sessionCleanupTargets.map(row => row.uid));
+    const targets = (await staleActiveSessions()).filter(row => confirmed.has(row.uid));
+    const skipped = confirmed.size - targets.length;
+    await stopSessionTargets(targets, progress => {
+      status.textContent = `已停止 ${progress.stopped}/${progress.total}，失败 ${progress.failed}，未确认 ${progress.uncertain}`
+        + (skipped ? `；已更新或退出等会话跳过 ${skipped} 个` : '') + cleanupUnavailableNote();
+      paintCleanupList(progress.details);
+    });
+  } catch (error) {
+    status.textContent = `清扫失败：${error.message || error}`;
+  } finally {
+    sessionCleanupBusy = false;
+    $('#session-cleanup-close').disabled = false;
+    $('#session-cleanup-close').textContent = '完成';
+  }
+};
 
 /** 选中的会话里能改附属关系的：真实会话行，不是待定启动或分叉父行。 */
 function pickedNestable() {
@@ -3861,7 +3966,7 @@ function renderChips() {
     if (!wanted.has(old.dataset.source)) old.remove();
   }
   const counts = new Map();
-  for (const row of sidebarSessions()) if (nodeSelected(row)) counts.set(row.source, (counts.get(row.source) || 0) + 1);
+  for (const row of sidebarSessions()) if (nodeSelected(row) && sessionInScope(row)) counts.set(row.source, (counts.get(row.source) || 0) + 1);
   for (const [k, v] of Object.entries(SOURCES)) {
     const n = counts.get(k) || 0;
     let c = box.querySelector(`:scope > .chip[data-source="${CSS.escape(k)}"]`);
@@ -6134,7 +6239,7 @@ for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', () => lay
 //   3. 机器 chip 缩成首字母（首字母相同则前两个字母），不显示会话数（仅中央站、机器筛选可见时）
 //   4. 右侧按钮从末尾折进 ⋯（新建、刷新页面、回收站、报告问题、设置）
 // 筛选条被挤压或整条顶栏横向溢出才进入下一级；放得下就按相反顺序展开。
-const HEADER_ACTIONS = ['new-session', 'page-reload', 'transfer-tasks', 'trash', 'report-bug', 'settings'];
+const HEADER_ACTIONS = ['new-session', 'page-reload', 'transfer-tasks', 'session-cleanup', 'trash', 'report-bug', 'settings'];
 const HEADER_FOLD_LABELS = 'header-fold-labels';
 const HEADER_FOLD_BRAND = 'header-fold-brand';
 const HEADER_FOLD_NODES = 'header-fold-nodes';

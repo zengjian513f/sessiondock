@@ -157,6 +157,9 @@
     <path d="M5.1 4.3h5.8c1 0 1.8.8 1.8 1.8v3.2A4.7 4.7 0 018 14a4.7 4.7 0 01-4.7-4.7V6.1c0-1 .8-1.8 1.8-1.8Z" fill="none" stroke="currentColor" stroke-width="1.25"/>
     <path d="M6 4.2V3a2 2 0 014 0v1.2M8 6v7.5M3.3 7H1.5m1.8 3H1.5m11.2-3h1.8m-1.8 3h1.8" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
   </symbol>
+  <symbol id="i-cleanup" viewBox="0 0 16 16">
+    <path d="m12.5 1.5-5 6M5 6l5 4-3 4H1.5L5 6Zm.5 4-2 4M8 12l-1 2" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
   <symbol id="i-sidebar" viewBox="0 0 16 16">
     <rect x="1.5" y="2" width="13" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.35"/>
     <path d="M5.4 2.5v11" fill="none" stroke="currentColor" stroke-width="1.35"/>
@@ -204,6 +207,9 @@
       </button>
       <button class="btn" id="transfer-tasks" hidden title="未完成的移动与复制" aria-label="未完成的移动与复制">
         <svg class="ui-icon" aria-hidden="true"><use href="#i-transfer"/></svg><span class="transfer-task-count"></span>
+      </button>
+      <button type="button" class="btn" id="session-cleanup" title="清扫：停止超过两天未更新的活跃会话" aria-label="清扫会话">
+        <svg class="ui-icon" aria-hidden="true"><use href="#i-cleanup"/></svg>
       </button>
       <button class="btn" id="trash" title="回收站" aria-label="回收站">
         <svg class="ui-icon" aria-hidden="true"><use href="#i-trash"/></svg>
@@ -451,6 +457,19 @@
     </div>
     <div id="bug-report-error" role="alert"></div>
   </form>
+</dialog>
+<dialog id="session-cleanup-dialog" class="app-dialog" aria-labelledby="session-cleanup-title">
+  <div class="settings-form">
+    <div class="modal-head">
+      <div><h2 id="session-cleanup-title">清扫会话</h2><p>停止最后更新距今超过 48 小时的活跃会话。范围为所有已启用机器及 Agent，不受当前筛选影响；会话记录和草稿保留。</p></div>
+    </div>
+    <p id="session-cleanup-status" role="status" aria-live="polite"></p>
+    <div id="session-cleanup-list" class="trash-list"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn danger" id="session-cleanup-start" disabled>停止这些会话</button>
+      <button type="button" class="btn" id="session-cleanup-close">取消</button>
+    </div>
+  </div>
 </dialog>
 <dialog id="trash-dialog" class="app-dialog" aria-labelledby="trash-title">
   <div class="trash-panel">

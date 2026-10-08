@@ -503,6 +503,28 @@ def main():
                         bounds = page.locator(selector).bounding_box()
                         assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 391, bounds
                     page.locator("#side-pick-cancel").click()
+                    # Resume once more, then stop the real private host via the
+                    # cleanup dialog. Age only the synthetic transcript mtime.
+                    old_time = time.time() - 3 * 86400
+                    os.utime(corpus.paths[CODEX_SID], (old_time, old_time))
+                    item.click()
+                    session_action(page).click()
+                    wait_xterm(page, "RS_SHELL_READY")
+                    page.wait_for_function("uid => sessionStoppable(uid)", arg=codex_uid)
+                    page.locator(".mobile-back").first.click()
+                    page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
+                    if not page.locator('#session-cleanup').is_visible():
+                        page.locator('#header-more-btn').click()
+                    page.locator('#session-cleanup').click()
+                    expect(page.locator('#session-cleanup-status')).to_contain_text('找到 1 个')
+                    with page.expect_response(lambda response: urlsplit(response.url).path == '/api/session/stop') as cleaned:
+                        page.locator('#session-cleanup-start').click()
+                    reply = cleaned.value.json()
+                    assert cleaned.value.status == 200 and reply['stage'] == 'graceful', reply
+                    expect(page.locator('#session-cleanup-status')).to_contain_text('已停止 1/1，失败 0，未确认 0')
+                    expect(page.locator('#session-cleanup-close')).to_have_text('完成')
+                    page.locator('#session-cleanup-close').click()
+                    page.wait_for_function("uid => !sessionStoppable(uid)", arg=codex_uid)
                     mobile.close()
                     assert {name: path.read_bytes() for name, path in corpus.paths.items()} == native
             finally:
