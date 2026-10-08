@@ -11,6 +11,7 @@ import tempfile
 from types import SimpleNamespace
 
 from PIL import Image
+from browser_runtime import choose_toolbar_option, open_toolbar_options
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, Corpus, codex_row, isolated_server
 from hub_fixtures import Hub, free_port, scoped
@@ -68,14 +69,15 @@ def main():
             expect(page.locator('#session-group-filter, #session-group-filters')).to_have_count(0)
             return page
         def tree(page):
-            page.locator('#view [data-v="tree"]').click()
+            choose_toolbar_option(page, "view", 'tree')
         def check_group_icon(page):
-            button = page.get_by_role('button', name='会话分组', exact=True)
+            button = open_toolbar_options(page, 'view').locator('button[data-v=group]')
             # Inspect the rendered button, so a monochrome desktop font fallback
             # fails even if the markup still contains the label character.
             for selected in (False, True):
                 if selected:
                     button.click()
+                    open_toolbar_options(page, 'view')
                     expect(button).to_have_class('on')
                     expect(page.locator('#session-group-add')).to_be_visible()
                 image = Image.open(BytesIO(button.screenshot())).convert('RGB')
@@ -83,6 +85,8 @@ def main():
                     for r, g, b in (image.getpixel((x, y))
                         for y in range(image.height) for x in range(image.width)))
                 assert yellow > 5, f'group icon lost its yellow emoji rendering: selected={selected}, pixels={yellow}'
+            page.keyboard.press('Escape')
+            page.keyboard.press('Escape')
             tree(page)
             print('PASS yellow group icon and view switching:', page.viewport_size, flush=True)
         def edit(page, uid, hold=False, hover=False):
@@ -98,7 +102,7 @@ def main():
             expect(page.locator('#session-group-menu')).to_be_visible()
             expect(page.locator('#session-group-menu button').first).to_contain_text('未分组')
         def create(page, name, enter=True):
-            page.locator('#view [data-v="group"]').click()
+            choose_toolbar_option(page, "view", 'group')
             expect(page.locator('#side > :last-child')).to_have_id('session-group-create-row')
             page.locator('#session-group-add').click()
             page.locator('#session-group-name').fill(name)
@@ -123,7 +127,7 @@ def main():
             page.wait_for_function('document.querySelector("#session-group-status").textContent === ""')
             if page.locator('#side-pick-group').is_visible(): expect(page.locator('#side-pick-group')).to_be_enabled()
         def remove(page, name):
-            page.locator('#view [data-v="group"]').click()
+            choose_toolbar_option(page, "view", 'group')
             page.get_by_role('button', name=f'删除分组 {name}', exact=True).click()
             expect(page.get_by_role('button', name=f'删除分组 {name}', exact=True)).to_have_count(0, timeout=20000)
             expect(page.locator('#session-group-add')).to_be_enabled(timeout=20000)
@@ -249,9 +253,9 @@ def main():
                 assert set(stored(i)['group_catalog']['groups']) == {'历史分组', '缓存分组', '待办', '稍后'}
             a, b = scoped(nodes[0].nid, uid_a), scoped(nodes[1].nid, uid_b)
             for view in ('tree', 'date'):
-                page.locator(f'#view [data-v="{view}"]').click()
+                choose_toolbar_option(page, "view", view)
                 expect(page.locator('#side .item')).to_have_count(4)
-            page.locator('#view [data-v="group"]').click()
+            choose_toolbar_option(page, "view", 'group')
             expect(page.locator('#side .item')).to_have_count(2)
             for name in ('历史分组', '缓存分组', '待办', '稍后'):
                 expect(page.get_by_role('button', name=f'删除分组 {name}', exact=True)).to_be_enabled()
@@ -292,7 +296,7 @@ def main():
             input_bounds = mobile.locator('#session-group-menu-name').bounding_box()
             assert input_bounds['x'] >= bounds['x'] and input_bounds['x'] + input_bounds['width'] <= bounds['x'] + bounds['width']
             mobile.locator('#session-group-menu-name').fill('关闭丢弃草稿')
-            mobile.locator('#view [data-v="tree"]').click()
+            choose_toolbar_option(mobile, "view", 'tree')
             expect(mobile.locator('#session-group-menu')).to_be_hidden()
             edit(mobile, uid_a, hold=True)
             expect(mobile.locator('#session-group-menu-name')).to_have_count(0)
@@ -312,14 +316,14 @@ def main():
             for context in contexts: context.close()
             contexts.clear(); hub.stop(); hub.start()
             bases[1] = start_node(1); rejoined = page_at(bases[1])
-            rejoined.locator('#view [data-v="group"]').click()
+            choose_toolbar_option(rejoined, "view", 'group')
             expect(rejoined.get_by_role('button', name='删除分组 搁置', exact=True)).to_have_count(0, timeout=25000)
             assert 'group' not in stored(1)['sessions'][uid_b]
             # Recreate the same name with a newer operation; deletion does not permanently reserve names.
             create(rejoined, '搁置')
             tree(rejoined); edit(rejoined, uid_b); assign(rejoined, '搁置')
             page = page_at(f'http://127.0.0.1:{hub.port}')
-            page.locator('#view [data-v="group"]').click()
+            choose_toolbar_option(page, "view", 'group')
             expect(page.get_by_role('button', name='删除分组 搁置', exact=True)).to_be_enabled()
             for context in contexts: context.close()
             contexts.clear(); hub.stop()
@@ -327,7 +331,7 @@ def main():
             bases = [start_node(i) for i in range(2)]
             for i, base in enumerate(bases):
                 solo = page_at(base)
-                solo.locator('#view [data-v="group"]').click()
+                choose_toolbar_option(solo, "view", 'group')
                 expect(solo.get_by_role('button', name='删除分组 搁置', exact=True)).to_be_enabled()
                 assert stored(i)['sessions'][corpora[i].uid('same')]['starred'] is True
             # Standalone deletion of a populated group clears the assignment atomically.

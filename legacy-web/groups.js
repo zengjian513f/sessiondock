@@ -7,7 +7,7 @@ globalThis.SessionDockGroups = (() => {
   const menu = $('#session-group-menu'), status = $('#session-group-status');
   const row = uid => indexedSessions().byUid.get(uid);
   const enabled = SessionDockCapabilities.allows('metadata');
-  $('#view [data-v="group"]').hidden = !enabled;
+  renderView();
   if (!enabled && S.view === 'group') { S.view = 'tree'; renderView(); renderSide(); }
   function message(text) { status.textContent = text; }
   function absorb(data) {

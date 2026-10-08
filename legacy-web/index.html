@@ -221,10 +221,14 @@
       <button class="btn" id="settings" title="设置" aria-label="设置">
         <svg class="ui-icon" aria-hidden="true"><use href="#i-settings"/></svg>
       </button>
-      <div class="header-more" id="header-more" hidden>
+      <div class="header-more" id="header-more">
         <button type="button" class="btn" id="header-more-btn" title="更多操作" aria-label="更多操作"
                 aria-haspopup="menu" aria-expanded="false" aria-controls="header-menu"><span aria-hidden="true">⋯</span></button>
-        <div id="header-menu" class="header-menu" hidden role="menu" aria-label="更多操作"></div>
+        <div id="header-menu" class="header-menu" hidden role="menu" aria-label="更多操作">
+          <button type="button" class="btn" data-menu-only data-toolbar-menu="view" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="toolbar-view-menu"><svg class="ui-icon"><use href="#i-list"/></svg><span>列表视图</span><span class="menu-arrow" aria-hidden="true">›</span></button>
+          <button type="button" class="btn" data-menu-only data-toolbar-menu="sources" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="toolbar-sources-menu"><svg class="ui-icon"><use href="#i-terminal"/></svg><span>Agent 类型</span><span class="menu-arrow" aria-hidden="true">›</span></button>
+          <button type="button" class="btn" data-menu-only data-toolbar-menu="nest" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="toolbar-nest-menu"><svg class="ui-icon"><use href="#i-tree"/></svg><span>折叠方式</span><span class="menu-arrow" aria-hidden="true">›</span></button>
+        </div>
       </div>
     </div>
   </header>
@@ -347,6 +351,9 @@
   <button type="button" role="menuitem" data-act="delete-tree">删除会话树…</button>
   <button type="button" role="menuitem" data-act="delete">删除会话</button>
 </div>
+<div id="toolbar-view-menu" class="ctx-menu toolbar-options" hidden role="menu" aria-label="列表视图"><div class="toolbar-options-hint">勾选显示在工具栏</div></div>
+<div id="toolbar-sources-menu" class="ctx-menu toolbar-options" hidden role="menu" aria-label="Agent 类型"><div class="toolbar-options-hint">勾选显示在工具栏</div></div>
+<div id="toolbar-nest-menu" class="ctx-menu toolbar-options" hidden role="menu" aria-label="折叠方式"><div class="toolbar-options-hint">勾选显示在工具栏</div></div>
 <div id="session-group-menu" class="ctx-menu" hidden role="menu" aria-label="会话分组"></div>
 <dialog id="new-session-dialog" aria-labelledby="new-session-title">
   <form id="new-session-form">

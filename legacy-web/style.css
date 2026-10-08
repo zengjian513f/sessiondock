@@ -214,7 +214,8 @@ header {
   padding: 4px 9px; cursor: pointer; font: inherit; font-size: 13px; white-space: nowrap;
   transition: background-color .12s, color .12s;
 }
-.seg button + button { border-left: 1px solid var(--border); }
+.seg button[hidden] { display: none; }
+.seg button:not([hidden]) ~ button:not([hidden]) { border-left: 1px solid var(--border); }
 .seg button:hover { background: var(--hover); color: var(--text); }
 .seg button.on { background: color-mix(in srgb, var(--accent) 12%, var(--panel-2)); color: var(--text); }
 .seg button.on:hover { background: color-mix(in srgb, var(--accent) 20%, var(--panel-2)); }
@@ -2453,3 +2454,19 @@ header .btn[data-session-docked] { display: none; }
 /* Cleanup uses the existing warning/error palette; the count stays in the menu. */
 #session-cleanup.cleanup-warn { color: #d39a24; }
 #session-cleanup.cleanup-danger { color: #e5484d; }
+
+/* 顶栏 ⋯ 的选项沿用分段按钮和上下文菜单的图标、选中色及间距。 */
+.header-menu .menu-arrow { margin-left: auto; }
+.toolbar-options { width: 230px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; }
+.toolbar-options-hint { padding: 6px 10px; color: var(--muted); font-size: 12px; }
+.toolbar-option { display: flex; align-items: center; }
+.toolbar-option[hidden] { display: none; }
+.toolbar-pin { display: flex; align-items: center; justify-content: center; align-self: stretch; flex: 0 0 30px; cursor: pointer; }
+.toolbar-pin input { accent-color: var(--accent); cursor: pointer; }
+.toolbar-options button { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.toolbar-options button .ico, .toolbar-options button .ui-icon { flex: none; }
+.toolbar-options button b { margin-left: auto; font-size: 11px; }
+.toolbar-options button.on { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.toolbar-options button:hover { background: var(--hover); }
+.toolbar-options button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.toolbar-options button.off .ico { opacity: .45; }

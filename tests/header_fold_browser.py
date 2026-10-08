@@ -10,7 +10,7 @@ whole sweep checks the fold order:
       then right-side buttons. Buttons that fold are a suffix of the priority list (settings ->
       report -> trash -> page refresh [-> new when terminal_create]); the menu keeps the inline order;
       the filter bar is never squeezed unless everything folded; once folded, one more button
-      would not fit; with nothing folded the ... button takes no room; within a tier narrower
+      would not fit; the ... button always provides toolbar options; within a tier narrower
       never unfolds chrome or buttons; all three tiers share one header height (no jump across
       1200px / 720px).
   title bar: inline items are a prefix of "actions (star -> fold turns -> report -> stop/delete)
@@ -51,7 +51,7 @@ HEADER_FOLD_JS = """() => {
   const picker = header.querySelector('#node-picker');
   const nodesPresent = !!(picker && !picker.hidden);
   return {inline: ids(actions.querySelectorAll(':scope > .btn')),
-    menu: ids(document.querySelectorAll('#header-menu > .btn')),
+    menu: ids(document.querySelectorAll('#header-menu > .btn:not([data-menu-only])')),
     more: !document.querySelector('#header-more').hidden,
     squeezed: filters.scrollWidth > filters.clientWidth || header.scrollWidth > header.clientWidth,
     free: actions.getBoundingClientRect().left - filters.getBoundingClientRect().right
@@ -142,13 +142,13 @@ def check_header(page, width, tiers, header_actions, chrome_tiers):
     fold = page.evaluate(HEADER_FOLD_JS)
     where = f"header@{width}"
     assert fold["inline"] + fold["menu"] == header_actions, (where, fold)
-    assert fold["more"] == bool(fold["menu"]), (where, fold)
+    assert fold["more"], (where, fold)
     if fold["menu"] != header_actions:
         assert not fold["squeezed"], (where, fold)
     if fold["menu"]:
         assert fold["free"] < fold["unit"], (where, fold)
     else:
-        assert not page.locator("#header-more-btn").is_visible(), where
+        assert page.locator("#header-more-btn").is_visible(), where
     assert fold["height"] <= 52 and not fold["overflow"], (where, fold)
     if fold["fold_brand"] or fold["fold_nodes"] or fold["menu"]:
         assert fold["fold_labels"] or not fold["labels"], (where, fold)
@@ -371,6 +371,9 @@ def check_menu_keyboard(page):
             .map(b => b.id || b.textContent.trim())""", selector)
 
     def rove(trigger, menu, selector):
+        # Keep the pointer outside menus while testing keyboard-only navigation;
+        # categories now also open their submenus on hover.
+        page.mouse.move(0, 899)
         page.locator(trigger).focus()
         page.keyboard.press('ArrowDown')
         expect(page.locator(menu)).to_be_visible()
