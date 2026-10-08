@@ -315,9 +315,8 @@ pub struct Launcher {
     adapters: BTreeMap<String, Adapter>,
     profiles: BTreeMap<String, CliProfile>,
     entries: Vec<Entry>,
-    /// Profile IDs whose CLI the last [`Launcher::probe_clis`] found not
-    /// installed (the wrapper could not find the command). Empty until the
-    /// first probe, so nothing is hidden on an unanswered probe.
+    /// Adapter/profile IDs whose executable is unusable or whose CLI the
+    /// last probe found absent. Seeded before serving the first request.
     missing: std::sync::Mutex<BTreeSet<String>>,
     /// Latest manual update of each profile's CLI (machine settings).
     updates: super::clients::Updates,
@@ -399,18 +398,23 @@ impl Launcher {
             return Err(Error::UnsafePath);
         }
         let entries = entries(&config);
-        // A configuration whose executables are unusable fails here, before
-        // any receipt exists; every launch checks them again.
+        // The host is required infrastructure. Individual CLIs may have been
+        // uninstalled since configuration; their absence must not stop the node.
         current_executable(&config.host_binary)?;
         let host_directory = CheckedDirectory::open(&config.host_dir)?;
+        let mut missing = BTreeSet::new();
         let mut adapters = BTreeMap::new();
         for adapter in config.adapters {
-            current_executable(&adapter.executable)?;
+            if current_executable(&adapter.executable).is_err() {
+                missing.insert(adapter.id.clone());
+            }
             adapters.insert(adapter.id.clone(), adapter);
         }
         let mut profiles = BTreeMap::new();
         for profile in config.profiles {
-            current_executable(&profile.executable)?;
+            if current_executable(&profile.executable).is_err() {
+                missing.insert(profile.id.clone());
+            }
             profiles.insert(profile.id.clone(), profile);
         }
         Ok(Self {
@@ -419,7 +423,7 @@ impl Launcher {
             adapters,
             profiles,
             entries,
-            missing: std::sync::Mutex::new(BTreeSet::new()),
+            missing: std::sync::Mutex::new(missing),
             updates: super::clients::Updates::default(),
             catalogs: super::models::CatalogCache::default(),
         })
@@ -428,18 +432,34 @@ impl Launcher {
     /// Check every agent CLI profile once, in parallel, and remember which
     /// commands are not installed. Blocking; run it off the reactor.
     pub fn probe_clis(&self) {
-        let absent: BTreeSet<String> = std::thread::scope(|scope| {
+        let mut absent: BTreeSet<String> = std::thread::scope(|scope| {
             let probes: Vec<_> = self
                 .profiles
                 .values()
-                .filter(|profile| profile.source != Source::Shell)
-                .map(|profile| (profile.id.clone(), scope.spawn(move || cli_absent(profile))))
+                .map(|profile| {
+                    (
+                        profile.id.clone(),
+                        scope.spawn(move || {
+                            if profile.source == Source::Shell {
+                                current_executable(&profile.executable).is_err()
+                            } else {
+                                cli_absent(profile)
+                            }
+                        }),
+                    )
+                })
                 .collect();
             probes
                 .into_iter()
                 .filter_map(|(id, probe)| probe.join().unwrap_or(false).then_some(id))
                 .collect()
         });
+        absent.extend(
+            self.adapters
+                .values()
+                .filter(|adapter| current_executable(&adapter.executable).is_err())
+                .map(|adapter| adapter.id.clone()),
+        );
         self.catalogs.warm(
             self.profiles
                 .values()
@@ -454,9 +474,9 @@ impl Launcher {
         let Ok(missing) = self.missing.lock() else {
             return false;
         };
-        self.profiles
-            .values()
-            .any(|profile| profile.source == source && missing.contains(&profile.id))
+        self.entries
+            .iter()
+            .any(|entry| entry.source == source && missing.contains(&entry.id))
     }
 
     pub fn host_dir(&self) -> &Path {
@@ -1017,7 +1037,7 @@ fn resolved_executable(path: &Path) -> Result<PathBuf, Error> {
 /// The ordinary executable file currently behind a configured path. Executables
 /// may be symlinks (npm/volta shims, WinGet links, `which` results): the alias
 /// is resolved first, then the no-follow checks apply to the real file. This
-/// runs when the configuration loads and again before every spawn, so a CLI
+/// runs during availability checks and again before every spawn, so a CLI
 /// that updated itself since the service started (Windows rewrites `claude.exe`
 /// in place, Unix re-targets `~/.local/bin/claude`) launches its current file;
 /// only a path that no longer names a usable executable is refused.

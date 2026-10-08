@@ -37,14 +37,29 @@ before every launch the launcher probes the host (`--dir <host dir>/.probe
 --no-record list`, an empty private directory, so no session file is read or
 removed) and such a host, which keeps nothing after exit anyway, is simply not told.
 
-The host and CLI executable paths must be usable absolute executable files, and
-the host directory must be usable by `ptyhost`. Executable symlinks are
-resolved. The launcher checks them when the configuration loads and again
-before every spawn, as they are at that moment: a CLI that updated itself since
+DELTA (2026-10-08): unavailable configured CLIs are isolated per source instead
+of preventing Web startup.
+The host executable must be usable and the host directory must be usable by
+`ptyhost`. Individual CLI executable paths remain configured when their files
+are deleted, lose execution permission, become directories or have broken
+symlinks. These profiles and fixed adapters are marked unavailable before the
+first request; they do not prevent the node, history or other clients from
+working. The periodic availability probe can enable them again after repair
+without editing the configuration. A wrapper that returns 126/127 is likewise
+unavailable after its probe. Invalid configuration structure and unusable host
+infrastructure still report startup errors.
+
+Executable symlinks are resolved. The launcher checks CLI availability when
+the configuration loads and checks the executable again before every spawn,
+as it is at that moment: a CLI that updated itself since
 the service started (the Windows Claude installer overwrites `claude.exe` in
 place; the Unix installer re-targets `~/.local/bin/claude`) launches its
 current file without a service restart. Only a path that no longer names an
 ordinary executable file is refused (`invalid_launch`).
+
+Regression: `tests/lifecycle_unavailable_cli_browser.py` opens synthetic history
+and creates a working Codex session through the local and Hub pages while four
+other configured executables are unusable, then repeats after service restart.
 
 Profiles provide fixed `args`, optional legacy `new_args` and `resume_args`,
 `env`, and `env_remove`. Configured argument templates remain compatible, but
