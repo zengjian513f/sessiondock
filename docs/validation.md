@@ -289,6 +289,11 @@ Shared helpers imported by browser suites live in `tests/*_fixtures.py`
 (extracted on 2026-10-06 from the removed HTTP/parity/real scripts); the runner
 skips them.
 
+`python3 tests/bug_report_shutdown_browser.py` uses Chromium and a private fake
+Claude worker. It submits through the report dialog, sends SIGTERM while the
+node captures diagnostics, then opens the retained worker after restart and
+checks the preserved prompt, idempotent report replay and one bundle/launch.
+
 ## Adding a suite
 
 `frontend_search_state_browser` 使用合成会话和隔离服务，通过桌面及手机实际输入、

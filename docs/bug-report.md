@@ -199,6 +199,17 @@ once; a lost response returns the stored result, without another bundle or launc
 A crash with an incomplete capture returns `report_result_unknown` and retains
 input for inspection.
 
+Graceful restart first stops HTTP admission and observers, then drains accepted
+report submissions (including tasks whose browser disconnected), and only then
+closes lifecycle admission. A report already capturing diagnostics can therefore
+finish its worker launch and durable result instead of failing with
+`lifecycle service: Closed` (BUG-20261008-133559-294506). If shutdown interrupts
+the subsequent background SEND, the worker retains its ordinary draft and
+diagnostic prompt for manual continuation; no SEND is automatically replayed.
+The [shutdown browser suite](../tests/bug_report_shutdown_browser.py) submits
+through the dialog, signals the private node during capture, and opens the
+retained worker after restart, checking one bundle/launch and identical replay.
+
 Draft GETs have a 12-second deadline covering headers and body. A timeout keeps
 the editor's input, explains that recovery retries automatically, and records
 the request trace, phase, HTTP status (if received), timing and connectivity in

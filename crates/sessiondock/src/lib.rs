@@ -89,6 +89,8 @@ pub struct PreparedApp {
     pub lifecycle: Option<Arc<lifecycle::service::LifecycleService>>,
     /// Bounded diagnostics writer; `shutdown()` drains it within its deadline.
     pub audit: Option<Arc<audit::AuditService>>,
+    /// Report submissions outlive disconnected HTTP callers; drain before lifecycle shutdown.
+    pub reports: tokio_util::task::TaskTracker,
 }
 
 pub async fn prepare_app(
@@ -125,7 +127,9 @@ pub async fn prepare_app(
                     )
                 })?,
                 Default::default(),
-                shutdown.clone(),
+                // HTTP shutdown stops admission and observers first. Accepted
+                // report captures must still be able to launch their worker.
+                tokio_util::sync::CancellationToken::new(),
             )
             .await;
             match result {
@@ -144,6 +148,12 @@ pub async fn prepare_app(
     .and_then(|result| result);
     match result {
         Ok(built) => {
+            let reports = built
+                .state
+                .bug_report
+                .as_ref()
+                .map(|context| context.submissions.clone())
+                .unwrap_or_default();
             // Process-evidence binding of pending Codex/Grok launches
             // (`new-status` resolution); no-op unless lifecycle,
             // managed runtime and the process scan are all configured.
@@ -153,6 +163,7 @@ pub async fn prepare_app(
                 node_router: built.node_router,
                 lifecycle,
                 audit: built.audit,
+                reports,
             })
         }
         Err(error) => {
@@ -461,6 +472,7 @@ fn build_app(
                 reader: reader.clone(),
                 audit: audit.clone(),
                 shutdown: shutdown.clone(),
+                submissions: tokio_util::task::TaskTracker::new(),
             }))
         }
         _ => None,

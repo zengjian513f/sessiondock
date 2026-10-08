@@ -105,7 +105,13 @@ pub async fn report(
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    tokio::spawn(report_inner(state, peer, body))
+    let submissions = state
+        .bug_report
+        .as_ref()
+        .map(|context| context.submissions.clone())
+        .unwrap_or_default();
+    submissions
+        .spawn(report_inner(state, peer, body))
         .await
         .map_err(|_| {
             ApiError::new(

@@ -1891,6 +1891,7 @@ function notePendingEnded(name) {
   if (row) { row.running = false; row.stale = true; }
   refreshPendingStage(name);
   if (row && typeof renderSide === 'function') renderSide();
+  paintLive();
   void loadTermList();
 }
 
@@ -1912,6 +1913,7 @@ async function stopPendingSession(info, button) {
     if (result.error) throw new Error(result.error);
     const current = T.pending.find(row => row.record_id === info.record_id);
     if (current) Object.assign(current, result);
+    paintLive();
     if (S.sel === pendingUid(info.name)) {
       const wait = $('.new-session-wait');
       if (wait) wait.textContent = '正在停止…';
