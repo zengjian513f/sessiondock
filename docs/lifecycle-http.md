@@ -443,6 +443,12 @@ still deny native claim while guarded host status proves the child is alive.
 
 ## Freeze a diagnostic scene (Linux)
 
+DELTA (2026-10-08, BUG-20261008-130854-53ee08): start/stop use the shared
+power glyph, distinct from pause/resume. Header controls keep the existing
+28 px icon-button style; full action names remain in tooltips, accessible
+labels and the folded menu. Starting a stopped session must not look like
+resuming a frozen process.
+
 The main session's action menu offers **冻结现场** for a verified managed
 Linux instance. It becomes **恢复运行** while paused. The separate report
 button stays available: freeze first, then report the problem. The header

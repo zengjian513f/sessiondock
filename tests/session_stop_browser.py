@@ -128,6 +128,10 @@ def main():
                     expect(page.locator("#msgs")).to_contain_text("Synthetic managed stop target")
                     # Before any instance exists the first action starts this native session.
                     expect(session_action(page)).to_have_attribute("aria-label", "启动会话")
+                    expect(session_action(page).locator('use')).to_have_attribute('href', '#i-power')
+                    expect(session_action(page).locator('span')).to_be_hidden()
+                    expect(session_action(page)).to_have_css('width', '28px')
+                    expect(session_action(page)).to_have_text('启动会话')
                     page.keyboard.press("Escape")
                     page.route("**/api/term/takeover", lambda route:
                                route.fulfill(status=500, json={"error":"synthetic start refused"}))
@@ -147,6 +151,10 @@ def main():
                     page.wait_for_function("uid => (T.list || []).some(row => row.uid === uid && row.instance_id)", arg=codex_uid)
                     action = session_action(page)
                     expect(action).to_have_attribute("aria-label", "停止会话")
+                    expect(action.locator('use')).to_have_attribute('href', '#i-power')
+                    expect(action.locator('span')).to_be_hidden()
+                    expect(action).to_have_css('width', '28px')
+                    expect(action).to_have_text('停止会话')
                     expect(page.locator("#a-session-action")).to_have_attribute("aria-label", "删除当前会话")
                     expect(page.locator("#a-session-action")).to_have_attribute("aria-disabled", "true")
                     expect(page.locator('.dhead-actions .session-menu-action').first).to_have_attribute('id','a-session-toggle')
