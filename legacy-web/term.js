@@ -4547,6 +4547,7 @@ function migrateComposerDraft(fromUid, toUid) {
 function switchComposerDraft(uid) {
   const ta = $('#cinput');
   if (composerUid === uid) return;
+  resetComposerPendingNotice();
   closeComposerHistory();
   composerUid = uid;
   const draft = composerDraft(uid, !!uid);
@@ -4872,6 +4873,12 @@ function composerInputNotice(status) {
   return messages[status.code] || status.message;
 }
 
+let composerPendingNotice = null;
+function resetComposerPendingNotice() {
+  clearTimeout(composerPendingNotice?.timer);
+  composerPendingNotice = null;
+}
+
 function renderComposerInputStatus() {
   const node = $('#composer-input-status');
   const draft = composerDrafts.get(composerDraftOwner(composerUid));
@@ -4880,9 +4887,25 @@ function renderComposerInputStatus() {
     ? {state:'starting', message:'会话已结束，重新启动后可继续发送；输入已保留'}
     : receipt && pendingPhase(receipt) === 'starting' && !takenOver(composerUid)
       ? {state:'starting', message:'会话正在启动；输入已保留'} : null;
-  const status = lifecycle || (draft && composerUsesInputStatus()
+  let status = lifecycle || (draft && composerUsesInputStatus()
     && !composerInputAllowsSend(draft.inputStatus)
     ? draft.inputStatus || composerInputStatus(null) : null);
+  // Brief initial checks should not flash a notice. This only delays presentation;
+  // SEND still requires an explicit ready status throughout the wait.
+  if (status?.code === 'input_check_pending') {
+    if (!composerPendingNotice || composerPendingNotice.uid !== composerUid) {
+      resetComposerPendingNotice();
+      const pending = composerPendingNotice = {uid: composerUid, shown: false};
+      pending.timer = setTimeout(() => {
+        if (composerPendingNotice !== pending || composerUid !== pending.uid) return;
+        pending.shown = true;
+        renderComposerInputStatus();
+      }, 500);
+    }
+    if (!composerPendingNotice.shown) status = null;
+  } else {
+    resetComposerPendingNotice();
+  }
   const blocking = status && (status.state === 'blocked'
     || (status.state === 'unknown' && status.code !== 'input_check_pending'));
   node.classList.toggle('blocked', !!blocking);
