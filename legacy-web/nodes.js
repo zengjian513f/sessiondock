@@ -276,7 +276,7 @@ function prepareNewNode() {
   document.querySelector('#new-node-label').hidden = false;
 }
 
-// 切换机器时，输入框里的目录若在新机器上也存在就原样保留；只有不存在
+// 切换机器时保留空输入，非空目录若在新机器上也存在就原样保留；只有不存在
 // （或无法确认）时才换成新机器的默认目录。用户在检查期间改了输入则不动。
 let newCwdCheck = 0;
 async function newNodeHasDir(path, node = newNodeId()) {
@@ -292,7 +292,7 @@ async function newNodeHasDir(path, node = newNodeId()) {
   } catch { return false; }
 }
 
-function refreshNewNodeFields(keepCwd = '') {
+function refreshNewNodeFields(keepCwd = null) {
   closeCwdPicker();
   const cap = newNodeCapabilities();
   cwdCompletion.common = commonSessionDirs();
@@ -308,7 +308,8 @@ function refreshNewNodeFields(keepCwd = '') {
     || cwdCompletion.common[0]?.cwd || cap.home || '';
   const input = document.querySelector('#new-cwd');
   const check = ++newCwdCheck;
-  if (keepCwd && keepCwd !== fallback && cap.enabled) {
+  if (keepCwd === '') input.value = '';
+  else if (keepCwd && keepCwd !== fallback && cap.enabled) {
     input.value = keepCwd;
     const node = newNodeId();
     newNodeHasDir(keepCwd).then(exists => {

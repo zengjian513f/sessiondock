@@ -38,7 +38,7 @@ def scenario(browser, hub, node, other):
 
     page.on("response", observe)
     context.route("**/api/term/create", create_then_disconnect)
-    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
+    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="domcontentloaded")
     page.wait_for_function("T.listLoaded && Nodes.list.length === 2 && T.pending.length === 1")
     page.locator("#new-session").click()
     page.locator("#new-node").select_option(node.nid)
@@ -64,7 +64,7 @@ def scenario(browser, hub, node, other):
     # No in-memory receipt after reload: the persisted draft must also remain
     # uncertain while this node's list is unavailable.
     page.wait_for_function("composerDrafts.get(S.sel)?.savedVersion === composerDrafts.get(S.sel)?.editVersion")
-    page.reload(wait_until="networkidle")
+    page.reload(wait_until="domcontentloaded")
     page.wait_for_function("T.listLoaded && Nodes.errors.get('term')?.length > 0")
     row.click()
     expect(row).to_contain_text("运行状态不确定")
@@ -104,7 +104,7 @@ def node_source_picker(browser, hub, node, other):
     page = context.new_page()
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
+    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="domcontentloaded")
     page.wait_for_function("T.listLoaded && Nodes.list.length === 2")
     page.locator("#new-session").click()
     opencode = page.locator('input[name="new-source"][value="opencode"]')
@@ -155,18 +155,27 @@ def node_source_picker(browser, hub, node, other):
 
 
 def node_switch_cwd(browser, hub, node, other):
-    """Switching machine keeps a typed directory that also exists on the new one."""
+    """Switching keeps blank input or a typed directory present on the new machine."""
     node.set(dirs=["/shared/proj"])
     other.set(dirs=["/shared/proj", "/only-b/work"])
     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
     page = context.new_page()
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
+    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="domcontentloaded")
     page.wait_for_function("T.listLoaded && Nodes.list.length === 2")
     page.locator("#new-session").click()
     cwd = page.locator("#new-cwd")
     page.locator("#new-node").select_option(node.nid)
+    expect(cwd).not_to_have_value("")  # Opening still chooses the usual default.
+    cwd.fill("")
+    page.locator("#new-node").select_option(other.nid)
+    expect(cwd).to_have_value("")
+    page.locator("#new-node").select_option(node.nid)
+    expect(cwd).to_have_value("")
+    page.locator("#new-session-go").click()
+    expect(page.locator("#new-session-error")).to_have_text("请选择启动目录")
+    expect(page.locator("#new-session-dialog")).to_be_visible()
     # Typing swaps the list title, groups and the lookup note; the dialog and
     # the list keep their geometry on every frame instead of jumping.
     cwd.fill("")
@@ -192,6 +201,29 @@ def node_switch_cwd(browser, hub, node, other):
         page.locator("#new-node").select_option(node.nid)
     expect(cwd).not_to_have_value("/only-b/work")
     expect(cwd).not_to_have_value("")
+    # An old missing-directory reply must not refill a cleared field, even
+    # when the user returns to that machine before the reply arrives.
+    held = []
+
+    def delay_check(route):
+        if f"node={other.nid}" in route.request.url and "path=%2Fmissing%2Fwork" in route.request.url:
+            held.append(route)
+            page.evaluate("window.__missingCwdHeld = true")
+        else:
+            route.continue_()
+
+    context.route("**/api/term/complete-dir?*", delay_check)
+    cwd.fill("/missing/work")
+    page.locator("#new-node").select_option(other.nid)
+    page.wait_for_function("window.__missingCwdHeld === true")
+    cwd.fill("")
+    page.locator("#new-node").select_option(node.nid)
+    page.locator("#new-node").select_option(other.nid)
+    for route in held:
+        with page.expect_response(lambda r: "path=%2Fmissing%2Fwork" in r.url):
+            route.fulfill(json={"directories": []})
+    page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+    expect(cwd).to_have_value("")
     assert not errors, errors
     context.close()
     node.pop("dirs")
@@ -217,7 +249,7 @@ def shared_recent_cwd(browser, hub, node, other):
         route.fulfill(json=data)
 
     context.route('**/api/sessions*', sessions)
-    page.goto(f'http://127.0.0.1:{hub.port}/', wait_until='networkidle')
+    page.goto(f'http://127.0.0.1:{hub.port}/', wait_until='domcontentloaded')
     page.wait_for_function('S.sessions.length === 2 && T.listLoaded && Nodes.list.length === 2')
     page.evaluate('''nid => store.set('newDirs.' + nid,
       ['/shared/recent', '/missing/recent', '/shared/recent/', '/shared/prefix'])''', other.nid)
@@ -282,7 +314,7 @@ def native_stop(browser, hub, node, other):
         stops.append(route.request.post_data_json)
         route.fulfill(json={"ok": True, "stopped": True, "stage": "graceful"})
     context.route("**/api/session/stop", stop)
-    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
+    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="domcontentloaded")
     page.wait_for_function("uid => T.listLoaded && T.list.some(row => row.uid === uid)", arg=uid)
     assert not page.evaluate("uid => S.live.has(uid)", uid)
     row = page.locator(f'#side .item[data-uid="{uid}"]')
@@ -333,7 +365,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS hub_pending_state_browser: per-node OpenCode picker, multi-select stop of a console-only session, machine select on the first row, steady cwd list while typing, node switch keeps existing cwd, create, partial list, draft/reload, recovery, confirmed exit")
+    print("PASS hub_pending_state_browser: per-node OpenCode picker, multi-select stop of a console-only session, machine select on the first row, steady cwd list while typing, node switch keeps blank/existing cwd, create, partial list, draft/reload, recovery, confirmed exit")
 
 
 if __name__ == "__main__":
