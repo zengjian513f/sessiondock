@@ -6908,7 +6908,7 @@ function paintSessionRunControl(button, row) {
   button.title = button.ariaLabel = label;
   if (button.closest('#item-menu')) button.textContent = label;
   else {
-    button.innerHTML = uiIcon(running ? 'power' : 'play');
+    button.innerHTML = uiIcon('power');
     button.classList.toggle('danger', running);
     labelSessionAction(button);
     button.onclick = () => toggleSessionRun(sessionRunRow(row?.uid) || row, button);

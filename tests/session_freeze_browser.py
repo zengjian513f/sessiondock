@@ -55,6 +55,12 @@ def freeze_button(page):
     expect(button).to_be_visible()
     report = page.locator('.dhead [data-report-bug]')
     expect(report).to_be_visible()
+    if button.evaluate("button => !!button.closest('#session-actions-menu')"):
+        expect(button.locator('span')).to_be_visible()
+    else:
+        expect(button.locator('span')).to_be_hidden()
+        expect(button).to_have_css('width', '28px')
+    expect(button.locator('span')).to_have_text(button.get_attribute('aria-label'))
     assert button.evaluate("button => button.nextElementSibling?.hasAttribute('data-report-bug')")
     assert button.evaluate("button => button.parentElement.classList.contains('session-menu-diagnostics')")
     return button
@@ -126,6 +132,8 @@ def check_freeze_overlay(page):
     expect(overlay.locator('.session-freeze-line')).to_have_text('会话已暂停')
     expect(overlay.locator('button')).to_have_count(1)
     expect(overlay.locator('[data-freeze-resume]')).to_have_attribute('aria-label', '恢复运行')
+    expect(overlay.locator('[data-freeze-resume]')).to_have_text('')
+    assert overlay.locator('[data-freeze-resume]').evaluate('button => button.scrollWidth <= button.clientWidth')
     expect(overlay.locator('[data-freeze-resume] use')).to_have_attribute('href', '#i-play')
     label_box = overlay.locator('span').bounding_box()
     play_box = overlay.locator('button').bounding_box()
