@@ -2073,13 +2073,16 @@ function tickSync() {
 setInterval(tickSync, TICK_MS);
 
 // ---- 活跃会话 ----
-async function refreshLive(force = false) {
+async function refreshLive(force = false, onlineOnly = false) {
   if (!SessionDockCapabilities.allows('live')) return;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
   let d;
   try {
-    const response = await fetch(appUrl('api/live' + (force ? '?force=1' : '')), {signal:controller.signal});
+    const query = new URLSearchParams();
+    if (force) query.set('force', '1');
+    if (HUB_MODE && onlineOnly) query.set('online_only', '1');
+    const response = await fetch(appUrl('api/live' + (query.size ? '?' + query : '')), {signal:controller.signal});
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     d = await response.json();
   } finally { clearTimeout(timeout); }
@@ -3558,8 +3561,8 @@ function sessionCleanupDays() {
 }
 async function staleActiveSessions(days) {
   const [response, live] = await Promise.all([
-    fetch(appUrl('api/sessions?force=1'), {signal: AbortSignal.timeout(15000)}),
-    refreshLive(true),
+    fetch(appUrl('api/sessions?force=1' + (HUB_MODE ? '&online_only=1' : '')), {signal: AbortSignal.timeout(15000)}),
+    refreshLive(true, true),
   ]);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const data = await response.json();
@@ -3591,17 +3594,18 @@ function paintCleanupList(targets, progress = null) {
     let row = existing.get(target.uid);
     existing.delete(target.uid);
     if (!row) {
-      row = el('div', 'trash-item');
+      row = el('div', 'trash-item cleanup-item');
       row.dataset.uid = target.uid;
-      const main = el('div', 'trash-main');
-      main.style.overflowWrap = 'anywhere';
-      main.append(el('div', 'cleanup-session-label'), el('div', 'trash-meta'));
-      row.append(main);
+      row.append(el('div', 'trash-main cleanup-session-label'), el('div', 'cleanup-session-status'));
       list.append(row);
     }
-    row.querySelector('.cleanup-session-label').textContent =
+    const label = row.querySelector('.cleanup-session-label');
+    label.textContent =
       `${target.node_name ? target.node_name + ' · ' : ''}${SOURCES[target.source]?.name || target.source} · ${target.title || target.sid} · ${fmtTime(target.updated)}`;
-    row.querySelector('.trash-meta').textContent = result ? result.message || labels[result.state] : '';
+    label.title = label.textContent;
+    const status = row.querySelector('.cleanup-session-status');
+    status.textContent = result ? result.message || labels[result.state] : '';
+    status.title = status.textContent;
     row.dataset.state = result?.state || 'preview';
   }
   for (const row of existing.values()) row.remove();

@@ -2470,3 +2470,12 @@ header .btn[data-session-docked] { display: none; }
 .toolbar-options button:hover { background: var(--hover); }
 .toolbar-options button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .toolbar-options button.off .ico { opacity: .45; }
+
+/* Reserve the status column before stopping so rows do not jump or wrap. */
+#session-cleanup-list .cleanup-item { flex-wrap: nowrap; min-height: 39px; box-sizing: border-box; }
+.cleanup-session-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 20px; }
+.cleanup-session-status {
+  flex: 0 0 11em; max-width: 44%; min-height: 20px; margin-left: auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
+  color: var(--muted); font-size: 11.5px; line-height: 20px;
+}

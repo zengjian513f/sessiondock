@@ -89,6 +89,9 @@ WebSocket 后仍在同一 TLS 流上双向转发。HTTP 与 HTTPS 都继续受�
 `check(node)` = 带 `X-SessionDock-List` 头的条件请求（见下文 `list_delta`，不再转发 `sig`）；`check_all()` 最多 16 路并发；
 `fetch()` 是聚合入口：已知离线的节点不等待，直接给失败记录（含 `offline_since`）和
 过期缓存；空 query 的 `/api/sessions` 先条件探测，`unchanged` 则回最新缓存。
+DELTA（2026-10-08）：清扫读取传 `online_only=1` 时，在选择阶段排除已知离线节点，
+不调用它们的聚合读取，也不返回离线快照；参数仅供 Hub 使用，不转发给节点。
+普通列表仍保留离线快照，当前在线但请求失败的机器仍报告读取错误。
 `recheck(node)` 用 `client.recheck`（5 s）探 `/api/live` 后 `nudge()`，返回是否在线。
 
 **搜索** `/api/search`：始终以 `progress=1` 请求；`Content-Type` 非 NDJSON 时按 JSON 整读

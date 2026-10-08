@@ -42,6 +42,7 @@ def main():
                     'node_id': node.nid, 'node_name': node.name,
                     **({'nest_parent': {'source': 'claude', 'sid': 'parent-not-loaded'}}
                        if name == 'hidden-child' else {})})
+            rows[6]['title'] = 'stop-error ' + 'long synthetic title ' * 20
             live = {row['uid'] for row in rows if row['sid'] != 'inactive'}
             stopped = []
             pending_stops = []
@@ -58,8 +59,13 @@ def main():
                     response = route.fetch(headers={key: value for key, value in route.request.headers.items()
                                                        if key.lower() != 'x-sessiondock-list'})
                     data = response.json()
-                    hidden = parse_qs(urlsplit(route.request.url).query).get('children') == ['hidden']
-                    data.update(sessions=[row for row in rows if not hidden or not row.get('nest_parent')],
+                    query = parse_qs(urlsplit(route.request.url).query)
+                    hidden = query.get('children') == ['hidden']
+                    online = {node['id'] for node in data['nodes'] if node.get('online') is not False}
+                    if query.get('online_only') == ['1']:
+                        assert all(row.get('node_id') in online for row in data['sessions']), data['sessions']
+                    data.update(sessions=[row for row in rows if (not hidden or not row.get('nest_parent'))
+                                          and (query.get('online_only') != ['1'] or row['node_id'] in online)],
                                 sig='cleanup-fixture', unchanged=False)
                     route.fulfill(response=response, json=data)
 
@@ -93,7 +99,7 @@ def main():
                         route.fulfill(json={'ok': True, 'stopped': False})
                         return
                     if uid.endswith(':stop-error') or uid.endswith('~stop-error'):
-                        route.fulfill(status=500, json={'error': 'synthetic stop failure'})
+                        route.fulfill(status=500, json={'error': 'synthetic stop failure ' + 'long failure detail ' * 20})
                     elif uid.endswith('~stop-uncertain'):
                         route.fulfill(json={'ok': True, 'stage': 'uncertain', 'stopped': False})
                     else:
@@ -167,6 +173,23 @@ def main():
                 page.locator('#nest-hidden').click()
                 page.wait_for_function('S.childMode === "hidden" && S.sessions.length === 7')
 
+                def row_heights():
+                    geometry = page.locator('#session-cleanup-list [data-uid]').evaluate_all('''rows => rows.map(row => {
+                        const box = row.getBoundingClientRect();
+                        const label = row.querySelector('.cleanup-session-label').getBoundingClientRect();
+                        const status = row.querySelector('.cleanup-session-status').getBoundingClientRect();
+                        return {uid: row.dataset.uid, height: box.height, labelRight: label.right,
+                                statusLeft: status.left, statusRight: status.right, right: box.right,
+                                labelTop: label.top, statusTop: status.top};
+                    })''')
+                    assert geometry, 'expected candidate rows'
+                    for item in geometry:
+                        assert item['statusLeft'] >= item['labelRight'], item
+                        assert item['statusRight'] <= item['right'], item
+                        assert abs(item['labelTop'] - item['statusTop']) < 1, item
+                        assert abs(item['height'] - geometry[0]['height']) < 1, geometry
+                    return {item['uid']: item['height'] for item in geometry}
+
                 def open_cleanup():
                     page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
                     if not page.locator('#session-cleanup').is_visible():
@@ -192,17 +215,20 @@ def main():
                 for row, updated in zip(rows, previous_times):
                     row['updated'] = updated
                 open_cleanup()
+                preview_heights = row_heights()
                 rows[3]['updated'] = datetime.now(timezone.utc).isoformat()
                 page.locator('#session-cleanup-start').click()
                 remaining = page.locator('#session-cleanup-list [data-uid]')
                 expect(remaining).to_have_count(4)
                 expect(page.locator('#session-cleanup-list [data-state=stopping]')).to_have_count(4)
+                assert all(preview_heights[uid] == height for uid, height in row_heights().items())
                 assert len(pending_stops) == 4
                 child = page.locator('#session-cleanup-list [data-uid]').filter(has_text='hidden-child').element_handle()
                 first = next(route for route in pending_stops if route.request.post_data_json['uid'] == rows[0]['uid'])
                 pending_stops.remove(first)
                 finish_stop(first)
                 expect(remaining).to_have_count(3)
+                assert all(preview_heights[uid] == height for uid, height in row_heights().items())
                 expect(page.locator('#session-cleanup-count')).to_have_text('3')
                 expect(page.locator('#session-cleanup-status')).to_contain_text('已停止 1/4')
                 assert child.evaluate('node => node.isConnected'), 'remaining rows must stay in place'
@@ -215,6 +241,7 @@ def main():
                 expect(page.locator('#session-cleanup-status')).to_contain_text('跳过 1 个')
                 expect(page.locator('#session-cleanup-list')).to_contain_text('synthetic stop failure')
                 expect(remaining).to_have_count(2)
+                assert all(preview_heights[uid] == height for uid, height in row_heights().items())
                 expect(page.locator('#session-cleanup-count')).to_have_text('2')
                 expect(page.locator('#session-cleanup-list')).to_contain_text('stop-uncertain')
                 assert set(stopped) == {rows[i]['uid'] for i in (0, 4, 6, 7)}, stopped
@@ -225,7 +252,9 @@ def main():
                 # Survivors are accurately reported; HTTP success must never
                 # count them as stopped or make them vanish without explanation.
                 stop_mode = 'still-running'
+                page.set_viewport_size({'width': 390, 'height': 844})
                 open_cleanup()
+                mobile_heights = row_heights()
                 expect(page.locator('#session-cleanup-status')).to_contain_text('找到 2 个')
                 page.locator('#session-cleanup-start').click()
                 expect(page.locator('#session-cleanup-list [data-state=stopping]')).to_have_count(2)
@@ -237,6 +266,8 @@ def main():
                 expect(remaining).to_have_count(2)
                 expect(page.locator('#session-cleanup-list [data-state=uncertain]')).to_have_count(2)
                 expect(page.locator('#session-cleanup-list')).to_contain_text('复查仍在运行')
+                assert row_heights() == mobile_heights
+                assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                 page.locator('#session-cleanup-close').click()
                 stop_mode = 'unverified'
                 open_cleanup()
@@ -280,6 +311,25 @@ def main():
                 expect(page.locator('#session-cleanup-status')).to_have_text('没有超过 5 天未更新的活跃会话。')
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                 page.locator('#session-cleanup-close').click()
+                # Offline snapshots must not enter cleanup reads, even though ordinary
+                # lists keep them available. The real Hub owns node health and filtering.
+                cleanup_setting(2, 5)
+                live.update([rows[0]['uid'], rows[6]['uid']])
+                nodes[1].set(offline=True)
+                for _ in range(2):
+                    page.request.get(f'http://127.0.0.1:{hub.port}/api/live?force=1')
+                page.evaluate('refreshLive(true)')
+                page.wait_for_function("id => Nodes.list.some(n => n.id === id && n.online === false)", arg=nodes[1].nid)
+                baseline = page.request.get(f'http://127.0.0.1:{hub.port}/api/sessions?force=1').json()
+                assert any(row.get('node_id') == nodes[1].nid for row in baseline['sessions']), baseline
+                before_stops = len(stopped)
+                open_cleanup()
+                expect(page.locator('#session-cleanup-status')).to_contain_text('找到 1 个')
+                expect(page.locator('#session-cleanup-status')).to_contain_text('机器已跳过：NodeB')
+                expect(page.locator('#session-cleanup-list')).not_to_contain_text('NodeB')
+                expect(page.locator('#session-cleanup-count')).to_have_text('1')
+                page.locator('#session-cleanup-close').click()
+                assert len(stopped) == before_stops
                 assert not errors, errors
                 context.close()
                 browser.close()

@@ -34,7 +34,7 @@ pub const FAN_OUT: usize = 16;
 /// node event so browsers and proxies keep the connection open.
 pub const HEARTBEAT: Duration = Duration::from_secs(1);
 /// Query keys the browser addresses to the hub, never forwarded to nodes.
-const HUB_KEYS: [&str; 3] = ["nodes", "sig", "progress"];
+const HUB_KEYS: [&str; 4] = ["nodes", "sig", "progress", "online_only"];
 const REQUEST_FAILED: &str = "机器请求失败，请核对结果";
 pub const TRASH_DIR: &str = "所选机器的本地回收站";
 
@@ -87,8 +87,10 @@ pub fn progress_requested(query: &Params) -> bool {
 /// are rejected.
 pub fn selected(registry: &Registry, query: &Params) -> Result<Vec<Node>, AggregateError> {
     let nodes = registry.all();
+    let online =
+        |node: &Node| first(query, "online_only") != Some("1") || !registry.offline(&node.id);
     let Some(ids) = first(query, "nodes") else {
-        return Ok(nodes);
+        return Ok(nodes.into_iter().filter(online).collect());
     };
     let wanted: Vec<&str> = ids.split(',').filter(|id| !id.is_empty()).collect();
     if wanted
@@ -99,7 +101,7 @@ pub fn selected(registry: &Registry, query: &Params) -> Result<Vec<Node>, Aggreg
     }
     Ok(nodes
         .into_iter()
-        .filter(|node| wanted.contains(&node.id.as_str()))
+        .filter(|node| wanted.contains(&node.id.as_str()) && online(node))
         .collect())
 }
 
