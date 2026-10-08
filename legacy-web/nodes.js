@@ -276,9 +276,8 @@ function prepareNewNode() {
   document.querySelector('#new-node-label').hidden = false;
 }
 
-// 切换机器时保留空输入，非空目录若在新机器上也存在就原样保留；只有不存在
-// （或无法确认）时才换成新机器的默认目录。用户在检查期间改了输入则不动。
-let newCwdCheck = 0;
+// 本次打开中用户编辑或选择过目录后，切换机器只更新候选，不再改写输入。
+let newCwdEdited = false;
 async function newNodeHasDir(path, node = newNodeId()) {
   const value = path.length > 1 ? path.replace(/\/+$/, '') : path;
   if (value === '/' || value === '~') return true;
@@ -292,7 +291,7 @@ async function newNodeHasDir(path, node = newNodeId()) {
   } catch { return false; }
 }
 
-function refreshNewNodeFields(keepCwd = null) {
+function refreshNewNodeFields() {
   closeCwdPicker();
   const cap = newNodeCapabilities();
   cwdCompletion.common = commonSessionDirs();
@@ -307,16 +306,7 @@ function refreshNewNodeFields(keepCwd = null) {
   const fallback = selected?.cwd || store.get(newDirsKey(), [])[0]
     || cwdCompletion.common[0]?.cwd || cap.home || '';
   const input = document.querySelector('#new-cwd');
-  const check = ++newCwdCheck;
-  if (keepCwd === '') input.value = '';
-  else if (keepCwd && keepCwd !== fallback && cap.enabled) {
-    input.value = keepCwd;
-    const node = newNodeId();
-    newNodeHasDir(keepCwd).then(exists => {
-      if (exists || check !== newCwdCheck || node !== newNodeId() || input.value.trim() !== keepCwd) return;
-      input.value = fallback;
-    });
-  } else input.value = fallback;
+  if (!newCwdEdited) input.value = fallback;
   document.querySelector('#new-session-error').textContent = '';
   document.querySelector('#new-session-go').disabled = !cap.enabled;
   renderCommonCwdOptions();
@@ -327,7 +317,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (!HUB_MODE) return;
   document.querySelector('#new-node').onchange = () => {
     store.set('newNode', newNodeId());
-    refreshNewNodeFields(document.querySelector('#new-cwd').value.trim());
+    refreshNewNodeFields();
   };
   void loadNodes().catch(() => {});
 });
