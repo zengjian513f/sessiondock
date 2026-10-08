@@ -108,6 +108,8 @@ def main():
                 context.route('**/api/session/stop', stop)
                 page.goto(f'http://127.0.0.1:{hub.port}/', wait_until='networkidle')
                 page.wait_for_function('S.sessions.length === 8 && S.live.size === 7')
+                summary = page.request.get(f'http://127.0.0.1:{hub.port}/api/sessions/cleanup-counts').json()
+                assert summary['interval_seconds'] == 10800, summary
                 a = page.locator('#node-chips button').filter(has_text='NodeA')
                 b = page.locator('#node-chips button').filter(has_text='NodeB')
                 claude = page.locator('#chips button[data-source=claude]')
@@ -201,6 +203,7 @@ def main():
                 pending_stops.remove(first)
                 finish_stop(first)
                 expect(remaining).to_have_count(3)
+                expect(page.locator('#session-cleanup-count')).to_have_text('3')
                 expect(page.locator('#session-cleanup-status')).to_contain_text('已停止 1/4')
                 assert child.evaluate('node => node.isConnected'), 'remaining rows must stay in place'
                 child.dispose()
@@ -212,6 +215,7 @@ def main():
                 expect(page.locator('#session-cleanup-status')).to_contain_text('跳过 1 个')
                 expect(page.locator('#session-cleanup-list')).to_contain_text('synthetic stop failure')
                 expect(remaining).to_have_count(2)
+                expect(page.locator('#session-cleanup-count')).to_have_text('2')
                 expect(page.locator('#session-cleanup-list')).to_contain_text('stop-uncertain')
                 assert set(stopped) == {rows[i]['uid'] for i in (0, 4, 6, 7)}, stopped
                 for node, uid in zip(nodes, ('claude:stale-root', 'codex:hidden-child')):

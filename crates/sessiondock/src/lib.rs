@@ -12,6 +12,7 @@ mod assets;
 pub mod audit;
 pub mod bridge;
 pub mod bug_report;
+mod cleanup;
 pub mod config;
 pub mod conversation;
 pub mod delivery;
@@ -515,6 +516,7 @@ fn build_app(
         service.clone().housekeeping(shutdown.clone());
     }
     let state = AppState {
+        cleanup_counts: Arc::new(cleanup::Counts::default()),
         transfer,
         shell_env,
         opencode_root,
@@ -556,6 +558,7 @@ fn build_app(
         polls: Arc::new(polls::PollCache::default()),
         ui_events,
     };
+    api::cleanup::spawn(state.clone());
     runtime::process_links::spawn(state.clone());
     runtime::spawn::spawn(state.clone());
     // Same state, own gate, no static fallback: everything the hub proxies.

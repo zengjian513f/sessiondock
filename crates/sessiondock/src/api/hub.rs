@@ -54,6 +54,7 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/nodes/{nid}/display"),
     ("ANY", "/api/nodes/{nid}/api/{*path}"),
     ("GET", "/api/sessions"),
+    ("GET", "/api/sessions/cleanup-counts"),
     ("POST", "/api/sessions/resolve"),
     ("GET", "/api/search"),
     ("GET", "/api/live"),
@@ -92,7 +93,7 @@ const NOT_REGISTERED: &str = "机器未注册或已移除";
 /// `/api/nodes/<nid>/api/media/…` source before its hub check when set.
 pub fn hub_capabilities() -> Value {
     json!({
-        "backend": "rust", "hub": true, "session_stop": true, "session_delete_tree": true, "session_clone_local_codex": true, "session_clone_remote": true, "session_move_remote": true, "transfer_confirm_mode": true, "session_link_lineage": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
+        "backend": "rust", "hub": true, "cleanup_counts": true, "session_stop": true, "session_delete_tree": true, "session_clone_local_codex": true, "session_clone_remote": true, "session_move_remote": true, "transfer_confirm_mode": true, "session_link_lineage": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
         "history_pages": true, "unread_batch": true, "media_continuation": true, "ui_events": true, "list_delta": true,
         "history_semantics": "limited_native"
     })
@@ -140,6 +141,7 @@ impl HubAudit {
 
 #[derive(Clone)]
 pub struct HubState {
+    pub(crate) cleanup_counts: Arc<crate::cleanup::Counts>,
     pub registry: Arc<Registry>,
     pub client: Arc<Client>,
     pub assets: Arc<Assets>,
@@ -213,6 +215,7 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         .clone()
         .spawn(registry.clone(), client.clone(), shutdown.clone());
     let state = HubState {
+        cleanup_counts: Arc::new(crate::cleanup::Counts::default()),
         resource_nodes: Arc::new(crate::hub::resources::RelatedNodes::default()),
         groups,
         registry: registry.clone(),
@@ -235,6 +238,23 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         .transfers
         .clone()
         .spawn(registry.clone(), client.clone(), state.shutdown.clone());
+    let counter_registry = registry.clone();
+    let counter_client = client.clone();
+    state.cleanup_counts.spawn(state.shutdown.clone(), move || {
+        let registry = counter_registry.clone();
+        let client = counter_client.clone();
+        async move {
+            let params = vec![("force".into(), "1".into())];
+            let (sessions, live) = tokio::join!(
+                aggregate::sessions(&registry, &client, &params),
+                aggregate::live(&registry, &client, &params),
+            );
+            Ok((
+                sessions.map_err(|e| e.to_string())?,
+                live.map_err(|e| e.to_string())?,
+            ))
+        }
+    });
     Ok(HubApp {
         router: hub_router(state),
         registry,
@@ -437,6 +457,9 @@ async fn handle(
     let client = &state.client;
     if (method == Method::GET || method == Method::HEAD) && !path.starts_with("/api/") {
         return Ok(assets::serve_asset(&state.assets, &uri, &method, &headers));
+    }
+    if method == Method::GET && path == "/api/sessions/cleanup-counts" {
+        return ok(&state.cleanup_counts.summary());
     }
     if method == Method::GET && path == "/api/meta" {
         return ok(

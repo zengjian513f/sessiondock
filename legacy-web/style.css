@@ -2449,3 +2449,7 @@ header .btn[data-session-docked] { display: none; }
 
 .item-resources:hover { background:var(--hover); }
 .item-resources:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
+
+/* Cleanup uses the existing warning/error palette; the count stays in the menu. */
+#session-cleanup.cleanup-warn { color: #d39a24; }
+#session-cleanup.cleanup-danger { color: #e5484d; }

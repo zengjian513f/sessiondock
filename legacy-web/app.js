@@ -3492,12 +3492,65 @@ $('#side-pick-attach').onclick = () => setNestAttach(pickedNestable());
 let sessionCleanupBusy = false;
 let sessionCleanupTargets = [];
 let sessionCleanupDaysInDialog = 2;
+// Only numeric age buckets survive a check; candidate rows belong to the open dialog.
+const CLEANUP_INTERVAL_MS = 3 * 60 * 60 * 1000;
+let cleanupCounts = null;
+let cleanupCountTimer = 0;
+let cleanupCountRequest = null;
+let cleanupCountDue = 0;
+function cleanupAgeDay(updated, now) {
+  return Math.ceil((now - Date.parse(updated)) / 86400000) - 1;
+}
+function paintCleanupCount() {
+  const button = $('#session-cleanup'), days = sessionCleanupDays();
+  const known = cleanupCounts?.ready;
+  const count = known ? Object.entries(cleanupCounts.days).reduce((sum, [age, n]) => sum + (+age >= days ? n : 0), 0) : null;
+  $('#session-cleanup-count').textContent = known ? String(count) : '?';
+  button.classList.toggle('cleanup-warn', known && count > 30 && count <= 100);
+  button.classList.toggle('cleanup-danger', known && count > 100);
+  button.title = `清扫：超过 ${days} 天未更新的活跃会话${known ? ` ${count} 个` : '，数量待检查'}`
+    + (cleanupCounts?.checked_at ? `；上次检查 ${new Date(cleanupCounts.checked_at).toLocaleString()}` : '')
+    + (cleanupCounts?.partial ? '；部分机器无法读取' : '')
+    + (cleanupCounts?.error ? `；更新失败：${cleanupCounts.error}` : '')
+    + '；每 3 小时更新，打开弹窗实时检查';
+  button.ariaLabel = `清扫会话${known ? `，${count} 个` : '，数量未知'}`;
+  const label = button.querySelector('.menu-label');
+  if (label) label.textContent = button.ariaLabel;
+}
+function scheduleCleanupCount(delay) {
+  clearTimeout(cleanupCountTimer);
+  cleanupCountDue = Date.now() + delay;
+  cleanupCountTimer = setTimeout(refreshCleanupCount, delay);
+}
+async function refreshCleanupCount() {
+  if (SessionDockNetwork.paused || cleanupCountRequest || !SessionDockCapabilities.allows('cleanup_counts')) return;
+  cleanupCountRequest = (async () => {
+    try {
+      const response = await fetch(appUrl('api/sessions/cleanup-counts'), {signal: AbortSignal.timeout(15000)});
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      if (data?.ready && data.days && (!cleanupCounts?.ready || data.checked_at > cleanupCounts.checked_at)) cleanupCounts = data;
+      else if (data?.error) cleanupCounts = {...cleanupCounts, error: data.error};
+      paintCleanupCount();
+      // Startup and an in-progress scheduled scan need only a tiny summary read.
+      scheduleCleanupCount(data?.next_check_at ? Math.max(5000, data.next_check_at - Date.now() + 1000) : 5000);
+    } catch (error) {
+      cleanupCounts = {...cleanupCounts, error: error.message || String(error)};
+      paintCleanupCount();
+      scheduleCleanupCount(CLEANUP_INTERVAL_MS);
+    } finally { cleanupCountRequest = null; }
+  })();
+  return cleanupCountRequest;
+}
+addEventListener('sessiondock-network-resumed', () => {
+  if (Date.now() >= cleanupCountDue) void refreshCleanupCount();
+});
 function sessionCleanupDays() {
   const days = Number(store.get('cleanupDays', 2));
   return Number.isInteger(days) && days > 0 ? days : 2;
 }
 async function staleActiveSessions(days) {
-  const [response] = await Promise.all([
+  const [response, live] = await Promise.all([
     fetch(appUrl('api/sessions?force=1'), {signal: AbortSignal.timeout(15000)}),
     refreshLive(true),
   ]);
@@ -3505,11 +3558,19 @@ async function staleActiveSessions(days) {
   const data = await response.json();
   if (!Array.isArray(data.sessions)) throw new Error('会话列表格式错误');
   applyNodeState(data, 'sessions');
-  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-  return data.sessions.filter(row => !row.agent_id && !row.stale && S.live.has(row.uid)
-    && Date.parse(row.updated) < cutoff
+  if (!live || live.known === false) throw new Error('运行状态未知');
+  const now = Date.now(), running = new Set(live.uids);
+  const active = data.sessions.filter(row => !row.agent_id && !row.stale && running.has(row.uid)
     && !['sessions', 'live'].some(kind => Nodes.errors.get(kind)?.some(error => error.node_id === row.node_id))
     && (!HUB_MODE || Nodes.list.some(node => node.id === row.node_id && node.online !== false)));
+  const buckets = {};
+  for (const row of active) {
+    const age = cleanupAgeDay(row.updated, now);
+    if (Number.isFinite(age) && age >= 1) buckets[age] = (buckets[age] || 0) + 1;
+  }
+  cleanupCounts = {ready: true, checked_at: now, days: buckets, partial: !!cleanupUnavailableNote()};
+  paintCleanupCount();
+  return active.filter(row => Date.parse(row.updated) < now - days * 86400000);
 }
 function paintCleanupList(targets, progress = null) {
   const list = $('#session-cleanup-list');
@@ -3581,6 +3642,10 @@ $('#session-cleanup').onclick = async () => {
 $('#session-cleanup-close').onclick = () => {
   if (!sessionCleanupBusy) $('#session-cleanup-dialog').close();
 };
+$('#session-cleanup-dialog').addEventListener('close', () => {
+  sessionCleanupTargets = [];
+  $('#session-cleanup-list').replaceChildren();
+});
 $('#session-cleanup-dialog').addEventListener('cancel', event => {
   if (sessionCleanupBusy) event.preventDefault();
 });
@@ -3595,10 +3660,19 @@ $('#session-cleanup-start').onclick = async () => {
     const confirmed = new Set(sessionCleanupTargets.map(row => row.uid));
     const targets = (await staleActiveSessions(sessionCleanupDaysInDialog)).filter(row => confirmed.has(row.uid));
     const skipped = confirmed.size - targets.length;
+    const countsBeforeStop = cleanupCounts;
     await stopSessionTargets(targets, progress => {
       status.textContent = `已停止 ${progress.stopped}/${progress.total}，失败 ${progress.failed}，未确认 ${progress.uncertain}`
         + (skipped ? `；已更新或退出等会话跳过 ${skipped} 个` : '') + cleanupUnavailableNote();
       paintCleanupList(targets, progress);
+      const remaining = {...countsBeforeStop.days};
+      for (const target of targets) {
+        if (progress.results.get(target.uid)?.state !== 'stopped') continue;
+        const age = cleanupAgeDay(target.updated, countsBeforeStop.checked_at);
+        if (remaining[age]) remaining[age]--;
+      }
+      cleanupCounts = {...countsBeforeStop, days: remaining, checked_at: Date.now()};
+      paintCleanupCount();
       if (progress.refreshError) status.textContent += `；${progress.refreshError}`;
     });
   } catch (error) {
@@ -10431,6 +10505,7 @@ $('#setting-cleanup-days').onchange = e => {
   const days = Number(e.target.value);
   if (Number.isInteger(days) && days > 0) store.set('cleanupDays', days);
   e.target.value = String(sessionCleanupDays());
+  paintCleanupCount();
 };
 $('#setting-console-paste-files').onchange = e => store.set('consolePasteFiles', e.target.checked === true);
 
@@ -10456,6 +10531,7 @@ renderOpts();
 renderPickBar();
 renderView();
 ensureConsolePlaceholder();
+void refreshCleanupCount();
 pollLive();   // 终端面板由 term.js 自己初始化 (它在本文件之后加载)
 function uidOfDeepLink(spec) {
   if (!spec) return null;
