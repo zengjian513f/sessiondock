@@ -192,6 +192,54 @@ def inactive_children(browser, root, binary):
     print('PASS inactive child hint, fold/keyboard, source/search/flat filters, live exit, all histories, desktop/mobile', flush=True)
 
 
+def completing_birth(browser, root, binary):
+    """A partial first native record must not consume completed birth preparation."""
+    corpus = Corpus(root)
+    corpus.put('parent', 'codex', [codex_row('session_meta', {
+        'id': 'parent', 'cwd': '/synthetic/research', 'timestamp': stamp(101)})], [])
+    corpus.put('birth-worker', 'codex', [], [])
+    child = corpus.paths['birth-worker']
+    # The path/SID already exist, but the CLI has not completed its first line.
+    child.write_bytes(b'{"type":"session_meta","payload":')
+    proc = root / 'proc'
+    proc.mkdir()
+    (proc / 'stat').write_text(f'btime {BTIME}\n')
+    proc_pid(proc, 100, 'codex', ['codex'], 1, fds={3: corpus.paths['parent']})
+    state = root / 'state'
+    state.mkdir(mode=0o700)
+    with server_with_env(corpus, {'SESSIONDOCK_PROC_ROOT': proc,
+            'SESSIONDOCK_STATE_DIR': state, 'SESSIONDOCK_GROK_ACTIVE': root / 'absent'},
+            binary) as (base, opener):
+        context = browser.new_context(viewport={'width': 608, 'height': 900})
+        page = context.new_page()
+        page.goto(base)
+        page.wait_for_function('S.sessions.length === 2')
+        if not page.evaluate('S.nest'):
+            page.locator('#nest-toggle').click()
+        initial = page.evaluate('uid => S.sessions.find(s => s.uid === uid)', corpus.uid('birth-worker'))
+        get_json(opener, base, '/api/live?force=1')
+        fixture.START[992] = 40_000
+        proc_pid(proc, 992, 'codex', ['codex', 'exec'], 1,
+                 env=[('CODEX_THREAD_ID', 'parent')], fds={3: child})
+        corpus.put('birth-worker', 'codex', [
+            codex_row('session_meta', {'id': initial['sid'], 'session_id': initial['sid'],
+                'cwd': '/synthetic/research/jobs/one', 'timestamp': stamp(401),
+                'source': 'exec', 'thread_source': 'user'}),
+            codex_row('response_item', {'type': 'message', 'role': 'user',
+                'content': 'Inspect completed birth'})], [])
+        with page.expect_response(lambda r: '/api/sessions?force=1' in r.url) as response:
+            page.evaluate('loadSessions(true)')
+        row = next(r for r in response.value.json()['sessions'] if r['uid'] == corpus.uid('birth-worker'))
+        assert row.get('nest_parent') == {'source': 'codex', 'sid': 'parent'}, \
+            'partial native row consumed the first completed birth preparation'
+        item = page.locator(f'#side .item[data-uid="{corpus.uid("birth-worker")}"]')
+        expect(item).to_have_attribute('data-depth', '1')
+        item.click()
+        expect(page.locator('#msgs')).to_contain_text('Inspect completed birth')
+        context.close()
+    print('PASS partial native identity completes under its launch parent on first publication', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -200,6 +248,7 @@ def main():
         root = Path(tmp)
         browser = pw.chromium.launch(headless=True)
         first_publication(browser, root / 'first-publication', args.binary)
+        completing_birth(browser, root / 'completing-birth', args.binary)
         inactive_children(browser, root / 'inactive-children', args.binary)
         corpus = Corpus(root)
         children = [f'exec-worker-{i}' for i in range(6)]
