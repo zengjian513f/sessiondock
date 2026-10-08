@@ -416,8 +416,9 @@ type ListPreparation<'a> = dyn Fn(&[Value]) -> Result<(), SessionError> + 'a;
 
 struct ListState {
     published: Option<Arc<Published>>,
-    /// Identities prepared for an HTTP list, independent of internal publications.
-    prepared_identities: BTreeSet<(String, String)>,
+    /// Identity and birth evidence prepared for an HTTP list. A partial native
+    /// header can keep the same UID/SID while its creation time/cwd completes.
+    prepared_identities: BTreeSet<(String, String, String, String)>,
     prepared_signature: Option<String>,
     /// Owner uids that vanished from the index since the views were last
     /// touched; applied before the next use of the view cache.
@@ -583,12 +584,15 @@ impl SessionStore {
                     (
                         row["uid"].as_str().unwrap_or("").to_owned(),
                         row["sid"].as_str().unwrap_or("").to_owned(),
+                        row["created"].as_str().unwrap_or("").to_owned(),
+                        row["cwd"].as_str().unwrap_or("").to_owned(),
                     )
                 })
                 .collect();
             if !identities.is_subset(&state.prepared_identities) {
                 // Prepare this exact inventory before taking the metadata snapshot.
-                // Internal readers/background ticks must not consume this first-list gate.
+                // Internal readers/background ticks and incomplete birth metadata
+                // must not consume the first-list gate for a completed native header.
                 prepare(index.sessions())?;
             }
             state.prepared_identities = identities;
