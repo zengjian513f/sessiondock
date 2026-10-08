@@ -1049,7 +1049,10 @@ $('#bug-report-form').onsubmit = async event => {
     let attachmentId = null;
     for (let i = 0; i < attachments.length; i++) {
       setSendButtonBusy(button, `上传 ${i + 1}/${attachments.length}`);
-      if (attachments[i].staging) await attachments[i].staging;
+      if (attachments[i].staging) {
+        await attachments[i].staging;
+        if (attachments[i].uploadCancelled) throw new Error('附件上传已取消；输入已保留。');
+      }
       const result = await uploadComposerAttachment(
         attachments[i], BUG_REPORT_DRAFT_UID, attachmentId, { node, render: renderBugReportItems });
       attachmentId ||= result.attachment_id;
@@ -3766,7 +3769,8 @@ function composerDraftRecord(draft, uid) {
 }
 async function priorComposerSubmission(uid,id,report=false) {
   const query=new URLSearchParams({uid,[report?'report_request_id':'request_id']:id});
-  const response=await fetch(appUrl('api/session/conversation?'+query),{cache:'no-store'});
+  const response=await fetch(appUrl('api/session/conversation?'+query),{
+    cache:'no-store', signal:AbortSignal.timeout(12000)});
   const data=await response.json();
   if (response.status===404) return null;
   if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
@@ -3873,6 +3877,7 @@ async function dismissQueuedSend(uid, requestId) {
 async function consumeComposerSubmission(uid,text,attachments,quotes) {
   const owner=composerDraftOwner(uid),draft=composerDrafts.get(owner);
   if (!draft) return;
+  delete draft.sendNotice;
   delete draft.requestId;delete draft.requestText;delete draft.report_prompt;delete draft.report_text;
   if (draft.text===text) draft.text='';
   const files=new Set(attachments.map(a=>a.id)),quoted=new Map(quotes.map(q=>[q.id,q.text]));
@@ -4169,6 +4174,11 @@ function persistComposerDraft(uid = composerUid) {
         if (data.error) throw new Error(data.error);
         draft.revision=data.draft.revision;draft.savedVersion=pending.version;draft.storageError='';
       }
+      for (const attachment of draft.attachments) {
+        if (attachment.uploaded?.upload_id && attachment.status === 'failed') {
+          attachment.status = 'ready'; attachment.error = ''; delete attachment.uploadRetryAt;
+        }
+      }
       return true;
     } catch (error) {
       draft.storageError='服务端草稿保存失败，当前输入保留：'+(error.message || error);
@@ -4196,8 +4206,15 @@ async function recoverComposerDrafts() {
   composerRecoveryBusy = true;
   try {
     for (const [uid, draft] of composerDrafts) {
+      for (const attachment of draft.attachments) {
+        if (attachment.status === 'failed' && attachment.uploadRetryAt <= Date.now()
+            && attachment.file instanceof Blob && !attachment.staging) {
+          const options = uid === BUG_REPORT_DRAFT_UID ? {node:bugReportNode(), render:renderBugReportItems} : {};
+          void stageComposerAttachment(attachment, uid, options);
+        }
+      }
       if (!draft.storageError || draft.loading || composerSaving.has(draft)
-          || draft.handedOffSession || draft.requestId) continue;
+          || draft.handedOffSession) continue;
       if (draft.loadFailed) await hydrateComposerDraft(uid, true);
       if (!draft.loadFailed && draft.editVersion > draft.savedVersion) await persistComposerDraft(uid);
     }
@@ -4227,6 +4244,12 @@ async function prepareComposerReload() {
   return !composerUnloadProtected && !composerSending && !bugReportSending;
 }
 function renderSavedComposerInputs(box, draft) {
+  const prior = box.querySelector(':scope > .draft-send-error');
+  if (draft.sendNotice) {
+    const notice = prior || el('div', 'draft-save-error draft-send-error');
+    notice.setAttribute('role', 'status'); notice.textContent = draft.sendNotice;
+    if (!prior) box.append(notice);
+  } else prior?.remove();
   const existing = box.querySelector(':scope > .draft-save-error[role="alert"]');
   if (!draft.storageError) { existing?.remove(); return; }
   if (existing) { existing.textContent = draft.storageError; return; }
@@ -4608,13 +4631,28 @@ async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) 
         uid, name, text, request_id:options.requestId || crypto.randomUUID(),
         draft_revision:options.draftRevision, attachments:options.attachments || [],
         quotes:options.quotes || [], lease:termSendLease(name).lease || null,
-      });
+      }, {timeoutMs:20000});
       if (data.error) {updateComposerInputStatus(uid, data); throw new Error(data.error);}
       acceptComposerServerRevision(draft,data.draft);
       S.live.add(uid); S.liveTmux.add(uid); S.lastSync = 0; S.syncGap = FAST_MIN;
       paintLive();
       return true;
     } catch (error) {
+      if (options.requestId && ['TimeoutError', 'TypeError'].includes(error.name)) {
+        // Only query the stable receipt. A timed-out POST may already have
+        // pasted into the CLI, so transport recovery must never SEND again.
+        try {
+          const prior = await priorComposerSubmission(uid, options.requestId);
+          if (prior?.state === 'sent') {
+            acceptComposerServerRevision(composerDraft(uid), prior.draft);
+            return true;
+          }
+        } catch { /* Keep the submission ID for the next background check. */ }
+        const draft = composerDraft(uid);
+        draft.sendNotice = '发送结果尚未确认，输入已保留；恢复连接后会核对结果，不会自动重复发送。';
+        refreshComposerDraft(composerDraftOwner(uid));
+        return false;
+      }
       await appAlert('发送失败，输入保留：' + (error.message || error));
       return false;
     }
@@ -4704,7 +4742,7 @@ function renderAttachmentCards(box, attachments,
     info.append(name, meta);
     if (attachment.status === 'failed' && onRetry && attachment.file instanceof Blob) {
       const retry = el('button', 'draft-retry', '重试');
-      retry.type = 'button'; retry.title = '重新上传';
+      retry.type = 'button'; retry.title = '继续上传';
       retry.disabled = disabled;
       retry.onclick = e => { e.stopPropagation(); onRetry(attachment); };
       info.appendChild(retry);
@@ -5042,6 +5080,7 @@ async function reconcileComposerSubmission(uid) {
   // A later attachment may be saved as metadata while its bytes still live in
   // this page. A receipt refresh must preserve that File and its preview.
   adoptServerDraft(draft,result.draft,uid);
+  delete draft.sendNotice;
   refreshComposerDraft(composerDraftOwner(uid));syncComposerUnloadProtection();
 }
 let composerInputProbeBusy=false, composerDraftSyncBusy=false;
@@ -5411,43 +5450,84 @@ async function uploadComposerAttachment(attachment, uid, attachmentId = null,
       && (!node || attachment.uploaded.node === node || nodeOf(attachment.uploaded.uid) === node)) return attachment.uploaded;
   if (!(attachment.file instanceof Blob)) throw new Error('请重新选择未上传的附件：' + attachment.file.name);
   if (attachment.file.size > COMPOSER_MAX_FILE_BYTES) throw new Error('单个附件不能超过 512 MiB');
-  attachment.status = 'uploading'; attachment.error = ''; attachment.progress = 0; render();
+  attachment.status = 'uploading'; attachment.error = ''; attachment.progress = 0;
+  attachment.stagingUid = uid; attachment.uploadCancelled = false; render();
   const url = new URL(appUrl('api/session/conversation/attachment'));
   url.searchParams.set('uid', uid); url.searchParams.set('id', attachment.id);
   url.searchParams.set('name', attachment.file.name || 'attachment');
   if (node) url.searchParams.set('node', node);
   try {
-    const sendUpload = () => new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      attachment.cancelUpload = () => xhr.abort();
-      xhr.open('POST', url);
+    const readStatus = async () => {
+      const statusUrl = new URL(url); statusUrl.pathname += '/status';
+      const response = await fetch(statusUrl, {cache:'no-store', signal:AbortSignal.timeout(12000)});
+      // Mixed-version fleets retain the old full-upload path.
+      if ([404, 405, 501].includes(response.status)) return null;
+      const value = await response.json();
+      if (!response.ok || value.error) throw Object.assign(new Error(value.error || `HTTP ${response.status}`),
+        {retryUpload:response.status >= 500 || [408,429].includes(response.status)});
+      return value.resumable ? value : null;
+    };
+    let cancelled = false, currentXhr = null;
+    attachment.cancelUpload = () => { cancelled = true; attachment.uploadCancelled = true; currentXhr?.abort(); };
+    const sendUpload = (blob, offset, resumable) => new Promise((resolve, reject) => {
+      if (cancelled) { reject(new Error('上传已取消')); return; }
+      const xhr = currentXhr = new XMLHttpRequest();
+      const destination = new URL(url);
+      if (resumable) { destination.searchParams.set('offset', offset); destination.searchParams.set('total', attachment.file.size); }
+      let timer, stalled = false;
+      const activity = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => { stalled = true; xhr.abort(); }, COMPOSER_UPLOAD_STALL_MS);
+      };
+      xhr.open('POST', destination);
       xhr.setRequestHeader('Content-Type', attachment.file.type || 'application/octet-stream');
       xhr.upload.onprogress = event => {
-        if (event.lengthComputable) attachment.progress = Math.floor(event.loaded / event.total * 100);
+        activity();
+        if (event.lengthComputable) attachment.progress = Math.floor((offset + event.loaded) / attachment.file.size * 100);
         render();
       };
+      xhr.onprogress = activity;
+      xhr.onloadend = () => { clearTimeout(timer); if (currentXhr === xhr) currentXhr = null; };
       xhr.onload = () => {
         let data;
         const failure = message => Object.assign(new Error(message), {
-          retryUpload: [502, 503, 504].includes(xhr.status),
+          retryUpload: [408, 409, 429, 502, 503, 504].includes(xhr.status),
         });
         try {data = JSON.parse(xhr.responseText);} catch {return reject(failure(`HTTP ${xhr.status}`));}
         if (xhr.status < 200 || xhr.status >= 300 || data.error) reject(failure(data.error || `HTTP ${xhr.status}`));
         else resolve(data);
       };
-      xhr.onerror = () => reject(Object.assign(new Error('上传连接中断'), {retryUpload: true}));
-      xhr.onabort = () => reject(new Error('上传已取消'));
-      xhr.send(attachment.file);
+      xhr.onerror = () => reject(Object.assign(new Error('上传连接中断'), {retryUpload:true}));
+      xhr.onabort = () => reject(Object.assign(new Error(stalled ? '上传暂时没有进展，恢复连接后继续上传' : '上传已取消'),
+        {retryUpload:stalled}));
+      activity(); xhr.send(blob);
     });
-    let data;
-    try {data = await sendUpload();}
-    catch (error) {
-      if (!error.retryUpload) throw error;
-      // Staging is idempotent by (draft uid, upload id, bytes). A lost reply
-      // can safely repeat this upload, including after the node saved it.
-      // This never retries the report launch or the conversation SEND.
-      data = await sendUpload();
+    let data = await readStatus();
+    const resumable = !!data;
+    let failures = 0;
+    while (!data?.upload_id) {
+      if (cancelled) throw new Error('上传已取消');
+      const offset = resumable ? data.offset : 0;
+      if (!Number.isSafeInteger(offset) || offset < 0 || offset >= attachment.file.size
+          || (data?.total !== undefined && data.total !== attachment.file.size)) throw new Error('附件续传进度与本地文件不一致');
+      attachment.progress = Math.floor(offset / attachment.file.size * 100); render();
+      try {
+        data = await sendUpload(resumable ? attachment.file.slice(offset, offset + COMPOSER_UPLOAD_CHUNK_BYTES)
+          : attachment.file, offset, resumable);
+        if (resumable && !data.upload_id && (!Number.isSafeInteger(data.offset) || data.offset <= offset)) {
+          throw new Error('服务端未确认附件上传进度');
+        }
+        failures = 0;
+      } catch (error) {
+        if (cancelled || !error.retryUpload || failures++ >= 1) throw error;
+        await new Promise(resolve => setTimeout(resolve, 750));
+        if (cancelled) throw new Error('上传已取消');
+        // A lost chunk acknowledgement may already be durable. Query first;
+        // only the unacknowledged suffix is sent again, using the same id.
+        if (resumable) data = await readStatus();
+      }
     }
+    attachment.uploadFailures = 0; delete attachment.uploadRetryAt;
     // The request has finished. Keeping its abort handler while the draft is
     // being saved makes the ready card's remove button abort a completed XHR.
     delete attachment.cancelUpload;
@@ -5456,10 +5536,17 @@ async function uploadComposerAttachment(attachment, uid, attachmentId = null,
     if (!await persistComposerDraft(uid)) throw new Error('附件已上传，草稿引用保存失败');
     return attachment.uploaded;
   } catch (error) {
-    attachment.status = 'failed'; attachment.error = error.message || String(error); render(); throw error;
-  } finally {delete attachment.cancelUpload;}
+    attachment.status = 'failed'; attachment.error = error.message || String(error);
+    if (!attachment.uploadCancelled && (error.retryUpload || ['TypeError','TimeoutError'].includes(error.name))) {
+      attachment.uploadRetryAt = Date.now() + Math.min(30000, 3000 * 2 ** Math.min(attachment.uploadFailures || 0, 4));
+      attachment.uploadFailures = (attachment.uploadFailures || 0) + 1;
+    } else delete attachment.uploadRetryAt;
+    render(); throw error;
+  } finally {delete attachment.cancelUpload; render();}
 }
 
+let COMPOSER_UPLOAD_STALL_MS = 30000;
+const COMPOSER_UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024;
 const COMPOSER_UPLOAD_LANES = 2;
 const composerUploadLanes = new Map();
 /** Stage a new attachment's bytes right away, so a refresh or another device
@@ -5530,7 +5617,7 @@ function loadStagedComposerPreview(attachment, uid, render = () => {}) {
  *  it is saved; the server refuses while a draft or submission still names
  *  them, and the 24 h sweep covers a failed call. */
 function discardStagedAttachment(attachment, saved = Promise.resolve(true)) {
-  const id = attachment?.uploaded?.upload_id, uid = attachment?.uploaded?.uid;
+  const id = attachment?.uploaded?.upload_id || attachment?.id, uid = attachment?.uploaded?.uid || attachment?.stagingUid;
   if (!id || !uid || !conversationSendEnabled()) return;
   Promise.resolve(saved)
     .then(ok => ok && post('api/session/conversation/attachment/discard', {uid, id}))
@@ -5599,7 +5686,10 @@ async function submitComposer() {
     const uploaded = [];
     for (let i = 0; i < attachments.length; i++) {
       setSendButtonBusy(button, `上传 ${i + 1}/${attachments.length}`);
-      if (attachments[i].staging) await attachments[i].staging; // Staged on add; only a failure uploads here.
+      if (attachments[i].staging) {
+        await attachments[i].staging; // Staged on add; only a failure uploads here.
+        if (attachments[i].uploadCancelled) throw new Error('附件上传已取消；输入已保留。');
+      }
       uploaded.push({...await uploadComposerAttachment(attachments[i], uid), number:attachments[i].number});
     }
     const requestText = JSON.stringify({text, attachments:uploaded.map(a => ({upload_id:a.upload_id,number:a.number})), quotes});

@@ -92,7 +92,7 @@ and manual dispatch:
 | --- | --- | --- |
 | `rust` | Ubuntu 24.04, Windows, macOS | `cargo fmt --all --check` (Linux), `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo build --release --workspace --locked`; Linux installs `clang-18` for resource-agent |
 | `checks` | Ubuntu 24.04 | `check_docs_links.py`, `check_agents_md.py`, `brand_names_check.py`, `env_reference.py --check` |
-| `browser` | Ubuntu 24.04 | debug/release `sessiondock` and `ptyhost`, Playwright Chromium; 14 suites cover the page, logs, final screen, history, native touches/appends/rewrites, flat timeline scrolling, cross-node nesting/scale/cache, list deltas, UI events, draft sync, conversation performance and search state. JSON results go to `target/validation/ci.json`; results and logs are uploaded on success or failure and retained for 14 days |
+| `browser` | Ubuntu 24.04 | debug/release `sessiondock` and `ptyhost`, Playwright Chromium; 16 suites cover the page, logs, final screen, history, native touches/appends/rewrites, flat timeline scrolling, cross-node nesting/scale/cache, list deltas, UI events, weak-network recovery, resumable attachments, draft sync, conversation performance and search state. JSON results go to `target/validation/ci.json`; results and logs are uploaded on success or failure and retained for 14 days |
 | `release` | Ubuntu 24.04, `v*` tags only, after the others | `deploy/release.py --check`, package uploaded as the `linux-package` artifact |
 
 CI compiles on the hosted Windows and macOS runners; it does not replace the

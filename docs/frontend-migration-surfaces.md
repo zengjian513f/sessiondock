@@ -239,6 +239,8 @@ Enter：`runSearch` → `GET api/search`，NDJSON 进度。进度条 `#search-pr
 
 打开会话：`openSession` → `fetchMessages` `GET api/messages/{uid}`，可选 `start`/`head`/`agent`。随后 `EventSource api/watch`。增量对不上时 `scheduleDiffRecovery`，而不是沿用旧偏移重连。迁移读失败有可见重试（`renderMigrationReadFailure` / `retryMigrationRead`），不静默清空。
 
+DELTA（弱网恢复）：首次正文读取和后续同步统一使用 12 秒无进展期限，收到响应头或正文分块重置计时；超时沿用可见错误与自动重试，已加载内容保留。断网、正文同步失败或通知流停滞时使用现有浮动提示样式说明内容可能不是最新，并提供“立即重连”；恢复后清除相应提示。取消信号贯穿响应体，不在收到响应头时失效。
+
 渲染：`renderSession` → `planTurns` / `appendMessages` / `msgNode`。角色包括 `user`、`user·subagent`、`assistant`、`assistant·subagent`、`thinking`、`tool`、`tool_result`、`question`、`answer`、`command`，以及事件行（`eventNode`）。子代理视图从标题栏下拉进入（`sessionViewRows`：主会话在前，运行中的子代理靠前并带绿点）。
 
 ### 回合与工具

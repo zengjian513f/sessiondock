@@ -431,14 +431,12 @@ def main():
                         assert response.status==200,response.text()
                         route.abort('failed')
                     page.route('**/api/session/conversation/send',lose_reply)
+                    count=len(sends)
                     page.fill('#cinput','lost HTTP reply');page.locator('#csend').click()
                     page.wait_for_function('!composerSending')
-                    expect(page.locator('#cinput')).to_have_value('lost HTTP reply')
-                    count=len(sends)
-                    page.unroute('**/api/session/conversation/send',lose_reply)
-                    page.locator('#csend').click();page.wait_for_function('!composerSending')
                     expect(page.locator('#cinput')).to_have_value('')
-                    assert len(sends)==count # Lookup only: no duplicate SEND.
+                    page.unroute('**/api/session/conversation/send',lose_reply)
+                    assert len(sends)==count+1 # Automatic lookup only: no duplicate SEND.
                     wait_history(page,'lost HTTP reply')
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
                     page.fill('#cinput','draft survives refresh');page.evaluate('async () => await composerDraftWrites')

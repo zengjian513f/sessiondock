@@ -263,6 +263,9 @@ Host、URI/正文上限、响应头），只是不做 loopback Host 检查——
   聚合为 `draft_epochs:{node:epoch}`；观察器发现某节点的值变化（或节点新出现）时发布
   `drafts`，因此直接写在节点页面上的草稿也会在一次观察周期（约 2 秒）内到达 Hub 页面。
   `draft_epochs` 不计入 `live` 变化。
+  DELTA（弱网恢复）：节点和 Hub 每 10 秒另发 `heartbeat` 事件。页面连续 30 秒
+  收不到通知或心跳，即使 EventSource 仍是 OPEN 也关闭重连，恢复兜底轮询并显示
+  同步中断提示；重连失败按 1.5 秒到 15 秒退避。健康心跳不触发额外 HTTP 轮询。
 - `term_list`：`enabled = any`（含过期缓存里的 `enabled:false`）、`home:""`、
   `sessions/pending` 全部拼接（含 stale 行）、`capabilities[nid] = {enabled: 真值且未失败,
   unavailable_reason: 失败文案或节点的, sources, resume_sources（失败为 {}）, home}`、

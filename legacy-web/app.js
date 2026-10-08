@@ -1236,6 +1236,29 @@ function cachePut(uid, e) {
 
 /** 带下载进度的取消息。start/head 给定时服务端只回新增部分。 */
 async function fetchMessages(uid, opts = {}) {
+  const stall = new AbortController();
+  let timer;
+  const activity = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => stall.abort(new DOMException('会话读取超时，请检查连接后重试。', 'TimeoutError')), SYNC_STALL_MS);
+    opts.onActivity?.();
+  };
+  activity();
+  try {
+    const result = await fetchMessageBody(uid, {...opts,
+      signal: AbortSignal.any([stall.signal, opts.signal].filter(Boolean)), onActivity: activity});
+    noteNetworkIssue(viewKey(uid, opts.agent || null));
+    return result;
+  } catch (error) {
+    if (!SessionDockNetwork.paused && (stall.signal.aborted || error.name === 'TypeError')) {
+      noteNetworkIssue(viewKey(uid, opts.agent || null), '会话同步暂时中断；已保留当前内容，恢复连接后会继续同步。');
+    }
+    if (stall.signal.aborted && !opts.signal?.aborted) throw stall.signal.reason;
+    throw error;
+  } finally { clearTimeout(timer); }
+}
+
+async function fetchMessageBody(uid, opts = {}) {
   const p = new URLSearchParams();
   if (opts.start) {
     p.set('start', opts.start);
@@ -1597,7 +1620,7 @@ function migrationReadPaused(uid, agent = null) {
  *  它们走退避重试，不暂停视图、不弹横幅、不关 SSE。 */
 function transientReadFailure(error) {
   if (!error) return false;
-  if (error.name === 'AbortError' || error.name === 'TypeError') return true;
+  if (['AbortError', 'TimeoutError', 'TypeError'].includes(error.name)) return true;
   const status = Number(error.status) || 0;
   return status === 408 || status === 429 || (status >= 500 && status !== 501);
 }
@@ -2729,7 +2752,45 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) poll
 
 // A single lightweight stream invalidates list state. Only the selected
 // conversation has a separate body subscription; other views stay lazy.
-let uiEvents = null, uiEventsReady = false, uiEventsRetry = 0;
+let uiEvents = null, uiEventsReady = false, uiEventsRetry = 0, uiEventsWatchdog = 0;
+let UI_EVENTS_STALL_MS = 30000;
+let uiEventsRetryAttempt = 0;
+const networkIssues = new Map();
+function noteNetworkIssue(channel, message = '') {
+  if (message) networkIssues.set(channel, message); else networkIssues.delete(channel);
+  renderNetworkNotice();
+}
+function renderNetworkNotice() {
+  const issue = !navigator.onLine ? '网络已断开；当前显示的是先前内容。未保存的输入请保留在本页。'
+    : networkIssues.get('events') || networkIssues.get(viewKey(S.sel, S.agent));
+  let notice = $('#network-status');
+  if (!issue || SessionDockNetwork.paused) { notice?.remove(); return; }
+  if (!notice) {
+    notice = el('div', 'app-float warn'); notice.id = 'network-status';
+    notice.setAttribute('role', 'status'); notice.setAttribute('aria-live', 'polite');
+    const text = el('span', 'network-status-text');
+    const actions = el('div', 'app-float-actions'), retry = el('button', 'btn', '立即重连');
+    retry.type = 'button'; retry.onclick = () => { void recoverNetworkConnection(); };
+    actions.append(retry); notice.append(text, actions); floatStack().append(notice);
+  }
+  notice.querySelector('.network-status-text').textContent = issue;
+}
+async function recoverNetworkConnection() {
+  renderNetworkNotice();
+  if (!navigator.onLine || SessionDockNetwork.paused) return;
+  closeUiEvents(); startUiEvents();
+  void pollSessions();
+  if (typeof recoverComposerDrafts === 'function') void recoverComposerDrafts();
+  if (S.sel) {
+    const uid = S.sel, agent = S.agent;
+    if (cache.has(viewKey(uid, agent))) {
+      await syncSession(uid, agent);
+      if (S.sel === uid && S.agent === agent) watchSession(uid, agent);
+    } else if (!String(uid).startsWith('tmux:')) void openSession(uid, agent);
+  }
+}
+addEventListener('offline', renderNetworkNotice);
+addEventListener('online', () => { void recoverNetworkConnection(); });
 let uiEventPending = null, uiEventApplying = false;
 function queueUiChange(change) {
   if (!uiEventPending) uiEventPending = {live:false, term:false, sessions:false, cursors:new Map()};
@@ -2788,32 +2849,45 @@ async function applyUiChanges() {
 }
 function closeUiEvents() {
   clearTimeout(uiEventsRetry);
+  clearTimeout(uiEventsWatchdog);
   uiEvents?.close(); uiEvents = null; uiEventsReady = false;
 }
 function startUiEvents() {
   if (SessionDockNetwork.paused) return;
-  if (!SessionDockCapabilities.config.ui_events || !window.EventSource || document.hidden || uiEvents) return;
+  if (!SessionDockCapabilities.config.ui_events || !window.EventSource || document.hidden || !navigator.onLine || uiEvents) return;
   clearTimeout(uiEventsRetry);
   const stream = new EventSource(appUrl('api/events'));
   uiEvents = stream;
+  const disconnected = () => {
+    if (uiEvents !== stream) return;
+    closeUiEvents();
+    noteNetworkIssue('events', '实时同步连接中断，正在自动重连；当前内容可能尚未更新。');
+    if (!document.hidden && navigator.onLine) {
+      uiEventsRetry = setTimeout(startUiEvents, retryDelay(uiEventsRetryAttempt++));
+    }
+  };
+  const activity = () => {
+    if (uiEvents !== stream) return;
+    clearTimeout(uiEventsWatchdog);
+    uiEventsWatchdog = setTimeout(disconnected, UI_EVENTS_STALL_MS);
+    uiEventsRetryAttempt = 0;
+    noteNetworkIssue('events');
+  };
+  // Also expire a connection that never receives its initial baseline.
+  uiEventsWatchdog = setTimeout(disconnected, UI_EVENTS_STALL_MS);
+  stream.addEventListener('heartbeat', activity);
   stream.addEventListener('change', event => {
     if (uiEvents !== stream) return;
     try {
       const change = JSON.parse(event.data);
+      activity();
       uiEventsReady = !change.retry;
       if (!change.retry) queueUiChange(change);
     } catch {
-      closeUiEvents();
-      if (!document.hidden) uiEventsRetry = setTimeout(startUiEvents, 3000);
+      disconnected();
     }
   });
-  stream.onerror = () => {
-    if (uiEvents !== stream) return;
-    closeUiEvents();
-    // Polling is a disconnected/old-server fallback, never parallel upkeep
-    // of a healthy push connection. Reconnect sends a fresh baseline.
-    if (!document.hidden) uiEventsRetry = setTimeout(startUiEvents, 3000);
-  };
+  stream.onerror = disconnected;
 }
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) closeUiEvents(); else startUiEvents();
@@ -5216,6 +5290,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   }
   S.sel = uid;
   S.agent = selectedAgent;
+  renderNetworkNotice();
   syncSessionNotices();
   clearUnread(uid);
   store.set('sel', uid);

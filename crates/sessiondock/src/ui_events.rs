@@ -1,9 +1,6 @@
 //! Shared, subscriber-owned UI invalidations. No conversation bodies cross
 //! this stream; detailed reads remain demand-driven.
-use axum::response::{
-    IntoResponse, Response, Sse,
-    sse::{Event, KeepAlive},
-};
+use axum::response::{IntoResponse, Response, Sse, sse::Event};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -239,9 +236,17 @@ pub fn stream(
 ) -> Response {
     let stream = async_stream::stream! {
         yield Ok::<_, Infallible>(Event::default().event("change").data("{\"initial\":true}"));
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             let received = tokio::select! {
                 _ = shutdown.cancelled() => break,
+                _ = heartbeat.tick() => {
+                    // SSE comments keep proxies alive but are invisible to
+                    // EventSource. A named event lets pages detect half-open links.
+                    yield Ok(Event::default().event("heartbeat").data("{}"));
+                    continue;
+                },
                 received = receiver.recv() => received,
             };
             let value = match received {
@@ -252,9 +257,7 @@ pub fn stream(
             yield Ok(Event::default().event("change").data(value.to_string()));
         }
     };
-    let mut response = Sse::new(stream)
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(20)))
-        .into_response();
+    let mut response = Sse::new(stream).into_response();
     response
         .headers_mut()
         .insert("x-accel-buffering", "no".parse().unwrap());
