@@ -244,7 +244,10 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         let registry = counter_registry.clone();
         let client = counter_client.clone();
         async move {
-            let params = vec![("force".into(), "1".into())];
+            let params = vec![
+                ("force".into(), "1".into()),
+                ("online_only".into(), "1".into()),
+            ];
             let (sessions, live) = tokio::join!(
                 aggregate::sessions(&registry, &client, &params),
                 aggregate::live(&registry, &client, &params),
