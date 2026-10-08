@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 from urllib.parse import quote
@@ -20,6 +21,70 @@ def sidebar_layout(page):
             return [rect.top, rect.height];
         });
     }""")
+
+
+def bound_launch_sidebar(browser, base, full, width):
+    """A compact catalog must not turn a confirmed child back into a new launch."""
+    native = next(row for row in full['sessions'] if row['sid'] == 'nest-grandchild-c')
+    receipt = {
+        'name': 'synthetic-bound-child', 'source': 'codex', 'cwd': native['cwd'],
+        'record_id': 'synthetic-record', 'launch_id': 'synthetic-launch',
+        'instance_id': 'synthetic-instance', 'state': 'running', 'running': True,
+        'started': 1791400000,
+        'binding': {'state': 'confirmed', 'source': native['source'],
+                    'sid': native['sid'], 'uid': native['uid']},
+    }
+    context = browser.new_context(viewport={'width': width, 'height': 900}, service_workers='block')
+    # Only runtime observations are synthetic; list scope, native history and
+    # navigation use the private Rust server and the actual page.
+    def terminal_list(route):
+        response = route.fetch()
+        payload = response.json()
+        payload.update(pending=[receipt], sessions=[{
+            'name': receipt['name'], 'instance_id': receipt['instance_id'],
+            'source': native['source'], 'sid': native['sid'], 'uid': native['uid'],
+        }])
+        route.fulfill(response=response, json=payload)
+    context.route('**/api/term/list', terminal_list)
+    page = context.new_page()
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    try:
+        page.goto(base, wait_until='networkidle')
+        page.wait_for_function('T.listLoaded && T.pending.length === 1')
+        expect(page.locator('#side .item.pending')).to_have_count(0)
+        page.locator('#nest-hidden').click()
+        expect(page.locator('#side .item')).to_have_count(2)
+        expect(page.locator('#side .item.pending')).to_have_count(0)
+        assert page.evaluate('uid => !S.sessions.some(row => row.uid === uid) && !cache.has(viewKey(uid))', native['uid'])
+        page.locator('#side .nest-caret').click()
+        child = page.locator('#side .item', has=page.locator('.t', has_text='Child B'))
+        child.locator('.nest-caret').click()
+        row = page.locator(f'#side .item[data-uid="{native["uid"]}"]')
+        row.locator('.t').click()
+        expect(page.locator('#detail h2')).to_contain_text('Grandchild C')
+        expect(page.locator('#msgs')).to_contain_text('reply Grandchild C')
+        expect(row).to_have_class(re.compile(r'\bsel\b'))
+        if width == 390:
+            page.locator('#detail .mobile-back').click()
+        root_uid = next(row['uid'] for row in full['sessions'] if row['sid'] == 'nest-root-a')
+        page.locator(f'#side .item[data-uid="{root_uid}"] .nest-caret').click()
+        expect(page.locator('#side .item')).to_have_count(2)
+        expect(page.locator('#side .item.pending')).to_have_count(0)
+        assert page.evaluate('S.sel') == native['uid']
+        expect(page.locator('#msgs')).to_contain_text('reply Grandchild C')
+        # Exited confirmed receipts retain the association without a live pane.
+        receipt.update(state='exited', running=False)
+        page.reload(wait_until='networkidle')
+        expect(page.locator('#side .item.pending')).to_have_count(0)
+        # An uncertain binding remains an actual unresolved launch.
+        receipt['binding']['state'] = 'uncertain'
+        page.reload(wait_until='networkidle')
+        expect(page.locator('#side .item.pending')).to_have_count(1)
+        assert not errors, errors
+        print(f'PASS bound child launch {width}px: compact catalog, matching title/history, collapse, exit and uncertain binding', flush=True)
+    finally:
+        context.close()
 
 
 def main():
@@ -171,6 +236,7 @@ def main():
                     assert not errors, errors
                     context.close()
                     print(f'PASS child modes {width}px: lazy arrows, one-level requests, collapse/release, stale-response race, stable layout during loading/failure, refresh, flat/tree and open detail', flush=True)
+                    bound_launch_sidebar(browser, base, full, width)
             finally:
                 browser.close()
 
