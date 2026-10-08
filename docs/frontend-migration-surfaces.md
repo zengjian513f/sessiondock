@@ -105,9 +105,10 @@ Hub 顶栏另有机器 chip，见第 2 节。节点离线、列表/运行状态/
 
 渲染入口是 `renderSide` / `patchSide` / `groupBy`。列表数据来自 `GET api/sessions`，增量签名 `GET api/sessions?sig=`，能力 `list_delta` 时走 [`legacy-web/list-sync.js`](../legacy-web/list-sync.js) 的 `expand`。`ui_events` 时用 `EventSource api/events`（`startUiEvents`），页面隐藏会停。空闲页不拉未选中会话的正文。[`tests/list_delta_browser.py`](../tests/list_delta_browser.py)、[`tests/ui_events_browser.py`](../tests/ui_events_browser.py)。收到列表失效（`sessions`）或连接基线（`initial`）时派发页面事件 `sessiondock-ui-sessions`，分组和迁移任务据此刷新。选中会话的正文订阅之外，SSE 正常时仍每 20 秒兜底对账一次（`tickSync` / `BACKUP_MS`）：正文订阅可能静默停滞而 `readyState` 仍为 open，这一兜底不是冗余，保留不变。空闲请求预算：[`tests/idle_requests_browser.py`](../tests/idle_requests_browser.py)。
 
-### 三种列表
+### 四种列表
 
 - **项目树**（默认）：按目录分组。同名目录用颜色区分（`timelineDirectoryColors`，会写回存储）。路径过长时 `fitTimelineDirectories` 压缩。
+- **按目录聚合**（DELTA）：只按完整工作目录路径分组，不同机器的相同路径放在一起；同名但路径不同的目录仍分开。组内沿用活动时间排序、筛选、折叠和嵌套，每行复用已有机器标识与目录样式。所选视图持久化。[`tests/hub_browser.py`](../tests/hub_browser.py)。
 - **时间轴**：按时间分组。
 - **会话分组**：只有 `metadata` 能力允许时 `#view [data-v=group]` 才出现。否则若存的是 `group` 会退回 `tree`。见下文分组。
 
@@ -355,7 +356,7 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 
 ### 新建会话
 
-`#new-session-dialog`（`openNewSessionDialog` / `createNewSession`）。来源：Claude（默认）、Codex、Grok、OpenCode、SSH。Hub 上先选机器。模型和推理强度按该 CLI 自己的目录（`createModelPicker`，`GET api/term/models`），可搜索。记忆的模型和 effort 按 `storeKey` 写入浏览器。工作目录：最近 8 条（`newDirs` 或 Hub 的 `newDirs.<nodeId>`）、常用目录、Tab 补全（`GET api/term/complete-dir`）。创建后侧栏出现待落盘行，阶段文案来自 `pendingStageMessage` / `workerStatusMessage`。可停止、删除或丢弃。记录还没出现时有明确缺失文案（`pendingRecordMissing`）。启动回执在 Hub 列表不完整时仍以真实退出为准。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)、[`tests/pending_create_discard_browser.py`](../tests/pending_create_discard_browser.py)、[`tests/new_session_model_browser.py`](../tests/new_session_model_browser.py)、[`tests/new_session_follow_browser.py`](../tests/new_session_follow_browser.py)、[`tests/lifecycle_cli_browser.py`](../tests/lifecycle_cli_browser.py)。
+`#new-session-dialog`（`openNewSessionDialog` / `createNewSession`）。来源：Claude（默认）、Codex、Grok、OpenCode、SSH。Hub 上先选机器。模型和推理强度按该 CLI 自己的目录（`createModelPicker`，`GET api/term/models`），可搜索。记忆的模型和 effort 按 `storeKey` 写入浏览器。工作目录：最近 8 条（`newDirs` 或 Hub 的 `newDirs.<nodeId>`）、常用目录、Tab 补全（`GET api/term/complete-dir`）。**DELTA：**Hub 新建目录候选还包含其他机器的会话目录和保存的近期目录，但须经当前所选机器确认存在；路径去重，未确认或不存在的跨机器路径不加入。打开弹窗及切换机器时重新检查，旧响应不能覆盖新列表，候选更新保留用户已输入的文字。创建后侧栏出现待落盘行，阶段文案来自 `pendingStageMessage` / `workerStatusMessage`。可停止、删除或丢弃。记录还没出现时有明确缺失文案（`pendingRecordMissing`）。启动回执在 Hub 列表不完整时仍以真实退出为准。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)、[`tests/pending_create_discard_browser.py`](../tests/pending_create_discard_browser.py)、[`tests/new_session_model_browser.py`](../tests/new_session_model_browser.py)、[`tests/new_session_follow_browser.py`](../tests/new_session_follow_browser.py)、[`tests/lifecycle_cli_browser.py`](../tests/lifecycle_cli_browser.py)。
 
 丢失根目录时，其它来源和新建仍可用。[`tests/missing_roots_browser.py`](../tests/missing_roots_browser.py)。
 

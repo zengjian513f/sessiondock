@@ -74,6 +74,15 @@ def main():
             page.wait_for_function("document.querySelector('.item[data-uid=\"claude:extra\"]') !== null")
             assert page.evaluate('timelinePlanCache.plans!==__plans')
             assert page.locator('.item[data-uid="claude:extra"]').count() == 1
+            # Directory aggregation reuses the same fitted path labels in
+            # windowed rows; narrowing the sidebar must not expose raw paths.
+            page.locator('#view [data-v=directory]').click()
+            page.set_viewport_size({'width': 390, 'height': 900})
+            page.wait_for_function('''() => [...document.querySelectorAll('#side .cwd-path')]
+              .some(node => node.textContent.includes('…'))''')
+            assert page.evaluate('''() => [...document.querySelectorAll('#side .cwd-path')]
+              .every(node => node.getBoundingClientRect().right
+                <= document.querySelector('#side').getBoundingClientRect().right + 1)''')
             assert not errors, errors
             browser.close()
     print('PASS sidebar path performance: indexed cold plans, cache invalidation, metadata and real disclosure/filter clicks')

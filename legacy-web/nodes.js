@@ -279,12 +279,13 @@ function prepareNewNode() {
 // 切换机器时，输入框里的目录若在新机器上也存在就原样保留；只有不存在
 // （或无法确认）时才换成新机器的默认目录。用户在检查期间改了输入则不动。
 let newCwdCheck = 0;
-async function newNodeHasDir(path) {
+async function newNodeHasDir(path, node = newNodeId()) {
   const value = path.length > 1 ? path.replace(/\/+$/, '') : path;
   if (value === '/' || value === '~') return true;
   if (!canCompleteCwd(value)) return false;
   try {
     const params = new URLSearchParams({ path: value, limit: '50' });
+    if (HUB_MODE) params.set('node', node);
     const response = await fetch(appUrl(`api/term/complete-dir?${params}`), { cache: 'no-store' });
     const data = await response.json();
     return response.ok && Array.isArray(data.directories) && data.directories.includes(value + '/');
@@ -318,6 +319,7 @@ function refreshNewNodeFields(keepCwd = '') {
   document.querySelector('#new-session-error').textContent = '';
   document.querySelector('#new-session-go').disabled = !cap.enabled;
   renderCommonCwdOptions();
+  void loadSharedCwdOptions();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
