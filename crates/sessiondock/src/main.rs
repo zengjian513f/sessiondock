@@ -107,6 +107,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         node_router,
         lifecycle,
         audit,
+        reports,
     } = sessiondock::prepare_app(config, shutdown.clone()).await?;
     // Both sockets before serving either: a node bind failure is a startup
     // error, never a loopback-only service that silently lost its hub face.
@@ -162,6 +163,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
         _ => loopback.await,
     };
     shutdown.cancel();
+    // A report may have been capturing diagnostics when the signal arrived,
+    // even after its browser disconnected. Settle its durable launch/result
+    // before closing lifecycle admission. Injection keeps its existing draft
+    // retention behavior when application shutdown interrupts it.
+    reports.close();
+    reports.wait().await;
     // Always drain the coordinator, even when serving reported a failure.
     let lifecycle_result = match lifecycle {
         Some(service) => service.shutdown().await,

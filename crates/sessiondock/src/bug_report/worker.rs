@@ -49,6 +49,7 @@ pub struct WorkerContext {
     pub reader: Reader,
     pub audit: Arc<AuditService>,
     pub shutdown: CancellationToken,
+    pub submissions: tokio_util::task::TaskTracker,
 }
 
 impl WorkerContext {

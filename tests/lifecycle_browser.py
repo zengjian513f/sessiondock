@@ -6,6 +6,7 @@ from browser_runtime import wait_for_async
 import json
 import shutil
 import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -172,6 +173,19 @@ def main(bind_native=False, bare_shell=False):
                                 expect(page.locator("#termpane")).to_be_hidden()
                                 page.locator("#a-term").click()
                         expect(page.locator("#termpane")).to_be_visible()
+                        if bare_shell:
+                            badge = page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"] .item-status')
+                            for refresh in range(2):
+                                page.evaluate("async () => { await loadTermList(); await refreshLive(true); paintLive(); }")
+                                expect(badge).to_have_class(re.compile(r"\btmux\b"))
+                                expect(page.locator('#dlive')).to_have_class(re.compile(r"\btmux\b"))
+                                assert badge.evaluate("""n => {
+                                    const probe = document.createElement('span');
+                                    probe.style.backgroundColor = 'var(--live-tmux)';
+                                    n.append(probe);
+                                    const matches = getComputedStyle(n).backgroundColor === getComputedStyle(probe).backgroundColor;
+                                    probe.remove(); return matches;
+                                }""")
                         if not (bind_native and restarted):
                             expect(page.locator("#composer")).to_be_hidden()
                         page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
@@ -277,6 +291,7 @@ def main(bind_native=False, bare_shell=False):
                                     # The shell exits on the Ctrl-D the stop sends first; no HUP needed.
                                     assert killed.value.json()["state"]=="exited",killed.value.text()
                                     action_page.wait_for_function("id => T.pending.some(row => row.record_id === id && row.running === false && row.final_screen?.id)",arg=receipt["record_id"],timeout=15000)
+                                    expect(action_page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"] .item-status')).not_to_have_class(re.compile(r"\bvisible\b"))
                                     action=action_page.locator("#a-session-action")
                                     if not action.is_visible():
                                         action_page.locator("#a-more").click()
@@ -396,7 +411,9 @@ if __name__=="__main__":
     import argparse
     parser=argparse.ArgumentParser()
     parser.add_argument("--native-binding",action="store_true")
+    parser.add_argument("--binary", default=str(REPO / "target/release/sessiondock"))
     args = parser.parse_args()
+    BINARY = Path(args.binary).resolve(strict=True)
     main(args.native_binding)
     if not args.native_binding:
         main(bare_shell=True)

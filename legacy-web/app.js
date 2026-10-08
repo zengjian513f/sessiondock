@@ -1964,6 +1964,8 @@ function sessionInputAttention(uid) {
 }
 const inputAttentionLabel = attention => attention === 'question' ? ' · 等待回答' : '';
 
+const pendingRowRunning = row => !!row && !row.stale && pendingPhase(row) === 'running';
+
 /** 角标颜色只说现在：绿 = 在跑，蓝 = 在跑且在受管终端里，灰 = 已退出但还有没看的新内容。
  *  颜色不随计数固化——以前把计数时的 tmux 态存进 localStorage，会话退出后角标还是蓝的。 */
 function paintItemStatus(node) {
@@ -1972,12 +1974,13 @@ function paintItemStatus(node) {
   if (!badge) return;
   const row = unreadRow(node.dataset.uid);
   // 临时会话没有 live 集合里的 uid，跑没跑以行上已算好的 live 类为准；已结束的行不亮点。
-  const pending = !!node.dataset.tmuxName && node.classList.contains('live');
+  const isPending = !!node.dataset.tmuxName;
+  const pending = isPending && node.classList.contains('live');
   const draft = typeof composerDrafts !== 'undefined'
     ? composerDrafts.get(composerDraftOwner(node.dataset.uid)) : null;
-  const active = pending || S.live.has(node.dataset.uid)
+  const active = isPending ? pending : S.live.has(node.dataset.uid)
     || (draft?.cli?.instance?.running === true && !!takenOver(node.dataset.uid));
-  const tmux = pending || S.liveTmux.has(node.dataset.uid);
+  const tmux = isPending ? pending : S.liveTmux.has(node.dataset.uid);
   const frozen = sessionFrozen(node.dataset.uid);
   const attention = !frozen && active ? sessionInputAttention(node.dataset.uid) : '';
   paintStatusMarker(badge, frozen, row.count, attention);
@@ -2031,6 +2034,7 @@ function paintHeaderTurn() {
   const attention = !frozen && active ? sessionInputAttention(S.sel) : '';
   paintStatusMarker(h, frozen, 0, attention);
   h.classList.toggle('visible', frozen || active);
+  h.classList.toggle('tmux', tmux);
   const turn = frozen || row?.dataset.tmuxName ? '' : sessionTurn(S.sel);
   h.classList.toggle('turn-working', turn === 'working' && !attention);
   h.classList.toggle('turn-waiting', turn === 'waiting');
@@ -2157,9 +2161,10 @@ function paintLive() {
   for (const n of document.querySelectorAll('.item.agent')) paintAgentStatus(n);
   for (const n of document.querySelectorAll('.item[data-uid]')) {
     const pendingRunning = n.dataset.tmuxName
-      && typeof T !== 'undefined' && T.list?.some(t => t.name === n.dataset.tmuxName && !t.stale);
-    n.classList.toggle('live', !!pendingRunning || S.live.has(n.dataset.uid));
-    n.classList.toggle('live-tmux', !!pendingRunning || S.liveTmux.has(n.dataset.uid));
+      && typeof T !== 'undefined' && [...(T.list || []), ...(T.pending || [])]
+        .some(t => t.name === n.dataset.tmuxName && pendingRowRunning(t));
+    n.classList.toggle('live', n.dataset.tmuxName ? !!pendingRunning : S.live.has(n.dataset.uid));
+    n.classList.toggle('live-tmux', n.dataset.tmuxName ? !!pendingRunning : S.liveTmux.has(n.dataset.uid));
     paintItemStatus(n);
   }
   const h = $('#dlive');
@@ -4704,7 +4709,7 @@ function patchSidebarRow(node, row, highlightKey) {
   const selected = S.sel === s.uid && !S.agent;
   const className = 'item tree' + (selected ? ' sel' : '')
     + (row.closed ? ' nest-closed' : '')
-    + (s.pending ? (s.stale ? ' pending' : ' pending live live-tmux') : '')
+    + (s.pending ? (pendingRowRunning(s) ? ' pending live live-tmux' : ' pending') : '')
     + (!s.pending && S.live.has(s.uid) ? ' live' : '')
     + (!s.pending && S.liveTmux.has(s.uid) ? ' live-tmux' : '')
     + (pickable && pickedSessions.has(s.uid) ? ' picked' : '')
@@ -4766,7 +4771,7 @@ function createSidebarRow(r, picked = pickedSessions) {
   // 正在看的子代理有自己那一行，主会话行不再一起亮
   const selected = S.sel === s.uid && !S.agent;
   const it = el('div', 'item tree' + (selected ? ' sel' : '') + (r.closed ? ' nest-closed' : '')
-                          + (s.pending ? (s.stale ? ' pending' : ' pending live live-tmux') : '')
+                          + (s.pending ? (pendingRowRunning(s) ? ' pending live live-tmux' : ' pending') : '')
                           + (!s.pending && S.live.has(s.uid) ? ' live' : '')
                           + (!s.pending && S.liveTmux.has(s.uid) ? ' live-tmux' : '')
                           + (pickable && picked.has(s.uid) ? ' picked' : '')

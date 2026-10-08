@@ -54,8 +54,9 @@ a command template supplied by a browser.
 
 Async `prepare_app` opens/reconciles existing receipts before serving routes.
 The synchronous app factory rejects this configuration. Failed startup and
-listener binding await service shutdown and release store locks. Shutdown closes
-admission and waits owned work; it does not terminate established hosts. An
+listener binding await service shutdown and release store locks. Graceful shutdown
+stops HTTP admission and observers, drains accepted report submissions, then closes
+lifecycle admission and waits owned work; it does not terminate established hosts. An
 explicit shell test validates Linux Web restart survival, not service-manager
 cgroup policies or Windows/macOS process independence.
 
