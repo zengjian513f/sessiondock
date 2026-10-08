@@ -8,10 +8,11 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import time
 from urllib.parse import urlsplit
 
 from browser_runtime import wait_for_async
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import Error as PlaywrightError, expect, sync_playwright
 from history_fixtures import REPO, BINARY, Corpus, isolated_server
 from private_hosts import private_hosts
 from send_browser import initialize, xterm_includes
@@ -23,6 +24,107 @@ def composer_layout(page):
         const node=document.querySelector(selector), rect=node.getBoundingClientRect();
         return [rect.top, rect.bottom, node.scrollTop];
     })""")
+
+
+def pending_notice_timing(page, context, base, root, uid):
+    """Click between two real fake-CLI sessions with controlled CHECK replies."""
+    page.locator('#new-session').click()
+    page.locator('input[name="new-source"][value="grok"]').check()
+    page.locator('#new-cwd').fill(str(root / 'work'))
+    with page.expect_response(lambda r: urlsplit(r.url).path == '/api/term/create') as created:
+        page.locator('#new-session-go').click()
+    receipt = created.value.json()
+    other_uid = 'tmux:' + receipt['name']
+    status = page.locator('#composer-input-status')
+    held = []
+    hold_uid = None
+    pattern = '**/api/session/conversation/check'
+
+    def next_check():
+        deadline = time.monotonic() + 10
+        while not held:
+            assert time.monotonic() < deadline, 'CHECK was not intercepted'
+            page.wait_for_timeout(10)
+        return held.pop(0)
+
+    def ready(route):
+        route.fulfill(json={'ok': True, 'input': {'state': 'ready', 'code': '', 'message': ''}})
+
+    def intercept(route):
+        nonlocal hold_uid
+        if route.request.post_data_json['uid'] == hold_uid:
+            held.append(route)
+            hold_uid = None
+        else:
+            ready(route)
+
+    def select(selected):
+        nonlocal hold_uid
+        hold_uid = selected
+        page.evaluate('window.pendingNoticeSamples = []; window.pendingNoticeStart = performance.now()')
+        page.locator(f'#side .item[data-uid="{selected}"]').first.click()
+
+    try:
+        expect(status).to_contain_text('PTY')
+        page.wait_for_function('!composerInputProbeBusy')
+        page.route(pattern, intercept)
+        page.evaluate("""() => {
+            const status=document.querySelector('#composer-input-status');
+            window.pendingNoticeSamples=[];
+            window.pendingNoticeObserver=new MutationObserver(() => {
+                if (!status.classList.contains('hidden') && status.textContent.includes('正在检查'))
+                    pendingNoticeSamples.push(performance.now()-pendingNoticeStart);
+            });
+            pendingNoticeObserver.observe(status, {attributes:true, childList:true, subtree:true});
+        }""")
+        # A fast result must never flash, including after its old timer would fire.
+        select(uid)
+        route = next_check()
+        assert status.is_hidden()
+        expect(page.locator('#csend')).to_be_disabled()
+        ready(route)
+        expect(page.locator('#csend')).to_be_enabled()
+        page.wait_for_timeout(600)
+        assert status.is_hidden() and page.evaluate('pendingNoticeSamples') == []
+
+        # A genuinely slow check appears after 500ms, despite draft rerenders.
+        select(other_uid)
+        route = next_check()
+        page.wait_for_timeout(200)
+        assert status.is_hidden()
+        page.locator('#cinput').fill('draft during slow check')
+        expect(status).to_have_text('正在检查终端输入状态', timeout=1000)
+        samples = page.evaluate('pendingNoticeSamples')
+        assert samples and 500 <= samples[0] < 1000, samples
+        expect(page.locator('#csend')).to_be_disabled()
+        ready(route)
+        expect(page.locator('#csend')).to_be_enabled()
+        assert status.is_hidden(), 'completed check retained its notice'
+
+        # The departing session's timer must not reveal the next session early.
+        select(uid)
+        route = next_check()
+        page.wait_for_timeout(300)
+        select(other_uid)
+        ready(route)
+        page.wait_for_timeout(250)
+        assert status.is_hidden(), 'old session timer revealed the new notice'
+        expect(status).to_have_text('正在检查终端输入状态', timeout=1000)
+        samples = page.evaluate('pendingNoticeSamples')
+        assert samples and samples[0] >= 500, samples
+        print('PASS pending notice: fast CHECK never flashes, slow CHECK waits 500ms, switch cancels old timer', flush=True)
+    finally:
+        page.evaluate('window.pendingNoticeObserver?.disconnect()')
+        while held:
+            try:
+                ready(held.pop(0))
+            except PlaywrightError:
+                pass  # Switching sessions may already have aborted the request.
+        page.unroute(pattern)
+        page.locator(f'#side .item[data-uid="{uid}"]').first.click()
+        context.request.post(base + '/api/term/kill', data={
+            'record_id': receipt['record_id'], 'instance_id': receipt['instance_id']})
+        expect(status).to_contain_text('PTY', timeout=10000)
 
 
 def main():
@@ -89,6 +191,7 @@ def main():
                 expect(page.locator('#csend')).to_be_disabled()
                 expect(page.locator('#composer-input-status')).to_contain_text('PTY')
                 expect(page.locator('#composer-input-status')).to_be_visible()
+                pending_notice_timing(page, context, base, root, uid)
                 expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\binput-attention\b'))
                 page.evaluate(r"""() => {
                     const item = document.querySelector('#side .item.sel');
@@ -149,16 +252,19 @@ def main():
                         updateComposerInputStatus(composerUid, {input:{state:code === 'input_check_pending'
                             ? 'unknown' : 'starting',code,message:'progress'}});
                         results.push([code,document.querySelector('#dlive').classList.contains('input-attention'),
-                            document.querySelector('#composer-input-status').classList.contains('input-attention')]);
+                            document.querySelector('#composer-input-status').classList.contains('input-attention'),
+                            !document.querySelector('#composer-input-status').classList.contains('hidden')]);
                     }
                     applyCliState(composerUid, {...previous,instance:{running:true,busy:true},
                         input:{state:'unknown',code:'cli_not_ready',message:'processing'}});
                     results.push(['working',document.querySelector('#dlive').classList.contains('input-attention'),
-                        document.querySelector('#composer-input-status').classList.contains('input-attention')]);
+                        document.querySelector('#composer-input-status').classList.contains('input-attention'),
+                        !document.querySelector('#composer-input-status').classList.contains('hidden')]);
                     applyCliState(composerUid, previous);
                     return results;
                 }""")
-                assert all(not header and not composer for _, header, composer in transitions), transitions
+                assert all(not header and not composer and visible == (code != 'input_check_pending')
+                           for code, header, composer, visible in transitions), transitions
                 ordinary_states = page.evaluate(r"""() => {
                     const draft=composerDraft(), previous=draft.cli, results=[];
                     for (const [state,code,running,expected] of [
