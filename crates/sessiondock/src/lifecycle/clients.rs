@@ -13,7 +13,7 @@ use std::{
     io::Read,
     path::PathBuf,
     process::{Command, ExitStatus, Stdio},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -24,6 +24,8 @@ use super::{
 
 /// One `--version` answer (a wrapper may first load a shell rc).
 const VERSION_TIMEOUT: Duration = Duration::from_secs(10);
+/// Reuse installed-version answers (including missing commands) during polling.
+const VERSION_TTL: Duration = Duration::from_secs(60);
 /// One whole update: download and install.
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(600);
 /// Tail of the update's output kept for the settings page.
@@ -99,15 +101,47 @@ pub enum UpdateError {
     Running,
 }
 
-/// Latest update and looked-up newest version per profile ID, kept for the
+struct InstalledVersion {
+    answer: (bool, String),
+    checked: Instant,
+}
+
+type VersionSlot = Arc<Mutex<Option<InstalledVersion>>>;
+
+/// Latest update, installed and looked-up newest version per profile ID, kept for the
 /// life of the service.
 #[derive(Default)]
 pub struct Updates {
     updates: Mutex<BTreeMap<String, Update>>,
+    versions: Mutex<BTreeMap<String, VersionSlot>>,
     latest: std::sync::Arc<Mutex<BTreeMap<String, Latest>>>,
 }
 
 impl Updates {
+    /// One probe per profile at a time; unrelated profiles still run in parallel.
+    /// Explicit updates refresh both before and after, regardless of cache age.
+    fn version(&self, profile: &CliProfile, refresh: bool) -> (bool, String) {
+        let slot = match self.versions.lock() {
+            Ok(mut cache) => cache.entry(profile.id.clone()).or_default().clone(),
+            Err(_) => return version(profile),
+        };
+        let Ok(mut cached) = slot.lock() else {
+            return version(profile);
+        };
+        if !refresh
+            && let Some(version) = cached.as_ref()
+            && version.checked.elapsed() < VERSION_TTL
+        {
+            return version.answer.clone();
+        }
+        let answer = version(profile);
+        *cached = Some(InstalledVersion {
+            answer: answer.clone(),
+            checked: Instant::now(),
+        });
+        answer
+    }
+
     fn get(&self, id: &str) -> Option<Update> {
         self.updates.lock().ok()?.get(id).cloned()
     }
@@ -165,8 +199,8 @@ impl Updates {
 }
 
 /// Every agent CLI profile with its current version, newest published version
-/// as known now and latest update; the versions are probed in parallel.
-/// Blocking for the `--version` probes only.
+/// as known now and latest update; uncached versions are probed in parallel.
+/// Blocking for the uncached `--version` probes only.
 pub fn list<'a>(profiles: impl Iterator<Item = &'a CliProfile>, updates: &Updates) -> Vec<Client> {
     let profiles: Vec<&CliProfile> = profiles
         .filter(|profile| profile.source != Source::Shell)
@@ -176,7 +210,7 @@ pub fn list<'a>(profiles: impl Iterator<Item = &'a CliProfile>, updates: &Update
             .iter()
             .map(|profile| {
                 let probe = scope.spawn(move || {
-                    let (installed, detail) = version(profile);
+                    let (installed, detail) = updates.version(profile, false);
                     let latest = if installed {
                         updates.latest(profile)
                     } else {
@@ -222,9 +256,9 @@ pub fn update(profile: &CliProfile, updates: &Updates) {
     let started_at = updates
         .get(&profile.id)
         .map_or_else(now, |update| update.started_at);
-    let before = version(profile).1;
+    let before = updates.version(profile, true).1;
     let outcome = run(profile, &["update"], UPDATE_TIMEOUT);
-    let after = version(profile).1;
+    let after = updates.version(profile, true).1;
     let (ok, code, output) = match outcome {
         Ok(Outcome {
             status: Some(status),
@@ -424,6 +458,7 @@ fn bounded(
         .stderr(Stdio::piped());
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    super::launcher::background_command(&mut command);
     let mut child = command.spawn()?;
     let stdout = Collector::start(
         child

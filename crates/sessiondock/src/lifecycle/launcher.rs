@@ -328,6 +328,18 @@ pub struct Launcher {
 /// Upper bound of one `--version` probe (a wrapper may first load a shell rc).
 const CLI_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// Background CLI commands must not create a transient desktop console.
+pub(super) fn background_command(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
 /// Whether the profile's command is positively absent: the executable cannot
 /// be started, or it ends with a shell's "command not found" / "not
 /// executable" status (127/126, e.g. a `with-zshrc grok` wrapper on a machine
@@ -354,6 +366,7 @@ fn cli_absent(profile: &CliProfile) -> bool {
     {
         command.current_dir(home);
     }
+    background_command(&mut command);
     let mut child = match command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -465,7 +478,7 @@ impl Launcher {
         &self.entries
     }
     /// Every agent CLI profile with its version and latest manual update.
-    /// Blocking; runs each `--version` in parallel.
+    /// Blocking; probes uncached versions in parallel.
     pub fn clients(&self) -> Vec<super::clients::Client> {
         super::clients::list(self.profiles.values(), &self.updates)
     }

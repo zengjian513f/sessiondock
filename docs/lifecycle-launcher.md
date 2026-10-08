@@ -102,6 +102,12 @@ its command exits non-zero, times out or cannot start.
 `--version` (10 s each, in parallel, under lifecycle admission) and answers
 `{clients:[{id, source, version?, detail, installed, latest?, latest_state?, update?}]}`:
 `detail` is the first output line and `version` its first `1.2.3`-shaped word.
+Installed-version answers, including missing commands, are cached per profile
+for 60 s after a probe finishes. Concurrent requests share one probe per
+profile; polling and reopening settings reuse its answer. An expired answer
+is refreshed on the next request. Background version checks (including startup
+availability and model-catalog checks), latest-version lookups and updates use
+Windows `CREATE_NO_WINDOW`, so these commands do not create desktop consoles.
 A profile whose command is missing (the picker's 126/127 rule) is
 `installed:false` and gets no cell. `latest` is the newest version on the
 channel the CLI's own updater follows, looked up with `curl` in the profile's
@@ -131,8 +137,9 @@ environment plus `update`: Claude, Codex, Grok and OpenCode all install without
 asking under that name. Stdin is closed, the working directory is the profile's
 `HOME`, the whole process group is killed after 600 s, and output pipes left
 open by a background process are read for at most 5 s after exit. `before` and
-`after` come from `--version` probes run just before and after the update, and
-`ok` from its exit status alone. The latest outcome per profile
+`after` come from `--version` probes run just before and after the update;
+both replace the installed-version cache immediately, even if the update fails.
+`ok` comes from its exit status alone. The latest outcome per profile
 (`running, started_at, finished_at, ok, code, before, after, output`, where
 `output` is the last 4000 characters of stdout then stderr with terminal
 escapes and carriage-return redraws removed) stays in memory until the service

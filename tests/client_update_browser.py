@@ -9,6 +9,8 @@ first on the profiles' PATH answers Codex's newest-version lookup and fails
 Claude's, so no network is used: Claude's cell stays shown with a faded arrow
 ("unknown") and says the lookup failed. Newest versions arrive in the
 background and the page polls until they do.
+Installed-version probes are counted: concurrent reads, polling and reopening
+settings reuse the cache, including the missing CLI; updates refresh it at once.
 The matrix is exercised twice through the real UI: on the node's own page, and
 on a real `sessiondock-hub` page whose requests reach the node through the
 explicit `/api/nodes/<id>/api/…` proxy, next to a fake node that has Codex only
@@ -21,6 +23,7 @@ is touched.
 from __future__ import annotations
 
 
+import argparse
 import json
 import os
 import re
@@ -45,7 +48,10 @@ FAKE_CODEX = """#!/bin/sh
 state="$SESSIONDOCK_TEST_CLI_STATE"
 eval "last=\\${$#}"
 case "$last" in
-  --version) printf 'codex-cli %s\\n' "$(cat "$state/codex.version")" ;;
+  --version)
+    echo probe >> "$state/codex.probes"
+    sleep 0.3
+    printf 'codex-cli %s\\n' "$(cat "$state/codex.version")" ;;
   update)
     printf '%s\\n' "$@" > "$state/codex.argv"
     if IFS= read -r line; then echo stdin-open > "$state/codex.stdin"; else echo stdin-closed > "$state/codex.stdin"; fi
@@ -60,16 +66,19 @@ esac
 FAKE_CLAUDE = """#!/bin/sh
 eval "last=\\${$#}"
 case "$last" in
-  --version) printf '2.1.1 (Claude Code)\\n' ;;
+  --version)
+    echo probe >> "$SESSIONDOCK_TEST_CLI_STATE/claude.probes"
+    sleep 0.3
+    printf '2.1.1 (Claude Code)\\n' ;;
   update) printf 'Checking for updates\\n'; printf 'Error: network unreachable\\n' >&2; exit 3 ;;
   *) exit 2 ;;
 esac
 """
-MISSING = "#!/bin/sh\nexit 127\n"
+MISSING = "#!/bin/sh\necho probe >> \"$SESSIONDOCK_TEST_CLI_STATE/grok.probes\"\nexit 127\n"
 FAKE_CURL = """#!/bin/sh
 eval "url=\\${$#}"
 case "$url" in
-  */@openai/codex/latest) printf '{"name":"@openai/codex","version":"%s"}\\n' "$SESSIONDOCK_TEST_NEW" ;;
+  */@openai/codex/latest) sleep 2.5; printf '{"name":"@openai/codex","version":"%s"}\\n' "$SESSIONDOCK_TEST_NEW" ;;
   *) exit 22 ;;
 esac
 """
@@ -96,8 +105,24 @@ def matrix_row(page, machine):
     return page.locator("#client-matrix tbody tr").filter(has=page.locator("th", has_text=machine))
 
 
-def check_machine(page, base, state, machine):
+def probe_counts(state):
+    return {source: len((state / f"{source}.probes").read_text().splitlines())
+            for source in ("codex", "claude", "grok")}
+
+
+def concurrent_reads(page, base):
+    answers = page.evaluate("""base => Promise.all(Array.from({length: 8}, () =>
+      fetch(base + '/api/clients').then(r => r.json())))""", base)
+    assert all(len(answer["clients"]) == 3 for answer in answers), answers
+
+
+def check_machine(page, base, state, machine, initial=OLD):
     page.goto(base + "/")
+    if machine == "本机":
+        concurrent_reads(page, base)
+        # One startup availability check and one settings probe per profile.
+        assert probe_counts(state) == {"codex": 2, "claude": 2, "grok": 2}, probe_counts(state)
+    before = probe_counts(state)
     open_machines(page)
     matrix = page.locator("#client-matrix table")
     # Columns are the clients installed on some machine: Grok is missing, OpenCode unconfigured.
@@ -105,21 +130,24 @@ def check_machine(page, base, state, machine):
     row = matrix_row(page, machine)
     codex = row.locator('td[data-client-source="codex"]')
     claude = row.locator('td[data-client-source="claude"]')
-    expect(codex.locator(".client-version")).to_have_text(OLD)
-    expect(codex).to_have_attribute("data-state", "outdated")
-    expect(codex).to_have_text(f"{OLD}↑")                      # just the version and the arrow
-    assert f"可更新到 {NEW}" in codex.get_attribute("title")
+    expect(codex.locator(".client-version")).to_have_text(initial)
+    expect(codex).to_have_attribute("data-state", "outdated" if initial == OLD else "current")
+    expect(codex).to_have_text(f"{initial}↑")                      # just the version and the arrow
+    assert NEW in codex.get_attribute("title")
     expect(claude.locator(".client-version")).to_have_text("2.1.1")
     expect(claude).to_have_attribute("data-state", "unknown", timeout=10000)   # its lookup failed
     expect(claude).to_have_text("2.1.1↑")
     expect(claude).to_have_attribute("title", re.compile("最新版本查询失败"))
+    assert probe_counts(state) == before, probe_counts(state)
 
     # A successful update: the button waits while the CLI runs, then the cell is current.
     codex.locator(".client-update").click()
     expect(codex.locator(".client-update")).to_have_text("…")
     expect(codex.locator(".client-update")).to_be_disabled()
     expect(codex.locator(".client-version")).to_have_text(NEW, timeout=20000)
-    expect(page.locator("#machine-note")).to_have_text(f"{machine}：Codex 已更新 {OLD} → {NEW}。")
+    note = (f"{machine}：Codex 已更新 {initial} → {NEW}。" if initial != NEW else
+            f"{machine}：Codex 已是最新版本 {NEW}。")
+    expect(page.locator("#machine-note")).to_have_text(note)
     expect(codex).to_have_attribute("data-state", "current")
     expect(codex.locator(".client-update")).to_have_text("↑")
     expect(codex.locator(".client-update")).to_be_enabled()
@@ -137,6 +165,16 @@ def check_machine(page, base, state, machine):
     expect(page.locator("#machine-note")).to_have_attribute("data-state", "error")
     expect(claude.locator(".client-version")).to_have_text("2.1.1")
     expect(claude.locator(".client-update")).to_be_enabled()
+    after = {**before, "codex": before["codex"] + 2, "claude": before["claude"] + 2}
+    assert probe_counts(state) == after, probe_counts(state)
+    # Reopening and reloading the actual settings page must keep those answers.
+    page.locator("#settings-dialog .modal-actions button").click()
+    open_machines(page)
+    expect(codex.locator(".client-version")).to_have_text(NEW)
+    page.reload()
+    open_machines(page)
+    expect(codex.locator(".client-version")).to_have_text(NEW)
+    assert probe_counts(state) == after, probe_counts(state)
 
 
 def api_contract(page, base):
@@ -168,7 +206,35 @@ def check_phone(page, base):
     assert all(extra <= 0 for extra in overflow), overflow
 
 
+def check_cache_expiry(page, base, state):
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(base + "/")
+    open_machines(page)
+    version = matrix_row(page, "本机").locator('td[data-client-source="codex"] .client-version')
+    expect(version).to_have_text(NEW)
+    before = probe_counts(state)
+    (state / "codex.version").write_text(OLD)
+    page.reload()
+    open_machines(page)
+    expect(version).to_have_text(NEW)
+    assert probe_counts(state) == before, probe_counts(state)
+    print("Checking 60 s cache expiry against an external CLI version change", flush=True)
+    page.wait_for_timeout(61000)
+    concurrent_reads(page, base)
+    page.reload()
+    open_machines(page)
+    expect(version).to_have_text(OLD)
+    assert probe_counts(state) == {source: count + 1 for source, count in before.items()}, probe_counts(state)
+    print("PASS cache expiry: one shared refresh per CLI, including missing commands", flush=True)
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--binary", type=Path, default=BINARY)
+    parser.add_argument("--hub-binary", type=Path)
+    args = parser.parse_args()
+    args.binary = args.binary.resolve()
+    hub_binary = args.hub_binary or args.binary.parent / HUB_BINARY.name
     if os.name != "posix":
         raise SystemExit("Fake CLI scripts need POSIX sh.")
     with tempfile.TemporaryDirectory(prefix="sessiondock-client-update-") as temporary, private_hosts(Path(temporary)):
@@ -182,7 +248,7 @@ def main():
             (root / "bin" / name).chmod(0o700)
         env = {"HOME": str(root / "home"), "PATH": str(root / "bin") + ":/usr/bin:/bin", "TERM": "xterm-256color",
                "SESSIONDOCK_TEST_CLI_STATE": str(state), "SESSIONDOCK_TEST_NEW": NEW}
-        launcher = {"schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"),
+        launcher = {"schema": 2, "host_binary": str(args.binary.parent / "ptyhost"),
                     "host_dir": str(root / "host"), "adapters": [], "profiles": [
                         {"id": "codex-cli-v1", "source": "codex", "executable": str(root / "bin/fake-codex"),
                          "args": CODEX_ARGS, "resume_args": ["resume", "{sid}"], "env": env},
@@ -193,7 +259,7 @@ def main():
         configuration = root / "launcher.json"
         configuration.touch(mode=0o600)
         configuration.write_text(json.dumps(launcher))
-        initialized = subprocess.run([str(BINARY), "--initialize-lifecycle", str(root / "ledger")],
+        initialized = subprocess.run([str(args.binary), "--initialize-lifecycle", str(root / "ledger")],
                                      cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
         assert initialized.returncode == 0, initialized.stderr.decode()
         token = "t" * 40
@@ -211,7 +277,7 @@ def main():
                 options["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
             browser = playwright.chromium.launch(**options)
             try:
-                with isolated_server(corpus, host_dir=root / "host", lifecycle_dir=root / "ledger",
+                with isolated_server(corpus, args.binary, host_dir=root / "host", lifecycle_dir=root / "ledger",
                                      launcher_config=configuration, extra_env=node_env) as (base, _):
                     errors = []
                     page = browser.new_page(viewport={"width": 1280, "height": 900})
@@ -222,13 +288,12 @@ def main():
                     api_contract(page, base)
                     print("PASS local machine settings: versions, update, failure, API contract")
 
-                    (state / "codex.version").write_text(OLD)
                     other = FakeNode("b" * 32, "Vega")
-                    hub = Hub(HUB_BINARY, root / "hub", [SimpleNamespace(name="Pavo", port=node_port, token=token), other])
+                    hub = Hub(hub_binary, root / "hub", [SimpleNamespace(name="Pavo", port=node_port, token=token), other])
                     hub.start()
                     try:
                         hub_base = f"http://127.0.0.1:{hub.port}"
-                        check_machine(page, hub_base, state, "Pavo")
+                        check_machine(page, hub_base, state, "Pavo", initial=NEW)
                         vega = matrix_row(page, "Vega")
                         expect(vega.locator('td[data-client-source="claude"]')).to_have_text("无")
                         expect(vega.locator('td[data-client-source="codex"] .client-version')).to_have_text("0.1.0")
@@ -248,6 +313,7 @@ def main():
                     finally:
                         hub.stop()
                         other.stop()
+                    check_cache_expiry(page, base, state)
                     assert not errors, errors
             finally:
                 browser.close()

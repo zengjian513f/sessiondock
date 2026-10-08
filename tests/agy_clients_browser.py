@@ -419,13 +419,13 @@ def check_variant(page, node, *, node_id=None):
 
 def check_updates(page, node, machine, *, node_id=None):
     phase(machine + " versions and update success/failure")
-    (node.state / "agy.version").write_text(OLD)
+    initial = (node.state / "agy.version").read_text()
     open_machines(page)
     expect(page.locator("#client-matrix thead th")).to_have_text(["机器", "Codex", "Agy"])
     cell = matrix_row(page, machine).locator('td[data-client-source="agy"]')
-    expect(cell.locator(".client-version")).to_have_text(OLD)
-    expect(cell).to_have_attribute("data-state", "outdated")
-    assert "可更新到 " + NEW in (cell.get_attribute("title") or "")
+    expect(cell.locator(".client-version")).to_have_text(initial)
+    expect(cell).to_have_attribute("data-state", "outdated" if initial == OLD else "current")
+    assert NEW in (cell.get_attribute("title") or "")
     codex = matrix_row(page, machine).locator('td[data-client-source="codex"]')
     expect(codex.locator(".client-version")).to_have_text("0.159.0")
     expect(codex).to_have_attribute("data-state", "current")
@@ -458,7 +458,9 @@ def check_updates(page, node, machine, *, node_id=None):
                 expect(note).to_have_attribute("data-state", "error")
                 assert "Error: synthetic Agy updater failure" in (cell.get_attribute("title") or "")
             else:
-                expect(note).to_have_text(f"{machine}：Agy 已更新 {OLD} → {NEW}。", timeout=20000)
+                message = (f"{machine}：Agy 已更新 {initial} → {NEW}。" if initial != NEW else
+                           f"{machine}：Agy 已是最新版本 {NEW}。")
+                expect(note).to_have_text(message, timeout=20000)
                 title = cell.get_attribute("title") or ""
                 assert "Agy installed " + NEW in title and "\x1b" not in title, title
                 assert "已是最新（" + NEW + "）" in title, title

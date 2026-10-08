@@ -570,6 +570,7 @@ fn run_bounded(
     if cwd.is_dir() {
         command.current_dir(cwd);
     }
+    super::launcher::background_command(&mut command);
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
