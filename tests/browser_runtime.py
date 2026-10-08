@@ -55,3 +55,23 @@ def wait_for_async(page, script: str, *, arg=None, timeout=None, polling="raf"):
             left = remaining()
             interval = polling if left is None else min(polling, left * 1000)
             await_operation(page._impl_obj.wait_for_timeout(interval))
+
+
+def open_toolbar_options(page, kind):
+    """Open the toolbar's second-level options through user clicks."""
+    if not page.locator('#header-menu').is_visible():
+        page.locator('#header-more-btn').click()
+    page.locator(f'#header-menu [data-toolbar-menu="{kind}"]').click()
+    return page.locator(f'#toolbar-{kind}-menu')
+
+
+def choose_toolbar_option(page, kind, value):
+    """Choose a pinned button or its equivalent under the header ellipsis."""
+    host, attribute = {'view': ('view', 'v'), 'nest': ('nest', 'mode'),
+                       'sources': ('chips', 'source')}[kind]
+    selector = f'button[data-{attribute}="{value}"]'
+    inline = page.locator(f'#{host} {selector}')
+    if inline.is_visible():
+        inline.click()
+    else:
+        open_toolbar_options(page, kind).locator(selector).click()

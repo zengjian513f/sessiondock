@@ -111,7 +111,9 @@ Hub 顶栏另有机器 chip，见第 2 节。节点离线、列表/运行状态/
 - **项目树**（默认）：按目录分组。同名目录用颜色区分（`timelineDirectoryColors`，会写回存储）。路径过长时 `fitTimelineDirectories` 压缩。
 - **按目录聚合**（DELTA）：只按完整工作目录路径分组，不同机器的相同路径放在一起；同名但路径不同的目录仍分开。组内沿用活动时间排序、筛选、折叠和嵌套，每行复用已有机器标识与目录样式。所选视图持久化。[`tests/hub_browser.py`](../tests/hub_browser.py)。
 - **时间轴**：按时间分组。
-- **会话分组**：只有 `metadata` 能力允许时 `#view [data-v=group]` 才出现。否则若存的是 `group` 会退回 `tree`。见下文分组。
+- **会话分组**：只有 `metadata` 能力允许时，工具栏及列表视图菜单才提供会话分组。否则若存的是 `group` 会退回 `tree`。见下文分组。
+
+**DELTA：顶栏选项可自选常驻。**「⋯」始终可用，含「列表视图」「Agent 类型」「折叠方式」二级菜单。菜单复用工具栏的图标、选中状态与来源计数；点击选项执行原有切换或筛选，勾选框只控制是否显示在顶栏，取消勾选的选项仍可从二级菜单使用。视图默认常驻目录聚合和时间轴，Agent 默认常驻 Codex、Claude、Grok；折叠方式默认三项均常驻，也可逐项取消。常驻偏好与当前视图、来源筛选和子会话模式分别持久化；全部取消时隐藏该分段，仍能通过菜单使用。来源菜单保留零会话不可用原因、右键/长按只选、当前机器和会话范围计数；能力未声明的会话分组不出现在任何入口。二级菜单支持方向键、Home/End、Escape 返回上级和点击外部关闭，窄屏保持菜单边界与选项文字可读。[`tests/toolbar_options_browser.py`](../tests/toolbar_options_browser.py)。
 
 分组头可折叠。普通浏览的折叠在 `closed`（持久）。搜索态用另一套 `searchClosed`，不写回 `closed`。[`tests/search_no_fold_browser.py`](../tests/search_no_fold_browser.py)。大量同名目录下点击折叠和筛选：[`tests/sidebar_path_performance_browser.py`](../tests/sidebar_path_performance_browser.py)。
 
@@ -548,6 +550,9 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 | `cleanupDays` | `2` | 功能；正整数天数 |
 | `consolePasteFiles` | `false` | 功能 |
 | `view` | `tree` | 顶栏 |
+| `toolbarPins.view` | `[directory, date]` | 常驻列表视图 |
+| `toolbarPins.sources` | `[codex, claude, grok]` | 常驻 Agent 类型 |
+| `toolbarPins.nest` | `[hidden, nested, flat]` | 常驻折叠方式 |
 | `nest` | `false` | 顶栏 |
 | `childMode` | 未设置 | 子会话显示方式；旧偏好回退到 `nest` |
 | `nestClosed` | `[]` | 分层折叠；搜索态不写 |

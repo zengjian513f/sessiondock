@@ -17,6 +17,13 @@ const store = {
   set: (k, v) => localStorage.setItem(STORAGE_PREFIX + k, JSON.stringify(v)),
 };
 
+const toolbarPins = Object.fromEntries(Object.entries({
+  view: ['directory', 'date'], sources: ['codex', 'claude', 'grok'], nest: ['hidden', 'nested', 'flat'],
+}).map(([kind, defaults]) => {
+  const saved = store.get(`toolbarPins.${kind}`, defaults);
+  return [kind, new Set(Array.isArray(saved) ? saved : defaults)];
+}));
+
 const FONT_CHOICES = SessionDockTypography.choices;
 const themeMedia = matchMedia('(prefers-color-scheme: dark)');
 
@@ -4124,15 +4131,29 @@ function renderChips() {
       };
       box.appendChild(c);
     }
-    c.classList.toggle('off', S.off.has(k));
-    c.classList.toggle('on', !S.off.has(k));
-    c.setAttribute('aria-pressed', String(!S.off.has(k)));
-    c.querySelector('.ico').style.color = v.color;
-    c.querySelector(':scope > b').textContent = n;
-    c.title = `${v.name}：点击选择或取消；右键或长按只选此类型`;
-    c.setAttribute('aria-label', `${v.name}，${n} 个会话`);
-    setControlUnavailable(c, n === 0 ? `${v.name} 在当前选择的机器上没有会话。` : '');
+    c.hidden = !toolbarPins.sources.has(k);
+    let option = $(`#toolbar-sources-menu button[data-source="${CSS.escape(k)}"]`);
+    if (!option) {
+      option = c.cloneNode(true);
+      option.hidden = false;
+      option.classList.remove('chip');
+      option.setAttribute('aria-label', v.name);
+      option.onclick = c.onclick;
+      toolbarOptionRow('sources', k, option);
+    }
+    for (const control of [c, option]) {
+      control.classList.toggle('off', S.off.has(k));
+      control.classList.toggle('on', !S.off.has(k));
+      control.setAttribute('aria-pressed', String(!S.off.has(k)));
+      control.querySelector('.ico').style.color = v.color;
+      control.querySelector(':scope > b').textContent = n;
+      control.title = `${v.name}：点击选择或取消；右键或长按只选此类型`;
+      control.setAttribute('aria-label', `${v.name}，${n} 个会话`);
+      setControlUnavailable(control, n === 0 ? `${v.name} 在当前选择的机器上没有会话。` : '');
+    }
+    option.parentElement.querySelector('input').checked = toolbarPins.sources.has(k);
   }
+  box.hidden = ![...box.children].some(button => !button.hidden);
 }
 
 /* 机器与 Agent Type 默认是多选；右键（桌面）或长按（触屏）快速收窄到一项。 */
@@ -4140,7 +4161,7 @@ let filterLongPress = null;
 let suppressFilterClick = null;
 
 function filterButton(target) {
-  return target.closest?.('#node-chips button[data-node], #chips button[data-source]') || null;
+  return target.closest?.('#node-chips button[data-node], #chips button[data-source], #toolbar-sources-menu button[data-source]') || null;
 }
 
 function selectOnlyFilter(button) {
@@ -4156,7 +4177,7 @@ function cancelFilterLongPress() {
   filterLongPress = null;
 }
 
-for (const host of [$('#node-chips'), $('#chips')]) {
+for (const host of [$('#node-chips'), $('#chips'), $('#toolbar-sources-menu')]) {
   if (host.id === 'node-chips') {
     // nodes.js 保持与冻结页面的字节兼容；在新交互层截住它的旧双击直选回调。
     host.addEventListener('dblclick', event => {
@@ -6237,7 +6258,7 @@ function syncSessionGlobalActions(heading, list) {
       button.removeAttribute('role');
       $('#header-more').before(button);
     }
-    $('#header-more').hidden = true;
+    $('#header-more').hidden = !$('#header-menu').children.length;
     layoutHeader();
   }
 }
@@ -6376,6 +6397,48 @@ for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', () => lay
   document.fonts?.ready.then(() => layoutSessionHead());   // 字体换过之后文字宽度会变
 }
 
+function toolbarOptionRow(kind, value, button) {
+  const row = el('div', 'toolbar-option');
+  const pin = el('label', 'toolbar-pin'), input = document.createElement('input');
+  input.type = 'checkbox';
+  input.checked = toolbarPins[kind].has(value);
+  input.setAttribute('aria-label', `在工具栏显示${button.ariaLabel || button.title}`);
+  pin.title = input.ariaLabel;
+  pin.appendChild(input);
+  row.append(pin, button);
+  $(`#toolbar-${kind}-menu`).appendChild(row);
+  input.onchange = () => {
+    input.checked ? toolbarPins[kind].add(value) : toolbarPins[kind].delete(value);
+    store.set(`toolbarPins.${kind}`, [...toolbarPins[kind]]);
+    renderView();
+    renderChips();
+  };
+  return row;
+}
+function closeToolbarMenus(restoreFocus = false) {
+  for (const trigger of document.querySelectorAll('#header-menu [data-toolbar-menu]')) {
+    const menu = document.getElementById(trigger.getAttribute('aria-controls'));
+    if (restoreFocus && !menu.hidden) trigger.focus();
+    menu.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+  }
+}
+function openToolbarMenu(trigger) {
+  closeToolbarMenus();
+  const menu = document.getElementById(trigger.getAttribute('aria-controls'));
+  menu.hidden = false;
+  trigger.setAttribute('aria-expanded', 'true');
+  positionToolbarMenu(trigger);
+}
+function positionToolbarMenu(trigger) {
+  const menu = document.getElementById(trigger.getAttribute('aria-controls'));
+  const rect = trigger.getBoundingClientRect();
+  const width = menu.offsetWidth, height = menu.offsetHeight;
+  const left = rect.right + 5 + width <= innerWidth - 8 ? rect.right + 5 : rect.left - width - 5;
+  menu.style.left = `${Math.max(8, Math.min(left, innerWidth - width - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(rect.top, innerHeight - height - 8))}px`;
+}
+
 // 顶栏按空间逐级收，任何一级都不因折叠留白：
 //   1. Agent / 组织方式 / 分层 的文字标签
 //   2. 主机标题（.brand-name）
@@ -6387,6 +6450,7 @@ const HEADER_FOLD_LABELS = 'header-fold-labels';
 const HEADER_FOLD_BRAND = 'header-fold-brand';
 const HEADER_FOLD_NODES = 'header-fold-nodes';
 function closeHeaderMenu(restoreFocus = false) {
+  closeToolbarMenus();
   const menu = $('#header-menu');
   if (!menu || menu.hidden) return;
   menu.hidden = true;
@@ -6420,7 +6484,6 @@ function layoutHeader() {
     .filter(button => button && !button.hidden && !button.hasAttribute('data-session-docked') && button.parentElement !== menu);
   if (MOBILE.matches && canFoldNodes) header.classList.add(HEADER_FOLD_NODES);
   if (squeezed()) {
-    closeHeaderMenu();
     if (!header.classList.contains(HEADER_FOLD_LABELS)) {
       header.classList.add(HEADER_FOLD_LABELS);
       if (!squeezed()) return;
@@ -6434,7 +6497,7 @@ function layoutHeader() {
       if (!squeezed()) return;
     }
     const buttons = inlineButtons();
-    // 折起第一个按钮只是把它换成 ⋯，宽度没省出来；所以真要折就至少折两个，循环自然做到
+    // ⋯ 常驻；从末尾移入动作，直到筛选条放得下。
     for (let i = buttons.length - 1; i >= 0 && squeezed(); i--) {
       more.hidden = false;
       foldButton(buttons[i]);
@@ -6443,9 +6506,8 @@ function layoutHeader() {
     return;
   }
   // 没被挤压：按相反顺序展开。同步试探并立刻收回放不下的那一级，避免中间态闪一下。
-  if (menu.children.length) closeHeaderMenu();
-  while (menu.children.length) {
-    const button = menu.children[0];
+  const foldedButtons = [...menu.querySelectorAll(':scope > button:not([data-menu-only])')];
+  for (const button of foldedButtons) {
     restoreButton(button);
     more.hidden = !menu.children.length;
     if (!squeezed()) continue;
@@ -6480,19 +6542,21 @@ function layoutHeader() {
   button.onclick = () => menu.hidden ? open() : closeHeaderMenu();
   bindMenuKeyboard(button, menu, items, open);
   menu.addEventListener('click', event => {
-    if (event.target.closest('button')) closeHeaderMenu(true);
+    if (event.target.closest('button') && !event.target.closest('[data-toolbar-menu]')) closeHeaderMenu(true);
   });
   $('#header-more').addEventListener('focusout', event => {
-    if (event.relatedTarget && !$('#header-more').contains(event.relatedTarget)) closeHeaderMenu();
+    if (event.relatedTarget && !$('#header-more').contains(event.relatedTarget)
+        && !event.relatedTarget.closest('.toolbar-options')) closeHeaderMenu();
   });
   document.addEventListener('click', event => {
-    if (!event.target.closest('#header-more')) closeHeaderMenu();
+    if (!event.target.closest('#header-more, .toolbar-options')) closeHeaderMenu();
   }, true);
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && menu.hidden === false) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      closeHeaderMenu(true);
+      if ($('.toolbar-options:not([hidden])')) closeToolbarMenus(true);
+      else closeHeaderMenu(true);
     }
   }, true);
   addEventListener('resize', () => closeHeaderMenu());
@@ -6501,7 +6565,11 @@ function layoutHeader() {
   // 收标签/标题会改 chips 和 brand 的宽度，observer 会再进来一次；layoutHeader
   // 只在仍被挤压时加下一级、放得下才展开，同步试探并收回，不会收-放循环。
   // 新建按钮随终端能力出现/消失时由 term.js 直接调 layoutHeader()。
-  const observer = new ResizeObserver(() => layoutHeader());
+  const observer = new ResizeObserver(() => {
+    layoutHeader();
+    const trigger = $('#header-menu [data-toolbar-menu][aria-expanded="true"]');
+    if (trigger) positionToolbarMenu(trigger);
+  });
   for (const node of [$('header'), $('.brand'), ...$('.header-filters').children]) observer.observe(node);
   layoutHeader();
 }
@@ -9437,22 +9505,47 @@ function inline(s, media = [], context = {}) {
 }
 
 // ---------------------------------------------------------------- 事件
-$('#view').onclick = e => {
-  const b = e.target.closest('button');
-  if (!b) return;
-  S.view = b.dataset.v;
+function selectSidebarView(view) {
+  S.view = view;
   store.set('view', S.view);
   renderView();
   renderSide();
+}
+$('#view').onclick = e => {
+  const button = e.target.closest('button[data-v]');
+  if (button) selectSidebarView(button.dataset.v);
 };
 
 function renderView() {
-  for (const b of $('#view').children) b.classList.toggle('on', b.dataset.v === S.view);
+  for (const b of $('#view').querySelectorAll('button[data-v]')) {
+    const allowed = b.dataset.v !== 'group' || SessionDockCapabilities.allows('metadata');
+    b.hidden = !allowed || !toolbarPins.view.has(b.dataset.v);
+    const option = $(`#toolbar-view-menu button[data-v="${b.dataset.v}"]`);
+    for (const button of [b, option].filter(Boolean)) {
+      button.classList.toggle('on', button.dataset.v === S.view);
+      button.setAttribute('aria-pressed', String(button.dataset.v === S.view));
+    }
+    if (option) {
+      option.parentElement.hidden = !allowed;
+      option.parentElement.querySelector('input').checked = toolbarPins.view.has(b.dataset.v);
+    }
+  }
   const mode = S.childMode === 'hidden' ? 'hidden' : S.nest ? 'nested' : 'flat';
-  for (const button of $('#nest').children) {
+  for (const button of $('#nest').querySelectorAll('button[data-mode]')) {
+    button.hidden = !toolbarPins.nest.has(button.dataset.mode);
     const selected = button.dataset.mode === mode;
     button.classList.toggle('on', selected);
     button.setAttribute('aria-pressed', String(selected));
+    const option = $(`#toolbar-nest-menu button[data-mode="${button.dataset.mode}"]`);
+    if (option) {
+      option.classList.toggle('on', selected);
+      option.setAttribute('aria-pressed', String(selected));
+      option.parentElement.querySelector('input').checked = toolbarPins.nest.has(button.dataset.mode);
+    }
+  }
+  for (const id of ['view', 'nest', 'chips']) {
+    const box = document.getElementById(id);
+    box.hidden = ![...box.children].some(button => !button.hidden);
   }
 }
 function setChildMode(mode) {
@@ -9476,6 +9569,47 @@ $('#nest').onclick = event => {
   const button = event.target.closest('button[data-mode]');
   if (button) setChildMode(button.dataset.mode);
 };
+
+for (const kind of ['view', 'nest']) {
+  const box = document.getElementById(kind);
+  for (const original of box.querySelectorAll('button')) {
+    const button = original.cloneNode(true);
+    button.removeAttribute('id');
+    button.hidden = false;
+    const value = kind === 'view' ? button.dataset.v : button.dataset.mode;
+    toolbarOptionRow(kind, value, button);
+    button.onclick = () => {
+      kind === 'view' ? selectSidebarView(value) : setChildMode(value);
+      closeHeaderMenu(true);
+    };
+  }
+}
+for (const trigger of document.querySelectorAll('#header-menu [data-toolbar-menu]')) {
+  const menu = document.getElementById(trigger.getAttribute('aria-controls'));
+  const items = () => [...menu.querySelectorAll('.toolbar-option:not([hidden]) button:not(:disabled)')];
+  trigger.onclick = () => openToolbarMenu(trigger);
+  trigger.onmouseenter = () => openToolbarMenu(trigger);
+  bindMenuKeyboard(trigger, menu, items, () => openToolbarMenu(trigger));
+  trigger.addEventListener('keydown', event => {
+    if (event.key !== 'ArrowRight') return;
+    event.preventDefault(); event.stopPropagation();
+    openToolbarMenu(trigger); items()[0]?.focus();
+  });
+  // Up/Down on the parent continues navigating the first-level menu.
+  trigger.onkeydown = null;
+  menu.addEventListener('focusout', event => {
+    if (event.relatedTarget && !event.relatedTarget.closest('#header-more, .toolbar-options')) closeHeaderMenu();
+  });
+  menu.addEventListener('keydown', event => {
+    if (event.key !== 'ArrowLeft') return;
+    event.preventDefault(); event.stopPropagation();
+    closeToolbarMenus(true);
+  });
+}
+$('#header-menu').addEventListener('mouseover', event => {
+  if (event.target.closest('button:not([data-toolbar-menu])')) closeToolbarMenus();
+});
+renderView();
 
 // A full render resolves filtering and hidden-parent successors. Folding only
 // changes the visible rows within that same display tree, never its membership.

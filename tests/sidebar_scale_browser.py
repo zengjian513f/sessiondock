@@ -24,6 +24,7 @@ import re
 from pathlib import Path
 import tempfile
 
+from browser_runtime import choose_toolbar_option
 from playwright.sync_api import expect, sync_playwright
 
 from frontend_framework_browser import launch_chromium
@@ -266,7 +267,7 @@ def check_search_and_folds(page):
 
 def check_date_view(page):
     """Timeline view rows carry a directory line; windowing measures them separately."""
-    page.locator('#view [data-v="date"]').click()
+    choose_toolbar_option(page, "view", 'date')
     page.wait_for_function("S.view === 'date' && document.querySelector('#side .item .cwd-path')")
     assert page.locator('#side .item').count() <= ROW_BUDGET
     page.evaluate("document.querySelector('#side').scrollTop = document.querySelector('#side').scrollHeight / 2")
@@ -276,7 +277,7 @@ def check_date_view(page):
         const r = node.getBoundingClientRect(); return r.top >= box.top && r.bottom <= box.bottom; });
     }''')
     assert page.locator('#side .item').count() <= ROW_BUDGET
-    page.locator('#view [data-v="tree"]').click()
+    choose_toolbar_option(page, "view", 'tree')
     page.wait_for_function("S.view === 'tree'")
 
 

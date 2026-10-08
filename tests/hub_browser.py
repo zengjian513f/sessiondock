@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import tempfile
 
+from browser_runtime import choose_toolbar_option
 from playwright.sync_api import expect, sync_playwright
 
 from hub_fixtures import REPO, FakeNode, Hub
@@ -116,7 +117,7 @@ def check_directory_view(browser, hub):
     expect(shared.locator('.gcount')).to_have_text('2')
     shared.locator(f'.item[data-uid="{scoped(NID["b"], "claude:same-file-hash")}"]').click()
     expect(page.locator('#detail')).to_contain_text('reply NodeB')
-    page.get_by_role('button', name='项目树', exact=True).click()
+    choose_toolbar_option(page, 'view', 'tree')
     expect(page.locator('#side > .group')).to_have_count(3)
     page.set_viewport_size({'width': 390, 'height': 844})
     page.get_by_role('button', name='按目录聚合', exact=True).click()
@@ -322,7 +323,7 @@ def check_nesting(page, injector):
     page.locator("#nest-flat").click()
     page.wait_for_function("S.nest === false")
     injector.on = False
-    page.get_by_role('button', name='项目树', exact=True).click()
+    choose_toolbar_option(page, 'view', 'tree')
     page.evaluate("loadSessions(true)")
     page.wait_for_function("S.sessions.length === 3")
 

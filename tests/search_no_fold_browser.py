@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 from urllib.request import Request
 
+from browser_runtime import choose_toolbar_option
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, batch35_agent_meta, claude_row, codex_message, codex_row, encoded, isolated_server
 from search_browser import corpus
@@ -81,7 +82,7 @@ def main():
                     errors = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
                     page.goto(base, wait_until='networkidle')
-                    page.locator(f'#view [data-v="{view}"]').click()
+                    choose_toolbar_option(page, "view", view)
                     if not page.locator('#nest-toggle').get_attribute('aria-pressed') == 'true':
                         page.locator("#nest-flat" if page.evaluate("S.nest") else "#nest-toggle").click()
                     parent = page.locator(f'#side .item[data-uid="{parent_uid}"]')
