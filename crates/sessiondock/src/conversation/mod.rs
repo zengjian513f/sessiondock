@@ -5,6 +5,7 @@ mod report_name;
 pub mod rewind;
 pub use input::{InputState, InputStatus, transient_input_error};
 pub mod store;
+pub mod uploads;
 use crate::{
     delivery::{
         driver::{
@@ -661,6 +662,13 @@ impl Conversations {
         let removed = self.store.discard_upload(&identity.key, id)?;
         if removed {
             let _ = tokio::fs::remove_file(self.upload_path(&identity.key, id)).await;
+        }
+        for extension in ["part", "resume"] {
+            let _ = tokio::fs::remove_file(
+                self.upload_path(&identity.key, id)
+                    .with_extension(extension),
+            )
+            .await;
         }
         Ok(removed)
     }

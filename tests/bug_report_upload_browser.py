@@ -42,6 +42,7 @@ def run(browser, root, config):
         page = context.new_page()
         attempts, errors = [], []
         fail_replies = 1
+        fail_uploads = 0
         fail_saves = False
         stalled_reads = []
 
@@ -59,11 +60,14 @@ def run(browser, root, config):
             route.continue_()
 
         def upload(route):
-            nonlocal fail_replies
+            nonlocal fail_replies, fail_uploads
             if route.request.method != 'POST':
                 return route.continue_()
             query = parse_qs(urlsplit(route.request.url).query)
             attempts.append((query['uid'][0], query['id'][0]))
+            if fail_uploads:
+                fail_uploads -= 1
+                return route.fulfill(status=502, json={'error':'synthetic upload interruption'})
             # Every attempt reaches the real Hub and authenticated Rust node.
             # Lose only the successful reply, after bytes are already durable.
             response = route.fetch()
@@ -128,9 +132,9 @@ def run(browser, root, config):
             page.locator('#bug-report-file').set_input_files(
                 {'name': 'capture.png', 'mimeType': 'image/png', 'buffer': payload})
             page.wait_for_function('bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging')
-            assert len(attempts) == 2 and attempts[0] == attempts[1], attempts
+            assert len(attempts) == 1, attempts
             assert not page.locator('#bug-report-items').get_by_role('button', name='重试', exact=True).count()
-            print('PASS lost upload reply: real bytes saved; retry reuses draft/upload ID', flush=True)
+            print('PASS lost upload reply: real bytes saved; status recovers without a second POST', flush=True)
 
             # Click the actual card with the caret in the middle, then read the
             # real draft back through the Hub to catch UI-only text copies.
@@ -149,7 +153,7 @@ def run(browser, root, config):
             assert saved.json()['draft']['value']['text'] == report_text, saved.json()
             print('PASS attachment card click: reference inserted at caret and actual text saved on the node', flush=True)
 
-            fail_replies = 2
+            fail_uploads = 2
             # Drop through the actual report form; upload/retry remains the
             # existing draft operation.
             transfer = page.evaluate_handle("""bytes => {
@@ -165,11 +169,11 @@ def run(browser, root, config):
             expect(form).not_to_have_class(re.compile(r'\bdragover\b'))
             retry = page.locator('#bug-report-items').get_by_role('button', name='重试', exact=True)
             expect(retry).to_be_visible()
-            assert len(attempts) == 4 and attempts[2] == attempts[3], attempts
+            assert len(attempts) == 3 and attempts[1] == attempts[2], attempts
             expect(page.locator('#bug-report-description')).to_have_value(report_text)
             retry.click()
             page.wait_for_function('bugReportDraftObject().attachments.every(a => a.uploaded?.upload_id && !a.staging)')
-            assert len(attempts) == 5 and attempts[4] == attempts[2], attempts
+            assert len(attempts) == 4 and attempts[3] == attempts[1], attempts
             print('PASS persistent interruption: bounded retry, retained text/file, manual recovery', flush=True)
 
             # The worker CLI runs with the model and effort picked in the dialog.

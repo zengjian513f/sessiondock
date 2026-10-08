@@ -118,6 +118,10 @@ pub fn router() -> Router<AppState> {
                 .layer(axum::extract::DefaultBodyLimit::disable()),
         )
         .route(
+            "/session/conversation/attachment/status",
+            get(conversation::upload_status),
+        )
+        .route(
             "/session/conversation/attachment/discard",
             post(conversation::discard),
         )

@@ -8,7 +8,7 @@ globalThis.SessionDockNetwork = (() => {
   const api = new URL('api/', base).pathname;
   const snapshots = new Map();
   let stopped = '', sleeping = false, sequence = 0;
-  const pending = new Set();
+  let backgroundAbort = new AbortController();
   const pausedError = () => new DOMException('自动同步已暂停', 'AbortError');
   const rowKey = (row, key) => `${row.node_id || ''}\n${row[key]}`;
 
@@ -20,14 +20,14 @@ globalThis.SessionDockNetwork = (() => {
       if (stopped === 'login' || stopped === reason) return;
       stopped = reason;
     }
-    for (const controller of pending) controller.abort();
-    pending.clear();
+    backgroundAbort.abort(pausedError());
     dispatchEvent(new CustomEvent('sessiondock-network-paused', {detail: reason}));
   }
 
   function resume() {
     if (!sleeping) return;
     sleeping = false;
+    backgroundAbort = new AbortController();
     // Waking a page must never clear a stale-build or expired-login pause.
     if (!stopped) dispatchEvent(new Event('sessiondock-network-resumed'));
   }
@@ -82,12 +82,12 @@ globalThis.SessionDockNetwork = (() => {
     // A stale page may still save editor drafts before reloading. An expired
     // login pauses writes too: repeatedly following the login redirect is waste.
     if (sleeping || (stopped && (background || stopped === 'login'))) throw pausedError();
-    const controller = new AbortController();
     const signal = init.signal || (input instanceof Request ? input.signal : null);
-    const abort = () => controller.abort(signal?.reason);
-    if (signal?.aborted) abort();
-    else signal?.addEventListener('abort', abort, {once:true});
-    if (background) pending.add(controller);
+    // Fetch resolves at the headers, while its body may still be streaming.
+    // Native signal composition keeps cancellation alive for that whole body,
+    // without retaining a listener for every request on the page's pause signal.
+    const signals = [signal, background ? backgroundAbort.signal : null].filter(Boolean);
+    const requestSignal = signals.length ? AbortSignal.any(signals) : undefined;
     const list = method === 'GET' && SessionDockCapabilities.config.list_delta
       && [api + 'sessions', api + 'term/list'].includes(url.pathname);
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
@@ -99,31 +99,26 @@ globalThis.SessionDockNetwork = (() => {
       cacheKey = key.toString(); baseline = snapshots.get(cacheKey)?.data; run = ++sequence;
       headers.set('X-SessionDock-List', baseline?.list_version || 'new');
     }
-    try {
-      const response = await nativeFetch(list ? url : input, {...init, headers, signal:controller.signal});
-      const destination = response.url ? new URL(response.url) : url;
-      if (response.status === 401 || (response.redirected && destination.origin === base.origin
-          && /\/__auth\//.test(destination.pathname))) {
-        pause('login'); throw pausedError();
-      }
-      if (!list || !response.ok) return response;
-      const wire = await response.json();
-      if (controller.signal.aborted) throw pausedError();
-      const data = expand(wire, baseline);
-      if (data.list_version && (!snapshots.has(cacheKey) || snapshots.get(cacheKey).run < run)) {
-        snapshots.set(cacheKey, {run, data});
-      }
-      // Return a fresh decoded object to the page; the transport baseline above
-      // never becomes S.sessions/T.list and cannot acquire UI-only mutations.
-      const output = {...data};
-      if (wire.list_delta && wire.list_unchanged && url.pathname === api + 'sessions') output.unchanged = true;
-      const resultHeaders = new Headers(response.headers);
-      resultHeaders.delete('Content-Length'); resultHeaders.delete('Content-Encoding');
-      return new Response(JSON.stringify(output), {status:response.status, statusText:response.statusText, headers:resultHeaders});
-    } finally {
-      pending.delete(controller);
-      signal?.removeEventListener('abort', abort);
+    const response = await nativeFetch(list ? url : input, {...init, headers, signal:requestSignal});
+    const destination = response.url ? new URL(response.url) : url;
+    if (response.status === 401 || (response.redirected && destination.origin === base.origin
+        && /\/__auth\//.test(destination.pathname))) {
+      pause('login'); throw pausedError();
     }
+    if (!list || !response.ok) return response;
+    const wire = await response.json();
+    requestSignal?.throwIfAborted();
+    const data = expand(wire, baseline);
+    if (data.list_version && (!snapshots.has(cacheKey) || snapshots.get(cacheKey).run < run)) {
+      snapshots.set(cacheKey, {run, data});
+    }
+    // Return a fresh decoded object to the page; the transport baseline above
+    // never becomes S.sessions/T.list and cannot acquire UI-only mutations.
+    const output = {...data};
+    if (wire.list_delta && wire.list_unchanged && url.pathname === api + 'sessions') output.unchanged = true;
+    const resultHeaders = new Headers(response.headers);
+    resultHeaders.delete('Content-Length'); resultHeaders.delete('Content-Encoding');
+    return new Response(JSON.stringify(output), {status:response.status, statusText:response.statusText, headers:resultHeaders});
   };
   return Object.freeze({pause, resume, get paused() {return sleeping || !!stopped;},
     get reason() {return stopped || (sleeping ? 'idle' : '');}});

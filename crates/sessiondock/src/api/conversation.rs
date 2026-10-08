@@ -291,6 +291,8 @@ pub struct UploadQuery {
     uid: String,
     id: String,
     name: String,
+    offset: Option<u64>,
+    total: Option<u64>,
 }
 pub async fn upload(State(s): State<AppState>, request: Request) -> Result<Response, ApiError> {
     let service = enabled(&s)?;
@@ -323,6 +325,43 @@ pub async fn upload(State(s): State<AppState>, request: Request) -> Result<Respo
         .unwrap_or("application/octet-stream")
         .to_owned();
     let path = service.upload_path(&identity.key, &q.id);
+    if let (Some(offset), Some(total)) = (q.offset, q.total) {
+        let current = crate::conversation::uploads::status(&service, &identity.key, &q.id)
+            .await
+            .map_err(error)?;
+        if current["upload_id"].is_string() {
+            if current["size"] != total
+                || current["name"] != crate::files::WriteService::attachment_name(&q.name)
+            {
+                return Err(ApiError::new(
+                    StatusCode::CONFLICT,
+                    "attachment_conflict",
+                    "相同附件上传 ID 对应了不同文件",
+                ));
+            }
+            return Ok(([(header::CACHE_CONTROL, "no-store")], Json(current)).into_response());
+        }
+        let mut receiving =
+            crate::conversation::uploads::Receiving::begin(path, &q.name, mime, total, offset)
+                .await
+                .map_err(error)?;
+        let mut stream = request.into_body().into_data_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| {
+                ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "attachment_interrupted",
+                    "附件上传中断；已确认的分块保留，可继续上传",
+                )
+            })?;
+            receiving.append(&chunk).await.map_err(error)?;
+        }
+        let value = receiving
+            .commit(&service, &identity.key, &q.id)
+            .await
+            .map_err(error)?;
+        return Ok(([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response());
+    }
     let temporary = path.with_extension(format!(
         "{}.upload",
         crate::conversation::random_id().map_err(error)?
@@ -480,6 +519,19 @@ fn attachment_body(
 pub struct Staged {
     uid: String,
     id: String,
+}
+pub async fn upload_status(
+    State(s): State<AppState>,
+    Query(q): Query<Staged>,
+) -> Result<Response, ApiError> {
+    let service = enabled(&s)?;
+    let identity = service.identity(&q.uid).await.map_err(error)?;
+    let lock = service.upload_lock(&identity.key, &q.id);
+    let _guard = lock.lock().await;
+    let value = crate::conversation::uploads::status(&service, &identity.key, &q.id)
+        .await
+        .map_err(error)?;
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response())
 }
 /// `<img>` types an editor preview needs; any other staged upload stays opaque
 /// bytes. The stored media type comes from the uploading browser, so nothing

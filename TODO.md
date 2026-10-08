@@ -28,7 +28,7 @@
 
 ## Operations and release engineering
 
-- [ ] 在现有 14 个 CI 浏览器回归套件之上，评估按改动范围选套件及周期性完整合成
+- [ ] 在现有 16 个 CI 浏览器回归套件之上，评估按改动范围选套件及周期性完整合成
   数据验收；复用 `run_validation.py` 的 JSON 结果与失败重跑能力。
 
 ## Architecture follow-up
