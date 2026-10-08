@@ -207,7 +207,7 @@ function renderNodes() {
   };
   const abbrs = nodeAbbrs(Nodes.list);
   const counts = new Map();
-  for (const row of S.sessions) if (!sessionHidden(row)) counts.set(row.node_id, (counts.get(row.node_id) || 0) + 1);
+  for (const row of sidebarSessions()) if (sessionInScope(row)) counts.set(row.node_id, (counts.get(row.node_id) || 0) + 1);
   for (const n of Nodes.list) {
     const count = counts.get(n.id) || 0;
     const reason = nodeChipReason(n);

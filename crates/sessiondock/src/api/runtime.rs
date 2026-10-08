@@ -121,7 +121,7 @@ fn cache_report(hit: bool, age: std::time::Duration, ttl: std::time::Duration) -
     })
 }
 
-fn finish(mut response: Value, volatile: Volatile) -> Response {
+fn finish(mut response: Value, volatile: Volatile) -> Value {
     if let (Some(report), Some(managed)) = (volatile.managed, response["managed"].as_object_mut()) {
         managed.insert("cache".into(), report);
     }
@@ -131,7 +131,7 @@ fn finish(mut response: Value, volatile: Volatile) -> Response {
         scan.insert("cache".into(), report);
     }
     response["draft_epoch"] = json!(volatile.draft_epoch);
-    ([(header::CACHE_CONTROL, "no-store")], Json(response)).into_response()
+    response
 }
 
 /// Legacy envelope. Without the scan, `uids` lists only sessions whose managed
@@ -151,9 +151,14 @@ pub async fn live(
     let force = query
         .as_deref()
         .is_some_and(|query| query.split('&').any(|pair| pair == "force=1"));
-    let generation = lifecycle_generation(&state);
+    let value = live_document(&state, force).await?;
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response())
+}
+
+pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value, ApiError> {
+    let generation = lifecycle_generation(state);
     let shared = match &state.runtime {
-        Some(runtime) => Some(shared(&state, runtime, force).await?),
+        Some(runtime) => Some(shared(state, runtime, force).await?),
         None => None,
     };
     let scanner = state.proc_scan.clone().unwrap_or_else(|| {
@@ -212,7 +217,7 @@ pub async fn live(
             },
         ));
     }
-    let response = assemble(&state, shared.as_ref(), scanned, &key).await?;
+    let response = assemble(state, shared.as_ref(), scanned, &key).await?;
     let response = Arc::new(response);
     state.polls.store_live(key, response.clone());
     Ok(finish(

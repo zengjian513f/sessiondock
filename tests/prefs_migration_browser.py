@@ -273,6 +273,9 @@ def main():
                 expect(page.get_by_role("tab", name="功能", exact=True)).to_have_attribute("aria-selected", "true")
                 expect(page.locator("#setting-cache")).to_have_value("64")
                 expect(page.locator("#setting-stop-concurrency")).to_have_value("6")
+                expect(page.locator("#setting-cleanup-days")).to_have_value("2")
+                page.locator("#setting-cleanup-days").fill("5")
+                page.locator("#setting-cleanup-days").press("Tab")
                 page.locator("#setting-cache").select_option("0")
                 assert page.evaluate("CACHE_MAX_BYTES === Infinity")
                 page.locator("#setting-cache").select_option("512")
@@ -282,6 +285,7 @@ def main():
                 after = page.evaluate(LS_DUMP)
                 assert after["sessiondock.cacheMb"] == "512"
                 assert after["sessiondock.stopConcurrency"] == "4"
+                assert after["sessiondock.cleanupDays"] == "5"
                 assert after["sessiondock.settingsTab"] == '"features"'
                 page.keyboard.press("Escape")
                 assert all(k == "__prefs_seeded" or k.startswith("sessiondock.") for k in after), after
@@ -291,6 +295,7 @@ def main():
                 assert page.evaluate("document.documentElement.dataset.theme") == "light"
                 assert page.evaluate("S.nest") is False
                 page.locator("#settings").click()
+                expect(page.locator("#setting-cleanup-days")).to_have_value("5")
                 expect(page.locator("#settings-features")).to_be_visible()
                 expect(page.locator("#setting-cache")).to_have_value("512")
                 expect(page.locator("#setting-stop-concurrency")).to_have_value("4")
@@ -301,7 +306,7 @@ def main():
                 page.get_by_role("tab", name="功能", exact=True).click()
                 page.locator("#setting-stop-concurrency").select_option("1")
                 assert page.evaluate("sessionStopConcurrency()") == 1
-                for selector in ("#settings-dialog", "#setting-cache", "#setting-stop-concurrency"):
+                for selector in ("#settings-dialog", "#setting-cache", "#setting-stop-concurrency", "#setting-cleanup-days"):
                     bounds = page.locator(selector).bounding_box()
                     assert bounds and bounds["x"] >= -1 and bounds["x"] + bounds["width"] <= 391, bounds
 

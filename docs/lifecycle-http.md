@@ -370,6 +370,10 @@ browser's Settings → Features → stop concurrency preference (default six);
 ended selections are skipped. The button updates after each result as
 “已停止 3/44”; failures and uncertain outcomes do not increment the stopped count
 and appear in expandable details beside the button, without a bulk-stop toast.
+An HTTP 200 with `stopped:false` waits for a fresh live snapshot rather than
+incrementing the stopped count. A session still live after a successful reply
+is reported as unconfirmed; a no-op is complete only when fresh state confirms
+absence. Failed or unavailable state refreshes do not establish exit.
 The completed progress stays until the selection changes. Selection controls
 are disabled while the batch runs. Pending launches use their existing
 `term/kill` receipt and instance identity (plus node routing on the Hub).

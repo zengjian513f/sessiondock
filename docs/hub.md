@@ -445,3 +445,18 @@ pub fn open_registry(config: &HubConfig) -> io::Result<Registry>;               
 JSON。`POST /api/sessions/delete`、`/api/sessions/fork-visibility` 走 `delete`/
 `fork_visibility`（body 是已解析的对象）；`POST /api/trash/purge` 且 `body.all` 真值走
 `purge_all(query)`；其余经 `resolve` → `proxy`（见「Hub 二进制与 HTTP 面」一节）。
+
+## 定期清扫计数
+
+节点与 Hub 声明 `cleanup_counts` 能力。`GET /api/sessions/cleanup-counts` 返回
+`ready`、`checked_at`（Unix 毫秒）、`days`（严格超过该整数天数的年龄桶）、
+`partial`、`error`、`interval_seconds` 和 `next_check_at`。初次统计尚未完成为
+`null`；读取只取数字，不触发目录或进程扫描。桶键大于等于用户设置天数的值相加
+即按钮数量；会话 UID、标题和候选名单不留在计数器里，也不写磁盘。
+
+服务启动即统计一次，此后每次结束等待 10800 秒；Hub 读取所有已启用节点的新鲜
+完整目录和运行状态，节点复用本地读模型及运行状态实现。未知运行状态、离线、
+过期数据和读取失败的节点不参与候选；部分失败带 `partial`，全部不可读保留上次
+数字并附 `error`。`SESSIONDOCK_CLEANUP_INTERVAL_SECS` 可覆盖默认秒数（正整数，
+其他值使用默认值），浏览器测试用私有服务的短周期覆盖后台更新。
+弹窗实时检查及颜色规则见[前端清扫约定](frontend-migration-surfaces.md#清扫过期活跃会话)。

@@ -23,6 +23,7 @@ pub struct LaunchAdapter {
 
 #[derive(Clone)]
 pub struct AppState {
+    pub(crate) cleanup_counts: Arc<crate::cleanup::Counts>,
     pub transfer: Option<Arc<crate::transfer::service::TransferService>>,
     pub assets: Arc<Assets>,
     pub capabilities: Arc<Value>,
@@ -199,7 +200,7 @@ pub fn capabilities() -> Value {
     json!({
         "backend": "rust", "stage": "replacement", "read_only": false,
         "storage_namespace": "sessiondock.",
-        "sessions": true, "watch": true, "search": true, "live": false,
+        "cleanup_counts": true, "sessions": true, "watch": true, "search": true, "live": false,
         "terminal": false, "audit": false, "files": false,
         "hub": false, "trash": false,
         "session_delete_tree": false, "bug_report": false, "session_clone_local_codex": false,
