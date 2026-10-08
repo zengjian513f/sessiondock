@@ -208,7 +208,7 @@
       <button class="btn" id="transfer-tasks" hidden title="未完成的移动与复制" aria-label="未完成的移动与复制">
         <svg class="ui-icon" aria-hidden="true"><use href="#i-transfer"/></svg><span class="transfer-task-count"></span>
       </button>
-      <button type="button" class="btn" id="session-cleanup" title="清扫：停止超过两天未更新的活跃会话" aria-label="清扫会话">
+      <button type="button" class="btn" id="session-cleanup" title="清扫：停止超过设置天数未更新的活跃会话" aria-label="清扫会话">
         <svg class="ui-icon" aria-hidden="true"><use href="#i-cleanup"/></svg>
       </button>
       <button class="btn" id="trash" title="回收站" aria-label="回收站">
@@ -461,7 +461,7 @@
 <dialog id="session-cleanup-dialog" class="app-dialog" aria-labelledby="session-cleanup-title">
   <div class="settings-form">
     <div class="modal-head">
-      <div><h2 id="session-cleanup-title">清扫会话</h2><p>停止最后更新距今超过 48 小时的活跃会话。范围为所有已启用机器及 Agent，不受当前筛选影响；会话记录和草稿保留。</p></div>
+      <div><h2 id="session-cleanup-title">清扫会话</h2><p id="session-cleanup-description"></p></div>
     </div>
     <p id="session-cleanup-status" role="status" aria-live="polite"></p>
     <div id="session-cleanup-list" class="trash-list"></div>
@@ -554,6 +554,10 @@
         <option value="1024">1 GB</option>
         <option value="0">不限制</option>
       </select>
+    </label>
+    <label class="setting-row" for="setting-cleanup-days">
+      <span><b>清扫未更新天数</b><small>超过此天数未更新的活跃会话可清扫；默认 2 天</small></span>
+      <input id="setting-cleanup-days" type="number" min="1" step="1" value="2" inputmode="numeric" aria-label="清扫未更新天数">
     </label>
     <label class="setting-row" for="setting-stop-concurrency">
       <span><b>停止并发数量</b><small>同时停止的会话数，下次批量停止生效</small></span>

@@ -2103,6 +2103,7 @@ async function refreshLive(force = false) {
   if (changed) {
     paintLive();
   }
+  return d;
 }
 
 let livePollRequest = null;
@@ -3387,14 +3388,29 @@ async function stopPickedSessions() {
 async function stopSessionTargets(targets, onProgress = () => {}) {
   sessionStopBusy = true;
   const progress = sessionStopProgress = {total: targets.length, stopped: 0, settled: 0,
-    failed: 0, uncertain: 0, details: [], refreshError: false};
+    failed: 0, uncertain: 0, details: [], refreshError: false, phase: 'stopping',
+    results: new Map(targets.map(row => [row.uid, {state: 'queued', message: ''}]))};
+  const publish = () => {
+    const results = [...progress.results.values()];
+    progress.stopped = results.filter(result => result.state === 'stopped').length;
+    progress.failed = results.filter(result => result.state === 'failed').length;
+    progress.uncertain = results.filter(result => result.state === 'uncertain').length;
+    progress.details = targets.flatMap(row => {
+      const result = progress.results.get(row.uid);
+      return ['failed', 'uncertain'].includes(result.state) ? [`「${row.title}」${result.message}`] : [];
+    });
+    if (progress.refreshError) progress.details.push(progress.refreshError);
+    renderPickBar();
+    onProgress(progress);
+  };
   $('#side-stop-details').open = false;
-  renderPickBar();
-  onProgress(progress);
+  publish();
   let next = 0;
   const stopNext = async () => {
     while (next < targets.length) {
-      const target = targets[next++];
+      const target = targets[next++], outcome = progress.results.get(target.uid);
+      outcome.state = 'stopping';
+      publish();
       try {
         if (target.pending) {
           const result = await post('api/term/kill', { record_id: target.record_id,
@@ -3403,41 +3419,65 @@ async function stopSessionTargets(targets, onProgress = () => {}) {
           const current = T.pending.find(row => row.record_id === target.record_id && row.node_id === target.node_id);
           if (current) Object.assign(current, result);
           if (!['exited', 'failed'].includes(result.state)) {
-            progress.uncertain++;
-            progress.details.push(`「${target.title}」停止请求已发送，尚未确认退出`);
+            outcome.state = 'uncertain';
+            outcome.message = '停止请求已发送，尚未确认退出';
             continue;
           }
+          outcome.state = 'stopped';
         } else {
           const result = await requestSessionStop(target);
           if (result.stage === 'uncertain') {
-            progress.uncertain++;
-            progress.details.push(`「${target.title}」${STOP_STAGE_TEXT.uncertain}`);
-            continue;
+            outcome.state = 'uncertain';
+            outcome.message = STOP_STAGE_TEXT.uncertain;
+          } else {
+            // HTTP 200 can be a no-op (stopped:false), not exit evidence.
+            outcome.state = result.stopped === true ? 'stopped' : 'verifying';
           }
         }
-        progress.stopped++;
       } catch (error) {
-        progress.failed++;
-        progress.details.push(`「${target.title}」停止失败：${error.message || error}`);
+        outcome.state = 'failed';
+        outcome.message = `停止失败：${error.message || error}`;
       } finally {
         progress.settled++;
-        renderPickBar();
-        onProgress(progress);
+        paintLive();
+        publish();
       }
     }
   };
   try {
     await Promise.all(Array.from({length: Math.min(sessionStopConcurrency(), targets.length)}, stopNext));
-    await refreshLive(true);
+    progress.phase = 'verifying';
+    publish();
+    const live = await refreshLive(true);
+    const liveUids = new Set(live?.uids || []);
+    for (const target of targets) {
+      const outcome = progress.results.get(target.uid);
+      if (target.pending || !['stopped', 'verifying'].includes(outcome.state)) continue;
+      const known = live && live.known !== false && (!HUB_MODE
+        || (Nodes.list.some(node => node.id === target.node_id && node.online !== false)
+          && !(live.errors || []).some(error => error.node_id === target.node_id)));
+      if (known && !liveUids.has(target.uid)) {
+        outcome.state = 'stopped';
+      } else if (liveUids.has(target.uid) || outcome.state === 'verifying') {
+        outcome.state = 'uncertain';
+        outcome.message = liveUids.has(target.uid)
+          ? '停止后复查仍在运行，未确认退出；保留在列表中，不会自动重试'
+          : '无法读取最新运行状态，尚未确认退出';
+      }
+    }
+    publish();
     if (typeof loadTermList === 'function') await loadTermList();
     paintLive();
   } catch (error) {
-    progress.refreshError = true;
-    progress.details.push(`停止请求已处理，刷新状态失败：${error.message || error}`);
+    progress.refreshError = `停止请求已处理，刷新状态失败：${error.message || error}`;
+    for (const outcome of progress.results.values()) if (outcome.state === 'verifying') {
+      outcome.state = 'uncertain';
+      outcome.message = '停止返回未确认退出，刷新状态失败';
+    }
   } finally {
     sessionStopBusy = false;
-    renderPickBar();
-    onProgress(progress);
+    progress.phase = 'done';
+    publish();
   }
 }
 
@@ -3451,7 +3491,12 @@ $('#side-pick-attach').onclick = () => setNestAttach(pickedNestable());
 // Pending launches lack a last-update timestamp and remain outside this action.
 let sessionCleanupBusy = false;
 let sessionCleanupTargets = [];
-async function staleActiveSessions() {
+let sessionCleanupDaysInDialog = 2;
+function sessionCleanupDays() {
+  const days = Number(store.get('cleanupDays', 2));
+  return Number.isInteger(days) && days > 0 ? days : 2;
+}
+async function staleActiveSessions(days) {
   const [response] = await Promise.all([
     fetch(appUrl('api/sessions?force=1'), {signal: AbortSignal.timeout(15000)}),
     refreshLive(true),
@@ -3460,24 +3505,45 @@ async function staleActiveSessions() {
   const data = await response.json();
   if (!Array.isArray(data.sessions)) throw new Error('会话列表格式错误');
   applyNodeState(data, 'sessions');
-  const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
   return data.sessions.filter(row => !row.agent_id && !row.stale && S.live.has(row.uid)
     && Date.parse(row.updated) < cutoff
     && !['sessions', 'live'].some(kind => Nodes.errors.get(kind)?.some(error => error.node_id === row.node_id))
     && (!HUB_MODE || Nodes.list.some(node => node.id === row.node_id && node.online !== false)));
 }
-function paintCleanupList(lines) {
-  $('#session-cleanup-list').replaceChildren(...lines.map(text => {
-    const row = document.createElement('div');
-    row.className = 'trash-item';
-    const main = document.createElement('div');
-    main.className = 'trash-main';
-    main.style.overflowWrap = 'anywhere';
-    main.textContent = text;
-    row.append(main);
-    return row;
-  }));
+function paintCleanupList(targets, progress = null) {
+  const list = $('#session-cleanup-list');
+  const existing = new Map([...list.querySelectorAll('[data-uid]')].map(row => [row.dataset.uid, row]));
+  list.querySelector('.trash-empty')?.remove();
+  const labels = {queued: '等待停止', stopping: '正在停止…', verifying: '正在确认是否退出…',
+    failed: '停止失败', uncertain: '尚未确认退出'};
+  for (const target of targets) {
+    const result = progress?.results.get(target.uid);
+    if (result?.state === 'stopped') continue;
+    let row = existing.get(target.uid);
+    existing.delete(target.uid);
+    if (!row) {
+      row = el('div', 'trash-item');
+      row.dataset.uid = target.uid;
+      const main = el('div', 'trash-main');
+      main.style.overflowWrap = 'anywhere';
+      main.append(el('div', 'cleanup-session-label'), el('div', 'trash-meta'));
+      row.append(main);
+      list.append(row);
+    }
+    row.querySelector('.cleanup-session-label').textContent =
+      `${target.node_name ? target.node_name + ' · ' : ''}${SOURCES[target.source]?.name || target.source} · ${target.title || target.sid} · ${fmtTime(target.updated)}`;
+    row.querySelector('.trash-meta').textContent = result ? result.message || labels[result.state] : '';
+    row.dataset.state = result?.state || 'preview';
+  }
+  for (const row of existing.values()) row.remove();
+  if (!list.children.length && progress) {
+    list.append(el('div', 'trash-empty', progress.phase === 'done'
+      ? progress.total ? '清扫完成，目标会话均已确认退出。' : '复查后没有需要停止的会话。'
+      : '正在复核停止结果…'));
+  }
 }
+
 function cleanupUnavailableNote() {
   const unavailable = HUB_MODE ? Nodes.list.filter(node => node.online === false
     || ['sessions', 'live'].some(kind => Nodes.errors.get(kind)?.some(error => error.node_id === node.id))) : [];
@@ -3487,6 +3553,9 @@ $('#session-cleanup').onclick = async () => {
   if (sessionCleanupBusy || sessionStopBusy || sessionDeleteBusy) return;
   const dialog = $('#session-cleanup-dialog'), status = $('#session-cleanup-status');
   sessionCleanupTargets = [];
+  sessionCleanupDaysInDialog = sessionCleanupDays();
+  $('#session-cleanup-description').textContent =
+    `停止最后更新距今超过 ${sessionCleanupDaysInDialog} 天的活跃会话。范围为所有已启用机器及 Agent，不受当前筛选影响；会话记录和草稿保留。天数可在设置 → 功能中修改。`;
   sessionCleanupBusy = true;
   $('#session-cleanup-start').disabled = true;
   $('#session-cleanup-close').disabled = true;
@@ -3496,12 +3565,11 @@ $('#session-cleanup').onclick = async () => {
   dialog.showModal();
   try {
     if (!SessionDockCapabilities.allows('live')) throw new Error('运行状态未知，无法清扫会话。');
-    sessionCleanupTargets = await staleActiveSessions();
+    sessionCleanupTargets = await staleActiveSessions(sessionCleanupDaysInDialog);
     status.textContent = (sessionCleanupTargets.length
-      ? `找到 ${sessionCleanupTargets.length} 个超过两天未更新的活跃会话。`
-      : '没有超过两天未更新的活跃会话。') + cleanupUnavailableNote();
-    paintCleanupList(sessionCleanupTargets.map(row =>
-      `${row.node_name ? row.node_name + ' · ' : ''}${SOURCES[row.source]?.name || row.source} · ${row.title || row.sid} · ${fmtTime(row.updated)}`));
+      ? `找到 ${sessionCleanupTargets.length} 个超过 ${sessionCleanupDaysInDialog} 天未更新的活跃会话。`
+      : `没有超过 ${sessionCleanupDaysInDialog} 天未更新的活跃会话。`) + cleanupUnavailableNote();
+    paintCleanupList(sessionCleanupTargets);
     $('#session-cleanup-start').disabled = !sessionCleanupTargets.length;
   } catch (error) {
     status.textContent = `检查失败：${error.message || error}`;
@@ -3525,12 +3593,13 @@ $('#session-cleanup-start').onclick = async () => {
   status.textContent = '正在复查会话状态…';
   try {
     const confirmed = new Set(sessionCleanupTargets.map(row => row.uid));
-    const targets = (await staleActiveSessions()).filter(row => confirmed.has(row.uid));
+    const targets = (await staleActiveSessions(sessionCleanupDaysInDialog)).filter(row => confirmed.has(row.uid));
     const skipped = confirmed.size - targets.length;
     await stopSessionTargets(targets, progress => {
       status.textContent = `已停止 ${progress.stopped}/${progress.total}，失败 ${progress.failed}，未确认 ${progress.uncertain}`
         + (skipped ? `；已更新或退出等会话跳过 ${skipped} 个` : '') + cleanupUnavailableNote();
-      paintCleanupList(progress.details);
+      paintCleanupList(targets, progress);
+      if (progress.refreshError) status.textContent += `；${progress.refreshError}`;
     });
   } catch (error) {
     status.textContent = `清扫失败：${error.message || error}`;
@@ -10317,6 +10386,7 @@ function openSettings() {
   $('#setting-cache').value = String(cacheLimitMb);
   $('#setting-sleep').value = String(SessionDockSleep.minutes);
   $('#setting-stop-concurrency').value = String(sessionStopConcurrency());
+  $('#setting-cleanup-days').value = String(sessionCleanupDays());
   $('#setting-console-paste-files').checked = consolePasteFilesEnabled();
   setMachineNote('');
   showSettingsTab(store.get('settingsTab', 'appearance'));
@@ -10357,6 +10427,11 @@ $('#setting-cache').onchange = e => {
   trimCache();
 };
 $('#setting-stop-concurrency').onchange = e => store.set('stopConcurrency', Number(e.target.value));
+$('#setting-cleanup-days').onchange = e => {
+  const days = Number(e.target.value);
+  if (Number.isInteger(days) && days > 0) store.set('cleanupDays', days);
+  e.target.value = String(sessionCleanupDays());
+};
 $('#setting-console-paste-files').onchange = e => store.set('consolePasteFiles', e.target.checked === true);
 
 document.addEventListener('keydown', e => {

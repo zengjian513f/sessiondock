@@ -392,11 +392,11 @@ header.header-fold-nodes #node-chips button { min-width: 28px; padding-inline: 6
 .setting-row b, .setting-row small { display: block; }
 .setting-row b { font-size: 13px; }
 .setting-row small { margin-top: 2px; color: var(--muted); font-size: 11.5px; line-height: 1.35; }
-.setting-row select {
+.setting-row select, .setting-row input[type="number"] {
   width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px;
   outline: none; background: var(--panel-2); color: var(--text); font: inherit;
 }
-.setting-row select:focus { border-color: var(--accent); }
+.setting-row select:focus, .setting-row input[type="number"]:focus { border-color: var(--accent); }
 .setting-row input[type="checkbox"] {
   width: 20px; height: 20px; margin: 0; justify-self: end; accent-color: var(--accent); cursor: pointer;
 }
