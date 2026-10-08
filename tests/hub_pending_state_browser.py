@@ -198,6 +198,74 @@ def node_switch_cwd(browser, hub, node, other):
     other.pop("dirs")
 
 
+def shared_recent_cwd(browser, hub, node, other):
+    """Other-node history and saved recents are offered only after a local check."""
+    node.set(dirs=['/shared/session', '/shared/recent', '/shared/prefix-extra'])
+    other.set(dirs=['/same/project'])
+    context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
+    page = context.new_page()
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+
+    def sessions(route):
+        response = route.fetch(headers={key: value for key, value in route.request.headers.items()
+                                        if key.lower() != 'x-sessiondock-list'})
+        data = response.json()
+        for row in data.get('sessions', []):
+            if row.get('node_id') == other.nid:
+                row['cwd'] = '/shared/session'
+        route.fulfill(json=data)
+
+    context.route('**/api/sessions*', sessions)
+    page.goto(f'http://127.0.0.1:{hub.port}/', wait_until='networkidle')
+    page.wait_for_function('S.sessions.length === 2 && T.listLoaded && Nodes.list.length === 2')
+    page.evaluate('''nid => store.set('newDirs.' + nid,
+      ['/shared/recent', '/missing/recent', '/shared/recent/', '/shared/prefix'])''', other.nid)
+    page.locator('#new-session').click()
+    page.locator('#new-node').select_option(node.nid)
+    cwd = page.locator('#new-cwd')
+    cwd.fill('')
+    options = page.locator('#new-cwd-options [role=option]')
+    expect(options.filter(has=page.locator('.new-cwd-option-path', has_text='/shared/session'))).to_have_count(1)
+    recent = page.locator('#new-cwd-options [role=option][title="/shared/recent"]')
+    expect(recent).to_be_visible()
+    expect(options.filter(has_text='/missing/recent')).to_have_count(0)
+    expect(options.filter(has_text='/shared/prefix')).to_have_count(0)
+    expect(options.filter(has_text='/shared/recent')).to_have_count(1)
+    recent.click()
+    expect(cwd).to_have_value('/shared/recent')
+    cwd.fill('session')
+    expect(page.locator('#new-cwd-options [role=option][title="/shared/session"]')).to_be_visible()
+    # Hold one old-machine response while switching. It must not replace the
+    # new machine's home or bring an unchecked old-machine directory back.
+    page.locator('#new-session-dialog .modal-actions button[type=button]').click()
+    held = []
+
+    def delay_check(route):
+        response = route.fetch()
+        if f'node={node.nid}' in route.request.url and 'path=%2Fshared%2Fsession' in route.request.url:
+            held.append((route, response))
+            page.evaluate('window.__sharedCwdHeld = true')
+        else:
+            route.fulfill(response=response)
+
+    context.route('**/api/term/complete-dir?*', delay_check)
+    page.locator('#new-session').click()
+    page.wait_for_function('window.__sharedCwdHeld === true')
+    page.locator('#new-node').select_option(other.nid)
+    cwd.fill('')
+    expect(options.filter(has_text='/home/' + other.name)).to_be_visible()
+    for route, response in held:
+        route.fulfill(response=response)
+    page.wait_for_function('''home => cwdCompletion.common.some(row => row.cwd === home)
+      && !cwdCompletion.common.some(row => row.cwd === '/home/NodeA')''', arg='/home/' + other.name)
+    expect(options.filter(has_text='/home/' + node.name)).to_have_count(0)
+    assert not errors, errors
+    context.close()
+    node.pop('dirs')
+    other.pop('dirs')
+
+
 def native_stop(browser, hub, node, other):
     """A session whose console is open on its machine but not in live state
     is stoppable from the hub page; the stop names that session."""
@@ -256,6 +324,7 @@ def main():
                     browser = playwright.chromium.launch(**launch)
                     node_source_picker(browser, hub, *nodes)
                     node_switch_cwd(browser, hub, *nodes)
+                    shared_recent_cwd(browser, hub, *nodes)
                     native_stop(browser, hub, *nodes)
                     scenario(browser, hub, *nodes)
                     browser.close()

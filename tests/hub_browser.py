@@ -63,6 +63,68 @@ class Injector:
         route.fulfill(status=response.status, headers={"content-type": "application/json"}, body=json.dumps(data))
 
 
+def check_directory_view(browser, hub):
+    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+    page = context.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+
+    def directories(route):
+        headers = {key: value for key, value in route.request.headers.items()
+                   if key.lower() != 'x-sessiondock-list'}
+        response = route.fetch(headers=headers)
+        data = response.json()
+        for row in data.get("sessions", []):
+            if row.get("node_id") == NID["c"]:
+                row["cwd"] = "/other/project"
+            if row.get("node_id") == NID["b"]:
+                row["updated"] = "2026-09-08T00:00:00Z"
+        route.fulfill(json=data)
+
+    context.route("**/api/sessions*", directories)
+    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
+    page.wait_for_function("S.sessions.length === 3 && T.listLoaded")
+    expect(page.locator('#side > .group')).to_have_count(3)
+    page.get_by_role('button', name='按目录聚合', exact=True).click()
+    expect(page.locator('#side > .group')).to_have_count(2)
+    shared = page.locator('#side > .group[data-key="/same/project"]')
+    expect(shared.locator('.gname')).to_have_text('/same/project')
+    expect(shared.locator('.gcount')).to_have_text('2')
+    expect(shared.locator('.item .node-badge')).to_have_text(['NodeB', 'NodeA'])
+    expect(page.locator('#side > .group[data-key="/other/project"] .gcount')).to_have_text('1')
+    shared.locator('.item').first.click(button='right')
+    page.locator('#item-menu [data-act=pick]').click()
+    shared.locator('.ghead-pick').click()
+    expect(page.locator('#side-picked')).to_have_text('已选 2 项')
+    shared.locator('.ghead').click()
+    expect(shared.locator('.item')).to_have_count(0)
+    expect(shared.locator('.ghead-pick')).to_be_checked()
+    page.locator('#side-pick-cancel').click()
+    expect(shared.locator('.item')).to_have_count(0)
+    page.reload(wait_until='networkidle')
+    page.wait_for_function('S.sessions.length === 3 && T.listLoaded')
+    expect(page.locator('#view [data-v=directory]')).to_have_class('on')
+    expect(shared.locator('.item')).to_have_count(0)
+    shared.locator('.ghead').click()
+    page.locator('#q').fill('NodeB')
+    expect(shared.locator('.gcount')).to_have_text('1')
+    expect(shared.locator('.item .node-badge')).to_have_text('NodeB')
+    page.locator('#q').fill('')
+    page.get_by_role('button', name='NodeA 1', exact=True).click()
+    expect(shared.locator('.gcount')).to_have_text('1')
+    page.get_by_role('button', name='NodeA 1', exact=True).click()
+    expect(shared.locator('.gcount')).to_have_text('2')
+    shared.locator(f'.item[data-uid="{scoped(NID["b"], "claude:same-file-hash")}"]').click()
+    expect(page.locator('#detail')).to_contain_text('reply NodeB')
+    page.get_by_role('button', name='项目树', exact=True).click()
+    expect(page.locator('#side > .group')).to_have_count(3)
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.get_by_role('button', name='按目录聚合', exact=True).click()
+    expect(page.locator('#side > .group')).to_have_count(2)
+    assert not errors, errors
+    context.close()
+
+
 def check_page(page, nodes, hub):
     a, b, vega = nodes
     page.wait_for_function(('S.sessions.length === 3 && Nodes.list.length === 3 && !!Nodes.capabilities["' + NID["b"] + '"]'))
@@ -249,9 +311,18 @@ def check_nesting(page, injector):
         if row["depth"] == 1:
             parent = rows[index - 1]
             assert parent["depth"] == 0 and parent["node"] == row["node"], (parent, row)
+    page.get_by_role('button', name='按目录聚合', exact=True).click()
+    expect(page.locator('#side > .group')).to_have_count(1)
+    rows = page.evaluate(ROWS_JS)
+    assert len(rows) == 6, rows
+    for index, row in enumerate(rows):
+        if row['depth'] == 1:
+            parent = rows[index - 1]
+            assert parent['depth'] == 0 and parent['node'] == row['node'], (parent, row)
     page.locator("#nest-flat").click()
     page.wait_for_function("S.nest === false")
     injector.on = False
+    page.get_by_role('button', name='项目树', exact=True).click()
     page.evaluate("loadSessions(true)")
     page.wait_for_function("S.sessions.length === 3")
 
@@ -336,6 +407,7 @@ def main():
                     if executable:
                         launch["executable_path"] = executable
                     browser = playwright.chromium.launch(**launch)
+                    check_directory_view(browser, hub)
                     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
                     injector = Injector()
                     context.route("**/api/sessions*", injector.handle)

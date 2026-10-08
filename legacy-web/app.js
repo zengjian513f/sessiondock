@@ -1094,7 +1094,7 @@ function timelineDirectoryMarkup(row) {
 
 let timelineFitContext = null;
 function fitTimelineDirectories(elements = null, context = null) {
-  if (S.view !== 'date') return;
+  if (S.view !== 'date' && S.view !== 'directory') return;
   elements ||= [...document.querySelectorAll('#side .cwd-path')];
   if (!elements.length) return;
   if (!context) {
@@ -4222,6 +4222,7 @@ function groupBy(list, {skipClosed = false} = {}) {
     const updated = stamp(s);
     if (S.view === 'date' && !dates.has(updated)) dates.set(updated, dayKey(updated));
     const k = S.view === 'tree' ? (s.node_id ? JSON.stringify([s.node_id, s.cwd || '(未知)']) : (s.cwd || '(未知)'))
+      : S.view === 'directory' ? (s.cwd || '(未知)')
       : S.view === 'group' ? `group:${s.group || ''}` : dates.get(updated);
     if (!m.has(k)) m.set(k, []);
     m.get(k).push(s);
@@ -4500,7 +4501,7 @@ function createSidebarRow(r, picked = pickedSessions) {
        <div class="t" title="${esc(s.title)}">${hl(s.title)}</div>
        <div class="m">${esc(meta)}</div>
        <div class="nest-inactive"${!r.inactive || r.closed ? ' hidden' : ''}>${r.inactive ? `有 ${r.inactive} 个不活跃会话（已被筛选隐藏）` : ''}</div>
-       ${S.view === 'date'
+       ${S.view === 'date' || S.view === 'directory'
          ? `<div class="cwd" title="${esc(s.cwd)}" data-node-name="${esc(s.node_name || '')}">${timelineDirectoryMarkup(s)}</div>` : ''}
        ${snippet ? `<div class="snip" title="${esc(snippet)}">${sidebarSnippet(snippet)}</div>` : ''}
      </div>
@@ -4697,7 +4698,7 @@ function layoutSidebarWindow({force = false, top = null} = {}) {
     }
     // Abbreviating a timeline path can remove many wrapped lines. Measure
     // only its final layout, otherwise the window treats empty space as rows.
-    if (S.view === 'date' && changed.length) {
+    if ((S.view === 'date' || S.view === 'directory') && changed.length) {
       fitTimelineDirectories(changed.flatMap(plan => [...plan.ul.querySelectorAll('.cwd-path')]),
         force ? null : timelineFitContext);
     }
@@ -4824,7 +4825,7 @@ function renderSide(suppliedList = null) {
     oldGroups.delete(key);
     g.classList.toggle('closed', sidebarGroupClosed(key));
     g.dataset.key = key;
-    const label = S.view === 'tree' ? nodeDirectory(first) : S.view === 'group' ? key.slice(6) : key;   // 分组标题不缩写, 只换 ~
+    const label = S.view === 'tree' ? nodeDirectory(first) : S.view === 'directory' ? shortCwd(key, 999) : S.view === 'group' ? key.slice(6) : key;   // 分组标题不缩写, 只换 ~
     const groupUids = summary ? summary.pickUids : items.filter(sessionPickable).map(x => x.uid);
     const headSignature = JSON.stringify([label, key, count, S.view, first?.node_name]);
     const oldHead = g.querySelector(':scope > .ghead');

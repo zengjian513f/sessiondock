@@ -135,7 +135,7 @@ def tier_of(width):
 
 
 def sweep_widths():
-    return sorted(set(range(320, 1501, 10)) | {608, 720, 721, 1199, 1200, 1698}, reverse=True)
+    return sorted(set(range(320, 1501, 10)) | {608, 720, 721, 1199, 1200, 1698, 1900}, reverse=True)
 
 
 def check_header(page, width, tiers, header_actions, chrome_tiers):
@@ -414,7 +414,7 @@ def run(page, uid):
     page.evaluate("uid => openSession(uid)", uid)
     page.wait_for_function('document.querySelector("#msgs")?.textContent.includes("reply Sweep")')
     check_status_badge(page, uid)
-    page.set_viewport_size({"width": 1698, "height": 900})
+    page.set_viewport_size({"width": 1900, "height": 900})
     page.evaluate("setSideWidth(340, true)")
     settle(page)
     seed_header_nodes(page)

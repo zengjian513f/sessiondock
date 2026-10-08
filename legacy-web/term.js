@@ -1109,10 +1109,10 @@ function suggestedSessionDir(cwd) {
     root => path === root || path.startsWith(root + '/'));
 }
 
-function commonSessionDirs() {
+function commonSessionDirs(includeOtherNodes = false) {
   const dirs = new Map();
   for (const s of S.sessions) {
-    if (HUB_MODE && s.node_id !== newNodeId()) continue;
+    if (HUB_MODE && !includeOtherNodes && s.node_id !== newNodeId()) continue;
     const cwd = String(s.cwd || '');
     if (!suggestedSessionDir(cwd)) continue;
     const row = dirs.get(cwd) || { cwd, count: 0, updated: '' };
@@ -1120,17 +1120,47 @@ function commonSessionDirs() {
     if ((s.updated || '') > row.updated) row.updated = s.updated || '';
     dirs.set(cwd, row);
   }
-  for (const [i, cwd] of store.get(newDirsKey(), []).entries()) {
-    if (!cwd?.startsWith('/')) continue;
-    const row = dirs.get(cwd) || { cwd, count: 0, updated: '' };
-    row.recent = 20 - i;
-    dirs.set(cwd, row);
+  const keys = includeOtherNodes && HUB_MODE
+    ? [...new Set([newDirsKey(), ...Nodes.machines.map(node => 'newDirs.' + node.id)])]
+    : [newDirsKey()];
+  for (const key of keys) {
+    for (const [i, cwd] of store.get(key, []).entries()) {
+      if (!cwd?.startsWith('/')) continue;
+      const row = dirs.get(cwd) || { cwd, count: 0, updated: '' };
+      row.recent = Math.max(row.recent || 0, 20 - i);
+      dirs.set(cwd, row);
+    }
   }
   const home = newNodeCapabilities().home;
   if (home && !dirs.has(home)) dirs.set(home, { cwd: home, count: 0, updated: '' });
   return [...dirs.values()].sort((a, b) =>
     (b.recent || 0) - (a.recent || 0) || b.count - a.count
     || b.updated.localeCompare(a.updated) || a.cwd.localeCompare(b.cwd));
+}
+
+// 当前机器的建议立即显示；其他机器的路径经当前机器确认后再加入。
+// 每次打开或切换机器重新检查，过期响应不能覆盖新的目录列表。
+let commonCwdRun = 0;
+async function loadSharedCwdOptions() {
+  const run = ++commonCwdRun, node = newNodeId();
+  if (!HUB_MODE || !newNodeCapabilities().enabled
+      || !SessionDockCapabilities.allows('terminal_complete_dir')) return;
+  const known = new Set(cwdCompletion.common.map(row => cwdPathKey(row.cwd)));
+  const candidates = commonSessionDirs(true);
+  const pending = candidates.filter(row => !known.has(cwdPathKey(row.cwd)));
+  if (!pending.length) return;
+  const current = () => run === commonCwdRun && node === newNodeId()
+    && $('#new-session-dialog').open;
+  await Promise.all(Array.from({length: Math.min(4, pending.length)}, async () => {
+    while (pending.length) {
+      const row = pending.shift();
+      if (await newNodeHasDir(row.cwd, node)) known.add(cwdPathKey(row.cwd));
+      if (!current()) return;
+    }
+  }));
+  if (!current()) return;
+  cwdCompletion.common = candidates.filter(row => known.has(cwdPathKey(row.cwd)));
+  if (!$('#new-cwd-picker').hidden) scheduleCwdCompletions();
 }
 
 const CWD_COMPLETION_DELAY = 120;
