@@ -11194,12 +11194,14 @@ async function cloneSessionGroup(uid, resumed = null) {
       transferOverallProgress(data, {cross:crossMachine(), moving:mode() === 'move', executing:operationStarted}));
     const percent = Math.floor(overallProgress * 10) / 10;
     const summary = `${completed ? '总进度' : '预计总进度'} ${percent}% · ${label}`;
-    const detail = work.map(step => {
+    const route = data.transport;
+    const transportDetail = route ? [route.method === 'scp' ? `SCP 直传${route.network ? ' · '+route.network : ''}` : 'Hub 中转', route.fallback].filter(Boolean).join(' · ') : '';
+    const detail = [transportDetail, work.map(step => {
       if (!step.unit) return step.label;
       const amount = count => step.unit === 'bytes' ? fmtSize(count) : String(count);
       const count = step.total == null ? amount(step.done) : `${amount(step.done)} / ${amount(step.total)}`;
       return `${step.label} · ${count}${step.unit === 'bytes' ? '' : ' '+step.unit}`;
-    }).join(' → ');
+    }).join(' → ')].filter(Boolean).join(' · ');
     progress.hidden = false; progress.dataset.phase = data.phase;
     progress.querySelector('.transfer-progress-label').textContent = summary;
     progress.querySelector('.transfer-progress-detail').textContent = detail;
@@ -11307,7 +11309,7 @@ function transferOverallProgress(data, {cross, moving, executing}) {
     preparing:{'复制相关历史':[.15,.65], '改写数据库记录':[.65,.8], '核对数据库记录':[.8,.85],
       '保存迁移记录':[.1,.15], '保存传输清单':[.9,.95], '接收迁移清单':[.95,1]},
     checking:{'编码迁移清单':[0,.1], '发送迁移清单':[.1,.7], '读取数据库记录':[.7,.85], '核对数据库记录':[.85,1]},
-    transferring:{'打包历史文件':[.1,.4], '传输会话包':[.4,.9], '接收历史文件':[.9,1]},
+    transferring:{'打包历史文件':[.1,.4], '传输会话包':[.4,.9], 'SCP 接收会话包':[.4,.9], '接收历史文件':[.9,1]},
     publishing:{'发布历史文件':[.1,.55], '导入数据库记录':[.55,1]},
     retiring:{'清理源历史':[.1,.85], '清理源数据库记录':[.85,1]},
   }[phase];

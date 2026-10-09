@@ -1175,7 +1175,7 @@ impl TransferService {
             .collect()
     }
     pub fn public(op: &Operation) -> Value {
-        json!({"link_map":Self::link_map(op),"created_ms":op.created_ms,"confirm_mode":true,"reserve_manifest":true,"operation_id":op.id,"mode":if op.moving {"move"} else {"clone"},"new_ids":op.new_ids(),"phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
+        json!({"link_map":Self::link_map(op),"created_ms":op.created_ms,"confirm_mode":true,"reserve_manifest":true,"scp_transfer":true,"operation_id":op.id,"mode":if op.moving {"move"} else {"clone"},"new_ids":op.new_ids(),"phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
             "dynamic_tools":op.dynamic_tools,
             "sessions":op.group().members.iter().map(|m|json!({"uid":m.uid,"sid":m.sid,"title":m.title,"agent":m.agent,"source":m.source,
                 "cwd":m.cwd,"file_count":op.plan.files.iter().filter(|f|f.source==m.path).count()+op.file_plan.as_ref().map_or(0,|p|p.files.iter().filter(|f|f.owner==m.uid).count()),

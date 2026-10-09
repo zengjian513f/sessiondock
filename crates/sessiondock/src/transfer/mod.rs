@@ -17,6 +17,7 @@ pub mod moving;
 pub mod native;
 pub mod progress;
 pub mod service;
+pub mod transport;
 
 use serde::{Deserialize, Serialize};
 

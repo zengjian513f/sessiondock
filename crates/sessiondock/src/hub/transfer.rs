@@ -1,5 +1,7 @@
 //! Durable cross-node clone orchestration over the authenticated node channel.
 //! The Hub forwards tar chunks without buffering the archive in memory.
+mod transport;
+
 use super::{Client, Registry, Target, client, namespace};
 use crate::transfer::TransferError;
 use serde::{Deserialize, Serialize};
@@ -40,8 +42,11 @@ struct Journal {
     bytes_total: u64,
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    transport: Option<transport::Report>,
 }
 pub struct Transfers {
+    policy: crate::transfer::transport::Policy,
     directory: PathBuf,
     work: crate::transfer::progress::Registry,
     links: Arc<std::sync::Mutex<std::collections::BTreeMap<String, crate::session_links::Record>>>,
@@ -98,6 +103,7 @@ impl Transfers {
             }
         }
         Ok(Self {
+            policy: Default::default(),
             directory,
             work: Default::default(),
             links: Arc::new(std::sync::Mutex::new(links)),
@@ -107,6 +113,10 @@ impl Transfers {
             cancellations: Default::default(),
             heartbeats: Default::default(),
         })
+    }
+    pub fn with_policy(mut self, policy: crate::transfer::transport::Policy) -> Self {
+        self.policy = policy;
+        self
     }
     /// No browser is responsible for finishing compensation or a committed move.
     /// On restart all unfinished journals are reconciled, never blindly replayed.
@@ -332,7 +342,7 @@ impl Transfers {
     fn public(journal: &Journal) -> Value {
         json!({"request":journal.request,"phase":journal.phase,"plan":journal.preview,
             "bytes_sent":journal.bytes_sent,"bytes_total":journal.bytes_total,
-            "error":journal.error,"result":journal.result})
+            "error":journal.error,"result":journal.result,"transport":journal.transport})
     }
     /// Startup recovery and successful saves keep this view current without
     /// reopening completed journals or waiting for the operation's mutation gate.
@@ -409,8 +419,12 @@ impl Transfers {
                 journal.phase.as_str(),
                 "checking" | "publishing" | "verifying"
             ) || journal.phase == "transferring"
-                && journal.bytes_total > 0
-                && journal.bytes_sent >= journal.bytes_total
+                && (journal.bytes_total > 0
+                    && journal
+                        .transport
+                        .as_ref()
+                        .is_some_and(|r| r.method == "scp")
+                    || journal.bytes_total > 0 && journal.bytes_sent >= journal.bytes_total)
             {
                 &request.target_node
             } else {
@@ -791,6 +805,7 @@ impl Transfers {
                 bytes_sent: 0,
                 bytes_total: 0,
                 error: None,
+                transport: None,
             }
         };
         if journal.phase == "complete" {
@@ -982,10 +997,11 @@ impl Transfers {
                 }
                 journal.phase = "transferring".into();
                 self.save(&journal).await?;
-                self.stream(
+                self.transport(
                     &client,
                     &source_address,
                     &target_address,
+                    source_state["scp_transfer"] == true && checked.1["scp_transfer"] == true,
                     &operation,
                     &mut journal,
                 )

@@ -171,9 +171,14 @@ def main():
     parser.add_argument('--preserve',action='store_true',help='Exercise identity-preserving cross-node copies')
     parser.add_argument('--move',action='store_true',help='Move groups, checking source retirement or shared-storage rejection')
     parser.add_argument('--dependencies',action='store_true',help='Check native external media/output/link contents on an SSH peer')
+    parser.add_argument('--scp-source', help='Explicit source SSH address reachable from the peer; enables SCP transport')
+    parser.add_argument('--scp-target', help='Explicit peer SSH address reachable from the source, for move-back')
+    parser.add_argument('--scp-user', default=os.environ.get('USER'), help='SSH user on both isolated fixture hosts')
+    parser.add_argument('--scp-port', type=int, default=22)
     args=parser.parse_args()
+    if args.scp_source and (not args.peer or not args.scp_target): parser.error('SCP requires --peer and --scp-target')
     if args.dependencies and not args.peer:parser.error('--dependencies requires --peer')
-    with tempfile.TemporaryDirectory(prefix='sessiondock-bundle-browser-') as temporary, sync_playwright() as pw:
+    with tempfile.TemporaryDirectory(prefix='sessiondock-bundle space [x]-' if args.scp_source else 'sessiondock-bundle-browser-') as temporary, sync_playwright() as pw:
         root=Path(temporary)
         browser=pw.chromium.launch(headless=True,**({'executable_path':os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') else {}))
         try:
@@ -221,7 +226,14 @@ def main():
                             env.update({f'SESSIONDOCK_{k.upper()}_ROOT':v for k,v in roots.items()})
                             env['SESSIONDOCK_PROC_ROOT']=str(corpus.root/'proc')
                             stack.enter_context(isolated_server(corpus,args.binary,state_dir=corpus.root/'state',trash_dir=corpus.root/'trash',extra_env=env,**(receipt_options if node is a else {})))
-                        if hub is None:hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[a,b])
+                        if hub is None:
+                            hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[a,b])
+                            if args.scp_source:
+                                policy=hubroot/'transport.json'
+                                policy.write_text(json.dumps({'default':'hub','networks':[{'name':'fixture-ssh','transport':'scp','nodes':{
+                                    a.nid:{'address':args.scp_source,'user':args.scp_user,'port':args.scp_port},
+                                    b.nid:{'address':args.scp_target,'user':args.scp_user,'port':args.scp_port}}}]}))
+                                hub.env['SESSIONDOCK_HUB_TRANSFER_CONFIG']=str(policy)
                         hub.start();stack.callback(hub.stop)
                         context=browser.new_context(service_workers='block');stack.callback(context.close)
                         page=context.new_page();page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
@@ -537,6 +549,9 @@ def main():
                         task_request={'uid':source_uid,'target_node':b.nid,'operation_id':completed['operation_id']}
                         progress=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/progress',data=task_request)
                         assert progress.ok and progress.json()['phase']=='complete',progress.text()
+                        if args.scp_source and not (args.move and args.preserve):
+                            assert progress.json()['transport']['method']=='scp' and progress.json()['transport']['fallback'] is None,progress.text()
+                            print('PASS '+provider+' real cross-machine SCP path and durable receipt',flush=True)
                         if not (args.move and args.preserve and peer and provider in ('codex','claude','grok')):
                             assert progress.json()['bytes_sent']==progress.json()['bytes_total']>0,progress.text()
                         pending=context.request.get(f'http://127.0.0.1:{hub.port}/api/session/transfers')

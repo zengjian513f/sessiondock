@@ -35,6 +35,8 @@ pub struct HubConfig {
     /// the hub page sits behind the authenticated reverse proxy (same rule and
     /// parser as the node, `config::parse_public_hosts`).
     pub public_hosts: Vec<String>,
+    /// SESSIONDOCK_HUB_TRANSFER_CONFIG: optional JSON data-path policy; unset uses Hub relay.
+    pub transfer_policy: crate::transfer::transport::Policy,
 }
 
 impl Default for HubConfig {
@@ -48,6 +50,7 @@ impl Default for HubConfig {
             web_dir: "legacy-web".into(),
             audit_dir: None,
             public_hosts: Vec::new(),
+            transfer_policy: Default::default(),
         }
     }
 }
@@ -57,7 +60,7 @@ fn invalid(message: impl Into<String>) -> io::Error {
 }
 
 impl HubConfig {
-    /// Read and validate the environment; nothing is opened or written.
+    /// Read the environment and optional transfer policy; nothing is written.
     pub fn from_env() -> io::Result<Self> {
         let mut config = Self::default();
         if let Some(bind) = env::var_os("SESSIONDOCK_HUB_BIND") {
@@ -100,6 +103,11 @@ impl HubConfig {
             config.web_dir = path.into();
         }
         config.audit_dir = env::var_os("SESSIONDOCK_AUDIT_DIR").map(PathBuf::from);
+        if let Some(path) = env::var_os("SESSIONDOCK_HUB_TRANSFER_CONFIG").filter(|v| !v.is_empty())
+        {
+            config.transfer_policy =
+                crate::transfer::transport::Policy::read(std::path::Path::new(&path))?;
+        }
         config.validate()?;
         Ok(config)
     }

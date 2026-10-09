@@ -226,13 +226,16 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         shutdown,
         public_hosts: Arc::new(config.public_hosts.clone()),
         ui_events: Arc::new(EventBus::default()),
-        transfers: Arc::new(crate::hub::transfer::Transfers::open(
-            config
-                .nodes_file
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new("."))
-                .join("transfers"),
-        )?),
+        transfers: Arc::new(
+            crate::hub::transfer::Transfers::open(
+                config
+                    .nodes_file
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join("transfers"),
+            )?
+            .with_policy(config.transfer_policy.clone()),
+        ),
     };
     state
         .transfers

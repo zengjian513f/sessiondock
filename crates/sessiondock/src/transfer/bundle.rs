@@ -555,6 +555,13 @@ impl TransferService {
     /// Stream into private numbered files. No tar entry is ever unpacked by its
     /// supplied path, and symlinks are materialized only after content checks.
     pub fn receive_bundle(&self, reader: impl Read) -> Result<Operation, TransferError> {
+        self.receive_bundle_for(reader, None)
+    }
+    pub fn receive_bundle_for(
+        &self,
+        reader: impl Read,
+        expected_id: Option<&str>,
+    ) -> Result<Operation, TransferError> {
         let mut archive = tar::Archive::new(reader);
         let mut entries = archive.entries()?;
         let mut first = entries.next().ok_or_else(|| invalid("缺少迁移清单"))??;
@@ -567,6 +574,9 @@ impl TransferService {
         first.read_to_end(&mut raw)?;
         drop(first);
         let manifest: Manifest = serde_json::from_slice(&raw)?;
+        if expected_id.is_some_and(|id| id != manifest.operation.id) {
+            return Err(invalid("迁移包与接收操作不符"));
+        }
         let _guard = self
             .locks
             .blocking(self.operation_keys(&manifest.operation));
