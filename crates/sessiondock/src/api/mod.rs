@@ -310,6 +310,22 @@ pub fn router() -> Router<AppState> {
 pub fn node_router() -> Router<AppState> {
     Router::new()
         .route(
+            "/api/session/transfer/scp/prepare",
+            post(transfer::scp::prepare),
+        )
+        .route(
+            "/api/session/transfer/scp/receive",
+            post(transfer::scp::receive),
+        )
+        .route(
+            "/api/session/transfer/scp/settle",
+            post(transfer::scp::settle),
+        )
+        .route(
+            "/api/session/transfer/scp/release",
+            post(transfer::scp::release),
+        )
+        .route(
             "/api/session/transfer/export",
             post(transfer::export_bundle),
         )

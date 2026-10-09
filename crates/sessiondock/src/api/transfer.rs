@@ -1,5 +1,7 @@
 //! Browser-facing clone orchestration. Paths and identity maps never come from
 //! the browser; the operation journal owns both between plan and confirmation.
+pub mod scp;
+
 use crate::{
     sessions::SessionSnapshot,
     state::AppState,
@@ -567,33 +569,37 @@ pub struct TransferId {
     new_ids: Option<bool>,
 }
 
-/// These routes are mounted only on the authenticated node listener.
-pub async fn export_bundle(
-    State(state): State<AppState>,
-    Json(body): Json<TransferId>,
-) -> Response {
-    let service = match service(&state) {
+async fn prepare_archive(
+    state: &AppState,
+    operation_id: String,
+) -> Result<crate::transfer::transport::Archive, Box<Response>> {
+    let service = match service(state) {
         Ok(s) => s,
-        Err(e) => return *e,
+        Err(e) => return Err(e),
     };
-    let _guard = match service.operation_guard(&body.operation_id).await {
+    let _guard = match service.operation_guard(&operation_id).await {
         Ok(guard) => guard,
-        Err(e) => return failure(e),
+        Err(e) => return Err(Box::new(failure(e))),
     };
     let copy = service.clone();
     let (op, snapshot) =
-        match tokio::task::spawn_blocking(move || copy.reserve_export(&body.operation_id)).await {
+        match tokio::task::spawn_blocking(move || copy.reserve_export(&operation_id)).await {
             Ok(Ok(op)) => op,
-            Ok(Err(e)) => return failure(e),
-            Err(e) => return failure(TransferError::new("move_io", e.to_string())),
+            Ok(Err(e)) => return Err(Box::new(failure(e))),
+            Err(e) => {
+                return Err(Box::new(failure(TransferError::new(
+                    "move_io",
+                    e.to_string(),
+                ))));
+            }
         };
-    if let Err(error) = stopped(&state, &op, Some(snapshot)).await {
+    if let Err(error) = stopped(state, &op, Some(snapshot)).await {
         let _ = service.release_export(&op.id, false);
-        return *error;
+        return Err(error);
     }
     let name = match crate::transfer::codex::uuid() {
         Ok(v) => v,
-        Err(e) => return failure(e),
+        Err(e) => return Err(Box::new(failure(e))),
     };
     let path = service
         .directory
@@ -611,25 +617,50 @@ pub async fn export_bundle(
         Ok(Ok((_, snapshot))) => snapshot,
         Ok(Err(e)) => {
             let _ = service.release_export(&op.id, false);
-            return failure(e);
+            return Err(Box::new(failure(e)));
         }
         Err(e) => {
             let _ = service.release_export(&op.id, false);
-            return failure(TransferError::new("move_io", e.to_string()));
+            return Err(Box::new(failure(TransferError::new(
+                "move_io",
+                e.to_string(),
+            ))));
         }
     };
-    if let Err(error) = stopped(&state, &op, Some(snapshot)).await {
+    if let Err(error) = stopped(state, &op, Some(snapshot)).await {
         let _ = service.release_export(&op.id, false);
         let _ = std::fs::remove_file(&path);
-        return *error;
+        return Err(error);
     }
     let file = match std::fs::File::open(&path) {
         Ok(v) => v,
-        Err(e) => return failure(e.into()),
+        Err(e) => return Err(Box::new(failure(e.into()))),
     };
     let length = match file.metadata() {
         Ok(v) => v.len(),
-        Err(e) => return failure(e.into()),
+        Err(e) => return Err(Box::new(failure(e.into()))),
+    };
+    Ok(crate::transfer::transport::Archive {
+        operation_id: op.id,
+        path: std::path::absolute(path).map_err(|e| Box::new(failure(e.into())))?,
+        bytes: length,
+    })
+}
+
+/// These routes are mounted only on the authenticated node listener.
+pub async fn export_bundle(
+    State(state): State<AppState>,
+    Json(body): Json<TransferId>,
+) -> Response {
+    let archive = match prepare_archive(&state, body.operation_id).await {
+        Ok(archive) => archive,
+        Err(error) => return *error,
+    };
+    let path = archive.path;
+    let length = archive.bytes;
+    let file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) => return failure(error.into()),
     };
     let (sender, mut receiver) =
         tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(4);
@@ -898,7 +929,9 @@ pub async fn check_bundle(
     })
     .await;
     match result {
-        Ok(Ok(())) => Json(json!({"ready":true,"move_handoff":true})).into_response(),
+        Ok(Ok(())) => {
+            Json(json!({"ready":true,"move_handoff":true,"scp_transfer":true})).into_response()
+        }
         Ok(Err(e)) => failure(e),
         Err(e) => failure(TransferError::new("move_io", e.to_string())),
     }
@@ -932,6 +965,11 @@ pub async fn interrupt(State(state): State<AppState>, Json(body): Json<TransferI
         service.interrupts.reset(&body.operation_id);
     } else {
         service.interrupts.cancel(&body.operation_id);
+        // SCP must stop and remove its partial archive before compensation.
+        let _guard = service
+            .locks
+            .acquire(vec![scp::lock_key(&body.operation_id)])
+            .await;
     }
     Json(json!({"cancel_requested":true})).into_response()
 }
