@@ -76,6 +76,65 @@ guards it.
 
 ## Terminal opening and response phases
 
+### Reproducible keyboard round trips
+
+`python3 tests/terminal_rtt_browser.py --binary target/release/sessiondock`
+opens the real console UI against a private raw-mode echo child, first through
+the node and then through an authenticated test Hub. Chromium presses actual
+keys; each reply has a sequence number. The suite checks every key returns
+exactly once, reaches the grid, produces no page error, and leaves the synthetic
+native record unchanged. Five warmup keys precede 40 individual keys and 40
+keys in groups of eight. Timings are observations, not latency pass/fail limits.
+
+`--output FILE` saves individual samples, browser/build information, phase
+frame/byte/paint counts, and p50/p95/max for keydown → WebSocket send → matching
+PTY reply → Canvas draw completion. Percentiles use nearest rank for p95.
+The draw endpoint is **not compositor presentation or physical display latency**.
+No clock synchronization between machines is needed: all timestamps come from
+the same browser's `performance.now()`.
+
+For a remote browser, `--serve FILE` keeps only the temporary loopback fixtures
+alive and writes their URLs and synthetic UIDs. Forward those loopback ports
+with SSH, then run the same script on the client with `--base URL --uid UID`.
+Creating `FILE` with its suffix replaced by `.stop` shuts the fixtures down;
+they also expire after 15 minutes. These options are for private fixtures,
+never existing production sessions. `--ptyhost` and `--hub-binary` select saved
+binaries independently; `SESSIONDOCK_TEST_WEB_DIR` selects saved frontend assets.
+
+On 2026-10-09, Chromium on Cetus exercised an isolated shell on Lyra over an
+SSH loopback forward on the existing network. The test Hub was colocated with
+the node. Each cell below is the median **keydown-to-Canvas-draw** time in ms,
+with 40 measured keys per phase. The first baseline preceded all experiments;
+each experiment changed one candidate setting relative to the baseline setup.
+
+| Trial | Node, individual | Node, grouped | Test Hub, individual | Test Hub, grouped |
+| --- | ---: | ---: | ---: | ---: |
+| Existing release binaries and frontend | 23.40 | 29.00 | 28.65 | 28.10 |
+| Accept sockets with `TCP_NODELAY` | 23.65 | 27.65 | 27.25 | 29.00 |
+| Draw synchronously instead of waiting for animation frame | 14.50 | 17.15 | 18.10 | 17.40 |
+| Host grid quiet wait changed from 1 ms to zero | 24.05 | 26.75 | 26.05 | 28.70 |
+
+Baseline node send-to-reply medians were 14.40/14.85 ms; reply-to-draw medians
+were 8.40/14.10 ms for individual/grouped input. `TCP_NODELAY` and removing the
+quiet wait did not establish a repeatable improvement in this setup. Drawing
+synchronously advances the measured draw boundary, but this does not establish
+earlier presentation and removes output coalescing. None of these experimental
+runtime changes was retained.
+
+Limits: this was a small synthetic-shell observation, not a measurement of the
+production HTTPS proxy, the remote production Hub's upstream connection, or
+Claude/Codex/Grok rendering. SSH forwarding changes TCP boundaries, so the
+`TCP_NODELAY` result cannot rule out Nagle delays on the production node link.
+The starting binaries were the existing release artifacts; experimental Rust
+binaries were rebuilt from the current checkout, so unrelated intervening code
+is another confounder. After the last browser run passed, Cetus SSH reset while
+copying its result file and a planned fresh-build baseline repeat could not run.
+The last Hub summary survived in the orchestration log; its raw samples were
+not retrieved. These data neither identify the reported production slowdown
+nor justify claiming a user-visible speedup.
+
+### Claim and attach receipts
+
 Browser `post()` receipts share `trace_id` and `page_id`:
 
 - `browser.http.response.headers`: fetch returned response headers; records
