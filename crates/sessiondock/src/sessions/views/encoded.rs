@@ -14,8 +14,9 @@
 //! request exactly as before; their message bytes are still cached for the
 //! page budget and the digest.
 //!
-//! Bytes are optional: a transient projection (search) computes the same
-//! digest and accounting in one streaming pass and retains nothing.
+//! Bytes are optional: shared inherited-prefix accounting computes the digest
+//! and weight in one streaming pass without retaining bytes. Cold search leaves
+//! detail encoding entirely to a later history open.
 
 use serde_json::Value;
 use sha1::{Digest, Sha1};

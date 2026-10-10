@@ -267,14 +267,8 @@ impl SearchService {
         let Some(_slot) = self.slots.acquire(self.slots.weight(bytes), cancelled) else {
             return Err(cancelled_error());
         };
-        let cached = match self.store.search_view_transient(pool, uid) {
-            Ok(view) => {
-                // The view (and any transient projection behind it) lives
-                // only for this body; the text is the only retained part.
-                let text = body(&view);
-                drop(view);
-                Cached::Text(text)
-            }
+        let cached = match self.store.search_text_transient(pool, uid) {
+            Ok(text) => Cached::Text(text),
             Err(error) if Cached::cacheable_error(error.status) => Cached::Error {
                 status: error.status,
                 message: error.message,

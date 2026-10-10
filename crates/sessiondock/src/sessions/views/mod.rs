@@ -293,6 +293,16 @@ impl View {
             rename: self.rename.as_ref(),
         }
     }
+
+    fn texts(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
+        self.events().filter_map(|event| {
+            let role = event.message["role"].as_str()?;
+            if role == "status" || event.message["inferred"] == true {
+                return None;
+            }
+            Some((role, event.message["text"].as_str().unwrap_or("")))
+        })
+    }
 }
 
 /// Immutable logical view. It owns no open files, and producing a client batch
@@ -452,13 +462,7 @@ impl ViewSnapshot {
     /// in timeline order, without media, cursors or private payloads. The
     /// inferred rename event is not searchable.
     pub fn texts(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
-        self.view.events().filter_map(|event| {
-            let role = event.message["role"].as_str()?;
-            if role == "status" || event.message["inferred"] == true {
-                return None;
-            }
-            Some((role, event.message["text"].as_str().unwrap_or("")))
-        })
+        self.view.texts()
     }
 
     /// The candidate (with the stamp that produced this view) a native span
@@ -597,9 +601,8 @@ pub(crate) fn parse_candidate(
     parse_candidate_retaining(candidate, previous, cache, pin, true)
 }
 
-/// `parse_candidate`, retaining the serialized message bytes only when
-/// `retain` (a transient projection computes the same digest and accounting
-/// in one pass and keeps nothing).
+/// `parse_candidate`, encoding details/checkpoints only when `retain`.
+/// Otherwise the parse is search-only and must never back a ViewSnapshot.
 pub(crate) fn parse_candidate_retaining(
     candidate: Candidate,
     previous: Option<&Parsed>,
@@ -750,14 +753,22 @@ pub(crate) fn parse_candidate_retaining(
     // One serialization pass: the retained hot-read bytes, the committed
     // semantic digest and the LRU accounting. A previous parse of the same
     // file (an append) lends the bytes of every message it left unchanged.
-    let encoded = encode_events(
-        &events,
-        retain,
-        previous.map(|previous| encoded::Previous {
-            events: &previous.events,
-            encoded: &previous.encoded,
-        }),
-    )?;
+    // Cold search consumes semantic text only. Serializing large tool output,
+    // discovering its image references and hashing detail checkpoints would
+    // scan it again despite none of it being searchable. Such parses stay
+    // private to search_text and never become a ViewSnapshot or cached file.
+    let encoded = if retain {
+        encode_events(
+            &events,
+            true,
+            previous.map(|previous| encoded::Previous {
+                events: &previous.events,
+                encoded: &previous.encoded,
+            }),
+        )?
+    } else {
+        EncodedEvents::default()
+    };
     let (native_id, _declared) = if candidate.source == "grok" {
         scope::grok_native_identity(summary.as_ref())
     } else if matches!(candidate.source, "opencode" | "agy") {
@@ -784,10 +795,12 @@ pub(crate) fn parse_candidate_retaining(
         pin,
         append_projection,
     };
-    parsed.meta["cursor"] = json!({
-        "end": committed, "head": parsed.head(committed),
-        "anchor": semantic_anchor(&history::native_identity(&parsed, &agent), &parsed, committed),
-    });
+    if retain {
+        parsed.meta["cursor"] = json!({
+            "end": committed, "head": parsed.head(committed),
+            "anchor": semantic_anchor(&history::native_identity(&parsed, &agent), &parsed, committed),
+        });
+    }
     Ok(parsed)
 }
 
@@ -1324,7 +1337,7 @@ impl Views {
         Self::default()
     }
 
-    /// The inherited-prefix cache, to share with `open_transient`.
+    /// The inherited-prefix cache, to share with `search_text`.
     pub(crate) fn prefixes(&self) -> Arc<Mutex<PrefixCache>> {
         self.prefixes.clone()
     }
@@ -1848,15 +1861,15 @@ impl FileSource for ColdFiles {
     }
 }
 
-/// Project one session without retaining it: the result is returned, the
-/// ASTs it decoded are dropped with this call; only inherited prefixes go
+/// Extract one session's search body without constructing detail bytes or
+/// checkpoints. The ASTs it decoded are dropped with this call; inherited prefixes go
 /// through the shared prefix cache (when given), so forks of one parent do
 /// not stream that parent once per search miss.
-pub(crate) fn open_transient(
+pub(crate) fn search_text(
     request: &ViewRequest,
     deps: &dyn Dependencies,
     prefixes: Option<&Mutex<PrefixCache>>,
-) -> Result<Arc<ViewSnapshot>, SessionError> {
+) -> Result<String, SessionError> {
     validate_request(request)?;
     let owner = restamp(&request.owner)?;
     let selected = request.selected.as_ref().map(restamp).transpose()?;
@@ -1868,7 +1881,7 @@ pub(crate) fn open_transient(
     let built = build(
         request, deps, &mut files, prefixes, owner, selected, pin, None, None, false,
     )?;
-    Ok(Arc::new(ViewSnapshot::new(Arc::new(built.view))))
+    Ok(crate::search::body_texts(built.view.texts()))
 }
 
 fn validate_request(request: &ViewRequest) -> Result<(), SessionError> {
@@ -2059,7 +2072,11 @@ fn build(
             )?;
             let prefixes = std::mem::take(&mut chain.prefixes);
             let inherited = chain.inherited();
-            let encoded = Arc::new(encode_events(inherited.as_slice(), files.retains(), None)?);
+            let encoded = Arc::new(if files.retains() {
+                encode_events(inherited.as_slice(), true, None)?
+            } else {
+                EncodedEvents::default()
+            });
             (prefixes, inherited, encoded)
         }
     };

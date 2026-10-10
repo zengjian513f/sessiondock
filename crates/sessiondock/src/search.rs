@@ -714,7 +714,12 @@ pub fn matches(
 /// searched, joined by newlines. Media, cursors and private payloads never
 /// enter it.
 pub fn body(view: &ViewSnapshot) -> String {
-    view.texts()
+    body_texts(view.texts())
+}
+
+/// The same body from a cold semantic projection, before detail encoding.
+pub(crate) fn body_texts<'a>(texts: impl Iterator<Item = (&'a str, &'a str)>) -> String {
+    texts
         .filter(|(role, text)| SEARCH_ROLES.contains(role) && !text.is_empty())
         .map(|(_, text)| text)
         .collect::<Vec<_>>()
