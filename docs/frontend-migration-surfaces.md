@@ -257,6 +257,11 @@ Enter：`runSearch` → `GET api/search`，NDJSON 进度。进度条 `#search-pr
 
 全文搜索只换左栏。右侧已打开会话的内容、滚动和展开保持原样。搜索态的分组折叠和嵌套折叠与平时分开，开始时是展开的。[`tests/search_no_fold_browser.py`](../tests/search_no_fold_browser.py)、[`tests/search_uuid_browser.py`](../tests/search_uuid_browser.py)。
 
+**DELTA（BUG-20261010-093039-38d9b1）：按需模式同样展开全文命中的子会话。**
+全文结果里的独立子会话和子代理直接可见，主会话仅作为子代理的结构行时不显示命中摘要。
+搜索里的箭头只折叠本轮结果，不请求普通目录的未命中分支，也不修改 `lazyOpen`；
+下一轮搜索重新展开，退出搜索恢复原来的按需展开状态。本地标题筛选仍只筛已加载的分支。
+
 会话内高亮：全文词也会标到已打开的消息上（`markMatches` / `markRegexMatches`）。标题栏出现上一处/下一处（`jumpMark`）和计数。高亮数量有上限时 `markCapped`，导航停在已标出的范围内。自动展开有上限（`autoOpen`）。
 
 右侧正文搜索与左栏全文是两条路径。审阅到的脚本覆盖了 UUID/UID 回车导航、搜索折叠隔离、可取消正则。AND/OR、大小写、全词在会话正文里的逐项点击，脚本头里尚需逐项核对。

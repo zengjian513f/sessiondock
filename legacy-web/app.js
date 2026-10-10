@@ -2950,7 +2950,7 @@ addEventListener('sessiondock-network-resumed', async () => {
 });
 
 function visible() {
-  const eligible = s => sidebarChildVisible(s) && (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
+  const eligible = s => (S.results !== null || sidebarChildVisible(s)) && (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
     && nodeSelected(s) && (globalThis.SessionDockGroups?.matches(s) ?? true);
   let pool = (S.results || sidebarSessions()).filter(eligible);
   if (S.activeOnly) {
@@ -2969,7 +2969,9 @@ function visible() {
     // They carry structural metadata, never a child's snippet or siblings.
     const found = new Map(pool.map(s => [s.uid, s]));
     const parents = new Map();
-    const {children} = nestEdges(sidebarSessions().filter(eligible));
+    const ancestry = new Map(sidebarSessions().filter(eligible).map(s => [s.uid, s]));
+    for (const row of pool) ancestry.set(row.uid, row);
+    const {children} = nestEdges([...ancestry.values()]);
     for (const [uid, rows] of children) for (const row of rows) parents.set(row.uid, uid);
     const indexed = indexedSessions().byUid;
     for (const match of pool) {
@@ -4410,7 +4412,10 @@ function nestStamp(s, children, memo = new Map()) {
 const sidebarGroupFolds = () => S.term ? S.searchClosed : S.closed;
 const sidebarNestFolds = () => S.term ? S.searchNestClosed : S.nestClosed;
 const sidebarGroupClosed = key => sidebarGroupFolds().has(key);
-const sidebarNestClosed = uid => S.childMode === 'hidden' ? !S.lazyOpen.has(uid) : sidebarNestFolds().has(uid);
+// Fulltext results already contain the matched children, even when the ordinary
+// catalog has not loaded their branch. Search folds never change lazyOpen.
+const sidebarLazy = () => S.childMode === 'hidden' && S.results === null;
+const sidebarNestClosed = uid => sidebarLazy() ? !S.lazyOpen.has(uid) : sidebarNestFolds().has(uid);
 
 function sidebarSearchText(s, agent = null) {
   const row = agent || s;
@@ -4426,7 +4431,7 @@ function sidebarMainMatches(s) {
 }
 
 function sidebarAgentItems(s) {
-  if (S.childMode === 'hidden' && !S.lazyOpen.has(s.uid)) return [];
+  if (sidebarLazy() && !S.lazyOpen.has(s.uid)) return [];
   const agents = s.agent_items || [];
   if (!S.term) return agents;
   if (S.results !== null) return agents.filter(a => a.hits > 0);
@@ -4462,7 +4467,7 @@ function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
   // 子代理行与分层开关无关，平铺模式同样挂在会话下面；children 在平铺时为空，
   // 发起的会话只在分层模式缩进。
   if (sidebarNestClosed(s.uid)) {
-    row.kids = S.childMode === 'hidden' ? (s.child_count || 0) : nestSize(s, children, sizes).rows - 1;
+    row.kids = sidebarLazy() ? (s.child_count || 0) : nestSize(s, children, sizes).rows - 1;
     row.closed = row.kids > 0 || !!row.inactive;
     return;
   }
@@ -4484,7 +4489,7 @@ function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
   }
   // 三角上写的是收起后消失的整棵子树行数。
   row.kids = out.length - start;
-  if (S.childMode === 'hidden') row.kids = Math.max(row.kids, s.child_count || 0);
+  if (sidebarLazy()) row.kids = Math.max(row.kids, s.child_count || 0);
 }
 
 const rowKey = row => row.agent ? `${row.s.uid}#${row.agent.id}` : row.s.uid;
@@ -9747,7 +9752,7 @@ async function toggleLazyFold(uid) {
 
 /** Change only the clicked subtree; changed data or filters use the full path. */
 function toggleNestFold(uid) {
-  if (S.childMode === 'hidden') { void toggleLazyFold(uid); return; }
+  if (sidebarLazy()) { void toggleLazyFold(uid); return; }
   const folds = sidebarNestFolds();
   folds.has(uid) ? folds.delete(uid) : folds.add(uid);
   if (!S.term) store.set('nestClosed', [...S.nestClosed]);
