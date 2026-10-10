@@ -14,9 +14,109 @@ from history_fixtures import BINARY, batch35_agent_meta, claude_row, codex_messa
 from search_browser import corpus
 
 
+def lazy_search(browser, base, data, width, screenshots=None):
+    """Fulltext children are independent of the compact catalog's expansions."""
+    context = browser.new_context(viewport={'width': width, 'height': 900}, service_workers='block')
+    page = context.new_page()
+    errors, lists = [], []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.on('request', lambda request: lists.append(request.url) if '/api/sessions' in request.url else None)
+    try:
+        page.goto(base, wait_until='networkidle')
+        page.locator('#nest-hidden').click()
+        page.wait_for_function('!sessionLoadActive && S.childMode === "hidden"')
+        parent_uid, child_uid = data.uid('search-main'), data.uid('codex-search')
+        parent = page.locator(f'#side .item[data-uid="{parent_uid}"]')
+        child = page.locator(f'#side .item[data-uid="{child_uid}"]')
+        only = page.locator('#side .item.agent[data-agent="only"]')
+        worker = page.locator('#side .item.agent[data-agent="worker"]')
+        grand = page.locator(f'#side .item[data-uid="{data.uid("grandchild")}"]')
+        expect(parent).to_be_visible()
+        expect(parent.locator('.nest-caret')).to_have_attribute('aria-expanded', 'false')
+        expect(child).to_have_count(0)
+        expect(only).to_have_count(0)
+        saved = page.evaluate('JSON.stringify([[...S.lazyOpen], [...S.nestClosed], localStorage.getItem("sessiondock.childMode")])')
+
+        def search(query):
+            old = page.locator('#stat').get_attribute('data-seq') or ''
+            page.locator('#q').fill(query)
+            page.locator('#q').press('Enter')
+            page.wait_for_function("old => (document.querySelector('#stat').dataset.seq || '') !== old", arg=old)
+
+        search('慢特征')
+        expect(parent).to_be_visible()
+        expect(parent.locator('.snip')).to_have_count(0)
+        expect(only).to_be_visible()
+        expect(only.locator('.snip mark')).to_have_text('慢特征')
+        expect(page.locator('#side-search-count')).to_have_text('1 条')
+        expect(parent.locator('.nest-caret')).to_have_attribute('aria-expanded', 'true')
+        if screenshots:
+            screenshots.mkdir(parents=True, exist_ok=True)
+            for theme in ('light', 'dark'):
+                page.locator('#header-more-btn').click()
+                page.locator('#settings').click()
+                page.locator('#setting-theme').select_option(theme)
+                page.locator('#settings-dialog .modal-close').click()
+                expect(only).to_be_visible()
+                page.screenshot(path=str(screenshots / f'lazy-search-{width}-{theme}.png'))
+        before = len(lists)
+        parent.locator('.nest-caret').click()
+        expect(only).to_have_count(0)
+        page.evaluate('async () => await runSessionPoll()')
+        expect(only).to_have_count(0)
+        parent.locator('.nest-caret').click()
+        expect(only).to_be_visible()
+        # Only the explicit reconciliation above may read the compact catalog.
+        assert len(lists) == before + 1, lists[before:]
+        only.click()
+        expect(page.locator('#msgs')).to_contain_text('SidecarOnly body 慢特征')
+        if width == 390:
+            page.locator('.mobile-back').click()
+        search('Needle')
+        expect(child).to_be_visible()
+        expect(worker).to_be_visible()
+        expect(only).to_have_count(0)
+        expect(page.locator('#side-search-count')).to_have_text('3 条')
+        search('CodexWorkerOnly')
+        expect(child).to_be_visible()
+        expect(page.locator('#side .item.agent[data-agent="codex-worker"]')).to_be_visible()
+        search('IndependentOnly')
+        expect(grand).to_be_visible()
+        grand.click()
+        expect(page.locator('#msgs')).to_contain_text('IndependentOnly child')
+        if width == 390:
+            page.locator('.mobile-back').click()
+        page.locator('#side-search-exit').click()
+        expect(child).to_have_count(0)
+        expect(only).to_have_count(0)
+        expect(grand).to_have_count(0)
+        expect(parent.locator('.nest-caret')).to_have_attribute('aria-expanded', 'false')
+        assert page.evaluate('JSON.stringify([[...S.lazyOpen], [...S.nestClosed], localStorage.getItem("sessiondock.childMode")])') == saved
+        # A branch opened before searching must remain open afterwards too.
+        parent.locator('.nest-caret').click()
+        expect(child).to_be_visible()
+        page.wait_for_function('!sessionLoadActive && S.lazyPending.size === 0')
+        opened = page.evaluate('JSON.stringify([...S.lazyOpen])')
+        search('慢特征')
+        expect(only).to_be_visible()
+        parent.locator('.nest-caret').click()
+        expect(only).to_have_count(0)
+        search('慢特征')
+        expect(only).to_be_visible()
+        page.locator('#side-search-exit').click()
+        expect(child).to_be_visible()
+        expect(only).to_be_visible()
+        assert page.evaluate('JSON.stringify([...S.lazyOpen])') == opened
+        assert not errors, errors
+        print(f'PASS lazy search {width}px: sidecar-only Chinese hit, nested sessions, folds/poll, click history and restored expansions', flush=True)
+    finally:
+        context.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--screenshots-dir', type=Path)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='sessiondock-search-no-fold-') as directory:
         data = corpus(Path(directory))
@@ -25,7 +125,7 @@ def main():
         agent_dir.mkdir(parents=True)
         for agent, title, body in [('worker', 'Synthetic worker', 'Needle worker body'),
                                    ('other', 'Other worker', 'unrelated worker body'),
-                                   ('only', 'SidecarOnly worker', 'SidecarOnly body')]:
+                                   ('only', 'SidecarOnly worker', 'SidecarOnly body 慢特征')]:
             (agent_dir / f'agent-{agent}.meta.json').write_text(json.dumps({'description': title, 'agentType': 'general-purpose'}))
             (agent_dir / f'agent-{agent}.jsonl').write_bytes(b''.join(encoded(row) for row in [
                 claude_row('search-main', 'user', f'{agent}-u', None, title, isSidechain=True, agentId=agent),
@@ -66,6 +166,8 @@ def main():
                 launch['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
             browser = pw.chromium.launch(**launch)
             try:
+                for width in (1280, 390):
+                    lazy_search(browser, base, data, width, args.screenshots_dir)
                 for view, width in [('date', 1280), ('tree', 1280), ('date', 390), ('tree', 390)]:
                     context = browser.new_context(viewport={'width': width, 'height': 900}, service_workers='block')
                     context.route('**/api/sessions?**', lambda route: route.fulfill(json=sessions))
