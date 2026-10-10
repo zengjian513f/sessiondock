@@ -21,7 +21,7 @@ mod views;
 pub use pages::PageStore;
 pub use views::ViewSnapshot;
 pub(crate) use views::{
-    Dependencies, Event, MessageBody, Parsed, Selected, ViewRequest, Views, open_transient,
+    Dependencies, Event, MessageBody, Parsed, Selected, ViewRequest, Views, search_text,
     validate_message_query,
 };
 mod providers;
@@ -864,22 +864,8 @@ impl SessionStore {
         Ok(SearchPool { rows, published })
     }
 
-    /// The main view of one pool entry for matching: a still-current cached
-    /// view is borrowed under the view lock; otherwise the file is streamed
-    /// into a transient projection outside any lock and dropped by the caller.
-    pub fn search_view(
-        &self,
-        pool: &SearchPool,
-        uid: &str,
-    ) -> Result<Arc<ViewSnapshot>, SessionError> {
-        if let Some(cached) = self.search_view_cached(pool, uid)? {
-            return Ok(cached);
-        }
-        self.search_view_transient(pool, uid)
-    }
-
-    /// Only the cheap probe of `search_view`: the cached view when it still
-    /// describes the current files, without streaming anything.
+    /// The cached view when it still describes the current files, without
+    /// streaming anything.
     pub fn search_view_cached(
         &self,
         pool: &SearchPool,
@@ -895,17 +881,17 @@ impl SessionStore {
 
     /// A one-off projection of the main view outside every lock; nothing is
     /// retained (search-text cache misses of idle sessions).
-    pub fn search_view_transient(
+    pub fn search_text_transient(
         &self,
         pool: &SearchPool,
         uid: &str,
-    ) -> Result<Arc<ViewSnapshot>, SessionError> {
+    ) -> Result<String, SessionError> {
         let prepared = pool.prepare(uid)?;
         let deps = IndexDeps {
             index: &prepared.published.index,
         };
         let prefixes = self.views()?.prefixes();
-        open_transient(&prepared.request, &deps, Some(&prefixes))
+        search_text(&prepared.request, &deps, Some(&prefixes))
     }
 
     /// Everything the searchable text of the main view depends on, from
