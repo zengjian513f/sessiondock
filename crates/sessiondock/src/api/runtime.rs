@@ -472,7 +472,10 @@ pub(crate) async fn shared(
         _ = state.shutdown.cancelled() => Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "shutdown", "服务正在关闭")),
         result = runtime.observe_shared(force, generation, async || {
             let permit = admit(state).await?;
-            let catalog = state.reader.run(|store| store.native_catalog()).await?;
+            let catalog = state
+                .reader
+                .run(move |store| store.observed_catalog(force))
+                .await?;
             let receipts = exit_receipts(state, force).await?;
             Ok::<_, ApiError>((permit, catalog, receipts))
         }) => result.map_err(|error| match error {

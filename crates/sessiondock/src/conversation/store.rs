@@ -430,14 +430,31 @@ impl Store {
             .cloned()
             .unwrap_or_default()
     }
-    /// Whether any session has queued sends (cheap gate before resolving identities).
-    pub fn has_queued(&self) -> bool {
+    /// Conservative prefilter, never ownership evidence or permission to retire
+    /// a send. Exact reconciliation still checks the resolved session key,
+    /// consumed echoes and the complete ordered Codex merged batch.
+    pub fn has_possible_echo(&self, uid: &str, echoes: &[super::cli_state::Echo]) -> bool {
         self.state
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .queued
             .values()
-            .any(|rows| !rows.is_empty())
+            .flatten()
+            .any(|row| {
+                row.state != "rejected"
+                    && echoes.iter().any(|echo| {
+                        echo.ts.is_none_or(|at| at >= row.sent_at - 5.0)
+                            && (echo.hash == row.echo_hash
+                                || (uid.starts_with("codex:")
+                                    && !echo.enqueue
+                                    && echo.ts.is_some()
+                                    && echo
+                                        .text
+                                        .trim()
+                                        .strip_prefix(row.text.trim())
+                                        .is_some_and(|rest| rest.starts_with('\n'))))
+                    })
+            })
     }
     /// Records a SEND the terminal accepted. A replayed submission ID is kept once.
     pub fn enqueue(&self, key: &str, item: QueuedSend) -> Result<()> {

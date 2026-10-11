@@ -51,6 +51,12 @@ model/turn scan encounters a real I/O failure or short read. It includes the
 provider `source` and the service/OS error text, never native records or paths.
 An mtime update alone does not produce this event or make a readable row fail.
 
+Successful history opens taking at least 2 s also emit `history.open.slow`:
+`uid`, `read_ms` (reader admission plus snapshot/body construction), `echo_ms`
+(queued-send reconciliation), `prompt_ms` (live approval observation), and total
+`ms`. These phases separate history work from runtime waits without recording
+message text or native contents.
+
 ## Validation
 
 [`tests/server_log_browser.py`](../tests/server_log_browser.py) drives the page on

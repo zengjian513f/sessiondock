@@ -1077,6 +1077,16 @@ impl SessionStore {
         Ok(self.publish(true)?.index.catalog())
     }
 
+    /// Display observations may reuse the same bounded-age index as history
+    /// opens. They must not force another root walk after the history reader
+    /// just published it. Control/identity admission still uses native_catalog.
+    pub(crate) fn observed_catalog(
+        &self,
+        force: bool,
+    ) -> Result<crate::runtime::NativeCatalog, SessionError> {
+        Ok(self.publish_within(force, OPEN_TTL)?.index.catalog())
+    }
+
     /// Validate an operator-chosen Claude node against the freshly opened
     /// main view and return the tip to pin plus the boundary it applies to.
     /// Reads native bytes only; persisting the pin is the caller's step, and

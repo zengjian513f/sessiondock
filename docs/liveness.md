@@ -270,6 +270,14 @@ probe; claim, attach, unleased send, stop and process-evidence binding keep
 `runtime::observe`, the fresh uncached probe. Its `sessions` and `pending`
 rows are therefore at most 2 s old, the predecessor's `PANES_TTL`.
 
+Display-only observation refreshes reuse the history reader's native index
+(up to 3 s old), instead of forcing a second directory scan after opening
+history (BUG-20261011-162855-0b94ac). This is a **DELTA** in discovery freshness:
+new native membership can take the index window plus the 2 s observation
+window to appear. `force=1` still refreshes both. Claim, attach, SEND, stop and
+binding still build their fresh native catalog; a display cache never grants
+authority.
+
 Agy 1.2.16 main-process fd identity has been checked against a real CLI in a
 private HOME with a loopback synthetic gateway. The scan resolves the explicit
 `SESSIONDOCK_AGY_HOME` and accepts a direct `conversations/<sid>.db` fd only

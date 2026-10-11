@@ -10,6 +10,7 @@ starting with `server.listening`. In the default `errors` mode ordinary 200
 requests are not logged. The Hub logs `hub.listening` and its requests the
 same way.
 """
+import argparse
 import json
 import tempfile
 from pathlib import Path
@@ -51,6 +52,9 @@ def drive(browser, base, uid):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--binary', type=Path, default=BINARY)
+    args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='sessiondock-server-log-') as temporary, sync_playwright() as pw:
         root = Path(temporary)
         corpus = Corpus(root)
@@ -68,10 +72,10 @@ def main():
                    'SESSIONDOCK_NODE_TOKEN_FILE': str(token), 'SESSIONDOCK_NODE_ID_FILE': str(identity),
                    'SESSIONDOCK_NODE_PEERS': '127.0.0.0/8'}
             log = root / 'node.log'
-            with isolated_server(corpus, BINARY, extra_env=env, log_path=log) as (base, _):
+            with isolated_server(corpus, args.binary, extra_env=env, log_path=log) as (base, _):
                 status = drive(browser, base, uid)
                 (root / 'hub').mkdir()
-                hub = Hub(BINARY.with_name('sessiondock-hub'), root / 'hub', [node])
+                hub = Hub(args.binary.with_name('sessiondock-hub'), root / 'hub', [node])
                 hub.env['SESSIONDOCK_LOG_REQUESTS'] = 'all'
                 hub.start()
                 try:
@@ -105,7 +109,7 @@ def main():
             print('PASS hub: structured startup line and request lines, no query string', flush=True)
 
             quiet = root / 'quiet.log'
-            with isolated_server(corpus, BINARY, log_path=quiet) as (base, _):
+            with isolated_server(corpus, args.binary, log_path=quiet) as (base, _):
                 drive(browser, base, uid)
             quiet_rows = lines(quiet.read_text())
             assert quiet_rows[0]['requests'] == 'errors', quiet_rows[0]
