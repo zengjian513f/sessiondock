@@ -1,0 +1,42 @@
+body.session-info-page { display: block; height: auto; min-height: 100dvh; overflow: auto; background: var(--bg); color: var(--text); }
+.si-header { position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; gap: 12px; padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--border); }
+.si-header h1 { margin: 0 auto 0 0; font-size: 15px; font-weight: 600; }
+.session-info-page a { color: var(--accent); text-decoration: none; }
+.session-info-page a:hover { text-decoration: underline; }
+.session-info-page button, .session-info-page input, .session-info-page select, .session-info-page textarea { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; }
+.session-info-page button { cursor: pointer; font-size: 12px; }
+.session-info-page button:hover { background: var(--hover); }
+.session-info-page button:disabled { opacity: .5; cursor: default; }
+.session-info-page :is(button,a,input,select,textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.si-main { display: block; width: min(1120px, 100%); margin: 0 auto; padding: 16px; box-sizing: border-box; }
+#info-status { color: var(--muted); font-size: 12px; margin: 0 0 10px; overflow-wrap: anywhere; }
+#info-status:empty { display: none; }
+.si-panel { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); padding: 14px; min-width: 0; margin-bottom: 12px; box-shadow: var(--shadow); }
+.si-panel h2 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+#info-summary h2 { font-size: 17px; margin-bottom: 12px; }
+.si-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px 24px; margin: 0; }
+.si-facts div { min-width: 0; }
+.si-facts dt { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
+.si-facts dd { margin: 0; overflow-wrap: anywhere; font-size: 13px; }
+.si-facts code { font-size: 12px; }
+.si-columns { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.si-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.si-heading h2 span, .si-caption { color: var(--muted); font-size: 12px; font-weight: 400; }
+.si-relation { padding: 10px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.si-relation:first-child { border-top: 0; }
+.si-relation-title { font-weight: 600; font-size: 13px; }
+.si-relation p { margin: 4px 0; font-size: 12px; color: var(--muted); }
+.si-relation .si-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.si-relation details { margin-top: 6px; font-size: 12px; }
+.si-relation summary { cursor: pointer; color: var(--muted); }
+.si-relation pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+.si-badge { display: inline-block; margin-left: 6px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); font-size: 10px; font-weight: 400; }
+.si-candidate { color: var(--tool); }
+.si-empty { padding: 18px 0; color: var(--muted); font-size: 12px; text-align: center; }
+#relation-form label { display: grid; gap: 5px; font-size: 12px; color: var(--muted); margin-bottom: 10px; min-width: 0; }
+#relation-form :is(input,select,textarea) { width: 100%; min-width: 0; box-sizing: border-box; }
+.si-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+#relation-error { color: var(--tool); font-size: 12px; margin-left: 8px; }
+#relation-save { color: var(--accent); }
+.session-info-page [hidden] { display: none !important; }
+@media (max-width: 720px) { .si-columns, .si-facts { grid-template-columns: 1fr; } .si-main { padding: 10px; } .si-header { padding: 8px 10px; gap: 8px; } .si-panel { padding: 12px; } }

@@ -269,6 +269,9 @@ fn sessions_body(nodes: Vec<Value>, answers: &[Answer], known: &str) -> Value {
             }
         }
     }
+    if let Some(rows) = result.get_mut("sessions").and_then(Value::as_array_mut) {
+        crate::metadata::relations::decorate(rows);
+    }
     let sig = signature(&result);
     if known == sig {
         return json!({

@@ -49,6 +49,9 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/events"),
     ("GET", "/api/nodes"),
     ("GET", "/api/groups"),
+    ("GET", "/api/session/info"),
+    ("GET", "/api/sessions/relations"),
+    ("POST", "/api/session/predecessor"),
     ("POST", "/api/groups"),
     ("POST", "/api/nodes/order"),
     ("POST", "/api/nodes/{nid}/display"),
@@ -93,7 +96,7 @@ const NOT_REGISTERED: &str = "机器未注册或已移除";
 /// `/api/nodes/<nid>/api/media/…` source before its hub check when set.
 pub fn hub_capabilities() -> Value {
     json!({
-        "backend": "rust", "hub": true, "cleanup_counts": true, "session_stop": true, "session_delete_tree": true, "session_clone_local_codex": true, "session_clone_remote": true, "session_move_remote": true, "transfer_confirm_mode": true, "session_link_lineage": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
+        "backend": "rust", "hub": true, "cleanup_counts": true, "session_stop": true, "session_delete_tree": true, "session_clone_local_codex": true, "session_clone_remote": true, "session_move_remote": true, "transfer_confirm_mode": true, "session_link_lineage": true, "session_relations": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
         "history_pages": true, "unread_batch": true, "media_continuation": true, "ui_events": true, "list_delta": true,
         "history_semantics": "limited_native"
     })
@@ -632,6 +635,26 @@ async fn handle(
     if method == Method::GET && explicit.is_none() && AGGREGATED.contains(&path.as_str()) {
         return aggregated(&state, &path, &pairs).await;
     }
+    if method == Method::GET
+        && explicit.is_none()
+        && matches!(
+            path.as_str(),
+            "/api/session/info" | "/api/sessions/relations"
+        )
+    {
+        let inventory = crate::hub::relations::inventory(registry, client).await?;
+        if path == "/api/sessions/relations" {
+            return ok(&super::relations::top_level_catalog(inventory));
+        }
+        let uid = pairs
+            .iter()
+            .find(|(key, _)| key == "uid")
+            .map(|(_, value)| value.as_str())
+            .unwrap_or("");
+        let value = crate::metadata::relations::info(&inventory, uid)
+            .ok_or_else(|| ProxyError::Invalid("会话不存在".into()))?;
+        return ok(&value);
+    }
     let attachment = ATTACHMENT_PATHS.contains(&path.as_str());
     let (mut body, upload) = if method == Method::POST && !attachment {
         (Some(read_body(request).await?), None)
@@ -645,6 +668,14 @@ async fn handle(
     } else {
         (None, None)
     };
+    if path == "/api/session/predecessor"
+        && let Some(body) = body.as_mut()
+    {
+        body.remove("remote_predecessor");
+        if explicit.is_none() {
+            crate::hub::relations::prepare(registry, client, body).await?;
+        }
+    }
     let _nest_writer = if method == Method::POST && path == "/api/session/nest" {
         Some(crate::hub::nest::WRITER.lock().await)
     } else {
@@ -796,6 +827,7 @@ async fn handle(
             "/api/session/star"
                 | "/api/session/group"
                 | "/api/session/nest"
+                | "/api/session/predecessor"
                 | "/api/sessions/fork-visibility"
                 | "/api/groups"
         )

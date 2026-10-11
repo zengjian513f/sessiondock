@@ -152,7 +152,10 @@ impl Assets {
         let entries = raw
             .into_iter()
             .map(|(path, mut data)| {
-                let html = matches!(path.as_str(), "/index.html" | "/files.html" | "/file.html");
+                let html = matches!(
+                    path.as_str(),
+                    "/index.html" | "/files.html" | "/file.html" | "/session-info.html"
+                );
                 if html {
                     data = String::from_utf8_lossy(&data)
                         .replace("__SESSIONDOCK_MODE__", mode_name)

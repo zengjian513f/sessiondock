@@ -3751,6 +3751,7 @@ function openItemMenu(uid, x, y) {
   // Keep every action in its fixed position, with the same unavailable hints as
   // other controls. The shared capture handler blocks mouse, touch and keyboard clicks.
   const unavailable = {
+    info: !row?.sid || SessionDockCapabilities.config.session_relations !== true ? '此会话暂不支持信息页。' : '',
     'copy-identity': !row?.sid ? '此会话尚无原生会话标识。' : '',
     stop: sessionRunUnavailable(row),
     hide: !parent ? '仅分叉父会话可隐藏。' : '',
@@ -3912,6 +3913,7 @@ $('#item-menu').onclick = async e => {
   if (button.dataset.act === 'group') { globalThis.SessionDockGroups?.showMenu([uid], button); return; }
   closeItemMenu();
   if (!uid) return;
+  if (button.dataset.act === 'info') { location.href = appUrl(`session-info.html?${new URLSearchParams({uid})}`); return; }
   if (button.dataset.act === 'copy-identity') {
     const row = sidebarSessions().find(session => session.uid === uid);
     if (!row?.sid) return;
@@ -6664,6 +6666,7 @@ function head(m, total) {
             aria-label="报告当前会话问题">${uiIcon('bug')}</button>
         </div>
         ${SessionDockCapabilities.config.session_clone_local_codex === true ? `<button class="session-menu-action" id="a-clone-group" type="button" title="迁移会话树" aria-label="迁移会话树">${uiIcon('transfer')}</button>` : ''}
+        ${!m.agent_id && SessionDockCapabilities.config.session_relations === true ? `<button class="session-menu-action" id="a-session-info" data-menu-only type="button" title="会话信息" aria-label="会话信息">${uiIcon('info')}</button>` : ''}
         ${SessionDockCapabilities.config.session_delete_tree === true ? `<button class="session-menu-action danger" id="a-delete-tree" data-menu-only type="button" title="删除会话树" aria-label="删除会话树">${uiIcon('tree')}</button>` : ''}
         ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action" data-menu-only></button>'}
         `, `
@@ -6687,6 +6690,7 @@ function head(m, total) {
     }
   }
   h.querySelector('.mobile-back').onclick = showMobileList;
+  h.querySelector('#a-session-info')?.addEventListener('click', () => { location.href = appUrl(`session-info.html?${new URLSearchParams({uid:m.uid})}`); });
   h.querySelector('#a-star').onclick = () => toggleSessionStar(m.uid);
   h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
   paintTransferAvailability(h.querySelector('#a-clone-group'), m.uid);

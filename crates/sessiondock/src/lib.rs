@@ -283,6 +283,7 @@ fn build_app(
     // Raw HTTP text/key input under the page's terminal lease; not a send ledger.
     capabilities["terminal_input"] = serde_json::json!(terminal.is_some());
     capabilities["metadata"] = serde_json::json!(metadata.is_some());
+    capabilities["session_relations"] = serde_json::json!(metadata.is_some());
     capabilities["files"] = serde_json::json!(files.is_some());
     capabilities["audit"] = serde_json::json!(audit.is_some());
     // Explicit private trash directory only; routes stay 501 without it.
