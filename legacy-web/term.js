@@ -1332,7 +1332,7 @@ function setCwdCompletionActive(step) {
 
 function setCwdValue(value, refresh = true) {
   const input = $('#new-cwd');
-  newCwdEdited = true;
+  newCwdCheck++;
   input.value = value;
   $('#new-session-error').textContent = '';
   input.focus();
@@ -1688,7 +1688,6 @@ function openNewSessionDialog() {
   const dialog = $('#new-session-dialog');
   closeCwdPicker();
   newCreateAttempt = null;
-  newCwdEdited = false;
   modelCatalogs.clear(); // 每次打开都读一遍：CLI 升级或换配置后列表会变
   prepareNewNode();
   refreshNewNodeFields();
@@ -2133,8 +2132,9 @@ $('#new-session').onclick = openNewSessionDialog;
 $('#new-session-form').onsubmit = createNewSession;
 $('#new-session-dialog .modal-close').onclick = () => $('#new-session-dialog').close();
 $('#new-session-dialog .modal-cancel').onclick = () => $('#new-session-dialog').close();
+$('#new-cwd-clear').onclick = () => setCwdValue('');
 $('#new-cwd').oninput = () => {
-  newCwdEdited = true;
+  newCwdCheck++;
   $('#new-session-error').textContent = '';
   scheduleCwdCompletions();
 };

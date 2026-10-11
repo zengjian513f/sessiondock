@@ -276,8 +276,8 @@ function prepareNewNode() {
   document.querySelector('#new-node-label').hidden = false;
 }
 
-// 本次打开中用户编辑或选择过目录后，切换机器只更新候选，不再改写输入。
-let newCwdEdited = false;
+// 切换机器时按目录存在性保留输入；检查期间的新输入和机器切换使旧结果失效。
+let newCwdCheck = 0;
 async function newNodeHasDir(path, node = newNodeId()) {
   const value = path.length > 1 ? path.replace(/\/+$/, '') : path;
   if (value === '/' || value === '~') return true;
@@ -291,7 +291,8 @@ async function newNodeHasDir(path, node = newNodeId()) {
   } catch { return false; }
 }
 
-function refreshNewNodeFields() {
+function refreshNewNodeFields(preserveCwd = false) {
+  const check = ++newCwdCheck, node = newNodeId();
   closeCwdPicker();
   const cap = newNodeCapabilities();
   cwdCompletion.common = commonSessionDirs();
@@ -306,7 +307,16 @@ function refreshNewNodeFields() {
   const fallback = selected?.cwd || store.get(newDirsKey(), [])[0]
     || cwdCompletion.common[0]?.cwd || cap.home || '';
   const input = document.querySelector('#new-cwd');
-  if (!newCwdEdited) input.value = fallback;
+  if (!preserveCwd) input.value = fallback;
+  else {
+    const value = input.value;
+    void newNodeHasDir(value.trim(), node).then(exists => {
+      if (exists || check !== newCwdCheck || node !== newNodeId()
+          || !document.querySelector('#new-session-dialog').open || input.value !== value) return;
+      input.value = fallback;
+      renderCommonCwdOptions();
+    });
+  }
   document.querySelector('#new-session-error').textContent = '';
   document.querySelector('#new-session-go').disabled = !cap.enabled;
   renderCommonCwdOptions();
@@ -317,7 +327,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (!HUB_MODE) return;
   document.querySelector('#new-node').onchange = () => {
     store.set('newNode', newNodeId());
-    refreshNewNodeFields();
+    refreshNewNodeFields(true);
   };
   void loadNodes().catch(() => {});
 });

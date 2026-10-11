@@ -146,8 +146,16 @@ def node_source_picker(browser, hub, node, other):
         assert all(r - l >= 34 for l, r in spans), (width, spans)
         # Like the header Agent filter, the buttons are one joined segment: no gaps between them.
         assert all(abs(b[0] - a[1]) <= 0.5 for a, b in zip(spans, spans[1:])), (width, spans)
-        if os.environ.get("SESSIONDOCK_TEST_SHOTS"):
-            page.screenshot(path=os.path.join(os.environ["SESSIONDOCK_TEST_SHOTS"], f"hub-picker-{width}.png"))
+        for theme in ("dark", "light"):
+            page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
+            page.locator("#new-cwd").fill("/shared/project")
+            if os.environ.get("SESSIONDOCK_TEST_SHOTS"):
+                page.screenshot(path=os.path.join(os.environ["SESSIONDOCK_TEST_SHOTS"], f"hub-picker-{width}-{theme}.png"))
+            page.locator("#new-cwd-clear").click()
+            expect(page.locator("#new-cwd")).to_have_value("")
+            expect(page.locator("#new-cwd")).to_be_focused()
+            if os.environ.get("SESSIONDOCK_TEST_SHOTS"):
+                page.screenshot(path=os.path.join(os.environ["SESSIONDOCK_TEST_SHOTS"], f"hub-picker-{width}-{theme}-empty.png"))
     assert not errors, errors
     context.close()
     node.pop("term_sources")
@@ -155,8 +163,8 @@ def node_source_picker(browser, hub, node, other):
 
 
 def node_switch_cwd(browser, hub, node, other):
-    """Only untouched defaults follow the machine; all user edits stay verbatim."""
-    node.set(dirs=["/shared/proj", "/node-a/default/child"])
+    """Existing directories survive machine switches regardless of how they were chosen."""
+    node.set(dirs=["/shared/proj", "/node-a/default", "/node-a/default/child"])
     other.set(dirs=["/shared/proj", "/only-b/work"])
     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
     page = context.new_page()
@@ -176,16 +184,25 @@ def node_switch_cwd(browser, hub, node, other):
     expect(cwd).to_have_value("/node-b/default")
     page.locator("#new-node").select_option(node.nid)
     expect(cwd).to_have_value("/node-a/default")
-    # Editing back to the original default still counts as a user edit.
+    # An untouched default also survives when it exists on the destination.
+    other.set(dirs=["/shared/proj", "/only-b/work", "/node-a/default"])
+    with page.expect_response(lambda r: "path=%2Fnode-a%2Fdefault" in r.url and "node=" + other.nid in r.url):
+        page.locator("#new-node").select_option(other.nid)
+    page.wait_for_timeout(200)
+    expect(cwd).to_have_value("/node-a/default")
+    page.locator("#new-node").select_option(node.nid)
+    other.set(dirs=["/shared/proj", "/only-b/work"])
     cwd.fill("/edited")
     cwd.fill("/node-a/default")
     page.locator("#new-node").select_option(other.nid)
-    expect(cwd).to_have_value("/node-a/default")
+    expect(cwd).to_have_value("/node-b/default")
     cwd.fill("")
-    page.locator("#new-node").select_option(other.nid)
-    expect(cwd).to_have_value("")
     page.locator("#new-node").select_option(node.nid)
+    expect(cwd).to_have_value("/node-a/default")
+    page.locator("#new-cwd-clear").click()
     expect(cwd).to_have_value("")
+    expect(cwd).to_be_focused()
+    expect(page.locator("#new-cwd-options-title")).to_have_text("最近使用")
     page.locator("#new-session-go").click()
     expect(page.locator("#new-session-error")).to_have_text("请选择启动目录")
     expect(page.locator("#new-session-dialog")).to_be_visible()
@@ -204,30 +221,51 @@ def node_switch_cwd(browser, hub, node, other):
     expect(page.locator("#new-cwd-options [data-cwd-kind=completion]", has_text="/shared/proj")).to_be_visible()
     frames = page.evaluate("() => { window.__cwdStop = true; return window.__cwdFrames; }")
     assert len(frames) > 5 and len({tuple(f) for f in frames}) == 1, sorted({tuple(f) for f in frames})
-    for value in ("/shared/proj", "/only-b/work", "/missing/work", "relative/path", "  /missing/work/  ", "   "):
+    for value in ("/shared/proj", "  /shared/proj/  ", "/only-b/work", "/missing/work", "relative/path", "   "):
         cwd.fill(value)
-        page.locator("#new-node").select_option(other.nid)
-        expect(cwd).to_have_value(value)
+        with page.expect_response(lambda r: "/api/term/complete-dir" in r.url and "node=" + other.nid in r.url):
+            page.locator("#new-node").select_option(other.nid)
+        expect(cwd).to_have_value(value if value.strip().rstrip("/") in ("/shared/proj", "/only-b/work") else "/node-b/default")
         page.locator("#new-node").select_option(node.nid)
-        expect(cwd).to_have_value(value)
-    # Reopening resets the edit flag. Choosing a candidate without typing
-    # then pins its value, even when it matches the original default.
+        expect(cwd).to_have_value(value if value.strip().rstrip("/") == "/shared/proj" else "/node-a/default")
+    # Candidate clicks and Tab completion follow the same existence rule.
     page.locator("#new-session-dialog .modal-close").click()
     page.locator("#new-session").click()
     expect(cwd).to_have_value("/node-a/default")
-    page.locator('#new-cwd-options [role=option][title="/node-a/default"]').click()
+    page.locator('#new-cwd-options [role=option]').filter(has=page.get_by_text("/node-a/default", exact=True)).or_(page.locator('#new-cwd-options [role=option][title="/node-a/default/"]')).click()
     page.locator("#new-node").select_option(other.nid)
-    expect(cwd).to_have_value("/node-a/default")
-    page.locator("#new-session-dialog .modal-close").click()
-    page.locator("#new-session").click()
     expect(cwd).to_have_value("/node-b/default")
-    # Tab completion is a user edit even without an input event.
     page.locator("#new-node").select_option(node.nid)
     expect(cwd).to_have_value("/node-a/default")
+    cwd.fill("/node-a/default/ch")
     cwd.press("Tab")
     expect(cwd).to_have_value("/node-a/default/child/")
     page.locator("#new-node").select_option(other.nid)
-    expect(cwd).to_have_value("/node-a/default/child/")
+    expect(cwd).to_have_value("/node-b/default")
+    # A delayed missing-path result must not overwrite newer typing or a switch.
+    held = []
+    def delay_check(route):
+        if "path=%2Fdelayed" in route.request.url:
+            held.append(route)
+        else:
+            route.continue_()
+    context.route("**/api/term/complete-dir?*", delay_check)
+    for action in ("type", "switch", "reopen"):
+        cwd.fill("/delayed")
+        page.locator("#new-node").select_option(node.nid)
+        page.wait_for_timeout(200)
+        assert held
+        if action == "switch":
+            page.locator("#new-node").select_option(other.nid)
+        elif action == "reopen":
+            page.locator("#new-session-dialog .modal-close").click()
+            page.locator("#new-session").click()
+        cwd.fill("/new-input")
+        for route in held:
+            route.fulfill(json={"directories": []})
+        held.clear()
+        page.wait_for_timeout(200)
+        expect(cwd).to_have_value("/new-input")
     assert not errors, errors
     context.close()
     node.pop("dirs")
@@ -369,7 +407,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS hub_pending_state_browser: per-node OpenCode picker, multi-select stop of a console-only session, machine select on the first row, steady cwd list while typing, node switch updates untouched defaults and preserves all edits/candidate choices/Tab completion, create, partial list, draft/reload, recovery, confirmed exit")
+    print("PASS hub_pending_state_browser: per-node OpenCode picker, multi-select stop of a console-only session, machine select on the first row, steady cwd list while typing, node switch retains existing directories and replaces missing paths, with stale-check protection, create, partial list, draft/reload, recovery, confirmed exit")
 
 
 if __name__ == "__main__":

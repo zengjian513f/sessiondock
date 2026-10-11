@@ -483,11 +483,11 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .modal-head > div { flex: 1; min-width: 0; }
 .modal-head h2 { margin: 0; font-size: 17px; line-height: 1.35; }
 .modal-head p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
-.modal-close {
+.modal-close, .new-cwd-clear {
   width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px;
   background: transparent; color: var(--muted); font: 21px/1 sans-serif; cursor: pointer;
 }
-.modal-close:hover { background: var(--hover); color: var(--text); }
+.modal-close:hover, .new-cwd-clear:hover { background: var(--hover); color: var(--text); }
 /* 新建会话和报告问题第一行放机器、Agent、模型、强度。Agent 和顶栏筛选一样连成
    一排、只留图标（悬停看名字），机器框收窄；宽度不够时模型和强度一起换到下一行。 */
 .new-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 7px; margin-top: 2px; container-type: inline-size; }

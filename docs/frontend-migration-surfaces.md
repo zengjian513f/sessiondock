@@ -392,7 +392,7 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 
 `#new-session-dialog`（`openNewSessionDialog` / `createNewSession`）。来源：Claude（默认）、Codex、Grok、OpenCode、SSH。Hub 上先选机器。模型和推理强度按该 CLI 自己的目录（`createModelPicker`，`GET api/term/models`），可搜索。记忆的模型和 effort 按 `storeKey` 写入浏览器。工作目录：最近 8 条（`newDirs` 或 Hub 的 `newDirs.<nodeId>`）、常用目录、Tab 补全（`GET api/term/complete-dir`）。**DELTA：**Hub 新建目录候选还包含其他机器的会话目录和保存的近期目录，但须经当前所选机器确认存在；路径去重，未确认或不存在的跨机器路径不加入。打开弹窗及切换机器时重新检查，旧响应不能覆盖新列表，候选更新保留用户已输入的文字。创建后侧栏出现待落盘行，阶段文案来自 `pendingStageMessage` / `workerStatusMessage`。可停止、删除或丢弃。记录还没出现时有明确缺失文案（`pendingRecordMissing`）。启动回执在 Hub 列表不完整时仍以真实退出为准。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)、[`tests/pending_create_discard_browser.py`](../tests/pending_create_discard_browser.py)、[`tests/new_session_model_browser.py`](../tests/new_session_model_browser.py)、[`tests/new_session_follow_browser.py`](../tests/new_session_follow_browser.py)、[`tests/lifecycle_cli_browser.py`](../tests/lifecycle_cli_browser.py)。
 
-DELTA（BUG-20261008-123158-ee0ab5）：每次打开按当前会话、近期目录或机器首页选择默认启动目录；本次打开期间尚未编辑时，切换机器更新默认目录。用户一旦输入、清空、选择目录候选或使用补全，之后切换机器必须原样保留编辑框内容，包括空值、空白字符以及在目标机器不存在或无法确认的路径；改回原值也不恢复自动回填。重新打开弹窗重置编辑状态；候选及其存在性检查只更新目录列表，不改写输入。空目录提交仍提示「请选择启动目录」。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)。
+DELTA（BUG-20261008-123158-ee0ab5，按后续目录存在性要求更新）：每次打开按当前会话、近期目录或机器首页选择默认启动目录；切换机器时，不区分用户是否编辑过，当前目录在目标机器仍存在就原样保留，否则（包括空值及无法确认存在）改用目标机器默认目录。检查使用去除首尾空白后的路径，保留时不改写原输入。检查期间的新输入、再次切换机器或重新打开弹窗使旧结果失效；候选列表更新不改写输入。输入框右侧「×」清空目录并将焦点留在输入框，重新显示最近目录；空目录直接提交仍提示「请选择启动目录」。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)。
 
 丢失根目录时，其它来源和新建仍可用。[`tests/missing_roots_browser.py`](../tests/missing_roots_browser.py)。
 
