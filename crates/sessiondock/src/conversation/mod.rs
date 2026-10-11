@@ -163,6 +163,7 @@ impl Conversations {
                         input::classify(&identity.source, &capture),
                         cli_state::editor_text(&identity.source, &capture),
                         cli_state::screen_busy(&identity.source, &capture),
+                        cli_state::screen_phase(&identity.source, &capture),
                     ))
                 })
             }
@@ -633,6 +634,7 @@ impl Conversations {
                         input::classify(&identity.source, &capture),
                         cli_state::editor_text(&identity.source, &capture),
                         cli_state::screen_busy(&identity.source, &capture),
+                        cli_state::screen_phase(&identity.source, &capture),
                     ))
                 })
             }

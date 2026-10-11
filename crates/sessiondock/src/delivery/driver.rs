@@ -331,6 +331,36 @@ pub fn codex_background_running(capture: &ScreenCapture) -> bool {
     false
 }
 
+/// Compaction starts before Codex writes any native record. Only recognize
+/// the live status block immediately above its editor, never history or drafts.
+pub fn codex_compacting(capture: &ScreenCapture) -> bool {
+    if capture.lag.is_some_and(|lag| lag > 0) {
+        return false;
+    }
+    let normalized = capture.text.replace('\r', "");
+    let raw: Vec<&str> = normalized.lines().collect();
+    let clean: Vec<String> = raw.iter().map(|line| codex_plain(line)).collect();
+    let Some((editor, _)) = locate_codex(&raw, &clean, capture.cursor) else {
+        return false;
+    };
+    let Some(end) = clean[..editor].iter().rposition(|line| nonblank(line)) else {
+        return false;
+    };
+    let mut start = end;
+    while start > 0 && nonblank(&clean[start - 1]) {
+        start -= 1;
+    }
+    let block = clean[start..=end]
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+    // The host may wrap in the middle of a word on a narrow terminal.
+    let status: String = block.chars().filter(|ch| !ch.is_whitespace()).collect();
+    let status = status.trim_start_matches('•');
+    status.starts_with("Compactingcontext(") && status.contains("esctointerrupt)")
+}
+
 /// Whether Claude visibly has a turn in progress.
 pub fn busy_screen(screen: &str) -> bool {
     BUSY_STATUS.is_match(&strip_ansi(screen))

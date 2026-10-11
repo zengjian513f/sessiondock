@@ -1501,8 +1501,13 @@ async function applyDiffPacket(uid, data, bytes = 0, agent = null) {
     // The session's CLI state changed (input readiness, editor text, queued
     // sends) without new records (docs/cli-state.md).
     if (!agent && Object.prototype.hasOwnProperty.call(data, 'cli')) {
+      const priorPhase = e.cli?.instance?.phase;
       e.cli = data.cli || null;
       globalThis.applyCliState?.(uid, e.cli);
+      if (S.sel === uid && !S.agent && priorPhase !== e.cli?.instance?.phase) {
+        renderConversationTail(e.activity, uid);
+        globalThis.renderQueuedSends?.(uid);
+      }
     }
     return 0;
   }
@@ -8952,8 +8957,11 @@ function renderActivity(activity) {
   const box = $('#msgs');
   if (!box) return;
   $('#activity')?.remove();
+  const compacting = !S.agent && S.live.has(S.sel)
+    && cache.get(viewKey(S.sel))?.cli?.instance?.phase === 'compacting';
+  if (compacting) activity = {state: 'working'};
   if (!activity || activity.state === 'idle') return;
-  if (activity.state === 'working') {
+  if (activity.state === 'working' && !compacting) {
     if (!S.live.has(S.sel)) return;
     const processStart = S.liveStarted.get(S.sel);
     const activityAt = Date.parse(activity.ts) / 1000;
@@ -8966,7 +8974,7 @@ function renderActivity(activity) {
     working: 'Working…', waiting: '等待回答',
     aborted: '已中断', failed: '执行失败',
   };
-  const label = labels[activity.state];
+  const label = compacting ? '正在压缩上下文…' : labels[activity.state];
   if (!label) return;
   const n = el('div', `activity ${activity.state}`);
   n.id = 'activity';

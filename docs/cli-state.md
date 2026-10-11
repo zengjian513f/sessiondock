@@ -9,7 +9,7 @@
 ```json
 {
   "observed_at": 1759056000.123,
-  "instance": {"running": true, "busy": false},
+  "instance": {"running": true, "busy": false, "phase": null},
   "input": {"state": "ready", "code": "", "message": ""},
   "editor": {"text": "粘贴的时候…"},
   "queued": [
@@ -23,6 +23,7 @@
 | `observed_at` | 最近一次成功读到画面的 Unix 秒；从未读到为 `null` |
 | `instance.running` | 最近一次读画面成功为 `true`，失败（实例已退出、宿主不可达）为 `false`，尚未尝试为 `null` |
 | `instance.busy` | 最近一次读画面成功时画面是否显示 CLI 的忙碌指示（spinner、`esc to interrupt`；Claude、Codex），或 Codex 当前编辑区上方的 `N background terminal(s) running · /ps to view · /stop to close`（N > 0）；两者之间可有 Codex 的额度提示（包括折行），其他正文仍隔断后台状态识别。后台终端可在模型回合结束后继续运行，仍算活动中，但不改变输入就绪或发送队列中断判定。历史引用和编辑区文字不算后台状态；Agy 根据已识别编辑区下方的原生页脚判断（见下文）；读失败、尚未读到、未知布局或 Grok、OpenCode 为 `null` |
+| `instance.phase` | 当前 Codex 编辑区正上方显示 `Compacting context (... esc to interrupt)` 时为 `compacting`；完成、中断、读屏失败、有滞后或无法识别时为 `null`。不从历史引用或编辑区文字推断；其他 CLI 当前为 `null` |
 | `input` | 与 CHECK 相同的分类结果（`ready`/`starting`/`blocked`/`unknown` 及 `code`/`message`）；最近一次读失败时为 `null` |
 | `editor.text` | 识别到编辑区时的可见文字（Claude、Codex、Agy）；Grok、OpenCode 尚无提取，为 `null` |
 | `queued` | 终端已接受、原生记录尚未出现的 SEND，按发送顺序；`state` 为 `queued`、`interrupted`、`rejected` 或 `lost` |
@@ -85,3 +86,15 @@ CLI 时，它自己启动的命令仍按最近的 CLI 归属计入。相对原�
 | Codex TUI 入队确认、折行与同文多次发送、引用画面不误认、中断后未确认处理、离屏与旧中断不误判、刷新恢复与迟到原生回显退掉、Esc 合并回显及重复快照隔离 | [send_native_codex_browser.py](../tests/send_native_codex_browser.py) |
 | 终端回滚同步到对话、刷新保留、下一条输入后以原生分支为准、调出已回答的输入既不回滚也不算 Esc 退回 | [rewind_cli_browser.py](../tests/rewind_cli_browser.py) |
 | 刷新后排队气泡由服务端恢复、Grok 无时间记录按摘要退掉 | [grok_send_echo_browser.py](../tests/grok_send_echo_browser.py) |
+
+## 正在压缩上下文（DELTA）
+
+BUG-20261011-082204-728fdf：Codex 原生 JSONL 在压缩结束时才写 `compacted`，
+开始时只有普通 `task_started`。原有 CLI 观察仅传忙碌布尔值，且只匹配
+`Working`，丢失了终端已有的压缩阶段。现在同一次屏幕观察识别当前编辑区
+正上方的压缩状态，经 `cli.instance.phase` 随 CHECK、消息视图与仅 CLI 变化的
+SSE 推送；`busy` 同时为 true。会话模式复用现有活动行显示“正在压缩上下文…”，
+结束或失去有效观察后恢复原有历史活动提示，不伪造历史消息或修改原生文件。
+旧节点缺字段时沿用原行为。当前仅支持 Codex 可识别的终端布局。
+[turn_state_browser.py](../tests/turn_state_browser.py) 覆盖开始、结束、刷新、
+宽窄屏和历史引用/编辑区文字隔离。

@@ -47,6 +47,14 @@ while IFS= read -r line; do
   case "$line" in
     busy) printf "Working (3s - esc to interrupt)\\n" ;;
     idle) printf "\\033[2J\\033[HRS_IDLE\\n" ;;
+    compacting|compact-quoted|compact-draft)
+      printf "\\033[2J\\033[HRS_SHELL_READY\\nRS_SCREEN_%s\\nSynthetic answer\\n\\n" "$line"
+      if [ "$line" = compact-draft ]; then printf "› "; fi
+      printf "• Compacting context (1m 37s • esc to interrupt)\\n  └ Making room to continue.\\n"
+      if [ "$line" = compact-quoted ]; then printf "\\nSynthetic tool output ends here\\n"; fi
+      if [ "$line" != compact-draft ]; then printf "\\n› \\033[2mAsk Codex to do anything\\033[0m\\n"; fi
+      printf "\\n  GPT-6-Astra medium · Context 89%% used\\n  ? for shortcuts\\n"
+      ;;
     background|background-many|background-wrapped|background-quota|background-quota-wrapped|background-zero|quoted|quoted-quota|draft)
       printf "\\033[2J\\033[HRS_SHELL_READY\\nRS_SCREEN_%s\\nSynthetic completed answer\\n\\n" "$line"
       status="1 background terminal running · /ps to view · /stop to close"
@@ -524,7 +532,44 @@ def main(binary=BINARY):
                     expect(badge(codex_uid)).to_have_attribute("title", re.compile("空闲"))
                     # The CLI state object carries the field for every observed session.
                     cli = page.evaluate("uid => cache.get(uid).cli", codex_uid)
-                    assert cli["instance"] == {"running": True, "busy": False}, cli
+                    assert cli["instance"] == {"running": True, "busy": False, "phase": None}, cli
+
+                    # A live compaction has no JSONL start record. Exercise the
+                    # real PTY observation, watch packet and conversation mode.
+                    for command, phase in [("compacting", "compacting"),
+                                           ("compact-quoted", None), ("compact-draft", None),
+                                           ("compacting", "compacting"), ("idle", None)]:
+                        if not page.locator("#termpane").is_visible():
+                            page.locator("#a-term").click()
+                        page.locator("#xterm").click()
+                        page.keyboard.type(command)
+                        page.keyboard.press("Enter")
+                        wait_xterm(page, "RS_IDLE" if command == "idle" else "RS_SCREEN_" + command)
+                        page.wait_for_function("([uid, phase]) => cache.get(uid)?.cli?.instance?.phase === phase",
+                                               arg=[codex_uid, phase], timeout=20000)
+                        page.locator("#a-term").click()
+                        if phase:
+                            expect(page.locator("#activity")).to_have_text("正在压缩上下文…")
+                            for width, theme in [(1280, 'dark'), (1280, 'light'), (390, 'dark'), (390, 'light')]:
+                                page.set_viewport_size({"width": width, "height": 900})
+                                if width == 390 and not page.locator("#activity").is_visible():
+                                    page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
+                                if width == 390 and page.locator("#termpane").is_visible():
+                                    page.locator("#a-term").click()
+                                observed = page.evaluate("uid => cache.get(uid).cli.observed_at", codex_uid)
+                                page.wait_for_function("([uid, at]) => cache.get(uid)?.cli?.observed_at > at && cache.get(uid)?.cli?.instance?.phase === 'compacting'",
+                                                       arg=[codex_uid, observed], timeout=20000)
+                                page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
+                                expect(page.locator("#activity")).to_be_visible()
+                                page.screenshot(path=f"/tmp/sessiondock-compacting-{width}-{theme}.png")
+                            page.set_viewport_size({"width": 1280, "height": 900})
+                            page.reload(wait_until="networkidle")
+                            expect(page.locator("#activity")).to_have_text("正在压缩上下文…", timeout=20000)
+                        else:
+                            expect(page.locator("#activity").filter(has_text="正在压缩上下文")).to_have_count(0)
+                    if not page.locator("#termpane").is_visible():
+                        page.locator("#a-term").click()
+                    print("PASS compaction in conversation mode, reload, completion and quoted/draft isolation")
 
                     # BUG-20261001-133105-146ce9: detached work no longer
                     # appears in the TUI or below its CLI, but carries the
