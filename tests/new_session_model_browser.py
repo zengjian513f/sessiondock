@@ -69,6 +69,7 @@ def check_drag_selection(page, cwd):
         open_dialog(page)
         dialog = page.locator("#new-session-dialog")
         field = page.locator("#new-cwd")
+        expect(field).to_have_value("")
         field.fill(str(cwd))
         box = field.bounding_box()
         bounds = dialog.bounding_box()

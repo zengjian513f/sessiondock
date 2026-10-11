@@ -178,27 +178,14 @@ def node_switch_cwd(browser, hub, node, other):
     }""", [node.nid, other.nid])
     page.locator("#new-session").click()
     cwd = page.locator("#new-cwd")
-    page.locator("#new-node").select_option(node.nid)
-    expect(cwd).to_have_value("/node-a/default")
-    page.locator("#new-node").select_option(other.nid)
-    expect(cwd).to_have_value("/node-b/default")
-    page.locator("#new-node").select_option(node.nid)
-    expect(cwd).to_have_value("/node-a/default")
-    # An untouched default also survives when it exists on the destination.
-    other.set(dirs=["/shared/proj", "/only-b/work", "/node-a/default"])
-    with page.expect_response(lambda r: "path=%2Fnode-a%2Fdefault" in r.url and "node=" + other.nid in r.url):
-        page.locator("#new-node").select_option(other.nid)
-    page.wait_for_timeout(200)
-    expect(cwd).to_have_value("/node-a/default")
-    page.locator("#new-node").select_option(node.nid)
-    other.set(dirs=["/shared/proj", "/only-b/work"])
-    cwd.fill("/edited")
+    expect(cwd).to_have_value("")
+    for nid in (node.nid, other.nid, node.nid):
+        page.locator("#new-node").select_option(nid)
+        expect(cwd).to_have_value("")
     cwd.fill("/node-a/default")
     page.locator("#new-node").select_option(other.nid)
-    expect(cwd).to_have_value("/node-b/default")
-    cwd.fill("")
-    page.locator("#new-node").select_option(node.nid)
-    expect(cwd).to_have_value("/node-a/default")
+    expect(cwd).to_have_value("")
+    cwd.fill("/shared/proj")
     page.locator("#new-cwd-clear").click()
     expect(cwd).to_have_value("")
     expect(cwd).to_be_focused()
@@ -225,23 +212,23 @@ def node_switch_cwd(browser, hub, node, other):
         cwd.fill(value)
         with page.expect_response(lambda r: "/api/term/complete-dir" in r.url and "node=" + other.nid in r.url):
             page.locator("#new-node").select_option(other.nid)
-        expect(cwd).to_have_value(value if value.strip().rstrip("/") in ("/shared/proj", "/only-b/work") else "/node-b/default")
+        expect(cwd).to_have_value(value if value.strip().rstrip("/") in ("/shared/proj", "/only-b/work") else "")
         page.locator("#new-node").select_option(node.nid)
-        expect(cwd).to_have_value(value if value.strip().rstrip("/") == "/shared/proj" else "/node-a/default")
+        expect(cwd).to_have_value(value if value.strip().rstrip("/") == "/shared/proj" else "")
     # Candidate clicks and Tab completion follow the same existence rule.
     page.locator("#new-session-dialog .modal-close").click()
     page.locator("#new-session").click()
-    expect(cwd).to_have_value("/node-a/default")
+    expect(cwd).to_have_value("")
     page.locator('#new-cwd-options [role=option]').filter(has=page.get_by_text("/node-a/default", exact=True)).or_(page.locator('#new-cwd-options [role=option][title="/node-a/default/"]')).click()
     page.locator("#new-node").select_option(other.nid)
-    expect(cwd).to_have_value("/node-b/default")
+    expect(cwd).to_have_value("")
     page.locator("#new-node").select_option(node.nid)
-    expect(cwd).to_have_value("/node-a/default")
+    expect(cwd).to_have_value("")
     cwd.fill("/node-a/default/ch")
     cwd.press("Tab")
     expect(cwd).to_have_value("/node-a/default/child/")
     page.locator("#new-node").select_option(other.nid)
-    expect(cwd).to_have_value("/node-b/default")
+    expect(cwd).to_have_value("")
     # A delayed missing-path result must not overwrite newer typing or a switch.
     held = []
     def delay_check(route):
@@ -340,6 +327,63 @@ def shared_recent_cwd(browser, hub, node, other):
     other.pop('dirs')
 
 
+def current_cwd_recommendation(browser, hub, node, other):
+    """The selected session directory ranks first only after destination validation."""
+    node.set(dirs=["/same/project"])
+    other.set(dirs=["/same/project"])
+    context = browser.new_context(service_workers="block")
+    page = context.new_page()
+    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="domcontentloaded")
+    page.wait_for_function("S.sessions.length === 2 && T.listLoaded && Nodes.list.length === 2")
+    uid = page.evaluate("nid => S.sessions.find(row => row.node_id === nid).uid", node.nid)
+    page.locator(f'#side .item[data-uid="{uid}"]').click()
+    page.wait_for_function("uid => S.sel === uid", arg=uid)
+    page.evaluate("""([a, b]) => {
+        store.set('newDirs.' + a, ['/recent/first', '/same/project/']);
+        store.set('newDirs.' + b, ['/recent/first', '/same/project/']);
+    }""", [node.nid, other.nid])
+    page.locator("#new-session").click()
+    cwd = page.locator("#new-cwd")
+    options = page.locator('#new-cwd-options [role=option]')
+    for nid in (node.nid, other.nid):
+        page.locator('#new-node').select_option(nid)
+        expect(options.first).to_have_attribute('title', '/same/project')
+        expect(options.filter(has_text='/same/project')).to_have_count(1)
+        expect(cwd).to_have_value('')
+    options.first.click()
+    expect(cwd).to_have_value('/same/project')
+    page.locator('#new-session-dialog .modal-close').click()
+    page.locator('#new-session').click()
+    expect(cwd).to_have_value('')
+    # Even a same-node session and saved recent must not bypass existence checks.
+    node.set(dirs=[])
+    page.locator('#new-node').select_option(node.nid)
+    expect(options.first).to_have_attribute('title', '/recent/first')
+    expect(options.filter(has_text='/same/project')).to_have_count(0)
+    # Hold a successful old-machine check, then change machines; it cannot pin
+    # the now-missing directory or overwrite text entered while checking.
+    held = []
+    def delay(route):
+        if 'path=%2Fsame%2Fproject' in route.request.url and 'node=' + other.nid in route.request.url:
+            held.append(route)
+        else:
+            route.continue_()
+    context.route('**/api/term/complete-dir?*', delay)
+    page.locator('#new-node').select_option(other.nid)
+    page.wait_for_timeout(200)
+    assert held
+    page.locator('#new-node').select_option(node.nid)
+    cwd.fill('recent')
+    for route in held:
+        route.fulfill(json={'directories': ['/same/project/']})
+    page.wait_for_timeout(200)
+    expect(cwd).to_have_value('recent')
+    expect(options.filter(has_text='/same/project')).to_have_count(0)
+    context.close()
+    node.pop('dirs')
+    other.pop('dirs')
+
+
 def native_stop(browser, hub, node, other):
     """A session whose console is open on its machine but not in live state
     is stoppable from the hub page; the stop names that session."""
@@ -399,6 +443,7 @@ def main():
                     node_source_picker(browser, hub, *nodes)
                     node_switch_cwd(browser, hub, *nodes)
                     shared_recent_cwd(browser, hub, *nodes)
+                    current_cwd_recommendation(browser, hub, *nodes)
                     native_stop(browser, hub, *nodes)
                     scenario(browser, hub, *nodes)
                     browser.close()
@@ -407,7 +452,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS hub_pending_state_browser: per-node OpenCode picker, multi-select stop of a console-only session, machine select on the first row, steady cwd list while typing, node switch retains existing directories and replaces missing paths, with stale-check protection, create, partial list, draft/reload, recovery, confirmed exit")
+    print("PASS hub_pending_state_browser: per-node OpenCode picker, multi-select stop of a console-only session, machine select on the first row, steady cwd list while typing, empty initial cwd, node switch retains existing directories and clears missing paths, with stale-check protection, create, partial list, draft/reload, recovery, confirmed exit")
 
 
 if __name__ == "__main__":

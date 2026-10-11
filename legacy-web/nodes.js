@@ -303,17 +303,14 @@ function refreshNewNodeFields(preserveCwd = false) {
   }
   const checked = document.querySelector('input[name="new-source"]:checked');
   if (!checked || checked.disabled) document.querySelector('input[name="new-source"]:not(:disabled)')?.click();
-  const selected = S.sessions.find(s => s.uid === S.sel && (!HUB_MODE || s.node_id === newNodeId()));
-  const fallback = selected?.cwd || store.get(newDirsKey(), [])[0]
-    || cwdCompletion.common[0]?.cwd || cap.home || '';
   const input = document.querySelector('#new-cwd');
-  if (!preserveCwd) input.value = fallback;
+  if (!preserveCwd) input.value = '';
   else {
     const value = input.value;
     void newNodeHasDir(value.trim(), node).then(exists => {
       if (exists || check !== newCwdCheck || node !== newNodeId()
           || !document.querySelector('#new-session-dialog').open || input.value !== value) return;
-      input.value = fallback;
+      input.value = '';
       renderCommonCwdOptions();
     });
   }
