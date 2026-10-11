@@ -219,6 +219,11 @@ catalog immediately recomputes attribution against the current process snapshot.
 Catalog delivery still occurs on every existing refresh, including after collector
 restart. Resource sampling remains every two seconds, background catalog refresh
 every five seconds and independent local parent discovery every ten seconds.
+Report and resource reads capture immutable snapshots under the attribution
+lock, then serialize and aggregate outside it. Boot-long SSH evidence is streamed
+without first expanding it into a JSON value tree; concurrent readers must not
+block new samples. Event batches yield to due sampling and persistence every
+100 ms while leaving remaining events queued.
 Resource responses aggregate sessions once, after applying current probe
 availability. None of these reuse decisions cache CPU or I/O measurements.
 Catalog and link identities are local-node/boot/process scoped. A missing remote
