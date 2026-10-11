@@ -240,6 +240,10 @@ def main():
         assert sidebar.locator('[data-resource="memory_pss_bytes"] .item-resource-value').inner_text() == '64M'
         assert sidebar.locator('[data-resource="proc_storage_read_bytes_per_second"] .item-resource-value').inner_text() == '2K/s'
         assert sidebar.locator('[data-resource="proc_storage_write_bytes_per_second"] .item-resource-value').inner_text() == '4K/s'
+        for operation, label in (('read', '读取'), ('write', '写入')):
+            cell = sidebar.locator(f'[data-resource="proc_storage_{operation}_bytes_per_second"]')
+            assert cell.get_attribute('aria-label').startswith(f'磁盘{label}速度：')
+            assert cell.locator('use').get_attribute('href') == f'#i-resource-{operation}'
         assert_resource_spacing(sidebar)
         assert sidebar.locator('.item-resources [title], .item-resources[title]').count() == 0
         assert sidebar.locator('.body > :nth-child(2)').get_attribute('class') == 'm'
@@ -315,10 +319,14 @@ def main():
         assert sidebar.evaluate('(e) => e.clientWidth > 0 && e.scrollWidth <= e.clientWidth')
         assert sidebar.locator('.item-resources').is_visible()
         assert_resource_spacing(sidebar)
-        page.screenshot(path='/tmp/sidebar-resources-mobile.png')
+        for theme in ('light', 'dark'):
+            page.evaluate('(theme) => applyTheme(theme)', theme)
+            for size, viewport in (('mobile', {'width':390,'height':844}),
+                                   ('desktop', {'width':1280,'height':960})):
+                page.set_viewport_size(viewport)
+                assert_resource_spacing(sidebar)
+                page.screenshot(path=f'/tmp/sidebar-resources-{theme}-{size}.png')
         page.set_viewport_size({'width':1280,'height':960})
-
-        page.screenshot(path='/tmp/sidebar-resources-desktop.png')
         assert page.locator('#detail [data-session-resources]').count() == 0
         other = page.locator(f'#side .item[data-uid="{scoped(nodes[2].nid, corpora[2].uid("probe"))}"]')
         other.locator('.body').click()
