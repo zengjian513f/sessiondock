@@ -320,7 +320,12 @@ for line in sys.stdin:
         return value
     def launch(tag,options,host):
         command=shlex.join(['/usr/bin/python3',str(remote_script),str(remote),tag])
-        value=run([*common,*options,f'{user}@{host}',command])
+        argv=[*common,*options,f'{user}@{host}',command]
+        if tag == 'short-v4':
+            # A tool shell writes a script before exec'ing SSH. Its earlier
+            # child cannot have inherited the subsequent SSH socket.
+            argv=['/bin/sh','-c','/bin/cat /dev/null; exec "$@"','fixture',*argv]
+        value=run(argv)
         # Client returns before the delayed grandchild is even created.
         assert value['elapsed']<3.0,value
         wait_for(lambda:(remote/(tag+'.pid')).exists())
