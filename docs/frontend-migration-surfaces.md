@@ -227,6 +227,8 @@ BUG-20261008-120649-69fc59 的终端、原生历史和账本绑定一致，首�
 
 资源列默认关（`sidebarResources`）。打开后每行一个按钮，六格：CPU 核数、进程数、内存 PSS、GPU 张数、磁盘读、磁盘写（[`legacy-web/sidebar-resources.js`](../legacy-web/sidebar-resources.js)）。只画视口内的行（含 160px 预读）。采样超过约 15 秒或子代理行显示「—」。数字用 zh-CN 紧凑格式。每 5 秒，以及回到前台和休眠恢复时，`GET api/resources/summary`；页面休眠期间不读。失败则清空数字，不把缺失显示成 0。点格子打开会话资源，不选中行。
 
+磁盘图标以硬盘为参照：读取箭头向上离开硬盘，写入箭头向下进入硬盘；两者使用相同的硬盘轮廓。读写字段、顺序与数值不因图标改变而互换。
+
 [`tests/sidebar_toggle_browser.py`](../tests/sidebar_toggle_browser.py)。
 
 会话资源对话框由 [`legacy-web/session-resources.js`](../legacy-web/session-resources.js) 现建：标题「会话资源」，范围「仅当前会话」/「包含子会话」（默认 inclusive），刷新，关闭。合计说明：只加当前会话相关机器的已知数，缺失不是零，同一进程只计一次。子代理若没有可识别进程归属，不会被拆进共享 CLI。`GET api/session/resources?uid&scope`。404 文案：「此服务尚未提供资源统计，请更新服务端。」
