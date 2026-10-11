@@ -102,13 +102,19 @@ impl Conversations {
             self.cli.remember(native, &identity.key);
         }
     }
-    /// The identity key of `uid`, resolving it once when nothing has yet.
-    /// Only worth calling when the ledger holds queued sends at all.
-    pub async fn ensure_cli_key(&self, uid: &str) -> Option<String> {
+    /// Restore a known queue key without observing any terminal. An unknown
+    /// identity needs live resolution only when this batch could settle a send;
+    /// an unrelated session's queue must not delay opening history.
+    pub async fn ensure_cli_key(&self, uid: &str, echoes: &[cli_state::Echo]) -> Option<String> {
         if let Some(key) = self.cli.key_of(uid) {
             return Some(key);
         }
-        if !self.store.has_queued() {
+        let key = self.store.canonical(uid);
+        if key != uid || !self.store.queued(&key).is_empty() {
+            self.cli.remember(uid, &key);
+            return Some(key);
+        }
+        if !self.store.has_possible_echo(uid, echoes) {
             return None;
         }
         let identity = self.identity(uid).await.ok()?;

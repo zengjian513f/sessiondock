@@ -483,7 +483,7 @@ async fn observe_cli(state: &AppState, uid: &str) -> Option<Value> {
 
 /// Retires queued sends echoed by a batch's user/command records. A session
 /// nothing has identified yet (a page opening the native view of a launch)
-/// is resolved first when the ledger holds queued sends.
+/// is resolved only if these echoes could match a queued send.
 async fn retire_echo_list(
     state: &AppState,
     uid: &str,
@@ -492,7 +492,7 @@ async fn retire_echo_list(
     let Some(service) = state.conversations.as_ref() else {
         return false;
     };
-    if echoes.is_empty() || service.ensure_cli_key(uid).await.is_none() {
+    if echoes.is_empty() || service.ensure_cli_key(uid, echoes).await.is_none() {
         return false;
     }
     let has_queue = service
