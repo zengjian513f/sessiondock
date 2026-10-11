@@ -63,4 +63,32 @@
 .sd-session-card .t .session-title { color: var(--text); font-size: inherit; font-weight: inherit; }
 /* Labdesk keeps its live-title marker inside the title link. Place it over the icon. */
 .sd-session-card .t .session-title { position: static; padding-inline-start: 0; }
-.sd-session-card .session-title > .session-activity { left: 40px; inset-inline-start: 40px; top: 3px; width: 8px; height: 8px; border: 2px solid var(--panel); }
+/* Icon status matches the sidebar; only text-aligned markers retain idle placeholders. */
+.sd-session-card .session-title > .session-activity {
+  display: none; box-sizing: border-box; left: 42px; inset-inline-start: 42px; top: 4px;
+  width: 8px; height: 8px; border: 2px solid var(--panel); border-radius: 999px;
+  --turn-ring: var(--live-direct, #22c55e);
+  background: var(--turn-ring); animation: none;
+}
+.sd-session-card .session-title > .session-activity.active { display: flex; }
+.sd-session-card .session-title > .session-activity.managed { --turn-ring: var(--live-tmux, #0ea5e9); }
+.sd-session-card .session-title > .session-activity.waiting {
+  left: 33px; inset-inline-start: 33px; width: 17px; height: 17px; border-radius: 5px;
+  background: #fbbf24; color: #422006; font: 700 13px/1 system-ui, sans-serif;
+  align-items: center; justify-content: center;
+}
+.sd-session-card .session-title > .session-activity.active.waiting::after { content: '?'; }
+.sd-session-card .session-title > .session-activity.active.working { animation: turn-pulse 1.4s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .sd-session-card .session-title > .session-activity.active.working { animation: none; box-shadow: 0 0 0 2px var(--turn-ring); }
+}
+
+/* Shared by sidebar/header indicators and vendored agent cards. */
+@keyframes turn-pulse {
+  from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--turn-ring) 75%, transparent); }
+  to { box-shadow: 0 0 0 6px color-mix(in srgb, var(--turn-ring) 0%, transparent); }
+}
+
+/* Canonical status palette for all agent icons, including dark mode. */
+:root { --live-direct: #22c55e; --live-tmux: #0ea5e9; --turn-waiting: #d97706; }
+:root[data-theme="dark"] { --live-direct: #4ade80; --live-tmux: #38bdf8; --turn-waiting: #fbbf24; }

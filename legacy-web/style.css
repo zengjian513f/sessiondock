@@ -24,9 +24,6 @@
   --scroll-track: rgba(107, 114, 128, .08);
   --scroll-thumb: rgba(107, 114, 128, .42);
   --scroll-thumb-hover: rgba(107, 114, 128, .68);
-  --live-direct: #22c55e;
-  --live-tmux: #0ea5e9;
-  --turn-waiting: #d97706;
   --star: #a66b00;
   --bubble-user: #d9fdd3;
   --bubble-assistant: #ffffff;
@@ -72,9 +69,6 @@
     --scroll-track: rgba(223, 227, 234, .05);
     --scroll-thumb: rgba(223, 227, 234, .24);
     --scroll-thumb-hover: rgba(223, 227, 234, .42);
-    --live-direct: #4ade80;
-    --live-tmux: #38bdf8;
-    --turn-waiting: #fbbf24;
     --star: #f6c344;
     --bubble-user: #244c36;
     --bubble-assistant: #22262d;
@@ -740,10 +734,6 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .item-status.tmux { --turn-ring: var(--live-tmux); }
 .item-status.turn-working { animation: turn-pulse 1.4s ease-out infinite; }
 .item-status.turn-waiting { background: var(--turn-waiting); }
-@keyframes turn-pulse {
-  from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--turn-ring) 75%, transparent); }
-  to { box-shadow: 0 0 0 6px color-mix(in srgb, var(--turn-ring) 0%, transparent); }
-}
 @media (prefers-reduced-motion: reduce) {
   .item-status.turn-working { animation: none; box-shadow: 0 0 0 2px var(--turn-ring); }
 }
