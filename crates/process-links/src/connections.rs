@@ -121,7 +121,11 @@ impl Tracker {
         if !ssh && !self.records.values().any(|r| r.connection == connection) {
             return;
         }
-        let shared = self.shared.contains(&process) || self.parents.values().any(|p| p == &process);
+        // A shell can fork a helper, then exec SSH in the same incarnation.
+        // Those earlier children never inherited this not-yet-open socket.
+        // fork() marks connections already open at the fork; explicit shared
+        // transport observations remain sticky across connection creation.
+        let shared = self.shared.contains(&process);
         self.senders.insert(process.clone());
         self.records
             .entry((process.clone(), connection.clone(), at.to_bits()))

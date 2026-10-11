@@ -87,6 +87,15 @@ Unknown owners and shared/reused tuples participate in ambiguity checks; an
 ambiguous interval never selects a session. Live exclusive sockets retain the
 compatibility path.
 
+A fork marks only connections already open when the fork is observed. A tool
+shell may run a helper (for example, writing a script) before exec'ing SSH in
+the same process incarnation; those earlier children did not inherit the later
+socket and do not make it shared. BUG-20261011-120329-bb1c86 exposed this false
+shared classification, which prevented remote Grok children from acquiring their
+launch initiator and sidebar parent. The kernel browser suite covers this launch
+alongside actual ControlMaster exclusion. Previously saved ambiguous evidence is
+not rewritten from transcript text.
+
 The Hub polls every two seconds. It skips an empty publication, and skips
 an unchanged publication only after a successful send and a current destination
 report confirming every process's initiator and launch chain. Observation time
