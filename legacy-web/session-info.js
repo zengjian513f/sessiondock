@@ -17,17 +17,19 @@
   function card(item, side) {
     const direct = item.distance === 1;
     const label = item.title || item.sid || item.session_uid;
-    const title = item.available ? `<a class="si-relation-title t" href="${esc(infoUrl(item.uid))}">${esc(label)}</a>` : `<span class="si-relation-title t">${esc(label)}</span>`;
+    const title = item.available ? `<a class="si-relation-title t" title="${esc(label)}" href="${esc(infoUrl(item.uid))}">${esc(label)}</a>` : `<span class="si-relation-title t">${esc(label)}</span>`;
+    const meta = `${item.node_name || item.node_id || '本机'} · ${kinds[item.kind] || item.kind} · ${direct ? '直接' : `间接 ${item.distance} 层`}`;
     return `<article class="si-relation sd-session-card" data-uid="${esc(item.uid)}" data-side="${side}">
       <span class="ico">${SessionDockCard.icon(item.source)}</span><div class="body">
       ${title}
-      <div class="m card-meta">${direct ? '直接' : `间接 · ${item.distance} 层`} · ${esc(kinds[item.kind] || item.kind)}${(item.path_status || item.status) === 'candidate' ? ' · <span class="si-candidate">待核实</span>' : ' · 已确认'}${item.available ? '' : ' · 会话不可用'}</div>
-      <div class="cwd card-path">${esc(item.node_name || item.node_id || '本机')} · ${esc(item.source)} · ${esc(item.sid || item.session_uid)}</div>
-      ${item.artifact ? `<div class="snip" title="${esc(item.artifact)}">${esc(item.artifact)}</div>` : ''}
-      <div class="card-extra">
-      ${item.evidence ? `<details><summary>关系依据</summary><pre>${esc(item.evidence)}</pre></details>` : ''}
+      <div class="m" title="${esc(meta)}">${esc(meta)}${(item.path_status || item.status) === 'candidate' ? ' · <span class="si-candidate">待核实</span>' : ''}${item.available ? '' : ' · 会话不可用'}</div>
+      <details class="si-more"><summary aria-label="关系详情与操作" title="关系详情与操作"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></summary>
+      <div class="si-relation-detail">
+      <div class="cwd card-path">${esc(item.source)} · ${esc(item.sid || item.session_uid)}</div>
+      ${item.artifact ? `<div class="si-artifact">${esc(item.artifact)}</div>` : ''}
+      ${item.evidence ? `<details class="si-evidence"><summary>关系依据</summary><pre>${esc(item.evidence)}</pre></details>` : ''}
       <div class="si-actions">${item.available ? `<a href="${esc(conversationUrl(item.uid))}">打开会话</a>` : ''}
-      ${direct ? `${item.status === 'candidate' ? '<button type="button" data-confirm>确认关系</button>' : ''}<button type="button" data-remove>移除关系</button>` : ''}</div></div></div></article>`;
+      ${direct ? `${item.status === 'candidate' ? '<button type="button" data-confirm>确认关系</button>' : ''}<button type="button" data-remove>移除关系</button>` : ''}</div></div></details></div></article>`;
   }
   function render() {
     const row = data.session;

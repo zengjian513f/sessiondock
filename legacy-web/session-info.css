@@ -39,3 +39,18 @@ body.session-info-page { display: block; height: auto; min-height: 100dvh; overf
 @media (max-width: 720px) { .si-columns, .si-facts { grid-template-columns: 1fr; } .si-main { padding: 10px; } .si-header { padding: 8px 10px; gap: 8px; } .si-panel { padding: 12px; } }
 
 .si-relation.sd-session-card { cursor: default; }
+
+/* Keep relation rows as compact as the sidebar; disclose management on demand. */
+.si-columns { align-items: start; }
+.si-list-panel { padding: 0; box-shadow: none; overflow: hidden; }
+.si-list-panel > .si-heading { margin: 0; padding: 7px 11px; border-bottom: 1px solid var(--border); }
+.si-list-panel > .si-heading h2 { font-size: 13px; }
+.si-list-panel .si-relation .body > :is(.t,.m) { margin-right: 25px; }
+.si-relation .si-more { margin: 0; }
+.si-more > summary { position: absolute; top: 6px; right: 7px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 4px; list-style: none; }
+.si-more > summary::-webkit-details-marker { display: none; }
+.si-more > summary svg { width: 18px; height: 18px; fill: currentColor; }
+.si-more > summary:hover, .si-more[open] > summary { background: var(--sel); color: var(--text); }
+.si-relation-detail { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.si-artifact { margin-top: 4px; color: var(--muted); }
+@media (max-width: 720px) { .si-list-panel { padding: 0; } }

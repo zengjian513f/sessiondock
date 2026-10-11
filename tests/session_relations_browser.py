@@ -94,6 +94,7 @@ def main():
         assert page.locator('#info-predecessors .sd-session-card').first.evaluate(measure) == sidebar_style
         open_info('second'); add('first', state='candidate')
         expect(page.locator('#info-predecessors .si-candidate')).to_have_count(2)
+        page.locator('#info-predecessors .si-more > summary').first.click()
         page.locator('#info-predecessors [data-confirm]').click()
         expect(page.locator('#info-predecessors .si-candidate')).to_have_count(0)
         add('review', side='successor', kind='branches', evidence='<img src=x onerror=alert(1)> 修复交接')
@@ -101,7 +102,15 @@ def main():
         expect(page.locator('#info-predecessors .si-relation')).to_have_count(2)
         expect(page.locator('#info-successors .si-relation')).to_have_count(2)
         expect(page.locator('#predecessor-count')).to_have_text('2 · 直接 1')
-        page.locator('#info-successors details').first.locator('summary').click()
+        compact = page.locator('#info-successors .si-relation').first
+        expect(compact.locator('.si-relation-detail')).to_be_hidden()
+        assert compact.bounding_box()['height'] <= 76
+        compact.locator('.si-more > summary').click()
+        compact.locator('.si-evidence > summary').click()
+        expect(compact.locator('pre')).to_be_visible()
+        screenshot('expanded-relation')
+        compact.locator('.si-more > summary').click()
+        expect(compact.locator('.si-relation-detail')).to_be_hidden()
         expect(page.locator('#info-successors img')).to_have_count(0)
         # Model-ready catalog excludes both native subagents and displayed children.
         page.locator('#add-predecessor').click()
@@ -126,6 +135,9 @@ def main():
                 page.set_viewport_size({'width':width,'height':900})
                 page.evaluate('theme=>document.documentElement.dataset.theme=theme',theme)
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), (width,theme)
+                for card in page.locator('.si-relation[data-uid]').all():
+                    expect(card.locator('.si-relation-detail')).to_be_hidden()
+                    assert card.bounding_box()['height'] <= 76, (width,theme)
                 page.screenshot(path=str(args.screenshots/f'info-{width}-{theme}.png'),full_page=True)
         page.set_viewport_size({'width':1280,'height':900})
         # Navigation goes to the information page, and its conversation link opens history.
@@ -150,10 +162,12 @@ def main():
         expect(page.locator('#info-editor')).to_be_visible();screenshot('save-error');page.locator('#relation-save').click();expect(page.locator('#info-editor')).to_be_hidden()
         expect(page.locator('#info-predecessors .si-relation')).to_have_count(3)
         twin_card=page.locator('#info-predecessors .si-relation').filter(has=page.locator('a.si-relation-title').filter(has_text='b origin'))
+        twin_card.locator('.si-more > summary').click()
         twin_card.locator('[data-remove]').click();expect(page.locator('#info-predecessors .si-relation')).to_have_count(2)
         # A cycle remains finite. Relationships are user assertions, not a native fork DAG.
         open_info('origin');add('research')
         assert len(api_info(refs['origin'])['ancestors'])==3
+        page.locator('#info-predecessors .si-more > summary').first.click()
         page.locator('#info-predecessors .si-relation').first.locator('[data-remove]').click()
         expect(page.locator('#info-predecessors .si-relation')).to_have_count(0)
         open_info('second')
@@ -162,6 +176,7 @@ def main():
         expect(page.locator('#info-status')).to_contain_text('部分机器')
         expect(page.locator('#info-predecessors')).to_contain_text('first')
         screenshot('offline')
+        page.locator('#info-predecessors .si-more > summary').first.click()
         page.locator('#info-predecessors .si-relation').first.locator('[data-remove]').click()
         expect(page.locator('#info-predecessors .si-relation')).to_have_count(0)
         for p,content in original.items():assert p.read_bytes()==content, p
