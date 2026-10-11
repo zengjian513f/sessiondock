@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from threading import Event, Thread
 from types import SimpleNamespace
 
 from playwright.sync_api import sync_playwright
@@ -141,6 +142,11 @@ def synthetic(fixture,pw):
                record(202,40001,-30,-25,owner,True),record(203,40002,-30,-25,owner),
                record(204,40002,-29,-24,other),record(205,40003,-60,-55,owner),
                record(206,40003,-30,-25,None)]
+    # A long-running node retains closed SSH evidence for the whole boot.
+    # Repeated report/catalog reads must not hold the sampler lock while
+    # expanding this history into JSON (BUG-20261011-085825-aba2df).
+    records.extend(record(10000+i, 45000+i%10000, -120, -110, other)
+                   for i in range(30000))
     for index in range(2):
         saved = {'node_id':fixture.nodes[index].nid,'boot_id':'event-boot',
                  'catalog':{'node_id':fixture.nodes[index].nid,'boot_id':'event-boot','owners':[],'sessions':[]},'links':[],'bindings':[],
@@ -167,6 +173,27 @@ def synthetic(fixture,pw):
                 (entry/'smaps_rollup').write_text('Pss: 16 kB\n')
         (fixture.corpora[index].root/'agent-state.json').write_text(json.dumps(saved))
     fixture.start()
+    stopped = Event()
+    failures = []
+    reads = []
+    def reader():
+        try:
+            while not stopped.is_set():
+                result = request(fixture.corpora[0].root/'agent.sock', 'report')
+                assert len(result['connections']) == len(records)
+                reads.append(result['sampled_at'])
+        except Exception as error:
+            failures.append(error)
+    readers = [Thread(target=reader, daemon=True) for _ in range(3)]
+    def finish_readers():
+        stopped.set()
+        for worker in readers:
+            worker.join(timeout=10)
+        assert not any(worker.is_alive() for worker in readers)
+        assert not failures, failures
+    fixture.stack.callback(finish_readers)
+    for worker in readers:
+        worker.start()
     page,item = fixture.browser(pw)
     wait_for(lambda: {b['process']['pid'] for b in fixture.bindings()} == {500,501})
     bindings = {b['process']['pid']:b for b in fixture.bindings()}
@@ -176,6 +203,14 @@ def synthetic(fixture,pw):
                for b in fixture.report(0)['bindings'])
     item.locator('.item-resources').click()
     page.wait_for_function("document.querySelectorAll('.session-resources .sr-node').length===2")
+    sampled_at = request(fixture.corpora[0].root/'agent.sock', 'health')['sampled_at']
+    wait_for(lambda: request(fixture.corpora[0].root/'agent.sock', 'health')['sampled_at'] > sampled_at)
+    assert time.time() - request(fixture.corpora[0].root/'agent.sock', 'health')['sampled_at'] < 15
+    page.get_by_role('button',name='刷新资源',exact=True).click()
+    wait_for(lambda: item.locator('[data-resource="process_count"] .item-resource-value').inner_text()=='3')
+    finish_readers()
+    assert len(reads) >= 3
+    print('PASS browser resources remain fresh with 30000 retained SSH spans and concurrent report readers', flush=True)
     page.get_by_role('button',name='关闭资源面板').click()
     fixture.hub.stop()
     fixture.restart_agents()

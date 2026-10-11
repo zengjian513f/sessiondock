@@ -246,11 +246,95 @@ fn diagnostic_worker(uid: u32, control: Arc<Mutex<Diagnostic>>) {
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+// Capture immutable snapshots under the attribution lock. Large boot-long
+// connection histories and resource aggregation must not hold up sampling.
+enum Response {
+    Value(Value),
+    Report(Arc<Report>),
+    Resources {
+        resources: Arc<Resources>,
+        report: Arc<Report>,
+        diagnostic: Value,
+        io_active: bool,
+    },
+}
+#[derive(serde::Serialize)]
+struct Envelope<T> {
+    ok: bool,
+    result: T,
+}
+impl Response {
+    fn write(self, writer: &mut impl Write) -> io::Result<()> {
+        match self {
+            Self::Value(value) => serde_json::to_writer(
+                writer,
+                &Envelope {
+                    ok: true,
+                    result: value,
+                },
+            )?,
+            Self::Report(report) => serde_json::to_writer(
+                writer,
+                &Envelope {
+                    ok: true,
+                    result: &*report,
+                },
+            )?,
+            Self::Resources {
+                resources,
+                report,
+                diagnostic,
+                io_active,
+            } => {
+                let mut resources = (*resources).clone();
+                let processes: BTreeSet<_> = resources
+                    .samples
+                    .iter()
+                    .map(|sample| &sample.process)
+                    .collect();
+                resources.bindings = report
+                    .bindings
+                    .iter()
+                    .filter(|binding| processes.contains(&binding.process))
+                    .cloned()
+                    .collect();
+                if !io_active {
+                    for sample in &mut resources.samples {
+                        for (name, _, _, _) in IO_METRICS {
+                            sample.metrics.insert(
+                                name.into(),
+                                metric(Value::Null, "unavailable", "临时探测未开启或正在启动"),
+                            );
+                        }
+                    }
+                    for (name, _, _, _) in IO_METRICS {
+                        resources.metric_availability.insert(
+                            name.into(),
+                            metric(Value::Null, "unavailable", "临时探测未开启或正在启动"),
+                        );
+                    }
+                }
+                resources.sessions = process_links::resource_summary::sessions(&resources);
+                let mut value = json!(resources);
+                value["diagnostic"] = diagnostic;
+                serde_json::to_writer(
+                    writer,
+                    &Envelope {
+                        ok: true,
+                        result: value,
+                    },
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
 struct State {
     engine: Engine,
     snapshot: Snapshot,
-    report: Report,
-    resources: Resources,
+    report: Arc<Report>,
+    resources: Arc<Resources>,
     status: CollectorStatus,
     forks: u64,
     execs: u64,
@@ -259,24 +343,26 @@ struct State {
 }
 impl State {
     fn update(&mut self, snapshot: Snapshot, resources: Resources) {
-        self.report = self
-            .engine
-            .update(&snapshot, resources.sampled_at, self.status.clone());
+        self.report = Arc::new(self.engine.update(
+            &snapshot,
+            resources.sampled_at,
+            self.status.clone(),
+        ));
         self.snapshot = snapshot;
-        self.resources = resources;
+        self.resources = Arc::new(resources);
     }
     fn refresh(&mut self) {
-        self.report = self.engine.update(
+        self.report = Arc::new(self.engine.update(
             &self.snapshot,
             self.resources.sampled_at,
             self.status.clone(),
-        );
+        ));
     }
-    fn handle(&mut self, request: Request) -> Result<Value, &'static str> {
+    fn handle(&mut self, request: Request) -> Result<Response, &'static str> {
         match request {
-            Request::Health => Ok(
+            Request::Health => Ok(Response::Value(
                 json!({"service":"resource-agent", "version":1, "node_id":self.engine.node_id, "boot_id":self.engine.boot_id, "sampled_at":self.report.sampled_at,"collector":self.status,"processes":self.snapshot.entries.len(),"fork_events":self.forks,"exec_events":self.execs,"exit_events":self.exits}),
-            ),
+            )),
             Request::Probe {
                 enabled,
                 lease_id,
@@ -317,46 +403,18 @@ impl State {
                     }
                     diagnostic.window = IoWindow::new(false);
                 }
-                Ok(diagnostic.value())
+                Ok(Response::Value(diagnostic.value()))
             }
-            Request::Report => Ok(json!(self.report)),
+            Request::Report => Ok(Response::Report(self.report.clone())),
             Request::Resources => {
-                let mut resources = self.resources.clone();
-                let processes: BTreeSet<_> = resources
-                    .samples
-                    .iter()
-                    .map(|sample| &sample.process)
-                    .collect();
-                resources.bindings = self
-                    .report
-                    .bindings
-                    .iter()
-                    .filter(|binding| processes.contains(&binding.process))
-                    .cloned()
-                    .collect();
                 let diagnostic = self.diagnostic.lock().unwrap_or_else(|e| e.into_inner());
-                if diagnostic.state != "active"
-                    || diagnostic.deadline.is_none_or(|d| d <= Instant::now())
-                {
-                    for sample in &mut resources.samples {
-                        for (name, _, _, _) in IO_METRICS {
-                            sample.metrics.insert(
-                                name.into(),
-                                metric(Value::Null, "unavailable", "临时探测未开启或正在启动"),
-                            );
-                        }
-                    }
-                    for (name, _, _, _) in IO_METRICS {
-                        resources.metric_availability.insert(
-                            name.into(),
-                            metric(Value::Null, "unavailable", "临时探测未开启或正在启动"),
-                        );
-                    }
-                }
-                resources.sessions = process_links::resource_summary::sessions(&resources);
-                let mut value = json!(resources);
-                value["diagnostic"] = diagnostic.value();
-                Ok(value)
+                Ok(Response::Resources {
+                    resources: self.resources.clone(),
+                    report: self.report.clone(),
+                    diagnostic: diagnostic.value(),
+                    io_active: diagnostic.state == "active"
+                        && diagnostic.deadline.is_some_and(|d| d > Instant::now()),
+                })
             }
             Request::Catalog(catalog) => {
                 if catalog.node_id != self.engine.node_id || catalog.boot_id != self.engine.boot_id
@@ -367,12 +425,12 @@ impl State {
                     self.engine.catalog(catalog);
                     self.refresh();
                 }
-                Ok(json!(self.report))
+                Ok(Response::Report(self.report.clone()))
             }
             Request::Publish(published) => {
                 self.engine.publish(published, &self.snapshot);
                 self.refresh();
-                Ok(json!(self.report))
+                Ok(Response::Report(self.report.clone()))
             }
         }
     }
@@ -971,18 +1029,17 @@ fn serve(mut stream: UnixStream, state: Arc<Mutex<State>>, uid: u32) -> io::Resu
     let mut line = String::new();
     BufReader::new(&stream).read_line(&mut line)?;
     let response = match serde_json::from_str::<Request>(&line) {
-        Ok(request) => match state
+        Ok(request) => state
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .handle(request)
-        {
-            Ok(result) => json!({"ok":true,"result":result}),
-            Err(error) => json!({"ok":false,"error":error}),
-        },
-        Err(_) => json!({"ok":false,"error":"invalid request"}),
+            .handle(request),
+        Err(_) => Err("invalid request"),
     };
     let mut writer = BufWriter::new(&mut stream);
-    serde_json::to_writer(&mut writer, &response)?;
+    match response {
+        Ok(response) => response.write(&mut writer)?,
+        Err(error) => serde_json::to_writer(&mut writer, &json!({"ok":false,"error":error}))?,
+    }
     writer.write_all(b"\n")?;
     writer.flush()
 }
@@ -1074,8 +1131,8 @@ pub fn run() -> io::Result<()> {
     let state = Arc::new(Mutex::new(State {
         engine,
         snapshot,
-        report,
-        resources: data,
+        report: Arc::new(report),
+        resources: Arc::new(data),
         status,
         forks: 0,
         execs: 0,
@@ -1245,6 +1302,7 @@ pub fn run() -> io::Result<()> {
                     None
                 }
             };
+            let batch_started = Instant::now();
             for event in first.into_iter().chain(receiver.try_iter()) {
                 let mut s = worker_state.lock().unwrap_or_else(|e| e.into_inner());
                 match event {
@@ -1279,6 +1337,11 @@ pub fn run() -> io::Result<()> {
                         s.engine.connections.received(process, connection, at);
                     }
                     Event::Shared(process) => s.engine.connections.shared(&process),
+                }
+                // A continuously nonempty event stream must not starve resource
+                // refresh or durable saves. Remaining events stay queued.
+                if batch_started.elapsed() >= Duration::from_millis(100) {
+                    break;
                 }
             }
             if sampled.elapsed() >= Duration::from_secs(2) {
