@@ -4652,6 +4652,7 @@ function paintAgentStatus(node) {
   const badge = node.querySelector(':scope > .ico > .item-status');
   if (!badge) return;
   badge.classList.toggle('visible', running);
+  badge.classList.toggle('turn-working', running);
   badge.title = badge.ariaLabel = running ? '子代理运行中' : '';
 }
 

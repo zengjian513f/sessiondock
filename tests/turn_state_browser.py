@@ -269,18 +269,42 @@ def main(binary=BINARY):
                     assert row_turn(opener, base, codex_uid, codex_path.stat().st_size) == "idle"
 
                     # ---- Long Codex subagent: native/list/detail agree and
-                    # both the sidebar and the view menu display its green dot.
+                    # the sidebar breathes and the view menu displays its green dot.
                     agent_path = corpus.put(CODEX_AGENT, "codex", agent_rows, [], parent=CODEX_SID)
                     page.locator(f'#side .item[data-uid="{codex_uid}"]:not(.agent)').click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic Codex turn target")
                     agent_dot = page.locator(f'#side .item.agent[data-agent="{CODEX_AGENT}"] .item-status')
                     expect(agent_dot).to_have_class(re.compile(r"\bvisible\b"), timeout=20000)
+                    expect(agent_dot).to_have_css("animation-name", "turn-pulse")
                     page.locator("#a-view-switch").click()
                     choice = page.locator(f'#session-view-menu button[data-agent="{CODEX_AGENT}"]')
                     expect(choice.locator(".view-live")).to_be_visible()
                     choice.click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic long agent working")
                     page.wait_for_function("cache.get(viewKey(S.sel,S.agent))?.activity?.state === 'working'")
+
+                    def agent_visuals(state):
+                        screenshots = os.environ.get("SESSIONDOCK_TEST_SCREENSHOTS")
+                        if not screenshots:
+                            return
+                        directory = Path(screenshots)
+                        directory.mkdir(parents=True, exist_ok=True)
+                        for width, theme in [(1280, "light"), (1280, "dark"), (390, "light"), (390, "dark")]:
+                            page.set_viewport_size({"width": width, "height": 900})
+                            if width == 390 and page.locator(".mobile-back").is_visible():
+                                page.locator(".mobile-back").click()
+                            page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
+                            expect(agent_dot.locator("xpath=..")).to_be_visible()
+                            page.screenshot(path=str(directory / f"subagent-{state}-{width}-{theme}.png"))
+                        page.set_viewport_size({"width": 1280, "height": 900})
+                        page.evaluate("document.documentElement.dataset.theme = 'light'")
+
+                    agent_visuals("working")
+                    page.emulate_media(reduced_motion="reduce")
+                    expect(agent_dot).to_have_css("animation-name", "none")
+                    expect(agent_dot).to_have_class(re.compile(r"\bturn-working\b"))
+                    page.emulate_media(reduced_motion="no-preference")
+                    expect(agent_dot).to_have_css("animation-name", "turn-pulse")
 
                     def agent_active(expected):
                         rows = json.loads(opener.open(base + "/api/sessions?force=1", timeout=10).read())["sessions"]
@@ -292,6 +316,9 @@ def main(binary=BINARY):
                     append(agent_path, codex_row("event_msg", {"type": "task_complete", "turn_id": "long-agent"}), padding)
                     agent_active(False)
                     expect(agent_dot).not_to_have_class(re.compile(r"\bvisible\b"), timeout=20000)
+                    expect(agent_dot).not_to_have_class(TURN)
+                    expect(agent_dot).to_have_css("animation-name", "none")
+                    agent_visuals("idle")
                     page.locator("#a-view-switch").click()
                     expect(choice.locator(".view-live")).to_have_count(0)
                     page.locator('#session-view-menu button[data-agent=""]').click()
@@ -305,6 +332,7 @@ def main(binary=BINARY):
                     append(agent_path, padding)
                     agent_active(True)
                     expect(agent_dot).to_have_class(re.compile(r"\bvisible\b"), timeout=20000)
+                    expect(agent_dot).to_have_css("animation-name", "turn-pulse")
                     # Replacing the inode resets the saved boundary, including
                     # when the replacement has a completion buried in its middle.
                     replacement = agent_path.with_suffix(".replacement")
