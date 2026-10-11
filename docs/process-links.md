@@ -105,6 +105,10 @@ retries. The cache is memory-only and a Hub restart starts it empty. Inherited
 bindings alone never suppress the first publication of a child's own durable
 link. Publications are additive; an empty publication never revoked saved links.
 
+Local collector requests buffer JSON before flushing the newline-delimited
+message. This preserves the wire protocol and timeouts while avoiding a socket
+write for each punctuation mark and short field in a full session catalog.
+
 The Linux adapter reads the monitored user's processes, selected identity variables,
 SSH connection variables and socket descriptors. It excludes detected SSH master
 connections, ambiguous matches and receiver processes predating a new connection

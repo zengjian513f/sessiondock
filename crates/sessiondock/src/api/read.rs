@@ -141,6 +141,7 @@ pub async fn messages(
     let prompts = state.prompts.clone();
     let uid_for_cli = uid.clone();
     let query_agent_empty = query.agent.is_empty();
+    let started = std::time::Instant::now();
     let (body, scope, mut prompt, echoes) = state
         .reader
         .run(move |store| {
@@ -164,7 +165,9 @@ pub async fn messages(
             Ok((body, scope, prompt, echoes))
         })
         .await?;
+    let read_ms = started.elapsed().as_millis();
     retire_echo_list(&state, &uid_for_cli, &echoes).await;
+    let echo_ms = started.elapsed().as_millis() - read_ms;
     // `result["prompt"]` is set for every main view:
     // null unless a Claude card or a Codex approval is live.
     if let Some(scope) = scope {
@@ -175,6 +178,16 @@ pub async fn messages(
             &mut CodexProbe::default(),
         )
         .await;
+    }
+    let elapsed_ms = started.elapsed().as_millis();
+    if elapsed_ms >= crate::log::SLOW_MS {
+        crate::log::warn(
+            "history.open.slow",
+            json!({
+                "uid": uid_for_cli, "read_ms": read_ms, "echo_ms": echo_ms,
+                "prompt_ms": elapsed_ms - read_ms - echo_ms, "ms": elapsed_ms,
+            }),
+        );
     }
     let cli = cli_field(&state, &uid_for_cli, query_agent_empty);
     Ok(JsonBytes(

@@ -27,6 +27,7 @@ def wait_live(opener, base, predicate, seconds=10):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--screenshots', type=Path)
     args = parser.parse_args()
     if os.name != "posix":
         raise SystemExit("This isolated real-shell acceptance currently requires POSIX.")
@@ -131,6 +132,9 @@ def main():
                     # Managed instance: the console is available while it runs.
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic live managed console")
+                    if args.screenshots:
+                        args.screenshots.mkdir(parents=True, exist_ok=True)
+                        page.screenshot(path=str(args.screenshots / 'history-open.png'))
                     expect(page.locator("#a-term")).to_be_visible()
                     expect(page.locator("#a-term")).to_have_attribute("data-unavailable", "false")
                     page.wait_for_function("instance => (T.list || []).some(row => row.instance_id === instance)", arg=instance)

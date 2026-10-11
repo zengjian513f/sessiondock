@@ -84,14 +84,19 @@ pub struct Resources {
 /// One bounded-time local exchange. Application requests never enter SSH's path.
 #[cfg(unix)]
 pub fn request(path: &Path, request: &Request) -> std::io::Result<serde_json::Value> {
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, BufWriter, Write};
     use std::os::unix::net::UnixStream;
     let mut stream = UnixStream::connect(path)?;
     let timeout = Some(std::time::Duration::from_secs(2));
     stream.set_read_timeout(timeout)?;
     stream.set_write_timeout(timeout)?;
-    serde_json::to_writer(&mut stream, request)?;
-    stream.write_all(b"\n")?;
+    // serde emits punctuation and short fields separately. Buffer the catalog
+    // instead of making thousands of one-byte socket writes per observation.
+    let mut writer = BufWriter::new(&mut stream);
+    serde_json::to_writer(&mut writer, request)?;
+    writer.write_all(b"\n")?;
+    writer.flush()?;
+    drop(writer);
     let mut line = String::new();
     BufReader::new(stream).read_line(&mut line)?;
     let response: serde_json::Value = serde_json::from_str(&line)?;
