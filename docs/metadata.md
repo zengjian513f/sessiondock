@@ -265,3 +265,64 @@ assignment for single sessions, cross-node batches and touch menus, creation
 failure/retry, draft focus, immediate assignment and batches,
 empty groups, removal without a dialog, hover/keyboard/mobile submenus, offline
 deletion/rejoin, same-name recreation, restarts, and unchanged native records.
+
+## Top-level work relationships
+
+DELTA: SessionDock adds explicit work handoffs, independent of native forks,
+subagents, sidebar nesting and clone/move lineage. Only top-level sessions can
+receive new edges: pending launches, shell sessions, native subagents and rows
+with a `nest_parent` are excluded. Existing historical edges are retained if an
+endpoint later disappears or becomes a child; they do not authorize native actions.
+
+Each receiving session owns a `predecessors` adjacency list in its metadata row.
+An entry records the exact local `session_uid`, optional remote `node_id`, source,
+native SID and title, `kind` (`continues`, `branches`, `references`), `status`
+(`confirmed`, `candidate`), `artifact` and plain-text `evidence`. Node plus record
+UID is the identity; matching UUIDs on different nodes never merge. One pair has
+one entry; changing its type or evidence replaces that entry atomically and keeps
+unrelated incoming edges. No native files are rewritten. Clone metadata's existing
+allowlist does not copy these work relationships or invent a handoff to a clone.
+
+`successors` is the reverse adjacency, generated from receiving rows. It is not a
+second durable copy requiring a distributed write. Local lists expose local reverse
+edges; the Hub rebuilds the reverse index across the fetched fleet inventory.
+Unavailable endpoints retain their saved descriptors. Node errors make the Hub
+response `partial`; missing successors on an offline node are not proof of absence.
+
+- `POST /api/session/predecessor` takes `{uid, predecessor_uid, kind?, status?,
+  artifact?, evidence?, remove?}`. The default is a confirmed continuation. Remove
+  is idempotent and can remove a saved unavailable predecessor. Self-edges are not
+  valid. User-asserted cycles are retained; recursive reads use a visited set.
+- The Hub resolves exact scoped identities and validates both top-level endpoints,
+  then forwards a trusted `remote_predecessor` to the receiving node. Local callers
+  cannot supply this descriptor; the Hub strips browser-supplied descriptors. No
+  cross-node double write occurs. Failed writes remain visible and retryable.
+- `GET /api/session/info?uid=…` returns the session (including adjacency fields),
+  resolved direct `predecessors`/`successors`, and recursive `ancestors`/`descendants`
+  with `distance`, evidence and availability. Traversal deduplicates nodes; a path
+  containing a candidate edge remains marked as unverified, including indirect nodes.
+- `GET /api/sessions/relations` provides the discovery catalog: top-level rows
+  only, without embedded `agent_items`. It reads summaries, not every transcript.
+- `GET /api/session/relations/hints?uid=…` explicitly opens one top-level view and
+  returns the first five user messages after excluding injected rule/environment
+  envelopes, plus Markdown-path and UUID matches. A cold read can parse that
+  session's native history. Matching a path or UUID is a clue, not a saved edge.
+
+The row menu and session action menu open `session-info.html?uid=…`. The page shows
+identity, all recorded predecessors and successors, distinguishes direct and indirect
+neighbors, and links to each information page and conversation. It supports adding
+both directions, confirming candidates, removing direct edges, inspecting evidence
+and lazily reading opening clues. Errors retain the editor. HTML escaping applies
+to titles, paths and evidence. The page reuses existing theme and typography. Sidebar rows and relationship
+cards share `legacy-web/session-card.css`; titles, icons, secondary information,
+snippets and interaction states follow the sidebar. Relationship cards initially show only the title and one metadata line, like
+sidebar rows. A trailing details control reveals UUID, handoff document, evidence
+and management actions; these fields never enlarge a collapsed row. Labdesk consumes a vendored copy of the same
+stylesheet and `session-card.js` brand marks, with time and contribution fields;
+update both copies together without introducing a runtime dependency between apps.
+
+Validation: [session_relations_browser.py](../tests/session_relations_browser.py)
+uses Chromium, two private nodes and a Hub for cross-node edits, native/subordinate
+exclusion, same-SID isolation, restart persistence, offline references, finite
+cycles, failure/retry, hints, navigation and unchanged native bytes. Desktop/mobile
+light/dark screenshots accompany actual interaction checks.

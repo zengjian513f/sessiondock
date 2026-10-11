@@ -19,6 +19,7 @@ mod metadata;
 pub(crate) mod node_auth;
 mod process_links;
 mod read;
+mod relations;
 pub(crate) mod runtime;
 mod search;
 mod shell_env;
@@ -81,6 +82,10 @@ pub fn router() -> Router<AppState> {
             get(metadata::groups).post(metadata::merge_groups),
         )
         .route("/session/group", post(metadata::session_group))
+        .route("/session/info", get(relations::info))
+        .route("/session/relations/hints", get(relations::hints))
+        .route("/session/predecessor", post(relations::save))
+        .route("/sessions/relations", get(relations::catalog))
         .route("/sessions", get(read::list))
         .route("/events", get(events::events))
         .route("/sessions/resolve", post(read::resolve_links))

@@ -2,6 +2,8 @@
 
 mod disk;
 mod model;
+pub mod relations;
+pub use relations::Predecessor;
 
 use std::{
     path::Path,
@@ -204,6 +206,15 @@ impl MetadataStore {
         identities: &std::collections::BTreeMap<(String, String), String>,
     ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
         self.update(|snapshot| snapshot.with_initial_nest_parents(found, identities))
+    }
+
+    pub fn set_predecessor(
+        &self,
+        uid: &str,
+        edge: Predecessor,
+        remove: bool,
+    ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
+        self.update(|snapshot| snapshot.with_predecessor(uid, edge, remove))
     }
 
     pub fn set_nest_display(

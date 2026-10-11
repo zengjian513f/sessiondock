@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::MetadataError;
+use super::{MetadataError, Predecessor};
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -148,6 +148,8 @@ pub(super) struct Row {
     /// Files published by the write service and recorded for this session.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     attachments: Vec<Attachment>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    predecessors: Vec<Predecessor>,
     /// Sidebar parent initialized by a launch or chosen by the user.
     #[serde(skip_serializing_if = "Option::is_none")]
     nest_parent: Option<NestParent>,
@@ -459,6 +461,27 @@ impl MetadataSnapshot {
             .map_or(&[], |row| row.attachments.as_slice())
     }
 
+    pub fn with_predecessor(
+        &self,
+        uid: &str,
+        edge: Predecessor,
+        remove: bool,
+    ) -> Result<Self, MetadataError> {
+        validate_uid(uid)?;
+        validate_uid(&edge.session_uid)?;
+        self.change(|rows| {
+            let row = rows.entry(uid.to_owned()).or_default();
+            row.predecessors
+                .retain(|old| old.session_uid != edge.session_uid || old.node_id != edge.node_id);
+            if !remove {
+                row.predecessors.push(edge);
+            }
+            row.predecessors
+                .sort_by(|a, b| (&a.node_id, &a.session_uid).cmp(&(&b.node_id, &b.session_uid)));
+            Ok(())
+        })
+    }
+
     pub fn nest_parent(&self, uid: &str) -> Option<&NestParent> {
         self.document.sessions.get(uid)?.nest_parent.as_ref()
     }
@@ -614,9 +637,10 @@ impl MetadataSnapshot {
 
     pub fn enrich(&self, rows: &mut [Value]) {
         let parents = fork_parent_uids(rows);
-        for row in rows {
+        for row in rows.iter_mut() {
             self.decorate(row, &parents)
         }
+        super::relations::decorate(rows);
     }
 
     fn decorate(&self, row: &mut Value, parents: &BTreeSet<String>) {
@@ -650,6 +674,15 @@ impl MetadataSnapshot {
         if let Some(parent) = saved.and_then(|row| row.nest_parent.as_ref()) {
             object.insert("nest_parent".into(), json!(parent));
         }
+        object.insert(
+            "predecessors".into(),
+            json!(
+                saved
+                    .map(|row| &row.predecessors)
+                    .cloned()
+                    .unwrap_or_default()
+            ),
+        );
         if parents.contains(&uid) {
             object.insert("fork_parent".into(), json!(true));
             object.insert(

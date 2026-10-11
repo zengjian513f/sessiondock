@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="sessiondock-build" content="__SESSIONDOCK_ASSET_VERSION__">
+<meta name="sessiondock-mode" content="__SESSIONDOCK_MODE__">
+<title>会话信息 · SessionDock</title>
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="stylesheet" href="typography.css?v=__SESSIONDOCK_ASSET_VERSION__">
+<link rel="stylesheet" href="session-card.css?v=__SESSIONDOCK_ASSET_VERSION__">
+<link rel="stylesheet" href="style.css?v=__SESSIONDOCK_ASSET_VERSION__">
+<link rel="stylesheet" href="session-info.css?v=__SESSIONDOCK_ASSET_VERSION__">
+<script src="capabilities.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<script>
+(() => {
+  const root = new URL('./', location.href).pathname;
+  const prefix = SessionDockCapabilities.config.hub ? `sessiondock.hub.${root}.` : 'sessiondock.';
+  let theme = 'system';
+  try { theme = JSON.parse(SessionDockCapabilities.stored('theme', prefix)) || 'system'; } catch {}
+  document.documentElement.dataset.theme = theme === 'system'
+    ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme;
+})();
+</script>
+<script defer src="session-info.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<script src="session-card.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+</head>
+<body class="session-info-page">
+<header class="si-header"><a href="./">← 会话列表</a><h1>会话信息</h1><button id="info-refresh" type="button">刷新</button><a id="info-open" hidden>打开会话 ↗</a></header>
+<main class="si-main">
+<p id="info-status" role="status">正在读取会话信息…</p>
+<section id="info-summary" class="si-panel" hidden></section>
+<details id="info-hints" class="si-panel" hidden><summary>开场交接线索</summary><p class="si-caption">从前五条用户消息查找交接文档和会话 UUID；线索需要核实后再建立关系。</p><div id="hint-content"></div></details>
+<section id="info-editor" class="si-panel" hidden>
+<form id="relation-form">
+<div class="si-heading"><h2 id="relation-form-title">添加前序</h2><button id="relation-cancel" type="button">取消</button></div>
+<label>查找顶级会话<input id="relation-search" type="search" placeholder="标题、目录或 UUID" autocomplete="off"></label>
+<label>会话<select id="relation-target" required aria-label="选择关联会话"></select></label>
+<div class="si-form-row"><label>关系<select id="relation-kind"><option value="continues">接续</option><option value="branches">任务分支</option><option value="references">引用</option></select></label>
+<label>状态<select id="relation-state"><option value="confirmed">已确认</option><option value="candidate">待核实</option></select></label></div>
+<label>交接文档<input id="relation-artifact" placeholder="交接文档路径（可选）"></label>
+<label>关系依据<textarea id="relation-evidence" rows="3" placeholder="交出与接手的原话、消息位置或说明"></textarea></label>
+<button id="relation-save" type="submit">保存关系</button><span id="relation-error" role="status"></span>
+</form></section>
+<div id="info-relations" class="si-columns" hidden>
+<section class="si-panel si-list-panel"><div class="si-heading"><h2>前序会话 <span id="predecessor-count"></span></h2><button id="add-predecessor" type="button">添加前序</button></div><div id="info-predecessors"></div></section>
+<section class="si-panel si-list-panel"><div class="si-heading"><h2>后序会话 <span id="successor-count"></span></h2><button id="add-successor" type="button">添加后序</button></div><div id="info-successors"></div></section>
+</div>
+</main>
+</body></html>

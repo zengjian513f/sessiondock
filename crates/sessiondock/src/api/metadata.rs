@@ -41,7 +41,7 @@ pub struct Diagnostics {
 }
 
 impl Diagnostics {
-    fn validate(&self, state: &AppState, hub: bool) -> Result<(), ApiError> {
+    pub(super) fn validate(&self, state: &AppState, hub: bool) -> Result<(), ApiError> {
         if !hub && !self._build.is_empty() && self._build != state.assets.build {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
@@ -82,7 +82,7 @@ pub struct NestRequest {
     diagnostics: Diagnostics,
 }
 
-fn configured(state: &AppState) -> Result<Arc<MetadataStore>, ApiError> {
+pub(super) fn configured(state: &AppState) -> Result<Arc<MetadataStore>, ApiError> {
     state.metadata.clone().ok_or_else(|| {
         ApiError::new(
             StatusCode::NOT_IMPLEMENTED,
@@ -92,7 +92,7 @@ fn configured(state: &AppState) -> Result<Arc<MetadataStore>, ApiError> {
     })
 }
 
-fn invalid(error: JsonRejection) -> ApiError {
+pub(super) fn invalid(error: JsonRejection) -> ApiError {
     if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
         return ApiError::new(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -107,7 +107,7 @@ fn invalid(error: JsonRejection) -> ApiError {
     )
 }
 
-async fn write(
+pub(super) async fn write(
     state: AppState,
     work: impl FnOnce(&SessionStore, &EventBus) -> Result<Value, ApiError> + Send + 'static,
 ) -> Result<JsonBytes, ApiError> {
@@ -137,7 +137,7 @@ async fn write(
     })?
 }
 
-fn update(
+pub(super) fn update(
     metadata: &MetadataStore,
     events: &EventBus,
     work: impl FnOnce(&MetadataStore) -> Result<Arc<MetadataSnapshot>, ApiError>,
