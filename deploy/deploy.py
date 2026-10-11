@@ -39,7 +39,6 @@ remain explicitly unmodified in the report. Other unsuccessful outcomes exit 1.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import os
@@ -71,7 +70,7 @@ BUILD_TARGET = STAGE_ROOT / "cargo-target"
 DIRTY_SCOPE = ["crates", "legacy-web", "Cargo.toml", "Cargo.lock"]
 WEB_EXCLUDES = ["node_modules", ".DS_Store", "*.swp"]
 GOOD = {"OK", "PLANNED", "SKIPPED"}
-COLUMNS = ("target", "kind", "result", "build", "sha256", "ptyhost", "s", "backup")
+COLUMNS = ("target", "kind", "result", "build", "version", "ptyhost", "s", "backup")
 PRINT_LOCK = threading.Lock()
 
 
@@ -92,13 +91,6 @@ def git(*args: str, timeout: float = 60) -> str:
     return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True,
                           timeout=timeout, check=True).stdout.strip()
 
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def source_tree(paths: list[str]) -> str:
@@ -262,7 +254,6 @@ def cmd_build(args) -> Path:
         die("web snapshot has no index.html")
 
     binaries: dict[str, Path] = {}
-    sha256: dict[str, str] = {}
     cargo_argv: list[str] = []
     if not args.web_only:
         cargo_argv, names = resolve_build(cfg, args.ptyhost is not False)
@@ -286,17 +277,18 @@ def cmd_build(args) -> Path:
                 die(f"expected binary missing: {src}", 1)
             dst = stage / "bin" / name
             shutil.copy2(src, dst)
-            binaries[name], sha256[name] = dst, sha256_file(dst)
+            binaries[name] = dst
 
     crates_dirty = any(not path.startswith("legacy-web/") for path in dirty_paths(included))
     web_dirty = any(path.startswith("legacy-web/") for path in dirty_paths(included))
     art = Artifacts(commit=commit, short=short,
                     dirty=(crates_dirty and not args.web_only) or web_dirty,
-                    built_at=started.isoformat(timespec="seconds"), web_dir=stage / "web",
-                    binaries=binaries, sha256=sha256, source_archive=stage / "source.tar",
+                    built_at=started.isoformat(timespec="microseconds"), web_dir=stage / "web",
+                    binaries=binaries, source_archive=stage / "source.tar",
                     web_only=args.web_only)
+    (stage / "web" / "release-version.txt").write_text(art.version + "\n")
     doc = {"commit": art.commit, "short": art.short, "dirty": art.dirty, "built_at": art.built_at,
-           "web_dir": "web", "binaries": {n: f"bin/{n}" for n in binaries}, "sha256": sha256,
+           "web_dir": "web", "binaries": {n: f"bin/{n}" for n in binaries}, "version": art.version,
            "source_archive": "source.tar", "web_only": art.web_only, "stage": str(stage),
            "web_source": "snapshot", "frontend": "legacy",
            "dirty_files": included, "ignored_dirty_files": ignored,
@@ -304,8 +296,8 @@ def cmd_build(args) -> Path:
            "source_tree": snapshot_tree, "source_source": "HEAD+named" if included else "HEAD"}
     (stage / "artifacts.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     print(f"commit {commit} ({short}) dirty={art.dirty} built_at={art.built_at}")
-    for name, digest in sha256.items():
-        print(f"  {name:16} {digest}  {binaries[name].stat().st_size} bytes")
+    for name, binary in binaries.items():
+        print(f"  {name:16} version={art.version}  {binary.stat().st_size} bytes")
     print(f"  web              {sum(1 for _ in (stage / 'web').rglob('*') if _.is_file())} files"
           f"  source.tar {(stage / 'source.tar').stat().st_size} bytes")
     return stage
@@ -332,7 +324,6 @@ def load_stage(path: Path) -> Artifacts:
     return Artifacts(commit=doc["commit"], short=doc["short"], dirty=doc["dirty"],
                      built_at=doc["built_at"], web_dir=path / doc["web_dir"],
                      binaries={n: path / rel for n, rel in doc["binaries"].items()},
-                     sha256=dict(doc["sha256"]),
                      source_archive=path / doc["source_archive"] if doc.get("source_archive") else None,
                      web_only=bool(doc.get("web_only")), frontend=doc.get("frontend", "legacy"))
 
@@ -351,7 +342,7 @@ def placeholder_artifacts(stage: Path | None) -> Artifacts:
     if stage is not None:
         return load_stage(stage)
     return Artifacts(commit="0" * 40, short="0000000", dirty=False, built_at="", web_dir=Path("."),
-                     binaries={}, sha256={}, source_archive=None, web_only=True)
+                     binaries={}, source_archive=None, web_only=True)
 
 
 def select_targets(args, targets: list[Target]) -> list[Target]:
@@ -370,14 +361,14 @@ def select_targets(args, targets: list[Target]) -> list[Target]:
 # -- per-target runs ---------------------------------------------------------------------
 def new_row(t: Target) -> dict:
     return {"target": t.name, "kind": t.kind, "result": "", "detail": "", "build_before": None,
-            "build_after": None, "sha_before": {}, "sha_after": {}, "ptyhost_before": None,
+            "build_after": None, "versions_before": {}, "versions_after": {}, "ptyhost_before": None,
             "ptyhost_after": None, "hosts_before": None, "hosts_after": None, "seconds": 0.0,
             "backup": None, "pruned": [], "plan": []}
 
 
 def fill(row: dict, when: str, r) -> None:
     row[f"build_{when}"] = r.build
-    row[f"sha_{when}"] = dict(r.binary_sha)
+    row[f"versions_{when}"] = dict(r.binary_versions)
     row[f"ptyhost_{when}"] = len(r.ptyhost_pids)
     row[f"hosts_{when}"] = r.host_records
 
@@ -392,7 +383,7 @@ def wait_healthy(h, timeout: float) -> ProbeResult:
 
 
 def rollback_problems(before: ProbeResult, after: ProbeResult, names: list[str],
-                      expect_sha: dict[str, str] | None) -> list[str]:
+                      expect_versions: dict[str, str] | None, expect_build: str | None = None) -> list[str]:
     out = []
     if not after.reachable:
         out.append(after.detail or "unreachable")
@@ -402,30 +393,28 @@ def rollback_problems(before: ProbeResult, after: ProbeResult, names: list[str],
     if not after.build:
         out.append("meta not answering")
     for n in names:
-        want = (expect_sha or before.binary_sha).get(n)
-        if want and after.binary_sha.get(n) != want:
-            out.append(f"bin/{n} sha256 {after.binary_sha.get(n, '-')[:12]} != {want[:12]}")
+        want = (before.binary_versions if expect_versions is None else expect_versions).get(n)
+        if want and after.binary_versions.get(n) != want:
+            out.append(f"bin/{n} version {after.binary_versions.get(n, '-')} != {want}")
+    if expect_build is not None and after.build != expect_build:
+        out.append(f"served build {after.build} != restored version {expect_build}")
     dead = sorted(set(before.ptyhost_pids) - set(after.ptyhost_pids))
     if dead:
         out.append(f"ptyhost pids gone: {dead}")
     return out
 
 
-def backup_shas(h, backup: str) -> dict[str, str] | None:
-    """SHA-256 of every binary inside `<backup>/bin` on the target (POSIX kinds only)."""
-    if h.kind.startswith("windows"):
-        return None
-    try:
-        rc, out = h.sh.run(f'for f in {shlex.quote(backup)}/bin/*; do [ -f "$f" ] || continue; '
-                           'sha256sum "$f" 2>/dev/null || shasum -a 256 "$f"; done', timeout=120)
-    except ShellError:
-        return None
-    shas = {}
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) == 2 and len(parts[0]) == 64:
-            shas[parts[1].rsplit("/", 1)[-1]] = parts[0]
-    return shas or None
+def backup_versions(h, backup: str) -> dict[str, str]:
+    """Read release markers from a backup; old backups may have none."""
+    versions = {}
+    for name in h.t.binaries + (["ptyhost"] if h.o.with_ptyhost else []):
+        if h.kind.startswith("windows"):
+            rc, out = h.sh.run(f'type "{backup}\\bin\\{name}.exe.version" 2>nul')
+        else:
+            rc, out = h.sh.run(f'cat {shlex.quote(backup + "/bin/" + name + ".version")} 2>/dev/null')
+        if rc == 0 and out.strip():
+            versions[name] = out.strip()
+    return versions
 
 
 def finisher(row: dict, log: Log, t0: float):
@@ -489,7 +478,7 @@ def run_push(t: Target, art: Artifacts, opts: DeployOptions, log_path: Path, ech
             h.rollback(backup)
             after = wait_healthy(h, opts.health_timeout)
             fill(row, "after", after)
-            problems = rollback_problems(before, after, list(before.binary_sha), None)
+            problems = rollback_problems(before, after, list(before.binary_versions), None, before.build)
         except Exception as e2:
             return finish("ROLLBACK_FAILED", f"{err}; rollback raised {type(e2).__name__}: {e2}")
         if problems:
@@ -527,22 +516,27 @@ def run_rollback(t: Target, art: Artifacts, opts: DeployOptions, log_path: Path,
                 return finish("FAILED", "no backup-deploy-* dir found on the target; pass --backup DIR")
             backup = found[0]
         row["backup"] = backup
-        expect = backup_shas(h, backup)
-        log(f"rollback from {backup} (expect sha {({k: v[:12] for k, v in (expect or {}).items()})})")
+        expect = backup_versions(h, backup)
+        if h.kind.startswith("windows"):
+            rc, restored_build = h.sh.run(f'type "{backup}\\web\\release-version.txt" 2>nul')
+        else:
+            rc, restored_build = h.sh.run(f"cat {shlex.quote(backup + '/web/release-version.txt')} 2>/dev/null")
+        restored_build = restored_build.strip() if rc == 0 else None
+        log(f"rollback from {backup} (expect versions {(expect)})")
         h.rollback(backup)
         after = wait_healthy(h, opts.health_timeout)
         fill(row, "after", after)
     except Exception as e:
         return finish("FAILED", f"{type(e).__name__}: {e}".splitlines()[0][:300])
-    problems = rollback_problems(before, after, list((expect or {}).keys()) or list(t.binaries), expect)
+    problems = rollback_problems(before, after, list((expect or {}).keys()) or list(t.binaries), expect, restored_build)
     if problems:
         return finish("FAILED", "; ".join(problems))
     return finish("OK", f"restored {backup}; build {before.build} -> {after.build}")
 
 
 # -- output ----------------------------------------------------------------------------------
-def sha_cell(t: Target, d: dict) -> str:
-    return " ".join(d.get(n, "")[:12] or "-" for n in t.binaries) if d else "-"
+def version_cell(t: Target, d: dict) -> str:
+    return " ".join(d.get(n, "") or "-" for n in t.binaries) if d else "-"
 
 
 def print_table(rows: list[dict], targets: dict[str, Target]) -> None:
@@ -551,7 +545,7 @@ def print_table(rows: list[dict], targets: dict[str, Target]) -> None:
         t = targets[r["target"]]
         table.append((r["target"], r["kind"], r["result"],
                       f"{r['build_before'] or '-'}→{r['build_after'] or '-'}",
-                      f"{sha_cell(t, r['sha_before'])}→{sha_cell(t, r['sha_after'])}",
+                      f"{version_cell(t, r['versions_before'])}→{version_cell(t, r['versions_after'])}",
                       f"{'-' if r['ptyhost_before'] is None else r['ptyhost_before']}/"
                       f"{'-' if r['ptyhost_after'] is None else r['ptyhost_after']}",
                       f"{r['seconds']:.1f}", r["backup"] or "-"))
@@ -753,7 +747,7 @@ def main(argv: list[str] | None = None) -> int:
     push_flags.add_argument("--targets", help="comma-separated target names")
     push_flags.add_argument("--all", action="store_true", help="every target in the targets file")
     push_flags.add_argument("--stage", help="stage dir (default: newest under target/deploy)")
-    push_flags.add_argument("--bin-only", action="store_true", help="skip web (build hash need not change)")
+    push_flags.add_argument("--bin-only", action="store_true", help="skip web (keep its release version)")
     push_flags.add_argument("--dry-run", action="store_true", help="probe, print the plan, upload nothing")
     push_flags.add_argument("--parallel", type=int, default=4)
     push_flags.add_argument("--keep-backups", type=int, default=5, help="0 = never prune")

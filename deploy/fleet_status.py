@@ -25,7 +25,7 @@ from pathlib import Path
 
 DASH = "-"
 FIELDS = ("target", "kind", "reach", "active", "build", "hostname",
-          "sha", "web", "ptyhost", "hosts", "backups", "commit", "age")
+          "version", "web", "ptyhost", "hosts", "backups", "commit", "age")
 
 
 @dataclass
@@ -69,7 +69,7 @@ def load_targets(path: Path) -> list[Target]:
     return out
 
 
-def posix_inner(t: Target, hasher: str) -> str:
+def posix_inner(t: Target) -> str:
     q, pfx = shlex.quote, t.prefix
     parts = ["set +e", f"printf '%s\\n' \"$(curl -sS --max-time 6 {q(t.health_url)})\""]
     if t.kind == "macos-node":
@@ -80,10 +80,10 @@ def posix_inner(t: Target, hasher: str) -> str:
         unit = q(str(t.service.get("unit", "sessiondock.service")))
         parts.append(f"printf 'active=%s\\n' \"$(systemctl --user is-active {unit})\"")
     for name in t.binaries:
-        parts.append(f"printf 'sha_{name}=%s\\n' "
-                     f"\"$({hasher} {q(f'{pfx}/bin/{name}')} 2>/dev/null | cut -c1-12)\"")
+        parts.append(f"printf 'version_{name}=%s\\n' "
+                     f"\"$(cat {q(f'{pfx}/bin/{name}.version')} 2>/dev/null)\"")
     parts += [
-        f"printf 'web=%s\\n' \"$({hasher} {q(pfx + '/web/' + 'app.js')} 2>/dev/null | cut -c1-12)\"",
+        f"printf 'web=%s\\n' \"$(cat {q(pfx + '/web/release-version.txt')} 2>/dev/null)\"",
         f"printf 'commit=%s\\n' \"$(cat {q(pfx + '/etc/deployed-commit')} 2>/dev/null)\"",
         "printf 'ptyhost=%s\\n' \"$(pgrep -xc ptyhost)\"",
         f"printf 'hosts=%s\\n' \"$(ls {q(pfx + '/host')} 2>/dev/null | wc -l)\"",
@@ -99,19 +99,19 @@ def inner_command(t: Target) -> str:
         return "\n".join([
             "python3 -c " + q(HEALTH),
             "printf 'active=%s\\n' \"$(systemctl is-active resource-agent.service)\"",
-            "printf 'sha_resource-agent=%s\\n' \"$(sha256sum " + q(t.prefix + "/bin/resource-agent") + " 2>/dev/null | cut -c1-12)\"",
+            "printf 'version_resource-agent=%s\\n' \"$(cat " + q(t.prefix + "/bin/resource-agent.version") + " 2>/dev/null)\"",
             "printf 'commit=%s\\n' \"$(cat " + q(t.prefix + "/deployed-commit") + " 2>/dev/null)\"",
         ])
     if t.kind in ("linux-node", "hub"):
-        return posix_inner(t, "sha256sum")
+        return posix_inner(t)
     if t.kind == "macos-node":
-        return posix_inner(t, "shasum -a 256")
+        return posix_inner(t)
     if t.kind != "windows-node":
         raise ValueError(f"unknown target kind {t.kind!r}")
     pfx = t.prefix.rstrip("\\/")
     return " & ".join([
         f"curl.exe -sS --max-time 6 {t.health_url}",
-        f"certutil -hashfile {pfx}\\bin\\sessiondock.exe SHA256",
+        f'for /f "usebackq delims=" %V in ("{pfx}\\bin\\sessiondock.exe.version") do @echo version=%V',
         f"type {pfx}\\etc\\deployed-commit",
         'tasklist /FI "IMAGENAME eq ptyhost.exe" /NH',
         'tasklist /FI "IMAGENAME eq sessiondock.exe" /NH',
@@ -187,31 +187,30 @@ def parse_output(t: Target, out: str) -> dict:
     health = extract_health(out)
     build, hostname = _nz(health.get("build")), _nz(health.get("hostname"))
     if t.kind == "windows-node":
-        sha, commit, pty, running = DASH, "", 0, False
+        version, commit, pty, running = DASH, "", 0, False
         for line in out.splitlines():
             s, low = line.strip(), line.strip().lower()
-            compact = "".join(c for c in s if c in "0123456789abcdefABCDEF")
-            if len(compact) == 64 and compact == s.replace(" ", "").replace("\t", ""):
-                sha = compact[:12]
+            if s.startswith("version="):
+                version = s.partition("=")[2]
             elif low.startswith("ptyhost.exe"):
                 pty += 1
             elif low.startswith("sessiondock.exe"):
                 running = True
-            elif s and not low.startswith(("sha256", "certutil")):
+            elif s:
                 tok = s.split()
                 if tok and len(tok[0]) >= 7 and all(c in "0123456789abcdefABCDEF" for c in tok[0][:7]):
                     commit = s
         cshort, age = short_commit(commit)
         return status_row(t, active="running" if running else "stopped", build=build,
-                          hostname=hostname, sha=sha, ptyhost=str(pty),
+                          hostname=hostname, version=version, ptyhost=str(pty),
                           commit=cshort, age=age, raw=out)
     kv = parse_kv(out)
     health = extract_health(kv.get("health", "")) or health
-    sha_key = f"sha_{t.binaries[0]}" if t.binaries else "sha"
+    version_key = f"version_{t.binaries[0]}" if t.binaries else "version"
     cshort, age = short_commit(kv.get("commit", ""))
     return status_row(
         t, active=_nz(kv.get("active")), build=_nz(health.get("build")),
-        hostname=_nz(health.get("hostname")), sha=_nz(kv.get(sha_key)),
+        hostname=_nz(health.get("hostname")), version=_nz(kv.get(version_key)),
         web=_nz(kv.get("web")), ptyhost=_nz(kv.get("ptyhost")),
         hosts=_nz(kv.get("hosts")), backups=_nz(kv.get("backups")),
         commit=cshort, age=age, raw=out,

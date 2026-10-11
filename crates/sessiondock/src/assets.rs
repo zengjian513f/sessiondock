@@ -7,7 +7,7 @@
 //! redirects to `file.html`. This is not a dynamic static-file server.
 //! The hub binary serves the same snapshot in `Mode::Hub` (`__SESSIONDOCK_MODE__`
 //! `hub`, hostname `SessionDock`, storage namespace `sessiondock.hub.<path>.`).
-use std::{collections::BTreeMap, fs, io, path::Path};
+use std::{collections::BTreeMap, fs, io, path::Path, time::SystemTime};
 
 use axum::{
     body::{Body, Bytes},
@@ -15,7 +15,6 @@ use axum::{
     http::{HeaderMap, Method, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use sha1::{Digest, Sha1};
 
 use crate::state::AppState;
 
@@ -69,11 +68,13 @@ impl Assets {
     ) -> io::Result<Self> {
         let root = root.canonicalize()?;
         let mut raw = BTreeMap::<String, Vec<u8>>::new();
+        let mut modified = SystemTime::UNIX_EPOCH;
         fn collect(
             root: &Path,
             dir: &Path,
             ancestors: &mut Vec<std::path::PathBuf>,
             raw: &mut BTreeMap<String, Vec<u8>>,
+            modified: &mut SystemTime,
         ) -> io::Result<()> {
             let resolved = dir.canonicalize()?;
             if !resolved.starts_with(root) || ancestors.contains(&resolved) {
@@ -93,8 +94,9 @@ impl Assets {
                 }
                 let metadata = fs::metadata(&resolved)?;
                 if metadata.is_dir() {
-                    collect(root, &path, ancestors, raw)?;
+                    collect(root, &path, ancestors, raw, modified)?;
                 } else if metadata.is_file() {
+                    *modified = (*modified).max(metadata.modified()?);
                     let data = fs::read(&resolved)?;
                     let name = path
                         .strip_prefix(root)
@@ -107,22 +109,28 @@ impl Assets {
             ancestors.pop();
             Ok(())
         }
-        collect(&root, &root, &mut Vec::new(), &mut raw)?;
+        collect(&root, &root, &mut Vec::new(), &mut raw, &mut modified)?;
         if !raw.contains_key("/index.html") {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 "frontend index.html missing",
             ));
         }
-        let mut digest = Sha1::new();
-        digest.update(b"sessiondock-legacy-v1\0");
-        digest.update(capabilities.to_string().as_bytes());
-        for (name, data) in &raw {
-            digest.update(name.as_bytes());
-            digest.update((data.len() as u64).to_be_bytes());
-            digest.update(data);
-        }
-        let build = format!("{:x}", digest.finalize())[..12].to_owned();
+        // Releases carry a UTC date version. Local development uses the latest
+        // asset modification time so edits invalidate cached assets after restart.
+        let build = raw
+            .remove("/release-version.txt")
+            .map(|value| String::from_utf8_lossy(&value).trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| {
+                format!(
+                    "dev-{}",
+                    modified
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos()
+                )
+            });
         let (mode_name, hostname) = match mode {
             Mode::Local => ("local", hostname),
             Mode::Hub => ("hub", HUB_HOSTNAME),

@@ -7,6 +7,7 @@ set "SD=@SD@"
 set "BK=@BACKUP@"
 if not exist "%BK%\bin" mkdir "%BK%\bin"
 for %%N in (@BINS@) do if exist "%SD%\bin\%%N.exe" copy /y "%SD%\bin\%%N.exe" "%BK%\bin\%%N.exe" >nul || exit /b 1
+for %%N in (@BINS@) do if exist "%SD%\bin\%%N.exe.version" copy /y "%SD%\bin\%%N.exe.version" "%BK%\bin\%%N.exe.version" >nul || exit /b 1
 robocopy "%SD%\web" "%BK%\web" /MIR /NFL /NDL /NJH /NJS /NP >nul
 if errorlevel 8 ( echo ROBOCOPY_FAILED & exit /b 2 )
 echo BACKUP_OK

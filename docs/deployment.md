@@ -83,7 +83,7 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 
 | 产物 | 内容 | 用途 |
 | --- | --- | --- |
-| `bin/<name>` + `artifacts.json` 里的 `sha256` | `cargo build --release --locked` 的 glibc 二进制，从 `target/release/` 拷进 stage | `linux-node`、`hub` 直接上传；stage 一旦生成就不再受后续构建影响 |
+| `bin/<name>` + `artifacts.json` 里的 `version` | `cargo build --release --locked` 的 glibc 二进制，从 `target/release/` 拷进 stage | `linux-node`、`hub` 直接上传；stage 一旦生成就不再受后续构建影响 |
 | `web/` | 源码树（HEAD 加点名文件）里 `legacy-web` 的快照，原样发布 | 所有 kind 的 `web/` |
 | `source.tar` | 源码树（HEAD 加 `--allow-dirty` 点名文件）的 `git archive` | `build_on_target` 的 kind（macOS、Windows）在节点上原生构建，与本机构建使用相同源码 |
 
@@ -179,23 +179,33 @@ kind 的处理模块缺失或坏掉记 `UNSUPPORTED`，不会让整轮崩溃。
   `backup-deploy-*`）。
 - 备份放在 `<prefix>/backup-deploy-<short commit>-<UTC 时间戳>/{bin,web}`。
 - `verify()` 必须看到：服务 active、目标机自己的 loopback 上 `/api/meta` 有应答、磁盘上二进制的
-  SHA-256 等于 stage 里的产物（原生构建则等于刚构建的文件）、web 变了时 `build` 字段也变了。
+  日期版本标记等于 stage 的 `version`，发布 web 时 `/api/meta.build` 等于该版本号。
 - dry run 只做 `probe()` 并打印计划，什么都不上传。
 
 ## `verify` 证明了什么
 
-`/api/meta` 的 `build` 是服务启动时对 web 资源快照 + capabilities 算的 SHA-1，**不是**二进制的哈希。
-所以：web 内容变了（工具在目标机上比较 `web/` 的内容摘要）就要求 `build` 变化；只换 Rust 二进制时
-`build` 不必变，靠 `sha256sum` 核对；web 变了就必须重启。`verify` 另外要求：单元 active、每个上传的
-二进制哈希等于 stage、probe 时的每个 ptyhost pid 仍在、host 记录数不少于之前。`--bin-only` 跳过 web
-（也不要求 `build` 变化），`--web-only` 跳过全部二进制步骤。
+`build` 直接读取 `web/release-version.txt`，不计算内容哈希。舰队每次构建生成 UTC 日期版本
+`YYYYMMDDTHHMMSSffffffZ`（含微秒），写入 stage 的 `artifacts.json` 和 web 版本文件。
+二进制旁的 `<name>.version`（Windows 为 `<name>.exe.version`）记录同一版本。
+服务重启后，`verify` 核对所发布二进制的版本标记及 `/api/meta.build`，并检查单元 active、
+probe 时的 ptyhost PID 仍在、host 记录数不少于之前。没有版本文件的开发目录使用最新资产
+修改时间作为 `dev-<纳秒时间戳>`，不再扫描内容计算摘要。
+
+`--bin-only` 保留 web 版本，`--web-only` 保留二进制版本。首次从旧部署工具升级须做完整发布，
+让服务支持日期版本；之后可继续单独更新前端。备份包含版本文件和 `deployed-commit`，回滚一并
+恢复；旧备份没有版本文件时移除本轮标记，健康检查照常执行。版本号用于识别发布批次，
+不做文件防篡改校验。旧 stage 应重新构建再发布。
+
+[`tests/release_version_browser.py`](../tests/release_version_browser.py) 在私有目录运行真实 Linux
+暂存、替换和回滚，通过 Chromium 打开会话并加载版本化资源，覆盖相同 mtime 的资源更新、
+浏览器缓存、版本标记恢复、重复发布及开发目录修改时间。
 
 ## Linux 节点与 Hub 的实现（`linux.py`、`hub.py`）
 
 - probe：一次 ssh 往返跑一段 POSIX 脚本（远程统一用 `sh -c` 包住，登录 shell 是 zsh 也不会因为通配
-  失配而中断），输出 `key=value`：`is-active`、`/api/meta`、每个二进制的 `sha256sum`、`pgrep -x ptyhost`、
-  `ls host | wc -l`、`etc/deployed-commit`、web 内容摘要。
-- stage：二进制 → `bin/<name>.new`（上传后再校验哈希）；web → `<prefix>/web.staging/`。Linux 节点与 Hub
+  失配而中断），输出 `key=value`：`is-active`、`/api/meta`、每个二进制的 `.version`、`pgrep -x ptyhost`、
+  `ls host | wc -l`、`etc/deployed-commit`。
+- stage：二进制 → `bin/<name>.new`（附带日期版本标记）；web → `<prefix>/web.staging/`。Linux 节点与 Hub
   不在节点上跑测试：它们拿到的二进制已经在构建机上按 stage 的 `test_mode` 验证过。
 - swap：`mv -f bin/<name>.new bin/<name>`；在目标机上 `rsync -a --delete web.staging/ web/` 后删掉 staging。
 - restart：`systemctl --user restart <unit>`；节点单元是 `KillMode=process`，分离的 ptyhost 不受影响。
@@ -228,7 +238,7 @@ to `build.packages`, and add one opt-in target per monitored Linux host with
 the same explicit SSH routing/hostname checks as its node, and
 `extra.node_id_file` pointing to that node's existing identity file. The deployment
 SSH user is the monitored UID; sudo is required for installing the system unit.
-The target verifies the local socket, binary hash and active BPF event capture;
+The target verifies the local socket, release version and active BPF event capture;
 a failed installation restores the previous collector, or disables/removes a
 new installation. It never restarts SSH or workload/session hosts. Non-Linux
 nodes without a collector retain the compatibility API.

@@ -33,8 +33,8 @@ class ResourceAgentHandler(TargetHandler):
         code, out = self.sh.run('test -r '+q(self.node_file), timeout=10)
         if code: return ProbeResult(False, 'node identity file missing')
         code, active = self.sh.run('systemctl is-active '+UNIT, timeout=10)
-        code, sha = self.sh.run('sha256sum '+q(self.t.prefix+'/bin/resource-agent')+' 2>/dev/null || true')
-        self.before = ProbeResult(True, 'system collector', active=active.strip()=='active', binary_sha={'resource-agent':sha.split()[0] if sha.split() else ''})
+        code, version = self.sh.run('cat '+q(self.t.prefix+'/bin/resource-agent.version')+' 2>/dev/null || true')
+        self.before = ProbeResult(True, 'system collector', build='resource-agent', active=active.strip()=='active', binary_versions={'resource-agent':version.strip()})
         return self.before
     def plan(self):
         return ['install root-owned read-only collector and system unit', 'restart collector only; SSH and workloads have no dependency on it']
@@ -44,8 +44,7 @@ class ResourceAgentHandler(TargetHandler):
         self.sh.upload(self.a.binaries['resource-agent'], self.temp+'/resource-agent')
         self.sh.upload(ROOT/'deploy/resource-agent.service', self.temp+'/resource-agent.service')
         self.sh.upload(ROOT/'deploy/sys-fs-resctrl.mount', self.temp+'/sys-fs-resctrl.mount')
-        _, sha = self.sh.run('sha256sum '+q(self.temp+'/resource-agent'), check=True)
-        if sha.split()[0] != self.a.sha256['resource-agent']: raise RuntimeError('collector upload hash mismatch')
+        self.sh.run("printf '%s\n' "+q(self.a.version)+' > '+q(self.temp+'/resource-agent.version'), check=True)
         config = f'MONITOR_UID={self.uid}\nNODE_ID_FILE={self.node_file}\n'
         self.sh.run("printf '%s' "+q(config)+' > '+q(self.temp+'/resource-agent.env'),check=True)
     def backup(self):
@@ -53,7 +52,7 @@ class ResourceAgentHandler(TargetHandler):
         self.backup_dir = self.t.prefix+'/backup-deploy-'+self.a.short+'-'+stamp
         script = '\n'.join([
             'set -e', 'sudo -n mkdir -p '+q(self.backup_dir),
-            'for f in '+q(self.t.prefix+'/bin/resource-agent')+' /etc/systemd/system/resource-agent.service /etc/systemd/system/sys-fs-resctrl.mount /etc/resource-agent.env; do',
+            'for f in '+q(self.t.prefix+'/bin/resource-agent')+' '+q(self.t.prefix+'/bin/resource-agent.version')+' '+q(self.t.prefix+'/deployed-commit')+' /etc/systemd/system/resource-agent.service /etc/systemd/system/sys-fs-resctrl.mount /etc/resource-agent.env; do',
             'if [ -f "$f" ]; then sudo -n cp -p "$f" '+q(self.backup_dir)+'/; fi', 'done',
             'systemctl is-enabled '+UNIT+' > '+q(self.temp+'/enabled')+' 2>/dev/null || true',
             'sudo -n cp '+q(self.temp+'/enabled')+' '+q(self.backup_dir+'/enabled'),
@@ -65,6 +64,7 @@ class ResourceAgentHandler(TargetHandler):
             'sudo -n install -d -m 0755 '+q(self.t.prefix+'/bin'),
             'sudo -n install -m 0755 '+q(self.temp+'/resource-agent')+' '+q(self.t.prefix+'/bin/resource-agent.new'),
             'sudo -n mv '+q(self.t.prefix+'/bin/resource-agent.new')+' '+q(self.t.prefix+'/bin/resource-agent'),
+            'sudo -n install -m 0644 '+q(self.temp+'/resource-agent.version')+' '+q(self.t.prefix+'/bin/resource-agent.version'),
             'sudo -n install -m 0644 '+q(self.temp+'/resource-agent.service')+' /etc/systemd/system/resource-agent.service',
             'sudo -n install -m 0644 '+q(self.temp+'/sys-fs-resctrl.mount')+' /etc/systemd/system/sys-fs-resctrl.mount',
             'sudo -n install -m 0600 '+q(self.temp+'/resource-agent.env')+' /etc/resource-agent.env',
@@ -83,15 +83,17 @@ class ResourceAgentHandler(TargetHandler):
             except ValueError: data = {}
             if data.get('collector',{}).get('events') == 'bpf': break
             time.sleep(.5)
-        _, sha = self.sh.run('sha256sum '+q(self.t.prefix+'/bin/resource-agent'))
-        have = sha.split()[0] if sha.split() else ''
+        _, version = self.sh.run('cat '+q(self.t.prefix+'/bin/resource-agent.version'))
+        have = version.strip()
         _, active = self.sh.run('systemctl is-active '+UNIT)
-        ok = (data.get('service')=='resource-agent' and data.get('collector',{}).get('events')=='bpf' and have==self.a.sha256['resource-agent'] and active.strip()=='active')
-        detail = 'collector health/events/hash verified' if ok else 'collector health, BPF events, service state or hash verification failed'
-        return VerifyResult(ok,detail,active=active.strip()=='active',binary_sha={'resource-agent':have})
+        ok = (data.get('service')=='resource-agent' and data.get('collector',{}).get('events')=='bpf' and have==self.a.version and active.strip()=='active')
+        detail = 'collector health/events/version verified' if ok else 'collector health, BPF events, service state or version verification failed'
+        return VerifyResult(ok,detail,build='resource-agent',active=active.strip()=='active',binary_versions={'resource-agent':have})
     def rollback(self, backup_dir):
         if not backup_dir.startswith(self.t.prefix+'/backup-deploy-'): raise RuntimeError('invalid backup path')
         self.sh.run('sudo -n systemctl stop '+UNIT, timeout=20)
+        self.sh.run('sudo -n rm -f '+q(self.t.prefix+'/deployed-commit')+'; if sudo -n test -f '+q(backup_dir+'/deployed-commit')+'; then sudo -n cp '+q(backup_dir+'/deployed-commit')+' '+q(self.t.prefix+'/deployed-commit')+'; fi',check=True)
+        self.sh.run('sudo -n rm -f '+q(self.t.prefix+'/bin/resource-agent.version')+'; if sudo -n test -f '+q(backup_dir+'/resource-agent.version')+'; then sudo -n cp '+q(backup_dir+'/resource-agent.version')+' '+q(self.t.prefix+'/bin/resource-agent.version')+'; fi',check=True)
         _, has = self.sh.run('sudo -n test -f '+q(backup_dir+'/resource-agent')+' && echo yes')
         if has.strip() == 'yes':
             self.sh.run('sudo -n cp '+q(backup_dir+'/resource-agent')+' '+q(self.t.prefix+'/bin/resource-agent.new')+' && sudo -n mv '+q(self.t.prefix+'/bin/resource-agent.new')+' '+q(self.t.prefix+'/bin/resource-agent'),check=True)

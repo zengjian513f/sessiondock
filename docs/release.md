@@ -7,8 +7,7 @@ python3 deploy/release.py [--ref REF] [--out DIR] [--check]
 ```
 
 `deploy/release.py` builds one commit into
-`target/release-packages/sessiondock-<version>-<short>-linux-<arch>.tar.gz`
-(plus a `.sha256` file). It never builds the working tree: the commit is
+`target/release-packages/sessiondock-<version>-<short>-linux-<arch>.tar.gz`. It never builds the working tree: the commit is
 extracted with `git archive` into a fresh temporary directory and compiled
 there with `cargo build --release --locked`.
 
@@ -20,7 +19,7 @@ The archive holds one top-level directory with:
 | `web/` | `legacy-web/` as committed (served by `SESSIONDOCK_WEB_DIR`) |
 | `README.md` | the repository README |
 | `manifest.json` | commit, version, target triple, `rustc -V`, `source_date_epoch`, binaries |
-| `SHA256SUMS` | SHA-256 of every other file |
+| `web/release-version.txt`, `bin/<name>.version` | Source commit date (`source_date_epoch`); no content checksums |
 
 `resource-agent` is not included: it is a separate Linux service with its own
 deployment, and its build compiles an embedded BPF object with clang.

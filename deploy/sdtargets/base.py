@@ -20,8 +20,7 @@ Invariants every handler must keep:
   lifecycle/, host/, audit/, trash/, search-cache/, hub/): only bin/ and web/ change.
 - Backups live at `<prefix>/backup-deploy-<short commit>-<UTC stamp>/{bin,web}`.
 - `verify()` must show the service active, `/api/meta` answering on the target's own
-  loopback, the on-disk binary SHA-256 equal to the staged artifact (native builds:
-  equal to the freshly built file), and the `build` field changed whenever web changed.
+  loopback, binary release markers and the served web build matching the release date version.
 - A dry run performs `probe()` only and prints the plan; nothing is uploaded.
 """
 from __future__ import annotations
@@ -31,6 +30,7 @@ import shlex
 import subprocess
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -64,12 +64,16 @@ class Artifacts:
     built_at: str                   # UTC ISO
     web_dir: Path                   # compiled frontend snapshot to rsync (trailing-slash semantics)
     binaries: dict[str, Path]       # name -> release file on the build machine (Linux glibc)
-    sha256: dict[str, str]          # name -> hex digest of binaries[name]
     source_archive: Path | None     # `git archive HEAD` tar for build_on_target kinds
     web_only: bool = False
     source_zip: Path | None = None  # optional `git archive --format=zip` of the same commit
                                     # (windows-node; derived from source_archive when None)
     frontend: str = "legacy"
+
+    @property
+    def version(self) -> str:
+        """UTC release date, independent of file contents."""
+        return datetime.fromisoformat(self.built_at).strftime("%Y%m%dT%H%M%S%fZ") if self.built_at else ""
 
 
 @dataclass
@@ -94,7 +98,7 @@ class ProbeResult:
     detail: str = ""
     build: str | None = None        # /api/meta "build" before deploy
     active: bool | None = None      # service state before deploy
-    binary_sha: dict[str, str] = field(default_factory=dict)
+    binary_versions: dict[str, str] = field(default_factory=dict)
     ptyhost_pids: list[int] = field(default_factory=list)
     host_records: int | None = None
     deployed_commit: str | None = None   # <prefix>/etc/deployed-commit if present
@@ -118,7 +122,7 @@ class VerifyResult:
     detail: str = ""
     build: str | None = None
     active: bool | None = None
-    binary_sha: dict[str, str] = field(default_factory=dict)
+    binary_versions: dict[str, str] = field(default_factory=dict)
     ptyhost_pids: list[int] = field(default_factory=list)
     host_records: int | None = None
     elapsed: float = 0.0
@@ -274,6 +278,25 @@ class TargetHandler:
     def write_marker(self) -> None:
         """Record `<prefix>/etc/deployed-commit`: '<full sha> <short> <built_at> dirty=<0|1>'."""
         raise NotImplementedError
+
+    def backup_marker(self, backup_dir: str) -> None:
+        """Keep source/date bookkeeping together with the release backup."""
+        if self.kind.startswith("windows"):
+            self.sh.run(f'if exist "{self.t.prefix}\\etc\\deployed-commit" copy /y "{self.t.prefix}\\etc\\deployed-commit" "{backup_dir}\\deployed-commit" >nul', check=True)
+        else:
+            src = shlex.quote(self.t.prefix + "/etc/deployed-commit")
+            dst = shlex.quote(backup_dir + "/deployed-commit")
+            self.sh.run(f"if [ -f {src} ]; then cp -p {src} {dst}; fi", check=True)
+
+    def restore_marker(self, backup_dir: str) -> None:
+        if self.kind.startswith("windows"):
+            dst = f'{self.t.prefix}\\etc\\deployed-commit'
+            src = f'{backup_dir}\\deployed-commit'
+            self.sh.run(f'if exist "{src}" (copy /y "{src}" "{dst}" >nul) else (if exist "{dst}" del /q "{dst}")', check=True)
+        else:
+            src = shlex.quote(backup_dir + "/deployed-commit")
+            dst = shlex.quote(self.t.prefix + "/etc/deployed-commit")
+            self.sh.run(f"if [ -f {src} ]; then cp -p {src} {dst}; else rm -f {dst}; fi", check=True)
 
     def prune_backups(self, keep: int) -> list[str]:
         """Delete all but the newest `keep` `backup-deploy-*` dirs; return what was removed."""

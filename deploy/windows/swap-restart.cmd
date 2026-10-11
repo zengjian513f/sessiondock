@@ -50,6 +50,11 @@ if exist "%SD%\bin\%1.exe" move /y "%SD%\bin\%1.exe" "%PREV%" >nul
 if errorlevel 1 ( echo UNLINK_FAILED %1 & exit /b 3 )
 move /y "%SD%\bin\%1.new.exe" "%SD%\bin\%1.exe" >nul
 if errorlevel 1 ( echo SWAP_FAILED %1 & exit /b 3 )
+del /q "%SD%\bin\%1.exe.version" >nul 2>&1
+if exist "%SD%\bin\%1.new.exe.version" (
+  move /y "%SD%\bin\%1.new.exe.version" "%SD%\bin\%1.exe.version" >nul
+  if errorlevel 1 ( echo VERSION_FAILED %1 & exit /b 3 )
+)
 del /q "%PREV%" >nul 2>&1
 echo SWAPPED %1
 exit /b 0
