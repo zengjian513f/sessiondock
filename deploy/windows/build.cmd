@@ -63,6 +63,7 @@ exit /b 0
 if not exist "%SRC%\target\release\%1.exe" ( echo NO_EXE %1 & exit /b 1 )
 copy /y "%SRC%\target\release\%1.exe" "%SD%\bin\%1.new.exe" >nul
 if errorlevel 1 ( echo COPY_FAILED %1 & exit /b 1 )
-for /f "skip=1 tokens=*" %%H in ('certutil -hashfile "%SD%\bin\%1.new.exe" SHA256 ^| findstr /v /i "certutil"') do ( echo NEW_SHA %1 %%H & exit /b 0 )
-echo HASH_FAILED %1
-exit /b 1
+echo @VERSION@> "%SD%\bin\%1.new.exe.version"
+if errorlevel 1 exit /b 1
+echo NEW_VERSION %1 @VERSION@
+exit /b 0

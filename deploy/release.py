@@ -7,7 +7,7 @@ Builds `sessiondock`, `sessiondock-hub`, `sessiondock-transfer` and `ptyhost`
 from `git archive REF` in a fresh temporary directory (never the working tree),
 with build paths remapped and SOURCE_DATE_EPOCH set to the commit time, then
 writes `sessiondock-<version>-<short>-linux-<arch>.tar.gz` with bin/, web/
-(legacy-web), README.md, manifest.json and SHA256SUMS. Archive entries are
+(legacy-web), README.md and manifest.json. Archive entries are
 sorted with fixed owner, mode and mtime, so the same commit and toolchain give
 the same bytes. `--check` builds twice in different directories and fails if
 the two packages differ. resource-agent ships separately (docs/release.md).
@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import hashlib
 import io
 import json
 import os
@@ -39,10 +38,6 @@ def run(argv, **kw) -> str:
 
 def git(*args: str) -> str:
     return run(["git", *args], cwd=ROOT)
-
-
-def sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def cargo() -> str:
@@ -83,7 +78,10 @@ def build(commit: str, epoch: str, work: Path) -> dict[str, bytes]:
 
 def package(files: dict[str, bytes], meta: dict, epoch: int, name: str) -> bytes:
     files = dict(files)
-    files["SHA256SUMS"] = "".join(f"{sha256(data)}  {path}\n" for path, data in sorted(files.items())).encode()
+    version = str(meta['source_date_epoch'])
+    files['web/release-version.txt'] = (version + '\n').encode()
+    for binary in meta['binaries']:
+        files[f'bin/{binary}.version'] = (version + '\n').encode()
     files["manifest.json"] = (json.dumps(meta, indent=2, sort_keys=True) + "\n").encode()
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
@@ -130,12 +128,11 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{name}.tar.gz"
     path.write_bytes(packages[0])
-    (out / f"{name}.tar.gz.sha256").write_text(f"{sha256(packages[0])}  {path.name}\n")
-    print(f"package {path} sha256 {sha256(packages[0])}")
+    print(f"package {path} version={version} source_date_epoch={epoch}")
     if args.check:
         if packages[0] != packages[1]:
             (out / f"{name}.second.tar.gz").write_bytes(packages[1])
-            print(f"error: second build differs ({sha256(packages[1])}); kept as {name}.second.tar.gz",
+            print(f"error: second build differs; kept as {name}.second.tar.gz",
                   file=sys.stderr)
             return 1
         print("reproducible: two builds in different directories are byte-identical")

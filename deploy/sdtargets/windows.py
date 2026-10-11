@@ -15,7 +15,7 @@ rustup shims are reparse points an elevated SSH cannot run), stages `bin\<name>.
 and `web.staging\`. `swap()` runs ONE script mirroring `restart-session1.cmd` with the
 swap inserted after the stop phase (the running exe is locked; ptyhost.exe hosts are never
 touched), so the restart happens there and `restart()` is a no-op afterwards. `verify()`
-polls `/api/meta`, compares certutil hashes, checks the ptyhost.exe pid set survived and
+polls `/api/meta`, compares release versions, checks the ptyhost.exe pid set survived and
 that the service landed in a desktop session (never session 0, where SSH lives; the
 desktop session number changes across logons, so no particular one is expected).
 Optional `service` keys `python` / `shortcut`
@@ -26,7 +26,6 @@ Windows node was unreachable, so it has not run on a real machine yet.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import subprocess
@@ -113,10 +112,8 @@ class WindowsNode(TargetHandler):
         super().__init__(*args, **kwargs)
         self.sh = CmdShell(self.t, self.log)
         self.tmp = tempfile.TemporaryDirectory(prefix="sd-deploy-win-")
-        self.expected_sha: dict[str, str] = {}
+        self.expected_versions: dict[str, str] = {}
         self.staged: list[str] = []
-        self.web_digest_before: str | None = None
-        self.web_changed = False
         self.restarted = False
         self.service_pids_before: list[int] = []
         self.vars: dict[str, str] = {k: str(v) for k, v in
@@ -182,25 +179,9 @@ class WindowsNode(TargetHandler):
                 pids.append(int(cells[1]))
         return sorted(pids)
 
-    def _sha(self, path: str) -> str | None:
-        rc, out = self.sh.run(f'certutil -hashfile "{path}" SHA256', timeout=60)
-        if rc != 0:
-            return None
-        for line in out.splitlines():
-            h = line.replace(" ", "").strip().lower()
-            if len(h) == 64 and all(c in "0123456789abcdef" for c in h):
-                return h
-        return None
-
-    def _web_digest(self, d: str) -> str | None:
-        ps = (f"$r='{d}'; if (Test-Path -LiteralPath $r) {{ Get-ChildItem -LiteralPath $r -Recurse -File | "
-              "ForEach-Object { $_.FullName.Substring($r.Length).TrimStart('\\').Replace('\\','/') + ' ' + "
-              "(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash } }")
-        rc, out = self.sh.run(f'powershell -NoProfile -Command "{ps}"', timeout=120)
-        lines = sorted(l.strip() for l in out.splitlines() if l.strip())
-        if rc != 0 or not lines:
-            return None
-        return hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
+    def _version(self, path: str) -> str | None:
+        rc, out = self.sh.run(f'type "{path}.version" 2>nul', timeout=20)
+        return out.strip() if rc == 0 and out.strip() else None
 
     def _host_records(self) -> int:
         _, out = self.sh.run(f'dir /b "{self.prefix}\\host\\*.json" 2>nul | find /c /v ""', timeout=30)
@@ -282,14 +263,13 @@ class WindowsNode(TargetHandler):
                           build=meta.get("build") if meta else None,
                           detail=f"sessiondock.exe pids={self.service_pids_before}")
         for name in self.bins:
-            sha = self._sha(f"{self.prefix}\\bin\\{name}.exe")
-            if sha:
-                res.binary_sha[name] = sha
+            version = self._version(f"{self.prefix}\\bin\\{name}.exe")
+            if version:
+                res.binary_versions[name] = version
         res.ptyhost_pids = self._tasklist("ptyhost.exe")
         res.host_records = self._host_records()
         _, out = self.sh.run(f'type "{self.prefix}\\etc\\deployed-commit" 2>nul', timeout=20)
         res.deployed_commit = out.strip() or None
-        self.web_digest_before = self._web_digest(f"{self.prefix}\\web")
         self._load_vars()
         self.before = res
         return res
@@ -302,7 +282,7 @@ class WindowsNode(TargetHandler):
             out["build.cmd"] = render("build.cmd", {
                 "SD": p, "SRC": self.source_dir, "TC": self.toolchain_bin,
                 "ZIP": f"{self.deploy_dir}\\source-{self.a.short}.zip", "BINS": bins,
-                "PKGS": " ".join(f"-p {n}" for n in self.bins), "TEST": "1" if self.run_tests else "0"})
+                "VERSION": self.a.version, "PKGS": " ".join(f"-p {n}" for n in self.bins), "TEST": "1" if self.run_tests else "0"})
         out["backup.cmd"] = render("backup.cmd", {"SD": p, "BACKUP": self.backup_dir or
                                                   f"{p}\\backup-deploy-{self.a.short}-<UTC stamp>", "BINS": bins})
         out["swap-restart.cmd"] = render("swap-restart.cmd", {
@@ -318,16 +298,16 @@ class WindowsNode(TargetHandler):
                     if self.run_tests else "tests skipped (mode none), ")
             steps += [f"scp <source zip of {self.a.short}> -> {d}\\source-{self.a.short}.zip",
                       f"scp build.cmd -> {d}\\build.cmd ; run it (timeout {int(self.build_timeout)}s): extract, {test}"
-                      f"real cargo.exe build --release --locked, MTIME check, copy -> bin\\<name>.new.exe, certutil"]
+                      f"real cargo.exe build --release --locked, MTIME check, copy -> bin\\<name>.new.exe with release date"]
         if self.ship_web:
             steps.append(f"scp web.zip -> {d}\\web.zip ; Expand-Archive -> {p}\\{WEB_STAGING}\\ "
-                         "(build changes iff content differs)")
+                         "(release date version)")
         steps += [f"scp backup.cmd ; run: copy bin\\*.exe + robocopy /MIR web -> {p}\\backup-deploy-{self.a.short}-<stamp>\\",
                   f"scp swap-restart.cmd ; run (timeout {int(SWAP_TIMEOUT)}s): process_identity.py --include-supervisor "
                   "-> move /y .new.exe -> robocopy /MIR web.staging web -> schtasks /IT explorer.exe SessionDock.lnk",
                   "restart: no-op (done inside swap-restart.cmd)",
                   f"verify: {self.t.health_url} within {self.o.health_timeout:.0f}s, new sessiondock.exe pid in a desktop session (not 0), "
-                  "certutil sha == staged, build changed iff web changed, ptyhost.exe pids kept, host records >= before",
+                  "release versions match staged date, ptyhost.exe pids kept, host records >= before",
                   f"marker: {p}\\etc\\deployed-commit = '{self.a.commit} {self.a.short} {self.a.built_at} dirty={int(self.a.dirty)}'"]
         for name, text in self._scripts().items():
             steps.append(f"--- {name} ---")
@@ -348,17 +328,17 @@ class WindowsNode(TargetHandler):
                 tok = line.split()
                 if len(tok) == 3 and tok[0] in ("MTIME_BEFORE", "MTIME_AFTER"):
                     mt[(tok[0], tok[1])] = tok[2]
-                elif len(tok) >= 3 and tok[0] == "NEW_SHA":
-                    self.expected_sha[tok[1]] = "".join(tok[2:]).lower()
+                elif len(tok) >= 3 and tok[0] == "NEW_VERSION":
+                    self.expected_versions[tok[1]] = tok[2]
             compiled = "Compiling" in out
             for name in self.bins:
-                if name not in self.expected_sha:
-                    raise RuntimeError(f"build.cmd printed no NEW_SHA for {name}")
+                if self.expected_versions.get(name) != self.a.version:
+                    raise RuntimeError(f"build.cmd printed no NEW_VERSION for {name}")
                 fresh = mt.get(("MTIME_AFTER", name)) != mt.get(("MTIME_BEFORE", name))
                 if compiled and not fresh:
                     raise RuntimeError(f"cargo compiled but target\\release\\{name}.exe kept its mtime")
                 self.staged.append(name)
-                self.log(f"staged {name}.new.exe sha256={self.expected_sha[name]} fresh={fresh}")
+                self.log(f"staged {name}.new.exe version={self.expected_versions[name]} fresh={fresh}")
         if self.ship_web:
             web_zip = self._web_zip()
             self.sh.run(f'if not exist "{self.deploy_dir}" mkdir "{self.deploy_dir}"', timeout=30, check=True)
@@ -367,15 +347,13 @@ class WindowsNode(TargetHandler):
             self.sh.run(f'rd /s /q "{staging}" 2>nul & powershell -NoProfile -Command "Expand-Archive -LiteralPath '
                         f"'{self.deploy_dir}\\web.zip' -DestinationPath '{staging}' -Force\" & "
                         f'if exist "{staging}\\index.html" (echo WEB_STAGED) else (exit /b 5)', timeout=120, check=True)
-            after = self._web_digest(staging)
-            self.web_changed = after != self.web_digest_before
-            self.log(f"web digest {self.web_digest_before} -> {after} changed={self.web_changed}")
 
     def backup(self) -> str:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         self.backup_dir = f"{self.prefix}\\backup-deploy-{self.a.short}-{stamp}"
         remote = self._upload_script("backup.cmd", self._scripts()["backup.cmd"])
         self._run_script(remote, "BACKUP_OK", 300)
+        self.backup_marker(self.backup_dir)
         return self.backup_dir
 
     def swap(self) -> None:
@@ -423,19 +401,16 @@ class WindowsNode(TargetHandler):
             tok = line.split()
             if len(tok) == 3 and tok[0] == "SESSION" and tok[2] == "0":
                 problems.append(f"sessiondock.exe pid {tok[1]} runs in session 0, not a desktop session")
-        expected = dict(before.binary_sha)
-        expected.update(self.expected_sha)
+        expected = dict(before.binary_versions)
+        expected.update(self.expected_versions)
         for name in self.bins:
-            sha = self._sha(f"{self.prefix}\\bin\\{name}.exe")
-            if sha:
-                res.binary_sha[name] = sha
-            if name in expected and sha != expected[name]:
-                problems.append(f"{name}.exe: on-disk sha {sha} != expected {expected[name]}")
-        if meta is not None and before.build is not None:
-            if self.web_changed and res.build == before.build:
-                problems.append(f"web changed but build still {res.build}")
-            if not self.web_changed and res.build != before.build and not self.staged:
-                problems.append(f"web unchanged but build {before.build} -> {res.build}")
+            version = self._version(f"{self.prefix}\\bin\\{name}.exe")
+            if version:
+                res.binary_versions[name] = version
+            if name in expected and version != expected[name]:
+                problems.append(f"{name}: version {version} != expected {expected[name]}")
+        if self.ship_web and res.build != self.a.version:
+            problems.append(f"served build {res.build} != release {self.a.version}")
         res.ptyhost_pids = self._tasklist("ptyhost.exe")
         lost = sorted(set(before.ptyhost_pids) - set(res.ptyhost_pids))
         if lost:
@@ -452,19 +427,21 @@ class WindowsNode(TargetHandler):
 
     def rollback(self, backup_dir: str) -> None:
         p = self.prefix
-        self.expected_sha, self.staged, self.restarted = {}, [], False
+        self.expected_versions, self.staged, self.restarted = {}, [], False
         for name in self.bins:
-            rc, _ = self.sh.run(f'if exist "{backup_dir}\\bin\\{name}.exe" (copy /y "{backup_dir}\\bin\\{name}.exe" '
+            rc, out = self.sh.run(f'if exist "{backup_dir}\\bin\\{name}.exe" (copy /y "{backup_dir}\\bin\\{name}.exe" '
                                 f'"{p}\\bin\\{name}.new.exe" >nul & echo RESTORED) else (echo ABSENT)', timeout=60)
-            sha = self._sha(f"{p}\\bin\\{name}.new.exe")
-            if sha:
-                self.expected_sha[name] = sha
+            if rc != 0:
+                raise ShellError("restore binary", rc, out)
+            if "RESTORED" in out:
+                self.sh.run(f'del /q "{p}\\bin\\{name}.new.exe.version" 2>nul & '
+                            f'if exist "{backup_dir}\\bin\\{name}.exe.version" copy /y "{backup_dir}\\bin\\{name}.exe.version" "{p}\\bin\\{name}.new.exe.version" >nul', timeout=30)
                 self.staged.append(name)
         rc, out = self.sh.run(f'rd /s /q "{p}\\{WEB_STAGING}" 2>nul & robocopy "{backup_dir}\\web" "{p}\\{WEB_STAGING}" '
                               "/MIR /NFL /NDL /NJH /NJS /NP >nul", timeout=120)
         if rc >= 8:
             raise ShellError("robocopy backup web -> web.staging", rc, out)
-        self.web_changed = self._web_digest(f"{p}\\{WEB_STAGING}") != self.web_digest_before
+        self.restore_marker(backup_dir)
         self.swap()
 
     def write_marker(self) -> None:

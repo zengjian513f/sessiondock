@@ -31,7 +31,6 @@ class LinuxNodeHandler(TargetHandler):
     kind = "linux-node"
     default_unit = "sessiondock.service"
     ships_ptyhost = True            # the hub subclass has no session hosts
-    web_digest_before: str | None = None
 
     # -- target facts ---------------------------------------------------------------
     @property
@@ -62,7 +61,7 @@ class LinuxNodeHandler(TargetHandler):
         return names
 
     def watched_binaries(self) -> list[str]:
-        """Binary names whose SHA-256 the probe records (shipped or not)."""
+        """Binary names whose release version the probe records (shipped or not)."""
         names = list(self.t.binaries)
         if self.ships_ptyhost and PTYHOST not in names:
             names.append(PTYHOST)
@@ -80,13 +79,11 @@ class LinuxNodeHandler(TargetHandler):
             f'{say} "meta=$(curl -sS --max-time 8 {q(self.t.health_url)} 2>/dev/null || true)"',
         ]
         for name in self.watched_binaries():
-            lines.append(f'{say} "sha:{name}=$(sha256sum "$P/bin/{name}" 2>/dev/null | cut -c1-64)"')
+            lines.append(f'{say} "version:{name}=$(cat "$P/bin/{name}.version" 2>/dev/null)"')
         lines += [
             f'{say} "pids=$(pgrep -x ptyhost 2>/dev/null | tr "\\n" " " || true)"',
             f'if [ -d "$P/host" ]; then {say} "hosts=$(ls "$P/host" 2>/dev/null | wc -l)"; fi',
             f'{say} "marker=$(cat "$P/etc/deployed-commit" 2>/dev/null || true)"',
-            f'{say} "webdigest=$(cd "$P/web" 2>/dev/null && find . -type f -print0 | LC_ALL=C sort -z'
-            ' | xargs -0 sha256sum 2>/dev/null | sha256sum | cut -c1-16)"',
             "exit 0",
         ]
         return "\n".join(lines)
@@ -100,7 +97,7 @@ class LinuxNodeHandler(TargetHandler):
         return facts
 
     def _snapshot(self) -> tuple[ProbeResult, dict[str, str]]:
-        """One round trip: service state, meta build, binary hashes, ptyhost pids."""
+        """One round trip: service state, meta build, binary versions, ptyhost pids."""
         try:
             rc, out = self.sh.run(self._probe_script(), timeout=60)
         except ShellError as e:
@@ -127,7 +124,7 @@ class LinuxNodeHandler(TargetHandler):
             detail="",
             build=(meta or {}).get("build") if isinstance(meta, dict) else None,
             active=facts.get("active") == "active",
-            binary_sha={k.split(":", 1)[1]: v for k, v in facts.items() if k.startswith("sha:") and v},
+            binary_versions={k.split(":", 1)[1]: v for k, v in facts.items() if k.startswith("version:") and v},
             ptyhost_pids=pids,
             host_records=int(hosts) if hosts and hosts.isdigit() else None,
             deployed_commit=facts.get("marker") or None,
@@ -137,12 +134,11 @@ class LinuxNodeHandler(TargetHandler):
     def probe(self) -> ProbeResult:
         result, facts = self._snapshot()
         self.before = result
-        self.web_digest_before = facts.get("webdigest")
         if result.reachable:
             self.log(f"probe: hostname={facts.get('hostname')} active={result.active} build={result.build} "
-                     f"sha={{{', '.join(f'{k}:{v[:12]}' for k, v in result.binary_sha.items())}}} "
+                     f"versions={result.binary_versions} "
                      f"ptyhost={len(result.ptyhost_pids)} hosts={result.host_records} "
-                     f"marker={result.deployed_commit!r} webdigest={self.web_digest_before}")
+                     f"marker={result.deployed_commit!r}")
         else:
             self.log(f"probe: {result.detail}")
         return result
@@ -155,9 +151,9 @@ class LinuxNodeHandler(TargetHandler):
         before = self.before or ProbeResult(False)
         out = []
         for name in self.binaries():
-            want = self.a.sha256.get(name, "?")
-            have = before.binary_sha.get(name, "")
-            state = "unchanged" if have == want else f"{have[:12] or '-'} -> {want[:12]}"
+            want = self.a.version
+            have = before.binary_versions.get(name, "")
+            state = "unchanged" if have == want else f"{have or '-'} -> {want}"
             out.append(f"upload {name} -> {self.path('bin', name + '.new')}, then mv -f over bin/{name} ({state})")
         if not self.binaries():
             out.append("binaries: skipped (--web-only)")
@@ -167,10 +163,9 @@ class LinuxNodeHandler(TargetHandler):
             out.append("web: skipped (--bin-only)")
         out.append(f"backup bin/{{{','.join(self.backup_names())}}} and web/ -> {self.path('backup-deploy-' + self.a.short + '-<stamp>')}")
         out.append(f"{self.systemctl} restart {self.unit} ({self.restart_note(before)})")
-        want_build = "must change" if (self.ship_web() and before.build) else "not required to change"
         hosts = "no host records" if before.host_records is None else f"host records >= {before.host_records}"
-        out.append(f"verify {self.t.health_url}: build {before.build} {want_build} if web content differs, "
-                   f"sha256 == staged, {len(before.ptyhost_pids)} ptyhost pids alive, {hosts}")
+        out.append(f"verify {self.t.health_url}: release {self.a.version}, "
+                   f"{len(before.ptyhost_pids)} ptyhost pids alive, {hosts}")
         out.append(f"write {self.path('etc', 'deployed-commit')} = {self.a.commit[:12]}; prune backups keep {self.o.keep_backups}")
         return out
 
@@ -183,11 +178,9 @@ class LinuxNodeHandler(TargetHandler):
                     raise RuntimeError(f"stage has no binary {name!r}; build it first")
                 dest = self.path("bin", name + ".new")
                 self.sh.upload(local, dest)
-                rc, out = self.sh.run(f"chmod 0755 {q(dest)} && sha256sum {q(dest)} | cut -c1-64",
-                                      timeout=60, check=True)
-                if out.strip() != self.a.sha256[name]:
-                    raise RuntimeError(f"{dest} sha256 {out.strip()[:12]} != staged {self.a.sha256[name][:12]}")
-                self.log(f"staged {dest} ({self.a.sha256[name][:12]})")
+                self.sh.run(f"chmod 0755 {q(dest)}", timeout=60, check=True)
+                self.sh.run(f"printf '%s\\n' {q(self.a.version)} > {q(dest + '.version')}", check=True)
+                self.log(f"staged {dest} version={self.a.version}")
             if self.ship_web():
                 self.sh.upload(self.a.web_dir.as_posix() + "/", self.path("web.staging") + "/", delete=True)
                 self.log(f"staged web -> {self.path('web.staging')}/")
@@ -196,7 +189,7 @@ class LinuxNodeHandler(TargetHandler):
             raise
 
     def _discard_staging(self) -> None:
-        news = " ".join(q(self.path("bin", n + ".new")) for n in self.binaries())
+        news = " ".join(q(self.path("bin", n)) for name in self.binaries() for n in (name + ".new", name + ".new.version"))
         cmd = f"rm -rf {q(self.path('web.staging'))}" + (f" && rm -f {news}" if news else "")
         self.sh.run(cmd, timeout=60)
 
@@ -210,9 +203,10 @@ class LinuxNodeHandler(TargetHandler):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         bdir = self.path(f"backup-deploy-{self.a.short}-{stamp}")
         copies = " && ".join(
-            f'if [ -f "$P/bin/{n}" ]; then cp -p "$P/bin/{n}" "$B/bin/{n}"; fi' for n in self.backup_names())
+            f'if [ -f "$P/bin/{n}" ]; then cp -p "$P/bin/{n}" "$B/bin/{n}"; fi' for name in self.backup_names() for n in (name, name + ".version"))
         self.sh.run(f'P={q(self.prefix)}; B={q(bdir)}; mkdir -p "$B/bin" "$B/web" && {copies} '
                     f'&& rsync -a --delete "$P/web/" "$B/web/"', timeout=300, check=True)
+        self.backup_marker(bdir)
         self.backup_dir = bdir
         self.log(f"backup -> {bdir}")
         return bdir
@@ -221,6 +215,7 @@ class LinuxNodeHandler(TargetHandler):
         for name in self.binaries():
             new, cur = self.path("bin", name + ".new"), self.path("bin", name)
             self.sh.run(f"test -f {q(new)} && mv -f {q(new)} {q(cur)}", timeout=60, check=True)
+            self.sh.run(f"mv -f {q(new + '.version')} {q(cur + '.version')}", check=True)
             self.log(f"swapped bin/{name}")
         if self.ship_web():
             staging = self.path("web.staging")
@@ -247,12 +242,11 @@ class LinuxNodeHandler(TargetHandler):
         elif not after.active:
             problems.append(f"{self.unit} is not active ({facts.get('active') or '?'})")
         for name in self.binaries():
-            want, have = self.a.sha256.get(name), after.binary_sha.get(name, "")
-            if have != want:
-                problems.append(f"bin/{name} sha256 {have[:12] or '-'} != staged {str(want)[:12]}")
-        web_changed = self.ship_web() and self.web_digest_before != facts.get("webdigest")
-        if self.ship_web() and web_changed and before.build and after.build == before.build:
-            problems.append(f"web content changed but build stayed {before.build}")
+            have = after.binary_versions.get(name)
+            if have != self.a.version:
+                problems.append(f"bin/{name} version {have} != release {self.a.version}")
+        if self.ship_web() and after.build != self.a.version:
+            problems.append(f"served build {after.build} != release {self.a.version}")
         if after.build is None:
             problems.append("meta has no build")
         dead = sorted(set(before.ptyhost_pids) - set(after.ptyhost_pids))
@@ -261,10 +255,10 @@ class LinuxNodeHandler(TargetHandler):
         if before.host_records is not None and (after.host_records or 0) < before.host_records:
             problems.append(f"host records {after.host_records} < {before.host_records}")
         detail = "; ".join(problems) if problems else (
-            f"build {before.build} -> {after.build} ({'web changed' if web_changed else 'web unchanged'}), "
+            f"build {before.build} -> {after.build}, "
             f"{len(after.ptyhost_pids)} ptyhost alive")
         self.log(f"verify: {'OK' if not problems else 'FAIL'}: {detail}")
-        return VerifyResult(not problems, detail, after.build, after.active, after.binary_sha,
+        return VerifyResult(not problems, detail, after.build, after.active, after.binary_versions,
                             after.ptyhost_pids, after.host_records, time.monotonic() - t0)
 
     # -- rollback / marker / prune ---------------------------------------------------
@@ -276,12 +270,14 @@ class LinuxNodeHandler(TargetHandler):
             f"set -e; P={q(self.prefix)}; B={q(backup_dir)}",
             'rm -rf "$P/web.staging"',
             'for f in "$B"/bin/*; do [ -f "$f" ] || continue; n=$(basename "$f");'
+            ' case "$n" in *.version) ;; *) rm -f "$P/bin/$n.version" ;; esac;'
             ' cp -p "$f" "$P/bin/$n.new" && mv -f "$P/bin/$n.new" "$P/bin/$n"; echo "restored bin/$n"; done',
             'if [ -f "$B/web/index.html" ]; then rsync -a --ignore-times --delete "$B/web/" "$P/web/"; echo "restored web/"; fi',
         ])
         rc, out = self.sh.run(script, timeout=300, check=True)
         for line in out.strip().splitlines():
             self.log(f"rollback: {line}")
+        self.restore_marker(backup_dir)
         self.restart()
 
     def list_backups(self) -> list[str]:

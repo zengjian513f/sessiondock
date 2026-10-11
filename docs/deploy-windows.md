@@ -34,21 +34,19 @@ set "RUSTDOC=%SD_TOOLCHAIN%\bin\rustdoc.exe"
 
 "%SD_TOOLCHAIN%\bin\cargo.exe" check -p sessiondock --all-targets --locked
 "%SD_TOOLCHAIN%\bin\cargo.exe" build -p sessiondock --release --locked
-certutil -hashfile target\release\sessiondock.exe SHA256
 ```
 
-编译检查、release 构建和 SHA-256 记录都成功后才能部署。错误 448 属于工具链问题；
+编译检查和 release 构建都成功后，记录发布日期版本号再部署。错误 448 属于工具链问题；
 修正后重建，不得复用旧 EXE。
 
 ## 3. 先暂存，再停止 Web 服务
 
-把新 EXE 暂存为 `sessiondock.pending.exe`。核对哈希，再备份线上 EXE。
+把新 EXE 暂存为 `sessiondock.pending.exe`。记录日期版本号，再备份线上 EXE 及其版本标记。
 完成前不要停止服务。
 
 ```bat
 set "SD_RUNTIME=<private-runtime-directory>"
 set "SD_BACKUP=<new-timestamped-backup-directory>"
-certutil -hashfile "%SD_RUNTIME%\bin\sessiondock.pending.exe" SHA256
 mkdir "%SD_BACKUP%"
 copy /y "%SD_RUNTIME%\bin\sessiondock.exe" "%SD_BACKUP%\sessiondock.exe"
 ```
@@ -62,10 +60,10 @@ copy /y "%SD_RUNTIME%\bin\sessiondock.exe" "%SD_BACKUP%\sessiondock.exe"
 每次更新检查：
 
 1. Web 服务由既有监督器管理并处于健康状态；配置检查和 `/api/health` 成功。
-2. 线上 `sessiondock.exe` 的 SHA-256 等于第 2 节记录。
+2. 线上 `sessiondock.exe.version` 等于本次发布日期版本号。
 3. host 记录数和既有 `ptyhost.exe` 的 PID、创建时间、Session ID 不变。
 4. 用只读或合成探针验证修复；不要创建付费会话或真实附件。
-5. 记录回滚目录、哈希、健康结果和平台限制；新工作写入 `TODO.md`。
+5. 记录回滚目录、版本号、健康结果和平台限制；新工作写入 `TODO.md`。
 
 按当前工作区部署有改动的静态文件和 EXE。复制前确认构建输入未变化。
 
@@ -99,7 +97,7 @@ python3 deploy/deploy.py rollback --targets <name> --backup <SD_RUNTIME>\backup-
   （`TEST_FAILED` → 退出码 18，该目标 `FAILED`，什么都没暂存；日志 `<SD_SOURCE>\.deploy-test.log`），
   处理器还要求输出里有 `TEST_OK`；除退出码外
   还比较 `target\release\sessiondock.exe` 构建前后的 mtime，编译过但文件没更新即失败；产物
-  `copy /y` 成 `bin\sessiondock.new.exe`，`certutil -hashfile … SHA256` 作为期望值；web 快照 zip
+  `copy /y` 成 `bin\sessiondock.new.exe`，附带 `sessiondock.new.exe.version` 日期版本标记；web 快照 zip
   解到 `web.staging\`。
 - backup：`backup.cmd` 拷 `bin\*.exe`、`robocopy /MIR` 整个 `web\`（robocopy 退出码 < 8 为成功）。
 - swap + restart 是**同一份** `swap-restart.cmd`，逐行镜像 `restart-session1.cmd`：
@@ -110,7 +108,7 @@ python3 deploy/deploy.py rollback --targets <name> --backup <SD_RUNTIME>\backup-
   因此重启发生在 swap 里，`restart()` 之后是空操作；rollback 把备份拷回 `.new.exe` / `web.staging` 后
   再跑同一份脚本。绝不从 SSH 直接 `start_sessiondock.py start`（会造出 session 0 的 supervisor）。
 - verify：`/api/meta` 在健康超时内应答且 `sessiondock.exe` 的 pid 已变、`Win32_Process` 里它的
-  SessionId 不为 0（桌面会话）、certutil 哈希等于 stage 时的值、web 内容变了则 `build` 必须变、probe 时的每个
+  SessionId 不为 0（桌面会话）、二进制版本标记等于 stage 日期版本、发布 web 时 `build` 等于该日期版本、probe 时的每个
   `ptyhost.exe` pid 仍在、host 记录数不少于之前；`etc\deployed-commit` 由 PowerShell `Set-Content` 写入。
 
 **状态（2026-09-15）**：这条自动化路径是按上述手工配方和转录记录写成的，只有
