@@ -76,6 +76,11 @@ def main():
         # Entry is reachable through the existing row context menu.
         page.goto(base,wait_until='networkidle')
         page.wait_for_function('S.sessions.length >= 6')
+        row = page.locator('.item.sd-session-card').first
+        expect(row).to_be_visible()
+        measure = "el=>{const s=getComputedStyle(el),t=getComputedStyle(el.querySelector('.t'));return {gap:s.gap,paddingTop:s.paddingTop,paddingRight:s.paddingRight,border:s.borderLeftWidth,title:t.fontSize,line:t.lineHeight,icon:el.querySelector('.source-icon').getBoundingClientRect().width}}"
+        sidebar_style = row.evaluate(measure)
+        screenshot('sidebar')
         open_item_menu(page,refs['first']);page.locator('#item-menu [data-act="info"]').click()
         expect(page.locator('#info-summary')).to_contain_text('a first')
         expect(page.locator('#info-predecessors')).to_contain_text('尚无已记录')
@@ -86,6 +91,7 @@ def main():
         page.locator('#info-hints > summary').click()
         add('origin')
         expect(page.locator('#info-predecessors')).to_contain_text('a origin')
+        assert page.locator('#info-predecessors .sd-session-card').first.evaluate(measure) == sidebar_style
         open_info('second'); add('first', state='candidate')
         expect(page.locator('#info-predecessors .si-candidate')).to_have_count(2)
         page.locator('#info-predecessors [data-confirm]').click()

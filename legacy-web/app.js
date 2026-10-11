@@ -4621,7 +4621,7 @@ function nestLeadMarkup(r) {
 }
 
 function agentRow(s, a, depth) {
-  const it = el('div', 'item agent tree',
+  const it = el('div', 'item sd-session-card agent tree',
     `${nestLeadMarkup({s, agent: a, depth, kids: 0, closed: false})}
      <span class="ico">${icon(s.source)}<span class="item-status"></span><span class="agent-mark" title="子代理" aria-hidden="true">${uiIcon('tree')}</span></span>
      <div class="body">
@@ -4727,7 +4727,7 @@ function patchSidebarRow(node, row, highlightKey) {
   }
   const pickable = S.picking && sessionPickable(s);
   const selected = S.sel === s.uid && !S.agent;
-  const className = 'item tree' + (selected ? ' sel' : '')
+  const className = 'item sd-session-card tree' + (selected ? ' sel' : '')
     + (row.closed ? ' nest-closed' : '')
     + (s.pending ? (pendingRowRunning(s) ? ' pending live live-tmux' : ' pending') : '')
     + (!s.pending && S.live.has(s.uid) ? ' live' : '')
@@ -4790,7 +4790,7 @@ function createSidebarRow(r, picked = pickedSessions) {
   const pickable = S.picking && sessionPickable(s);
   // 正在看的子代理有自己那一行，主会话行不再一起亮
   const selected = S.sel === s.uid && !S.agent;
-  const it = el('div', 'item tree' + (selected ? ' sel' : '') + (r.closed ? ' nest-closed' : '')
+  const it = el('div', 'item sd-session-card tree' + (selected ? ' sel' : '') + (r.closed ? ' nest-closed' : '')
                           + (s.pending ? (pendingRowRunning(s) ? ' pending live live-tmux' : ' pending') : '')
                           + (!s.pending && S.live.has(s.uid) ? ' live' : '')
                           + (!s.pending && S.liveTmux.has(s.uid) ? ' live-tmux' : '')

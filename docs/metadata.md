@@ -313,7 +313,12 @@ identity, all recorded predecessors and successors, distinguishes direct and ind
 neighbors, and links to each information page and conversation. It supports adding
 both directions, confirming candidates, removing direct edges, inspecting evidence
 and lazily reading opening clues. Errors retain the editor. HTML escaping applies
-to titles, paths and evidence. The page reuses existing theme and typography.
+to titles, paths and evidence. The page reuses existing theme and typography. Sidebar rows and relationship
+cards share `legacy-web/session-card.css`; titles, icons, secondary information,
+snippets and interaction states follow the sidebar. Relationship evidence and
+actions remain in the card body. Labdesk consumes a vendored copy of the same
+stylesheet and `session-card.js` brand marks, with time and contribution fields;
+update both copies together without introducing a runtime dependency between apps.
 
 Validation: [session_relations_browser.py](../tests/session_relations_browser.py)
 uses Chromium, two private nodes and a Hub for cross-node edits, native/subordinate

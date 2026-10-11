@@ -22,9 +22,6 @@ body.session-info-page { display: block; height: auto; min-height: 100dvh; overf
 .si-columns { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .si-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .si-heading h2 span, .si-caption { color: var(--muted); font-size: 12px; font-weight: 400; }
-.si-relation { padding: 10px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
-.si-relation:first-child { border-top: 0; }
-.si-relation-title { font-weight: 600; font-size: 13px; }
 .si-relation p { margin: 4px 0; font-size: 12px; color: var(--muted); }
 .si-relation .si-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .si-relation details { margin-top: 6px; font-size: 12px; }
@@ -40,3 +37,5 @@ body.session-info-page { display: block; height: auto; min-height: 100dvh; overf
 #relation-save { color: var(--accent); }
 .session-info-page [hidden] { display: none !important; }
 @media (max-width: 720px) { .si-columns, .si-facts { grid-template-columns: 1fr; } .si-main { padding: 10px; } .si-header { padding: 8px 10px; gap: 8px; } .si-panel { padding: 12px; } }
+
+.si-relation.sd-session-card { cursor: default; }
