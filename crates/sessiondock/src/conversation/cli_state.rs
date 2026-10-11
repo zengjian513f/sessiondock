@@ -29,6 +29,8 @@ pub struct Instance {
     /// `null` after a failed read or for CLIs without a recognized busy
     /// indicator (Grok, OpenCode).
     pub busy: Option<bool>,
+    /// Live CLI operation unavailable in native history until it completes.
+    pub phase: Option<&'static str>,
 }
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Editor {
@@ -64,6 +66,7 @@ struct Entry {
     input: Option<InputStatus>,
     editor_text: Option<String>,
     busy: Option<bool>,
+    phase: Option<&'static str>,
     failing_since: Option<Instant>,
     /// Text of the send the latest native echo retired, kept to recognize it
     /// when the CLI puts it back into the editor (Esc before any output).
@@ -75,7 +78,15 @@ struct Entry {
 /// One observation result: the classified input state, editor text and busy
 /// indicator, or the failure that kept the screen unreadable (instance gone,
 /// host error).
-pub type Observation = Result<(InputStatus, Option<String>, Option<bool>), Failure>;
+pub type Observation = Result<
+    (
+        InputStatus,
+        Option<String>,
+        Option<bool>,
+        Option<&'static str>,
+    ),
+    Failure,
+>;
 
 #[derive(Default)]
 pub struct Registry {
@@ -179,12 +190,13 @@ impl Registry {
         let now = Instant::now();
         entry.attempted = Some(now);
         match observation {
-            Ok((input, text, busy)) => {
+            Ok((input, text, busy, phase)) => {
                 entry.observed_at = Some(unix_now());
                 entry.running = Some(true);
                 entry.input = Some(returned(*input, text.as_deref(), entry, &queued));
                 entry.editor_text = text.clone();
                 entry.busy = *busy;
+                entry.phase = *phase;
                 entry.failing_since = None;
             }
             Err(_) => {
@@ -192,6 +204,7 @@ impl Registry {
                 entry.input = None;
                 entry.editor_text = None;
                 entry.busy = None;
+                entry.phase = None;
                 entry.failing_since.get_or_insert(now);
             }
         }
@@ -206,6 +219,7 @@ impl Registry {
             instance: Instance {
                 running: entry.running,
                 busy: entry.busy,
+                phase: entry.phase,
             },
             input: entry.input,
             editor: Editor {
@@ -272,7 +286,9 @@ pub fn screen_busy(source: &str, capture: &crate::delivery::driver::ScreenCaptur
     match source {
         "claude" => Some(driver::busy_screen(&capture.text)),
         "codex" => Some(
-            driver::codex_busy_screen(&capture.text) || driver::codex_background_running(capture),
+            driver::codex_busy_screen(&capture.text)
+                || driver::codex_background_running(capture)
+                || driver::codex_compacting(capture),
         ),
         "agy" => super::input::agy_busy(capture),
         _ => None,
@@ -620,4 +636,13 @@ pub fn echo_hash(text: &str) -> String {
         .as_str()
         .unwrap_or_default()
         .to_owned()
+}
+
+/// Only a current, recognized CLI screen can supply an in-progress phase.
+pub fn screen_phase(
+    source: &str,
+    capture: &crate::delivery::driver::ScreenCapture,
+) -> Option<&'static str> {
+    (source == "codex" && crate::delivery::driver::codex_compacting(capture))
+        .then_some("compacting")
 }
