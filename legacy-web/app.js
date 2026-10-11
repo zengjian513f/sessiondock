@@ -1426,18 +1426,25 @@ function applyMigrationMeta(uid, agent, entry, meta) {
   entry.meta = meta;
   if (!agent) {
     const listed = indexedSessions().byUid.get(uid);
+    // Detail metadata is not a compact catalog projection: child_count may
+    // include unloaded (even remote) sessions, and agent_items is unfiltered.
+    // Keep the catalog count and the current lazy branch scope when following
+    // the selected conversation, until a list response updates them.
+    const rowMeta = {...meta};
+    if (listed && Object.hasOwn(listed, 'child_count')) rowMeta.child_count = listed.child_count;
+    if (S.childMode === 'hidden' && !S.lazyOpen.has(uid)) delete rowMeta.agent_items;
     // Cursor/size updates do not change membership, ordering, nesting or
     // filters; migration_warnings 同样只出现在详情里，左栏从不展示（docs/history-pages.md）。
     // Keep the indexed row object used by the resolved sidebar tree;
     // replace the array normally for every other kind of metadata change.
-    if (listed && JSON.stringify(listed) !== JSON.stringify(meta)) {
-      const local = Object.keys({...listed, ...meta}).every(field =>
+    if (listed && JSON.stringify(listed) !== JSON.stringify(rowMeta)) {
+      const local = Object.keys({...listed, ...rowMeta}).every(field =>
         field === 'cursor' || field === 'size' || field === 'migration_warnings'
-          || JSON.stringify(listed[field]) === JSON.stringify(meta[field]));
+          || JSON.stringify(listed[field]) === JSON.stringify(rowMeta[field]));
       if (local) {
         const sizeChanged = listed.size !== meta.size;
         for (const field of ['cursor', 'size', 'migration_warnings']) {
-          if (Object.hasOwn(meta, field)) listed[field] = meta[field];
+          if (Object.hasOwn(rowMeta, field)) listed[field] = rowMeta[field];
           else delete listed[field];
         }
         if (sizeChanged) {
@@ -1447,7 +1454,7 @@ function applyMigrationMeta(uid, agent, entry, meta) {
             if (!sidebarTextSelectionProtected()) patchSidebarRow(node, node._nestRow, node._highlightKey);
           }
         }
-      } else S.sessions = S.sessions.map(row => row.uid === uid ? {...meta} : row);
+      } else S.sessions = S.sessions.map(row => row.uid === uid ? rowMeta : row);
     }
   }
   if (!changed) {

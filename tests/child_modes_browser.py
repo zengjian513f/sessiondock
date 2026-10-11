@@ -9,7 +9,7 @@ import tempfile
 from urllib.parse import quote
 
 from playwright.sync_api import expect, sync_playwright
-from history_fixtures import BINARY, get_json, isolated_server
+from history_fixtures import BINARY, Corpus, codex_message, codex_row, encoded, get_json, isolated_server
 from nest_tree_browser import corpus
 
 
@@ -21,6 +21,52 @@ def sidebar_layout(page):
             return [rect.top, rect.height];
         });
     }""")
+
+
+def codex_detail_branch(browser, binary):
+    """Native subagents remain reachable while the collapsed parent's SSE runs."""
+    with tempfile.TemporaryDirectory(prefix='sessiondock-child-detail-') as temp:
+        data = Corpus(Path(temp))
+        parent = codex_row('session_meta', {'id': 'parent', 'cwd': '/synthetic', 'source': 'cli'})
+        data.put('parent', 'codex', [parent, codex_message('user', 'Codex parent')], ['Codex parent'])
+        for index in range(3):
+            sid = f'child-{index}'
+            meta = codex_row('session_meta', {'id': sid, 'cwd': '/synthetic',
+                'source': {'subagent': {'thread_spawn': {'parent_thread_id': 'parent',
+                    'agent_path': f'/root/{sid}', 'depth': 1}}}})
+            # Current CLI copies the parent's session_meta into each fork.
+            data.put(sid, 'codex', [meta, parent, codex_message('assistant', f'Child reply {index}')], [])
+        with isolated_server(data, binary) as (base, _):
+            for width, theme in ((1400, 'dark'), (390, 'light')):
+                context = browser.new_context(viewport={'width': width, 'height': 900}, service_workers='block')
+                context.add_init_script(f"localStorage.setItem('sessiondock.theme', JSON.stringify('{theme}'))")
+                page = context.new_page()
+                errors = []
+                page.on('pageerror', lambda error: errors.append(str(error)))
+                page.goto(base, wait_until='networkidle')
+                page.locator('#nest-hidden').click()
+                uid = data.uid('parent')
+                row = page.locator(f'#side .item[data-uid="{uid}"]')
+                row.locator('.t').click()
+                expect(page.locator('#msgs')).to_contain_text('Codex parent')
+                marker = f'Native follow {width}'
+                with data.paths['parent'].open('ab') as output:
+                    output.write(encoded(codex_message('assistant', marker)))
+                expect(page.locator('#msgs')).to_contain_text(marker, timeout=15000)
+                # Check after a detail read even if a catalog invalidation also ran.
+                page.evaluate('syncSession(S.sel, null)')
+                assert page.evaluate('uid => S.sessions.find(s => s.uid === uid).child_count', uid) == 3
+                assert page.evaluate('uid => !S.sessions.find(s => s.uid === uid).agent_items', uid)
+                if width == 390:
+                    page.locator('#detail .mobile-back').click()
+                row.locator('.nest-caret').click()
+                expect(page.locator('#side .item.agent')).to_have_count(3)
+                page.screenshot(path=f'/tmp/sessiondock-31eb05-{width}.png')
+                page.locator('#side .item.agent[data-agent="child-0"]').click()
+                expect(page.locator('#msgs')).to_contain_text('Child reply 0')
+                assert not errors, errors
+                context.close()
+                print(f'PASS Codex detail branch {width}px {theme}: native append, retained count, expand three agents, open child history', flush=True)
 
 
 def bound_launch_sidebar(browser, base, full, width):
@@ -100,6 +146,7 @@ def main():
                 launch['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
             browser = pw.chromium.launch(**launch)
             try:
+                codex_detail_branch(browser, args.binary)
                 for width in (1400, 390):
                     context = browser.new_context(viewport={'width': width, 'height': 900}, service_workers='block')
                     page = context.new_page()
