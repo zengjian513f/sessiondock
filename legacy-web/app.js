@@ -9038,47 +9038,100 @@ function renderTerminalThreadNotice(uid = S.sel) {
   box.appendChild(notice);
 }
 
+function questionMatchesScreen(questions, screen) {
+  if (screen?.kind !== 'screen_menu' || screen.questions?.length !== 1) return false;
+  const compact = value => String(value || '').replace(/\s+/gu, '');
+  const visible = screen.questions[0];
+  return questions?.some(q => compact(q.question) === compact(visible.question)
+    && q.options?.length > 0 && q.options.every((option, index) =>
+      compact(option.label) === compact(visible.options?.[index]?.label)));
+}
+
+// All live questions share the conversation's scroll area. CHECK supplies the
+// current terminal page; a matching hook may supply the complete questionnaire.
+function renderConversationQuestion(uid = S.sel) {
+  const box = $('#msgs');
+  if (!box || uid !== S.sel || S.agent) return;
+  const entry = cache.get(viewKey(uid));
+  const draft = typeof composerDraft === 'function' && uid === composerUid
+    ? composerDraft(uid, false) : null;
+  const screen = draft?.inputPrompt;
+  const native = entry?.prompt?.questions?.length ? entry.prompt : pendingHistoryQuestion(entry);
+  const matches = questionMatchesScreen(native?.questions, screen);
+  const answerable = (native?.state || 'waiting') === 'waiting'
+    && (native?.questions?.length === 1 ? !native.questions[0].multiple
+      : sessiondockCli(uid)?.canAnswerQuestionForm(native));
+  const useScreen = !!screen && !(matches && answerable);
+  const prompt = useScreen ? screen : native;
+  const id = prompt?.id || prompt?.call_id || '';
+  pruneQuestionFormDrafts(uid, prompt && (prompt.state || 'waiting') === 'waiting' ? id : '');
+
+  box.querySelectorAll('.question-live-shadowed').forEach(
+    node => node.classList.remove('question-live-shadowed'));
+  const answered = new Set((entry?.msgs || [])
+    .filter(m => ['answer', 'tool_result'].includes(m.role) && m.call_id).map(m => m.call_id));
+  for (const node of box.querySelectorAll('.msg[data-role="question"][data-call-id]')) {
+    if (node.closest('#conversation-question')) continue;
+    const history = entry?.msgs?.find(m => m.role === 'question' && m.call_id === node.dataset.callId);
+    if (prompt && (node.dataset.callId === id || (useScreen && history
+        && !answered.has(history.call_id) && questionMatchesScreen(history.questions, screen)))) {
+      node.classList.add('question-live-shadowed');
+    }
+  }
+  let slot = $('#conversation-question');
+  if (!slot) {
+    slot = el('div', 'hidden');
+    slot.id = 'conversation-question';
+  }
+  if (slot !== box.lastElementChild) box.appendChild(slot);
+  const signature = JSON.stringify([uid, prompt, useScreen, useScreen ? draft?.inputAnswer : null]);
+  if (slot.dataset.signature === signature) return;
+  const focused = slot.querySelector('.question-text-input');
+  const restore = focused && document.activeElement === focused
+    ? {start: focused.selectionStart, end: focused.selectionEnd} : null;
+  if (draft && !screen && (draft.inputStatus?.state === 'ready' || sessionComposerEnded(uid))) {
+    const prefix = `${composerDraftOwner(uid)}\0`;
+    for (const key of screenMenuTextDrafts.keys()) {
+      if (key.startsWith(prefix)) screenMenuTextDrafts.delete(key);
+    }
+  }
+  const liveQuestion = prompt && {...prompt, role: 'question', call_id: id, live: true, uid,
+    state: useScreen && draft.inputAnswer ? 'submitted' : prompt.state,
+    ts: prompt.ts || prompt.created_at};
+  const controls = useScreen ? {
+    answer: (uid, index) => answerComposerQuestion(uid, id, index),
+    cancel: uid => screen.kind === 'screen_menu'
+      ? answerComposerScreenMenu(uid, id, 'cancel') : answerComposerQuestion(uid, id, 1),
+    action: (uid, index) => answerComposerScreenMenu(uid, id, 'action', index),
+    textAnswer: (uid, value) => answerComposerScreenMenu(uid, id, 'text', value),
+  } : {};
+  const next = prompt ? stampMessageTime(questionNode(liveQuestion, controls), [liveQuestion])
+    : el('div', 'hidden');
+  next.id = 'conversation-question';
+  next.setAttribute('aria-label', 'CLI 选择题');
+  next.dataset.signature = signature;
+  slot.replaceWith(next);
+  slot = next;
+  if (prompt) $('#activity')?.remove();
+  if (restore) {
+    const input = slot.querySelector('.question-text-input');
+    if (input && !input.disabled) {
+      input.focus({preventScroll: true});
+      input.setSelectionRange(restore.start, restore.end);
+    }
+  }
+  refreshMessageTimeDividers(box);
+  settle(box);
+}
+
 function renderConversationTail(activity, uid = S.sel) {
   const box = $('#msgs');
   if (!box) return;
-  const entry = cache.get(viewKey(uid));
   $('#activity')?.remove();
-  box.querySelectorAll('.live-question').forEach(node => node.remove());
-  box.querySelectorAll('.question-live-shadowed').forEach(
-    node => node.classList.remove('question-live-shadowed'));
-  const prompt = entry?.prompt;
-  const nativeQuestion = prompt?.questions?.length ? null : pendingHistoryQuestion(entry);
-  const activeQuestion = prompt?.questions?.length ? prompt : nativeQuestion;
-  const activeDraftId = activeQuestion
-    && (activeQuestion.state || 'waiting') === 'waiting'
-    ? String(activeQuestion.id || activeQuestion.call_id || '') : '';
-  pruneQuestionFormDrafts(uid, activeDraftId);
-  if (prompt?.questions?.length) {
-    if (prompt.id) {
-      [...box.querySelectorAll('.msg[data-role="question"][data-call-id]')]
-        .find(node => node.dataset.callId === prompt.id)
-        ?.classList.add('question-live-shadowed');
-    }
-    const liveQuestion = {
-      role: 'question', call_id: prompt.id, questions: prompt.questions,
-      text: prompt.questions.map(q => q.question).join('\n\n'), live: true,
-      state: prompt.state, uid, ts: prompt.ts || prompt.created_at,
-    };
-    box.appendChild(stampMessageTime(questionNode(liveQuestion), [liveQuestion]));
-  } else if (nativeQuestion) {
-    [...box.querySelectorAll('.msg[data-role="question"][data-call-id]')]
-      .find(node => node.dataset.callId === nativeQuestion.call_id)
-      ?.classList.add('question-live-shadowed');
-    const liveQuestion = { ...nativeQuestion, live: true, uid };
-    box.appendChild(stampMessageTime(questionNode(liveQuestion), [liveQuestion]));
-  } else {
-    renderActivity(activity);
-  }
+  renderConversationQuestion(uid);
+  if (!$('#conversation-question.live-question')) renderActivity(activity);
   renderTerminalThreadNotice(uid);
-  if (typeof renderComposerQuestion === 'function' && uid === composerUid) {
-    renderComposerQuestion(composerDraft(uid, false));
-  }
-  if (typeof syncComposerSendState==='function') syncComposerSendState();
+  if (typeof syncComposerSendState === 'function') syncComposerSendState();
   refreshMessageTimeDividers(box);
   scheduleBrowserSnapshot('conversation-tail');
 }

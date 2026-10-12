@@ -375,7 +375,7 @@ Claude 在终端里双 Esc 回滚后，对话跟着显示到回滚点，标题�
 
 画面菜单（`kind: screen_menu`）复用同一张卡，另外有：多选同步勾选、当前页文字、下一页/返回/提交等 `actions`、取消（仅当给了 `cancel_keys`）。文字草稿存在页面内存（`screenMenuTextDrafts`），轮询不把正在打的字清掉。点击前重新 CHECK 同一语义 ID，再按新画面算按键。菜单消失、换了会话或选项变了，就不写。密钥类字段不在网页里填。
 
-目录信任：Codex 预启动文件夹信任走 composer 题卡。[`tests/startup_question_browser.py`](../tests/startup_question_browser.py)。Claude 工作区信任在 hook/历史之前，同一套卡。[`tests/startup_claude_browser.py`](../tests/startup_claude_browser.py)。Claude 题卡点到正确原生选项：[``tests/question_browser.py``](../tests/question_browser.py)。四个 CLI 的源码菜单清单在 Chromium 里点：[``tests/cli_menus_browser.py``](../tests/cli_menus_browser.py)。
+目录信任：Codex 预启动文件夹信任走对话区题卡。[`tests/startup_question_browser.py`](../tests/startup_question_browser.py)。Claude 工作区信任在 hook/历史之前，同一套卡。[`tests/startup_claude_browser.py`](../tests/startup_claude_browser.py)。Claude 题卡点到正确原生选项：[``tests/question_browser.py``](../tests/question_browser.py)。四个 CLI 的源码菜单清单在 Chromium 里点：[``tests/cli_menus_browser.py``](../tests/cli_menus_browser.py)。
 
 发送在 `cli_question` 时被拒绝，输入保留。回答走终端按键，不走 SEND 正文。
 

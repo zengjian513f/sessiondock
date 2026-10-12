@@ -51,6 +51,7 @@ import os
 import select
 import sys
 import termios
+import textwrap
 import threading
 import time
 import tty
@@ -221,7 +222,26 @@ class Fake:
         self.menu = {"path": path, "questions": questions, "tab": spec.get("tab", 0),
                      "cursors": list(spec.get("cursors") or [0] * len(questions)),
                      "texts": [""] * len(questions), "answers": [None] * len(questions),
-                     "review": spec.get("review", 0)}
+                     "review": spec.get("review", 0), "boxed": spec.get("boxed", False),
+                     "tool_id": spec.get("tool_id")}
+        if self.menu["boxed"]:
+            context_id = str(uuid.uuid4())
+            self.append([{"type": "assistant", "uuid": context_id, "parentUuid": self.parent,
+                          "sessionId": self.sid, "cwd": os.getcwd(), "timestamp": self.now(),
+                          "message": {"role": "assistant", "content": "\n\n".join(
+                              f"队列观察 {i + 1}：现有作业仍在运行，等待资源释放。" for i in range(35))}}])
+            self.parent = context_id
+            question_id = str(uuid.uuid4())
+            self.append([{"type": "assistant", "uuid": question_id, "parentUuid": self.parent,
+                          "sessionId": self.sid, "cwd": os.getcwd(), "timestamp": self.now(),
+                          "message": {"role": "assistant", "content": [{"type": "tool_use",
+                              "id": spec["tool_id"], "name": "AskUserQuestion", "input": {
+                                  "questions": [{"header": "队列调度", "question": q["question"],
+                                      "multiSelect": False, "options": [{"label": label,
+                                          "description": q["descriptions"][i]}
+                                          for i, label in enumerate(q["options"])]}
+                                      for q in questions]}}]}}])
+            self.parent = question_id
         self.render_menu()
 
     def render_menu(self):
@@ -238,7 +258,11 @@ class Fake:
             if described:
                 tabs = "☐ Criterion" if count == 1 else "←  ☐ Criterion  ☐ Scope  ✔ Submit  →"
                 lines += ["─" * 60, tabs, ""]
-            lines.append(question["question"])
+            if menu["boxed"]:
+                lines += ["│ " + line for line in textwrap.wrap(question["question"], width=40)]
+                lines.append("")
+            else:
+                lines.append(question["question"])
             for i, row in enumerate(rows):
                 if described and i == len(rows) - 1:
                     lines.append("─" * 60)
@@ -254,6 +278,13 @@ class Fake:
         menu = self.menu
         self.menu = None
         answers = {q["question"]: a for q, a in zip(menu["questions"], menu["answers"]) if a is not None}
+        if menu["boxed"]:
+            result_id = str(uuid.uuid4())
+            self.append([{"type": "user", "uuid": result_id, "parentUuid": self.parent,
+                          "sessionId": self.sid, "cwd": os.getcwd(), "timestamp": self.now(),
+                          "message": {"role": "user", "content": [{"type": "tool_result",
+                              "tool_use_id": menu["tool_id"], "content": "、".join(answers.values())}]}}])
+            self.parent = result_id
         with open(menu["path"] + ".answers", "w", encoding="utf-8") as stream:
             json.dump({"outcome": outcome, "answers": answers}, stream, ensure_ascii=False)
         self.render()

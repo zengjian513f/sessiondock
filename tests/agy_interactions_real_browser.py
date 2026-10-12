@@ -97,7 +97,7 @@ def run(browser, base, root, agy, records, evidence, holds):
     page.set_default_timeout(20000)
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
-    card = page.locator('#composer-question')
+    card = page.locator('#conversation-question')
 
     def capture(label):
         # Read the actual host frame, including styles; no production host.
