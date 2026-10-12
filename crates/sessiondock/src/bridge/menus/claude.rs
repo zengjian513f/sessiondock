@@ -525,7 +525,16 @@ pub fn screen_prompt(screen: &str) -> Option<Value> {
         .filter(|i| !rows.iter().any(|r| r.line == *i))
         .filter(|i| !description_lines.contains(i) && !border(lines[*i]))
         .filter(|&i| !matches!(lines[i].trim(), "Submit" | "Next"))
-        .map(|i| lines[i].trim())
+        // AskUserQuestion's wrapped prompt is marked with a left border on
+        // every physical row. It is decoration, not part of the native text.
+        .map(|i| {
+            let line = lines[i].trim();
+            if question_tabs.is_some() {
+                line.strip_prefix('│').unwrap_or(line).trim_start()
+            } else {
+                line
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n")
         .trim()

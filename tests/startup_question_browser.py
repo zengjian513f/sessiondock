@@ -129,11 +129,11 @@ def main():
                     return receipt
 
                 receipt = create()
-                card = page.locator('#composer-question')
+                card = page.locator('#conversation-question')
                 expect(card).to_be_visible(timeout=15000)
                 expect(card).to_contain_text(str(root / 'work'))
                 expect(card).to_contain_text(DISCLOSURE)
-                expect(card.locator('.msg.question.live-question > .question-body')).to_have_count(1)
+                expect(card.locator(':scope > .question-body')).to_have_count(1)
                 expect(card.locator('.question-item > .question-header')).to_have_text('目录信任确认')
                 expect(card.locator('.question-options > button > span')).to_have_text(['1', '2'])
                 expect(card.locator('.question-options > button b')).to_have_text(['信任并继续', '退出'])

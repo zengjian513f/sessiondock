@@ -1739,6 +1739,7 @@ function showNewSessionStage(info, {historyMode = 'push'} = {}) {
   showSessionCount(sidebarSessions().length);
   const src = SOURCES[info.source];
   const pendingTitle = info.title || `新建 ${src.name} 会话`;
+  disposeMessageObservers($('#msgs'));
   $('#detail').innerHTML = `<div class="dhead" data-uid="${esc(S.sel)}"><div class="dtitle">
     <button class="mobile-back" title="返回会话列表" aria-label="返回会话列表">←</button>
     <h2>${sessionIconMarkup(info.source, true, true)}<span>${esc(pendingTitle)}</span></h2>
@@ -1755,7 +1756,9 @@ function showNewSessionStage(info, {historyMode = 'push'} = {}) {
       <span class="meta-secondary"><code>${esc(shortCwd(info.cwd, 999))}</code></span>
       <span class="meta-source">${esc(src.name)}</span></div>`)}
     </div></div>
-  </div><div class="empty new-session-wait">${esc(pendingStageMessage(info))}</div>`;
+  </div><div id="msgs" class="msgs"><div class="empty new-session-wait">${esc(pendingStageMessage(info))}</div></div>`;
+  stickBottom($('#msgs'), true);
+  watchBottom($('#msgs'));
   $('#detail .mobile-back').onclick = showMobileList;
   bindConsoleButton($('#a-term'), S.sel);
   renderPendingSessionAction(info);
@@ -4964,67 +4967,10 @@ function renderComposerInputStatus() {
     node.append(el('span', 'composer-input-status-copy', notice));
 
   }
-  renderComposerQuestion(draft);
+  renderConversationQuestion(composerUid);
   syncComposerSendState();
 }
 
-function renderComposerQuestion(draft) {
-  const box = $('#composer-question');
-  const screenPrompt = draft?.inputPrompt;
-  const question = activeCliQuestion(composerUid);
-  // CHECK describes only the visible terminal page; hooks/history can already
-  // supply the complete form. Match its content so a stale hook cannot obscure
-  // a different menu, and give the complete form one set of answer controls.
-  const compact = value => String(value || '').replace(/\s+/gu, '');
-  const duplicate = screenPrompt?.kind === 'screen_menu'
-    && screenPrompt.questions?.length === 1
-    && (question?.state || 'waiting') === 'waiting'
-    && (question?.questions?.length === 1 ? !question.questions[0].multiple
-      : sessiondockCli(composerUid)?.canAnswerQuestionForm(question))
-    && question?.questions?.some(q => {
-      const visible = screenPrompt.questions[0];
-      return compact(q.question) === compact(visible.question)
-        && q.options?.length > 0
-        && q.options.every((option, index) =>
-          compact(option.label) === compact(visible.options?.[index]?.label));
-    });
-  const prompt = duplicate ? null : screenPrompt;
-  const signature = JSON.stringify([composerUid, prompt, duplicate, draft?.inputAnswer]);
-  if (box.dataset.signature === signature) return;
-  box.dataset.signature = signature;
-  const focused = box.querySelector('.question-text-input');
-  const restore = focused && document.activeElement === focused
-    ? {start:focused.selectionStart, end:focused.selectionEnd} : null;
-  box.replaceChildren();
-  box.classList.toggle('hidden', !prompt);
-  if (!prompt) {
-    if (draft?.inputStatus?.state === 'ready' || sessionComposerEnded(composerUid)) {
-      const prefix = `${composerDraftOwner(composerUid)}\0`;
-      for (const key of screenMenuTextDrafts.keys()) {
-        if (key.startsWith(prefix)) screenMenuTextDrafts.delete(key);
-      }
-    }
-    return;
-  }
-  const uid = composerUid;
-  box.appendChild(questionNode({
-    ...prompt, uid, call_id: prompt.id, live: true,
-    state: draft.inputAnswer ? 'submitted' : 'waiting',
-  }, {
-    answer: (uid, index) => answerComposerQuestion(uid, prompt.id, index),
-    cancel: uid => prompt.kind === 'screen_menu'
-      ? answerComposerScreenMenu(uid, prompt.id, 'cancel') : answerComposerQuestion(uid, prompt.id, 1),
-    action: (uid, index) => answerComposerScreenMenu(uid, prompt.id, 'action', index),
-    textAnswer: (uid, value) => answerComposerScreenMenu(uid, prompt.id, 'text', value),
-  }));
-  if (restore) {
-    const input = box.querySelector('.question-text-input');
-    if (input && !input.disabled) {
-      input.focus({preventScroll:true});
-      input.setSelectionRange(restore.start, restore.end);
-    }
-  }
-}
 
 async function answerComposerQuestion(uid, id, index) {
   if (composerDraft(uid, false)?.inputPrompt?.kind === 'screen_menu')
@@ -5034,19 +4980,19 @@ async function answerComposerQuestion(uid, id, index) {
   const binding = termInputBody(name, {name, keys:[], uid});
   if (!binding) return false;
   draft.inputAnswer = id;
-  renderComposerQuestion(draft);
+  renderConversationQuestion(composerUid);
   // Recheck the same live menu before writing, including pre-rollout launches.
   const current = await probeComposerInput(uid);
   if (current?.prompt?.id !== id || composerUid !== uid || takenOver(uid) !== name) {
     if (draft.inputAnswer === id) draft.inputAnswer = null;
-    if (composerUid === uid) renderComposerQuestion(draft);
+    if (composerUid === uid) renderConversationQuestion(composerUid);
     return false;
   }
   const keys = sessiondockCli(current.prompt.source)?.questionAnswerKeys(current.prompt, index);
   let ok = false;
   try { ok = !!keys?.length && await writeComposerMenuInput(name, uid, binding, {keys}); }
   catch (error) { await appAlert('回答未完成，请检查终端后继续：' + (error.message || error)); }
-  if (!ok) { draft.inputAnswer = null; if (composerUid === uid) renderComposerQuestion(draft); }
+  if (!ok) { draft.inputAnswer = null; if (composerUid === uid) renderConversationQuestion(composerUid); }
   else pollComposerInput();
   return !!ok;
 }
@@ -5072,7 +5018,7 @@ async function answerComposerScreenMenu(uid, id, kind, value) {
   delete binding.keys;
   const pending = {id, revision:screenMenuRevision(shown), sent:false};
   draft.inputAnswer = pending;
-  renderComposerQuestion(draft);
+  renderConversationQuestion(composerUid);
   let ok = false;
   let refreshOnly = false;
   try {
@@ -5119,7 +5065,7 @@ async function answerComposerScreenMenu(uid, id, kind, value) {
         await probeComposerInput(uid);
         if (draft.inputAnswer === pending) {
           draft.inputAnswer = null;
-          if (composerUid === uid) renderComposerQuestion(draft);
+          if (composerUid === uid) renderConversationQuestion(composerUid);
         }
       } else pollComposerInput();
     }
@@ -5130,7 +5076,7 @@ async function answerComposerScreenMenu(uid, id, kind, value) {
   } finally {
     if (!ok && draft.inputAnswer === pending) {
       draft.inputAnswer = null;
-      if (composerUid === uid) renderComposerQuestion(draft);
+      if (composerUid === uid) renderConversationQuestion(composerUid);
     }
   }
 }

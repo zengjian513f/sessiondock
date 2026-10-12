@@ -322,11 +322,11 @@ def run(browser, base, root, agy, records, evidence, holds):
                     if stage == 'unknown-menu':
                         assert code == 'cli_not_ready', code
                     if stage.startswith('model'):
-                        expect(page.locator('#composer-question')).to_contain_text('Switch Model')
+                        expect(page.locator('#conversation-question')).to_contain_text('Switch Model')
                         if stage == 'model-select':
-                            page.locator('#composer-question [data-question-option]').filter(has_text=MODELS[0]).click()
+                            page.locator('#conversation-question [data-question-option]').filter(has_text=MODELS[0]).click()
                         else:
-                            page.locator('#composer-question .question-cancel').click()
+                            page.locator('#conversation-question .question-cancel').click()
                         ready(page)
                         expect(page.locator('#cinput')).to_have_value('SESSIONDOCK_BLOCKED_' + stage)
                     if stage == 'resume-menu':

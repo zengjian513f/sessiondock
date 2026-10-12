@@ -29,6 +29,7 @@ from send_browser import create_claude, initialize
 from popups import on_popup  # noqa: E402
 
 DEBUG = {}
+SCREENSHOTS = Path(os.environ.get('SESSIONDOCK_TEST_SCREENSHOTS', '/tmp/sessiondock-question-review'))
 FORM = [
     {"header": "清理范围", "question": "v8 这批怎么清理？",
      "options": ["全部删除、不留痕", "台账保留、标注作废", "只删文件、台账保留"]},
@@ -46,6 +47,14 @@ DESCRIBED = [
      "options": ["台账与展示 (Recommended)", "只改台账", "只改展示"],
      "descriptions": ["同步修改台账和页面展示。\n既能保存也能筛选。", "只保存新的判定值。", "只更新列表显示。"]},
 ]
+BOXED = [{"header": "队列调度", "question":
+    "工作节点上的资源空出来一份，就向协调器租下一份、先空着不用，等所有资源凑齐后再启动整机任务"
+    "（不抢占、不终止任何作业，只是不让新作业补进来）。要按这个方案继续等待并保留资源吗？",
+    "options": ["保留资源（推荐）", "继续被动等待", "选择其他节点"],
+    "descriptions": [
+        "预计 2—3 小时后现有作业结束，期间已空出的资源闲置。\n其他新排的作业这段时间无法进入此节点；随后整机任务约需独占 8—10 小时。",
+        "不预留资源，等待某个节点恰好整机空闲。\n可能需要等待较长时间，当前排队任务仍无法启动。",
+        "其他节点的新作业刚起跑，还要等待很多小时。\n闲置时间较长，需要继续观察。"]}]
 
 
 def hook(state, sid, event, tool, questions, agent_id=None):
@@ -68,7 +77,7 @@ def answer(page, root, sid, tool, questions, choices, menu, *, layout=False):
     outcome.unlink(missing_ok=True)
     spec.write_text(json.dumps({"questions": [{"question": q["question"], "options": q["options"],
                                               "descriptions": q.get("descriptions")}
-                                              for q in questions], **menu}))
+                                              for q in questions], 'tool_id': tool, **menu}))
     if layout:
         # Before the hook arrives, CHECK must still show the current screen
         # page with each wrapped description attached to its own option.
@@ -79,24 +88,55 @@ def answer(page, root, sid, tool, questions, choices, menu, *, layout=False):
         page.wait_for_timeout(100)
         check = page.evaluate('async () => await probeComposerInput(composerUid)')
         visible = check['prompt']['questions'][0]
-        assert visible['question'] == questions[0]['question'], visible
+        assert ''.join(visible['question'].split()) == ''.join(questions[0]['question'].split()), visible
         assert [o.get('description') for o in visible['options'][:3]] == questions[0]['descriptions'], visible
-        expect(page.locator('#composer-question')).to_be_visible()
-        expect(page.locator('#composer-question .question-text')).to_have_text(questions[0]['question'])
-        expect(page.locator('#composer-question .question-option small')).to_have_count(3)
+        expect(page.locator('#conversation-question')).to_be_visible()
+        expect(page.locator('#conversation-question .question-text')).to_have_text(visible['question'])
+        expect(page.locator('#conversation-question .question-option small')).to_have_count(3)
+        expect(page.locator('#composer .live-question')).to_have_count(0)
+        assert page.locator('#conversation-question').evaluate("e => e.closest('#msgs') !== null")
+        assert page.locator('#conversation-question').evaluate(
+            """e => !['auto', 'scroll'].includes(getComputedStyle(e).overflowY)
+                && getComputedStyle(e).maxHeight === 'none' && e.scrollHeight <= e.clientHeight + 1""")
+        if menu.get('boxed'):
+            expect(page.locator('.live-question:visible')).to_have_count(1)
+            expect(page.locator('#msgs')).to_contain_text('队列观察 35', timeout=20000)
+            assert page.locator('#msgs').evaluate('e => e.scrollHeight > e.clientHeight')
+            assert page.locator('#composer').evaluate('e => e.clientHeight < 120')
+            page.locator('#msgs').hover()
+            page.mouse.wheel(0, -1000)
+            page.wait_for_timeout(150)
+            before = page.locator('#msgs').evaluate('e => e.scrollTop')
+            page.mouse.wheel(0, 1000)
+            page.wait_for_timeout(150)
+            assert page.locator('#msgs').evaluate('e => e.scrollTop') > before
+            page.locator('#conversation-question .question-text-input').scroll_into_view_if_needed()
+            SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(SCREENSHOTS / f'{tool}-screen.png'))
         # A matching but non-answerable history form must leave the native
         # controls available, including its text field.
         hook(root / 'state', sid, 'PreToolUse', tool + '-multiple', [{**questions[0], 'multiple': True}])
-        expect(page.locator(f'#msgs .live-question[data-call-id="{tool}-multiple"] .question-multiple')).to_be_visible(timeout=20000)
-        expect(page.locator('#composer-question')).to_be_visible()
-        page.locator('#composer-question .question-text-input').fill('custom answer')
+        page.wait_for_function("id => cache.get(viewKey(S.sel))?.prompt?.id === id", arg=tool + '-multiple')
+        expect(page.locator('#conversation-question')).to_be_visible()
+        expect(page.locator('.live-question:visible')).to_have_count(1)
+        page.locator('#conversation-question .question-text-input').fill('custom answer')
     hook(root / "state", sid, "PreToolUse", tool, questions)
     card = page.locator(f'#msgs .msg.question.live-question[data-call-id="{tool}"]')
     expect(card.locator(".question-item")).to_have_count(len(questions), timeout=20000)
     if layout:
-        expect(page.locator('#composer-question')).to_be_hidden()
+        expect(page.locator('#conversation-question')).to_be_visible()
         expect(page.locator('.live-question:visible')).to_have_count(1)
         expect(card.locator('.question-option small')).to_have_count(sum(len(q['descriptions']) for q in questions))
+        expect(page.locator('#conversation-question .question-text-input')).to_have_count(0)
+        if menu.get('boxed'):
+            expect(page.locator(f'#msgs .msg[data-role="question"][data-call-id="{tool}"]:visible')).to_have_count(1)
+            page.locator('#cinput').fill('保留这条消息草稿 / keep draft')
+            for delta in [-1200, 1200]:
+                page.locator('#msgs').hover()
+                page.mouse.wheel(0, delta)
+                page.wait_for_timeout(100)
+            SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(SCREENSHOTS / f'{tool}.png'))
     for index, choice in enumerate(choices):
         card.locator(f'[data-question-index="{index}"][data-question-option="{choice}"]').click()
         if layout and len(questions) > 1:
@@ -113,6 +153,14 @@ def answer(page, root, sid, tool, questions, choices, menu, *, layout=False):
     want = {q["question"]: q["options"][c] for q, c in zip(questions, choices)}
     assert got == {"outcome": "submitted", "answers": want}, (got, want)
     hook(root / "state", sid, "PostToolUse", tool, questions)
+    page.wait_for_function("""id => {
+        const prompt = cache.get(viewKey(S.sel))?.prompt;
+        return !prompt || prompt.id !== id || prompt.state !== 'waiting';
+    }""", arg=tool)
+    if menu.get('boxed'):
+        expect(page.locator('#conversation-question.live-question')).to_have_count(0, timeout=20000)
+        expect(page.locator('#cinput')).to_have_value('保留这条消息草稿 / keep draft')
+        page.locator('#cinput').fill('')
 
 
 def main():
@@ -196,6 +244,10 @@ def main():
                         # A single native question has a checkbox header, no
                         # arrows/Submit tab, and an Up/Down navigation footer.
                         answer(page, root, sid, f"toolu-single-described-{width}", DESCRIBED[:1], [0], {}, layout=True)
+                        for theme in ['light', 'dark']:
+                            page.emulate_media(color_scheme=theme)
+                            answer(page, root, sid, f"toolu-boxed-{width}-{theme}", BOXED, [0],
+                                   {'boxed': True}, layout=True)
                     assert not errors and not dialogs, (errors, dialogs)
             finally:
                 browser.close()

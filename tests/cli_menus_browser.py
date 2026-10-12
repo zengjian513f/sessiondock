@@ -198,7 +198,7 @@ def main():
                         return result;
                     };
                 }''')
-                card = page.locator('#composer-question')
+                card = page.locator('#conversation-question')
 
                 def shown(source, generation):
                     deadline = time.monotonic() + 5
@@ -426,9 +426,9 @@ def main():
                             clear(source)
                             loaded(source, fixture_frame(source, fixture, native, outcome))
                             if outcome == 'text':
-                                page.locator('#composer-question .question-text-input').fill('browser answer')
+                                page.locator('#conversation-question .question-text-input').fill('browser answer')
                                 page.evaluate('async () => await probeComposerInput(composerUid)')
-                                expect(page.locator('#composer-question .question-text-input')).to_have_value('browser answer')
+                                expect(page.locator('#conversation-question .question-text-input')).to_have_value('browser answer')
                             count = len(writes)
                             card.locator(selector).click()
                             deadline = time.monotonic() + 7

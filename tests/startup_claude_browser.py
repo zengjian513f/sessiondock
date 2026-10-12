@@ -124,7 +124,7 @@ def main():
                     if urlsplit(request.url).path == '/api/term/send' else None)
             try:
                 page.goto(base, wait_until='networkidle')
-                card = page.locator('#composer-question')
+                card = page.locator('#conversation-question')
 
                 def launch(state):
                     screen.write_text(state)
