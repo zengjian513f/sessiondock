@@ -9253,15 +9253,22 @@ function blocks(src, media = [], context = {}) {
 
     if (RE_LIST.test(line)) {
       const tag = /^\s*\d/.test(line) ? 'ol' : 'ul';
+      const start = tag === 'ol' ? parseInt(line.trim(), 10) : 1;
+      const sameList = value => RE_LIST.test(value) && (/^\s*\d/.test(value) ? 'ol' : 'ul') === tag;
       const items = [];
-      while (i < ls.length && RE_LIST.test(ls[i])) {
+      while (i < ls.length && sameList(ls[i])) {
         let item = ls[i++].replace(RE_LIST, '');
         while (i < ls.length && ls[i].trim() && !RE_LIST.test(ls[i]) && /^\s{2,}/.test(ls[i])) {
           item += '\n' + ls[i++].trim();     // 续行并入当前条目
         }
         items.push(`<li>${inline(item, media, context)}</li>`);
+        // Blank lines between items make a loose list, not a new counter.
+        // Only cross them when the next block is another item of this kind.
+        let next = i;
+        while (next < ls.length && !ls[next].trim()) next++;
+        if (next < ls.length && sameList(ls[next])) i = next;
       }
-      out += `<${tag}>${items.join('')}</${tag}>`;
+      out += `<${tag}${tag === 'ol' && start !== 1 ? ` start="${start}"` : ''}>${items.join('')}</${tag}>`;
       continue;
     }
 
