@@ -5606,7 +5606,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   if (hit) {
     // 先把缓存立即画出来，但暂不占一个长期 SSE 连接。补齐缓存游标之后再
     // 建 watch，避免 HTTP/1 连接池紧张时增量 fetch 永远排在 EventSource 后。
-    await renderSession(hit.meta, hit.msgs, hit.activity, { startWatch: false });
+    await renderSession(hit.meta, hit.msgs, hit.activity, { startWatch: false, showProgress: !follow });
     if (S.sel === uid && S.agent === selectedAgent) {
       await syncSession(uid, selectedAgent);
       if (S.sel === uid && S.agent === selectedAgent) watchSession(uid, selectedAgent);
@@ -5619,13 +5619,15 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     ensureConsolePlaceholder();
     auditDetailRendered('loading');
   }
-  progress(0, 0, '下载');
+  // Following a launch is background synchronization of the page already on
+  // screen. Keep its header/composer intact until the native view is ready.
+  if (!follow) progress(0, 0, '下载');
   let res;
   try {
     res = await fetchMessages(uid, {
       agent: selectedAgent, signal: ac.signal,
       windowed: true,
-      onProgress: (a, b, detail) => progress(a, b, '下载', detail),
+      onProgress: follow ? undefined : (a, b, detail) => progress(a, b, '下载', detail),
     });
   } catch (e) {
     if (e.name === 'AbortError') return;      // 已经切到别的会话了
@@ -5645,7 +5647,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
                   prompt: data.prompt || null, cli: data.cli ?? null,
                   total: data.message_total, partial: data.partial || null });
   S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
-  await renderSession(data.meta, data.messages, data.activity);
+  await renderSession(data.meta, data.messages, data.activity, {showProgress: !follow});
 }
 
 // ---- 保持贴底 ----
@@ -6073,7 +6075,7 @@ async function loadFullHistory(uid, agent, button) {
   }
 }
 
-async function renderSession(meta, msgs, activity = null, { startWatch = true, historyPageEntry = null } = {}) {
+async function renderSession(meta, msgs, activity = null, { startWatch = true, historyPageEntry = null, showProgress = true } = {}) {
   const seq = ++renderSeq;
   const uid = meta.uid;
   const agent = meta.agent_id || null;
@@ -6110,7 +6112,7 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
   for (let i = 0; i < plan.length; i += RENDER_BATCH) {
     buildPlan(frag, plan.slice(i, i + RENDER_BATCH), null);
     if (i + RENDER_BATCH < plan.length) {
-      progress(i + RENDER_BATCH, plan.length, '渲染');
+      if (showProgress) progress(i + RENDER_BATCH, plan.length, '渲染');
       await new Promise(r => setTimeout(r, 0));
       if (seq !== renderSeq || S.sel !== uid || S.agent !== agent) return;
     }
@@ -6632,6 +6634,7 @@ function sessionViewRows(m) {
 
 function head(m, total) {
   const h = el('div', 'dhead');
+  h.dataset.uid = m.uid;
   const tmuxLive = S.liveTmux.has(m.uid);
   const hasAgents = (m.agent_items || []).length > 0;
   const titleView = hasAgents ? `
@@ -6943,7 +6946,12 @@ function paintSessionRunControl(button, row) {
   setControlUnavailable(button, sessionRunUnavailable(row));
 }
 function refreshSessionRunControls() {
-  paintSessionRunControl($('#a-session-toggle'), sessionRunRow(S.sel));
+  const button = $('#a-session-toggle');
+  const row = sessionRunRow(S.sel);
+  // A bound launch can leave the sidebar before resolveNewSession follows it.
+  // Missing from that projection does not mean its running host has stopped.
+  if (row && button?.closest('.dhead')?.dataset.uid === S.sel)
+    paintSessionRunControl(button, row);
   if (menuUid) paintSessionRunControl($('#item-menu [data-act="stop"]'), sessionRunRow(menuUid));
 }
 async function toggleSessionRun(row, button = null) {
@@ -6971,6 +6979,9 @@ async function toggleSessionRun(row, button = null) {
 
 function renderSessionAction(m, button = $('#a-session-action')) {
   const heading = button?.closest('.dhead');
+  // During automatic follow the native UID is selected before its messages
+  // arrive. Do not paint native actions into the still-visible launch header.
+  if (heading && heading.dataset.uid !== m.uid) return;
   renderSessionFreeze(m, heading?.querySelector('#a-session-freeze'));
   paintSessionRunControl(heading?.querySelector('#a-session-toggle'), m);
   if (!button || m.uid !== S.sel) return;

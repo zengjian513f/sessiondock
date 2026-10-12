@@ -6,9 +6,13 @@ before any input; that record creates the native history and the page leaves
 the launch receipt for the real session. Typing in the composer while that
 happens must not be interrupted: no loading interstitial replaces the page,
 the composer never hides, it keeps focus and the draft, and the automatic
-switch does not add a browser history entry. Desktop and 390 px, fake CLI.
+switch does not add a browser history entry. First SEND also follows through
+a deliberately delayed history response without mixing native and launch
+header actions or showing a global download/render overlay. Desktop and
+390/472 px (including keyboard height), light/dark, fake CLI.
 """
 
+import argparse
 import json
 import os
 import subprocess
@@ -35,24 +39,63 @@ WATCH = """() => {
   new MutationObserver(() => {
     if (document.querySelector('#detail .spin')) followEvents.push('spinner');
   }).observe(document.querySelector('#detail'), {childList: true, subtree: true});
+  new MutationObserver(() => {
+    if (document.querySelector('#prog').classList.contains('on')) followEvents.push('progress');
+  }).observe(document.querySelector('#prog'), {attributes: true, attributeFilter: ['class']});
   window.followHistory = history.length;
 }"""
 
+HEADER = """() => {
+  const head = document.querySelector('#detail > .dhead');
+  return {title: head.querySelector('h2').textContent,
+    height: head.getBoundingClientRect().height,
+    buttons: [...head.querySelectorAll('.dhead-actions button')].filter(b => b.offsetWidth)
+      .map(b => [b.id || b.dataset.reportBug, b.ariaLabel,
+        Math.round(b.getBoundingClientRect().x)])};
+}"""
 
-def follow(page, root, base, work, draft):
+
+def follow(page, root, base, work, draft, *, send=False, screenshots=None, label='follow'):
+    (root / "notice").unlink(missing_ok=True)
     receipt = create_claude(page, base, work, open_terminal=False)
     pending = "tmux:" + receipt["name"]
     assert page.evaluate("S.sel") == pending
     page.locator("#cinput").click()
     page.locator("#cinput").press_sequentially(draft)
+    # Hold the actual first-history request across term/list refreshes, as on
+    # the reported phone. The UI must keep the launch header until it can
+    # replace it once, not write native actions into that older header.
+    held = []
+    def hold(route):
+        held.append(route)
+    page.route('**/api/messages/**', hold, times=1)
+    before = page.evaluate(HEADER)
+    if send:
+        expect(page.locator('#csend')).to_be_enabled(timeout=15000)
+        with page.expect_response(lambda r: '/api/session/conversation/send' in r.url) as sent:
+            page.locator('#csend').click()
+        assert sent.value.ok and sent.value.json()['state'] == 'sent', sent.value.text()
+        expect(page.locator('#cinput')).to_have_value('')
+        page.locator('#cinput').click()
+        page.locator('#cinput').fill('后续草稿 preserved while the first reply loads')
+        draft = '后续草稿 preserved while the first reply loads'
     page.evaluate(WATCH)
-    # Still on the launch page: the native history does not exist yet.
-    assert page.evaluate("S.sel") == pending
-    (root / "notice").write_text(NOTICE)
+    if not send:
+        assert page.evaluate("S.sel") == pending
+        (root / "notice").write_text(NOTICE)
     native = claude_uid(root, receipt["declared_sid"])
     page.wait_for_function("uid => S.sel === uid", arg=native, timeout=20000)
+    page.wait_for_timeout(1800)  # Keep the response pending through another live/list refresh.
+    assert len(held) == 1, len(held)
+    if screenshots:
+        page.screenshot(path=str(screenshots / f'{label}-loading.png'))
+    during = page.evaluate(HEADER)
+    assert during == before, {'before': before, 'during': during}
+    expect(page.locator('#prog .txt')).to_be_hidden()
+    held.pop().continue_()
+    expected = 'OK: 执行 /synthetic/prompts/fast_seed_to_endpoint.md 首条消息' if send else NOTICE
     page.wait_for_function("text => document.querySelector('#msgs')?.textContent.includes(text)",
-                           arg=NOTICE, timeout=15000)
+                           arg=expected, timeout=15000)
     state = page.evaluate("""() => ({events: followEvents, active: document.activeElement?.id,
       value: document.querySelector('#cinput').value, history: history.length - followHistory,
       url: location.href})""")
@@ -61,10 +104,27 @@ def follow(page, root, base, work, draft):
     assert state["value"] == draft, state
     assert state["history"] == 0, state
     expect(page.locator("#composer")).to_be_visible()
+    # The native view must settle after metadata/live refreshes too.
+    settled = page.evaluate(HEADER)
+    page.wait_for_timeout(1800)
+    assert page.evaluate(HEADER) == settled
+    if screenshots:
+        page.screenshot(path=str(screenshots / f'{label}-loaded.png'))
+    page.locator('#a-more').click()
+    expect(page.locator('#session-actions-menu #a-session-action')).to_be_visible()
+    page.keyboard.press('Escape')
+    page.locator('#a-term').click()
+    expect(page.locator('#termpane')).to_be_visible()
+    page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
     return receipt
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--screenshots', type=Path)
+    args = parser.parse_args()
+    if args.screenshots:
+        args.screenshots.mkdir(parents=True, exist_ok=True)
     if os.name != "posix":
         print("SKIP new_session_follow_browser: POSIX required", flush=True)
         return
@@ -98,9 +158,15 @@ def main():
                                      launcher_config=configuration, state_dir=root / "state",
                                      file_roots=(root / "work",), file_write_roots=(root / "work",)) as (base, _):
                     receipts = []
-                    for width, height, draft in [(1280, 900, "draft typed on desktop"), (390, 844, "phone draft")]:
+                    cases = [(1280, 900, 'light', False), (390, 844, 'dark', False),
+                             (1280, 900, 'dark', True), (390, 844, 'light', True),
+                             (472, 287, 'light', True), (472, 287, 'dark', True)]
+                    for width, height, theme, send in cases:
+                        print(f'follow {width}x{height} {theme} send={send}', flush=True)
                         context = browser.new_context(viewport={"width": width, "height": height},
+                                                      color_scheme=theme,
                                                       service_workers="block")
+                        context.add_init_script("Object.defineProperty(navigator, 'standalone', {value: true})")
                         context.route("**/*", lambda route: route.continue_()
                                       if route.request.url.startswith(base + "/") else route.abort())
                         page = context.new_page()
@@ -108,7 +174,10 @@ def main():
                         page.on("pageerror", lambda error: errors.append(str(error)))
                         page.goto(base, wait_until="networkidle")
                         try:
-                            receipts.append(follow(page, root, base, root / "work", draft))
+                            receipts.append(follow(page, root, base, root / "work",
+                                '执行 /synthetic/prompts/fast_seed_to_endpoint.md 首条消息',
+                                send=send, screenshots=args.screenshots,
+                                label=f'{width}-{theme}-{"send" if send else "notice"}'))
                         finally:
                             for item in receipts:
                                 context.request.post(base + "/api/term/kill",
@@ -119,7 +188,9 @@ def main():
             finally:
                 browser.close()
     print("PASS new_session_follow_browser: startup notice switches the launch page to the native session "
-          "without a spinner, hidden composer, lost focus/draft or extra history entry (desktop + 390 px)")
+          "and first SEND follow without intermediate header changes, progress overlay, spinner, "
+          "hidden composer, lost focus/draft or extra history entry; menus and terminal work "
+          "(desktop, 390 px, keyboard-height 472 px; light + dark)")
 
 
 if __name__ == "__main__":
