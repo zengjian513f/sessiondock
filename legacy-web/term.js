@@ -1746,7 +1746,7 @@ function showNewSessionStage(info, {historyMode = 'push'} = {}) {
   showSessionCount(sidebarSessions().length);
   const src = SOURCES[info.source];
   const pendingTitle = info.title || `新建 ${src.name} 会话`;
-  $('#detail').innerHTML = `<div class="dhead"><div class="dtitle">
+  $('#detail').innerHTML = `<div class="dhead" data-uid="${esc(S.sel)}"><div class="dtitle">
     <button class="mobile-back" title="返回会话列表" aria-label="返回会话列表">←</button>
     <h2>${sessionIconMarkup(info.source, true, true)}<span>${esc(pendingTitle)}</span></h2>
     <div class="dhead-actions" aria-label="会话操作">
@@ -1755,7 +1755,7 @@ function showNewSessionStage(info, {historyMode = 'push'} = {}) {
       <button class="session-menu-action" id="a-session-toggle" type="button"></button>
       <button class="session-menu-action" data-report-bug title="报告当前会话问题"
         aria-label="报告当前会话问题">${uiIcon('bug')}</button>
-      <button class="session-menu-action danger" id="a-session-action"></button>
+      <button class="session-menu-action danger" id="a-session-action" data-menu-only></button>
       `, `
     <div class="dmeta"><span id="mcount-total">0 条消息</span>
       ${info.node_name ? `<span class="meta-node node-badge" data-node-color="${nodeColor(info.node_name)}">${esc(info.node_name)}</span>` : ''}
