@@ -297,6 +297,12 @@ DELTA（弱网恢复）：首次正文读取和后续同步统一使用 12 秒�
 
 Markdown（`md` / `blocks` / `inline`）和公式（`renderFormulae`，按需加载 KaTeX）。公式库失败时正文仍在。审阅到的脚本头没有单独点名 KaTeX 渲染，标为缺口。原生标签族：[`tests/native_tags_browser.py`](../tests/native_tags_browser.py)、[`tests/history_browser.py`](../tests/history_browser.py)。
 
+DELTA（BUG-20261012-054602-f0bb43）：Markdown 同类列表条目之间的空行不再切断列表，
+有序列表按首项编号连续计数（包括原文每项都写 `1.` 的形式），保留非 1 的起始编号。
+普通段落、标题、代码围栏或有序/无序类型切换仍结束列表；不跨消息续号。
+沿用现有列表样式。宽窄屏、明暗主题及重载回归见
+[`tests/render_assets_browser.py`](../tests/render_assets_browser.py)。
+
 时间：相邻消息间隔 ≥5 分钟，或距上一条分隔 ≥20 分钟，插入时间分隔（`messageTimeDivider`）。折叠过程会重算分隔。
 
 活动行 `renderActivity`：`working` / `waiting`。旧进程的 working 在 CLI 已不在时不显示。等待回答参与侧栏 `?`。
