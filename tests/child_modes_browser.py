@@ -123,9 +123,13 @@ def bound_launch_sidebar(browser, base, full, width):
         receipt.update(state='exited', running=False)
         page.reload(wait_until='networkidle')
         expect(page.locator('#side .item.pending')).to_have_count(0)
+        # Reloading the native URL now reveals that child in the compact list.
+        expect(page.locator('#side .item.sel')).to_have_attribute('data-uid', native['uid'])
         # An uncertain binding remains an actual unresolved launch.
+        # Start without an explicit native URL, whose revealed native row would
+        # independently identify this terminal and suppress the pending card.
         receipt['binding']['state'] = 'uncertain'
-        page.reload(wait_until='networkidle')
+        page.goto(base, wait_until='networkidle')
         expect(page.locator('#side .item.pending')).to_have_count(1)
         assert not errors, errors
         print(f'PASS bound child launch {width}px: compact catalog, matching title/history, collapse, exit and uncertain binding', flush=True)
