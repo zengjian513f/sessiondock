@@ -224,7 +224,15 @@ where
         } else {
             driver::inspect(screen)
         };
-        view.composer_token.and(view.text)
+        // Empty editors can still display a dim prompt suggestion. Its text
+        // may be identical to this SEND, but changing from suggestion to real
+        // input is consumption evidence (BUG-20261012-080313-6f05f9). Conversely,
+        // an unchanged suggestion must never settle the paste early.
+        if view.state == driver::ComposerState::Editing {
+            view.composer_token.and(view.text)
+        } else {
+            None
+        }
     };
     let original = editor_text(before);
     let suffix: String = prompt
