@@ -5526,7 +5526,7 @@ function updateSessionUrl(uid, agent, mode) {
   const method = mode === 'replace' || !new URL(location.href).searchParams.has('sid') ? 'replaceState' : 'pushState';
   history[method](history.state, '', url);
 }
-function revealSessionInSidebar(uid, agent) {
+function revealSessionInSidebar(uid, agent, catalog = null) {
   const target = sidebarRowNode(uid, agent, true);
   // Selecting an existing row opens its conversation, not its descendants.
   // In particular, do not clear a fold the user set with this row's caret.
@@ -5534,9 +5534,16 @@ function revealSessionInSidebar(uid, agent) {
     target.scrollIntoView({block: 'nearest'});
     return;
   }
-  const row = S.sessions.find(s => s.uid === uid);
+  const row = (catalog || S.sessions).find(s => s.uid === uid);
   if (!row) return;
-  let changed = false;
+  // Link lookup may need the full inventory; retain only the opened branches
+  // afterwards so ordinary polling keeps the compact catalog contract.
+  let changed = !!catalog;
+  if (catalog) { S.sessions = catalog; S.sig = ''; }
+  if (S.term || S.results) { cancelSearch(true); changed = true; }
+  if (S.view === 'group' && !globalThis.SessionDockGroups?.matches(row)) {
+    S.view = 'tree'; store.set('view', S.view); changed = true;
+  }
   if (!visible().some(s => s.uid === uid)) {
     if (S.term || S.results) cancelSearch(true);
     if (S.off.delete(row.source)) store.set('off', [...S.off]);
@@ -5544,15 +5551,22 @@ function revealSessionInSidebar(uid, agent) {
     if (S.activeOnly) { S.activeOnly = false; store.set('activeOnly', false); }
     changed = true;
   }
-  // 子代理行两种模式都在，深链不再替用户打开分层开关；分层模式才需要沿发起链展开祖先。
+  // 按需模式也沿祖先链展开，但保留用户选择的显示模式和目标自身的折叠。
   const byKey = new Map(S.sessions.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
   const seen = new Set();
   for (let current = row; current && !seen.has(current.uid);
-       current = S.nest ? nestParentOf(current, byKey) : null) {
+       current = sidebarNested() ? nestParentOf(current, byKey) : null) {
     seen.add(current.uid);
     // A hidden link target needs its ancestors, but not its own children.
-    if ((current.uid !== uid || agent) && sidebarNestFolds().delete(current.uid)) changed = true;
+    if (current.uid !== uid || agent) {
+      if (sidebarLazy() && !S.lazyOpen.has(current.uid)) {
+        S.lazyOpen.set(current.uid, {source: current.source, sid: current.sid, node_id: current.node_id || ''});
+        changed = true;
+      }
+      if (sidebarNestFolds().delete(current.uid)) changed = true;
+    }
   }
+  if (sidebarLazy()) pruneLazyRows();
   if (changed && !S.term) store.set('nestClosed', [...S.nestClosed]);
   const groups = groupBy(visible(), {skipClosed: true});
   const contains = session => session.uid === uid
@@ -5571,7 +5585,7 @@ function revealSessionInSidebar(uid, agent) {
 /** `follow` continues the page already on screen (a new launch reaching its
  *  native history): keep the composer and its focus, and leave the launch
  *  stage up until the conversation replaces it instead of flashing a spinner. */
-async function openSession(uid, agent = null, {exact = false, historyMode = 'push', follow = false} = {}) {
+async function openSession(uid, agent = null, {exact = false, historyMode = 'push', follow = false, sidebarCatalog = null} = {}) {
   const selectedAgent = agent || null;
   if (!selectedAgent) uid = followContinuedSession(uid);
   if (!selectedAgent && !exact && hiddenForkParent(S.sessions.find(s => s.uid === uid))) {
@@ -5597,7 +5611,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   clearUnread(uid);
   store.set('sel', uid);
   store.set('agent', S.agent ? { uid, id: S.agent } : null);
-  revealSessionInSidebar(uid, selectedAgent);
+  revealSessionInSidebar(uid, selectedAgent, sidebarCatalog);
   paintSidebarSelection(uid, selectedAgent);
   updateSessionUrl(uid, selectedAgent, historyMode);
 
@@ -10775,12 +10789,12 @@ renderView();
 ensureConsolePlaceholder();
 void refreshCleanupCount();
 pollLive();   // 终端面板由 term.js 自己初始化 (它在本文件之后加载)
-function uidOfDeepLink(spec) {
+function uidOfDeepLink(spec, sessions = S.sessions) {
   if (!spec) return null;
   const cut = spec.indexOf(':');
   const source = cut > 0 ? spec.slice(0, cut) : null;
   const sid = cut > 0 ? spec.slice(cut + 1) : spec;
-  const matches = S.sessions.filter(s => s.sid === sid && (!source || s.source === source) && (!deepNode() || s.node_id === deepNode()));
+  const matches = sessions.filter(s => s.sid === sid && (!source || s.source === source) && (!deepNode() || s.node_id === deepNode()));
   const byUid = new Map(matches.map(row => [row.uid, row]));
   // Verified rollout generations share one native ID. Collapse only explicit
   // continuations within this identity and machine; independent copies remain ambiguous.
@@ -10797,28 +10811,28 @@ function uidOfDeepLink(spec) {
   }));
   const hit = (matches.length === 1 ? matches[0]
     : current.size === 1 ? byUid.get(current.values().next().value) : null)
-    || S.sessions.find(s => s.uid === spec);
+    || sessions.find(s => s.uid === spec);
   return hit ? hit.uid : null;
 }
-function agentOfDeepLink(spec) {
+function agentOfDeepLink(spec, sessions = S.sessions) {
   if (!spec) return null;
   const cut=spec.indexOf(':');
   const source=cut>0 ? spec.slice(0,cut) : null;
   const id=cut>0 ? spec.slice(cut+1) : spec;
-  const matches=S.sessions.filter(s=>(!source || s.source===source) && (!deepNode() || s.node_id===deepNode()))
+  const matches=sessions.filter(s=>(!source || s.source===source) && (!deepNode() || s.node_id===deepNode()))
     .flatMap(s=>(s.agent_items || []).filter(a=>a.id===id).map(a=>({uid:s.uid,agent:a.id})));
   return matches.length===1 ? matches[0] : null;
 }
-function routeSession(spec) {
+function routeSession(spec, sessions = S.sessions) {
   const marker = spec.indexOf('/agent:');
   if (marker >= 0) {
-    const uid = uidOfDeepLink(spec.slice(0, marker));
+    const uid = uidOfDeepLink(spec.slice(0, marker), sessions);
     const id = spec.slice(marker + 7);
-    const item = S.sessions.find(s => s.uid === uid)?.agent_items?.find(a => a.id === id || a.id === 'agent-' + id);
+    const item = sessions.find(s => s.uid === uid)?.agent_items?.find(a => a.id === id || a.id === 'agent-' + id);
     return uid && item ? {uid, agent: item.id} : null;
   }
-  const uid = uidOfDeepLink(spec);
-  return uid ? {uid, agent: null} : agentOfDeepLink(spec);
+  const uid = uidOfDeepLink(spec, sessions);
+  return uid ? {uid, agent: null} : agentOfDeepLink(spec, sessions);
 }
 let deepLinkSequence = 0;
 async function waitForTermList() {
@@ -10848,9 +10862,23 @@ async function openExternalSession(spec, historyMode = 'replace') {
     }
     return true;
   }
-  const route = routeSession(spec);
-  if (route && !S.sessions.find(s => s.uid === route.uid)?.stale) {
-    await openSession(route.uid, route.agent, {exact:true, historyMode}); return true;
+  let route = routeSession(spec), sidebarCatalog = null;
+  if (S.childMode === 'hidden' && (!route || !sidebarRowNode(route.uid, route.agent))) {
+    try {
+      // The compact list deliberately omits this target/its ancestors. Resolve
+      // against the complete inventory before treating it as a missing link.
+      const response = await fetch(appUrl('api/sessions?force=1'), {signal: AbortSignal.timeout(15000)});
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      if (!Array.isArray(data.sessions)) throw new Error('会话列表格式错误');
+      sidebarCatalog = data.sessions;
+      route = routeSession(spec, sidebarCatalog);
+    } catch (error) { console.warn('链接会话列表读取失败', error); }
+    if (sequence !== deepLinkSequence || href !== location.href || selected !== S.sel) return true;
+  }
+  if (route && !(sidebarCatalog || S.sessions).find(s => s.uid === route.uid)?.stale) {
+    if (document.body.classList.contains('side-collapsed')) setSideCollapsed(false);
+    await openSession(route.uid, route.agent, {exact:true, historyMode, sidebarCatalog}); return true;
   }
   if (!HUB_MODE || !SessionDockCapabilities.config.session_link_lineage) return false;
   let result;
@@ -10864,7 +10892,8 @@ async function openExternalSession(spec, historyMode = 'replace') {
   } catch { result = {status:'unavailable', alternatives:[]}; }
   if (sequence !== deepLinkSequence || href !== location.href || selected !== S.sel) return true;
   const open = async session => {
-    await openSession(session.uid, session.agent || null, {exact:true, historyMode});
+    if (document.body.classList.contains('side-collapsed')) setSideCollapsed(false);
+    await openSession(session.uid, session.agent || null, {exact:true, historyMode, sidebarCatalog});
     const url = new URL(location.href); url.searchParams.set('sid',session.sid); url.searchParams.set('node',session.node);
     history.replaceState(history.state,'',url);
     if (session.via?.length) showSessionLinkNotice(session.copied
