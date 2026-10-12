@@ -15,6 +15,12 @@ from hub_browser import CHROMIUM
 from popups import on_popup  # noqa: E402
 
 
+def open_new_session(page):
+    if not page.locator("#new-session").is_visible():
+        page.locator("#header-more-btn").click()
+    page.locator("#new-session").click()
+
+
 def scenario(browser, hub, node, other):
     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
     page = context.new_page()
@@ -40,7 +46,7 @@ def scenario(browser, hub, node, other):
     context.route("**/api/term/create", create_then_disconnect)
     page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="domcontentloaded")
     page.wait_for_function("T.listLoaded && Nodes.list.length === 2 && T.pending.length === 1")
-    page.locator("#new-session").click()
+    open_new_session(page)
     page.locator("#new-node").select_option(node.nid)
     page.locator('#new-session-form label:has(input[name="new-source"][value="codex"])').click()
     page.locator("#new-cwd").fill("/synthetic/work")
@@ -106,7 +112,7 @@ def node_source_picker(browser, hub, node, other):
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="domcontentloaded")
     page.wait_for_function("T.listLoaded && Nodes.list.length === 2")
-    page.locator("#new-session").click()
+    open_new_session(page)
     opencode = page.locator('input[name="new-source"][value="opencode"]')
     page.locator("#new-node").select_option(node.nid)
     expect(opencode).to_be_disabled()
@@ -176,7 +182,7 @@ def node_switch_cwd(browser, hub, node, other):
         store.set('newDirs.' + a, ['/node-a/default']);
         store.set('newDirs.' + b, ['/node-b/default']);
     }""", [node.nid, other.nid])
-    page.locator("#new-session").click()
+    open_new_session(page)
     cwd = page.locator("#new-cwd")
     expect(cwd).to_have_value("")
     for nid in (node.nid, other.nid, node.nid):
@@ -217,7 +223,7 @@ def node_switch_cwd(browser, hub, node, other):
         expect(cwd).to_have_value(value if value.strip().rstrip("/") == "/shared/proj" else "")
     # Candidate clicks and Tab completion follow the same existence rule.
     page.locator("#new-session-dialog .modal-close").click()
-    page.locator("#new-session").click()
+    open_new_session(page)
     expect(cwd).to_have_value("")
     page.locator('#new-cwd-options [role=option]').filter(has=page.get_by_text("/node-a/default", exact=True)).or_(page.locator('#new-cwd-options [role=option][title="/node-a/default/"]')).click()
     page.locator("#new-node").select_option(other.nid)
@@ -246,7 +252,7 @@ def node_switch_cwd(browser, hub, node, other):
             page.locator("#new-node").select_option(other.nid)
         elif action == "reopen":
             page.locator("#new-session-dialog .modal-close").click()
-            page.locator("#new-session").click()
+            open_new_session(page)
         cwd.fill("/new-input")
         for route in held:
             route.fulfill(json={"directories": []})
@@ -282,7 +288,7 @@ def shared_recent_cwd(browser, hub, node, other):
     page.wait_for_function('S.sessions.length === 2 && T.listLoaded && Nodes.list.length === 2')
     page.evaluate('''nid => store.set('newDirs.' + nid,
       ['/shared/recent', '/missing/recent', '/shared/recent/', '/shared/prefix'])''', other.nid)
-    page.locator('#new-session').click()
+    open_new_session(page)
     page.locator('#new-node').select_option(node.nid)
     cwd = page.locator('#new-cwd')
     cwd.fill('')
@@ -311,7 +317,7 @@ def shared_recent_cwd(browser, hub, node, other):
             route.fulfill(response=response)
 
     context.route('**/api/term/complete-dir?*', delay_check)
-    page.locator('#new-session').click()
+    open_new_session(page)
     page.wait_for_function('window.__sharedCwdHeld === true')
     page.locator('#new-node').select_option(other.nid)
     cwd.fill('')
@@ -327,41 +333,76 @@ def shared_recent_cwd(browser, hub, node, other):
     other.pop('dirs')
 
 
-def current_cwd_recommendation(browser, hub, node, other):
-    """The selected session directory ranks first only after destination validation."""
+def current_cwd_defaults(browser, hub, node, other):
+    """Open on the selected session; switches validate rather than choose a cwd."""
     node.set(dirs=["/same/project"])
     other.set(dirs=["/same/project"])
-    context = browser.new_context(service_workers="block")
+    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
     page = context.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="domcontentloaded")
     page.wait_for_function("S.sessions.length === 2 && T.listLoaded && Nodes.list.length === 2")
     uid = page.evaluate("nid => S.sessions.find(row => row.node_id === nid).uid", node.nid)
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     page.wait_for_function("uid => S.sel === uid", arg=uid)
     page.evaluate("""([a, b]) => {
+        store.set('newNode', b);
         store.set('newDirs.' + a, ['/recent/first', '/same/project/']);
         store.set('newDirs.' + b, ['/recent/first', '/same/project/']);
     }""", [node.nid, other.nid])
-    page.locator("#new-session").click()
+    # A single-machine list filter must not replace the selected session's node.
+    page.locator(f'#node-chips [data-node="{other.nid}"]').dblclick()
+    open_new_session(page)
     cwd = page.locator("#new-cwd")
     options = page.locator('#new-cwd-options [role=option]')
-    for nid in (node.nid, other.nid):
-        page.locator('#new-node').select_option(nid)
-        expect(options.first).to_have_attribute('title', '/same/project')
-        expect(options.filter(has_text='/same/project')).to_have_count(1)
-        expect(cwd).to_have_value('')
-    options.first.click()
+    expect(page.locator('#new-node')).to_have_value(node.nid)
     expect(cwd).to_have_value('/same/project')
-    page.locator('#new-session-dialog .modal-close').click()
-    page.locator('#new-session').click()
-    expect(cwd).to_have_value('')
-    # Even a same-node session and saved recent must not bypass existence checks.
-    node.set(dirs=[])
-    page.locator('#new-node').select_option(node.nid)
+    page.locator('#new-cwd-clear').click()
     expect(options.first).to_have_attribute('title', '/recent/first')
+    expect(options.filter(has_text='/same/project')).to_have_count(1)
+    page.locator('#new-session-dialog .modal-close').click()
+    open_new_session(page)
+    expect(cwd).to_have_value('/same/project')
+    for nid in (other.nid, node.nid):
+        page.locator('#new-node').select_option(nid)
+        expect(cwd).to_have_value('/same/project')
+    # Defaults and empty/missing states retain the established layout in both
+    # themes on desktop and mobile. Open anew each time, ignoring last machine.
+    for width, height in ((1280, 900), (390, 844)):
+        page.set_viewport_size({"width": width, "height": height})
+        for theme in ('dark', 'light'):
+            page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
+            page.locator('#new-session-dialog .modal-close').click()
+            open_new_session(page)
+            expect(page.locator('#new-node')).to_have_value(node.nid)
+            expect(cwd).to_have_value('/same/project')
+            if os.environ.get('SESSIONDOCK_TEST_SHOTS'):
+                page.screenshot(path=os.path.join(os.environ['SESSIONDOCK_TEST_SHOTS'],
+                    f'cwd-default-{width}-{theme}.png'))
+            # No manual input: the initial directory itself survives a switch,
+            # then clears when that same directory disappears at the destination.
+            page.locator('#new-node').select_option(other.nid)
+            expect(cwd).to_have_value('/same/project')
+            node.set(dirs=[])
+            page.locator('#new-node').select_option(node.nid)
+            expect(cwd).to_have_value('')
+            if os.environ.get('SESSIONDOCK_TEST_SHOTS'):
+                page.screenshot(path=os.path.join(os.environ['SESSIONDOCK_TEST_SHOTS'],
+                    f'cwd-missing-{width}-{theme}.png'))
+            node.set(dirs=['/same/project'])
+    # Reopening resets to the selected session, including after explicit clear.
+    page.locator('#new-cwd-clear').click()
+    page.locator('#new-session-dialog .modal-close').click()
+    open_new_session(page)
+    expect(cwd).to_have_value('/same/project')
+    # A missing initial directory clears too, without choosing a saved recent.
+    page.locator('#new-session-dialog .modal-close').click()
+    node.set(dirs=[])
+    open_new_session(page)
+    expect(cwd).to_have_value('')
     expect(options.filter(has_text='/same/project')).to_have_count(0)
-    # Hold a successful old-machine check, then change machines; it cannot pin
-    # the now-missing directory or overwrite text entered while checking.
+    # A held successful check cannot overwrite a subsequent switch or typing.
     held = []
     def delay(route):
         if 'path=%2Fsame%2Fproject' in route.request.url and 'node=' + other.nid in route.request.url:
@@ -369,6 +410,7 @@ def current_cwd_recommendation(browser, hub, node, other):
         else:
             route.continue_()
     context.route('**/api/term/complete-dir?*', delay)
+    cwd.fill('/same/project')
     page.locator('#new-node').select_option(other.nid)
     page.wait_for_timeout(200)
     assert held
@@ -379,6 +421,7 @@ def current_cwd_recommendation(browser, hub, node, other):
     page.wait_for_timeout(200)
     expect(cwd).to_have_value('recent')
     expect(options.filter(has_text='/same/project')).to_have_count(0)
+    assert not errors, errors
     context.close()
     node.pop('dirs')
     other.pop('dirs')
@@ -440,11 +483,17 @@ def main():
                     if executable:
                         launch["executable_path"] = executable
                     browser = playwright.chromium.launch(**launch)
+                    print("RUN node_source_picker", flush=True)
                     node_source_picker(browser, hub, *nodes)
+                    print("RUN node_switch_cwd", flush=True)
                     node_switch_cwd(browser, hub, *nodes)
+                    print("RUN shared_recent_cwd", flush=True)
                     shared_recent_cwd(browser, hub, *nodes)
-                    current_cwd_recommendation(browser, hub, *nodes)
+                    print("RUN current_cwd_defaults", flush=True)
+                    current_cwd_defaults(browser, hub, *nodes)
+                    print("RUN native_stop", flush=True)
                     native_stop(browser, hub, *nodes)
+                    print("RUN scenario", flush=True)
                     scenario(browser, hub, *nodes)
                     browser.close()
             finally:
@@ -452,7 +501,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS hub_pending_state_browser: per-node OpenCode picker, multi-select stop of a console-only session, machine select on the first row, steady cwd list while typing, empty initial cwd, node switch retains existing directories and clears missing paths, with stale-check protection, create, partial list, draft/reload, recovery, confirmed exit")
+    print("PASS hub_pending_state_browser: per-node OpenCode picker, multi-select stop of a console-only session, machine select on the first row, steady cwd list while typing, selected-session machine/cwd defaults without pinning, node switch retains existing directories and clears missing paths, with stale-check protection, create, partial list, draft/reload, recovery, confirmed exit")
 
 
 if __name__ == "__main__":

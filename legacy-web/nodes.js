@@ -261,8 +261,8 @@ function prepareNewNode() {
   const select = document.querySelector('#new-node');
   const previous = select.value;
   const selected = selectedNodeIds();
-  const preferred = selected.length === 1 ? selected[0]
-    : nodeOf(S.sel) || previous || store.get('newNode', '');
+  const preferred = nodeOf(S.sel) || (selected.length === 1 ? selected[0]
+    : previous || store.get('newNode', ''));
   select.replaceChildren();
   for (const n of Nodes.list) {
     const option = document.createElement('option');
@@ -291,7 +291,7 @@ async function newNodeHasDir(path, node = newNodeId()) {
   } catch { return false; }
 }
 
-function refreshNewNodeFields(preserveCwd = false) {
+function refreshNewNodeFields() {
   const check = ++newCwdCheck, node = newNodeId();
   closeCwdPicker();
   const cap = newNodeCapabilities();
@@ -304,16 +304,13 @@ function refreshNewNodeFields(preserveCwd = false) {
   const checked = document.querySelector('input[name="new-source"]:checked');
   if (!checked || checked.disabled) document.querySelector('input[name="new-source"]:not(:disabled)')?.click();
   const input = document.querySelector('#new-cwd');
-  if (!preserveCwd) input.value = '';
-  else {
-    const value = input.value;
-    void newNodeHasDir(value.trim(), node).then(exists => {
-      if (exists || check !== newCwdCheck || node !== newNodeId()
-          || !document.querySelector('#new-session-dialog').open || input.value !== value) return;
-      input.value = '';
-      renderCommonCwdOptions();
-    });
-  }
+  const value = input.value;
+  void newNodeHasDir(value.trim(), node).then(exists => {
+    if (exists || check !== newCwdCheck || node !== newNodeId()
+        || !document.querySelector('#new-session-dialog').open || input.value !== value) return;
+    input.value = '';
+    renderCommonCwdOptions();
+  });
   document.querySelector('#new-session-error').textContent = '';
   document.querySelector('#new-session-go').disabled = !cap.enabled;
   renderCommonCwdOptions();
@@ -324,7 +321,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (!HUB_MODE) return;
   document.querySelector('#new-node').onchange = () => {
     store.set('newNode', newNodeId());
-    refreshNewNodeFields(true);
+    refreshNewNodeFields();
   };
   void loadNodes().catch(() => {});
 });
