@@ -1133,8 +1133,7 @@ function commonSessionDirs(includeOtherNodes = false) {
   }
   const home = newNodeCapabilities().home;
   if (home && !dirs.has(home)) dirs.set(home, { cwd: home, count: 0, updated: '' });
-  return [...dirs.values()].filter(row => includeOtherNodes
-    || cwdPathKey(row.cwd) !== cwdPathKey(currentSessionCwd())).sort((a, b) =>
+  return [...dirs.values()].sort((a, b) =>
     (b.recent || 0) - (a.recent || 0) || b.count - a.count
     || b.updated.localeCompare(a.updated) || a.cwd.localeCompare(b.cwd));
 }
@@ -1144,19 +1143,18 @@ function currentSessionCwd() {
     || T.pending.find(row => pendingUid(row.name) === S.sel)?.cwd || '';
 }
 
-// 当前会话目录须在所选机器上确认存在，才能置顶；其他机器的候选同样先检查。
+// 当前会话目录与其他机器的候选须先确认存在；沿用普通最近/常用排序。
 // 每次打开或切换机器重新检查，过期响应不能覆盖新的目录列表。
 let commonCwdRun = 0;
 async function loadSharedCwdOptions() {
   const run = ++commonCwdRun, node = newNodeId();
   if (!newNodeCapabilities().enabled
       || !SessionDockCapabilities.allows('terminal_complete_dir')) return;
-  const selected = currentSessionCwd(), selectedKey = cwdPathKey(selected);
-  const known = new Set(cwdCompletion.common.map(row => cwdPathKey(row.cwd)));
+  const selectedKey = cwdPathKey(currentSessionCwd());
+  const known = new Set(cwdCompletion.common.map(row => cwdPathKey(row.cwd))
+    .filter(key => key !== selectedKey));
   const candidates = commonSessionDirs(true);
-  const pending = candidates.filter(row => cwdPathKey(row.cwd) !== selectedKey
-    && !known.has(cwdPathKey(row.cwd)));
-  if (selected) pending.unshift({cwd: selected});
+  const pending = candidates.filter(row => !known.has(cwdPathKey(row.cwd)));
   if (!pending.length) return;
   const current = () => run === commonCwdRun && node === newNodeId()
     && $('#new-session-dialog').open;
@@ -1169,12 +1167,6 @@ async function loadSharedCwdOptions() {
   }));
   if (!current()) return;
   cwdCompletion.common = candidates.filter(row => known.has(cwdPathKey(row.cwd)));
-  if (selected && known.has(selectedKey)) {
-    const row = cwdCompletion.common.find(row => cwdPathKey(row.cwd) === selectedKey)
-      || {cwd: selected, count: 0, updated: ''};
-    cwdCompletion.common = [{...row, cwd: selected},
-      ...cwdCompletion.common.filter(row => cwdPathKey(row.cwd) !== selectedKey)];
-  }
   if (!$('#new-cwd-picker').hidden) scheduleCwdCompletions();
 }
 
@@ -1705,6 +1697,7 @@ function openNewSessionDialog() {
   newCreateAttempt = null;
   modelCatalogs.clear(); // 每次打开都读一遍：CLI 升级或换配置后列表会变
   prepareNewNode();
+  $('#new-cwd').value = currentSessionCwd();
   refreshNewNodeFields();
   NewModels.refresh();
   dialog.showModal();

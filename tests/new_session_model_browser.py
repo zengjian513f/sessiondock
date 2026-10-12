@@ -124,6 +124,11 @@ def create(page, cwd):
         page.locator("#new-session-go").click()
     assert created.value.status == 200, created.value.text()
     expect(page.locator("#new-session-dialog")).to_be_hidden()
+    # Standalone mode also uses the selected pending session's directory when
+    # opening again; no native history is required for this default.
+    open_dialog(page)
+    expect(page.locator("#new-cwd")).to_have_value(str(cwd))
+    page.locator("#new-session-dialog .modal-cancel").click()
     return json.loads(created.value.request.post_data)
 
 
