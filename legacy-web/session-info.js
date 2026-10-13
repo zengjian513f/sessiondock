@@ -54,6 +54,7 @@
       const next = await request(`api/session/info?${new URLSearchParams({uid})}`);
       if (version !== sequence) return;
       data = next; render();
+      SessionDockResearch.load(data.session);
     } catch (error) { if (version === sequence) $('#info-status').textContent = `读取失败：${error.message}`; }
     finally { if (version === sequence) $('#info-refresh').disabled = false; }
   }

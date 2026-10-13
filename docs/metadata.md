@@ -321,6 +321,38 @@ and management actions; these fields never enlarge a collapsed row. Labdesk cons
 stylesheet and `session-card.js` brand marks, with time and contribution fields;
 update both copies together without introducing a runtime dependency between apps.
 
+### Research associations (DELTA)
+
+The information page shows an independent read-only research panel below the session
+summary, before handoff clues and session relationships. It queries the same-origin
+Labdesk `GET /labdesk/api/session-research?session_uid=SOURCE:SID&node=NODE_ID`.
+The native identity comes from the resolved session row, never the record UID or a
+title/path match; node mode obtains its persistent node ID from `/api/meta`.
+Labdesk checks its node-to-host mapping against the ledger host before returning links.
+An unregistered session, missing node mapping and conflicting host have distinct messages.
+
+Explicit experiment links and experiments containing explicitly linked steps are shown
+together, with the latter labeled as step-derived. Steps are nested under their experiment;
+only exact membership of the native session in the current step's `body.session_uids`
+counts. The query also covers steps missing from the session's experiment list.
+Direct reports are deduplicated separately from experiment-context reports, which appear
+in a closed disclosure and do not count as directly linked reports. No ancestor,
+descendant or cloned session automatically inherits research links. Missing target records
+retain their IDs and an unavailable label rather than disappearing.
+
+Titles open Labdesk experiment, step or report deep links in a new tab. Groups initially
+show five entries with an explicit disclosure for the remainder; counts always cover all
+results. The panel reuses existing themes, typography and compact row styles. It loads
+independently; an unavailable Labdesk never blocks ordinary session information or
+relationships. Refresh errors retain the previous result and display a retry action;
+first-load failures never masquerade as zero associations. No native or ledger writes occur.
+
+Validation: [session_research_browser.py](../tests/session_research_browser.py) covers
+node and Hub identities, nested steps, direct/context reports, missing records, overflow,
+deep links, light/dark wide/mobile rendering and load/retry states. Its optional
+`--labdesk-dir CHECKOUT` uses Labdesk's private SQLite fixture and actual authenticated
+API to verify the complete query path without connecting to production data.
+
 Validation: [session_relations_browser.py](../tests/session_relations_browser.py)
 uses Chromium, two private nodes and a Hub for cross-node edits, native/subordinate
 exclusion, same-SID isolation, restart persistence, offline references, finite
