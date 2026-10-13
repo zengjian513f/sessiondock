@@ -71,7 +71,7 @@ def main():
                 launcher_config=launcher, state_dir=root / 'state',
                 audit_dir=root / 'audit', extra_env={**auth_env,
                     'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
-                    'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work')},
+                    'SESSIONDOCK_BUG_REPORT_WORKER': 'true', 'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work')},
                 file_roots=(root / 'work',), file_write_roots=(root / 'work',)) as (base, _), sync_playwright() as pw:
             options = {'headless': True}
             if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
@@ -431,10 +431,9 @@ def main():
                     native = root / 'codex' / ('rollout-' + commands[-1]['sid'] + '.jsonl')
                     users = [json.loads(line) for line in native.read_text().splitlines() if json.loads(line).get('type') == 'response_item']
                     assert len(users) == 1 and users[0]['payload']['content'][0]['text'] == worker_prompt.strip(), users
-                    assert '随后立即 push' in worker_prompt
-                    assert 'python3 deploy/deploy.py deploy --all' in worker_prompt
-                    assert '无需再次确认' in worker_prompt
-                    assert '不要 push' not in worker_prompt and '不要部署' not in worker_prompt
+                    assert '当前仓库的 AGENTS.md' in worker_prompt
+                    assert '用户授权' in worker_prompt
+                    assert 'deploy --all' not in worker_prompt
                     assert not dialogs and not errors, (dialogs, errors)
                     context.request.post(base + '/api/term/kill', data={
                         'record_id': worker['record_id'], 'instance_id': worker['instance_id']})

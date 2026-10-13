@@ -39,9 +39,9 @@ fn now() -> f64 {
 
 async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
     let node_id = state
-        .node
-        .as_ref()
-        .map(|n| n.node_id.clone())
+        .local_node_id
+        .as_deref()
+        .map(str::to_owned)
         .unwrap_or_default();
     {
         let caches = caches().lock().unwrap_or_else(|e| e.into_inner());
@@ -426,6 +426,9 @@ async fn legacy_publish(state: &AppState, published: Published) -> Result<usize,
 }
 
 fn agent_socket(state: &AppState) -> Option<std::path::PathBuf> {
+    if !state.resource_agent_enabled || state.local_node_id.is_none() {
+        return None;
+    }
     let configured = std::env::var_os("SESSIONDOCK_RESOURCE_AGENT_SOCKET");
     let path = configured
         .as_ref()
@@ -445,9 +448,9 @@ async fn agent_catalog(
 ) -> Result<(process_links::agent::Catalog, Vec<SessionRow>), ApiError> {
     use process_links::agent::{Catalog, Owner};
     let node_id = state
-        .node
-        .as_ref()
-        .map(|n| n.node_id.clone())
+        .local_node_id
+        .as_deref()
+        .map(str::to_owned)
         .unwrap_or_default();
     let document = state
         .reader
@@ -650,7 +653,7 @@ pub async fn report(state: &AppState) -> Result<Report, ApiError> {
 /// Bindings of this machine's processes owned by sessions on other machines,
 /// for live work display. Empty without a node identity or attribution.
 pub async fn remote_bindings(state: &AppState) -> Vec<Binding> {
-    let Some(node_id) = state.node.as_ref().map(|n| n.node_id.clone()) else {
+    let Some(node_id) = state.local_node_id.as_deref().map(str::to_owned) else {
         return Vec::new();
     };
     let mut report = None;
@@ -683,7 +686,7 @@ pub async fn publish(state: &AppState, published: Published) -> Result<usize, Ap
         })
         .await
             && let Ok(report) = serde_json::from_value::<Report>(value)
-            && Some(report.node_id.as_str()) == state.node.as_ref().map(|n| n.node_id.as_str())
+            && Some(report.node_id.as_str()) == state.local_node_id.as_deref()
         {
             remember_agent_parents(state, &report, None).await?;
             return Ok(report.bindings.len());
@@ -699,15 +702,18 @@ pub async fn resources(state: &AppState) -> serde_json::Value {
             process_links::agent::request(&path, &process_links::agent::Request::Resources)
         })
         .await
-        && value["node_id"].as_str() == state.node.as_ref().map(|n| n.node_id.as_str())
+        && value["node_id"].as_str() == state.local_node_id.as_deref()
     {
         return value;
     }
-    serde_json::json!({"version":1,"availability":"unavailable","reason":"collector_not_available","samples":null})
+    serde_json::json!({"version":1,"node_id":state.local_node_id.as_deref().unwrap_or_default(),"availability":"unavailable","reason":"collector_not_available","samples":null})
 }
 /// Keep the independent collector's session catalog fresh without requiring an
 /// open browser or a running fleet Hub. Failure is isolated to monitoring.
 pub fn spawn(state: AppState) {
+    if !state.resource_agent_enabled || state.local_node_id.is_none() {
+        return;
+    }
     tokio::spawn(async move {
         loop {
             tokio::select! {

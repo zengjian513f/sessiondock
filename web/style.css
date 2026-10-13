@@ -522,6 +522,7 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 :is(#new-session-form, #bug-report-form) .node-select:not([hidden]) { flex: 0 1 132px; min-width: 88px; padding-left: 8px; }
 /* 下拉菜单以模型+强度这一组为宽度，窄屏换行后也不会伸出对话框。 */
 .new-choice { position: relative; display: flex; gap: 7px; flex: 1 1 220px; min-width: 0; }
+#bug-report-form .new-choice[hidden], #bug-report-source[hidden] { display: none; }
 .new-model { flex: 1 1 0; min-width: 0; }
 .new-pick {
   display: flex; align-items: center; gap: 6px; width: 100%; height: 39px; padding: 0 10px;
@@ -1076,6 +1077,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
 }
 .session-menu-action .ui-icon { flex: none; }
+.session-menu-action[data-report-bug][hidden] { display: none; }
 .session-menu-action:hover, .session-menu-action:focus-visible { background: var(--hover); }
 .session-menu-action.on { background: var(--sel); }
 .session-menu-action.star-toggle.on { color: var(--star); }

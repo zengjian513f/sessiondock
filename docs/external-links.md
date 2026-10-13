@@ -21,8 +21,7 @@ behavior. Legacy UID links still resolve their row and the browser follows its
 known continuation, as it does for other session navigation. See
 [read model](read-model.md) for continuation evidence.
 
-File links resolve to FileDock's machine-and-path entry; see [files](files.md).
-The independent file service owns directory navigation and standalone previews.
+With `SESSIONDOCK_FILEDOCK_URL`, file links resolve to the configured FileDock machine-and-path entry. Without it, conversation files retain built-in preview/download and directory links explain the optional integration; see [files](files.md).
 
 ## Sharing and old-link mapping
 
@@ -35,8 +34,8 @@ do not derive the native ID from its path hash.
 | Older form | Current form |
 | --- | --- |
 | `?sid=<internal-uid>` or a node-qualified UID | `?sid=<source>:<native-id>&node=<node-id>` from the resolved row |
-| File service `file.html?node=ID&path=ABS` or `files.html?node=ID&path=ABS` | File service root `?node=ID&path=ABS`, normally `/files/?node=ID&path=ABS` |
-| SessionDock file adapter with a session UID and relative reference | Resolve through the adapter, then share the resulting FileDock machine/absolute-path URL |
+| File service `file.html?node=ID&path=ABS` or `files.html?node=ID&path=ABS` | File service root `?node=ID&path=ABS`, at the configured `SESSIONDOCK_FILEDOCK_URL` |
+| SessionDock file adapter with a session UID and relative reference | Resolve through the adapter; with FileDock configured, share its resulting machine/absolute-path URL |
 
 The session router retains UID fallback for old links; this is not the format
 new scripts should generate. FileDock compatibility with an older entry is a

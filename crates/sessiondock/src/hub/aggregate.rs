@@ -400,6 +400,8 @@ fn term_list_body(nodes: Vec<Value>, answers: &[Answer]) -> Value {
                 "enabled": answer.flag("enabled") && answer.ok(),
                 "unavailable_reason": reason,
                 "sources": get("sources", json!({})),
+                "bug_report": answer.ok() && get("bug_report", json!(false)) == true,
+                "bug_report_worker": answer.ok() && get("bug_report_worker", json!(false)) == true,
                 "resume_sources": if answer.ok() { get("resume_sources", json!({})) } else { json!({}) },
                 "home": get("home", json!("")),
             }),

@@ -132,6 +132,8 @@ class NodeHandler(BaseHTTPRequestHandler):
                 return self._json({"error": "terminal list temporarily unavailable"}, 503)
             time.sleep(s.get("term_delay", 0))
             return self._json({"enabled": s.get("term_enabled", True),
+                               "bug_report": s.get("bug_report", True),
+                               "bug_report_worker": s.get("bug_report_worker", True),
                                "unavailable_reason": s.get("term_reason", ""),
                                "sources": s.get("term_sources", {"claude": True, "codex": True}),
                                "home": "/home/" + s["name"], "sessions": s.get("term_sessions", []),

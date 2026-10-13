@@ -863,7 +863,9 @@ pub async fn list(
     };
     let mut response = json!({"enabled":false, "transport_enabled":state.terminal.is_some(),
         "unavailable_reason":"没有通过完整会话 UID 和实例校验的运行中终端；创建和 CLI 接管尚未启用。",
-        "sources":{},"home":home,"sessions":[],"pending":[],"hosts":[]});
+        "sources":{},"home":home,"sessions":[],"pending":[],"hosts":[],
+        "bug_report": state.capabilities["bug_report"],
+        "bug_report_worker": state.capabilities["bug_report_worker"]});
     if let Some(service) = &state.terminal {
         response["hosts"] = json!(service.hosts().await?);
         if let Some(runtime) = &state.runtime {

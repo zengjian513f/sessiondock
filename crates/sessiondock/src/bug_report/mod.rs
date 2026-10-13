@@ -743,11 +743,10 @@ pub fn worker_prompt(
    假 CLI 或无头浏览器套件复现，偶发问题不要为强行复现耗掉任务；
 2. 找到跨层链路中第一个与预期不一致的事件，不能只隐藏页面症状；
 3. 保留工作区里已有的用户改动，完成最小而完整的修复；
-4. 修复完成后，只 stage 本次修复涉及的文件并 commit（其它会话的未提交改动不要碰，
-   不要 `git add -A`）；随后立即 push，并按仓库部署流程运行
-   `python3 deploy/deploy.py deploy --all`，完成服务重启与健康检查，无需再次确认。
-   保留生产会话、状态和回滚备份，不手工修改生产数据。
-5. 完成后说明根因、修改的文件、验证结果、push 与各节点部署结果和仍存风险。
+4. 验证修复遵循当前仓库的 AGENTS.md 和开发文档。提交、推送、部署与外部发布
+   依照该仓库的流程和用户授权执行；本诊断报告不额外授予发布权限。
+   保留会话、状态和其他人的改动，不手工修改生产数据。
+5. 完成后说明根因、修改的文件、实际验证结果与未完成事项。
 ",
         title = report_title(description),
         dir = report_dir.display(),
@@ -755,7 +754,7 @@ pub fn worker_prompt(
     )
 }
 
-/// `问题机器` as the prompt and toast name it: `Lyra（主机 lyra）`, or just
+/// `问题机器` as the prompt and toast name it: `Example（主机 example-host）`, or just
 /// the host when the machine has no registered name.
 fn origin_label(origin: &Origin) -> String {
     let label = origin.label();

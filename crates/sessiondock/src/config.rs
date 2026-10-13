@@ -9,6 +9,11 @@ use crate::sessions::SessionRoots;
 pub struct Config {
     pub bind: SocketAddr,
     pub web_dir: PathBuf,
+    pub integrations: crate::integrations::Integrations,
+    /// Auto connects to a configured collector; off retains process polling only.
+    pub resource_agent_enabled: bool,
+    /// Saving diagnostics does not implicitly authorize a CLI worker.
+    pub bug_report_worker: bool,
     pub roots: SessionRoots,
     /// Names file; defaults beside the configured Codex sessions root.
     pub codex_index: Option<PathBuf>,
@@ -51,8 +56,8 @@ pub struct Config {
     /// (`SESSIONDOCK_SHELL_ENV_WATCH`, `:`-separated).
     pub shell_env_watch: Vec<PathBuf>,
     /// Second listener for Hub traffic. Honoured only together
-    /// with the token file, the id file and the peer networks; any subset of
-    /// the four is a startup error. Never a substitute for the loopback bind.
+    /// with the token file, the id file and the peer networks. Identity alone
+    /// is valid for standalone integrations and never opens this listener.
     pub node_bind: Option<SocketAddr>,
     /// Shared hub credential (`--node-token-file`): 32–256 chars of
     /// `[A-Za-z0-9._~+/=-]`, read once at startup, never printed.
@@ -248,6 +253,9 @@ impl Default for Config {
         Self {
             bind: "127.0.0.1:8741".parse().expect("constant socket address"),
             web_dir: "web".into(),
+            integrations: Default::default(),
+            resource_agent_enabled: true,
+            bug_report_worker: false,
             roots: SessionRoots {
                 claude: None,
                 codex: None,
@@ -329,6 +337,28 @@ pub fn default_search_workers() -> usize {
 impl Config {
     pub fn from_env() -> io::Result<Self> {
         let mut config = Self::default();
+        config.integrations = crate::integrations::Integrations::from_env()?;
+        config.resource_agent_enabled = match env::var("SESSIONDOCK_RESOURCE_AGENT_MODE").as_deref()
+        {
+            Ok("auto") | Err(env::VarError::NotPresent) => true,
+            Ok("off") => false,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SESSIONDOCK_RESOURCE_AGENT_MODE must be auto or off",
+                ));
+            }
+        };
+        config.bug_report_worker = match env::var("SESSIONDOCK_BUG_REPORT_WORKER").as_deref() {
+            Ok("1" | "true") => true,
+            Ok("0" | "false") | Err(env::VarError::NotPresent) => false,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SESSIONDOCK_BUG_REPORT_WORKER must be true or false",
+                ));
+            }
+        };
         if let Some(bind) = env::var_os("SESSIONDOCK_BIND") {
             config.bind = bind.to_str().and_then(|s| s.parse().ok()).ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidInput, "invalid SESSIONDOCK_BIND")
@@ -567,41 +597,44 @@ impl Config {
     /// (`--check-config` runs this too and must not mint an id); startup mints
     /// a missing id through `hub::identity::node_id`.
     fn validate_node(&self) -> io::Result<()> {
-        let configured = [
-            self.node_bind.is_some(),
-            self.node_token_file.is_some(),
-            self.node_id_file.is_some(),
-            !self.node_peers.is_empty(),
-        ];
-        if configured.iter().all(|set| !set) {
+        let listener = self.node_bind.is_some()
+            || self.node_token_file.is_some()
+            || !self.node_peers.is_empty();
+        if listener {
+            let (Some(bind), Some(token), Some(_)) = (
+                self.node_bind,
+                self.node_token_file.as_ref(),
+                self.node_id_file.as_ref(),
+            ) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SESSIONDOCK_NODE_BIND, SESSIONDOCK_NODE_TOKEN_FILE, SESSIONDOCK_NODE_ID_FILE and SESSIONDOCK_NODE_PEERS must be set together (the node listener fails closed)",
+                ));
+            };
+            if self.node_peers.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SESSIONDOCK_NODE_PEERS is required for the node listener",
+                ));
+            }
+            if bind == self.bind && bind.port() != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SESSIONDOCK_NODE_BIND must differ from SESSIONDOCK_BIND",
+                ));
+            }
+            crate::hub::NodeToken::load(token).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!("SESSIONDOCK_NODE_TOKEN_FILE: {error}"),
+                )
+            })?;
+        }
+        // A local collector or external integration needs stable identity without
+        // opening the authenticated Hub listener. --check-config never mints it.
+        let Some(id) = self.node_id_file.as_ref() else {
             return Ok(());
-        }
-        if !configured.iter().all(|set| *set) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "SESSIONDOCK_NODE_BIND, SESSIONDOCK_NODE_TOKEN_FILE, SESSIONDOCK_NODE_ID_FILE and SESSIONDOCK_NODE_PEERS must be set together (the node listener fails closed)",
-            ));
-        }
-        let (Some(bind), Some(token), Some(id)) = (
-            self.node_bind,
-            self.node_token_file.as_ref(),
-            self.node_id_file.as_ref(),
-        ) else {
-            unreachable!("checked above");
         };
-        // Port 0 is a fresh socket each time (tests); a fixed address is one listener.
-        if bind == self.bind && bind.port() != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "SESSIONDOCK_NODE_BIND must differ from SESSIONDOCK_BIND",
-            ));
-        }
-        crate::hub::NodeToken::load(token).map_err(|error| {
-            io::Error::new(
-                error.kind(),
-                format!("SESSIONDOCK_NODE_TOKEN_FILE: {error}"),
-            )
-        })?;
         match std::fs::read_to_string(id) {
             Ok(value) => {
                 if !crate::hub::identity::is_node_id(value.trim()) {

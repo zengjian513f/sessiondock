@@ -449,3 +449,13 @@ without independent process attribution never copy the parent's usage.
 Clicking the sidebar resource area opens full metrics for that explicit session
 without changing the selected conversation. The area supports keyboard activation
 and has no hover tooltip; the detail header no longer has a resource button.
+
+## Optional collector
+
+`SESSIONDOCK_RESOURCE_AGENT_MODE=auto` (default) connects to the configured local
+collector when available. `off` disables collector connections and keeps polling
+process attribution. Missing collectors produce unavailable resource samples,
+never synthetic zero usage. `SESSIONDOCK_NODE_ID_FILE` may be configured alone
+for a stable local identity; it does not enable Hub authentication or a listener.
+The collector uses the same identity file. See [resource-agent.md](resource-agent.md)
+for independent installation and privileges.

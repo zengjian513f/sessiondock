@@ -325,7 +325,11 @@ update both copies together without introducing a runtime dependency between app
 
 The information page shows an independent read-only research panel below the session
 summary, before handoff clues and session relationships. It queries the same-origin
-Labdesk `GET /labdesk/api/session-research?session_uid=SOURCE:SID&node=NODE_ID`.
+Labdesk `GET <SESSIONDOCK_LABDESK_URL>/api/session-research?session_uid=SOURCE:SID&node=NODE_ID`.
+The URL is opt-in on the server rendering the page (node or Hub); an unset URL
+hides the research section and sends no research requests. `research` and
+`labdesk_url` in the capability declaration describe this integration.
+Standalone nodes can use `SESSIONDOCK_NODE_ID_FILE` without a Hub listener.
 The native identity comes from the resolved session row, never the record UID or a
 title/path match; node mode obtains its persistent node ID from `/api/meta`.
 Labdesk checks its node-to-host mapping against the ledger host before returning links.

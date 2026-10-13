@@ -163,6 +163,11 @@ def render(rows, hub_rows):
     lines += table(rows)
     lines += ["", "## Hub (`sessiondock-hub`, `HubConfig::from_env`)", ""]
     lines += table(hub_rows)
+    lines += ["", "## Optional browser integrations (node and Hub)", "",
+              "Read by `integrations.rs`; an unset or empty URL disables the integration.", "",
+              "| Variable | Default | Behavior |", "| --- | --- | --- |",
+              "| `SESSIONDOCK_LABDESK_URL` | unset | Research panel API and deep-link base; see [metadata](metadata.md). |",
+              "| `SESSIONDOCK_FILEDOCK_URL` | unset | External directory browser base; builtin single-file reads remain available; see [files](files.md). |", ""]
     lines += ["", "## Resource collector runtime", "",
               "These settings are read by `runtime/process_links.rs` and the shared",
               "`process-links` client. They do not start or configure the collector service.", "",

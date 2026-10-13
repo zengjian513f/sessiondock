@@ -14,6 +14,8 @@ constructors; this is not an inventory of every environment variable read by CLI
 
 | Variable | Field | Required | Validation | Set by tests | Docs |
 | --- | --- | --- | --- | --- | --- |
+| `SESSIONDOCK_RESOURCE_AGENT_MODE` | `resource_agent_enabled` | no (default) | Auto connects to a configured collector; off retains process polling only; SESSIONDOCK_RESOURCE_AGENT_MODE must be auto or off | no | [process-links.md](process-links.md), [resource-agent.md](resource-agent.md) |
+| `SESSIONDOCK_BUG_REPORT_WORKER` | `bug_report_worker` | no (default) | Saving diagnostics does not implicitly authorize a CLI worker; SESSIONDOCK_BUG_REPORT_WORKER must be true or false | no | [bug-report.md](bug-report.md), [capabilities.md](capabilities.md) |
 | `SESSIONDOCK_BIND` | `bind` | no (default) | invalid SESSIONDOCK_BIND | isolated_server | [hub.md](hub.md), [runbook-dev.md](runbook-dev.md) |
 | `SESSIONDOCK_WEB_DIR` | `web_dir` | no (default) |  | isolated_server | [deploy-hub.md](deploy-hub.md), [hub.md](hub.md), [release.md](release.md), [runbook-dev.md](runbook-dev.md) |
 | `SESSIONDOCK_CLAUDE_ROOT` | `roots.claude` | no (Option) | nonempty; directory when present; missing roots are retried | isolated_server | [liveness.md](liveness.md), [read-model.md](read-model.md) |
@@ -36,7 +38,7 @@ constructors; this is not an inventory of every environment variable read by CLI
 | `SESSIONDOCK_SHELL_ENV_WATCH` | `shell_env_watch` | no (default) | Startup files whose change triggers an immediate recheck (`SESSIONDOCK_SHELL_ENV_WATCH`, `:`-separated) | no | [shell-env.md](shell-env.md) |
 | `SESSIONDOCK_NODE_BIND` | `node_bind` | no (Option) | Second listener for Hub traffic; invalid SESSIONDOCK_NODE_BIND | no | [deploy-hub.md](deploy-hub.md), [deploy-macos.md](deploy-macos.md), [hub.md](hub.md), [security-model.md](security-model.md) |
 | `SESSIONDOCK_NODE_TOKEN_FILE` | `node_token_file` | no (Option) | Shared hub credential (`--node-token-file`): 32–256 chars of `[A-Za-z0-9._~+/=-]`, read once at startup, never printed | no | [hub.md](hub.md) |
-| `SESSIONDOCK_NODE_ID_FILE` | `node_id_file` | no (Option) | Persistent node identity (`--node-id-file`): 32 hex, minted `O_EXCL` 0600 on first start; an existing file is only read | no | [hub.md](hub.md) |
+| `SESSIONDOCK_NODE_ID_FILE` | `node_id_file` | no (Option) | Persistent node identity (`--node-id-file`): 32 hex, minted `O_EXCL` 0600 on first start; an existing file is only read | no | [files.md](files.md), [hub.md](hub.md), [metadata.md](metadata.md), [process-links.md](process-links.md), [resource-agent.md](resource-agent.md) |
 | `SESSIONDOCK_BUG_REPORT_DIR` | `bug_report_dir` | no (Option) | Bug-report bundles: an configured bundle directory | no | [bug-report.md](bug-report.md), [capabilities.md](capabilities.md), [error-codes.md](error-codes.md) |
 | `SESSIONDOCK_BUG_REPORT_REPO` | `bug_report_repo` | no (Option) | The repository a bug-report worker investigates: the worker's cwd and the parent of `sessiondock_attachments/` | no | [bug-report.md](bug-report.md) |
 | `SESSIONDOCK_SEARCH_CACHE_DIR` | `search_cache_dir` | no (Option) | Persistent search-text cache (`docs/read-model.md` "搜索") | no | [architecture.md](architecture.md), [performance.md](performance.md), [read-model.md](read-model.md), [runbook-dev.md](runbook-dev.md) |
@@ -67,6 +69,16 @@ constructors; this is not an inventory of every environment variable read by CLI
 | `SESSIONDOCK_WEB_DIR` | `web_dir` | no (default) | `SESSIONDOCK_WEB_DIR`, default `web`; served in hub mode; SESSIONDOCK_WEB_DIR must be an existing directory | isolated_server | [deploy-hub.md](deploy-hub.md), [hub.md](hub.md), [release.md](release.md), [runbook-dev.md](runbook-dev.md) |
 | `SESSIONDOCK_AUDIT_DIR` | `audit_dir` | no (Option) | `SESSIONDOCK_AUDIT_DIR`: where `hub.node.*.changed` records go; unset keeps the hub silent about display/order changes | isolated_server | [README.md](README.md), [capabilities.md](capabilities.md), [deploy-hub.md](deploy-hub.md), [diagnostics.md](diagnostics.md), [hub.md](hub.md), [logging.md](logging.md) |
 | `SESSIONDOCK_HUB_TRANSFER_CONFIG` | `transfer_policy` | no (default) | SESSIONDOCK_HUB_TRANSFER_CONFIG: optional JSON data-path policy; unset uses Hub relay | no | [deploy-hub.md](deploy-hub.md), [session-transport.md](session-transport.md) |
+
+## Optional browser integrations (node and Hub)
+
+Read by `integrations.rs`; an unset or empty URL disables the integration.
+
+| Variable | Default | Behavior |
+| --- | --- | --- |
+| `SESSIONDOCK_LABDESK_URL` | unset | Research panel API and deep-link base; see [metadata](metadata.md). |
+| `SESSIONDOCK_FILEDOCK_URL` | unset | External directory browser base; builtin single-file reads remain available; see [files](files.md). |
+
 
 ## Resource collector runtime
 

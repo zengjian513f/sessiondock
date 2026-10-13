@@ -224,6 +224,9 @@ async function fetchTermList() {
     T.list = mergeUnavailableTermRows(data.sessions || [], T.list, data.errors);
     T.sources = data.sources || {};
     T.resume_sources = data.resume_sources || {};
+    T.bug_report = data.bug_report === true;
+    T.bug_report_worker = data.bug_report_worker === true;
+    syncBugReportAvailability();
     T.home = data.home || '';
     const hadSelected = String(S.sel || '').startsWith('tmux:')
       && (T.pending || []).some(row => pendingUid(row.name) === S.sel);
@@ -590,6 +593,20 @@ async function post(url, body, {timeoutMs = 0} = {}) {
 // ---------------------------------------------------------------- 缺陷报告
 let bugReportToastTimer = 0;
 
+function bugReportsEnabled() {
+  return HUB_MODE ? Object.values(Nodes.capabilities).some(cap => cap.enabled && cap.bug_report === true)
+    : SessionDockCapabilities.config.bug_report === true;
+}
+function bugReportWorkerEnabled() {
+  return HUB_MODE ? Nodes.capabilities[bugReportNode()]?.bug_report_worker === true
+    : SessionDockCapabilities.config.bug_report_worker === true;
+}
+function syncBugReportAvailability() {
+  for (const button of document.querySelectorAll('[data-report-bug]')) button.hidden = !bugReportsEnabled();
+  if (typeof layoutHeader === 'function') layoutHeader();
+}
+syncBugReportAvailability();
+
 const BUG_REPORT_SOURCES = { claude: 'Claude', codex: 'Codex', grok: 'Grok', opencode: 'OpenCode', agy: 'Agy' };
 
 function bugReportSource() {
@@ -599,6 +616,10 @@ function bugReportSource() {
 // 与新建会话一样，AI CLI 都可以做处理会话；记住上次的选择，处理机器上
 // 缺少的命令置灰（中央站下按所选机器的能力表，单机按本机）。
 function syncBugReportSources() {
+  const worker = bugReportWorkerEnabled();
+  $('#bug-report-source').hidden = !worker;
+  $('#bug-report-form .new-choice').hidden = !worker;
+  $('#bug-report-go').textContent = worker ? '发送' : '保存诊断';
   const remembered = store.get('bugReportSource', 'codex');
   const sources = HUB_MODE ? Nodes.capabilities[bugReportNode()]?.sources : T.sources;
   const known = sources && Object.keys(sources).length;
@@ -630,7 +651,7 @@ function prepareBugReportNode() {
     const option = document.createElement('option');
     option.value = n.id;
     option.textContent = n.name + (Nodes.capabilities[n.id]?.enabled ? '' : '（离线）');
-    option.disabled = !Nodes.capabilities[n.id]?.enabled;
+    option.disabled = !Nodes.capabilities[n.id]?.enabled || Nodes.capabilities[n.id]?.bug_report !== true;
     select.appendChild(option);
   }
   const usable = id => [...select.options].some(o => o.value === id && !o.disabled);
@@ -664,7 +685,7 @@ function showBugReportToast(report, worker) {
   const text = document.createElement('span');
   const label = BUG_REPORT_SOURCES[worker?.source] || '处理';
   const where = worker?.node_name ? `到 ${worker.node_name}` : '';
-  text.textContent = `${report} 已保存${where}，${label} 处理会话正在启动`;
+  text.textContent = worker ? `${report} 已保存${where}，${label} 处理会话正在启动` : `${report} 诊断已保存`;
   const dismiss = () => {
     clearTimeout(bugReportToastTimer);
     toast.classList.add('hidden');
@@ -683,7 +704,7 @@ function showBugReportToast(report, worker) {
   ignore.type = 'button';
   ignore.className = 'btn';
   ignore.textContent = '忽略';
-  ignore.title = '关闭通知，处理会话继续运行';
+  ignore.title = worker ? '关闭通知，处理会话继续运行' : '关闭通知';
   ignore.onclick = dismiss;
   const head = document.createElement('div');
   head.className = 'app-float-head';
@@ -692,7 +713,8 @@ function showBugReportToast(report, worker) {
   head.appendChild(title);
   const actions = document.createElement('div');
   actions.className = 'app-float-actions';
-  actions.append(ignore, open);
+  actions.append(ignore);
+  if (worker) actions.append(open);
   toast.append(head, text, actions);
   toast.classList.remove('hidden');
   bugReportToastTimer = setTimeout(dismiss, 20000);
@@ -857,6 +879,7 @@ function closeBugReportAttachMenu() {
 }
 
 function openBugReportDialog() {
+  if (!bugReportsEnabled()) return;
   const dialog = $('#bug-report-dialog');
   $('#bug-report-error').textContent = '';
   $('#bug-report-go').disabled = typeof staleBuildShown !== 'undefined' && staleBuildShown;
@@ -881,7 +904,7 @@ function openBugReportDialog() {
   });
   syncBugReportSources();
   modelCatalogs.clear(); // 每次打开都读一遍：CLI 升级或换配置后列表会变
-  BugReportModels.refresh();
+  if (bugReportWorkerEnabled()) BugReportModels.refresh();
   dialog.showModal();
   closeBugReportAttachMenu();
   autoGrow($('#bug-report-description'));
@@ -903,13 +926,13 @@ $('#bug-report-node').onchange = () => {
   renderBugReportItems();
   hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
   syncBugReportSources();
-  BugReportModels.refresh();
+  if (bugReportWorkerEnabled()) BugReportModels.refresh();
   $('#bug-report-error').textContent = notice;
   autoGrow($('#bug-report-description'));
 };
 $('#bug-report-source').addEventListener('change', () => {
   store.set('bugReportSource', bugReportSource());
-  BugReportModels.refresh();
+  if (bugReportWorkerEnabled()) BugReportModels.refresh();
 });
 $('#bug-report-dialog .modal-close').onclick = () => $('#bug-report-dialog').close();
 $('#bug-report-description').addEventListener('input', event => {
@@ -1041,7 +1064,7 @@ $('#bug-report-form').onsubmit = async event => {
       attachments:attachments.map(a=>({upload_id:a.uploaded?.upload_id,number:a.number})),origin});
     if (pending.requestId && pending.requestText===priorPayload) {
       const previous=await priorComposerSubmission(BUG_REPORT_DRAFT_UID,pending.requestId,true);
-      if (previous?.worker) {completeBugReportSubmission(previous,node);return;}
+      if (previous?.report_id) {completeBugReportSubmission(previous,node);return;}
     }
     if (!await persistComposerDraft(BUG_REPORT_DRAFT_UID)) throw new Error(bugReportDraftObject().storageError || '报告草稿保存失败');
     // 与对话发送一致：同一批附件共用一个编号目录，失败的附件保留在卡片上重试。
@@ -1747,7 +1770,7 @@ function showNewSessionStage(info, {historyMode = 'push'} = {}) {
       <button class="iconbtn" id="a-term" title="切换到终端" aria-label="切换到终端">${uiIcon('terminal')}</button>
       ${sessionActionsMarkup(`
       <button class="session-menu-action" id="a-session-toggle" type="button"></button>
-      <button class="session-menu-action" data-report-bug title="报告当前会话问题"
+      <button class="session-menu-action" data-report-bug ${bugReportsEnabled() ? '' : 'hidden'} title="报告当前会话问题"
         aria-label="报告当前会话问题">${uiIcon('bug')}</button>
       <button class="session-menu-action danger" id="a-session-action" data-menu-only></button>
       `, `

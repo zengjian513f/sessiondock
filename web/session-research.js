@@ -3,7 +3,7 @@
   'use strict';
   const $ = selector => document.querySelector(selector);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
-  const base = new URL('../labdesk/', location.href);
+  const base = globalThis.SessionDockCapabilities?.integration('labdesk');
   let current, controller, generation = 0, rendered = false;
   const labels = {
     unregistered: '此会话尚未登记到研究台账。',
@@ -48,6 +48,7 @@
     rendered = true;
   }
   async function load(row) {
+    if (!base) { $('#info-research').hidden = true; return; }
     current = row;
     controller?.abort(); controller = new AbortController();
     const version = ++generation, signal = controller.signal;
