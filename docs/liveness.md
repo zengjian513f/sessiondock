@@ -11,7 +11,9 @@ frontend expects (`capabilities.live: true`).
   tests point it at a synthetic tree.
 - Grok's active-sessions file defaults to
   `~/.grok/active_sessions.json`; `SESSIONDOCK_GROK_ACTIVE=<file>` provides a
-  test override. Entries name sessions live without a pid, stale ones included.
+  test override. Entries without a PID remain display-only hints. Entries with a recorded
+  PID count only while that process exists and is not a zombie. The registry
+  never supplies PIDs for stopping or taking over a session.
 - On a target without native process discovery, `/api/live` reports
   `scan: {status: "unsupported_platform"}`, `capabilities.live` stays false and
   managed observations remain available. External checks return no PID evidence
@@ -70,7 +72,7 @@ is only the candidate pre-filter on Windows and does not change this.
 Per session list (`active_processes`): a process held by a Codex fork and its
 ancestors belongs to the deepest fork in the list only; unrelated sessions
 sharing a helper keep it; a session named by the Grok active file is live
-without pids. `started_at[uid]` is the earliest start among the owned pids
+without process-control PIDs, subject to the registry check above. `started_at[uid]` is the earliest start among the owned pids
 that are CLI main processes (`btime + starttime / CLK_TCK`, unrounded).
 
 ## `tmux_uids`: whose console a pane is
@@ -350,3 +352,14 @@ service (the launcher `env_clear`s).
   port versus the deployed
   service's `/api/live`; the uid sets and the reasons for every difference are
   recorded in the batch ledger.
+
+### DELTA: expired Grok active registrations
+
+BUG-20261013-154315-ac4fbd exposed a Grok registry entry whose PID was gone
+and whose managed receipt was already Exited. The old unconditional hint made
+cleanup repeatedly report running although there was no process to stop.
+PID-bearing registrations now exclude missing/zombie processes; independent
+command/file evidence and legacy PID-less hints retain their existing semantics.
+No native registry or session file is rewritten.
+`tests/cleanup_counts_browser.py` exercises missing, live and zombie registry
+PIDs through the node and Hub cleanup dialogs and counters.

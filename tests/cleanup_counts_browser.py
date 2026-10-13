@@ -5,6 +5,8 @@ Native files and /proc are synthetic and private; no CLI is launched or stopped.
 The timer override allows checking background updates with every page closed.
 """
 import argparse
+import json
+import shutil
 from contextlib import ExitStack
 import os
 import re
@@ -33,12 +35,21 @@ def main(binary):
         proc.mkdir()
         (proc / 'stat').write_text('btime 1700000000\n')
         proc_pid(proc, 100, 'codex', ['codex'], 1, fds={3: str(corpus.paths['old'])})
+        # A stale Grok registry used to keep an exited session in cleanup forever.
+        grok = corpus.root / 'grok' / 'synthetic-work' / 'stale-registration'
+        grok.mkdir(parents=True)
+        (grok / 'summary.json').write_text(json.dumps({
+            'info': {'id': 'stale-registration', 'cwd': '/synthetic/work'},
+            'generated_title': 'Stale Grok registration', 'updated_at': '2020-01-01T00:00:00Z'}))
+        active = corpus.root / 'active_sessions.json'
+        active.write_text(json.dumps([{'session_id': 'stale-registration', 'pid': 200}]))
         (corpus.root / 'ids').mkdir()
         nid = 'a' * 32
         (corpus.root / 'ids/node-id').write_text(nid)
         node = SimpleNamespace(name='Synthetic', nid=nid, port=free_port(), token=TOKEN)
         env = node_env(corpus.root, node.port, '127.0.0.0/8')
-        env.update(SESSIONDOCK_PROC_ROOT=str(proc), SESSIONDOCK_CLEANUP_INTERVAL_SECS='2')
+        env.update(SESSIONDOCK_PROC_ROOT=str(proc), SESSIONDOCK_CLEANUP_INTERVAL_SECS='2',
+                   SESSIONDOCK_GROK_ACTIVE=str(active))
         base, _ = stack.enter_context(isolated_server(corpus, binary, extra_env=env))
         hubroot = root / 'hub'
         hubroot.mkdir()
@@ -61,8 +72,24 @@ def main(binary):
                 assert set(summary) == {'ready', 'checked_at', 'days', 'partial', 'error', 'interval_seconds', 'next_check_at'}, summary
                 page.locator('#session-cleanup').click()
                 expect(page.locator('#session-cleanup-status')).to_contain_text('找到 1 个')
+                expect(page.locator('#session-cleanup-list')).not_to_contain_text('Stale Grok registration')
                 page.locator('#session-cleanup-close').click()
                 expect(page.locator('#session-cleanup-list')).to_be_empty()
+                # An existing registered process still supplies a display hint.
+                proc_pid(proc, 200, 'grok', ['grok'], 1)
+                page.locator('#session-cleanup').click()
+                expect(page.locator('#session-cleanup-status')).to_contain_text('找到 2 个')
+                expect(page.locator('#session-cleanup-list')).to_contain_text('Stale Grok registration')
+                page.locator('#session-cleanup-close').click()
+                # Zombie processes cannot keep the hint alive either.
+                stat = proc / '200/stat'
+                stat.write_text(stat.read_text().replace(') S ', ') Z '))
+                (proc / '200/cmdline').write_bytes(b'')
+                page.locator('#session-cleanup').click()
+                expect(page.locator('#session-cleanup-status')).to_contain_text('找到 1 个')
+                expect(page.locator('#session-cleanup-list')).not_to_contain_text('Stale Grok registration')
+                page.locator('#session-cleanup-close').click()
+                shutil.rmtree(proc / '200')
                 context.close()
 
             # Both services keep checking after all browser pages have closed.
