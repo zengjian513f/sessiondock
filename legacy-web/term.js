@@ -4212,8 +4212,10 @@ function persistComposerDraft(uid = composerUid) {
         for (let attempt=0;data.code==='draft_revision' && attempt<2;attempt++) {
           // Another page saved first. This page is the one still editing, so
           // its input wins: rebase onto the server revision and save again.
+          // A verified rollout rebind can carry this editor to a different
+          // draft, whose revision may be lower (including zero).
           const row=await readServerComposerDraft(pending.uid);
-          if (row.revision>draft.revision) draft.revision=row.revision;
+          draft.revision=row.revision;
           data=await post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value}, {timeoutMs:12000});
         }
         if (data.reload) throw new Error(data.error || '页面已更新，请重新加载后再提交');
