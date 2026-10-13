@@ -179,12 +179,64 @@ that close 1 s after their first frame:
 - `terminal.attach.closed`: the close code and reason.
 
 A `max_write_ms` of 1 s or more is a warning. Page `browser.terminal.input` rows
-without a matching `terminal.input.written` window mean the frames did not reach
-the node. Prompt input receipts followed by no `terminal.output.sent` mean the
-CLI produced no screen change. Output sent but not received points to the link
-back to the browser. Only counts and timings are recorded, never terminal bytes.
+without a matching `terminal.input.written` window locate a gap between browser
+input and a recorded host write; they do not prove that no frame reached the
+node. The input receipt is emitted after the gated write, and cancellation can
+drop an unfinished aggregation window; audit delivery is also best effort.
+Prompt input receipts followed by no `terminal.output.sent` are consistent with
+no CLI screen change. Output sent but not received points to the link back to
+the browser. Only counts and timings are recorded, never terminal bytes.
 
 `tests/terminal_diagnostics_browser.py` clicks the mobile console, sends shell
 input, correlates node/browser claim and terminal I/O receipts, checks the
 node's close receipt, and exercises real delayed HTTP
 headers and bodies using isolated loopback fixtures.
+
+### BUG-20261013-232935-441af3: repeated PTY upstream stalls
+
+The Cygnus report was captured on build `20261013T223823185417Z`, commit
+`afbe3f7c`, with a clean checkout. The complete manifest, browser state,
+environment, 842 audit events and terminal capture were reviewed alongside
+the lifecycle/conversation ledgers, the native Claude JSONL and the node/Hub
+service journals. Times below are UTC on 2026-10-13.
+
+- At 23:28:40 the first claim completed in 52 ms and the browser painted the
+  initial grid within 167 ms. The first recorded input at 23:28:44.093
+  (event 513, 27 bytes) had no corresponding node write receipt. This is the
+  first observable input-path divergence, before the report dialog existed.
+- Across the first four connections the browser recorded 42 inputs. Each
+  received its initial screen but timed out its first bidirectional heartbeat
+  after 10 seconds (events 533, 625, 697 and 792). None had an input-write
+  receipt. Replacement claims completed in 49–72 ms, and ordinary HTTP/SSE
+  traffic continued. The browser reported zero buffered WebSocket bytes at
+  timeout; this is not a remote-delivery acknowledgement.
+- The fifth connection opened at 23:29:27.254. Its first input receipt was
+  two zero-byte resize frames (event 820), not the user's text. The terminal
+  capture still showed an unsubmitted draft; the native history checkpoint
+  stayed at 9277741 throughout the report window. PTY keystrokes do not use a
+  SEND delivery ledger; the deployment had no `delivery/` directory, and its
+  current conversation ledger and running lifecycle record were inspected.
+- The subsequent daily audit shows new input on the fifth connection at
+  23:29:37.784 and a node write window at 23:29:38.810 (39 bytes).
+  At 23:29:51.028 native JSONL recorded a new user message. The same managed
+  instance remained running; this recovery preceded this investigation and
+  involved no repair or restart by the investigator.
+
+The evidence identifies the browser-input → node-write gap and failed
+bidirectional transport checks. It does not identify whether browser/network,
+HTTPS proxy, Hub forwarding or node receive processing caused the gap.
+The journals contain slow successful HTTP requests but no event establishing
+a WebSocket failure cause. Header-button errors after opening the report are
+occlusion by that dialog, not evidence that the terminal keyboard was blocked.
+No speculative runtime change, input replay or production-data edit was made.
+
+On 2026-10-14, `python3 tests/terminal_heartbeat_browser.py` passed in headless
+Chromium with private synthetic fixtures: separately stalled downstream/upstream
+sockets recovered, the host survived, and uncertain input was not replayed.
+`python3 tests/terminal_rtt_browser.py --binary target/debug/sessiondock` also
+passed: node and authenticated Hub paths each returned and painted all 85
+keys (5 warmup, 40 individual, 40 grouped). Both runs used existing debug
+binaries and the current frontend; they were not production-network tests.
+These checks exercise recovery and input delivery, not the cause of this
+intermittent production incident. The unresolved investigation remains in
+[TODO](../TODO.md).
