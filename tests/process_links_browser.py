@@ -156,10 +156,77 @@ def gpu_collector(root):
         listener.close()
 
 
+def standalone_resources(browser, binary, corpus, proc, with_agent, screenshots=None):
+    """Local identity and resources do not require a Hub authentication listener."""
+    forbidden = socket.socket(socket.AF_UNIX)
+    forbidden.bind(str(corpus.root / 'disabled.sock'))
+    forbidden.listen()
+    forbidden.setblocking(False)
+    cases = [('auto', corpus.root / 'absent.sock', False),
+             ('off', corpus.root / 'disabled.sock', False)]
+    if with_agent:
+        cases.append(('auto', corpus.root / 'gpu.sock', True))
+    try:
+        for mode, path, observed in cases:
+            environment = {'SESSIONDOCK_NODE_ID_FILE': str(corpus.root / 'ids/node-id'),
+                           'SESSIONDOCK_PROC_ROOT': str(proc),
+                           'SESSIONDOCK_RESOURCE_AGENT_MODE': mode,
+                           'SESSIONDOCK_RESOURCE_AGENT_SOCKET': str(path)}
+            with isolated_server(corpus, binary, state_dir=corpus.root / 'state',
+                                 extra_env=environment) as (base, opener):
+                context = browser.new_context(service_workers='block')
+                try:
+                    page = context.new_page()
+                    page.goto(base, wait_until='networkidle')
+                    uid = corpus.uid('parent')
+                    page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    meta = get_json(opener, base, '/api/meta')
+                    assert meta['node_id'] == 'a' * 32 and meta['protocol'] == 0, meta
+                    report = get_json(opener, base, '/api/process-links')
+                    assert report['node_id'] == 'a' * 32
+                    assert any(b['process']['pid'] == 100 and b['session']['sid'] == 'parent'
+                               for b in report['bindings']), report
+                    page.get_by_role('button', name='列表资源', exact=True).click()
+                    page.locator('#side .item.sel .item-resources').click()
+                    page.locator('.session-resources .sr-node').first.wait_for()
+                    page.get_by_role('button', name='仅当前会话', exact=True).click()
+                    page.get_by_role('button', name='刷新资源').click()
+                    resources = get_json(opener, base, '/api/resources')
+                    if observed:
+                        assert resources['availability'] == 'observed', resources
+                        expect(page.locator('.sr-node .sr-status')).to_have_text('在线')
+                    else:
+                        assert resources['availability'] == 'unavailable' and resources['samples'] is None
+                        expect(page.locator('.sr-node .sr-status')).to_have_text('采集端不支持')
+                        for value in page.locator('.sr-totals dd').all():
+                            expect(value).to_have_text('—')
+                    assert context.request.post(base + '/api/process-links',
+                        data={'boot_id': 'forged', 'links': []}).status == 403
+                    assert context.request.post(base + '/api/resources/probe',
+                        data={'enabled': True}).status == 403
+                    if screenshots:
+                        screenshots.mkdir(parents=True, exist_ok=True)
+                        page.screenshot(path=str(screenshots / f'collector-{mode}-{observed}.png'), full_page=True)
+                    page.get_by_role('button', name='关闭资源面板').click()
+                finally:
+                    context.close()
+            print(f'PASS standalone identity; collector {mode}, observed={observed}; browser resources and auth gates', flush=True)
+        try:
+            connection, _ = forbidden.accept()
+        except BlockingIOError:
+            pass
+        else:
+            connection.close()
+            raise AssertionError('collector off must make no socket requests')
+    finally:
+        forbidden.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
     parser.add_argument("--with-agent", action="store_true")
+    parser.add_argument('--screenshots', type=Path)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='process-links-') as temporary, sync_playwright() as pw, ExitStack() as agents:
         root = Path(temporary)
@@ -242,6 +309,7 @@ def main():
         hub = None
         browser = pw.chromium.launch(headless=True)
         try:
+            standalone_resources(browser, args.binary, corpora[0], procs[0], args.with_agent, args.screenshots)
             for restarted in (False, True):
                 with ExitStack() as stack:
                     local = []

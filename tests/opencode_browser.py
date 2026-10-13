@@ -166,7 +166,7 @@ def main():
                 extra_env={'SESSIONDOCK_OPENCODE_DB': str(db),
                            'SESSIONDOCK_OPENCODE_ROOT': str(root / 'mirror'),
                            'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
-                           'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work')}) as (base, _), sync_playwright() as pw:
+                           'SESSIONDOCK_BUG_REPORT_WORKER': 'true', 'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work')}) as (base, _), sync_playwright() as pw:
             options = {'headless': True}
             if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
                 options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']

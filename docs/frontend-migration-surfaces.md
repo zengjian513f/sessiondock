@@ -517,13 +517,13 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 ### 文件入口 `file.html` 与 `files.html`
 
-两页标记相同，都加载 [`web/file.js`](../web/file.js)。它们不浏览目录、不预览，只解析后跳到 FileDock。
+两页标记相同，都加载 [`web/file.js`](../web/file.js)。配置 `SESSIONDOCK_FILEDOCK_URL` 时解析后跳到 FileDock；默认使用会话文件 API 预览单文件、下载或复制路径，目录显示未配置提示。
 
-- 有 `node` 和绝对 `path`：直接 `location.replace` 到同源固定的 `/files/?node&path`，并带上原来的 hash。
+- 有 `node` 和绝对 `path`：已配置时 `location.replace` 到 `SESSIONDOCK_FILEDOCK_URL` 加 `?node&path`，并带上原来的 hash。
 - 只有会话 `uid` 和 `ref`：先 `POST api/session/resolve-files`。相对名先对当前 cwd，不行再看记录里的路径和这些目录的直接子项。多个不同目标保持不确定。
 - 失败停在本页：标题「无法打开文件」，正文是实际错误，按钮「刷新」。未登录时：「请登录后刷新页面」。
 
-目录浏览、预览、下载、上传属于 FileDock，不在本仓库页面里。对话侧仍负责识别引用、行内媒体、附件上传和控制台粘贴。
+目录浏览与文件管理属于可选 FileDock；单文件预览、下载仍在本仓库。对话侧仍负责识别引用、行内媒体、附件上传和控制台粘贴。
 
 [`tests/files_browser.py`](../tests/files_browser.py) 覆盖对话链接、node/path、解析失败和直接目录入口，含桌面和手机。FileDock 自己的套件不在本文范围。
 

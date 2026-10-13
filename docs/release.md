@@ -17,7 +17,7 @@ The archive holds one top-level directory with:
 | --- | --- |
 | `bin/` | `sessiondock`, `sessiondock-hub`, `sessiondock-transfer`, `ptyhost` |
 | `web/` | `web/` as committed (served by `SESSIONDOCK_WEB_DIR`) |
-| `README.md` | the repository README |
+| `README.md` | prebuilt-binary startup and configuration guide |
 | `manifest.json` | commit, version, target triple, `rustc -V`, `source_date_epoch`, binaries |
 | `web/release-version.txt`, `bin/<name>.version` | Source commit date (`source_date_epoch`); no content checksums |
 
@@ -97,3 +97,13 @@ and manual dispatch:
 CI compiles on the hosted Windows and macOS runners; it does not replace the
 real-machine checks on vela and cetus, nor the full browser sweep
 ([validation](validation.md)), which stays on the development machines.
+
+## Separate optional collector package
+
+`python3 deploy/release.py --component resource-agent --ref HEAD` builds only the
+Linux collector and packages its binary, service templates and installation guide.
+The default core package does not build the collector. Packaging requires Python
+3.11 or newer. Package README files describe the prebuilt binaries, with offline
+public integration/collector guides; they do not copy the private repository README.
+See [public snapshots](public-release.md) for a history-free source export and
+[resource-agent](resource-agent.md) for the optional BPF build dependencies.

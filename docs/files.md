@@ -1,9 +1,6 @@
 # Files and FileDock
 
-Directory browsing, standalone file previews, downloads, uploads and file-manager
-operations are provided by the independent **FileDock** service. Its entry points
-use `?node=ID&path=ABS` at the file-service base `/files/` on the same origin:
-`/files/?node=ID&path=ABS`. Both files and directories use this entry. A file is
+Directory browsing and file-manager operations are optionally provided by the independent **FileDock** service. Set `SESSIONDOCK_FILEDOCK_URL` on the node or Hub serving the page; unset disables the external integration. Its entry points use `?node=ID&path=ABS` at that configured base. Both files and directories use this entry. A file is
 identified by its machine and absolute path; URL-encode query values.
 
 SessionDock's `file.html` and `files.html` are entry adapters. They derive the node
@@ -20,11 +17,17 @@ and immediate children of recorded directories. Multiple distinct fallback
 targets remain ambiguous and require an explicit path; directories are not
 searched recursively. Filesystem permission and access errors are preserved.
 
-The file-service base is fixed at `/files/` on the current origin; there is no
-configuration, environment variable or capability field that changes it (the
-adapter pages carry no capability declaration). The authenticated public proxy
-routes `/sessiondock/` and `/files/` independently.
-FileDock has its own binary, private state, node tokens and deployment lifecycle.
+`capabilities.file_browser` and `filedock_url` advertise the configured integration
+in `/api/meta` and the HTML capability declaration, including both adapter pages.
+Prefer a same-origin authenticated reverse proxy. FileDock has its own binary,
+private state, node tokens and deployment lifecycle. Its node mapping must use
+the same stable identity as SessionDock; standalone nodes may configure only
+`SESSIONDOCK_NODE_ID_FILE`, without a Hub listener.
+
+DELTA: without FileDock, conversation file links retain built-in text/media
+previews and downloads via the existing single-file API. Direct path links and
+directories explain that directory browsing is not configured and offer copying
+the resolved path. They never navigate to an assumed external service.
 
 Conversation-specific responsibilities remain here:
 

@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "include": [
+    "Cargo.toml", "Cargo.lock", ".gitignore",
+    "crates/sessiondock/", "crates/process-links/", "crates/resource-agent/",
+    "crates/ptyhost/", "crates/ptyhost-client/", "crates/ptyhost-screen/",
+    "web/", "tests/", "deploy/release.py", "deploy/resource-agent.service",
+    "deploy/sys-fs-resctrl.mount", "docs/resource-agent.md"
+  ],
+  "optional": ["LICENSE", "LICENSE.md", "LICENSE.txt"],
+  "exclude": ["tests/env_reference.py"],
+  "overlays": {
+    "public/README.md": "README.md",
+    "public/AGENTS.md": "AGENTS.md",
+    "public/NOTICE.md": "NOTICE.md",
+    "public/workflows/ci.yml": ".github/workflows/ci.yml",
+    "public/docs/README.md": "docs/README.md",
+    "public/docs/install.md": "docs/install.md",
+    "public/docs/integrations.md": "docs/integrations.md",
+    "public/docs/validation.md": "docs/validation.md",
+    "public/docs/release.md": "docs/release.md",
+    "public/docs/conversation.md": "docs/conversation.md"
+  }
+}

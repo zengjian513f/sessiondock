@@ -468,7 +468,7 @@ def main():
             'SESSIONDOCK_AGY_HOME': str(root / 'home/.gemini/antigravity-cli'),
             'SESSIONDOCK_AGY_ROOT': str(root / 'mirror'),
             'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
-            'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work'),
+            'SESSIONDOCK_BUG_REPORT_WORKER': 'true', 'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work'),
             'SESSIONDOCK_PROC_ROOT': str(root / 'proc')}
         try:
             with patch.dict(os.environ, {**env, 'PLAYWRIGHT_BROWSERS_PATH': browser_cache,

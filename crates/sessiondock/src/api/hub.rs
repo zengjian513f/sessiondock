@@ -148,6 +148,7 @@ pub struct HubState {
     pub registry: Arc<Registry>,
     pub client: Arc<Client>,
     pub assets: Arc<Assets>,
+    pub capabilities: Arc<Value>,
     pub page_nodes: Arc<PageNodes>,
     pub audit: Option<Arc<HubAudit>>,
     pub shutdown: CancellationToken,
@@ -199,10 +200,13 @@ pub struct HubApp {
 pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Result<HubApp> {
     let registry = Arc::new(open_registry(config)?);
     let client = Arc::new(Client::default());
+    let mut capabilities = hub_capabilities();
+    config.integrations.apply(&mut capabilities);
+    let capabilities = Arc::new(capabilities);
     let assets = Arc::new(Assets::load_mode(
         &config.web_dir,
         HUB_HOSTNAME,
-        &hub_capabilities(),
+        &capabilities,
         Mode::Hub,
     )?);
     let audit = config
@@ -224,6 +228,7 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         registry: registry.clone(),
         client: client.clone(),
         assets,
+        capabilities,
         page_nodes: PageNodes::new(),
         audit,
         shutdown,
@@ -473,7 +478,7 @@ async fn handle(
     if method == Method::GET && path == "/api/meta" {
         return ok(
             &json!({"mode": "hub", "protocol": PROTOCOL, "build": state.assets.build,
-            "hostname": HUB_HOSTNAME, "capabilities": hub_capabilities()}),
+            "hostname": HUB_HOSTNAME, "capabilities": &*state.capabilities}),
         );
     }
     if method == Method::GET && path == "/api/resources/summary" {

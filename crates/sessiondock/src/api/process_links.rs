@@ -38,9 +38,9 @@ pub async fn session_resources(
     let inclusive = crate::hub::resources::inclusive(query.scope.as_deref())
         .map_err(|message| ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", message))?;
     let node_id = state
-        .node
-        .as_ref()
-        .map(|node| node.node_id.clone())
+        .local_node_id
+        .as_deref()
+        .map(str::to_owned)
         .unwrap_or_default();
     let document = state
         .reader
@@ -98,11 +98,7 @@ pub async fn session_probe(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     crate::hub::resources::inclusive(body.scope.as_deref())
         .map_err(|message| ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", message))?;
-    let node_id = state
-        .node
-        .as_ref()
-        .map(|n| n.node_id.as_str())
-        .unwrap_or_default();
+    let node_id = state.local_node_id.as_deref().unwrap_or_default();
     let document = state
         .reader
         .run_wait(&state.shutdown, |store| store.list_recent())

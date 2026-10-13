@@ -80,7 +80,7 @@ def main():
                         'SESSIONDOCK_CODEX_ROOT': str(home / 'sessions'),
                         'SESSIONDOCK_CODEX_INDEX': str(home / 'session_index.jsonl'),
                         'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
-                        'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work')},
+                        'SESSIONDOCK_BUG_REPORT_WORKER': 'true', 'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work')},
                     file_roots=(root / 'work',), file_write_roots=(root / 'work',)) as (base, _), sync_playwright() as pw:
                 options = {'headless': True}
                 if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):

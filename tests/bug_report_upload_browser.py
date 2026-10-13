@@ -30,7 +30,7 @@ def run(browser, root, config):
         'SESSIONDOCK_NODE_ID_FILE': str(root / 'node-id'),
         'SESSIONDOCK_NODE_PEERS': '127.0.0.0/8',
         'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
-        'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work'),
+        'SESSIONDOCK_BUG_REPORT_WORKER': 'true', 'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work'),
     }
     with isolated_server(Corpus(root), REPO / 'target/release/sessiondock',
             state_dir=root / 'state', host_dir=root / 'host', lifecycle_dir=root / 'ledger',

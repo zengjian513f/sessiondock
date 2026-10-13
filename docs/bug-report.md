@@ -1,8 +1,7 @@
 # Bug reports and their CLI workers (M7)
 
 `POST /api/bug-report` captures a self-contained diagnostic bundle
-and starts a managed
-CLI instance that investigates it. The Rust implementation lives in
+and optionally starts a managed CLI instance that investigates it. The Rust implementation lives in
 `bug_report/mod.rs` (bundle), `bug_report/worker.rs` (launch + prompt
 injection), `audit/query.rs` (server-side audit events and the time-window
 query), `api/bug_report.rs` (route, validation, the `uid=bug-report` upload)
@@ -15,6 +14,7 @@ dependency is configured.
 | Setting | Meaning |
 | --- | --- |
 | `SESSIONDOCK_BUG_REPORT_DIR` | Bundle root. Created as needed and chmodded to `0700` on Unix. |
+| `SESSIONDOCK_BUG_REPORT_WORKER` | Default `false`: save diagnostics only. Set `true` to start the configured CLI after saving. |
 | `SESSIONDOCK_BUG_REPORT_REPO` | The repository the worker investigates: the worker's cwd and the parent of `sessiondock_attachments/`. Ordinary filesystem paths are accepted. |
 
 The two variables are all-or-nothing (`--check-config` prints
@@ -362,3 +362,22 @@ window's dates line by line (≤ 100 000 rows).
   home and repository, confirms the exact native task and assistant reply,
   native name after the first response, actual Luna low, and unchanged everyday
   configuration. The synthetic repository instructs the model to reply only OK.
+
+## Optional worker and portable instructions
+
+DELTA: a configured report service saves a diagnostic bundle by default, returning
+`201 {ok, report_id, path, worker: null}` with manifest status `captured`. It does
+not require an installed CLI for the chosen source and does not start a process.
+The current report composer still uses the configured conversation, attachment,
+audit and lifecycle services listed above; capture-only does not remove those
+storage/service prerequisites. With `SESSIONDOCK_BUG_REPORT_WORKER=true`, the
+existing launch flow and `202` worker response remain. Report buttons are hidden
+when the report capability is absent; the source/model controls are hidden when
+only capture is configured. Hub tracks these capabilities per node.
+
+Worker prompts follow the target repository's AGENTS.md and user authorization.
+They contain no built-in fleet deploy command or implicit publishing permission.
+Validation: [optional_report_browser.py](../tests/optional_report_browser.py)
+checks disabled controls and capture-only submissions in desktop/mobile layouts;
+[send_codex_attachments_browser.py](../tests/send_codex_attachments_browser.py)
+checks explicit worker launch, complete prompt injection and attachments.

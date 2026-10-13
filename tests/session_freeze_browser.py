@@ -194,7 +194,7 @@ def main():
             with isolated_server(corpus, BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
                     launcher_config=config, audit_dir=root / 'audit', extra_env={
                         'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
-                        'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work'),
+                        'SESSIONDOCK_BUG_REPORT_WORKER': 'true', 'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work'),
                         'SESSIONDOCK_NODE_BIND': f'127.0.0.1:{node.port}',
                         'SESSIONDOCK_NODE_TOKEN_FILE': str(token_file), 'SESSIONDOCK_NODE_ID_FILE': str(id_file),
                         'SESSIONDOCK_NODE_PEERS': '127.0.0.0/8'}) as (base, opener):

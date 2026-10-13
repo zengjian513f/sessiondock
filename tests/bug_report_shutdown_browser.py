@@ -39,7 +39,7 @@ os.execv({git!r}, [{git!r}, *sys.argv[1:]])
 ''')
     shim.chmod(0o700)
     env = {'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
-           'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work')}
+           'SESSIONDOCK_BUG_REPORT_WORKER': 'true', 'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work')}
     previous_path = os.environ['PATH']
     os.environ['PATH'] = str(root / 'bin') + os.pathsep + previous_path
     result = body = None

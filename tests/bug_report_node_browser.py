@@ -832,6 +832,24 @@ def main():
                     page.evaluate("loadTermList()")
                     page.wait_for_function(('Nodes.capabilities["' + NID["c"] + '"]?.enabled === true'))
 
+                    # A Hub can mix worker-enabled, capture-only and disabled nodes.
+                    nodes[0].set(bug_report=False)
+                    nodes[1].set(bug_report_worker=False)
+                    page.evaluate("loadTermList()")
+                    page.wait_for_function('Nodes.capabilities["' + NID["a"] + '"]?.bug_report === false')
+                    open_report(page)
+                    page.select_option('#bug-report-node', NID['b'])
+                    expect(page.locator('#bug-report-source')).to_be_hidden()
+                    expect(page.locator('#bug-report-go')).to_have_text('保存诊断')
+                    # Playwright's disabled state retargets an option to its select;
+                    # inspect the native option and exercise keyboard selection instead.
+                    expect(page.locator('#bug-report-node option[value="' + NID['a'] + '"]')).to_have_js_property('disabled', True)
+                    page.locator('#bug-report-node').press('Home')
+                    expect(page.locator('#bug-report-node')).to_have_value(NID['b'])
+                    page.select_option('#bug-report-node', NID['c'])
+                    expect(page.locator('#bug-report-source')).to_be_visible()
+                    page.locator("#bug-report-dialog .modal-close").click()
+
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
                     page.evaluate("markStaleBuild('test-build')")

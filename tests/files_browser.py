@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Conversation file references open the independent FileDock page."""
-import argparse,json,os,tempfile
+import argparse,base64,json,os,tempfile
 from pathlib import Path
 from urllib.parse import urlsplit,parse_qs,urlencode
 from playwright.sync_api import expect,sync_playwright
 from history_fixtures import BINARY,build_corpus,claude_row,codex_row,codex_message,isolated_server
+from hub_fixtures import Hub
 NODE='a'*32
 
 def main():
- parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--binary',type=Path,default=BINARY);args=parser.parse_args()
+ parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--binary',type=Path,default=BINARY);parser.add_argument('--screenshots',type=Path);args=parser.parse_args()
  with tempfile.TemporaryDirectory(prefix='sessiondock-filedock-') as t:
   corpus=build_corpus(Path(t));directory=corpus.root/'files';directory.mkdir();file=directory/'文档 with spaces.md';file.write_text('# linked file')
-  sid='claude-filedock';corpus.put(sid,'claude',[claude_row(sid,'user','u0',None,f'Open `{file}` and `missing.txt`.',cwd=str(directory))],[])
+  image=directory/'preview.png';image.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=='))
+  sid='claude-filedock';corpus.put(sid,'claude',[claude_row(sid,'user','u0',None,f'Open `{file}`, `{image}` and `missing.txt`.',cwd=str(directory))],[])
   # A prior mention of another project's same-named file must not override cwd.
   current=directory/'SCREENING.md';current.write_text('# current project')
   other=directory/'other';other.mkdir();(other/current.name).write_text('# other project')
@@ -52,7 +54,7 @@ def main():
   text+='普通文件 report.md 和目录 ./docs/ 保持原样。\n\n```text\nhttps://links.example.test/literal\n```'
   corpus.put(web,'claude',[claude_row(web,'assistant','a0',None,text,cwd=str(directory))],[])
   before={p:p.read_bytes() for p in corpus.paths.values()}
-  with isolated_server(corpus,args.binary,file_roots=(directory,)) as (base,_),sync_playwright() as pw:
+  with isolated_server(corpus,args.binary,file_roots=(directory,),extra_env={'SESSIONDOCK_FILEDOCK_URL':'/file-manager/'}) as (base,_),sync_playwright() as pw:
    browser=pw.chromium.launch(**({'executable_path':os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') else {}))
    for width in [1280,390]:
     context=browser.new_context(viewport={'width':width,'height':900},service_workers='block');errors=[];destinations=[]
@@ -62,7 +64,7 @@ def main():
     context.route('**/api/meta',meta)
     def destination(route):
      destinations.append(parse_qs(urlsplit(route.request.url).query));route.fulfill(content_type='text/html',body='<h1>FileDock destination</h1>')
-    context.route('**/files/?*',destination)
+    context.route('**/file-manager/?*',destination)
     context.route('https://**.example.test/**',lambda route:route.fulfill(content_type='text/html',body='<h1>Web destination</h1>'))
     checked_windows=set()
     def windows_resolution(route):
@@ -142,6 +144,61 @@ def main():
     print(f'PASS web links: bold/plain/italic/parenthesized/www/query/fragment/Markdown/code-span clicks; width={width}',flush=True)
     assert not errors,errors;context.close()
    browser.close()
+  with isolated_server(corpus,args.binary,file_roots=(directory,)) as (base,_),sync_playwright() as pw:
+   browser=pw.chromium.launch(headless=True)
+   for width,theme in [(1280,'light'),(1280,'dark'),(390,'light'),(390,'dark')]:
+    context=browser.new_context(viewport={'width':width,'height':900},color_scheme=theme,service_workers='block')
+    requests=[]
+    context.on('request',lambda request:requests.append(request.url))
+    context.add_init_script("window.copiedPaths=[]; Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>window.copiedPaths.push(text)}})")
+    page=context.new_page();page.goto(base);page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]').click()
+    with context.expect_page() as opened:page.locator(f'#msgs a[data-file-ref={json.dumps(str(file),ensure_ascii=False)}]').click()
+    preview=opened.value;expect(preview.locator('#file-content pre')).to_have_text('# linked file')
+    expect(preview.locator('#file-download')).to_be_visible()
+    preview.locator('#file-copy').click();preview.wait_for_function('path=>window.copiedPaths.at(-1)===path',arg=str(file))
+    with preview.expect_download() as downloaded:preview.locator('#file-download').click()
+    assert Path(downloaded.value.path()).read_text()=='# linked file'
+    if args.screenshots:
+     args.screenshots.mkdir(parents=True,exist_ok=True);preview.screenshot(path=str(args.screenshots/f'file-{width}-{theme}.png'))
+    media=context.new_page();media.goto(base+'/file.html?'+urlencode({'uid':corpus.uid(sid),'ref':str(image)}))
+    expect(media.locator('iframe[title="文件预览"]')).to_be_visible()
+    expect(media.frame_locator('iframe').locator('img')).to_be_visible()
+    expect(media.locator('#file-download')).to_be_visible()
+    direct=context.new_page();direct.goto(base+'/files.html?'+urlencode({'path':str(directory)}))
+    expect(direct.locator('#file-title')).to_have_text('文件浏览器未启用')
+    direct.locator('#file-copy').click();direct.wait_for_function('path=>window.copiedPaths.at(-1)===path',arg=str(directory))
+    expect(direct.locator('#file-retry')).to_be_hidden()
+    if args.screenshots:direct.screenshot(path=str(args.screenshots/f'directory-{width}-{theme}.png'))
+    # A granted directory reference gets the same useful fallback, without a node identity.
+    direct.goto(base+'/file.html?'+urlencode({'uid':corpus.uid(regression),'ref':'./other'}))
+    expect(direct.locator('#file-title')).to_have_text('文件浏览器未启用')
+    expect(direct.locator('#file-content')).to_contain_text(str(other))
+    assert not any('/file-manager/' in url or '/files/?' in url for url in requests if 'file.html' not in url),requests
+    assert direct.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    context.close()
+   browser.close()
+  print('PASS optional FileDock: disabled standalone text/media preview/download/copy; old directory link and granted directory fallback; custom configured base; desktop/mobile light/dark',flush=True)
+  with sync_playwright() as pw:
+   browser=pw.chromium.launch(headless=True)
+   for configured in [False,True]:
+    hubroot=Path(t)/('hub-enabled' if configured else 'hub-disabled');hubroot.mkdir()
+    hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[])
+    if configured:hub.env['SESSIONDOCK_FILEDOCK_URL']='/hub-file-manager/'
+    try:
+     hub.start();context=browser.new_context(service_workers='block')
+     context.route('**/hub-file-manager/?*',lambda route:route.fulfill(content_type='text/html',body='<h1>Hub FileDock destination</h1>'))
+     page=context.new_page();base=f'http://127.0.0.1:{hub.port}'
+     page.goto(base+'/files.html?'+urlencode({'node':NODE,'path':str(directory)}))
+     if configured:
+      expect(page.locator('h1')).to_have_text('Hub FileDock destination')
+      assert parse_qs(urlsplit(page.url).query)=={'node':[NODE],'path':[str(directory)]}
+     else:
+      expect(page.locator('#file-title')).to_have_text('文件浏览器未启用')
+      expect(page.locator('#file-copy')).to_be_visible()
+     context.close()
+    finally:hub.stop()
+   browser.close()
+  print('PASS Hub FileDock: disabled directory fallback and configured custom-base navigation',flush=True)
   assert all(p.read_bytes()==v for p,v in before.items())
  print('PASS SessionDock file-reference click, Windows drive recognition/backend grants/routing/copy/drive roots, exact node/Unicode path, cwd precedence, explicit sibling path, unique fallback, ambiguous/missing errors, independent directory entry; desktop/mobile')
 if __name__=='__main__':main()

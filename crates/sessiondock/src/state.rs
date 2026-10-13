@@ -67,8 +67,11 @@ pub struct AppState {
     /// its mirrored directory under this root at once.
     pub opencode_root: Option<std::path::PathBuf>,
     /// Node identity behind the second listener; `None` keeps
-    /// `/api/meta` at `protocol: 0, node_id: null` and no hub can register us.
+    /// `/api/meta` at `protocol: 0` and no hub can register us.
     pub node: Option<Arc<crate::api::node_auth::NodeIdentity>>,
+    pub local_node_id: Option<Arc<str>>,
+    pub resource_agent_enabled: bool,
+    pub bug_report_worker: bool,
     /// Bug-report bundles and workers; `None` keeps
     /// `POST /api/bug-report` 501 and `capabilities.bug_report` false.
     pub bug_report: Option<Arc<crate::bug_report::worker::WorkerContext>>,

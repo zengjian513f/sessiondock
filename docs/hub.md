@@ -463,3 +463,10 @@ JSON。`POST /api/sessions/delete`、`/api/sessions/fork-visibility` 走 `delete
 数字并附 `error`。`SESSIONDOCK_CLEANUP_INTERVAL_SECS` 可覆盖默认秒数（正整数，
 其他值使用默认值），浏览器测试用私有服务的短周期覆盖后台更新。
 弹窗实时检查及颜色规则见[前端清扫约定](frontend-migration-surfaces.md#清扫过期活跃会话)。
+
+### Standalone local identity
+
+`SESSIONDOCK_NODE_ID_FILE` can be configured alone for a local resource collector
+or optional browser integration. This reports a stable `node_id` with `protocol: 0`
+and opens no Hub listener. If any listener setting (bind, token or peers) is set,
+the full authenticated four-setting configuration remains required.

@@ -100,10 +100,10 @@ def main():
                 def user_count(text):
                     return page.locator('#msgs .msg[data-role=user]:not(.queued-send)').filter(has_text=text).count()
 
-                append('claude我已经卸载。cygnus上有', 0)
+                append('claude我已经卸载。example-node上有', 0)
                 page.wait_for_function(
                     "text => [...document.querySelectorAll('#msgs .msg[data-role=user]:not(.queued-send)')].some(n => n.textContent.includes(text))",
-                    arg='claude我已经卸载。cygnus上有', timeout=15000)
+                    arg='claude我已经卸载。example-node上有', timeout=15000)
                 stamps = page.evaluate("() => (cache.get(S.sel)?.msgs || []).filter(m => m.role === 'user').map(m => m.ts)")
                 assert stamps == [None], stamps
 
@@ -133,12 +133,12 @@ def main():
                 expect(page.locator('#queued-sends')).to_have_count(0)
                 expect(page.locator('#csend')).to_have_attribute('aria-busy', 'false')
 
-                send('claude我已经卸载。cygnus上有')
-                assert user_count('claude我已经卸载。cygnus上有') == 1
+                send('claude我已经卸载。example-node上有')
+                assert user_count('claude我已经卸载。example-node上有') == 1
                 expect(page.locator('#queued-sends .msg.queued-send')).to_have_count(1)
-                append('claude我已经卸载。cygnus上有', 2)
+                append('claude我已经卸载。example-node上有', 2)
                 page.wait_for_function(
-                    "() => [...document.querySelectorAll('#msgs .msg[data-role=user]:not(.queued-send)')].filter(n => n.textContent.includes('claude我已经卸载。cygnus上有')).length === 2",
+                    "() => [...document.querySelectorAll('#msgs .msg[data-role=user]:not(.queued-send)')].filter(n => n.textContent.includes('claude我已经卸载。example-node上有')).length === 2",
                     timeout=15000)
                 expect(page.locator('#queued-sends')).to_have_count(0)
                 expect(page.locator('#csend')).to_have_attribute('aria-busy', 'false')

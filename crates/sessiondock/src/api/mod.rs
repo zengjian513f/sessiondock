@@ -378,12 +378,12 @@ pub fn node_router() -> Router<AppState> {
 }
 
 /// Node mode: `protocol: 1` and the persistent `node_id` once the
-/// identity is configured; `0`/`null` otherwise so no hub registers this
-/// service by accident.
+/// authenticated listener is configured. Standalone identity still reports
+/// protocol 0, so a local collector does not enable Hub registration.
 async fn meta(State(state): State<AppState>) -> Json<Value> {
     let (protocol, node_id) = match &state.node {
         Some(node) => (crate::hub::PROTOCOL, json!(node.node_id)),
-        None => (0, Value::Null),
+        None => (0, json!(state.local_node_id.as_deref())),
     };
     // No `migration` disclaimer — this is the replacement
     // service, and `capabilities.stage` says so.

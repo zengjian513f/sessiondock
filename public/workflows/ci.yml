@@ -1,0 +1,56 @@
+name: Public source validation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      collector:
+        description: Also compile the optional Linux resource collector
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build core without collector dependencies
+        run: |
+          cargo build --locked -p sessiondock -p ptyhost
+          cargo build --release --locked -p sessiondock -p ptyhost
+      - name: Check public documentation
+        run: |
+          python3 tests/check_docs_links.py
+          python3 tests/check_agents_md.py
+          python3 tests/brand_names_check.py
+      - name: Install browser
+        run: |
+          python3 -m pip install playwright
+          python3 -m playwright install --with-deps chromium
+      - name: Exercise local and Hub pages
+        run: python3 tests/run_validation.py --only legacy_browser,hub_browser,files_browser,session_research_browser --browser-jobs 2
+
+  collector:
+    if: github.event_name == 'workflow_dispatch' && inputs.collector
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+      - name: Install optional BPF compiler
+        run: sudo apt-get update && sudo apt-get install -y clang-18 linux-libc-dev
+      - name: Build optional collector
+        env:
+          BPF_CLANG: clang-18
+        run: cargo build --release --locked -p resource-agent

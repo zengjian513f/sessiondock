@@ -37,6 +37,8 @@ pub struct HubConfig {
     pub public_hosts: Vec<String>,
     /// SESSIONDOCK_HUB_TRANSFER_CONFIG: optional JSON data-path policy; unset uses Hub relay.
     pub transfer_policy: crate::transfer::transport::Policy,
+    /// Optional browser services, shared with node configuration.
+    pub integrations: crate::integrations::Integrations,
 }
 
 impl Default for HubConfig {
@@ -51,6 +53,7 @@ impl Default for HubConfig {
             audit_dir: None,
             public_hosts: Vec::new(),
             transfer_policy: Default::default(),
+            integrations: Default::default(),
         }
     }
 }
@@ -63,6 +66,7 @@ impl HubConfig {
     /// Read the environment and optional transfer policy; nothing is written.
     pub fn from_env() -> io::Result<Self> {
         let mut config = Self::default();
+        config.integrations = crate::integrations::Integrations::from_env()?;
         if let Some(bind) = env::var_os("SESSIONDOCK_HUB_BIND") {
             config.bind = bind
                 .to_str()

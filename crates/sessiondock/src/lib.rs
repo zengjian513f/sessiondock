@@ -21,6 +21,7 @@ pub mod files;
 pub mod fingerprint;
 pub mod hub;
 pub mod hub_config;
+pub mod integrations;
 pub(crate) mod json_compat;
 pub mod lifecycle;
 pub mod list_sync;
@@ -264,6 +265,7 @@ fn build_app(
         .map_err(io::Error::other)?
         .map(Arc::new);
     let mut capabilities = state::capabilities();
+    config.integrations.apply(&mut capabilities);
     capabilities["session_clone_local_codex"] = serde_json::json!(
         cfg!(target_os = "linux") && config.state_dir.is_some() && config.roots.codex.is_some()
     );
@@ -329,12 +331,21 @@ fn build_app(
             && metadata.is_some()
             && files_write.is_some()
     );
-    // Node identity: configuration proved the four settings come
-    // together; the id is minted here (O_EXCL 0600) on first start. `hub`
-    // stays false — a node is not a hub.
+    capabilities["bug_report_worker"] =
+        serde_json::json!(config.bug_report_worker && capabilities["bug_report"] == true);
+    let local_node_id = config
+        .node_id_file
+        .as_deref()
+        .map(hub::identity::node_id)
+        .transpose()?
+        .map(Arc::<str>::from);
+    // Only full listener configuration opens authenticated Hub transport.
     let node = match (&config.node_token_file, &config.node_id_file) {
-        (Some(token), Some(id)) => Some(Arc::new(api::node_auth::NodeIdentity {
-            node_id: hub::identity::node_id(id)?,
+        (Some(token), Some(_)) => Some(Arc::new(api::node_auth::NodeIdentity {
+            node_id: local_node_id
+                .as_deref()
+                .expect("configured identity")
+                .to_owned(),
             token: hub::NodeToken::load(token)?,
             peers: config.node_peers.clone(),
         })),
@@ -566,6 +577,9 @@ fn build_app(
         audit: audit.clone(),
         trash,
         node,
+        local_node_id,
+        resource_agent_enabled: config.resource_agent_enabled,
+        bug_report_worker: config.bug_report_worker,
         bug_report,
         prompts,
         polls: Arc::new(polls::PollCache::default()),

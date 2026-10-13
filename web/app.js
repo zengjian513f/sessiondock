@@ -6679,7 +6679,7 @@ function head(m, total) {
           <button class="session-menu-action" id="m-next" title="下一处" aria-label="下一处匹配">↓</button></div>` : ''}
         <div class="session-menu-diagnostics">
           ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-freeze" hidden></button>'}
-          <button class="session-menu-action" data-report-bug title="报告当前会话问题"
+          <button class="session-menu-action" data-report-bug ${bugReportsEnabled() ? '' : 'hidden'} title="报告当前会话问题"
             aria-label="报告当前会话问题">${uiIcon('bug')}</button>
         </div>
         ${SessionDockCapabilities.config.session_clone_local_codex === true ? `<button class="session-menu-action" id="a-clone-group" type="button" title="迁移会话树" aria-label="迁移会话树">${uiIcon('transfer')}</button>` : ''}

@@ -165,7 +165,7 @@ async fn report_inner(
     };
     // The source needs its one
     // configured CLI, the same the picker starts.
-    if ctx.lifecycle.entry_for(source, false).is_none() {
+    if state.bug_report_worker && ctx.lifecycle.entry_for(source, false).is_none() {
         return Ok(json_body(
             StatusCode::SERVICE_UNAVAILABLE,
             json!({"error": format!("本机找不到 {} 命令", source_name(source)), "code": "bug_report_source_unavailable"}),
@@ -410,45 +410,54 @@ async fn report_inner(
             });
         }
     };
-    let response_body = match worker::launch(
-        &ctx,
-        &report,
-        source,
-        cols,
-        rows,
-        conversations.clone(),
-        draft_uid,
-        body["draft_revision"].as_u64(),
-        (model, effort),
-    )
-    .await
-    {
-        Ok(worker) => (
-            StatusCode::ACCEPTED,
-            json!({"ok": true, "report_id": report.report_id, "path": report.path,
+    let response_body = if !state.bug_report_worker {
+        let _ = update_manifest(&report.path, json!({"status": "captured"}));
+        (
+            StatusCode::CREATED,
+            json!({"ok": true, "report_id": report.report_id, "path": report.path, "worker": null}),
+        )
+    } else {
+        match worker::launch(
+            &ctx,
+            &report,
+            source,
+            cols,
+            rows,
+            conversations.clone(),
+            draft_uid,
+            body["draft_revision"].as_u64(),
+            (model, effort),
+        )
+        .await
+        {
+            Ok(worker) => (
+                StatusCode::ACCEPTED,
+                json!({"ok": true, "report_id": report.report_id, "path": report.path,
                 "worker": worker}),
-        ),
-        Err(error) => {
-            let message = format!(
-                "诊断已保存，但 {} 会话启动失败：{error}",
-                source_label(source)
-            );
-            let _ = update_manifest(&report.path, json!({"status": "failed", "error": message}));
-            ctx.audit.record(crate::audit::query::ServerEvent {
-                event: "bug_report.worker_launch_failed",
-                category: "bug-report",
-                severity: "error",
-                uid: &uid,
-                trace_id: &report.report_id,
-                page_id: "",
-                build: "",
-                data: json!({"report_id": report.report_id, "error": error}),
-            });
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"error": message, "code": "bug_report_worker_failed",
+            ),
+            Err(error) => {
+                let message = format!(
+                    "诊断已保存，但 {} 会话启动失败：{error}",
+                    source_label(source)
+                );
+                let _ =
+                    update_manifest(&report.path, json!({"status": "failed", "error": message}));
+                ctx.audit.record(crate::audit::query::ServerEvent {
+                    event: "bug_report.worker_launch_failed",
+                    category: "bug-report",
+                    severity: "error",
+                    uid: &uid,
+                    trace_id: &report.report_id,
+                    page_id: "",
+                    build: "",
+                    data: json!({"report_id": report.report_id, "error": error}),
+                });
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    json!({"error": message, "code": "bug_report_worker_failed",
                     "report_id": report.report_id, "path": report.path}),
-            )
+                )
+            }
         }
     };
     conversations

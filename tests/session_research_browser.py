@@ -21,12 +21,12 @@ SID = '15badaae-951a-4fa2-b3fc-d6a7790c95ff'
 def synthetic():
     steps = [{'experiment_id':'E1', 'step_id':f'S{i:03}', 'name':f'步骤 {i} <img src=x onerror=alert(1)> · 分析长标题和跨机器样本',
               'status':'已完成', 'position':i} for i in range(1,8)]
-    exps = [dict(experiment_id=f'E{i}', project='m1.05pq', name=f'稳定性验证 {i} · Long experiment title / 中英文样本覆盖和参数敏感性分析',
+    exps = [dict(experiment_id=f'E{i}', project='synthetic-research', name=f'稳定性验证 {i} · Long experiment title / 中英文样本覆盖和参数敏感性分析',
                  status='研究中', available=True, direct=i<8, steps=steps if i==1 else []) for i in range(1,9)]
     exps[-1]['steps'] = [dict(experiment_id='E8', step_id='S001', name='漏登记实验仍能反查的步骤', status='计划', position=1)]
     def report(rid, available=True):
         return dict(report_id=rid, title=f'研报 {rid} · 中英文长标题 Research report on stability', available=available,
-                    project='m1.05pq', experiments=[{'experiment_id':e['experiment_id'],'project':e['project']} for e in exps])
+                    project='synthetic-research', experiments=[{'experiment_id':e['experiment_id'],'project':e['project']} for e in exps])
     return dict(status='ok', experiments=exps, reports=[report('R1'),report('R404',False)], related_reports=[report('R2')])
 
 
@@ -45,9 +45,15 @@ def main():
         (corpus.root/'ids').mkdir(); (corpus.root/'ids/node-id').write_text(node.nid+'\n')
         (corpus.root/'proc').mkdir()
         env=node_env(corpus.root,node.port,'127.0.0.0/8'); env['SESSIONDOCK_PROC_ROOT']=str(corpus.root/'proc')
+        env['SESSIONDOCK_LABDESK_URL']='/research-ledger/'
         local=stack.enter_context(isolated_server(corpus,args.binary,extra_env=env))[0]
-        hubroot=root/'hub';hubroot.mkdir();hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[node]);hub.start();stack.callback(hub.stop)
+        hubroot=root/'hub';hubroot.mkdir();hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[node]);hub.env['SESSIONDOCK_LABDESK_URL']='/research-ledger/';hub.start();stack.callback(hub.stop)
         base=f'http://127.0.0.1:{hub.port}'
+        plain=Corpus(root/'plain')
+        plain.put(SID,'codex',[codex_row('session_meta',{'id':SID,'cwd':'/synthetic/research'}),codex_message('user','Standalone session')],[])
+        standalone=stack.enter_context(isolated_server(plain,args.binary))[0]
+        defaultroot=root/'default-hub';defaultroot.mkdir()
+        default_hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),defaultroot,[node]);default_hub.start();stack.callback(default_hub.stop)
         client=None
         if args.labdesk_dir:
             sys.path.insert(0,str(args.labdesk_dir))
@@ -57,7 +63,7 @@ def main():
         browser=pw.chromium.launch(headless=True);stack.callback(browser.close)
         context=browser.new_context(viewport={'width':1280,'height':1000});stack.callback(context.close)
         page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-        mode={'value':'normal'}; requests=[]; held=[]
+        mode={'value':'normal'}; requests=[]; held=[]; expected_project={'value':'synthetic-research'}
         def route_research(route):
             query=parse_qs(urlsplit(route.request.url).query);requests.append(query)
             assert query['node']==[node.nid],query
@@ -74,13 +80,15 @@ def main():
             if mode['value']=='unmapped':params['node']='c'*32
             if client:
                 response=client.get('/api/session-research',params=params)
+                if response.status_code==200 and response.json().get('experiments'):
+                    expected_project['value']=response.json()['experiments'][0]['project']
                 route.fulfill(status=response.status_code,body=response.content,content_type='application/json');return
             status={'mismatch':'host_mismatch','unmapped':'node_unmapped'}.get(mode['value'])
             if not status and query['session_uid']!=['codex:'+SID]:status='ok' if query['session_uid']==['codex:empty'] else 'unregistered'
             route.fulfill(json=dict(status=status,experiments=[],reports=[],related_reports=[]) if status else synthetic())
-        context.route('**/labdesk/api/session-research?*',route_research)
-        context.route('**/labdesk/experiments?*',lambda r:r.fulfill(content_type='text/html',body='<h1>实验步骤目标页</h1>'))
-        context.route('**/labdesk/reports?*',lambda r:r.fulfill(content_type='text/html',body='<h1>研报目标页</h1>'))
+        context.route('**/research-ledger/api/session-research?*',route_research)
+        context.route('**/research-ledger/experiments?*',lambda r:r.fulfill(content_type='text/html',body='<h1>实验步骤目标页</h1>'))
+        context.route('**/research-ledger/reports?*',lambda r:r.fulfill(content_type='text/html',body='<h1>研报目标页</h1>'))
         def shot(name):
             if args.screenshots:
                 args.screenshots.mkdir(parents=True,exist_ok=True);page.screenshot(path=str(args.screenshots/(name+'.png')),full_page=True)
@@ -88,6 +96,15 @@ def main():
             uid=corpus.uid(sid) if url==local else scoped(node.nid,corpus.uid(sid))
             page.goto(url+'/session-info.html?'+urlencode({'uid':uid}))
             expect(page.locator('#info-summary')).to_be_visible()
+        for url,uid in [(standalone,plain.uid(SID)),(f'http://127.0.0.1:{default_hub.port}',scoped(node.nid,corpus.uid(SID)))]:
+            page.goto(url+'/session-info.html?'+urlencode({'uid':uid}))
+            expect(page.locator('#info-summary')).to_be_visible()
+            page.locator('#info-refresh').click();expect(page.locator('#info-refresh')).to_be_enabled()
+            expect(page.locator('#info-research')).to_be_hidden()
+            assert requests==[],requests
+            caps=page.evaluate('SessionDockCapabilities.config')
+            assert caps['research'] is False and caps['labdesk_url'] is None,caps
+        shot('disabled')
         page.goto(base);page.wait_for_function('S.sessions.length === 3')
         open_item_menu(page,scoped(node.nid,corpus.uid(SID)));page.locator('#item-menu [data-act="info"]').click()
         expect(page.locator('#research-count')).to_have_text('实验 8 · 步骤 8 · 研报 2')
@@ -107,9 +124,9 @@ def main():
         expect(page.locator('a').filter(has_text='漏登记实验仍能反查')).to_be_visible()
         page.locator('.si-research-related > summary').click()
         expect(page.locator('.si-research-related')).to_contain_text('不计入上方研报数量')
-        for title,params,path in [('E1 ·',{'eid':['E1'],'project':['m1.05pq']},'/labdesk/experiments'),
-                                  ('S001 · 步骤',{'eid':['E1'],'project':['m1.05pq'],'step':['S001']},'/labdesk/experiments'),
-                                  ('R1 ·',{'rid':['R1'],'project':['m1.05pq']},'/labdesk/reports')]:
+        for title,params,path in [('E1 ·',{'eid':['E1'],'project':[expected_project['value']]},'/research-ledger/experiments'),
+                                  ('S001 · 步骤',{'eid':['E1'],'project':[expected_project['value']],'step':['S001']},'/research-ledger/experiments'),
+                                  ('R1 ·',{'rid':['R1'],'project':[expected_project['value']]},'/research-ledger/reports')]:
             with page.expect_popup() as pop:page.locator('#research-content a').filter(has_text=title).first.click()
             popup=pop.value;popup.wait_for_load_state();assert urlsplit(popup.url).path==path;assert parse_qs(urlsplit(popup.url).query)==params;popup.close()
         shot('expanded')
@@ -135,7 +152,7 @@ def main():
         open_info('unregistered');expect(page.locator('#research-status')).to_contain_text('尚未登记');shot('unregistered')
         open_info(url=local);expect(page.locator('#research-count')).to_have_text('实验 8 · 步骤 8 · 研报 2')
         assert not errors,errors
-        print('PASS research browser: node + Hub, native identity, ledger query, missing experiment link, exact steps, direct/contextual reports, links, folds, wide/mobile themes, errors/retry and empty states',flush=True)
+        print('PASS research browser: standalone + Hub disabled without requests, custom URL node + Hub, native identity, ledger query, missing experiment link, exact steps, direct/contextual reports, links, folds, wide/mobile themes, errors/retry and empty states',flush=True)
 
 
 if __name__=='__main__':main()
