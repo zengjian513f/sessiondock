@@ -336,7 +336,7 @@ Hub 是**独立二进制** `sessiondock-hub`（同 crate，`src/bin/sessiondock-
 进程列表）、`remove <nid>`、`list`。`register` 调 `Registry::register`，注册时打节点的
 `/api/meta` 必须经过节点的**第二监听**（带 `X-SessionDock-Node-Token` 与 `X-SessionDock-Protocol: 1`）。
 
-**页面（`assets.rs` 的 `Mode::Hub`）**：同一份 legacy-web 快照，`__SESSIONDOCK_MODE__=hub`、
+**页面（`assets.rs` 的 `Mode::Hub`）**：同一份 web 快照，`__SESSIONDOCK_MODE__=hub`、
 hostname `SessionDock`、能力声明 `hub_capabilities()`（`backend:rust, hub:true,
 storage_namespace:"sessiondock.hub.", history_pages, media_continuation`——每机能力
 terminal/files/trash/live/audit 都不声明，页面按每台机器的 `/api/term/list.capabilities`
@@ -393,7 +393,7 @@ WebSocket 用裸 TCP 双向拷贝（101 后不解帧），HTTP 客户端手写�
   的两台机器（媒体 + SSE）、设置页停用/启用/拖动/键盘换序/改名，`sessiondock.hub.<path>.` 前缀。
 - **真实根只读验收**（不进 sweep）：起一台真实 Rust 节点（debug 二进制指向真实读根、第二监听在
   loopback、`SESSIONDOCK_NODE_PEERS=127.0.0.0/8`）+ 一台假节点，`sessiondock-hub register` 注册两台，
-  hub 在 loopback 端口起、`SESSIONDOCK_WEB_DIR=<worktree>/legacy-web`，Playwright 列出真实会话
+  hub 在 loopback 端口起、`SESSIONDOCK_WEB_DIR=<worktree>/web`，Playwright 列出真实会话
   （≈800 行，`<source>:<nid>~…` 命名空间）、经代理打开最新一条真实会话、搜索流出进度、设置页可用；
   结束核对读根 mtime/size 未变。实测 810 会话（809 真实节点）、冷列表 2.8 s、打开最新会话 1.1 s、
   搜索 0.3 s、无控制台错误。脚本用最便宜配置、只读、末尾自删（本 WP 未创建临时会话）。

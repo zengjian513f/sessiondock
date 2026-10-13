@@ -52,7 +52,7 @@ The same day the HTTP-only suites, oracle parity tools, benchmarks and probes
 followed, so that only browser suites remain. Cover new behavior by adding or
 extending a browser suite.
 
-The frontend `legacy-web/` is served as committed and needs no build.
+The frontend `web/` is served as committed and needs no build.
 `--web-dir` (or `SESSIONDOCK_TEST_WEB_DIR`) points the browser suites at another
 frontend directory.
 

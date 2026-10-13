@@ -88,7 +88,7 @@ def main():
     try:
         check_frontend(failures)
     except (AssertionError, OSError, ValueError, KeyError) as exc:
-        failures.append(f"built frontend {frontend_dir()}: {exc}; run npm --prefix web run build:migration or select SESSIONDOCK_TEST_WEB_DIR")
+        failures.append(f"frontend {frontend_dir()}: {exc}; check web/ or select SESSIONDOCK_TEST_WEB_DIR")
     if failures:
         print("FAIL brand names check:")
         for line in failures:

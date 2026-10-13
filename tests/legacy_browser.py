@@ -39,10 +39,12 @@ def main():
             port = reservation.getsockname()[1]
         base = f"http://127.0.0.1:{port}"
         environment.update({"SESSIONDOCK_BIND": f"127.0.0.1:{port}",
-            "SESSIONDOCK_WEB_DIR": str(frontend_dir()),
             "SESSIONDOCK_CLAUDE_ROOT": str(data / "claude"),
             "SESSIONDOCK_CODEX_ROOT": str(data / "codex"),
             "SESSIONDOCK_GROK_ROOT": str(data / "grok")})
+        # Exercise the node's default web/ path; preserve explicit artifact validation.
+        if frontend_dir() != (REPO / "web").resolve():
+            environment["SESSIONDOCK_WEB_DIR"] = str(frontend_dir())
         process = subprocess.Popen([str(executable)], cwd=REPO, env=environment,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:

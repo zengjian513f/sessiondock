@@ -7,7 +7,7 @@ flags after opening optional services. `assets.rs` injects the JSON as
 
 ## Meta tag, `storage_namespace`, fail-closed
 
-`legacy-web/capabilities.js` is the only parser. A page without the tag uses
+`web/capabilities.js` is the only parser. A page without the tag uses
 the permissive fallback (`declared:false`) while retaining the SessionDock
 storage namespace. A present tag must
 `JSON.parse` to a non-array object; otherwise it **fails closed**:
@@ -110,7 +110,7 @@ before publishing.
 | `sessions` | `true` | no `config`/`allows` gate | [architecture.md](architecture.md) |
 | `watch` | `true` | no `config`/`allows` gate (SSE is always on) | [architecture.md](architecture.md) |
 | `search` | `true` | else title-only filter, no NDJSON `/api/search` | [architecture.md](architecture.md) |
-| `list_delta` | `true` | incremental session-list snapshots (`legacy-web/list-sync.js`) | [liveness.md](liveness.md#apilive-with-the-scan) |
+| `list_delta` | `true` | incremental session-list snapshots (`web/list-sync.js`) | [liveness.md](liveness.md#apilive-with-the-scan) |
 | `unread_batch` | `true` | batched background unread summaries | [history-pages.md](history-pages.md) |
 | `ui_events` | `true` | lightweight list/preference change events (`/api/events`) | [liveness.md](liveness.md#apilive-with-the-scan) |
 | `live` | `true` where native process discovery is supported | when false the page skips `/api/live` (“运行状态未知”); when true `/api/live` merges managed observations with native process discovery | [liveness.md](liveness.md), [processes.md](processes.md) |

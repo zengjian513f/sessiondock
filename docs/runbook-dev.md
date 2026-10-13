@@ -30,7 +30,7 @@ private directory first when exercising writes.
 
 ```sh
 export SESSIONDOCK_BIND=127.0.0.1:8741
-export SESSIONDOCK_WEB_DIR=legacy-web
+export SESSIONDOCK_WEB_DIR=web
 # export the desired native read roots
 ./target/release/sessiondock
 ```
@@ -72,7 +72,7 @@ diagnostics. Their absence does not disable unrelated file or attachment APIs.
 
 ## 5. Open the page
 
-Open the loopback URL printed by SessionDock. `legacy-web/` is served directly.
+Open the loopback URL printed by SessionDock. `web/` is served directly.
 
 ## 6. Banner and capabilities
 

@@ -14,7 +14,7 @@ Read [glossary.md](glossary.md) first. It defines the shared terms.
 
 ## 3. Architecture and module map
 
-- [architecture.md](architecture.md) — Default path: `legacy-web/` → Axum → session views/search/SSE, with ptyhost, conversation, lifecycle, files and Hub services.
+- [architecture.md](architecture.md) — Default path: `web/` → Axum → session views/search/SSE, with ptyhost, conversation, lifecycle, files and Hub services.
 - [module-map.md](module-map.md) — Generated map of every crate `src` `.rs` file.
 
 ## 4. Contracts by area

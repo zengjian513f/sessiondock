@@ -1,7 +1,7 @@
 # SessionDock
 
 独立演进的 Rust 会话服务，包含本地节点、多机 Hub、受管终端、可靠发送、文件与
-媒体能力。前端位于 `legacy-web/`（`/sessiondock/`），是按提交原样发布的纯 JS 静态资源。
+媒体能力。前端位于 `web/`（`/sessiondock/`），是按提交原样发布的纯 JS 静态资源。
 
 未完成工作见 [TODO.md](TODO.md)；全部当前合同文档索引见
 [docs/README.md](docs/README.md)，路由清单见
@@ -20,7 +20,7 @@ crates/
   ptyhost-client/    独立异步 host 客户端，显式开发目录才接入传输
   ptyhost/           独立 Rust PTY host，保留旧协议并增加可选实例校验
   ptyhost-screen/    服务端终端画面模型
-legacy-web/          前端（纯 JS 静态资源，无构建步骤）
+web/                 前端（纯 JS 静态资源，无构建步骤）
 reference/
   legacy-web/        原前端的冻结快照，仅作迁移参考
 tests/               实际浏览器操作、协议验证和可选 Python fixture 差分
@@ -59,7 +59,7 @@ cargo run -p sessiondock --locked
 | 变量 | 默认值 | 含义 |
 | --- | --- | --- |
 | `SESSIONDOCK_BIND` | `127.0.0.1:8741` | 只允许 loopback，不允许公网/局域网绑定 |
-| `SESSIONDOCK_WEB_DIR` | `legacy-web` | 工作前端目录，相对服务启动目录 |
+| `SESSIONDOCK_WEB_DIR` | `web` | 工作前端目录，相对服务启动目录 |
 | `SESSIONDOCK_CLAUDE_ROOT` | 无 | `项目/*.jsonl`，及 `项目/会话/subagents/agent-*.{jsonl,meta.json}` |
 | `SESSIONDOCK_CODEX_ROOT` | 无 | 显式的 sessions 形状目录，递归 JSONL |
 | `SESSIONDOCK_CODEX_INDEX` | 所配置 Codex 根父目录的 `session_index.jsonl` | 只读名称索引；显式设置可覆盖默认位置 |
@@ -130,7 +130,7 @@ python3 tests/grok_metadata_browser.py
 - 整组操作见 [移动](docs/session-move.md) 与 [克隆](docs/session-clone.md)；
   独立 Linux 资源采集及会话计量见 [process-links](docs/process-links.md)。
 
-前端 `legacy-web/` 不经过构建，Rust 服务直接提供并注入能力声明；验证采用 Chromium 用户操作。
+前端 `web/` 不经过构建，Rust 服务直接提供并注入能力声明；验证采用 Chromium 用户操作。
 平台限制见对应合同。
 
 架构见 [docs/architecture.md](docs/architecture.md)，冻结前端参考见

@@ -62,7 +62,7 @@ SessionDock 节点和 Hub 成功即满足部署要求；其余节点记录待补
 
 ## 接入清单
 
-下面覆盖 OpenCode、Agy 实际改动及后续共用能力。Rust 路径除另有注明外相对 `crates/sessiondock/src/`。使用 `rg` 同时查 `opencode`、`agy`、`grok`、`Source::Grok` 和来源枚举/集合，检查服务端、生产前端 `legacy-web/`、测试和文档；只搜一种来源不能保证覆盖所有分支。不要修改冻结参考来代替生产实现。清单不是新增输入限制的依据，保持各现行合同的能力与拒绝边界。
+下面覆盖 OpenCode、Agy 实际改动及后续共用能力。Rust 路径除另有注明外相对 `crates/sessiondock/src/`。使用 `rg` 同时查 `opencode`、`agy`、`grok`、`Source::Grok` 和来源枚举/集合，检查服务端、生产前端 `web/`、测试和文档；只搜一种来源不能保证覆盖所有分支。不要修改冻结参考来代替生产实现。清单不是新增输入限制的依据，保持各现行合同的能力与拒绝边界。
 
 ### ptyhost 与 client
 
@@ -259,14 +259,14 @@ Agy 曾把 `SYSTEM_MESSAGE` 当工具结果，原样显示 `<SYSTEM_MESSAGE>`，
 
 ### 前端
 
-- `legacy-web/cli.js`：`<Cli>Cli` 类、注册表和来源识别。
+- `web/cli.js`：`<Cli>Cli` 类、注册表和来源识别。
   - 需要特殊按键行为时覆盖 `questionAnswerKeys`、`canAnswerQuestionForm`、`questionFormAnswerKeyGroups`、`questionCancelKeys`、`repeatedEscape`；
   - 目前只有 Claude、Codex 覆盖了这些，基类的默认值是安全的。
-- `legacy-web/index.html`：`i-<cli>` 图标 symbol、新建及报告选择器 radio。
-- `legacy-web/style.css`：
+- `web/index.html`：`i-<cli>` 图标 symbol、新建及报告选择器 radio。
+- `web/style.css`：
   - `--<cli>` 颜色，浅色和深色主题都要定义；
   - 新建会话选择器已经是五列，再加一列要重新验证手机宽度（390 px 一行排得下）。
-- `legacy-web/term.js`：输入识别还不可靠时用终端优先布局（`sessionTerminalFirst`）；检查 `legacy-web/app.js` 的来源能力、停止/删除及批量操作分支。
+- `web/term.js`：输入识别还不可靠时用终端优先布局（`sessionTerminalFirst`）；检查 `web/app.js` 的来源能力、停止/删除及批量操作分支。
 - 新图标、按钮、颜色与交互优先复用所在界面已有样式；验证包含 390 px 窄屏及深浅主题。
 
 ### 文档与测试

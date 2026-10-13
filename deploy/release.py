@@ -7,7 +7,7 @@ Builds `sessiondock`, `sessiondock-hub`, `sessiondock-transfer` and `ptyhost`
 from `git archive REF` in a fresh temporary directory (never the working tree),
 with build paths remapped and SOURCE_DATE_EPOCH set to the commit time, then
 writes `sessiondock-<version>-<short>-linux-<arch>.tar.gz` with bin/, web/
-(legacy-web), README.md and manifest.json. Archive entries are
+(web), README.md and manifest.json. Archive entries are
 sorted with fixed owner, mode and mtime, so the same commit and toolchain give
 the same bytes. `--check` builds twice in different directories and fails if
 the two packages differ. resource-agent ships separately (docs/release.md).
@@ -69,9 +69,9 @@ def build(commit: str, epoch: str, work: Path) -> dict[str, bytes]:
     print(f"build {commit[:12]} in {work}", flush=True)
     subprocess.run(argv, cwd=src, env=env, check=True)
     files = {f"bin/{name}": (target / "release" / name).read_bytes() for name in BINARIES}
-    for path in sorted((src / "legacy-web").rglob("*")):
+    for path in sorted((src / "web").rglob("*")):
         if path.is_file():
-            files["web/" + path.relative_to(src / "legacy-web").as_posix()] = path.read_bytes()
+            files["web/" + path.relative_to(src / "web").as_posix()] = path.read_bytes()
     files["README.md"] = (src / "README.md").read_bytes()
     return files
 

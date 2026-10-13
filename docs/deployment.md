@@ -2,7 +2,7 @@
 
 `deploy/deploy.py` 把"在构建机上 release 构建一次，再推到每台机器"的手工流程固定下来：每台目标机
 按同一套步骤走，失败自动回滚，最后给出对齐表格和 JSON 报告。它取代的手工做法（备份到
-`backup-deploy-*`、`bin/sessiondock.new` + `mv`、`rsync -a --delete legacy-web/ web/`、重启、curl
+`backup-deploy-*`、`bin/sessiondock.new` + `mv`、`rsync -a --delete web/ <PREFIX>/web/`、重启、curl
 `/api/meta`）形状不变，所以旧备份和新备份长得一样。不要把真实地址写进任何被跟踪的文件；
 真实清单只在未跟踪的 `deploy/targets.local.json`。
 
@@ -49,7 +49,7 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
   ptyhost）。`--web-only` 完全不跑 cargo。默认 `--targets-file` 是
   `deploy/targets.local.json`（缺省时退回 `targets.example.json`），其中 `build` 段给出 cargo
   路径与包名；`sessiondock-hub` 是 `sessiondock` 包里的第二个 bin，工具用 `cargo metadata` 解析。
-  前端 `legacy-web/` 按快照原样进入 stage，不执行任何 Node 构建。
+  前端 `web/` 按快照原样进入 stage，不执行任何 Node 构建。
   `--test`（默认 `none`，build 常用来做 dry run）在构建完成后按[测试门](#测试门build--test--push)跑测试。
 - `push`：默认取 `target/deploy/` 下最新的 stage，默认并行 4、保留 5 份备份（`0` = 不清理）、健康
   超时 45 s。`--dry-run` 只做 probe 并打印每台的计划，什么都不上传。离线或禁用的目标记为
@@ -84,7 +84,7 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 | 产物 | 内容 | 用途 |
 | --- | --- | --- |
 | `bin/<name>` + `artifacts.json` 里的 `version` | `cargo build --release --locked` 的 glibc 二进制，从 `target/release/` 拷进 stage | `linux-node`、`hub` 直接上传；stage 一旦生成就不再受后续构建影响 |
-| `web/` | 源码树（HEAD 加点名文件）里 `legacy-web` 的快照，原样发布 | 所有 kind 的 `web/` |
+| `web/` | 源码树（HEAD 加点名文件）里 `web` 的快照，原样发布 | 所有 kind 的 `web/` |
 | `source.tar` | 源码树（HEAD 加 `--allow-dirty` 点名文件）的 `git archive` | `build_on_target` 的 kind（macOS、Windows）在节点上原生构建，与本机构建使用相同源码 |
 
 `artifacts.json` 还记录 commit、`dirty`、`built_at`、web 来源和 cargo 命令，以及测试门的结果
@@ -152,7 +152,7 @@ stem 恰好是套件名则按套件跑；某条改动触发全量时这些脚本
 | `crates/sessiondock/src/<module>/**`、`src/<module>.rs` | `cargo_*` + 模块别名：`sessions` → `history_*`、`sessions_*`、`messages_*`、`native_*`、`*_parity`、`codex_*`、`claude_*`、`grok_*`、`agent_*`、`orphan_*`、`continued_*`、`fork_*`、`list_rows_*`、`input_history_*`、`inventory_*`、`symlink_*`、`unicode_*`、`names_*`、`budget_*`、`reader_pool_*`、`sse_*`、`rewind_*`；`terminal` → `terminal_*`、`term_*`、`managed_*`、`session_stop_*`、`grok_raw_send_*`；`lifecycle` → `lifecycle_*`、`send_*`、`outbox*`、`pending_*`、`restart_state_*`、`live_*`、`session_stop_*`；`hub`/`hub_config`/`bin` → `hub_*`（`hub` 另加 `node_auth_*`）；`search` → `search_*`；`media` → `media_*`、`native_*`；`files` → `file*`；`delivery` → `delivery_*`、`send_*`、`outbox*`；`bug_report` → `bug_report_*`；`audit` → `audit_*`；`metadata` → `metadata_*`、`prefs_*`；`trash` → `trash_*`；`runtime` → `live_*`、`spawned_by_*`、`managed_*`、`restart_state_*`、`lifecycle_*`；`bridge` → `claude_prompt_*`、`prompt_*`、`live_*`；`native_replay` → `native_*`；`assets` → `static_assets_*`、`meta_*`、`prefs_*`。表里没有的模块用 `<module>*`，一个都匹配不上就全量 |
 | `crates/sessiondock/src/api/**`、`main.rs`、`lib.rs`、`config.rs`、`security.rs`、`state.rs`、`error.rs` | 横切面 → 全量 |
 | `crates/sessiondock/tests/fixtures/**` | 全量（浏览器套件也用这些 fixture） |
-| `legacy-web/**` | 所有 `*_browser*` + `brand_names_check` |
+| `web/**` | 所有 `*_browser*` + `brand_names_check` |
 | `deploy/**` | 只跑文档检查（仓库没有部署脚本的非浏览器测试） |
 | `tests/<stem>.py` | 若 `<stem>` 是套件 → 该套件及 `<stem>_*`（如 `lifecycle_browser` 带上 `lifecycle_browser_native_binding`）；否则取同前缀的套件（`hub_fake_node.py` → `hub_*`）；仍没有（`fake_claude_cli.py`）或是共享夹具 `*_fixtures.py` → 全量；其它非 `.py` 文件与 `tests/fixtures/**` → 全量；`check_docs_links.py`、`check_agents_md.py` 改自己就跑自己 |
 | `Cargo.toml`、`Cargo.lock`、`.github/**`、其它任何未命中路径（`reference/**` …） | 全量 |

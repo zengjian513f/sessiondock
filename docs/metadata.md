@@ -314,7 +314,7 @@ neighbors, and links to each information page and conversation. It supports addi
 both directions, confirming candidates, removing direct edges, inspecting evidence
 and lazily reading opening clues. Errors retain the editor. HTML escaping applies
 to titles, paths and evidence. The page reuses existing theme and typography. Sidebar rows and relationship
-cards share `legacy-web/session-card.css`; titles, icons, secondary information,
+cards share `web/session-card.css`; titles, icons, secondary information,
 snippets and interaction states follow the sidebar. Relationship cards initially show only the title and one metadata line, like
 sidebar rows. A trailing details control reveals UUID, handoff document, evidence
 and management actions; these fields never enlarge a collapsed row. Labdesk consumes a vendored copy of the same
