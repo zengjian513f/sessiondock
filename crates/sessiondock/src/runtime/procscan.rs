@@ -628,7 +628,7 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         }
     }
     if let Some(file) = grok_active {
-        note_grok_sessions(&mut sids, file);
+        note_grok_sessions(&mut sids, file, &tree);
     }
     stats.elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     Scan {
@@ -671,9 +671,8 @@ fn env_owner(
     Some(owner)
 }
 
-/// Grok's own active list names sessions without
-/// exposing a pid; a stale entry stays.
-fn note_grok_sessions(sids: &mut BTreeMap<String, BTreeSet<i64>>, file: &Path) {
+/// Grok's active list supplies display hints, never process-control PIDs.
+fn note_grok_sessions(sids: &mut BTreeMap<String, BTreeSet<i64>>, file: &Path, tree: &ProcTree) {
     let Some(data) = std::fs::read(file)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
@@ -686,6 +685,16 @@ fn note_grok_sessions(sids: &mut BTreeMap<String, BTreeSet<i64>>, file: &Path) {
         _ => Vec::new(),
     };
     for entry in entries {
+        // Grok can leave registrations behind after exit. A recorded PID
+        // that is gone or a zombie cannot keep an otherwise stopped session
+        // live. Keep legacy PID-less hints and never turn this file into
+        // process-control authority.
+        if let Some(pid) = entry.get("pid").and_then(Value::as_u64)
+            && let Ok(pid) = u32::try_from(pid)
+            && !process_stamp(tree.root(), pid).is_some_and(|(state, _)| state != 'Z')
+        {
+            continue;
+        }
         let sid = match &entry {
             Value::Object(_) => entry["id"]
                 .as_str()
