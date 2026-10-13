@@ -72,8 +72,8 @@
 
 - Treat SessionDock as an independent project. Current contracts live in `docs/`
   and unfinished work lives only in `TODO.md`; do not use the archived migration
-  history as current guidance. `legacy-web/` is the production frontend at
-  `/sessiondock/`. Do not replace the production frontend or delete `legacy-web/` without an
+  history as current guidance. `web/` is the production frontend at
+  `/sessiondock/`. Do not replace the production frontend or delete `web/` without an
   explicit user instruction to do so.
 - `crates/sessiondock`: Rust HTTP service. Keep transport handlers separate
   from session/domain logic and future ptyhost client code.
@@ -81,7 +81,7 @@
   protocol and process lifetime unless a task explicitly changes them.
 - `crates/ptyhost-client`: explicit-directory local protocol library. It must not
   launch processes, auto-clean unknown host records, or expose host credentials.
-- `legacy-web` is the production frontend, based on the predecessor Python
+- `web` is the production frontend, based on the predecessor Python
   frontend at `e5b023a`. Keep changes small and capability-gated. Missing row
   fields degrade like Python. Keep console explanations visible.
   Preferences use `SessionDockCapabilities.stored` and only `sessiondock.*`

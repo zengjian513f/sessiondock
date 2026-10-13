@@ -3,19 +3,13 @@
 本目录的 `legacy-web/` 是前身项目前端的冻结静态快照，仅用于历史参考。
 不要将它直接接到生产 API，也不要为了构建生产前端而修改这些文件。
 
-生产前端唯一来源是 `web/`，构建并服务 `web/dist-migration/`；仓库根目录的
-`legacy-web/` 已退役。本快照不参与构建、服务或默认验收。
-`tests/legacy_asset_diff.py` 与 `tests/legacy_text_diff.py` 仅比较显式提供的历史
-备份目录，必须同时传入 `--legacy-dir` 和 `--reference-dir`，不会默认读取生产
-产物或本目录。它们不是 Vue 验收工具：
+生产前端唯一来源是根目录的 `web/`，纯 JS 静态资源按提交原样发布，无构建步骤。
+旧 Vue 前端已移除；2026-10-13 将生产目录从 `legacy-web/` 改名为 `web/`。
+本目录的 `reference/legacy-web/` 保持原位，不参与构建、服务或默认验收。
 
-```sh
-python3 tests/legacy_asset_diff.py --legacy-dir BACKUP_LEGACY --reference-dir BACKUP_REFERENCE
-python3 tests/legacy_text_diff.py --legacy-dir BACKUP_LEGACY --reference-dir BACKUP_REFERENCE
-```
-
-下面保留旧前端相对冻结快照的历史基线改动登记；`legacy_text_diff.py` 在历史
-比较中以此判断用户可见文本差异是否已登记，不表示当前 Vue 验收已通过。
+下面保留旧前端相对冻结快照的历史基线改动登记，其中的旧目录名称记录当时状态。
+历史差分脚本 `legacy_asset_diff.py`、`legacy_text_diff.py` 已移除，当前验收使用
+实际浏览器套件，见 [验证合同](../docs/validation.md)。
 
 ## 有意的基线改动
 

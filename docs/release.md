@@ -16,7 +16,7 @@ The archive holds one top-level directory with:
 | Path | Content |
 | --- | --- |
 | `bin/` | `sessiondock`, `sessiondock-hub`, `sessiondock-transfer`, `ptyhost` |
-| `web/` | `legacy-web/` as committed (served by `SESSIONDOCK_WEB_DIR`) |
+| `web/` | `web/` as committed (served by `SESSIONDOCK_WEB_DIR`) |
 | `README.md` | the repository README |
 | `manifest.json` | commit, version, target triple, `rustc -V`, `source_date_epoch`, binaries |
 | `web/release-version.txt`, `bin/<name>.version` | Source commit date (`source_date_epoch`); no content checksums |

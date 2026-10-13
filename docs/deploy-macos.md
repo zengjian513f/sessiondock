@@ -67,7 +67,7 @@ CLI 启动 profile 的 `executable` 用 `with-zshrc`（`#!/bin/zsh`，`source ~/
 
 ```sh
 cp target/release/sessiondock <PREFIX>/bin/sessiondock.new && mv <PREFIX>/bin/sessiondock.new <PREFIX>/bin/sessiondock
-rsync -a --delete legacy-web/ <PREFIX>/web/
+rsync -a --delete web/ <PREFIX>/web/
 launchctl kickstart -k gui/$(id -u)/<label>      # 只重启 sessiondock；ptyhost 会话不受影响
 ```
 

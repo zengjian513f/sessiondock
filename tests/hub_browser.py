@@ -400,6 +400,9 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix="sessiondock-hub-browser-") as temp:
             hub = Hub(hub_binary, Path(temp), nodes)
+            # Exercise the Hub's default web/ path unless testing a separate artifact.
+            if Path(hub.env["SESSIONDOCK_WEB_DIR"]).resolve() == (REPO / "web").resolve():
+                hub.env.pop("SESSIONDOCK_WEB_DIR")
             hub.start()
             try:
                 with sync_playwright() as playwright:

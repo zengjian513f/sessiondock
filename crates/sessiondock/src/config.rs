@@ -247,7 +247,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             bind: "127.0.0.1:8741".parse().expect("constant socket address"),
-            web_dir: "legacy-web".into(),
+            web_dir: "web".into(),
             roots: SessionRoots {
                 claude: None,
                 codex: None,

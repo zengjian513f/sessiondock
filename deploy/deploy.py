@@ -66,8 +66,8 @@ STAGE_ROOT = ROOT / "target" / "deploy"
 # incremental cache valid between deploys.
 BUILD_TREE = STAGE_ROOT / "tree"
 BUILD_TARGET = STAGE_ROOT / "cargo-target"
-# The frontend is legacy-web/, served exactly as committed.
-DIRTY_SCOPE = ["crates", "legacy-web", "Cargo.toml", "Cargo.lock"]
+# The frontend is web/, served exactly as committed.
+DIRTY_SCOPE = ["crates", "web", "Cargo.toml", "Cargo.lock"]
 WEB_EXCLUDES = ["node_modules", ".DS_Store", "*.swp"]
 GOOD = {"OK", "PLANNED", "SKIPPED"}
 COLUMNS = ("target", "kind", "result", "build", "version", "ptyhost", "s", "backup")
@@ -244,12 +244,12 @@ def cmd_build(args) -> Path:
     for line in included:
         print("  + " + line)
     checkout_build_tree(snapshot_tree)
-    with subprocess.Popen(["git", "archive", "--format=tar", snapshot_tree, "legacy-web"], cwd=ROOT,
+    with subprocess.Popen(["git", "archive", "--format=tar", snapshot_tree, "web"], cwd=ROOT,
                           stdout=subprocess.PIPE) as ga:
         subprocess.run(["tar", "-x", "--strip-components=1", "-C", str(stage / "web")],
                        stdin=ga.stdout, check=True, timeout=300)
     if ga.returncode != 0:
-        die("git archive legacy-web failed")
+        die("git archive web failed")
     if not (stage / "web" / "index.html").is_file():
         die("web snapshot has no index.html")
 
@@ -279,8 +279,8 @@ def cmd_build(args) -> Path:
             shutil.copy2(src, dst)
             binaries[name] = dst
 
-    crates_dirty = any(not path.startswith("legacy-web/") for path in dirty_paths(included))
-    web_dirty = any(path.startswith("legacy-web/") for path in dirty_paths(included))
+    crates_dirty = any(not path.startswith("web/") for path in dirty_paths(included))
+    web_dirty = any(path.startswith("web/") for path in dirty_paths(included))
     art = Artifacts(commit=commit, short=short,
                     dirty=(crates_dirty and not args.web_only) or web_dirty,
                     built_at=started.isoformat(timespec="microseconds"), web_dir=stage / "web",

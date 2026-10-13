@@ -1,6 +1,6 @@
 # 现有前端用户可见功能清单
 
-`legacy-web/`（`/sessiondock/`）是唯一的前端。2026-10-05 起它不再包含 Vue 代码，也不依赖
+`web/`（`/sessiondock/`）是唯一的前端。2026-10-05 起它不再包含 Vue 代码，也不依赖
 任何构建；曾经的独立 Vue 前端已从仓库移除。
 
 `grok-4.7 high headless 产出，人工审阅`
@@ -17,7 +17,7 @@
 
 按批对照时，每一节都给出：用户看到什么、默认是什么、出错或不可用时页面怎么说、关键函数、相关存储键或 API、已有的 `tests/*browser.py`。函数名是锚点，不是新接口。
 
-能力开关来自页面上的 `<meta name="sessiondock-capabilities">`，解析在 [`legacy-web/capabilities.js`](../legacy-web/capabilities.js)。没有这张标签时 `declared:false`，行为保持放开，存储前缀仍是 `sessiondock.`。标签存在但 JSON 不是对象时失败关闭：`read_only`、关掉 live/outbox/audit/search/files，并显示「能力配置无效，请检查服务配置。」（`#backend-notice`，[`app.js` `configuration_error` 分支](../legacy-web/app.js)）。健康页面没有常驻横幅。`allows(name)` 的含义是 `config[name] !== false`，缺键仍允许。完整旗标表见 [`docs/capabilities.md`](capabilities.md)。
+能力开关来自页面上的 `<meta name="sessiondock-capabilities">`，解析在 [`web/capabilities.js`](../web/capabilities.js)。没有这张标签时 `declared:false`，行为保持放开，存储前缀仍是 `sessiondock.`。标签存在但 JSON 不是对象时失败关闭：`read_only`、关掉 live/outbox/audit/search/files，并显示「能力配置无效，请检查服务配置。」（`#backend-notice`，[`app.js` `configuration_error` 分支](../web/app.js)）。健康页面没有常驻横幅。`allows(name)` 的含义是 `config[name] !== false`，缺键仍允许。完整旗标表见 [`docs/capabilities.md`](capabilities.md)。
 
 存储前缀：节点 `sessiondock.`；Hub 为能力里的 `storage_namespace`，缺省时页面用 `sessiondock.hub.` 加上当前 `location.pathname`。读写只使用 `sessiondock.*`。Hub 模式由 `<meta name="sessiondock-mode">` 为 `hub` 决定。
 
@@ -25,7 +25,7 @@
 
 ## 1. 页面壳、设置、机器
 
-主页面是 [`legacy-web/index.html`](../legacy-web/index.html)。标题是主机名加「会话管理」。语言 `zh-CN`。视口带 `interactive-widget=resizes-content`。首屏样式加载前就根据 `theme` 设置 `documentElement.dataset.theme`，避免闪色。窄屏（≤720px）若 URL 带 `sid`，或上次 `mobilePage === 'detail'` 且有 `sel`，则 `data-boot-page=detail`，直接从会话页起步；列表恢复失败再退回列表（`leaveBootDetail`）。
+主页面是 [`web/index.html`](../web/index.html)。标题是主机名加「会话管理」。语言 `zh-CN`。视口带 `interactive-widget=resizes-content`。首屏样式加载前就根据 `theme` 设置 `documentElement.dataset.theme`，避免闪色。窄屏（≤720px）若 URL 带 `sid`，或上次 `mobilePage === 'detail'` 且有 `sel`，则 `data-boot-page=detail`，直接从会话页起步；列表恢复失败再退回列表（`leaveBootDetail`）。
 
 ### 顶栏
 
@@ -48,7 +48,7 @@
 | `#settings` | 设置 |
 | `#header-more` | 空间不够时，右侧按钮从末尾折进「更多操作」 |
 
-`layoutHeader` 的折叠顺序：先收 Agent / 组织方式 / 分层的文字标签，再收主机标题，再把机器 chip 收成首字母（撞车用前两个字母，[`nodeAbbrs`](../legacy-web/nodes.js)），最后把右侧按钮折进 ⋯。放得下就按相反顺序展开。隐藏的能力按钮不会被折进菜单。窄屏、中屏（≤1199）、宽屏三级，与 `style.css` 断点一致（`layoutTier`）。
+`layoutHeader` 的折叠顺序：先收 Agent / 组织方式 / 分层的文字标签，再收主机标题，再把机器 chip 收成首字母（撞车用前两个字母，[`nodeAbbrs`](../web/nodes.js)），最后把右侧按钮折进 ⋯。放得下就按相反顺序展开。隐藏的能力按钮不会被折进菜单。窄屏、中屏（≤1199）、宽屏三级，与 `style.css` 断点一致（`layoutTier`）。
 
 左栏被收起，或手机正打开会话详情时，新建、设置，以及独立应用下的刷新，会挪到会话标题栏。展开列表后回到顶栏。[`tests/session_global_actions_browser.py`](../tests/session_global_actions_browser.py)。
 
@@ -70,7 +70,7 @@ DELTA（BUG-20261012-023202-d4294d）：新建会话自动接续到原生历史�
 外观（`applyTheme`、`applyFont`、`applyInterfaceScale`）：
 
 - 界面缩放 `interfaceScale`：50–150，步长 1，默认 100。滑块、重置、主页面双指捏合共用同一数值。旧的 30–49 读出来按 50。捏合开始派发 `sessiondock-pinch-start`，取消进行中的终端选区且不复制。单指滚动保持浏览器原生。`#app` 使用 `touch-action: pan-x pan-y`。带 `data-pinch-owner` 的区域页面不接管。浏览器自己的页面缩放（`visualViewport.scale !== 1`）不当成键盘，也不因此改 PTY 行列。手势期间 `#scale-indicator` 显示百分比，松手后淡出，不挡输入。设置对话框尺寸不跟着滑块变。
-- 等宽字体 `font`：`ubuntu`（默认，Ubuntu Sans Mono）、`cascadia`、`system`、`consolas`。终端和工具输出共用。字体文件在 `legacy-web/fonts/`。`typography.js` 的 `apply` 在样式表之后执行。
+- 等宽字体 `font`：`ubuntu`（默认，Ubuntu Sans Mono）、`cascadia`、`system`、`consolas`。终端和工具输出共用。字体文件在 `web/fonts/`。`typography.js` 的 `apply` 在样式表之后执行。
 - 颜色 `theme`：`system`（默认，跟随 `prefers-color-scheme`）、`light`、`dark`。系统主题变化时若选择仍是 `system`，`applyTheme('system')` 再刷一次。浅色终端会改写 ANSI/OSC 颜色，见第 6 节。
 - 「安装到桌面」按钮。见第 8 节。
 
@@ -107,13 +107,13 @@ Hub 顶栏另有机器 chip，见第 2 节。节点离线、列表/运行状态/
 
 ### 弹窗外观
 
-`appAlert` / `appConfirm`（[`legacy-web/popup.js`](../legacy-web/popup.js)）用与新建会话、回收站相同的居中 `dialog.app-dialog`。消息含空行时第一行当标题。Esc 或 × 等于取消。带操作按钮的浮动卡（版本更新、登录环境、登录失效、缺陷报告回执、链接候选选择）进 `#float-stack`，不抢焦点。[`tests/popup_browser.py`](../tests/popup_browser.py)。
+`appAlert` / `appConfirm`（[`web/popup.js`](../web/popup.js)）用与新建会话、回收站相同的居中 `dialog.app-dialog`。消息含空行时第一行当标题。Esc 或 × 等于取消。带操作按钮的浮动卡（版本更新、登录环境、登录失效、缺陷报告回执、链接候选选择）进 `#float-stack`，不抢焦点。[`tests/popup_browser.py`](../tests/popup_browser.py)。
 
 ---
 
 ## 2. 侧栏：嵌套、筛选、分组、多选、未读、深链、资源
 
-渲染入口是 `renderSide` / `patchSide` / `groupBy`。列表数据来自 `GET api/sessions`，增量签名 `GET api/sessions?sig=`，能力 `list_delta` 时走 [`legacy-web/list-sync.js`](../legacy-web/list-sync.js) 的 `expand`。`ui_events` 时用 `EventSource api/events`（`startUiEvents`），页面隐藏会停。空闲页不拉未选中会话的正文。[`tests/list_delta_browser.py`](../tests/list_delta_browser.py)、[`tests/ui_events_browser.py`](../tests/ui_events_browser.py)。收到列表失效（`sessions`）或连接基线（`initial`）时派发页面事件 `sessiondock-ui-sessions`，分组和迁移任务据此刷新。选中会话的正文订阅之外，SSE 正常时仍每 20 秒兜底对账一次（`tickSync` / `BACKUP_MS`）：正文订阅可能静默停滞而 `readyState` 仍为 open，这一兜底不是冗余，保留不变。空闲请求预算：[`tests/idle_requests_browser.py`](../tests/idle_requests_browser.py)。
+渲染入口是 `renderSide` / `patchSide` / `groupBy`。列表数据来自 `GET api/sessions`，增量签名 `GET api/sessions?sig=`，能力 `list_delta` 时走 [`web/list-sync.js`](../web/list-sync.js) 的 `expand`。`ui_events` 时用 `EventSource api/events`（`startUiEvents`），页面隐藏会停。空闲页不拉未选中会话的正文。[`tests/list_delta_browser.py`](../tests/list_delta_browser.py)、[`tests/ui_events_browser.py`](../tests/ui_events_browser.py)。收到列表失效（`sessions`）或连接基线（`initial`）时派发页面事件 `sessiondock-ui-sessions`，分组和迁移任务据此刷新。选中会话的正文订阅之外，SSE 正常时仍每 20 秒兜底对账一次（`tickSync` / `BACKUP_MS`）：正文订阅可能静默停滞而 `readyState` 仍为 open，这一兜底不是冗余，保留不变。空闲请求预算：[`tests/idle_requests_browser.py`](../tests/idle_requests_browser.py)。
 
 ### 四种列表
 
@@ -180,7 +180,7 @@ DELTA（2026-10-08）：服务启动后及每隔 3 小时重新统计，关闭�
 
 ### 分组
 
-[`legacy-web/groups.js`](../legacy-web/groups.js)，需要 `metadata`。
+[`web/groups.js`](../web/groups.js)，需要 `metadata`。
 
 - `GET/POST api/groups`：创建、删除。分组集合在收到 `sessiondock-ui-sessions`、回到前台和休眠恢复时重读；事件通道正常时定时重读放慢到约 60 秒（兜底 Hub 合并节点页面直接改过的集合），断开时保持 10 秒；休眠、隐藏或编辑中不读。删除确认就是按钮本身，没有第二套确认框。离线节点时状态是「已创建/已删除；离线节点恢复连接后同步。」
 - 分组视图底部「＋ 新建分组」，Esc 退出编辑并焦点回到按钮。
@@ -234,13 +234,13 @@ BUG-20261008-120649-69fc59 的终端、原生历史和账本绑定一致，首�
 
 ### 资源列与会话资源
 
-资源列默认关（`sidebarResources`）。打开后每行一个按钮，六格：CPU 核数、进程数、内存 PSS、GPU 张数、磁盘读、磁盘写（[`legacy-web/sidebar-resources.js`](../legacy-web/sidebar-resources.js)）。只画视口内的行（含 160px 预读）。采样超过约 15 秒或子代理行显示「—」。数字用 zh-CN 紧凑格式。每 5 秒，以及回到前台和休眠恢复时，`GET api/resources/summary`；页面休眠期间不读。失败则清空数字，不把缺失显示成 0。点格子打开会话资源，不选中行。
+资源列默认关（`sidebarResources`）。打开后每行一个按钮，六格：CPU 核数、进程数、内存 PSS、GPU 张数、磁盘读、磁盘写（[`web/sidebar-resources.js`](../web/sidebar-resources.js)）。只画视口内的行（含 160px 预读）。采样超过约 15 秒或子代理行显示「—」。数字用 zh-CN 紧凑格式。每 5 秒，以及回到前台和休眠恢复时，`GET api/resources/summary`；页面休眠期间不读。失败则清空数字，不把缺失显示成 0。点格子打开会话资源，不选中行。
 
 磁盘图标以硬盘为参照：读取箭头向上离开硬盘，写入箭头向下进入硬盘；两者使用相同的硬盘轮廓。读写字段、顺序与数值不因图标改变而互换。
 
 [`tests/sidebar_toggle_browser.py`](../tests/sidebar_toggle_browser.py)。
 
-会话资源对话框由 [`legacy-web/session-resources.js`](../legacy-web/session-resources.js) 现建：标题「会话资源」，范围「仅当前会话」/「包含子会话」（默认 inclusive），刷新，关闭。合计说明：只加当前会话相关机器的已知数，缺失不是零，同一进程只计一次。子代理若没有可识别进程归属，不会被拆进共享 CLI。`GET api/session/resources?uid&scope`。404 文案：「此服务尚未提供资源统计，请更新服务端。」
+会话资源对话框由 [`web/session-resources.js`](../web/session-resources.js) 现建：标题「会话资源」，范围「仅当前会话」/「包含子会话」（默认 inclusive），刷新，关闭。合计说明：只加当前会话相关机器的已知数，缺失不是零，同一进程只计一次。子代理若没有可识别进程归属，不会被拆进共享 CLI。`GET api/session/resources?uid&scope`。404 文案：「此服务尚未提供资源统计，请更新服务端。」
 
 抽屉打开且约 60 秒内有可信操作、页面未休眠时，`POST api/session/resources/probe` 申请短租约；关闭、休眠或空闲会释放。状态：未探测 / 启动中 / 探测中 / 失败 / 关闭。探测失败按节点列在对话框里。
 
@@ -259,7 +259,7 @@ BUG-20261008-120649-69fc59 的终端、原生历史和账本绑定一致，首�
 打字：`cancelSearch()` 退出全文结果，120ms 后 `renderSide` 做本地筛选（`matchesSearch` / `searchTerms`）。Esc 清空并退出。大小写、全词、正则、AND/OR 存在 `opts`，默认全关、`mode: 'all'`（按钮显示 AND）。
 
 - AND：全部词，可以落在不同消息。OR：任一词。
-- 正则：整段输入当一个表达式，不拆词，AND/OR 按钮禁用。本地先 `reTerm`，无效则「正则无效」，不发全盘请求。正则匹配在 worker（[`legacy-web/regex-worker.js`](../legacy-web/regex-worker.js)）里，可取消。[`tests/conversation_performance_browser.py`](../tests/conversation_performance_browser.py)。
+- 正则：整段输入当一个表达式，不拆词，AND/OR 按钮禁用。本地先 `reTerm`，无效则「正则无效」，不发全盘请求。正则匹配在 worker（[`web/regex-worker.js`](../web/regex-worker.js)）里，可取消。[`tests/conversation_performance_browser.py`](../tests/conversation_performance_browser.py)。
 - 改选项：若已经在全文结果里，立刻重搜；否则只刷新本地筛选。
 
 Enter：`runSearch` → `GET api/search`，NDJSON 进度。进度条 `#search-progress` 显示已扫描会话数、百分比、每台机器的准备中/扫描中/离线跳过/搜索失败/达到上限/已完成，以及「取消」。结果边到边画进左栏（约 50ms 合并一次），并给键盘一个任务间隙，使 Backspace/Esc 能中止。完成后左栏是命中列表，带「退出搜索 ×」。截断时提示细化条件。部分节点离线或失败会写进 `#stat`，不把不完整结果说成完整。
@@ -293,7 +293,7 @@ DELTA（弱网恢复）：首次正文读取和后续同步统一使用 12 秒�
 
 连续工具并成一组（`groupNode`），至少 2 条。用户打开过的组，后续追加仍保持打开。[`tests/tool_group_fold_browser.py`](../tests/tool_group_fold_browser.py)。大组默认折叠，展开才建 DOM；再折叠再打开内容还在。[`tests/conversation_performance_browser.py`](../tests/conversation_performance_browser.py)。单组不必再包一层过程外壳。
 
-工具行（`toolEntry`）：命令/参数、输出预览、统计、可折叠全文。输出用 [`legacy-web/syntax.js`](../legacy-web/syntax.js) 和 [`syntax-worker.js`](../legacy-web/syntax-worker.js)，大段高亮不占 UI 线程。[`tests/render_assets_browser.py`](../tests/render_assets_browser.py)。Diff 行着色（`paintToolOutputDiff`）。带 `changes` 的文件修改走左右/行内 diff（`fileDiffMarkup` / `paintInlineFileDiff`），可切换换行。围栏图保持终端列宽，不因中文等宽字体挤乱。[`tests/code_diagram_browser.py`](../tests/code_diagram_browser.py)。
+工具行（`toolEntry`）：命令/参数、输出预览、统计、可折叠全文。输出用 [`web/syntax.js`](../web/syntax.js) 和 [`syntax-worker.js`](../web/syntax-worker.js)，大段高亮不占 UI 线程。[`tests/render_assets_browser.py`](../tests/render_assets_browser.py)。Diff 行着色（`paintToolOutputDiff`）。带 `changes` 的文件修改走左右/行内 diff（`fileDiffMarkup` / `paintInlineFileDiff`），可切换换行。围栏图保持终端列宽，不因中文等宽字体挤乱。[`tests/code_diagram_browser.py`](../tests/code_diagram_browser.py)。
 
 Markdown（`md` / `blocks` / `inline`）和公式（`renderFormulae`，按需加载 KaTeX）。公式库失败时正文仍在。审阅到的脚本头没有单独点名 KaTeX 渲染，标为缺口。原生标签族：[`tests/native_tags_browser.py`](../tests/native_tags_browser.py)、[`tests/history_browser.py`](../tests/history_browser.py)。
 
@@ -349,7 +349,7 @@ Claude 在终端里双 Esc 回滚后，对话跟着显示到回滚点，标题�
 
 服务端每个逻辑会话一份草稿：文字、引用、附件元数据、提交 ID、修订号。`GET/POST api/session/conversation`。浏览器里的旧 `composerDraft.*` 和 IndexedDB `composer-drafts` 只在导入时读一次（`importLegacyComposer`），成功后删掉本地副本。
 
-行为（[`docs/conversation.md`](conversation.md)，实现在 [`legacy-web/term.js`](../legacy-web/term.js) 的 `composerDraft` / `persistComposerDraft` / `submitComposer`）：
+行为（[`docs/conversation.md`](conversation.md)，实现在 [`web/term.js`](../web/term.js) 的 `composerDraft` / `persistComposerDraft` / `submitComposer`）：
 
 - 打开或切换会话只读草稿，不立刻保存。输入框在第一次读取返回前禁用。
 - 正在编辑的页面赢；空闲页面跟随服务端修订。不做字段级合并。保存冲突重读再写，最多两次，仍失败才显示错误。
@@ -371,7 +371,7 @@ Claude 在终端里双 Esc 回滚后，对话跟着显示到回滚点，标题�
 
 ### 问题、信任、审批、屏幕菜单
 
-历史里的问题渲染成题卡（`questionNode`）。正在问的卡可以点。单选题：Claude 用方向键把光标夹到真实选项再按数字；Codex 用数字直选；审批用选项上的助记键，不用数字菜单（[`legacy-web/cli.js`](../legacy-web/cli.js)）。Grok、OpenCode 走基类，基类不猜测按键。多题单选（Claude）在网页上每题选一项再「提交答案」，按键分组发送，组间约 50ms。多选或无法直答时文案是「多选或多题请在原生终端回答」，并提供「打开终端」和「取消」。
+历史里的问题渲染成题卡（`questionNode`）。正在问的卡可以点。单选题：Claude 用方向键把光标夹到真实选项再按数字；Codex 用数字直选；审批用选项上的助记键，不用数字菜单（[`web/cli.js`](../web/cli.js)）。Grok、OpenCode 走基类，基类不猜测按键。多题单选（Claude）在网页上每题选一项再「提交答案」，按键分组发送，组间约 50ms。多选或无法直答时文案是「多选或多题请在原生终端回答」，并提供「打开终端」和「取消」。
 
 画面菜单（`kind: screen_menu`）复用同一张卡，另外有：多选同步勾选、当前页文字、下一页/返回/提交等 `actions`、取消（仅当给了 `cancel_keys`）。文字草稿存在页面内存（`screenMenuTextDrafts`），轮询不把正在打的字清掉。点击前重新 CHECK 同一语义 ID，再按新画面算按键。菜单消失、换了会话或选项变了，就不写。密钥类字段不在网页里填。
 
@@ -455,7 +455,7 @@ DELTA（BUG-20261012-075426-889b9d，替代 BUG-20261008-123158-ee0ab5 的旧目
 
 ## 6. 终端：归属、网格、键盘、触摸、剪贴板、录制
 
-实现在 [`legacy-web/term.js`](../legacy-web/term.js)，菜单在 [`legacy-web/term-menu.js`](../legacy-web/term-menu.js)。网格外观层 [`legacy-web/grid/facade.js`](../legacy-web/grid/facade.js) 导出 `GridTerm`，由 `index.html` 在 `term.js` 之前挂到 `globalThis.GridTerm`。
+实现在 [`web/term.js`](../web/term.js)，菜单在 [`web/term-menu.js`](../web/term-menu.js)。网格外观层 [`web/grid/facade.js`](../web/grid/facade.js) 导出 `GridTerm`，由 `index.html` 在 `term.js` 之前挂到 `globalThis.GridTerm`。
 
 ### 打开方式与布局
 
@@ -517,7 +517,7 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 ### 文件入口 `file.html` 与 `files.html`
 
-两页标记相同，都加载 [`legacy-web/file.js`](../legacy-web/file.js)。它们不浏览目录、不预览，只解析后跳到 FileDock。
+两页标记相同，都加载 [`web/file.js`](../web/file.js)。它们不浏览目录、不预览，只解析后跳到 FileDock。
 
 - 有 `node` 和绝对 `path`：直接 `location.replace` 到同源固定的 `/files/?node&path`，并带上原来的 hash。
 - 只有会话 `uid` 和 `ref`：先 `POST api/session/resolve-files`。相对名先对当前 cwd，不行再看记录里的路径和这些目录的直接子项。多个不同目标保持不确定。
@@ -533,9 +533,9 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 ### 安装与更新
 
-[`legacy-web/manifest.webmanifest`](../legacy-web/manifest.webmanifest)：名称 SessionDock，`display: standalone`，`start_url`/`scope` 为 `./`，图标 192 与 512。`theme-color` `#245de8`。
+[`web/manifest.webmanifest`](../web/manifest.webmanifest)：名称 SessionDock，`display: standalone`，`start_url`/`scope` 为 `./`，图标 192 与 512。`theme-color` `#245de8`。
 
-[`legacy-web/pwa-install.js`](../legacy-web/pwa-install.js) 接 `beforeinstallprompt`。按钮文案：「安装到桌面」；已是独立窗口或已安装时「已安装」并禁用；浏览器还没给安装事件时禁用，标题「浏览器尚未提供安装能力」。脚本标签上有 `data-storage-key="sessiondock.pwa-install-dismissed"`，当前这个脚本不读、不写该键。没有单独的「以后再说」存储。
+[`web/pwa-install.js`](../web/pwa-install.js) 接 `beforeinstallprompt`。按钮文案：「安装到桌面」；已是独立窗口或已安装时「已安装」并禁用；浏览器还没给安装事件时禁用，标题「浏览器尚未提供安装能力」。脚本标签上有 `data-storage-key="sessiondock.pwa-install-dismissed"`，当前这个脚本不读、不写该键。没有单独的「以后再说」存储。
 
 页面不再注册 Service Worker。`index.html` 末尾会注销已有 registration，并删掉名前缀 `sessiondock-shell-` 的 Cache Storage。原因写在页面注释里：避免旧页面卡死时新标签也被 Service Worker 拖住。离线壳不是当前行为。
 
@@ -545,7 +545,7 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 ### 休眠
 
-[`legacy-web/page-sleep.js`](../legacy-web/page-sleep.js)。无可信操作达到 `sleepMinutes`（默认 60，0 为不休眠）后，全屏对话框「页面已休眠」，只有 Resume。`SessionDockNetwork.pause('idle')`。回到标签、焦点、`pageshow` 只重新检查时间，不关掉对话框。休眠期间点对话框以外的地方会被吞掉，避免点到旧按钮。鼠标移动、按键、滚轮、触摸、输入都算活动，且必须是 `isTrusted`。其它标签改了 `sleepMinutes` 时，本页 `storage` 事件跟着变。休眠不停止后端 CLI。
+[`web/page-sleep.js`](../web/page-sleep.js)。无可信操作达到 `sleepMinutes`（默认 60，0 为不休眠）后，全屏对话框「页面已休眠」，只有 Resume。`SessionDockNetwork.pause('idle')`。回到标签、焦点、`pageshow` 只重新检查时间，不关掉对话框。休眠期间点对话框以外的地方会被吞掉，避免点到旧按钮。鼠标移动、按键、滚轮、触摸、输入都算活动，且必须是 `isTrusted`。其它标签改了 `sleepMinutes` 时，本页 `storage` 事件跟着变。休眠不停止后端 CLI。
 
 [`tests/page_sleep_browser.py`](../tests/page_sleep_browser.py)。
 
@@ -655,7 +655,7 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 ## 入口与验收边界
 
-前端只有 `legacy-web/`，按提交原样发布。`2552436` 记录迁移开始时的行为基线。
+前端只有 `web/`，按提交原样发布。`2552436` 记录迁移开始时的行为基线。
 
 视觉复用现有 `style.css`、`typography.css`、
 `session-resources.css`；不引入像素补偿。验收锚点为本文中的浏览器操作与临时 loopback，

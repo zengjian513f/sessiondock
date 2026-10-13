@@ -6,7 +6,7 @@ Byte-console clients still get the raw PTY stream and parse it in xterm.js.
 An exited SSH session's [final screen](terminal-final-screen.md) is saved as
 one snapshot of this protocol.
 
-The client is the main console (`term.js` through `legacy-web/grid/facade.js`,
+The client is the main console (`term.js` through `web/grid/facade.js`,
 see [Main console](#main-console)); the former standalone `grid.html` page was
 removed. It uses the same claim and attach lease as the byte console
 ([terminal ownership](terminal-ownership.md),
@@ -245,7 +245,7 @@ never enter the model's saved state.
 
 ## Browser modules
 
-The four modules under `legacy-web/grid/` have no DOM except
+The four modules under `web/grid/` have no DOM except
 `input.js`'s hidden-textarea helper; `grid/facade.js` assembles them into
 the console's `GridTerm`.
 
@@ -490,7 +490,7 @@ no xterm.js. A running host started before the grid protocol existed reports
 「此会话的终端宿主不支持网格显示，重新启动会话后即可打开控制台。」 An exited
 row has no host and shows its final screen or explains itself. The hub
 registry has no per-machine renderer attribute ([hub](hub.md)).
-`legacy-web/grid/facade.js` exports `GridTerm`, an xterm.js-compatible
+`web/grid/facade.js` exports `GridTerm`, an xterm.js-compatible
 object (`write` of JSON-line text, `resize`, `buffer.active`, selection,
 `onData`, `onSelectionChange`, `onClipboard`, `proposeDimensions`, …)
 built on the grid modules; `index.html` publishes it as

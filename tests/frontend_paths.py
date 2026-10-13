@@ -7,7 +7,7 @@ from urllib.parse import unquote, urlsplit
 
 def frontend_dir():
     repository = Path(__file__).resolve().parents[1]
-    return Path(os.environ.get("SESSIONDOCK_TEST_WEB_DIR") or repository / "legacy-web").resolve()
+    return Path(os.environ.get("SESSIONDOCK_TEST_WEB_DIR") or repository / "web").resolve()
 
 
 class FrontendHTML(HTMLParser):

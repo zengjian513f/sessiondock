@@ -82,7 +82,7 @@ RULES = [
     ("crates/ptyhost/", PTYHOST), ("crates/ptyhost-client/", PTYHOST),
     ("crates/sessiondock/src/", module_rule),
     ("crates/sessiondock/tests/fixtures/", [FULL]),
-    ("legacy-web/", ["*_browser*", "brand_names_check"]),
+    ("web/", ["*_browser*", "brand_names_check"]),
     ("deploy/", DOCS),
     ("tests/", tests_rule),
     ("Cargo.toml", [FULL]), ("Cargo.lock", [FULL]), (".github/", [FULL]),

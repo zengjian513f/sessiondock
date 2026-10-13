@@ -2,7 +2,7 @@
 
 ## 当前可运行链路
 
-当前生产链路：`legacy-web/` → Axum API → 有界 blocking 工作池 →
+当前生产链路：`web/` → Axum API → 有界 blocking 工作池 →
 `sessions` 原生记录解析 / 版本缓存；详情增量通过 SSE 返回。
 静态资源在启动时读取为内存快照，HTML 注入模式、build 与能力；
 请求不访问静态目录中的动态路径。无需 Node.js 服务，前端也没有构建步骤。
@@ -11,7 +11,7 @@
 claim/WS传输。受控host匹配full SID/UID，缺少/冲突证据保留unknown；
 关联快照本身不授权控制，claim重新观察唯一关联并固定instance，随后只使用
 guarded attach。legacy已接手动控制台；受控创建需要额外显式配置，发送走服务端会话服务。
-`legacy-web/` 是纯 JS 静态资源，按提交原样部署；设置对话框各页由 `app.js` 驱动
+`web/` 是纯 JS 静态资源，按提交原样部署；设置对话框各页由 `app.js` 驱动
 `index.html` 中的控件。legacy增量补接元数据变化，只更新缓存/标题栏，不重绘已有消息
 正文；子代理名称更新已经过无列表刷新、无reload的实际SSE/DOM回归。
 

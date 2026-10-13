@@ -26,7 +26,7 @@ pub struct HubConfig {
     pub networks: Vec<Network>,
     /// The text of `networks` as configured, for `--check-config`.
     pub networks_text: String,
-    /// `SESSIONDOCK_WEB_DIR`, default `legacy-web`; served in hub mode.
+    /// `SESSIONDOCK_WEB_DIR`, default `web`; served in hub mode.
     pub web_dir: PathBuf,
     /// `SESSIONDOCK_AUDIT_DIR`: where `hub.node.*.changed` records go; unset
     /// keeps the hub silent about display/order changes.
@@ -47,7 +47,7 @@ impl Default for HubConfig {
             cache_dir: PathBuf::new(),
             networks: parse_networks(DEFAULT_NETWORKS).expect("constant networks"),
             networks_text: DEFAULT_NETWORKS.to_string(),
-            web_dir: "legacy-web".into(),
+            web_dir: "web".into(),
             audit_dir: None,
             public_hosts: Vec::new(),
             transfer_policy: Default::default(),
