@@ -67,3 +67,14 @@ Validation: `python3 tests/files_browser.py` exercises actual conversation links
 node/path routing, unresolved-reference errors and direct directory entry on
 desktop/mobile. FileDock's own browser and node/hub suites validate previews,
 downloads and mutations against synthetic files.
+
+DELTA (BUG-20261013-223056-f48de9): configured FileDock previews CSV as a table
+with a source toggle, reusing its document table styles. CSV parsing and bounded
+preview handling belong to FileDock; SessionDock continues to resolve and route
+the file reference. Its standalone fallback without FileDock remains plain text.
+The report's browser event 226 opened the CSV link in a new page; native history
+and the lifecycle binding agreed on the referenced file and session. FileDock's
+text renderer classified CSV as source-only, so no table mode was available.
+FileDock's `tests/csv_browser.py` now clicks a real SessionDock conversation link
+through the resolver and FileDock node/hub, then exercises table/source switching,
+copy, download, directory reopening and truncated CSV exports in Chromium.
