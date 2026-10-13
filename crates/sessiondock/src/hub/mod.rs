@@ -21,6 +21,7 @@ pub mod proxy;
 pub mod registry;
 pub mod resources;
 pub mod session_links;
+pub mod terminal_transport;
 pub mod transfer;
 
 pub use client::{Client, ClientError, JSON_LIMIT, Target};

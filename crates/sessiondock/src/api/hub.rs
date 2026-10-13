@@ -142,6 +142,83 @@ impl HubAudit {
     }
 }
 
+/// Store locally even if the node link fails, and copy metadata into the
+/// node's existing audit intake so its next bug bundle includes the Hub hop.
+fn terminal_observer(
+    state: &HubState,
+    target: crate::hub::client::Target,
+    node_id: &str,
+    query: &proxy::Query,
+) -> Option<crate::hub::terminal_transport::Observer> {
+    let audit = state.audit.clone()?;
+    let field = |key: &str| {
+        query
+            .get(key)
+            .and_then(|v| v.first())
+            .cloned()
+            .unwrap_or_default()
+    };
+    let (page, uid, connection, name) = (
+        field("page"),
+        field("uid"),
+        field("connection"),
+        field("name"),
+    );
+    let node_id = node_id.to_owned();
+    let build = state.assets.build.clone();
+    let client = state.client.clone();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Value>(16);
+    let forwarding_audit = audit.clone();
+    tokio::spawn(async move {
+        while let Some(body) = rx.recv().await {
+            let result = client
+                .json(
+                    &target,
+                    "POST",
+                    "/api/audit/browser",
+                    Some(&body),
+                    AUDIT_TIMEOUT,
+                )
+                .await;
+            let failure = match result {
+                Ok((status, value)) if (200..300).contains(&status) && value["dropped"] != true => {
+                    None
+                }
+                Ok((status, _)) => Some(json!({"status": status})),
+                Err(error) => Some(json!({"code": error.code()})),
+            };
+            if let Some(failure) = failure {
+                forwarding_audit.record(
+                    "hub.terminal.audit_forward_failed",
+                    "terminal",
+                    json!({"connection": body["events"][0]["connection_id"], "failure": failure}),
+                );
+            }
+        }
+    });
+    Some(Arc::new(move |mut data| {
+        let timestamp = crate::audit::query::rfc3339(std::time::SystemTime::now());
+        data["connection"] = json!(connection);
+        data["page_id"] = json!(page);
+        data["uid"] = json!(uid);
+        data["name"] = json!(name);
+        data["node_id"] = json!(node_id);
+        data["observer"] = json!("hub");
+        data["observed_at"] = json!(timestamp);
+        audit.record("hub.terminal.transport", "terminal", data.clone());
+        let body = json!({"page_id": page, "uid": uid, "_build": build,
+            "events": [{"event": "hub.terminal.transport", "ts": timestamp,
+                "connection_id": connection, "data": data}]});
+        if tx.try_send(body).is_err() {
+            audit.record(
+                "hub.terminal.audit_forward_dropped",
+                "terminal",
+                json!({"connection": connection}),
+            );
+        }
+    }))
+}
+
 #[derive(Clone)]
 pub struct HubState {
     pub(crate) cleanup_counts: Arc<crate::cleanup::Counts>,
@@ -808,6 +885,9 @@ async fn handle(
         .target(&node)
         .map_err(|_| Reply::Invalid(NOT_REGISTERED.into()))?;
     let display_ip = proxy::display_ip(&headers, peer.map(|address| address.ip()));
+    let terminal_observer = (resolved.path == "/api/term/attach")
+        .then(|| terminal_observer(&state, target.clone(), &node.id, &resolved.query))
+        .flatten();
     let response = proxy::proxy(
         client,
         &target,
@@ -822,6 +902,7 @@ async fn handle(
             browser: &headers,
             display_ip: &display_ip,
             upgrade,
+            terminal_observer,
         },
     )
     .await?;

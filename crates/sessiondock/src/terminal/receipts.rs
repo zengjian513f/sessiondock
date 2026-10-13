@@ -5,7 +5,7 @@
 //! produced no output. Only counts and timings leave this module; terminal
 //! bytes never do. The observer must not block the bridge.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// One aggregation window starts at its first frame and closes this long after.
@@ -21,6 +21,8 @@ pub enum IoDirection {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum IoReceipt {
+    /// Cumulative receive/write boundaries, retained across bridge cancellation.
+    Progress(serde_json::Value),
     Window {
         direction: IoDirection,
         frames: u64,
@@ -35,6 +37,104 @@ pub enum IoReceipt {
         code: u16,
         reason: String,
     },
+}
+
+/// Lives outside the selected I/O futures, so revocation cannot discard the
+/// final counters or the operation that was still pending. Never stores bytes.
+pub(super) struct Progress {
+    started: Instant,
+    state: Mutex<ProgressState>,
+}
+
+struct ProgressState {
+    received_frames: u64,
+    received_bytes: u64,
+    written_frames: u64,
+    written_bytes: u64,
+    pings: u64,
+    pongs: u64,
+    input_stage: &'static str,
+    input_since: Instant,
+    output_stage: &'static str,
+    output_since: Instant,
+}
+
+impl Progress {
+    pub(super) fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            started: now,
+            state: Mutex::new(ProgressState {
+                received_frames: 0,
+                received_bytes: 0,
+                written_frames: 0,
+                written_bytes: 0,
+                pings: 0,
+                pongs: 0,
+                input_stage: "attaching_host",
+                input_since: now,
+                output_stage: "attaching_host",
+                output_since: now,
+            }),
+        }
+    }
+
+    pub(super) fn input(&self, stage: &'static str) {
+        let mut state = self.state.lock().unwrap();
+        state.input_stage = stage;
+        state.input_since = Instant::now();
+    }
+
+    pub(super) fn output(&self, stage: &'static str) {
+        let mut state = self.state.lock().unwrap();
+        state.output_stage = stage;
+        state.output_since = Instant::now();
+    }
+
+    pub(super) fn received(&self, bytes: usize) {
+        let mut state = self.state.lock().unwrap();
+        state.received_frames += 1;
+        state.received_bytes += bytes as u64;
+    }
+
+    pub(super) fn written(&self, bytes: usize) {
+        let mut state = self.state.lock().unwrap();
+        state.written_frames += 1;
+        state.written_bytes += bytes as u64;
+    }
+
+    pub(super) fn ping(&self) {
+        self.state.lock().unwrap().pings += 1;
+    }
+    pub(super) fn pong(&self) {
+        self.state.lock().unwrap().pongs += 1;
+    }
+
+    pub(super) fn report(&self, observer: Option<&IoObserver>, reason: &str) {
+        let Some(observer) = observer else {
+            return;
+        };
+        let state = self.state.lock().unwrap();
+        let data = serde_json::json!({
+            "reason": reason, "elapsed_ms": millis(self.started.elapsed()),
+            "received_frames": state.received_frames, "received_bytes": state.received_bytes,
+            "written_frames": state.written_frames, "written_bytes": state.written_bytes,
+            "pings_received": state.pings, "pongs_sent": state.pongs,
+            "input_stage": state.input_stage, "input_stage_ms": millis(state.input_since.elapsed()),
+            "output_stage": state.output_stage, "output_stage_ms": millis(state.output_since.elapsed()),
+        });
+        drop(state);
+        observer(IoReceipt::Progress(data));
+    }
+
+    pub(super) async fn watch(&self, observer: Option<&IoObserver>) {
+        // A quiet socket still needs evidence that its receive loop is alive.
+        let mut tick = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            tick.tick().await;
+            self.report(observer, "periodic");
+        }
+    }
 }
 
 pub type IoObserver = Arc<dyn Fn(IoReceipt) + Send + Sync>;

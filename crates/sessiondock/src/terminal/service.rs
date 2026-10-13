@@ -26,7 +26,7 @@ use super::input;
 use super::ownership::{
     self, BoundLease, ClaimResponse, Claimant, ExpectedTarget, LeaseTarget, Registry, Revocation,
 };
-use super::receipts::{IoDirection, IoMeter, IoObserver, IoReceipt};
+use super::receipts::{IoDirection, IoMeter, IoObserver, IoReceipt, Progress};
 
 const OUTPUT_CHUNK: usize = 32 * 1024;
 const OUTPUT_QUEUE: usize = 16;
@@ -791,12 +791,18 @@ impl PreparedAttachment {
 
 impl PreparedAttachment {
     pub async fn run(self, socket: WebSocket, size: TerminalSize, shutdown: CancellationToken) {
+        let progress = Progress::new();
+        let observer = self.observer.as_ref();
+        progress.report(observer, "opened");
+        let monitoring = progress.watch(observer);
+        tokio::pin!(monitoring);
         let mut revoked = self.guard.bound.revocations();
         let attachment = tokio::select! {
             biased;
             signal = revocation(&mut revoked) => Err(Close::revoked(signal)),
             _ = shutdown.cancelled() => Err(Close::shutdown()),
             attachment = self.attach_current(size) => attachment,
+            _ = &mut monitoring => unreachable!(),
         };
         let (mut sink, stream) = socket.split();
         let close = match attachment {
@@ -809,9 +815,17 @@ impl PreparedAttachment {
                     // host halves before attempting the browser close handshake.
                     let output = host_output(reader, send.clone());
                     let observer = self.observer.as_ref();
-                    let input =
-                        browser_input(stream, writer, send, &self.guard, observer, self.heartbeat);
-                    let sending = browser_output(&mut sink, receive, observer, self.heartbeat);
+                    let input = browser_input(
+                        stream,
+                        writer,
+                        send,
+                        &self.guard,
+                        observer,
+                        self.heartbeat,
+                        &progress,
+                    );
+                    let sending =
+                        browser_output(&mut sink, receive, observer, self.heartbeat, &progress);
                     tokio::pin!(output, input, sending);
                     tokio::select! {
                         biased;
@@ -820,10 +834,12 @@ impl PreparedAttachment {
                         close = output => close,
                         close = input => close,
                         close = sending => close,
+                        _ = &mut monitoring => unreachable!(),
                     }
                 }
             }
         };
+        progress.report(observer, "closed");
         // Do not hold ownership until the peer acknowledges its close. The
         // exact credential guard is safe even after a newer claim was installed.
         let _ = self.guard.registry.release(&self.guard.bound);
@@ -1038,10 +1054,17 @@ async fn browser_input(
     guard: &LeaseGuard,
     observer: Option<&IoObserver>,
     heartbeat: bool,
+    progress: &Progress,
 ) -> Close {
     let mut meter = IoMeter::new(IoDirection::Input);
     let close = browser_input_frames(
-        stream, writer, sender, guard, observer, &mut meter, heartbeat,
+        stream,
+        writer,
+        sender,
+        guard,
+        &mut meter,
+        heartbeat,
+        (observer, progress),
     )
     .await;
     meter.flush(observer);
@@ -1069,10 +1092,11 @@ async fn browser_input_frames(
     mut writer: AttachWriter,
     sender: mpsc::Sender<BrowserOutput>,
     guard: &LeaseGuard,
-    observer: Option<&IoObserver>,
     meter: &mut IoMeter,
     heartbeat: bool,
+    diagnostics: (Option<&IoObserver>, &Progress),
 ) -> Close {
+    let (observer, progress) = diagnostics;
     loop {
         if meter
             .deadline()
@@ -1080,6 +1104,7 @@ async fn browser_input_frames(
         {
             meter.flush(observer);
         }
+        progress.input("waiting_browser");
         let Some(message) = next_or_flush(meter, observer, stream.next()).await else {
             break;
         };
@@ -1098,6 +1123,8 @@ async fn browser_input_frames(
             Message::Text(text) => {
                 match serde_json::from_str::<BrowserControl>(&text) {
                     Ok(BrowserControl::Ping { id }) if heartbeat => {
+                        progress.ping();
+                        progress.input("queueing_pong");
                         if let Err(close) = enqueue(&sender, BrowserOutput::Pong(id)).await {
                             return close;
                         }
@@ -1127,9 +1154,12 @@ async fn browser_input_frames(
             HostInput::Data(bytes) => bytes.len(),
             HostInput::Resize(_) => 0,
         };
-        if let Err(close) = gated_write(guard, &mut writer, write).await {
+        progress.received(bytes);
+        progress.input("waiting_gate");
+        if let Err(close) = gated_write(guard, &mut writer, write, progress).await {
             return close;
         }
+        progress.written(bytes);
         meter.note(received, bytes, received.elapsed());
     }
     Close::new(1000, "client disconnected")
@@ -1151,11 +1181,13 @@ async fn gated_write(
     guard: &LeaseGuard,
     writer: &mut AttachWriter,
     input: HostInput,
+    progress: &Progress,
 ) -> Result<(), Close> {
     let _gate = guard.gate.lock().await;
     // The same async gate covers claim publication, attach and every write.
     // No new old-lease write can begin after a successful force claim.
     current(guard)?;
+    progress.input("writing_host");
     let result = match input {
         HostInput::Data(bytes) => writer.send_data(&bytes).await,
         HostInput::Resize(size) => writer.resize(size).await,
@@ -1172,7 +1204,9 @@ async fn browser_output(
     receiver: mpsc::Receiver<BrowserOutput>,
     observer: Option<&IoObserver>,
     heartbeat: bool,
+    progress: &Progress,
 ) -> Close {
+    progress.output("heartbeat_ready");
     if heartbeat
         && sink
             .send(Message::Text("{\"t\":\"heartbeat_ready\"}".into()))
@@ -1182,7 +1216,7 @@ async fn browser_output(
         return Close::new(1001, "browser disconnected");
     }
     let mut meter = IoMeter::new(IoDirection::Output);
-    let close = browser_output_frames(sink, receiver, observer, &mut meter).await;
+    let close = browser_output_frames(sink, receiver, observer, &mut meter, progress).await;
     meter.flush(observer);
     close
 }
@@ -1192,6 +1226,7 @@ async fn browser_output_frames(
     mut receiver: mpsc::Receiver<BrowserOutput>,
     observer: Option<&IoObserver>,
     meter: &mut IoMeter,
+    progress: &Progress,
 ) -> Close {
     loop {
         if meter
@@ -1200,10 +1235,12 @@ async fn browser_output_frames(
         {
             meter.flush(observer);
         }
+        progress.output("waiting_host_output");
         let Some(item) = next_or_flush(meter, observer, receiver.recv()).await else {
             break;
         };
         let started = Instant::now();
+        progress.output("writing_browser");
         let result = match item {
             BrowserOutput::Data(bytes) => {
                 let length = bytes.len();
@@ -1213,10 +1250,15 @@ async fn browser_output_frames(
             }
             BrowserOutput::Flush => sink.flush().await,
             BrowserOutput::Pong(id) => {
-                sink.send(Message::Text(
-                    serde_json::json!({"t":"pong", "id":id}).to_string().into(),
-                ))
-                .await
+                let result = sink
+                    .send(Message::Text(
+                        serde_json::json!({"t":"pong", "id":id}).to_string().into(),
+                    ))
+                    .await;
+                if result.is_ok() {
+                    progress.pong();
+                }
+                result
             }
             BrowserOutput::Finish(close) => return close,
         };

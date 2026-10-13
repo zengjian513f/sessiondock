@@ -26,7 +26,6 @@ use axum::{
 use futures_util::StreamExt;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
-use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
 use super::{
@@ -678,6 +677,7 @@ pub struct Forward<'a> {
     /// The browser connection's pending upgrade (`hyper::upgrade::on`), for
     /// `/api/term/attach`; `None` outside a hyper connection.
     pub upgrade: Option<hyper::upgrade::OnUpgrade>,
+    pub terminal_observer: Option<super::terminal_transport::Observer>,
 }
 
 /// `HubHandler.proxy`: forward one request to `target` and translate the
@@ -799,25 +799,17 @@ pub async fn proxy(
                 );
             }
         }
-        let (mut upstream, prefetched) = response.into_body().into_raw();
+        let (upstream, prefetched) = response.into_body().into_raw();
         if let Some(upgrade) = forward.upgrade {
             // After the 101 no frame has been consumed: hand both sockets to a
             // raw copy, prefetched bytes first, until either side closes.
-            tokio::spawn(async move {
-                let Ok(upgraded) = upgrade.await else {
-                    return;
-                };
-                let mut browser = hyper_util::rt::TokioIo::new(upgraded);
-                if !prefetched.is_empty() && browser.write_all(&prefetched).await.is_err() {
-                    return;
-                }
-                tokio::select! {
-                    _ = shutdown.cancelled() => {}
-                    _ = tokio::io::copy_bidirectional(&mut browser, &mut upstream) => {}
-                }
-                let _ = browser.shutdown().await;
-                let _ = upstream.shutdown().await;
-            });
+            tokio::spawn(super::terminal_transport::run(
+                upgrade,
+                upstream,
+                prefetched,
+                shutdown,
+                forward.terminal_observer,
+            ));
         }
         return Ok(reply);
     }
