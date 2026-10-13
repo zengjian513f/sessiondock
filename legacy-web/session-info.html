@@ -22,6 +22,7 @@
     ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme;
 })();
 </script>
+<script defer src="session-research.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="session-info.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script src="session-card.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 </head>
@@ -30,6 +31,11 @@
 <main class="si-main">
 <p id="info-status" role="status">正在读取会话信息…</p>
 <section id="info-summary" class="si-panel" hidden></section>
+<section id="info-research" class="si-panel si-list-panel" hidden aria-labelledby="research-heading">
+<div class="si-heading"><h2 id="research-heading">关联研究 <span id="research-count"></span></h2><button id="research-retry" type="button" hidden>重试</button></div>
+<p id="research-status" class="si-caption" role="status"></p>
+<div id="research-content"></div>
+</section>
 <details id="info-hints" class="si-panel" hidden><summary>开场交接线索</summary><p class="si-caption">从前五条用户消息查找交接文档和会话 UUID；线索需要核实后再建立关系。</p><div id="hint-content"></div></details>
 <section id="info-editor" class="si-panel" hidden>
 <form id="relation-form">

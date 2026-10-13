@@ -54,3 +54,20 @@ body.session-info-page { display: block; height: auto; min-height: 100dvh; overf
 .si-relation-detail { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
 .si-artifact { margin-top: 4px; color: var(--muted); }
 @media (max-width: 720px) { .si-list-panel { padding: 0; } }
+
+#research-status, .si-research-related > .si-caption { margin: 10px 13px; overflow-wrap: anywhere; }
+#research-status:empty { display: none; }
+.si-research-label { font-size: 12px; font-weight: 600; color: var(--muted); margin: 0; padding: 8px 13px 3px; }
+.si-research-row { cursor: default; align-items: baseline; }
+.si-research-experiment-row { padding-left: 33px; }
+.si-research-experiment > summary { cursor: pointer; list-style: none; }
+.si-research-experiment > summary::-webkit-details-marker { display: none; }
+.si-research-experiment > summary::before { content: '▸'; color: var(--muted); font-size: 12px; width: 12px; flex: none; }
+.si-research-experiment[open] > summary::before { content: '▾'; }
+.si-research-experiment > summary > .si-caption { flex: none; }
+.si-research-steps { margin: 0 13px 7px 35px; border-left: 1px solid var(--border); }
+.si-research-row .t { display: block; -webkit-line-clamp: unset; }
+.si-research-overflow > summary, .si-research-related > summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 8px 13px; }
+.si-research-related { border-top: 1px solid var(--border); margin-top: 7px; }
+#info-research .si-heading { flex-wrap: wrap; }
+#research-content { padding-bottom: 7px; }
