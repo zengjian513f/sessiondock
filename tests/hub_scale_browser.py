@@ -3,13 +3,14 @@
 
 Three private nodes contain synthetic native histories. Same-SID parents on
 different nodes and providers must stay separate; children on two nodes add to
-one parent. Reload timings and Hub RSS/HWM are observations, not machine gates.
+one parent. Repeated reloads must not accumulate freed Hub list projections.
 """
 
 import argparse
 from contextlib import ExitStack
 import json
 from pathlib import Path
+import platform
 import statistics
 import tempfile
 import time
@@ -49,6 +50,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
     parser.add_argument('--parents', type=int, default=800)
+    parser.add_argument('--samples', type=int, default=40)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='sessiondock-hub-scale-') as temporary, \
             sync_playwright() as pw, ExitStack() as stack:
@@ -97,7 +99,8 @@ def main():
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         timings = []
-        for sample in range(5):
+        resident = []
+        for sample in range(args.samples):
             start = time.perf_counter()
             if sample:
                 page.reload()
@@ -116,7 +119,17 @@ def main():
             assert actual == expected, ('cross-node/provider counts differ',
                 [(uid, count, actual.get(uid)) for uid, count in expected.items()
                  if actual.get(uid) != count][:12])
-            print(f'PASS hub scale sample={sample + 1} parents={len(expected)} list_ms={timings[-1]}', flush=True)
+            resident.append(memory(hub.process.pid).get('rss_mib'))
+            print(f'PASS hub scale sample={sample + 1} parents={len(expected)} list_ms={timings[-1]} rss_mib={resident[-1]}', flush=True)
+        # The first reloads warm the bounded list caches. Subsequent complete
+        # projections are temporary; wait for the coalesced heap release while
+        # the page's normal list/SSE subscriptions keep running.
+        if resident[0] is not None and platform.libc_ver()[0] == 'glibc':
+            ceiling = max(resident[:3]) + 64
+            deadline = time.monotonic() + 10
+            while memory(hub.process.pid)['rss_mib'] > ceiling and time.monotonic() < deadline:
+                page.wait_for_timeout(100)
+            assert memory(hub.process.pid)['rss_mib'] <= ceiling, ('Hub retained reload temporaries', resident, memory(hub.process.pid))
         # A real filter and disclosure must load exactly the selected remote
         # branch. Same-SID parents elsewhere must not gain any of its children.
         page.locator('#q').fill('a codex scale-0000')
@@ -129,7 +142,7 @@ def main():
         expect(page.locator('#msgs')).to_contain_text(child[1])
         assert not errors, errors
         print('METRICS ' + json.dumps({'suite': 'hub_scale_browser', 'parents': len(expected),
-              'samples': len(timings), 'list_ms': timings, 'list_p50_ms': statistics.median(timings),
+              'samples': len(timings), 'rss_samples_mib': resident, 'list_ms': timings, 'list_p50_ms': statistics.median(timings),
               'list_p95_ms': max(timings), **memory(hub.process.pid)}), flush=True)
         print('PASS hub scale: exact summed counts, node/source isolation, reload, filter, expand and open', flush=True)
 

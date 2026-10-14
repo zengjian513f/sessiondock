@@ -74,6 +74,14 @@ WebSocket 后仍在同一 TLS 流上双向转发。HTTP 与 HTTPS 都继续受�
 `public_payload` 改写后的载荷，上限 128 条（先进先出，`/api/search` 不缓存）。
 内存载荷通过不可变 `Arc<Value>` 在注册表、聚合请求和磁盘快照写入任务之间共享；
 注册表锁内只复制引用。上游列表增量缓存也共享不可变基线；离线标记只修改答复副本。
+Hub 的 JSON 阻塞任务完成后复用节点的合并延迟 `malloc_trim(0)`，归还解析、聚合、
+UI 快照和替换基线产生的空闲 heap 页；保留仍被引用的列表、离线缓存和传输语义。
+非 glibc 平台沿用该回收函数的空操作。`hub_scale_browser.py` 用 Chromium 重载大列表，
+检查预热后的 RSS 不随重复投影持续累积，并继续过滤、展开和打开远端子会话。
+BUG-20261014-124811-809df3：两次异常断联对应 Hub 在 12:40:50 / 12:47:44 UTC
+达到 2 GiB cgroup 上限后被 OOM killer 终止；节点 PTY 与原生会话继续运行。
+浏览器 WebSocket 1006、SSE 错误与 HTTP 502 同时出现，节点笼统的 1009 收帧错误
+是上游骤断后的记录，不能据此认定用户发送了超大输入。另一次 4001 是显式接管。
 `/api/sessions` 且 query 只含 `force`/`sig` 的完整答复统一存为 `(nid,"/api/sessions","")`，
 签名变化替换当前列表，不保留每个旧签名对应的完整列表，
 并按 `sig` 变化写 `hub-cache/<nid>.sessions.json`（`{stamp,data}`，0600，`.tmp`+rename，
