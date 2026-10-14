@@ -160,6 +160,14 @@ def node_source_picker(browser, hub, node, other):
             page.locator("#new-cwd-clear").click()
             expect(page.locator("#new-cwd")).to_have_value("")
             expect(page.locator("#new-cwd")).to_be_focused()
+            expect(page.locator("#new-cwd")).to_have_attribute("placeholder", "输入或选择目录")
+            assert page.locator("#new-cwd").evaluate("el => el.matches(':placeholder-shown')")
+            # Clearing again must not reveal a sample path that looks like a default.
+            page.locator("#new-cwd-clear").click()
+            expect(page.locator("#new-cwd")).to_have_value("")
+            page.locator("#new-session-go").click()
+            expect(page.locator("#new-session-error")).to_have_text("请选择启动目录")
+            expect(page.locator("#new-session-dialog")).to_be_visible()
             if os.environ.get("SESSIONDOCK_TEST_SHOTS"):
                 page.screenshot(path=os.path.join(os.environ["SESSIONDOCK_TEST_SHOTS"], f"hub-picker-{width}-{theme}-empty.png"))
     assert not errors, errors
@@ -185,6 +193,7 @@ def node_switch_cwd(browser, hub, node, other):
     open_new_session(page)
     cwd = page.locator("#new-cwd")
     expect(cwd).to_have_value("")
+    expect(cwd).to_have_attribute("placeholder", "输入或选择目录")
     for nid in (node.nid, other.nid, node.nid):
         page.locator("#new-node").select_option(nid)
         expect(cwd).to_have_value("")
