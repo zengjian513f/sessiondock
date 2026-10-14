@@ -23,11 +23,12 @@ struct Document {
     /// Sent text the CLI has not echoed as a native record yet, per identity
     /// key, in send order (docs/cli-state.md).
     queued: BTreeMap<String, Vec<QueuedSend>>,
-    /// Native merged echoes already used to settle sends, surviving restarts.
+    /// Consumed native evidence (merged echoes and editable queue pops),
+    /// surviving restarts. Keep the original on-disk field name.
     merged_echoes: BTreeMap<String, HashSet<String>>,
 }
 /// One SEND the terminal accepted whose native user/command record has not
-/// been seen yet. `state` is `queued`, `interrupted`, `rejected` or `lost`.
+/// been seen yet. `state` is `queued`, `returned`, `interrupted`, `rejected` or `lost`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct QueuedSend {
     pub request_id: String,
@@ -540,6 +541,31 @@ impl Store {
             Ok(true)
         })
     }
+    /// Preserve editable queue returns and consume their native evidence in
+    /// one write; dismissing a receipt must not reuse its pop for another SEND.
+    pub fn mark_returned(&self, key: &str, marks: &[(String, String)]) -> Result<()> {
+        self.update(|doc| {
+            for (id, evidence) in marks {
+                if doc
+                    .merged_echoes
+                    .get(key)
+                    .is_some_and(|used| used.contains(evidence))
+                {
+                    continue;
+                }
+                if let Some(row) = doc.queued.get_mut(key).into_iter().flatten().find(|row| {
+                    row.request_id == *id && matches!(row.state.as_str(), "queued" | "lost")
+                }) {
+                    row.state = "returned".into();
+                    doc.merged_echoes
+                        .entry(key.into())
+                        .or_default()
+                        .insert(evidence.clone());
+                }
+            }
+            Ok(())
+        })
+    }
     /// Keeps selected sends whose processing an interrupted CLI did not confirm.
     pub fn mark_interrupted(&self, key: &str, request_ids: &[String]) -> Result<()> {
         self.update(|doc| {
@@ -573,15 +599,16 @@ impl Store {
             .queued
             .get(key)
             .is_some_and(|rows| {
-                rows.iter()
-                    .any(|row| row.state != "rejected" && row.state != state)
+                rows.iter().any(|row| {
+                    !matches!(row.state.as_str(), "rejected" | "returned") && row.state != state
+                })
             });
         if !changed {
             return Ok(false);
         }
         self.update(|doc| {
             for row in doc.queued.get_mut(key).into_iter().flatten() {
-                if row.state != "rejected" {
+                if !matches!(row.state.as_str(), "rejected" | "returned") {
                     row.state = state.into();
                 }
             }

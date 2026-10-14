@@ -26,7 +26,7 @@
 | `instance.phase` | 当前 Codex 编辑区正上方显示 `Compacting context (... esc to interrupt)` 时为 `compacting`；完成、中断、读屏失败、有滞后或无法识别时为 `null`。不从历史引用或编辑区文字推断；其他 CLI 当前为 `null` |
 | `input` | 与 CHECK 相同的分类结果（`ready`/`starting`/`blocked`/`unknown` 及 `code`/`message`）；最近一次读失败时为 `null` |
 | `editor.text` | 识别到编辑区时的可见文字（Claude、Codex、Agy）；Grok、OpenCode 尚无提取，为 `null` |
-| `queued` | 终端已接受、原生记录尚未出现的 SEND，按发送顺序；`state` 为 `queued`、`interrupted`、`rejected` 或 `lost` |
+| `queued` | 终端已接受、原生记录尚未出现的 SEND，按发送顺序；`state` 为 `queued`、`returned`、`interrupted`、`rejected` 或 `lost` |
 | `queued[].cli_queued_at` | 确认该正文进入 CLI 自己输入队列的时间：Claude 原生 enqueue 时间，或 Codex 画面首次观察时间；尚未看到为 `null` |
 | `queued[].error` | `rejected` 时保存 CLI 的命令拒绝原文；其他状态可省略 |
 | `queued[].command_rejections_before` | Claude 命令发送前，识别到的画面中同名未知命令警告数量；无基线的旧回执省略，不用旧画面推断结果 |
@@ -49,6 +49,7 @@ Agy 1.2.16 提取已识别编辑区正文，并用只读镜像中的 native user
 - **通知独立消费**：终端回滚检查只查看最新历史快照，不消费历史变更通知。读屏期间出现的原生记录仍须由历史分支推送并对账，不能只发送 `cli_only` 后等 HTTP 补拉或下一条回复（BUG-20261005-151728-007777）。
 - **回显对账**：watcher 每次拿到含正文的数据包，把其中 user/command 记录的正文摘要（与 SEND 回执相同的 SHA-256）与 `queued` 比对；摘要相同且记录时间不早于发送时间 5 秒的记录退掉一条排队项，一条记录通常只退一条。Codex 把多条待处理输入合并为一个 user 记录时，完整正文须等于连续发送项按顺序用换行连接的正文，且每项都满足时间边界，才一起结清；不使用子串或忽略排版空白的匹配，也不要求每项都曾在 TUI 可见。已消费的合并回显与结清结果一起持久化，刷新或重启后重复读到它不能结清下一批同文输入（BUG-20261003-231725-8dad6b）。没有时间的记录（Grok）只按摘要匹配。
 - **CLI 入队**：Claude 忙碌时收到输入先写 `queue-operation` enqueue，到当前步骤结束才写 remove 与 `queued_command`。同一对账把摘要相同、时间不早于发送 5 秒的 enqueue 记录写进 `cli_queued_at`，排队项保留到 user/command 记录出现（BUG-20260928-231633-9a7610）。一条 enqueue 记录只配一条排队项，已标记的项仍占用它。
+- **Claude 队列退回（DELTA）**：原生 `queue-operation` 的 `popAll` / `popOne` 表示把可编辑队列项取回编辑区并撤销排队，不是处理成功。服务端用已确认 enqueue、完整正文和发送/入队之后的 pop 时间逐条匹配，持久化为 `returned` 并保留正文，显示“已从 CLI 队列退回编辑区，未确认处理，请到终端查看”，可关闭提示。无正文、无时间、早于发送的 pop，以及普通 `remove` / `dequeue` 不作此推断。正常原生 user/command 回显仍优先结清；退回证据一对一消费并与状态原子保存，关闭、刷新及重启不能让它错误匹配后续同文发送。CHECK/观察从完整原生视图核对尚未结清的 Claude 回执，恢复旧版本遗漏且已落在历史分页之外的退回记录；不改变页面游标、不伪造用户历史、不自动重发，也不声称编辑区当前仍有这段文字。实例随后退出不把已确认退回降级成 `lost`。BUG-20261014-151630-58b85b 中遗漏 `popAll`，使六小时前已退出 CLI 队列的消息一直显示等待处理。
 - **Claude 未知命令**：Claude Code 2.1.289 的交互分派可只显示 `Unknown command: /name`（可附 `Did you mean`），不写 JSONL，不能永远等待原生回显（BUG-20261005-081802-e81d57）。SEND 在粘贴前记录同名警告数量，CHECK/观察仅从无滞后、已识别编辑区上方读取完整匹配的新警告，一条警告只配一条发送，持久化为 `rejected` 并保留错误原文；不把斜杠命令一概当失败，也不按超时或空闲推断成功。旧警告、引用行、编辑区文字不作为新增警告；实例退出后也保留明确拒绝结果。旧回执缺少发送前基线，或警告已离屏/被重画覆盖而无法证明新增时，仍保留未确认状态，用户可关闭提示。关闭只撤下回执，不取消或重发 CLI 输入。
 - **Codex CLI 入队**：Codex 忙碌队列在下一次工具调用之前仅存在于 TUI，JSONL 不写入队事件。观察和 CHECK 从已识别编辑区正上方的 `Messages to be submitted after next tool call` 区块读取 `↳` 消息，与待确认发送的完整正文忽略排版空白后逐条匹配，持久化首次观察时间到 `cli_queued_at`（BUG-20260930-123331-237778）。引用的工具输出、无匹配正文、未知编辑区或有 lag 的画面不算证据；重复正文一对一匹配，已确认项仍占用可见条目。队列离屏不撤销已获得的证据，也不据此移除消息；仍等原生 user 记录退掉排队项。
 - **退回**：回显退掉排队项时记住最后一条的正文（仅内存）。之后读到的编辑区文字与它或仍在排队的正文忽略空白后相同，且分类为 `cli_input_pending`，则 `input` 改为 `cli_input_returned`。原生历史里这条输入之后已有回答（assistant、thinking、工具）时不算退回（见下条），记忆随之清掉。
@@ -83,6 +84,7 @@ CLI 时，它自己启动的命令仍按最近的 CLI 归属计入。相对原�
 | --- | --- |
 | 命令活动、终端宿主隔离、SSH 远端归属与刷新/重启恢复 | [process_activity_browser.py](../tests/process_activity_browser.py)、[process_links_browser.py](../tests/process_links_browser.py) |
 | 忙碌 SEND 排队气泡、CHECK 响应携带 `cli.queued`、回显退掉 | [send_browser.py](../tests/send_browser.py) |
+| Claude 队列 popAll/popOne 退回、旧回执及分页外证据恢复、刷新/关闭、真实回显结清 | [send_claude_returned_browser.py](../tests/send_claude_returned_browser.py) |
 | 原生输入在读屏期间落盘，现有 SSE 在模型回复前结清队列；后续回复同样不丢通知 | [send_echo_browser.py](../tests/send_echo_browser.py) |
 | Codex TUI 入队确认、折行与同文多次发送、引用画面不误认、中断后未确认处理、离屏与旧中断不误判、刷新恢复与迟到原生回显退掉、Esc 合并回显及重复快照隔离 | [send_native_codex_browser.py](../tests/send_native_codex_browser.py) |
 | 终端回滚同步到对话、刷新保留、下一条输入后以原生分支为准、调出已回答的输入既不回滚也不算 Esc 退回 | [rewind_cli_browser.py](../tests/rewind_cli_browser.py) |
