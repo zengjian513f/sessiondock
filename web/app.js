@@ -6378,6 +6378,8 @@ function closeSessionActions(restoreFocus = false) {
   menu.hidden = true;
   const button = $('#a-more');
   button?.setAttribute('aria-expanded', 'false');
+  // Apply any folding deferred while the user was interacting with the menu.
+  layoutSessionHead(menu.closest('.dhead'));
   if (restoreFocus) button?.focus();
 }
 
@@ -6478,10 +6480,14 @@ function layoutSessionHead(heading = $('#detail .dhead')) {
   const list = menu?.querySelector('[role="menu"]');
   syncSessionGlobalActions(heading, list);
   if (!wrap || !menu || !list) return;
+  // Background capability/task refreshes can request layout even when no
+  // geometry changed. Keep an open menu and its focused/selected contents in
+  // place; moving its children would also discard focus and text selection.
+  // Explicit dismissal (including resize) applies the latest layout on close.
+  if (!menu.hidden) return;
   const actions = wrap.parentElement;
   const tier = layoutTier();
   const menuButtons = node => node.matches('button') ? [node] : [...node.querySelectorAll('button')];
-  closeSessionActions();
   // 先把平铺出去的操作和元信息都收回菜单（保持原始顺序），量过宽度再按顺序往外放
   for (const node of actions.querySelectorAll(':scope > [data-from-menu]')) {
     delete node.dataset.fromMenu;
