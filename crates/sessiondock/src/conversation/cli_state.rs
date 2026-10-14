@@ -409,6 +409,102 @@ pub(super) fn expects_native_echo(source: &str, text: &str) -> bool {
 }
 
 impl super::Conversations {
+    /// Claude's popAll/popOne take editable queued commands back into the
+    /// editor and discard their queue entries. They are not delivered prompts.
+    /// Read the native view, not only the browser's current history window, so
+    /// old pending receipts recover after upgrade/restart as well.
+    async fn observe_returned_queue(&self, identity: &super::Identity) -> Result<(), Failure> {
+        let pending: Vec<_> = self
+            .store
+            .queued(&identity.key)
+            .into_iter()
+            .filter(|row| matches!(row.state.as_str(), "queued" | "lost"))
+            .collect();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let since = pending
+            .iter()
+            .map(|row| row.sent_at)
+            .fold(f64::INFINITY, f64::min)
+            - 5.0;
+        let uid = identity.uid.clone();
+        let native = self
+            .reader
+            .run(move |sessions| {
+                let snapshot = sessions.snapshot(&uid, "")?;
+                let mut echoes = Vec::new();
+                let mut returned = Vec::new();
+                for event in snapshot.view.events() {
+                    let message = &event.message;
+                    let text = message["text"].as_str().unwrap_or("");
+                    let ts = message["ts"]
+                        .as_str()
+                        .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+                        .map(|at| at.timestamp_millis() as f64 / 1000.0);
+                    if ts.is_some_and(|at| at < since) {
+                        continue;
+                    }
+                    let enqueue =
+                        message["role"] == "queue_operation" && message["operation"] == "enqueue";
+                    if enqueue || matches!(message["role"].as_str(), Some("user" | "command")) {
+                        echoes.push(Echo {
+                            hash: echo_hash(text),
+                            text: text.to_owned(),
+                            ts,
+                            enqueue,
+                        });
+                    } else if message["role"] == "queue_operation"
+                        && matches!(message["operation"].as_str(), Some("popAll" | "popOne"))
+                        && !text.trim().is_empty()
+                        && let Some(at) = ts
+                    {
+                        returned.push((echo_hash(text), at));
+                    }
+                }
+                Ok((echoes, returned))
+            })
+            .await;
+        let Ok((echoes, returned)) = native else {
+            return Ok(());
+        };
+        if !returned.iter().any(|(hash, at)| {
+            pending
+                .iter()
+                .any(|row| hash == &row.echo_hash && *at >= row.sent_at)
+        }) {
+            return Ok(());
+        }
+        // A real prompt echo wins over queue metadata, including an echo in an
+        // older page. Enqueue records establish which SEND the pop belongs to.
+        self.retire_echoes(&identity.uid, &echoes);
+        let mut consumed = self.store.merged_echoes(&identity.key);
+        let mut marks = Vec::new();
+        for row in self.store.queued(&identity.key) {
+            if !matches!(row.state.as_str(), "queued" | "lost") {
+                continue;
+            }
+            let Some(enqueued_at) = row.cli_queued_at else {
+                continue;
+            };
+            for (hash, at) in &returned {
+                let evidence = format!("returned:{hash}:{at:?}");
+                if hash == &row.echo_hash
+                    && *at >= row.sent_at
+                    && *at >= enqueued_at
+                    && consumed.insert(evidence.clone())
+                {
+                    marks.push((row.request_id, evidence));
+                    break;
+                }
+            }
+        }
+        if !marks.is_empty() {
+            self.store.mark_returned(&identity.key, &marks)?;
+        }
+        Ok(())
+    }
+
     /// A confirmed Codex queue may be consumed by a steer, then interrupted
     /// before any user record is written. Absence from a screen alone cannot
     /// prove this: require a later native abort AND an idle, empty composer.
@@ -419,6 +515,9 @@ impl super::Conversations {
         capture: &crate::delivery::driver::ScreenCapture,
     ) -> Result<(), Failure> {
         use crate::delivery::driver;
+        if identity.source == "claude" {
+            return self.observe_returned_queue(identity).await;
+        }
         let queued = self.store.queued(&identity.key);
         if identity.source != "codex"
             || !queued

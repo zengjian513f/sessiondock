@@ -825,7 +825,7 @@ pub(super) fn record(
         }
         "queue-operation" if tag.is_none() => {
             let operation = record["operation"].as_str().unwrap_or("");
-            if ["enqueue", "remove", "dequeue", "popAll"].contains(&operation)
+            if ["enqueue", "remove", "dequeue", "popAll", "popOne"].contains(&operation)
                 && (!["enqueue", "remove"].contains(&operation)
                     || record["content"]
                         .as_str()
