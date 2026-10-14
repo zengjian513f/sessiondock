@@ -999,41 +999,149 @@ function shortCwd(p, max = 40) {
 }
 
 const timelinePath = cwd => (cwd || '(未知)').replace(/^\/home\/[^/]+/, '~').replace(/\/+$/, '') || '/';
-const TIMELINE_COLORS = ['blue', 'teal', 'violet', 'amber', 'rose', 'olive', 'rust', 'cyan'];
-let timelineColors = new Map();
+// Ordered so the first free colors on a fresh screen sit far apart in hue. The
+// second sixteen are softer neighbours of the first, used only when every
+// primary color is already on screen.
+const TIMELINE_COLORS = [
+  'blue', 'amber', 'teal', 'rose', 'violet', 'olive', 'rust', 'cyan',
+  'fuchsia', 'jade', 'orange', 'sky', 'indigo', 'raspberry', 'brown', 'gold',
+  'denim', 'ochre', 'pine', 'mauve', 'lavender', 'moss', 'brick', 'lagoon',
+  'orchid', 'mint', 'apricot', 'steel', 'periwinkle', 'berry', 'tan', 'mustard',
+];
+const TIMELINE_PRIMARY_COLORS = 16;
+const TIMELINE_COLOR_MEMORY = 256;
+// path → preferred color, least recently shown first. A directory returning to
+// the screen takes its preferred color again when no directory on screen holds
+// it; a temporary substitute does not replace the preference.
+let timelineColorMemory = new Map();
 try {
   for (const [path, color] of store.get('timelineDirectoryColors', [])) {
-    if (typeof path === 'string' && TIMELINE_COLORS.includes(color)
-        && ![...timelineColors.values()].includes(color)) timelineColors.set(path, color);
+    if (typeof path === 'string' && TIMELINE_COLORS.includes(color)) {
+      timelineColorMemory.delete(path);
+      timelineColorMemory.set(path, color);
+    }
   }
 } catch { /* Ignore invalid saved assignments. */ }
+// A free color is taken in order of how long ago it was last on screen, so a
+// directory that just scrolled away keeps its color available the longest.
+let timelineColorTick = 0;
+const timelineColorSeen = new Map(TIMELINE_COLORS.map(color => [color, 0]));
+for (const color of timelineColorMemory.values()) timelineColorSeen.set(color, ++timelineColorTick);
+let timelineScreen = {colors: new Map(), depths: new Map()};
 
-function timelineDirectoryColors(rows) {
-  const counts = new Map(), seen = new Set();
-  for (const row of rows) {
-    if (!row.cwd || row.cwd === '(未知)' || seen.has(row.uid)) continue;
-    seen.add(row.uid); // Search results also contain sessions in the main list.
-    const path = timelinePath(row.cwd);
-    counts.set(path, (counts.get(path) || 0) + 1);
+/** Tint only the final directory, plus as many ancestors as it takes to tell
+ *  apart directories on screen that share that final name. */
+function timelineTintDepths(paths) {
+  const byLeaf = new Map();
+  for (const path of paths) {
+    const parts = path === '/' ? ['/'] : path.split('/');
+    if (!byLeaf.has(parts.at(-1))) byLeaf.set(parts.at(-1), []);
+    byLeaf.get(parts.at(-1)).push([path, parts]);
   }
-  const common = [...counts].filter(([, count]) => count >= 2)
-    .sort(([a, ac], [b, bc]) => bc - ac || (a < b ? -1 : a > b ? 1 : 0))
-    .slice(0, TIMELINE_COLORS.length).map(([path]) => path);
-  const assigned = new Map(common.filter(path => timelineColors.has(path))
-    .map(path => [path, timelineColors.get(path)]));
-  const free = TIMELINE_COLORS.filter(color => ![...assigned.values()].includes(color));
-  for (const path of common) {
-    if (!assigned.has(path)) assigned.set(path, free.shift());
+  const depths = new Map();
+  const sameTail = (a, b, depth) => b.length >= depth
+    && a.slice(-depth).every((part, i) => part === b[b.length - depth + i]);
+  for (const peers of byLeaf.values()) {
+    for (const [path, parts] of peers) {
+      let depth = 1;
+      while (depth < parts.length
+        && peers.some(([other, otherParts]) => other !== path && sameTail(parts, otherParts, depth))) depth++;
+      depths.set(path, depth);
+    }
   }
-  // Preserve slots when session counts reorder the common directories. Filters
-  // use the full pool, and reloads reuse the assignment instead of recoloring it.
-  if (assigned.size !== timelineColors.size
-      || [...assigned].some(([path, color]) => timelineColors.get(path) !== color)) {
-    timelineColors = assigned;
-    store.set('timelineDirectoryColors', [...assigned]);
-  }
-  return timelineColors;
+  return depths;
 }
+
+/** Directories visible in the sidebar get distinct colors. A directory keeps
+ *  its color for as long as it stays on screen, whatever scrolls in around it. */
+function paintTimelineDirectories() {
+  if (S.view !== 'date' && S.view !== 'directory') return;
+  const side = $('#side');
+  if (!side.clientHeight) return; // A hidden sidebar has no screen to keep.
+  const elements = [...side.querySelectorAll('.cwd-path')];
+  const box = side.getBoundingClientRect(), margin = side.clientHeight / 3;
+  // Rows just below or above the viewport are colored before they scroll in.
+  const rows = new Map();
+  for (const element of elements) {
+    const rect = element.getBoundingClientRect(), path = element.dataset.path;
+    if (!rect.height || rect.bottom < box.top - margin || rect.top > box.bottom + margin) continue;
+    if (path === '(未知)') continue;
+    if (!rows.has(path)) rows.set(path, []);
+    rows.get(path).push(rect.top);
+  }
+  const colors = new Map();
+  for (const path of rows.keys()) {
+    if (timelineScreen.colors.has(path)) colors.set(path, timelineScreen.colors.get(path));
+  }
+  let remembered = false;
+  for (const [path, tops] of rows) {
+    if (colors.has(path)) continue;
+    const used = new Set(colors.values());
+    let color = timelineColorMemory.get(path);
+    if (!color || used.has(color)) {
+      const free = TIMELINE_COLORS.slice(0, TIMELINE_PRIMARY_COLORS).filter(c => !used.has(c));
+      if (!free.length) free.push(...TIMELINE_COLORS.slice(TIMELINE_PRIMARY_COLORS).filter(c => !used.has(c)));
+      if (free.length) {
+        color = free.reduce((a, b) => timelineColorSeen.get(b) < timelineColorSeen.get(a) ? b : a);
+      } else {
+        // More directories than colors: repeat the color whose rows are farthest away.
+        const distance = candidate => Math.min(...[...colors].filter(([, c]) => c === candidate)
+          .flatMap(([other]) => rows.get(other))
+          .flatMap(y => tops.map(top => Math.abs(y - top))));
+        color = TIMELINE_COLORS.reduce((a, b) => distance(b) > distance(a) ? b : a);
+      }
+    }
+    colors.set(path, color);
+    const preferred = timelineColorMemory.get(path) || color;
+    remembered ||= !timelineColorMemory.has(path);
+    timelineColorMemory.delete(path);
+    timelineColorMemory.set(path, preferred);
+  }
+  timelineColorTick++;
+  for (const color of colors.values()) timelineColorSeen.set(color, timelineColorTick);
+  if (remembered) rememberTimelineColors();
+  timelineScreen = {colors, depths: timelineTintDepths(rows.keys())};
+  for (const element of elements) paintTimelinePath(element);
+  paintHeadDirectory();
+}
+
+function rememberTimelineColors() {
+  for (const path of timelineColorMemory.keys()) {
+    if (timelineColorMemory.size <= TIMELINE_COLOR_MEMORY) break;
+    timelineColorMemory.delete(path);
+  }
+  store.set('timelineDirectoryColors', [...timelineColorMemory]);
+}
+
+/** The session header shows its directory with the sidebar's color, also when
+ *  the sidebar does not show it: a new directory gets a preferred color now. */
+function timelineDirectoryColor(path) {
+  if (path === '(未知)') return '';
+  if (timelineScreen.colors.has(path)) return timelineScreen.colors.get(path);
+  if (!timelineColorMemory.has(path)) {
+    timelineColorMemory.set(path, TIMELINE_COLORS.slice(0, TIMELINE_PRIMARY_COLORS)
+      .reduce((a, b) => timelineColorSeen.get(b) < timelineColorSeen.get(a) ? b : a));
+    rememberTimelineColors();
+  }
+  return timelineColorMemory.get(path);
+}
+
+/** The header always shows the whole path; only its colors follow the sidebar. */
+function paintHeadDirectory(root = $('#detail > .dhead')) {
+  const element = root?.querySelector('.meta-cwd > .cwd-path');
+  if (!element) return;
+  const path = element.dataset.path, color = timelineDirectoryColor(path);
+  const markup = timelinePathMarkup(timelineFullLabel(path), timelineScreen.depths.get(path) || 1);
+  if (element.dataset.cwdColor !== color) element.dataset.cwdColor = color;
+  if (element.innerHTML !== markup) element.innerHTML = markup;
+}
+
+let timelinePaintFrame = 0;
+function scheduleTimelinePaint() {
+  cancelAnimationFrame(timelinePaintFrame);
+  timelinePaintFrame = requestAnimationFrame(paintTimelineDirectories);
+}
+$('#side').addEventListener('scroll', scheduleTimelinePaint, {passive: true});
 
 /** Count directories, not sessions: a busy project must not change which parts
  *  identify a path. Keep the full pool even while filtering the sidebar. */
@@ -1059,7 +1167,7 @@ function timelinePathPlans(rows) {
   }
   const plans = new Map(paths.map(path => {
     const parts = path === '/' ? ['/'] : path.split('/');
-    const leaf = parts.at(-1), hidden = new Set(), labels = [path];
+    const leaf = parts.at(-1), hidden = new Set(), labels = [timelineFullLabel(path)];
     // Repeated ancestors carry less information. Ties favor keeping the deeper
     // context. Never remove the root anchor or any part of the final directory.
     const order = parts.map((_, i) => i).slice(1, -1).sort((a, b) =>
@@ -1079,8 +1187,15 @@ function timelinePathPlans(rows) {
         hidden.delete(i);
         continue;
       }
-      const label = tokens.map(token => token === null ? '…' : token).join('/');
-      labels.push(label);
+      // `to` is the last original component a displayed part stands for, so a
+      // tint can start at an ancestor even when the label abbreviates it.
+      const shown = [];
+      parts.forEach((part, j) => {
+        if (!hidden.has(j)) shown.push({text: part, to: j});
+        else if (hidden.has(j - 1)) shown.at(-1).to = j;
+        else shown.push({text: '…', to: j});
+      });
+      labels.push({text: shown.map(part => part.text).join('/'), parts: shown});
     }
     return [path, {leaf, labels}];
   }));
@@ -1088,15 +1203,50 @@ function timelinePathPlans(rows) {
   return plans;
 }
 
-function timelinePathMarkup(path, leaf) {
-  return esc(path.slice(0, path.length - leaf.length))
-    + `<span class="cwd-leaf">${esc(leaf)}</span>`;
+function timelineFullLabel(path) {
+  const parts = path === '/' ? ['/'] : path.split('/');
+  return {text: path, parts: parts.map((text, to) => ({text, to}))};
+}
+
+function timelinePathMarkup(label, depth = 1) {
+  const start = label.parts.at(-1).to + 1 - depth;
+  const split = label.parts.findIndex(part => part.to >= start);
+  const prefix = label.parts.slice(0, split).map(part => part.text + '/').join('');
+  return (prefix ? `<span class="cwd-rest">${esc(prefix)}</span>` : '')
+    + `<span class="cwd-leaf">${esc(label.text.slice(prefix.length))}</span>`;
+}
+
+// Clicking a row's directory toggles between the whole path and only its
+// tinted part; the full path stays in the tooltip.
+let timelineTintOnly = !!store.get('timelineDirectoryTintOnly', false);
+document.body.classList.toggle('cwd-tint-only', timelineTintOnly);
+function toggleTimelineTintOnly(row) {
+  const side = $('#side'), before = row.getBoundingClientRect().top;
+  timelineTintOnly = !timelineTintOnly;
+  store.set('timelineDirectoryTintOnly', timelineTintOnly);
+  document.body.classList.toggle('cwd-tint-only', timelineTintOnly);
+  renderSide();
+  // Rows above change height; keep the clicked row under the pointer.
+  const after = side.querySelector(`.item[data-key="${CSS.escape(row.dataset.key)}"]`);
+  if (after) side.scrollTop += after.getBoundingClientRect().top - before;
+}
+
+function paintTimelinePath(element, label = element._cwdLabel) {
+  const path = element.dataset.path;
+  const color = timelineScreen.colors.get(path) || '', depth = timelineScreen.depths.get(path) || 1;
+  if (element.dataset.cwdColor !== color) element.dataset.cwdColor = color;
+  label ||= timelineFullLabel(path);
+  if (element._cwdLabel === label && element._cwdDepth === depth) return;
+  element._cwdLabel = label;
+  element._cwdDepth = depth;
+  const markup = timelinePathMarkup(label, depth);
+  if (element.innerHTML !== markup) element.innerHTML = markup;
 }
 
 function timelineDirectoryMarkup(row) {
-  const path = timelinePath(row.cwd), leaf = path === '/' ? '/' : path.split('/').at(-1);
+  const path = timelinePath(row.cwd);
   return (row.node_name ? `<span class="cwd-machine">${nodeBadge(row.node_name)}</span>` : '')
-    + `<span class="cwd-path" data-path="${esc(path)}">${timelinePathMarkup(path, leaf)}</span>`;
+    + `<span class="cwd-path" data-path="${esc(path)}">${timelinePathMarkup(timelineFullLabel(path))}</span>`;
 }
 
 let timelineFitContext = null;
@@ -1106,9 +1256,9 @@ function fitTimelineDirectories(elements = null, context = null) {
   if (!elements.length) return;
   if (!context) {
     const rows = [...S.sessions, ...pendingTmuxSessions(), ...(S.results || [])];
-    context = timelineFitContext = {plans: timelinePathPlans(rows), colors: timelineDirectoryColors(rows)};
+    context = timelineFitContext = {plans: timelinePathPlans(rows)};
   }
-  const {plans, colors} = context;
+  const {plans} = context;
   const measure = document.createElement('canvas').getContext('2d');
   const font = getComputedStyle(elements[0]);
   measure.font = `${font.fontWeight} ${font.fontSize} ${font.fontFamily}`;
@@ -1117,24 +1267,23 @@ function fitTimelineDirectories(elements = null, context = null) {
   const updates = elements.map(element => {
     const plan = plans.get(element.dataset.path);
     if (!plan) return null;
-    const color = colors.get(element.dataset.path) || '';
     const width = element.clientWidth;
-    if (!width) return {element, color}; // Fit a closed date group when opened.
+    if (!width) return {element}; // Fit a closed date group when opened.
     const measured = label => {
-      if (!widths.has(label)) {
-        widths.set(label, measure.measureText(label).width);
+      if (!widths.has(label.text)) {
+        widths.set(label.text, measure.measureText(label.text).width);
       }
-      return widths.get(label);
+      return widths.get(label.text);
     };
-    const label = plan.labels.find(label => measured(label) <= width)
+    // The tinted part of the whole path needs no ellipsis when shown alone.
+    const label = timelineTintOnly ? plan.labels[0] : plan.labels.find(label => measured(label) <= width)
       || plan.labels.reduce((best, label) => measured(label) < measured(best) ? label : best);
-    return {element, color, markup: timelinePathMarkup(label, plan.leaf)};
+    return {element, label};
   });
-  for (const update of updates) {
-    if (!update) continue;
-    if (update.element.dataset.cwdColor !== update.color) update.element.dataset.cwdColor = update.color;
-    if (update.markup && update.element.innerHTML !== update.markup) update.element.innerHTML = update.markup;
-  }
+  // Rows created by scrolling take the colors already on screen immediately;
+  // the paint pass then colors any directory that has just come into view.
+  for (const update of updates) if (update) paintTimelinePath(update.element, update.label);
+  scheduleTimelinePaint();
 }
 
 let timelineFitFrame = 0;
@@ -4761,6 +4910,7 @@ function patchSidebarRow(node, row, highlightKey) {
     if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
     if (S.nestAttach) { void pickNestParent(s); return; }
     if (S.picking) { if (sessionPickable(s)) toggleSessionPick(s.uid); return; }
+    if (event.target.closest('.cwd-path')) { toggleTimelineTintOnly(event.currentTarget); return; }
     s.pending ? openPendingSession(s) : openSession(s.uid);
   };
   paintItemStatus(node);
@@ -4819,6 +4969,7 @@ function createSidebarRow(r, picked = pickedSessions) {
     if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
     if (S.nestAttach) { void pickNestParent(s); return; }
     if (S.picking) { if (sessionPickable(s)) toggleSessionPick(s.uid); return; }
+    if (event.target.closest('.cwd-path')) { toggleTimelineTintOnly(event.currentTarget); return; }
     s.pending ? openPendingSession(s) : openSession(s.uid);
   };
   const star = it.querySelector('.item-star');
@@ -4844,7 +4995,7 @@ const SIDE_WINDOW_MIN = 400, SIDE_WINDOW_OVERSCAN = 600;
 const sideRowHeights = new Map(), sideRowAverages = new Map();
 let sideWindowBusy = false;
 
-const sideHeightScope = () => `${S.view}\u0000${S.term ? 1 : 0}`;
+const sideHeightScope = () => `${S.view}\u0000${S.term ? 1 : 0}\u0000${timelineTintOnly ? 1 : 0}`;
 function sideRowHeight(r, scope = sideHeightScope()) {
   return sideRowHeights.get(`${scope}\u0000${rowKey(r)}`)
     ?? sideRowAverages.get(`${scope}\u0000${r.agent ? 'agent' : 'session'}`)?.mean
@@ -6692,13 +6843,14 @@ function head(m, total) {
       <span class="meta-secondary">${fmtSize(m.size)}</span>
       <span class="meta-secondary">${esc(fmtTime(m.created))} → ${esc(fmtTime(m.updated))}</span>
       ${m.node_name ? `<span class="meta-node node-badge" data-node-color="${nodeColor(m.node_name)}">${esc(m.node_name)}</span>` : ''}
-      <span class="meta-secondary"><code>${esc(shortCwd(m.cwd || '(未知)', 999))}</code></span>
+      <span class="meta-secondary meta-cwd"><code class="cwd-path" data-path="${esc(timelinePath(m.cwd))}"></code></span>
       <span class="meta-source">${esc(m.agent_type || SOURCES[m.source].name)}</span>
       ${m.model ? `<span class="meta-secondary">${esc(m.model)}</span>` : ''}
       <span class="meta-secondary session-id"><code>${esc(m.sid)}</code></span>
     </div>`)}
       </div>
     </div>`;
+  paintHeadDirectory(h);
   if (m.source === 'agy' && Array.isArray(m.migration_warnings)) {
     for (const warning of m.migration_warnings) {
       const notice = el('div', 'tool-change-warning native-history-warning', warning);
