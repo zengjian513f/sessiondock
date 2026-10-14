@@ -427,6 +427,8 @@ DELTA（BUG-20261012-075426-889b9d，替代 BUG-20261008-123158-ee0ab5 的旧目
 
 DELTA（BUG-20261014-151919-677616）：启动目录为空时仅显示「输入或选择目录」操作提示，不显示看似已填入的示例路径；占位文字不是目录值，空值提交仍提示选择目录。清空、切换机器及当前会话目录继承规则不变。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)。
 
+DELTA（推荐目录打开跳变）：打开或切换机器时，推荐区保持固定高度并显示「正在读取目录…」，目录检查完成后一次呈现合并排序结果，不先显示本机候选再重排。继承当前会话目录不触发匹配模式，打开后仍显示「最近使用」；用户输入后才按输入匹配，后台结果保留当前模式与输入。无须检查时直接完成加载；检查失败的跨机候选仍不加入。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)。
+
 丢失根目录时，其它来源和新建仍可用。[`tests/missing_roots_browser.py`](../tests/missing_roots_browser.py)。
 
 ### 移动与复制

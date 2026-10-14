@@ -296,6 +296,7 @@ function refreshNewNodeFields() {
   closeCwdPicker();
   const cap = newNodeCapabilities();
   cwdCompletion.common = commonSessionDirs();
+  cwdCompletion.commonLoading = true;
   for (const input of document.querySelectorAll('input[name="new-source"]')) {
     input.disabled = !cap.sources?.[input.value];
     const name = SOURCES[input.value]?.name || (input.value === 'shell' ? 'SSH' : input.value);
