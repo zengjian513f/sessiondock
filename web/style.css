@@ -950,6 +950,7 @@ body.dragging #drag { will-change: transform; }
 .cwd-path { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--muted); }
 /* Only the final directory, or the ancestors needed to tell it apart on screen, is tinted. */
 .cwd-path .cwd-leaf { color: var(--cwd-color, inherit); }
+.cwd-tint-only .cwd-path .cwd-rest { display: none; }
 .cwd-path[data-cwd-color="blue"] { --cwd-color: light-dark(#1d4ed8, #93b4ff); }
 .cwd-path[data-cwd-color="amber"] { --cwd-color: light-dark(#8a5b00, #f4cf75); }
 .cwd-path[data-cwd-color="teal"] { --cwd-color: light-dark(#0f766e, #5eead4); }

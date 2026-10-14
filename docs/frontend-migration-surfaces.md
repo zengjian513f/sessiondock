@@ -137,8 +137,9 @@ Hub 顶栏另有机器 chip，见第 2 节。节点离线、列表/运行状态/
 - 侧栏视口（上下各多算 1/3 屏，滚入前就上好色）内的不同目录颜色互不相同；目录留在屏上期间颜色不变，滚动、筛选和刷新都不改它。`(未知)` 不上色。
 - 只染最后一级目录。同屏另有同名最后一级但路径不同的目录时，向上多染若干级直到能区分；缩写成 `…` 的部分若落在这一段内也一起染色。
 - 内置 32 色，明暗主题各一组，对白底、暗底和选中底色的对比度都不低于 4.5:1。前 16 色色相相互拉开，平时只从这里取；后 16 色是前者的柔和近邻，只在前 16 色都已同屏占用时才启用；32 色都占满时，选同色行离得最远的颜色复用。
+- 单击行内的目录位置不打开会话，而是在“完整路径”和“只显示上色部分”之间切换；后者用完整路径计算上色段，不出现 `…`，完整路径仍在悬停提示里。设置存为本地偏好 `timelineDirectoryTintOnly`，行高缓存按该模式分开，切换后被点击的行保持在原位置。
 - 新上屏的目录先取首选色（存储的 `timelineDirectoryColors`）；首选色已被同屏目录占用时，取最久没上屏的空闲色，作为临时色，不覆盖首选色。首次上色的颜色即首选色，刷新页面后沿用。
-- [`tests/sidebar_directory_colors_browser.py`](../tests/sidebar_directory_colors_browser.py) 覆盖同屏不重复、同名目录多染一级、滚动保色、回到顶部和刷新恢复、明暗主题与后 16 色启用条件。
+- [`tests/sidebar_directory_colors_browser.py`](../tests/sidebar_directory_colors_browser.py) 覆盖同屏不重复、同名目录多染一级、滚动保色、回到顶部和刷新恢复、单击目录切换只显示上色部分及其持久化、明暗主题与后 16 色启用条件。
 
 逻辑行序始终是每组的 `group._rows`，不依赖 DOM：多选拖选的范围按 `sidebarPickOrder` 计算，可以跨过未渲染的行；整组勾选、全选、计数照旧。深链、父会话链「显示」和选中都走 `sidebarRowNode(uid, agent, true)`，按估计位置滚过去再渲染并 `scrollIntoView`。侧栏里有文字选区或焦点时，所在行在滚动中保留在窗口内，选区不丢。层叠三角在窗口模式下只改 `group._rows` 再重排窗口。行数不超过阈值时仍全部渲染，行为与以前相同。[`tests/sidebar_scale_browser.py`](../tests/sidebar_scale_browser.py)。
 
@@ -613,6 +614,7 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 | `termLayoutPolicyVersion` | 迁到 `2` | 一次性 |
 | `sidebarResources` | `false` | 资源列 |
 | `timelineDirectoryColors` | `[]` | 目录首选颜色 `[path, color]`，最多 256 条 |
+| `timelineDirectoryTintOnly` | `false` | 目录只显示上色部分（单击目录位置切换） |
 | `newDirs` 或 `newDirs.<node>` | `[]` | 最近工作目录，最多 8 |
 | `newNode` | `''` | Hub 新建默认机器 |
 | `bugReportSource` | `codex` | 报告 |

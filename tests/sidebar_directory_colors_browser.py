@@ -39,6 +39,10 @@ SCREEN = '''() => {
 }'''
 
 
+SHOWN = '''() => [...document.querySelectorAll('#side .cwd-path')].filter(element => element.offsetHeight)
+    .map(element => ({shown: element.innerText.trim(), tint: element.querySelector('.cwd-leaf').textContent}))'''
+
+
 def sessions(count, short=False):
     now = datetime(2026, 10, 14, 5, tzinfo=timezone.utc)
     directories = [path.replace('~', '/home/tester', 1) for path in TWINS] + [f'/home/tester/Projects/workspace-{n:03d}' for n in range(140)]
@@ -148,6 +152,31 @@ def main():
                     _, reloaded, _ = screen(page)
                     assert reloaded == first, ('colors differ after reload', first, reloaded)
                     print('PASS directory colors', theme, viewport['width'], len(first), 'directories', flush=True)
+
+                    # Clicking a directory shows only its tinted part, without opening the
+                    # session; the choice survives a reload and a second click restores it.
+                    url = page.url
+                    target = page.locator('#side .item .cwd-path[data-path="~/Projects/beta/src"]').first
+                    box = target.bounding_box()
+                    target.click()
+                    settle(page)
+                    assert page.url == url and not page.locator('#side .item.sel').count(), 'directory click opened a session'
+                    assert abs(target.bounding_box()['y'] - box['y']) < 2, ('clicked row moved', box, target.bounding_box())
+                    assert page.evaluate("localStorage.getItem('sessiondock.timelineDirectoryTintOnly')") == 'true'
+                    for row in page.evaluate(SHOWN):
+                        assert row['shown'] == row['tint'] and '…' not in row['shown'], row
+                    assert target.inner_text() == 'beta/src', target.inner_text()
+                    page.screenshot(path=str(shots / f'{theme}-{viewport["width"]}-tint-only.png'))
+                    page.reload(wait_until='networkidle')
+                    expect(page.locator('#side .cwd-path').first).to_be_visible()
+                    settle(page)
+                    assert all(row['shown'] == row['tint'] for row in page.evaluate(SHOWN))
+                    page.locator('#side .item .cwd-path').first.click()
+                    settle(page)
+                    assert page.evaluate("localStorage.getItem('sessiondock.timelineDirectoryTintOnly')") == 'false'
+                    assert page.locator('#side .item .cwd-path[data-path="~/Projects/alpha/src"]').first.inner_text().startswith('~/')
+                    page.evaluate("localStorage.removeItem('sessiondock.timelineDirectoryTintOnly')")
+                    print('PASS directory click toggles tinted-only paths', theme, viewport['width'], flush=True)
                     context.close()
 
                 # More directories on one screen than primary colors.

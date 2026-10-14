@@ -1186,7 +1186,23 @@ function timelinePathMarkup(label, depth = 1) {
   const start = label.parts.at(-1).to + 1 - depth;
   const split = label.parts.findIndex(part => part.to >= start);
   const prefix = label.parts.slice(0, split).map(part => part.text + '/').join('');
-  return esc(prefix) + `<span class="cwd-leaf">${esc(label.text.slice(prefix.length))}</span>`;
+  return (prefix ? `<span class="cwd-rest">${esc(prefix)}</span>` : '')
+    + `<span class="cwd-leaf">${esc(label.text.slice(prefix.length))}</span>`;
+}
+
+// Clicking a row's directory toggles between the whole path and only its
+// tinted part; the full path stays in the tooltip.
+let timelineTintOnly = !!store.get('timelineDirectoryTintOnly', false);
+document.body.classList.toggle('cwd-tint-only', timelineTintOnly);
+function toggleTimelineTintOnly(row) {
+  const side = $('#side'), before = row.getBoundingClientRect().top;
+  timelineTintOnly = !timelineTintOnly;
+  store.set('timelineDirectoryTintOnly', timelineTintOnly);
+  document.body.classList.toggle('cwd-tint-only', timelineTintOnly);
+  renderSide();
+  // Rows above change height; keep the clicked row under the pointer.
+  const after = side.querySelector(`.item[data-key="${CSS.escape(row.dataset.key)}"]`);
+  if (after) side.scrollTop += after.getBoundingClientRect().top - before;
 }
 
 function paintTimelinePath(element, label = element._cwdLabel) {
@@ -1233,7 +1249,8 @@ function fitTimelineDirectories(elements = null, context = null) {
       }
       return widths.get(label.text);
     };
-    const label = plan.labels.find(label => measured(label) <= width)
+    // The tinted part of the whole path needs no ellipsis when shown alone.
+    const label = timelineTintOnly ? plan.labels[0] : plan.labels.find(label => measured(label) <= width)
       || plan.labels.reduce((best, label) => measured(label) < measured(best) ? label : best);
     return {element, label};
   });
@@ -4867,6 +4884,7 @@ function patchSidebarRow(node, row, highlightKey) {
     if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
     if (S.nestAttach) { void pickNestParent(s); return; }
     if (S.picking) { if (sessionPickable(s)) toggleSessionPick(s.uid); return; }
+    if (event.target.closest('.cwd-path')) { toggleTimelineTintOnly(event.currentTarget); return; }
     s.pending ? openPendingSession(s) : openSession(s.uid);
   };
   paintItemStatus(node);
@@ -4925,6 +4943,7 @@ function createSidebarRow(r, picked = pickedSessions) {
     if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
     if (S.nestAttach) { void pickNestParent(s); return; }
     if (S.picking) { if (sessionPickable(s)) toggleSessionPick(s.uid); return; }
+    if (event.target.closest('.cwd-path')) { toggleTimelineTintOnly(event.currentTarget); return; }
     s.pending ? openPendingSession(s) : openSession(s.uid);
   };
   const star = it.querySelector('.item-star');
@@ -4950,7 +4969,7 @@ const SIDE_WINDOW_MIN = 400, SIDE_WINDOW_OVERSCAN = 600;
 const sideRowHeights = new Map(), sideRowAverages = new Map();
 let sideWindowBusy = false;
 
-const sideHeightScope = () => `${S.view}\u0000${S.term ? 1 : 0}`;
+const sideHeightScope = () => `${S.view}\u0000${S.term ? 1 : 0}\u0000${timelineTintOnly ? 1 : 0}`;
 function sideRowHeight(r, scope = sideHeightScope()) {
   return sideRowHeights.get(`${scope}\u0000${rowKey(r)}`)
     ?? sideRowAverages.get(`${scope}\u0000${r.agent ? 'agent' : 'session'}`)?.mean
