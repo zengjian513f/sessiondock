@@ -14,7 +14,7 @@ import tempfile
 
 from playwright.sync_api import expect, sync_playwright
 from frontend_framework_browser import launch_chromium
-from header_fold_browser import corpus
+from header_fold_browser import SID, corpus
 from history_fixtures import BINARY, isolated_server
 
 PRIMARY = ['blue', 'amber', 'teal', 'rose', 'violet', 'olive', 'rust', 'cyan',
@@ -107,7 +107,8 @@ def main():
     shots.mkdir(parents=True, exist_ok=True)
     rows = sessions(900)
     with tempfile.TemporaryDirectory(prefix='sessiondock-dir-colors-') as temporary, sync_playwright() as pw:
-        with isolated_server(corpus(Path(temporary)), args.binary) as (base, _):
+        corpus_data = corpus(Path(temporary))
+        with isolated_server(corpus_data, args.binary) as (base, _):
             browser = launch_chromium(pw)
             try:
                 for theme, viewport in [('light', {'width': 1280, 'height': 900}),
@@ -178,6 +179,33 @@ def main():
                     page.evaluate("localStorage.removeItem('sessiondock.timelineDirectoryTintOnly')")
                     print('PASS directory click toggles tinted-only paths', theme, viewport['width'], flush=True)
                     context.close()
+
+                # The session header shows the whole path with the sidebar's color,
+                # unaffected by the sidebar's tinted-only display.
+                data = corpus_data
+                context = browser.new_context(viewport={'width': 1280, 'height': 700})
+                context.add_init_script("window.EventSource=undefined;"
+                    "localStorage.setItem('sessiondock.view', JSON.stringify('date'));"
+                    "localStorage.setItem('sessiondock.timelineDirectoryTintOnly', 'true');")
+                page = context.new_page()
+                page.goto(base, wait_until='networkidle')
+                page.locator(f'#side .item[data-uid="{data.uid(SID)}"]').click()
+                expect(page.locator('#msgs')).to_contain_text('reply Sweep')
+                settle(page)
+                side = page.locator(f'#side .item[data-uid="{data.uid(SID)}"] .cwd-path')
+                header = page.locator('.dhead .meta-cwd > .cwd-path')
+                path = side.get_attribute('data-path')
+                assert header.get_attribute('data-path') == path, (path, header.get_attribute('data-path'))
+                assert side.get_attribute('data-cwd-color') and \
+                    header.get_attribute('data-cwd-color') == side.get_attribute('data-cwd-color')
+                assert side.inner_text() == path.rsplit('/', 1)[1], side.inner_text()
+                assert header.inner_text() == path, header.inner_text()
+                assert header.locator('.cwd-leaf').inner_text() == path.rsplit('/', 1)[1]
+                assert header.evaluate("e => getComputedStyle(e.querySelector('.cwd-leaf')).color") != \
+                    header.evaluate("e => getComputedStyle(e).color")
+                page.locator('.dhead').screenshot(path=str(shots / 'light-header.png'))
+                print('PASS header directory uses the sidebar color and whole path', flush=True)
+                context.close()
 
                 # More directories on one screen than primary colors.
                 context, page = open_page(browser, base, sessions(400, short=True), 'light',

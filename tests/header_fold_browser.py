@@ -103,6 +103,7 @@ HEAD_STATE_JS = f"""() => {{
     brief_gap: brief ? parseFloat(getComputedStyle(brief).columnGap) : 0,
     action_gap: parseFloat(getComputedStyle(actions).columnGap),
     title_clipped: text.scrollWidth > text.clientWidth + 1,
+    bug_reports: [...document.querySelectorAll('.dhead [data-report-bug]')].some(b => !b.hidden),
     height: document.querySelector('.dhead').offsetHeight,
     overflow: document.documentElement.scrollWidth > innerWidth,
   }};
@@ -180,7 +181,8 @@ def check_header(page, width, tiers, header_actions, chrome_tiers):
 def check_head(page, width, tier, tiers, key, meta_order):
     state = page.evaluate(HEAD_STATE_JS)
     where = f"{key}@{width}"
-    action_order = state["globals"] + ACTION_ORDER
+    # Bug reports are an optional integration; a disabled one leaves no action.
+    action_order = [i for i in state["globals"] + ACTION_ORDER if i != "report-bug" or state["bug_reports"]]
     priority = [i for i in action_order if i not in ('a-session-action', 'a-session-info')] + meta_order
     inline_actions = [i for i in state["inline"] if i not in ("a-term", "a-more", "session-resources")]
     placed = inline_actions + state["brief"]
@@ -431,7 +433,7 @@ def run(page, uid):
     mobile_actions = ["a-global-settings"]
     if page.evaluate("appDisplayMode.matches || navigator.standalone === true"):
         mobile_actions.append("a-global-page-reload")
-    priority_of = lambda tier: (mobile_actions if tier == "narrow" else []) + [i for i in ACTION_ORDER if i not in ('a-session-action', 'a-session-info')] + meta_order  # noqa: E731
+    priority_of = lambda tier: (mobile_actions if tier == "narrow" else []) + [i for i in ACTION_ORDER if i not in ('a-session-action', 'a-session-info') and (i != 'report-bug' or head['bug_reports'])] + meta_order  # noqa: E731
     header_rows, head_rows, heights, header_tiers, head_tiers, chrome_tiers = [], [], [], {}, {}, {}
     chrome_events = []
     previous_chrome = None

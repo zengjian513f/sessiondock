@@ -1099,15 +1099,41 @@ function paintTimelineDirectories() {
   }
   timelineColorTick++;
   for (const color of colors.values()) timelineColorSeen.set(color, timelineColorTick);
-  if (remembered) {
-    for (const path of timelineColorMemory.keys()) {
-      if (timelineColorMemory.size <= TIMELINE_COLOR_MEMORY) break;
-      timelineColorMemory.delete(path);
-    }
-    store.set('timelineDirectoryColors', [...timelineColorMemory]);
-  }
+  if (remembered) rememberTimelineColors();
   timelineScreen = {colors, depths: timelineTintDepths(rows.keys())};
   for (const element of elements) paintTimelinePath(element);
+  paintHeadDirectory();
+}
+
+function rememberTimelineColors() {
+  for (const path of timelineColorMemory.keys()) {
+    if (timelineColorMemory.size <= TIMELINE_COLOR_MEMORY) break;
+    timelineColorMemory.delete(path);
+  }
+  store.set('timelineDirectoryColors', [...timelineColorMemory]);
+}
+
+/** The session header shows its directory with the sidebar's color, also when
+ *  the sidebar does not show it: a new directory gets a preferred color now. */
+function timelineDirectoryColor(path) {
+  if (path === '(未知)') return '';
+  if (timelineScreen.colors.has(path)) return timelineScreen.colors.get(path);
+  if (!timelineColorMemory.has(path)) {
+    timelineColorMemory.set(path, TIMELINE_COLORS.slice(0, TIMELINE_PRIMARY_COLORS)
+      .reduce((a, b) => timelineColorSeen.get(b) < timelineColorSeen.get(a) ? b : a));
+    rememberTimelineColors();
+  }
+  return timelineColorMemory.get(path);
+}
+
+/** The header always shows the whole path; only its colors follow the sidebar. */
+function paintHeadDirectory(root = $('#detail > .dhead')) {
+  const element = root?.querySelector('.meta-cwd > .cwd-path');
+  if (!element) return;
+  const path = element.dataset.path, color = timelineDirectoryColor(path);
+  const markup = timelinePathMarkup(timelineFullLabel(path), timelineScreen.depths.get(path) || 1);
+  if (element.dataset.cwdColor !== color) element.dataset.cwdColor = color;
+  if (element.innerHTML !== markup) element.innerHTML = markup;
 }
 
 let timelinePaintFrame = 0;
@@ -6817,13 +6843,14 @@ function head(m, total) {
       <span class="meta-secondary">${fmtSize(m.size)}</span>
       <span class="meta-secondary">${esc(fmtTime(m.created))} → ${esc(fmtTime(m.updated))}</span>
       ${m.node_name ? `<span class="meta-node node-badge" data-node-color="${nodeColor(m.node_name)}">${esc(m.node_name)}</span>` : ''}
-      <span class="meta-secondary"><code>${esc(shortCwd(m.cwd || '(未知)', 999))}</code></span>
+      <span class="meta-secondary meta-cwd"><code class="cwd-path" data-path="${esc(timelinePath(m.cwd))}"></code></span>
       <span class="meta-source">${esc(m.agent_type || SOURCES[m.source].name)}</span>
       ${m.model ? `<span class="meta-secondary">${esc(m.model)}</span>` : ''}
       <span class="meta-secondary session-id"><code>${esc(m.sid)}</code></span>
     </div>`)}
       </div>
     </div>`;
+  paintHeadDirectory(h);
   if (m.source === 'agy' && Array.isArray(m.migration_warnings)) {
     for (const warning of m.migration_warnings) {
       const notice = el('div', 'tool-change-warning native-history-warning', warning);
