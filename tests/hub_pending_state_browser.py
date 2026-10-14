@@ -16,6 +16,12 @@ from popups import on_popup  # noqa: E402
 
 
 def open_new_session(page):
+    page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+    if page.locator('#a-global-new-session').count():
+        if not page.locator('#a-global-new-session').is_visible():
+            page.locator('#a-more').click()
+        page.locator('#a-global-new-session').click()
+        return
     if not page.locator("#new-session").is_visible():
         page.locator("#header-more-btn").click()
     page.locator("#new-session").click()
@@ -436,6 +442,72 @@ def current_cwd_defaults(browser, hub, node, other):
     other.pop('dirs')
 
 
+def stable_open_cwd(browser, hub, node, other):
+    """Opening publishes recommendations once, without changing to typed matches."""
+    shared = '/shared/Projects/跨机器推荐目录-with-a-long-project-name'
+    node.set(dirs=['/same/project', shared])
+    context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
+    page = context.new_page()
+    errors, held = [], []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    context.route('**/api/term/complete-dir?*', lambda route: held.append(route))
+    page.goto(f'http://127.0.0.1:{hub.port}/', wait_until='domcontentloaded')
+    page.wait_for_function('S.sessions.length === 2 && T.listLoaded && Nodes.list.length === 2')
+    uid = page.evaluate('nid => S.sessions.find(row => row.node_id === nid).uid', node.nid)
+    page.locator(f'#side .item[data-uid="{uid}"]').click()
+    page.wait_for_function('uid => S.sel === uid', arg=uid)
+    page.evaluate("([nid, path]) => store.set('newDirs.' + nid, [path])", [other.nid, shared])
+    for width in (1280, 390):
+        page.set_viewport_size({'width': width, 'height': 900})
+        for theme in ('dark', 'light'):
+            page.evaluate('theme => document.documentElement.dataset.theme = theme', theme)
+            page.evaluate('''() => {
+                window.__cwdPublications = [];
+                window.__cwdObserver = new MutationObserver(() => {
+                    const rows = [...document.querySelectorAll('#new-cwd-options [role=option]')]
+                        .map(el => el.title);
+                    if (rows.length) window.__cwdPublications.push(rows);
+                });
+                window.__cwdObserver.observe(document.querySelector('#new-cwd-options'), {childList: true});
+            }''')
+            open_new_session(page)
+            cwd = page.locator('#new-cwd')
+            options = page.locator('#new-cwd-options [role=option]')
+            expect(cwd).to_have_value('/same/project')
+            expect(options).to_have_count(0)
+            expect(page.locator('#new-cwd-options')).to_contain_text('正在读取目录')
+            before = page.locator('#new-session-dialog').bounding_box()
+            if os.environ.get('SESSIONDOCK_TEST_SHOTS'):
+                page.screenshot(path=os.path.join(os.environ['SESSIONDOCK_TEST_SHOTS'],
+                    f'cwd-loading-{width}-{theme}.png'))
+            assert held
+            while held:
+                held.pop(0).continue_()
+            expect(options.first).to_have_attribute('title', shared)
+            expect(page.locator('#new-cwd-options-title')).to_have_text('最近使用')
+            expect(cwd).to_have_value('/same/project')
+            after = page.locator('#new-session-dialog').bounding_box()
+            assert before == after, (before, after)
+            publications = page.evaluate('''() => {
+                window.__cwdObserver.disconnect(); return window.__cwdPublications;
+            }''')
+            assert publications and all(rows == publications[-1] for rows in publications), publications
+            if os.environ.get('SESSIONDOCK_TEST_SHOTS'):
+                page.screenshot(path=os.path.join(os.environ['SESSIONDOCK_TEST_SHOTS'],
+                    f'cwd-ready-{width}-{theme}.png'))
+            # The chosen row remains a real directory input; typing still filters.
+            options.first.click()
+            expect(cwd).to_have_value(shared)
+            cwd.fill('跨机器')
+            expect(page.locator('#new-cwd-options-title')).to_have_text('匹配目录')
+            expect(options).to_have_count(1)
+            expect(options.first).to_have_attribute('title', shared)
+            page.locator('#new-session-dialog .modal-close').click()
+    assert not errors, errors
+    context.close()
+    node.pop('dirs')
+
+
 def native_stop(browser, hub, node, other):
     """A session whose console is open on its machine but not in live state
     is stoppable from the hub page; the stop names that session."""
@@ -492,6 +564,8 @@ def main():
                     if executable:
                         launch["executable_path"] = executable
                     browser = playwright.chromium.launch(**launch)
+                    print("RUN stable_open_cwd", flush=True)
+                    stable_open_cwd(browser, hub, *nodes)
                     print("RUN node_source_picker", flush=True)
                     node_source_picker(browser, hub, *nodes)
                     print("RUN node_switch_cwd", flush=True)

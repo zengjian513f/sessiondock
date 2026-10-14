@@ -1171,14 +1171,13 @@ function currentSessionCwd() {
 let commonCwdRun = 0;
 async function loadSharedCwdOptions() {
   const run = ++commonCwdRun, node = newNodeId();
-  if (!newNodeCapabilities().enabled
-      || !SessionDockCapabilities.allows('terminal_complete_dir')) return;
+  const canCheck = newNodeCapabilities().enabled
+    && SessionDockCapabilities.allows('terminal_complete_dir');
   const selectedKey = cwdPathKey(currentSessionCwd());
   const known = new Set(cwdCompletion.common.map(row => cwdPathKey(row.cwd))
     .filter(key => key !== selectedKey));
-  const candidates = commonSessionDirs(true);
-  const pending = candidates.filter(row => !known.has(cwdPathKey(row.cwd)));
-  if (!pending.length) return;
+  const candidates = canCheck ? commonSessionDirs(true) : cwdCompletion.common;
+  const pending = canCheck ? candidates.filter(row => !known.has(cwdPathKey(row.cwd))) : [];
   const current = () => run === commonCwdRun && node === newNodeId()
     && $('#new-session-dialog').open;
   await Promise.all(Array.from({length: Math.min(4, pending.length)}, async () => {
@@ -1189,14 +1188,20 @@ async function loadSharedCwdOptions() {
     }
   }));
   if (!current()) return;
-  cwdCompletion.common = candidates.filter(row => known.has(cwdPathKey(row.cwd)));
-  if (!$('#new-cwd-picker').hidden) scheduleCwdCompletions();
+  cwdCompletion.common = canCheck
+    ? candidates.filter(row => known.has(cwdPathKey(row.cwd))) : candidates;
+  cwdCompletion.commonLoading = false;
+  if (!$('#new-cwd-picker').hidden) {
+    // 打开时即使继承了目录，也保持推荐列表；只有用户输入才切到匹配。
+    if (cwdCompletion.mode === 'common') renderCommonCwdOptions();
+    else scheduleCwdCompletions();
+  }
 }
 
 const CWD_COMPLETION_DELAY = 120;
 const cwdCompletion = {
   timer: null, abort: null, sequence: 0,
-  rows: [], completions: [], forValue: '', active: -1, mode: 'common', common: [],
+  rows: [], completions: [], forValue: '', active: -1, mode: 'common', common: [], commonLoading: false,
 };
 
 function canCompleteCwd(value) {
@@ -1257,7 +1262,8 @@ function renderCwdOptions(value, recentRows, completionRows = [], completionNote
     return true;
   });
   const completions = completionFirst ? unique(rawCompletions) : [];
-  const recent = unique(rawRecent);
+  // 本机候选与跨机检查结果一起呈现，避免先显示一版再插入、重排。
+  const recent = unique(cwdCompletion.commonLoading ? [] : rawRecent);
   if (!completionFirst) completions.push(...unique(rawCompletions));
   const options = completionFirst
     ? [...completions, ...recent] : [...recent, ...completions];
@@ -1269,6 +1275,7 @@ function renderCwdOptions(value, recentRows, completionRows = [], completionNote
   cwdCompletion.forValue = value;
   cwdCompletion.active = -1;
   box.replaceChildren();
+  box.setAttribute('aria-busy', String(cwdCompletion.commonLoading));
   $('#new-cwd-options-title').textContent = value ? '匹配目录' : '最近使用';
   picker.hidden = false;
 
@@ -1310,7 +1317,7 @@ function renderCwdOptions(value, recentRows, completionRows = [], completionNote
 
   if (!value) {
     recent.forEach(addOption);
-    if (!recent.length) note('还没有使用过的目录');
+    if (!recent.length) note(cwdCompletion.commonLoading ? '正在读取目录…' : '还没有使用过的目录');
   } else {
     let offset = 0;
     const addGroup = (label, rows, empty = '') => {
@@ -1322,19 +1329,19 @@ function renderCwdOptions(value, recentRows, completionRows = [], completionNote
     };
     if (completionFirst) {
       addGroup('补全建议', completions, completionNote);
-      addGroup('最近匹配', recent);
+      addGroup('最近匹配', recent, cwdCompletion.commonLoading ? '正在读取目录…' : '');
     } else {
-      addGroup('最近匹配', recent);
+      addGroup('最近匹配', recent, cwdCompletion.commonLoading ? '正在读取目录…' : '');
       addGroup('补全建议', completions, completionNote);
     }
-    if (!recent.length && !completions.length && !completionNote) note('没有匹配的目录');
+    if (!recent.length && !completions.length && !completionNote && !cwdCompletion.commonLoading) note('没有匹配的目录');
   }
   input.setAttribute('aria-expanded', 'true');
   input.removeAttribute('aria-activedescendant');
   $('#new-cwd-completion-status').textContent = options.length
     ? (value ? `${recent.length} 个最近匹配，${completions.length} 个补全建议`
              : `${recent.length} 个最近目录`)
-    : (completionNote || '没有匹配的目录');
+    : (cwdCompletion.commonLoading ? '正在读取目录…' : completionNote || '没有匹配的目录');
 }
 
 function renderCommonCwdOptions() {
