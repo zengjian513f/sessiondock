@@ -246,7 +246,14 @@ impl Client {
             .map_err(|_| ClientError::Invalid("hub worker pool closed"))?;
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            work()
+            let result = work();
+            // List decoding, aggregation and UI snapshots repeatedly allocate
+            // and drop full JSON projections on different worker arenas. The
+            // node already returns those free pages to glibc; the Hub needs the
+            // same coalesced release after its CPU jobs. Delay it so the result
+            // and replaced baselines can finish leaving their callers too.
+            crate::sessions::memory::release_soon();
+            result
         })
         .await
         .map_err(|_| ClientError::Invalid("hub worker failed"))
