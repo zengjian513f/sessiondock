@@ -88,6 +88,14 @@ def main():
     with context.expect_page() as opened:page.locator('#msgs a[data-file-ref="missing.txt"]').click()
     missing=opened.value;expect(missing.locator('#file-retry')).to_be_visible();assert 'FileDock destination' not in missing.locator('body').inner_text()
     direct=context.new_page();direct.goto(base+'/file.html?'+urlencode({'node':NODE,'path':str(directory)}));expect(direct.locator('h1')).to_have_text('FileDock destination');assert destinations[-1]['path']==[str(directory)]
+    # The title bar directory opens FileDock at the session's machine and cwd.
+    head_cwd=page.locator('.dhead .meta-cwd-link')
+    if not head_cwd.is_visible():page.locator('#a-more').click()
+    expect(head_cwd).to_be_visible();assert head_cwd.locator('.cwd-path').inner_text()==str(directory)
+    with context.expect_page() as opened:head_cwd.click()
+    expect(opened.value.locator('h1')).to_have_text('FileDock destination')
+    assert destinations[-1]=={'node':[NODE],'path':[str(directory)]},destinations
+    opened.value.close();page.keyboard.press('Escape')
     if width<600:page.locator('.mobile-back').click()
     page.locator(f'#side .item[data-uid="{corpus.uid(regression)}"]').click()
     for ref,target in [('SCREENING.md',current),('other/SCREENING.md',other/current.name),('fallback.md',fallback)]:
@@ -153,6 +161,7 @@ def main():
     context.add_init_script("window.copiedPaths=[]; Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>window.copiedPaths.push(text)}})")
     page=context.new_page();page.goto(base);page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]').click()
     with context.expect_page() as opened:page.locator(f'#msgs a[data-file-ref={json.dumps(str(file),ensure_ascii=False)}]').click()
+    expect(page.locator('.dhead .meta-cwd .cwd-path')).to_have_count(1);expect(page.locator('.dhead .meta-cwd-link')).to_have_count(0)
     preview=opened.value;expect(preview.locator('#file-content pre')).to_have_text('# linked file')
     expect(preview.locator('#file-download')).to_be_visible()
     preview.locator('#file-copy').click();preview.wait_for_function('path=>window.copiedPaths.at(-1)===path',arg=str(file))

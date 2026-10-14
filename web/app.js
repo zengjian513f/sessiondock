@@ -1126,9 +1126,19 @@ function timelineDirectoryColor(path) {
   return timelineColorMemory.get(path);
 }
 
+/** With FileDock configured the header directory opens it in a new tab; the
+ *  adapter derives the node from the session UID and keeps only node and path. */
+function headDirectoryMarkup(m) {
+  const code = `<code class="cwd-path" data-path="${esc(timelinePath(m.cwd))}"></code>`;
+  if (!m.cwd || !SessionDockCapabilities.integration('filedock')) return code;
+  const href = appUrl('files.html') + '?' + new URLSearchParams({uid: m.uid, path: m.cwd});
+  return `<a class="meta-cwd-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer"
+    title="在 FileDock 中打开 ${esc(m.cwd)}">${code}</a>`;
+}
+
 /** The header always shows the whole path; only its colors follow the sidebar. */
 function paintHeadDirectory(root = $('#detail > .dhead')) {
-  const element = root?.querySelector('.meta-cwd > .cwd-path');
+  const element = root?.querySelector('.meta-cwd .cwd-path');
   if (!element) return;
   const path = element.dataset.path, color = timelineDirectoryColor(path);
   const markup = timelinePathMarkup(timelineFullLabel(path), timelineScreen.depths.get(path) || 1);
@@ -6843,7 +6853,7 @@ function head(m, total) {
       <span class="meta-secondary">${fmtSize(m.size)}</span>
       <span class="meta-secondary">${esc(fmtTime(m.created))} → ${esc(fmtTime(m.updated))}</span>
       ${m.node_name ? `<span class="meta-node node-badge" data-node-color="${nodeColor(m.node_name)}">${esc(m.node_name)}</span>` : ''}
-      <span class="meta-secondary meta-cwd"><code class="cwd-path" data-path="${esc(timelinePath(m.cwd))}"></code></span>
+      <span class="meta-secondary meta-cwd">${headDirectoryMarkup(m)}</span>
       <span class="meta-source">${esc(m.agent_type || SOURCES[m.source].name)}</span>
       ${m.model ? `<span class="meta-secondary">${esc(m.model)}</span>` : ''}
       <span class="meta-secondary session-id"><code>${esc(m.sid)}</code></span>

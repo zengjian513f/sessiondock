@@ -24,6 +24,11 @@ private state, node tokens and deployment lifecycle. Its node mapping must use
 the same stable identity as SessionDock; standalone nodes may configure only
 `SESSIONDOCK_NODE_ID_FILE`, without a Hub listener.
 
+With FileDock configured, the session title bar's directory (inline or in the
+⋯ menu) is a link that opens `files.html?uid=UID&path=CWD` in a new tab; the
+adapter derives the node and navigates to FileDock at that machine and cwd.
+Without FileDock the directory is plain text, not a link.
+
 DELTA: without FileDock, conversation file links retain built-in text/media
 previews and downloads via the existing single-file API. Direct path links and
 directories explain that directory browsing is not configured and offer copying

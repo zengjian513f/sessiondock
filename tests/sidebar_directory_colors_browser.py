@@ -193,7 +193,7 @@ def main():
                 expect(page.locator('#msgs')).to_contain_text('reply Sweep')
                 settle(page)
                 side = page.locator(f'#side .item[data-uid="{data.uid(SID)}"] .cwd-path')
-                header = page.locator('.dhead .meta-cwd > .cwd-path')
+                header = page.locator('.dhead .meta-cwd .cwd-path')
                 path = side.get_attribute('data-path')
                 assert header.get_attribute('data-path') == path, (path, header.get_attribute('data-path'))
                 assert side.get_attribute('data-cwd-color') and \
