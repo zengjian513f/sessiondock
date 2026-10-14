@@ -2515,7 +2515,8 @@ function ensureTerm(name) {
     d = applyTermAlt(applyTermCtrl(d));
     if (!d) return;
     if (view.ws?.readyState !== 1) return;
-    browserAuditEvent('terminal.input', {name, bytes: new TextEncoder().encode(d).length},
+    browserAuditEvent('terminal.input', {name, bytes: new TextEncoder().encode(d).length,
+      transport: (view.scrollPos || _wheelRequests.size || _resumeInput) ? 'http' : 'websocket'},
       {uid: T.uid || '', connectionId: view.auditConnectionId || ''});
     if (view.scrollPos || _wheelRequests.size || _resumeInput) {
       // 等所有已经发出的滚轮请求落地，再由一个服务端请求原子执行
@@ -2533,7 +2534,7 @@ function ensureTerm(name) {
       );
       return;
     }
-    view.ws.send(new TextEncoder().encode(d));
+    sendTermFrame(view.ws, new TextEncoder().encode(d), 'input');
     if (/[\r\n]/.test(d)) notePendingInput(name);
   });
   // ptyhost 没有服务端 copy-mode；滚轮交给网格的历史或应用鼠标处理。
@@ -2819,7 +2820,7 @@ function performTermFit(view, forceSync = false) {
   // 同一个 socket 的相同尺寸不再反复通知 tmux，避免 TUI 收到无效 SIGWINCH。
   if (ws?.readyState === 1 && (forceSync
       || view.lastResizeWs !== ws || view.lastResizeKey !== key)) {
-    ws.send(JSON.stringify({ t: 'resize', cols: view.term.cols, rows: view.term.rows }));
+    sendTermFrame(ws, JSON.stringify({ t: 'resize', cols: view.term.cols, rows: view.term.rows }), 'resize');
     view.lastResizeWs = ws;
     view.lastResizeKey = key;
   }
@@ -3407,6 +3408,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
                                       mode: 'grid'});
   const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
+  ws._transportAudit = {name, uid: uid || '', connectionId, frames: 0, bytes: 0};
   view.ws = ws;
   if (T.name === name) T.ws = ws;
   const dec = new TextDecoder();
@@ -3480,6 +3482,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
     }
   };
   ws.onclose = event => {
+    auditTermTransport(ws, 'transport.closed', {code: event.code, clean: event.wasClean, replaced: view.ws !== ws});
     if (view.ws !== ws) return;           // 主动换 socket 后，旧 close 事件作废
     cancelTermConnectTimeout(view);
     cancelTermHeartbeat(view);
@@ -3623,11 +3626,37 @@ function armTermConnectTimeout(view, ws, uid, connectionId) {
   }, TERM_CONNECT_TIMEOUT_MS);
 }
 
+/** A successful send only queues bytes in the browser; correlate this receipt
+ * with Hub raw-byte counters and node host-write counters, never CLI delivery. */
+function auditTermTransport(ws, event, data = {}, severity = 'info') {
+  const audit = ws?._transportAudit;
+  if (!audit) return;
+  browserAuditEvent('terminal.' + event, {
+    name: audit.name, sent_frames: audit.frames, sent_bytes: audit.bytes,
+    ready_state: ws.readyState, buffered_bytes: ws.bufferedAmount, ...data,
+  }, {uid: audit.uid, connectionId: audit.connectionId, severity});
+}
+
+function sendTermFrame(ws, data, kind, extra = {}) {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data).length : data.byteLength;
+  try { ws.send(data); }
+  catch (error) {
+    auditTermTransport(ws, 'frame.send_failed', {kind, bytes, error_name: error.name, ...extra}, 'error');
+    throw error;
+  }
+  if (ws._transportAudit) {
+    ws._transportAudit.frames++;
+    ws._transportAudit.bytes += bytes;
+  }
+  auditTermTransport(ws, 'frame.sent', {kind, bytes, ...extra});
+}
+
 function dropTermSocket(view = currentTermViewObject()) {
   if (!view) return;
   cancelTermConnectTimeout(view);
   cancelTermHeartbeat(view);
   const ws = view.ws;
+  auditTermTransport(ws, 'transport.dropped');
   view.ws = null;                        // 先失效引用，close 回调便不会误判成意外断线
   // HTTP keys must not reuse the lease released with this socket. A hidden
   // conversation may stay disconnected and use the verified instance path.
@@ -3650,7 +3679,12 @@ function startTermHeartbeat(view, ws, uid, connectionId) {
   if (view.heartbeat) return;
   let id = 0, pending = null, sentAt = 0;
   const heartbeat = view.heartbeat = {timer: null, ack(received) {
-    if (view.ws !== ws || pending === null || received !== pending) return;
+    if (view.ws !== ws || pending === null || received !== pending) {
+      auditTermTransport(ws, 'heartbeat.pong', {id: received, expected_id: pending, matched: false});
+      return;
+    }
+    auditTermTransport(ws, 'heartbeat.pong', {id: received, matched: true,
+      round_trip_ms: Math.round(performance.now() - sentAt)});
     clearTimeout(heartbeat.timer);
     pending = null;
     heartbeat.timer = setTimeout(ping, TERM_HEARTBEAT_INTERVAL_MS);
@@ -3659,11 +3693,12 @@ function startTermHeartbeat(view, ws, uid, connectionId) {
     if (view.ws !== ws || ws.readyState !== WebSocket.OPEN || document.hidden) return;
     pending = ++id;
     sentAt = performance.now();
-    ws.send(JSON.stringify({t: 'ping', id: pending}));
+    sendTermFrame(ws, JSON.stringify({t: 'ping', id: pending}), 'ping', {id: pending});
     heartbeat.timer = setTimeout(() => {
       if (view.ws !== ws || pending === null) return;
       browserAuditEvent('terminal.heartbeat_timeout', {
-        name: view.name, timeout_ms: TERM_HEARTBEAT_TIMEOUT_MS,
+        name: view.name, timeout_ms: TERM_HEARTBEAT_TIMEOUT_MS, id: pending,
+        sent_frames: ws._transportAudit?.frames, sent_bytes: ws._transportAudit?.bytes,
         elapsed_ms: Math.round(performance.now() - sentAt), buffered_bytes: ws.bufferedAmount,
       }, {uid: uid || '', connectionId, severity: 'warning'});
       dropTermSocket(view);

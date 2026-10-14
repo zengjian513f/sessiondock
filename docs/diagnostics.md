@@ -192,6 +192,63 @@ input, correlates node/browser claim and terminal I/O receipts, checks the
 node's close receipt, and exercises real delayed HTTP
 headers and bodies using isolated loopback fixtures.
 
+### Locating a stalled terminal across the Hub
+
+The browser, Hub and node now keep the same page and connection identifiers
+through these additional metadata-only receipts. A successful write at any
+boundary means that boundary accepted bytes, not that the CLI processed them.
+
+| Receipt | What it establishes |
+| --- | --- |
+| `browser.terminal.input` | The console produced input; `transport` selects HTTP or WebSocket. |
+| `browser.terminal.frame.sent` | WebSocket `send()` returned, with input/resize/ping kind, per-connection frame/byte totals and `buffered_bytes`. |
+| `browser.terminal.frame.send_failed` | `send()` threw; records the exception name, not its message or payload. |
+| `browser.terminal.heartbeat.pong` | Pong ID, whether it matched the pending probe, and matching round-trip time. Timeout records also include the pending ID and cumulative send counts. |
+| `hub.terminal.transport` | Hub `browser_read`, `node_written`, `node_read`, `browser_written`: cumulative bytes/calls, pending duration, EOF and I/O error kind for each boundary. |
+| `terminal.transport.progress` | Node decoded input received versus written to the host; ping/pong counts; current input/output stage and duration. |
+| `browser.terminal.transport.dropped` / `.closed` | Browser-side disposal and actual close, including replaced sockets and their final send totals. |
+
+Hub/node snapshots are emitted on opening, every five seconds (including quiet
+connections; Hub periodic snapshots start after the upgrade), and on exit.
+Node state lives outside the cancellable I/O futures,
+so replacement, shutdown and an unfinished write retain the counters and stage.
+Input stages distinguish `attaching_host`, `waiting_browser`, `waiting_gate`,
+`writing_host` and `queueing_pong`; output stages distinguish readiness control,
+waiting for host output and writing to the browser. Node snapshots include the
+audit service's cumulative dropped-event and disk-write-error counters.
+
+Hub byte counts include WebSocket framing; browser/node input-byte counts do
+not. Compare the two ends of each Hub direction, not Hub raw bytes against
+decoded PTY bytes. Response bytes prefetched with the HTTP upgrade are included
+in `node_read`. No WebSocket payload parsing, input replay or protocol change is
+introduced by these meters.
+
+With Hub audit enabled, the original snapshot is stored in its private
+`hub-YYYY-MM-DD.jsonl`. An independent bounded diagnostic queue also forwards
+it to the node's existing audit intake. There it is named
+`browser.hub.terminal.transport` because that intake prefixes event names;
+`data.observer: "hub"`, `observed_at`, page/connection and node ID establish its
+origin. These copies therefore enter ordinary `events.jsonl` bug bundles,
+including remote captures, without depending on the browser to relay them.
+Forwarding failure or queue overflow is recorded locally as
+`hub.terminal.audit_forward_failed` / `.audit_forward_dropped`; it never blocks
+terminal traffic. If the node was unreachable, inspect the Hub's local file.
+Logs are still best effort; an absent receipt alone is not proof of lost input.
+
+For example: browser send counts increasing while Hub `browser_read` stays
+unchanged places the gap before Hub receipt; Hub read increasing with node-write
+stalled places it in Hub upstream forwarding; node decoded receive increasing
+without host writes places it in the node stage recorded alongside those counts.
+A node pong count increasing without a matching browser pong places the gap on
+the return path. The two Hub return counters further split that path.
+
+`tests/terminal_heartbeat_browser.py` exercises both direct node and real
+authenticated Hub paths in Chromium. It blocks each direction separately and
+also blocks the very first upstream heartbeat/input while the initial screen
+still arrives. Assertions join all three layers, retain final state on
+replacement, verify uncertain input is not replayed, and check that terminal
+text and node credentials do not appear in these logs.
+
 ### BUG-20261013-232935-441af3: repeated PTY upstream stalls
 
 The Cygnus report was captured on build `20261013T223823185417Z`, commit

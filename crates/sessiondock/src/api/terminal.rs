@@ -402,6 +402,14 @@ fn io_observer(
     let uid = query.uid.clone().unwrap_or_default();
     std::sync::Arc::new(move |receipt| {
         let (event, severity, data) = match receipt {
+            IoReceipt::Progress(mut data) => {
+                let snapshot = audit.snapshot();
+                data["audit_dropped_events"] = json!(snapshot.dropped_events);
+                data["audit_write_errors"] = json!(snapshot.write_errors);
+                data["name"] = json!(name);
+                data["connection"] = json!(connection);
+                ("terminal.transport.progress", "info", data)
+            }
             IoReceipt::Window {
                 direction,
                 frames,
