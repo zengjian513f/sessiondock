@@ -445,9 +445,10 @@ def current_cwd_defaults(browser, hub, node, other):
 
 
 def stable_open_cwd(browser, hub, node, other):
-    """Thousands of foreign cwd candidates use one batch and publish only once."""
+    """Attached sessions never become recent cwd candidates or disk checks."""
     shared = '/shared/Projects/跨机器推荐目录-with-a-long-project-name'
-    node.set(dirs=['/same/project', shared])
+    nested_dirs = [f'/shared/历史目录-{i:04d}/work' for i in range(3660)]
+    node.set(dirs=['/same/project', shared, '/shared/native-child', *nested_dirs])
     context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
     page = context.new_page()
     errors, held = [], []
@@ -463,12 +464,17 @@ def stable_open_cwd(browser, hub, node, other):
                                         if key.lower() != 'x-sessiondock-list'})
         data = response.json()
         foreign = next(row for row in data['sessions'] if row['node_id'] == other.nid)
-        data['sessions'].extend({**foreign, 'uid': f'claude:{other.nid}~batch-{i}',
-            'cwd': f'/shared/历史目录-{i:04d}/work'} for i in range(3660))
+        local = next(row for row in data['sessions'] if row['node_id'] == node.nid)
+        for i, path in enumerate(nested_dirs):
+            original = foreign if i % 2 else local
+            data['sessions'].append({**original, 'uid': f"claude:{original['node_id']}~batch-{i}",
+                'cwd': path, 'nest_parent': {'source': 'claude', 'sid': 'background-parent'}})
+        data['sessions'].append({**foreign, 'uid': f'claude:{other.nid}~native-child',
+            'cwd': '/shared/native-child', 'agent_id': 'native-child'})
         route.fulfill(json=data)
     context.route('**/api/sessions*', many_sessions)
     page.goto(f'http://127.0.0.1:{hub.port}/', wait_until='domcontentloaded')
-    page.wait_for_function('S.sessions.length === 3662 && T.listLoaded && Nodes.list.length === 2')
+    page.wait_for_function('S.sessions.length === 3663 && T.listLoaded && Nodes.list.length === 2')
     uid = page.evaluate('nid => S.sessions.find(row => row.node_id === nid).uid', node.nid)
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     page.wait_for_function('uid => S.sel === uid', arg=uid)
@@ -498,12 +504,14 @@ def stable_open_cwd(browser, hub, node, other):
                     f'cwd-loading-{width}-{theme}.png'))
             assert held
             assert len(batches) == 1, 'one batch, not one request per historical cwd'
-            assert len(batches[0]['paths']) >= 3661
+            assert set(batches[0]['paths']) == {'/same/project', shared}
             assert batches[0]['_node'] == node.nid
             while held:
                 held.pop(0).continue_()
             batches.clear()
             expect(options.first).to_have_attribute('title', shared)
+            expect(options).to_have_count(3)
+            expect(options.filter(has_text='/same/project')).to_contain_text('2 个会话')
             expect(page.locator('#new-cwd-options-title')).to_have_text('最近使用')
             expect(cwd).to_have_value('/same/project')
             after = page.locator('#new-session-dialog').bounding_box()
@@ -525,6 +533,9 @@ def stable_open_cwd(browser, hub, node, other):
             if os.environ.get('SESSIONDOCK_TEST_SHOTS'):
                 page.screenshot(path=os.path.join(os.environ['SESSIONDOCK_TEST_SHOTS'],
                     f'cwd-matching-{width}-{theme}.png'))
+            cwd.fill('历史目录')
+            expect(options).to_have_count(0)
+            expect(page.locator('#new-cwd-options')).to_contain_text('没有匹配的目录')
             page.locator('#new-session-dialog .modal-close').click()
     assert not errors, errors
     context.close()

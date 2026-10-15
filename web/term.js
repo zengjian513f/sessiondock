@@ -1158,6 +1158,7 @@ function suggestedSessionDir(cwd) {
 function commonSessionDirs(includeOtherNodes = false) {
   const dirs = new Map();
   for (const s of S.sessions) {
+    if (s.nest_parent?.sid || s.agent_id) continue;
     if (HUB_MODE && !includeOtherNodes && s.node_id !== newNodeId()) continue;
     const cwd = String(s.cwd || '');
     if (!suggestedSessionDir(cwd)) continue;
