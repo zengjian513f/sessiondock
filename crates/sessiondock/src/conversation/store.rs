@@ -151,7 +151,13 @@ fn completed_editor_value(
     if let Some(items) = next.get_mut("quotes").and_then(Value::as_array_mut) {
         items.retain(|q| !submitted["quotes"].as_array().unwrap().contains(q));
     }
-    for field in ["requestId", "requestText", "report_prompt", "report_text"] {
+    for field in [
+        "requestId",
+        "requestText",
+        "report_prompt",
+        "report_text",
+        "continuation_title",
+    ] {
         next.as_object_mut()?.remove(field);
     }
     if next["text"].as_str().unwrap_or("").is_empty()

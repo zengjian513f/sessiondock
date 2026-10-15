@@ -7,15 +7,17 @@ create failure/retry, retained draft after refused SEND, and ordinary-create res
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import sys
 import tempfile
 import uuid
+from urllib.parse import urlencode
 
 from playwright.sync_api import expect, sync_playwright
 
-from history_fixtures import BINARY, REPO, Corpus, claude_row, isolated_server
+from history_fixtures import BINARY, REPO, Corpus, claude_row, codex_row, codex_message, isolated_server
 from private_hosts import private_hosts
 from send_browser import SETTINGS, initialize, wait_history
 from session_global_actions_browser import click_action
@@ -31,6 +33,7 @@ def open_continue(page):
     expect(page.locator('#new-session-title')).to_have_text('接续会话')
     expect(page.locator('#continue-session-reference')).to_contain_text(SID)
     expect(page.locator('#continue-session-description')).to_be_focused()
+    expect(page.locator('[data-continue-session] use').first).to_have_attribute('href', '#i-continue')
     expect(page.locator('#new-session-form label:has(input[value="shell"])')).to_be_hidden()
 
 
@@ -69,6 +72,8 @@ def check_hub(browser, root):
         created = [body for path, body in writes if path == '/api/term/create']
         sent = [body for path, body in writes if path == '/api/session/conversation/send']
         assert len(created) == len(sent) == 1, writes
+        assert created[0]['remote_continuation']['node_id'] == 'a' * 32, created
+        assert created[0]['remote_continuation']['session_uid'] == origin.split(':')[0] + ':' + origin.split('~')[1], created
         assert created[0]['source'] == 'codex' and created[0]['model'] == 'NodeB-codex', created
         assert origin in sent[0]['text'] and '机器：NodeA' in sent[0]['text'], sent
         assert sent[0]['uid'] == 'tmux:same-terminal', sent
@@ -81,9 +86,77 @@ def check_hub(browser, root):
             node.stop()
 
 
+def check_codex_names(browser, base, root, corpus, cases, screenshots):
+    for index, (sid, original, expected) in enumerate(cases):
+        print(f'continue native title: {original} -> {expected}', flush=True)
+        context = browser.new_context(viewport={'width': 390 if index % 2 else 1280, 'height': 844},
+                                      color_scheme='dark' if index % 2 else 'light')
+        page = context.new_page()
+        page.goto(base, wait_until='networkidle')
+        page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]').click()
+        expect(page.locator('.dtitle h2')).to_contain_text(original)
+        click_action(page, '[data-continue-session]')
+        page.fill('#continue-session-description', '继续处理，保持命名')
+        if index == 0:
+            (root / 'hide-status').touch()
+        page.locator('#continue-session-go').click()
+        expect(page.locator('#new-session-dialog')).to_be_hidden()
+        if index == 0:
+            expect(page.locator('dialog.app-popup[open]')).to_contain_text('原生命名', timeout=25000)
+            page.locator('dialog.app-popup[open] button[data-popup-action="ok"]').click()
+            before = (root / 'codex-submissions.commands').read_text()
+            (root / 'hide-status').unlink()
+            page.reload(wait_until='networkidle')
+            expect(page.locator('#cinput')).to_have_value(re.compile(re.escape(expected)))
+            expect(page.locator('#csend')).to_be_enabled(timeout=15000)
+            page.locator('#csend').click()
+        expect(page.locator('.dtitle h2')).to_contain_text(expected, timeout=20000)
+        page.wait_for_function('!composerSending && !newSessionCreating')
+        expect(page.locator('#cinput')).to_have_value('')
+        names = [json.loads(line) for line in (root / 'session_index.jsonl').read_text().splitlines()]
+        assert names[-1]['thread_name'] == expected, names
+        commands = [json.loads(line) for line in (root / 'codex-submissions.commands').read_text().splitlines()]
+        assert commands[-1]['command'] == '/rename ' + expected and not commands[-1]['rollout_exists'], commands
+        if index == 0:
+            assert (root / 'codex-submissions.commands').read_text() == before
+        native = root / 'codex' / ('rollout-' + commands[-1]['sid'] + '.jsonl')
+        rows = [json.loads(line) for line in native.read_text().splitlines()]
+        users = [row for row in rows if row.get('type') == 'response_item' and row['payload'].get('role') == 'user']
+        assert len(users) == 1 and users[0]['payload']['content'][0]['text'].startswith(expected + '\n'), users
+        new_uid = page.evaluate('S.sel')
+        try:
+            page.wait_for_function("uid => S.sessions.find(row => row.uid === uid)?.predecessors?.length === 1", arg=new_uid, timeout=20000)
+        except Exception:
+            print('relation diagnostic', new_uid, page.evaluate('S.sessions.find(row => row.uid === S.sel)'), flush=True)
+            print((root / 'ledger/lifecycle-ledger.json').read_text(), flush=True)
+            print((root / 'state/session-metadata.json').read_text(), flush=True)
+            raise
+        page.goto(base + '/session-info.html?' + urlencode({'uid': new_uid}), wait_until='networkidle')
+        expect(page.locator('#info-predecessors')).to_contain_text(original)
+        page.goto(base + '/session-info.html?' + urlencode({'uid': corpus.uid(sid)}), wait_until='networkidle')
+        expect(page.locator('#info-successors')).to_contain_text(expected)
+        page.goto(base, wait_until='networkidle')
+        if page.locator('.mobile-back').is_visible():
+            page.locator('.mobile-back').click()
+        page.locator(f'#side .item[data-uid="{new_uid}"]').click()
+        expect(page.locator('.dtitle h2')).to_contain_text(expected)
+        if screenshots:
+            page.screenshot(path=str(screenshots / f'codex-{index}-named.png'))
+        if index == 0:
+            # Continuing the result increments once more, rather than nesting suffixes.
+            click_action(page, '[data-continue-session]')
+            page.fill('#continue-session-description', '再次接续')
+            page.locator('#continue-session-go').click()
+            expect(page.locator('.dtitle h2')).to_contain_text(original + ' (3)', timeout=20000)
+            page.wait_for_function('!composerSending && !newSessionCreating')
+        context.close()
+    return new_uid, original, expected
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--screenshots', type=Path)
+    parser.add_argument('--names-only', action='store_true')
     args = parser.parse_args()
     if args.screenshots:
         args.screenshots.mkdir(parents=True, exist_ok=True)
@@ -96,6 +169,17 @@ def main():
             claude_row(SID, 'user', 'u', None, TITLE, cwd=str(root / 'work')),
             claude_row(SID, 'assistant', 'a', 'u', '已有调查结果', cwd=str(root / 'work'))],
             [TITLE, '已有调查结果'])
+        cases = []
+        for index, (original, expected) in enumerate([
+            ('原始标题 / Investigation', '原始标题 / Investigation (2)'),
+            ('调查(2)', '调查 (3)'), ('调查 （9）', '调查 (10)'),
+            ('调查[12]', '调查 (13)'), ('调查 ［3］', '调查 (4)'),
+            ('调查【4】', '调查 (5)'), ('调查 [草稿] (内文)', '调查 [草稿] (内文) (2)'),
+            ('调查(9007199254740993)', '调查 (9007199254740994)')]):
+            sid = str(uuid.uuid4())
+            corpus.put(sid, 'codex', [codex_row('session_meta', {'id': sid, 'cwd': str(root / 'work')}),
+                        codex_message('user', original), codex_message('assistant', '已有结果', 2)], [original, '已有结果'])
+            cases.append((sid, original, expected))
         wrapper = root / 'bin/fake-claude'
         wrapper.write_text('#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' '
                            + shlex.quote(str(REPO / 'tests/fake_claude_cli.py')) + ' "$@"\n')
@@ -109,6 +193,15 @@ def main():
                 'new_args': ['--session-id', '{session_id}'], 'resume_args': ['--resume', '{sid}'],
                 'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'), 'TERM': 'xterm-256color',
                         'LANG': 'C.UTF-8', 'SESSIONDOCK_TEST_CLAUDE_ROOT': str(root / 'claude')}}]}))
+        config = json.loads(configuration.read_text())
+        config['profiles'].append({'id': 'codex-cli-v1', 'source': 'codex',
+            'executable': sys.executable, 'args': [str(REPO / 'tests/fake_codex_cli.py'), '--reply'],
+            'new_args': [], 'resume_args': ['resume', '{sid}'],
+            'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'), 'TERM': 'xterm-256color',
+                    'LANG': 'C.UTF-8', 'SESSIONDOCK_TEST_CODEX_ROOT': str(root / 'codex'),
+                    'SESSIONDOCK_TEST_SUBMISSIONS': str(root / 'codex-submissions'),
+                    'SESSIONDOCK_TEST_STATUS_HIDE_FILE': str(root / 'hide-status')}})
+        configuration.write_text(json.dumps(config))
         initialize('--initialize-lifecycle', root / 'ledger')
         with isolated_server(corpus, BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
                              launcher_config=configuration, state_dir=root / 'state',
@@ -118,9 +211,9 @@ def main():
             if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
                 launch['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
             browser = playwright.chromium.launch(**launch)
-            for width, height, theme in ((1280, 844, 'light'), (390, 844, 'dark'),
+            for width, height, theme in (() if args.names_only else ((1280, 844, 'light'), (390, 844, 'dark'),
                                          (1280, 844, 'dark'), (320, 844, 'light'),
-                                         (472, 287, 'light'), (472, 287, 'dark')):
+                                         (472, 287, 'light'), (472, 287, 'dark'))):
                 print(f'continue {width}x{height} {theme}', flush=True)
                 context = browser.new_context(viewport={'width': width, 'height': height},
                                               color_scheme=theme, service_workers='block')
@@ -188,11 +281,11 @@ def main():
                     expect(page.locator('#cinput')).to_have_value(sends[0]['text'])
                     expect(page.locator('#csend')).to_be_enabled(timeout=15000)
                     page.locator('#csend').click()
-                wait_history(page, 'OK: 接续以下会话：')
+                wait_history(page, 'OK: ' + TITLE + ' (2)')
                 expect(page.locator('#cinput')).to_have_value('')
                 assert len(sends) == (2 if refused else 1), sends
                 prompt = sends[-1]['text']
-                assert prompt.startswith('接续以下会话：\n会话标识：' + corpus.uid(SID)), prompt
+                assert prompt.startswith(TITLE + ' (2)\n\n接续以下会话：\n会话标识：' + corpus.uid(SID)), prompt
                 assert f'会话 ID：{SID}' in prompt and prompt.endswith(text), prompt
                 assert sends[-1]['uid'] != corpus.uid(SID), sends
                 assert creates[-1]['source'] == 'claude' and creates[-1]['effort'] == 'high', creates
@@ -211,9 +304,26 @@ def main():
                 page.locator('#new-session-dialog .modal-cancel').click()
                 assert not errors, errors
                 context.close()
+            last_uid, last_original, last_title = check_codex_names(browser, base, root, corpus, cases, args.screenshots)
             (root / 'hub').mkdir(mode=0o700)
             check_hub(browser, root / 'hub')
             browser.close()
+        # Reload the service as well as the browser. The initialized edge survives;
+        # explicit removal must not be undone by the persisted creation intent.
+        with isolated_server(corpus, BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
+                             launcher_config=configuration, state_dir=root / 'state') as (base, _), sync_playwright() as playwright:
+            browser = playwright.chromium.launch(**launch)
+            page = browser.new_page()
+            page.goto(base + '/session-info.html?' + urlencode({'uid': last_uid}), wait_until='networkidle')
+            expect(page.locator('#info-predecessors')).to_contain_text(last_original)
+            page.locator('#info-predecessors .si-more > summary').first.click()
+            page.locator('#info-predecessors [data-remove]').click()
+            expect(page.locator('#info-predecessors')).to_contain_text('尚无已记录')
+            assert page.request.get(base + '/api/term/list?force=1').ok
+            page.reload(wait_until='networkidle')
+            expect(page.locator('#info-predecessors')).to_contain_text('尚无已记录')
+            browser.close()
+        print('PASS continuation native names, bidirectional relations, restart and explicit removal', flush=True)
     print('PASS session_continue_browser: prefixed first SEND, native reply, create retry, '
           'refused SEND retains draft across reload, cancel/reset; desktop/phone light/dark')
 

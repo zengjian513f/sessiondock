@@ -778,7 +778,7 @@ function carryBugReportDraft(fromUid, toUid) {
   to.attachments = [...to.attachments, ...moving];
   to.nextAttachmentNumber = Math.max(to.nextAttachmentNumber || 1, from.nextAttachmentNumber || 1);
   ensureComposerAttachmentNumbers(to);
-  for (const field of ['requestId','requestText','report_prompt','report_text']) {
+  for (const field of ['requestId','requestText','report_prompt','report_text','continuation_title']) {
     delete to[field]; delete from[field];
   }
   from.attachments = from.attachments.filter(item => !moving.includes(item));
@@ -1750,7 +1750,15 @@ function continueSessionEnabled() {
 function continueSessionButtonMarkup(info) {
   if (!info.sid || info.source === 'shell') return '';
   return `<button class="session-menu-action" data-continue-session ${continueSessionEnabled() ? '' : 'hidden'}
-    type="button" title="接续会话" aria-label="接续会话">${uiIcon('fork')}</button>`;
+    type="button" title="接续会话" aria-label="接续会话">${uiIcon('continue')}</button>`;
+}
+
+function nextContinuationTitle(title) {
+  const text = String(title || '').trim();
+  const suffix = /\s*(?:\((\d+)\)|（(\d+)）|\[(\d+)\]|［(\d+)］|【(\d+)】)\s*$/.exec(text);
+  const base = suffix ? text.slice(0, suffix.index).trimEnd() : text;
+  const number = suffix ? BigInt(suffix.slice(1).find(value => value !== undefined)) + 1n : 2n;
+  return `${base} (${number < 2n ? 2n : number})`;
 }
 
 function openNewSessionDialog(origin = null) {
@@ -2215,7 +2223,7 @@ async function createNewSession(e) {
   try {
     const requestId = newSessionRequestId(source, cwd);
     const request = { source, cwd, cols: 120, rows: newCreateAttempt.rows,
-      request_id: requestId, ...(HUB_MODE ? {_node: newNodeId()} : {}),
+      request_id: requestId, ...(origin ? {continuation_uid:origin.uid} : {}), ...(HUB_MODE ? {_node: newNodeId()} : {}),
       ...NewModels.choice() };
     let d = await post('api/term/create', request);
     if (d.needs_create) {
@@ -2238,7 +2246,8 @@ async function createNewSession(e) {
       // A retried create may return the same instance: preserve an existing
       // draft rather than replacing it or issuing another first SEND.
       if (!draft.text && !draft.requestId) {
-        draft.text = `接续以下会话：\n会话标识：${origin.uid}\n会话 ID：${origin.sid}`
+        draft.continuation_title = nextContinuationTitle(origin.title);
+        draft.text = `${draft.continuation_title}\n\n接续以下会话：\n会话标识：${origin.uid}\n会话 ID：${origin.sid}`
           + (origin.agent_id ? `\n子代理：${origin.agent_id}` : '')
           + (origin.node_name ? `\n机器：${origin.node_name}` : '')
           + (origin.cwd ? `\n目录：${origin.cwd}` : '')
@@ -3969,6 +3978,7 @@ function composerDraftRecord(draft, uid) {
       uploaded:item.uploaded, file:{name:item.file.name, size:item.file.size,
         type:item.file.type, lastModified:item.file.lastModified}})),
     nextAttachmentNumber:draft.nextAttachmentNumber, requestId:draft.requestId,
+    ...(draft.continuation_title ? {continuation_title:draft.continuation_title} : {}),
     requestText:draft.requestText, session:{...draft.session, uid},
     ...(draft.report_prompt ? {report_prompt:draft.report_prompt,report_text:draft.report_text} : {})};
 }
@@ -4085,7 +4095,7 @@ async function consumeComposerSubmission(uid,text,attachments,quotes) {
   const owner=composerDraftOwner(uid),draft=composerDrafts.get(owner);
   if (!draft) return;
   delete draft.sendNotice;
-  delete draft.requestId;delete draft.requestText;delete draft.report_prompt;delete draft.report_text;
+  delete draft.requestId;delete draft.requestText;delete draft.report_prompt;delete draft.report_text;delete draft.continuation_title;
   if (draft.text===text) draft.text='';
   const files=new Set(attachments.map(a=>a.id)),quoted=new Map(quotes.map(q=>[q.id,q.text]));
   for (const item of draft.attachments.filter(a=>files.has(a.id))) {
@@ -4233,7 +4243,7 @@ function hydrateComposerDraft(uid, retry = false) {
         draft.handedOffSession=row.value.session;return;
       }
       if (!draft.editVersion && row.value && !row.value.removed) {
-        for (const field of ['requestId','requestText','report_prompt','report_text']) delete draft[field];
+        for (const field of ['requestId','requestText','report_prompt','report_text','continuation_title']) delete draft[field];
         Object.assign(draft, restoreComposerDraftRecord(row.value, uid), {revision:row.revision});
         if (legacy?.db) await Promise.all(draft.attachments.map(async item => {
           if (item.uploaded?.upload_id) return;
@@ -4294,7 +4304,7 @@ function adoptServerDraft(draft, row, uid) {
     return local;
   });
   for (const a of draft.attachments) if (a.preview && !next.attachments.some(b => a.id === b.id)) URL.revokeObjectURL(a.preview);
-  for (const field of ['requestId','requestText','report_prompt','report_text']) delete draft[field];
+  for (const field of ['requestId','requestText','report_prompt','report_text','continuation_title']) delete draft[field];
   Object.assign(draft, next, {revision: row.revision, editVersion: draft.editVersion,
     savedVersion: draft.editVersion, storageError: ''});
   return draft;

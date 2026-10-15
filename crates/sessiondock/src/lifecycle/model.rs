@@ -183,6 +183,8 @@ pub struct LaunchSpec {
     model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    continuation: Option<crate::metadata::Predecessor>,
 }
 impl LaunchSpec {
     /// Fixed-argv adapter launch. Synchronous filesystem validation: a future
@@ -243,6 +245,7 @@ impl LaunchSpec {
             launch,
             model: None,
             effort: None,
+            continuation: None,
         };
         spec.validate()?;
         Ok(spec)
@@ -258,6 +261,13 @@ impl LaunchSpec {
         self.effort = effort.filter(|value| !value.is_empty());
         self.validate()?;
         Ok(self)
+    }
+    pub fn with_continuation(mut self, edge: Option<crate::metadata::Predecessor>) -> Self {
+        self.continuation = edge;
+        self
+    }
+    pub fn continuation(&self) -> Option<&crate::metadata::Predecessor> {
+        self.continuation.as_ref()
     }
     pub fn model(&self) -> Option<&str> {
         self.model.as_deref()
@@ -302,7 +312,8 @@ impl LaunchSpec {
             self.cwd(),
             self.launch.clone(),
         )?
-        .with_choice(self.model.clone(), self.effort.clone())?;
+        .with_choice(self.model.clone(), self.effort.clone())?
+        .with_continuation(self.continuation.clone());
         if checked == *self {
             Ok(())
         } else {

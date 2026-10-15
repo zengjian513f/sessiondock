@@ -150,6 +150,8 @@ pub(super) struct Row {
     attachments: Vec<Attachment>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     predecessors: Vec<Predecessor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    continuation_initialized: Option<bool>,
     /// Sidebar parent initialized by a launch or chosen by the user.
     #[serde(skip_serializing_if = "Option::is_none")]
     nest_parent: Option<NestParent>,
@@ -459,6 +461,30 @@ impl MetadataSnapshot {
             .sessions
             .get(uid)
             .map_or(&[], |row| row.attachments.as_slice())
+    }
+
+    pub fn with_initial_continuation(
+        &self,
+        uid: &str,
+        edge: Predecessor,
+    ) -> Result<Self, MetadataError> {
+        validate_uid(uid)?;
+        validate_uid(&edge.session_uid)?;
+        self.change(|rows| {
+            let row = rows.entry(uid.to_owned()).or_default();
+            if row.continuation_initialized == Some(true) {
+                return Ok(());
+            }
+            if !row
+                .predecessors
+                .iter()
+                .any(|old| old.session_uid == edge.session_uid && old.node_id == edge.node_id)
+            {
+                row.predecessors.push(edge);
+            }
+            row.continuation_initialized = Some(true);
+            Ok(())
+        })
     }
 
     pub fn with_predecessor(

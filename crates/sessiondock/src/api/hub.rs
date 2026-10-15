@@ -750,6 +750,11 @@ async fn handle(
     } else {
         (None, None)
     };
+    if path == "/api/term/create"
+        && let Some(body) = body.as_mut()
+    {
+        crate::hub::relations::prepare_continuation(registry, client, body).await?;
+    }
     if path == "/api/session/predecessor"
         && let Some(body) = body.as_mut()
     {
