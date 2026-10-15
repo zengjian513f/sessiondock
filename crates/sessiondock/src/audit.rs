@@ -11,7 +11,7 @@
 //! * The writer is a dedicated OS thread fed by a `std::sync::mpsc` channel
 //!   using the 20,000-item queue bound. Producers use `try_send`.
 //! * Records are appended to one JSONL file per UTC day. Matching daily files
-//!   older than the 14-day retention window are removed.
+//!   are filtered by receipt time on startup and every minute for rolling 24h retention.
 //! * Durability policy: every batch is written with one `write_all`; the file is
 //!   `fdatasync`ed when the writer has been idle for one second after writes,
 //!   when a segment is rotated out, and during graceful shutdown. Losing the
@@ -183,6 +183,15 @@ impl AuditService {
         limits: Limits,
         shutdown: CancellationToken,
     ) -> io::Result<Self> {
+        Self::open_named(directory, limits, shutdown, "browser-")
+    }
+
+    pub(crate) fn open_named(
+        directory: PathBuf,
+        limits: Limits,
+        shutdown: CancellationToken,
+        prefix: &'static str,
+    ) -> io::Result<Self> {
         std::fs::create_dir_all(&directory)?;
         #[cfg(unix)]
         {
@@ -199,7 +208,7 @@ impl AuditService {
             sequence: AtomicU64::new(1),
         });
         let (done_tx, done) = watch::channel(false);
-        let worker = writer::Writer::new(directory, shared.clone(), shutdown.clone());
+        let worker = writer::Writer::new(directory, shared.clone(), shutdown.clone(), prefix);
         std::thread::Builder::new()
             .name("sessiondock-audit".into())
             .spawn(move || {

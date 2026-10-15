@@ -148,6 +148,7 @@ async fn serve(config: HubConfig) -> Result<(), Box<dyn Error>> {
         registry,
         client: _client,
         monitor,
+        audit,
     } = hub_api::hub_app(&config, shutdown.clone())?;
     let listener = match tokio::net::TcpListener::bind(config.bind).await {
         Ok(listener) => listener,
@@ -177,6 +178,9 @@ async fn serve(config: HubConfig) -> Result<(), Box<dyn Error>> {
     .await;
     shutdown.cancel();
     monitor.stop().await;
+    if let Some(audit) = audit {
+        audit.shutdown().await;
+    }
     served?;
     Ok(())
 }

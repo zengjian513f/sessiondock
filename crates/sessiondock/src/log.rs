@@ -86,7 +86,7 @@ pub fn error(event: &str, fields: Value) {
 pub struct ErrorCode(pub &'static str);
 
 /// Identifier headers the page already sends; at most 64 printable bytes.
-fn id_header(headers: &HeaderMap, name: &str) -> Option<String> {
+pub(crate) fn id_header(headers: &HeaderMap, name: &str) -> Option<String> {
     let value = headers.get(name)?.to_str().ok()?;
     (!value.is_empty() && value.len() <= 64 && value.bytes().all(|b| b.is_ascii_graphic()))
         .then(|| value.to_owned())

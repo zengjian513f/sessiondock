@@ -1,8 +1,8 @@
-//! Dedicated writer thread: daily JSONL files with fourteen-day retention.
+//! Dedicated writer thread: daily JSONL files with rolling 24-hour retention.
 
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Write as _},
+    io::{self, BufRead as _, BufReader, BufWriter, Write as _},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -22,42 +22,55 @@ const IDLE_SYNC: Duration = Duration::from_secs(1);
 /// waits slightly longer so a normal drain always completes first.
 const DRAIN_DEADLINE: Duration = Duration::from_millis(1500);
 const ERROR_LOG_INTERVAL: Duration = Duration::from_secs(60);
-const RETENTION_DAYS: u64 = 14;
+const RETENTION: Duration = Duration::from_secs(24 * 3600);
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 const PREFIX: &str = "browser-";
 const SUFFIX: &str = ".jsonl";
 
 struct Segment {
     file: File,
-    path: PathBuf,
     date: String,
     bytes: u64,
 }
 
 pub struct Writer {
     directory: PathBuf,
+    prefix: &'static str,
     shared: Arc<Shared>,
     shutdown: CancellationToken,
     segment: Option<Segment>,
     dirty: bool,
     last_write: Instant,
     last_error_log: Option<Instant>,
+    last_cleanup: Instant,
 }
 
 impl Writer {
-    pub fn new(directory: PathBuf, shared: Arc<Shared>, shutdown: CancellationToken) -> Self {
+    pub fn new(
+        directory: PathBuf,
+        shared: Arc<Shared>,
+        shutdown: CancellationToken,
+        prefix: &'static str,
+    ) -> Self {
         Self {
             directory,
+            prefix,
             shared,
             shutdown,
             segment: None,
             dirty: false,
             last_write: Instant::now(),
             last_error_log: None,
+            last_cleanup: Instant::now(),
         }
     }
 
     pub fn run(mut self, rx: Receiver<Batch>) {
+        self.enforce_retention();
         loop {
+            if self.last_cleanup.elapsed() >= CLEANUP_INTERVAL {
+                self.enforce_retention();
+            }
             if self.stopping() {
                 break;
             }
@@ -174,13 +187,12 @@ impl Writer {
         }
     }
 
-    /// Closes the current daily segment, opens today's file and applies
-    /// the fourteen-day retention window.
+    /// Closes the current daily segment and opens today's file.
     fn rotate(&mut self, date: &str) -> io::Result<()> {
         self.sync();
         self.segment.take();
-        let index = latest_index(&self.directory, date).map_or(0, |(index, _)| index);
-        let path = self.directory.join(segment_name(date, index));
+        let index = latest_index(&self.directory, date, self.prefix).map_or(0, |(index, _)| index);
+        let path = self.directory.join(named_segment(date, index, self.prefix));
         let mut options = OpenOptions::new();
         options.create(true).append(true);
         #[cfg(unix)]
@@ -198,44 +210,37 @@ impl Writer {
         }
         self.segment = Some(Segment {
             file,
-            path,
             date: date.to_owned(),
             bytes: metadata.len(),
         });
-        self.enforce_retention();
         Ok(())
     }
 
-    /// Delete matching segments older than the retention window.
+    /// Runs on the dedicated writer, including idle periods and startup.
+    /// Close our append handle before replacing a mixed-age file (also Windows).
     fn enforce_retention(&mut self) {
-        let mut segments = list_segments(&self.directory);
-        segments.sort();
-        let mut total: u64 = segments.iter().map(|segment| segment.size).sum();
-        let active = self.segment.as_ref().map(|segment| segment.path.clone());
-        let cutoff = utc_date(
-            SystemTime::now()
-                .checked_sub(Duration::from_secs(RETENTION_DAYS * 24 * 3600))
-                .unwrap_or(SystemTime::UNIX_EPOCH),
-        );
-        for segment in &segments {
-            if segment.date >= cutoff || active.as_ref() == Some(&segment.path) {
-                continue;
-            }
-            match fs::remove_file(&segment.path) {
-                Ok(()) => total -= segment.size,
-                Err(error) => {
-                    self.shared
-                        .counters
-                        .write_errors
-                        .fetch_add(1, Ordering::Relaxed);
-                    self.log_error(&error);
-                }
+        self.last_cleanup = Instant::now();
+        self.sync();
+        self.segment.take();
+        let cutoff = SystemTime::now()
+            .checked_sub(RETENTION)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        for segment in list_named_segments(&self.directory, self.prefix) {
+            if let Err(error) = prune_segment(&segment.path, cutoff) {
+                self.shared
+                    .counters
+                    .write_errors
+                    .fetch_add(1, Ordering::Relaxed);
+                self.log_error(&error);
             }
         }
-        self.shared
-            .counters
-            .retained_bytes
-            .store(total, Ordering::Relaxed);
+        self.shared.counters.retained_bytes.store(
+            list_named_segments(&self.directory, self.prefix)
+                .iter()
+                .map(|s| s.size)
+                .sum(),
+            Ordering::Relaxed,
+        );
     }
 }
 
@@ -247,17 +252,17 @@ pub struct SegmentFile {
     pub size: u64,
 }
 
-pub fn segment_name(date: &str, index: u32) -> String {
+fn named_segment(date: &str, index: u32, prefix: &str) -> String {
     if index == 0 {
-        format!("{PREFIX}{date}{SUFFIX}")
+        format!("{prefix}{date}{SUFFIX}")
     } else {
-        format!("{PREFIX}{date}.{index:04}{SUFFIX}")
+        format!("{prefix}{date}.{index:04}{SUFFIX}")
     }
 }
 
 /// Parses `browser-YYYY-MM-DD.jsonl` / `browser-YYYY-MM-DD.NNNN.jsonl`.
-pub fn parse_segment_name(name: &str) -> Option<(String, u32)> {
-    let rest = name.strip_prefix(PREFIX)?.strip_suffix(SUFFIX)?;
+fn parse_named_segment(name: &str, prefix: &str) -> Option<(String, u32)> {
+    let rest = name.strip_prefix(prefix)?.strip_suffix(SUFFIX)?;
     let (date, index) = match rest.split_once('.') {
         None => (rest, 0),
         Some((date, index)) => {
@@ -282,6 +287,10 @@ pub fn parse_segment_name(name: &str) -> Option<(String, u32)> {
 /// Regular files matching the segment pattern; anything else in the directory
 /// is ignored and never deleted.
 pub fn list_segments(directory: &Path) -> Vec<SegmentFile> {
+    list_named_segments(directory, PREFIX)
+}
+
+fn list_named_segments(directory: &Path, prefix: &str) -> Vec<SegmentFile> {
     let Ok(entries) = fs::read_dir(directory) else {
         return Vec::new();
     };
@@ -289,7 +298,7 @@ pub fn list_segments(directory: &Path) -> Vec<SegmentFile> {
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name();
-            let (date, index) = parse_segment_name(name.to_str()?)?;
+            let (date, index) = parse_named_segment(name.to_str()?, prefix)?;
             let metadata = fs::symlink_metadata(entry.path()).ok()?;
             metadata.is_file().then(|| SegmentFile {
                 date,
@@ -301,10 +310,84 @@ pub fn list_segments(directory: &Path) -> Vec<SegmentFile> {
         .collect()
 }
 
-fn latest_index(directory: &Path, date: &str) -> Option<(u32, u64)> {
-    list_segments(directory)
+fn latest_index(directory: &Path, date: &str, prefix: &str) -> Option<(u32, u64)> {
+    list_named_segments(directory, prefix)
         .into_iter()
         .filter(|segment| segment.date == date)
         .max_by_key(|segment| segment.index)
         .map(|segment| (segment.index, segment.size))
+}
+
+/// Filter by the server receipt time, never the untrusted browser clock or
+/// filename date. Unknown/malformed records are preserved rather than guessing.
+/// Only this writer owns matching files; evidence and business files are ignored.
+fn prune_segment(path: &Path, cutoff: SystemTime) -> io::Result<()> {
+    let cutoff: chrono::DateTime<chrono::Utc> = cutoff.into();
+    // Most scans find nothing expired. Avoid rewriting retained data (and
+    // allocating a temporary file) on every idle maintenance tick.
+    let expired = |line: &[u8]| {
+        serde_json::from_slice::<serde_json::Value>(line)
+            .ok()
+            .and_then(|row| {
+                row.get("received_at")
+                    .or_else(|| row.get("ts"))?
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts).ok())
+            .is_some_and(|ts| ts < cutoff)
+    };
+    let mut found = false;
+    for line in BufReader::new(File::open(path)?).split(b'\n') {
+        if expired(&line?) {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return Ok(());
+    }
+    let temporary = path.with_extension("jsonl.retention-tmp");
+    let result = (|| {
+        let input = BufReader::new(File::open(path)?);
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut output = BufWriter::new(options.open(&temporary)?);
+        let mut removed = false;
+        let mut retained = false;
+        for line in input.split(b'\n') {
+            let line = line?;
+            if line.is_empty() {
+                continue;
+            }
+            if expired(&line) {
+                removed = true;
+            } else {
+                output.write_all(&line)?;
+                output.write_all(b"\n")?;
+                retained = true;
+            }
+        }
+        output.flush()?;
+        if removed && retained {
+            output.get_ref().sync_all()?;
+        }
+        drop(output);
+        if removed {
+            if retained {
+                fs::rename(&temporary, path)?;
+            } else {
+                fs::remove_file(path)?;
+            }
+        }
+        Ok(())
+    })();
+    // A failed cleanup leaves the original intact. Never touch unrelated files.
+    let _ = fs::remove_file(temporary);
+    result
 }

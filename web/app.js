@@ -10716,18 +10716,32 @@ async function updateMachineClient(target, client, button) {
 }
 
 // 两类请求的路径不同：展示属性是中央自己的接口，终端后端要转发给那台机器。
+async function machineSettingsRequest(url, body) {
+  const traceId = requestId(), started = performance.now();
+  let status = null;
+  try {
+    const response = await fetch(appUrl(url), {
+      method: 'POST', headers: {'Content-Type': 'application/json',
+        'X-SessionDock-Page': AUDIT_PAGE_ID, 'X-SessionDock-Trace': traceId},
+      body: JSON.stringify(body),
+    });
+    status = response.status;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.error || `请求失败（HTTP ${status}）`);
+    browserAuditEvent('settings.saved', {url, status, duration_ms: performance.now() - started}, {traceId});
+    return data;
+  } catch (error) {
+    browserAuditEvent('settings.save_failed', {url, status, duration_ms: performance.now() - started},
+      {traceId, severity: 'error'});
+    throw error;
+  }
+}
+
 async function machinePost(url, body, control) {
   control.disabled = true;
   setMachineNote('正在保存…');
   try {
-    const response = await fetch(appUrl(url), {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || data.error) throw new Error(
-      data.error || `请求失败（HTTP ${response.status}）`);
-    return data;
+    return await machineSettingsRequest(url, body);
   } finally {
     control.disabled = false;
   }
@@ -10801,12 +10815,7 @@ async function saveMachineOrder(ids) {
   const version = machineOrderVersion;
   const current = () => version === machineOrderVersion;
   try {
-    const response = await fetch(appUrl('api/nodes/order'), {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ids}),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || data.error) throw new Error(data.error || `请求失败（HTTP ${response.status}）`);
+    const data = await machineSettingsRequest('api/nodes/order', {ids});
     setMachineNote('顺序已保存。');
     if (!current()) return;             // 更新的排序正在保存，它会自己重载
     Nodes.machines = data.machines;
