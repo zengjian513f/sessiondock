@@ -336,6 +336,7 @@ struct State {
     report: Arc<Report>,
     resources: Arc<Resources>,
     status: CollectorStatus,
+    usage: Value,
     forks: u64,
     execs: u64,
     exits: u64,
@@ -360,6 +361,7 @@ impl State {
     }
     fn handle(&mut self, request: Request) -> Result<Response, &'static str> {
         match request {
+            Request::Usage => Ok(Response::Value(self.usage.clone())),
             Request::Health => Ok(Response::Value(
                 json!({"service":"resource-agent", "version":1, "node_id":self.engine.node_id, "boot_id":self.engine.boot_id, "sampled_at":self.report.sampled_at,"collector":self.status,"processes":self.snapshot.entries.len(),"fork_events":self.forks,"exec_events":self.execs,"exit_events":self.exits}),
             )),
@@ -808,11 +810,18 @@ impl ResourceSampler {
                     .try_fold(0u64, |sum, s| sum.checked_add(s.memory_bytes?));
                 sample.metrics.insert("gpu_devices".into(), metric(json!(devices), "partial", "NVIDIA compute-app residency by GPU UUID; excludes pure graphics; MPS may expose only its server; residency is not compute utilization"));
                 sample.metrics.insert("gpu_memory_bytes".into(), metric(json!(memory), if memory.is_some() {"partial"} else {"unavailable"}, "NVIDIA compute-app framebuffer residency; unsupported/conflicting memory reports remain unknown"));
-                // The sampler has no per-process utilization source; never use whole-card utilization.
-                let _ = gpu_samples
+                let utilization: BTreeMap<_, _> = gpu_samples
                     .into_iter()
                     .flatten()
-                    .any(|s| s.utilization_percent.is_some());
+                    .map(|g| (&g.device_uuid, g.utilization_percent))
+                    .collect();
+                let models: BTreeMap<_, _> = gpu_samples
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|g| g.device_name.as_ref().map(|name| (&g.device_uuid, name)))
+                    .collect();
+                sample.metrics.insert("gpu_utilization_by_device".into(), json!({"value":utilization,"sampled_at":observation.sampled_at,"status":"partial"}));
+                sample.metrics.insert("gpu_models".into(), json!(models));
             }
             for name in ["gpu_devices", "gpu_memory_bytes"] {
                 if observation.result.is_some() {
@@ -901,7 +910,6 @@ impl ResourceSampler {
             sessions: Vec::new(),
             session_measurements: Vec::new(),
             unavailable: vec![
-                "gpu_per_process_compute_utilization".into(),
                 "nfs_wire_rpc_accounting".into(),
                 "complete_exited_process_accounting".into(),
             ],
@@ -1128,12 +1136,19 @@ pub fn run() -> io::Result<()> {
         &SlowObservations::default(),
     );
     let report = engine.update(&snapshot, data.sampled_at, status.clone());
+    let mut usage = crate::usage::Ledger::open(
+        &config.state.with_extension("usage.json"),
+        &config.node_id,
+        now(),
+    )?;
+    let initial_usage = usage.view();
     let state = Arc::new(Mutex::new(State {
         engine,
         snapshot,
         report: Arc::new(report),
         resources: Arc::new(data),
         status,
+        usage: initial_usage,
         forks: 0,
         execs: 0,
         exits: 0,
@@ -1293,6 +1308,7 @@ pub fn run() -> io::Result<()> {
     let worker = std::thread::spawn(move || {
         let mut sampled = Instant::now();
         let mut saved_at = Instant::now();
+        let mut usage_saved_at = Instant::now();
         while !STOP.load(Ordering::Relaxed) {
             let first = match receiver.recv_timeout(Duration::from_millis(100)) {
                 Ok(event) => Some(event),
@@ -1369,6 +1385,10 @@ pub fn run() -> io::Result<()> {
                     s.engine.connections.gap();
                 }
                 s.update(snapshot, data);
+                let resources = s.resources.clone();
+                let report = s.report.clone();
+                drop(s);
+                usage.observe(&resources, &report);
                 sampled = Instant::now();
             }
             if saved_at.elapsed() >= Duration::from_secs(2) {
@@ -1380,8 +1400,22 @@ pub fn run() -> io::Result<()> {
                 if let Err(error) = save(&worker_config.state, &saved) {
                     eprintln!("cannot save attribution: {error}");
                 }
+                if usage_saved_at.elapsed() >= Duration::from_secs(30) {
+                    if let Err(error) = usage.save() {
+                        eprintln!("cannot save usage: {error}");
+                        let mut view = usage.view();
+                        view["persistence_error"] = json!(error.to_string());
+                        worker_state.lock().unwrap_or_else(|e| e.into_inner()).usage = view;
+                    } else {
+                        worker_state.lock().unwrap_or_else(|e| e.into_inner()).usage = usage.view();
+                    }
+                    usage_saved_at = Instant::now();
+                }
                 saved_at = Instant::now();
             }
+        }
+        if let Err(error) = usage.save() {
+            eprintln!("cannot save final usage: {error}");
         }
     });
     while !STOP.load(Ordering::Relaxed) {

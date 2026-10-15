@@ -11,6 +11,8 @@ mod memory;
 #[cfg(target_os = "linux")]
 mod server;
 #[cfg(target_os = "linux")]
+mod usage;
+#[cfg(target_os = "linux")]
 fn main() -> std::io::Result<()> {
     if std::env::args().nth(1).as_deref() == Some("--io-probe-helper") {
         return io_events::helper_main();

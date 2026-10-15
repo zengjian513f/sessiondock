@@ -459,3 +459,29 @@ never synthetic zero usage. `SESSIONDOCK_NODE_ID_FILE` may be configured alone
 for a stable local identity; it does not enable Hub authentication or a listener.
 The collector uses the same identity file. See [resource-agent.md](resource-agent.md)
 for independent installation and privileges.
+
+### Persistent session usage
+
+The collector's read-only `usage` request returns a version-1 cumulative ledger,
+shared with Node Status (`/api/usage`) without requiring any diagnostic lease.
+`state.usage.json` beside the attribution state contains per-session/per-scope
+Beijing calendar-day buckets, CPU seconds, GPU UUID residency seconds, estimated
+compute seconds and observed compute card-seconds. Device names and sampling-gap
+intervals remain durable. Direct and inclusive buckets are separate views, never
+additive; inclusive attribution uses causal launch chains, not sidebar nesting.
+Within each target session, devices deduplicate across processes/descendants.
+
+CPU uses counter deltas only across continuous observations of the same process
+incarnation and owner. Missing exited processes are not reconstructed. GPU uses
+resident compute contexts; different sessions sharing a GPU may each accrue
+residency time. A background pmon observation every ten seconds supplies per-PID
+SM utilization; missing values remain unknown, and concurrent per-card sums cap
+at one card. This is an estimate, not exclusive GPU billing. No whole-device
+utilization is charged to sessions. Reboots, restart gaps and intervals over ten
+seconds are not extrapolated. Snapshots publish and atomically persist every
+thirty seconds, with a final flush on orderly shutdown; abrupt termination can
+lose the unflushed tail. Historical usage starts at deployment, not session birth.
+
+Browser acceptance lives in Node Status `tests/usage_browser.py`: private real
+collector with fixture GPU CLI, CPU task, same-card processes, restart persistence,
+local HTTP adapter and multi-machine UI. No production attribution/state is used.
