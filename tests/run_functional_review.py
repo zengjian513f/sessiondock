@@ -20,7 +20,11 @@ DEFAULT_SUITES = ['sidebar_input_browser', 'startup_actions_browser', 'audit_shu
     'frontend_search_state_browser', 'regex_worker_browser', 'trash_interactions_browser',
     'bug_report_node_browser', 'composer_editor_browser', 'files_browser', 'hub_transfer_browser',
     'session_cleanup_browser', 'session_freeze_browser', 'session_stop_browser',
-    'search_browser', 'session_research_browser']
+    'search_browser', 'session_research_browser', 'history_browser', 'history_pages_browser',
+    'terminal_input_browser', 'terminal_selection_browser', 'terminal_shift_browser',
+    'terminal_claim_browser', 'terminal_final_screen_browser', 'terminal_scrollback_browser',
+    'session_resources_browser', 'resource_probe_browser', 'popup_browser', 'metadata_browser',
+    'network_recovery_browser', 'session_link_reveal_browser']
 
 
 def main():

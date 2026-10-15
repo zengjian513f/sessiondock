@@ -280,17 +280,21 @@
       "id": "sd.resources.direct",
       "input": "点击仅当前会话",
       "expected": "切换 direct 范围，刷新统计及探测租约",
-      "suites": [],
-      "scope": "scenario",
-      "remaining": "尚未为「点击仅当前会话」核对并执行到「切换 direct 范围，刷新统计及探测租约」的独立浏览器结果断言；候选套件：tests/session_resources_browser.py。盘点中的静态候选不计通过。"
+      "suites": [
+        "session_resources_browser"
+      ],
+      "scope": "partial",
+      "remaining": "真实页面控件与指标说明断言；统计采用注入样本，只证明前端范围/展示，不证明真实collector全链路。"
     },
     {
       "id": "sd.resources.inclusive",
       "input": "点击包含子会话",
       "expected": "切换 inclusive，按相关节点聚合",
-      "suites": [],
-      "scope": "scenario",
-      "remaining": "尚未为「点击包含子会话」核对并执行到「切换 inclusive，按相关节点聚合」的独立浏览器结果断言；候选套件：tests/session_resources_browser.py。盘点中的静态候选不计通过。"
+      "suites": [
+        "session_resources_browser"
+      ],
+      "scope": "partial",
+      "remaining": "真实页面控件与指标说明断言；统计采用注入样本，只证明前端范围/展示，不证明真实collector全链路。"
     },
     {
       "id": "sd.resources.refresh",
@@ -340,9 +344,11 @@
       "id": "sd.resources.metric-tip",
       "input": "鼠标悬停或键盘聚焦指标",
       "expected": "显示单位、缺失原因和采样口径说明",
-      "suites": [],
-      "scope": "scenario",
-      "remaining": "尚未为「鼠标悬停或键盘聚焦指标」核对并执行到「显示单位、缺失原因和采样口径说明」的独立浏览器结果断言；候选套件：tests/session_resources_browser.py。盘点中的静态候选不计通过。"
+      "suites": [
+        "session_resources_browser"
+      ],
+      "scope": "partial",
+      "remaining": "真实页面控件与指标说明断言；统计采用注入样本，只证明前端范围/展示，不证明真实collector全链路。"
     },
     {
       "id": "sd.resources.modal-backdrop",
@@ -428,17 +434,21 @@
       "id": "sd.sidebar.star-row",
       "input": "点击行内星标",
       "expected": "独立切换收藏，不打开会话",
-      "suites": [],
+      "suites": [
+        "metadata_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击行内星标」核对并执行到「独立切换收藏，不打开会话」的独立浏览器结果断言；候选套件：tests/sidebar_toggle_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.sidebar.caret",
       "input": "点击子会话三角",
       "expected": "按需加载或折叠当前子树",
-      "suites": [],
+      "suites": [
+        "session_link_reveal_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击子会话三角」核对并执行到「按需加载或折叠当前子树」的独立浏览器结果断言；候选套件：tests/sidebar_toggle_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.sidebar.group-collapse",
@@ -1140,41 +1150,51 @@
       "id": "sd.conversation.deep-link",
       "input": "地址栏打开 sid/node/agent 深链",
       "expected": "解析唯一会话或显示候选/缺失；不任意选副本",
-      "suites": [],
+      "suites": [
+        "session_link_reveal_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「地址栏打开 sid/node/agent 深链」核对并执行到「解析唯一会话或显示候选/缺失；不任意选副本」的独立浏览器结果断言；候选套件：tests/history_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.conversation.back-forward",
       "input": "浏览器后退/前进",
       "expected": "按URL重新选择主/子代理会话",
-      "suites": [],
+      "suites": [
+        "session_link_reveal_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「浏览器后退/前进」核对并执行到「按URL重新选择主/子代理会话」的独立浏览器结果断言；候选套件：tests/history_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.conversation.mobile-back",
       "input": "点击移动端返回列表",
       "expected": "显示侧栏并保留会话状态",
-      "suites": [],
+      "suites": [
+        "session_link_reveal_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击移动端返回列表」核对并执行到「显示侧栏并保留会话状态」的独立浏览器结果断言；候选套件：tests/history_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.conversation.chat",
       "input": "点击对话 tab",
       "expected": "关闭辅助视图并显示正文",
-      "suites": [],
-      "scope": "scenario",
-      "remaining": "尚未为「点击对话 tab」核对并执行到「关闭辅助视图并显示正文」的独立浏览器结果断言；候选套件：tests/history_browser.py。盘点中的静态候选不计通过。"
+      "suites": [
+        "session_resources_browser"
+      ],
+      "scope": "partial",
+      "remaining": "真实页面控件与指标说明断言；统计采用注入样本，只证明前端范围/展示，不证明真实collector全链路。"
     },
     {
       "id": "sd.conversation.star",
       "input": "点击标题栏星标",
       "expected": "保存收藏状态",
-      "suites": [],
+      "suites": [
+        "metadata_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击标题栏星标」核对并执行到「保存收藏状态」的独立浏览器结果断言；候选套件：tests/history_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.conversation.actions",
@@ -1196,17 +1216,21 @@
       "id": "sd.conversation.view-switch",
       "input": "点击主会话/子代理视图切换",
       "expected": "打开视图选择列表",
-      "suites": [],
+      "suites": [
+        "metadata_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击主会话/子代理视图切换」核对并执行到「打开视图选择列表」的独立浏览器结果断言；候选套件：tests/history_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.conversation.view-select",
       "input": "点击视图列表主会话或子代理",
       "expected": "读取指定正文和更新深链",
-      "suites": [],
+      "suites": [
+        "metadata_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击视图列表主会话或子代理」核对并执行到「读取指定正文和更新深链」的独立浏览器结果断言；候选套件：tests/history_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.conversation.compact",
@@ -1348,33 +1372,41 @@
       "id": "sd.conversation.parent-chain",
       "input": "点击父会话链按钮",
       "expected": "打开关联链菜单",
-      "suites": [],
+      "suites": [
+        "metadata_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击父会话链按钮」核对并执行到「打开关联链菜单」的独立浏览器结果断言；候选套件：tests/history_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.conversation.parent-show",
       "input": "父会话链点击显示",
       "expected": "保存可见性并将侧栏目标定位到可见处",
-      "suites": [],
+      "suites": [
+        "metadata_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「父会话链点击显示」核对并执行到「保存可见性并将侧栏目标定位到可见处」的独立浏览器结果断言；候选套件：tests/history_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.conversation.parent-hide",
       "input": "父会话链点击隐藏",
       "expected": "保存父会话隐藏状态",
-      "suites": [],
+      "suites": [
+        "metadata_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「父会话链点击隐藏」核对并执行到「保存父会话隐藏状态」的独立浏览器结果断言；候选套件：tests/history_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.conversation.parent-open",
       "input": "父会话链点击打开",
       "expected": "打开确切UID而非自动跟随",
-      "suites": [],
+      "suites": [
+        "metadata_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「父会话链点击打开」核对并执行到「打开确切UID而非自动跟随」的独立浏览器结果断言；候选套件：tests/history_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.conversation.parent-escape",
@@ -1860,9 +1892,11 @@
       "id": "sd.terminal.retry",
       "input": "打开失败后再次点击控制台",
       "expected": "直接重试连接，清除旧错误",
-      "suites": [],
+      "suites": [
+        "terminal_claim_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「打开失败后再次点击控制台」核对并执行到「直接重试连接，清除旧错误」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.takeover",
@@ -1900,9 +1934,11 @@
       "id": "sd.terminal.final",
       "input": "点击已退出SSH会话",
       "expected": "只读显示最终屏幕；不claim不WS不发送",
-      "suites": [],
+      "suites": [
+        "terminal_final_screen_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击已退出SSH会话」核对并执行到「只读显示最终屏幕；不claim不WS不发送」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.final-scroll",
@@ -1926,9 +1962,11 @@
       "id": "sd.terminal.wheel",
       "input": "普通屏滚轮",
       "expected": "本地回滚，接近最旧行时触发历史分页",
-      "suites": [],
+      "suites": [
+        "terminal_scrollback_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「普通屏滚轮」核对并执行到「本地回滚，接近最旧行时触发历史分页」的独立浏览器结果断言；候选套件：tests/terminal_scrollback_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.wheel-alt",
@@ -1950,17 +1988,21 @@
       "id": "sd.terminal.select-drag",
       "input": "鼠标拖选终端",
       "expected": "建立本地文本选区",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「鼠标拖选终端」核对并执行到「建立本地文本选区」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.select-shift",
       "input": "CLI鼠标捕获时Shift拖选",
       "expected": "强制本地选字不发远端鼠标",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「CLI鼠标捕获时Shift拖选」核对并执行到「强制本地选字不发远端鼠标」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.select-double",
@@ -1974,9 +2016,11 @@
       "id": "sd.terminal.mouse-cli",
       "input": "CLI鼠标捕获时点击/拖动",
       "expected": "按单元格发送mouse down/move/up",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「CLI鼠标捕获时点击/拖动」核对并执行到「按单元格发送mouse down/move/up」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.link",
@@ -1990,25 +2034,31 @@
       "id": "sd.terminal.scrollbar-drag",
       "input": "拖动终端滚动条滑块",
       "expected": "只改变本地视口，备用屏不适用",
-      "suites": [],
+      "suites": [
+        "terminal_scrollback_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「拖动终端滚动条滑块」核对并执行到「只改变本地视口，备用屏不适用」的独立浏览器结果断言；候选套件：tests/terminal_scrollback_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.scrollbar-track",
       "input": "点击终端滚动条轨道",
       "expected": "定位本地回滚位置",
-      "suites": [],
+      "suites": [
+        "terminal_scrollback_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击终端滚动条轨道」核对并执行到「定位本地回滚位置」的独立浏览器结果断言；候选套件：tests/terminal_scrollback_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.scrollbar-keyboard",
       "input": "滚动条聚焦后方向键/PageUp/PageDown/Home/End",
       "expected": "按行/页/边界滚动，停止CLI输入传播",
-      "suites": [],
+      "suites": [
+        "terminal_scrollback_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「滚动条聚焦后方向键/PageUp/PageDown/Home/End」核对并执行到「按行/页/边界滚动，停止CLI输入传播」的独立浏览器结果断言；候选套件：tests/terminal_scrollback_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.type",
@@ -2040,57 +2090,71 @@
       "id": "sd.terminal.menu-context",
       "input": "终端鼠标右键",
       "expected": "打开粘贴/查找菜单；触摸长按不走此菜单",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「终端鼠标右键」核对并执行到「打开粘贴/查找菜单；触摸长按不走此菜单」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.menu-button",
       "input": "点击终端 ⋯",
       "expected": "打开或关闭同一菜单",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击终端 ⋯」核对并执行到「打开或关闭同一菜单」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.menu-paste",
       "input": "菜单点击粘贴",
       "expected": "读系统剪贴板；失败显示键盘粘贴提示",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「菜单点击粘贴」核对并执行到「读系统剪贴板；失败显示键盘粘贴提示」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.find-open",
       "input": "菜单点击查找",
       "expected": "打开本地已加载输出查找框",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「菜单点击查找」核对并执行到「打开本地已加载输出查找框」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.find-type",
       "input": "查找框输入",
       "expected": "重算匹配；输出变化提示重试",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「查找框输入」核对并执行到「重算匹配；输出变化提示重试」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.find-next",
       "input": "查找表单Enter/下一处",
       "expected": "定位下一匹配",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「查找表单Enter/下一处」核对并执行到「定位下一匹配」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.find-prev",
       "input": "点击查找上一个",
       "expected": "定位上一匹配",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击查找上一个」核对并执行到「定位上一匹配」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.find-close",
@@ -2104,25 +2168,31 @@
       "id": "sd.terminal.find-escape",
       "input": "查找框Escape",
       "expected": "关闭查找不把Esc送CLI",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「查找框Escape」核对并执行到「关闭查找不把Esc送CLI」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.menu-keyboard",
       "input": "菜单上下方向键",
       "expected": "循环可用菜单项",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「菜单上下方向键」核对并执行到「循环可用菜单项」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.menu-escape",
       "input": "菜单Escape",
       "expected": "关闭并聚焦终端",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「菜单Escape」核对并执行到「关闭并聚焦终端」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.menu-outside",
@@ -2136,49 +2206,61 @@
       "id": "sd.terminal.touch-select",
       "input": "触摸长按终端",
       "expected": "启动本地选区，不弹终端右键菜单",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「触摸长按终端」核对并执行到「启动本地选区，不弹终端右键菜单」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.touch-adjust",
       "input": "触摸移动选区端点",
       "expected": "更新选择；双指捏合取消",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「触摸移动选区端点」核对并执行到「更新选择；双指捏合取消」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.touch-end",
       "input": "触摸选字后抬起",
       "expected": "完成选择及复制；cancel不复制",
-      "suites": [],
+      "suites": [
+        "terminal_selection_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「触摸选字后抬起」核对并执行到「完成选择及复制；cancel不复制」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.soft-ctrl",
       "input": "点击窄屏底栏ctrl",
       "expected": "Ctrl/Alt下一键；Shift本地选字及下次导航修饰，再点关闭",
-      "suites": [],
+      "suites": [
+        "terminal_shift_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击窄屏底栏ctrl」核对并执行到「Ctrl/Alt下一键；Shift本地选字及下次导航修饰，再点关闭」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.soft-alt",
       "input": "点击窄屏底栏alt",
       "expected": "Ctrl/Alt下一键；Shift本地选字及下次导航修饰，再点关闭",
-      "suites": [],
+      "suites": [
+        "terminal_shift_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击窄屏底栏alt」核对并执行到「Ctrl/Alt下一键；Shift本地选字及下次导航修饰，再点关闭」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.soft-shift",
       "input": "点击窄屏底栏shift",
       "expected": "Ctrl/Alt下一键；Shift本地选字及下次导航修饰，再点关闭",
-      "suites": [],
+      "suites": [
+        "terminal_shift_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击窄屏底栏shift」核对并执行到「Ctrl/Alt下一键；Shift本地选字及下次导航修饰，再点关闭」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.soft-key-escape",
@@ -2192,57 +2274,71 @@
       "id": "sd.terminal.soft-key-tab",
       "input": "点击底栏Tab",
       "expected": "编码修饰键后发送该键并清除一次修饰状态",
-      "suites": [],
+      "suites": [
+        "terminal_shift_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击底栏Tab」核对并执行到「编码修饰键后发送该键并清除一次修饰状态」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.soft-key-left",
       "input": "点击底栏Left",
       "expected": "编码修饰键后发送该键并清除一次修饰状态",
-      "suites": [],
+      "suites": [
+        "terminal_shift_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击底栏Left」核对并执行到「编码修饰键后发送该键并清除一次修饰状态」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.soft-key-up",
       "input": "点击底栏Up",
       "expected": "编码修饰键后发送该键并清除一次修饰状态",
-      "suites": [],
+      "suites": [
+        "terminal_shift_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击底栏Up」核对并执行到「编码修饰键后发送该键并清除一次修饰状态」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.soft-key-down",
       "input": "点击底栏Down",
       "expected": "编码修饰键后发送该键并清除一次修饰状态",
-      "suites": [],
+      "suites": [
+        "terminal_shift_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击底栏Down」核对并执行到「编码修饰键后发送该键并清除一次修饰状态」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.soft-key-right",
       "input": "点击底栏Right",
       "expected": "编码修饰键后发送该键并清除一次修饰状态",
-      "suites": [],
+      "suites": [
+        "terminal_shift_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击底栏Right」核对并执行到「编码修饰键后发送该键并清除一次修饰状态」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.soft-key-ppage",
       "input": "点击底栏PPage",
       "expected": "编码修饰键后发送该键并清除一次修饰状态",
-      "suites": [],
+      "suites": [
+        "terminal_shift_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击底栏PPage」核对并执行到「编码修饰键后发送该键并清除一次修饰状态」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.terminal.soft-key-npage",
       "input": "点击底栏NPage",
       "expected": "编码修饰键后发送该键并清除一次修饰状态",
-      "suites": [],
+      "suites": [
+        "terminal_shift_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击底栏NPage」核对并执行到「编码修饰键后发送该键并清除一次修饰状态」的独立浏览器结果断言；候选套件：tests/terminal_selection_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.new.open",
@@ -3441,17 +3537,21 @@
       "id": "sd.shell.popup-confirm",
       "input": "确认弹窗点击确认",
       "expected": "resolve true",
-      "suites": [],
+      "suites": [
+        "popup_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「确认弹窗点击确认」核对并执行到「resolve true」的独立浏览器结果断言；候选套件：tests/popup_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.shell.popup-cancel",
       "input": "确认弹窗点击取消",
       "expected": "resolve false",
-      "suites": [],
+      "suites": [
+        "popup_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「确认弹窗点击取消」核对并执行到「resolve false」的独立浏览器结果断言；候选套件：tests/popup_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.shell.popup-close",
@@ -3465,9 +3565,11 @@
       "id": "sd.shell.popup-escape",
       "input": "确认/提示弹窗Escape",
       "expected": "作为取消",
-      "suites": [],
+      "suites": [
+        "popup_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「确认/提示弹窗Escape」核对并执行到「作为取消」的独立浏览器结果断言；候选套件：tests/popup_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.info.research-experiment",
@@ -3533,9 +3635,11 @@
       "id": "sd.sidebar.resources-toggle",
       "input": "点击列表资源按钮",
       "expected": "切换六格资源列和附加宽度，保存偏好",
-      "suites": [],
+      "suites": [
+        "resource_probe_browser"
+      ],
       "scope": "scenario",
-      "remaining": "尚未为「点击列表资源按钮」核对并执行到「切换六格资源列和附加宽度，保存偏好」的独立浏览器结果断言；候选套件：tests/sidebar_toggle_browser.py。盘点中的静态候选不计通过。"
+      "remaining": "仅计套件中真实鼠标/键盘/CDP触摸主流程与结果；旧内部刷新/处理器直接调用不计输入证据。未执行的键盘/触摸/故障/缩放组合仍待补。"
     },
     {
       "id": "sd.conversation.cwd-open",
