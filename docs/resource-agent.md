@@ -89,6 +89,12 @@ short-lived processes that exit between polls. Kernel tracing and hardware
 memory-bandwidth monitoring require a separately configured privileged service;
 the web application itself remains unprivileged.
 
+The cumulative usage ledger beside the state file (`resource-agent.usage.json`
+in this example) contains session identities, titles and resource measurements.
+The collector writes it and its temporary file with owner-only permissions
+(`0600`), independent of the process umask, and tightens existing ledger
+permissions when opening it. Keep the containing directory private as above.
+
 ## Install an optional system service
 
 The supplied [systemd unit](../deploy/resource-agent.service) installs separately

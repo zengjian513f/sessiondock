@@ -295,14 +295,25 @@ def main():
             nodes.append(SimpleNamespace(name=name, nid=name * 32, port=free_port(), token=TOKEN))
         if args.with_agent:
             for index, (corpus, proc) in enumerate(zip(corpora, procs)):
+                ledger = corpus.root / 'agent-state.usage.json'
+                if index == 1:
+                    # Upgrade an older ledger and reuse a permissive leftover temp file.
+                    ledger.write_text(json.dumps({'version': 1, 'node_id': nodes[index].nid,
+                        'started_at': 123., 'updated_at': time.time(), 'gap_seconds': 0.,
+                        'gaps': [], 'device_models': {'GPU-old': 'Synthetic retained model'}, 'rows': {}}))
+                    ledger.chmod(0o644)
+                    ledger.with_suffix('.tmp').touch(mode=0o644)
+                    ledger.with_suffix('.tmp').chmod(0o644)
                 (corpus.root / 'gpu.csv').write_text('601, GPU-local, 32\n930, GPU-local, 64\n300, GPU-independent, 16\n'
                                                    if index == 0 else '800, GPU-remote, 32\n')
                 agent = subprocess.Popen([str(args.binary.resolve().with_name('resource-agent')),
                     '--uid', str(os.getuid()), '--node-id-file', str(corpus.root / 'ids/node-id'),
                     '--socket', str(corpus.root / 'agent.sock'), '--state', str(corpus.root / 'agent-state.json'),
-                    '--proc-root', str(proc), '--events', 'off'])
+                    '--proc-root', str(proc), '--events', 'off'], umask=0o022)
                 agents.callback(lambda p=agent: (p.terminate(), p.wait(timeout=10)))
                 wait_for(lambda: (corpus.root / 'agent.sock').exists())
+                if index == 1:
+                    wait_for(lambda: ledger.stat().st_mode & 0o777 == 0o600)
                 agents.enter_context(gpu_collector(corpus.root))
         hubroot = root / 'hub'
         hubroot.mkdir()
@@ -567,6 +578,17 @@ def main():
                         stat.write_text(stat.read_text().replace('30000', '30001').replace('S 100 ', 'S 1 '))
                         wait_for(lambda: not any(b['process']['pid'] == 300 for b in get_json(opener, base, '/api/process-links')['bindings']))
                         print('PASS restart without SSH evidence and PID reuse rejection', flush=True)
+            if args.with_agent:
+                for index, corpus in enumerate(corpora):
+                    ledger = corpus.root / 'agent-state.usage.json'
+                    saved = wait_for(lambda: json.loads(ledger.read_text()) if ledger.exists()
+                        and json.loads(ledger.read_text())['rows'] else None, timeout=40)
+                    assert ledger.stat().st_mode & 0o777 == 0o600, 'saved ledger must ignore permissive umask/temp mode'
+                    assert saved['node_id'] == nodes[index].nid
+                    if index == 1:
+                        assert saved['started_at'] == 123.
+                        assert saved['device_models']['GPU-old'] == 'Synthetic retained model'
+                print('PASS private usage persistence with umask 022, existing ledger and leftover temp file', flush=True)
         finally:
             browser.close()
             if hub:
