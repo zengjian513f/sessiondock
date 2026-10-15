@@ -45,7 +45,7 @@
     while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
     return `${value.toLocaleString('zh-CN', {maximumFractionDigits: i ? 1 : 0})}<small> ${units[i]}${unit === 'rate' ? '/s' : ''}</small>`;
   }
-  function metrics(values, fallback) {
+  function metrics(values, fallback, owner = 'totals') {
     return fields.map(([key, label, unit]) => {
       const raw = values?.[key];
       const item = typeof raw === 'number' ? {value: raw, status: 'ok'} : (raw || {});
@@ -54,7 +54,7 @@
       const status = reasons[item.status] || (!usable ? reasons[fallback] || '暂无采样' : '');
       const stamp = Number.isFinite(item.sampled_at) ? `采样 ${new Date(item.sampled_at * 1000).toLocaleTimeString('zh-CN', {hour12:false})}` : '';
       const tip = [descriptions[key], status, detail, stamp].filter(Boolean).join(' · ');
-      return `<div class="sr-metric${item.status === 'partial' ? ' sr-partial' : ''}" tabindex="0" title="${esc(tip)}"><dt>${label}</dt><dd>${usable ? number(item.value, unit) : '—'}</dd></div>`;
+      return `<div class="sr-metric${item.status === 'partial' ? ' sr-partial' : ''}" tabindex="0" data-metric-key="${esc(JSON.stringify([owner, key]))}" title="${esc(tip)}"><dt>${label}</dt><dd>${usable ? number(item.value, unit) : '—'}</dd></div>`;
     }).join('');
   }
   const probeStates = {off:'未探测', starting:'正在启动', active:'探测中', stopping:'正在停止', failed:'探测失败', unsupported:'不支持探测'};
@@ -79,7 +79,7 @@
     return `<div class="sr-summary-head"><span title="仅合计当前会话相关机器的已知数据；缺失值不代表零。同一进程只计一次。">${nodes.length > 1 ? '跨机器合计' : '合计'}</span><span>${stamp ? `采样 ${esc(stamp)}` : '实时采样'}</span></div>
       <dl class="sr-metrics sr-totals">${metrics(data.totals?.metrics || data.totals)}</dl>
       <div class="sr-section-heading">执行机器 <span>${nodes.length}</span></div>
-      ${nodes.length ? nodes.map(node => `<section class="sr-node"><div class="sr-node-head"><h3>${esc(node.node_name || node.node_id)}</h3><span class="sr-status${node.status === 'ok' ? ' sr-status-ok' : ''}">${esc(node.status === 'ok' ? '在线' : reasons[node.status] || '状态未知')}</span>${diagnostic(node)}</div><dl class="sr-metrics">${metrics(node.metrics, node.status)}</dl></section>`).join('') : '<div class="sr-empty" title="未采集的数据不代表零占用。">暂无关联进程</div>'}`;
+      ${nodes.length ? nodes.map(node => `<section class="sr-node"><div class="sr-node-head"><h3>${esc(node.node_name || node.node_id)}</h3><span class="sr-status${node.status === 'ok' ? ' sr-status-ok' : ''}">${esc(node.status === 'ok' ? '在线' : reasons[node.status] || '状态未知')}</span>${diagnostic(node)}</div><dl class="sr-metrics">${metrics(node.metrics, node.status, node.node_id)}</dl></section>`).join('') : '<div class="sr-empty" title="未采集的数据不代表零占用。">暂无关联进程</div>'}`;
   }
   let dialog, content, subtitle, currentUid = '', scope = 'inclusive', generation = 0, pending = false, probePending = false;
   let loader = async (uid, selectedScope) => {
@@ -196,7 +196,16 @@
     try {
       const data = await loader(currentUid, scope);
       if (ticket !== generation || !dialog.open) return;
+      // Polling replaces the metric nodes. Keep keyboard users on the same
+      // machine/metric, without moving their current reading position.
+      const active = document.activeElement;
+      const metricKey = content.contains(active) ? active.dataset.metricKey : null;
       content.innerHTML = render(data);
+      if (metricKey) {
+        const replacement = [...content.querySelectorAll('[data-metric-key]')]
+          .find(element => element.dataset.metricKey === metricKey);
+        (replacement || dialog.querySelector('#sr-title')).focus({preventScroll: true});
+      }
       reportLoad('ready');
       updateProbe(data);
       void reconcileProbe();
