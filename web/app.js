@@ -232,7 +232,12 @@ window.__sessiondockPageId = AUDIT_PAGE_ID;
 // Fresh id for one request, trace or connection; the fallback keeps insecure
 // (plain HTTP) contexts working where crypto.randomUUID is unavailable.
 function requestId() {
-  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 let browserAuditQueue = [];
@@ -11870,13 +11875,33 @@ async function deleteSessionTree(uid) {
   const $d = selector => dialog.querySelector(selector);
   const confirm = $d('.tree-confirm'), error = $d('.transfer-error');
   const saved = store.get('treeDeleteRequest', null);
-  let requestId = saved?.uid === uid ? saved.request_id : null;
-  let plan = null, busy = !!requestId, finished = false, timer = null, polling = false, overall = 0;
+  let deleteRequestId = saved?.uid === uid ? saved.request_id : null;
+  let plan = null, busy = !!deleteRequestId, finished = false, timer = null, polling = false, overall = 0;
+  let lastProgressLog = -Infinity;
   const request = async (action, body) => {
-    const response = await fetch(appUrl(`api/session/tree/${action}`), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({uid,...body}), signal:AbortSignal.timeout(20000)});
-    const data = await response.json();
-    if (!response.ok) throw Object.assign(new Error(data.error?.message || data.error || '操作失败'), {status:response.status, code:data.code});
-    return data;
+    const traceId = requestId(), started = performance.now();
+    let status = null;
+    try {
+      const response = await fetch(appUrl(`api/session/tree/${action}`), {method:'POST',
+        headers:{'Content-Type':'application/json', 'X-SessionDock-Page':AUDIT_PAGE_ID, 'X-SessionDock-Trace':traceId},
+        body:JSON.stringify({uid,...body}), signal:AbortSignal.timeout(20000)});
+      status = response.status;
+      const data = await response.json();
+      if (!response.ok) throw Object.assign(new Error(data.error?.message || data.error || '操作失败'), {status, code:data.code});
+      const duration_ms = performance.now() - started;
+      if (action !== 'progress') browserAuditEvent('tree.request.completed',
+        {action, status, phase:data.phase || '', duration_ms}, {uid, traceId, requestId:body.request_id});
+      return data;
+    } catch (failure) {
+      const now = performance.now();
+      if (action !== 'progress' || now - lastProgressLog >= 5000) {
+        browserAuditEvent('tree.request.failed', {action, status,
+          duration_ms:now - started, code:failure.code || failure.name},
+          {uid, traceId, requestId:body.request_id, severity:'error'});
+        if (action === 'progress') lastProgressLog = now;
+      }
+      throw failure;
+    }
   };
   function close() {
     clearTimeout(timer); dialog.close(); dialog.remove(); resumeTransferSidebar();
@@ -11928,7 +11953,7 @@ async function deleteSessionTree(uid) {
   async function poll() {
     if (!dialog.isConnected || !busy || polling) return;
     polling = true;
-    try { const data = await request('progress', {request_id:requestId}); error.hidden = true; acceptStatus(data); }
+    try { const data = await request('progress', {request_id:deleteRequestId}); error.hidden = true; acceptStatus(data); }
     catch (failure) {
       if (failure.status === 404 && failure.code === 'not_found') acceptStatus({phase:'failed', error:'服务器尚无此删除记录，请关闭后重新预览。'});
       else {error.textContent = `暂时无法读取删除进度：${failure.message}。关闭窗口不会中断删除，重新打开可继续查看。`; error.hidden = false;}
@@ -11938,17 +11963,17 @@ async function deleteSessionTree(uid) {
   confirm.onclick = async () => {
     if (busy || !plan) return;
     busy = true; confirm.disabled = true; confirm.textContent = '正在删除…'; error.hidden = true;
-    requestId = crypto.randomUUID(); store.set('treeDeleteRequest', {uid, request_id:requestId});
+    deleteRequestId = requestId(); store.set('treeDeleteRequest', {uid, request_id:deleteRequestId});
     if (plan.sessions.some(m => m.uid === S.sel)) closeWatch();
     paint({phase:'checking'}); $d('.tree-close').textContent = '关闭';
-    try {acceptStatus(await request('delete', {request_id:requestId, uids:plan.sessions.map(m => m.uid)}));}
+    try {acceptStatus(await request('delete', {request_id:deleteRequestId, uids:plan.sessions.map(m => m.uid)}));}
     catch (failure) {
       if (failure.status >= 400 && failure.status < 500) acceptStatus({phase:'failed', error:failure.message});
       else {error.textContent = `请求结果尚未确认：${failure.message}，正在查询同一次删除。`; error.hidden = false;}
     }
     if (busy) void poll();
   };
-  if (requestId) {
+  if (deleteRequestId) {
     $d('.clone-status').textContent = '正在读取上次删除记录…'; confirm.hidden = true; $d('.tree-close').textContent = '关闭'; void poll();
   } else {
     try {
