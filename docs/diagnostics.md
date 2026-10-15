@@ -297,3 +297,46 @@ binaries and the current frontend; they were not production-network tests.
 These checks exercise recovery and input delivery, not the cause of this
 intermittent production incident. The unresolved investigation remains in
 [TODO](../TODO.md).
+
+## Embedded information and resource views
+
+`dom.snapshot` (also used by bug reports) records `view` separately from the
+terminal connection/mode. `terminal.visible` uses rendered geometry and CSS;
+an open WebSocket may remain connected while the information/resource view
+hides the terminal. `content_view` contains the pane and scrolling element's
+client/scroll dimensions, positions, display and overflow. Information views
+also include the iframe document's root and body measurements.
+
+`content_view.changed` records open/close, and `content_view.loaded` records
+document load, successful content load and failures. Resource polling records
+state transitions, not repeated successes. Explicit refreshes retain receipts.
+Passive wheel observers in the iframe document and resource pane aggregate
+attempt counts/deltas and before/after layout for a fixed one-second window
+into `content_view.scroll`. `moved` also detects movement that returned to its
+starting position. No movement alone is not an error: compare direction,
+position, dimensions and overflow to distinguish an edge from blocked scrolling.
+Leaving a view flushes its pending window and removes its listeners. These
+metadata-only events use the existing bounded 500-event browser queue and
+batched intake; no text, input values or credentials are collected.
+
+An intentionally modal-covered console button records `occluded_by_modal` in
+its normal state receipt, rather than a `console.button.missing` error.
+Missing, hidden or clipped buttons remain faults.
+
+For BUG-20261015-135638-c5bbf6, all 917 bundled events, the manifest, browser
+state, environment, terminal capture, lifecycle binding and native JSONL
+metadata were reviewed. The first observable diagnostic divergence is snapshot
+587 after information-button click 583: it still reports the CSS-hidden terminal
+as visible. Resource click 701 and information click 730 confirm the active
+surface; no iframe wheel evidence existed. All 26 heartbeat replies matched,
+HTTP response receipts were 200, native progress continued, and the lifecycle
+binding was running. The four button errors followed report-modal occlusion.
+No delivery directory existed and none was created.
+
+The private Chromium baseline reproduced the information root's `overflow:hidden`:
+2853px content in a 714px viewport stayed at scrollTop 0 after mouse wheel input.
+The resource pane scrolled from 0 to 426 normally. The fix gives the information
+root vertical scrolling; resource layout remains unchanged. The
+[content scroll suite](../tests/content_scroll_browser.py) checks real wheels,
+view changes, retry, geometry, themes/zoom and persisted audit records, including
+an HTTP-served old-CSS fault to verify blocked-scroll diagnostics.

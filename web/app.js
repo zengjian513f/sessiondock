@@ -465,7 +465,7 @@ function browserStateSnapshot(reason = '') {
   const entry = S.sel ? cache.get(viewKey(S.sel, S.agent)) : null;
   const termState = typeof T === 'undefined' ? null : {
     name: T.name, uid: T.uid, mode: T.mode,
-    visible: !$('#termpane')?.classList.contains('hidden'),
+    visible: contentElementState($('#termpane'))?.visible || false,
     connected: T.ws?.readyState ?? null,
     frozen: (T.list || []).find(row => row.uid === S.sel)?.frozen ?? null,
   };
@@ -480,6 +480,8 @@ function browserStateSnapshot(reason = '') {
       cache: entry ? {messages: entry.msgs?.length || 0, end: entry.end,
         anchor: entry.anchor, activity: entry.activity?.state || ''} : null,
       dom_messages: nodes.length, terminal: termState,
+      view: SessionContentView.kind || (termState?.visible ? 'terminal' : 'chat'),
+      content_view: SessionContentView.kind ? SessionContentView.snapshot() : null,
       header: consoleButtonState(),
     },
   };
@@ -542,8 +544,10 @@ function consoleButtonState() {
     state.hit_target = hit ? (hit.id ? '#' + hit.id : hit.classList?.[0] ? '.' + hit.classList[0]
       : hit.tagName.toLowerCase()) : null;
   }
-  // 不在 DOM 一定算丢；在 DOM 但页面可见时被隐藏/裁掉/盖住也算丢
-  state.ok = state.present && (!shown || (!state.hidden && state.in_right && state.hit !== false));
+  // Missing/hidden/clipped buttons are faults; a modal intentionally makes the page inert.
+  state.occluded_by_modal = !!document.querySelector('dialog:modal') && state.hit === false;
+  state.ok = state.present && (!shown || (!state.hidden && state.in_right
+    && (state.hit !== false || state.occluded_by_modal)));
   return state;
 }
 
@@ -555,7 +559,7 @@ function auditConsoleButton(reason = '') {
   try { state = consoleButtonState(); } catch { return; }
   const term = typeof T === 'undefined' ? null : {
     name: T.name, uid: T.uid, mode: T.mode, views: [...T.views.keys()],
-    visible: !$('#termpane')?.classList.contains('hidden'),
+    visible: contentElementState($('#termpane'))?.visible || false,
   };
   if (!state.ok) {
     // 丢失期间最多 5 秒记一次，免得 MutationObserver/定时器把库刷爆

@@ -88,7 +88,7 @@
     if (!response.ok) throw new Error(response.status === 404 ? '此服务尚未提供资源统计，请更新服务端。' : `资源统计暂不可用（${response.status}）`);
     return response.json();
   };
-  let requestedSession = null;
+  let requestedSession = null, loadState = '';
   function selection() {
     if (requestedSession) return requestedSession;
     if (typeof S === 'undefined') return null;
@@ -187,22 +187,28 @@
     subtitle.textContent = selected.title || selected.sid || selected.uid;
     const ticket = ++generation;
     pending = true;
+    const reportLoad = state => {
+      if ((force || changed || loadState !== state) && dialog.classList.contains('sr-embedded')) SessionContentView.receipt('loaded', {state});
+      loadState = state;
+    };
     if (changed) dialog.querySelector('.sr-probe-error').textContent = '';
     if (changed || force || !content.innerHTML) content.innerHTML = '<p class="sr-empty">正在读取资源采样…</p>';
     try {
       const data = await loader(currentUid, scope);
       if (ticket !== generation || !dialog.open) return;
       content.innerHTML = render(data);
+      reportLoad('ready');
       updateProbe(data);
       void reconcileProbe();
     } catch (error) {
-      if (ticket === generation && dialog.open) { content.innerHTML = `<p class="sr-empty sr-error">${esc(error.message || '资源统计暂不可用')}</p>`; }
+      if (ticket === generation && dialog.open) { content.innerHTML = `<p class="sr-empty sr-error">${esc(error.message || '资源统计暂不可用')}</p>`; reportLoad('error'); }
     } finally { if (ticket === generation) pending = false; }
   }
   function open(session, host = null) {
     if (!host && dialog?.classList.contains('sr-embedded')) SessionContentView.close();
     requestedSession = session?.uid ? {uid:session.uid, title:session.title, sid:session.sid} : null;
     ensure();
+    loadState = '';
     leaseId = crypto.randomUUID();
     probeSupported = false; observedProbeState = 'off'; lastProbeRequest = 0;
     if (dialog.open) dialog.close();
