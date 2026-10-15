@@ -12,6 +12,8 @@ from types import SimpleNamespace
 
 from PIL import Image
 from browser_runtime import choose_toolbar_option, open_toolbar_options
+from input_hit_fixtures import hit_fill
+
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, Corpus, codex_row, isolated_server
 from hub_fixtures import Hub, free_port, scoped
@@ -108,7 +110,7 @@ def main():
             choose_toolbar_option(page, "view", 'group')
             expect(page.locator('#side > :last-child')).to_have_id('session-group-create-row')
             page.locator('#session-group-add').click()
-            page.locator('#session-group-name').fill(name)
+            hit_fill(page.locator('#session-group-name'), name)
             if enter: page.locator('#session-group-name').press('Enter')
             else: page.locator('#session-group-create-row button').click()
             expect(page.locator('#session-group-name')).to_have_count(0)
@@ -123,7 +125,7 @@ def main():
             page.locator('#session-group-menu-add').click()
             input = page.locator('#session-group-menu-name')
             expect(input).to_be_focused()
-            input.fill(f'  {name}  ')
+            hit_fill(input, f'  {name}  ')
             input.press('Enter')
             expect(page.locator('#session-group-menu')).to_be_hidden()
             expect(input).to_have_count(0)
@@ -193,7 +195,7 @@ def main():
             expect(local[0].locator('#side .gname').filter(has_text='未分组')).to_have_count(0)
             expect(local[0].locator('#side .item')).to_have_count(1)
             local[0].locator('#session-group-add').click()
-            local[0].locator('#session-group-name').fill('取消创建')
+            hit_fill(local[0].locator('#session-group-name'), '取消创建')
             # A refresh must not discard the inline draft/focus.
             local[0].clock.fast_forward(60000)
             expect(local[0].locator('#session-group-name')).to_have_value('取消创建')
@@ -212,9 +214,9 @@ def main():
             local[0].locator('#session-group-menu-add').click()
             input = local[0].locator('#session-group-menu-name')
             expect(input).to_be_focused()
-            input.fill('   '); input.press('Enter')
+            hit_fill(input, '   '); input.press('Enter')
             expect(input).to_be_focused()
-            input.fill('取消菜单创建')
+            hit_fill(input, '取消菜单创建')
             for key in ('ArrowLeft', 'ArrowDown', 'Home', 'End'):
                 input.press(key); expect(input).to_be_focused()
             local[0].clock.fast_forward(60000)
@@ -226,7 +228,7 @@ def main():
             expect(local[0].locator('#session-group-menu-add')).to_be_focused()
             assert '取消菜单创建' not in stored(0)['group_catalog']['groups']
             local[0].locator('#session-group-menu-add').click()
-            input.fill('菜单新组')
+            hit_fill(input, '菜单新组')
             input.dispatch_event('keydown', {'key': 'Enter', 'isComposing': True})
             assert '菜单新组' not in stored(0)['group_catalog']['groups']
             # A failed write keeps the draft and focus so Enter can retry.
@@ -305,7 +307,7 @@ def main():
             assert bounds['x'] >= 0 and bounds['x'] + bounds['width'] <= 390
             input_bounds = mobile.locator('#session-group-menu-name').bounding_box()
             assert input_bounds['x'] >= bounds['x'] and input_bounds['x'] + input_bounds['width'] <= bounds['x'] + bounds['width']
-            mobile.locator('#session-group-menu-name').fill('关闭丢弃草稿')
+            hit_fill(mobile.locator('#session-group-menu-name'), '关闭丢弃草稿')
             choose_toolbar_option(mobile, "view", 'tree')
             expect(mobile.locator('#session-group-menu')).to_be_hidden()
             edit(mobile, uid_a, hold=True)

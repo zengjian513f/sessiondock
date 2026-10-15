@@ -2242,7 +2242,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   /* Single-finger scrolling remains native; two-finger zoom belongs to the app. */
   touch-action: pan-x pan-y;
 }
-.app-dialog {
+#new-session-dialog, .app-dialog {
   max-width: calc(100vw / var(--interface-scale) - 16px);
   max-height: calc(100dvh / var(--interface-scale) - 16px);
 }

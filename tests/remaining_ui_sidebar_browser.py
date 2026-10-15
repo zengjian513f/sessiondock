@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 import tempfile
+from input_hit_fixtures import hit_fill, hit_select
+
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, build_corpus, isolated_server
 from browser_evidence_fixtures import run_with_evidence
@@ -66,13 +68,13 @@ def main():
                     # Settings are preferences: inspect storage and actual reloaded UI.
                     header(page,'#settings')
                     page.locator('.settings-tab[data-tab=appearance]').click()
-                    page.locator('#setting-list-path').select_option('tint')
+                    hit_select(page.locator('#setting-list-path'), 'tint')
                     assert page.evaluate("localStorage.getItem('sessiondock.timelineDirectoryTintOnly')")=='true'
                     expect(page.locator('body')).to_have_class(__import__('re').compile('cwd-tint-only'))
-                    page.locator('#setting-list-path').select_option('full')
+                    hit_select(page.locator('#setting-list-path'), 'full')
                     page.locator('.settings-tab[data-tab=features]').click()
-                    field=page.locator('#setting-cleanup-days');field.fill('7');field.press('Tab');expect(field).to_have_value('7')
-                    field.fill('0');field.press('Tab');expect(field).to_have_value('7')
+                    field=page.locator('#setting-cleanup-days');hit_fill(field, '7');field.press('Tab');expect(field).to_have_value('7')
+                    hit_fill(field, '0');field.press('Tab');expect(field).to_have_value('7')
                     assert page.evaluate("localStorage.getItem('sessiondock.cleanupDays')")=='7'
                     page.mouse.click(2,2);expect(page.locator('#settings-dialog')).to_be_hidden()
                     page.reload(wait_until='networkidle');header(page,'#settings');expect(field).to_have_value('7')

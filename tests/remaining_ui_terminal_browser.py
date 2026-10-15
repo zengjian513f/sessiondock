@@ -7,6 +7,8 @@ import shlex
 import sys
 import tempfile
 import uuid
+from input_hit_fixtures import hit_fill
+
 from playwright.sync_api import expect,sync_playwright
 from history_fixtures import BINARY,Corpus,codex_row,codex_message,isolated_server
 import terminal_input_browser as fixture
@@ -91,7 +93,7 @@ def main():
                     page.locator('#a-chat').click();expect(page.locator('.term-context-menu')).to_be_hidden();page.locator('#a-term').click()
                     done('sd.terminal.menu-outside','Pointer outside terminal menu closes it',width)
                     page.locator('#termpane canvas').click(button='right');page.locator('.term-context-menu').get_by_text('查找',exact=True).click()
-                    expect(page.locator('.term-find')).to_be_visible();page.locator('.term-find input').fill('SELECT_FIRST')
+                    expect(page.locator('.term-find')).to_be_visible();hit_fill(page.locator('.term-find input'), 'SELECT_FIRST')
                     page.locator('.term-find [aria-label=关闭查找]').click();expect(page.locator('.term-find')).to_be_hidden();expect(key).to_be_focused()
                     done('sd.terminal.find-close','Find menu, real text entry, close button restores terminal focus',width)
                     mode('alt');page.locator('#termpane canvas').hover();sent(b'\x1b[B',lambda:page.mouse.wheel(0,120))

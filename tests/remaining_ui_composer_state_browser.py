@@ -2,6 +2,8 @@
 """Question fallback, unsaved navigation and report receipt via private fake CLI."""
 import argparse,json,tempfile,time
 from pathlib import Path
+from input_hit_fixtures import hit_fill
+
 from playwright.sync_api import expect,sync_playwright
 from history_fixtures import BINARY,REPO,Corpus,isolated_server
 from composer_editor_browser import fixture,type_text
@@ -22,7 +24,7 @@ def main():
   with isolated_server(Corpus(root),a.binary,host_dir=root/'host',lifecycle_dir=root/'ledger',launcher_config=launcher,state_dir=root/'state',audit_dir=root/'audit',extra_env={'SESSIONDOCK_BUG_REPORT_DIR':str(root/'reports'),'SESSIONDOCK_BUG_REPORT_WORKER':'true','SESSIONDOCK_BUG_REPORT_REPO':str(root/'work')}) as (base,_):
    browser=pw.chromium.launch(headless=True)
    try:
-    context=browser.new_context(viewport={'width':1280,'height':900});page=context.new_page();page.goto(base,wait_until='networkidle');open_dialog(page);pick_source(page,'claude');page.locator('#new-cwd').fill(str(root/'work/claude-area'));page.locator('#new-session-go').click()
+    context=browser.new_context(viewport={'width':1280,'height':900});page=context.new_page();page.goto(base,wait_until='networkidle');open_dialog(page);pick_source(page,'claude');hit_fill(page.locator('#new-cwd'), str(root/'work/claude-area'));page.locator('#new-session-go').click()
     card=page.locator('#conversation-question');expect(card).to_be_visible(timeout=20000);card.get_by_role('button',name='打开终端',exact=True).click();expect(page.locator('#termpane')).to_be_visible();page.wait_for_function('T.ws?.readyState===WebSocket.OPEN')
     done('sd.conversation.question-terminal','Real fake CLI trust screen is recognized as a question; card button opens same native PTY and live lease')
     page.locator('#a-chat').click();screen.write_text(json.dumps({'sequence':2,'screen':'Unrecognized private screen, no ready prompt','expected_bytes':''}));expect(page.locator('#composer-input-status')).to_contain_text('终端',timeout=15000)
@@ -44,7 +46,7 @@ def main():
     for r in held:r.continue_()
     page.unroute('**/api/session/conversation',draft);durable(page,root,'unsaved navigation fixture');page.remove_listener('dialog',dismiss);page.reload(wait_until='networkidle');expect(page.locator('#cinput')).to_have_value('unsaved navigation fixture')
     done('sd.composer.navigate-unsaved','Real typing with held draft POST triggers browser beforeunload on refresh; dismiss preserves text; real save then refresh restores durable draft')
-    open_report(page);page.locator('#bug-report-description').fill('Isolated receipt test, no external provider');page.locator('#bug-report-source label:has(input[value=claude])').click();page.locator('#bug-report-go').click();toast=page.locator('#bug-report-toast');expect(toast).to_be_visible(timeout=20000)
+    open_report(page);hit_fill(page.locator('#bug-report-description'), 'Isolated receipt test, no external provider');page.locator('#bug-report-source label:has(input[value=claude])').click();page.locator('#bug-report-go').click();toast=page.locator('#bug-report-toast');expect(toast).to_be_visible(timeout=20000)
     receipt=toast.inner_text();(a.output/'receipt.txt').write_text(receipt);toast.get_by_role('button',name='打开',exact=True).click();expect(page.locator('#bug-report-toast')).to_be_hidden();expect(page.locator('#cinput')).to_be_visible()
     manifests=list((root/'reports').rglob('manifest.json'));assert manifests;manifest=json.loads(manifests[-1].read_text());(a.output/'receipt-manifest-keys.json').write_text(json.dumps(sorted(manifest)))
     assert len(list((root/'host').glob('*.json')))>=2

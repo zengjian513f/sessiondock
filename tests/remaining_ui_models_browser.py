@@ -2,6 +2,8 @@
 """New/report source/model/directory controls with isolated fake CLI catalogs."""
 import argparse,json,sys,tempfile
 from pathlib import Path
+from input_hit_fixtures import hit_fill
+
 from playwright.sync_api import expect,sync_playwright
 from history_fixtures import BINARY,REPO,Corpus,isolated_server
 from composer_editor_browser import fixture
@@ -36,21 +38,21 @@ def main():
      page.locator('input[name=new-source][value=opencode]').locator('..').click();expect(page.locator('#new-model')).to_be_enabled()
      page.locator('#new-model').click();expect(page.locator('#new-model-menu')).to_be_visible();page.locator('#new-session-dialog h2').click();expect(page.locator('#new-model-menu')).to_be_hidden()
      done('sd.new.model-outside','Pointer outside model popover closes it',width)
-     cwd=page.locator('#new-cwd');cwd.fill(str(root/'work/al'))
+     cwd=page.locator('#new-cwd');hit_fill(cwd, str(root/'work/al'))
      expect(page.locator('#new-cwd-options [data-cwd-option]')).to_have_count(2)
      cwd.press('Tab');expect(cwd).to_have_value(str(root/'work/alp'))
      cwd.press('ArrowDown');cwd.press('Enter');assert cwd.input_value() in [str(root/'work/alpha')+'/',str(root/'work/alpine')+'/'],cwd.input_value()
      done('sd.new.cwd-complete sd.new.cwd-keyboard','Tab common-prefix completion then ArrowDown/Enter selects real temporary directory',width)
      page.locator('#new-cwd-clear').click();expect(cwd).to_have_value('');expect(cwd).to_be_focused()
      done('sd.new.cwd-clear','Clear button empties directory and retains keyboard focus',width)
-     cwd.fill(str(root/'work/al'));page.locator('#new-cwd-options [data-cwd-option]').first.click();assert 'alp' in cwd.input_value()
+     hit_fill(cwd, str(root/'work/al'));page.locator('#new-cwd-options [data-cwd-option]').first.click();assert 'alp' in cwd.input_value()
      done('sd.new.cwd-click','Click matching directory fills launch directory',width)
      page.locator('#new-session-dialog .modal-cancel').click();open_report(page)
      for source in ['claude','grok','agy','opencode']:
       radio=page.locator(f'#bug-report-source input[value={source}]');radio.locator("..").click();expect(radio).to_be_checked();expect(page.locator('#bug-report-model')).to_be_visible()
       done('sd.report.source-'+source,'Actual source selection refreshes visible model picker using fake CLI catalog',width)
      expect(page.locator('#bug-report-model')).to_be_enabled();page.locator('#bug-report-model').click()
-     search=page.locator('#bug-report-model-search');expect(search).to_be_visible();search.fill('zeta')
+     search=page.locator('#bug-report-model-search');expect(search).to_be_visible();hit_fill(search, 'zeta')
      expect(page.locator('#bug-report-model-options [role=option]')).to_have_count(1)
      search.press('ArrowDown');search.press('Enter');expect(page.locator('#bug-report-model-label')).to_have_text('prov/zeta-1')
      page.locator('#bug-report-model').press('ArrowDown');page.keyboard.press('Escape');expect(page.locator('#bug-report-model-menu')).to_be_hidden();expect(page.locator('#bug-report-dialog')).to_be_visible()

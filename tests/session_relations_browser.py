@@ -8,6 +8,8 @@ import tempfile
 from types import SimpleNamespace
 from urllib.parse import urlencode
 
+from input_hit_fixtures import hit_fill, hit_select
+
 from playwright.sync_api import sync_playwright, expect
 from history_fixtures import BINARY, Corpus, codex_row, codex_message, isolated_server
 from hub_fixtures import Hub, free_port, scoped
@@ -64,12 +66,12 @@ def main():
         def add(source, side='predecessor', state='confirmed', kind='continues', evidence='通过交接文档继续工作'):
             page.locator('#add-'+side).click()
             expect(page.locator('#relation-target option[value="'+refs.get(source,source)+'"]')).to_have_count(1)
-            page.locator('#relation-search').fill(source if source in refs else '')
-            page.locator('#relation-target').select_option(refs.get(source,source))
-            page.locator('#relation-kind').select_option(kind)
-            page.locator('#relation-state').select_option(state)
-            page.locator('#relation-artifact').fill('/synthetic/HANDOFF.md')
-            page.locator('#relation-evidence').fill(evidence)
+            hit_fill(page.locator('#relation-search'), source if source in refs else '')
+            hit_select(page.locator('#relation-target'), refs.get(source,source))
+            hit_select(page.locator('#relation-kind'), kind)
+            hit_select(page.locator('#relation-state'), state)
+            hit_fill(page.locator('#relation-artifact'), '/synthetic/HANDOFF.md')
+            hit_fill(page.locator('#relation-evidence'), evidence)
             page.locator('#relation-save').click()
             expect(page.locator('#info-editor')).to_be_hidden()
         # Entry is reachable through the existing row context menu.
@@ -129,13 +131,13 @@ def main():
         expect(page.locator('#relation-target option[value="'+refs['origin']+'"]')).to_have_count(1)
         expect(page.locator('#relation-target option[value="'+refs['nested']+'"]')).to_have_count(0)
         assert '子代理不参与' not in page.locator('#relation-target').inner_text()
-        page.locator('#relation-target').select_option(refs['origin'])
-        page.locator('#relation-search').fill('origin')
+        hit_select(page.locator('#relation-target'), refs['origin'])
+        hit_fill(page.locator('#relation-search'), 'origin')
         expect(page.locator('#relation-target')).to_have_value(refs['origin'])
         expect(page.locator('#relation-target option[value="'+refs['research']+'"]')).to_have_count(0)
-        page.locator('#relation-search').fill('no matching fixture')
+        hit_fill(page.locator('#relation-search'), 'no matching fixture')
         expect(page.locator('#relation-target option')).to_have_count(1)
-        page.locator('#relation-search').fill('')
+        hit_fill(page.locator('#relation-search'), '')
         expect(page.locator('#relation-target option[value="'+refs['research']+'"]')).to_have_count(1)
         screenshot('editor')
         page.locator('#relation-cancel').click()
@@ -194,7 +196,7 @@ def main():
         assert branch['evidence']=='<img src=x onerror=alert(1)> 修复交接', branch
         # A failed save retains the editor and succeeds when explicitly retried.
         page.route('**/api/session/predecessor',lambda route:route.fulfill(status=503,json={'error':'synthetic write failure'}),times=1)
-        page.locator('#add-predecessor').click();page.locator('#relation-target').select_option(twin)
+        page.locator('#add-predecessor').click();hit_select(page.locator('#relation-target'), twin)
         page.locator('#relation-save').click();expect(page.locator('#relation-error')).to_contain_text('synthetic write failure')
         expect(page.locator('#info-editor')).to_be_visible();screenshot('save-error');page.locator('#relation-save').click();expect(page.locator('#info-editor')).to_be_hidden()
         expect(page.locator('#info-predecessors .si-relation')).to_have_count(3)
