@@ -28,6 +28,19 @@ that separate JSONL store under `SESSIONDOCK_AUDIT_DIR` is unchanged.
 OpenCode preparation failures retain exit status and output byte counts only;
 CLI stdout and stderr text never become diagnostic fields.
 
+Browser terminal input, successful input-frame sends and output receipts are
+summarized by connection and transport/kind in the five-second audit batch.
+Each summary retains counts, byte totals and elapsed time, with no key or output
+text. Successful heartbeat probes produce no browser events; failures and
+connection transitions remain observable. At most 64 summary buckets and 500
+queued events are retained; capacity losses produce a count. Page navigation
+flushes partial summaries through the existing bounded beacon path.
+
+`tests/terminal_log_volume_browser.py` measures actual typing-to-render latency
+with logging on/off, checks the private shell's command ledger, and compares
+persisted event/byte counts. This small workload does not establish a universal
+performance bound or cover sustained terminal output.
+
 ## Request log
 
 A layer on the node's `/api` routes (including the authenticated node

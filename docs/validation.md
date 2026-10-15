@@ -108,6 +108,15 @@ cache); suites that were not part of those runs are `n/a`.
 
 ## CLI diagnostic acceptance
 
+`python3 tests/trash_interactions_browser.py --binary target/release/sessiondock`
+uses real pointer and keyboard confirmation controls for delete, restore,
+conflict retry, purge and cancellation. Private native files and recycle-bin
+manifests independently verify the outcomes, including wide/narrow dismissal.
+
+`python3 tests/terminal_log_volume_browser.py --binary target/release/sessiondock`
+types through a real isolated console, verifies private shell receipts and
+pagehide summary persistence, and records on/off latency and event/byte totals.
+
 `python3 tests/cli_diagnostics_browser.py --binary target/release/sessiondock`
 submits a private fake OpenCode session through the new-session dialog, verifies
 failed CLI output is absent from runtime diagnostics, then retries successfully.

@@ -241,6 +241,8 @@ let browserAuditDue = 0;
 let browserAuditRetryAt = 0;
 let browserAuditSending = false;
 let browserAuditFailCount = 0;
+let browserAuditDropped = 0;
+const browserAuditSummaries = new Map();
 const AUDIT_BATCH_BYTES = 48 * 1024;
 const AUDIT_BATCH_COUNT = 100;
 const AUDIT_FLUSH_MS = 5000;
@@ -266,7 +268,31 @@ function spliceAuditBatch(queue, limit = AUDIT_BATCH_BYTES, count = AUDIT_BATCH_
 }
 
 function capAuditQueue() {
-  if (browserAuditQueue.length > 500) browserAuditQueue.splice(0, browserAuditQueue.length - 500);
+  if (browserAuditQueue.length > 500) {
+    browserAuditDropped += browserAuditQueue.length - 500;
+    browserAuditQueue.splice(0, browserAuditQueue.length - 500);
+  }
+}
+
+// Successful terminal traffic is counted per connection and kind, never per
+// key, mouse report or output frame. The existing batch timer also flushes
+// quiet tails; pagehide drains these summaries before sending its beacon.
+function drainBrowserAuditSummaries() {
+  const now = performance.now();
+  for (const value of browserAuditSummaries.values()) {
+    browserAuditQueue.push({...value.record, data: {...value.record.data,
+      count: value.count, bytes: value.bytes, chunks: value.chunks,
+      elapsed_ms: Math.round(now - value.started), summary: true}});
+  }
+  browserAuditSummaries.clear();
+  capAuditQueue();
+  if (browserAuditDropped) {
+    const dropped = browserAuditDropped;
+    browserAuditDropped = 0;
+    browserAuditQueue.push({event: 'audit.dropped', ts: new Date().toISOString(),
+      uid: '', severity: 'warning', data: {events: dropped, reason: 'queue_capacity'}, content: null});
+    capAuditQueue();
+  }
 }
 
 // Ordinary diagnostics share a batch across several polling cycles. Full
@@ -285,12 +311,30 @@ function browserAuditEvent(event, data = {}, fields = {}) {
   try {
     // The service stores metadata only; message/DOM/terminal bodies would
     // waste bandwidth and prematurely fill the byte-limited audit batches.
-    browserAuditQueue.push({
+    const record = {
       event, ts: new Date().toISOString(), uid: fields.uid ?? S.sel ?? '',
       trace_id: fields.traceId || '', request_id: fields.requestId || '',
       connection_id: fields.connectionId || '', severity: fields.severity || 'info',
       data, content: null,
-    });
+    };
+    if ((event === 'terminal.frame.sent' && data.kind === 'ping')
+        || (event === 'terminal.heartbeat.pong' && data.matched)) return;
+    if (['terminal.input', 'terminal.frame.sent', 'terminal.output_received'].includes(event)) {
+      const key = JSON.stringify([event, record.connection_id, data.kind || '', data.transport || '']);
+      let summary = browserAuditSummaries.get(key);
+      if (!summary) {
+        if (browserAuditSummaries.size >= 64) { browserAuditDropped++; return; }
+        summary = {record, count: 0, bytes: 0, chunks: 0, started: performance.now()};
+        browserAuditSummaries.set(key, summary);
+      }
+      summary.record = record;
+      summary.count++;
+      summary.bytes += Number(data.bytes) || 0;
+      summary.chunks += Number(data.chunks) || 0;
+      scheduleBrowserAudit();
+      return;
+    }
+    browserAuditQueue.push(record);
     capAuditQueue();
     scheduleBrowserAudit(browserAuditQueue.length >= AUDIT_BATCH_COUNT ? 0
       : fields.severity === 'error' ? 100 : AUDIT_FLUSH_MS);
@@ -308,6 +352,7 @@ async function flushBrowserAudit() {
   clearTimeout(browserAuditTimer);
   browserAuditTimer = 0;
   if (SessionDockNetwork.paused) return;
+  drainBrowserAuditSummaries();
   if (browserAuditSending || !browserAuditQueue.length) return;
   if (performance.now() < browserAuditRetryAt) { scheduleBrowserAudit(); return; }
   const events = spliceAuditBatch(browserAuditQueue);
@@ -346,7 +391,7 @@ async function flushBrowserAudit() {
       capAuditQueue();
     } else {
       browserAuditQueue.unshift(...events);
-      if (browserAuditQueue.length > 500) browserAuditQueue.length = 500;
+      capAuditQueue();
     }
   } finally {
     browserAuditSending = false;
@@ -363,6 +408,7 @@ async function flushBrowserAudit() {
 function flushBrowserAuditBeacon() {
   if (SessionDockNetwork.paused) return;
   if (!SessionDockCapabilities.allows('audit')) return;
+  drainBrowserAuditSummaries();
   clearTimeout(browserAuditTimer);
   browserAuditTimer = 0;
   if (!navigator.sendBeacon || !browserAuditQueue.length) return;

@@ -310,8 +310,15 @@ def main():
                 for width in (1280, 390):
                     page.set_viewport_size({'width': width, 'height': 700})
                     page.reload(wait_until='networkidle')
-                    if width < 600 and page.locator('.mobile-back').is_visible():
-                        page.locator('.mobile-back').click()
+                    if width < 600:
+                        # Restoring the selected session is asynchronous after
+                        # reload. Wait for its actual back button before
+                        # returning to the list; an immediate visibility probe
+                        # can race the restored mobile detail view.
+                        back = page.locator('#detail .mobile-back')
+                        expect(back).to_be_visible()
+                        back.click()
+                    expect(page.locator('#q')).to_be_visible()
                     search('Needle')
                     banner = page.locator('#side-search-state')
                     expect(banner).to_be_visible()

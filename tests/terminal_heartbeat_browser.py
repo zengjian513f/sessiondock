@@ -81,7 +81,7 @@ def run(browser, binary, through_hub=False, screenshots=None):
                 # Report 441af3: the first screen arrives but the very first
                 # ping and typed bytes never cross the upstream boundary.
                 cold_connection = page.evaluate('currentTermViewObject().auditConnectionId')
-                keyboard.focus()
+                page.locator('#termpane canvas').first.click()
                 page.keyboard.type('coldlost')
                 page.keyboard.press('Enter')
                 page.wait_for_function('currentTermViewObject().heartbeat === null', timeout=16000)
@@ -122,7 +122,7 @@ def run(browser, binary, through_hub=False, screenshots=None):
                 old = sockets[-1]
                 old['block'] = direction
                 count = len(sockets)
-                keyboard.focus()
+                page.locator('#termpane canvas').first.click()
                 page.keyboard.type(command)
                 page.keyboard.press('Enter')
                 assert page.evaluate('T.ws.readyState') == 1
@@ -137,7 +137,7 @@ def run(browser, binary, through_hub=False, screenshots=None):
                 assert host.poll() is None, 'recovery restarted/stopped the host'
                 if direction == 'down':
                     fixture.xterm_contains(page, 'ECHO_once')  # recovered snapshot, no replay
-                keyboard.focus()
+                page.locator('#termpane canvas').first.click()
                 page.keyboard.type('ping')
                 page.keyboard.press('Enter')
                 fixture.xterm_contains(page, 'RS_PING_OK')
@@ -167,7 +167,8 @@ def run(browser, binary, through_hub=False, screenshots=None):
                 assert final['input_stage'] == 'waiting_browser', final
                 assert all(r['data']['sent_frames'] > 0 for r in browser_sent)
                 assert all('data' not in r['data'] and 'text' not in r['data'] for r in browser_sent)
-                assert any(r['event'] == 'browser.terminal.heartbeat.pong' and r['data']['matched'] for r in rows)
+                assert not any(r['event'] == 'browser.terminal.heartbeat.pong' and r['data']['matched'] for r in rows)
+                assert all(r['data']['summary'] and r['data']['count'] > 0 for r in browser_sent)
                 if through_hub:
                     end = next(r['data'] for r in reversed(hub_rows) if r['data']['reason'] in ('eof', 'io_error'))
                     assert end['browser_read']['bytes'] == end['node_written']['bytes'] > 0, end
@@ -206,7 +207,7 @@ def run(browser, binary, through_hub=False, screenshots=None):
                         if page.locator('#side').is_visible():
                             fixture.open_console(page, uid)
                         expect(page.locator('#termpane')).to_be_in_viewport()
-                        keyboard.focus()
+                        page.locator('#termpane canvas').first.click()
                         page.keyboard.type('ping')
                         page.keyboard.press('Enter')
                         fixture.xterm_contains(page, 'RS_PING_OK')
