@@ -106,6 +106,12 @@ Typical time is the wall-clock measured on 2026-09-12 during the batch-19 and
 batch-20 acceptance runs on the development machine (release binary, warm page
 cache); suites that were not part of those runs are `n/a`.
 
+## Regex worker acceptance
+
+`python3 tests/regex_worker_browser.py --binary target/release/sessiondock`
+drives regex input, injected Worker failure, visible error, Enter retry and
+Escape at wide and narrow widths, checking persisted metadata-only diagnostics.
+
 ## Hub diagnostic acceptance
 
 `python3 tests/hub_diagnostics_browser.py --binary target/release/sessiondock`

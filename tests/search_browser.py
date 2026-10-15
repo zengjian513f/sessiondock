@@ -303,6 +303,10 @@ def main():
                 expect(page.locator('#side-search-state')).to_be_hidden()
                 # The search mode remains obvious inside the list area at both
                 # widths; its heading stays put when the session list scrolls.
+                for index in range(40):
+                    sid = f'search-scroll-{index}'
+                    data.put(sid, 'codex', [codex_row('session_meta', {'id': sid, 'cwd': '/synthetic/search'}),
+                        codex_message('user', f'Needle scroll fixture {index}')], [])
                 for width in (1280, 390):
                     page.set_viewport_size({'width': width, 'height': 700})
                     page.reload(wait_until='networkidle')
@@ -313,15 +317,29 @@ def main():
                     expect(banner).to_be_visible()
                     before = banner.bounding_box()
                     assert before['height'] <= 32, before
-                    page.locator('#side').evaluate("el => { el.style.height = '60px'; el.style.flex = 'none'; el.scrollTop = el.scrollHeight; }")
+                    side = page.locator('#side')
+                    bounds = side.bounding_box()
+                    page.mouse.move(bounds['x'] + bounds['width']/2, bounds['y'] + bounds['height']/2)
+                    for _ in range(40):
+                        metrics = side.evaluate('e => ({top:e.scrollTop, max:e.scrollHeight-e.clientHeight})')
+                        if metrics['max'] > 0 and metrics['max'] - metrics['top'] <= 2:
+                            break
+                        page.mouse.wheel(0, 700)
+                        page.wait_for_timeout(50)
+                    assert metrics['top'] > 0 and metrics['max'] - metrics['top'] <= 2, metrics
+                    for _ in range(40):
+                        page.mouse.wheel(0, -700)
+                        page.wait_for_timeout(50)
+                        if side.evaluate('e => e.scrollTop') <= 1:
+                            break
+                    assert side.evaluate('e => e.scrollTop') <= 1
                     assert banner.bounding_box()['y'] == before['y']
                     expect(page.locator('#side-search-exit')).to_be_in_viewport()
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                     page.locator('#side-search-exit').click()
                     expect(banner).to_be_hidden()
-                    expect(page.locator('#side .item[data-uid]')).to_have_count(3)
+                    expect(page.locator('#side .item[data-uid]')).to_have_count(43)
                     assert page.locator('#side').evaluate('el => getComputedStyle(el).backgroundColor') == normal_background
-                    page.locator('#side').evaluate("el => { el.style.height = ''; el.style.flex = ''; }")
                     page.locator('#q').fill('很长的搜索条件' * 20)
                     expect(banner).to_be_visible()
                     assert banner.bounding_box()['height'] <= 32
@@ -332,7 +350,7 @@ def main():
                     page.get_by_role('button', name='返回全部会话', exact=True).click()
                     expect(banner).to_be_hidden()
                     expect(page.locator('#q')).to_have_value('')
-                    expect(page.locator('#side .item[data-uid]')).to_have_count(3)
+                    expect(page.locator('#side .item[data-uid]')).to_have_count(43)
                 assert not errors, errors
                 assert all(url.startswith(base + "/") for url in requests)
                 assert any(status == 200 and "application/x-ndjson" in mime for _, status, mime in searches)

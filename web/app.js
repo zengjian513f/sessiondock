@@ -5384,9 +5384,11 @@ function reTerm(global) {
 }
 
 let regexWorker = null, regexGeneration = '', regexRequest = 0, regexPaintTimer = null;
-let regexResultRevision = 0;
+let regexResultRevision = 0, regexFailed = false;
+let regexFailureCount = 0, regexFailureLoggedAt = -Infinity;
 const regexResults = new Map(), regexPending = new Map(), regexByText = new Map();
 function resetRegexSearch() {
+  regexFailed = false;
   regexWorker?.terminate();
   regexWorker = null;
   regexGeneration = '';
@@ -5399,6 +5401,7 @@ function resetRegexSearch() {
 }
 
 function regexMatches(text) {
+  if (regexFailed) return Promise.resolve([]);
   const re = reTerm(true);
   if (!re) return Promise.resolve([]);
   const generation = `${re.source}\0${re.flags}`;
@@ -5412,6 +5415,10 @@ function regexMatches(text) {
   if (!regexWorker) {
     regexWorker = new Worker(appUrl('regex-worker.js'));
     regexWorker.onmessage = ({data}) => {
+      if (regexFailureCount) {
+        browserAuditEvent('search.regex_worker_recovered', {failures: regexFailureCount});
+        regexFailureCount = 0;
+      }
       const job = regexPending.get(data.id);
       if (!job) return;
       regexPending.delete(data.id);
@@ -5425,7 +5432,19 @@ function regexMatches(text) {
         renderSide();
       }, 50);
     };
-    regexWorker.onerror = () => resetRegexSearch();
+    regexWorker.onerror = event => {
+      event.preventDefault();
+      resetRegexSearch();
+      regexFailed = true;
+      $('#stat').textContent = '正则匹配暂不可用，请按 Enter 重试或修改搜索内容。';
+      $('#stat').classList.add('err');
+      regexFailureCount++;
+      if (performance.now() - regexFailureLoggedAt >= 10000) {
+        regexFailureLoggedAt = performance.now();
+        console.warn('正则匹配 worker 不可用；可按 Enter 重试。');
+        browserAuditEvent('search.regex_worker_failed', {failures: regexFailureCount}, {severity: 'error'});
+      }
+    };
   }
   const id = ++regexRequest;
   let resolve;
