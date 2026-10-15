@@ -27,6 +27,9 @@ the same stable identity as SessionDock; standalone nodes may configure only
 With FileDock configured, the session title bar's directory (inline or in the
 ⋯ menu) is a link that opens `files.html?uid=UID&path=CWD` in a new tab; the
 adapter derives the node and navigates to FileDock at that machine and cwd.
+This also applies to launch-only sessions before native history exists or a
+binding is confirmed: their receipt supplies cwd and the pending UID supplies
+the machine. Both header paths reuse the same directory component.
 Without FileDock the directory is plain text, not a link.
 
 DELTA: without FileDock, conversation file links retain built-in text/media
@@ -70,7 +73,10 @@ UI preferences belong to FileDock.
 
 Validation: `python3 tests/files_browser.py` exercises actual conversation links,
 node/path routing, unresolved-reference errors and direct directory entry on
-desktop/mobile. FileDock's own browser and node/hub suites validate previews,
+desktop/mobile. `tests/autobind_browser.py` clicks the launch-only directory
+before the fake CLI writes its first native record, in wide/narrow light/dark
+views (regression BUG-20261015-153941-18a613). FileDock's own browser and
+node/hub suites validate previews,
 downloads and mutations against synthetic files.
 
 DELTA (BUG-20261013-223056-f48de9): configured FileDock previews CSV as a table

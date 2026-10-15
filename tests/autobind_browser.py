@@ -12,7 +12,7 @@ import os
 import shutil
 from pathlib import Path
 import tempfile
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 import subprocess
 import time
 from playwright.sync_api import sync_playwright, expect
@@ -59,6 +59,7 @@ def main():
                                       codex_message("user", "Pre-existing session")], [])
         older_uid = corpus.uid("older")
         fresh_path = root / "codex/2026/09/29/rollout-fresh.jsonl"
+        (root / "node-id").write_text("a" * 32)
         configuration = root / "launcher.json"
         configuration.touch(mode=0o600)
         # The process scan reads only CLI-named processes: a `codex`-named sh.
@@ -84,10 +85,13 @@ def main():
             try:
                 with isolated_server(corpus, BINARY, host_dir=root / "host", lifecycle_dir=root / "ledger",
                                      launcher_config=configuration, audit_dir=root / "audit",
-                                     extra_env={"SESSIONDOCK_PROC_SCAN": "1"}) as (base, _):
+                                     extra_env={"SESSIONDOCK_PROC_SCAN": "1", "SESSIONDOCK_FILEDOCK_URL": "/file-manager/",
+                                                "SESSIONDOCK_NODE_ID_FILE": str(root / "node-id")}) as (base, _):
                     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
                     context.route("**/*", lambda route: route.continue_()
                                   if route.request.url.startswith(base + "/") else route.abort())
+                    context.route("**/file-manager/?*", lambda route: route.fulfill(
+                        content_type="text/html", body="<h1>FileDock destination</h1>"))
                     page = context.new_page()
                     errors = []
                     page.on("pageerror", lambda error: errors.append(str(error)))
@@ -103,6 +107,32 @@ def main():
                     assert receipt["launch_kind"] == "new_pending", receipt
                     pending_uid = "tmux:" + receipt["name"]
                     page.wait_for_function("uid => S.sel === uid", arg=pending_uid)
+                    # The launch receipt already has cwd; native history is not
+                    # required to open its directory, inline or in the narrow menu.
+                    assert not fresh_path.exists()
+                    for width, theme in [(1280, "light"), (1280, "dark"), (390, "light"), (390, "dark")]:
+                        page.set_viewport_size({"width": width, "height": 900})
+                        page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
+                        if width < 600 and page.locator("#side").is_visible():
+                            page.locator(f'#side .item[data-uid="{pending_uid}"]').click()
+                        directory = page.locator(".dhead .meta-cwd-link")
+                        if not directory.is_visible():
+                            page.locator("#a-more").click()
+                        screenshots = os.environ.get("SESSIONDOCK_TEST_SCREENSHOTS")
+                        if screenshots:
+                            Path(screenshots).mkdir(parents=True, exist_ok=True)
+                            page.screenshot(path=str(Path(screenshots) / f"pending-directory-{width}-{theme}.png"))
+                        expect(directory).to_be_visible()
+                        expect(directory.locator(".cwd-path")).to_have_text(str(root / "work"))
+                        with context.expect_page() as opened:
+                            directory.click()
+                        expect(opened.value.locator("h1")).to_have_text("FileDock destination")
+                        query = parse_qs(urlsplit(opened.value.url).query)
+                        assert query == {"node": [context.request.get(base + "/api/meta").json()["node_id"]],
+                                         "path": [str(root / "work")]}, query
+                        opened.value.close()
+                        page.keyboard.press("Escape")
+                    page.set_viewport_size({"width": 1280, "height": 900})
                     expect(page.locator("#termpane")).to_be_hidden()
                     page.locator("#a-term").click()
                     expect(page.locator("#termpane")).to_be_visible()
