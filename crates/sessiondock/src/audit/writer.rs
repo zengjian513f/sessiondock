@@ -35,6 +35,7 @@ struct Segment {
 
 pub struct Writer {
     directory: PathBuf,
+    prefix: &'static str,
     shared: Arc<Shared>,
     shutdown: CancellationToken,
     segment: Option<Segment>,
@@ -45,9 +46,15 @@ pub struct Writer {
 }
 
 impl Writer {
-    pub fn new(directory: PathBuf, shared: Arc<Shared>, shutdown: CancellationToken) -> Self {
+    pub fn new(
+        directory: PathBuf,
+        shared: Arc<Shared>,
+        shutdown: CancellationToken,
+        prefix: &'static str,
+    ) -> Self {
         Self {
             directory,
+            prefix,
             shared,
             shutdown,
             segment: None,
@@ -184,8 +191,8 @@ impl Writer {
     fn rotate(&mut self, date: &str) -> io::Result<()> {
         self.sync();
         self.segment.take();
-        let index = latest_index(&self.directory, date).map_or(0, |(index, _)| index);
-        let path = self.directory.join(segment_name(date, index));
+        let index = latest_index(&self.directory, date, self.prefix).map_or(0, |(index, _)| index);
+        let path = self.directory.join(named_segment(date, index, self.prefix));
         let mut options = OpenOptions::new();
         options.create(true).append(true);
         #[cfg(unix)]
@@ -218,7 +225,7 @@ impl Writer {
         let cutoff = SystemTime::now()
             .checked_sub(RETENTION)
             .unwrap_or(SystemTime::UNIX_EPOCH);
-        for segment in list_segments(&self.directory) {
+        for segment in list_named_segments(&self.directory, self.prefix) {
             if let Err(error) = prune_segment(&segment.path, cutoff) {
                 self.shared
                     .counters
@@ -228,7 +235,10 @@ impl Writer {
             }
         }
         self.shared.counters.retained_bytes.store(
-            list_segments(&self.directory).iter().map(|s| s.size).sum(),
+            list_named_segments(&self.directory, self.prefix)
+                .iter()
+                .map(|s| s.size)
+                .sum(),
             Ordering::Relaxed,
         );
     }
@@ -242,17 +252,17 @@ pub struct SegmentFile {
     pub size: u64,
 }
 
-pub fn segment_name(date: &str, index: u32) -> String {
+fn named_segment(date: &str, index: u32, prefix: &str) -> String {
     if index == 0 {
-        format!("{PREFIX}{date}{SUFFIX}")
+        format!("{prefix}{date}{SUFFIX}")
     } else {
-        format!("{PREFIX}{date}.{index:04}{SUFFIX}")
+        format!("{prefix}{date}.{index:04}{SUFFIX}")
     }
 }
 
 /// Parses `browser-YYYY-MM-DD.jsonl` / `browser-YYYY-MM-DD.NNNN.jsonl`.
-pub fn parse_segment_name(name: &str) -> Option<(String, u32)> {
-    let rest = name.strip_prefix(PREFIX)?.strip_suffix(SUFFIX)?;
+fn parse_named_segment(name: &str, prefix: &str) -> Option<(String, u32)> {
+    let rest = name.strip_prefix(prefix)?.strip_suffix(SUFFIX)?;
     let (date, index) = match rest.split_once('.') {
         None => (rest, 0),
         Some((date, index)) => {
@@ -277,6 +287,10 @@ pub fn parse_segment_name(name: &str) -> Option<(String, u32)> {
 /// Regular files matching the segment pattern; anything else in the directory
 /// is ignored and never deleted.
 pub fn list_segments(directory: &Path) -> Vec<SegmentFile> {
+    list_named_segments(directory, PREFIX)
+}
+
+fn list_named_segments(directory: &Path, prefix: &str) -> Vec<SegmentFile> {
     let Ok(entries) = fs::read_dir(directory) else {
         return Vec::new();
     };
@@ -284,7 +298,7 @@ pub fn list_segments(directory: &Path) -> Vec<SegmentFile> {
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name();
-            let (date, index) = parse_segment_name(name.to_str()?)?;
+            let (date, index) = parse_named_segment(name.to_str()?, prefix)?;
             let metadata = fs::symlink_metadata(entry.path()).ok()?;
             metadata.is_file().then(|| SegmentFile {
                 date,
@@ -296,8 +310,8 @@ pub fn list_segments(directory: &Path) -> Vec<SegmentFile> {
         .collect()
 }
 
-fn latest_index(directory: &Path, date: &str) -> Option<(u32, u64)> {
-    list_segments(directory)
+fn latest_index(directory: &Path, date: &str, prefix: &str) -> Option<(u32, u64)> {
+    list_named_segments(directory, prefix)
         .into_iter()
         .filter(|segment| segment.date == date)
         .max_by_key(|segment| segment.index)
@@ -314,7 +328,12 @@ fn prune_segment(path: &Path, cutoff: SystemTime) -> io::Result<()> {
     let expired = |line: &[u8]| {
         serde_json::from_slice::<serde_json::Value>(line)
             .ok()
-            .and_then(|row| row.get("received_at")?.as_str().map(str::to_owned))
+            .and_then(|row| {
+                row.get("received_at")
+                    .or_else(|| row.get("ts"))?
+                    .as_str()
+                    .map(str::to_owned)
+            })
             .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts).ok())
             .is_some_and(|ts| ts < cutoff)
     };

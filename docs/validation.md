@@ -106,6 +106,12 @@ Typical time is the wall-clock measured on 2026-09-12 during the batch-19 and
 batch-20 acceptance runs on the development machine (release binary, warm page
 cache); suites that were not part of those runs are `n/a`.
 
+## Hub diagnostic acceptance
+
+`python3 tests/hub_diagnostics_browser.py --binary target/release/sessiondock`
+uses two private nodes and a Hub, real machine settings controls, persisted
+registry assertions and legacy/current log retention checks.
+
 ## Diagnostic retention acceptance
 
 `python3 tests/diagnostic_retention_browser.py --binary target/release/sessiondock`

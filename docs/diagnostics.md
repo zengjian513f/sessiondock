@@ -33,6 +33,17 @@ Saved bug-report evidence and business/session files are outside this cleanup.
 counters. Shutdown closes admission and drains queued records within the
 configured shutdown deadline.
 
+## Hub diagnostics
+
+Hub settings and terminal transport receipts use the same bounded dedicated
+writer and shutdown drain, in `hub-YYYY-MM-DD[.NNNN].jsonl` segments. Startup
+and idle cleanup retain rolling 24 hours using `received_at`, or legacy `ts`.
+Settings changes carry page/trace IDs and operation duration alongside their
+existing metadata. Sink initialization failure disables diagnostics with a
+warning rather than preventing the Hub from serving business operations.
+`tests/hub_diagnostics_browser.py` exercises settings writes and independently
+checks registry persistence, correlation, mixed segments, idle cleanup and flush.
+
 ## Browser request cadence
 
 Ordinary receipts are batched for up to 5 seconds, with up to 100 events and

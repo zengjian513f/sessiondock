@@ -105,40 +105,43 @@ pub fn hub_capabilities() -> Value {
 /// Server-side records of settings-page changes:
 /// one JSONL line per event under the hub's audit directory.
 pub struct HubAudit {
-    directory: PathBuf,
+    service: crate::audit::AuditService,
 }
 
 impl HubAudit {
-    pub fn new(directory: PathBuf) -> Self {
-        Self { directory }
+    pub fn new(directory: PathBuf, shutdown: CancellationToken) -> std::io::Result<Self> {
+        Ok(Self {
+            service: crate::audit::AuditService::open_named(
+                directory,
+                crate::audit::Limits::default(),
+                shutdown,
+                "hub-",
+            )?,
+        })
     }
 
-    /// Best effort and off the request path; a full disk never fails the
-    /// change it records.
+    /// Reuse the bounded dedicated writer, idle retention and shutdown drain.
     pub fn record(&self, event: &'static str, category: &'static str, data: Value) {
-        let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
-        let line = json!({
-            "ts": now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-            "event": event, "category": category, "data": data,
+        self.service.record(crate::audit::query::ServerEvent {
+            event,
+            category,
+            severity: "info",
+            uid: data.get("uid").and_then(Value::as_str).unwrap_or_default(),
+            trace_id: data
+                .get("trace_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            page_id: data
+                .get("page_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            build: "",
+            data: data.clone(),
         });
-        let path = self
-            .directory
-            .join(format!("hub-{}.jsonl", now.format("%Y-%m-%d")));
-        tokio::task::spawn_blocking(move || {
-            use std::io::Write;
-            let mut options = std::fs::OpenOptions::new();
-            options.create(true).append(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            if let Ok(mut file) = options.open(path) {
-                let mut bytes = serde_json::to_vec(&line).expect("JSON serializes");
-                bytes.push(b'\n');
-                let _ = file.write_all(&bytes);
-            }
-        });
+    }
+
+    pub async fn shutdown(&self) -> bool {
+        self.service.shutdown().await
     }
 }
 
@@ -269,6 +272,7 @@ pub struct HubApp {
     pub client: Arc<Client>,
     /// The health monitor; `stop()` on shutdown.
     pub monitor: Monitor,
+    pub audit: Option<Arc<HubAudit>>,
 }
 
 /// Build the hub from its configuration inside a Tokio runtime: the registry
@@ -286,10 +290,18 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         &capabilities,
         Mode::Hub,
     )?);
-    let audit = config
-        .audit_dir
-        .clone()
-        .map(|directory| Arc::new(HubAudit::new(directory)));
+    let audit = config.audit_dir.clone().and_then(|directory| {
+        match HubAudit::new(directory, shutdown.clone()) {
+            Ok(audit) => Some(Arc::new(audit)),
+            Err(error) => {
+                crate::log::warn(
+                    "hub.audit.unavailable",
+                    json!({"kind": format!("{:?}", error.kind())}),
+                );
+                None
+            }
+        }
+    });
     let monitor = Monitor::spawn(registry.clone(), client.clone(), shutdown.clone());
     crate::hub::process_links::spawn(registry.clone(), client.clone(), shutdown.clone());
     let groups = Arc::new(crate::hub::groups::Groups::open(
@@ -307,7 +319,7 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         assets,
         capabilities,
         page_nodes: PageNodes::new(),
-        audit,
+        audit: audit.clone(),
         shutdown,
         public_hosts: Arc::new(config.public_hosts.clone()),
         ui_events: Arc::new(EventBus::default()),
@@ -351,6 +363,7 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         registry,
         client,
         monitor,
+        audit,
     })
 }
 
@@ -665,13 +678,13 @@ async fn handle(
     }
     if method == Method::POST && path == "/api/nodes/order" {
         let body = read_body(request).await?;
-        return set_order(&state, &body);
+        return set_order(&state, &body, &headers);
     }
     if method == Method::POST
         && let Some(nid) = proxy::display_route(&path).map(str::to_string)
     {
         let body = read_body(request).await?;
-        return set_display(&state, &nid, &body);
+        return set_display(&state, &nid, &body, &headers);
     }
     let mut explicit: Option<String> = None;
     if let Some((nid, rest)) = proxy::explicit_node(&path) {
@@ -997,7 +1010,13 @@ async fn aggregated(state: &HubState, path: &str, query: &Params) -> Result<Resp
 }
 
 /// 网页只改机器的名称、配色和是否启用；接机器、下机器、地址和凭据仍是服务器端操作。
-fn set_display(state: &HubState, nid: &str, body: &Map<String, Value>) -> Result<Response, Reply> {
+fn set_display(
+    state: &HubState,
+    nid: &str,
+    body: &Map<String, Value>,
+    headers: &axum::http::HeaderMap,
+) -> Result<Response, Reply> {
+    let started = std::time::Instant::now();
     let registry = &state.registry;
     let Some(node) = registry.find(nid) else {
         return status(StatusCode::NOT_FOUND, json!({"error": NOT_REGISTERED}));
@@ -1039,7 +1058,10 @@ fn set_display(state: &HubState, nid: &str, body: &Map<String, Value>) -> Result
         audit.record(
             "hub.node.display.changed",
             "terminal",
-            json!({"node_id": nid, "from": before, "to": after}),
+            json!({"node_id": nid, "from": before, "to": after,
+                "page_id": crate::log::id_header(headers, "x-sessiondock-page"),
+                "trace_id": crate::log::id_header(headers, "x-sessiondock-trace"),
+                "duration_ms": started.elapsed().as_millis()}),
         );
     }
     ok(
@@ -1049,7 +1071,12 @@ fn set_display(state: &HubState, nid: &str, body: &Map<String, Value>) -> Result
 }
 
 /// 设置页拖动后的机器顺序：机器筛选、新建会话下拉和设置页都按它排。
-fn set_order(state: &HubState, body: &Map<String, Value>) -> Result<Response, Reply> {
+fn set_order(
+    state: &HubState,
+    body: &Map<String, Value>,
+    headers: &axum::http::HeaderMap,
+) -> Result<Response, Reply> {
+    let started = std::time::Instant::now();
     let registry = &state.registry;
     let before: Vec<String> = registry
         .machines()
@@ -1069,7 +1096,10 @@ fn set_order(state: &HubState, body: &Map<String, Value>) -> Result<Response, Re
         audit.record(
             "hub.node.order.changed",
             "terminal",
-            json!({"from": before, "to": after}),
+            json!({"from": before, "to": after,
+                "page_id": crate::log::id_header(headers, "x-sessiondock-page"),
+                "trace_id": crate::log::id_header(headers, "x-sessiondock-trace"),
+                "duration_ms": started.elapsed().as_millis()}),
         );
     }
     ok(&json!({"ok": true, "machines": registry.machines()}))
