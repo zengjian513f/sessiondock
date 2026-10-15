@@ -3906,7 +3906,6 @@ function openItemMenu(uid, x, y) {
   // Keep every action in its fixed position, with the same unavailable hints as
   // other controls. The shared capture handler blocks mouse, touch and keyboard clicks.
   const unavailable = {
-    info: !row?.sid || SessionDockCapabilities.config.session_relations !== true ? '此会话暂不支持信息页。' : '',
     'copy-identity': !row?.sid ? '此会话尚无原生会话标识。' : '',
     stop: sessionRunUnavailable(row),
     hide: !parent ? '仅分叉父会话可隐藏。' : '',
@@ -4068,7 +4067,6 @@ $('#item-menu').onclick = async e => {
   if (button.dataset.act === 'group') { globalThis.SessionDockGroups?.showMenu([uid], button); return; }
   closeItemMenu();
   if (!uid) return;
-  if (button.dataset.act === 'info') { location.href = appUrl(`session-info.html?${new URLSearchParams({uid})}`); return; }
   if (button.dataset.act === 'copy-identity') {
     const row = sidebarSessions().find(session => session.uid === uid);
     if (!row?.sid) return;
@@ -6424,7 +6422,7 @@ function bindSessionActions(heading) {
 }
 
 // 会话头任何宽度都只占一行，且不因折叠留白。一行上的重要程度：标题 → 操作按钮（按菜单顺序：
-// 启动/停止、星标、折叠过程、搜索、冻结/恢复与报告、迁移会话树、删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
+// 星标、折叠过程、搜索、启动/停止与冻结/恢复及接续、迁移会话树、报告、删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
 // 模型、会话号、分支）。宽屏/中屏长标题让到标题行的 40%（不少于 8em）为止，窄屏标题不让位；
 // 标题之后先按顺序平铺操作，全放下了再把元信息按顺序跟在标题后面（.dbrief）；从放不下的那一项起
 // 后面的全部收进 ⋯ 菜单（放不下某个按钮时元信息也不放，免得次要的露着、重要的反而折了）；
@@ -6838,11 +6836,9 @@ function head(m, total) {
         S.live.has(m.uid), tmuxLive, sessionTurn(m.uid))}${titleView}</h2>
       ${menuView}
       <div class="dhead-actions" aria-label="会话操作">
-        ${forkChainButtonMarkup(m)}
         ${consoleButtonMarkup()}
+        ${forkChainButtonMarkup(m)}
         ${sessionActionsMarkup(`
-        ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-toggle" type="button"></button>'}
-        ${continueSessionButtonMarkup(m)}
         ${starButtonMarkup(m.uid, !!m.starred, 'session-menu-action', 'a-star')}
         <button class="session-menu-action turn-mode${S.compactTurns ? '' : ' on'}" id="a-turns"
           title="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
@@ -6851,13 +6847,14 @@ function head(m, total) {
         ${S.term ? `<div class="session-menu-search"><b id="mcount">…</b>
           <button class="session-menu-action" id="m-prev" title="上一处" aria-label="上一处匹配">↑</button>
           <button class="session-menu-action" id="m-next" title="下一处" aria-label="下一处匹配">↓</button></div>` : ''}
-        <div class="session-menu-diagnostics">
+        <div class="session-menu-diagnostics session-run-actions">
+          ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-toggle" type="button"></button>'}
           ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-freeze" hidden></button>'}
-          <button class="session-menu-action" data-report-bug ${bugReportsEnabled() ? '' : 'hidden'} title="报告当前会话问题"
-            aria-label="报告当前会话问题">${uiIcon('bug')}</button>
+          ${continueSessionButtonMarkup(m)}
         </div>
         ${SessionDockCapabilities.config.session_clone_local_codex === true ? `<button class="session-menu-action" id="a-clone-group" type="button" title="迁移会话树" aria-label="迁移会话树">${uiIcon('transfer')}</button>` : ''}
-        ${!m.agent_id && SessionDockCapabilities.config.session_relations === true ? `<button class="session-menu-action" id="a-session-info" data-menu-only type="button" title="会话信息" aria-label="会话信息">${uiIcon('info')}</button>` : ''}
+        <button class="session-menu-action" data-report-bug ${bugReportsEnabled() ? '' : 'hidden'} title="报告当前会话问题"
+          aria-label="报告当前会话问题">${uiIcon('bug')}</button>
         ${SessionDockCapabilities.config.session_delete_tree === true ? `<button class="session-menu-action danger" id="a-delete-tree" data-menu-only type="button" title="删除会话树" aria-label="删除会话树">${uiIcon('tree')}</button>` : ''}
         ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action" data-menu-only></button>'}
         `, `
@@ -6882,7 +6879,6 @@ function head(m, total) {
     }
   }
   h.querySelector('.mobile-back').onclick = showMobileList;
-  h.querySelector('#a-session-info')?.addEventListener('click', () => { location.href = appUrl(`session-info.html?${new URLSearchParams({uid:m.uid})}`); });
   h.querySelector('#a-star').onclick = () => toggleSessionStar(m.uid);
   h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
   paintTransferAvailability(h.querySelector('#a-clone-group'), m.uid);

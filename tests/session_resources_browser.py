@@ -15,7 +15,7 @@ def assert_drawer_layout(page, case):
       const box = dialog.getBoundingClientRect(), issues = [];
       const inside = (rect, parent) => rect.left >= parent.left - 1 && rect.right <= parent.right + 1;
       for (const element of dialog.querySelectorAll('h2, h3, button, .sr-probe, .sr-summary-head, .sr-section-heading, .sr-metric')) {
-        if (!inside(element.getBoundingClientRect(), box)) issues.push(element.textContent);
+        if (element.getClientRects().length && !inside(element.getBoundingClientRect(), box)) issues.push(element.textContent);
       }
       for (const cell of dialog.querySelectorAll('.sr-metric')) {
         const rect = cell.getBoundingClientRect(), label = cell.querySelector('dt'), value = cell.querySelector('dd');
@@ -31,12 +31,17 @@ def assert_drawer_layout(page, case):
       return {left:box.left, right:box.right, top:box.top, bottom:box.bottom,
               width:innerWidth, height:innerHeight, overflow:dialog.scrollWidth-dialog.clientWidth, issues};
     }''')
-    assert geometry['left'] > 0 and abs(geometry['left'] + geometry['right'] - geometry['width']) <= 2, (case, geometry)
-    assert geometry['top'] > 0 and abs(geometry['top'] + geometry['bottom'] - geometry['height']) <= 2, (case, geometry)
+    assert geometry['left'] >= -1 and geometry['right'] <= geometry['width'] + 1, (case, geometry)
+    assert geometry['top'] >= 0 and geometry['bottom'] <= geometry['height'] + 1, (case, geometry)
     assert geometry['overflow'] <= 1 and not geometry['issues'], (case, geometry)
 
 
 def check_responsive_drawer(page, screenshots):
+    # Give the embedded resource tab the content area when testing extreme zoom.
+    # Sidebar-open desktop/phone layouts are exercised above.
+    page.set_viewport_size({'width':1280, 'height':960})
+    page.evaluate('applyInterfaceScale', 100)
+    page.locator('#side-toggle').click()
     # Exercise the app's real zoom setting, including the former clipped 600px/105% case.
     viewports = [(600, 850), (320, 568), (360, 800), (390, 844), (412, 915),
                  (520, 800), (521, 800), (640, 900), (768, 1024), (1024, 768),
@@ -69,6 +74,8 @@ def check_responsive_drawer(page, screenshots):
                 page.screenshot(path=str(screenshots / f'resources-{width}x{height}-{scale}-dark.png'))
         print(f'PASS resource layout {width}x{height}: 50/80/100/105/125/150%, light/dark, scope/refresh/scroll', flush=True)
     page.evaluate('applyInterfaceScale', 100)
+    page.set_viewport_size({'width':1280, 'height':960})
+    page.locator('#side-toggle').click()
     page.set_viewport_size({'width': 390, 'height': 844})
 
 
@@ -185,7 +192,9 @@ def main():
                 page.set_viewport_size({'width':390,'height':844})
                 page.locator('.mobile-back:visible').click()
                 expect(page.locator('#side')).to_be_visible()
-                page.locator('#side .item-resources').first.press('Enter')
+                page.locator('#side .item-resources').first.click()
+                assert not page.locator('dialog[open]').count()
+                page.locator('#a-resources').press('Enter')
                 expect(page.get_by_role('dialog')).to_be_visible()
                 page.wait_for_function("document.querySelector('.sr-totals').textContent.includes('4.5')")
                 assert page.evaluate("document.querySelector('.session-resources').scrollWidth <= innerWidth")
@@ -212,11 +221,12 @@ def main():
                 page.get_by_role('button', name='刷新资源').click()
                 page.get_by_text('compute-with-a-long-hostname-测试执行机器', exact=True).wait_for()
                 check_responsive_drawer(page, args.screenshots)
-                page.get_by_role('button', name='关闭资源面板').click()
+                page.locator('#a-chat').click()
                 if not page.locator('#side').is_visible():
                     page.locator('.mobile-back:visible').click()
                 page.evaluate("SessionDockResources.setLoader(async () => {throw new Error('测试采集端离线')})")
                 page.locator('#side .item-resources').first.click()
+                page.locator('#a-resources').click()
                 page.get_by_text('测试采集端离线').wait_for()
                 print('PASS resource drawer: selection, inclusive totals, Chinese tooltips, compact layout, refresh, offline/unknown, mobile, close, unsupported probe and error', flush=True)
         finally:

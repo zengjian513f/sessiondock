@@ -197,7 +197,8 @@ def main():
         assert {n['node_id'] for n in view['nodes']} == {nodes[0].nid,nodes[1].nid}, view
         assert view['totals']['metrics']['gpu_count']['value'] is None, view
         assert view['totals']['metrics']['gpu_memory_bytes']['value'] is None, view
-        sidebar.locator('.item-resources').click()
+        sidebar.locator('.body').click()
+        page.locator('#a-resources').click()
         gpu = page.locator('.sr-totals .sr-metric').nth(1)
         wait_for(lambda: gpu.locator('dd').inner_text() == '—')
         gpu.hover()
@@ -205,7 +206,7 @@ def main():
         for scope in ('direct', 'inclusive'):
             page.locator(f'.session-resources [data-scope="{scope}"]').click()
             wait_for(lambda: gpu.locator('dd').inner_text() == '—')
-        page.get_by_role('button', name='关闭资源面板').click()
+        page.locator('#a-chat').click()
         # Keep a confirmed positive subtotal, with explicit incomplete coverage.
         collectors[0].gpu_devices = ['GPU-confirmed']
         page.evaluate('SessionDockSidebarResources.refresh()')
@@ -331,7 +332,11 @@ def main():
         other.locator('.body').click()
         selected_before = page.evaluate('S.sel')
         sidebar.locator('.item-resources').click()
-        assert page.evaluate('S.sel') == selected_before
+        assert page.evaluate('S.sel') == uid
+        assert sidebar.locator('.item-resources').evaluate('e => e.tagName') == 'DIV'
+        assert not page.locator('dialog[open]').count()
+        assert not any(c.enabled for c in collectors)
+        page.locator('#a-resources').click()
         assert page.locator('.sr-subtitle').inner_text() == page.evaluate('uid => S.sessions.find(session => session.uid === uid).title', uid)
         assert '64' in page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='内存带宽')).inner_text()
         page.locator('.sr-probe[data-state="active"]').wait_for()
@@ -362,7 +367,7 @@ def main():
         page.get_by_text('b：机器探测请求失败，请检查采集服务', exact=True).wait_for()
         wait_for(lambda: collectors[0].enabled)
         assert not collectors[1].enabled
-        page.get_by_role('button', name='关闭资源面板').click()
+        page.locator('#a-chat').click()
         wait_for(lambda: not collectors[0].enabled)
         # The header resource view uses the same lease lifecycle without a modal.
         collectors[1].fail = False

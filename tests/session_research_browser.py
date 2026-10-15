@@ -106,7 +106,13 @@ def main():
             assert caps['research'] is False and caps['labdesk_url'] is None,caps
         shot('disabled')
         page.goto(base);page.wait_for_function('S.sessions.length === 3')
-        open_item_menu(page,scoped(node.nid,corpus.uid(SID)));page.locator('#item-menu [data-act="info"]').click()
+        open_item_menu(page,scoped(node.nid,corpus.uid(SID)))
+        assert page.locator('#item-menu [data-act="info"]').count() == 0
+        page.keyboard.press('Escape')
+        page.locator(f'#side .item[data-uid="{scoped(node.nid,corpus.uid(SID))}"]').locator('.body').click()
+        page.locator('#a-info').click()
+        expect(page.frame_locator('#session-content-view iframe').locator('#info-summary')).to_be_visible()
+        page.goto(page.locator('#session-content-view iframe').evaluate('e => e.src').replace('embedded=1', 'embedded=0'), wait_until='networkidle')
         expect(page.locator('#research-count')).to_have_text('实验 8 · 步骤 8 · 研报 2')
         assert requests[-1]['session_uid']==['codex:'+SID]
         expect(page.locator('#research-content img')).to_have_count(0)
