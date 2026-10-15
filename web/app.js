@@ -4633,8 +4633,18 @@ function nestSize(s, children, memo = new Map()) {
   return size;
 }
 
+function nestSearchMatches(s, children, memo) {
+  if (memo.has(s.uid)) return memo.get(s.uid);
+  memo.set(s.uid, false);
+  const matched = sidebarAgentItems(s).length > 0 || (children.get(s.uid) || []).some(child =>
+    sidebarMainMatches(child) || nestSearchMatches(child, children, memo));
+  memo.set(s.uid, matched);
+  return matched;
+}
+
 function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
-  const row = {s, agent: null, depth, kids: 0, closed: false, busy: S.lazyPending.has(s.uid), inactive: s.sidebarInactiveChildren || 0};
+  const row = {s, agent: null, depth, kids: 0, closed: false, busy: S.lazyPending.has(s.uid), inactive: s.sidebarInactiveChildren || 0,
+    matchingChildren: !!S.term && nestSearchMatches(s, children, sizes.searchMatches ||= new Map())};
   const showMain = sidebarMainMatches(s) || (sidebarNested() && S.view !== 'group');
   if (showMain) out.push(row);
   // 子代理行与分层开关无关，平铺模式同样挂在会话下面；children 在平铺时为空，
@@ -4774,7 +4784,7 @@ function nestFoldCount(r) {
 }
 
 function nestLeadMarkup(r) {
-  const caret = r.kids || r.inactive ? `<button type="button" class="nest-caret" aria-expanded="${!r.closed}" aria-busy="${!!r.busy}"
+  const caret = r.kids || r.inactive ? `<button type="button" class="nest-caret${r.matchingChildren ? ' search-hit' : ''}" aria-expanded="${!r.closed}" aria-busy="${!!r.busy}"
       title="${r.closed ? '展开' : '收起'} ${nestFoldCount(r)}" aria-label="${r.closed ? '展开' : '收起'}「${esc(r.s.title)}」下的 ${nestFoldCount(r)}"></button>` : '';
   return `<span class="nest-lead" aria-hidden="${r.kids || r.inactive ? 'false' : 'true'}">${'<i class="nest-guide"></i>'.repeat(r.depth)}<span class="nest-slot">${caret}</span></span>`;
 }
@@ -4910,6 +4920,7 @@ function patchSidebarRow(node, row, highlightKey) {
   }
   const caret = node.querySelector('.nest-caret');
   if (caret) {
+    caret.classList.toggle('search-hit', !!row.matchingChildren);
     caret.setAttribute('aria-expanded', String(!row.closed));
     caret.setAttribute('aria-busy', String(!!row.busy));
     caret.title = `${row.closed ? '展开' : '收起'} ${nestFoldCount(row)}`;
@@ -4931,7 +4942,7 @@ function sidebarRowIdentity(r, picked, sessionSignatures) {
     const {agent_items, cursor, ...fields} = r.s;
     sessionSignatures.set(r.s.uid, JSON.stringify(fields));
   }
-  const signature = JSON.stringify([sessionSignatures.get(r.s.uid), r.agent, r.depth, r.kids, r.closed, r.inactive, r.busy,
+  const signature = JSON.stringify([sessionSignatures.get(r.s.uid), r.agent, r.depth, r.kids, r.closed, r.inactive, r.busy, r.matchingChildren,
     r.agent ? agentMeta(r.s.uid, r.agent) : itemMeta(r.s),
     S.view, S.nestAttachUids.includes(r.s.uid), S.term, S.opts,
     S.opts.regex ? regexResultRevision : 0,

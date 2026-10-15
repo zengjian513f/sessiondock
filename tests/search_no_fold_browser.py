@@ -37,12 +37,40 @@ def lazy_search(browser, base, data, width, screenshots=None):
         expect(only).to_have_count(0)
         saved = page.evaluate('JSON.stringify([[...S.lazyOpen], [...S.nestClosed], localStorage.getItem("sessiondock.childMode")])')
 
+        def check_caret(matched, state):
+            caret = parent.locator('.nest-caret')
+            for theme in ('light', 'dark'):
+                page.locator('#header-more-btn').click()
+                page.locator('#settings').click()
+                page.locator('#setting-theme').select_option(theme)
+                page.locator('#settings-dialog .modal-close').click()
+                caret.hover()
+                caret.focus()
+                if screenshots:
+                    screenshots.mkdir(parents=True, exist_ok=True)
+                    page.screenshot(path=str(screenshots / f'caret-{state}-{width}-{theme}.png'))
+                red = caret.evaluate('''node => {
+                    const [r, g, b] = getComputedStyle(node).color.match(/\\d+/g).map(Number);
+                    return r > g * 1.4 && r > b * 1.4;
+                }''')
+                assert red == matched, (state, theme, red, matched)
+
+        # A compact row still advertises unloaded children, but its own UUID
+        # match is no evidence that any child matches the local filter.
+        page.locator('#q').fill('search-main')
+        expect(parent).to_be_visible()
+        expect(parent.locator('.nest-caret')).to_have_attribute('aria-expanded', 'false')
+        check_caret(False, 'parent-only')
+
         def search(query):
             old = page.locator('#stat').get_attribute('data-seq') or ''
             page.locator('#q').fill(query)
             page.locator('#q').press('Enter')
             page.wait_for_function("old => (document.querySelector('#stat').dataset.seq || '') !== old", arg=old)
 
+        search('search-main')
+        expect(parent).to_be_visible()
+        expect(parent.locator('.nest-caret')).to_have_count(0)
         search('慢特征')
         expect(parent).to_be_visible()
         expect(parent.locator('.snip')).to_have_count(0)
@@ -62,6 +90,7 @@ def lazy_search(browser, base, data, width, screenshots=None):
         before = len(lists)
         parent.locator('.nest-caret').click()
         expect(only).to_have_count(0)
+        check_caret(True, 'sidecar-hit')
         page.evaluate('async () => await runSessionPoll()')
         expect(only).to_have_count(0)
         parent.locator('.nest-caret').click()
@@ -82,7 +111,7 @@ def lazy_search(browser, base, data, width, screenshots=None):
         expect(page.locator('#side .item.agent[data-agent="codex-worker"]')).to_be_visible()
         search('IndependentOnly')
         expect(grand).to_be_visible()
-        grand.click()
+        grand.locator('.t').click()
         expect(page.locator('#msgs')).to_contain_text('IndependentOnly child')
         if width == 390:
             page.locator('.mobile-back').click()
@@ -255,6 +284,7 @@ def main():
                     expect(worker).to_be_visible()
                     parent.locator('.nest-caret').click()
                     expect(worker).to_have_count(0)
+                    check_red_themes(parent.locator('.nest-caret'))
                     parent.locator('.nest-caret').click()
                     expect(worker).to_be_visible()
                     page.locator("#nest-flat" if page.evaluate("S.nest") else "#nest-toggle").click()
@@ -315,7 +345,7 @@ def main():
                     expect(child).to_be_visible()
                     assert parent.locator('.nest-caret').evaluate('node => getComputedStyle(node).color') != folded_color
                     assert group.locator('.caret').evaluate('node => getComputedStyle(node).color') != folded_color
-                    child.click()
+                    child.locator('.t').click()
                     expect(page.locator('#msgs')).to_contain_text('Needle from another provider')
                     if width == 390:
                         page.locator('.mobile-back').click()
@@ -323,14 +353,13 @@ def main():
                     expect(page.locator('#msgs')).to_contain_text('Needle worker body')
                     if width == 390:
                         page.locator('.mobile-back').click()
-                    # Browser history reveals a target hidden by search folds.
-                    parent.locator('.nest-caret').click()
-                    group.locator('.ghead').click()
+                    # History between visible results preserves the search.
                     page.go_back()
                     expect(page.locator('#msgs')).to_contain_text('Needle from another provider')
                     if width == 390:
                         page.locator('.mobile-back').click()
                     expect(child).to_be_visible()
+                    expect(page.locator('#q')).to_have_value('Needle')
                     # A changed sessions response must not replace the matched
                     # sidecar subset with the full metadata list.
                     sessions['sig'] += '-refresh'
@@ -406,7 +435,13 @@ def main():
                     expect(child.locator('.snip')).to_have_count(0)
                     expect(missed).to_have_count(0)
                     expect(page.locator('#side .item.agent')).to_have_count(0)
-                    grand.click()
+                    child.locator('.nest-caret').click()
+                    parent.locator('.nest-caret').click()
+                    check_red_themes(parent.locator('.nest-caret'))
+                    parent.locator('.nest-caret').click()
+                    check_red_themes(child.locator('.nest-caret'))
+                    child.locator('.nest-caret').click()
+                    grand.locator('.t').click()
                     expect(page.locator('#msgs')).to_contain_text('IndependentOnly child')
                     if width == 390:
                         page.locator('.mobile-back').click()
