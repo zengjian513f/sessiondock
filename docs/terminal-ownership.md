@@ -171,3 +171,27 @@ that every lifecycle mutation drops at once
 claim/attach keep their fresh probes. Explicit stop and force takeover cover
 managed and external sessions through lifecycle discovery; resume creates a
 newly observed instance rather than reclaiming an exited one.
+
+## DELTA: conversation startup discovery
+
+On a Hub deep link with a machine ID (or a reload with a saved scoped UID),
+terminal discovery first requests `/api/term/list?nodes=<id>`, applies that
+machine's verified display observation, then fills the full fleet inventory.
+Concurrent bootstrap refreshes share this sequence. Unqueried machines' saved
+views are preserved until the full inventory answers; a partial response is not
+proof that their terminals disappeared. Instance checks, CHECK/SEND and explicit
+ownership claims keep their existing contracts.
+
+BUG-20261015-030106-0869b4: browser history finished rendering at 03:00:43.152,
+but the first input CHECK started at 03:00:45.791 and took only 160.6 ms.
+The Hub recorded 4012 ms for the initial `/api/term/list`. The running lifecycle
+record already had a confirmed native binding, and the captured terminal and
+native JSONL showed ongoing work. The first mismatch was making this one
+conversation wait for whole-fleet discovery. The available logs do not identify
+which upstream caused that particular aggregation delay. No delivery directory
+was present in that deployment; opening the conversation did not submit input.
+
+[hub_composer_startup_browser.py](../tests/hub_composer_startup_browser.py)
+opens a deep link through a real isolated Hub with a slow fake peer, types before
+that peer's four-second response, then checks the full inventory, retained
+layouts and navigation to the other machine on desktop/mobile in both themes.

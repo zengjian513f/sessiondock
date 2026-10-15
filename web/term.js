@@ -171,13 +171,28 @@ function mergeUnavailableTermRows(rows, previous, errors) {
   return [...rows.filter(row => !names.has(row.name)), ...retained.map(row => ({...row, stale:true}))];
 }
 
+let termListBootstrap = null;
+let termListStarted = false;
 function loadTermList() {
   if (SessionDockNetwork.paused) return Promise.resolve();
-  const request = fetchTermList().finally(() => { if (T.listRequest === request) T.listRequest = null; });
+  if (termListBootstrap) return termListBootstrap;
+  // A linked/reloaded conversation needs its own machine's observation, not
+  // the slowest member of the fleet. Complete the inventory afterwards.
+  const node = !termListStarted && HUB_MODE
+    ? (deepNode() || nodeOf(DEEP_SID || S.sel || store.get('sel', ''))) : '';
+  termListStarted = true;
+  const first = /^[a-f0-9]{32}$/.test(node) ? node : '';
+  const request = (first
+    ? fetchTermList(first).then(() => fetchTermList())
+    : fetchTermList()).finally(() => {
+      if (T.listRequest === request) T.listRequest = null;
+      if (termListBootstrap === request) termListBootstrap = null;
+    });
+  if (first) termListBootstrap = request;
   T.listRequest = request;
   return request;
 }
-async function fetchTermList() {
+async function fetchTermList(node = '') {
   const requestSeq = ++termListRequestSeq;
   const openEpoch = termOpenEpoch;
   const fingerprint = () => [
@@ -194,7 +209,7 @@ async function fetchTermList() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12000);
   try {
-    const response = await fetch(appUrl('api/term/list'), {signal:controller.signal});
+    const response = await fetch(appUrl('api/term/list' + (node ? '?nodes=' + node : '')), {signal:controller.signal});
     transient = response.status === 429 || response.status >= 500;
     data = await response.json();
     if (!response.ok || data.error) throw new Error(
@@ -211,7 +226,8 @@ async function fetchTermList() {
   // 请求在终端打开/切换之前发出时，它的“没有该视图”结论已经过期。丢弃
   // 整份结果并立刻重取，不能先销毁刚打开的常驻终端视图再补回来。
   if (openEpoch !== termOpenEpoch) {
-    void loadTermList();
+    if (termListBootstrap) await fetchTermList(node);
+    else void loadTermList();
     return;
   }
   T.listLoaded = true;
@@ -260,6 +276,7 @@ async function fetchTermList() {
   if (loaded) {
     const valid = new Set([...T.list, ...T.pending].map(x => x.name));
     const kept = new Map([...T.openViews].filter(([name, saved]) => {
+      if (node && nodeOf(pendingUid(name)) !== node) return true;
       if (!valid.has(name)) return false;
       const row = (saved.record_id ? T.pending : T.list).find(row => row.name === name);
       return !!row && saved.uid === (row.uid || (row.record_id && pendingUid(row.name)))
@@ -270,6 +287,7 @@ async function fetchTermList() {
       store.set('termviews', [...kept]);
     }
     for (const name of T.views.keys()) {
+      if (node && nodeOf(pendingUid(name)) !== node) continue;
       const current = [...T.list, ...T.pending].find(row => row.name === name);
       const replaced = current
         && T.views.get(name)?.instanceId

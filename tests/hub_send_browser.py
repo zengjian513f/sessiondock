@@ -106,6 +106,9 @@ def check_browser(browser, root, config):
         hub = Hub(REPO / "target/debug/sessiondock-hub", root / "hub", [node])
         web = root / "hub-web"
         shutil.copytree(frontend_dir(), web)
+        # copytree preserves mtimes; make the isolated Hub asset build differ
+        # deliberately instead of depending on incidental directory timestamps.
+        os.utime(web / "app.js", None)
         hub.env["SESSIONDOCK_WEB_DIR"] = str(web)
         hub.start()
         try:
