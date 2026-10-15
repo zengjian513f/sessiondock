@@ -15,6 +15,7 @@ from history_fixtures import REPO, BINARY, Corpus, codex_message, codex_row, iso
 from send_browser import initialize, xterm_includes
 from hub_send_browser import cleanup_hosts
 from popups import on_popup  # noqa: E402
+from bug_report_node_browser import open_report, wait_drafts
 
 CODEX_SID = "6a7b8c9d-0e1f-4a2b-9c3d-4e5f6a7b8c9d"
 
@@ -98,7 +99,11 @@ def main():
         try:
             with isolated_server(corpus, BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
                     launcher_config=launcher, state_dir=root / 'state',
-                    file_roots=(root / 'work',), file_write_roots=(root / 'work',)) as (base, _), sync_playwright() as pw:
+                    file_roots=(root / 'work',), file_write_roots=(root / 'work',),
+                    audit_dir=root / 'audit', extra_env={
+                        'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
+                        'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work'),
+                    }) as (base, _), sync_playwright() as pw:
                 options = {'headless': True}
                 if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
                     options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
@@ -261,7 +266,7 @@ def main():
                     page.locator('#csend').click()
                 assert sent.value.status == 200, sent.value.text()
                 submission = sent.value.request.post_data_json
-                bubble = page.locator('#queued-sends .queued-send').filter(has_text=text)
+                bubble = page.locator(f'#queued-sends .queued-send[data-request-id="{submission["request_id"]}"]')
                 expect(bubble).to_have_attribute('data-cli-queued', '1', timeout=15000)
                 # An idle screen without the queue is insufficient evidence
                 # when no native abort followed this send.
@@ -290,27 +295,72 @@ def main():
                 persisted = json.loads(ledger.read_text())
                 assert any(r['state'] == 'interrupted' and r['text'] == text
                            for rows in persisted['queued'].values() for r in rows)
+                # The report must freeze both the rendered receipt and the
+                # node's durable queue, even when the SEND predates its window.
+                shots = REPO / 'target/validation/queued-diagnostics'
+                shots.mkdir(parents=True, exist_ok=True)
+                for width, theme in [(1280, 'light'), (390, 'dark')]:
+                    page.set_viewport_size({'width': width, 'height': 900})
+                    page.emulate_media(color_scheme=theme)
+                    if width < 600 and page.locator('#side').is_visible():
+                        page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    page.locator('#a-chat').click()
+                    expect(bubble).to_be_visible()
+                    page.locator('#msgs').hover()
+                    page.mouse.wheel(0, 10000)
+                    snapshot = page.evaluate("browserStateSnapshot('test').data.cli")
+                    receipt = next(r for r in snapshot['rendered'] if r['request_id'] == submission['request_id'])
+                    assert receipt['state'] == 'interrupted' and receipt['dismissible'] and receipt['visible'], snapshot
+                    assert text not in json.dumps(snapshot), snapshot
+                    page.screenshot(path=str(shots / f'interrupted-{width}-{theme}.png'))
+                page.set_viewport_size({'width': 1280, 'height': 900})
+                open_report(page)
+                page.locator('#bug-report-description').fill('Interrupted receipt remains after an edited follow-up')
+                wait_drafts(page)
+                with page.expect_response(lambda r: urlsplit(r.url).path == '/api/bug-report') as reported:
+                    page.locator('#bug-report-go').click()
+                report = reported.value.json()
+                assert reported.value.status == 201, report
+                bundle = Path(report['path'])
+                manifest = json.loads((bundle / 'manifest.json').read_text())
+                server_cli = manifest['session']['cli_diagnostics']
+                assert next(r for r in server_cli['queued'] if r['request_id'] == submission['request_id'])['state'] == 'interrupted'
+                browser_cli = json.loads((bundle / 'browser-state.json').read_text())['data']['cli']
+                assert next(r for r in browser_cli['rendered'] if r['request_id'] == submission['request_id'])['dismissible']
+                assert text not in json.dumps(server_cli)
+                events = [json.loads(line) for line in (bundle / 'events.jsonl').read_text().splitlines()]
+                assert any(r['event'] == 'browser.dom.snapshot' and any(
+                    q['request_id'] == submission['request_id'] and q['state'] == 'interrupted'
+                    for q in r['data'].get('cli', {}).get('queued', [])) for r in events)
+                # Restore the fake TUI's desktop geometry after phone views.
+                page.locator('#a-term').click()
+                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
+                page.locator('#a-chat').click()
+                page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'")
                 # A send after the abort is a new queue, not an interrupted
                 # receipt. A later echo also overrides interrupted evidence.
-                page.locator('#cinput').fill('new input after interrupt')
+                edited_text = text + ' with edited wording'
+                page.locator('#cinput').fill(edited_text)
                 with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
                     page.locator('#csend').click()
                 assert sent.value.status == 200, sent.value.text()
-                new_bubble = page.locator('#queued-sends .queued-send').filter(has_text='new input after interrupt')
+                new_bubble = page.locator('#queued-sends .queued-send').filter(has_text=edited_text)
                 expect(new_bubble).to_have_attribute('data-cli-queued', '1', timeout=15000)
                 expect(new_bubble).to_have_attribute('data-state', 'queued')
                 queue_file.write_text('idle-hidden')
                 time.sleep(2)
                 checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': build}).json()
                 assert checked['cli']['instance']['busy'] is False, checked
-                assert next(r for r in checked['cli']['queued'] if r['text'] == 'new input after interrupt')['state'] == 'queued', checked
-                queue_file.write_text('all')
+                assert next(r for r in checked['cli']['queued'] if r['text'] == edited_text)['state'] == 'queued', checked
+                queue_file.unlink()
+                expect(new_bubble).to_have_count(0, timeout=15000)
+                expect(bubble).to_have_attribute('data-state', 'interrupted')
+                assert edited_text in [r['content'][0]['text'] for r in user_records(rollout)]
                 late_echo = codex_message('user', text)
                 late_echo['timestamp'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
                 with rollout.open('a') as stream:
                     stream.write(json.dumps(late_echo) + '\n')
                 expect(bubble).to_have_count(0, timeout=15000)
-                queue_file.unlink()
                 expect(new_bubble).to_have_count(0, timeout=15000)
                 # BUG-20261003-231725-8dad6b: two sends become one native
                 # user message after Esc, including multiline Unicode input.

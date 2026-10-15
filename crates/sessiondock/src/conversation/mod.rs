@@ -127,6 +127,24 @@ impl Conversations {
         let key = self.cli.key_of(uid)?;
         Some(self.cli.current(&key, self.store.queued(&key)))
     }
+    /// Read-only report evidence, including receipts older than the audit
+    /// window. Do not observe/reconcile here: capture must preserve the fault.
+    pub fn cli_diagnostics(&self, uid: &str) -> Value {
+        let key = self
+            .cli
+            .key_of(uid)
+            .unwrap_or_else(|| self.store.canonical(uid));
+        let state = self.cli.current(&key, self.store.queued(&key));
+        json!({
+            "observed_at": state.observed_at,
+            "instance": state.instance,
+            "input": state.input.map(|input| json!({"state": input.state, "code": input.code})),
+            "queued": state.queued.iter().map(|row| json!({
+                "request_id": row.request_id, "state": row.state,
+                "sent_at": row.sent_at, "cli_queued_at": row.cli_queued_at
+            })).collect::<Vec<_>>()
+        })
+    }
     /// Reads the CLI screen unless a reading younger than `max_age` exists,
     /// classifies input readiness and editor text, and returns the state
     /// with the session's queued sends. Sends of an instance that has been

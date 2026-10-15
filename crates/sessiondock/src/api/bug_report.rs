@@ -490,11 +490,16 @@ async fn local_context(
     uid: &str,
     terminal_name: &str,
 ) -> Context {
-    let session = if !uid.is_empty() && !uid.starts_with("tmux:") {
+    let mut session = if !uid.is_empty() && !uid.starts_with("tmux:") {
         session_row(state, uid).await
     } else {
         json!({})
     };
+    if !uid.is_empty()
+        && let Some(conversations) = &state.conversations
+    {
+        session["cli_diagnostics"] = conversations.cli_diagnostics(uid);
+    }
     let terminal_capture = if terminal_name.is_empty() {
         String::new()
     } else {

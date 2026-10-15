@@ -4024,11 +4024,29 @@ function applyCliState(uid, cli, {status = true} = {}) {
  *  turn sealing, tool grouping and time dividers never treat them as history.
  *  app.js removes the block before appending records; the tail render
  *  restores it. Interrupted or lost rows can be closed. */
+function queuedSendDiagnostics() {
+  const uid = S.sel;
+  const cli = uid && !S.agent ? composerDrafts.get(composerDraftOwner(uid))?.cli : null;
+  return {
+    observed_at: cli?.observed_at ?? null,
+    instance: cli?.instance ?? null,
+    input: cli?.input ? {state: cli.input.state, code: cli.input.code} : null,
+    queued: (cli?.queued || []).map(item => ({request_id: item.request_id,
+      state: item.state, sent_at: item.sent_at, cli_queued_at: item.cli_queued_at ?? null})),
+    rendered: [...document.querySelectorAll('#queued-sends .queued-send')].map(node => ({
+      request_id: node.dataset.requestId, state: node.dataset.state,
+      cli_queued: node.dataset.cliQueued === '1',
+      dismissible: !!node.querySelector('.queued-send-dismiss'),
+      visible: !!node.getClientRects().length,
+    })),
+  };
+}
 function renderQueuedSends(uid = composerUid) {
   // A new session waits on its stage page until the first native record;
   // its queued text goes under the stage text instead of a message list.
   const box = $('#msgs'), stage = box ? null : $('#detail .new-session-wait');
   $('#queued-sends')?.remove();
+  scheduleBrowserSnapshot('queued-sends');
   if (!box && !stage) return;
   const draft = uid && uid === S.sel && !S.agent ? composerDrafts.get(composerDraftOwner(uid)) : null;
   // Esc right after Enter makes Claude put the prompt back into its editor

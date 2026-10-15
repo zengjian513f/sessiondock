@@ -480,6 +480,7 @@ function browserStateSnapshot(reason = '') {
       cache: entry ? {messages: entry.msgs?.length || 0, end: entry.end,
         anchor: entry.anchor, activity: entry.activity?.state || ''} : null,
       dom_messages: nodes.length, terminal: termState,
+      cli: typeof queuedSendDiagnostics === 'function' ? queuedSendDiagnostics() : null,
       view: SessionContentView.kind || (termState?.visible ? 'terminal' : 'chat'),
       content_view: SessionContentView.kind ? SessionContentView.snapshot() : null,
       header: consoleButtonState(),

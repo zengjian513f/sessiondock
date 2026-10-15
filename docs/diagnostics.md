@@ -356,3 +356,32 @@ root vertical scrolling; resource layout remains unchanged. The
 [content scroll suite](../tests/content_scroll_browser.py) checks real wheels,
 view changes, retry, geometry, themes/zoom and persisted audit records, including
 an HTTP-served old-CSS fault to verify blocked-scroll diagnostics.
+
+## Queued-input incident evidence
+
+`dom.snapshot` and `browser-state.json` include `cli`: last observation time,
+instance/input state, queued request IDs with state/send/enqueue times, and the
+rendered bubbles' IDs, states, visibility and dismiss-button presence. Queue
+renders also schedule a snapshot. No input/editor text or new digest is logged.
+Reports additionally freeze the origin node's read-only receipt metadata in
+`manifest.session.cli_diagnostics`, including receipts older than the 15-minute
+audit window and receipts recovered after a service restart. Remote capture
+carries this with the session row. Capture does not observe, reconcile, dismiss
+or resend input; null observation fields mean no in-memory observation exists.
+
+BUG-20261015-154632-c5f7ce: all 3539 bundled audit rows, browser state,
+environment and terminal capture were inspected, then correlated with the
+origin's conversation/lifecycle ledgers and native Codex records. At 15:12:14 UTC
+SEND succeeded and the CLI queue was observed. Native interruptions at 15:13:01
+and 15:13:07 followed; the retained receipt is `interrupted`. The native user
+record at 15:15:12 has edited wording, not the original submitted text. A later
+answer cannot prove consumption of that original input. Keeping this explicit,
+dismissible uncertainty follows the CLI-state contract; fuzzy text matching or
+an automatic timeout would discard evidence. No production receipt was edited.
+
+The report's first observable evidence gap is that none of its snapshots
+identified the bubble or its state: the initial SEND also predates the bundled
+window. Thus the old bundle alone cannot prove the precise label rendered at
+report time. The new paired snapshots make browser/server disagreement directly
+inspectable. The native Codex browser suite exercises interruption, reload,
+report submission and persisted metadata without logging message text.
