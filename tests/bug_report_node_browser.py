@@ -119,6 +119,7 @@ def options(page):
 def open_report(page):
     # Resizing can unfold the button between visibility lookup and click.
     # Resolve whichever entry is currently visible on every click retry.
+    page.wait_for_timeout(150)  # responsive header settles after viewport changes
     page.locator("#report-bug:visible, #header-more-btn:visible").first.click()
     if not page.locator("#bug-report-dialog").is_visible():
         page.locator("#report-bug").click()
@@ -169,7 +170,7 @@ def check_report_scroll(page):
             (608, 788, 1), (390, 640, 1),
             (390, 360, 1), (1280, 500, 12)]:
         page.set_viewport_size({"width": width, "height": height})
-        page.evaluate("openBugReportDialog()")
+        open_report(page)
         page.wait_for_selector("#bug-report-dialog[open]")
         page.locator("#bug-report-file").set_input_files([
             {"name": f"screen-{i}.png", "mimeType": "image/png", "buffer": PNG}
@@ -230,7 +231,7 @@ def check_report_scroll(page):
 
 
 def check_send_busy_width(page, boundary):
-    page.evaluate("openBugReportDialog()")
+    open_report(page)
     page.wait_for_selector("#bug-report-dialog[open]")
     page.fill("#bug-report-description", "发送按钮不要变宽")
     idle = page.locator("#bug-report-go").evaluate("el => el.getBoundingClientRect().width")
@@ -257,7 +258,7 @@ def check_send_busy_width(page, boundary):
     boundary.pending.clear()
     boundary.defer = False
     page.wait_for_function("!bugReportSending")
-    page.evaluate("document.querySelector('#bug-report-dialog').close()")
+    page.locator('#bug-report-dialog .modal-close').click()
     clear_report_draft(page)
     wait_drafts(page)
     boundary.calls.clear()
@@ -375,7 +376,7 @@ def check_report_layout(page):
     # picker, the joined agent icons (names on hover), the model and effort
     # pickers ending flush with the send button.
     page.set_viewport_size({"width": 1280, "height": 900})
-    page.evaluate("openBugReportDialog()")
+    open_report(page)
     page.wait_for_selector("#bug-report-dialog[open]")
     page.wait_for_function("!document.querySelector('#bug-report-node-label').hidden")
     # The picker still says what the machine is for, now as its accessible name and tooltip.
@@ -418,11 +419,11 @@ def check_report_layout(page):
     # Back to the default machine; the choice stays remembered for NodeB's Codex.
     page.select_option("#bug-report-node", NID["a"])
     expect(page.locator("#bug-report-model-label")).to_have_text("选择模型")
-    page.evaluate("document.querySelector('#bug-report-dialog').close()")
+    page.locator('#bug-report-dialog .modal-close').click()
 
     # Phone: two attachments share one row instead of stacking at 100% width.
     page.set_viewport_size({"width": 390, "height": 844})
-    page.evaluate("openBugReportDialog()")
+    open_report(page)
     page.wait_for_selector("#bug-report-dialog[open]")
     page.locator("#bug-report-file").set_input_files([
         {"name": f"screen-{i}.png", "mimeType": "image/png", "buffer": PNG}
@@ -440,14 +441,14 @@ def check_report_layout(page):
       };
     }""")
     assert phone["same_row"] and phone["gap"] >= 0 and not phone["overflow"] and phone["frac"] <= 0.55, phone
-    page.evaluate("document.querySelector('#bug-report-dialog').close()")
+    page.locator('#bug-report-dialog .modal-close').click()
     clear_report_draft(page)
     wait_drafts(page)
     page.set_viewport_size({"width": 1280, "height": 900})
 
 
 def check_shared_draft_recovery(page, boundary):
-    page.evaluate("openBugReportDialog()")
+    open_report(page)
     page.wait_for_function("!bugReportDraftObject().loading")
     page.fill('#bug-report-description','服务端保存 [附件1]')
     page.locator('#bug-report-file').set_input_files([
@@ -467,7 +468,7 @@ def check_shared_draft_recovery(page, boundary):
     page.locator('#bug-report-dialog .modal-close').click()
     page.reload(wait_until='networkidle')
     page.wait_for_function('Nodes.list.length===3')
-    page.evaluate('openBugReportDialog()')
+    open_report(page)
     page.wait_for_function('!bugReportDraftObject().loading')
     assert page.locator('#bug-report-description').input_value()=='服务端保存 [附件1]'
     assert not page.evaluate('bugReportDraftObject().attachments[0].file instanceof Blob')
@@ -510,7 +511,7 @@ def check_draft_follows_machine(page, boundary):
     # emptied the box. Description, quotes and the attachments this page still
     # holds follow the selection; the previous machine keeps nothing.
     boundary.uploads.clear();boundary.discards.clear()
-    page.evaluate("openBugReportDialog()")
+    open_report(page)
     page.wait_for_function("!bugReportDraftObject().loading")
     page.fill('#bug-report-description','切换机器也别清空 [附件1]')
     page.locator('#bug-report-file').set_input_files([
@@ -557,7 +558,7 @@ def check_model_menu_floats(page):
     for width, height, scale in ((1280, 900, 1), (390, 844, 1), (1280, 700, 0.8)):
         page.set_viewport_size({"width": width, "height": height})
         page.evaluate(f"document.documentElement.style.setProperty('--compact-scale', '{scale}')")
-        page.evaluate("openBugReportDialog()")
+        open_report(page)
         page.wait_for_selector("#bug-report-dialog[open]")
         page.wait_for_function("!document.querySelector('#bug-report-model').disabled")
         measure = """() => {
@@ -586,7 +587,7 @@ def check_model_menu_floats(page):
         page.keyboard.press("Escape")
         expect(page.locator("#bug-report-model-menu")).to_be_hidden()
         expect(page.locator("#bug-report-dialog")).to_be_visible()
-        page.evaluate("document.querySelector('#bug-report-dialog').close()")
+        page.locator('#bug-report-dialog .modal-close').click()
     page.evaluate("document.documentElement.style.removeProperty('--compact-scale')")
     page.set_viewport_size({"width": 1280, "height": 900})
 
@@ -594,7 +595,7 @@ def check_model_menu_floats(page):
 def check_enter_keys(page):
     # Enter and Shift+Enter match the composer: on a phone Enter is a newline too.
     page.set_viewport_size({"width": 390, "height": 844})
-    page.evaluate("openBugReportDialog()")
+    open_report(page)
     page.wait_for_selector("#bug-report-dialog[open]")
     textarea = page.locator("#bug-report-description")
     textarea.fill("手机上")
@@ -602,7 +603,7 @@ def check_enter_keys(page):
     assert textarea.input_value() == "手机上\n", textarea.input_value()
     expect(page.locator("#bug-report-dialog")).to_be_visible()
     textarea.fill("")
-    page.evaluate("document.querySelector('#bug-report-dialog').close()")
+    page.locator('#bug-report-dialog .modal-close').click()
     wait_drafts(page)
     page.set_viewport_size({"width": 1280, "height": 900})
 

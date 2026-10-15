@@ -8,6 +8,7 @@ bytes, and a console command sent from the composer clears the server draft. Run
 legacy composer against the fake Claude CLI plus a synthetic shell.
 """
 from browser_runtime import wait_for_async
+from bug_report_node_browser import open_report
 import base64
 import json
 import os
@@ -89,8 +90,11 @@ def main():
             browser = playwright.chromium.launch(**options)
             try:
                 with isolated_server(corpus, BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
-                                     launcher_config=configuration, state_dir=root / 'state',
-                                     file_roots=(root / 'work',), file_write_roots=(root / 'work',)) as (base, _):
+                                     launcher_config=configuration, state_dir=root / 'state', audit_dir=root/'audit',
+                                     file_roots=(root / 'work',), file_write_roots=(root / 'work',),
+                                     extra_env={'SESSIONDOCK_BUG_REPORT_DIR':str(root/'reports'),
+                                                'SESSIONDOCK_BUG_REPORT_REPO':str(root/'work'),
+                                                'SESSIONDOCK_BUG_REPORT_WORKER':'false'}) as (base, _):
                     errors, sends = [], []
 
                     def open_page(context, draft_route=None):
@@ -278,7 +282,7 @@ def main():
 
                     # Report drafts share the same save path. Failed upload
                     # bytes must prevent reload even after metadata is saved.
-                    a.locator('[data-report-bug]:visible').first.click()
+                    open_report(a)
                     expect(a.locator('#bug-report-description')).to_be_enabled()
                     expect(a.locator('#bug-report-go')).to_be_disabled()
                     a.fill('#bug-report-description', 'report after deployment')
@@ -291,7 +295,7 @@ def main():
                     a.locator('#bug-report-dialog .modal-close').click()
                     a.locator('.version-stale button[data-act="reload"]').click()
                     expect(a.locator('.version-stale')).to_contain_text('已取消重新加载')
-                    a.locator('[data-report-bug]:visible').first.click()
+                    open_report(a)
                     a.locator('#bug-report-items .draft-remove').click()
                     a.locator('#bug-report-dialog .modal-close').click()
                     a.unroute('**/api/session/conversation/attachment?*', fail_draft)
@@ -307,7 +311,7 @@ def main():
                     wait_server_text(context, base, uid, 'last keystrokes before reload')
                     assert len(sends) == 1, sends
                     a.unroute('**/api/session/conversation', obsolete_build)
-                    a.locator('[data-report-bug]:visible').first.click()
+                    open_report(a)
                     expect(a.locator('#bug-report-description')).to_have_value('report after deployment')
                     a.locator('#bug-report-dialog .modal-close').click()
                     print('PASS stale-build drafts: old-build save, Enter blocked, failed-save retry, report and upload protection, reload waits for latest text', flush=True)
