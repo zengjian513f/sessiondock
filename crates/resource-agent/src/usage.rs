@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Write},
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
@@ -54,8 +55,12 @@ pub struct Ledger {
 }
 impl Ledger {
     pub fn open(path: &Path, node: &str, at: f64) -> io::Result<Self> {
-        let saved = match fs::read(path) {
-            Ok(bytes) => serde_json::from_slice::<Saved>(&bytes).map_err(io::Error::other)?,
+        let saved = match fs::File::open(path) {
+            Ok(file) => {
+                file.set_permissions(fs::Permissions::from_mode(0o600))?;
+                serde_json::from_reader::<_, Saved>(io::BufReader::new(file))
+                    .map_err(io::Error::other)?
+            }
             Err(e) if e.kind() == io::ErrorKind::NotFound => Saved {
                 version: 1,
                 node_id: node.into(),
@@ -262,7 +267,14 @@ impl Ledger {
     }
     pub fn save(&self) -> io::Result<()> {
         let tmp = self.path.with_extension("tmp");
-        let mut file = fs::File::create(&tmp)?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        // A leftover temporary file may predate private ledger permissions.
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
         serde_json::to_writer(&mut file, &self.saved)?;
         file.flush()?;
         file.sync_all()?;

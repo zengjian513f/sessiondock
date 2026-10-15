@@ -15,7 +15,7 @@ The matrix is exercised twice through the real UI: on the node's own page, and
 on a real `sessiondock-hub` page whose requests reach the node through the
 explicit `/api/nodes/<id>/api/…` proxy, next to a fake node that has Codex only
 (its Claude cell reads 无, and its Codex, with no newest version of its own, is
-judged against Pavo's). The update receives the profile's fixed arguments
+judged against NodeA's). The update receives the profile's fixed arguments
 and a closed stdin; a second request while one is running is refused, and an
 unknown profile ID is 404. No real CLI, native CLI home or production directory
 is touched.
@@ -199,7 +199,7 @@ def check_phone(page, base):
     page.set_viewport_size({"width": 390, "height": 844})
     page.goto(base + "/")
     open_machines(page)
-    expect(page.locator("#client-matrix tbody tr")).to_have_count(2)   # Pavo and the offline Vega
+    expect(page.locator("#client-matrix tbody tr")).to_have_count(2)   # NodeA and the offline NodeB
     # The matrix may scroll inside its own box; the dialog and the page never scroll sideways.
     overflow = page.evaluate("""() => [document.scrollingElement, document.querySelector('#settings-machines')]
       .map(box => box.scrollWidth - box.clientWidth)""")
@@ -288,25 +288,25 @@ def main():
                     api_contract(page, base)
                     print("PASS local machine settings: versions, update, failure, API contract")
 
-                    other = FakeNode("b" * 32, "Vega")
-                    hub = Hub(hub_binary, root / "hub", [SimpleNamespace(name="Pavo", port=node_port, token=token), other])
+                    other = FakeNode("b" * 32, "NodeB")
+                    hub = Hub(hub_binary, root / "hub", [SimpleNamespace(name="NodeA", port=node_port, token=token), other])
                     hub.start()
                     try:
                         hub_base = f"http://127.0.0.1:{hub.port}"
-                        check_machine(page, hub_base, state, "Pavo", initial=NEW)
-                        vega = matrix_row(page, "Vega")
-                        expect(vega.locator('td[data-client-source="claude"]')).to_have_text("无")
-                        expect(vega.locator('td[data-client-source="codex"] .client-version')).to_have_text("0.1.0")
-                        # Vega found no newest Codex itself; Pavo's newer install and lookup still mark it upgradable.
-                        expect(vega.locator('td[data-client-source="codex"]')).to_have_attribute("data-state", "outdated")
-                        expect(vega.locator('td[data-client-source="codex"]')).to_have_attribute("title", re.compile(f"可更新到 {NEW}"))
+                        check_machine(page, hub_base, state, "NodeA", initial=NEW)
+                        node_b = matrix_row(page, "NodeB")
+                        expect(node_b.locator('td[data-client-source="claude"]')).to_have_text("无")
+                        expect(node_b.locator('td[data-client-source="codex"] .client-version')).to_have_text("0.1.0")
+                        # NodeB found no newest Codex itself; NodeA's newer install and lookup still mark it upgradable.
+                        expect(node_b.locator('td[data-client-source="codex"]')).to_have_attribute("data-state", "outdated")
+                        expect(node_b.locator('td[data-client-source="codex"]')).to_have_attribute("title", re.compile(f"可更新到 {NEW}"))
                         print("PASS hub matrix through the explicit node proxy, with an empty cell")
                         # A machine that cannot be reached reads 离线, never 失败.
                         other.stop()
                         page.goto(hub_base + "/")
                         open_machines(page)
-                        expect(matrix_row(page, "Vega").locator("td.client-status")).to_have_text("离线", timeout=20000)
-                        expect(matrix_row(page, "Pavo").locator('td[data-client-source="codex"] .client-version')).to_have_text(NEW)
+                        expect(matrix_row(page, "NodeB").locator("td.client-status")).to_have_text("离线", timeout=20000)
+                        expect(matrix_row(page, "NodeA").locator('td[data-client-source="codex"] .client-version')).to_have_text(NEW)
                         print("PASS an unreachable machine reads 离线")
                         check_phone(page, hub_base)
                         print("PASS 390px machine row without horizontal overflow")

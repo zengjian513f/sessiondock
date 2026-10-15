@@ -159,8 +159,8 @@ def check_header(page, width, tiers, header_actions, chrome_tiers):
     if fold["menu"] and fold["nodes_present"]:
         assert fold["nodes_abbr"] or width <= 720, (where, "machines must go before buttons", fold)
     if fold["nodes_present"]:
-        full = ["Lyra 9", "Cygnus 9", "Cetus 9"]
-        abbr = ["L", "Cy", "Ce"]
+        full = ["Lake 9", "Cedar 9", "Coral 9"]
+        abbr = ["L", "Ce", "Co"]
         assert fold["node_texts"] == (abbr if fold["nodes_abbr"] else full), (where, fold)
         assert fold["nodes_abbr"] or width > 720, (where, "narrow header shows machine initials", fold)
     assert fold["scope_width"] <= 30, (where, "session counts take only their digits", fold)
@@ -261,7 +261,7 @@ def seed_header_nodes(page):
       picker.hidden = false;
       const chips = document.querySelector('#node-chips');
       chips.replaceChildren();
-      const nodes = [['n1', 'Lyra'], ['n2', 'Cygnus'], ['n3', 'Cetus']]
+      const nodes = [['n1', 'Lake'], ['n2', 'Cedar'], ['n3', 'Coral']]
         .map(([id, name]) => ({id, name}));
       const abbrs = nodeAbbrs(nodes);
       for (const node of nodes) {

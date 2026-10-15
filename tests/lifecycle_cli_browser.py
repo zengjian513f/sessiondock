@@ -11,8 +11,8 @@ second creation the configured Claude executable is rewritten in place, the way
 the Windows Claude installer overwrites `claude.exe` while the service runs;
 creation must keep working and launch the rewritten file. A second server
 then runs with a host binary from before `--no-record` (a wrapper that rejects
-`--no-record` with status 2 and otherwise runs the real ptyhost, the Cetus
-shape of 2026-09-19): an agent session must still be created through it. No
+`--no-record` with status 2 and otherwise runs the real ptyhost, matching an older
+Windows installation): an agent session must still be created through it. No
 model binary, native CLI home or production host is touched.
 """
 

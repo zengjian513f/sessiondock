@@ -45,7 +45,7 @@ SHOWN = '''() => [...document.querySelectorAll('#side .cwd-path')].filter(elemen
 
 def sessions(count, short=False):
     now = datetime(2026, 10, 14, 5, tzinfo=timezone.utc)
-    directories = [path.replace('~', '/home/tester', 1) for path in TWINS] + [f'/home/tester/Projects/workspace-{n:03d}' for n in range(140)]
+    directories = [path.replace('~', '/home/example', 1) for path in TWINS] + [f'/home/example/Projects/workspace-{n:03d}' for n in range(140)]
     rows = []
     for index in range(count):
         date = (now - timedelta(minutes=index * 7)).isoformat()
