@@ -1,5 +1,5 @@
 /* Viewport units need the same app zoom compensation as the other dialogs. */
-.session-resources { box-sizing: border-box; position: fixed; inset: 0 0 0 auto; margin: 0; width: min(640px, calc(100vw / var(--interface-scale, 1))); height: calc(100dvh / var(--interface-scale, 1)); max-width: calc(100vw / var(--interface-scale, 1)); max-height: calc(100dvh / var(--interface-scale, 1)); padding: 8px 10px; border: 0; border-left: 1px solid var(--border); background: var(--bg); color: var(--text); overflow-y: auto; box-shadow: -8px 0 36px #00000014; }
+.session-resources { box-sizing: border-box; position: fixed; inset: 0; margin: auto; width: min(640px, calc(100vw / var(--interface-scale, 1) - 24px)); height: fit-content; max-width: calc(100vw / var(--interface-scale, 1) - 24px); max-height: calc(100dvh / var(--interface-scale, 1) - 24px); padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); overflow-y: auto; box-shadow: 0 12px 36px #00000024; }
 .session-resources::backdrop { background: #10182840; }
 .sr-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .sr-top > :first-child { flex: 1; min-width: 0; }

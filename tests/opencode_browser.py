@@ -368,7 +368,7 @@ def main():
                 shot('resumed')
 
                 # ---- Delete: stop, confirm the irreversible OpenCode delete.
-                page.locator('#a-term').click()
+                page.locator('#a-chat').click()
                 action = page.locator('#a-session-toggle')
                 if not action.is_visible():
                     page.locator('#a-more').click()

@@ -147,7 +147,7 @@ def run(browser, scale=100):
             assert abs(page.evaluate(GEOMETRY)['top']) < 1, page.evaluate(GEOMETRY)
             page.evaluate('keyboardResizes.length = 0')
             # Reopen with the keyboard already up and restore the active screen.
-            page.locator('#a-term').click()
+            page.locator('#a-chat').click()
             page.locator('#a-term').click()
             page.wait_for_timeout(300)
             reopened = page.evaluate(GEOMETRY)

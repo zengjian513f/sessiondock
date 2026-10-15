@@ -184,7 +184,7 @@ def check_head(page, width, tier, tiers, key, meta_order):
     # Bug reports are an optional integration; a disabled one leaves no action.
     action_order = [i for i in state["globals"] + ACTION_ORDER if i != "report-bug" or state["bug_reports"]]
     priority = [i for i in action_order if i not in ('a-session-action', 'a-session-info')] + meta_order
-    inline_actions = [i for i in state["inline"] if i not in ("a-term", "a-more", "session-resources")]
+    inline_actions = [i for i in state["inline"] if i not in ("a-chat", "a-term", "a-info", "a-resources", "a-more", "session-resources")]
     placed = inline_actions + state["brief"]
     assert placed == priority[:len(placed)], (where, placed, priority, state)
     assert state["brief"] + state["menu_meta"] == meta_order, (where, state)

@@ -114,7 +114,7 @@ def main():
                 resume_codex(page, uid)
                 xterm_includes(page, 'Context 32% used · Ready')
                 xterm_includes(page, 'Context 27% used · Working')
-                page.locator('#a-term').click()
+                page.locator('#a-chat').click()
                 page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
                 build = context.request.get(base + '/api/meta').json()['build']
                 checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': build}).json()
@@ -153,7 +153,7 @@ def main():
                 xterm_includes(page, 'Select Model and Effort')
                 page.locator('#termpane .xterm-helper-textarea').press('Escape')
                 page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
-                page.locator('#a-term').click()
+                page.locator('#a-chat').click()
                 # Audit every known built-in and each opted-in argument form
                 # by typing and submitting through the real composer.
                 manifest = json.loads((REPO / 'tests/fixtures/codex_send_commands.json').read_text())
@@ -194,7 +194,7 @@ def main():
                     print(f'native Codex click-to-clear: {(time.monotonic() - started)*1000:.0f} ms', flush=True)
                     page.locator('#a-term').click()
                     xterm_includes(page, '> ' + text)
-                    page.locator('#a-term').click()
+                    page.locator('#a-chat').click()
                     users = [r['content'][0]['text'] for r in user_records(rollout)]
                     assert users.count(text) == 1, users
                     # Replaying a completed request only reads its receipt.

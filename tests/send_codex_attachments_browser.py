@@ -121,7 +121,7 @@ def main():
                 assert multiline.value.status == 200, multiline.value.text()
                 page.locator('#a-term').click()
                 xterm_includes(page, '> report task')
-                page.locator('#a-term').click()
+                page.locator('#a-chat').click()
                 # Count the critical path and hold the post-send draft save.
                 # A slow cleanup must not keep the successful send spinning.
                 page.locator('#cinput').fill('latency regression')
@@ -197,7 +197,7 @@ def main():
                 page.locator('#a-term').click()
                 xterm_includes(page, '> Please inspect both images')
                 xterm_includes(page, '附件2:')
-                page.locator('#a-term').click()
+                page.locator('#a-chat').click()
                 expect(page.locator('#composer')).to_be_visible()
                 page.locator('#cadd').click()
                 with page.expect_file_chooser() as chooser:
@@ -215,7 +215,7 @@ def main():
                 assert len(note_paths) == 1 and note_paths[0].read_bytes() == b'text attachment bytes', note_paths
                 page.locator('#a-term').click()
                 xterm_includes(page, '> Please read the text file')
-                page.locator('#a-term').click()
+                page.locator('#a-chat').click()
                 expect(page.locator('[data-attach="pdf"]')).to_have_count(0)
                 # Android without the document API: the generic file input must
                 # request all openable files without enabling media capture intents.
@@ -232,7 +232,7 @@ def main():
                     if width == 390:
                         page.locator('#side .item.sel').click()
                         if page.locator('#termpane').is_visible():
-                            page.locator('#a-term').click()
+                            page.locator('#a-chat').click()
                     files = [
                         {'name': f'paper-{width}.pdf', 'mimeType': 'application/pdf', 'buffer': pdf},
                         {'name': f'notes-{width}.txt', 'mimeType': 'text/plain', 'buffer': b'notes'},
@@ -254,7 +254,7 @@ def main():
                         page.set_viewport_size({'width': 1280, 'height': 900})
                         page.locator('#a-term').click()
                         xterm_includes(page, 'Ask Codex to do anything')
-                        page.locator('#a-term').click()
+                        page.locator('#a-chat').click()
                     page.locator('#cinput').fill(f'Read the files selected at {width}px')
                     page.evaluate('async () => await composerDraftWrites')
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=30000) as generic_sent:
@@ -266,7 +266,7 @@ def main():
                         assert len(paths) == 1 and paths[0].read_bytes() == file['buffer'], paths
                     page.locator('#a-term').click()
                     xterm_includes(page, f'> Read the files selected at {width}px')
-                    page.locator('#a-term').click()
+                    page.locator('#a-chat').click()
                     print(f'PASS generic file menu/staging at {width}px: PDF, text, extensionless bytes and PNG; native send and exact bytes', flush=True)
 
                 # Stub only the OS picker boundary. Actual clicks, File objects,
@@ -352,7 +352,7 @@ def main():
                         page.locator('#a-term').click()
                         xterm_includes(page, 'Do you trust this directory?')
                         page.locator('.xterm-helper-textarea').last.press('Enter')
-                        page.locator('#a-term').click()
+                        page.locator('#a-chat').click()
                         page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
                         # Refresh loses all File objects and frontend aliases.
                         page.reload(wait_until='domcontentloaded')

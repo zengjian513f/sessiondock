@@ -237,7 +237,7 @@ def check_browser(browser, root, config):
                 page.wait_for_function("!!T.views.get(T.name)?.inputLease?.token")
                 page._sessiondock_claiming = False
                 before_dialogs = len(page._sessiondock_dialogs)
-                page.locator("#a-term").click()
+                page.locator("#a-chat").click()
                 expect(page.locator("#composer")).to_be_visible()
                 page.locator("#cinput").fill("keep draft while cancelling")
                 if disconnect == "background":

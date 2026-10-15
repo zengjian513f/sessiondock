@@ -522,7 +522,7 @@ def main(binary=BINARY):
                     # console button repaint must not bring back the parent's editor or its
                     # CLI input notice.
                     if page.locator("#termpane").is_visible():
-                        page.locator("#a-term").click()
+                        page.locator("#a-chat").click()
                     expect(page.locator("#composer")).to_be_visible()
                     page.locator('#side .item.agent[data-agent="a1b2c3d4e5f6a7b8c"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic background result")
@@ -575,7 +575,7 @@ def main(binary=BINARY):
                         wait_xterm(page, "RS_IDLE" if command == "idle" else "RS_SCREEN_" + command)
                         page.wait_for_function("([uid, phase]) => cache.get(uid)?.cli?.instance?.phase === phase",
                                                arg=[codex_uid, phase], timeout=20000)
-                        page.locator("#a-term").click()
+                        page.locator("#a-chat").click()
                         if phase:
                             expect(page.locator("#activity")).to_have_text("正在压缩上下文…")
                             for width, theme in [(1280, 'dark'), (1280, 'light'), (390, 'dark'), (390, 'light')]:
@@ -583,7 +583,7 @@ def main(binary=BINARY):
                                 if width == 390 and not page.locator("#activity").is_visible():
                                     page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
                                 if width == 390 and page.locator("#termpane").is_visible():
-                                    page.locator("#a-term").click()
+                                    page.locator("#a-chat").click()
                                 observed = page.evaluate("uid => cache.get(uid).cli.observed_at", codex_uid)
                                 page.wait_for_function("([uid, at]) => cache.get(uid)?.cli?.observed_at > at && cache.get(uid)?.cli?.instance?.phase === 'compacting'",
                                                        arg=[codex_uid, observed], timeout=20000)

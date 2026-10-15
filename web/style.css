@@ -2467,3 +2467,6 @@ header .btn[data-session-docked] { display: none; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
   color: var(--muted); font-size: 11.5px; line-height: 20px;
 }
+
+/* Reuse the toolbar segmented control for the four session view entries. */
+.session-views button { width: 28px; min-width: 28px; padding: 4px; }

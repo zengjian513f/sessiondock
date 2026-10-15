@@ -79,7 +79,7 @@ def run(browser):
             page.locator('[data-term-key="PPage"]').click()
             delivered(b'\x1b[5;3~')
             alt.click()
-            page.locator('#a-term').click()
+            page.locator('#a-chat').click()
             page.locator('#a-term').click()
             expect(alt).to_have_attribute('aria-pressed', 'false')
             assert not errors, errors

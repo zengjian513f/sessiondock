@@ -58,7 +58,9 @@ def live_rotation(browser, hub_mode):
                 page.locator(f'#side .item[data-uid="{view_uid(guard_uid)}"]').click()
                 page.locator("#a-term").click()
                 page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
-                expect(page.locator("#a-term")).to_have_attribute("aria-label", "切换到对话")
+                expect(page.locator("#a-term")).to_have_attribute("aria-pressed", "true")
+                page.locator("#a-term").click()
+                expect(page.locator("#a-term")).to_have_attribute("aria-pressed", "true")
                 original = page.evaluate("({name:T.name, instance:T.views.get(T.name).instanceId})")
                 initial_controls = list(controls)
                 # Retain object identities only for assertions; all view changes
@@ -99,13 +101,13 @@ def live_rotation(browser, hub_mode):
                     # mock terminal response can establish the new association.
                     page.evaluate("async () => { await loadSessions(true); await loadTermList(); }")
                     page.wait_for_function("uid => S.sel === uid && T.uid === uid", arg=uid)
-                    expect(page.locator("#a-term")).to_have_attribute("aria-label", "切换到对话")
-                    page.locator("#a-term").click()
+                    expect(page.locator("#a-term")).to_have_attribute("aria-pressed", "true")
+                    page.locator("#a-chat").click()
                     expect(page.locator("#msgs")).to_be_visible()
                     expect(page.locator("#msgs")).to_contain_text(f"Rotated conversation {generation}")
-                    expect(page.locator("#a-term")).to_have_attribute("aria-label", "切换到终端")
+                    expect(page.locator("#a-term")).to_have_attribute("aria-pressed", "false")
                     page.locator("#a-term").click()
-                    expect(page.locator("#a-term")).to_have_attribute("aria-label", "切换到对话")
+                    expect(page.locator("#a-term")).to_have_attribute("aria-pressed", "true")
                     assert page.evaluate("T.ws === window.rotationSocket && T.views.get(T.name) === window.rotationView")
                     assert page.evaluate("({name:T.name, instance:T.views.get(T.name).instanceId})") == original
                     assert controls == initial_controls, controls
