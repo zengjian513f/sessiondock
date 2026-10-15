@@ -60,8 +60,12 @@
       const next = await request(`api/session/info?${new URLSearchParams({uid})}`);
       if (version !== sequence) return;
       data = next; render();
+      if (embedded) parent.sessionContentLoad(document, 'ready');
       SessionDockResearch.load(data.session);
-    } catch (error) { if (version === sequence) $('#info-status').textContent = `读取失败：${error.message}`; }
+    } catch (error) { if (version === sequence) {
+      $('#info-status').textContent = `读取失败：${error.message}`;
+      if (embedded) parent.sessionContentLoad(document, 'error');
+    } }
     finally { if (version === sequence) $('#info-refresh').disabled = false; }
   }
   function choices() {

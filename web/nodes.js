@@ -94,10 +94,79 @@ function paintConsoleAvailability(button, uid, agent = null) {
 }
 
 // Auxiliary views share the conversation's content area without disposing its state.
+// Layout metadata only: no DOM text, native paths or credentials.
+function contentElementState(element) {
+  if (!element) return null;
+  const style = element.ownerDocument.defaultView.getComputedStyle(element);
+  const rect = element.getBoundingClientRect();
+  const visible = element.checkVisibility ? element.checkVisibility({checkOpacity: true, checkVisibilityCSS: true})
+    : style.visibility === 'visible' && style.opacity !== '0';
+  return {visible: visible && rect.width > 0 && rect.height > 0,
+    display: style.display, overflow_x: style.overflowX, overflow_y: style.overflowY,
+    client_width: element.clientWidth, client_height: element.clientHeight,
+    scroll_width: element.scrollWidth, scroll_height: element.scrollHeight,
+    scroll_left: Math.round(element.scrollLeft), scroll_top: Math.round(element.scrollTop)};
+}
+
+function sessionContentLoad(doc, state) {
+  if (SessionContentView.pane?.querySelector('iframe')?.contentDocument !== doc) return;
+  SessionContentView.receipt('loaded', {state});
+}
+
 const SessionContentView = {
   kind: '', uid: '', agent: null, pane: null,
+  scrollElement() {
+    return this.kind === 'info' ? this.pane?.querySelector('iframe')?.contentDocument?.scrollingElement
+      : this.pane?.querySelector('.sr-embedded');
+  },
+  snapshot() {
+    const doc = this.pane?.querySelector('iframe')?.contentDocument;
+    return {kind: this.kind, pane: contentElementState(this.pane),
+      scroll: contentElementState(this.scrollElement()),
+      ...(doc ? {html: contentElementState(doc.documentElement), body: contentElementState(doc.body)} : {})};
+  },
+  receipt(event, extra = {}) {
+    if (!SessionDockCapabilities.allows('audit')) return;
+    try {
+      browserAuditEvent(`content_view.${event}`, {...this.snapshot(), ...extra});
+      scheduleBrowserSnapshot(`content-${event}`);
+    } catch { /* diagnostics must not interrupt view changes or content loading */ }
+  },
+  flushWheel() {
+    clearTimeout(this.wheelTimer); this.wheelTimer = 0;
+    const pending = this.wheelPending; this.wheelPending = null;
+    if (!pending) return;
+    const after = contentElementState(this.scrollElement());
+    const moved = pending.moved || !!after && (after.scroll_top !== pending.before?.scroll_top || after.scroll_left !== pending.before?.scroll_left);
+    this.receipt('scroll', {...pending, after, moved, duration_ms: Math.round(performance.now() - pending.started)});
+  },
+  watchWheel(target) {
+    this.wheelController?.abort();
+    this.wheelController = new AbortController();
+    target.addEventListener('scroll', () => {
+      const pending = this.wheelPending, element = this.scrollElement();
+      if (pending && element && (Math.round(element.scrollTop) !== pending.before?.scroll_top
+          || Math.round(element.scrollLeft) !== pending.before?.scroll_left)) pending.moved = true;
+    }, {passive: true, capture: true, signal: this.wheelController.signal});
+    target.addEventListener('wheel', event => {
+      if (!SessionDockCapabilities.allows('audit')) return;
+      if (!this.wheelPending) {
+        this.wheelPending = {before: contentElementState(this.scrollElement()), attempts: 0,
+          delta_x: 0, delta_y: 0, started: performance.now()};
+        // One fixed window, never one receipt per frame or a success polling loop.
+        this.wheelTimer = setTimeout(() => this.flushWheel(), 1000);
+      }
+      this.wheelPending.attempts++;
+      this.wheelPending.delta_x += Math.round(event.deltaX);
+      this.wheelPending.delta_y += Math.round(event.deltaY);
+      this.wheelPending.delta_mode = event.deltaMode;
+    }, {passive: true, capture: true, signal: this.wheelController.signal});
+  },
   close() {
     if (!this.kind) return;
+    this.flushWheel();
+    this.receipt('changed', {action: 'close'});
+    this.wheelController?.abort();
     this.kind = '';
     this.themeObserver?.disconnect();
     SessionDockResources.closeEmbedded();
@@ -132,15 +201,21 @@ const SessionContentView = {
         if (frame.contentDocument?.documentElement)
           frame.contentDocument.documentElement.dataset.theme = document.documentElement.dataset.theme;
       };
-      frame.onload = syncTheme;
+      frame.onload = () => {
+        syncTheme();
+        if (frame.contentDocument) this.watchWheel(frame.contentDocument);
+        this.receipt('loaded', {state: 'document'});
+      };
       const observer = new MutationObserver(syncTheme);
       observer.observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
       this.themeObserver?.disconnect(); this.themeObserver = observer;
       this.pane.append(frame);
     } else {
+      this.watchWheel(this.pane);
       SessionDockResources.open(S.sessions.find(row => row.uid === uid) || {uid}, this.pane);
     }
     renderTakeoverBtn();
+    this.receipt('changed', {action: 'open'});
   },
 };
 

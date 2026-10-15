@@ -421,6 +421,11 @@ DELTA（BUG-20261014-151938-1ad4cb）：后台能力/迁移任务刷新不得关
 [`tests/session_menu_refresh_browser.py`](../tests/session_menu_refresh_browser.py) 通过真实 Hub
 迁移任务 HTTP 刷新验证 675/390/1280 px、明暗主题下的菜单保持、焦点与关闭/导航操作。
 
+DELTA（BUG-20261015-135638-c5bbf6）：信息页根文档允许垂直滚动，嵌入时内容在固定会话标题栏下滚动。
+资源页沿用现有滚动容器。两个视图的长内容必须能用实际鼠标滚轮到达底部；不得仅以
+`focus` 或程序滚动验证可达性。宽窄屏、明暗、缩放、来回切换与读取失败后刷新由
+[`tests/content_scroll_browser.py`](../tests/content_scroll_browser.py) 覆盖。
+
 ### 新建会话
 
 `#new-session-dialog`（`openNewSessionDialog` / `createNewSession`）。来源：Claude（默认）、Codex、Grok、OpenCode、SSH。Hub 上先选机器。模型和推理强度按该 CLI 自己的目录（`createModelPicker`，`GET api/term/models`），可搜索。记忆的模型和 effort 按 `storeKey` 写入浏览器。工作目录：最近 8 条（`newDirs` 或 Hub 的 `newDirs.<nodeId>`）、常用目录、Tab 补全（`GET api/term/complete-dir`）。**DELTA：**Hub 新建目录候选还包含其他机器的会话目录和保存的近期目录，但须经当前所选机器确认存在；路径去重，未确认或不存在的跨机器路径不加入。打开弹窗及切换机器时重新检查，旧响应不能覆盖新列表，候选更新保留用户已输入的文字。创建后侧栏出现待落盘行，阶段文案来自 `pendingStageMessage` / `workerStatusMessage`。可停止、删除或丢弃。记录还没出现时有明确缺失文案（`pendingRecordMissing`）。启动回执在 Hub 列表不完整时仍以真实退出为准。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)、[`tests/pending_create_discard_browser.py`](../tests/pending_create_discard_browser.py)、[`tests/new_session_model_browser.py`](../tests/new_session_model_browser.py)、[`tests/new_session_follow_browser.py`](../tests/new_session_follow_browser.py)、[`tests/lifecycle_cli_browser.py`](../tests/lifecycle_cli_browser.py)。
