@@ -12,7 +12,8 @@ Hub 自身**无鉴权**，只 loopback 绑定，放在**已鉴权的反代**后�
 
 ## 边界
 
-- 生产发布必须同批部署 Hub 和所有在线节点。
+- 生产发布同批尝试 Hub 和所有在线节点；至少一台节点与 Hub 部署、重启及健康检查
+  成功即满足完成条件，其余目标记录待补发，不反复轮询。详见 [部署合同](deployment.md)。
 - Hub 是独立二进制 `sessiondock-hub`，**不共享节点的任何私有目录**：不读会话根、host、delivery、
   lifecycle、state、audit（节点的）。它只拥有自己的注册表、缓存目录和（可选）审计目录。
 - 注册是**服务器端操作**：`sessiondock-hub register/remove/list`，网页上没有注册路由。节点凭据从

@@ -20,10 +20,11 @@ set "RUSTDOC=%SD_TOOLCHAIN%\bin\rustdoc.exe"
 
 文件缺失或版本检查失败时停止。`rustup which` 仅用于诊断。
 
-## 2. 在独立构建目录中构建当前工作区
+## 2. 在独立目录中构建选定源码
 
-复制当前工作区的全部内容，包括未提交改动。独立目录只防止构建污染运行目录；
-不得借此筛选源码。不要在生产运行目录中执行 Cargo。
+统一用 [部署工具](deployment.md) 生成源码快照：默认 HEAD，仅加入 `--allow-dirty PATH`
+明确点名的未提交文件；其他会话的改动不进入产物。Windows 从同一快照原生构建，
+静态文件也取自该快照。不要在生产运行目录中执行 Cargo。
 
 ```bat
 set "SD_SOURCE=<independent-build-directory>"
@@ -65,7 +66,7 @@ copy /y "%SD_RUNTIME%\bin\sessiondock.exe" "%SD_BACKUP%\sessiondock.exe"
 4. 用只读或合成探针验证修复；不要创建付费会话或真实附件。
 5. 记录回滚目录、版本号、健康结果和平台限制；新工作写入 `TODO.md`。
 
-按当前工作区部署有改动的静态文件和 EXE。复制前确认构建输入未变化。
+静态文件和 EXE 必须来自同一份选定源码快照，不混入工作区后续改动。
 
 ## 5. 用 deploy.py 部署
 

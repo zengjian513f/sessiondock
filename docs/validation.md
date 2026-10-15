@@ -14,10 +14,7 @@ python3 tests/run_validation.py --only legacy_browser
 ```
 
 `--tags` defaults to `rust,python`. Validation is by headless Chromium browser
-suites only: on 2026-10-06 the unit tests (Rust `#[test]` modules,
-`crates/*/tests`, Node `*_contract.mjs`, Python `unittest`), the HTTP-only
-`*_suite.py` scripts, the Python-oracle `*_parity.py` tools and the benchmarks
-and probes were removed. `--only NAME[,NAME…]` and `--skip`
+suites. `--only NAME[,NAME…]` and `--skip`
 filter by suite name. `--keep-going` continues after a failure. Per-suite logs
 go under `target/validation/<stamp>/`. Rust runs first as parallel lanes that
 share no cargo build directory (`cargo_clippy`; `cargo_build`;
@@ -42,15 +39,9 @@ end in Chromium. If no suite covers it, add or extend one. Docs-only and
 deploy-script-only work run the doc checks (`check_docs_links.py`,
 `check_agents_md.py`).
 
-**The repository has no unit tests or non-browser test suites; do not add any.** A 2026-10-06 audit
-found every failing unit test — 15 Node contract, 21 `cargo test` and one Python
-unittest failure — was a test not updated after intentional changes (none was a
-product bug), while the regressions that mattered were caught by browser
-suites. All Rust `#[test]` modules and `crates/*/tests/*.rs`, the
-`tests/*_contract.mjs` files and the Python `unittest` suites were then removed.
-The same day the HTTP-only suites, oracle parity tools, benchmarks and probes
-followed, so that only browser suites remain. Cover new behavior by adding or
-extending a browser suite.
+**Do not add unit tests or non-browser test suites.** Cover new behavior by
+adding or extending a browser suite. For the historical removal and its audit,
+consult [historical lessons](delegation.md#历史踩坑) only when relevant.
 
 The frontend `web/` is served as committed and needs no build.
 `--web-dir` (or `SESSIONDOCK_TEST_WEB_DIR`) points the browser suites at another

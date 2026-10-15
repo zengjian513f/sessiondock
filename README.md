@@ -23,7 +23,7 @@ crates/
 web/                 前端（纯 JS 静态资源，无构建步骤）
 reference/
   legacy-web/        原前端的冻结快照，仅作迁移参考
-tests/               实际浏览器操作、协议验证和可选 Python fixture 差分
+tests/               Chromium 浏览器套件、共享夹具与静态检查工具
 docs/                当前架构、协议、运维和验证合同
 ```
 
@@ -34,7 +34,7 @@ docs/                当前架构、协议、运维和验证合同
 以下命令从仓库根目录执行。
 
 ```sh
-cargo run -p sessiondock --locked
+cargo run -p sessiondock --bin sessiondock --locked
 ```
 
 打开 <http://127.0.0.1:8741>。未配置数据根时列表确实为空，不自动扫描
@@ -48,7 +48,7 @@ CLI home 或原项目。普通监听只允许 loopback，Host 接受本地地址
 SESSIONDOCK_CLAUDE_ROOT=crates/sessiondock/tests/fixtures/claude \
 SESSIONDOCK_CODEX_ROOT=crates/sessiondock/tests/fixtures/codex \
 SESSIONDOCK_GROK_ROOT=crates/sessiondock/tests/fixtures/grok \
-cargo run -p sessiondock --locked
+cargo run -p sessiondock --bin sessiondock --locked
 ```
 
 以上是 POSIX shell 写法；PowerShell 可逐个设置对应 `$env:SESSIONDOCK_*` 后
@@ -84,8 +84,11 @@ cargo run -p sessiondock --locked
 
 ## 构建与检查
 
-仓库只用 headless Chromium 浏览器测试验证：改动用覆盖该功能的浏览器测试验证（没有就补），不要新增单元测试或非浏览器测试。2026-10-06 核查发现 15 项 Node 合同、21 项 `cargo test` 和 1 项 Python unittest 失败全是测试没跟上有意的改动，没有一项是程序 bug，真正的问题都由浏览器测试发现；随后全部单元测试（Rust `#[test]`/`crates/*/tests`、`tests/*_contract.mjs`、Python unittest）、只走 HTTP 的 `*_suite.py`、Python oracle 差分工具（`*_parity.py`）以及基准和探针脚本均已删除。共享夹具在 `tests/*_fixtures.py`。
-全量清扫是 `python3 tests/run_validation.py`。
+功能与缺陷通过覆盖实际用户路径的 headless Chromium 套件验证；不要新增单元测试或非浏览器测试。
+共享夹具在 `tests/*_fixtures.py`，套件选择见 [验证合同](docs/validation.md)。
+纯文档改动运行 `python3 tests/check_docs_links.py` 和 `python3 tests/check_agents_md.py`；
+全量验证入口是 `python3 tests/run_validation.py`。
+历史踩坑与委派记录见 [delegation.md](docs/delegation.md)，仅在相关问题时查阅。
 
 ```sh
 cargo build --workspace --release --locked

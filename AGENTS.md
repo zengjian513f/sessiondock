@@ -25,7 +25,7 @@
   Claude `claude-haiku-4-5-20251001`, Codex `gpt-5.6-luna`, or Grok `grok-4.6`
   at low effort. Pass the model on the command line, assert the actual model,
   and use temporary homes. Never change everyday defaults or fall back to a
-  costlier model. See `~/.claude/cli-model-isolation.md`.
+  costlier model. See `/lyra-share/agent-rules/references/cli-model-isolation.md`.
 - Never commit deployment addresses, personal absolute paths, credentials,
   runtime data, build outputs, or local environment files.
 - `origin` is `zengjian513f/sessiondock`. Every completed change must be
@@ -110,15 +110,10 @@
   exists, add or extend one.
   Playwright Chromium is required; fixtures are temporary. A screenshot of a
   render is not enough.
-- Validation is by headless Chromium browser suites only. The repository has
-  no unit tests: Rust `#[test]` modules and `crates/*/tests`, Node
-  `*_contract.mjs` and Python `unittest` suites were removed on 2026-10-06
-  after an audit found every failing unit test (15 Node contract, 21
-  `cargo test`, 1 Python unittest) was stale, never a product bug, while real
-  regressions were caught by browser suites. The HTTP-only `*_suite.py`
-  scripts, the Python-oracle `*_parity.py` tools, benchmarks and probes were
-  removed the same day. Do not add unit tests or non-browser suites; add or
-  extend a browser suite instead. Shared helpers live in `tests/*_fixtures.py`.
+- Behavioral validation uses headless Chromium browser suites. Do not add unit
+  tests or non-browser suites; add or extend a browser suite instead. Shared
+  helpers live in `tests/*_fixtures.py`. Historical lessons are in
+  [docs/delegation.md](docs/delegation.md); consult them only for related issues.
 - Docs-only and deploy-script-only changes run the doc checks
   (`check_docs_links.py`, `check_agents_md.py`), not a token browser run. Anything the page can show still needs the browser path.
 - Full sweep: `python3 tests/run_validation.py`. Use `--list`, `--dry-run`,
