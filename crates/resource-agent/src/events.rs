@@ -27,13 +27,15 @@ pub fn start(uid: u32, sender: SyncSender<Event>, lost: Arc<AtomicU64>) -> std::
         include_str!("connections.bt")
     )
     .replace("TARGET_UID", &uid.to_string());
-    let mut child = Command::new("/usr/bin/bpftrace")
-        .args(["-q", "-B", "line", "-e", &script])
-        .env("BPFTRACE_MAX_STRLEN", "96")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut child = Command::new(
+        std::env::var_os("RESOURCE_AGENT_BPFTRACE").unwrap_or_else(|| "/usr/bin/bpftrace".into()),
+    )
+    .args(["-q", "-B", "line", "-e", &script])
+    .env("BPFTRACE_MAX_STRLEN", "96")
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()?;
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
     let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as u64;
@@ -46,13 +48,7 @@ pub fn start(uid: u32, sender: SyncSender<Event>, lost: Arc<AtomicU64>) -> std::
     let boot_epoch = crate::server::now() - boot.tv_sec as f64 - boot.tv_nsec as f64 / 1e9;
     let errors = lost.clone();
     std::thread::spawn(move || {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            // Expose loss/degradation without exporting commands or environment.
-            if !line.trim().is_empty() {
-                errors.fetch_add(1, Ordering::Relaxed);
-                eprintln!("kernel collector: {line}");
-            }
-        }
+        crate::runtime_log::drain_diagnostics(stderr, "resource.collector_stderr", &errors);
     });
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {

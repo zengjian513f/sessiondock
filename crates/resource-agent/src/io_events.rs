@@ -82,20 +82,7 @@ pub fn start(uid: u32, sender: SyncSender<Event>, lost: Arc<AtomicU64>) -> std::
     let stderr = child.stderr.take().unwrap();
     let errors = lost.clone();
     std::thread::spawn(move || {
-        let mut logged = false;
-        for line in BufReader::new(stderr).lines() {
-            if !matches!(line, Ok(ref line) if line.trim().is_empty()) {
-                // libbpf diagnostics imply incomplete coverage; don't relay raw
-                // kernel payloads or unbounded repeated diagnostics.
-                errors.fetch_add(1, Ordering::Relaxed);
-                if !logged {
-                    if let Ok(ref line) = line {
-                        eprintln!("I/O helper: {}", line.chars().take(400).collect::<String>());
-                    }
-                    logged = true;
-                }
-            }
-        }
+        crate::runtime_log::drain_diagnostics(stderr, "resource.io_helper_stderr", &errors);
     });
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {

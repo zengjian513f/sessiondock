@@ -101,7 +101,11 @@ impl Client {
             self.dead.store(true, Ordering::Release);
             drop(queue);
             self.disconnect();
-            eprintln!("attach output disconnected: queue limit exceeded");
+            crate::runtime_log::emit(
+                "warn",
+                "pty.attach_disconnected",
+                serde_json::json!({"reason":"queue_limit","client_id":self.id}),
+            );
             return false;
         }
         queue.bytes += bytes;
@@ -166,7 +170,11 @@ impl Client {
                 }
             };
             if self.write_frame(&mut stream, &frame).is_err() {
-                eprintln!("attach output disconnected: write failed or deadline expired");
+                crate::runtime_log::emit(
+                    "warn",
+                    "pty.attach_disconnected",
+                    serde_json::json!({"reason":"write_failed_or_deadline","client_id":self.id}),
+                );
                 self.disconnect();
                 return;
             }

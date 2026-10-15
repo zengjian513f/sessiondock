@@ -399,3 +399,69 @@ window. Thus the old bundle alone cannot prove the precise label rendered at
 report time. The new paired snapshots make browser/server disagreement directly
 inspectable. The native Codex browser suite exercises interruption, reload,
 report submission and persisted metadata without logging message text.
+
+## Process-owned runtime diagnostics
+
+The node, detached PTY hosts and resource collector share the metadata writer in
+[`crates/runtime_log.rs`](../crates/runtime_log.rs). This extends ordinary runtime
+logging; browser/audit and Hub audit retention are unchanged.
+
+| Process | Default sink and correlation |
+| --- | --- |
+| Node | `SESSIONDOCK_STATE_DIR/runtime-logs`; HTTP keeps page/trace, method, path without query, status and duration. Without a state directory, stderr remains caller-owned. `SESSIONDOCK_RUNTIME_LOG_DIR` explicitly selects a private directory; `-` selects external stderr. |
+| PTY host | `<explicit --dir>/runtime-logs`, opened by the host itself; name, instance ID, optional UID, PID, attachment client ID and elapsed time. No service-owned pipe, stdout or local wire change. |
+| resource-agent | `--state` with extension replaced by `runtime-logs`; node ID, PID, local request sequence, operation, duration and error kind. Collector diagnostics retain byte/loss counts only, never raw stderr. `RESOURCE_AGENT_BPFTRACE` can select an administrator-provided collector executable (default `/usr/bin/bpftrace`); browser tests use a local fake emitting no kernel observations. |
+| Hub runtime / external proxy / old journal | Existing stderr or external configuration. Shared journal cannot safely be expired by project; no global vacuum or proxy policy change is made. Hub audit has its separate existing writer. |
+
+Records include UTC `ts` and receipt `timestamp_ms`. Host open/close, startup/exit,
+output delivery failure and screen reset are recorded; successful terminal
+frames are not. Resource startup/exit, collector ready/failure, probe outcome,
+slow/error local requests and persistence failures are recorded. Successful
+resource polling produces no event. Local resource request IDs do not claim to
+be browser trace IDs: correlate via node, operation and time. The PTY wire is
+unchanged; host client IDs are local, joined to node attachment diagnostics by
+host identity and time, not a fabricated end-to-end connection ID.
+
+Admission is nonblocking, bounded by 1,024 queued items and 8 MiB plus one
+in-flight item. A worker retains at most 128 aggregation keys. Diagnostic records over 16 KiB
+are counted as dropped; business inputs are unaffected. The first event
+is delivered immediately; repeats of the same level/event/code/status/path/source
+are summarized after five seconds, with `repeat_count` (additional events), first
+receipt time/trace, last receipt fields and elapsed time. Correlation IDs do not
+defeat aggregation. Dropped records, failed writes, cleanup errors and all
+warning/error event counts remain cumulative, including failures while the sink
+is unavailable. `log.delivery` retries changed totals at most once per minute;
+failed summary writes never acknowledge totals. Node health and collector health
+also expose counters. Shutdown drains normal work for at most one second;
+a stuck filesystem or external stderr thread cannot hold host/service exit.
+A process killed without graceful shutdown cannot flush pending diagnostics.
+
+Only `runtime-<pid>-<minute>.jsonl` files in these dedicated directories are
+owned. Each write reopens the current minute segment, so rotation cannot strand
+logging on an unlinked descriptor. Maintenance runs at startup and every
+60 seconds on the worker, including idle periods; the node also maintains its
+configured host directory when no hosts remain. Active minute segments are
+skipped. Valid records expire by receipt time after 24 hours. Mixed files retain
+recent records byte-for-byte; malformed, invalid-UTF8 and partial bytes use the
+file mtime plus 24 hours. Rewrites preserve mtime. Strictly named orphan cleanup
+temporaries expire by mtime. Cache entries use size/mtime/earliest expiry, bounded
+to 4,096 files; changed or expired segments are reread, and restart rebuilds the
+cache. Filesystem failure can extend retention; counters expose this condition.
+Normal cleanup lag is up to one minute plus the background sweep duration.
+
+The writer does not compress logs. Externally compressed/renamed files are not
+owned merely because they resemble logs, and are not silently deleted. No
+session/native records, resource attribution/usage ledgers, final screens,
+saved bug reports or shared system journals are cleanup targets. Existing
+external journal/access archives retain their external policy. Already-running
+PTY binaries keep their old logging behavior until their sessions naturally end;
+deploying the new binary does not restart those hosts.
+
+[`tests/runtime_layers_browser.py`](../tests/runtime_layers_browser.py) creates a
+fake CLI through the real page, sends input, opens/refreshes resource views,
+restarts only the private web service and reconnects to the same host. It checks
+independent log/persistence fixtures, rotation, mixed/corrupt records, actual
+idle maintenance, cleanup/sink failure, recovery and default/detailed request
+volume and response timings. External stderr failure, full-pipe saturation,
+cumulative-summary retry and bounded shutdown additionally use the existing
+[`runtime_log_fault_browser.py`](../tests/runtime_log_fault_browser.py).

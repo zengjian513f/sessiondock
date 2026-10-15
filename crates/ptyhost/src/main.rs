@@ -17,6 +17,8 @@ mod final_screen;
 mod guard;
 mod output;
 mod protocol;
+#[path = "../../runtime_log.rs"]
+mod runtime_log;
 mod session;
 mod transport;
 
@@ -166,6 +168,7 @@ fn main() {
             2
         }
     };
+    runtime_log::shutdown();
     std::process::exit(code);
 }
 
@@ -186,7 +189,21 @@ fn cmd_run(args: &Args, dir: PathBuf) -> i32 {
         .as_deref()
         .and_then(|raw| serde_json::from_str(raw).ok())
         .unwrap_or_else(|| json!({}));
-    match session::Session::spawn(
+    runtime_log::init(
+        Some(dir.join("runtime-logs")),
+        "ptyhost",
+        json!({"name":name,"instance_id":meta.get("instance_id"),"uid":meta.get("uid")}),
+    );
+    ptyhost_screen::screen::set_reset_reporter(|count, cols, rows| {
+        runtime_log::emit(
+            "error",
+            "pty.screen_reset",
+            json!({"count":count,"cols":cols,"rows":rows}),
+        )
+    });
+    runtime_log::emit("info", "pty.started", json!({}));
+    let started = std::time::Instant::now();
+    let code = match session::Session::spawn(
         name,
         args.command.clone(),
         args.cwd.clone(),
@@ -199,10 +216,20 @@ fn cmd_run(args: &Args, dir: PathBuf) -> i32 {
     ) {
         Ok(session) => session.serve(),
         Err(e) => {
-            eprintln!("ptyhost: {e}");
+            runtime_log::emit(
+                "error",
+                "pty.spawn_failed",
+                json!({"error_kind":e.kind().to_string()}),
+            );
             1
         }
-    }
+    };
+    runtime_log::emit(
+        "info",
+        "pty.stopped",
+        json!({"code":code,"duration_ms":started.elapsed().as_millis(),"delivery":runtime_log::snapshot()}),
+    );
+    code
 }
 
 fn cmd_list(dir: &Path) -> i32 {
