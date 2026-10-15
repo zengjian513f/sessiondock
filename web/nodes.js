@@ -434,6 +434,17 @@ function prepareNewNode() {
 
 // 切换机器时按目录存在性保留输入；检查期间的新输入和机器切换使旧结果失效。
 let newCwdCheck = 0;
+async function newNodeExistingDirs(paths, node = newNodeId()) {
+  try {
+    const response = await fetch(appUrl('api/term/check-dirs'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, cache: 'no-store',
+      body: JSON.stringify({paths, ...(HUB_MODE ? {_node: node} : {})}),
+    });
+    const data = await response.json();
+    return response.ok && Array.isArray(data.directories) ? data.directories : [];
+  } catch { return []; }
+}
+
 async function newNodeHasDir(path, node = newNodeId()) {
   const value = path.length > 1 ? path.replace(/\/+$/, '') : path;
   if (value === '/' || value === '~') return true;

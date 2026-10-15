@@ -195,6 +195,10 @@ pub fn router() -> Router<AppState> {
             )),
         )
         .route("/term/complete-dir", get(lifecycle::complete_dir))
+        .route(
+            "/term/check-dirs",
+            post(lifecycle::check_dirs).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
         .route("/term/models", get(lifecycle::models))
         // Machine settings: installed CLI versions and a manual update.
         .route("/clients", get(lifecycle::clients))

@@ -105,7 +105,32 @@ def main(bind_native=False, bare_shell=False):
                             continue
                         expect(page.locator("#new-session")).to_be_visible()
                         if not restarted:
-                            page.locator("#new-session").click()
+                            page.locator('#new-session').click()
+                            expect(page.locator('#new-cwd-options')).to_have_attribute('aria-busy', 'false')
+                            page.locator('#new-session-dialog .modal-close').click()
+                            # Seed a saved recent under the private test root, then
+                            # select its native row and exercise exact batch checking.
+                            page.evaluate("path => store.set('newDirs', [path])", str(root / 'work'))
+                            page.locator(f'#side .item[data-uid="{native_uid}"]').click()
+                            with page.expect_response(lambda r: urlsplit(r.url).path == '/api/term/check-dirs') as checked:
+                                page.locator('#new-session').click()
+                            assert checked.value.status == 200, checked.value.text()
+                            assert checked.value.json()['directories'] == [str(root / 'work')]
+                            page.locator('#new-cwd').fill('work')
+                            expect(page.locator('#new-cwd-options [role=option]').filter(
+                                has=page.get_by_text(str(root / 'work'), exact=True))).to_be_visible()
+                            # Exact checks have no completion count/prefix truncation.
+                            dirs = [root / 'work' / f'directory-{i}' for i in range(80)]
+                            for directory in dirs:
+                                directory.mkdir()
+                            link = root / 'work' / 'linked-directory'
+                            link.symlink_to(dirs[-1], target_is_directory=True)
+                            file = root / 'work' / 'plain-file'
+                            file.touch()
+                            existing = [str(p) for p in [*dirs, link]]
+                            result = context.request.post(base + '/api/term/check-dirs', data={
+                                'paths': [*existing, str(file), str(root / 'missing'), 'relative/path']})
+                            assert result.status == 200 and result.json()['directories'] == existing, result.text()
                             if bare_shell:
                                 page.set_viewport_size({"width":390,"height":844})
                             page.locator(f'input[name="new-source"][value="{source}"]').check()
@@ -140,7 +165,7 @@ def main(bind_native=False, bare_shell=False):
                             expect(page.locator(".new-session-wait")).to_be_hidden()
                             # Back from the phone width, the header returns its global buttons.
                             expect(page.locator(".dhead-actions #a-global-new-session")).to_have_count(0)
-                            assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : b.hasAttribute('data-session-resources') ? 'session-resources' : ''))"))==["a-more","a-session-action","a-session-toggle","a-term","report-bug"]
+                            assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : b.hasAttribute('data-session-resources') ? 'session-resources' : ''))"))==["a-chat","a-info","a-more","a-resources","a-session-action","a-session-toggle","a-term","report-bug"]
                             expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话")
                             expect(page.locator("#a-session-toggle")).to_have_attribute("aria-label","停止会话")
                             if bare_shell:

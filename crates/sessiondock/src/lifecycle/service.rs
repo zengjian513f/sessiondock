@@ -417,6 +417,32 @@ impl LifecycleService {
         .await
         .map_err(|_| Error::WorkerFailed)?
     }
+
+    /// Batch exact checks for recent cwd suggestions, without scanning siblings.
+    pub async fn existing_directories(&self, paths: Vec<String>) -> Result<Vec<String>, Error> {
+        let permit = tokio::select! {
+            _ = self.stop.cancelled() => return Err(Error::Closed),
+            permit = self.admission.clone().acquire_owned() => permit.map_err(|_| Error::Closed)?,
+        };
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            paths
+                .into_iter()
+                .filter(|text| {
+                    let path = text.trim();
+                    if path.is_empty()
+                        || (path.starts_with('~') && path != "~" && !path.starts_with("~/"))
+                    {
+                        return false;
+                    }
+                    super::model::expand_user(std::path::Path::new(path))
+                        .is_some_and(|path| path.is_absolute() && path.is_dir())
+                })
+                .collect()
+        })
+        .await
+        .map_err(|_| Error::WorkerFailed)
+    }
     /// Agent CLI versions for the machine settings, probed under the same
     /// admission as the model catalog.
     pub async fn clients(&self) -> Result<Vec<super::clients::Client>, Error> {
