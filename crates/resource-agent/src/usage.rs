@@ -19,6 +19,10 @@ struct Row {
     scope: String,
     day: i64,
     cpu_seconds: f64,
+    #[serde(default)]
+    storage_write_bytes: f64,
+    #[serde(default)]
+    storage_write_observed_seconds: f64,
     gpu_seconds: BTreeMap<String, f64>,
     compute_seconds: BTreeMap<String, f64>,
     compute_observed_seconds: f64,
@@ -42,6 +46,7 @@ struct Saved {
 struct Prior {
     owner: String,
     cpu: f64,
+    write_bytes: Option<u64>,
 }
 pub struct Ledger {
     path: PathBuf,
@@ -100,7 +105,7 @@ impl Ledger {
         }
         let bindings: BTreeMap<_, _> = report.bindings.iter().map(|b| (&b.process, b)).collect();
         let mut previous = BTreeMap::new();
-        let mut groups: BTreeMap<String, (Session, String, f64, BTreeSet<String>)> =
+        let mut groups: BTreeMap<String, (Session, String, f64, BTreeSet<String>, f64, bool)> =
             BTreeMap::new();
         let mut gpu_known = BTreeSet::new();
         let mut utilization: BTreeMap<String, BTreeMap<String, Option<f64>>> = BTreeMap::new();
@@ -127,11 +132,21 @@ impl Ledger {
             } else {
                 0.
             };
+            let write_delta = if continuous {
+                self.previous
+                    .get(&sample.process)
+                    .filter(|p| p.owner == owner)
+                    .and_then(|p| sample.write_bytes.zip(p.write_bytes))
+                    .and_then(|(now, old)| now.checked_sub(old))
+            } else {
+                None
+            };
             previous.insert(
                 sample.process.clone(),
                 Prior {
                     owner: owner.clone(),
                     cpu: sample.cpu_seconds,
+                    write_bytes: sample.write_bytes,
                 },
             );
             let mut targets = BTreeMap::from([
@@ -168,11 +183,19 @@ impl Ledger {
                     gpu_known.insert(key.clone());
                 }
                 let compute = utilization.entry(key.clone()).or_default();
-                let group =
-                    groups
-                        .entry(key)
-                        .or_insert((session, scope.into(), 0., BTreeSet::new()));
+                let group = groups.entry(key).or_insert((
+                    session,
+                    scope.into(),
+                    0.,
+                    BTreeSet::new(),
+                    0.,
+                    false,
+                ));
                 group.2 += delta;
+                if let Some(bytes) = write_delta {
+                    group.4 += bytes as f64;
+                    group.5 = true;
+                }
                 if fresh {
                     for uuid in gpu.unwrap()["value"]
                         .as_array()
@@ -194,7 +217,7 @@ impl Ledger {
             }
         }
         let mut devices = BTreeMap::new();
-        for (key, (session, scope, cpu, uuids)) in groups {
+        for (key, (session, scope, cpu, uuids, writes, writes_known)) in groups {
             if continuous {
                 // Split at Beijing day boundaries; callers select local date ranges explicitly.
                 let mut start = self.at;
@@ -211,6 +234,8 @@ impl Ledger {
                             scope: scope.clone(),
                             day,
                             cpu_seconds: 0.,
+                            storage_write_bytes: 0.,
+                            storage_write_observed_seconds: 0.,
                             gpu_seconds: BTreeMap::new(),
                             compute_seconds: BTreeMap::new(),
                             compute_observed_seconds: 0.,
@@ -223,6 +248,10 @@ impl Ledger {
                         row.session.title = session.title.clone();
                     }
                     row.cpu_seconds += cpu * fraction;
+                    row.storage_write_bytes += writes * fraction;
+                    if writes_known {
+                        row.storage_write_observed_seconds += end - start;
+                    }
                     row.observed_seconds += end - start;
                     row.last_at = end;
                     if gpu_known.contains(&key) && self.gpu_known.contains(&key) {
@@ -263,7 +292,7 @@ impl Ledger {
         self.saved.updated_at = at;
     }
     pub fn view(&self) -> Value {
-        json!({"version":1,"node_id":self.saved.node_id,"started_at":self.saved.started_at,"updated_at":self.saved.updated_at,"gap_seconds":self.saved.gap_seconds,"gaps":self.saved.gaps,"rows":self.saved.rows.values().collect::<Vec<_>>(),"cpu_status":"partial","gpu_status":"estimated","compute_status":"estimated","device_models":self.saved.device_models,"timezone":"Asia/Shanghai","reason":"CPU 为已观察进程累计执行时间差，短命进程可能漏计；GPU 为计算上下文驻留采样，非独占卡时；有效计算卡时按 pmon 进程 SM 利用率估算，缺失不补零；同卡并发利用率相加后封顶，可能重叠。每日桶按北京时间划分。"})
+        json!({"version":1,"node_id":self.saved.node_id,"started_at":self.saved.started_at,"updated_at":self.saved.updated_at,"gap_seconds":self.saved.gap_seconds,"gaps":self.saved.gaps,"rows":self.saved.rows.values().collect::<Vec<_>>(),"cpu_status":"partial","storage_write_status":"partial","gpu_status":"estimated","compute_status":"estimated","device_models":self.saved.device_models,"timezone":"Asia/Shanghai","reason":"CPU 为已观察进程累计执行时间差，短命进程可能漏计；GPU 为计算上下文驻留采样，非独占卡时；有效计算卡时按 pmon 进程 SM 利用率估算，缺失不补零；同卡并发利用率相加后封顶，可能重叠。存储写入按 /proc/PID/io write_bytes 差值累计，不扣取消写入，不代表实际落盘量或完整 NFS 写入量；短命进程及未观测区间可能漏计。每日桶按北京时间划分。"})
     }
     pub fn save(&self) -> io::Result<()> {
         let tmp = self.path.with_extension("tmp");
