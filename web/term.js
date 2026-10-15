@@ -488,7 +488,7 @@ async function rebindSelectedTermSession() {
 }
 
 /** 顶栏切换前先跟进 pane 的当前分支，然后再执行原本的对话/终端切换。 */
-async function toggleLinkedTermSession(uid) {
+async function toggleLinkedTermSession(uid, terminalOnly = false) {
   const linked = linkedTermSession(uid, { followReplacement: true });
   if (!linked) return false;
   const toUid = adoptLinkedTermSession(uid, linked, 'user-toggle');
@@ -499,7 +499,8 @@ async function toggleLinkedTermSession(uid) {
   } else {
     T.uid = toUid;
   }
-  await toggleTermPane(linked.name);
+  if (terminalOnly) await openTermPane(linked.name, true, 'full');
+  else await toggleTermPane(linked.name);
   return true;
 }
 
@@ -1847,7 +1848,7 @@ function showNewSessionStage(info, {historyMode = 'push'} = {}) {
     <button class="mobile-back" title="返回会话列表" aria-label="返回会话列表">←</button>
     <h2>${sessionIconMarkup(info.source, true, true)}<span>${esc(pendingTitle)}</span></h2>
     <div class="dhead-actions" aria-label="会话操作">
-      <button class="iconbtn" id="a-term" title="切换到终端" aria-label="切换到终端">${uiIcon('terminal')}</button>
+      ${consoleButtonMarkup()}
       ${sessionActionsMarkup(`
       <button class="session-menu-action" id="a-session-toggle" type="button"></button>
       <button class="session-menu-action" data-report-bug ${bugReportsEnabled() ? '' : 'hidden'} title="报告当前会话问题"
@@ -2341,21 +2342,18 @@ function renderTakeoverBtn() {
   const b = $('#a-term');
   if (!b) return;
   const name = takenOver(S.sel);
-  const replacement = name ? null
-    : linkedTermSession(S.sel, { followReplacement: true });
   const paneOpen = !!name && !$('#termpane').classList.contains('hidden');
-  const ptyOnly = typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(S.sel);
-  const switchToChat = paneOpen && (ptyOnly ? T.mode === 'full' : (MOBILE.matches || T.mode === 'full'));
-  const terminalVisible = paneOpen && (ptyOnly || MOBILE.matches || T.mode !== 'collapsed');
-  const label = replacement ? '切换到当前会话终端'
-    : !name ? '接管会话'
-    : ptyOnly ? (switchToChat ? '切换到对话' : '切换到终端')
-    : MOBILE.matches ? (paneOpen ? '切换到对话' : '切换到终端')
-    : switchToChat ? '切换到对话' : '切换到终端';
-  b.innerHTML = uiIcon(switchToChat ? 'chat' : 'terminal');
-  b.title = b.ariaLabel = label;
+  const terminalVisible = paneOpen && (T.mode === 'full' || (MOBILE.matches && !sessionTerminalFirst(S.sel)));
+  b.innerHTML = uiIcon('terminal');
+  b.title = b.ariaLabel = '终端';
   b.setAttribute('aria-expanded', String(terminalVisible));
-  b.classList.toggle('on', !!name);
+  b.setAttribute('aria-pressed', String(terminalVisible));
+  b.classList.toggle('on', terminalVisible);
+  const chat = $('#a-chat');
+  if (chat) {
+    chat.setAttribute('aria-pressed', String(!terminalVisible));
+    chat.classList.toggle('on', !terminalVisible);
+  }
   paintConsoleAvailability(b, S.sel, S.agent);
   renderComposer();
   renderTermOutputNotice(currentTermViewObject());

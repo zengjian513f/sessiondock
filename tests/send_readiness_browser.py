@@ -421,7 +421,7 @@ def main():
                 page.set_viewport_size({'width': 390, 'height': 844})
                 page.evaluate('showMobileDetail()')
                 if page.locator('#termpane').is_visible():
-                    page.locator('#a-term').click()
+                    page.locator('#a-chat').click()
                 expect(page.locator('#cinput')).to_be_visible()
                 mobile = page.evaluate(r"""() => {
                     const input=document.querySelector('#cinput');
@@ -556,7 +556,7 @@ def main():
                         && v.lastResizeKey === before.key
                         && v.ws._resizeSpy.length === 0;
                 }""", arg=before)
-                page.locator('#a-term').click()
+                page.locator('#a-chat').click()
                 expect(page.locator('#composer')).to_be_visible()
                 expect(page.locator('#cinput')).to_be_visible()
                 probed = page.evaluate(r"""async () => {
@@ -677,7 +677,7 @@ def main():
                     assert len(force_claims) == 1 and force_claims[0]['instance_id'] == receipt['instance_id'], claims
                     assert len(other_dialogs) == 1 and '抢占' in other_dialogs[0], other_dialogs
                     expect(page_two.locator('#cinput')).to_have_value('draft after takeover')
-                    page_two.locator('#a-term').click()
+                    page_two.locator('#a-chat').click()
                     page_two.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=10000)
                     # Pure terminal CSS hides the composer via its parent.
                     checks=[]
@@ -691,7 +691,7 @@ def main():
                     assert len(checks)==before, f'hidden composer sent {len(checks)-before} CHECKs'
                     with page_two.expect_request(lambda request:
                             urlsplit(request.url).path == '/api/session/conversation/check', timeout=1400):
-                        page_two.locator('#a-term').click()
+                        page_two.locator('#a-chat').click()
                     expect(page_two.locator('#cinput')).to_be_visible()
                     page_two.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'")
                     print('PASS hidden composer: 0 CHECKs over 6.2s, immediate check on return')

@@ -97,7 +97,7 @@ def rotation(browser, hub_mode):
                 uid = view_uid(corpus.uid(CODEX_SID))
                 resume_codex(page, uid)
                 instance = page.evaluate('T.views.get(T.name).instanceId')
-                page.locator('#a-term').click()
+                page.locator('#a-chat').click()
                 if hub_mode:
                     page.set_viewport_size({'width': 390, 'height': 900})
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
@@ -135,7 +135,7 @@ def rotation(browser, hub_mode):
                     assert row['revision'] < previous_revision, row
                     assert page.evaluate('uid => T.list.find(row => row.current_uid === uid)?.instance_id', uid) == instance
                     if page.locator('#termpane').is_visible():
-                        page.locator('#a-term').click()
+                        page.locator('#a-chat').click()
                     expect(page.locator('#cinput')).to_have_value(text if generation == 1 else '')
                     text += '，现在发送'
                     page.locator('#cinput').fill(text)

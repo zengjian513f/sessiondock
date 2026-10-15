@@ -496,7 +496,7 @@ def check_shift_selection(page, context, root, keyboard, surface):
         send('touchCancel')
         print('PASS', surface, mode, 'Shift immediate local selection, pinch preemption, retained latch, no CLI bytes', flush=True)
     shift.tap()
-    page.locator('#a-term').click()
+    page.locator('#a-chat').click()
     page.locator('#a-term').click()
     assert shift.get_attribute('aria-pressed') == 'false'
 

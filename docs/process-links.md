@@ -448,7 +448,8 @@ without independent process attribution never copy the parent's usage.
 
 Clicking the sidebar resource area opens full metrics for that explicit session
 without changing the selected conversation. The area supports keyboard activation
-and has no hover tooltip; the detail header no longer has a resource button.
+and has no hover tooltip. The detail header also opens the centered resource
+dialog from its four-part conversation/terminal/info/resources control.
 
 ## Optional collector
 

@@ -94,11 +94,40 @@ function paintConsoleAvailability(button, uid, agent = null) {
 }
 
 function consoleButtonMarkup() {
-  return `<button class="iconbtn" id="a-term" type="button" title="打开控制台" aria-label="打开控制台">${uiIcon('terminal')}</button>`;
+  return `<div class="seg session-views" role="group" aria-label="会话视图">
+    <button id="a-chat" type="button" title="对话" aria-label="对话" aria-pressed="true" class="on">${uiIcon('chat')}</button>
+    <button id="a-term" type="button" title="终端" aria-label="终端" aria-pressed="false">${uiIcon('terminal')}</button>
+    <button id="a-info" type="button" title="信息" aria-label="信息">${uiIcon('info')}</button>
+    <button id="a-resources" type="button" title="资源" aria-label="资源" data-session-resources>${uiIcon('resource-cpu')}</button>
+  </div>`;
 }
 
 function bindConsoleButton(button, uid, agent = null) {
   if (!button) return;
+  const group = button.closest('.session-views');
+  if (group) {
+    group.querySelector('#a-chat').onclick = () => {
+      if (S.sel !== uid || S.agent !== agent) return;
+      if (MOBILE.matches && !sessionTerminalFirst(uid)) closeTermPane();
+      else {
+        T.mode = 'collapsed';
+        store.set('termmode', T.mode);
+        rememberTermLayout();
+        layoutTermPane();
+        renderTakeoverBtn();
+      }
+    };
+    const info = group.querySelector('#a-info');
+    const infoReason = String(uid).startsWith('tmux:') ? '会话尚未落盘，暂时没有会话信息。'
+      : agent ? '请切换到主会话查看会话信息。'
+      : SessionDockCapabilities.config.session_relations !== true ? '此服务尚未提供会话信息。' : '';
+    setControlUnavailable(info, infoReason);
+    info.onclick = () => { if (!infoReason) location.href = appUrl(`session-info.html?${new URLSearchParams({uid})}`); };
+    group.querySelector('#a-resources').onclick = () => {
+      const row = S.sessions.find(row => row.uid === uid);
+      SessionDockResources.open(row || {uid});
+    };
+  }
   button.onclick = async () => {
     const reason = consoleUnavailableReason(uid, agent, false);
     if (reason) { paintConsoleAvailability(button, uid, agent); return; }
@@ -107,7 +136,7 @@ function bindConsoleButton(button, uid, agent = null) {
     ConsoleUI.errors.delete(uid);
     paintConsoleAvailability(button, uid, agent);
     try {
-      if (linkedTermSession(uid, {followReplacement: true})) await toggleLinkedTermSession(uid);
+      if (linkedTermSession(uid, {followReplacement: true})) await toggleLinkedTermSession(uid, !!group);
       else await takeover(uid, button);
     } catch (error) {
       const message = error.message || String(error);

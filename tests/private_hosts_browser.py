@@ -43,7 +43,7 @@ def main(timeout_root=None):
                                 page = browser.new_page()
                                 page.goto(base, wait_until="networkidle")
                                 receipt = create_claude(page, base, root / "work")
-                                page.locator("#a-term").click()
+                                page.locator("#a-chat").click()
                                 page.locator("#cinput").fill("fixture cleanup probe")
                                 page.locator("#csend").click()
                                 wait_history(page, "fixture cleanup probe")

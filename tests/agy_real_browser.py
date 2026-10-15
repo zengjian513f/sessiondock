@@ -127,7 +127,7 @@ def clear_terminal(page):
 
 def ready(page):
     if not page.locator('#composer').is_visible():
-        page.locator('#a-term').click()
+        page.locator('#a-chat').click()
     expect(page.locator('#composer')).to_be_visible()
     page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'", timeout=20000)
 
@@ -154,7 +154,7 @@ def no_gateway_text(records, text):
 def refuse(page, base, name, text, records):
     """Controls are exercised first; direct HTTP also checks the server guard."""
     if not page.locator('#composer').is_visible():
-        page.locator('#a-term').click()
+        page.locator('#a-chat').click()
     page.locator('#cinput').fill(text)
     page.wait_for_function("() => composerDraft()?.inputStatus?.state !== 'ready'", timeout=15000)
     expect(page.locator('#csend')).to_be_disabled()
@@ -251,7 +251,7 @@ def run(browser, base, root, agy, records, evidence, holds):
             'argv': launches, 'fds': fds}, indent=2))
         # Expand the actual native reasoning disclosure instead of changing DOM.
         if not page.locator('#composer').is_visible():
-            page.locator('#a-term').click()
+            page.locator('#a-chat').click()
         process = page.locator('#msgs .turn-process').first
         if process.count() and 'folded' in (process.get_attribute('class') or ''):
             process.locator('.fold-toggle').first.click()
@@ -340,7 +340,7 @@ def run(browser, base, root, agy, records, evidence, holds):
             finally:
                 clear_terminal(page)
                 if not page.locator('#composer').is_visible():
-                    page.locator('#a-term').click()
+                    page.locator('#a-chat').click()
                 page.locator('#cinput').fill('')
 
         page.reload(wait_until='networkidle')

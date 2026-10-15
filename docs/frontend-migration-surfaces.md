@@ -250,7 +250,7 @@ BUG-20261008-120649-69fc59 的终端、原生历史和账本绑定一致，首�
 
 [`tests/sidebar_toggle_browser.py`](../tests/sidebar_toggle_browser.py)。
 
-会话资源对话框由 [`web/session-resources.js`](../web/session-resources.js) 现建：标题「会话资源」，范围「仅当前会话」/「包含子会话」（默认 inclusive），刷新，关闭。合计说明：只加当前会话相关机器的已知数，缺失不是零，同一进程只计一次。子代理若没有可识别进程归属，不会被拆进共享 CLI。`GET api/session/resources?uid&scope`。404 文案：「此服务尚未提供资源统计，请更新服务端。」
+会话资源对话框居中，四边保留间距，内容超过视口时内部滚动；由 [`web/session-resources.js`](../web/session-resources.js) 现建：标题「会话资源」，范围「仅当前会话」/「包含子会话」（默认 inclusive），刷新，关闭。合计说明：只加当前会话相关机器的已知数，缺失不是零，同一进程只计一次。子代理若没有可识别进程归属，不会被拆进共享 CLI。`GET api/session/resources?uid&scope`。404 文案：「此服务尚未提供资源统计，请更新服务端。」
 
 抽屉打开且约 60 秒内有可信操作、页面未休眠时，`POST api/session/resources/probe` 申请短租约；关闭、休眠或空闲会释放。状态：未探测 / 启动中 / 探测中 / 失败 / 关闭。探测失败按节点列在对话框里。
 
@@ -400,7 +400,7 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 - 手机返回列表。
 - 有子代理时，标题是下拉，切换主会话/子代理。
 - 父会话链或子会话菜单。
-- 控制台按钮（`bindConsoleButton`）。不可用时用原生 tooltip 和 `aria-description` 说明原因，不弹浮层、不打开空终端。Hub 上按节点能力灰掉：[`tests/hub_console_availability_browser.py`](../tests/hub_console_availability_browser.py)。
+- 四联视图入口按「对话、终端、信息、资源」排列，复用顶栏分段按钮。对话与终端是明确选择，重复点击终端不会切回对话；信息打开既有会话信息页，资源打开居中对话框。待落盘或能力未开放时保留信息入口并解释不可用原因。DELTA（BUG-20261015-122122-e6a37e）：替代原单一控制台切换按钮及资源右侧抽屉。控制台连接（`bindConsoleButton`）不可用时用原生 tooltip 和 `aria-description` 说明原因，不弹浮层、不打开空终端。Hub 上按节点能力灰掉：[`tests/hub_console_availability_browser.py`](../tests/hub_console_availability_browser.py)。
 - 星标、展开/折叠过程、搜索导航。
 - 冻结现场 / 恢复运行（`renderSessionFreeze`）。需要 `session_freeze`、已加载的终端列表、以及可验证的 `instance_id`。否则按钮在，但是不可用，原因分别是：正在读取、当前节点不支持、状态已失效、没有可验证实例。成功后会话区覆盖「会话已暂停」和恢复按钮，不放进全局浮层。`POST api/session/freeze`。[`tests/session_freeze_browser.py`](../tests/session_freeze_browser.py)。
 - 报告当前会话问题。

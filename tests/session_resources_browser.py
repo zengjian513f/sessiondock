@@ -31,8 +31,8 @@ def assert_drawer_layout(page, case):
       return {left:box.left, right:box.right, top:box.top, bottom:box.bottom,
               width:innerWidth, height:innerHeight, overflow:dialog.scrollWidth-dialog.clientWidth, issues};
     }''')
-    assert geometry['left'] >= -1 and abs(geometry['right'] - geometry['width']) <= 1, (case, geometry)
-    assert abs(geometry['top']) <= 1 and abs(geometry['bottom'] - geometry['height']) <= 1, (case, geometry)
+    assert geometry['left'] > 0 and abs(geometry['left'] + geometry['right'] - geometry['width']) <= 2, (case, geometry)
+    assert geometry['top'] > 0 and abs(geometry['top'] + geometry['bottom'] - geometry['height']) <= 2, (case, geometry)
     assert geometry['overflow'] <= 1 and not geometry['issues'], (case, geometry)
 
 
@@ -79,6 +79,7 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='sessiondock-resources-') as temporary, sync_playwright() as pw:
         corpus = Corpus(Path(temporary))
+        (Path(temporary) / 'state').mkdir()
         corpus.put('resources', 'codex', [
             codex_row('session_meta', {'id': 'resources', 'cwd': '/synthetic/resources', 'timestamp': '2026-09-11T10:00:00Z'}),
             codex_row('response_item', {'type': 'message', 'role': 'user', 'content': '资源统计测试：长会话标题也不能挤出刷新和关闭按钮 / synthetic-session-' * 5})], [])
@@ -87,11 +88,28 @@ def main():
             launch['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
         browser = pw.chromium.launch(**launch)
         try:
-            with isolated_server(corpus, args.binary) as (base, _):
+            with isolated_server(corpus, args.binary, state_dir=Path(temporary) / 'state') as (base, _):
                 page = browser.new_page(viewport={'width': 1280, 'height': 960})
                 page.goto(base, wait_until='networkidle')
                 page.locator('#side .item').first.click()
-                assert page.locator('#detail [data-session-resources]').count() == 0
+                assert page.locator('.session-views button').evaluate_all('(buttons) => buttons.map(b => b.getAttribute("aria-label"))') == ['对话', '终端', '信息', '资源']
+                for width, theme in [(1280, 'light'), (390, 'light'), (390, 'dark'), (1280, 'dark')]:
+                    page.set_viewport_size({'width':width, 'height':960})
+                    page.evaluate('(theme) => document.documentElement.dataset.theme = theme', theme)
+                    if not page.locator('#a-chat').is_visible():
+                        page.locator('#side .item').first.click()
+                    page.locator('#a-chat').click()
+                    expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
+                    for button in page.locator('.session-views button').all():
+                        expect(button).to_be_in_viewport()
+                    if args.screenshots:
+                        args.screenshots.mkdir(parents=True, exist_ok=True)
+                        page.screenshot(path=str(args.screenshots / f'four-views-{width}-{theme}.png'))
+                page.locator('#a-info').click()
+                page.wait_for_url('**/session-info.html?*')
+                expect(page.locator('#info-summary')).to_contain_text('resources')
+                page.go_back(wait_until='networkidle')
+                page.locator('#side .item').first.click()
                 page.get_by_role('button', name='列表资源', exact=True).click()
                 page.evaluate('''() => {
                   window.resourceCalls = [];
@@ -105,7 +123,7 @@ def main():
                       {node_id:'b',node_name:'compute-b',status:'offline',reason:'机器离线',metrics:{},diagnostic:{state:'unsupported',remaining_seconds:0}}]};
                   });
                 }''')
-                page.locator('#side .item-resources').first.click()
+                page.locator('#a-resources').click()
                 page.get_by_role('dialog').wait_for()
                 page.wait_for_function("document.querySelector('.sr-totals').textContent.includes('4.5')")
                 assert page.locator('.sr-metric[title*="NFS 探针不可用"]').count() > 0
@@ -164,6 +182,8 @@ def main():
                 page.get_by_text('compute-with-a-long-hostname-测试执行机器', exact=True).wait_for()
                 check_responsive_drawer(page, args.screenshots)
                 page.get_by_role('button', name='关闭资源面板').click()
+                if not page.locator('#side').is_visible():
+                    page.locator('.mobile-back:visible').click()
                 page.evaluate("SessionDockResources.setLoader(async () => {throw new Error('测试采集端离线')})")
                 page.locator('#side .item-resources').first.click()
                 page.get_by_text('测试采集端离线').wait_for()
