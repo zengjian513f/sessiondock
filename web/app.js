@@ -6847,6 +6847,7 @@ function head(m, total) {
         ${consoleButtonMarkup()}
         ${sessionActionsMarkup(`
         ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-toggle" type="button"></button>'}
+        ${continueSessionButtonMarkup(m)}
         ${starButtonMarkup(m.uid, !!m.starred, 'session-menu-action', 'a-star')}
         <button class="session-menu-action turn-mode${S.compactTurns ? '' : ' on'}" id="a-turns"
           title="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"

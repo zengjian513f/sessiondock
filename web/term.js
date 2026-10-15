@@ -317,6 +317,9 @@ async function fetchTermList(node = '') {
     if (typeof layoutHeader === 'function') layoutHeader();
   }
   renderTakeoverBtn();
+  for (const button of document.querySelectorAll('[data-continue-session]')) {
+    button.hidden = !continueSessionEnabled();
+  }
   const after = fingerprint();
   if (after !== before && S.sig && typeof renderSide === 'function') {
     const side = $('#side'), top = side?.scrollTop || 0;
@@ -1739,19 +1742,63 @@ const NewModels = createModelPicker('new', {
 const BugReportModels = createModelPicker('bug-report', {
   source: () => bugReportSource(), node: () => bugReportNode(), storeKey: 'bugReportModel'});
 
-function openNewSessionDialog() {
+let newContinueOrigin = null;
+function continueSessionEnabled() {
+  return T.enabled && SessionDockCapabilities.allows('terminal_create') && conversationSendEnabled();
+}
+
+function continueSessionButtonMarkup(info) {
+  if (!info.sid || info.source === 'shell') return '';
+  return `<button class="session-menu-action" data-continue-session ${continueSessionEnabled() ? '' : 'hidden'}
+    type="button" title="接续会话" aria-label="接续会话">${uiIcon('fork')}</button>`;
+}
+
+function openNewSessionDialog(origin = null) {
+  // The ordinary button's click event is not a continuation source.
+  newContinueOrigin = origin?.uid ? {...origin} : null;
   const dialog = $('#new-session-dialog');
+  $('#new-session-title').textContent = newContinueOrigin ? '接续会话' : '新建会话';
+  $('#continue-session-composer').hidden = !newContinueOrigin;
+  $('#continue-session-reference').hidden = !newContinueOrigin;
+  $('#continue-session-reference').textContent = newContinueOrigin
+    ? `原会话：${newContinueOrigin.title || ''} · ${newContinueOrigin.sid}` : '';
+  $('#continue-session-description').value = '';
+  $('#new-session-form input[value="shell"]').closest('label').hidden = !!newContinueOrigin;
   closeCwdPicker();
   newCreateAttempt = null;
   modelCatalogs.clear(); // 每次打开都读一遍：CLI 升级或换配置后列表会变
   prepareNewNode();
   $('#new-cwd').value = currentSessionCwd();
+  if (newContinueOrigin) {
+    const input = $(`#new-session-form input[value="${CSS.escape(newContinueOrigin.source)}"]`);
+    if (input) input.checked = true;
+  }
   refreshNewNodeFields();
   NewModels.refresh();
   dialog.showModal();
-  renderCommonCwdOptions();
-  setTimeout(() => { $('#new-cwd').focus(); $('#new-cwd').select(); }, 0);
+  if (newContinueOrigin) closeCwdPicker();
+  else renderCommonCwdOptions();
+  setTimeout(() => {
+    const input = newContinueOrigin ? $('#continue-session-description') : $('#new-cwd');
+    autoGrow($('#continue-session-description'));
+    input.focus();
+    if (!newContinueOrigin) input.select();
+  }, 0);
 }
+
+document.addEventListener('click', event => {
+  if (!event.target.closest('[data-continue-session]') || !continueSessionEnabled()) return;
+  const info = cache.get(viewKey(S.sel, S.agent))?.meta || S.sessions.find(row => row.uid === S.sel);
+  if (info?.sid) openNewSessionDialog(info);
+});
+
+$('#continue-session-description').addEventListener('input', event => autoGrow(event.target));
+$('#continue-session-description').addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !MOBILE.matches) {
+    event.preventDefault();
+    $('#new-session-form').requestSubmit();
+  }
+});
 
 function selectPendingSidebarRow(uid, added) {
   const row = added ? null : document.querySelector(`#side .item[data-uid="${CSS.escape(uid)}"]`);
@@ -2148,12 +2195,20 @@ function newSessionRequestId(source, cwd) {
 
 async function createNewSession(e) {
   e.preventDefault();
+  if (newSessionCreating) return;
+  if (newContinueOrigin && typeof staleBuildShown !== 'undefined' && staleBuildShown) {
+    $('#new-session-error').textContent = '页面已更新，请重新加载后再提交';
+    return;
+  }
+  const origin = newContinueOrigin;
+  const description = $('#continue-session-description').value;
   const source = $('#new-session-dialog input[name="new-source"]:checked')?.value;
   const cwd = $('#new-cwd').value.trim();
-  const go = $('#new-session-go'), error = $('#new-session-error');
+  const go = origin ? $('#continue-session-go') : $('#new-session-go'), error = $('#new-session-error');
   error.textContent = '';
   if (!source) { error.textContent = '没有可用的会话类型'; return; }
   if (!cwd) { error.textContent = '请选择启动目录'; return; }
+  newSessionCreating = true;
   go.disabled = true;
   go.textContent = '创建中…';
   const dirsKey = newDirsKey();
@@ -2175,17 +2230,38 @@ async function createNewSession(e) {
     if (d.error) { error.textContent = d.error; return; }
     const recent = [d.cwd, ...store.get(dirsKey, []).filter(x => x !== d.cwd)].slice(0, 8);
     store.set(dirsKey, recent);
+    if (origin) {
+      const uid = pendingUid(d.name);
+      const draft = composerDraft(uid);
+      await hydrateComposerDraft(uid, true);
+      if (draft.loadFailed) throw new Error(draft.storageError || '接续消息读取失败');
+      // A retried create may return the same instance: preserve an existing
+      // draft rather than replacing it or issuing another first SEND.
+      if (!draft.text && !draft.requestId) {
+        draft.text = `接续以下会话：\n会话标识：${origin.uid}\n会话 ID：${origin.sid}`
+          + (origin.agent_id ? `\n子代理：${origin.agent_id}` : '')
+          + (origin.node_name ? `\n机器：${origin.node_name}` : '')
+          + (origin.cwd ? `\n目录：${origin.cwd}` : '')
+          + `\n\n${description.trim() || '请接续该会话继续处理。'}`;
+      }
+      if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '接续消息保存失败');
+    }
     $('#new-session-dialog').close();
     await openPendingSession(d);
+    if (origin && composerDraftOwner(S.sel) === composerDraftOwner(pendingUid(d.name)))
+      await submitComposer({initial: true});
     // The backend instance is ready; list refresh must not block the conversation.
     void loadTermList();
   } catch (err) {
     error.textContent = err.message || '创建失败';
   } finally {
+    newSessionCreating = false;
     go.disabled = false;
-    go.textContent = '创建';
+    go.textContent = origin ? '发送' : '创建';
   }
 }
+
+let newSessionCreating = false;
 
 $('#new-session').onclick = openNewSessionDialog;
 $('#new-session-form').onsubmit = createNewSession;
@@ -5724,7 +5800,7 @@ function discardStagedAttachment(attachment, saved = Promise.resolve(true)) {
 }
 
 let composerSending = false;
-async function submitComposer() {
+async function submitComposer({initial = false} = {}) {
   if (typeof staleBuildShown !== 'undefined' && staleBuildShown) return;
   if (!conversationSendEnabled()
       && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(composerUid || S.sel))) {
@@ -5741,7 +5817,9 @@ async function submitComposer() {
   if (composerSending || (!text.trim() && !attachments.length && !quotes.length)) return;
   // Enter obeys the same readiness gate as the Send button. The reason stays
   // beside the editor and polling clears it when the CLI becomes ready.
-  if (composerUsesInputStatus(uid) && !composerInputAllowsSend(draft.inputStatus)) {
+  // An explicitly submitted first message uses SEND's own fresh startup
+  // checks; the new page may not have completed its first browser CHECK yet.
+  if (!initial && composerUsesInputStatus(uid) && !composerInputAllowsSend(draft.inputStatus)) {
     renderComposerInputStatus();
     return;
   }

@@ -219,6 +219,26 @@ Finished AI receipts stay for at most 600 s after `finished_at`; a finished
 AI receipt migrated from an older ledger without that time is archived at
 once.
 
+## DELTA: Continue in a new session (2026-10-15)
+
+An indexed AI conversation offers **接续会话** when terminal creation and
+conversation SEND are available. It opens the ordinary new-session picker
+with the original source and cwd selected, plus a report-style text editor.
+The machine, source, model, effort and cwd remain editable; SSH is excluded.
+Submitting creates an independent session and saves its first draft with the
+original record UID and native SID before the user's continuation request.
+Hub-scoped UIDs retain the original machine scope even if the new session
+runs elsewhere; an active subagent reference is included when applicable.
+This passes a textual reference, without copying or rewriting native history.
+
+The first message uses the ordinary conversation SEND path, including fresh
+server readiness checks and submission deduplication. A failed create leaves
+the dialog editable and reuses its create request ID on retry. A refused or
+failed SEND keeps the prefixed draft in the new session for an explicit retry;
+it does not schedule automatic retries. Cancelling creates no session.
+Ordinary new-session creation does not inherit the continuation reference.
+Browser acceptance: [session_continue_browser.py](../tests/session_continue_browser.py).
+
 ## Automatic binding by process evidence
 
 A new Codex/Grok pane is associated with its native record once the

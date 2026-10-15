@@ -364,6 +364,7 @@
       <div><h2 id="new-session-title">新建会话</h2></div>
       <button type="button" class="modal-close" title="关闭" aria-label="关闭">×</button>
     </div>
+    <p id="continue-session-reference" class="continue-session-reference" hidden></p>
     <div class="new-row">
       <label id="new-node-label" class="node-select" hidden title="机器"><span class="visually-hidden">机器</span><select id="new-node"></select></label>
       <fieldset class="new-source">
@@ -407,6 +408,13 @@
         <div id="new-cwd-options" role="listbox" aria-labelledby="new-cwd-options-title"></div>
       </div>
       <div id="new-cwd-completion-status" class="visually-hidden" role="status" aria-live="polite"></div>
+    </div>
+    <div id="continue-session-composer" class="composer-row report-composer" hidden>
+      <div class="composer-input-wrap">
+        <textarea id="continue-session-description" rows="1" enterkeyhint="enter"
+          aria-label="接续要求" placeholder="输入接续要求，首条消息会自动带上原会话标识"></textarea>
+      </div>
+      <div class="cbtns"><button type="submit" class="btn go" id="continue-session-go">发送</button></div>
     </div>
     <div class="modal-actions">
       <div id="new-session-error" role="alert"></div>
