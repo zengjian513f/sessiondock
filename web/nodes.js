@@ -298,7 +298,7 @@ function refreshNewNodeFields() {
   cwdCompletion.common = commonSessionDirs();
   cwdCompletion.commonLoading = true;
   for (const input of document.querySelectorAll('input[name="new-source"]')) {
-    input.disabled = !cap.sources?.[input.value];
+    input.disabled = !cap.sources?.[input.value] || (input.value === 'shell' && !!newContinueOrigin);
     const name = SOURCES[input.value]?.name || (input.value === 'shell' ? 'SSH' : input.value);
     input.closest('label').title = input.disabled ? `${name}：此机器未安装或未配置该客户端` : name;
   }
