@@ -71,3 +71,6 @@ body.session-info-page { display: block; height: auto; min-height: 100dvh; overf
 .si-research-related { border-top: 1px solid var(--border); margin-top: 7px; }
 #info-research .si-heading { flex-wrap: wrap; }
 #research-content { padding-bottom: 7px; }
+
+.si-embedded .si-header > a { display: none; }
+.si-embedded .si-main { width: 100%; }

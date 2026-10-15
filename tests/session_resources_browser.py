@@ -106,10 +106,14 @@ def main():
                         args.screenshots.mkdir(parents=True, exist_ok=True)
                         page.screenshot(path=str(args.screenshots / f'four-views-{width}-{theme}.png'))
                 page.locator('#a-info').click()
-                page.wait_for_url('**/session-info.html?*')
-                expect(page.locator('#info-summary')).to_contain_text('resources')
-                page.go_back(wait_until='networkidle')
-                page.locator('#side .item').first.click()
+                info = page.frame_locator('#session-content-view iframe')
+                expect(info.locator('#info-summary')).to_contain_text('resources')
+                assert 'session-info.html' not in page.url
+                info.get_by_role('button', name='添加前序', exact=True).click()
+                expect(info.locator('#relation-form')).to_be_visible()
+                info.get_by_role('button', name='取消', exact=True).click()
+                page.locator('#a-chat').click()
+                expect(page.locator('#msgs')).to_be_visible()
                 page.get_by_role('button', name='列表资源', exact=True).click()
                 page.evaluate('''() => {
                   window.resourceCalls = [];
@@ -123,6 +127,33 @@ def main():
                       {node_id:'b',node_name:'compute-b',status:'offline',reason:'机器离线',metrics:{},diagnostic:{state:'unsupported',remaining_seconds:0}}]};
                   });
                 }''')
+                for width, theme in [(1280, 'light'), (390, 'light'), (390, 'dark'), (1280, 'dark')]:
+                    page.set_viewport_size({'width': width, 'height': 960})
+                    page.evaluate('(theme) => document.documentElement.dataset.theme = theme', theme)
+                    for view in ['info', 'resources']:
+                        page.locator('#a-' + view).click()
+                        expect(page.locator('#a-' + view)).to_have_attribute('aria-pressed', 'true')
+                        assert page.locator('.session-views button.on').count() == 1
+                        expect(page.locator('#msgs')).not_to_be_visible()
+                        if view == 'info':
+                            expect(info.locator('#info-summary')).to_be_visible()
+                            expect(info.locator('html')).to_have_attribute('data-theme', theme)
+                        else:
+                            page.wait_for_function("document.querySelector('.sr-totals')?.textContent.includes('4.5')")
+                            assert not page.locator('dialog:modal').count()
+                        boxes = page.evaluate('''() => {
+                          const rect = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return {x:r.x,y:r.y,right:r.right,bottom:r.bottom}; };
+                          return {pane:rect('#session-content-view'), right:rect('#right'), head:rect('.dhead')};
+                        }''')
+                        assert abs(boxes['pane']['x'] - boxes['right']['x']) < 2, boxes
+                        assert abs(boxes['pane']['right'] - boxes['right']['right']) < 2, boxes
+                        assert abs(boxes['pane']['bottom'] - boxes['right']['bottom']) < 2, boxes
+                        assert abs(boxes['pane']['y'] - boxes['head']['bottom']) < 2, boxes
+                        if args.screenshots:
+                            page.screenshot(path=str(args.screenshots / f'pane-{view}-{width}-{theme}.png'), animations='disabled')
+                    page.locator('#a-chat').click()
+                    expect(page.locator('#msgs')).to_be_visible()
+                    expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
                 page.locator('#a-resources').click()
                 page.get_by_role('dialog').wait_for()
                 page.wait_for_function("document.querySelector('.sr-totals').textContent.includes('4.5')")
@@ -149,13 +180,13 @@ def main():
                 if args.screenshots:
                     args.screenshots.mkdir(parents=True, exist_ok=True)
                     page.screenshot(path=str(args.screenshots / 'resources-desktop.png'))
-                page.keyboard.press('Escape')
+                page.locator('#a-chat').click()
                 assert not page.get_by_role('dialog').is_visible()
                 page.set_viewport_size({'width':390,'height':844})
-                if not page.locator('#side').is_visible():
-                    page.locator('.mobile-back:visible').click()
-                page.locator('#side .item-resources').first.focus()
-                page.keyboard.press('Enter')
+                page.locator('.mobile-back:visible').click()
+                expect(page.locator('#side')).to_be_visible()
+                page.locator('#side .item-resources').first.press('Enter')
+                expect(page.get_by_role('dialog')).to_be_visible()
                 page.wait_for_function("document.querySelector('.sr-totals').textContent.includes('4.5')")
                 assert page.evaluate("document.querySelector('.session-resources').scrollWidth <= innerWidth")
                 page.locator('.sr-node h3').first.scroll_into_view_if_needed()

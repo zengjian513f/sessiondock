@@ -24,6 +24,7 @@ def live_rotation(browser, hub_mode):
         corpus.put("original", "codex", [codex_row("session_meta", {
             "id": sid, "cwd": str(root / "work"), "timestamp": "2026-09-11T08:00:00Z"}, 0),
             codex_message("user", "Original managed conversation", 1)], [])
+        (root / 'state').mkdir(mode=0o700)
         guard_uid = corpus.uid("original")
         native = corpus.paths["original"].read_bytes()
         node = SimpleNamespace(nid="a" * 32, name="RotationNode", port=free_port(), token="f" * 64)
@@ -40,7 +41,7 @@ def live_rotation(browser, hub_mode):
         view_uid = lambda uid: scoped(node.nid, uid) if hub_mode else uid
         instance = "rotation-" + uuid.uuid4().hex
         with host(root, instance, uid=guard_uid) as (process, _), \
-             isolated_server(corpus, BINARY, host_dir=root / "host", extra_env=extra) as (base, _):
+             isolated_server(corpus, BINARY, host_dir=root / "host", state_dir=root / "state", extra_env=extra) as (base, _):
             hub = Hub(REPO / "target/debug/sessiondock-hub", root / "hub", [node]) if hub_mode else None
             if hub:
                 hub.start()
@@ -61,6 +62,14 @@ def live_rotation(browser, hub_mode):
                 expect(page.locator("#a-term")).to_have_attribute("aria-pressed", "true")
                 page.locator("#a-term").click()
                 expect(page.locator("#a-term")).to_have_attribute("aria-pressed", "true")
+                for auxiliary in ('info', 'resources'):
+                    page.locator('#a-' + auxiliary).click()
+                    expect(page.locator('#session-content-view')).to_be_visible()
+                    expect(page.locator('#termpane')).not_to_be_visible()
+                    page.locator('#a-term').click()
+                    expect(page.locator('#session-content-view')).to_have_count(0)
+                    expect(page.locator('#termpane')).to_be_visible()
+                    expect(page.locator('#a-term')).to_have_attribute('aria-pressed', 'true')
                 original = page.evaluate("({name:T.name, instance:T.views.get(T.name).instanceId})")
                 initial_controls = list(controls)
                 # Retain object identities only for assertions; all view changes

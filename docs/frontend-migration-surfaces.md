@@ -400,7 +400,7 @@ Esc 按钮 `#cesc`：`sendComposerEscape`。Claude/Codex 在忙碌或输入非�
 - 手机返回列表。
 - 有子代理时，标题是下拉，切换主会话/子代理。
 - 父会话链或子会话菜单。
-- 四联视图入口按「对话、终端、信息、资源」排列，复用顶栏分段按钮。对话与终端是明确选择，重复点击终端不会切回对话；信息打开既有会话信息页，资源打开居中对话框。待落盘或能力未开放时保留信息入口并解释不可用原因。DELTA（BUG-20261015-122122-e6a37e）：替代原单一控制台切换按钮及资源右侧抽屉。控制台连接（`bindConsoleButton`）不可用时用原生 tooltip 和 `aria-description` 说明原因，不弹浮层、不打开空终端。Hub 上按节点能力灰掉：[`tests/hub_console_availability_browser.py`](../tests/hub_console_availability_browser.py)。
+- 四联视图入口按「对话、终端、信息、资源」排列，复用顶栏分段按钮。对话与终端是明确选择，重复点击终端不会切回对话；信息与资源统一占满会话标题栏下方的内容区，保留侧栏和四联切换入口；切回对话或终端不丢弃会话状态。信息复用既有信息页的嵌入模式，资源复用统计视图并在离开时释放探测租约。DELTA（2026-10-15）：四联入口不再跳转整页或弹出模态框；侧栏资源格仍保留快捷对话框。待落盘或能力未开放时保留信息入口并解释不可用原因。DELTA（BUG-20261015-122122-e6a37e）：替代原单一控制台切换按钮及资源右侧抽屉。控制台连接（`bindConsoleButton`）不可用时用原生 tooltip 和 `aria-description` 说明原因，不弹浮层、不打开空终端。Hub 上按节点能力灰掉：[`tests/hub_console_availability_browser.py`](../tests/hub_console_availability_browser.py)。
 - 星标、展开/折叠过程、搜索导航。
 - 冻结现场 / 恢复运行（`renderSessionFreeze`）。需要 `session_freeze`、已加载的终端列表、以及可验证的 `instance_id`。否则按钮在，但是不可用，原因分别是：正在读取、当前节点不支持、状态已失效、没有可验证实例。成功后会话区覆盖「会话已暂停」和恢复按钮，不放进全局浮层。`POST api/session/freeze`。[`tests/session_freeze_browser.py`](../tests/session_freeze_browser.py)。
 - 报告当前会话问题。

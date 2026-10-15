@@ -2343,7 +2343,8 @@ function renderTakeoverBtn() {
   if (!b) return;
   const name = takenOver(S.sel);
   const paneOpen = !!name && !$('#termpane').classList.contains('hidden');
-  const terminalVisible = paneOpen && (T.mode === 'full' || (MOBILE.matches && !sessionTerminalFirst(S.sel)));
+  const contentView = SessionContentView.sync();
+  const terminalVisible = !contentView && paneOpen && (T.mode === 'full' || (MOBILE.matches && !sessionTerminalFirst(S.sel)));
   b.innerHTML = uiIcon('terminal');
   b.title = b.ariaLabel = '终端';
   b.setAttribute('aria-expanded', String(terminalVisible));
@@ -2351,8 +2352,8 @@ function renderTakeoverBtn() {
   b.classList.toggle('on', terminalVisible);
   const chat = $('#a-chat');
   if (chat) {
-    chat.setAttribute('aria-pressed', String(!terminalVisible));
-    chat.classList.toggle('on', !terminalVisible);
+    chat.setAttribute('aria-pressed', String(!contentView && !terminalVisible));
+    chat.classList.toggle('on', !contentView && !terminalVisible);
   }
   paintConsoleAvailability(b, S.sel, S.agent);
   renderComposer();

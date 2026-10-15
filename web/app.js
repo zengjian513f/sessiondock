@@ -955,6 +955,7 @@ function showMobileDetail() {
 }
 
 function showMobileList() {
+  SessionContentView.close();
   if (typeof T !== 'undefined' && !$('#termpane').classList.contains('hidden')) closeTermPane(true);
   document.body.classList.remove('mobile-detail');
   if (MOBILE.matches) store.set('mobilePage', 'list');
@@ -5771,6 +5772,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   }
   S.sel = uid;
   S.agent = selectedAgent;
+  SessionContentView.sync();
   renderNetworkNotice();
   syncSessionNotices();
   clearUnread(uid);

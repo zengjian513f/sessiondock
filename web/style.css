@@ -2470,3 +2470,11 @@ header .btn[data-session-docked] { display: none; }
 
 /* Reuse the toolbar segmented control for the four session view entries. */
 .session-views button { width: 28px; min-width: 28px; padding: 4px; }
+
+/* Information and resource tabs occupy the same area below the session header. */
+#right.session-content-view > #detail { flex: none; }
+#right.session-content-view > #detail > :not(.dhead),
+#right.session-content-view > #composer,
+#right.session-content-view > #termpane { display: none !important; }
+#session-content-view { flex: 1; min-height: 0; min-width: 0; display: flex; overflow: hidden; }
+#session-content-view > iframe { flex: 1; width: 100%; min-width: 0; border: 0; background: var(--bg); }

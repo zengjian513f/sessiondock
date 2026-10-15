@@ -327,7 +327,6 @@ def main():
                 assert_resource_spacing(sidebar)
                 page.screenshot(path=f'/tmp/sidebar-resources-{theme}-{size}.png')
         page.set_viewport_size({'width':1280,'height':960})
-        assert page.locator('#detail [data-session-resources]').count() == 0
         other = page.locator(f'#side .item[data-uid="{scoped(nodes[2].nid, corpora[2].uid("probe"))}"]')
         other.locator('.body').click()
         selected_before = page.evaluate('S.sel')
@@ -365,6 +364,15 @@ def main():
         assert not collectors[1].enabled
         page.get_by_role('button', name='关闭资源面板').click()
         wait_for(lambda: not collectors[0].enabled)
+        # The header resource view uses the same lease lifecycle without a modal.
+        collectors[1].fail = False
+        sidebar.locator('.body').click()
+        page.locator('#a-resources').click()
+        page.locator('.sr-probe[data-state="active"]').wait_for()
+        wait_for(lambda: collectors[0].enabled and collectors[1].enabled)
+        assert page.locator('dialog:modal').count() == 0
+        page.locator('#a-chat').click()
+        wait_for(lambda: not collectors[0].enabled and not collectors[1].enabled)
         counts = [len(c.calls) for c in collectors]
         assert context.request.post(local[0][0] + '/api/resources/probe', data={'enabled': True}).status == 403
         assert context.request.post(f'http://127.0.0.1:{nodes[0].port}/api/resources/probe', data={'enabled': True}).status == 403
