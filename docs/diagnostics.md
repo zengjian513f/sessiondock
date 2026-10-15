@@ -440,11 +440,20 @@ Only `runtime-<pid>-<minute>.jsonl` files in these dedicated directories are
 owned. Each write reopens the current minute segment, so rotation cannot strand
 logging on an unlinked descriptor. Maintenance runs at startup and every
 60 seconds on the worker, including idle periods; the node also maintains its
-configured host directory when no hosts remain. Active minute segments are
+configured host directory for exited PIDs. On Unix, live PIDs are left to their
+own host; each host parses only its own PID shard. A persistent
+`.runtime-maintenance.lock` serializes same-directory sweeps with a nonblocking
+OS lock; contention defers one sweep, never blocks the PTY. Directory enumeration
+still occurs per process, but retained bytes are not parsed once per host.
+Active minute segments are
 skipped. Valid records expire by receipt time after 24 hours. Mixed files retain
 recent records byte-for-byte; malformed, invalid-UTF8 and partial bytes use the
 file mtime plus 24 hours. Rewrites preserve mtime. Strictly named orphan cleanup
-temporaries expire by mtime. Cache entries use size/mtime/earliest expiry, bounded
+temporaries expire by mtime. New scratch names include PID, time and a process
+sequence, retry existing names and have an RAII cleanup guard on every exit.
+Recent crash leftovers are preserved without blocking later sweeps. If the
+filesystem prevents even scratch removal, that failure is counted and the
+leftover expires after 24 hours once maintenance can write again. Cache entries use size/mtime/earliest expiry, bounded
 to 4,096 files; changed or expired segments are reread, and restart rebuilds the
 cache. Filesystem failure can extend retention; counters expose this condition.
 Normal cleanup lag is up to one minute plus the background sweep duration.
@@ -465,3 +474,8 @@ idle maintenance, cleanup/sink failure, recovery and default/detailed request
 volume and response timings. External stderr failure, full-pipe saturation,
 cumulative-summary retry and bounded shutdown additionally use the existing
 [`runtime_log_fault_browser.py`](../tests/runtime_log_fault_browser.py).
+
+[`tests/runtime_final_review_browser.py`](../tests/runtime_final_review_browser.py)
+creates multiple hosts through Chromium, measures per-host scan bytes, injects
+atomic replacement/removal failure, verifies recovery and protected fixtures,
+and reconnects after node restart before checking exited-host maintenance.

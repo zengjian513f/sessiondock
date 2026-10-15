@@ -37,6 +37,7 @@ struct Logger {
     identity: Value,
 }
 static LOGGER: OnceLock<Logger> = OnceLock::new();
+static TEMP_SERIAL: AtomicU64 = AtomicU64::new(0);
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -90,11 +91,17 @@ pub fn init(directory: Option<PathBuf>, layer: &str, identity: Value) {
             .spawn(move || {
                 let mut sink = Sink {
                     directory,
+                    scope: if layer_owned == "ptyhost" {
+                        Scope::Own
+                    } else {
+                        Scope::All
+                    },
                     cache: BTreeMap::new(),
                 };
                 let mut host_sink = if layer_owned == "server" {
                     std::env::var_os("SESSIONDOCK_PTYHOST_DIR").map(|p| Sink {
                         directory: Some(PathBuf::from(p).join("runtime-logs")),
+                        scope: Scope::Exited,
                         cache: BTreeMap::new(),
                     })
                 } else {
@@ -279,7 +286,26 @@ impl Drop for Temporary<'_> {
         }
     }
 }
+enum Scope {
+    All,
+    Own,
+    Exited,
+}
+fn alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        pid <= i32::MAX as u32
+            && (unsafe { libc::kill(pid as i32, 0) } == 0
+                || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
+}
 struct Sink {
+    scope: Scope,
     directory: Option<PathBuf>,
     cache: BTreeMap<PathBuf, (u64, SystemTime, u64)>,
 }
@@ -336,6 +362,36 @@ impl Sink {
                 return;
             }
         };
+        // A persistent coordination inode is never unlinked. Lock contention skips
+        // this sweep, never blocks the writer or the independent host lifecycle.
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let lock = match options.open(dir.join(".runtime-maintenance.lock")) {
+            Ok(file) => file,
+            Err(_) => {
+                s.cleanup_errors.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+        };
+        if !lock.metadata().is_ok_and(|m| m.is_file()) {
+            s.cleanup_errors.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => return,
+            Err(_) => {
+                s.cleanup_errors.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+        }
         let cutoff = now().saturating_sub(DAY);
         for entry in entries {
             let result = (|| -> io::Result<()> {
@@ -343,7 +399,10 @@ impl Sink {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
                 if let Some(pid) = name.strip_prefix(".runtime-clean-") {
-                    if pid.parse::<u32>().is_ok()
+                    if matches!(pid.split('-').count(), 1 | 3)
+                        && pid
+                            .split('-')
+                            .all(|part| !part.is_empty() && part.parse::<u64>().is_ok())
                         && entry.file_type()?.is_file()
                         && entry
                             .metadata()?
@@ -372,6 +431,12 @@ impl Sink {
                 {
                     return Ok(());
                 }
+                let owner = pid.parse::<u32>().unwrap();
+                if matches!(self.scope, Scope::Own) && owner != std::process::id()
+                    || matches!(self.scope, Scope::Exited) && alive(owner)
+                {
+                    return Ok(());
+                }
                 if minute.parse::<u64>().unwrap_or(u64::MAX) >= now() / 60_000 {
                     return Ok(());
                 }
@@ -388,7 +453,6 @@ impl Sink {
                     .unwrap_or_default()
                     .as_millis() as u64;
                 // Streaming copy bounds memory even for corrupt/unterminated large records.
-                let temporary = dir.join(format!(".runtime-clean-{}", std::process::id()));
                 let mut options = OpenOptions::new();
                 options.write(true).create_new(true);
                 #[cfg(unix)]
@@ -396,7 +460,19 @@ impl Sink {
                     use std::os::unix::fs::OpenOptionsExt;
                     options.mode(0o600);
                 }
-                let file = options.open(&temporary)?;
+                let (temporary, file) = loop {
+                    let temporary = dir.join(format!(
+                        ".runtime-clean-{}-{}-{}",
+                        std::process::id(),
+                        now(),
+                        TEMP_SERIAL.fetch_add(1, Ordering::Relaxed)
+                    ));
+                    match options.open(&temporary) {
+                        Ok(file) => break (temporary, file),
+                        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                        Err(error) => return Err(error),
+                    }
+                };
                 let _temporary = Temporary {
                     path: temporary.clone(),
                     state: s,

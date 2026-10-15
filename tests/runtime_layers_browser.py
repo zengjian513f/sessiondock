@@ -193,10 +193,9 @@ def layers(browser,args):
                 active=next(p for p in nodelog.glob('runtime-*.jsonl') if '90000' not in p.name)
                 active.rename(nodelog/'external-rotation.jsonl')
                 page.screenshot(path=str(args.output/'resources.png'))
-                # Exact malformed cleanup failure: another pathname blocks the cleaner's private temporary.
-                # Node pid from the original startup segment after rotation.
-                node_pid=json.loads((nodelog/'external-rotation.jsonl').read_text().splitlines()[0])['pid']
-                blocker=nodelog/f'.runtime-clean-{node_pid}';blocker.mkdir()
+                # Replace the owned coordination file with a directory to fail cleanup.
+                blocker=nodelog/'.runtime-maintenance.lock';lock_saved=nodelog/'saved-maintenance-lock'
+                blocker.rename(lock_saved);blocker.mkdir()
                 # Wait across actual low-frequency idle cleanup, while using the resource page normally.
                 for i in range(7):
                     page.wait_for_timeout(9000)
@@ -206,7 +205,7 @@ def layers(browser,args):
                 assert not (agentlog/'runtime-900004-1.jsonl').exists()
                 assert (nodelog/'runtime-900004-1.jsonl').exists()
                 health=get_json(opener,base,'/api/health')['runtime_log'];assert health['cleanup_errors']>0,health
-                blocker.rmdir();state.rmdir()
+                blocker.rmdir();lock_saved.rename(blocker);state.rmdir()
                 for directory in (hostlog,agentlog):
                     summaries=[r for r in rows(directory) if r.get('event')=='log.delivery']
                     assert summaries and summaries[-1]['write_errors']>0,(directory,summaries)
