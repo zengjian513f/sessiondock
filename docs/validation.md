@@ -418,3 +418,49 @@ second session click verifies normal initialization without missing helpers.
 `tests/sidebar_input_browser.py` reaches first/last sidebar rows with wheel
 input, drags the divider by mouse and touch, checks reload persistence, cancels
 a touch drag, scrolls by touch and expands the sidebar with Tab/Enter.
+
+### Remaining UI operation scenarios
+
+The `remaining_ui_*_browser.py` suites are discovered automatically. Each uses
+private fixtures and writes a failure-safe `result.json` with explicit operation
+IDs and observed results; an ID does not imply untested state combinations.
+
+- [Composer](../tests/remaining_ui_composer_browser.py),
+  [composer state](../tests/remaining_ui_composer_state_browser.py),
+  [restart](../tests/remaining_ui_restart_browser.py) and
+  [model pickers](../tests/remaining_ui_models_browser.py): native clipboard/file
+  chooser/drop, durable drafts, quotes, unsaved refresh, fake CLI questions,
+  failed-launch restart and local report receipts.
+- [Sidebar](../tests/remaining_ui_sidebar_browser.py),
+  [shell](../tests/remaining_ui_shell_browser.py),
+  [relations](../tests/remaining_ui_relations_browser.py) and
+  [lifecycle](../tests/remaining_ui_lifecycle_browser.py): keyboard/touch menus,
+  settings, node scopes, parent visibility, ambiguous links and deletion.
+- [Conversation](../tests/remaining_ui_conversation_browser.py),
+  [history recovery](../tests/remaining_ui_history_browser.py) and
+  [media](../tests/remaining_ui_media_browser.py): real scroll endpoints,
+  tool/diff/search controls, cancellation before the first history page returns,
+  stale cursors, offline recovery, media continuation and download retry.
+- [Terminal inputs](../tests/remaining_ui_terminal_browser.py),
+  [terminal state](../tests/remaining_ui_terminal_state_browser.py) and
+  [exit/cleanup](../tests/remaining_ui_exit_browser.py): independent fake CLI byte
+  receipts, native paste, selection, wheel protocols, lease refusal/acceptance,
+  persistent split layout, final-screen scrolling and exact private process stop.
+- [Transfer](../tests/remaining_ui_transfer_browser.py) and
+  [pending tasks](../tests/remaining_ui_tasks_browser.py): real two-node plans,
+  lost replies, retry identity, task recovery and withdrawal, checked against
+  private journals and unchanged native source bytes.
+
+Injected HTTP errors establish frontend failure handling only. OS IME candidate
+windows, native application destinations and browser installation prompts are
+not claimed as automated coverage. The unknown-input notice currently contains
+text only; its terminal fallback is the existing title-bar action, not a separate
+notice button. These suites do not replace runtime retention/performance suites.
+
+Related independently maintained suites are [content input](../tests/content_input_browser.py)
+for embedded-view native touch/keyboard/scrollbars, and
+[runtime layers](../tests/runtime_layers_browser.py) for browser-driven private
+CLI survival, runtime retention and sink faults.
+A separate concurrent review may additionally supply
+`tests/runtime_final_review_browser.py` for private multi-host maintenance,
+scratch recovery and independent process lifetimes.
