@@ -715,7 +715,7 @@ def main():
                     page.set_viewport_size({"width": 390, "height": 844})
                     receipt = page.locator('#bug-report-toast')
                     expect(receipt).to_be_visible()
-                    expect(receipt.locator('.app-float-head strong')).to_have_text('缺陷报告已提交')
+                    expect(receipt.locator('.app-float-head strong')).to_have_text('报告已提交')
                     expect(receipt.locator('.app-float-actions .primary')).to_have_text('打开')
                     layout = receipt.evaluate("""card => {
                         const body = card.querySelector(':scope > span').getBoundingClientRect();

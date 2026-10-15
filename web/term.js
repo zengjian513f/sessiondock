@@ -731,7 +731,7 @@ function showBugReportToast(report, worker) {
   const head = document.createElement('div');
   head.className = 'app-float-head';
   const title = document.createElement('strong');
-  title.textContent = '缺陷报告已提交';
+  title.textContent = '报告已提交';
   head.appendChild(title);
   const actions = document.createElement('div');
   actions.className = 'app-float-actions';
@@ -1045,6 +1045,7 @@ function completeBugReportSubmission(data,node) {
 $('#bug-report-form').onsubmit = async event => {
   event.preventDefault();
   if (bugReportSending) return;
+  const report_type = $('#bug-report-type input:checked').value;
   const reportText = $('#bug-report-description').value;
   const description = reportText.trim();
   const error = $('#bug-report-error');
@@ -1075,14 +1076,14 @@ $('#bug-report-form').onsubmit = async event => {
   renderBugReportItems();
   const snapshot = browserStateSnapshot('bug-report');
   browserAuditEvent('bug_report.requested', {
-    ...snapshot.data, attachments: attachments.length,
+    ...snapshot.data, report_type, attachments: attachments.length,
     worker_node: node, origin_node: origin.node_id || '', remote,
   });
   try {
     bugReportDraftObject().text = reportText;
     await hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
     const pending=bugReportDraftObject();
-    const priorPayload=JSON.stringify({description,source:bugReportSource(),...BugReportModels.choice(),
+    const priorPayload=JSON.stringify({description,report_type,source:bugReportSource(),...BugReportModels.choice(),
       attachments:attachments.map(a=>({upload_id:a.uploaded?.upload_id,number:a.number})),origin});
     if (pending.requestId && pending.requestText===priorPayload) {
       const previous=await priorComposerSubmission(BUG_REPORT_DRAFT_UID,pending.requestId,true);
@@ -1114,7 +1115,7 @@ $('#bug-report-form').onsubmit = async event => {
     store.set('bugReportSource', source);
     const reportDraft=bugReportDraftObject();
     const choice = BugReportModels.choice();
-    const requestText=JSON.stringify({description,source,...choice,attachments:uploaded,origin});
+    const requestText=JSON.stringify({description,report_type,source,...choice,attachments:uploaded,origin});
     if (reportDraft.requestText!==requestText || !reportDraft.requestId) {
       reportDraft.requestText=requestText;reportDraft.requestId=crypto.randomUUID();
     }
@@ -1124,7 +1125,7 @@ $('#bug-report-form').onsubmit = async event => {
     const d = await post('api/bug-report', {
       ...(HUB_MODE ? {_node: node} : {}),
       draft_uid:BUG_REPORT_DRAFT_UID,draft_revision:reportDraft.revision,request_id:reportDraft.requestId,
-      description, uid: remote ? '' : (S.sel || ''), page_id: TERM_PAGE_ID, source, ...choice,
+      description, report_type, uid: remote ? '' : (S.sel || ''), page_id: TERM_PAGE_ID, source, ...choice,
       terminal_name: remote ? '' : terminalName, snapshot, attachments: uploaded,
       origin, ...(captured ? {captured} : {}),
       cols: Math.max(80, T.term?.cols || 120), rows: Math.max(24, T.term?.rows || 36),

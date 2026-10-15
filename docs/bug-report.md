@@ -52,7 +52,12 @@ leftover `bug_report_profiles` key in `launcher.json` is ignored.)
 
 ## Route contract (`POST /api/bug-report`)
 
-Body: `{description (required, ≤ 50000 chars), uid, page_id|_page_id,
+The dialog starts with a report-type selector: 功能需求 first, 缺陷报告 selected by default.
+`report_type: "feature"` is preserved in the manifest and replay payload and creates a
+`功能需求: …` worker title and task. Missing/other values retain the bug-report behavior.
+Report IDs and bundle paths keep the existing `BUG-…` format for both types.
+
+Body: `{report_type, description (required, ≤ 50000 chars), uid, page_id|_page_id,
 _trace_id, _build, source ∈ claude|codex|grok|opencode|agy (default codex), model, effort, terminal_name,
 snapshot (object), attachments: [{path, number, name, kind, mime, size,
 attachment_id}], cols (40–300), rows (12–120), origin ({node_id, node_name,
@@ -115,7 +120,7 @@ Codex and Agy, whose identities stay pending like any other launch); `token` is 
 launch id. The extra identity fields let the legacy page
 open the pending console exactly as after `term/create`.
 
-Worker titles use `BUG: <first nonempty line of the user description>` (trimmed).
+Bug-report worker titles use `BUG: <first nonempty line of the user description>` (trimmed).
 Before the first Codex report task, the server submits `/rename <title>` as a
 separate local CLI command, queries `/status` on that guarded terminal to obtain
 its native session ID, and confirms that ID's title directly in the native name

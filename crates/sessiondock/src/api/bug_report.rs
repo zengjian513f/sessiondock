@@ -221,8 +221,12 @@ async fn report_inner(
     })?;
     let report_lock = conversations.upload_lock(&identity.key, "report-submission");
     let _report_guard = report_lock.lock().await;
+    let feature = body["report_type"] == "feature";
     let mut payload = json!({"description":body["description"],"source":source_text,
         "attachments":body["attachments"],"origin":body["origin"],"uid":body["uid"]});
+    if feature {
+        payload["report_type"] = json!("feature");
+    }
     // Only a chosen model/effort joins the replay payload, so earlier
     // receipts without one still match their retried request.
     if let Some(model) = &model {
@@ -355,6 +359,7 @@ async fn report_inner(
     };
     let input = CreateInput {
         description,
+        feature,
         uid: uid.clone(),
         page_id,
         trace_id: text(&body["_trace_id"], 128),
