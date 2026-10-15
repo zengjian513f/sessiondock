@@ -728,7 +728,7 @@ impl Session {
             }
         };
         if let Some(reason) = reason {
-            eprintln!("PTY output incomplete: {reason}");
+            crate::runtime_log::emit("warn", "pty.output_incomplete", json!({"reason":reason}));
         }
         // Drain the model for bytes already published; exited stays false while
         // it works. A timeout/read error cannot claim a complete PTY output tail.
@@ -801,7 +801,11 @@ impl Session {
             }
             .write(&self.directory);
             if let Err(error) = written {
-                eprintln!("ptyhost: 最终画面保存失败: {error}");
+                crate::runtime_log::emit(
+                    "error",
+                    "pty.final_screen_failed",
+                    json!({"error_kind":error.kind().to_string()}),
+                );
             }
         }
         let frame: Arc<[u8]> = pack_frame(FRAME_EXIT, exit.to_string().as_bytes()).into();
@@ -1198,6 +1202,12 @@ impl Session {
             client.disconnect();
             return;
         }
+        let attachment_started = Instant::now();
+        crate::runtime_log::emit(
+            "info",
+            "pty.attach_opened",
+            json!({"client_id":client.id,"grid":grid}),
+        );
         self.write_info();
         let _ = reader.set_read_timeout(None);
         let mut chunk = vec![0u8; 65536];
@@ -1223,6 +1233,11 @@ impl Session {
         }
         client.disconnect();
         self.drop_client(&client);
+        crate::runtime_log::emit(
+            "info",
+            "pty.attach_closed",
+            json!({"client_id":client.id,"duration_ms":attachment_started.elapsed().as_millis()}),
+        );
         if !self.exited.load(Ordering::Relaxed) {
             self.write_info();
         }

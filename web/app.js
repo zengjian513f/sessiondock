@@ -6267,6 +6267,10 @@ async function loadHistoryPage(uid, agent, button) {
       if (failure) historyPageFailure(request, $('#msgs .history-gap-load'), failure);
     }
   } else if (failure) historyPageFailure(request, button, failure);
+  else if (request.aborted && currentHistoryPageEntry(request) && button.isConnected) {
+    button.disabled = false;
+    button.textContent = `加载中间 ${Number(entry.partial?.omitted || 0).toLocaleString()} 条消息`;
+  }
 }
 
 /** 页已取到、只等渲染：视图与缓存条目仍是发起时的那份即可（游标已推进）。 */

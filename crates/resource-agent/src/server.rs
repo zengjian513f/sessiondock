@@ -195,7 +195,11 @@ fn diagnostic_worker(uid: u32, control: Arc<Mutex<Diagnostic>>) {
                     receiver = Some(rx);
                 }
                 Err(error) => {
-                    eprintln!("I/O probe start failed: {error}");
+                    crate::runtime_log::emit(
+                        "error",
+                        "resource.probe_start_failed",
+                        json!({"error_kind":error.kind().to_string()}),
+                    );
                     d.deadline = None;
                     d.leases.clear();
                     d.state = "failed";
@@ -363,7 +367,7 @@ impl State {
         match request {
             Request::Usage => Ok(Response::Value(self.usage.clone())),
             Request::Health => Ok(Response::Value(
-                json!({"service":"resource-agent", "version":1, "node_id":self.engine.node_id, "boot_id":self.engine.boot_id, "sampled_at":self.report.sampled_at,"collector":self.status,"processes":self.snapshot.entries.len(),"fork_events":self.forks,"exec_events":self.execs,"exit_events":self.exits}),
+                json!({"service":"resource-agent", "version":1, "node_id":self.engine.node_id, "boot_id":self.engine.boot_id, "sampled_at":self.report.sampled_at,"collector":self.status,"processes":self.snapshot.entries.len(),"fork_events":self.forks,"exec_events":self.execs,"exit_events":self.exits,"runtime_log":crate::runtime_log::snapshot()}),
             )),
             Request::Probe {
                 enabled,
@@ -1036,13 +1040,34 @@ fn serve(mut stream: UnixStream, state: Arc<Mutex<State>>, uid: u32) -> io::Resu
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
     let mut line = String::new();
     BufReader::new(&stream).read_line(&mut line)?;
-    let response = match serde_json::from_str::<Request>(&line) {
+    let started = Instant::now();
+    static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+    let request_id = REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+    let decoded = serde_json::from_str::<Request>(&line);
+    let op = match &decoded {
+        Ok(Request::Probe { .. }) => "probe",
+        Ok(Request::Catalog(_)) => "catalog",
+        Ok(Request::Publish(_)) => "publish",
+        Ok(Request::Health) => "health",
+        Ok(Request::Usage) => "usage",
+        Ok(Request::Report) => "report",
+        Ok(Request::Resources) => "resources",
+        Err(_) => "invalid",
+    };
+    let response = match decoded {
         Ok(request) => state
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .handle(request),
         Err(_) => Err("invalid request"),
     };
+    if response.is_err() || op == "probe" || started.elapsed() >= Duration::from_secs(2) {
+        crate::runtime_log::emit(
+            if response.is_err() { "warn" } else { "info" },
+            "resource.operation",
+            json!({"op":op,"request_id":request_id,"ok":response.is_ok(),"duration_ms":started.elapsed().as_millis()}),
+        );
+    }
     let mut writer = BufWriter::new(&mut stream);
     match response {
         Ok(response) => response.write(&mut writer)?,
@@ -1053,6 +1078,16 @@ fn serve(mut stream: UnixStream, state: Arc<Mutex<State>>, uid: u32) -> io::Resu
 }
 pub fn run() -> io::Result<()> {
     let config = Arc::new(Config::load()?);
+    crate::runtime_log::init(
+        Some(config.state.with_extension("runtime-logs")),
+        "resource-agent",
+        json!({"node_id":config.node_id}),
+    );
+    crate::runtime_log::emit(
+        "info",
+        "resource.started",
+        json!({"events":config.events,"io_events":config.io_events}),
+    );
     fs::create_dir_all(
         config
             .state
@@ -1160,7 +1195,11 @@ pub fn run() -> io::Result<()> {
         match events::start(config.uid, sender, lost.clone()) {
             Ok(child) => Some(child),
             Err(error) => {
-                eprintln!("kernel events unavailable: {error}");
+                crate::runtime_log::emit(
+                    "error",
+                    "resource.collector_unavailable",
+                    json!({"error_kind":error.kind().to_string()}),
+                );
                 state.lock().unwrap().status.events = "unavailable".into();
                 None
             }
@@ -1323,10 +1362,12 @@ pub fn run() -> io::Result<()> {
                 let mut s = worker_state.lock().unwrap_or_else(|e| e.into_inner());
                 match event {
                     Event::Ready => {
+                        crate::runtime_log::emit("info", "resource.collector_ready", json!({}));
                         s.status.events = "bpf".into();
                         s.status.ssh_connections = true;
                     }
                     Event::Failed => {
+                        crate::runtime_log::emit("warn", "resource.collector_failed", json!({}));
                         s.status.events = "unavailable".into();
                         s.status.ssh_connections = false;
                         s.engine.connections.gap();
@@ -1398,11 +1439,19 @@ pub fn run() -> io::Result<()> {
                     .engine
                     .saved();
                 if let Err(error) = save(&worker_config.state, &saved) {
-                    eprintln!("cannot save attribution: {error}");
+                    crate::runtime_log::emit(
+                        "error",
+                        "resource.attribution_save_failed",
+                        json!({"error_kind":error.kind().to_string()}),
+                    );
                 }
                 if usage_saved_at.elapsed() >= Duration::from_secs(30) {
                     if let Err(error) = usage.save() {
-                        eprintln!("cannot save usage: {error}");
+                        crate::runtime_log::emit(
+                            "error",
+                            "resource.usage_save_failed",
+                            json!({"error_kind":error.kind().to_string()}),
+                        );
                         let mut view = usage.view();
                         view["persistence_error"] = json!(error.to_string());
                         worker_state.lock().unwrap_or_else(|e| e.into_inner()).usage = view;
@@ -1415,7 +1464,11 @@ pub fn run() -> io::Result<()> {
             }
         }
         if let Err(error) = usage.save() {
-            eprintln!("cannot save final usage: {error}");
+            crate::runtime_log::emit(
+                "error",
+                "resource.final_usage_save_failed",
+                json!({"error_kind":error.kind().to_string()}),
+            );
         }
     });
     while !STOP.load(Ordering::Relaxed) {
@@ -1424,14 +1477,27 @@ pub fn run() -> io::Result<()> {
                 let state = state.clone();
                 let uid = config.uid;
                 std::thread::spawn(move || {
-                    let _ = serve(stream, state, uid);
+                    let started = Instant::now();
+                    let result = serve(stream, state, uid);
+                    if result.is_err() || started.elapsed() >= Duration::from_secs(2) {
+                        crate::runtime_log::emit(
+                            "warn",
+                            "resource.request",
+                            json!({"duration_ms":started.elapsed().as_millis(),
+                            "error_kind":result.err().map(|e|e.kind().to_string())}),
+                        );
+                    }
                 });
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(20))
             }
             Err(error) => {
-                eprintln!("socket accept: {error}");
+                crate::runtime_log::emit(
+                    "error",
+                    "resource.accept_failed",
+                    json!({"error_kind":error.kind().to_string()}),
+                );
                 STOP.store(true, Ordering::Relaxed);
             }
         }

@@ -281,10 +281,9 @@ impl Screen {
         self.parser = Processor::new();
         self.resets += 1;
         self.resize_moved = None;
-        eprintln!(
-            "screen model reset #{} ({}x{}, blank)",
-            self.resets, cols, rows
-        );
+        if let Some(report) = RESET_REPORTER.get() {
+            report(self.resets, cols, rows);
+        }
     }
 
     pub fn term(&self) -> &Term<Responder> {
@@ -646,4 +645,10 @@ fn finish(rows: Vec<(String, bool)>, join: bool) -> Vec<String> {
         out.push(buf);
     }
     out
+}
+
+/// Metadata-only observer; callers must use nonblocking delivery.
+static RESET_REPORTER: std::sync::OnceLock<fn(u64, u16, u16)> = std::sync::OnceLock::new();
+pub fn set_reset_reporter(report: fn(u64, u16, u16)) {
+    let _ = RESET_REPORTER.set(report);
 }
