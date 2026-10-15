@@ -1858,10 +1858,11 @@ function showNewSessionStage(info, {historyMode = 'push'} = {}) {
       `, `
     <div class="dmeta"><span id="mcount-total">0 条消息</span>
       ${info.node_name ? `<span class="meta-node node-badge" data-node-color="${nodeColor(info.node_name)}">${esc(info.node_name)}</span>` : ''}
-      <span class="meta-secondary"><code>${esc(shortCwd(info.cwd, 999))}</code></span>
+      <span class="meta-secondary meta-cwd">${headDirectoryMarkup({...info, uid: S.sel})}</span>
       <span class="meta-source">${esc(src.name)}</span></div>`)}
     </div></div>
   </div><div id="msgs" class="msgs"><div class="empty new-session-wait">${esc(pendingStageMessage(info))}</div></div>`;
+  paintHeadDirectory();
   stickBottom($('#msgs'), true);
   watchBottom($('#msgs'));
   $('#detail .mobile-back').onclick = showMobileList;
