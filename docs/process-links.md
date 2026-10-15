@@ -466,7 +466,14 @@ The collector's read-only `usage` request returns a version-1 cumulative ledger,
 shared with Node Status (`/api/usage`) without requiring any diagnostic lease.
 `state.usage.json` beside the attribution state contains per-session/per-scope
 Beijing calendar-day buckets, CPU seconds, GPU UUID residency seconds, estimated
-compute seconds and observed compute card-seconds. Device names and sampling-gap
+compute seconds and observed compute card-seconds. Storage writes accumulate
+continuous same-process/owner deltas of the existing `/proc/PID/io` `write_bytes`
+counter in `storage_write_bytes`, with `storage_write_observed_seconds` for
+availability. No extra reads or probes are required. Cancelled writes are not
+subtracted; this is neither physical disk traffic nor complete NFS accounting.
+Missing samples, resets and first observations add nothing; short-lived processes
+may be missed. Older rows default to zero bytes and zero coverage, preserving
+CPU/GPU history without fabricating historic write totals. Device names and sampling-gap
 intervals remain durable. Direct and inclusive buckets are separate views, never
 additive; inclusive attribution uses causal launch chains, not sidebar nesting.
 Within each target session, devices deduplicate across processes/descendants.
