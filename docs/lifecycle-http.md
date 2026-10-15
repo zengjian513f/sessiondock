@@ -230,6 +230,25 @@ original record UID and native SID before the user's continuation request.
 Hub-scoped UIDs retain the original machine scope even if the new session
 runs elsewhere; an active subagent reference is included when applicable.
 This passes a textual reference, without copying or rewriting native history.
+The first draft starts with `Original title (N)`, starting at 2. A trailing
+`(N)`, `（N）`, `[N]`, `［N］` or `【N】` (with optional whitespace) is replaced
+with the next number in canonical ` (N)` form; interior/non-numeric brackets
+are preserved. The number is derived from the source title, not sibling counts.
+As with bug reports, Codex receives a local `/rename` before its first task;
+`/status` and the native name index confirm the exact instance's title. Naming
+and its receipt share the SEND lock; reload/retry retains the intended name,
+and an unconfirmed rename retains the draft without sending the task or
+repeating the rename. Other CLIs receive the title in the first prompt, matching
+the report naming path; they do not gain a native rename protocol here.
+
+The continuation source descriptor is persisted with the launch intent. Once
+its declared native SID or confirmed process binding appears in the inventory,
+the server initializes a confirmed `continues` predecessor in session metadata.
+Successors are derived in reverse, including across nodes through the Hub.
+Discovery survives page closure and server restart; a durable initialization
+marker prevents later manual removal from being undone. Pending launches do not
+receive fabricated native identities. The button uses a forward arrow, separate
+from the native fork icon.
 
 The first message uses the ordinary conversation SEND path, including fresh
 server readiness checks and submission deduplication. A failed create leaves

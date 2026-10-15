@@ -151,3 +151,64 @@ pub async fn hints(
         Ok(json!({"uid": query.uid, "messages": messages}))
     }).await
 }
+
+/// Publish an explicitly requested continuation once its exact native identity
+/// exists. The intent lives in the launch receipt, so closing the page or a
+/// restart between first SEND and discovery cannot lose the edge.
+pub(super) async fn record_continuations(
+    state: &AppState,
+    records: std::sync::Arc<Vec<crate::lifecycle::model::Record>>,
+) -> Result<(), ApiError> {
+    if !records
+        .iter()
+        .any(|record| record.spec().continuation().is_some())
+    {
+        return Ok(());
+    }
+    let Some(metadata) = state.metadata.clone() else {
+        return Ok(());
+    };
+    let events = state.ui_events.clone();
+    state
+        .reader
+        .run(move |sessions| {
+            let inventory = sessions.list_recent()?;
+            let rows = inventory["sessions"].as_array().expect("session rows");
+            for record in records.iter() {
+                let Some(edge) = record.spec().continuation() else {
+                    continue;
+                };
+                let owner = if let Some(binding) = record
+                    .binding()
+                    .filter(|b| b.state() == crate::lifecycle::model::BindingState::Confirmed)
+                {
+                    rows.iter().find(|row| row["uid"] == binding.spec().uid())
+                } else if let Some(sid) = record.declared_sid() {
+                    let mut matches = rows.iter().filter(|row| {
+                        row["sid"] == sid && row["source"] == json!(record.spec().source())
+                    });
+                    let first = matches.next();
+                    if matches.next().is_some() {
+                        None
+                    } else {
+                        first
+                    }
+                } else {
+                    None
+                };
+                let Some(owner) = owner.filter(|row| relations::top_level(row)) else {
+                    continue;
+                };
+                let uid = owner["uid"].as_str().expect("session uid");
+                metadata::update(&metadata, &events, |store| {
+                    Ok(store.initialize_continuation(uid, edge.clone())?)
+                })
+                .map_err(|error| crate::sessions::SessionError {
+                    status: error.status.as_u16(),
+                    message: error.message,
+                })?;
+            }
+            Ok(())
+        })
+        .await
+}

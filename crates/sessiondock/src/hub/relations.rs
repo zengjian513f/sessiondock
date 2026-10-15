@@ -58,3 +58,29 @@ pub async fn prepare(
     body.remove("predecessor_uid");
     Ok(())
 }
+
+/// Resolve the source before the destination has a native identity.
+pub async fn prepare_continuation(
+    registry: &Registry,
+    client: &Client,
+    body: &mut Map<String, Value>,
+) -> Result<(), ProxyError> {
+    body.remove("remote_continuation");
+    let Some(uid) = body
+        .remove("continuation_uid")
+        .and_then(|v| v.as_str().map(str::to_owned))
+    else {
+        return Ok(());
+    };
+    let target = body.get("_node").and_then(Value::as_str).unwrap_or("");
+    let inventory = inventory(registry, client).await?;
+    let source = inventory["sessions"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|r| r["uid"] == uid && r["stale"] != true))
+        .ok_or_else(|| ProxyError::Invalid("前序会话不存在或机器离线".into()))?;
+    body.insert(
+        "remote_continuation".into(),
+        json!(relations::descriptor(source, &json!({"node_id":target}))),
+    );
+    Ok(())
+}

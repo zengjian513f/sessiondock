@@ -13,7 +13,7 @@ mod files;
 mod final_screen;
 mod health;
 pub mod hub;
-mod lifecycle;
+pub(crate) mod lifecycle;
 mod media;
 mod metadata;
 pub(crate) mod node_auth;

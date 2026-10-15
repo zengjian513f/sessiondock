@@ -280,6 +280,11 @@ pub fn prepare_list(
 }
 
 async fn tick(state: &AppState) -> Result<(), String> {
+    if let Some(service) = &state.lifecycle {
+        crate::api::lifecycle::shared_records(state, service, false)
+            .await
+            .map_err(|error| error.message)?;
+    }
     let (Some(scanner), Some(metadata)) = (&state.proc_scan, &state.metadata) else {
         return Ok(());
     };

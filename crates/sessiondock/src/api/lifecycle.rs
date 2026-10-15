@@ -11,7 +11,7 @@ use crate::{
     state::AppState,
 };
 use axum::{
-    Json,
+    Extension, Json,
     extract::{
         Query, State,
         rejection::{JsonRejection, QueryRejection},
@@ -222,7 +222,7 @@ pub async fn bind(
 /// [`crate::polls::RECEIPTS_TTL`] under one lifecycle generation; concurrent
 /// misses wait for one refresh and `force` refreshes regardless. Mutation
 /// paths keep their own fresh lists.
-pub(super) async fn shared_records(
+pub(crate) async fn shared_records(
     state: &AppState,
     service: &LifecycleService,
     force: bool,
@@ -237,6 +237,7 @@ pub(super) async fn shared_records(
         return Ok(records);
     }
     let records = std::sync::Arc::new(service.list(0, usize::MAX).await.map_err(failure)?);
+    super::relations::record_continuations(state, records.clone()).await?;
     state.polls.store_receipts(generation, records.clone());
     Ok(records)
 }
@@ -292,6 +293,10 @@ pub(super) fn response_bytes(
 
 #[derive(Deserialize)]
 pub struct CreateRequest {
+    #[serde(default)]
+    continuation_uid: Option<String>,
+    #[serde(default)]
+    remote_continuation: Option<crate::metadata::Predecessor>,
     source: Source,
     cwd: String,
     #[serde(default)]
@@ -626,6 +631,7 @@ fn build_spec(
 }
 pub async fn create(
     State(state): State<AppState>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     body: Result<Json<CreateRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let service = enabled(&state)?;
@@ -687,6 +693,36 @@ pub async fn create(
     } else {
         spec
     };
+    let continuation = if let Some(edge) = body.remote_continuation {
+        if hub.is_none() {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "relations_remote_hub",
+                "跨机器关系需要通过 Hub 验证",
+            ));
+        }
+        Some(edge)
+    } else if let Some(uid) = body.continuation_uid {
+        Some(
+            state
+                .reader
+                .run(move |store| {
+                    let inventory = store.list(true)?;
+                    let row = inventory["sessions"]
+                        .as_array()
+                        .and_then(|rows| rows.iter().find(|r| r["uid"] == uid))
+                        .ok_or_else(|| crate::sessions::SessionError {
+                            status: 404,
+                            message: "前序会话不存在".into(),
+                        })?;
+                    Ok(crate::metadata::relations::descriptor(row, row))
+                })
+                .await?,
+        )
+    } else {
+        None
+    };
+    let spec = spec.with_continuation(continuation);
     let record = service.create(request_id, spec).await.map_err(failure)?;
     response(project(&record), permit).await
 }

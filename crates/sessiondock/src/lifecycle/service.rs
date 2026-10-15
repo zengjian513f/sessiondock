@@ -877,6 +877,7 @@ impl Core {
                         spec.effort().map(str::to_owned),
                     )
                 })
+                .map(|normalized| normalized.with_continuation(spec.continuation().cloned()))
                 .unwrap_or(spec);
                 if let Some(record) = store.lookup_request(&id, &spec).map_err(Error::Store)? {
                     return Ok(Created::Existing(record));

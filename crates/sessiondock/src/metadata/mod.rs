@@ -208,6 +208,14 @@ impl MetadataStore {
         self.update(|snapshot| snapshot.with_initial_nest_parents(found, identities))
     }
 
+    pub fn initialize_continuation(
+        &self,
+        uid: &str,
+        edge: Predecessor,
+    ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
+        self.update(|snapshot| snapshot.with_initial_continuation(uid, edge))
+    }
+
     pub fn set_predecessor(
         &self,
         uid: &str,

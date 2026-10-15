@@ -1,4 +1,4 @@
-//! Name a report through the Codex TUI before sending its first model task.
+//! Name a report or continuation through the Codex TUI before sending its first model task.
 //! Native index confirmation belongs to the same managed instance. No title
 //! override and no writes to CLI-owned files are involved.
 use super::*;
@@ -10,22 +10,32 @@ impl Conversations {
         lease: &LeaseHandle,
         input: &SendInput,
     ) -> Result<(), Failure> {
-        if identity.source != "codex" || !input.request_id.starts_with("report-send:") {
+        if identity.source != "codex" {
             return Ok(());
         }
-        let Some((record, note)) = identity.record.as_ref().and_then(|record| {
-            self.reports
-                .as_ref()?
-                .pending_decoration(record.record_id())
-                .map(|note| (record, note))
-        }) else {
+        let Some(record) = identity.record.as_ref() else {
             return Ok(());
         };
-        if input.request_id != format!("report-send:{}", note["report_id"].as_str().unwrap_or("")) {
+        let draft = self.store.draft(&identity.key);
+        let continuation = draft.value["continuation_title"].as_str().filter(|_| {
+            draft.value["requestId"] == input.request_id && draft.value["text"] == input.text
+        });
+        let note = self
+            .reports
+            .as_ref()
+            .and_then(|reports| reports.pending_decoration(record.record_id()));
+        let (title, request) = if let Some(title) = continuation {
+            (title, format!("continue-rename:{}", record.record_id()))
+        } else if let Some(note) = note.as_ref().filter(|note| {
+            input.request_id == format!("report-send:{}", note["report_id"].as_str().unwrap_or(""))
+        }) {
+            (
+                note["title"].as_str().unwrap_or("BUG:"),
+                format!("report-rename:{}", record.record_id()),
+            )
+        } else {
             return Ok(());
-        }
-        let title = note["title"].as_str().unwrap_or("BUG:");
-        let request = format!("report-rename:{}", record.record_id());
+        };
         let previous = self.store.request(&identity.key, &request);
         if previous.as_ref().is_some_and(|old| old.phase == "sent") {
             return Ok(());
@@ -79,8 +89,12 @@ impl Conversations {
                 if tokio::time::Instant::now() >= deadline {
                     return Err(Failure::new(
                         409,
-                        "report_rename_unconfirmed",
-                        "未确认 Codex 原生命名成功，缺陷任务尚未发送；请检查终端，草稿已保留",
+                        if continuation.is_some() {
+                            "continue_rename_unconfirmed"
+                        } else {
+                            "report_rename_unconfirmed"
+                        },
+                        "未确认 Codex 原生命名成功，任务尚未发送；请检查终端，草稿已保留",
                     ));
                 }
                 tokio::time::sleep(Duration::from_millis(250)).await;
