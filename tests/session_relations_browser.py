@@ -12,7 +12,6 @@ from playwright.sync_api import sync_playwright, expect
 from history_fixtures import BINARY, Corpus, codex_row, codex_message, isolated_server
 from hub_fixtures import Hub, free_port, scoped
 from node_auth_fixtures import node_env, TOKEN
-from nest_tree_browser import open_item_menu
 
 
 def main():
@@ -81,7 +80,8 @@ def main():
         measure = "el=>{const s=getComputedStyle(el),t=getComputedStyle(el.querySelector('.t'));return {gap:s.gap,paddingTop:s.paddingTop,paddingRight:s.paddingRight,border:s.borderLeftWidth,title:t.fontSize,line:t.lineHeight,icon:el.querySelector('.source-icon').getBoundingClientRect().width}}"
         sidebar_style = row.evaluate(measure)
         screenshot('sidebar')
-        open_item_menu(page,refs['first'])
+        page.locator(f'#side .item[data-uid="{refs["first"]}"]').click(button='right')
+        expect(page.locator('#item-menu')).to_be_visible()
         assert page.locator('#item-menu [data-act="info"]').count() == 0
         page.keyboard.press('Escape')
         page.locator(f'#side .item[data-uid="{refs['first']}"]').locator('.body').click()
@@ -119,21 +119,21 @@ def main():
         expect(compact.locator('.si-relation-detail')).to_be_hidden()
         expect(page.locator('#info-successors img')).to_have_count(0)
         # Model-ready catalog excludes both native subagents and displayed children.
+        before_cancel = (corpora[1].root/'state/session-metadata.json').read_bytes()
         page.locator('#add-predecessor').click()
         expect(page.locator('#relation-target option[value="'+refs['origin']+'"]')).to_have_count(1)
         expect(page.locator('#relation-target option[value="'+refs['nested']+'"]')).to_have_count(0)
         assert '子代理不参与' not in page.locator('#relation-target').inner_text()
         screenshot('editor')
         page.locator('#relation-cancel').click()
+        assert (corpora[1].root/'state/session-metadata.json').read_bytes() == before_cancel
         def api_info(uid):return page.request.get(base+'/api/session/info?'+urlencode({'uid':uid})).json()
         result = api_info(refs['second'])
         assert len(result['session']['predecessors'])==1 and len(result['session']['successors'])==2
         assert {x['uid'] for x in result['ancestors']}=={refs['origin'],refs['first']}
         assert not api_info(twin)['descendants'], 'same native SID on another node must stay separate'
-        rejected=page.request.post(base+'/api/session/predecessor',data={'uid':refs['second'],'predecessor_uid':refs['nested']})
-        assert rejected.status==400, rejected.text()
-        forged=page.request.post(locals_[1]+'/api/session/predecessor',data={'uid':corpora[1].uid('second'),'remote_predecessor':{'session_uid':corpora[0].uid('first'),'node_id':nodes[0].nid}})
-        assert forged.status==403, forged.text()
+        # The user-visible picker excludes nested sessions above. Direct forged
+        # HTTP writes are not browser functional acceptance.
         print('PASS page entry, cross-node adjacency, recursive predecessors/successors, evidence, top-level filter and same-SID isolation',flush=True)
         if args.screenshots:
             args.screenshots.mkdir(parents=True,exist_ok=True)

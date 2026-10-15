@@ -106,6 +106,15 @@ Typical time is the wall-clock measured on 2026-09-12 during the batch-19 and
 batch-20 acceptance runs on the development machine (release binary, warm page
 cache); suites that were not part of those runs are `n/a`.
 
+## Diagnostic retention acceptance
+
+`python3 tests/diagnostic_retention_browser.py --binary target/release/sessiondock`
+drives actual page navigation and session selection against a private server.
+It checks mixed-age/numbered segments, 24-hour boundaries, idle cleanup, restart,
+cleanup and sink failure, protected evidence, and records enabled/disabled audit
+navigation timings. Artifacts are under `target/diagnostic-retention/`. These
+timings are observations, not a claim of equivalent performance.
+
 ## Suites
 
 The table lists the suites `--list` reports plus the opt-in `*_real` browser suites; rows for the removed non-browser suites were dropped on 2026-10-06.

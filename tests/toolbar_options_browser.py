@@ -93,10 +93,14 @@ def main():
                     assert page.evaluate("S.off.has('agy')")
                     pin.uncheck()
                     if width < 720:
-                        source.dispatch_event('pointerdown', {'pointerType': 'touch', 'pointerId': 1, 'button': 0, 'clientX': 30, 'clientY': 300})
+                        touch = context.new_cdp_session(page)
+                        bounds = source.bounding_box()
+                        point = {'x': bounds['x'] + bounds['width']/2, 'y': bounds['y'] + bounds['height']/2}
+                        touch.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [point]})
+                        page.wait_for_timeout(700)
                         expect(page.locator('#side .item')).to_have_count(1)
-                        source.dispatch_event('pointerup', {'pointerType': 'touch', 'pointerId': 1})
-                        source.dispatch_event('click')
+                        touch.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+                        touch.detach()
                     else:
                         source.click(button='right')
                     expect(page.locator('#side .item')).to_have_count(1)
@@ -128,7 +132,11 @@ def main():
                     # Keyboard navigation and bounded, readable mobile submenus.
                     page.locator('#header-more-btn').press('ArrowDown')
                     trigger = page.locator('#header-menu [data-toolbar-menu=nest]')
-                    trigger.focus()
+                    for _ in range(20):
+                        if trigger.evaluate('e => e === document.activeElement'):
+                            break
+                        page.keyboard.press('ArrowDown')
+                    expect(trigger).to_be_focused()
                     trigger.press('ArrowRight')
                     menu = page.locator('#toolbar-nest-menu')
                     expect(menu.locator('button[data-mode=hidden]')).to_be_focused()
@@ -156,13 +164,34 @@ def main():
                     source = menu.locator('button[data-source=agy]')
                     expect(source).to_have_attribute('aria-disabled', 'true')
                     expect(source).to_have_attribute('title', 'Agy 在当前选择的机器上没有会话。')
-                    # Playwright blocks click() on aria-disabled controls; a DOM
-                    # click exercises the page's unavailable-control guard.
-                    source.dispatch_event('click')
+                    # A real pointer can reach aria-disabled controls; activation
+                    # must leave filtering unchanged.
+                    bounds = source.bounding_box()
+                    page.mouse.click(bounds['x'] + bounds['width']/2, bounds['y'] + bounds['height']/2)
                     assert page.evaluate("S.off.has('agy')")
                     menu.get_by_role('checkbox', name='在工具栏显示Agy', exact=True).check()
                     expect(page.locator('#chips button[data-source=agy]')).to_be_visible()
                     expect(page.locator('#chips button[data-source=agy]')).to_have_attribute('aria-disabled', 'true')
+                    # Exercise each actual toolbar and duplicate submenu entry,
+                    # including persisted preferences after navigation.
+                    for value in ('tree', 'directory', 'date', 'group'):
+                        menu = open_toolbar_options(page, 'view')
+                        option = menu.locator(f'button[data-v={value}]')
+                        option.locator('..').get_by_role('checkbox').check()
+                        option.click()
+                        assert page.evaluate('S.view') == value
+                        page.locator(f'#view button[data-v={value}]').click()
+                        assert page.evaluate('S.view') == value
+                    for value in ('hidden', 'nested', 'flat'):
+                        menu = open_toolbar_options(page, 'nest')
+                        option = menu.locator(f'button[data-mode={value}]')
+                        option.locator('..').get_by_role('checkbox').check()
+                        option.click()
+                        page.locator(f'#nest button[data-mode={value}]').click()
+                        expect(page.locator(f'#nest button[data-mode={value}]')).to_have_attribute('aria-pressed', 'true')
+                    page.reload(wait_until='networkidle')
+                    assert page.evaluate('S.view') == 'group'
+                    expect(page.locator('#nest button[data-mode=flat]')).to_have_attribute('aria-pressed', 'true')
                     assert not errors, errors
                     print(f'PASS toolbar options {width}px: defaults, independent pin/filter, submenus, persistence, keyboard, bounds', flush=True)
                     context.close()

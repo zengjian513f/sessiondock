@@ -21,8 +21,13 @@ arrays, objects and serialized values have no additional Rust-only limits.
 Writers use a nonblocking queue with the 20,000-item capacity. A full
 queue remains best effort and returns `202` with `dropped:true`. There is no
 per-client rate bucket, concurrent-parse gate, queued-byte cap, file-size
-rotation threshold or retained-byte cap. Matching daily files older than
-the 14-day retention window are deleted.
+rotation threshold or retained-byte cap. The writer filters matching daily and numbered JSONL segments by server
+`received_at` on startup and every 60 seconds, including while idle. Records
+older than rolling 24 hours expire; mixed-age files retain recent records.
+Cleanup lag is up to 60 seconds plus writer/IO time. Malformed or undated
+records are preserved for diagnosis. Cleanup failures increment `write_errors`
+and emit a rate-limited warning; they do not reject business operations.
+Saved bug-report evidence and business/session files are outside this cleanup.
 
 `GET /api/health` reports accepted, rejected, dropped, written and queued
 counters. Shutdown closes admission and drains queued records within the
