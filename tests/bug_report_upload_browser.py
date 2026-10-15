@@ -177,6 +177,7 @@ def run(browser, root, config):
             print('PASS persistent interruption: bounded retry, retained text/file, manual recovery', flush=True)
 
             # The worker CLI runs with the model and effort picked in the dialog.
+            page.locator('#bug-report-type label:has(input[value=feature])').click()
             page.locator('#bug-report-model').click()
             page.locator('#bug-report-model-options [role=option]', has_text='Opus').click()
             page.locator('#bug-report-effort').select_option('high')
@@ -198,6 +199,8 @@ def run(browser, root, config):
             assert (bundles[0] / 'description.md').read_text() == report_text + '\n'
             # The worker brief defers validation to AGENTS.md: no unit-test step.
             brief = (bundles[0] / 'worker-prompt.md').read_text()
+            assert brief.startswith('功能需求:') and '处理 sessiondock 功能需求' in brief, brief
+            assert json.loads((bundles[0] / 'manifest.json').read_text())['worker']['title'].startswith('功能需求:'), brief
             assert 'AGENTS.md' in brief and 'cargo test' not in brief, brief
             files = sorted((root / 'work/sessiondock_attachments').rglob('*.png'))
             assert len(files) == 2, files

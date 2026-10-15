@@ -431,6 +431,13 @@
       <div><h2 id="bug-report-title">报告问题</h2></div>
       <button type="button" class="modal-close" title="关闭" aria-label="关闭">×</button>
     </div>
+    <div class="new-row">
+    <fieldset class="new-source" id="bug-report-type">
+      <legend class="visually-hidden">报告类型</legend>
+      <label><input type="radio" name="bug-report-type" value="feature"><span>功能需求</span></label>
+      <label><input type="radio" name="bug-report-type" value="bug" checked><span>缺陷报告</span></label>
+    </fieldset>
+    </div>
     <div class="new-row report-row" role="group" aria-label="处理会话">
       <label id="bug-report-node-label" class="node-select" hidden title="处理这份报告的会话运行在哪台机器"><span class="visually-hidden">处理节点</span><select id="bug-report-node"></select></label>
       <fieldset class="new-source report-source" id="bug-report-source">

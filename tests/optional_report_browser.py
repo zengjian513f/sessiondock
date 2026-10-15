@@ -37,7 +37,7 @@ def main():
                     'SESSIONDOCK_BUG_REPORT_DIR': str(capture / 'reports'),
                     'SESSIONDOCK_BUG_REPORT_REPO': str(capture / 'work'),
                 }) as (base, _):
-            for width, theme in [(1280, 'light'), (390, 'dark')]:
+            for width, theme in [(1280, 'light'), (1280, 'dark'), (390, 'light'), (390, 'dark')]:
                 context = browser.new_context(viewport={'width': width, 'height': 900}, color_scheme=theme)
                 page = context.new_page()
                 errors = []
@@ -45,6 +45,12 @@ def main():
                 page.goto(base, wait_until='networkidle')
                 expect(page.locator('html')).to_have_attribute('data-theme', theme)
                 open_report(page)
+                expect(page.locator('#bug-report-type input[value=bug]')).to_be_checked()
+                assert page.locator('#bug-report-type label').first.inner_text() == '功能需求'
+                assert page.locator('#bug-report-type').bounding_box()['height'] < 50
+                report_type = 'feature' if theme == 'light' else 'bug'
+                page.locator(f'#bug-report-type label:has(input[value={report_type}])').click()
+                expect(page.locator(f'#bug-report-type input[value={report_type}]')).to_be_checked()
                 expect(page.locator('#bug-report-source')).to_be_hidden()
                 expect(page.locator('#bug-report-model')).to_be_hidden()
                 expect(page.locator('#bug-report-go')).to_have_text('保存诊断')
@@ -60,11 +66,15 @@ def main():
                 expect(page.locator('#bug-report-toast button', has_text='打开')).to_have_count(0)
                 manifest = json.loads((Path(result['path']) / 'manifest.json').read_text())
                 assert manifest['status'] == 'captured', manifest
+                assert manifest['report_type'] == report_type, manifest
+                prompt = (Path(result['path']) / 'worker-prompt.md').read_text()
+                assert prompt.startswith('功能需求:' if report_type == 'feature' else 'BUG:'), prompt
+                assert ('处理 sessiondock 功能需求' if report_type == 'feature' else '处理 sessiondock 缺陷报告') in prompt
                 assert context.request.get(base + '/api/term/list').json()['pending'] == []
                 assert not errors, errors
                 context.close()
         browser.close()
-    print('PASS optional reports: hidden when disabled; capture-only wide/light and mobile/dark, no worker')
+    print('PASS optional reports: hidden when disabled; feature/bug capture, wide/mobile light/dark, no worker')
 
 
 if __name__ == '__main__':
