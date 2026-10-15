@@ -231,7 +231,8 @@ def node_switch_cwd(browser, hub, node, other):
     assert len(frames) > 5 and len({tuple(f) for f in frames}) == 1, sorted({tuple(f) for f in frames})
     for value in ("/shared/proj", "  /shared/proj/  ", "/only-b/work", "/missing/work", "relative/path", "   "):
         cwd.fill(value)
-        with page.expect_response(lambda r: "/api/term/complete-dir" in r.url and "node=" + other.nid in r.url):
+        with page.expect_response(lambda r: "/api/term/check-dirs" in r.url
+                                  and r.request.post_data_json.get('_node') == other.nid):
             page.locator("#new-node").select_option(other.nid)
         expect(cwd).to_have_value(value if value.strip().rstrip("/") in ("/shared/proj", "/only-b/work") else "")
         page.locator("#new-node").select_option(node.nid)
@@ -325,13 +326,14 @@ def shared_recent_cwd(browser, hub, node, other):
 
     def delay_check(route):
         response = route.fetch()
-        if f'node={node.nid}' in route.request.url and 'path=%2Fshared%2Fsession' in route.request.url:
+        body = route.request.post_data_json
+        if body.get('_node') == node.nid and '/shared/session' in body['paths']:
             held.append((route, response))
             page.evaluate('window.__sharedCwdHeld = true')
         else:
             route.fulfill(response=response)
 
-    context.route('**/api/term/complete-dir?*', delay_check)
+    context.route('**/api/term/check-dirs', delay_check)
     open_new_session(page)
     page.wait_for_function('window.__sharedCwdHeld === true')
     page.locator('#new-node').select_option(other.nid)
@@ -443,16 +445,30 @@ def current_cwd_defaults(browser, hub, node, other):
 
 
 def stable_open_cwd(browser, hub, node, other):
-    """Opening publishes recommendations once, without changing to typed matches."""
+    """Thousands of foreign cwd candidates use one batch and publish only once."""
     shared = '/shared/Projects/跨机器推荐目录-with-a-long-project-name'
     node.set(dirs=['/same/project', shared])
     context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
     page = context.new_page()
     errors, held = [], []
+    batches = []
     page.on('pageerror', lambda error: errors.append(str(error)))
     context.route('**/api/term/complete-dir?*', lambda route: held.append(route))
+    def hold_batch(route):
+        batches.append(route.request.post_data_json)
+        held.append(route)
+    context.route('**/api/term/check-dirs', hold_batch)
+    def many_sessions(route):
+        response = route.fetch(headers={key: value for key, value in route.request.headers.items()
+                                        if key.lower() != 'x-sessiondock-list'})
+        data = response.json()
+        foreign = next(row for row in data['sessions'] if row['node_id'] == other.nid)
+        data['sessions'].extend({**foreign, 'uid': f'claude:{other.nid}~batch-{i}',
+            'cwd': f'/shared/历史目录-{i:04d}/work'} for i in range(3660))
+        route.fulfill(json=data)
+    context.route('**/api/sessions*', many_sessions)
     page.goto(f'http://127.0.0.1:{hub.port}/', wait_until='domcontentloaded')
-    page.wait_for_function('S.sessions.length === 2 && T.listLoaded && Nodes.list.length === 2')
+    page.wait_for_function('S.sessions.length === 3662 && T.listLoaded && Nodes.list.length === 2')
     uid = page.evaluate('nid => S.sessions.find(row => row.node_id === nid).uid', node.nid)
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     page.wait_for_function('uid => S.sel === uid', arg=uid)
@@ -481,8 +497,12 @@ def stable_open_cwd(browser, hub, node, other):
                 page.screenshot(path=os.path.join(os.environ['SESSIONDOCK_TEST_SHOTS'],
                     f'cwd-loading-{width}-{theme}.png'))
             assert held
+            assert len(batches) == 1, 'one batch, not one request per historical cwd'
+            assert len(batches[0]['paths']) >= 3661
+            assert batches[0]['_node'] == node.nid
             while held:
                 held.pop(0).continue_()
+            batches.clear()
             expect(options.first).to_have_attribute('title', shared)
             expect(page.locator('#new-cwd-options-title')).to_have_text('最近使用')
             expect(cwd).to_have_value('/same/project')
@@ -502,6 +522,9 @@ def stable_open_cwd(browser, hub, node, other):
             expect(page.locator('#new-cwd-options-title')).to_have_text('匹配目录')
             expect(options).to_have_count(1)
             expect(options.first).to_have_attribute('title', shared)
+            if os.environ.get('SESSIONDOCK_TEST_SHOTS'):
+                page.screenshot(path=os.path.join(os.environ['SESSIONDOCK_TEST_SHOTS'],
+                    f'cwd-matching-{width}-{theme}.png'))
             page.locator('#new-session-dialog .modal-close').click()
     assert not errors, errors
     context.close()

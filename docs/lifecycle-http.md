@@ -76,6 +76,7 @@ bodies ignore unrelated dictionary members. The local-only middleware applies.
 | GET `/api/term/list` | optional `force=1` | Native-bound sessions plus separate launch-only pending receipts, `sources` and `resume_sources` per source (false when the source has no unique CLI or its CLI is not installed, [below](#installed-clis)) and `backends`; served from a 2 s per-view response cache that every mutation above drops at once, `force=1` bypasses it ([liveness.md](liveness.md#response-caches)) |
 | POST `/api/term/takeover` | `uid`; optional `force`, `cols`, `rows` | Reuse a managed console, start a stopped session, or return `needs_confirm` for a running external CLI; confirmed force terminates only exact native-session process matches before resume |
 | GET `/api/term/complete-dir` | `path`, optional `limit` | Absolute/`~/` completion without a configured root gate; directory symlinks are followed, ≤50 (default 24) |
+| POST `/api/term/check-dirs` | `paths` (array of strings) | Read-only batch existence checks for absolute/`~/` directories; returns existing input spellings in `directories`, follows directory symlinks, does not enumerate parents or apply completion limits |
 | GET `/api/term/models` | `source` | The source's one CLI profile's model catalog for the new-session picker: `{models:[{id,name,efforts,default_effort?}], efforts, default_model?}`; empty when the source has no unique profile or the CLI keeps no list ([below](#model-and-effort)) |
 
 The limited legacy diagnostics `_build`, `_trace_id`, `_page_id` are accepted but

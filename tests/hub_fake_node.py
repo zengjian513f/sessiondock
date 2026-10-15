@@ -294,6 +294,9 @@ class NodeHandler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "name": q["name"][0], "size": len(raw), "attachment_id": "1",
                                "media": {"src": "/api/media/dddddddddddddddddddddddddddddddd"}})
         body = json.loads(raw or b"{}")
+        if u.path == "/api/term/check-dirs":
+            dirs = s.get("dirs", ["/home/" + s["name"] + "/work"])
+            return self._json({"directories": [p for p in body["paths"] if p.rstrip("/") in dirs]})
         s["writes"].append((u.path, body))
         if u.path == "/api/session/conversation":
             draft = {"revision": body.get("revision", 0) + 1, "value": body["value"]}

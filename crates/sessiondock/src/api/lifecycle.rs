@@ -850,6 +850,26 @@ pub async fn takeover(
 }
 
 #[derive(Deserialize)]
+pub struct CheckDirsBody {
+    paths: Vec<String>,
+}
+
+/// Read-only exact directory checks; no parent enumeration or completion limit.
+pub async fn check_dirs(
+    State(state): State<AppState>,
+    body: Result<Json<CheckDirsBody>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let service = enabled(&state)?;
+    let permit = admit(&state).await?;
+    let body = parse_body(body)?;
+    let directories = service
+        .existing_directories(body.paths)
+        .await
+        .map_err(failure)?;
+    response(json!({"directories": directories}), permit).await
+}
+
+#[derive(Deserialize)]
 pub struct CompleteDirQuery {
     #[serde(default)]
     path: String,

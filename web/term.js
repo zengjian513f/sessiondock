@@ -1203,13 +1203,13 @@ async function loadSharedCwdOptions() {
   const pending = canCheck ? candidates.filter(row => !known.has(cwdPathKey(row.cwd))) : [];
   const current = () => run === commonCwdRun && node === newNodeId()
     && $('#new-session-dialog').open;
-  await Promise.all(Array.from({length: Math.min(4, pending.length)}, async () => {
-    while (pending.length) {
-      const row = pending.shift();
-      if (await newNodeHasDir(row.cwd, node)) known.add(cwdPathKey(row.cwd));
-      if (!current()) return;
-    }
-  }));
+  // 一次检查整批路径，不能把每个历史目录都变成一次跨机器补全请求。
+  // 即使没有待检查路径，也等打开弹窗的同步步骤完成后再检查 current()。
+  const existing = await (pending.length
+    ? newNodeExistingDirs(pending.map(row => row.cwd), node) : []);
+  for (const path of existing) {
+    known.add(cwdPathKey(path));
+  }
   if (!current()) return;
   cwdCompletion.common = canCheck
     ? candidates.filter(row => known.has(cwdPathKey(row.cwd))) : candidates;
