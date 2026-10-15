@@ -73,6 +73,13 @@ def open_page(browser, base, rows, theme, viewport):
     return context, page
 
 
+def open_settings(page):
+    if not page.locator('#settings').is_visible():
+        page.locator('#header-more-btn').click()
+    page.locator('#settings').click()
+    page.locator('.settings-tab[data-tab="appearance"]').click()
+
+
 def settle(page):
     page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
 
@@ -154,30 +161,29 @@ def main():
                     assert reloaded == first, ('colors differ after reload', first, reloaded)
                     print('PASS directory colors', theme, viewport['width'], len(first), 'directories', flush=True)
 
-                    # Clicking a directory shows only its tinted part, without opening the
-                    # session; the choice survives a reload and a second click restores it.
-                    url = page.url
-                    target = page.locator('#side .item .cwd-path[data-path="~/Projects/beta/src"]').first
-                    box = target.bounding_box()
-                    target.click()
+                    # The appearance option changes every row and survives reload.
+                    open_settings(page)
+                    expect(page.locator('#setting-list-path')).to_have_value('full')
+                    page.locator('#setting-list-path').select_option('tint')
+                    page.screenshot(path=str(shots / f'{theme}-{viewport["width"]}-settings.png'))
+                    page.locator('#settings-dialog .modal-close').click()
                     settle(page)
-                    assert page.url == url and not page.locator('#side .item.sel').count(), 'directory click opened a session'
-                    assert abs(target.bounding_box()['y'] - box['y']) < 2, ('clicked row moved', box, target.bounding_box())
                     assert page.evaluate("localStorage.getItem('sessiondock.timelineDirectoryTintOnly')") == 'true'
                     for row in page.evaluate(SHOWN):
                         assert row['shown'] == row['tint'] and '…' not in row['shown'], row
-                    assert target.inner_text() == 'beta/src', target.inner_text()
                     page.screenshot(path=str(shots / f'{theme}-{viewport["width"]}-tint-only.png'))
                     page.reload(wait_until='networkidle')
                     expect(page.locator('#side .cwd-path').first).to_be_visible()
                     settle(page)
                     assert all(row['shown'] == row['tint'] for row in page.evaluate(SHOWN))
-                    page.locator('#side .item .cwd-path').first.click()
+                    open_settings(page)
+                    expect(page.locator('#setting-list-path')).to_have_value('tint')
+                    page.locator('#setting-list-path').select_option('full')
+                    page.locator('#settings-dialog .modal-close').click()
                     settle(page)
                     assert page.evaluate("localStorage.getItem('sessiondock.timelineDirectoryTintOnly')") == 'false'
                     assert page.locator('#side .item .cwd-path[data-path="~/Projects/alpha/src"]').first.inner_text().startswith('~/')
-                    page.evaluate("localStorage.removeItem('sessiondock.timelineDirectoryTintOnly')")
-                    print('PASS directory click toggles tinted-only paths', theme, viewport['width'], flush=True)
+                    print('PASS list path appearance option and persistence', theme, viewport['width'], flush=True)
                     context.close()
 
                 # The session header shows the whole path with the sidebar's color,
@@ -186,11 +192,13 @@ def main():
                 context = browser.new_context(viewport={'width': 1280, 'height': 700})
                 context.add_init_script("window.EventSource=undefined;"
                     "localStorage.setItem('sessiondock.view', JSON.stringify('date'));"
+                    "if (localStorage.getItem('sessiondock.timelineDirectoryTintOnly') === null) "
                     "localStorage.setItem('sessiondock.timelineDirectoryTintOnly', 'true');")
                 page = context.new_page()
                 page.goto(base, wait_until='networkidle')
-                page.locator(f'#side .item[data-uid="{data.uid(SID)}"]').click()
+                page.locator(f'#side .item[data-uid="{data.uid(SID)}"] .cwd-path').click()
                 expect(page.locator('#msgs')).to_contain_text('reply Sweep')
+                assert page.evaluate("localStorage.getItem('sessiondock.timelineDirectoryTintOnly')") == 'true'
                 settle(page)
                 side = page.locator(f'#side .item[data-uid="{data.uid(SID)}"] .cwd-path')
                 header = page.locator('.dhead .meta-cwd .cwd-path')
@@ -205,6 +213,18 @@ def main():
                     header.evaluate("e => getComputedStyle(e).color")
                 page.locator('.dhead').screenshot(path=str(shots / 'light-header.png'))
                 print('PASS header directory uses the sidebar color and whole path', flush=True)
+                # Full-path mode also stays unchanged when clicking a directory,
+                # in both list views (including freshly created row elements).
+                open_settings(page)
+                page.locator('#setting-list-path').select_option('full')
+                page.locator('#settings-dialog .modal-close').click()
+                for view in ['date', 'directory']:
+                    page.reload(wait_until='networkidle')
+                    page.locator(f'#view [data-v="{view}"]').click()
+                    page.locator(f'#side .item[data-uid="{data.uid(SID)}"] .cwd-path').click()
+                    expect(page.locator('#msgs')).to_contain_text('reply Sweep')
+                    assert page.evaluate("localStorage.getItem('sessiondock.timelineDirectoryTintOnly')") == 'false'
+                print('PASS directory clicks open sessions without changing path display', flush=True)
                 context.close()
 
                 # More directories on one screen than primary colors.

@@ -1226,19 +1226,14 @@ function timelinePathMarkup(label, depth = 1) {
     + `<span class="cwd-leaf">${esc(label.text.slice(prefix.length))}</span>`;
 }
 
-// Clicking a row's directory toggles between the whole path and only its
-// tinted part; the full path stays in the tooltip.
+// List path display is an explicit appearance preference.
 let timelineTintOnly = !!store.get('timelineDirectoryTintOnly', false);
 document.body.classList.toggle('cwd-tint-only', timelineTintOnly);
-function toggleTimelineTintOnly(row) {
-  const side = $('#side'), before = row.getBoundingClientRect().top;
-  timelineTintOnly = !timelineTintOnly;
+function setTimelineTintOnly(value) {
+  timelineTintOnly = value;
   store.set('timelineDirectoryTintOnly', timelineTintOnly);
   document.body.classList.toggle('cwd-tint-only', timelineTintOnly);
   renderSide();
-  // Rows above change height; keep the clicked row under the pointer.
-  const after = side.querySelector(`.item[data-key="${CSS.escape(row.dataset.key)}"]`);
-  if (after) side.scrollTop += after.getBoundingClientRect().top - before;
 }
 
 function paintTimelinePath(element, label = element._cwdLabel) {
@@ -4931,7 +4926,6 @@ function patchSidebarRow(node, row, highlightKey) {
     if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
     if (S.nestAttach) { void pickNestParent(s); return; }
     if (S.picking) { if (sessionPickable(s)) toggleSessionPick(s.uid); return; }
-    if (event.target.closest('.cwd-path')) { toggleTimelineTintOnly(event.currentTarget); return; }
     s.pending ? openPendingSession(s) : openSession(s.uid);
   };
   paintItemStatus(node);
@@ -4990,7 +4984,6 @@ function createSidebarRow(r, picked = pickedSessions) {
     if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
     if (S.nestAttach) { void pickNestParent(s); return; }
     if (S.picking) { if (sessionPickable(s)) toggleSessionPick(s.uid); return; }
-    if (event.target.closest('.cwd-path')) { toggleTimelineTintOnly(event.currentTarget); return; }
     s.pending ? openPendingSession(s) : openSession(s.uid);
   };
   const star = it.querySelector('.item-star');
@@ -10893,6 +10886,7 @@ function openSettings() {
   applyInterfaceScale();
   $('#setting-font').value = store.get('font', 'ubuntu');
   $('#setting-theme').value = store.get('theme', 'system');
+  $('#setting-list-path').value = timelineTintOnly ? 'tint' : 'full';
   $('#setting-cache').value = String(cacheLimitMb);
   $('#setting-sleep').value = String(SessionDockSleep.minutes);
   $('#setting-stop-concurrency').value = String(sessionStopConcurrency());
@@ -10930,6 +10924,7 @@ $('#setting-scale-reset').onclick = () => {
 };
 $('#setting-font').onchange = e => applyFont(e.target.value, true);
 $('#setting-theme').onchange = e => applyTheme(e.target.value, true);
+$('#setting-list-path').onchange = e => setTimelineTintOnly(e.target.value === 'tint');
 $('#setting-cache').onchange = e => {
   cacheLimitMb = Math.max(0, +e.target.value || 0);
   CACHE_MAX_BYTES = cacheLimitMb ? cacheLimitMb * 1024 * 1024 : Infinity;
