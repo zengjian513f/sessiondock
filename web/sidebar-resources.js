@@ -42,17 +42,10 @@
     if (!enabled) return;
     let panel = node.querySelector('.item-resources');
     if (!panel) {
-      panel = document.createElement('button'); panel.type = 'button'; panel.className = 'item-resources';
-      panel.setAttribute('aria-haspopup', 'dialog');
-      panel.addEventListener('click', event => {
-        event.stopPropagation();
-        globalThis.SessionDockResources?.open(node._resourceSession);
-      });
-      panel.addEventListener('mousedown', event => event.stopPropagation());
-      panel.addEventListener('keydown', event => event.stopPropagation());
+      panel = document.createElement('div'); panel.className = 'item-resources';
       node.querySelector('.body').after(panel);
     }
-    panel.setAttribute('aria-label', node._resourceAgent ? '查看所属会话资源' : '查看会话资源');
+    panel.setAttribute('aria-label', '会话资源摘要');
     const age = Date.now()/1000 - sampledAt;
     const metrics = age >= -5 && age <= 15 && !node._resourceAgent ? rows.get(key(session)) : null;
     const cells = fields.map(([field, icon, label, unit]) => {

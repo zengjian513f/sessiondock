@@ -81,7 +81,13 @@ def main():
         measure = "el=>{const s=getComputedStyle(el),t=getComputedStyle(el.querySelector('.t'));return {gap:s.gap,paddingTop:s.paddingTop,paddingRight:s.paddingRight,border:s.borderLeftWidth,title:t.fontSize,line:t.lineHeight,icon:el.querySelector('.source-icon').getBoundingClientRect().width}}"
         sidebar_style = row.evaluate(measure)
         screenshot('sidebar')
-        open_item_menu(page,refs['first']);page.locator('#item-menu [data-act="info"]').click()
+        open_item_menu(page,refs['first'])
+        assert page.locator('#item-menu [data-act="info"]').count() == 0
+        page.keyboard.press('Escape')
+        page.locator(f'#side .item[data-uid="{refs['first']}"]').locator('.body').click()
+        page.locator('#a-info').click()
+        expect(page.frame_locator('#session-content-view iframe').locator('#info-summary')).to_be_visible()
+        page.goto(page.locator('#session-content-view iframe').evaluate('e => e.src').replace('embedded=1', 'embedded=0'), wait_until='networkidle')
         expect(page.locator('#info-summary')).to_contain_text('a first')
         expect(page.locator('#info-predecessors')).to_contain_text('尚无已记录')
         screenshot('empty')

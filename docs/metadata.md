@@ -308,7 +308,11 @@ response `partial`; missing successors on an offline node are not proof of absen
   envelopes, plus Markdown-path and UUID matches. A cold read can parse that
   session's native history. Matching a path or UUID is a clue, not a saved edge.
 
-The row menu and session action menu open `session-info.html?uid=…`. The page shows
+The row menu and session action menu open `session-info.html?uid=…`.
+DELTA (2026-10-15): the four-part session view switch embeds that page inside
+the conversation content area, retaining the sidebar and session header.
+Embedded relationship links remain in that area; conversation links open the main app.
+The page shows
 identity, all recorded predecessors and successors, distinguishes direct and indirect
 neighbors, and links to each information page and conversation. It supports adding
 both directions, confirming candidates, removing direct edges, inspecting evidence

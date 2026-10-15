@@ -109,9 +109,9 @@
     document.body.append(dialog);
     content = dialog.querySelector('.sr-content');
     subtitle = dialog.querySelector('.sr-subtitle');
-    dialog.querySelector('.sr-close').onclick = () => dialog.close();
-    dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
-    dialog.addEventListener('close', () => { generation++; pending = false; void reconcileProbe(); });
+    dialog.querySelector('.sr-close').onclick = () => dialog.classList.contains('sr-embedded') ? SessionContentView.close() : dialog.close();
+    dialog.addEventListener('click', event => { if (event.target === dialog && !dialog.classList.contains('sr-embedded')) dialog.close(); });
+    dialog.addEventListener('close', () => { if (!dialog.open) { generation++; pending = false; void reconcileProbe(); } });
     dialog.querySelectorAll('[data-scope]').forEach(button => {
       button.onclick = () => {
         scope = button.dataset.scope;
@@ -199,17 +199,29 @@
       if (ticket === generation && dialog.open) { content.innerHTML = `<p class="sr-empty sr-error">${esc(error.message || '资源统计暂不可用')}</p>`; }
     } finally { if (ticket === generation) pending = false; }
   }
-  function open(session) {
+  function open(session, host = null) {
+    if (!host && dialog?.classList.contains('sr-embedded')) SessionContentView.close();
     requestedSession = session?.uid ? {uid:session.uid, title:session.title, sid:session.sid} : null;
     ensure();
     leaseId = crypto.randomUUID();
     probeSupported = false; observedProbeState = 'off'; lastProbeRequest = 0;
-    if (!dialog.open) dialog.showModal();
+    if (dialog.open) dialog.close();
+    dialog.classList.toggle('sr-embedded', !!host);
+    (host || document.body).append(dialog);
+    if (host) dialog.setAttribute('open', '');
+    else dialog.showModal();
     refresh(true);
   }
   setInterval(() => { void reconcileProbe(); }, 1000);
   setInterval(() => { if (dialog?.open && !document.hidden) refresh(); }, 5000);
   addEventListener('pagehide', () => { pageGone = true; void reconcileProbe(); });
   addEventListener('pageshow', () => { pageGone = false; });
-  window.SessionDockResources = {render, open, setLoader: fn => { loader = fn; }};
+  window.SessionDockResources = {render, open, closeEmbedded: () => {
+    if (!dialog?.classList.contains('sr-embedded')) return;
+    dialog.removeAttribute('open');
+    generation++; pending = false;
+    void reconcileProbe();
+    dialog.classList.remove('sr-embedded');
+    document.body.append(dialog);
+  }, setLoader: fn => { loader = fn; }};
 })();

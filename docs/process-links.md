@@ -446,10 +446,9 @@ existing cells for reuse. Nesting changes reuse rows whose structure is unchange
 The original title and metadata remain in the main column. Agent subrows
 without independent process attribution never copy the parent's usage.
 
-Clicking the sidebar resource area opens full metrics for that explicit session
-without changing the selected conversation. The area supports keyboard activation
-and has no hover tooltip. The detail header also opens the centered resource
-dialog from its four-part conversation/terminal/info/resources control.
+The sidebar resource area is display-only. It has no separate click or keyboard
+action; clicking it selects the session row and never starts a diagnostic lease.
+Resource details and probing open only from the detail header’s resources tab.
 
 ## Optional collector
 

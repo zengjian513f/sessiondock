@@ -21,7 +21,8 @@ def check_menu(page, uid, width, theme, screenshots):
     menu = page.locator('#session-actions-menu')
     trigger.click()
     expect(menu).to_be_visible()
-    info = menu.locator('#a-session-info')
+    assert menu.locator('#a-session-info').count() == 0
+    info = menu.locator('#a-session-action')
     info.focus()
     focused = info.element_handle()
     # Exercise the same real Hub HTTP response and MutationObserver as the
@@ -51,11 +52,12 @@ def check_menu(page, uid, width, theme, screenshots):
     trigger.click()
     page.evaluate('refreshTransferTasks()')
     settle(page)
-    # A real menu action still navigates to the requested session's info page.
-    with page.expect_navigation():
-        info.click()
-    expect(page.get_by_role('heading', name='会话信息', exact=True)).to_be_visible()
-    expect(page.locator('main')).to_contain_text('00000000-1234-4567-89ab-000000000001')
+    page.keyboard.press('Escape')
+    page.locator('#a-info').click()
+    frame = page.frame_locator('#session-content-view iframe')
+    expect(frame.get_by_role('heading', name='会话信息', exact=True)).to_be_visible()
+    expect(frame.locator('main')).to_contain_text('00000000-1234-4567-89ab-000000000001')
+
 
 
 def main():

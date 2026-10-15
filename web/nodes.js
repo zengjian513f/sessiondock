@@ -93,6 +93,57 @@ function paintConsoleAvailability(button, uid, agent = null) {
   setControlUnavailable(button, reason);
 }
 
+// Auxiliary views share the conversation's content area without disposing its state.
+const SessionContentView = {
+  kind: '', uid: '', agent: null, pane: null,
+  close() {
+    if (!this.kind) return;
+    this.kind = '';
+    this.themeObserver?.disconnect();
+    SessionDockResources.closeEmbedded();
+    this.pane?.remove();
+    this.pane = null;
+    $('#right').classList.remove('session-content-view');
+    renderTakeoverBtn();
+  },
+  sync() {
+    if (this.kind && (this.uid !== S.sel || this.agent !== S.agent)) this.close();
+    for (const kind of ['info', 'resources']) {
+      const button = $(`#a-${kind}`);
+      button?.classList.toggle('on', this.kind === kind);
+      button?.setAttribute('aria-pressed', String(this.kind === kind));
+    }
+    return this.kind;
+  },
+  open(kind, uid, agent) {
+    if (this.kind === kind && this.uid === uid && this.agent === agent) return;
+    this.close();
+    this.kind = kind; this.uid = uid; this.agent = agent;
+    this.pane = document.createElement('section');
+    this.pane.id = 'session-content-view';
+    this.pane.setAttribute('aria-label', kind === 'info' ? '会话信息' : '会话资源');
+    $('#right').append(this.pane);
+    $('#right').classList.add('session-content-view');
+    if (kind === 'info') {
+      const frame = document.createElement('iframe');
+      frame.title = '会话信息';
+      frame.src = appUrl(`session-info.html?${new URLSearchParams({uid, embedded: '1'})}`);
+      const syncTheme = () => {
+        if (frame.contentDocument?.documentElement)
+          frame.contentDocument.documentElement.dataset.theme = document.documentElement.dataset.theme;
+      };
+      frame.onload = syncTheme;
+      const observer = new MutationObserver(syncTheme);
+      observer.observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
+      this.themeObserver?.disconnect(); this.themeObserver = observer;
+      this.pane.append(frame);
+    } else {
+      SessionDockResources.open(S.sessions.find(row => row.uid === uid) || {uid}, this.pane);
+    }
+    renderTakeoverBtn();
+  },
+};
+
 function consoleButtonMarkup() {
   return `<div class="seg session-views" role="group" aria-label="会话视图">
     <button id="a-chat" type="button" title="对话" aria-label="对话" aria-pressed="true" class="on">${uiIcon('chat')}</button>
@@ -108,6 +159,7 @@ function bindConsoleButton(button, uid, agent = null) {
   if (group) {
     group.querySelector('#a-chat').onclick = () => {
       if (S.sel !== uid || S.agent !== agent) return;
+      SessionContentView.close();
       if (MOBILE.matches && !sessionTerminalFirst(uid)) closeTermPane();
       else {
         T.mode = 'collapsed';
@@ -122,15 +174,15 @@ function bindConsoleButton(button, uid, agent = null) {
       : agent ? '请切换到主会话查看会话信息。'
       : SessionDockCapabilities.config.session_relations !== true ? '此服务尚未提供会话信息。' : '';
     setControlUnavailable(info, infoReason);
-    info.onclick = () => { if (!infoReason) location.href = appUrl(`session-info.html?${new URLSearchParams({uid})}`); };
+    info.onclick = () => { if (!infoReason) SessionContentView.open('info', uid, agent); };
     group.querySelector('#a-resources').onclick = () => {
-      const row = S.sessions.find(row => row.uid === uid);
-      SessionDockResources.open(row || {uid});
+      SessionContentView.open('resources', uid, agent);
     };
   }
   button.onclick = async () => {
     const reason = consoleUnavailableReason(uid, agent, false);
     if (reason) { paintConsoleAvailability(button, uid, agent); return; }
+    SessionContentView.close();
     // 上次连接失败不再拦一道确认框：点击直接重新接入并显示 pty，失败时明确提示原因。
     ConsoleUI.busy.add(uid);
     ConsoleUI.errors.delete(uid);

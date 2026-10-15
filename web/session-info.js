@@ -3,10 +3,16 @@
   'use strict';
   const $ = selector => document.querySelector(selector);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+  const embedded = new URLSearchParams(location.search).get('embedded') === '1' && window.parent !== window;
+  document.body.classList.toggle('si-embedded', embedded);
+  if (embedded) document.addEventListener('click', event => {
+    const link = event.target.closest('a');
+    if (link && new URL(link.href).pathname === new URL('./', location.href).pathname) link.target = '_top';
+  });
   const uid = new URLSearchParams(location.search).get('uid') || '';
   const kinds = {continues:'接续', branches:'任务分支', references:'引用'};
   let data, candidates = [], direction = 'predecessor', sequence = 0, saving = false;
-  const infoUrl = target => `session-info.html?${new URLSearchParams({uid: target})}`;
+  const infoUrl = target => `session-info.html?${new URLSearchParams({uid: target, ...(embedded ? {embedded: '1'} : {})})}`;
   const conversationUrl = target => `./?${new URLSearchParams({sid: target})}`;
   async function request(path, body) {
     const response = await fetch(path, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...body, _build:document.querySelector('meta[name="sessiondock-build"]').content})} : {});
