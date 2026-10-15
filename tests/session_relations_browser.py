@@ -91,6 +91,11 @@ def main():
         expect(page.locator('#info-summary')).to_contain_text('a first')
         expect(page.locator('#info-predecessors')).to_contain_text('尚无已记录')
         screenshot('empty')
+        page.route('**/api/session/relations/hints?*', lambda route:
+                   route.fulfill(status=503, json={'error':'synthetic hints failure'}), times=1)
+        page.locator('#info-hints > summary').click()
+        expect(page.locator('#hint-content')).to_contain_text('synthetic hints failure')
+        page.locator('#info-hints > summary').click()
         page.locator('#info-hints > summary').click()
         expect(page.locator('#hint-content')).to_contain_text('/synthetic/HANDOFF.md')
         screenshot('hints')
@@ -124,6 +129,14 @@ def main():
         expect(page.locator('#relation-target option[value="'+refs['origin']+'"]')).to_have_count(1)
         expect(page.locator('#relation-target option[value="'+refs['nested']+'"]')).to_have_count(0)
         assert '子代理不参与' not in page.locator('#relation-target').inner_text()
+        page.locator('#relation-target').select_option(refs['origin'])
+        page.locator('#relation-search').fill('origin')
+        expect(page.locator('#relation-target')).to_have_value(refs['origin'])
+        expect(page.locator('#relation-target option[value="'+refs['research']+'"]')).to_have_count(0)
+        page.locator('#relation-search').fill('no matching fixture')
+        expect(page.locator('#relation-target option')).to_have_count(1)
+        page.locator('#relation-search').fill('')
+        expect(page.locator('#relation-target option[value="'+refs['research']+'"]')).to_have_count(1)
         screenshot('editor')
         page.locator('#relation-cancel').click()
         assert (corpora[1].root/'state/session-metadata.json').read_bytes() == before_cancel
@@ -150,7 +163,20 @@ def main():
         page.locator('#info-successors .si-relation-title').filter(has_text='research').click()
         expect(page.locator('#info-summary')).to_contain_text('b research')
         expect(page.locator('#info-predecessors .si-relation')).to_have_count(3)
+        page.go_back()
+        expect(page.locator('#info-summary')).to_contain_text('b second')
+        page.go_forward()
+        expect(page.locator('#info-summary')).to_contain_text('b research')
         page.locator('#info-open').click();expect(page.locator('#msgs')).to_contain_text('研究记录')
+        open_info('second')
+        research = page.locator('#info-successors .si-relation').filter(
+            has=page.locator('a.si-relation-title').filter(has_text='research'))
+        research.locator('.si-more > summary').click()
+        research.locator('.si-actions a').click()
+        expect(page.locator('#msgs')).to_contain_text('b research 工作交接')
+        open_info('second')
+        page.locator('.si-header a').first.click()
+        expect(page.locator('#side .item').first).to_be_visible()
         # Independent node plus hub restart preserves the canonical receiving-node row.
         hub.stop()
         for server in servers:server.close()
@@ -161,6 +187,11 @@ def main():
         saved=json.loads((corpora[1].root/'state/session-metadata.json').read_text())
         edge=saved['sessions'][corpora[1].uid('second')]['predecessors'][0]
         assert edge['session_uid']==corpora[0].uid('first') and edge['node_id']==nodes[0].nid
+        assert edge['kind']=='continues' and edge['status']=='confirmed', edge
+        assert edge['artifact']=='/synthetic/HANDOFF.md' and edge['evidence']=='通过交接文档继续工作', edge
+        branch=saved['sessions'][corpora[1].uid('review')]['predecessors'][0]
+        assert branch['session_uid']==corpora[1].uid('second') and branch['kind']=='branches', branch
+        assert branch['evidence']=='<img src=x onerror=alert(1)> 修复交接', branch
         # A failed save retains the editor and succeeds when explicitly retried.
         page.route('**/api/session/predecessor',lambda route:route.fulfill(status=503,json={'error':'synthetic write failure'}),times=1)
         page.locator('#add-predecessor').click();page.locator('#relation-target').select_option(twin)
@@ -170,6 +201,9 @@ def main():
         twin_card=page.locator('#info-predecessors .si-relation').filter(has=page.locator('a.si-relation-title').filter(has_text='b origin'))
         twin_card.locator('.si-more > summary').click()
         twin_card.locator('[data-remove]').click();expect(page.locator('#info-predecessors .si-relation')).to_have_count(2)
+        removed=json.loads((corpora[1].root/'state/session-metadata.json').read_text())
+        assert all(e['session_uid']!=corpora[1].uid('origin') or e.get('node_id')!=nodes[1].nid
+            for e in removed['sessions'][corpora[1].uid('second')]['predecessors'])
         # A cycle remains finite. Relationships are user assertions, not a native fork DAG.
         open_info('origin');add('research')
         assert len(api_info(refs['origin'])['ancestors'])==3

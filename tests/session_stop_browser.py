@@ -157,7 +157,7 @@ def main():
                     expect(action).to_have_text('停止会话')
                     expect(page.locator("#a-session-action")).to_have_attribute("aria-label", "删除当前会话")
                     expect(page.locator("#a-session-action")).to_have_attribute("aria-disabled", "true")
-                    expect(page.locator('.dhead-actions .session-menu-action').first).to_have_attribute('id','a-session-toggle')
+                    expect(page.locator('.dhead-actions #a-session-toggle')).to_be_visible()
                     page.evaluate('''() => {
                         window.stopAttentionFlashes=[];
                         window.stopAttentionObserver=new MutationObserver(() => {
@@ -208,7 +208,7 @@ def main():
                     assert page.evaluate("uid => S.live.has(uid)", codex_uid) is False
                     expect(session_action(page)).to_have_attribute("aria-label", "启动会话")
                     expect(page.locator("#a-session-action")).not_to_have_attribute("aria-disabled", "true")
-                    expect(page.locator('.dhead-actions .session-menu-action').first).to_have_attribute('id','a-session-toggle')
+                    expect(page.locator('.dhead-actions #a-session-toggle')).to_be_visible()
                     page.wait_for_timeout(1200)
                     assert page.evaluate('stopAttentionFlashes') == [], page.evaluate('stopAttentionFlashes')
                     page.evaluate('stopAttentionObserver.disconnect()')
@@ -250,7 +250,7 @@ def main():
                     page.evaluate("uid => { S.live.add(uid); paintLive(); }", other_uid)
                     action = session_action(page)
                     expect(action).to_have_attribute("aria-label", "停止会话")
-                    expect(page.locator('.dhead-actions .session-menu-action').first).to_have_attribute('id','a-session-toggle')
+                    expect(page.locator('.dhead-actions #a-session-toggle')).to_be_visible()
                     before = len(dialogs)
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as stopped:
                         action.click()

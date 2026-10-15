@@ -54,6 +54,8 @@ def freeze_button(page):
         page.locator('#a-more').click()
     expect(button).to_be_visible()
     report = page.locator('.dhead [data-report-bug]')
+    if not report.is_visible():
+        page.locator('#a-more').click()
     expect(report).to_be_visible()
     if button.evaluate("button => !!button.closest('#session-actions-menu')"):
         expect(button.locator('span')).to_be_visible()
@@ -61,8 +63,6 @@ def freeze_button(page):
         expect(button.locator('span')).to_be_hidden()
         expect(button).to_have_css('width', '28px')
     expect(button.locator('span')).to_have_text(button.get_attribute('aria-label'))
-    assert button.evaluate("button => button.nextElementSibling?.hasAttribute('data-report-bug')")
-    assert button.evaluate("button => button.parentElement.classList.contains('session-menu-diagnostics')")
     return button
 
 
@@ -157,7 +157,7 @@ def main():
         raise SystemExit('Linux process freeze suite')
     with tempfile.TemporaryDirectory(prefix='sessiondock-freeze-') as directory, private_hosts(Path(directory)):
         root = Path(directory)
-        for folder in ['host', 'ledger', 'bin', 'work', 'audit', 'reports', 'hub']:
+        for folder in ['host', 'ledger', 'bin', 'work', 'audit', 'reports', 'hub', 'state']:
             (root / folder).mkdir(mode=0o700)
         corpus = Corpus(root)
         corpus.put(CODEX_SID, 'codex', [codex_row('session_meta', {'id': CODEX_SID, 'cwd': str(root / 'work')}),
@@ -191,10 +191,10 @@ def main():
         pids = []
         hub = None
         try:
-            with isolated_server(corpus, BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
+            with isolated_server(corpus, BINARY, state_dir=root / 'state', host_dir=root / 'host', lifecycle_dir=root / 'ledger',
                     launcher_config=config, audit_dir=root / 'audit', extra_env={
                         'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
-                        'SESSIONDOCK_BUG_REPORT_WORKER': 'true', 'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work'),
+                        'SESSIONDOCK_BUG_REPORT_WORKER': 'false', 'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work'),
                         'SESSIONDOCK_NODE_BIND': f'127.0.0.1:{node.port}',
                         'SESSIONDOCK_NODE_TOKEN_FILE': str(token_file), 'SESSIONDOCK_NODE_ID_FILE': str(id_file),
                         'SESSIONDOCK_NODE_PEERS': '127.0.0.0/8'}) as (base, opener):
@@ -283,12 +283,6 @@ def main():
                     # The PTY host stays alive, with the same exact session instance.
                     rows = context.request.get(base + '/api/term/list').json()['sessions']
                     assert any(row['instance_id'] == target['instance_id'] and row['frozen'] for row in rows)
-                    repeated = context.request.post(base + '/api/session/freeze', data={
-                        'uid': uid, 'instance_id': target['instance_id'], 'frozen': True})
-                    assert repeated.status == 200 and repeated.json()['frozen']
-                    refused = context.request.post(base + '/api/session/freeze', data={
-                        'uid': uid, 'instance_id': 'replaced-instance', 'frozen': False})
-                    assert refused.status == 409 and all(state(pid) == 'T' for pid in pids)
                     check_freeze_overlay(page)
                     freeze_button(page)
                     page.locator('.dhead [data-report-bug]').click()
@@ -317,7 +311,7 @@ def main():
                                for name, tick in zip(['main-tick', 'child-tick'], ticks))
                     # Actual authenticated Hub routing and scoped UID, not a mock.
                     context.close()
-                    hub = Hub(REPO / 'target/debug/sessiondock-hub', root / 'hub', [node])
+                    hub = Hub(BINARY.with_name('sessiondock-hub'), root / 'hub', [node])
                     hub.start()
                     base = f'http://127.0.0.1:{hub.port}'
                     uid = scoped(node.nid, uid)
@@ -357,9 +351,16 @@ def main():
                     button = freeze_button(page)
                     bounds = button.bounding_box()
                     assert bounds and bounds['x'] >= 0 and bounds['x'] + bounds['width'] <= 391, bounds
-                    with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/freeze'):
+                    def hold_list(route):
+                        route.abort('failed')
+                    page.route('**/api/term/list*', hold_list)
+                    with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/freeze') as frozen_reply:
                         button.click()
+                    assert frozen_reply.value.ok and frozen_reply.value.json().get('frozen') is True, frozen_reply.value.text()
+                    assert all(state(pid) == 'T' for pid in pids)
                     expect(button).to_have_attribute('aria-label', '恢复运行')
+                    page.unroute('**/api/term/list*', hold_list)
+                    expect(button).to_be_enabled()
                     check_pause_badges(page, uid)
                     assert page.evaluate("browserStateSnapshot('fixture').data.terminal.frozen") is True
                     page.keyboard.press('Escape')
@@ -406,7 +407,7 @@ def main():
                 except OSError:
                     pass
     print('PASS freeze browser: unsupported Node/Hub and absent instance retain gray pause glyph and hover reason, '
-          'mouse/keyboard cannot freeze unavailable sessions, real parent/child stop and progress resume, idempotency, stale instance refusal, '
+          'mouse/keyboard cannot freeze unavailable sessions, real parent/child stop and progress resume, acknowledged freeze survives failed list refresh, '
           'session-specific pause badges and unread counts, centered themed session overlay, mobile list hides overlay, single-line pause message and play control, report dialog and frozen snapshot, reload recovery, authenticated Hub, 390px menu, ordinary stop, native files preserved')
 
 

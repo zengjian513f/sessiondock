@@ -181,6 +181,7 @@ async fn serve(config: HubConfig) -> Result<(), Box<dyn Error>> {
     if let Some(audit) = audit {
         audit.shutdown().await;
     }
+    sessiondock::log::shutdown().await;
     served?;
     Ok(())
 }

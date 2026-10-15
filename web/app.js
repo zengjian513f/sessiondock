@@ -241,6 +241,11 @@ let browserAuditDue = 0;
 let browserAuditRetryAt = 0;
 let browserAuditSending = false;
 let browserAuditFailCount = 0;
+let browserAuditDropped = 0;
+const browserAuditDelivery = {network: 0, http: 0, timeout: 0, beacon_rejected: 0, dropped: 0};
+let browserAuditDeliveredStats = '';
+const AUDIT_QUEUE_BYTES = 512 * 1024;
+const browserAuditSummaries = new Map();
 const AUDIT_BATCH_BYTES = 48 * 1024;
 const AUDIT_BATCH_COUNT = 100;
 const AUDIT_FLUSH_MS = 5000;
@@ -266,7 +271,33 @@ function spliceAuditBatch(queue, limit = AUDIT_BATCH_BYTES, count = AUDIT_BATCH_
 }
 
 function capAuditQueue() {
-  if (browserAuditQueue.length > 500) browserAuditQueue.splice(0, browserAuditQueue.length - 500);
+  let bytes = browserAuditQueue.reduce((n, event) => n + auditEventBytes(event), 0);
+  while (browserAuditQueue.length > 500 || bytes > AUDIT_QUEUE_BYTES) {
+    bytes -= auditEventBytes(browserAuditQueue.shift());
+    browserAuditDropped++;
+    browserAuditDelivery.dropped++;
+  }
+}
+
+// Successful terminal traffic is counted per connection and kind, never per
+// key, mouse report or output frame. The existing batch timer also flushes
+// quiet tails; pagehide drains these summaries before sending its beacon.
+function drainBrowserAuditSummaries() {
+  const now = performance.now();
+  for (const value of browserAuditSummaries.values()) {
+    browserAuditQueue.push({...value.record, data: {...value.record.data,
+      count: value.count, bytes: value.bytes, chunks: value.chunks,
+      elapsed_ms: Math.round(now - value.started), summary: true}});
+  }
+  browserAuditSummaries.clear();
+  capAuditQueue();
+  if (browserAuditDropped) {
+    const dropped = browserAuditDropped;
+    browserAuditDropped = 0;
+    browserAuditQueue.push({event: 'audit.dropped', ts: new Date().toISOString(),
+      uid: '', severity: 'warning', data: {events: dropped, reason: 'queue_capacity'}, content: null});
+    capAuditQueue();
+  }
 }
 
 // Ordinary diagnostics share a batch across several polling cycles. Full
@@ -285,12 +316,30 @@ function browserAuditEvent(event, data = {}, fields = {}) {
   try {
     // The service stores metadata only; message/DOM/terminal bodies would
     // waste bandwidth and prematurely fill the byte-limited audit batches.
-    browserAuditQueue.push({
+    const record = {
       event, ts: new Date().toISOString(), uid: fields.uid ?? S.sel ?? '',
       trace_id: fields.traceId || '', request_id: fields.requestId || '',
       connection_id: fields.connectionId || '', severity: fields.severity || 'info',
       data, content: null,
-    });
+    };
+    if ((event === 'terminal.frame.sent' && data.kind === 'ping')
+        || (event === 'terminal.heartbeat.pong' && data.matched)) return;
+    if (['terminal.input', 'terminal.frame.sent', 'terminal.output_received'].includes(event)) {
+      const key = JSON.stringify([event, record.connection_id, data.kind || '', data.transport || '']);
+      let summary = browserAuditSummaries.get(key);
+      if (!summary) {
+        if (browserAuditSummaries.size >= 64) { browserAuditDropped++; browserAuditDelivery.dropped++; return; }
+        summary = {record, count: 0, bytes: 0, chunks: 0, started: performance.now()};
+        browserAuditSummaries.set(key, summary);
+      }
+      summary.record = record;
+      summary.count++;
+      summary.bytes += Number(data.bytes) || 0;
+      summary.chunks += Number(data.chunks) || 0;
+      scheduleBrowserAudit();
+      return;
+    }
+    browserAuditQueue.push(record);
     capAuditQueue();
     scheduleBrowserAudit(browserAuditQueue.length >= AUDIT_BATCH_COUNT ? 0
       : fields.severity === 'error' ? 100 : AUDIT_FLUSH_MS);
@@ -308,11 +357,20 @@ async function flushBrowserAudit() {
   clearTimeout(browserAuditTimer);
   browserAuditTimer = 0;
   if (SessionDockNetwork.paused) return;
+  drainBrowserAuditSummaries();
   if (browserAuditSending || !browserAuditQueue.length) return;
   if (performance.now() < browserAuditRetryAt) { scheduleBrowserAudit(); return; }
-  const events = spliceAuditBatch(browserAuditQueue);
+  const events = spliceAuditBatch(browserAuditQueue, AUDIT_BATCH_BYTES, AUDIT_BATCH_COUNT - 1);
   if (!events.length) return;
+  const stats = JSON.stringify(browserAuditDelivery);
+  if (stats !== browserAuditDeliveredStats && Object.values(browserAuditDelivery).some(Boolean)) {
+    events.push({event: 'audit.delivery', ts: new Date().toISOString(),
+      data: {...browserAuditDelivery, cumulative: true}, content: null});
+  }
   browserAuditSending = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  let failure = 'network';
   try {
     const response = await fetch(appUrl('api/audit/browser'), {
       method: 'POST',
@@ -320,21 +378,25 @@ async function flushBrowserAudit() {
         'Content-Type': 'application/json', 'X-SessionDock-Page': AUDIT_PAGE_ID,
         'X-SessionDock-Build': BUILD_ID,
       },
-      body: auditPayload(events),
+      body: auditPayload(events), signal: controller.signal,
     });
     // 必须把响应体读完：没读的 fetch 响应在渲染进程里各占着一条 2 MiB 共享内存
     // 数据管道（一个 fd），直到 GC 才释放。这里每秒一条，渲染进程 1024 个 fd 的
     // 上限十几分钟就满，之后 GPU 命令缓冲区拿不到共享内存，整页在原生代码里卡死。
-    await response.arrayBuffer().catch(() => {});
+    if (!response.ok) failure = 'http';
+    await response.arrayBuffer();
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    browserAuditDeliveredStats = stats;
     browserAuditFailCount = 0;
     browserAuditRetryAt = 0;
   } catch (error) {
+    browserAuditDelivery[controller.signal.aborted ? 'timeout' : failure]++;
     browserAuditRetryAt = performance.now() + AUDIT_FLUSH_MS;
     // 断网期间只是攒着，不算失败次数；连续三次在线失败才认定这一批本身有问题
     if (navigator.onLine) browserAuditFailCount += 1;
     if (browserAuditFailCount >= 3) {
       browserAuditFailCount = 0;
+      browserAuditDelivery.dropped += events.length;
       const bytes = events.reduce((n, ev) => n + auditEventBytes(ev), 0);
       browserAuditQueue.push({
         event: 'audit.dropped', ts: new Date().toISOString(), uid: S.sel ?? '',
@@ -346,9 +408,10 @@ async function flushBrowserAudit() {
       capAuditQueue();
     } else {
       browserAuditQueue.unshift(...events);
-      if (browserAuditQueue.length > 500) browserAuditQueue.length = 500;
+      capAuditQueue();
     }
   } finally {
+    clearTimeout(timeout);
     browserAuditSending = false;
     if (browserAuditQueue.length && !browserAuditTimer) {
       scheduleBrowserAudit(browserAuditQueue.length >= AUDIT_BATCH_COUNT ? 0 : AUDIT_FLUSH_MS);
@@ -363,6 +426,7 @@ async function flushBrowserAudit() {
 function flushBrowserAuditBeacon() {
   if (SessionDockNetwork.paused) return;
   if (!SessionDockCapabilities.allows('audit')) return;
+  drainBrowserAuditSummaries();
   clearTimeout(browserAuditTimer);
   browserAuditTimer = 0;
   if (!navigator.sendBeacon || !browserAuditQueue.length) return;
@@ -372,9 +436,10 @@ function flushBrowserAuditBeacon() {
   for (const budget of [40 * 1024, 20 * 1024]) {
     const events = spliceAuditBatch(slim, budget, 100);
     if (!events.length) break;
-    const ok = navigator.sendBeacon(appUrl('api/audit/browser'),
-      new Blob([auditPayload(events)], {type: 'application/json'}));
-    if (!ok) { slim.unshift(...events); break; }
+    let ok = false;
+    try { ok = navigator.sendBeacon(appUrl('api/audit/browser'),
+      new Blob([auditPayload(events)], {type: 'application/json'})); } catch { /* count below */ }
+    if (!ok) { browserAuditDelivery.beacon_rejected++; slim.unshift(...events); break; }
   }
   if (slim.length) {
     browserAuditQueue.unshift(...slim);
@@ -435,7 +500,7 @@ function observeLongFrames() {
         const event = longFrameEvent(entry);
         const sent = navigator.sendBeacon?.(appUrl('api/audit/browser'),
           new Blob([auditPayload([event])], {type: 'application/json'}));
-        if (!sent) browserAuditEvent(event.event, event.data, {severity: event.severity});
+        if (!sent) { browserAuditDelivery.beacon_rejected++; browserAuditEvent(event.event, event.data, {severity: event.severity}); }
       } catch { /* 诊断不影响页面 */ }
     }
   });
@@ -480,6 +545,7 @@ function browserStateSnapshot(reason = '') {
       cache: entry ? {messages: entry.msgs?.length || 0, end: entry.end,
         anchor: entry.anchor, activity: entry.activity?.state || ''} : null,
       dom_messages: nodes.length, terminal: termState,
+      cli: typeof queuedSendDiagnostics === 'function' ? queuedSendDiagnostics() : null,
       view: SessionContentView.kind || (termState?.visible ? 'terminal' : 'chat'),
       content_view: SessionContentView.kind ? SessionContentView.snapshot() : null,
       header: consoleButtonState(),
@@ -6840,6 +6906,19 @@ function sessionViewRows(m) {
       </button>`).join('')}`;
 }
 
+function bugReportsEnabled() {
+  return HUB_MODE ? Object.values(Nodes.capabilities).some(cap => cap.enabled && cap.bug_report === true)
+    : SessionDockCapabilities.config.bug_report === true;
+}
+// The native catalog can render before the later deferred terminal script.
+// Keep markup available here; terminal initialization reveals supported actions.
+function continueSessionButtonMarkup(info) {
+  if (!info.sid || info.source === 'shell') return '';
+  const enabled = typeof continueSessionEnabled === 'function' && continueSessionEnabled();
+  return `<button class="session-menu-action" data-continue-session ${enabled ? '' : 'hidden'}
+    type="button" title="接续会话" aria-label="接续会话">${uiIcon('continue')}</button>`;
+}
+
 function head(m, total) {
   const h = el('div', 'dhead');
   h.dataset.uid = m.uid;
@@ -7098,8 +7177,17 @@ function renderSessionFreeze(m, button = $('#a-session-freeze')) {
       const result = await post('api/session/freeze', {uid:m.uid,
         instance_id:row.instance_id, frozen:!row.frozen});
       if (result.error || !result.ok) throw new Error(result.error || '请求失败');
+      // A list refresh may have replaced the row while POST was in flight.
+      // Apply the receipt to the current verified instance and render it now;
+      // a slow follow-up observation must not hide an acknowledged outcome.
       row.frozen = result.frozen;
+      for (const current of T.list || []) {
+        if (current.uid === m.uid && current.instance_id === row.instance_id)
+          current.frozen = result.frozen;
+      }
+      ++termListRequestSeq; // pre-operation observations cannot undo this receipt
       paintTurn(m.uid);
+      renderSessionFreeze(m);
       browserAuditEvent('session.freeze', {uid:m.uid, instance_id:row.instance_id,
         frozen:result.frozen, process_count:result.process_count});
       syncSessionFreezeOverlay();

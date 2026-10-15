@@ -112,8 +112,8 @@ const OPENCODE_PREPARE_TIMEOUT: std::time::Duration = std::time::Duration::from_
 
 /// `opencode api <operation…>` with the profile's executable, fixed
 /// arguments and environment, in `cwd`, bounded by
-/// [`OPENCODE_PREPARE_TIMEOUT`]. Returns whether it succeeded and a clipped
-/// copy of its output for the service log.
+/// [`OPENCODE_PREPARE_TIMEOUT`]. Returns success and output-free outcome
+/// metadata for the service log.
 fn opencode_api(
     profile: &CliProfile,
     cwd: &Path,
@@ -153,9 +153,17 @@ fn opencode_api(
     let output = child
         .wait_with_output()
         .map_err(|error| Error::SpawnFailed(error.kind()))?;
-    let text = String::from_utf8_lossy(&output.stdout).into_owned()
-        + &String::from_utf8_lossy(&output.stderr);
-    Ok((output.status.success(), text.chars().take(400).collect()))
+    // CLI output can include conversation text, paths or credentials. Keep
+    // only process outcome metadata, even on preparation failure.
+    Ok((
+        output.status.success(),
+        format!(
+            "exit_code={:?} stdout_bytes={} stderr_bytes={}",
+            output.status.code(),
+            output.stdout.len(),
+            output.stderr.len()
+        ),
+    ))
 }
 
 /// The picker's model and effort in each CLI's own option spelling, for a

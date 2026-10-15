@@ -92,10 +92,13 @@ def main():
         def edit(page, uid, hold=False, hover=False):
             item = page.locator(f'#side .item[data-uid="{uid}"]')
             if hold:
-                item.dispatch_event('pointerdown', {'pointerType': 'touch', 'pointerId': 1, 'button': 0, 'clientX': 30, 'clientY': 300})
+                box = item.bounding_box()
+                cdp = page.context.new_cdp_session(page)
+                cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [
+                    {'x': box['x'] + 30, 'y': box['y'] + box['height']/2}]})
+                page.wait_for_timeout(800)
+                cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
                 expect(page.locator('#item-menu')).to_be_visible()
-                item.dispatch_event('pointerup', {'pointerType': 'touch', 'pointerId': 1})
-                item.dispatch_event('click')
             else: item.click(button='right')
             trigger = page.locator('#item-menu [data-act="group"]')
             trigger.hover() if hover else trigger.click()
@@ -137,7 +140,11 @@ def main():
             tree(page)
             page.locator(f'#side .item[data-uid="{uid}"]').click(button='right')
             trigger = page.locator('#item-menu [data-act="group"]')
-            trigger.focus(); trigger.press('ArrowRight')
+            for _ in range(200):
+                if trigger.evaluate('e => e === document.activeElement'): break
+                page.keyboard.press('Tab')
+            expect(trigger).to_be_focused()
+            page.keyboard.press('ArrowRight')
             menu = page.locator('#session-group-menu')
             expect(menu).to_be_visible()
             # Navigate away from the checked assignment with real keyboard input.
@@ -188,7 +195,7 @@ def main():
             local[0].locator('#session-group-add').click()
             local[0].locator('#session-group-name').fill('取消创建')
             # A refresh must not discard the inline draft/focus.
-            local[0].evaluate('renderSide()')
+            local[0].clock.fast_forward(60000)
             expect(local[0].locator('#session-group-name')).to_have_value('取消创建')
             expect(local[0].locator('#session-group-name')).to_be_focused()
             local[0].locator('#session-group-name').press('Escape')
@@ -202,8 +209,7 @@ def main():
             # Create from the assignment menu without switching to Group view.
             other = corpora[0].uid('other')
             edit(local[0], other)
-            local[0].locator('#session-group-menu-add').focus()
-            local[0].keyboard.press('Enter')
+            local[0].locator('#session-group-menu-add').click()
             input = local[0].locator('#session-group-menu-name')
             expect(input).to_be_focused()
             input.fill('   '); input.press('Enter')
@@ -211,7 +217,6 @@ def main():
             input.fill('取消菜单创建')
             for key in ('ArrowLeft', 'ArrowDown', 'Home', 'End'):
                 input.press(key); expect(input).to_be_focused()
-            local[0].dispatch_event('body', 'sessiondock-ui-sessions')
             local[0].clock.fast_forward(60000)
             expect(input).to_have_value('取消菜单创建')
             expect(input).to_be_focused()
@@ -269,7 +274,12 @@ def main():
             tree(page)
             # The second level opens with keyboard and closes independently.
             page.locator(f'#side .item[data-uid="{a}"]').click(button='right')
-            trigger = page.locator('#item-menu [data-act="group"]'); trigger.focus(); trigger.press('ArrowRight')
+            trigger = page.locator('#item-menu [data-act="group"]')
+            for _ in range(200):
+                if trigger.evaluate('e => e === document.activeElement'): break
+                page.keyboard.press('Tab')
+            expect(trigger).to_be_focused()
+            page.keyboard.press('ArrowRight')
             expect(page.locator('#session-group-menu')).to_be_visible()
             page.locator('#session-group-menu button').first.press('ArrowLeft')
             expect(page.locator('#session-group-menu')).to_be_hidden(); expect(trigger).to_be_focused()

@@ -105,4 +105,6 @@ def main():
         print('PASS Hub settings persistence, correlation, rolling retention, idle, shutdown flush',flush=True)
 
 
-if __name__=='__main__':main()
+if __name__ == '__main__':
+    from browser_evidence_fixtures import run_with_evidence
+    run_with_evidence(main, 'target/hub-diagnostics')

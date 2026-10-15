@@ -15,7 +15,7 @@ from nest_tree_browser import corpus
 from node_auth_fixtures import node_env, TOKEN
 
 
-def check_links(browser, base, data, node=None):
+def check_links(browser, base, data, output, node=None):
     prefix = 'sessiondock.hub./.' if node else 'sessiondock.'
     identity = lambda sid: scoped(node.nid, data.uid(sid)) if node else data.uid(sid)
     root, target = identity('nest-root-a'), identity('nest-grandchild-c')
@@ -66,7 +66,7 @@ def check_links(browser, base, data, node=None):
                         page.evaluate('loadSessions(true)')
                         expect(selected).to_be_in_viewport()
                     if navigation == 'initial':
-                        page.screenshot(path=f'/tmp/sessiondock-19dfa1-{"hub" if node else "node"}-{width}-{mode}-{"agent" if agent else "session"}.png')
+                        page.screenshot(path=str(output / f'{"hub" if node else "node"}-{width}-{mode}-{"agent" if agent else "session"}.png'))
                 # Explicitly folding the selected row's ancestor remains a user
                 # choice; normal polling must not force it back open.
                 if mode == 'hidden':
@@ -92,7 +92,9 @@ def check_links(browser, base, data, node=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--output', type=Path, default=Path('target/session-link-reveal'))
     args = parser.parse_args()
+    args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-link-reveal-') as temp, sync_playwright() as pw, ExitStack() as stack:
         data = corpus(Path(temp) / 'node')
         node = SimpleNamespace(name='Synthetic', nid='a'*32, port=free_port(), token=TOKEN)
@@ -109,9 +111,12 @@ def main():
         stack.callback(hub.stop)
         browser = pw.chromium.launch(headless=True)
         stack.callback(browser.close)
-        check_links(browser, f'http://127.0.0.1:{hub.port}', data, node)
-        check_links(browser, base, data)
+        check_links(browser, f'http://127.0.0.1:{hub.port}', data, args.output, node)
+        check_links(browser, base, data, args.output)
+    (args.output/'result.json').write_text(json.dumps({'passed':['explicit links, reload, mobile back, ancestor fold and browser back on private node/Hub'],
+        'limits':['legacy forced catalog-refresh assertions are not counted as user-input coverage']})+'\n')
 
 
 if __name__ == '__main__':
-    main()
+    from browser_evidence_fixtures import run_with_evidence
+    run_with_evidence(main, 'target/session-link-reveal')

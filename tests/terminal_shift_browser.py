@@ -96,7 +96,8 @@ def run(browser):
             shift.tap()
             key('Left', b'\x1b[D')
             shift.tap()
-            page.locator('#a-term').tap()
+            page.locator('#a-chat').tap()
+            expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
             page.locator('#a-term').tap()
             expect(shift).to_have_attribute('aria-pressed', 'false')
             assert len(sends) == 12, sends

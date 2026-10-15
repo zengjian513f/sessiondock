@@ -15,6 +15,7 @@ pub struct HealthResponse {
     stage: &'static str,
     /// Browser diagnostics intake counters; `enabled:false` when unconfigured.
     audit: crate::audit::Snapshot,
+    runtime_log: serde_json::Value,
 }
 
 pub async fn get_health(State(state): State<AppState>) -> Result<Json<HealthResponse>, ApiError> {
@@ -36,6 +37,7 @@ pub async fn get_health(State(state): State<AppState>) -> Result<Json<HealthResp
     }
     Ok(Json(HealthResponse {
         status: "ok",
+        runtime_log: crate::log::snapshot(),
         service: "sessiondock",
         version: env!("CARGO_PKG_VERSION"),
         api_version: 1,

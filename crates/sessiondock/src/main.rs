@@ -178,6 +178,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     if let Some(service) = audit {
         service.shutdown().await;
     }
+    sessiondock::log::shutdown().await;
     if sessiondock::shell_env::restart_requested() {
         // Non-zero on purpose: the supervisor (`Restart=on-failure`) starts
         // a fresh service that loads the current login environment.
