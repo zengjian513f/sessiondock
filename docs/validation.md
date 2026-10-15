@@ -461,6 +461,13 @@ Related independently maintained suites are [content input](../tests/content_inp
 for embedded-view native touch/keyboard/scrollbars, and
 [runtime layers](../tests/runtime_layers_browser.py) for browser-driven private
 CLI survival, runtime retention and sink faults.
-A separate concurrent review may additionally supply
-`tests/runtime_final_review_browser.py` for private multi-host maintenance,
-scratch recovery and independent process lifetimes.
+[Runtime maintenance](../tests/runtime_final_review_browser.py) covers private
+multi-host maintenance, abandoned scratch recovery and independent process
+lifetimes, including service restart and cleanup after a host exits.
+
+[HTTP contexts](../tests/http_context_browser.py) uses a private hostname mapped
+to loopback to exercise a genuinely insecure HTTP origin, alongside secure
+loopback. It creates a session and deletes/restores a private session tree at
+wide and narrow widths, checking durable receipts and browser/server log
+correlation. The insecure case asserts that `crypto.randomUUID` is unavailable;
+ordinary localhost tests alone do not cover that environment.
