@@ -14,9 +14,10 @@ pub struct GpuSample {
     pub process: Process,
     /// Aggregate device counts as a set of (execution node, UUID).
     pub device_uuid: String,
+    pub device_name: Option<String>,
     /// GPU context framebuffer residency. None means unsupported, not zero.
     pub memory_bytes: Option<u64>,
-    /// This query cannot measure per-process compute utilization.
+    /// pmon per-process SM utilization; absent when unsupported or unreadable.
     pub utilization_percent: Option<f64>,
 }
 
@@ -31,15 +32,51 @@ pub fn collect(
         .map(|p| (p.pid, p.clone()))
         .collect();
     let output = query(timeout)?;
+    let mut devices = BTreeMap::new();
+    let mut names = BTreeMap::new();
+    let mut command = Command::new("nvidia-smi");
+    command.args([
+        "--query-gpu=index,uuid,name",
+        "--format=csv,noheader,nounits",
+    ]);
+    if let Ok(text) = query_command(&mut command, timeout) {
+        for line in text.lines() {
+            let fields: Vec<_> = line.split(',').map(str::trim).collect();
+            if fields.len() >= 3 {
+                devices.insert(fields[0].to_owned(), fields[1].to_owned());
+                names.insert(fields[1].to_owned(), fields[2..].join(", "));
+            }
+        }
+    }
+    let mut utilization = BTreeMap::new();
+    if !output.trim().is_empty() {
+        let mut command = Command::new("nvidia-smi");
+        command.args(["pmon", "-c", "1", "-s", "u"]);
+        if let Ok(text) = query_command(&mut command, timeout) {
+            for line in text.lines().filter(|l| !l.trim_start().starts_with('#')) {
+                let f: Vec<_> = line.split_whitespace().collect();
+                if f.len() >= 4 {
+                    if let (Some(uuid), Ok(pid), Ok(sm)) =
+                        (devices.get(f[0]), f[1].parse::<u32>(), f[3].parse::<f64>())
+                    {
+                        if (0. ..=100.).contains(&sm) {
+                            utilization.insert((pid, uuid.clone()), sm);
+                        }
+                    }
+                }
+            }
+        }
+    }
     Ok(parse(&output)?
         .into_iter()
         .filter_map(|((pid, device_uuid), memory_bytes)| {
             let process = current.get(&pid)?;
             crate::memory::matches(root, process).then(|| GpuSample {
                 process: process.clone(),
+                device_name: names.get(&device_uuid).cloned(),
+                utilization_percent: utilization.get(&(pid, device_uuid.clone())).copied(),
                 device_uuid,
                 memory_bytes,
-                utilization_percent: None,
             })
         })
         .collect())
