@@ -274,7 +274,10 @@ def main():
             options["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
         browser = pw.chromium.launch(**options)
         with isolated_server(Corpus(root), args.binary, host_dir=root / "host", lifecycle_dir=root / "ledger",
-                             launcher_config=launcher, state_dir=root / "state") as (base, _):
+                             launcher_config=launcher, state_dir=root / "state", audit_dir=root / "audit",
+                             extra_env={"SESSIONDOCK_BUG_REPORT_DIR": str(root / "reports"),
+                                        "SESSIONDOCK_BUG_REPORT_REPO": str(work),
+                                        "SESSIONDOCK_BUG_REPORT_WORKER": "true"}) as (base, _):
             context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
             context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
             page = context.new_page()

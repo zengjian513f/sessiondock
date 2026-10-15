@@ -80,7 +80,14 @@ def expect_option(control, value, label):
 
 def expect_install(page):
     button = page.locator("[data-pwa-install-button]")
-    button.scroll_into_view_if_needed()
+    for _ in range(12):
+        bounds = button.bounding_box()
+        if bounds and 0 <= bounds['y'] and bounds['y'] + bounds['height'] <= page.viewport_size['height']:
+            break
+        dialog = page.locator('#settings-dialog').bounding_box()
+        page.mouse.move(dialog['x'] + dialog['width'] - 25, dialog['y'] + dialog['height']/2)
+        page.mouse.wheel(0, 350)
+        page.wait_for_timeout(50)
     expect(button).to_be_visible()
     expect(button).to_be_disabled()
     expect(button).to_have_text("安装到桌面")
@@ -160,7 +167,11 @@ def nudge_scale(page, steps):
     slider = page.locator("#setting-scale")
     output = page.locator("#setting-scale-value")
     start = int(slider.input_value())
-    slider.focus()
+    for _ in range(80):
+        if slider.evaluate('e => e === document.activeElement'):
+            break
+        page.keyboard.press('Tab')
+    expect(slider).to_be_focused()
     for _ in range(steps):
         slider.press("ArrowRight")
     value = str(start + steps)

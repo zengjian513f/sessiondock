@@ -25,6 +25,9 @@ durations, error codes and error messages from the service itself. This is the
 same boundary the browser diagnostics keep ([diagnostics](diagnostics.md));
 that separate JSONL store under `SESSIONDOCK_AUDIT_DIR` is unchanged.
 
+OpenCode preparation failures retain exit status and output byte counts only;
+CLI stdout and stderr text never become diagnostic fields.
+
 ## Request log
 
 A layer on the node's `/api` routes (including the authenticated node
