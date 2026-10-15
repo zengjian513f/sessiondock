@@ -65,4 +65,6 @@ def main():
             finally:browser.close()
 
 
-if __name__=='__main__':main()
+if __name__ == '__main__':
+    from browser_evidence_fixtures import run_with_evidence
+    run_with_evidence(main, 'target/cli-diagnostics')

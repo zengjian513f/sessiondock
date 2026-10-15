@@ -380,3 +380,41 @@ into the repo, native homes, or production paths.
 
 本次单一附属关系改动的回归清单及对应浏览器路径见
 [nesting-regression-audit.md](nesting-regression-audit.md)。
+
+## Functional review entry
+
+`python3 tests/run_functional_review.py --binary target/release/sessiondock
+--output target/functional-review` runs the reviewed browser portfolio. Use
+`--only suite_browser,...` to select scenarios and `--jobs 1` for timing runs.
+It uses the invoking Python with Playwright, repository fixtures and
+[`functional_operations.json`](../tests/functional_operations.json), with no
+external inventory directory dependency. The catalog lists expected inputs and
+results for all current operation IDs; it is not a claim of execution. The output
+contains current suite status, per-operation scenario evidence and explicit
+remaining scope. A passed shared scenario does not imply every state combination
+passed. Run Rust build/format and document checks separately.
+
+The runner invalidates its previous result before launching browsers and exits
+nonzero on failure. Diagnostic suites use `browser_evidence_fixtures` to replace
+old results with `running`, then `passed` or `failed`, retaining the exception in
+`failure.txt`. `SESSIONDOCK_TEST_EXPECT_BROWSER_FAILURE=1` makes
+`audit_delivery_browser` assert absent rendered text after a real session click;
+this is a browser-driven negative check of runner exit/evidence behavior, not
+an accepted product pass.
+
+`tests/audit_delivery_browser.py` drives navigation during HTTP, network,
+timeout and beacon refusal faults, then checks persisted cumulative receipts.
+`tests/runtime_log_fault_browser.py` drives navigation under normal, failing
+and blocked runtime sinks and verifies shutdown and flush independently.
+
+`tests/audit_shutdown_browser.py` types into a private shell, blocks only its
+audit file sink, stops the node within a deadline, reconnects through the real
+console after restart and independently checks both commands in the shell ledger.
+
+`tests/startup_actions_browser.py` holds the later terminal script, clicks a
+native session and checks the fixture answer before releasing that script; a
+second session click verifies normal initialization without missing helpers.
+
+`tests/sidebar_input_browser.py` reaches first/last sidebar rows with wheel
+input, drags the divider by mouse and touch, checks reload persistence, cancels
+a touch drag, scrolls by touch and expands the sidebar with Tab/Enter.

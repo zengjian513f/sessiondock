@@ -107,7 +107,7 @@ def suites(binary):
             argv += ["--binary", binary]
         items.append({"name": path.stem, "argv": argv, "kind": "python", "timeout": 900,
                       "tags": ("python",), "skip": skip, "serial": serial, "browser": browser,
-                      "real": real})
+                      "real": real, "binary": binary, "output_dir": has_flag(text, "--output") and path.stem != "terminal_rtt_browser"})
         if path.name == "lifecycle_browser.py":
             items.append({"name": "lifecycle_browser_native_binding",
                           "argv": [sys.executable, rel, "--native-binding"],
@@ -166,6 +166,8 @@ def run_one(suite, env, log_dir, scale):
 
 def prepare_env(suite, base, chrome):
     env = dict(base)
+    if suite.get("binary"):
+        env["SESSIONDOCK_TEST_BINARY"] = str(Path(suite["binary"]).resolve())
     kind = suite["kind"]
     if kind == "python" and chrome and not env.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
         env["PLAYWRIGHT_CHROMIUM_EXECUTABLE"] = chrome
@@ -258,7 +260,13 @@ def main(argv=None):
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     log_dir = args.log_dir or (ROOT / "target/validation" / stamp)
     log_dir.mkdir(parents=True, exist_ok=True)
+    for suite in plan:
+        if suite.get("output_dir"):
+            suite["argv"] += ["--output", str((log_dir / (suite["name"] + "-artifacts")).resolve())]
     started = datetime.now().astimezone().isoformat()
+    if args.json:
+        dump_json(args.json, {"status": "running", "started": started,
+            "plan": [suite["name"] for suite in plan], "results": [], "exit_code": None})
 
     if not shutil.which("cargo", path=env.get("PATH", "")):
         cargo_bin = Path.home() / ".cargo/bin"

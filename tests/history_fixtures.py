@@ -22,7 +22,7 @@ from frontend_paths import frontend_dir
 REPO = Path(__file__).resolve().parents[1]
 
 
-BINARY = REPO / "target/debug" / ("sessiondock.exe" if os.name == "nt" else "sessiondock")
+BINARY = Path(os.environ.get("SESSIONDOCK_TEST_BINARY") or REPO / "target/debug" / ("sessiondock.exe" if os.name == "nt" else "sessiondock"))
 
 
 def encoded(record):
@@ -488,7 +488,7 @@ def build_corpus(root: Path) -> Corpus:
 
 
 @contextmanager
-def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Path | None = None, file_roots: tuple[Path, ...] = (), file_write_roots: tuple[Path, ...] = (), host_dir: Path | None = None, lifecycle_dir: Path | None = None, launcher_config: Path | None = None, audit_dir: Path | None = None, trash_dir: Path | None = None, extra_env: dict[str, str] | None = None, log_path: Path | None = None):
+def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Path | None = None, file_roots: tuple[Path, ...] = (), file_write_roots: tuple[Path, ...] = (), host_dir: Path | None = None, lifecycle_dir: Path | None = None, launcher_config: Path | None = None, audit_dir: Path | None = None, trash_dir: Path | None = None, extra_env: dict[str, str] | None = None, log_path: Path | None = None, stderr_sink=None):
     executable = executable.resolve(strict=True)
     environment = {key: value for key, value in os.environ.items() if not key.startswith("SESSIONDOCK_")}
     with socket.socket() as reservation:
@@ -524,7 +524,7 @@ def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Pat
     # the child when diagnostics exceed a pipe's capacity.
     # `log_path` keeps the server's stdout/stderr (the structured log) for the caller.
     with (open(log_path, "w+b") if log_path else tempfile.TemporaryFile(mode="w+b")) as log:
-        process = subprocess.Popen([str(executable)], cwd=REPO, env=environment, stdout=log, stderr=log)
+        process = subprocess.Popen([str(executable)], cwd=REPO, env=environment, stdout=log, stderr=stderr_sink if stderr_sink is not None else log)
         try:
             for _ in range(150):
                 if process.poll() is not None:
@@ -532,7 +532,7 @@ def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Pat
                     details = log.read(8192).decode("utf-8", "replace")
                     raise AssertionError(f"isolated Rust server exited early ({process.returncode}): {details}")
                 try:
-                    get_json(opener, base, "/api/health")
+                    get_json(opener, base, "/api/health", timeout=0.2)
                     break
                 except (OSError, URLError):
                     time.sleep(0.05)
@@ -550,9 +550,9 @@ def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Pat
                     raise AssertionError("isolated Rust server did not shut down within five seconds")
 
 
-def get_json(opener, base, route):
+def get_json(opener, base, route, *, timeout=10):
     assert route.startswith("/api/") and not route.startswith("//")
-    with opener.open(base + route, timeout=10) as response:
+    with opener.open(base + route, timeout=timeout) as response:
         raw = response.read(MAX_RESPONSE_BYTES + 1)
         assert len(raw) <= MAX_RESPONSE_BYTES, "oversized synthetic response"
         return json.loads(raw)

@@ -17,7 +17,7 @@ def confirm(page, accept):
 
 
 def open_trash(page):
-    if not page.locator('#trash').is_visible():
+    if not page.locator('#trash').is_visible() and not page.locator('#header-menu').is_visible():
         page.locator('#header-more-btn').click()
     page.locator('#trash').click()
     expect(page.locator('#trash-dialog')).to_be_visible()
@@ -70,6 +70,7 @@ def main():
                 page.locator('#trash-done').click()
                 for width in [1280,390]:
                     page.set_viewport_size({'width':width,'height':800})
+                    page.wait_for_timeout(150)  # settle responsive menu relocation before clicking
                     for close in ['button','escape','backdrop','tab']:
                         open_trash(page)
                         if close=='button':page.locator('#trash-close').click()
@@ -103,4 +104,6 @@ def main():
             finally:browser.close()
 
 
-if __name__=='__main__':main()
+if __name__ == '__main__':
+    from browser_evidence_fixtures import run_with_evidence
+    run_with_evidence(main, 'target/trash-interactions')

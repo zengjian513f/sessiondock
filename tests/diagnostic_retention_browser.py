@@ -26,8 +26,14 @@ def seed(path, *hours):
 
 
 def rows(directory):
-    return [json.loads(line) for path in directory.glob('browser-*.jsonl')
-            for line in path.read_text().splitlines() if line]
+    result = []
+    for path in directory.glob('browser-*.jsonl'):
+        for line in path.read_bytes().splitlines():
+            try:
+                result.append(json.loads(line))
+            except (ValueError, UnicodeDecodeError):
+                pass
+    return result
 
 
 def until(page, condition, seconds=12):
@@ -55,6 +61,21 @@ def main():
         seed(old, -25)
         seed(mixed, -25, -23.99)
         seed(recent, -1)
+        corrupt = audit / 'browser-2000-01-06.jsonl'
+        corrupt.write_bytes(b'{broken\n\xff\xfe\n{}\n' + json.dumps({'received_at': stamp(-1), 'event': 'recent-in-corrupt'}).encode() + b'\n')
+        old_time = time.time() - 26 * 3600
+        os.utime(corrupt, (old_time, old_time))
+        crash = audit / 'browser-2000-01-07.jsonl.retention-tmp'
+        crash.write_bytes(b'partial rewrite')
+        os.utime(crash, (old_time, old_time))
+        fresh_crash = audit / 'browser-2000-01-08.jsonl.retention-tmp'
+        fresh_crash.write_bytes(b'recent rewrite')
+        large = audit / 'browser-2000-01-09.0001.jsonl'
+        record = json.dumps({'received_at': stamp(-12), 'event': 'volume', 'data': {'fixture': 'x' * 420}}) + '\n'
+        with large.open('w') as stream:
+            for _ in range(140000):
+                stream.write(record)
+        large_size = large.stat().st_size
         protected = audit / 'saved-defect-evidence.jsonl'
         seed(protected, -300)
         protected_bytes = protected.read_bytes()
@@ -75,6 +96,10 @@ def main():
                 assert not old.exists(), 'expired segment survived startup'
                 assert [r['event'] for r in map(json.loads, mixed.read_text().splitlines())] == ['fixture.-23.99']
                 assert recent.exists() and protected.read_bytes() == protected_bytes
+                assert not crash.exists() and fresh_crash.exists(), 'owned crash temporary age policy'
+                assert [r['event'] for r in map(json.loads, corrupt.read_text().splitlines())] == ['recent-in-corrupt'], 'malformed owned bytes must expire'
+                scanned = get_json(opener, base, '/api/health')['audit']['retention_scanned_bytes']
+                assert scanned >= large_size
                 receipt = next(r for r in rows(audit) if r.get('event') == 'browser.session.opened')
                 assert receipt['page_id'] and receipt['received_at']
                 print('scenario complete', flush=True); evidence['scenarios'].append('startup: old removed, mixed numbered segment filtered, recent/protected retained; real row click persisted')
@@ -98,6 +123,12 @@ def main():
                 tick = time.monotonic()
                 until(page, lambda: not idle_old.exists(), seconds=70)
                 elapsed = time.monotonic() - tick
+                scanned_after = get_json(opener, base, '/api/health')['audit']['retention_scanned_bytes']
+                assert scanned_after - scanned < large_size / 10, 'recent immutable volume reparsed on idle tick'
+                evidence['metrics']['retention_volume'] = {'fixture_bytes': large_size, 'records': 140000,
+                    'initial_scanned_bytes': scanned, 'idle_additional_scanned_bytes': scanned_after - scanned}
+                if os.environ.get('SESSIONDOCK_TEST_EXPECT_BROWSER_FAILURE') == '1':
+                    expect(page.locator('#msgs')).to_contain_text('INTENTIONALLY ABSENT runner failure proof', timeout=1000)
                 evidence['metrics']['idle'] = {'seconds': elapsed, 'record_delta': len(rows(audit))-before,
                     'byte_delta': sum(p.stat().st_size for p in audit.glob('browser-*.jsonl'))-byte_before}
                 print('scenario complete', flush=True); evidence['scenarios'].append('idle cleanup within 70 seconds without rotation')
@@ -162,4 +193,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    from browser_evidence_fixtures import run_with_evidence
+    run_with_evidence(main, 'target/diagnostic-retention')

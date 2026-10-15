@@ -24,8 +24,15 @@ per-client rate bucket, concurrent-parse gate, queued-byte cap, file-size
 rotation threshold or retained-byte cap. The writer filters matching daily and numbered JSONL segments by server
 `received_at` on startup and every 60 seconds, including while idle. Records
 older than rolling 24 hours expire; mixed-age files retain recent records.
-Cleanup lag is up to 60 seconds plus writer/IO time. Malformed or undated
-records are preserved for diagnosis. Cleanup failures increment `write_errors`
+Cleanup lag is up to 60 seconds plus writer/IO time. Malformed, undated and
+non-UTF8 rows in owned segments expire 24 hours after file modification;
+readable recent rows in the same file survive. Rewrites preserve that mtime.
+Owned `.jsonl.retention-tmp` crash files use the same age rule. Unknown files,
+symlinks, directories and externally compressed files are not owned by this
+writer and are untouched (it never creates compressed segments).
+A metadata/earliest-expiry cache skips unchanged recent segments; known local
+appends update the cache without reparsing their prefix. Health exposes
+`retention_scanned_bytes` for maintenance measurement. Cleanup failures increment `write_errors`
 and emit a rate-limited warning; they do not reject business operations.
 Saved bug-report evidence and business/session files are outside this cleanup.
 
@@ -51,7 +58,14 @@ Ordinary receipts are batched for up to 5 seconds, with up to 100 events and
 error receipts bring the pending flush forward to 100 ms. New ordinary events
 do not postpone the existing deadline. Failed requests wait at least 5 seconds
 before retrying, including when new events fill the queue. Page hiding/unloading still flushes via
-beacon, and long-frame beacons remain immediate.
+beacon, and long-frame beacons remain immediate. One fetch may be in flight,
+with a 10-second timeout including the body. Pending events are bounded by
+500 entries and 512 KiB; terminal summaries have 64 buckets. Diagnostic drops
+never reject business input. `browser.audit.delivery` carries cumulative
+network, non-2xx, timeout, beacon-refusal and capacity/drop counters. A failed
+summary send does not reset those counters; a later successful batch reports
+them. Beacon acceptance cannot prove server persistence and does not acknowledge
+these statistics.
 
 Rust pages omit the `content` body before sizing/queueing receipts: the intake
 only persists structured metadata, so transferring DOM/message/terminal

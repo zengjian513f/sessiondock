@@ -13,8 +13,24 @@ Every line has:
 | `level` | `info`, `warn` or `error` |
 | `event` | dotted name, e.g. `server.listening`, `http.request`, `transfer.inventory` |
 
-plus the event's own fields. A line is written with one `write` so concurrent
-lines stay whole.
+plus the event's own fields. Producers enqueue without waiting on stderr.
+A dedicated thread writes complete lines; admission is bounded by 1,024 items
+and 8 MiB, plus at most one in-flight item. Capacity losses and write failures
+are cumulative counters in node health `runtime_log`. Once a minute, changed
+loss totals are reported by `log.delivery`; failed summaries do not clear them.
+Shutdown waits at most one second for normal draining; a blocked external sink
+does not hold service exit. This does not change detached ptyhost descriptors.
+
+The shared system journal remains an external sink: this application cannot
+safely impose project-only 24-hour deletion there. No global vacuum is run.
+The application-owned browser/Hub JSONL retention contract is separate;
+ordinary shared-journal, proxy, PTY and resource-agent retention is not claimed
+complete by this change. `tests/runtime_log_fault_browser.py` uses real page
+navigation with private file, failing-device and full-pipe sinks to measure
+response time, normal flush and bounded shutdown. A private recoverable FIFO
+stays broken across the real 60-second summary interval; after recovery the
+browser scenario checks that the delivered cumulative errors include the
+previously failed summary.
 
 ## What is never logged
 

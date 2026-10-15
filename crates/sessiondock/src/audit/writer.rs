@@ -1,7 +1,8 @@
 //! Dedicated writer thread: daily JSONL files with rolling 24-hour retention.
 
 use std::{
-    fs::{self, File, OpenOptions},
+    collections::HashMap,
+    fs::{self, File, FileTimes, OpenOptions},
     io::{self, BufRead as _, BufReader, BufWriter, Write as _},
     path::{Path, PathBuf},
     sync::{
@@ -29,6 +30,7 @@ const SUFFIX: &str = ".jsonl";
 
 struct Segment {
     file: File,
+    path: PathBuf,
     date: String,
     bytes: u64,
 }
@@ -43,6 +45,7 @@ pub struct Writer {
     last_write: Instant,
     last_error_log: Option<Instant>,
     last_cleanup: Instant,
+    retention_cache: HashMap<PathBuf, (u64, SystemTime, SystemTime)>,
 }
 
 impl Writer {
@@ -62,6 +65,7 @@ impl Writer {
             last_write: Instant::now(),
             last_error_log: None,
             last_cleanup: Instant::now(),
+            retention_cache: HashMap::new(),
         }
     }
 
@@ -122,8 +126,11 @@ impl Writer {
             .segment
             .as_ref()
             .is_none_or(|segment| segment.date != today);
+        let mut appended_from = None;
         let result = if rotate { self.rotate(&today) } else { Ok(()) }.and_then(|()| {
             let segment = self.segment.as_mut().expect("rotation opened a segment");
+            let before = segment.file.metadata()?;
+            appended_from = Some((before.len(), before.modified()?));
             segment.file.write_all(&batch.bytes)?;
             segment.bytes += length;
             Ok(())
@@ -131,6 +138,19 @@ impl Writer {
         let counters = &self.shared.counters;
         match result {
             Ok(()) => {
+                // Our append cannot introduce old records. Keep the cached deadline
+                // while accounting for the new suffix without reparsing the prefix.
+                if let Some(segment) = &self.segment {
+                    if let Some(cached) = self.retention_cache.get_mut(&segment.path)
+                        && let Ok(metadata) = segment.file.metadata()
+                        && appended_from == Some((cached.0, cached.1))
+                        && cached.0 + length == metadata.len()
+                    {
+                        cached.0 = metadata.len();
+                        cached.1 = metadata.modified().unwrap_or(SystemTime::now());
+                        cached.2 = cached.2.min(SystemTime::now() + RETENTION);
+                    }
+                }
                 counters.written_bytes.fetch_add(length, Ordering::Relaxed);
                 counters
                     .written_events
@@ -210,6 +230,7 @@ impl Writer {
         }
         self.segment = Some(Segment {
             file,
+            path,
             date: date.to_owned(),
             bytes: metadata.len(),
         });
@@ -225,13 +246,67 @@ impl Writer {
         let cutoff = SystemTime::now()
             .checked_sub(RETENTION)
             .unwrap_or(SystemTime::UNIX_EPOCH);
-        for segment in list_named_segments(&self.directory, self.prefix) {
-            if let Err(error) = prune_segment(&segment.path, cutoff) {
+        let now = SystemTime::now();
+        let segments = list_named_segments(&self.directory, self.prefix);
+        self.retention_cache
+            .retain(|path, _| segments.iter().any(|s| &s.path == path));
+        for segment in segments {
+            let result = (|| {
+                let metadata = fs::metadata(&segment.path)?;
+                let modified = metadata.modified()?;
+                if self
+                    .retention_cache
+                    .get(&segment.path)
+                    .is_some_and(|cached| {
+                        cached.0 == metadata.len() && cached.1 == modified && now < cached.2
+                    })
+                {
+                    return Ok(());
+                }
+                self.shared
+                    .counters
+                    .retention_scanned_bytes
+                    .fetch_add(metadata.len(), Ordering::Relaxed);
+                let next = prune_segment(&segment.path, cutoff)?;
+                if let Ok(metadata) = fs::metadata(&segment.path) {
+                    self.retention_cache.insert(
+                        segment.path.clone(),
+                        (metadata.len(), metadata.modified()?, next),
+                    );
+                }
+                Ok::<_, io::Error>(())
+            })();
+            if let Err(error) = result {
                 self.shared
                     .counters
                     .write_errors
                     .fetch_add(1, Ordering::Relaxed);
                 self.log_error(&error);
+            }
+        }
+        // Only our exact crash-temporary names, never saved evidence or a
+        // directory/symlink. Each failure is isolated from the other segments.
+        if let Ok(entries) = fs::read_dir(&self.directory) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Some(base) = name.to_str().and_then(|s| s.strip_suffix(".retention-tmp"))
+                else {
+                    continue;
+                };
+                if parse_named_segment(base, self.prefix).is_none() {
+                    continue;
+                }
+                if let Ok(meta) = fs::symlink_metadata(entry.path())
+                    && meta.is_file()
+                    && meta.modified().is_ok_and(|t| t < cutoff)
+                    && let Err(error) = fs::remove_file(entry.path())
+                {
+                    self.shared
+                        .counters
+                        .write_errors
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.log_error(&error);
+                }
             }
         }
         self.shared.counters.retained_bytes.store(
@@ -318,14 +393,12 @@ fn latest_index(directory: &Path, date: &str, prefix: &str) -> Option<(u32, u64)
         .map(|segment| (segment.index, segment.size))
 }
 
-/// Filter by the server receipt time, never the untrusted browser clock or
-/// filename date. Unknown/malformed records are preserved rather than guessing.
-/// Only this writer owns matching files; evidence and business files are ignored.
-fn prune_segment(path: &Path, cutoff: SystemTime) -> io::Result<()> {
-    let cutoff: chrono::DateTime<chrono::Utc> = cutoff.into();
-    // Most scans find nothing expired. Avoid rewriting retained data (and
-    // allocating a temporary file) on every idle maintenance tick.
-    let expired = |line: &[u8]| {
+/// Receipt time governs readable records. Unattributed bytes in an owned
+/// segment expire 24h after its last modification; recent readable rows survive.
+/// Cache the earliest expiry so unchanged recent files need only metadata checks.
+fn prune_segment(path: &Path, cutoff: SystemTime) -> io::Result<SystemTime> {
+    let modified = fs::metadata(path)?.modified()?;
+    let timestamp = |line: &[u8]| -> SystemTime {
         serde_json::from_slice::<serde_json::Value>(line)
             .ok()
             .and_then(|row| {
@@ -335,17 +408,21 @@ fn prune_segment(path: &Path, cutoff: SystemTime) -> io::Result<()> {
                     .map(str::to_owned)
             })
             .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts).ok())
-            .is_some_and(|ts| ts < cutoff)
+            .map(SystemTime::from)
+            .unwrap_or(modified)
     };
+    let mut next = SystemTime::now() + RETENTION;
     let mut found = false;
     for line in BufReader::new(File::open(path)?).split(b'\n') {
-        if expired(&line?) {
+        let at = timestamp(&line?);
+        if at < cutoff {
             found = true;
-            break;
+        } else {
+            next = next.min(at + RETENTION);
         }
     }
     if !found {
-        return Ok(());
+        return Ok(next);
     }
     let temporary = path.with_extension("jsonl.retention-tmp");
     let result = (|| {
@@ -358,36 +435,31 @@ fn prune_segment(path: &Path, cutoff: SystemTime) -> io::Result<()> {
             options.mode(0o600);
         }
         let mut output = BufWriter::new(options.open(&temporary)?);
-        let mut removed = false;
         let mut retained = false;
         for line in input.split(b'\n') {
             let line = line?;
-            if line.is_empty() {
-                continue;
-            }
-            if expired(&line) {
-                removed = true;
-            } else {
+            if timestamp(&line) >= cutoff {
                 output.write_all(&line)?;
                 output.write_all(b"\n")?;
                 retained = true;
             }
         }
         output.flush()?;
-        if removed && retained {
+        if retained {
+            // Rewriting must not renew the age of malformed retained bytes.
+            output
+                .get_ref()
+                .set_times(FileTimes::new().set_modified(modified))?;
             output.get_ref().sync_all()?;
         }
         drop(output);
-        if removed {
-            if retained {
-                fs::rename(&temporary, path)?;
-            } else {
-                fs::remove_file(path)?;
-            }
+        if retained {
+            fs::rename(&temporary, path)?;
+        } else {
+            fs::remove_file(path)?;
         }
-        Ok(())
+        Ok(next)
     })();
-    // A failed cleanup leaves the original intact. Never touch unrelated files.
     let _ = fs::remove_file(temporary);
     result
 }

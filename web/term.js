@@ -615,10 +615,6 @@ async function post(url, body, {timeoutMs = 0} = {}) {
 // ---------------------------------------------------------------- 缺陷报告
 let bugReportToastTimer = 0;
 
-function bugReportsEnabled() {
-  return HUB_MODE ? Object.values(Nodes.capabilities).some(cap => cap.enabled && cap.bug_report === true)
-    : SessionDockCapabilities.config.bug_report === true;
-}
 function bugReportWorkerEnabled() {
   return HUB_MODE ? Nodes.capabilities[bugReportNode()]?.bug_report_worker === true
     : SessionDockCapabilities.config.bug_report_worker === true;
@@ -1748,12 +1744,6 @@ const BugReportModels = createModelPicker('bug-report', {
 let newContinueOrigin = null;
 function continueSessionEnabled() {
   return T.enabled && SessionDockCapabilities.allows('terminal_create') && conversationSendEnabled();
-}
-
-function continueSessionButtonMarkup(info) {
-  if (!info.sid || info.source === 'shell') return '';
-  return `<button class="session-menu-action" data-continue-session ${continueSessionEnabled() ? '' : 'hidden'}
-    type="button" title="接续会话" aria-label="接续会话">${uiIcon('continue')}</button>`;
 }
 
 function nextContinuationTitle(title) {

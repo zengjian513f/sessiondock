@@ -81,6 +81,7 @@ struct Counters {
     written_bytes: AtomicU64,
     write_errors: AtomicU64,
     retained_bytes: AtomicU64,
+    retention_scanned_bytes: AtomicU64,
 }
 
 /// Counter snapshot published through `/api/health`. Every field is a plain
@@ -98,6 +99,7 @@ pub struct Snapshot {
     pub written_bytes: u64,
     pub write_errors: u64,
     pub retained_bytes: u64,
+    pub retention_scanned_bytes: u64,
     pub queued_batches: u64,
     pub queued_bytes: u64,
 }
@@ -135,6 +137,7 @@ impl Shared {
             written_bytes: load(&counters.written_bytes),
             write_errors: load(&counters.write_errors),
             retained_bytes: load(&counters.retained_bytes),
+            retention_scanned_bytes: load(&counters.retention_scanned_bytes),
             queued_batches: self.queued_batches.load(Ordering::Relaxed) as u64,
             queued_bytes: self.queued_bytes.load(Ordering::Relaxed) as u64,
         }
