@@ -29,7 +29,8 @@ cd <SD_SOURCE>
 shasum -a 256 target/release/sessiondock target/release/ptyhost
 ```
 
-仓库不含单元测试（2026-10-06 已删除），部署验证只跑浏览器与 HTTP 套件。
+行为验证使用 headless Chromium；编译和部署检查按 [验证合同](validation.md) 与
+[部署测试门](deployment.md#测试门build--test--push) 执行，不运行已移除的 HTTP-only 套件。
 
 ## 3. 运行目录与 launchd
 
@@ -44,7 +45,7 @@ set -e
 PREFIX=<PREFIX>
 set -a; . "$PREFIX/etc/env"; set +a
 cd "$PREFIX"
-exec "$PREFIX/bin/sessiondock"
+exec "$HOME/.local/bin/with-zshrc" "$PREFIX/bin/sessiondock"
 ```
 
 用户级 LaunchAgent `~/Library/LaunchAgents/<label>.plist`：`ProgramArguments` = wrapper，
@@ -60,8 +61,9 @@ launchctl print gui/$(id -u)/<label> | grep -E 'state|pid'
 curl -s http://127.0.0.1:8741/api/meta
 ```
 
-CLI 启动 profile 的 `executable` 用 `with-zshrc`（`#!/bin/zsh`，`source ~/.zprofile ~/.zshrc` 后
-`exec "$@"`）：launchd 起的进程没有 brew / `~/.local/bin` 的 PATH。
+launchd 的初始环境不含交互 shell 的完整 PATH；上面的 `with-zshrc` 在服务启动时
+加载一次登录环境并 `exec` 服务。CLI profile 的 `executable` 直接指定 CLI 绝对路径，
+继承服务环境。包装器与环境漂移检测配置见 [shell-env.md](shell-env.md)。
 
 ## 4. 滚动更新
 

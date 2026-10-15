@@ -1,8 +1,8 @@
 # 委派本机 grok CLI（grok-4.6）做简单任务
 
 用户已授权：在本仓库的开发过程中，可以把**边界清楚、可机械验证、独立成文件**的
-任务交给本机 `grok` CLI 以 headless 方式完成（全局调用法：`~/.claude/grok-cli.md`）。
-这是委派编码工作，模型自定；grok 产出仍须人工审阅并按批次记账。
+任务交给本机 `grok` CLI 以 headless 方式完成（全局调用法：`/lyra-share/agent-rules/references/grok-cli.md`）。
+默认使用 `grok-4.6`，用户明确指定时按本次指令；产出须人工审阅并按批次记账。
 不得让 grok 触碰生产服务、原 Python 仓库、凭据或运行数据。
 
 ## 调用方式
@@ -39,7 +39,7 @@ timeout 1200 ~/.local/bin/grok \
 - 规格可以写完整，且验证是机械的（`--list` 输出、固定命令、精确断言）。
 - 只依赖标准库或仓库已有依赖，≤300 行，不需要理解多个 Rust 模块之间的约束。
 - 不与正在并行工作的子代理共享文件（尤其 `api/mod.rs`、`state.rs`、
-  `config.rs`、`legacy-web/app.js`、`tests/history_fixtures.py`）。
+  `config.rs`、`web/app.js`、`tests/history_fixtures.py`）。
 
 不适合：
 
@@ -72,7 +72,7 @@ of the verification commands.
 
 ## 审阅清单（人工，必做）
 
-1. `git status --short`：产出是否只落在指定文件；有越界改动直接还原。
+1. `git status --short`：产出是否只落在指定文件；越界改动先确认归属，不回滚其他会话的修改。
 2. 通读文件：无网络访问、无写仓库外路径、无 `subprocess` 调用未授权命令、
    无新增依赖；风格与相邻脚本一致。
 3. 跑任务书里的验证命令，再按改动选择文档检查或覆盖该路径的浏览器套件；
@@ -121,7 +121,23 @@ of the verification commands.
 | 2026-09-12 | q74 `tests/shadow_compare.py`（M8 生产只读影子比对工具，操作者手动运行；接力波最后一个任务）| 978 秒，260 行（任务书上限），rc=0；grok 自己把 336 行压到限内；合成语料 10 PASS/3 DELTA/0 DIFF、无 flag exit 2 复验通过；人工审阅未改动，记入 `docs/replacement-checklist.md` §3 |
 | 2026-09-12 | 8 个并行任务：`tests/bench_summary.py`、`tests/migration_history_status.py`（原 `plan_status.py`）、`docs/validation.md`、`tests/check_docs_links.py`、`tests/legacy_asset_diff.py`、`tests/route_ledger.py`、`tests/rss_watch.py`、`run_validation.py --json/--rerun-failed/--dry-run` | 165–454 秒各自完成，8/8 一次通过验证命令；人工审阅只改了 `docs/validation.md` 里对临时样例路径的引用。bench_summary 复算结果与第十九批手工表一致；check_docs_links 对仓库 89 个链接 0 坏链并能识别人工坏链 |
 
-## 并行经验（8 路）
+## 历史踩坑
+
+仅在相关问题时查阅；这里记录当时的经过，不替代现行合同。
+
+### 测试清理（2026-10-06）
+
+核查发现 15 项 Node 合同、21 项 `cargo test` 和 1 项 Python unittest 失败全是测试
+没跟上有意的改动，没有一项是程序 bug，真正的问题都由浏览器测试发现。随后删除
+Rust `#[test]` 模块、`crates/*/tests/*.rs`、`tests/*_contract.mjs`、Python unittest、
+HTTP-only `*_suite.py`、Python oracle `*_parity.py` 以及基准和探针脚本。
+
+### 共享工作区误发布
+
+2026-10-06 之前构建直接编译共享工作区，任何会话的未提交改动都会挡住部署，
+`--allow-dirty` 只能整体放行，结果把另一会话未完成的改动发上了线。
+
+### 并行经验（8 路）
 
 - 8 个 headless 进程同时跑没有问题：主要在等 API，CPU/内存可忽略；每个任务
   书独立、产出文件互不相同，`git status` 审阅时不需要拆分。

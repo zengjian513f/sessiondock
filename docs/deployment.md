@@ -43,8 +43,7 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
   否则拒绝）。共享 checkout 里其他未提交改动（别的会话尚未完成的工作）既不阻止构建也不进入
   stage，构建只列出它们。源码树检出到私有构建 worktree `target/deploy/tree`，在那里用独立的
   `--target-dir target/deploy/cargo-target` 编译，web 快照也取自同一棵树；固定路径让增量缓存在
-  多次部署间有效。历史：2026-10-06 之前构建直接编译共享工作区，任何会话的未提交改动都会挡住
-  部署，`--allow-dirty` 只能整体放行，结果把另一会话未完成的改动发上了线。
+  多次部署间有效。
   ptyhost 默认一并构建和发布（`--without-ptyhost` 关闭；`--with-ptyhost` 仍可用，要求 stage 带
   ptyhost）。`--web-only` 完全不跑 cargo。默认 `--targets-file` 是
   `deploy/targets.local.json`（缺省时退回 `targets.example.json`），其中 `build` 段给出 cargo
