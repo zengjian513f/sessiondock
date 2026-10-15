@@ -13,6 +13,8 @@ from pathlib import Path
 import tempfile
 
 
+from input_hit_fixtures import hit_fill
+
 from playwright.sync_api import expect, sync_playwright
 
 from history_fixtures import BINARY, Corpus, claude_row, codex_message, codex_row, isolated_server
@@ -98,7 +100,7 @@ def main():
 
                 def search(query):
                     old = page.locator("#stat").get_attribute("data-seq") or ""
-                    page.locator("#q").fill(query)
+                    hit_fill(page.locator("#q"), query)
                     page.locator("#q").press("Enter")
                     wait_search(old)
 
@@ -282,7 +284,7 @@ def main():
                     };
                     window.restoreSearchFetch = () => { window.fetch = original; };
                 }""", result)
-                page.locator("#q").fill("Needle")
+                hit_fill(page.locator("#q"), "Needle")
                 page.locator("#q").press("Enter")
                 expect(page.locator("#side-search-count")).to_have_text("2 条")
                 page.locator("#q").press("Backspace")
@@ -347,7 +349,7 @@ def main():
                     expect(banner).to_be_hidden()
                     expect(page.locator('#side .item[data-uid]')).to_have_count(43)
                     assert page.locator('#side').evaluate('el => getComputedStyle(el).backgroundColor') == normal_background
-                    page.locator('#q').fill('很长的搜索条件' * 20)
+                    hit_fill(page.locator('#q'), '很长的搜索条件' * 20)
                     expect(banner).to_be_visible()
                     assert banner.bounding_box()['height'] <= 32
                     expect(page.locator('#side-search-exit')).to_be_in_viewport()

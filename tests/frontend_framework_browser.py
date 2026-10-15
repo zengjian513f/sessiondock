@@ -23,6 +23,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from input_hit_fixtures import hit_fill, hit_select
+
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, build_corpus, isolated_server
 
@@ -219,13 +221,13 @@ def exercise(browser, base, width, height):
         expect_install(page)
 
         theme = page.locator("#setting-theme")
-        theme.select_option("light")
+        hit_select(theme, "light")
         expect_option(theme, "light", "浅色")
         expect(page.locator("html")).to_have_attribute("data-theme", "light")
-        theme.select_option("dark")
+        hit_select(theme, "dark")
         expect_option(theme, "dark", "深色")
         expect(page.locator("html")).to_have_attribute("data-theme", "dark")
-        page.locator("#setting-font").select_option("cascadia")
+        hit_select(page.locator("#setting-font"), "cascadia")
         expect_option(page.locator("#setting-font"), "cascadia", "Cascadia Mono（内置）")
 
         nudge_scale(page, 5)
@@ -242,9 +244,9 @@ def exercise(browser, base, width, height):
         expect_option(page.locator("#setting-stop-concurrency"), "6", "6 个（默认）")
         paste = page.locator("#setting-console-paste-files")
         expect(paste).not_to_be_checked()
-        page.locator("#setting-cache").select_option("128")
-        page.locator("#setting-sleep").select_option("15")
-        page.locator("#setting-stop-concurrency").select_option("2")
+        hit_select(page.locator("#setting-cache"), "128")
+        hit_select(page.locator("#setting-sleep"), "15")
+        hit_select(page.locator("#setting-stop-concurrency"), "2")
         paste.click()
         expect(paste).to_be_checked()
 

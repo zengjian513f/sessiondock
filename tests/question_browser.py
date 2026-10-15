@@ -22,6 +22,8 @@ from pathlib import Path
 from private_hosts import private_hosts
 from urllib.parse import urlsplit
 
+from input_hit_fixtures import hit_fill
+
 from playwright.sync_api import sync_playwright, expect
 
 from history_fixtures import REPO, BINARY, Corpus, isolated_server
@@ -119,7 +121,7 @@ def answer(page, root, sid, tool, questions, choices, menu, *, layout=False):
         page.wait_for_function("id => cache.get(viewKey(S.sel))?.prompt?.id === id", arg=tool + '-multiple')
         expect(page.locator('#conversation-question')).to_be_visible()
         expect(page.locator('.live-question:visible')).to_have_count(1)
-        page.locator('#conversation-question .question-text-input').fill('custom answer')
+        hit_fill(page.locator('#conversation-question .question-text-input'), 'custom answer')
     hook(root / "state", sid, "PreToolUse", tool, questions)
     card = page.locator(f'#msgs .msg.question.live-question[data-call-id="{tool}"]')
     expect(card.locator(".question-item")).to_have_count(len(questions), timeout=20000)
@@ -130,7 +132,7 @@ def answer(page, root, sid, tool, questions, choices, menu, *, layout=False):
         expect(page.locator('#conversation-question .question-text-input')).to_have_count(0)
         if menu.get('boxed'):
             expect(page.locator(f'#msgs .msg[data-role="question"][data-call-id="{tool}"]:visible')).to_have_count(1)
-            page.locator('#cinput').fill('保留这条消息草稿 / keep draft')
+            hit_fill(page.locator('#cinput'), '保留这条消息草稿 / keep draft')
             for delta in [-1200, 1200]:
                 page.locator('#msgs').hover()
                 page.mouse.wheel(0, delta)
@@ -160,7 +162,7 @@ def answer(page, root, sid, tool, questions, choices, menu, *, layout=False):
     if menu.get('boxed'):
         expect(page.locator('#conversation-question.live-question')).to_have_count(0, timeout=20000)
         expect(page.locator('#cinput')).to_have_value('保留这条消息草稿 / keep draft')
-        page.locator('#cinput').fill('')
+        hit_fill(page.locator('#cinput'), '')
 
 
 def main():
@@ -210,7 +212,7 @@ def main():
                     DEBUG.update(dialogs=dialogs)
                     receipt = create_claude(page, base, root / "work", open_terminal=False)
                     sid = receipt["declared_sid"]
-                    page.fill("#cinput", "hello")
+                    hit_fill(page.locator("#cinput"), "hello")
                     with page.expect_response(lambda r: urlsplit(r.url).path == "/api/session/conversation/send", timeout=20000) as sent:
                         page.locator("#csend").click()
                     assert sent.value.status == 200, sent.value.text()

@@ -15,6 +15,8 @@ import tempfile
 import uuid
 from urllib.parse import urlencode
 
+from input_hit_fixtures import hit_fill, hit_select
+
 from playwright.sync_api import expect, sync_playwright
 
 from history_fixtures import BINARY, REPO, Corpus, claude_row, codex_row, codex_message, isolated_server
@@ -57,13 +59,13 @@ def check_hub(browser, root):
         origin = page.evaluate('S.sel')
         click_action(page, '[data-continue-session]')
         expect(page.locator('#new-node')).to_have_value('a' * 32)
-        page.select_option('#new-node', 'b' * 32)
+        hit_select(page.locator('#new-node'), 'b' * 32)
         page.locator('#new-session-form label:has(input[value="codex"])').click()
         page.locator('#new-model').click()
         page.locator('#new-model-options [role=option]').filter(has_text='NodeB-codex').click()
         expect(page.locator('#new-model-label')).to_have_text('NodeB-codex')
-        page.fill('#new-cwd', '/home/NodeB/work')
-        page.fill('#continue-session-description', '换到另一台机器继续分析')
+        hit_fill(page.locator('#new-cwd'), '/home/NodeB/work')
+        hit_fill(page.locator('#continue-session-description'), '换到另一台机器继续分析')
         page.locator('#continue-session-go').click()
         expect(page.locator('#new-session-dialog')).to_be_hidden()
         expect(page.locator('#cinput')).to_have_value('')
@@ -96,7 +98,7 @@ def check_codex_names(browser, base, root, corpus, cases, screenshots):
         page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]').click()
         expect(page.locator('.dtitle h2')).to_contain_text(original)
         click_action(page, '[data-continue-session]')
-        page.fill('#continue-session-description', '继续处理，保持命名')
+        hit_fill(page.locator('#continue-session-description'), '继续处理，保持命名')
         if index == 0:
             (root / 'hide-status').touch()
         page.locator('#continue-session-go').click()
@@ -145,7 +147,7 @@ def check_codex_names(browser, base, root, corpus, cases, screenshots):
         if index == 0:
             # Continuing the result increments once more, rather than nesting suffixes.
             click_action(page, '[data-continue-session]')
-            page.fill('#continue-session-description', '再次接续')
+            hit_fill(page.locator('#continue-session-description'), '再次接续')
             page.locator('#continue-session-go').click()
             expect(page.locator('.dtitle h2')).to_contain_text(original + ' (3)', timeout=20000)
             page.wait_for_function('!composerSending && !newSessionCreating')
@@ -233,17 +235,17 @@ def main():
                 page.locator(f'#side .item[data-uid="{corpus.uid(SID)}"]').click()
                 expect(page.locator('#msgs')).to_contain_text('已有调查结果')
                 open_continue(page)
-                page.fill('#continue-session-description', '暂存后取消')
+                hit_fill(page.locator('#continue-session-description'), '暂存后取消')
                 page.locator('#new-session-dialog .modal-close').click()
                 assert page.evaluate('S.sel') == corpus.uid(SID) and not creates and not sends
                 open_continue(page)
                 text = f'继续调查第 {width} 项，保留原会话的上下文引用。'
-                page.fill('#continue-session-description', text)
+                hit_fill(page.locator('#continue-session-description'), text)
                 page.locator('#continue-session-description').press('Enter' if width < 720 else 'Shift+Enter')
                 expect(page.locator('#continue-session-description')).to_have_value(text + '\n')
                 assert not creates
-                page.fill('#continue-session-description', text)
-                page.select_option('#new-effort', 'high')
+                hit_fill(page.locator('#continue-session-description'), text)
+                hit_select(page.locator('#new-effort'), 'high')
                 page.locator('#continue-session-go').scroll_into_view_if_needed()
                 expect(page.locator('#continue-session-go')).to_be_in_viewport()
                 if args.screenshots:

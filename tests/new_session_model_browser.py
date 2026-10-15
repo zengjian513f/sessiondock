@@ -16,6 +16,8 @@ import time
 import urllib.request
 from urllib.parse import parse_qs, urlsplit
 
+from input_hit_fixtures import hit_fill, hit_select
+
 from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from hub_fixtures import FakeNode, Hub
@@ -70,10 +72,11 @@ def check_drag_selection(page, cwd):
         dialog = page.locator("#new-session-dialog")
         field = page.locator("#new-cwd")
         expect(field).to_have_value("")
-        field.fill(str(cwd))
+        hit_fill(field, str(cwd))
         box = field.bounding_box()
         bounds = dialog.bounding_box()
-        outside = (bounds["x"] - 10, box["y"] + box["height"] / 2)
+        # Keep the backdrop point inside the browser viewport, even with an 8px margin.
+        outside = (bounds["x"] / 2, box["y"] + box["height"] / 2)
         inside = (box["x"] + 110, outside[1])
         page.mouse.move(*inside)
         page.mouse.down()
@@ -119,7 +122,7 @@ def choose_model(page, name):
 
 
 def create(page, cwd):
-    page.locator("#new-cwd").fill(str(cwd))
+    hit_fill(page.locator("#new-cwd"), str(cwd))
     with page.expect_response(lambda r: r.url.endswith("/api/term/create")) as created:
         page.locator("#new-session-go").click()
     assert created.value.status == 200, created.value.text()
@@ -170,7 +173,7 @@ def check_catalog_source_change(browser, base):
         expect(page.locator("#new-model")).to_be_disabled()
         pick_source(page, "grok")
         expect(page.locator("#new-model-label")).to_have_text("grok current")
-        page.locator("#new-effort").select_option("low")
+        hit_select(page.locator("#new-effort"), "low")
         assert len(delayed) == 1, len(delayed)
         delayed.pop().fulfill(json={"models": [{"id": "codex-late", "name": "Codex late",
             "efforts": ["medium"]}], "default_model": "codex-late"})
@@ -210,20 +213,20 @@ def check_shared_effort(browser, binary, root):
         page.evaluate("""nid => store.set('newModel.' + nid + '|codex',
             {model: 'shared-a', effort: 'low'})""", nodes[0].nid)
         open_dialog(page)
-        page.locator("#new-node").select_option(nodes[0].nid)
+        hit_select(page.locator("#new-node"), nodes[0].nid)
         pick_source(page, "codex")
         expect(page.locator("#new-model-label")).to_have_text("Shared A")
         expect(page.locator("#new-effort")).to_have_value("high")
         assert page.locator("#new-effort option").all_inner_texts() == ["low", "high"]
-        page.locator("#new-effort").select_option("low")
+        hit_select(page.locator("#new-effort"), "low")
         choose_model(page, "Shared B")
         expect(page.locator("#new-effort")).to_have_value("high")
-        page.locator("#new-node").select_option(nodes[1].nid)
+        hit_select(page.locator("#new-node"), nodes[1].nid)
         expect(page.locator("#new-model-label")).to_have_text("Shared A")
         expect(page.locator("#new-effort")).to_have_value("low")
         choose_model(page, "Shared B")
         expect(page.locator("#new-effort")).to_have_value("high")
-        page.locator("#new-node").select_option(nodes[0].nid)
+        hit_select(page.locator("#new-node"), nodes[0].nid)
         expect(page.locator("#new-model-label")).to_have_text("Shared B")
         expect(page.locator("#new-effort")).to_have_value("high")
         choose_model(page, "Shared A")
@@ -316,12 +319,12 @@ def main():
             efforts = page.locator("#new-effort option").all_inner_texts()
             assert efforts == ["low", "medium", "high", "xhigh", "max"], efforts
             expect(page.locator("#new-effort")).to_have_value("high")
-            page.locator("#new-effort").select_option("medium")
+            hit_select(page.locator("#new-effort"), "medium")
             choose_model(page, "Sonnet")
             expect(page.locator("#new-effort")).to_have_value("high")
             choose_model(page, "Opus")
             expect(page.locator("#new-effort")).to_have_value("medium")
-            page.locator("#new-effort").select_option("high")
+            hit_select(page.locator("#new-effort"), "high")
             shot("claude")
             body = create(page, work)
             assert body["model"] == "opus" and body["effort"] == "high", body
@@ -373,10 +376,10 @@ def main():
             expect(page.locator("#new-model")).to_be_focused()
             assert page.locator("#new-effort option").all_inner_texts() == ["low", "high"]
             expect(page.locator("#new-effort")).to_have_value("high")
-            page.locator("#new-effort").select_option("low")
+            hit_select(page.locator("#new-effort"), "low")
             choose_model(page, "GPT Fake B")
             expect(page.locator("#new-effort")).to_have_value("medium")
-            page.locator("#new-effort").select_option("xhigh")
+            hit_select(page.locator("#new-effort"), "xhigh")
             choose_model(page, "GPT Fake A")
             expect(page.locator("#new-effort")).to_have_value("low")
             body = create(page, work)
@@ -448,7 +451,7 @@ def main():
             choose_model(page, "Grok Fake")
             assert page.locator("#new-effort option").all_inner_texts() == ["low", "high"]
             expect(page.locator("#new-effort")).to_have_value("high")
-            page.locator("#new-effort").select_option("low")
+            hit_select(page.locator("#new-effort"), "low")
             body = create(page, work)
             argv = wait_argv(log, lambda a: "grok-fake" in a)
             assert argv[-4:] == ["-m", "grok-fake", "--reasoning-effort", "low"], argv

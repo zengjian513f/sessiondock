@@ -25,6 +25,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 
 from playwright.sync_api import expect, sync_playwright
+from input_hit_fixtures import hit_select
 
 from hub_fixtures import REPO, FakeNode, Hub
 from hub_fake_node import PNG
@@ -410,12 +411,12 @@ def check_report_layout(page):
     assert wide["joined"], wide
     assert wide["select_width"] <= 140 and wide["inside"] and wide["send_align"] <= 1, wide
     # The model list is the chosen machine's; the choice goes out with the report.
-    page.select_option("#bug-report-node", NID["b"])
+    hit_select(page.locator("#bug-report-node"), NID["b"])
     page.locator('#bug-report-form label:has(input[value="codex"])').click()
     page.locator("#bug-report-model").click()
     page.locator("#bug-report-model-options [role=option]", has_text="NodeB-codex").click()
     expect(page.locator("#bug-report-model-label")).to_have_text("NodeB-codex")
-    page.locator("#bug-report-effort").select_option("high")
+    hit_select(page.locator("#bug-report-effort"), "high")
     # Back to the default machine; the choice stays remembered for NodeB's Codex.
     page.select_option("#bug-report-node", NID["a"])
     expect(page.locator("#bug-report-model-label")).to_have_text("选择模型")

@@ -471,3 +471,14 @@ loopback. It creates a session and deletes/restores a private session tree at
 wide and narrow widths, checking durable receipts and browser/server log
 correlation. The insecure case asserts that `crypto.randomUUID` is unavailable;
 ordinary localhost tests alone do not cover that environment.
+
+[Input hit regression](../tests/input_hit_browser.py) checks named peer controls,
+real pointer hits before editing, wheel reachability of long error states,
+wide/narrow viewports and interface scaling. Relation saves are checked against
+private metadata and reload; failed launches retry into a private fake CLI;
+settings and filtering retain their business results. The long-error case also
+regresses the new-session dialog missing from scale-aware sizing.
+Explicit helpers in
+[input hit fixtures](../tests/input_hit_fixtures.py) also guard existing group,
+relation, model, continuation, question, search and settings inputs without
+patching Playwright APIs or treating native selectors/popovers as peer overlap.
