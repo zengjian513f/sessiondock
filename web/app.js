@@ -1706,6 +1706,8 @@ function applyMigrationMeta(uid, agent, entry, meta) {
   }
   oldHead.replaceWith(next);
   layoutSessionHead();
+  if (wasOpen && next.querySelector('#session-view-menu'))
+    placeDropdown(next.querySelector('#session-view-menu'), next.querySelector('#a-view-switch'));
 }
 
 async function applyDiff(uid, data, bytes = 0, agent = null) {
@@ -4002,9 +4004,7 @@ function openItemMenu(uid, x, y) {
   paintSessionRunControl(menu.querySelector('[data-act="stop"]'), row);
   paintTransferAvailability(menu.querySelector('[data-act="clone"]'), uid);
   menu.hidden = false;
-  const box = menu.getBoundingClientRect();
-  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - box.width - 8))}px`;
-  menu.style.top = `${Math.max(8, Math.min(y, innerHeight - box.height - 8))}px`;
+  placeFixedMenu(menu, x, y);
   menu.querySelector('button:not([aria-disabled="true"])')?.focus({ preventScroll: true });
 }
 
@@ -6505,6 +6505,7 @@ function bindSessionActions(heading) {
     if (views) views.hidden = true;
     heading.querySelector('#a-view-switch')?.setAttribute('aria-expanded', 'false');
     closeForkChainMenu();
+    placeDropdown(menu, button);
   };
   button.onclick = () => menu.hidden ? open() : closeSessionActions();
   bindMenuKeyboard(button, menu, items, open);
@@ -6662,6 +6663,10 @@ function layoutSessionHead(heading = $('#detail .dhead')) {
     more.title = more.ariaLabel = menuEmpty ? '会话信息' : '更多会话操作';
     more.hidden = menuEmpty && !meta?.children.length;
   }
+  for (const [menuId, anchorId] of [['session-view-menu', 'a-view-switch'], ['fork-chain-menu', 'a-fork-chain'], ['session-actions-menu', 'a-more']]) {
+    const dropdown = heading.querySelector('#' + menuId), anchor = heading.querySelector('#' + anchorId);
+    if (dropdown && !dropdown.hidden && anchor) placeDropdown(dropdown, anchor);
+  }
   auditHeaderLayout(heading, tier, actions);
 }
 
@@ -6749,11 +6754,7 @@ function openToolbarMenu(trigger) {
 }
 function positionToolbarMenu(trigger) {
   const menu = document.getElementById(trigger.getAttribute('aria-controls'));
-  const rect = trigger.getBoundingClientRect();
-  const width = menu.offsetWidth, height = menu.offsetHeight;
-  const left = rect.right + 5 + width <= innerWidth - 8 ? rect.right + 5 : rect.left - width - 5;
-  menu.style.left = `${Math.max(8, Math.min(left, innerWidth - width - 8))}px`;
-  menu.style.top = `${Math.max(8, Math.min(rect.top, innerHeight - height - 8))}px`;
+  placeSubmenu(menu, trigger);
 }
 
 // 顶栏按空间逐级收，任何一级都不因折叠留白：
@@ -7023,6 +7024,7 @@ function head(m, total) {
       if (viewMenu.hidden) viewMenu.innerHTML = sessionViewRows(m);
       viewMenu.hidden = !viewMenu.hidden;
       viewSwitch.setAttribute('aria-expanded', String(!viewMenu.hidden));
+      if (!viewMenu.hidden) placeDropdown(viewMenu, viewSwitch);
       if (!viewMenu.hidden) setTimeout(() => document.addEventListener('click', close, { once: true }), 0);
     };
     viewMenu.onclick = e => {
@@ -7090,6 +7092,7 @@ function renderForkChainMenu() {
   }).concat(children.map((row, i) => chainRow(children.length > 1 ? `子会话 ${i + 1}` : '子会话', row)));
   menu.innerHTML = rows.join('')
     || '<div class="chain-row gone" role="none"><span><small>没有父会话或子会话</small></span></div>';
+  placeDropdown(menu, $('#a-fork-chain'));
 }
 
 function bindForkChainMenu(heading, m) {
@@ -9744,9 +9747,7 @@ document.addEventListener('contextmenu', async event => {
     kind: link.dataset.referenceKind === 'web' ? 'web' : link.dataset.fileKind};
   const place = () => {
     fileMenu.hidden = false;
-    const box = fileMenu.getBoundingClientRect();
-    fileMenu.style.left = `${Math.max(8, Math.min(event.clientX, innerWidth - box.width - 8))}px`;
-    fileMenu.style.top = `${Math.max(8, Math.min(event.clientY, innerHeight - box.height - 8))}px`;
+    placeFixedMenu(fileMenu, event.clientX, event.clientY);
   };
   if (link.dataset.fileRef) {
     fileMenuTargetText.textContent = '正在读取文件信息…';

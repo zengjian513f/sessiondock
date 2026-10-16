@@ -97,6 +97,38 @@
     return stack;
   };
 
+  // Pointer/anchor rectangles use viewport pixels; fixed CSS coordinates are
+  // before interface zoom. Clamp in one coordinate system, then convert once.
+  globalThis.placeFixedMenu = (menu, x, y) => {
+    const box = menu.getBoundingClientRect(), zoom = menu.currentCSSZoom || 1;
+    menu.style.left = `${Math.max(8, Math.min(x, innerWidth - box.width - 8)) / zoom}px`;
+    menu.style.top = `${Math.max(8, Math.min(y, innerHeight - box.height - 8)) / zoom}px`;
+  };
+  globalThis.placeSubmenu = (menu, anchor) => {
+    menu.style.maxHeight = '';
+    const rect = anchor.getBoundingClientRect(), box = menu.getBoundingClientRect();
+    if (rect.right + 5 + box.width <= innerWidth - 8) {
+      placeFixedMenu(menu, rect.right + 5, rect.top);
+    } else if (rect.left - box.width - 5 >= 8) {
+      placeFixedMenu(menu, rect.left - box.width - 5, rect.top);
+    } else {
+      // A narrow viewport has no side-by-side room. Keep the trigger exposed
+      // so opening on hover cannot intercept the following click/tap.
+      const below = innerHeight - rect.bottom - 13, above = rect.top - 13;
+      const down = below >= Math.min(box.height, 160) || below >= above;
+      menu.style.maxHeight = `${Math.max(0, down ? below : above) / (menu.currentCSSZoom || 1)}px`;
+      placeFixedMenu(menu, rect.left, down ? rect.bottom + 5 : rect.top - 5 - menu.getBoundingClientRect().height);
+    }
+  };
+  globalThis.placeDropdown = (menu, anchor) => {
+    menu.style.maxHeight = '';
+    const rect = anchor.getBoundingClientRect(), box = menu.getBoundingClientRect();
+    const below = innerHeight - rect.bottom - 13, above = rect.top - 13;
+    const down = below >= Math.min(box.height, 160) || below >= above;
+    menu.style.maxHeight = `${Math.max(0, Math.min(box.height, down ? below : above)) / (menu.currentCSSZoom || 1)}px`;
+    placeFixedMenu(menu, rect.left, down ? rect.bottom + 5 : rect.top - 5 - menu.getBoundingClientRect().height);
+  };
+
   // Use the same native hover hint as available controls.
   const normalTitles = new WeakMap();
   globalThis.setControlUnavailable = (control, reason) => {
