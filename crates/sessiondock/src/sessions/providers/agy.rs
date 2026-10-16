@@ -164,7 +164,8 @@ pub(super) fn metadata(summary: &Value, records: &[(Value, u64)], fallback: &str
     };
     json!({"sid": session["id"], "title": clip(&title), "cwd": session["directory"],
         "created": stamp(&session["time_created"]), "updated": stamp(&session["time_updated"]),
-        "model": session["model"]["id"], "branch": session["agent"]})
+        "model": session["model"]["id"], "branch": session["agent"],
+        "_is_subagent": session["parent_id"].as_str().is_some_and(|id| !id.trim().is_empty())})
 }
 
 /// Presentation only: retain the entire native call in text and never infer

@@ -488,3 +488,6 @@ Explicit helpers in
 [input hit fixtures](../tests/input_hit_fixtures.py) also guard existing group,
 relation, model, continuation, question, search and settings inputs without
 patching Playwright APIs or treating native selectors/popovers as peer overlap.
+
+Agy 原生子代理归属：`python3 tests/agy_nesting_browser.py --binary target/debug/sessiondock`，
+私有原生目录与 Chromium 验证父子链、历史增量、父关系变更、刷新重启及宽窄明暗画面。

@@ -94,6 +94,8 @@ pub struct CodexMeta {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentMeta {
     pub id: String,
+    /// Mirrored native parent SID (Agy); other providers use their own provenance.
+    pub parent_sid: Option<String>,
     pub title: String,
     pub kind: String,
     /// The agent's last turn is not closed:

@@ -401,6 +401,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
             created,
             updated,
             Some(AgentMeta {
+                parent_sid: None,
                 turn_at: None,
                 id: id.clone(),
                 title,
