@@ -84,14 +84,18 @@ managed instance that is `running` (always included), or a Claude session
 that inherited a pane through `continued_in` (below).
 
 - **CLI barrier** (`live.is_cli_process`, `ProcTree::is_cli_process`): both
-  walks stop when an intermediate process — not the start of the walk, not
-  the root or tmux server being looked for — is itself a CLI main process
+  walks stop when an ancestor process — not the start of the walk —
+  is itself a CLI main process, including a managed host's CLI session root
   (`claude`/`codex`/`grok` argv0). A `grok -p` or `codex exec` spawned by a
   pane's Claude sits in that pane's process tree, but the console is the
   Claude's: the grandchild session is live (its own signals) and
-  it is not in `tmux_uids`. A CLI's own tool
-  shell (`bash tool.sh` under it) still walks through the CLI, because the
-  CLI is the start's parent, not an intermediate.
+  it is not in `tmux_uids`. The CLI root itself still owns its console;
+  a non-CLI launcher root can still host its direct CLI descendant.
+  BUG-20261016-130948-13f42f checked the managed root before the CLI barrier,
+  falsely marking a nested `codex exec` blue and allowing takeover to launch
+  a second resume without external-process confirmation. The shared ancestry
+  check now applies the barrier first. Browser coverage:
+  [live_console_boundary_browser.py](../tests/live_console_boundary_browser.py).
 - **Continued-in inheritance** (`server._pane_for_session` /
   `_continued_origin`, `api/runtime.rs` `inherits_pane`): a Claude session
   that no pane owns by process tree inherits the pane of the first listed

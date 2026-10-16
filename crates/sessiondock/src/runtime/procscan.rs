@@ -350,7 +350,7 @@ impl ProcTree {
 
     /// This pid is a session's CLI main process
     /// (`claude`/`codex`/`grok` itself). The pane-ownership walks stop at one
-    /// that is neither their start nor their target: a `grok -p` or `codex
+    /// above their starting process, even at a host root: a `grok -p` or `codex
     /// exec` a pane's Claude spawned sits in that pane's process tree, but
     /// the console is the parent CLI's, not the grandchild session's.
     pub fn is_cli_process(&self, pid: u32) -> bool {
@@ -392,11 +392,13 @@ impl ProcTree {
         pids.iter().filter(|pid| **pid > 0).any(|pid| {
             let mut current = pid.unsigned_abs() as u32;
             for step in 0..ANCESTRY_DEPTH {
-                if roots.contains(&current) {
-                    return true;
-                }
+                // The host root may be the parent CLI itself. Its descendants
+                // cannot borrow that console merely by reaching the root.
                 if step > 0 && self.is_cli_process(current) {
                     break;
+                }
+                if roots.contains(&current) {
+                    return true;
                 }
                 match self.parent(current) {
                     Some(parent) if parent.ppid > 1 => current = parent.ppid,
