@@ -28,12 +28,18 @@ from hub_fixtures import FakeNode, Hub
 SID = '019a29ee-d9b0-741c-a645-776a523e6b6d'
 TITLE = '接续长标题会话 / Continue the existing investigation without losing its reference'
 REVIEW_SUBSESSIONS = '检查子代理和 exec 类子会话的执行情况。'
-TAKE_OVER_PROCESSES = '接管正在运行的任务进程。'
+TAKE_OVER_PROCESSES = '接管运行、排队及自动后继任务。'
+REQUIREMENTS = {
+    'restore': '恢复原任务目标与剩余事项。',
+    'review': REVIEW_SUBSESSIONS,
+    'takeover': TAKE_OVER_PROCESSES,
+    'finish': '接收成果并完成验收与收尾。',
+}
 
 
-def check_requirements(prompt, review=True, takeover=True):
-    assert prompt.count(REVIEW_SUBSESSIONS) == int(review), prompt
-    assert prompt.count(TAKE_OVER_PROCESSES) == int(takeover), prompt
+def check_requirements(prompt, **selection):
+    for key, instruction in REQUIREMENTS.items():
+        assert prompt.count(instruction) == int(selection.get(key, True)), prompt
 
 
 def open_continue(page):
@@ -43,8 +49,9 @@ def open_continue(page):
     expect(page.locator('#continue-session-reference')).to_contain_text(SID)
     expect(page.locator('#continue-session-description')).to_be_focused()
     expect(page.locator('#continue-session-options')).to_be_visible()
-    expect(page.get_by_role('checkbox', name=REVIEW_SUBSESSIONS[:-1])).to_be_checked()
-    expect(page.get_by_role('checkbox', name=TAKE_OVER_PROCESSES[:-1])).to_be_checked()
+    expect(page.locator('#continue-session-options input')).to_have_count(4)
+    for instruction in REQUIREMENTS.values():
+        expect(page.get_by_role('checkbox', name=instruction[:-1], exact=True)).to_be_checked()
     expect(page.locator('[data-continue-session] use').first).to_have_attribute('href', '#i-continue')
     expect(page.locator('#new-session-form label:has(input[value="shell"])')).to_be_hidden()
 
@@ -249,8 +256,8 @@ def main():
                 expect(page.locator('#msgs')).to_contain_text('已有调查结果')
                 open_continue(page)
                 hit_fill(page.locator('#continue-session-description'), '暂存后取消')
-                page.locator('#continue-session-review').uncheck()
-                page.locator('#continue-session-takeover').uncheck()
+                for key in REQUIREMENTS:
+                    page.locator('#continue-session-' + key).uncheck()
                 page.locator('#new-session-dialog .modal-close').click()
                 assert page.evaluate('S.sel') == corpus.uid(SID) and not creates and not sends
                 open_continue(page)
@@ -265,8 +272,11 @@ def main():
                     hit_fill(page.locator('#continue-session-description'), text)
                 review = not (theme == 'dark' and width != 472)
                 takeover = width != 320 and not (width == 1280 and theme == 'dark')
-                page.locator('#continue-session-review').set_checked(review)
-                page.locator('#continue-session-takeover').set_checked(takeover)
+                selection = {'review': review, 'takeover': takeover,
+                             'restore': theme == 'light' and width != 472 or width == 472 and theme == 'dark',
+                             'finish': width == 472 or width == 1280 and theme == 'light'}
+                for key, selected in selection.items():
+                    page.locator('#continue-session-' + key).set_checked(selected)
                 for option in page.locator('#continue-session-options label').all():
                     label_box = option.locator('span').bounding_box()
                     check_box = option.locator('input').bounding_box()
@@ -284,8 +294,8 @@ def main():
                 page.locator('#continue-session-go').click()
                 expect(page.locator('#new-session-error')).to_have_text('合成的启动失败')
                 expect(page.locator('#continue-session-description')).to_have_value(text)
-                expect(page.locator('#continue-session-review')).to_be_checked(checked=review)
-                expect(page.locator('#continue-session-takeover')).to_be_checked(checked=takeover)
+                for key, selected in selection.items():
+                    expect(page.locator('#continue-session-' + key)).to_be_checked(checked=selected)
                 assert not sends and page.evaluate('S.sel') == corpus.uid(SID)
                 if width == 1280 and theme == 'light':
                     page.route('**/api/session/conversation?uid=tmux*', lambda route: route.fulfill(
@@ -308,7 +318,7 @@ def main():
                     expect(page.locator('dialog.app-popup[open]')).to_contain_text('合成的输入未就绪')
                     page.locator('dialog.app-popup[open] button[data-popup-action="ok"]').click()
                     assert corpus.uid(SID) in page.locator('#cinput').input_value()
-                    check_requirements(page.locator('#cinput').input_value(), review, takeover)
+                    check_requirements(page.locator('#cinput').input_value(), **selection)
                     page.reload(wait_until='networkidle')
                     expect(page.locator('#cinput')).to_have_value(sends[0]['text'])
                     if args.screenshots:
@@ -321,9 +331,9 @@ def main():
                 prompt = sends[-1]['text']
                 assert prompt.startswith(TITLE + ' (2)\n\n接续以下会话：\n会话标识：' + corpus.uid(SID)), prompt
                 assert f'会话 ID：{SID}' in prompt and prompt.endswith(text or '请接续该会话继续处理。'), prompt
-                check_requirements(prompt, review, takeover)
-                for instruction, selected in ((REVIEW_SUBSESSIONS, review), (TAKE_OVER_PROCESSES, takeover)):
-                    if selected:
+                check_requirements(prompt, **selection)
+                for key, instruction in REQUIREMENTS.items():
+                    if selection[key]:
                         expect(page.locator('#msgs')).to_contain_text(instruction)
                     else:
                         expect(page.locator('#msgs')).not_to_contain_text(instruction)

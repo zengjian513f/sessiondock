@@ -231,9 +231,10 @@ original record UID and native SID before the user's continuation request.
 Hub-scoped UIDs retain the original machine scope even if the new session
 runs elsewhere; an active subagent reference is included when applicable.
 This passes a textual reference, without copying or rewriting native history.
-DELTA (BUG-20261016-004357-a2fa7d): the dialog offers two independent checkboxes,
-“检查子代理和 exec 类子会话的执行情况” and “接管正在运行的任务进程”.
-Both start checked whenever the dialog opens. Only selected requirements enter
+DELTA (BUG-20261016-004357-a2fa7d): the dialog offers four independent checkboxes:
+“恢复原任务目标与剩余事项”, “检查子代理和 exec 类子会话的执行情况”,
+“接管运行、排队及自动后继任务”, and “接收成果并完成验收与收尾”.
+All start checked whenever the dialog opens. Only selected requirements enter
 the first draft, between the source reference and the user's request, including
 when the request is empty. They use the same persisted draft and SEND path on
 local and cross-node continuations; create failure retains the selection, and
