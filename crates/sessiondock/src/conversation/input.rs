@@ -471,7 +471,7 @@ fn agy_editor_layout(capture: &ScreenCapture) -> Option<(String, String, bool)> 
     ))
 }
 
-pub(super) fn agy_editor(capture: &ScreenCapture) -> Option<String> {
+pub(crate) fn agy_editor(capture: &ScreenCapture) -> Option<String> {
     agy_editor_layout(capture).map(|(editor, _, _)| editor)
 }
 

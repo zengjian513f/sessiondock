@@ -983,10 +983,10 @@ def run(binary, ast_cache_mb=64, view_cache_mb=128):
                             page.locator('#a-more').click()
                         page.locator('#a-session-action').click()
                         popup = page.locator('dialog.app-popup[open]')
-                        expect(popup).to_contain_text('/resume')
-                        popup.locator('[data-popup-action="ok"]').click()
+                        expect(popup).to_contain_text('Agy 会话会永久删除')
+                        popup.locator('[data-popup-action="cancel"]').click()
                         refused = page.request.delete(base + '/api/session/' + uid + '?force=1')
-                        assert refused.status == 409 and refused.json()['code'] == 'agy_delete_unsupported', refused.text()
+                        assert refused.status == 409 and refused.json()['code'] == 'root_unconfigured', refused.text()
 
                         def refuse_transfer():
                             if not page.locator('#a-clone-group').is_visible():

@@ -436,7 +436,7 @@ def check_pick_delete_confirm_cancel(page, listed):
                        'OpenCode 会话会从 OpenCode 直接删除（连同子会话），不进回收站，无法恢复。')
         menu_delete(page, 'agy:mix-d')
         cancel_confirm(page, '删除会话「Agy 丁」?',
-                       '其中 1 个 Agy 会话将跳过：请在 agy 的 /resume 菜单删除原生会话，SessionDock 会自动更新列表。')
+                       '其中 1 个 Agy 会话会永久删除，不进回收站，无法恢复。')
         assert calls == [], calls
         row(page, 'claude:mix-a').click(button='right')
         page.locator('#item-menu [data-act="pick"]').click()
@@ -449,7 +449,7 @@ def check_pick_delete_confirm_cancel(page, listed):
             page, '删除 / 丢弃选中的 6 个会话?',
             '2 个新建会话将停止并丢弃，未发送的草稿也会清除；若已生成会话记录，记录会保留。\n'
             '文件会移入服务端回收站，不会永久删除。\n'
-            '其中 1 个 Agy 会话将跳过：请在 agy 的 /resume 菜单删除原生会话，SessionDock 会自动更新列表。\n'
+            '其中 1 个 Agy 会话会永久删除，不进回收站，无法恢复。\n'
             '其中 1 个 OpenCode 会话会从 OpenCode 直接删除（连同子会话），不进回收站，无法恢复。\n'
             '其中 1 个还在运行，会被跳过，需要先停止。')
         expect(page.locator('#side-picked')).to_have_text('已选 6 项')

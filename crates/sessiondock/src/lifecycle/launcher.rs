@@ -820,6 +820,58 @@ impl Launcher {
         Err(Error::PrepareFailed)
     }
 
+    /// A short-lived native Agy UI, isolated from the user's managed hosts.
+    pub(super) fn agy_delete_command(
+        &self,
+        directory: &Path,
+        sid: &str,
+        cwd: &Path,
+    ) -> Result<Command, Error> {
+        let mut profiles = self.profiles.values().filter(|p| p.source == Source::Agy);
+        let (Some(profile), None) = (profiles.next(), profiles.next()) else {
+            return Err(Error::AdapterUnavailable);
+        };
+        let mut command = Command::new(current_executable(&self.host_binary)?);
+        for name in &profile.env_remove {
+            command.env_remove(name);
+        }
+        command.envs(&profile.env);
+        for name in DENIED_ENV {
+            command.env_remove(name);
+        }
+        command
+            .env("AGY_CLI_DISABLE_AUTO_UPDATE", "1")
+            .current_dir(cwd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .arg("--dir")
+            .arg(directory)
+            .args([
+                "run",
+                "--name",
+                "agy-delete",
+                "--cols",
+                "160",
+                "--rows",
+                "40",
+                "--no-record",
+                "--cwd",
+            ])
+            .arg(cwd)
+            .arg("--")
+            .arg(current_executable(&profile.executable)?)
+            .args(&profile.args);
+        for arg in &profile.resume_args {
+            command.arg(if arg == SID_PLACEHOLDER { sid } else { arg });
+        }
+        if !profile.resume_args.iter().any(|arg| arg == SID_PLACEHOLDER) {
+            command.args(["--conversation", sid]);
+        }
+        background_command(&mut command);
+        Ok(command)
+    }
+
     /// Delete one OpenCode session (and its child sessions) through
     /// OpenCode's own API with the configured OpenCode profile. OpenCode keeps
     /// no recycle bin, so this cannot be undone.

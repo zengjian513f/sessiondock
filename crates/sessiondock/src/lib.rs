@@ -544,6 +544,7 @@ fn build_app(
         transfer,
         shell_env,
         opencode_root,
+        agy_home: config.agy_home.clone(),
         conversations,
         assets,
         capabilities,

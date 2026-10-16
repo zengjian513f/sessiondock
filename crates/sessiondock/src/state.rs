@@ -65,6 +65,7 @@ pub struct AppState {
     pub trash: Option<Arc<crate::trash::TrashService>>,
     /// SessionDock's OpenCode mirror; deleting an OpenCode session removes
     /// its mirrored directory under this root at once.
+    pub agy_home: Option<std::path::PathBuf>,
     pub opencode_root: Option<std::path::PathBuf>,
     /// Node identity behind the second listener; `None` keeps
     /// `/api/meta` at `protocol: 0` and no hub can register us.
