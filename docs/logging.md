@@ -1,8 +1,12 @@
 # Server log
 
-Both binaries (`sessiondock`, `sessiondock-hub`) write their log to stderr as
-one JSON object per line; under systemd, journald keeps it with the unit
-(`journalctl --user -u sessiondock -o cat`). The writer is `crates/sessiondock/src/log.rs`.
+Both binaries (`sessiondock`, `sessiondock-hub`) emit one JSON object per line
+through `crates/sessiondock/src/log.rs` and the shared runtime writer.
+With `SESSIONDOCK_STATE_DIR`, the default sink is its `runtime-logs` directory;
+without it, the sink is stderr. `SESSIONDOCK_RUNTIME_LOG_DIR` selects a private
+directory explicitly, or `-` selects stderr. The Hub normally retains its
+external stderr configuration; under systemd, journald keeps that output with
+the unit (`journalctl --user -u sessiondock -o cat`).
 Before 2026-10-06 the services printed free-form text lines.
 
 Every line has:
@@ -10,10 +14,11 @@ Every line has:
 | Field | Meaning |
 | --- | --- |
 | `ts` | RFC 3339 UTC time with milliseconds |
+| `timestamp_ms` | Writer receipt time in Unix milliseconds; used for retention |
 | `level` | `info`, `warn` or `error` |
 | `event` | dotted name, e.g. `server.listening`, `http.request`, `transfer.inventory` |
 
-plus the event's own fields. Producers enqueue without waiting on stderr.
+plus the event's own fields. Producers enqueue without waiting on the sink.
 A dedicated thread writes complete lines; admission is bounded by 1,024 items
 and 8 MiB, plus at most one in-flight item. Capacity losses and write failures
 are cumulative counters in node health `runtime_log`. Once a minute, changed
@@ -23,9 +28,14 @@ does not hold service exit. This does not change detached ptyhost descriptors.
 
 The shared system journal remains an external sink: this application cannot
 safely impose project-only 24-hour deletion there. No global vacuum is run.
-The application-owned browser/Hub JSONL retention contract is separate;
-ordinary shared-journal, proxy, PTY and resource-agent retention is not claimed
-complete by this change. `tests/runtime_log_fault_browser.py` uses real page
+Application-owned runtime files for the node, PTY hosts and resource-agent have
+rolling 24-hour retention and bounded duplicate aggregation. Their directories,
+five-second summaries, idle maintenance, failure counters and browser validation
+are specified in [process-owned runtime diagnostics](diagnostics.md#process-owned-runtime-diagnostics).
+Already-running old PTY hosts retain their prior logging behavior until natural
+exit. Browser and Hub audit JSONL have separate retention contracts; external
+journal and proxy archives remain outside application cleanup.
+`tests/runtime_log_fault_browser.py` uses real page
 navigation with private file, failing-device and full-pipe sinks to measure
 response time, normal flush and bounded shutdown. A private recoverable FIFO
 stays broken across the real 60-second summary interval; after recovery the
