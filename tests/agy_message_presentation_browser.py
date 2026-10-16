@@ -32,6 +32,21 @@ WRITE_BODY = '\n'.join(f'print("保留写入行 {i}")' for i in range(96)) + '\n
 CHECKPOINT = '# Resuming from a compaction\n\n## Progress Summary\n压缩摘要 agycheckpointbody'
 COMMAND_HEADER = ('Created At: 2026-10-16T16:48:00+08:00\r\n'
                   'Completed At: 2026-10-16T16:48:01+08:00\r\n\r\n')
+MULTILINE = '\n'.join(f'多行短正文 {i}' for i in range(80))
+SETTINGS = [
+    'The user changed setting `Model Selection` from None to Gemini 3.8 Flash (High). '
+    "No need to comment on this change if the user doesn't ask about it. "
+    'If reporting what model you are, please use a human readable name instead of the exact string.',
+    'The user changed setting `Model Selection` from Gemini 3.8 Flash (High) to Claude Opus 5.5 (Medium). '
+    "No need to comment on this change if the user doesn't ask about it. "
+    'If reporting what model you are, please use a human readable name instead of the exact string.',
+]
+FILE_OUTPUT = ('Created At: 2026-10-16T16:48:00+08:00\nCompleted At: 2026-10-16T16:48:01+08:00\n'
+               'File Path: `file:///synthetic/report.py`\nTotal Lines: 2\nTotal Bytes: 32\nShowing lines 1 to 2\n'
+               'The following code has been modified to include a line number before every line, '
+               'in the format: <line_number>: <original_line>. Please note that any changes targeting '
+               'the original code should remove the line number, colon, and leading space.\n'
+               '1: print("agyfilepreview")\n2: print("保留文件内容")')
 
 
 def planner(index, *calls):
@@ -71,6 +86,7 @@ def fixtures():
                      'The command exited with code 0.\nOutput:\n当前配额 12.7%\n'
                      + '\n'.join(f'日志 {i}: 完整保留输出' for i in range(16))),
               planner(3, edit), record(4, 'GENERIC', 'Updated statusline.py'),
+              record(5, 'GENERIC', FILE_OUTPUT),
               error, planner_error, record(8, 'CHECKPOINT', CHECKPOINT),
               planner(9, {'name': 'write_to_file', 'args': {
                   'TargetFile': WRITTEN, 'CodeContent': WRITE_BODY, 'Overwrite': True,
@@ -81,7 +97,11 @@ def fixtures():
                      + 'The command exited with code 2.\r\nOutput:\r\nagyfailedcommand'),
               record(11, 'GENERIC', COMMAND_HEADER
                      + 'Output:\r\nThe command exited with code 9.\r\nagyordinaryoutput'),
-              record(12, 'PLANNER_RESPONSE', FINAL)]
+              record(12, 'PLANNER_RESPONSE', FINAL),
+              record(14, 'USER_INPUT', '检查多行内容的收缩'),
+              record(15, 'PLANNER_RESPONSE', MULTILINE)]
+    for setting in SETTINGS:
+        values[0]['content'] += '\n<USER_SETTINGS_CHANGE>\n' + setting + '\n</USER_SETTINGS_CHANGE>'
     return values, calls, edit
 
 
@@ -132,6 +152,19 @@ def run(binary, screenshots):
                             groups = page.get_by_role('button', name='展开工具调用组', exact=True)
                             while groups.count():
                                 groups.first.click()
+                            notices = page.locator('#msgs .native-settings')
+                            expect(notices).to_have_count(2)
+                            expect(notices.nth(0).locator('summary')).to_contain_text('未设置 → Gemini 3.8 Flash (High)')
+                            expect(notices.nth(1).locator('summary')).to_contain_text('Gemini 3.8 Flash (High) → Claude Opus 5.5 (Medium)')
+                            expect(notices.locator('.event-detail-body')).to_have_count(0)
+                            assert notices.nth(1).evaluate('(e) => e.clientHeight') < 60
+                            notices.nth(1).locator('summary').click()
+                            expect(notices.nth(1).locator('.event-detail-body')).to_contain_text('No need to comment')
+                            notices.nth(1).scroll_into_view_if_needed()
+                            page.screenshot(path=str(screenshots / f'{theme}-{width}-settings-expanded.png'))
+                            notices.nth(1).locator('summary').click()
+                            notices.nth(0).scroll_into_view_if_needed()
+                            page.screenshot(path=str(screenshots / f'{theme}-{width}-settings.png'))
                             heads = page.locator('#msgs .tool-head')
                             expect(heads.filter(has_text='$ ' + COMMAND)).to_have_count(1)
                             expect(heads.filter(has_text='读 ' + TARGET)).to_have_count(1)
@@ -190,6 +223,12 @@ def run(binary, screenshots):
                             write = page.locator('#msgs .file-change-msg').filter(has=
                                 page.locator('.file-change-head > b').filter(has_text=WRITTEN))
                             expect(write).to_contain_text('写入 · 完整')
+                            expect(write.get_by_role('button', name='展开全部差异', exact=True)).to_be_visible()
+                            assert write.locator('.file-change-body').evaluate('(e) => e.clientHeight') <= 340
+                            write.get_by_role('button', name='展开全部差异', exact=True).click()
+                            assert write.locator('.file-change-body').evaluate('(e) => e.clientHeight') > 1000
+                            write.get_by_role('button', name='收起差异', exact=True).click()
+                            assert write.locator('.file-change-body').evaluate('(e) => e.clientHeight') <= 340
                             write.get_by_role('button', name='并排', exact=True).click()
                             expect(write.locator('.diff-unavailable')).to_contain_text('原内容没有记录')
                             expect(write.locator('.diff-split')).to_contain_text('保留写入行 95')
@@ -201,10 +240,27 @@ def run(binary, screenshots):
                             write.scroll_into_view_if_needed()
                             page.screenshot(path=str(screenshots / f'{theme}-{width}-write.png'))
                             result = page.locator('#msgs .tool-entry[data-role=tool_result]').filter(has_text='当前配额')
-                            expect(result).to_contain_text('工具结果')
+                            expect(result.locator('.tool-status')).to_contain_text('exit 0')
+                            expect(result).not_to_contain_text('Created At:')
                             result.get_by_role('button', name='展开全文', exact=False).click()
                             expect(result).to_contain_text('日志 15: 完整保留输出')
                             result.get_by_role('button', name='收起', exact=True).click()
+                            result.locator('summary').click()
+                            expect(result.locator('.event-detail-body')).to_contain_text('Created At:')
+                            result.locator('summary').click()
+                            file_result = page.locator('#msgs .tool-entry[data-role=tool_result]').filter(has_text='agyfilepreview')
+                            expect(file_result.locator('.tool-status')).to_have_text('文件内容 · report.py · 行 1–2 / 2')
+                            expect(file_result.locator(':scope > .tool-out')).to_contain_text('1: print("agyfilepreview")')
+                            expect(file_result).not_to_contain_text('The following code has been modified')
+                            multiline = page.locator('#msgs .msg[data-role=assistant]').filter(has_text='多行短正文 79')
+                            expect(multiline.get_by_role('button', name='展开全文', exact=False)).to_be_visible()
+                            assert multiline.locator('.mb').evaluate('(e) => e.clientHeight') <= 340
+                            multiline.get_by_role('button', name='展开全文', exact=False).click()
+                            assert multiline.locator('.mb').evaluate('(e) => e.clientHeight') > 1000
+                            multiline.get_by_role('button', name='收起', exact=True).click()
+                            assert multiline.locator('.mb').evaluate('(e) => e.clientHeight') <= 340
+                            multiline.scroll_into_view_if_needed()
+                            page.screenshot(path=str(screenshots / f'{theme}-{width}-multiline.png'))
                             command.scroll_into_view_if_needed()
                             page.screenshot(path=str(screenshots / f'{theme}-{width}-tools.png'))
                             change.scroll_into_view_if_needed()
@@ -213,7 +269,7 @@ def run(binary, screenshots):
                             assert not errors, errors
                             if theme == 'dark' and width == 390:
                                 # Append with the page open: same summary/diff projection via live history.
-                                more = planner(13, {'name': 'run_command', 'args': {
+                                more = planner(16, {'name': 'run_command', 'args': {
                                     'CommandLine': 'printf incremental-presentation'}},
                                     {'name': 'view_file', 'args': {'AbsolutePath': TARGET, 'StartLine': 42}})
                                 with path.open('ab') as output:

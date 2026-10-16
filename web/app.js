@@ -6013,15 +6013,18 @@ function watchBottom(box) {
   // 内容高度变化 (展开消息、渲染完成、字体加载…) 时跟随
   if (window.ResizeObserver) {
     disposeMessageObservers(box);
-    const ro = new ResizeObserver(() => settle(box));
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) entry.target._refreshClip?.();
+      settle(box);
+    });
     ro.observe(box);
     // 普通消息只盯底部 30 条，避免上万节点的观察成本；但图片、公式、表格即使
     // 位于很早的消息里，加载或窄屏重排也会改变总高度，必须额外观察。
     const rich = new Set(), ordinary = new Set();
     const observeRich = root => {
       const observe = node => { rich.add(node); ro.observe(node); };
-      if (root.matches?.('img, .katex, .tw')) observe(root);
-      root.querySelectorAll?.('img, .katex, .tw').forEach(observe);
+      if (root.matches?.('img, .katex, .tw, .content-preview')) observe(root);
+      root.querySelectorAll?.('img, .katex, .tw, .content-preview').forEach(observe);
     };
     const syncTail = () => {
       const tail = new Set();
@@ -8113,8 +8116,10 @@ function toolEntry(m) {
   if (m.counted === false) entry.dataset.counted = 'false';
   if (m.role !== 'tool') {
     // 落单的工具输出(没配到调用): 保持独立块
-    addClippedPre(entry, 'tool-out' + (m.error ? ' err' : ''),
-                  m.name ? `${m.name}\n${m.text}` : m.text, toolOutputPath(m));
+    if (!appendAgyOutputPreview(entry, m)) {
+      addClippedPre(entry, 'tool-out' + (m.error ? ' err' : ''),
+                    m.name ? `${m.name}\n${m.text}` : m.text, toolOutputPath(m));
+    }
     if (m.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(m.media, m.media_more));
     return entry;
   }
@@ -8157,6 +8162,44 @@ function toolEntry(m) {
   if (m.media?.length) entry.insertAdjacentHTML('beforeend', mediaGallery(m.media, m.media_more));
   appendToolResult(entry, m.result, m);
   return entry;
+}
+
+// Native protocol headers remain available in a closed disclosure; the useful
+// output gets the same eight-line preview as every other tool result.
+function appendAgyOutputPreview(entry, m) {
+  if (m.native_type !== 'GENERIC') return false;
+  const text = String(m.text || '').replace(/\r\n/g, '\n');
+  const header = text.match(/^Created At: ([^\n]+)\nCompleted At: ([^\n]+)\n/);
+  if (!header || !header.slice(1).every(stamp => Number.isFinite(Date.parse(stamp)))) return false;
+  const rest = text.slice(header[0].length);
+  let output = '', label = '', codePath = '';
+  const command = rest.match(/^\nThe command exited with code (-?\d+)\.\nOutput:\n?/);
+  const file = rest.match(/^File Path: `([^`\n]+)`\nTotal Lines: (\d+)\nTotal Bytes: (\d+)\nShowing lines (\d+) to (\d+)\nThe following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>\. Please note that any changes targeting the original code should remove the line number, colon, and leading space\.\n/);
+  if (command && Number.isInteger(m.exit_code) && +command[1] === m.exit_code) {
+    output = rest.slice(command[0].length);
+    label = `${m.error ? '✗ 出错' : '✓ 完成'} · exit ${m.exit_code}`;
+  } else if (file) {
+    output = rest.slice(file[0].length);
+    codePath = file[1];
+    let filename = codePath.split('/').pop();
+    try { filename = decodeURIComponent(filename); } catch { /* 保留原始文件名 */ }
+    label = `文件内容 · ${filename} · 行 ${file[4]}–${file[5]} / ${file[2]}`;
+  } else return false;
+  const status = el('div', 'tool-status' + (m.error ? ' err' : ''), label);
+  if (codePath) status.title = codePath;
+  entry.appendChild(status);
+  if (output.trim()) addClippedPre(entry, 'tool-out' + (m.error ? ' err' : ''), output, codePath);
+  const raw = el('details', 'event-details');
+  raw.appendChild(el('summary', '', '原始记录'));
+  raw.ontoggle = () => {
+    if (raw.open && !raw.querySelector('pre')) {
+      const body = el('div', 'event-detail-body');
+      raw.appendChild(body);
+      addClippedPre(body, 'tool-out', m.text);
+    }
+  };
+  entry.appendChild(raw);
+  return true;
 }
 
 function appendToolResult(entry, r, m) {
@@ -8295,6 +8338,7 @@ function paintInlineFileDiff(card, change, view) {
   const body = card.querySelector('.file-change-body');
   body.innerHTML = fileDiffMarkup(change, view);
   paintSyntax(body);
+  body._refreshClip?.();
 }
 
 function setInlineFileDiffWrap(card, on) {
@@ -8331,7 +8375,27 @@ function fileChangeNode(m) {
         <button type="button" data-diff-view="split" aria-pressed="false">并排</button>
         <button type="button" data-diff-wrap aria-pressed="false" title="长行自动换行">换行</button>
       </span></span></div>
-      <div class="file-change-body"></div>`;
+      <div class="file-change-body content-preview clip"></div>`;
+    const diffBody = card.querySelector('.file-change-body');
+    const more = el('button', 'more file-diff-more', '展开全部差异');
+    more.type = 'button';
+    more.hidden = true;
+    more.setAttribute('aria-expanded', 'false');
+    diffBody._refreshClip = () => {
+      if (card.isConnected && diffBody.classList.contains('clip')) {
+        more.hidden = diffBody.scrollHeight <= diffBody.clientHeight + 1;
+      }
+    };
+    more.onclick = () => {
+      const anchor = diffBody.classList.contains('clip') ? card.querySelector('.file-change-head') : more;
+      mutateKeepingMessageAnchor(anchor, () => {
+        const clipped = diffBody.classList.toggle('clip');
+        more.textContent = clipped ? '展开全部差异' : '收起差异';
+        more.setAttribute('aria-expanded', String(!clipped));
+        diffBody._refreshClip();
+      });
+    };
+    card.appendChild(more);
     card.querySelector('.file-change-toolbar').onclick = e => {
       const wrap = e.target.closest('button[data-diff-wrap]');
       if (wrap) {
@@ -8999,6 +9063,30 @@ function msgNode(m) {
     return n;
   }
   if (m.role === 'event') return eventNode(m);
+  if (m.role === 'system' && m.native_type === 'USER_SETTINGS_CHANGE') {
+    const setting = String(m.text || '').match(/^The user changed setting `([^`]+)` from (.*?) to (.*?)\. No need to comment on this change if the user doesn't ask about it\./s);
+    if (setting) {
+      const label = setting[1] === 'Model Selection' ? '模型' : setting[1];
+      const before = setting[2] === 'None' ? '未设置' : setting[2];
+      const summary = `${label}：${before} → ${setting[3]}`;
+      const n = el('div', 'msg native-settings');
+      n.dataset.role = 'system';
+      n.dataset.nativeType = m.native_type;
+      n.dataset.counted = 'false';
+      const details = el('details', 'event-details');
+      const heading = el('summary', '', summary);
+      heading.title = summary;
+      details.appendChild(heading);
+      details.ontoggle = () => {
+        if (!details.open || details.querySelector('.event-detail-body')) return;
+        const body = el('div', 'event-detail-body');
+        body.innerHTML = md(m.text, true);
+        details.appendChild(body);
+      };
+      n.appendChild(details);
+      return n;
+    }
+  }
   if (m.changes?.length) return fileChangeNode(m);
   if (m.role === 'question') return questionNode(m);
   if (TOOL_ROLES.has(m.role)) {
@@ -9019,7 +9107,7 @@ function msgNode(m) {
   n.dataset.role = m.role;
   if (m.native_type) n.dataset.nativeType = m.native_type;
   if (m.counted === false) n.dataset.counted = 'false';
-  const body = el('div', 'mb');
+  const body = el('div', 'mb content-preview');
   const linkContext = {uid: S.sel, agent: S.agent};
   const render = full => md(m.text, full, m.media, linkContext) + mediaGallery(m.media, m.media_more);
   const paint = full => {
@@ -9028,16 +9116,26 @@ function msgNode(m) {
   n.appendChild(body);
   const setAction = addAction(n);
   const long = m.text.length > CLIP;
+  let expanded = false, needsMore = long;
   const full = () => {
+    expanded = true;
     body.classList.remove('clip'); paint(true);
-    setAction(long ? '收起' : '', long ? clipped : null, long ? true : null);
+    setAction(needsMore ? '收起' : '', needsMore ? clipped : null, needsMore ? true : null);
   };
   const clipped = () => {
+    expanded = false;
     body.classList.add('clip'); paint(false);
     setAction(`展开全文 (${m.text.length.toLocaleString()} 字符)`, full, false);
   };
   if (long) hit ? full() : clipped();
-  else paint(hit);
+  else { body.classList.toggle('clip', !hit); expanded = hit; paint(hit); }
+  body._refreshClip = () => {
+    if (!body.isConnected || expanded) return;
+    needsMore = long || body.scrollHeight > body.clientHeight + 1;
+    body.classList.toggle('has-overflow', needsMore);
+    setAction(needsMore ? `展开全文 (${m.text.length.toLocaleString()} 字符)` : '',
+      needsMore ? full : null, needsMore ? false : null);
+  };
   if (S.term && S.opts.regex && !found && SEARCH_ROLES.has(m.role)) {
     const generation = regexGeneration;
     regexMatches(m.text).then(ranges => {

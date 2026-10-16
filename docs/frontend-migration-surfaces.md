@@ -313,6 +313,14 @@ DELTA（弱网恢复）：首次正文读取和后续同步统一使用 12 秒�
 
 工具行（`toolEntry`）：命令/参数、输出预览、统计、可折叠全文。输出用 [`web/syntax.js`](../web/syntax.js) 和 [`syntax-worker.js`](../web/syntax-worker.js)，大段高亮不占 UI 线程。[`tests/render_assets_browser.py`](../tests/render_assets_browser.py)。Diff 行着色（`paintToolOutputDiff`）。带 `changes` 的文件修改走左右/行内 diff（`fileDiffMarkup` / `paintInlineFileDiff`），可切换换行。围栏图保持终端列宽，不因中文等宽字体挤乱。[`tests/code_diagram_browser.py`](../tests/code_diagram_browser.py)。
 
+DELTA（2026-10-16 自动收缩）：普通正文除 4,000 字阈值外，也按实际渲染高度提供
+340 px 预览；短字数、多行或窄屏折行的内容同样有“展开全文/收起”，搜索命中仍沿用
+原来的自动展开规则。文件差异保持路径、增删统计和显示选项可见，正文超过 340 px
+默认收缩，可独立“展开全部差异/收起差异”；切换并排、统一和换行保留当前展开选择。
+Agy 设置通知默认收为旧值 → 新值的一行摘要，完整说明按需展开；已识别的命令/文件
+结果头收进“原始记录”，有效输出沿用 8 行预览。回归见
+[`tests/agy_message_presentation_browser.py`](../tests/agy_message_presentation_browser.py)。
+
 Markdown（`md` / `blocks` / `inline`）和公式（`renderFormulae`，按需加载 KaTeX）。公式库失败时正文仍在。审阅到的脚本头没有单独点名 KaTeX 渲染，标为缺口。原生标签族：[`tests/native_tags_browser.py`](../tests/native_tags_browser.py)、[`tests/history_browser.py`](../tests/history_browser.py)。
 
 DELTA（BUG-20261012-054602-f0bb43）：Markdown 同类列表条目之间的空行不再切断列表，

@@ -99,7 +99,9 @@ dev/ino、size、mtime stamp，目录未提交也能发现正文追加或改写�
 - `USER_INPUT`：仅去除 CLI 外层 `<USER_REQUEST>`，保留用户自己的正文与内层
   同名文本，作为原生回显对账依据。尾部 `<ADDITIONAL_METADATA>` 识别为
   `native_metadata`，不混入用户正文；`<USER_SETTINGS_CHANGE>` 独立显示为
-  “设置变更”的系统气泡。其他完整尾部 tag 保留类型和正文，显示“附加信息”；
+  “设置变更”的系统气泡。**DELTA（2026-10-16 自动折叠）**：已识别的原生
+  `The user changed setting` 说明默认只显示一行旧值 → 新值，`Model Selection`
+  标为“模型”；点击展开完整原文，未知结构仍保留原有正文。其他完整尾部 tag 保留类型和正文，显示“附加信息”；
   不完整结构保留原文，不按正文里的代码/HTML tag 推断系统消息。
 - `SYSTEM_MESSAGE`：独立投影为 `system`，使用既有系统气泡并标注“系统消息”，
   不进入工具组、不计为回复。仅移除原生说明前缀和完整外层 `<SYSTEM_MESSAGE>`；
@@ -128,6 +130,8 @@ dev/ino、size、mtime stamp，目录未提交也能发现正文追加或改写�
   **DELTA（2026-10-16 全量遍扫）**：GENERIC 只有在原生 `Created At`、`Completed At`
   时间头及紧随其后的 `The command exited with code N.` 结构成立时投影 `exit_code`，
   非零码标记失败；输出正文内的同名句子保留普通文本，不反推工具配对。
+  已识别的命令和文件结果头默认收进“原始记录”，首屏保留退出状态或读取行范围及
+  有效输出预览；原始记录可展开，不删除字段或时间。正文输出不重复铺原生行号说明。
   完整 transcript 的这些实测记录没有跨步骤 call ID，不按位置猜配对，也不宣称
   已验证其他工具、并行工具或可靠的调用/结果配对。
 - 图片按 `media[].mime_type` 和 `uri` 接入既有媒体授权/文件校验，其他媒体类型显示
