@@ -1,7 +1,7 @@
 //! Agy's complete, system-generated transcript (not the truncated transcript).
 use serde_json::{Value, json};
 
-use super::{ParseOptions, Parser, Skipped, clip, envelopes, normalized, string};
+use super::{ParseOptions, Parser, Skipped, clip, envelopes, normalized, string, tools};
 use crate::sessions::Event;
 
 /// Resume only the forward Agy reducer, never retain native records here.
@@ -167,6 +167,63 @@ pub(super) fn metadata(summary: &Value, records: &[(Value, u64)], fallback: &str
         "model": session["model"]["id"], "branch": session["agent"]})
 }
 
+/// Presentation only: retain the entire native call in text and never infer
+/// call IDs or execute/read any of these arguments.
+fn tool_fields(call: &Value) -> Value {
+    let name = call["name"].as_str().unwrap_or("Agy 工具调用");
+    let args = &call["args"];
+    let (kind, input) = match name {
+        "run_command" => ("exec_command", json!({"cmd":args["CommandLine"]})),
+        "view_file" => ("Read", json!({"file_path":args["AbsolutePath"]})),
+        "search_web" => ("WebSearch", json!({"query":args["query"]})),
+        "read_url_content" => ("WebFetch", json!({"url":args["Url"]})),
+        "replace_file_content" => (
+            "Edit",
+            json!({
+                "file_path":args["TargetFile"], "old_string":args["TargetContent"],
+                "new_string":args["ReplacementContent"],
+            }),
+        ),
+        _ => (name, args.clone()),
+    };
+    let native_summary = || {
+        args["toolSummary"]
+            .as_str()
+            .filter(|text| !text.trim().is_empty())
+            .map(clip)
+    };
+    let summary = if name == "replace_file_content" {
+        args["TargetFile"]
+            .as_str()
+            .filter(|path| !path.is_empty())
+            .map(|path| clip(&format!("修改 {path}")))
+            .or_else(native_summary)
+    } else if matches!(
+        name,
+        "run_command" | "view_file" | "search_web" | "read_url_content"
+    ) {
+        tools::summary(kind, &input).or_else(native_summary)
+    } else {
+        native_summary().or_else(|| tools::summary(kind, &input))
+    };
+    let mut fields = json!({"native_type":"PLANNER_RESPONSE", "name":name,
+        "summary":summary,"changes":null});
+    // Only the observed exact replacement fields establish a diff. Missing
+    // fields, unknown tools and edits without both sides stay raw calls.
+    if name == "replace_file_content"
+        && args["TargetFile"].is_string()
+        && args["TargetContent"].is_string()
+        && args["ReplacementContent"].is_string()
+    {
+        match tools::changes(kind, &input) {
+            Ok(changes) if !changes.is_empty() => fields["changes"] = json!(changes),
+            Ok(_) => {}
+            Err(reason) => fields["changes_unavailable_reason"] = json!(reason),
+        }
+    }
+    fields
+}
+
 impl Parser<'_> {
     pub(super) fn agy(&mut self, record: &Value, end: u64) -> Result<(), String> {
         let ts = normalized(&record["created_at"]);
@@ -267,23 +324,14 @@ impl Parser<'_> {
                         media,
                     )?;
                 }
-                // The complete transcript documents tool_calls as native JSON.
-                // Retain all fields instead of inventing call/result IDs or
-                // interpreting provider-specific argument layouts as edits.
                 for call in calls {
-                    let name = call["name"].as_str().unwrap_or("Agy 工具调用");
-                    self.emit(
-                        end,
-                        "tool",
-                        string(call),
-                        &ts,
-                        json!({"native_type":"PLANNER_RESPONSE", "name":name,"changes":null}),
-                    );
+                    self.emit(end, "tool", string(call), &ts, tool_fields(call));
                 }
             }
             "ERROR_MESSAGE" => {
                 let text = record["content"]
                     .as_str()
+                    .filter(|text| !text.trim().is_empty())
                     .or(record["error"].as_str())
                     .unwrap_or("");
                 if !text.is_empty() {
@@ -297,13 +345,19 @@ impl Parser<'_> {
                 }
             }
             other => {
-                let content = string(&record["content"]);
+                let mut content = string(&record["content"]);
+                if content.trim().is_empty()
+                    && let Some(error) = record["error"].as_str()
+                {
+                    content = error.to_owned();
+                }
                 if !content.is_empty() || !media.is_empty() {
                     // Generic/unknown steps publish their own content. The
                     // transcript has no documented cross-step call ID, so do
                     // not attach a result to an unrelated call by position.
                     self.emit_media(end, "tool_result", content, &ts,
-                        json!({"native_type":other,"name":other,"error":record["status"]=="ERROR" || record["error"].is_string()}), media)?;
+                        json!({"native_type":other,"name":if other == "GENERIC" { "工具结果" } else { other },
+                            "error":record["status"]=="ERROR" || record["error"].as_str().is_some_and(|error| !error.trim().is_empty())}), media)?;
                 } else {
                     self.skipped.note("Agy 记录类型", other);
                 }

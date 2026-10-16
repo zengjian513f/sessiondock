@@ -113,6 +113,13 @@ dev/ino、size、mtime stamp，目录未提交也能发现正文追加或改写�
   出现的记录与包裹，不宣称识别尚未见到的任意 tag。
 - `tool_calls` 和 `media` 已取得真实 CLI 样本：`view_file` 调用包含 `name` 与 `args`，
   后续 GENERIC 步骤提供文本或图片结果。调用保留 native JSON，结果独立显示；
+  **DELTA（BUG-20261016-084905-94b5af）**：按报告中实际出现的 `args` 字段生成
+  `run_command`、`view_file`、`search_web`、`read_url_content` 摘要，其他调用优先使用
+  原生 `toolSummary`，复用现有参数展开控件。`replace_file_content` 仅在
+  `TargetFile`、`TargetContent`、`ReplacementContent` 均为字符串时生成既有的片段 diff；
+  原始调用可在同一卡片展开，缺失字段和未知结构保留普通工具展示。GENERIC 的显示名为
+  “工具结果”，不把原生类型名当作正文；`native_type` 仍为 `GENERIC`。错误正文为空时
+  回退到原生 `error` 字符串，避免丢失失败记录。全文、分页、增量和搜索使用同一投影。
   完整 transcript 的这些实测记录没有跨步骤 call ID，不按位置猜配对，也不宣称
   已验证其他工具、并行工具或可靠的调用/结果配对。
 - 图片按 `media[].mime_type` 和 `uri` 接入既有媒体授权/文件校验，其他媒体类型显示
@@ -200,6 +207,7 @@ composer 路径；真实 CLI 浏览器核对了处理会话、完整报告提示
 | --- | --- | --- |
 | [agy_browser.py](../tests/agy_browser.py) | `python3 tests/agy_browser.py --binary target/debug/sessiondock`；fake CLI pending，新建、effort argv、终端键入、刷新重连、清理、未安装与 390 px 深浅主题 | 不证明 native history 或真实 CLI 恢复 |
 | [agy_history_browser.py](../tests/agy_history_browser.py) | `python3 tests/agy_history_browser.py --binary target/debug/sessiondock`；native schema seeds，Chromium 列表/搜索/分页/增量/旧记录改写/回退/DB 替换/重启/transcript 缺失与恢复/目录行删除/图片/原始工具字段/错误、删除提示及混合组移动克隆拒绝，检查原生字节及 mtime 不被修改 | 合成 schema，图片路径已有通过记录；不证明真实工具或媒体产出，不是原生删除 API 测试 |
+| [agy_message_presentation_browser.py](../tests/agy_message_presentation_browser.py) | 报告字段形状的合成数据；Chromium 点击过程/参数/全文展开、diff 并排与换行，覆盖摘要、未知结构、错误字段回退、实时追加及 1280/675/390 px 明暗主题截图 | 私有 HOME 与 loopback，不启动 CLI，不执行工具，不使用生产会话 |
 | [agy_real_browser.py](../tests/agy_real_browser.py) | `python3 tests/agy_real_browser.py`（`run_validation --real-only` 发布验收；`--agy` 默认取已安装的 `agy`）；临时 HOME/XDG、私有目录和 loopback 合成 gateway，真实 CLI + Chromium | operator only，`--real-only`；验证发送、多行、绑定、思考、网页发送菜单命令不等待原生回显、菜单阻发/回答/取消、停止恢复、问题报告与窄屏；不调用付费模型 |
 | [agy_tools_real_browser.py](../tests/agy_tools_real_browser.py) | `python3 tests/agy_tools_real_browser.py`（`--real-only`）；真实 CLI 读取临时文本和 PNG，再由 Chromium 展开原生工具历史和加载图片 | operator only，`--real-only`；loopback 合成模型，核对实际请求模型；不证明跨步骤配对或其他工具语义 |
 | [agy_clients_browser.py](../tests/agy_clients_browser.py) | 本机与 Hub 的模型、强度 argv、版本、官方 manifest、更新成功/失败、未安装与离线门控 | 仅运行私有假 CLI/curl，不修改已安装客户端 |
