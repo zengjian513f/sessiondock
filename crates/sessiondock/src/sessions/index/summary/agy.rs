@@ -5,8 +5,8 @@
 use serde_json::Value;
 
 use super::{
-    CLAUDE_HEAD_LINES, Input, Records, RowSummary, SidecarBytes, clip, committed_end, cursor_head,
-    iso_seconds, native_identity, norm_ts, skipped_warnings, text_if_truthy,
+    AgentMeta, CLAUDE_HEAD_LINES, Input, Records, RowSummary, SidecarBytes, clip, committed_end,
+    cursor_head, iso_seconds, native_identity, norm_ts, skipped_warnings, text_if_truthy,
 };
 
 pub const UNTITLED: &str = "Agy 会话";
@@ -86,6 +86,16 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         native_identity(std::iter::empty::<&Value>())
     };
     let committed = input.data.as_ref().and_then(committed_end);
+    let agent = text_if_truthy(&session["parent_id"]).map(|parent_sid| AgentMeta {
+        id: sid.clone(),
+        parent_sid: Some(parent_sid),
+        title: text_if_truthy(&session["title"])
+            .or_else(|| text_if_truthy(&session["agent"]))
+            .unwrap_or_else(|| title.clone()),
+        kind: text_if_truthy(&session["agent"]).unwrap_or_else(|| "subagent".to_owned()),
+        open_turn: session["status"] == "CASCADE_RUN_STATUS_RUNNING",
+        turn_at: None,
+    });
     RowSummary {
         sid,
         title: clip(title.trim(), 110),
@@ -97,7 +107,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         model: session["model"]["id"].clone(),
         branch: session["agent"].clone(),
         codex: None,
-        agent: None,
+        agent,
         grok: None,
         continued_in_sid: None,
         native_id,

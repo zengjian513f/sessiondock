@@ -67,7 +67,17 @@ agy 默认数据目录为 `~/.gemini/antigravity-cli/`，SessionDock 不自动�
 增量视图、搜索和媒体复用文件读模型，不复制镜像冒充原生恢复载体。
 列表标题优先使用目录标题，否则取首条 user 正文，再回退 `Agy 会话`；cwd 解码
 workspace 的 file URI。当前目录查询没有模型字段，列表不能据启动 argv 猜造模型；
-读取到的 parent/status 字段也不代表已实现原生子代理挂靠或回合三态。
+原生 `parent_conversation_id` 经镜像 `parent_id` 进入归属图：子会话按同来源 SID
+解析父会话，沿父链归入根会话的 `agent_items`，复用现有子代理折叠、历史、搜索与分页。
+子代理身份为自己的 UUID，标题优先目录标题、其次 agent name；只有明确的
+`CASCADE_RUN_STATUS_RUNNING` 标为活跃，不据此推断完整回合三态。
+缺失父会话、歧义及循环沿用已有原生子代理处理；不写 `nest_parent` 或原生文件。
+目录父关系变化和重启重新构图，不从同目录或 `self` 名称猜测父会话。
+
+DELTA（BUG-20261016-142441-359ba6）：此前 Agy 镜像已保存 parent，但摘要丢弃它，
+导致原生子会话错误显示为顶层；现接入现有原生子代理归属图。
+验证：[agy_nesting_browser.py](../tests/agy_nesting_browser.py)，包含无 user 记录的 `self`
+子会话、嵌套代理、父缺失、目录父关系变更、折叠/打开/刷新/增量/重启及宽窄明暗画面。
 
 持久只读 SQLite 连接以 `PRAGMA data_version` 检测目录提交；在读事务前采样，
 整轮同步成功后确认，后续提交留给下一轮。每秒查看已知 transcript 的

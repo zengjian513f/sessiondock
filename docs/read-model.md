@@ -105,7 +105,8 @@ Agy 的原生 `SYSTEM_MESSAGE` 独立显示为带类型标注的系统气泡，�
   `native_state.read_failed` 元数据日志。块内的记录直接借用读取缓冲区，只有跨块
   记录才拼接。浏览器回归见 [`index_append_browser.py`](../tests/index_append_browser.py)。
 - **归属图**（`index/graph`）：Claude sidecar 归属主会话（目录 + 文件名 +
-  头部 `sessionId`）；Codex 子代理 rollout 归属（头部元数据）；fork 父子
+  头部 `sessionId`）；Codex 子代理 rollout 归属（头部元数据）；Agy 原生子会话
+  归属（镜像 `parent_id`，见 [agy.md](agy.md)）；fork 父子
   （`history_base`/`forked_from`）。规则与 [history-pages.md](history-pages.md)
   中记录的一致，输入改为摘要。
 - **子代理运行态与续写**（`index/agent_stops`）：`agent_items[].active`

@@ -451,11 +451,18 @@ impl<'a> Graph<'a> {
     fn agent_owner(&self, entry: &CandidateRef) -> Result<String, Unowned> {
         let parent = entry
             .summary
-            .codex
+            .agent
             .as_ref()
-            .map(|codex| codex.parent_thread_id.as_str())
+            .and_then(|agent| agent.parent_sid.as_deref())
+            .or_else(|| {
+                entry
+                    .summary
+                    .codex
+                    .as_ref()
+                    .map(|codex| codex.parent_thread_id.as_str())
+            })
             .unwrap_or("");
-        match self.sid("codex", parent) {
+        match self.sid(entry.source, parent) {
             Ok(uid) => Ok(uid),
             Err(error) if error.status == 409 => Err(Unowned::Broken(error)),
             Err(error) => Err(Unowned::Missing(error)),

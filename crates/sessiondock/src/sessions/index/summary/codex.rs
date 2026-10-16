@@ -231,6 +231,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     let (native_id, declared_ids) =
         native_identity(first_meta.and_then(|meta| meta.get("id")).into_iter());
     let agent = is_subagent.then(|| AgentMeta {
+        parent_sid: None,
         id: sid.clone(),
         title: first_truthy([
             &meta["agent_path"],
