@@ -7,7 +7,6 @@ explicit low model variant and asserts its actual wire model in the gateway.
 import json
 from pathlib import Path
 import sqlite3
-from urllib.parse import urlsplit
 from playwright.sync_api import expect
 import agy_real_browser as h
 from agy_interactions_real_browser import gateway
@@ -74,7 +73,8 @@ def run(browser, base, root, agy, records, evidence, holds):
                 assert row['sid'] in catalog()
                 evidence.pass_('running session delete control disabled and backend rejects deletion')
                 page.locator('#a-more').click()
-            stop()
+            if index == 1:
+                stop()
         target, other = made[1], made[0]
         assert target['sid'] != other['sid']
         for width in (1280, 390):
@@ -103,14 +103,13 @@ def run(browser, base, root, agy, records, evidence, holds):
         expect(page.locator(f'#side .item[data-uid="{target["uid"]}"]')).to_have_count(0)
         page.locator(f'#side .item[data-uid="{other["uid"]}"]').click()
         h.history(page, 'DONE same title deletion fixture')
-        with page.expect_response(lambda r: urlsplit(r.url).path == '/api/term/takeover') as resumed:
-            page.locator('#a-term').click()
-        assert resumed.value.status == 200 and resumed.value.json()['declared_sid'] == other['sid'], resumed.value.text()
-        name = resumed.value.json()['name']
-        page.wait_for_function("name => T.name === name && T.ws?.readyState === WebSocket.OPEN && document.querySelector('#a-term')?.getAttribute('aria-busy') !== 'true'", arg=name)
+        h.terminal(page)
         h.wait_screen(page, '? for shortcuts')
         h.send(page, 'survivor resumes')
         h.history(page, 'DONE survivor resumes')
+        for _ in range(70):
+            page.wait_for_timeout(1000)
+            assert target['sid'] not in catalog(), 'another live CLI restored the deleted catalog row'
         evidence.pass_('real native permanent delete, cancel in four layouts, refresh stays deleted, other SID resumes; delete makes no model request')
         assert not list((root / 'host').glob('.agy-delete-*'))
         evidence.pass_('private deletion host cleaned up')

@@ -86,3 +86,7 @@ purge or service restart. It never deletes restored files again. Each moved file
 updates the recovery manifest. After a service interruption, a completed manifest
 can recover the result; an incomplete operation asks the user to inspect the
 list/trash and create a fresh preview rather than blindly repeating deletion.
+
+Agy 删除成功后在私有镜像根保存持久删除回执，阻止原生旧索引重新导入已删除的空壳。
+显式删除仅剩索引且数据库和 brain 均不存在的会话，只登记回执，不恢复或改写原生数据。
+若原生载体实际重现，则撤销回执并重新显示。详见 [Agy 合同](agy.md)。

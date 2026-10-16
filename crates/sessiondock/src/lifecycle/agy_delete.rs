@@ -23,9 +23,10 @@ fn present(home: &Path, sid: &str) -> Result<bool, String> {
 }
 
 fn deleted(home: &Path, sid: &str) -> Result<bool, String> {
-    if present(home, sid)? {
-        return Ok(false);
-    }
+    Ok(!present(home, sid)? && payload_missing(home, sid)?)
+}
+
+fn payload_missing(home: &Path, sid: &str) -> Result<bool, String> {
     for path in [
         home.join("conversations").join(format!("{sid}.db")),
         home.join("brain").join(sid),
@@ -109,7 +110,9 @@ fn picker_row<'a>(text: &'a str, sid: &str) -> Option<&'a str> {
 }
 
 pub async fn remove(launcher: &Launcher, sid: &str, cwd: &Path, home: &Path) -> Result<(), String> {
-    if deleted(home, sid)? {
+    // An explicitly deleted index-only remnant has no native payload to remove.
+    // Do not resume it: doing so may create a new empty conversation database.
+    if payload_missing(home, sid)? {
         return Ok(());
     }
     let id = super::store::fresh_request_id().map_err(|_| "无法创建 Agy 删除任务")?;
