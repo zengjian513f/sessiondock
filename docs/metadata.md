@@ -128,6 +128,15 @@ is checked again when its native creation time or working directory becomes know
 Internal list reads do not consume this gate. Unchanged birth evidence keeps the
 ordinary list byte cache; background discovery still records evidence that arrives
 later.
+
+DELTA (BUG-20261016-222238-05a031): complete detail snapshots and accepted deltas
+also reconcile the sidebar row. If the detail cache already knows the parent but
+the list still has an older row, changing the list row refreshes the tree even
+when the detail header is unchanged. This does not change flat/nested preferences
+or reopen folded branches. `tests/nest_tree_browser.py` covers full reads without
+SSE, a delayed catalog followed by an unchanged detail delta, and explicit detach
+on desktop/mobile in both themes.
+
 Verified SSH initiators also initialize the same parent, with the remote node ID.
 A private `nest_initialized` decision marker preserves automatic initialization
 and explicit attach/detach across scans, exits and restarts; it is not a second

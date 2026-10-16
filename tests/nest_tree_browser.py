@@ -19,7 +19,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 
 from history_fixtures import (BINARY, Corpus, claude_row, codex_message, codex_row, encoded, get_json,
                             isolated_server)
@@ -548,9 +548,95 @@ def check_hidden_spawner(browser, binary, root, width):
         context.close()
 
 
+def check_detail_parent_sync(browser, binary, root, width, theme, screenshots=None):
+    """A fresh detail read repairs a stale catalog even with no SSE notification."""
+    data = Corpus(root)
+    parent_sid = '11111111-1111-4111-8111-111111111111'
+    worker_sid = '22222222-2222-4222-8222-222222222222'
+    for sid, title in ((parent_sid, '审查研究方法并复核六个已关闭实验'),
+                       (worker_sid, 'M1-E19 独立执行子会话：保留原协议并完成复核')):
+        data.put(sid, 'codex', [codex_row('session_meta', {
+            'id': sid, 'cwd': '/synthetic/research/review-six-experiments',
+            'timestamp': '2026-10-16T15:00:00Z'}),
+            codex_message('user', title), codex_message('assistant', 'reply ' + sid)], [])
+    state = root / 'state'
+    state.mkdir(mode=0o700)
+    parent, worker = data.uid(parent_sid), data.uid(worker_sid)
+    with isolated_server(data, binary, state_dir=state) as (base, opener):
+        stale = get_json(opener, base, '/api/sessions')
+        context = browser.new_context(viewport={'width': width, 'height': 900},
+                                      service_workers='block', color_scheme=theme)
+        # Hold the old list while a separate client initializes the parent.
+        # Only ordinary HTTP detail reads can reconcile this page; no invented
+        # rows, direct DOM changes or explicit render calls are used.
+        context.add_init_script('window.EventSource = undefined')
+        page = context.new_page()
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.goto(base, wait_until='networkidle')
+        page.wait_for_function('S.sessions.length === 2')
+        page.evaluate('uiEventsReady = true')  # Suppress the fallback list timer too.
+        page.locator('#nest-toggle').click()
+
+        def item(uid):
+            return page.locator(f'#side .item[data-uid="{uid}"]')
+
+        def return_to_list():
+            if page.locator('body').evaluate('node => node.classList.contains("mobile-detail")'):
+                page.locator('#detail .mobile-back').click()
+
+        def set_parent(value):
+            response = context.request.post(base + '/api/session/nest',
+                                            data={'uid': worker, 'parent_uid': value})
+            assert response.ok, response.text()
+
+        def open_worker():
+            item(worker).click()
+            expect(page.locator('#msgs')).to_contain_text('reply ' + worker_sid)
+            return_to_list()
+
+        set_parent(parent)
+        open_worker()
+        # The first complete snapshot must repair the list without waiting for SSE.
+        expect(item(worker)).to_have_attribute('data-depth', '1')
+
+        # A delayed catalog can put the old row back after the detail cache
+        # already learned its parent. The next cached open receives identical
+        # detail metadata, but must still reconcile the displayed tree.
+        page.route('**/api/sessions*', lambda route: route.fulfill(json=stale), times=1)
+        page.evaluate('loadSessions(true)')
+        expect(item(worker)).to_have_attribute('data-depth', '0')
+        assert page.evaluate('uid => !!cache.get(viewKey(uid, null)).meta.nest_parent', worker)
+        item(parent).click()
+        expect(page.locator('#msgs')).to_contain_text('reply ' + parent_sid)
+        return_to_list()
+        open_worker()
+        expect(item(worker)).to_have_attribute('data-depth', '1')
+
+        if screenshots:
+            screenshots.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(screenshots / f'nest-sync-{width}-{theme}.png'))
+        # User folds and an explicit detach remain authoritative.
+        item(parent).locator('.nest-caret').click()
+        expect(item(worker)).to_have_count(0)
+        item(parent).locator('.nest-caret').click()
+        expect(item(worker)).to_have_attribute('data-depth', '1')
+        set_parent(None)
+        item(parent).click()
+        return_to_list()
+        open_worker()
+        expect(item(worker)).to_have_attribute('data-depth', '0')
+        saved = json.loads((state / 'session-metadata.json').read_text())['sessions'][worker]
+        assert saved == {'nest_initialized': True}, saved
+        assert not errors, errors
+        context.close()
+    print(f'PASS detail parent sync: full snapshot, unchanged delta, fold/detach, {width}px {theme}', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
+    parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="sessiondock-nest-tree-") as directory:
         root = Path(directory)
@@ -572,6 +658,10 @@ def main():
                 launch["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
             browser = playwright.chromium.launch(**launch)
             try:
+                for width in (1400, 390):
+                    for theme in ('light', 'dark'):
+                        check_detail_parent_sync(browser, args.binary,
+                            root / f'detail-sync-{width}-{theme}', width, theme, args.screenshots)
                 for width, height in ((1400, 900), (390, 760)):
                     context = browser.new_context(viewport={"width": width, "height": height},
                                                   service_workers="block",
