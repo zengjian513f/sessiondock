@@ -108,6 +108,8 @@ dev/ino、size、mtime stamp，目录未提交也能发现正文追加或改写�
   纯文本和不完整包裹保留可见正文。
 - `PLANNER_RESPONSE`：`thinking` 单独投影；无 `tool_calls` 且 status 为 `DONE`
   时正文为 `phase: final`，其他情况为 `progress`。`ERROR_MESSAGE` 投影为可见错误消息。
+- `CHECKPOINT`：**DELTA（2026-10-16 全量遍扫）**，上下文压缩投影为既有的
+  “上下文 · 已压缩”事件，不计消息数、不进入工具组；完整摘要用“查看结果”展开并渲染 Markdown。
 - 所有投影消息携带 `native_type`。`GENERIC` 沿用独立工具结果；未知原生步骤仍
   保留类型名称与原始内容，不猜工具配对或丢弃内容。上述识别覆盖本次报告会话实际
   出现的记录与包裹，不宣称识别尚未见到的任意 tag。
@@ -115,11 +117,17 @@ dev/ino、size、mtime stamp，目录未提交也能发现正文追加或改写�
   后续 GENERIC 步骤提供文本或图片结果。调用保留 native JSON，结果独立显示；
   **DELTA（BUG-20261016-084905-94b5af）**：按报告中实际出现的 `args` 字段生成
   `run_command`、`view_file`、`search_web`、`read_url_content` 摘要，其他调用优先使用
-  原生 `toolSummary`，复用现有参数展开控件。`replace_file_content` 仅在
+  原生 `toolSummary`，复用现有参数展开控件。读取摘要保留 `StartLine` 及
+  `EndLine` 对应的行数。`replace_file_content` 仅在
   `TargetFile`、`TargetContent`、`ReplacementContent` 均为字符串时生成既有的片段 diff；
+  `write_to_file` 的 `TargetFile`、`CodeContent` 为字符串时显示完整写入内容，原内容
+  标记不可用，不按 `Overwrite` 猜测修改前的文件。上述读取范围与写入呈现为本次遍扫的 DELTA。
   原始调用可在同一卡片展开，缺失字段和未知结构保留普通工具展示。GENERIC 的显示名为
   “工具结果”，不把原生类型名当作正文；`native_type` 仍为 `GENERIC`。错误正文为空时
   回退到原生 `error` 字符串，避免丢失失败记录。全文、分页、增量和搜索使用同一投影。
+  **DELTA（2026-10-16 全量遍扫）**：GENERIC 只有在原生 `Created At`、`Completed At`
+  时间头及紧随其后的 `The command exited with code N.` 结构成立时投影 `exit_code`，
+  非零码标记失败；输出正文内的同名句子保留普通文本，不反推工具配对。
   完整 transcript 的这些实测记录没有跨步骤 call ID，不按位置猜配对，也不宣称
   已验证其他工具、并行工具或可靠的调用/结果配对。
 - 图片按 `media[].mime_type` 和 `uri` 接入既有媒体授权/文件校验，其他媒体类型显示
@@ -207,7 +215,7 @@ composer 路径；真实 CLI 浏览器核对了处理会话、完整报告提示
 | --- | --- | --- |
 | [agy_browser.py](../tests/agy_browser.py) | `python3 tests/agy_browser.py --binary target/debug/sessiondock`；fake CLI pending，新建、effort argv、终端键入、刷新重连、清理、未安装与 390 px 深浅主题 | 不证明 native history 或真实 CLI 恢复 |
 | [agy_history_browser.py](../tests/agy_history_browser.py) | `python3 tests/agy_history_browser.py --binary target/debug/sessiondock`；native schema seeds，Chromium 列表/搜索/分页/增量/旧记录改写/回退/DB 替换/重启/transcript 缺失与恢复/目录行删除/图片/原始工具字段/错误、删除提示及混合组移动克隆拒绝，检查原生字节及 mtime 不被修改 | 合成 schema，图片路径已有通过记录；不证明真实工具或媒体产出，不是原生删除 API 测试 |
-| [agy_message_presentation_browser.py](../tests/agy_message_presentation_browser.py) | 报告字段形状的合成数据；Chromium 点击过程/参数/全文展开、diff 并排与换行，覆盖摘要、未知结构、错误字段回退、实时追加及 1280/675/390 px 明暗主题截图 | 私有 HOME 与 loopback，不启动 CLI，不执行工具，不使用生产会话 |
+| [agy_message_presentation_browser.py](../tests/agy_message_presentation_browser.py) | 报告与遍扫字段形状的合成数据；Chromium 点击过程/参数/全文/压缩摘要展开、替换与写入 diff 并排与换行，覆盖读取范围、命令失败及输出正文反例、未知结构、错误字段回退、实时追加及 1280/675/390 px 明暗主题截图 | 私有 HOME 与 loopback，不启动 CLI，不执行工具，不使用生产会话 |
 | [agy_real_browser.py](../tests/agy_real_browser.py) | `python3 tests/agy_real_browser.py`（`run_validation --real-only` 发布验收；`--agy` 默认取已安装的 `agy`）；临时 HOME/XDG、私有目录和 loopback 合成 gateway，真实 CLI + Chromium | operator only，`--real-only`；验证发送、多行、绑定、思考、网页发送菜单命令不等待原生回显、菜单阻发/回答/取消、停止恢复、问题报告与窄屏；不调用付费模型 |
 | [agy_tools_real_browser.py](../tests/agy_tools_real_browser.py) | `python3 tests/agy_tools_real_browser.py`（`--real-only`）；真实 CLI 读取临时文本和 PNG，再由 Chromium 展开原生工具历史和加载图片 | operator only，`--real-only`；loopback 合成模型，核对实际请求模型；不证明跨步骤配对或其他工具语义 |
 | [agy_clients_browser.py](../tests/agy_clients_browser.py) | 本机与 Hub 的模型、强度 argv、版本、官方 manifest、更新成功/失败、未安装与离线门控 | 仅运行私有假 CLI/curl，不修改已安装客户端 |

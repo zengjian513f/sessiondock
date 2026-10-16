@@ -27,6 +27,11 @@ AFTER = 'quota = current_usage\nprint(quota)\n'
 FINAL = ('## 原因分析\n\n状态栏使用了旧的配额快照。\n\n'
          '| 项目 | 修复前 | 修复后 |\n| --- | --- | --- |\n'
          '| 周用量 | 0% | 当前真实用量 |\n\n已修复并完成验证。')
+WRITTEN = '/synthetic/中文 工作目录/report.py'
+WRITE_BODY = '\n'.join(f'print("保留写入行 {i}")' for i in range(96)) + '\n'
+CHECKPOINT = '# Resuming from a compaction\n\n## Progress Summary\n压缩摘要 agycheckpointbody'
+COMMAND_HEADER = ('Created At: 2026-10-16T16:48:00+08:00\r\n'
+                  'Completed At: 2026-10-16T16:48:01+08:00\r\n\r\n')
 
 
 def planner(index, *calls):
@@ -46,7 +51,8 @@ def fixtures():
     calls = [
         {'name': 'run_command', 'args': {'CommandLine': COMMAND,
             'Cwd': '/synthetic/中文 工作目录', 'toolSummary': 'Refresh quota cache'}},
-        {'name': 'view_file', 'args': {'AbsolutePath': TARGET, 'toolSummary': 'Read statusline.py'}},
+        {'name': 'view_file', 'args': {'AbsolutePath': TARGET, 'StartLine': 12,
+            'EndLine': 20, 'toolSummary': 'Read statusline.py'}},
         {'name': 'search_web', 'args': {'query': 'statusline quota 中文'}},
         {'name': 'read_url_content', 'args': {'Url': 'https://example.test/quota'}},
         {'name': 'manage_task', 'args': {'Action': 'kill', 'TaskId': 'fixture/task-62',
@@ -65,7 +71,17 @@ def fixtures():
                      'The command exited with code 0.\nOutput:\n当前配额 12.7%\n'
                      + '\n'.join(f'日志 {i}: 完整保留输出' for i in range(16))),
               planner(3, edit), record(4, 'GENERIC', 'Updated statusline.py'),
-              error, planner_error, record(8, 'PLANNER_RESPONSE', FINAL)]
+              error, planner_error, record(8, 'CHECKPOINT', CHECKPOINT),
+              planner(9, {'name': 'write_to_file', 'args': {
+                  'TargetFile': WRITTEN, 'CodeContent': WRITE_BODY, 'Overwrite': True,
+                  'toolSummary': 'Write synthetic report'}},
+                  {'name': 'write_to_file', 'args': {'TargetFile': WRITTEN,
+                   'toolSummary': 'Missing native content stays raw'}}),
+              record(10, 'GENERIC', COMMAND_HEADER
+                     + 'The command exited with code 2.\r\nOutput:\r\nagyfailedcommand'),
+              record(11, 'GENERIC', COMMAND_HEADER
+                     + 'Output:\r\nThe command exited with code 9.\r\nagyordinaryoutput'),
+              record(12, 'PLANNER_RESPONSE', FINAL)]
     return values, calls, edit
 
 
@@ -119,6 +135,7 @@ def run(binary, screenshots):
                             heads = page.locator('#msgs .tool-head')
                             expect(heads.filter(has_text='$ ' + COMMAND)).to_have_count(1)
                             expect(heads.filter(has_text='读 ' + TARGET)).to_have_count(1)
+                            expect(heads.filter(has_text='读 ' + TARGET)).to_contain_text('⌖12+9')
                             expect(heads.filter(has_text='搜索 statusline quota 中文')).to_have_count(1)
                             expect(heads.filter(has_text='抓 https://example.test/quota')).to_have_count(1)
                             expect(heads.filter(has_text='Cancel quota background task')).to_have_count(1)
@@ -134,7 +151,9 @@ def run(binary, screenshots):
                             expect(unknown.locator('.tool-args')).to_be_visible()
                             assert json.loads(unknown.locator('.tool-args').inner_text()) == calls[5]
                             # Exact replacement uses the existing fragment diff and retains native params.
-                            change = page.locator('#msgs .file-change-msg')
+                            expect(page.locator('#msgs .file-change-msg')).to_have_count(2)
+                            change = page.locator('#msgs .file-change-msg').filter(has=
+                                page.locator('.file-change-head > b').filter(has_text=TARGET))
                             expect(change).to_have_count(1)
                             expect(change).to_contain_text('片段')
                             expect(change.locator('.diff-line.del')).to_contain_text('quota = 0')
@@ -147,8 +166,40 @@ def run(binary, screenshots):
                             change.get_by_role('button', name='收起参数', exact=True).click()
                             change.get_by_role('button', name='统一', exact=True).click()
                             # Independent results and error-only records stay visible, without invented pairing.
-                            expect(page.locator('#msgs .tool-out.err')).to_contain_text('agyerroronly')
+                            expect(page.locator('#msgs .tool-out.err').filter(has_text='agyerroronly')).to_have_count(1)
+                            expect(page.locator('#msgs .tool-out.err').filter(has_text='agyfailedcommand')).to_have_count(1)
+                            expect(page.locator('#msgs .tool-out.err').filter(has_text='agyordinaryoutput')).to_have_count(0)
                             expect(page.locator('#msgs')).to_contain_text('agyplannererroronly')
+                            projected = page.evaluate('cache.get(viewKey(S.sel, S.agent)).msgs')
+                            failed = next(m for m in projected if 'agyfailedcommand' in m['text'])
+                            assert failed['exit_code'] == 2 and failed['error'] is True
+                            ordinary = next(m for m in projected if 'agyordinaryoutput' in m['text'])
+                            assert ordinary['exit_code'] is None and ordinary['error'] is False
+                            checkpoint = next(m for m in projected if m.get('native_type') == 'CHECKPOINT')
+                            assert checkpoint['role'] == 'event' and checkpoint['counted'] is False
+                            assert checkpoint['details'] == CHECKPOINT
+                            compact = page.locator('#msgs .timeline-event.compact')
+                            expect(compact).to_contain_text('已压缩')
+                            expect(compact.locator('.event-detail-body')).to_have_count(0)
+                            compact.locator('summary').click()
+                            expect(compact.get_by_role('heading', name='Progress Summary', exact=True)).to_be_visible()
+                            expect(compact).to_contain_text('agycheckpointbody')
+                            compact.scroll_into_view_if_needed()
+                            page.screenshot(path=str(screenshots / f'{theme}-{width}-checkpoint.png'))
+                            compact.locator('summary').click()
+                            write = page.locator('#msgs .file-change-msg').filter(has=
+                                page.locator('.file-change-head > b').filter(has_text=WRITTEN))
+                            expect(write).to_contain_text('写入 · 完整')
+                            write.get_by_role('button', name='并排', exact=True).click()
+                            expect(write.locator('.diff-unavailable')).to_contain_text('原内容没有记录')
+                            expect(write.locator('.diff-split')).to_contain_text('保留写入行 95')
+                            write.get_by_role('button', name='展开原始参数', exact=True).click()
+                            written_call = json.loads(write.locator('.tool-args').inner_text())
+                            assert written_call['args']['CodeContent'] == WRITE_BODY
+                            write.get_by_role('button', name='收起参数', exact=True).click()
+                            write.get_by_role('button', name='统一', exact=True).click()
+                            write.scroll_into_view_if_needed()
+                            page.screenshot(path=str(screenshots / f'{theme}-{width}-write.png'))
                             result = page.locator('#msgs .tool-entry[data-role=tool_result]').filter(has_text='当前配额')
                             expect(result).to_contain_text('工具结果')
                             result.get_by_role('button', name='展开全文', exact=False).click()
@@ -162,12 +213,14 @@ def run(binary, screenshots):
                             assert not errors, errors
                             if theme == 'dark' and width == 390:
                                 # Append with the page open: same summary/diff projection via live history.
-                                more = planner(9, {'name': 'run_command', 'args': {
-                                    'CommandLine': 'printf incremental-presentation'}})
+                                more = planner(13, {'name': 'run_command', 'args': {
+                                    'CommandLine': 'printf incremental-presentation'}},
+                                    {'name': 'view_file', 'args': {'AbsolutePath': TARGET, 'StartLine': 42}})
                                 with path.open('ab') as output:
                                     output.write(encoded(more))
                                 page.wait_for_function('() => cache.get(viewKey(S.sel, S.agent))?.msgs.some(m => m.summary === "$ printf incremental-presentation")')
                                 expect(page.locator('#msgs')).to_contain_text('$ printf incremental-presentation')
+                                page.wait_for_function('() => cache.get(viewKey(S.sel, S.agent))?.msgs.some(m => m.summary?.endsWith("⌖42"))')
                             context.close()
                             print(f'PASS Agy presentation {theme} {width}: summaries/raw params/diff/errors/output/Markdown', flush=True)
             finally:

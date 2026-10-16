@@ -174,7 +174,18 @@ fn tool_fields(call: &Value) -> Value {
     let args = &call["args"];
     let (kind, input) = match name {
         "run_command" => ("exec_command", json!({"cmd":args["CommandLine"]})),
-        "view_file" => ("Read", json!({"file_path":args["AbsolutePath"]})),
+        "view_file" => {
+            let length = args["EndLine"].as_i64().and_then(|end| {
+                end.checked_sub(args["StartLine"].as_i64()?)?
+                    .checked_add(1)
+                    .filter(|length| *length > 0)
+            });
+            (
+                "Read",
+                json!({"file_path":args["AbsolutePath"],
+                "offset":args["StartLine"], "limit":length}),
+            )
+        }
         "search_web" => ("WebSearch", json!({"query":args["query"]})),
         "read_url_content" => ("WebFetch", json!({"url":args["Url"]})),
         "replace_file_content" => (
@@ -184,6 +195,11 @@ fn tool_fields(call: &Value) -> Value {
                 "new_string":args["ReplacementContent"],
             }),
         ),
+        "write_to_file" => (
+            "Write",
+            json!({"file_path":args["TargetFile"],
+            "content":args["CodeContent"]}),
+        ),
         _ => (name, args.clone()),
     };
     let native_summary = || {
@@ -192,11 +208,16 @@ fn tool_fields(call: &Value) -> Value {
             .filter(|text| !text.trim().is_empty())
             .map(clip)
     };
-    let summary = if name == "replace_file_content" {
+    let summary = if matches!(name, "replace_file_content" | "write_to_file") {
+        let verb = if name == "write_to_file" {
+            "写入"
+        } else {
+            "修改"
+        };
         args["TargetFile"]
             .as_str()
             .filter(|path| !path.is_empty())
-            .map(|path| clip(&format!("修改 {path}")))
+            .map(|path| clip(&format!("{verb} {path}")))
             .or_else(native_summary)
     } else if matches!(
         name,
@@ -208,12 +229,13 @@ fn tool_fields(call: &Value) -> Value {
     };
     let mut fields = json!({"native_type":"PLANNER_RESPONSE", "name":name,
         "summary":summary,"changes":null});
-    // Only the observed exact replacement fields establish a diff. Missing
-    // fields, unknown tools and edits without both sides stay raw calls.
-    if name == "replace_file_content"
-        && args["TargetFile"].is_string()
-        && args["TargetContent"].is_string()
-        && args["ReplacementContent"].is_string()
+    // Only observed replacement/write fields establish a diff. Missing
+    // fields and unknown tools stay raw calls; writes never infer old content.
+    if args["TargetFile"].is_string()
+        && ((name == "replace_file_content"
+            && args["TargetContent"].is_string()
+            && args["ReplacementContent"].is_string())
+            || (name == "write_to_file" && args["CodeContent"].is_string()))
     {
         match tools::changes(kind, &input) {
             Ok(changes) if !changes.is_empty() => fields["changes"] = json!(changes),
@@ -222,6 +244,24 @@ fn tool_fields(call: &Value) -> Value {
         }
     }
     fields
+}
+
+/// Only Agy's native command header establishes the exit code. The same
+/// sentence inside Output, a file, or a checkpoint is ordinary text.
+fn command_exit_code(content: &str) -> Option<i64> {
+    let mut lines = content.lines();
+    for label in ["Created At: ", "Completed At: "] {
+        chrono::DateTime::parse_from_rfc3339(lines.next()?.strip_prefix(label)?).ok()?;
+    }
+    if lines.next()? != "" {
+        return None;
+    }
+    lines
+        .next()?
+        .strip_prefix("The command exited with code ")?
+        .strip_suffix('.')?
+        .parse()
+        .ok()
 }
 
 impl Parser<'_> {
@@ -328,6 +368,21 @@ impl Parser<'_> {
                     self.emit(end, "tool", string(call), &ts, tool_fields(call));
                 }
             }
+            "CHECKPOINT" => {
+                let content = string(&record["content"]);
+                if !content.is_empty() {
+                    self.emit(
+                        end,
+                        "event",
+                        "已压缩",
+                        &ts,
+                        json!({
+                            "native_type":"CHECKPOINT", "counted":false, "event_kind":"compact",
+                            "details":content,
+                        }),
+                    );
+                }
+            }
             "ERROR_MESSAGE" => {
                 let text = record["content"]
                     .as_str()
@@ -355,9 +410,13 @@ impl Parser<'_> {
                     // Generic/unknown steps publish their own content. The
                     // transcript has no documented cross-step call ID, so do
                     // not attach a result to an unrelated call by position.
+                    let exit_code = (other == "GENERIC")
+                        .then(|| command_exit_code(&content))
+                        .flatten();
                     self.emit_media(end, "tool_result", content, &ts,
                         json!({"native_type":other,"name":if other == "GENERIC" { "工具结果" } else { other },
-                            "error":record["status"]=="ERROR" || record["error"].as_str().is_some_and(|error| !error.trim().is_empty())}), media)?;
+                            "exit_code":exit_code,
+                            "error":exit_code.is_some_and(|code| code != 0) || record["status"]=="ERROR" || record["error"].as_str().is_some_and(|error| !error.trim().is_empty())}), media)?;
                 } else {
                     self.skipped.note("Agy 记录类型", other);
                 }
