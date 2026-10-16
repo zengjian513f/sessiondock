@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import shutil
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -26,6 +27,8 @@ def main():
     for n in ('home','host','ledger','state','work','bin','claude','codex','grok','opencode','mirror','proc','hub'):
         (root/n).mkdir(mode=0o700)
     native=root/'native';seed(native,root/'work')
+    with sqlite3.connect(native/'conversation_summaries.db') as c:
+        deleted_row=c.execute('SELECT * FROM conversation_summaries WHERE conversation_id=?',(IDS[0],)).fetchone()
     fake=root/'bin/agy';fake.write_text('#!'+str(Path(sys.executable).resolve())+'\n'+FAKE);fake.chmod(0o700)
     env={'HOME':str(root/'home'),'TERM':'xterm-256color','PATH':'/usr/bin:/bin','LANG':'C.UTF-8',
          'DELETE_NATIVE':str(native),'DELETE_LOG':str(root/'calls.jsonl')}
@@ -80,6 +83,16 @@ def main():
             repeat=page.request.delete(base+'/api/session/'+uid)
             assert repeat.status==404,repeat.text()
             print('PASS cancel, same-title SID deletion, native files, repeated delete',flush=True)
+            # Replay the first inconsistent production event: a stale catalog row
+            # reappears after confirmed deletion, without either native payload.
+            with sqlite3.connect(native/'conversation_summaries.db') as c:
+                c.execute('INSERT INTO conversation_summaries VALUES (?,?,?,?,?,?,?,?)',deleted_row)
+            page.wait_for_timeout(1600)
+            page.reload();page.wait_for_function('T.listLoaded')
+            assert not page.evaluate('sid => S.sessions.some(r=>r.sid===sid)',IDS[0])
+            assert not (root/'mirror/cli'/IDS[0]).exists()
+            assert exists(IDS[0]), 'the mirror must not rewrite native catalog data'
+            print('PASS stale native index does not resurrect a confirmed deletion',flush=True)
             for mode,sid in [('wrong',IDS[1]),('refuse',IDS[2])]:
                 (native/'mode').write_text(mode);open_sid(base,sid);popup=menu()
                 with page.expect_response(lambda r:r.request.method=='DELETE',timeout=40000) as response:popup.locator('[data-popup-action="ok"]').click()
@@ -93,10 +106,14 @@ def main():
                 print('PASS',mode,'preserves native session and cleans worker',flush=True)
             (native/'mode').unlink()
             hub_url=f'http://127.0.0.1:{hub.port}'
+            (native/'conversations'/(IDS[3]+'.db')).unlink()
+            shutil.rmtree(native/'brain'/IDS[3])
             uid=open_sid(hub_url,IDS[3]);popup=menu()
             with page.expect_response(lambda r:r.request.method=='DELETE',timeout=40000) as response:popup.locator('[data-popup-action="ok"]').click()
             assert response.value.status==200,response.value.text()
-            assert not exists(IDS[3]) and exists(IDS[4])
+            assert exists(IDS[3]) and exists(IDS[4])
+            assert (root/'mirror/deleted'/IDS[3]).is_file()
+            assert not (native/'conversations'/(IDS[3]+'.db')).exists()
             print('PASS actual Hub forwards scoped Agy deletion to owning node',flush=True)
             open_sid(hub_url,IDS[4])
             page.locator(f'#side .item[data-uid="{page.evaluate("S.sel")}"]').click(button='right')
@@ -118,6 +135,22 @@ def main():
             print('PASS Hub batch deletes both selected SIDs, keeps failures, refresh and worker cleanup',flush=True)
         finally:
             browser.close();hub.stop()
+    with isolated_server(Corpus(root),args.binary,host_dir=root/'host',lifecycle_dir=root/'ledger',
+            launcher_config=config,state_dir=root/'state',trash_dir=root/'trash',extra_env=extra) as (base,_), sync_playwright() as pw:
+        browser=pw.chromium.launch(**options)
+        try:
+            page=browser.new_page();page.goto(base);page.wait_for_function('T.listLoaded')
+            assert not page.evaluate('sid => S.sessions.some(r=>r.sid===sid)',IDS[0])
+            # A real native payload appearing again overrides the old receipt.
+            (native/'conversations'/(IDS[0]+'.db')).write_bytes(b'restored native fixture')
+            page.wait_for_function('sid => S.sessions.some(r=>r.sid===sid)',arg=IDS[0],timeout=20000)
+            uid=page.evaluate('sid => S.sessions.find(r=>r.sid===sid).uid',IDS[0])
+            page.locator(f'#side .item[data-uid="{uid}"]').click()
+            expect(page.locator('#detail')).to_contain_text('仅找到 Agy 的会话索引')
+            assert not (root/'mirror/deleted'/IDS[0]).exists()
+            print('PASS deletion survives service restart; genuine native restoration becomes visible',flush=True)
+        finally:
+            browser.close()
 
 
 if __name__=='__main__':main()

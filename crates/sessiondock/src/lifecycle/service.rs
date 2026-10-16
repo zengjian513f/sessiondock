@@ -369,6 +369,7 @@ impl LifecycleService {
         sid: String,
         cwd: PathBuf,
         home: PathBuf,
+        root: PathBuf,
         slot: tokio::sync::OwnedMutexGuard<()>,
     ) -> Result<(), String> {
         let launcher = self.launcher.clone();
@@ -376,7 +377,12 @@ impl LifecycleService {
         tokio::spawn(async move {
             let _slot = slot;
             crate::log::info("agy.delete_started", serde_json::json!({"sid":sid}));
-            let result = super::agy_delete::remove(&launcher, &sid, &cwd, &home).await;
+            let result = super::agy_delete::remove(&launcher, &sid, &cwd, &home)
+                .await
+                .and_then(|()| {
+                    crate::sessions::agy::record_deleted(&root, &sid)
+                        .map_err(|_| "原生删除已完成，但删除回执保存失败，请刷新后核对".to_owned())
+                });
             match &result {
                 Ok(()) => crate::log::info("agy.delete_completed", serde_json::json!({"sid":sid})),
                 Err(error) => crate::log::warn(

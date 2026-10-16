@@ -275,18 +275,19 @@ async fn delete_native(
         };
         let cwd = std::path::PathBuf::from(row["cwd"].as_str().unwrap_or("/"));
         let removal = if agy {
-            match &state.agy_home {
-                Some(home) => {
+            match (&state.agy_home, &state.agy_root) {
+                (Some(home), Some(root)) => {
                     lifecycle
                         .agy_remove(
                             sid.to_owned(),
                             cwd,
                             home.clone(),
+                            root.clone(),
                             agy_lock.take().expect("Agy deletion slot"),
                         )
                         .await
                 }
-                None => Err("未配置 Agy 原生数据目录".into()),
+                _ => Err("未配置 Agy 原生数据目录".into()),
             }
         } else {
             lifecycle

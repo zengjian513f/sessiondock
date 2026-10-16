@@ -62,6 +62,35 @@ fn stamp(path: &Path) -> io::Result<Stamp> {
     })
 }
 
+/// A successful native deletion remains authoritative when a stale native
+/// summary reappears. These receipts never change native storage.
+pub(crate) fn record_deleted(root: &Path, sid: &str) -> io::Result<()> {
+    let directory = root.join("deleted");
+    private_dir(&directory)?;
+    publish(&directory.join(sid), sid.as_bytes(), false)
+}
+
+fn deleted_receipt(home: &Path, root: &Path, sid: &str) -> io::Result<bool> {
+    let receipt = root.join("deleted").join(sid);
+    match fs::read(&receipt) {
+        Ok(bytes) if bytes == sid.as_bytes() => (),
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    }
+    // A genuinely restored native session takes precedence over an old receipt.
+    if home
+        .join("conversations")
+        .join(format!("{sid}.db"))
+        .try_exists()?
+        || home.join("brain").join(sid).try_exists()?
+    {
+        fs::remove_file(receipt)?;
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 pub struct Mirror {
     home: PathBuf,
     root: PathBuf,
@@ -190,12 +219,15 @@ impl Mirror {
         } else {
             self.sessions.clone()
         };
+        let mut known = BTreeSet::new();
         for (sid, session) in &sessions {
-            self.export(sid, session)?;
+            if !deleted_receipt(&self.home, &self.root, sid)? {
+                self.export(sid, session)?;
+                known.insert(sid.clone());
+            }
         }
-        if changed {
+        if changed || known.len() != sessions.len() {
             // Only remove private projections marked as ours, including stale entries after restart.
-            let known: BTreeSet<_> = sessions.keys().cloned().collect();
             let folder = self.root.join("cli");
             if folder.is_dir() {
                 for entry in fs::read_dir(&folder)? {
