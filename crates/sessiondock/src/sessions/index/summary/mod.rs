@@ -822,6 +822,9 @@ pub fn skipped_warnings(source: &str, records: &Records) -> Vec<String> {
                 _ if value["content"]
                     .as_str()
                     .is_some_and(|text| !text.is_empty())
+                    || value["error"]
+                        .as_str()
+                        .is_some_and(|text| !text.trim().is_empty())
                     || value["media"]
                         .as_array()
                         .is_some_and(|media| !media.is_empty()) => {}

@@ -8311,6 +8311,9 @@ function fileChangeNode(m) {
   n.dataset.role = 'tool';
   if (m.result && m.result.counted !== false) n.dataset.result = '1'; // 修改确认输出并入卡片
   if (m.counted === false) n.dataset.counted = 'false';
+  // Agy keeps the complete native call beside the derived diff. Reuse the
+  // existing summary/argument toggle so all native fields remain inspectable.
+  if (m.native_type === 'PLANNER_RESPONSE') n.appendChild(toolEntry(m));
   const body = el('div', 'file-change-list');
   for (const change of m.changes) {
     const card = el('section', 'file-change-card');
