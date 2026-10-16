@@ -1469,6 +1469,9 @@ function cachePut(uid, e) {
   cache.delete(uid);
   cache.set(uid, e);
   trimCache();
+  // Complete reads and resets carry the same catalog metadata as deltas.
+  // Reconcile it before waiting for a later list invalidation or SSE packet.
+  applyMigrationMeta(e.meta.uid, e.meta.agent_id || null, e, e.meta);
 }
 
 /** 带下载进度的取消息。start/head 给定时服务端只回新增部分。 */
@@ -1654,6 +1657,7 @@ function applyMigrationMeta(uid, agent, entry, meta) {
     (m.agent_items || []).map(a => [a.id, a.title, a.type])]);
   const changed = key(entry.meta) !== key(meta);
   entry.meta = meta;
+  let sidebarChanged = false;
   if (!agent) {
     const listed = indexedSessions().byUid.get(uid);
     // Detail metadata is not a compact catalog projection: child_count may
@@ -1684,16 +1688,21 @@ function applyMigrationMeta(uid, agent, entry, meta) {
             if (!sidebarTextSelectionProtected()) patchSidebarRow(node, node._nestRow, node._highlightKey);
           }
         }
-      } else S.sessions = S.sessions.map(row => row.uid === uid ? rowMeta : row);
+      } else {
+        S.sessions = S.sessions.map(row => row.uid === uid ? rowMeta : row);
+        sidebarChanged = true;
+      }
     }
   }
+  // A fresh detail snapshot may already carry the parent while the catalog
+  // still has the old row. Reconcile that tree independently of header changes.
+  if (!agent && (changed || sidebarChanged)) renderSide();
   if (!changed) {
     // The first native message changes an assigned launch from unused to
     // populated even when its title and other header fields stay the same.
     if (S.sel === uid && !S.agent) renderSessionAction(meta);
     return;
   }
-  if (!agent) renderSide();
   if (S.sel !== uid || S.agent !== agent) return;
   const oldHead = $('#detail > .dhead');
   if (!oldHead) return;
