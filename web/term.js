@@ -1763,6 +1763,8 @@ function openNewSessionDialog(origin = null) {
   $('#continue-session-reference').hidden = !newContinueOrigin;
   $('#continue-session-reference').textContent = newContinueOrigin
     ? `原会话：${newContinueOrigin.title || ''} · ${newContinueOrigin.sid}` : '';
+  $('#continue-session-options').hidden = !newContinueOrigin;
+  document.querySelectorAll('#continue-session-options input').forEach(input => { input.checked = true; });
   $('#continue-session-description').value = '';
   $('#new-session-form input[value="shell"]').closest('label').hidden = !!newContinueOrigin;
   closeCwdPicker();
@@ -2204,6 +2206,8 @@ async function createNewSession(e) {
   }
   const origin = newContinueOrigin;
   const description = $('#continue-session-description').value;
+  const continuationRequirements = Array.from(document.querySelectorAll('#continue-session-options input:checked'),
+    input => `${input.value}。`).join('\n');
   const source = $('#new-session-dialog input[name="new-source"]:checked')?.value;
   const cwd = $('#new-cwd').value.trim();
   const go = origin ? $('#continue-session-go') : $('#new-session-go'), error = $('#new-session-error');
@@ -2245,6 +2249,7 @@ async function createNewSession(e) {
           + (origin.agent_id ? `\n子代理：${origin.agent_id}` : '')
           + (origin.node_name ? `\n机器：${origin.node_name}` : '')
           + (origin.cwd ? `\n目录：${origin.cwd}` : '')
+          + (continuationRequirements ? `\n\n${continuationRequirements}` : '')
           + `\n\n${description.trim() || '请接续该会话继续处理。'}`;
       }
       if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '接续消息保存失败');

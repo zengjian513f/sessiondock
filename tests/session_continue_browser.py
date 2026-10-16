@@ -27,6 +27,13 @@ from hub_fixtures import FakeNode, Hub
 
 SID = '019a29ee-d9b0-741c-a645-776a523e6b6d'
 TITLE = '接续长标题会话 / Continue the existing investigation without losing its reference'
+REVIEW_SUBSESSIONS = '检查子代理和 exec 类子会话的执行情况。'
+TAKE_OVER_PROCESSES = '接管正在运行的任务进程。'
+
+
+def check_requirements(prompt, review=True, takeover=True):
+    assert prompt.count(REVIEW_SUBSESSIONS) == int(review), prompt
+    assert prompt.count(TAKE_OVER_PROCESSES) == int(takeover), prompt
 
 
 def open_continue(page):
@@ -35,6 +42,9 @@ def open_continue(page):
     expect(page.locator('#new-session-title')).to_have_text('接续会话')
     expect(page.locator('#continue-session-reference')).to_contain_text(SID)
     expect(page.locator('#continue-session-description')).to_be_focused()
+    expect(page.locator('#continue-session-options')).to_be_visible()
+    expect(page.get_by_role('checkbox', name=REVIEW_SUBSESSIONS[:-1])).to_be_checked()
+    expect(page.get_by_role('checkbox', name=TAKE_OVER_PROCESSES[:-1])).to_be_checked()
     expect(page.locator('[data-continue-session] use').first).to_have_attribute('href', '#i-continue')
     expect(page.locator('#new-session-form label:has(input[value="shell"])')).to_be_hidden()
 
@@ -78,6 +88,8 @@ def check_hub(browser, root):
         assert created[0]['remote_continuation']['session_uid'] == origin.split(':')[0] + ':' + origin.split('~')[1], created
         assert created[0]['source'] == 'codex' and created[0]['model'] == 'NodeB-codex', created
         assert origin in sent[0]['text'] and '机器：NodeA' in sent[0]['text'], sent
+        check_requirements(sent[0]['text'])
+        assert sent[0]['text'].endswith('换到另一台机器继续分析'), sent
         assert sent[0]['uid'] == 'tmux:same-terminal', sent
         assert not any(path == '/api/term/create' for path, _ in nodes[0].state()['writes'])
         assert not errors, errors
@@ -125,6 +137,7 @@ def check_codex_names(browser, base, root, corpus, cases, screenshots):
         rows = [json.loads(line) for line in native.read_text().splitlines()]
         users = [row for row in rows if row.get('type') == 'response_item' and row['payload'].get('role') == 'user']
         assert len(users) == 1 and users[0]['payload']['content'][0]['text'].startswith(expected + '\n'), users
+        check_requirements(users[0]['payload']['content'][0]['text'])
         new_uid = page.evaluate('S.sel')
         try:
             page.wait_for_function("uid => S.sessions.find(row => row.uid === uid)?.predecessors?.length === 1", arg=new_uid, timeout=20000)
@@ -236,6 +249,8 @@ def main():
                 expect(page.locator('#msgs')).to_contain_text('已有调查结果')
                 open_continue(page)
                 hit_fill(page.locator('#continue-session-description'), '暂存后取消')
+                page.locator('#continue-session-review').uncheck()
+                page.locator('#continue-session-takeover').uncheck()
                 page.locator('#new-session-dialog .modal-close').click()
                 assert page.evaluate('S.sel') == corpus.uid(SID) and not creates and not sends
                 open_continue(page)
@@ -245,6 +260,18 @@ def main():
                 expect(page.locator('#continue-session-description')).to_have_value(text + '\n')
                 assert not creates
                 hit_fill(page.locator('#continue-session-description'), text)
+                if width == 472 and theme == 'dark':
+                    text = ''  # Empty custom requirements still include task review.
+                    hit_fill(page.locator('#continue-session-description'), text)
+                review = not (theme == 'dark' and width != 472)
+                takeover = width != 320 and not (width == 1280 and theme == 'dark')
+                page.locator('#continue-session-review').set_checked(review)
+                page.locator('#continue-session-takeover').set_checked(takeover)
+                for option in page.locator('#continue-session-options label').all():
+                    label_box = option.locator('span').bounding_box()
+                    check_box = option.locator('input').bounding_box()
+                    assert abs((label_box['y'] + label_box['height'] / 2)
+                               - (check_box['y'] + check_box['height'] / 2)) < 2
                 hit_select(page.locator('#new-effort'), 'high')
                 page.locator('#continue-session-go').scroll_into_view_if_needed()
                 expect(page.locator('#continue-session-go')).to_be_in_viewport()
@@ -257,6 +284,8 @@ def main():
                 page.locator('#continue-session-go').click()
                 expect(page.locator('#new-session-error')).to_have_text('合成的启动失败')
                 expect(page.locator('#continue-session-description')).to_have_value(text)
+                expect(page.locator('#continue-session-review')).to_be_checked(checked=review)
+                expect(page.locator('#continue-session-takeover')).to_be_checked(checked=takeover)
                 assert not sends and page.evaluate('S.sel') == corpus.uid(SID)
                 if width == 1280 and theme == 'light':
                     page.route('**/api/session/conversation?uid=tmux*', lambda route: route.fulfill(
@@ -279,8 +308,11 @@ def main():
                     expect(page.locator('dialog.app-popup[open]')).to_contain_text('合成的输入未就绪')
                     page.locator('dialog.app-popup[open] button[data-popup-action="ok"]').click()
                     assert corpus.uid(SID) in page.locator('#cinput').input_value()
+                    check_requirements(page.locator('#cinput').input_value(), review, takeover)
                     page.reload(wait_until='networkidle')
                     expect(page.locator('#cinput')).to_have_value(sends[0]['text'])
+                    if args.screenshots:
+                        page.screenshot(path=str(args.screenshots / f'{width}-{theme}-restored.png'))
                     expect(page.locator('#csend')).to_be_enabled(timeout=15000)
                     page.locator('#csend').click()
                 wait_history(page, 'OK: ' + TITLE + ' (2)')
@@ -288,7 +320,13 @@ def main():
                 assert len(sends) == (2 if refused else 1), sends
                 prompt = sends[-1]['text']
                 assert prompt.startswith(TITLE + ' (2)\n\n接续以下会话：\n会话标识：' + corpus.uid(SID)), prompt
-                assert f'会话 ID：{SID}' in prompt and prompt.endswith(text), prompt
+                assert f'会话 ID：{SID}' in prompt and prompt.endswith(text or '请接续该会话继续处理。'), prompt
+                check_requirements(prompt, review, takeover)
+                for instruction, selected in ((REVIEW_SUBSESSIONS, review), (TAKE_OVER_PROCESSES, takeover)):
+                    if selected:
+                        expect(page.locator('#msgs')).to_contain_text(instruction)
+                    else:
+                        expect(page.locator('#msgs')).not_to_contain_text(instruction)
                 assert sends[-1]['uid'] != corpus.uid(SID), sends
                 assert creates[-1]['source'] == 'claude' and creates[-1]['effort'] == 'high', creates
                 assert creates[-1]['request_id'] == creates[-2]['request_id'], creates
@@ -302,6 +340,7 @@ def main():
                 page.locator('#new-session').click()
                 expect(page.locator('#new-session-title')).to_have_text('新建会话')
                 expect(page.locator('#continue-session-composer')).to_be_hidden()
+                expect(page.locator('#continue-session-options')).to_be_hidden()
                 expect(page.locator('#new-session-form label:has(input[value="shell"])')).to_be_visible()
                 page.locator('#new-session-dialog .modal-cancel').click()
                 assert not errors, errors
