@@ -5879,7 +5879,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   if (hit) {
     // 先把缓存立即画出来，但暂不占一个长期 SSE 连接。补齐缓存游标之后再
     // 建 watch，避免 HTTP/1 连接池紧张时增量 fetch 永远排在 EventSource 后。
-    await renderSession(hit.meta, hit.msgs, hit.activity, { startWatch: false, showProgress: !follow });
+    await renderSession(hit.meta, hit.msgs, hit.activity, { startWatch: false });
     if (S.sel === uid && S.agent === selectedAgent) {
       await syncSession(uid, selectedAgent);
       if (S.sel === uid && S.agent === selectedAgent) watchSession(uid, selectedAgent);
@@ -5894,13 +5894,11 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   }
   // Following a launch is background synchronization of the page already on
   // screen. Keep its header/composer intact until the native view is ready.
-  if (!follow) progress(0, 0, '下载');
   let res;
   try {
     res = await fetchMessages(uid, {
       agent: selectedAgent, signal: ac.signal,
       windowed: true,
-      onProgress: follow ? undefined : (a, b, detail) => progress(a, b, '下载', detail),
     });
   } catch (e) {
     if (e.name === 'AbortError') return;      // 已经切到别的会话了
@@ -5920,7 +5918,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
                   prompt: data.prompt || null, cli: data.cli ?? null,
                   total: data.message_total, partial: data.partial || null });
   S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
-  await renderSession(data.meta, data.messages, data.activity, {showProgress: !follow});
+  await renderSession(data.meta, data.messages, data.activity);
 }
 
 // ---- 保持贴底 ----
@@ -6336,7 +6334,7 @@ async function loadFullHistory(uid, agent, button) {
                    total: data.message_total, partial: null});
     S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
     if (S.sel === uid && S.agent === agent) {
-      await renderSession(data.meta, data.messages, data.activity);
+      await renderSession(data.meta, data.messages, data.activity, {showProgress: true});
     }
   } catch (e) {
     if (e.name !== 'AbortError') {
@@ -6352,7 +6350,9 @@ async function loadFullHistory(uid, agent, button) {
   }
 }
 
-async function renderSession(meta, msgs, activity = null, { startWatch = true, historyPageEntry = null, showProgress = true } = {}) {
+// Ordinary navigation and background updates use the conversation's own loading
+// state. Global progress is reserved for an explicit full-history request.
+async function renderSession(meta, msgs, activity = null, { startWatch = true, historyPageEntry = null, showProgress = false } = {}) {
   const seq = ++renderSeq;
   const uid = meta.uid;
   const agent = meta.agent_id || null;
