@@ -411,6 +411,24 @@
       </div>
       <div id="new-cwd-completion-status" class="visually-hidden" role="status" aria-live="polite"></div>
     </div>
+    <div id="continue-session-options" role="group" aria-label="自动加入首条消息的要求" hidden>
+      <label class="setting-row continue-session-option">
+        <span>恢复原任务目标与剩余事项</span>
+        <input id="continue-session-restore" type="checkbox" value="恢复原任务目标与剩余事项" checked>
+      </label>
+      <label class="setting-row continue-session-option">
+        <span>检查子代理和 exec 类子会话的执行情况</span>
+        <input id="continue-session-review" type="checkbox" value="检查子代理和 exec 类子会话的执行情况" checked>
+      </label>
+      <label class="setting-row continue-session-option">
+        <span>接管运行、排队及自动后继任务</span>
+        <input id="continue-session-takeover" type="checkbox" value="接管运行、排队及自动后继任务" checked>
+      </label>
+      <label class="setting-row continue-session-option">
+        <span>接收成果并完成验收与收尾</span>
+        <input id="continue-session-finish" type="checkbox" value="接收成果并完成验收与收尾" checked>
+      </label>
+    </div>
     <div id="continue-session-composer" class="composer-row report-composer" hidden>
       <div class="composer-input-wrap">
         <textarea id="continue-session-description" rows="1" enterkeyhint="enter"

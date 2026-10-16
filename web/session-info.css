@@ -46,6 +46,7 @@ body.session-info-page { display: block; height: auto; min-height: 100dvh; overf
 .si-list-panel { padding: 0; box-shadow: none; overflow: hidden; }
 .si-list-panel > .si-heading { margin: 0; padding: 7px 11px; border-bottom: 1px solid var(--border); }
 .si-list-panel > .si-heading h2 { font-size: 13px; }
+.si-list-panel .si-empty { margin: 0; padding: 7px 13px; }
 .si-list-panel .si-relation .body > :is(.t,.m) { margin-right: 25px; }
 .si-relation .si-more { margin: 0; }
 .si-more > summary { position: absolute; top: 6px; right: 7px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 4px; list-style: none; }

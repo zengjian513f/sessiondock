@@ -399,6 +399,10 @@ header.header-fold-nodes #node-chips button { min-width: 28px; padding-inline: 6
 .setting-row input[type="checkbox"] {
   width: 20px; height: 20px; margin: 0; justify-self: end; accent-color: var(--accent); cursor: pointer;
 }
+.setting-row.continue-session-option {
+  grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 4px 0;
+  border: 0; font-size: 12px; color: var(--muted); cursor: pointer;
+}
 .settings-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 2px; }
 .settings-tab {
   padding: 7px 14px; border: 0; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0;
