@@ -15,6 +15,14 @@ Moves support different filesystems by publishing a complete copy before removin
 the source. Named symlinks move as links. Later file changes remain part of the
 selected entry.
 
+Agy single and batch deletion uses the native CLI's resume picker, with an
+explicit permanent-deletion confirmation and no recycle-bin entry or undo.
+The worker selects the complete SID and verifies the native current-session
+marker and confirmation before submitting. It verifies native removal before
+refreshing the mirror and retiring launch receipts. Running sessions remain
+protected; failures remain visible. See [Agy](agy.md) for the verified interface
+and its evidence boundary. Whole-tree deletion remains unsupported for Agy.
+
 Fork parents referenced by another session and currently running sessions remain
 protected. Liveness uses fresh managed-host and native CLI observations over the
 same inventory. An absent managed receipt does not prevent deleting an inactive

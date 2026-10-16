@@ -363,8 +363,33 @@ impl LifecycleService {
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
     }
-    /// Configured adapter/profile IDs with their source and capabilities.
-    /// Delete an OpenCode session through OpenCode's API (irreversible).
+    /// Delete through Agy's native UI while retaining the serialized execution slot.
+    pub async fn agy_remove(
+        &self,
+        sid: String,
+        cwd: PathBuf,
+        home: PathBuf,
+        slot: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<(), String> {
+        let launcher = self.launcher.clone();
+        // Disconnecting the HTTP caller must not cancel native cleanup halfway.
+        tokio::spawn(async move {
+            let _slot = slot;
+            crate::log::info("agy.delete_started", serde_json::json!({"sid":sid}));
+            let result = super::agy_delete::remove(&launcher, &sid, &cwd, &home).await;
+            match &result {
+                Ok(()) => crate::log::info("agy.delete_completed", serde_json::json!({"sid":sid})),
+                Err(error) => crate::log::warn(
+                    "agy.delete_failed",
+                    serde_json::json!({"sid":sid,"error":error}),
+                ),
+            }
+            result
+        })
+        .await
+        .map_err(|_| "Agy 删除任务未完成，请刷新列表核对".to_owned())?
+    }
+
     pub async fn opencode_remove(&self, sid: String, cwd: PathBuf) -> Result<(), Error> {
         let launcher = self.launcher.clone();
         tokio::task::spawn_blocking(move || launcher.opencode_remove(&sid, &cwd))

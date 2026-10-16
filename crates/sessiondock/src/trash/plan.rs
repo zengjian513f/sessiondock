@@ -94,7 +94,7 @@ impl Plan {
             return Err(TrashError::new(
                 409,
                 "agy_delete_unsupported",
-                "Agy 尚无已核实的原生删除接口；请在 agy 的 /resume 菜单删除会话，不能删除文本镜像冒充原生删除",
+                "Agy 使用原生 CLI 永久删除，不支持文件回收站或整树删除；请使用删除当前会话",
             ));
         }
         let root = match source.as_str() {

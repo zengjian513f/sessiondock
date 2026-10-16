@@ -6,3 +6,5 @@ pub mod model;
 pub mod models;
 pub mod service;
 pub mod store;
+
+pub(crate) mod agy_delete;

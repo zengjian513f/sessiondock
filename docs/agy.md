@@ -1,6 +1,6 @@
 # Agy（Antigravity CLI）
 
-本页记录 agy 1.2.16/1.2.17 的接入合同与证据边界，核对日期为 2026-10-05。
+本页记录 Agy 的接入合同与证据边界，各功能的验证版本和日期见对应章节。
 接入范围是 Rust 后端与 legacy 前端。
 
 官方接口依据：[会话管理](https://www.antigravity.google/docs/cli/conversations/)、
@@ -200,10 +200,23 @@ BUG-20261005-092243-45bf46：原生 `run_command` 已进入 Command 审批，绑
 
 ## 操作、更新与问题报告
 
-原生删除、移动、克隆均不支持。删除返回 `409 agy_delete_unsupported`，提示在 CLI
-`/resume` 菜单操作；真实 1.2.16 的该菜单提供 `f4 Delete`，但尚无 verified
-noninteractive delete API，不能删 mirror 冒充 native 删除。含 Agy 的整组操作必须
-按既有能力合同显示阻碍项，不能忽略该成员或仅迁移文本镜像。
+**DELTA（BUG-20261016-133224-f27b18，2026-10-16）**：单条及批量删除接入原生
+CLI 永久删除，不进入回收站，不提供恢复。网页确认后，节点通过配置的 Agy profile
+启动独立私有 ptyhost，以完整 SID `--conversation` 恢复，识别空编辑区，再打开
+`/resume`、按完整 SID 搜索。只有唯一选中行标记为 `[CURRENT]` 且菜单明确提供
+`f4 Delete` 时才进入原生确认；确认画面出现后提交一次。不会调用模型、修改原生
+SQLite、删除镜像冒充删除，或按标题/列表位置猜目标。
+
+删除串行执行，取得执行位置后重新核对运行状态；运行中会话仍须先停止。
+每次原生操作最多等待 25 秒。未识别画面、选择不符、原生失败或超时会保留可见失败，
+不自动重发确认。成功须核对原生索引行、会话数据库及 brain 目录均已消失，再让镜像
+同步并刷新列表、清理对应启动回执。HTTP 断开不取消已经开始的原生操作；正常结束或
+失败均停止该次私有工作进程。服务日志记录 `agy.delete_started/completed/failed`。
+
+真实 Agy 1.4.0 在私有 HOME、合成 loopback 模型网关中验证上述路径；常规浏览器测试
+使用假 CLI，覆盖节点、Hub、批量、取消、身份不符与原生失败。更早版本、修改过的
+快捷键和未知菜单尚未获得本次实机验收，不绕过原生确认。移动、克隆及整树删除仍不
+支持，整组操作保留阻碍项，不能忽略 Agy 成员或仅迁移文本镜像。
 
 `--version` 输出纯版本号。客户端 latest 已实现读取官方 updater 的平台 manifest
 `version`（OS/arch，Linux musl 使用对应后缀），沿用后台缓存；手动更新执行
@@ -218,8 +231,10 @@ composer 路径；真实 CLI 浏览器核对了处理会话、完整报告提示
 | 套件 | 数据与范围 | 证据边界 |
 | --- | --- | --- |
 | [agy_browser.py](../tests/agy_browser.py) | `python3 tests/agy_browser.py --binary target/debug/sessiondock`；fake CLI pending，新建、effort argv、终端键入、刷新重连、清理、未安装与 390 px 深浅主题 | 不证明 native history 或真实 CLI 恢复 |
-| [agy_history_browser.py](../tests/agy_history_browser.py) | `python3 tests/agy_history_browser.py --binary target/debug/sessiondock`；native schema seeds，Chromium 列表/搜索/分页/增量/旧记录改写/回退/DB 替换/重启/transcript 缺失与恢复/目录行删除/图片/原始工具字段/错误、删除提示及混合组移动克隆拒绝，检查原生字节及 mtime 不被修改 | 合成 schema，图片路径已有通过记录；不证明真实工具或媒体产出，不是原生删除 API 测试 |
+| [agy_history_browser.py](../tests/agy_history_browser.py) | `python3 tests/agy_history_browser.py --binary target/debug/sessiondock`；native schema seeds，Chromium 列表/搜索/分页/增量/旧记录改写/回退/DB 替换/重启/transcript 缺失与恢复/目录行删除/图片/原始工具字段/错误、删除确认取消/缺少启动项及混合组移动克隆拒绝，检查原生字节及 mtime 不被修改 | 合成 schema，图片路径已有通过记录；不证明真实工具或媒体产出，不是原生删除 API 测试 |
 | [agy_message_presentation_browser.py](../tests/agy_message_presentation_browser.py) | 报告与遍扫字段形状的合成数据；Chromium 点击过程/参数/全文/压缩摘要展开、替换与写入 diff 并排与换行，覆盖读取范围、命令失败及输出正文反例、未知结构、错误字段回退、实时追加及 1280/675/390 px 明暗主题截图 | 私有 HOME 与 loopback，不启动 CLI，不执行工具，不使用生产会话 |
+| [agy_delete_browser.py](../tests/agy_delete_browser.py) | 私有假 CLI；节点与 Hub 实际点击单条/批量删除、取消、失败、SID 选择不符、重复请求及刷新 | 合成原生索引/文件；不证明真实 CLI 存储语义 |
+| [agy_delete_real_browser.py](../tests/agy_delete_real_browser.py) | `--real-only` 或直接执行；真实 CLI、私有 HOME、合成 loopback 模型；永久删除、取消、运行中保护、其他 SID 恢复及四种视口/主题 | 不访问生产会话，不使用账号或付费模型；删除阶段无模型请求 |
 | [agy_real_browser.py](../tests/agy_real_browser.py) | `python3 tests/agy_real_browser.py`（`run_validation --real-only` 发布验收；`--agy` 默认取已安装的 `agy`）；临时 HOME/XDG、私有目录和 loopback 合成 gateway，真实 CLI + Chromium | operator only，`--real-only`；验证发送、多行、绑定、思考、网页发送菜单命令不等待原生回显、菜单阻发/回答/取消、停止恢复、问题报告与窄屏；不调用付费模型 |
 | [agy_tools_real_browser.py](../tests/agy_tools_real_browser.py) | `python3 tests/agy_tools_real_browser.py`（`--real-only`）；真实 CLI 读取临时文本和 PNG，再由 Chromium 展开原生工具历史和加载图片 | operator only，`--real-only`；loopback 合成模型，核对实际请求模型；不证明跨步骤配对或其他工具语义 |
 | [agy_clients_browser.py](../tests/agy_clients_browser.py) | 本机与 Hub 的模型、强度 argv、版本、官方 manifest、更新成功/失败、未安装与离线门控 | 仅运行私有假 CLI/curl，不修改已安装客户端 |

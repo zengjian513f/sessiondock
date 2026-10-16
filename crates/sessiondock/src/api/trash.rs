@@ -157,12 +157,11 @@ async fn run_delete(
 ) -> Result<DeleteOutcome, ApiError> {
     let (rows, liveness) = frozen_liveness(state).await?;
     let catalog = rows.clone();
-    // OpenCode sessions live in OpenCode's database, not in files the
-    // recycle bin can move: they are deleted through OpenCode's API.
-    let (opencode, uids): (Vec<String>, Vec<String>) = uids
+    // Native database sessions use their CLI deletion adapters, not the file recycle bin.
+    let (native, uids): (Vec<String>, Vec<String>) = uids
         .into_iter()
-        .partition(|uid| uid.starts_with("opencode:"));
-    let removed = delete_opencode(state, &rows, &liveness, opencode).await;
+        .partition(|uid| uid.starts_with("opencode:") || uid.starts_with("agy:"));
+    let removed = delete_native(state, &rows, &liveness, native).await;
     let outcome = state
         .reader
         .run_wait(&state.shutdown, move |store| {
@@ -184,11 +183,10 @@ async fn run_delete(
     Ok(outcome)
 }
 
-/// Delete OpenCode sessions through OpenCode's API with the configured
-/// OpenCode launch profile, then drop their mirror directories at once so
-/// the next list no longer shows them. A running session is refused like any
+/// Delete native database sessions through the configured CLI profile.
+/// Refresh their mirrors only after native deletion is confirmed. A running session is refused like any
 /// other; there is no recycle-bin entry (`entry_id` empty) and no undo.
-async fn delete_opencode(
+async fn delete_native(
     state: &AppState,
     rows: &[Value],
     liveness: &Liveness,
@@ -218,7 +216,35 @@ async fn delete_opencode(
                 .push(refused("not_found", "会话不存在", None));
             continue;
         };
-        let note = match liveness.state(&uid) {
+        let agy = row["source"] == "agy";
+        let mut agy_lock = if agy {
+            Some(
+                crate::lifecycle::agy_delete::DELETE
+                    .clone()
+                    .lock_owned()
+                    .await,
+            )
+        } else {
+            None
+        };
+        // Native UI deletion may wait for another request. Re-observe runtime
+        // after acquiring the slot, not from the pre-queue inventory snapshot.
+        let latest = if agy {
+            match frozen_liveness(state).await {
+                Ok((_, live)) => Some(live),
+                Err(_) => {
+                    outcome.failed.push(refused(
+                        "liveness_unavailable",
+                        "无法核对会话运行状态",
+                        None,
+                    ));
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        let note = match latest.as_ref().unwrap_or(liveness).state(&uid) {
             RunState::Running(detail) => {
                 outcome.skipped.push(refused(
                     "session_running",
@@ -242,25 +268,56 @@ async fn delete_opencode(
         let (Some(lifecycle), Some(sid)) = (&state.lifecycle, row["sid"].as_str()) else {
             outcome.failed.push(refused(
                 "root_unconfigured",
-                "删除 OpenCode 会话需要本机配置的 OpenCode 启动项",
+                "删除原生会话需要本机配置的 CLI 启动项",
                 Some(note),
             ));
             continue;
         };
         let cwd = std::path::PathBuf::from(row["cwd"].as_str().unwrap_or("/"));
-        if lifecycle
-            .opencode_remove(sid.to_owned(), cwd)
-            .await
-            .is_err()
-        {
+        let removal = if agy {
+            match &state.agy_home {
+                Some(home) => {
+                    lifecycle
+                        .agy_remove(
+                            sid.to_owned(),
+                            cwd,
+                            home.clone(),
+                            agy_lock.take().expect("Agy deletion slot"),
+                        )
+                        .await
+                }
+                None => Err("未配置 Agy 原生数据目录".into()),
+            }
+        } else {
+            lifecycle
+                .opencode_remove(sid.to_owned(), cwd)
+                .await
+                .map_err(|_| "OpenCode 删除会话失败，请查看服务日志".to_owned())
+        };
+        if let Err(error) = removal {
             outcome.failed.push(refused(
-                "opencode_remove_failed",
-                "OpenCode 删除会话失败，请查看服务日志",
+                if agy {
+                    "agy_remove_failed"
+                } else {
+                    "opencode_remove_failed"
+                },
+                &error,
                 Some(note),
             ));
             continue;
         }
-        if let (Some(root), Some(path)) = (&state.opencode_root, row["path"].as_str()) {
+        if agy {
+            // The mirror owns its files. Let it observe the native catalog commit
+            // before publishing the next inventory, instead of racing its writer.
+            if let Some(path) = row["path"].as_str() {
+                let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+                while std::path::Path::new(path).exists() && tokio::time::Instant::now() < deadline
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
+        if !agy && let (Some(root), Some(path)) = (&state.opencode_root, row["path"].as_str()) {
             let path = std::path::Path::new(path);
             if path.starts_with(root) && path != root.as_path() {
                 let _ = std::fs::remove_dir_all(path);
