@@ -121,7 +121,8 @@ html, body {
 .btn.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
 .btn.primary:hover { background: var(--accent); filter: brightness(1.08); }
 .app-popup { width: min(440px, calc(100vw - 28px)); }
-.app-popup-panel { display: flex; flex-direction: column; gap: 12px; padding: 17px; }
+.app-popup-panel { display: flex; flex-direction: column; gap: 12px; padding: 17px; max-height: inherit; overflow: auto; }
+.app-popup-panel > * { flex-shrink: 0; min-width: 0; }
 .app-popup-message {
   white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.55;
   max-height: min(420px, 55dvh); overflow: auto;
@@ -129,12 +130,14 @@ html, body {
 .app-popup .btn.danger { color: #e5484d; border-color: currentColor; }
 #float-stack {
   position: fixed; inset: 0; z-index: 10000; pointer-events: none;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 10px; padding: 12px;
+  display: flex; flex-direction: column; align-items: center; justify-content: safe center;
+  gap: 10px; padding: 12px; overflow-y: auto;
 }
 .app-float {
   pointer-events: auto; box-sizing: border-box; width: min(440px, calc(100vw - 24px));
-  max-height: 60dvh; overflow: auto;
+  /* The stack already occupies the scaled viewport; vw alone gets zoomed twice. */
+  max-width: 100%; max-height: min(calc(60dvh / var(--interface-scale, 1)), 100%);
+  flex-shrink: 0; overflow: auto;
   display: flex; flex-direction: column; gap: 10px; padding: 14px 16px;
   border: 1px solid var(--border); border-radius: 13px;
   background: var(--panel); color: var(--text); box-shadow: 0 24px 70px rgba(0, 0, 0, .28);
@@ -147,13 +150,23 @@ html, body {
 .app-float-head strong { flex: 1; min-width: 0; font-size: 15px; }
 .app-float-actions { display: flex; justify-content: flex-end; align-items: center; gap: 7px; flex-wrap: wrap; }
 .app-float .btn { white-space: nowrap; }
-.shell-env-stale { width: min(640px, calc(100vw - 24px)); }
+.shell-env-stale { width: min(640px, calc(100vw - 24px)); container-type: inline-size; }
 .shell-env-table { border-collapse: collapse; width: 100%; }
 .shell-env-table th { text-align: left; font-weight: 600; padding: 2px 6px; color: var(--muted); }
 .shell-env-table td { padding: 4px 6px; border-top: 1px solid var(--border); vertical-align: middle; }
-.shell-env-table .shell-env-node { white-space: nowrap; font-weight: 600; }
-.shell-env-table .shell-env-changed { width: 100%; min-width: 8em; overflow-wrap: anywhere; }
+.shell-env-table .shell-env-node { min-width: 5em; overflow-wrap: anywhere; font-weight: 600; }
+.shell-env-table .shell-env-changed { width: 100%; overflow-wrap: anywhere; }
 .shell-env-table td:nth-child(3), .shell-env-table td:nth-child(4) { width: 1%; white-space: nowrap; }
+@container (max-width: 360px) {
+  .shell-env-table thead { display: none; }
+  .shell-env-table tbody { display: grid; gap: 8px; }
+  .shell-env-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; }
+  .shell-env-table .shell-env-node { grid-column: 1 / -1; }
+  .shell-env-table .shell-env-changed { grid-column: 1 / -1; }
+  .shell-env-table td { min-width: 0; }
+  .shell-env-table td:nth-child(3), .shell-env-table td:nth-child(4) { width: auto; }
+  .shell-env-table td:nth-child(3) { grid-column: 2; }
+}
 
 #app { display: flex; flex-direction: column; height: 100%; }
 #node-notice { padding: 6px 12px; color: var(--muted); font-size: 12px; flex: none; }
@@ -324,6 +337,7 @@ body.side-collapsed #side-toggle { color: var(--accent); border-color: color-mix
 .header-menu {
   position: absolute; z-index: 12; top: calc(100% + 6px); right: 0;
   min-width: 190px; padding: 5px;
+  max-height: calc(100dvh / var(--interface-scale, 1) - 54px); overflow-y: auto;
   border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
   box-shadow: 0 10px 28px rgba(16, 24, 40, .18);
 }
@@ -591,6 +605,11 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 @container (max-width: 300px) {
   :is(#new-session-form, #bug-report-form) .new-source span { min-width: 34px; padding: 6px 4px; }
 }
+@container (max-width: 220px) {
+  :is(#new-session-form, #bug-report-form) .new-source:has(input[value="agy"]) {
+    min-width: 0; max-width: 100%; flex-wrap: wrap;
+  }
+}
 /* 新建会话与报告问题共用的机器下拉。 */
 .node-select:not([hidden]) {
   display: flex; align-items: center; gap: 7px; flex: 1 1 120px; min-width: 96px;
@@ -788,9 +807,9 @@ main { display: flex; flex: 1; min-height: 0; }
   box-shadow: 0 10px 30px rgba(0, 0, 0, .26), 0 2px 6px rgba(0, 0, 0, .12);
 }
 .ctx-menu[hidden] { display: none; }
-#item-menu { max-height: calc(100vh - 16px); overflow-y: auto; }
+#item-menu { max-height: calc(100dvh / var(--interface-scale, 1) - 16px); overflow-y: auto; }
 #item-menu [role="separator"] { border: 0; border-top: 1px solid var(--border); margin: 4px 6px; }
-#file-menu { width: min(380px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; }
+#file-menu { width: min(380px, calc(100vw / var(--interface-scale, 1) - 16px)); max-height: calc(100dvh / var(--interface-scale, 1) - 16px); overflow-y: auto; }
 .ctx-menu-target {
   padding: 8px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border);
   font-size: 12px; line-height: 1.5; color: var(--text); user-select: text;
@@ -1053,9 +1072,9 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .session-view-switch > span { min-width: 0; overflow-wrap: anywhere; }
 .session-view-switch > i { flex: none; color: var(--muted); font-style: normal; font-size: 13px; }
 .session-view-menu {
-  position: absolute; z-index: 12; top: calc(100% + 5px); left: 21px;
-  display: grid; gap: 3px; width: min(520px, calc(100vw - 40px));
-  max-height: min(480px, 70vh); overflow-y: auto; padding: 5px;
+  position: fixed; z-index: 12; top: auto; left: auto;
+  display: grid; gap: 3px; width: min(520px, calc(100vw / var(--interface-scale, 1) - 40px));
+  max-height: min(480px, calc(70dvh / var(--interface-scale, 1))); overflow-y: auto; padding: 5px;
   border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
   box-shadow: 0 10px 28px rgba(16, 24, 40, .18);
 }
@@ -1080,7 +1099,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .session-view-menu button.running .view-span { color: var(--live-direct); }
 .session-view-menu b { overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.35; }
 /* 回退父会话链：挂在标题栏右侧操作区下方，每级一行，右侧是显示/隐藏 */
-.fork-chain-menu { left: auto; right: 0; width: min(440px, calc(100vw - 40px)); }
+.fork-chain-menu { width: min(440px, calc(100vw / var(--interface-scale, 1) - 40px)); }
 .fork-chain-menu .chain-row { display: flex; align-items: center; gap: 8px; }
 .fork-chain-menu .chain-row > .chain-open { flex: 1 1 auto; min-width: 0; }
 .fork-chain-menu .chain-row.shown > .chain-open { color: var(--muted); }
@@ -1104,8 +1123,8 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 #a-more { font-size: 24px; line-height: 1; }
 #a-more[hidden] { display: none; }
 .session-actions-menu {
-  position: absolute; z-index: 12; top: calc(100% + 6px); right: 0;
-  width: min(320px, calc(100vw - 24px)); max-height: calc(100dvh - 100px);
+  position: fixed; z-index: 12; top: auto; left: auto;
+  width: min(320px, calc(100vw / var(--interface-scale, 1) - 24px)); max-height: calc(100dvh / var(--interface-scale, 1) - 100px);
   overflow-y: auto; overscroll-behavior: contain; padding: 5px;
   border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
   box-shadow: 0 10px 28px rgba(16, 24, 40, .18);
@@ -2133,13 +2152,13 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     flex: 1 1 auto; align-items: center; overflow: hidden; white-space: nowrap;
   }
   .session-view-menu, .fork-chain-menu {
-    position: fixed; top: max(45px, env(safe-area-inset-top)); right: 8px; left: 8px;
-    width: auto; max-height: min(480px, calc(100dvh - 54px));
+    width: calc(100vw / var(--interface-scale, 1) - 16px);
+    max-height: min(480px, calc(100dvh / var(--interface-scale, 1) - 54px));
   }
   .dhead-actions { max-width: none; flex-wrap: nowrap; gap: 0; }
   .dhead-actions > .iconbtn { width: 32px; height: 32px; }
   .session-actions > .iconbtn { width: 32px; height: 32px; }
-  .session-actions-menu { max-height: calc(100dvh - 54px); }
+  .session-actions-menu { max-height: calc(100dvh / var(--interface-scale, 1) - 54px); }
   .msg.turn-process:not(.folded) > .turn-toolbar { top: 4px; width: 100%; }
   .msg.turn-process:not(.folded) > .turn-toolbar > .turn-preview { flex: 1 1 auto; }
   .turn-nav-btn { width: 25px; padding-inline: 3px; overflow: hidden; font-size: 0; }
@@ -2246,7 +2265,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   /* Single-finger scrolling remains native; two-finger zoom belongs to the app. */
   touch-action: pan-x pan-y;
 }
-#new-session-dialog, .app-dialog {
+#new-session-dialog, #bug-report-dialog, .app-dialog {
   max-width: calc(100vw / var(--interface-scale) - 16px);
   max-height: calc(100dvh / var(--interface-scale) - 16px);
 }
@@ -2411,7 +2430,7 @@ header .btn[data-session-docked] { display: none; }
 #session-group-status { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 #session-group-status:empty { display: none; }
 #item-menu [data-act="group"] { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
-#session-group-menu { min-width: 170px; max-width: min(280px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow-y: auto; }
+#session-group-menu { min-width: 170px; max-width: min(280px, calc(100vw / var(--interface-scale, 1) - 16px)); max-height: calc(100dvh / var(--interface-scale, 1) - 16px); overflow-y: auto; }
 #session-group-menu button { display: flex; gap: 8px; align-items: baseline; overflow-wrap: anywhere; }
 #session-group-menu [role="separator"] { border-top: 1px solid var(--border); margin: 4px 6px; }
 #session-group-menu form { display: flex; margin: 4px 6px; }
@@ -2447,7 +2466,7 @@ header .btn[data-session-docked] { display: none; }
 
 /* 顶栏 ⋯ 的选项沿用分段按钮和上下文菜单的图标、选中色及间距。 */
 .header-menu .menu-arrow { margin-left: auto; }
-.toolbar-options { width: 230px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; }
+.toolbar-options { width: 230px; max-width: calc(100vw / var(--interface-scale, 1) - 16px); max-height: calc(100dvh / var(--interface-scale, 1) - 16px); overflow-y: auto; }
 .toolbar-options-hint { padding: 6px 10px; color: var(--muted); font-size: 12px; }
 .toolbar-option { display: flex; align-items: center; }
 .toolbar-option[hidden] { display: none; }

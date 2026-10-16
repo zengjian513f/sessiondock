@@ -169,10 +169,7 @@ globalThis.SessionDockGroups = (() => {
   }
   function positionMenu() {
     if (!menuAnchor) return;
-    const box = menuAnchor.getBoundingClientRect(), width = menu.offsetWidth, height = menu.offsetHeight;
-    const right = box.right + 5, left = box.left - width - 5;
-    menu.style.left = `${Math.max(8, Math.min(right + width <= innerWidth - 8 ? right : left, innerWidth - width - 8))}px`;
-    menu.style.top = `${Math.max(8, Math.min(box.top, innerHeight - height - 8))}px`;
+    placeSubmenu(menu, menuAnchor);
   }
   function showMenu(uids, anchor, focus = true) {
     if (!available || busy || anchor.getAttribute('aria-disabled') === 'true') return;

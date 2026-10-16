@@ -69,7 +69,7 @@ baseline. Managed CLI hosts survive, as on any restart.
 
 Every 60 s, and when the page becomes visible, the page asks each online
 machine (`api/nodes/<id>/api/shell-env` on the hub, `api/shell-env` locally).
-The notice at the bottom is a table with the columns machine, changed
+The centered floating notice is a table with the columns machine, changed
 variables, `重启` and `忽略`, one row per machine whose environment drifted.
 `忽略` hides that exact set of names for the page. With two or more machines to
 restart, `全部重启 (N)` above the table sends every restart at once. A
@@ -79,5 +79,8 @@ request fails, until the machine answers with a new `started_at` (at most
 2 minutes). Only the newest of overlapping checks is drawn. A machine
 without the endpoint (an older build) or without the configuration shows
 nothing.
+
+The card fits the scaled viewport. Below 360 CSS pixels of card content width,
+machine names, wrapping changed names and actions occupy separate rows. Long notices and stacked cards remain scrollable.
 
 Regression: `python3 tests/shell_env_browser.py`.
