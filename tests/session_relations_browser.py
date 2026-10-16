@@ -105,6 +105,40 @@ def main():
         add('origin')
         expect(page.locator('#info-predecessors')).to_contain_text('a origin')
         assert page.locator('#info-predecessors .sd-session-card').first.evaluate(measure) == sidebar_style
+        # An empty relationship list must not reserve more room than a real row.
+        # Exercise the embedded page too: it is the entry used in bug reports.
+        for embedded in (False, True):
+            if embedded:
+                page.locator('#info-open').click()
+                page.locator('#a-info').click()
+            view = page.frame_locator('#session-content-view iframe') if embedded else page
+            for width, theme in [(1280, 'light'), (675, 'light'), (390, 'light'),
+                                 (390, 'dark'), (675, 'dark'), (1280, 'dark')]:
+                page.set_viewport_size({'width':width, 'height':900})
+                if embedded and not page.locator('#a-info').is_visible():
+                    page.locator(f'#side .item[data-uid="{refs["first"]}"] .body').click()
+                    page.locator('#a-info').click()
+                page.evaluate('theme=>document.documentElement.dataset.theme=theme', theme)
+                expect(view.locator('html')).to_have_attribute('data-theme', theme)
+                populated = view.locator('#info-predecessors')
+                empty = view.locator('#info-successors')
+                expect(populated.locator('.si-relation')).to_have_count(1)
+                expect(empty).to_contain_text('尚无已记录')
+                empty.scroll_into_view_if_needed()
+                screenshot(f'density-{embedded}-{width}-{theme}')
+                filled_height = populated.bounding_box()['height']
+                empty_height = empty.bounding_box()['height']
+                assert empty_height <= filled_height + 1, (embedded, width, theme, empty_height, filled_height)
+                panel_height = 'e => e.closest(".si-list-panel").getBoundingClientRect().height'
+                assert empty.evaluate(panel_height) <= populated.evaluate(panel_height) + 1
+                # Details remain available and return to the original compact height.
+                populated.locator('.si-more > summary').click()
+                expect(populated.locator('.si-relation-detail')).to_be_visible()
+                populated.locator('.si-more > summary').click()
+                expect(populated.locator('.si-relation-detail')).to_be_hidden()
+                assert abs(populated.bounding_box()['height'] - filled_height) < 1
+            page.set_viewport_size({'width':1280, 'height':900})
+        print('PASS empty/populated relation density: standalone/embedded, desktop/tablet/phone, light/dark, expand/collapse', flush=True)
         open_info('second'); add('first', state='candidate')
         expect(page.locator('#info-predecessors .si-candidate')).to_have_count(2)
         page.locator('#info-predecessors .si-more > summary').first.click()
