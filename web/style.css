@@ -1468,6 +1468,9 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 }
 .event-detail-body > :first-child { margin-top: 0; }
 .event-detail-body > :last-child { margin-bottom: 0; }
+.msg.native-settings { padding: 3px 8px; color: var(--muted); box-shadow: none; }
+.native-settings > .event-details { margin: 0; min-width: 0; }
+.native-settings summary { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; list-style-position: inside; }
 
 /* 连续工具调用合并成的组 */
 .msg.grp:not(.folded) {
@@ -1551,7 +1554,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .tool-entry > .tool-args-close:hover { color: var(--terminal-fg); background: var(--hover); }
 .tool-entry > .tool-args-close[hidden] { display: none; }
 .tool-entry > .tool-status {
-  padding: 1px 10px 5px; color: var(--muted); font-size: 11.5px; line-height: 1.5;
+  padding: 1px 10px 5px; color: var(--muted); font-size: 11.5px; line-height: 1.5; overflow-wrap: anywhere;
 }
 .tool-entry > .tool-status.err { color: #e5534b; }
 .tool-entry > .tool-out { margin-top: 3px; }
@@ -1599,6 +1602,8 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .file-change-toolbar button:hover { background: var(--hover); color: var(--text); }
 .file-change-toolbar button.on { border-color: var(--border); background: var(--sel); color: var(--text); }
 .file-change-body { width: 100%; overflow-x: auto; background: var(--panel); }
+.file-change-body.clip { max-height: 340px; overflow-y: hidden; }
+.file-change-card > .file-diff-more { margin: 0; border-width: 1px 0 0; border-radius: 0; }
 .diff-unified { min-width: max-content; padding: 8px 0 18px; }
 .diff-line {
   display: grid; grid-template-columns: 24px minmax(0, 1fr); min-height: 21px;
@@ -1717,7 +1722,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .media-more:disabled:not([data-media-cursor]) { cursor: default; }
 .media-page-error { color: var(--muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 .mb.clip { max-height: 340px; overflow: hidden; position: relative; }
-.mb.clip::after {
+.mb.clip.has-overflow::after {
   content: ""; position: absolute; inset: auto 0 0 0; height: 46px;
   background: linear-gradient(transparent, var(--bubble));
   pointer-events: none;
