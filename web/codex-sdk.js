@@ -10,6 +10,7 @@ const CodexSdkView = {
   turn: null, items: new Map(), nodes: new Map(), requests: new Map(),
   summary: null, models: [], historyTimer: 0, snapshotReady: null,
   limits: null, resetCards: null, redeemKeys: new Map(),
+  limitsRead: null, limitsRetryTimer: 0, limitsRetryDelay: 1000,
   modelChoice: null, effortChoice: null,
   pendingAtOpen: false,
   legacyViews: new Set(),
@@ -104,6 +105,9 @@ const CodexSdkView = {
     this.es?.close();
     this.es = null;
     clearTimeout(this.historyTimer);
+    clearTimeout(this.limitsRetryTimer);
+    this.limitsRead?.abort();
+    this.limitsRead = null; this.limitsRetryTimer = 0; this.limitsRetryDelay = 1000;
     this.items.clear(); this.nodes.clear(); this.requests.clear();
     this.turn = null; this.summary = null; this.limits = null; this.resetCards = null;
     this.models = []; this.modelChoice = this.effortChoice = null;
@@ -171,12 +175,27 @@ const CodexSdkView = {
 
   // ---------------------------------------------------------------- 用量
   async loadLimits(generation = this.generation) {
+    if (!this.current(generation) || this.limitsRead) return;
+    clearTimeout(this.limitsRetryTimer);
+    this.limitsRetryTimer = 0;
+    const read = new AbortController();
+    this.limitsRead = read;
     try {
-      const response = await fetch(appUrl(`api/codex-sdk/limits?${new URLSearchParams({uid: this.uid})}`));
+      const response = await fetch(appUrl(`api/codex-sdk/limits?${new URLSearchParams({uid: this.uid})}`), {signal: read.signal});
       const data = await response.json();
-      if (!this.current(generation) || !data?.ok) return;
+      if (!this.current(generation)) return;
+      if (!response.ok || !data?.ok) throw new Error('limits unavailable');
       this.applyLimits(data.raw);
-    } catch { /* 用量条只是附加信息；读取失败时保持隐藏或上一次的值 */ }
+      this.limitsRetryDelay = 1000;
+    } catch {
+      // 保留上次成功值；短暂失败不能让用量一直隐藏到下一回合。
+      if (this.current(generation)) {
+        this.limitsRetryTimer = setTimeout(() => this.loadLimits(generation), this.limitsRetryDelay);
+        this.limitsRetryDelay = Math.min(this.limitsRetryDelay * 2, 30000);
+      }
+    } finally {
+      if (this.limitsRead === read) this.limitsRead = null;
+    }
   },
 
   applyLimits(raw) {

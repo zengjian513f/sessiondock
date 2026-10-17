@@ -212,6 +212,9 @@ before first SEND does not retain these unpersisted receipts.
   replaced from the fresh read. Limits load on open, after every turn and on
   `account/rateLimits/updated`, which the node forwards to every attached page
   (that notification carries one bucket only; reset cards refresh on the reads).
+  Failed reads retain the last known values and retry automatically with backoff
+  from 1 second up to 30 seconds, without starting a model turn. Only one read is
+  in flight per view; closing or switching the view cancels its read and retry.
 
 ## Composer and conversation controls
 
