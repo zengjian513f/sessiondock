@@ -34,18 +34,20 @@ const CodexSdkView = {
       <div id="sdk-composer">
         <div class="sdk-status" role="status" aria-live="polite"></div>
         <div class="sdk-options">
-          <label class="new-effort sdk-model" title="模型"><span class="visually-hidden">模型</span><select id="sdk-model"><option value="">默认模型</option></select></label>
-          <label class="new-effort sdk-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="sdk-effort"><option value="">默认强度</option></select></label>
-        </div>
-        <div class="sdk-gauges" aria-label="用量">
-          <span class="sdk-gauge" data-gauge="5h" hidden></span>
-          <span class="sdk-gauge" data-gauge="7d" hidden></span>
-          <span class="sdk-gauge" data-gauge="context" hidden></span>
-          <span class="sdk-credits" hidden></span>
-          <span class="sdk-reset" hidden>
-            <label class="new-effort" title="可兑换的限额重置卡"><span class="visually-hidden">重置卡</span><select id="sdk-reset-card"></select></label>
-            <button class="btn" id="sdk-reset-use" type="button" title="兑换所选重置卡">兑换</button>
-          </span>
+          <div class="sdk-gauges" aria-label="用量">
+            <span class="sdk-gauge" data-gauge="5h" hidden></span>
+            <span class="sdk-gauge" data-gauge="7d" hidden></span>
+            <span class="sdk-gauge" data-gauge="context" hidden></span>
+            <span class="sdk-credits" hidden></span>
+          </div>
+          <div class="sdk-pickers">
+            <label class="new-effort sdk-model" title="模型"><span class="visually-hidden">模型</span><select id="sdk-model"><option value="">默认模型</option></select></label>
+            <label class="new-effort sdk-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="sdk-effort"><option value="">默认强度</option></select></label>
+            <span class="sdk-reset" hidden>
+              <label class="new-effort" title="可兑换的限额重置卡"><span class="visually-hidden">重置卡</span><select id="sdk-reset-card"></select></label>
+              <button class="btn" id="sdk-reset-use" type="button" title="兑换所选重置卡">兑换</button>
+            </span>
+          </div>
         </div>
         <div class="composer-row">
           <div class="composer-input-wrap"><textarea id="sdk-input" rows="1" enterkeyhint="enter" placeholder="通过 Codex SDK 发送"></textarea></div>
@@ -186,9 +188,15 @@ const CodexSdkView = {
     node.replaceChildren();
     const name = document.createElement('span');
     name.textContent = label;
-    const bar = document.createElement('progress');
-    bar.max = 100; bar.value = value;
-    bar.setAttribute('aria-label', `${label} 剩余 ${value}%`);
+    const bar = document.createElement('i');
+    bar.className = 'sdk-bar';
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-label', `${label} 剩余`);
+    bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
+    bar.setAttribute('aria-valuenow', String(value));
+    const fill = document.createElement('u');
+    fill.style.width = `${value}%`;
+    bar.append(fill);
     const text = document.createElement('b');
     text.textContent = `${value}%`;
     node.append(name, bar, text);
@@ -235,20 +243,22 @@ const CodexSdkView = {
     const cards = this.resetCards?.credits || [];
     const holder = this.pane.querySelector('.sdk-reset');
     const select = holder.querySelector('select');
-    holder.hidden = !(this.resetCards?.availableCount > 0);
+    const usable = cards.filter(row => !row.status || row.status === 'available');
+    holder.hidden = !(this.resetCards?.availableCount > 0) || (cards.length > 0 && !usable.length);
     if (!holder.hidden) {
       const chosen = select.value;
       select.replaceChildren();
       const count = this.resetCards.availableCount;
       if (!cards.length) select.append(new Option(`重置卡 ×${count}`, ''));
-      for (const card of cards.filter(row => !row.status || row.status === 'available')) {
-        const expires = card.expiresAt ? ` · ${new Date(card.expiresAt * 1000).toLocaleDateString()} 到期` : '';
+      for (const card of usable) {
+        const expires = card.expiresAt ? ` · ${new Date(card.expiresAt * 1000).toLocaleDateString(undefined, {year: '2-digit', month: 'numeric', day: 'numeric'})} 到期` : '';
         const option = new Option(`${card.title || '限额重置卡'}${expires}`, card.id);
         if (card.description) option.title = card.description;
         select.append(option);
       }
       if ([...select.options].some(option => option.value === chosen)) select.value = chosen;
       select.title = `共 ${count} 张可兑换`;
+      holder.querySelector('#sdk-reset-use').textContent = `兑换 (${count})`;
     }
   },
 

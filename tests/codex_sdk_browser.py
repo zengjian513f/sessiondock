@@ -165,7 +165,7 @@ def browser_check(corpus, base, fake):
             # Context joins the limit bars: 1000 of a 4000-token window used.
             context_bar = pane.locator('.sdk-gauge[data-gauge="context"]')
             expect(context_bar.locator("b")).to_have_text("75%")
-            expect(context_bar.locator("progress")).to_have_attribute("value", "75")
+            expect(context_bar.locator(".sdk-bar")).to_have_attribute("aria-valuenow", "75")
             # After completion the rollout holds the turn; it is shown exactly once.
             expect(history.locator('.msg[data-role="assistant"]').filter(has_text="All done after approval")).to_have_count(1)
             expect(pane.locator('.msg[data-role="assistant"]').filter(has_text="All done after approval")).to_have_count(1)
@@ -174,7 +174,7 @@ def browser_check(corpus, base, fake):
             # Account limits as bars (remaining), credits, and redeemable reset cards.
             five, week = pane.locator('.sdk-gauge[data-gauge="5h"]'), pane.locator('.sdk-gauge[data-gauge="7d"]')
             expect(five.locator("b")).to_have_text("60%")
-            expect(five.locator("progress")).to_have_attribute("value", "60")
+            expect(five.locator(".sdk-bar")).to_have_attribute("aria-valuenow", "60")
             expect(week.locator("b")).to_have_text("75%")
             expect(pane.locator(".sdk-credits")).to_have_text("Credits 1,235")
             reset = pane.locator("#sdk-reset-card")
