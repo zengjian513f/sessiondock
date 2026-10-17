@@ -1,22 +1,30 @@
-.quota-agent { padding: 0; overflow: hidden; }
-.quota-agent > h2 { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.quota-agent { padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; background: var(--panel); }
+.quota-agent > h2 { margin: 0; font-size: 13px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .quota-scroll { overflow-x: auto; }
 .quota-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.quota-table { table-layout: fixed; min-width: 900px; }
+.quota-table { table-layout: fixed; min-width: 660px; }
 .quota-col-machine { width: 15%; }
 .quota-col-group { width: 20%; }
 .quota-col-window { width: 8%; }
-.quota-col-remaining { width: 14%; }
+.quota-col-remaining { width: 13%; }
 .quota-col-reset { width: 22%; }
-.quota-col-captured { width: 21%; }
-.quota-table th, .quota-table td { padding: 9px 12px; white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
+.quota-col-captured { width: 22%; }
+.quota-table th, .quota-table td { padding: 5px 8px; white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
 .quota-table tbody + tbody { border-top: 1px solid var(--border); }
 .quota-table .quota-machine-name { position: sticky; left: 0; background: var(--panel); }
 .quota-table thead th:first-child { position: sticky; left: 0; background: var(--panel); }
 .quota-remaining { font-variant-numeric: tabular-nums; }
 .quota-remaining strong { font-size: 12px; font-weight: 600; }
-.quota-remaining progress { display: block; width: 100%; height: 5px; margin: 6px 0 2px; accent-color: var(--accent); }
+.quota-remaining progress { display: block; width: 100%; height: 5px; margin: 4px 0 1px; accent-color: var(--accent); }
 .quota-time { font-variant-numeric: tabular-nums; }
 .quota-time > div { margin-top: 4px; }
 .quota-error { color: var(--tool); font-size: 12px; overflow-wrap: anywhere; }
 @media (max-width: 720px) { .quota-agent { padding: 0; } }
+
+#quota-dialog { width: min(960px, calc(100vw - 28px)); }
+.quota-panel { display: flex; flex-direction: column; max-height: inherit; }
+.quota-panel > .modal-head { padding: 10px 12px; gap: 8px; flex-shrink: 0; }
+.quota-panel > .modal-head h2 { margin: 0 auto 0 0; font-size: 15px; }
+.quota-body { padding: 0 12px 4px; overflow-y: auto; }
+#quota-status { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+#quota-status:empty { display: none; }

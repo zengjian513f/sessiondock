@@ -37,7 +37,7 @@ for line in sys.stdin:
  elif q['method']=='initialized': pass
  elif q['method']=='account/rateLimits/read':
   with (root/'calls').open('a') as f:f.write('query\n')
-  print(json.dumps({'id':2,'result':{'rateLimitsByLimitId':{'codex':{'primary':{'usedPercent':25,'windowDurationMins':300,'resetsAt':4096400000},'secondary':{'usedPercent':60,'windowDurationMins':10080,'resetsAt':4096500000}},'extra':{'limitName':'Long model bucket 模型专用额度组','primary':{'windowDurationMins':60}}}}}),flush=True)
+  print(json.dumps({'id':2,'result':{'rateLimitResetCredits':{'availableCount':3,'credits':[{'status':'available','expiresAt':4096400000}]},'rateLimitsByLimitId':{'codex':{'credits':{'balance':'123.45','hasCredits':True,'unlimited':False},'primary':{'usedPercent':25,'windowDurationMins':300,'resetsAt':4096400000},'secondary':{'usedPercent':60,'windowDurationMins':10080,'resetsAt':4096500000}},'extra':{'limitName':'Long model bucket 模型专用额度组','primary':{'windowDurationMins':60}}}}}),flush=True)
  else: raise AssertionError(q)
 '''
 
@@ -48,7 +48,7 @@ def main():
         root=Path(tmp)
         for name in ('state','host','ledger','home','claude','codex','grok'): (root/name).mkdir(mode=0o700)
         script=root/'fake.py';script.write_text(FAKE)
-        profiles=[{'id':source+'-fixture','source':source,'executable':sys.executable,'args':[str(script),source],'env':{'QUOTA_FIXTURE':str(root),'HOME':str(root/'home')}} for source in ('codex','agy')]
+        profiles=[{'id':source+'-fixture','source':source,'executable':sys.executable,'args':[str(script),source],'env':{'QUOTA_FIXTURE':str(root),'HOME':str(root/'home')}} for source in ('codex','claude','agy')]
         config=root/'launcher.json';config.write_text(json.dumps({'schema':2,'host_binary':str(binary.parent/'ptyhost'),'host_dir':str(root/'host'),'profiles':profiles}));config.chmod(0o600)
         subprocess.run([str(binary),'--initialize-lifecycle',str(root/'ledger')],env={'PATH':'/usr/bin:/bin'},check=True,capture_output=True)
         settings=root/'home/settings.json';settings.write_text(json.dumps({'statusLine':{'type':'command','command':'cat','padding':2},'unrelated':True}))
@@ -81,42 +81,63 @@ def main():
             assert link.evaluate("n => !!(document.querySelector('#client-matrix').compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING)")
             page.screenshot(path=str(out/'settings-entry.png'))
             link.click()
-            machine=page
-            expect(page.get_by_role('table')).to_have_count(3)
+            assert page.url.rstrip('/')==hubbase
+            machine=page.locator('#quota-dialog')
+            expect(machine).to_be_visible()
+            expect(machine.get_by_role('table')).to_have_count(3)
             for name in ('Codex','Claude Code','Agy'):
-                table=page.get_by_role('table',name=name,exact=True)
-                expect(table.get_by_role('columnheader')).to_have_text(['机器','额度组','窗口','剩余额度','下次重置','最后采集 / 状态'])
-                expect(table.get_by_role('rowgroup').filter(has=page.get_by_role('rowheader',name='Empty Node',exact=True))).to_contain_text('未配置')
+                table=machine.get_by_role('table',name=name,exact=True)
+                expect(table.get_by_role('columnheader')).to_have_text(['机器','额度组','窗口','剩余','重置 / 到期','采集'])
+                expect(table.get_by_role('rowheader',name='Empty Node',exact=True)).to_have_count(0)
             expect(machine.locator('section[data-source=claude]')).to_contain_text('87.5%')
-            expect(machine.locator('section[data-source=codex]')).to_contain_text('暂无额度')
-            page.get_by_role('button',name='刷新额度').click()
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('N/A')
+            page.get_by_role('button',name='刷新').click()
             expect(machine.locator('section[data-source=codex]')).to_contain_text('75%',timeout=30000)
-            expect(machine.locator('section[data-source=codex]')).to_contain_text('剩余额度未知')
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('N/A')
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('123.45')
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('3 张')
             expect(machine.locator('section[data-source=agy]')).to_contain_text('85%')
-            expect(machine.locator('section[data-source=agy]')).to_contain_text('已过记录的重置时间')
-            expect(machine.locator('section[data-source=claude]')).to_contain_text('剩余 0%')
+            expect(machine.locator('section[data-source=agy] [title="已过重置时间，等待新快照"]')).to_have_count(1)
+            expect(machine.locator('section[data-source=claude]')).to_contain_text('0%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             assert (root/'calls').read_text().count('query')==1
             for theme in ('light','dark'):
                 page.evaluate("theme => localStorage.setItem('sessiondock.hub./.theme', JSON.stringify(theme))", theme)
                 for width in (1280,390):
-                    page.set_viewport_size({'width':width,'height':950});page.reload();expect(machine.locator('section[data-source=codex]')).to_contain_text('75%')
+                    page.set_viewport_size({'width':width,'height':950});page.reload()
+                    if width==390: page.locator('#header-more-btn').click()
+                    page.locator('#settings').click();page.get_by_role('tab',name='机器',exact=True).click();page.locator('#quota-open').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('75%')
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                     page.screenshot(path=str(out/f'{theme}-{width}.png'),full_page=True)
                     if width==390:
                         scroll=page.get_by_role('region',name='Codex 额度表，可横向滚动')
                         scroll.hover();page.mouse.wheel(1000,0)
-                        expect(page.get_by_role('table',name='Codex',exact=True).get_by_role('columnheader',name='最后采集 / 状态')).to_be_in_viewport()
+                        expect(machine.get_by_role('table',name='Codex',exact=True).get_by_role('columnheader',name='采集')).to_be_in_viewport()
                         assert scroll.evaluate('n => n.scrollLeft > 0')
                         page.screenshot(path=str(out/f'{theme}-390-scrolled.png'),full_page=True)
             assert (root/'calls').read_text().count('query')==1, 'GET must not query CLIs'
-            (root/'fail').touch();page.get_by_role('button',name='刷新额度').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('查询失败',timeout=30000);expect(machine.locator('section[data-source=codex]')).to_contain_text('75%');expect(machine.locator('section[data-source=agy]')).to_contain_text('85%')
+            (root/'fail').touch();page.get_by_role('button',name='刷新').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('查询失败',timeout=30000);expect(machine.locator('section[data-source=codex]')).to_contain_text('75%');expect(machine.locator('section[data-source=agy]')).to_contain_text('85%')
             page.screenshot(path=str(out/'query-failure.png'),full_page=True)
             # A node transport failure leaves its displayed snapshot in place.
             page.route('**/api/quotas/refresh',lambda route:route.fulfill(status=503,body='offline') if (root/'ids/node-id').read_text().strip() in route.request.url else route.continue_())
-            page.get_by_role('button',name='刷新额度').click();expect(page.locator('#quota-status')).to_contain_text('1 台机器读取失败');expect(machine.locator('section[data-source=codex]')).to_contain_text('75%')
+            page.get_by_role('button',name='刷新').click();expect(page.locator('#quota-status')).to_contain_text('1 台读取失败');expect(machine.locator('section[data-source=codex]')).to_contain_text('75%')
+            machine.get_by_role('button',name='关闭',exact=True).click()
+            expect(machine).to_have_count(0)
+            expect(page.locator('#settings-dialog')).to_be_visible()
+            page.locator('#quota-open').click()
+            expect(machine.locator('section[data-source=claude]')).to_contain_text('87.5%')
+            page.keyboard.press('Escape')
+            expect(machine).to_have_count(0)
+            # Explicitly uninstalled clients stay hidden even with stale quota snapshots.
+            page.route('**/api/clients',lambda route:route.fulfill(json={'clients':[{'source':'codex','installed':True},{'source':'claude','installed':False},{'source':'agy','installed':False}]}))
+            page.locator('#quota-open').click()
+            expect(machine.get_by_role('table')).to_have_count(1)
+            expect(machine.get_by_role('table',name='Codex',exact=True)).to_be_visible()
+            page.screenshot(path=str(out/'installed-only.png'))
+            page.keyboard.press('Escape')
+            page.unroute('**/api/clients')
             page.goto(base+'/quotas.html');machine=page;expect(machine.locator('section[data-source=claude]')).to_contain_text('87.5%')
-            page.get_by_role('link',name='← 会话列表').click();expect(page.locator('#settings')).to_be_visible()
+            page.get_by_role('link',name='← 会话列表').click();expect(page.locator('#header-more-btn')).to_be_visible()
             assert not errors,errors
             context.close();browser.close()
     print('PASS quotas: Hub/local navigation, native structured queries, Claude wrapper, snapshots, failures, responsive themes')

@@ -240,13 +240,26 @@ async fn query(profile: &CliProfile) -> Result<Value, ()> {
                     _=>vec![("codex",&result["rateLimits"])],
                 };
                 let mut buckets=Vec::new();
+                let mut credit_rows=Vec::new();
                 for (id,limit) in limits {
+                    if limit["credits"].is_object() {
+                        let c=&limit["credits"];
+                        let remaining=if c["unlimited"]==true {json!("不限量")} else {c["balance"].clone()};
+                        credit_rows.push(json!({"id":format!("{id}:credits"),"group":format!("{} credits",limit["limitName"].as_str().unwrap_or(id)),"remaining_text":remaining}));
+                    }
                     for window in ["primary","secondary"] {
                         let b=&limit[window]; if !b.is_object() {continue}
                         buckets.push(bucket(&format!("{id}:{window}"),limit["limitName"].as_str().unwrap_or(id),b["windowDurationMins"].clone(),b["usedPercent"].as_f64().map(|v|100.-v),epoch(&b["resetsAt"])));
                     }
                 }
-                if buckets.is_empty() {return Err(())}
+                let resets=&result["rateLimitResetCredits"];
+                if buckets.is_empty() && credit_rows.is_empty() && !resets.is_object() {return Err(())}
+                if credit_rows.is_empty() {credit_rows.push(json!({"id":"credits","group":"Credits","remaining_text":null}));}
+                buckets.extend(credit_rows);
+                // The authoritative count can exceed the number of detail rows.
+                let expiry=resets["credits"].as_array().and_then(|rows|rows.iter()
+                    .filter(|c|c["status"]=="available").filter_map(|c|c["expiresAt"].as_i64()).min());
+                buckets.push(json!({"id":"reset-credits","group":"重置卡","remaining_text":resets["availableCount"].as_i64().map(|n|format!("{n} 张")),"expires_at":epoch(&json!(expiry))}));
                 return Ok(snapshot("codex",buckets));
             }
         }

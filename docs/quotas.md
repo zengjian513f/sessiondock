@@ -1,8 +1,10 @@
 # Agent 额度
 
-`quotas.html` 从设置 → 机器 → AI 客户端下方的 Agent 额度进入。
+设置 → 机器 → AI 客户端下方的 Agent 额度打开弹窗，关闭后保留设置页。
+独立入口 `quotas.html` 继续可用。只显示 `/api/clients` 确认已安装的客户端；
+未安装的机器行和空分组隐藏，缺失数据统一显示 `N/A`。
 Codex、Claude Code、Agy 各一个表格，复用客户端矩阵的表格样式；
-列为机器、额度组、窗口、剩余额度、下次重置、最后采集/状态。
+列为机器、额度组、窗口、剩余、重置/到期、采集；错误和过期说明放在悬停提示中。
 同一机器的多个窗口合并机器与采集时间单元格，三张表列宽一致；窄屏表格内部横向滚动。
 同一账号可能跨机器共享额度，页面不相加，也不根据相同百分比猜测账号身份。
 Agy 中的 Claude/GPT 组属于 Agy，与独立 Claude Code、Codex 分开。
@@ -16,7 +18,7 @@ Agy 中的 Claude/GPT 组属于 Agy，与独立 Claude Code、Codex 分开。
 - 复用 launcher profile 的 executable、固定参数与环境，清除会话身份环境变量；工作目录为临时目录。
   CLI 查询最长 25 秒，结束或取消时回收子进程。stderr 与原始认证错误不返回网页。
 - 快照只存归一化额度字段，原子写入，文件权限 0600。不采集账号凭据、邮件、会话正文。
-  没有配置 state dir 或 profile 时显示未配置，缺字段显示未知。
+  没有快照或缺字段显示 N/A。
 - 查询失败保留旧快照并标记失败；重置时间经过不推断额度变成 100%。
   时间按浏览器本地时区显示。页面重载只读取快照，点击刷新才主动查询。
 
@@ -46,10 +48,15 @@ CLI 调用 `sessiondock quota-statusline STATE_DIRECTORY` 时先保存额度，�
 传给原 command，原 stdout 原样输出；没有原 command 时无输出。采集不读取凭据文件。
 原命令最多等待 10 秒。Windows 的安装命令需另行适配 shell quoting；当前安装支持 POSIX。
 恢复时还原 settings 备份即可，不影响会话数据。现有 Claude 会话是否即时重载 settings
-由 CLI 控制；尚未收到回调时页面明确显示等待快照。
+由 CLI 控制；尚未收到回调时页面显示 N/A。
 
 ## 验收
 
 `python3 tests/quotas_browser.py`：真实隔离 Node/Hub 与合成 CLI，点击设置入口、刷新、返回；
 验证 Codex 握手/多桶、Agy 零回合 JSON、Claude wrapper 原输出及字段过滤，
 缺字段/零额度/已过重置时间、失败保留快照、宽窄屏和明暗主题。
+
+Codex 同时展示结构化 credits 余额与重置卡：数量取 availableCount，
+到期时间取已返回的可用卡片中最近的一次，不用明细条数推算总数，不提供兑换操作。
+Claude statusline 尚无 Usage credits 余额，显示 N/A。
+接口依据：[Codex App Server](https://learn.chatgpt.com/docs/app-server)。
