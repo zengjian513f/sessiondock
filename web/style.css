@@ -1137,6 +1137,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 }
 .session-menu-action .ui-icon { flex: none; }
 .session-menu-action[data-report-bug][hidden] { display: none; }
+#a-clone-group[hidden] { display: none; }
 .session-menu-action:hover, .session-menu-action:focus-visible { background: var(--hover); }
 .session-menu-action.on { background: var(--sel); }
 .session-menu-action.star-toggle.on { color: var(--star); }

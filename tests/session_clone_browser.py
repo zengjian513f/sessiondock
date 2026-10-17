@@ -10,6 +10,7 @@ from contextlib import ExitStack
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -218,44 +219,67 @@ def main():
                         page.locator(f'#side .item[data-uid="{selected}"]').click()
                         expect(page.locator('#a-clone-group svg use')).to_have_attribute('href','#i-transfer')
                         expect(page.locator('#a-clone-group')).to_have_attribute('aria-label','迁移会话树')
-                        # Native title hints must retain input guards without a
-                        # custom overlay, modal or clone-plan request.
+                        # Running sessions keep their green/blue status but never
+                        # offer migration in either header or row menus.
                         plans=[]
                         page.on('request',lambda r:plans.append(r.url) if r.url.endswith('/api/session/clone/plan') else None)
-                        running={'value':True}
+                        running={'value':True, 'managed':False}
                         def live_reply(route):
                             response=route.fetch()
                             data=response.json();data['uids']=[selected] if running['value'] else []
+                            data['tmux_uids']=[selected] if running['value'] and running['managed'] else []
                             route.fulfill(response=response,json=data)
                         page.route('**/api/live*',live_reply)
-                        page.evaluate('async () => await pollLive(true)')
                         action=page.locator('#a-clone-group')
-                        expect(action).to_have_attribute('aria-disabled','true')
-                        if not action.is_visible():page.locator('#a-more').click()
-                        action.hover()
-                        tip=page.locator('#control-unavailable-tooltip')
-                        expect(action).to_have_attribute('title','会话正在运行，请先停止后再迁移会话树。')
-                        expect(tip).to_have_count(0)
-                        assert float(action.evaluate("b => getComputedStyle(b).opacity"))==.55
-                        page.mouse.move(0,0)
-                        action.hover()
-                        expect(tip).to_have_count(0)
-                        action.click(force=True)
-                        expect(page.locator('dialog[open]')).to_have_count(0)
-                        action.focus();page.keyboard.press('Enter');expect(tip).to_have_count(0)
-                        page.keyboard.press('Escape');expect(tip).to_have_count(0)
-                        page.locator(f'#side .item[data-uid="{selected}"]').click(button='right')
                         menu_action=page.locator('#item-menu [data-act="clone"]')
-                        expect(menu_action).to_have_attribute('aria-disabled','true')
-                        menu_action.hover();assert '正在运行' in menu_action.get_attribute('title')
-                        menu_action.tap(force=True);expect(tip).to_have_count(0)
-                        assert not plans,'running action must not open a plan'
+                        tip=page.locator('#control-unavailable-tooltip')
+                        shots=Path('target/green-transfer-review');shots.mkdir(parents=True,exist_ok=True)
+                        for width in (1280,390):
+                            page.set_viewport_size({'width':width,'height':900})
+                            if width==390:page.evaluate('showMobileDetail()')
+                            for theme in ('light','dark'):
+                                page.emulate_media(color_scheme=theme)
+                                expect(page.locator('html')).to_have_attribute('data-theme',theme)
+                                page.evaluate('async () => await pollLive(true)')
+                                expect(page.locator('#dlive')).to_have_class(re.compile(r'\bvisible\b'))
+                                expect(action).to_have_attribute('hidden','')
+                                expect(action).to_be_hidden()
+                                page.locator('#a-more').click()
+                                expect(action).to_be_hidden()
+                                page.screenshot(path=str(shots/f'running-header-{width}-{theme}.png'))
+                                page.keyboard.press('Escape')
+                                if width==390:page.locator('.mobile-back').click()
+                                row=page.locator(f'#side .item[data-uid="{selected}"]')
+                                if width==390:
+                                    touch=context.new_cdp_session(page)
+                                    touch.send('Input.dispatchTouchEvent',{'type':'touchStart','touchPoints':[{'x':100,'y':row.bounding_box()['y']+20}]})
+                                    expect(page.locator('#item-menu')).to_be_visible()
+                                    touch.send('Input.dispatchTouchEvent',{'type':'touchEnd','touchPoints':[]})
+                                    touch.detach()
+                                else:row.click(button='right')
+                                expect(menu_action).to_have_attribute('hidden','')
+                                expect(menu_action).to_be_hidden()
+                                page.screenshot(path=str(shots/f'running-sidebar-{width}-{theme}.png'))
+                                page.keyboard.press('Escape')
+                                if width==390:
+                                    row.tap()
+                                    if not page.locator('body').evaluate("body => body.classList.contains('mobile-detail')"):
+                                        row.tap()
+                                    expect(page.locator('#a-more')).to_be_visible()
+                        running['managed']=True
+                        page.evaluate('async () => await pollLive(true)')
+                        expect(action).to_be_hidden()
+                        assert not plans,'running session must not open a migration plan'
                         running['value']=False
                         page.evaluate('async () => await pollLive(true)')
+                        expect(action).not_to_have_attribute('hidden','')
                         expect(action).not_to_have_attribute('aria-disabled','true')
                         expect(action).to_have_attribute('title','迁移会话树')
+                        page.set_viewport_size({'width':1280,'height':900})
+                        page.emulate_media(color_scheme='light')
+                        page.locator(f'#side .item[data-uid="{selected}"]').click(button='right')
+                        expect(menu_action).to_be_visible()
                         expect(menu_action).not_to_have_attribute('aria-disabled','true')
-                        expect(tip).to_have_count(0)
                         page.keyboard.press('Escape')
                         # Offline machines and empty agent-type filters use the
                         # same native hint; no toggle/solo action or alert is sent.
@@ -278,7 +302,7 @@ def main():
                         page.keyboard.press('Escape');expect(tip).to_have_count(0)
                         page.evaluate("id => {Nodes.list.find(n=>n.id===id).online=true; renderNodes();}",destination_node.nid)
                         expect(machine).not_to_have_attribute('aria-disabled','true')
-                        print('PASS native title hints without custom overlays: running action/menu, offline machine, empty agent; hover/touch/keyboard and live recovery',flush=True)
+                        print('PASS running green/blue sessions hide header and sidebar migration; desktop/mobile light/dark, long press, stopped recovery, offline/empty native hints',flush=True)
 
                         # Both a flat toolbar and its overflow menu use the same
                         # icon + managed label, never a naked wrapping text node.
