@@ -6,7 +6,7 @@ This file is produced by `tests/error_codes.py`. Handlers return JSON `{"error":
 python3 tests/error_codes.py --write
 ```
 
-Scanned `crates/sessiondock/src`: **207** (status, code) pairs.
+Scanned `crates/sessiondock/src`: **208** (status, code) pairs.
 
 ## 400 Bad Request
 
@@ -29,11 +29,11 @@ Scanned `crates/sessiondock/src`: **207** (status, code) pairs.
 
 ### `codex_sdk_empty`
 
-- 消息内容为空 — [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `turn` L145 → `POST /api/codex-sdk/turn`
+- 消息内容为空 — [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `turn` L166 → `POST /api/codex-sdk/turn`
 
 ### `codex_sdk_unsupported`
 
-- SDK 模式只支持 Codex 主会话 — [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `thread_id` L60
+- SDK 模式只支持 Codex 主会话 — [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `thread_id` L75
 
 ### `create_cwd_failed`
 
@@ -518,11 +518,15 @@ Scanned `crates/sessiondock/src`: **207** (status, code) pairs.
 
 ### `codex_sdk_idle`
 
-- (dynamic) — [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `rpc` L47
+- (dynamic) — [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `rpc` L59
 
 ### `codex_sdk_request_gone`
 
-- (dynamic) — [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `rpc` L49
+- (dynamic) — [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `rpc` L61
+
+### `codex_sdk_thread_busy`
+
+- 该会话正被另一个独立运行的 Codex 进程占用（不是通过共享 app-server 启动的终端）；请先退出它，或在终端里重新接管该会话。 — [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `rpc` L51
 
 ### `draft_revision`
 
@@ -1419,7 +1423,7 @@ Scanned `crates/sessiondock/src`: **207** (status, code) pairs.
 
 ### `codex_sdk_unavailable`
 
-- (dynamic) — [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `rpc` L39
+- (dynamic) — [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `rpc` L38
 
 ### `conversation_send`
 

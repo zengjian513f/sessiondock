@@ -10,13 +10,13 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 214 files, 89243 lines, 7 undocumented.
+`crates/sessiondock/src`: 214 files, 89500 lines, 7 undocumented.
 
 - `api/`
   - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines)
   - `bug_report.rs` — `POST /api/bug-report`, `POST /api/bug-report/capture` and the (794 lines)
   - `cleanup.rs` — (no module doc) (30 lines)
-  - `codex_sdk.rs` — HTTP transport for the Codex SDK mode (docs/codex-sdk.md). Handlers only (191 lines)
+  - `codex_sdk.rs` — HTTP transport for the Codex SDK mode (docs/codex-sdk.md). Handlers only (223 lines)
   - `conversation.rs` — Thin HTTP transport for server-owned conversation drafts, staging and one-shot SEND. (704 lines)
   - `events.rs` — Node UI invalidations share one cached observer. (37 lines)
   - `files.rs` — File transport. Every request resolves the selected session; opening a (522 lines)
@@ -73,9 +73,9 @@ python3 tests/module_map.py --write
   - `worker.rs` — The bug-report worker. (466 lines)
 - `cleanup.rs` — Periodic cleanup counts only: no candidate identities, rows, or disk state. (133 lines)
 - `codex_sdk/`
-  - `connection.rs` — One WebSocket JSON-RPC connection over the app-server's Unix control (282 lines)
-  - `live.rs` — Per-thread live state: the daemon's view of one loaded thread as this (240 lines)
-  - `mod.rs` — Codex SDK mode: one JSON-RPC connection from this node to the shared Codex (324 lines)
+  - `connection.rs` — One WebSocket JSON-RPC connection over the app-server's Unix control (317 lines)
+  - `live.rs` — Per-thread live state: the daemon's view of one loaded thread as this (256 lines)
+  - `mod.rs` — Codex SDK mode: one JSON-RPC connection from this node to the shared Codex (467 lines)
     - mods: `connection`, `live`
 - `config.rs` — SessionDock configuration. Paths come from explicit environment variables; (705 lines)
 - `conversation/`
@@ -126,13 +126,13 @@ python3 tests/module_map.py --write
 - `hub_config.rs` — Configuration of the `sessiondock-hub` binary. Separate from (131 lines)
 - `integrations.rs` — Optional browser integrations shared by nodes and the Hub. (37 lines)
 - `json_compat.rs` — JSON truthiness and `urllib.parse.unquote`, shared by call sites that had (69 lines)
-- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (646 lines)
+- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (651 lines)
   - mods: `api`, `assets`, `audit`, `bridge`, `bug_report`, `cleanup`, `codex_sdk`, `config`, `conversation`, `delivery`, `error`, `files`, `fingerprint`, `hub`, `hub_config`, `integrations`, `json_compat`, `lifecycle`, `list_sync`, `log`, `media`, `metadata`, `native_replay`, `observe`, `polls`, `quota_statusline`, `quotas`, `runtime`, `search`, `security`, `sessions`, `shell_env`, `state`, `terminal`, `transfer`, `trash`, `ui_events`, `session_links`
 - `lifecycle/`
   - `agy_delete.rs` — Native deletion through Agy's own resume picker. No native SQLite writes. (206 lines)
   - `autobind.rs` — Process-evidence binding of pending Codex/Grok launches. (326 lines)
   - `clients.rs` — Installed agent CLI versions and manual updates for the machine settings. (597 lines)
-  - `launcher.rs` — Configured adapters and one-authority process spawn. No discovery, (1253 lines)
+  - `launcher.rs` — Configured adapters and one-authority process spawn. No discovery, (1279 lines)
   - `mod.rs` — Isolated durable process-creation intent. No launcher or native-session binding. (10 lines)
     - mods: `autobind`, `clients`, `launcher`, `model`, `models`, `service`, `store`, `agy_delete`
   - `model.rs` — Private creation-intent types: `LaunchSpec`, `Record`, and `BindingSpec`. (631 lines)

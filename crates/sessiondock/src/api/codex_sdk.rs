@@ -43,6 +43,16 @@ fn rpc(error: RpcError) -> ApiError {
         RpcError::Disconnected => {
             ApiError::new(StatusCode::BAD_GATEWAY, "codex_sdk_disconnected", message)
         }
+        // The rollout's single-writer lock: another runtime (a terminal that
+        // did not join the shared daemon) owns this thread.
+        RpcError::Remote {
+            message: ref remote,
+            ..
+        } if remote.contains("active writer") => ApiError::new(
+            StatusCode::CONFLICT,
+            "codex_sdk_thread_busy",
+            "该会话正被另一个独立运行的 Codex 进程占用（不是通过共享 app-server 启动的终端）；请先退出它，或在终端里重新接管该会话。",
+        ),
         RpcError::Remote { .. } => {
             ApiError::new(StatusCode::BAD_GATEWAY, "codex_sdk_rejected", message)
         }

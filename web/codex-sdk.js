@@ -317,9 +317,6 @@ const CodexSdkView = {
       ? `上下文 ${Math.min(100, Math.round(used / window * 100))}%` : '';
     const status = this.summary?.status || {};
     const parts = [];
-    if (S.live.has(this.uid)) {
-      parts.push('该会话的 CLI 进程仍在运行。SessionDock 启动的终端使用独立运行时，与 SDK 同时发送会形成两份上下文；建议先在终端退出 Codex。');
-    }
     if (this.summary?.last_error?.message) parts.push(`错误：${this.summary.last_error.message}`);
     if (status.type === 'systemError') parts.push('Codex 报告系统错误。');
     else if (status.activeFlags?.includes('waitingOnApproval')) parts.push('等待批准。');
@@ -358,12 +355,6 @@ const CodexSdkView = {
     const input = this.input;
     const text = input?.value || '';
     if (!text.trim()) return;
-    if (S.live.has(this.uid) && !this.turn && !this.confirmedLive) {
-      const ok = await appConfirm('该会话的 CLI 进程仍在运行，SDK 将在另一个运行时继续同一会话。仍然发送？',
-        {ok: '仍然发送'});
-      if (!ok) return;
-      this.confirmedLive = this.uid;
-    }
     const button = this.pane.querySelector('#sdk-send');
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');

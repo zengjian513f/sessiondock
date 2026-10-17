@@ -418,11 +418,49 @@ def main():
                     expect(page.locator(receipt_row)).to_have_count(0)
                     assert not errors, errors
                     context.close()
+
+                # ---- With a shared Codex app-server (docs/codex-sdk.md) a resumed
+                # Codex terminal joins it: `--remote` names the socket and `-C`
+                # keeps the session's directory, which the daemon would otherwise
+                # replace with its own. The scripted daemon only has to accept the
+                # reachability check; a TUI never starts one it was told to join.
+                from codex_sdk_fixtures import FakeAppServer
+                (root / "host-remote").mkdir(mode=0o700)
+                remote_configuration = root / "launcher-remote.json"
+                remote_configuration.touch(mode=0o600)
+                remote_configuration.write_text(json.dumps({**launcher, "host_dir": str(root / "host-remote")}))
+                initialized = subprocess.run([str(BINARY), "--initialize-lifecycle", str(root / "ledger-remote")],
+                    cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
+                assert initialized.returncode == 0, initialized.stderr.decode()
+                app_socket = root / "app.sock"
+                with FakeAppServer(app_socket, None, CODEX_SID):
+                    with isolated_server(corpus, server_wrapper, host_dir=root / "host-remote", lifecycle_dir=root / "ledger-remote",
+                                         launcher_config=remote_configuration,
+                                         extra_env={"SESSIONDOCK_CODEX_APP_SERVER": str(app_socket)}) as (base, _):
+                        errors = []
+                        context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+                        context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
+                        page = context.new_page()
+                        page.on("pageerror", lambda error: errors.append(str(error)))
+                        on_popup(page, lambda dialog: dialog.accept())
+                        page.goto(base, wait_until="networkidle")
+                        page.get_by_role("button", name="时间轴", exact=True).click()
+                        page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
+                        expect(page.locator("#a-term")).to_have_attribute("data-unavailable", "false")
+                        page.locator("#a-term").click()
+                        expect(page.locator("#termpane")).to_be_visible()
+                        page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+                        xterm_includes(page, argv_lines("CODEX", ["--enable", "default_mode_request_user_input", "-c",
+                            "suppress_unstable_features_warning=true", "resume", CODEX_SID,
+                            "-c", "check_for_update_on_startup=false",
+                            "--remote", f"unix://{app_socket}", "-C", str(root / "work/codex-area")]))
+                        assert not errors, errors
+                        context.close()
             finally:
                 browser.close()
                 # Cleanup only explicitly created instances in this private
                 # fixture, protected by their full immutable launch envelope.
-                for path in list((root / "host").glob("*.json")) + list((root / "host-stale").glob("*.json")):
+                for path in list((root / "host").glob("*.json")) + list((root / "host-stale").glob("*.json")) + list((root / "host-remote").glob("*.json")):
                     record = json.loads(path.read_text())
                     meta = record["meta"]
                     try:
@@ -435,7 +473,7 @@ def main():
                     except OSError:
                         pass
                 deadline = time.monotonic() + 6
-                while (list((root / "host").glob("*.sock")) or list((root / "host-stale").glob("*.sock"))) \
+                while (list((root / "host").glob("*.sock")) or list((root / "host-stale").glob("*.sock")) or list((root / "host-remote").glob("*.sock"))) \
                         and time.monotonic() < deadline:
                     time.sleep(.05)
     print("PASS lifecycle CLI browser: Claude profile --session-id echoed in pending console (desktop+mobile), "

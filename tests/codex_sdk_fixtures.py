@@ -68,7 +68,10 @@ class FakeAppServer:
 
     # ------------------------------------------------------------ transport
     async def _client(self, reader, writer):
-        head = await reader.readuntil(b"\r\n\r\n")
+        try:
+            head = await reader.readuntil(b"\r\n\r\n")
+        except (asyncio.IncompleteReadError, ConnectionError):
+            return  # A reachability probe connects and leaves.
         key = ""
         for line in head.decode("latin1").split("\r\n"):
             if line.lower().startswith("sec-websocket-key:"):

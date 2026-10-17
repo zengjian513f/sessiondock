@@ -39,13 +39,33 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
 
 ### Terminal coexistence
 
-Two clients share one live thread only when both use the same app-server.
-SessionDock-managed Codex terminals are launched with `-c` overrides, which
-makes Codex 0.163 run an in-process runtime instead of the shared daemon. While
-such a CLI process is alive (`S.live`), the SDK view shows a persistent notice
-and asks for confirmation before the first new turn; it does not block the
-send. A TUI started as plain `codex` / `codex resume` (or with
-`--remote unix://`) shares the daemon and sees SDK turns live.
+Two clients share one live thread only when both use the same app-server, and
+Codex 0.163 gives each of these a different runtime: a plain `codex` /
+`codex resume` joins the shared daemon, but any `-c` override makes it run an
+in-process runtime that nobody else can reach (and that holds the rollout's
+writer lock, so the daemon answers `already has an active writer`).
+
+SessionDock-launched Codex terminals therefore join the daemon: the launcher
+appends `--remote unix://` (`unix://<path>` for an explicit endpoint) and
+`-C <launch directory>` after its existing arguments, for new, resume and
+report-worker launches ([lifecycle-launcher.md](lifecycle-launcher.md)). Verified
+on 0.163.0: `-m` and `-c model_reasoning_effort` still apply under `--remote`;
+without `-C` the daemon starts the thread in *its own* directory, so `-C` is
+required; a TUI told to `--remote` never starts a daemon and exits with a
+connection error when none runs, so before each Codex launch the launcher
+connects, else runs `codex app-server daemon start` (bounded 30 s) and, if the
+daemon still is not reachable, launches the old way without `--remote`.
+
+The default endpoint applies only when the configured Codex sessions root's
+parent is the `CODEX_HOME` the CLI itself resolves (`$CODEX_HOME`, else
+`~/.codex`); an isolated home (tests, other roots) is never joined. Only
+terminals started after this change share; an already running terminal keeps
+its own runtime until it is restarted, and the SDK view reports
+`409 codex_sdk_thread_busy` ("正被另一个独立运行的 Codex 进程占用") if such a
+process holds the thread. Consequences of a shared daemon: commands the agent
+runs inherit the *daemon's* environment (the one SessionDock or the first TUI
+had when it started the daemon), not each terminal's; and restarting or
+updating the daemon ends every attached terminal.
 
 ## HTTP
 
@@ -65,7 +85,8 @@ always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 | GET `/api/codex-sdk/models?uid=` | `model/list` (cached 5 minutes per node) |
 
 Errors: `503 codex_sdk_unavailable` (socket unreachable / start failed),
-`502 codex_sdk_disconnected` (connection lost or 120 s timeout; the call may
+`409 codex_sdk_thread_busy` (the rollout's writer lock is held by an independent
+runtime), `502 codex_sdk_disconnected` (connection lost or 120 s timeout; the call may
 have run), `502 codex_sdk_rejected` (JSON-RPC error from the app-server, its
 message forwarded).
 
@@ -113,8 +134,7 @@ client of the daemon).
   (steer). 停止 interrupts. Model and effort selectors come from `model/list`;
   an empty choice keeps the thread's current setting, a choice applies to the
   started turn and, per app-server semantics, to later turns.
-- The status line shows the live-terminal notice, the last turn error, the
-  waiting state and context usage (`last.totalTokens / modelContextWindow`).
+- The status line shows the last turn error, the waiting state and context usage (`last.totalTokens / modelContextWindow`).
 
 ## Not yet covered
 

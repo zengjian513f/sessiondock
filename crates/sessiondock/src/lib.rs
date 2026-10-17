@@ -106,8 +106,13 @@ pub async fn prepare_app(
         config.validate()?;
         let launcher = match (&config.lifecycle_dir, &config.launcher_config) {
             (Some(_), Some(path)) => {
-                let launcher = lifecycle::launcher::read_config(path).map_err(io::Error::other)?;
+                let mut launcher = lifecycle::launcher::read_config(path).map_err(io::Error::other)?;
                 config.validate_launcher(&launcher)?;
+                launcher.codex_remote = codex_sdk::Endpoint::from_config(
+                    config.codex_app_server.as_deref(),
+                    config.roots.codex.as_deref(),
+                )
+                .and_then(|endpoint| endpoint.tui_remote());
                 Some(launcher)
             }
             (None, None) => None,

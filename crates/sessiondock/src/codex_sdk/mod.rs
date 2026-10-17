@@ -39,6 +39,76 @@ pub struct Endpoint {
     pub socket: PathBuf,
     /// `CODEX_HOME` for `codex app-server daemon start`; `None` never starts.
     pub autostart_home: Option<PathBuf>,
+    /// The socket was named by `SESSIONDOCK_CODEX_APP_SERVER`.
+    pub explicit: bool,
+}
+
+/// How a SessionDock-launched Codex TUI joins the shared daemon (`codex
+/// --remote …`), so a terminal and the SDK view drive one live thread
+/// instead of two runtimes fighting over the rollout's writer lock.
+#[derive(Clone, Debug)]
+pub struct TuiRemote {
+    /// Value of `--remote`: `unix://` (the default control socket of the
+    /// TUI's own `CODEX_HOME`) or `unix://<path>` for an explicit socket.
+    pub arg: String,
+    pub socket: PathBuf,
+    /// `CODEX_HOME` the daemon is started in; `None` never starts one.
+    pub home: Option<PathBuf>,
+}
+
+impl TuiRemote {
+    /// Make the daemon reachable before a launch: connect, else start it once
+    /// (`codex app-server daemon start`, idempotent) and wait for the socket.
+    /// Blocking and bounded; `false` means launch the TUI the old way rather
+    /// than fail the launch. A TUI given `--remote` does not start the daemon
+    /// itself and exits with a connection error when none runs.
+    pub fn ensure(&self, codex: &std::path::Path) -> bool {
+        #[cfg(unix)]
+        {
+            use std::{os::unix::net::UnixStream, process::Stdio};
+            let reachable = || UnixStream::connect(&self.socket).is_ok();
+            if reachable() {
+                return true;
+            }
+            let Some(home) = &self.home else {
+                return false;
+            };
+            let Ok(mut child) = std::process::Command::new(codex)
+                .args(["app-server", "daemon", "start"])
+                .env("CODEX_HOME", home)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            else {
+                return false;
+            };
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let started = loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break status.success(),
+                    Ok(None) if Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    _ => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break false;
+                    }
+                }
+            };
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while started && !reachable() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            started && reachable()
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = codex;
+            false
+        }
+    }
 }
 
 impl Endpoint {
@@ -57,6 +127,7 @@ impl Endpoint {
             Some(value) => Some(Self {
                 socket: PathBuf::from(value.strip_prefix("unix://").unwrap_or(value)),
                 autostart_home: None,
+                explicit: true,
             }),
             None => {
                 let home = codex_root?.parent()?.to_path_buf();
@@ -65,9 +136,40 @@ impl Endpoint {
                         .join("app-server-control")
                         .join("app-server-control.sock"),
                     autostart_home: Some(home),
+                    explicit: false,
                 })
             }
         }
+    }
+}
+
+impl Endpoint {
+    /// The TUI's view of this endpoint. A default endpoint applies only when
+    /// it is the `CODEX_HOME` the CLI itself resolves (`$CODEX_HOME`, else
+    /// `~/.codex`): `--remote unix://` finds its socket there, so a different
+    /// configured sessions root (an isolated or test home) must not be joined.
+    pub fn tui_remote(&self) -> Option<TuiRemote> {
+        if self.explicit {
+            return Some(TuiRemote {
+                arg: format!("unix://{}", self.socket.display()),
+                socket: self.socket.clone(),
+                home: None,
+            });
+        }
+        let home = self.autostart_home.as_ref()?;
+        let own = std::env::var_os("CODEX_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))?;
+        let same = match (home.canonicalize(), own.canonicalize()) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => home == &own,
+        };
+        same.then(|| TuiRemote {
+            arg: "unix://".to_string(),
+            socket: self.socket.clone(),
+            home: Some(home.clone()),
+        })
     }
 }
 
