@@ -149,6 +149,25 @@ is an intentional extension beyond the frozen Python oracle, whose lineage
 reads no `promptId` and treats such an input as an unanswered sibling. The batch-35 lineage notes (missing
 ancestor, cycle, missing declared leaf) are unchanged and non-fatal.
 
+**Explicit Claude rewinds (DELTA, BUG-20261017-072946-4cbf80).** Claude 2.1.302
+writes `last-prompt` with `explicit: true` when persisting a rewind. This is a
+confirmed native boundary: off-chain interrupted inputs at or before it, and
+their tools/results, no longer belong to the conversation. The marker can be
+flushed after a replacement input and followed by an ordinary `last-prompt`
+selecting that input; the boundary survives that later leaf selection. Inputs
+on the active chain remain visible, as do ordinary interrupted siblings written
+after the boundary. An explicit all-zero UUID leaf means an empty conversation,
+not a missing ancestor. Routine `last-prompt` records retain the existing rules.
+The incident's first rewind-specific divergence was the 07:28:54 UTC native
+append: the replacement input branched from the startup hook and an explicit
+empty-leaf marker was present, yet the view retained the old interrupted turn.
+Browser SSE application succeeded; lifecycle receipts confirmed the original
+instance was later stopped and resumed, and no delivery directory existed.
+No native files or production ledgers were changed during diagnosis.
+[claude_explicit_rewind_browser.py](../tests/claude_explicit_rewind_browser.py)
+covers live resets, reload, search, first/later-input rewinds, delayed markers,
+empty history and later ordinary interruptions using synthetic native records.
+
 **Codex rollout rotation.** Codex 0.156.1 can keep a native thread ID while
 starting a new physical rollout whose `history_base.thread_id` is that same
 ID. The new header's ordinal equals `end_ordinal_exclusive`. These explicit
