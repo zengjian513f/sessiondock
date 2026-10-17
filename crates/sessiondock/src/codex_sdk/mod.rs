@@ -296,6 +296,32 @@ impl CodexSdk {
         connection.reply(id, result)
     }
 
+    /// `account/rateLimits/read`: the 5 h / weekly windows, credits and the
+    /// earned reset cards. Account-wide, so it needs no thread.
+    pub async fn rate_limits(&self) -> Result<Value, RpcError> {
+        let connection = self.inner.connection().await?;
+        connection
+            .request("account/rateLimits/read", json!({}))
+            .await
+    }
+
+    /// `account/rateLimitResetCredit/consume` for one chosen card. The caller's
+    /// `idempotency_key` makes a retried redemption of the same attempt safe.
+    pub async fn consume_reset(
+        &self,
+        credit_id: Option<&str>,
+        idempotency_key: &str,
+    ) -> Result<Value, RpcError> {
+        let connection = self.inner.connection().await?;
+        let mut params = json!({"idempotencyKey": idempotency_key});
+        if let Some(id) = credit_id.filter(|id| !id.is_empty()) {
+            params["creditId"] = json!(id);
+        }
+        connection
+            .request("account/rateLimitResetCredit/consume", params)
+            .await
+    }
+
     pub async fn models(&self) -> Result<Value, RpcError> {
         if let Some((at, value)) = self.inner.models.lock().expect("models").clone()
             && at.elapsed() < MODEL_CACHE
@@ -366,6 +392,19 @@ impl Inner {
     /// live state and fan out under the same lock.
     pub(crate) fn notify(&self, method: &str, params: Value) {
         let Some(thread_id) = thread_of(&params) else {
+            // Account-wide limit changes reach every attached page.
+            if method == "account/rateLimits/updated" {
+                let threads: Vec<_> = self
+                    .threads
+                    .lock()
+                    .expect("threads")
+                    .values()
+                    .cloned()
+                    .collect();
+                for thread in threads {
+                    thread.apply(method, params.clone());
+                }
+            }
             return;
         };
         let thread = self

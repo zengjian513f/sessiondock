@@ -29,7 +29,10 @@ Scanned `crates/sessiondock/src`: **208** (status, code) pairs.
 
 ### `codex_sdk_empty`
 
-- 消息内容为空 — [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `turn` L166 → `POST /api/codex-sdk/turn`
+- 消息内容为空
+- 缺少兑换幂等键
+- [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `reset_credit` L239 → `POST /api/codex-sdk/reset-credit`
+- [`api/codex_sdk.rs`](../crates/sessiondock/src/api/codex_sdk.rs) `turn` L166 → `POST /api/codex-sdk/turn`
 
 ### `codex_sdk_unsupported`
 
@@ -443,8 +446,8 @@ Scanned `crates/sessiondock/src`: **208** (status, code) pairs.
 
 - node listener serves /api only
 - API route not found
-- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `node_not_found` L423
-- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `not_found` L431 → `ANY (fallback)`
+- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `node_not_found` L425
+- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `not_found` L433 → `ANY (fallback)`
 
 ### `session_error`
 

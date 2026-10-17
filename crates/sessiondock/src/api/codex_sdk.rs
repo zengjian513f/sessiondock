@@ -211,6 +211,48 @@ pub async fn respond(
     Ok(Json(json!({"ok": true})))
 }
 
+pub async fn limits(
+    State(state): State<AppState>,
+    Query(query): Query<Target>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    let _ = &query.uid;
+    let value = sdk.rate_limits().await.map_err(rpc)?;
+    Ok(Json(json!({"ok": true, "raw": value})))
+}
+
+#[derive(Deserialize)]
+pub struct Redeem {
+    #[allow(dead_code)]
+    uid: String,
+    #[serde(default)]
+    credit_id: Option<String>,
+    idempotency_key: String,
+}
+
+pub async fn reset_credit(
+    State(state): State<AppState>,
+    Json(body): Json<Redeem>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    if body.idempotency_key.trim().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "codex_sdk_empty",
+            "缺少兑换幂等键",
+        ));
+    }
+    let outcome = sdk
+        .consume_reset(body.credit_id.as_deref(), &body.idempotency_key)
+        .await
+        .map_err(rpc)?;
+    // The daemon says to read the windows again instead of inferring them.
+    let limits = sdk.rate_limits().await.map_err(rpc)?;
+    Ok(Json(
+        json!({"ok": true, "raw": {"outcome": outcome, "limits": limits}}),
+    ))
+}
+
 pub async fn models(
     State(state): State<AppState>,
     Query(query): Query<Target>,

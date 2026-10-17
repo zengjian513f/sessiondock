@@ -2520,7 +2520,19 @@ header .btn[data-session-docked] { display: none; }
 .sdk-options { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sdk-options .new-effort { flex: 0 1 180px; }
 .sdk-options .new-effort > select { height: 30px; font-size: 12.5px; }
-.sdk-usage { margin-left: auto; white-space: nowrap; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.sdk-gauges { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; min-width: 0; color: var(--muted); font-size: 12px; }
+.sdk-gauges:not(:has(> :not([hidden]))) { display: none; }
+.sdk-gauges [hidden] { display: none; }
+.sdk-gauge { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.sdk-gauge progress { width: 64px; height: 5px; accent-color: var(--accent); }
+.sdk-gauge b { min-width: 3ch; color: var(--text); font-weight: 600; }
+.sdk-gauge.low progress { accent-color: var(--danger); }
+.sdk-gauge.low b { color: var(--danger); }
+.sdk-credits { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text); }
+.sdk-reset { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; min-width: 0; }
+.sdk-reset .new-effort { flex: 0 1 220px; }
+.sdk-reset .new-effort > select { height: 28px; font-size: 12.5px; }
+.sdk-reset .btn { flex: none; white-space: nowrap; height: 28px; min-height: 28px; padding: 0 10px; }
 .sdk-request .mb pre { white-space: pre-wrap; word-break: break-word; }
 .sdk-request-title { font-weight: 600; }
 .sdk-request-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }

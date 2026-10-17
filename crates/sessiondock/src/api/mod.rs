@@ -271,6 +271,8 @@ pub fn router() -> Router<AppState> {
         .route("/codex-sdk/interrupt", post(codex_sdk::interrupt))
         .route("/codex-sdk/respond", post(codex_sdk::respond))
         .route("/codex-sdk/models", get(codex_sdk::models))
+        .route("/codex-sdk/limits", get(codex_sdk::limits))
+        .route("/codex-sdk/reset-credit", post(codex_sdk::reset_credit))
         .route("/live", get(runtime::live))
         .route("/shell-env", get(shell_env::status))
         .route("/shell-env/restart", post(shell_env::restart))

@@ -32,6 +32,11 @@ class FakeAppServer:
         self.clients = []
         self.turn = None
         self.request_seq = 0
+        self.used = {"primary": 40, "secondary": 25}
+        self.cards = [{"id": "card-a", "resetType": "codexRateLimits", "status": "available", "grantedAt": 1790000000,
+                       "expiresAt": 1800000000, "title": "Reset A", "description": "first"},
+                      {"id": "card-b", "resetType": "codexRateLimits", "status": "available", "grantedAt": 1790000001,
+                       "expiresAt": 1810000000, "title": "Reset B", "description": None}]
         self.waiting = {}           # server request id -> continuation
         self.thread = threading.Thread(target=self._run, daemon=True)
 
@@ -161,6 +166,16 @@ class FakeAppServer:
                 {"id": "fake-luna", "model": "fake-luna", "displayName": "Fake Luna", "hidden": False, "isDefault": False,
                  "supportedReasoningEfforts": [{"reasoningEffort": "medium", "description": "mid"}],
                  "defaultReasoningEffort": "medium"}], "nextCursor": None})
+        elif method == "account/rateLimits/read":
+            bucket = self._bucket()
+            await reply({"rateLimits": bucket, "rateLimitsByLimitId": {"codex": bucket},
+                         "rateLimitResetCredits": {"availableCount": len(self.cards), "credits": list(self.cards)}})
+        elif method == "account/rateLimitResetCredit/consume":
+            self.cards = [card for card in self.cards if card["id"] != params.get("creditId")]
+            self.used = {"primary": 0, "secondary": 0}
+            await reply({"outcome": "reset"})
+            for client in list(self.clients):
+                await self.send(client, {"method": "account/rateLimits/updated", "params": {"rateLimits": self._bucket()}})
         elif method == "turn/start":
             text = params["input"][0]["text"]
             turn_id = f"turn-{len(self.methods('turn/start'))}"
@@ -181,6 +196,12 @@ class FakeAppServer:
             await reply({"status": "unsubscribed"})
         else:
             await self.send(writer, {"id": mid, "error": {"code": -32601, "message": f"unknown {method}"}})
+
+    def _bucket(self):
+        return {"limitId": "codex", "limitName": None, "planType": "pro", "rateLimitReachedType": None,
+                "primary": {"usedPercent": self.used["primary"], "windowDurationMins": 300, "resetsAt": 1790500000},
+                "secondary": {"usedPercent": self.used["secondary"], "windowDurationMins": 10080, "resetsAt": 1791000000},
+                "credits": {"hasCredits": True, "unlimited": False, "balance": "1234.5"}}
 
     async def _user_item(self, turn_id, text, suffix="user"):
         item = {"type": "userMessage", "id": f"{turn_id}-{suffix}", "content": [{"type": "text", "text": text}]}

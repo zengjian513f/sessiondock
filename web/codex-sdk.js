@@ -9,6 +9,7 @@ const CodexSdkView = {
   box: null, history: null, live: null, notice: null, input: null,
   turn: null, items: new Map(), nodes: new Map(), requests: new Map(),
   summary: null, models: [], historyTimer: 0, snapshotReady: null,
+  limits: null, resetCards: null, redeemKeys: new Map(),
 
   available(uid, agent) {
     return SessionDockCapabilities.config.codex_sdk === true && !agent
@@ -35,7 +36,16 @@ const CodexSdkView = {
         <div class="sdk-options">
           <label class="new-effort sdk-model" title="模型"><span class="visually-hidden">模型</span><select id="sdk-model"><option value="">默认模型</option></select></label>
           <label class="new-effort sdk-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="sdk-effort"><option value="">默认强度</option></select></label>
-          <span class="sdk-usage"></span>
+        </div>
+        <div class="sdk-gauges" aria-label="用量">
+          <span class="sdk-gauge" data-gauge="5h" hidden></span>
+          <span class="sdk-gauge" data-gauge="7d" hidden></span>
+          <span class="sdk-gauge" data-gauge="context" hidden></span>
+          <span class="sdk-credits" hidden></span>
+          <span class="sdk-reset" hidden>
+            <label class="new-effort" title="可兑换的限额重置卡"><span class="visually-hidden">重置卡</span><select id="sdk-reset-card"></select></label>
+            <button class="btn" id="sdk-reset-use" type="button" title="兑换所选重置卡">兑换</button>
+          </span>
         </div>
         <div class="composer-row">
           <div class="composer-input-wrap"><textarea id="sdk-input" rows="1" enterkeyhint="enter" placeholder="通过 Codex SDK 发送"></textarea></div>
@@ -60,6 +70,7 @@ const CodexSdkView = {
     pane.querySelector('#sdk-send').onclick = () => this.send();
     pane.querySelector('#sdk-stop').onclick = () => this.interrupt();
     pane.querySelector('#sdk-model').onchange = () => this.paintEfforts();
+    pane.querySelector('#sdk-reset-use').onclick = () => this.redeem();
     this.setNotice('正在连接 Codex app-server…');
     this.start(generation);
   },
@@ -70,7 +81,7 @@ const CodexSdkView = {
     this.es = null;
     clearTimeout(this.historyTimer);
     this.items.clear(); this.nodes.clear(); this.requests.clear();
-    this.turn = null; this.summary = null;
+    this.turn = null; this.summary = null; this.limits = null; this.resetCards = null;
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
     this.uid = '';
   },
@@ -98,6 +109,7 @@ const CodexSdkView = {
     }
     if (!this.current(generation)) return;
     this.loadModels(generation);
+    this.loadLimits(generation);
     let ready;
     this.snapshotReady = new Promise(resolve => { ready = resolve; });
     const es = new EventSource(appUrl(`api/codex-sdk/events?${new URLSearchParams({uid})}`));
@@ -135,6 +147,138 @@ const CodexSdkView = {
       select.value = chosen;
       this.paintEfforts();
     } catch { /* 模型列表只影响选择器，发送仍使用会话当前设置 */ }
+  },
+
+  // ---------------------------------------------------------------- 用量
+  async loadLimits(generation = this.generation) {
+    try {
+      const response = await fetch(appUrl(`api/codex-sdk/limits?${new URLSearchParams({uid: this.uid})}`));
+      const data = await response.json();
+      if (!this.current(generation) || !data?.ok) return;
+      this.applyLimits(data.raw);
+    } catch { /* 用量条只是附加信息；读取失败时保持隐藏或上一次的值 */ }
+  },
+
+  applyLimits(raw) {
+    this.limits = raw?.rateLimitsByLimitId?.codex || raw?.rateLimits || null;
+    this.resetCards = raw?.rateLimitResetCredits || null;
+    this.paintGauges();
+  },
+
+  /** 窗口时长（分钟）→ 5h / 7d 等简称。 */
+  windowLabel(minutes) {
+    if (!Number.isFinite(minutes) || minutes <= 0) return '额度';
+    if (minutes === 300) return '5h';
+    if (minutes === 10080) return '7d';
+    if (minutes % 1440 === 0) return `${minutes / 1440}d`;
+    if (minutes % 60 === 0) return `${minutes / 60}h`;
+    return `${minutes}m`;
+  },
+
+  gauge(slot, label, remaining, title) {
+    const node = this.pane?.querySelector(`[data-gauge="${slot}"]`);
+    if (!node) return;
+    node.hidden = !Number.isFinite(remaining);
+    if (node.hidden) return;
+    const value = Math.max(0, Math.min(100, Math.round(remaining)));
+    node.classList.toggle('low', value <= 20);
+    node.title = title;
+    node.replaceChildren();
+    const name = document.createElement('span');
+    name.textContent = label;
+    const bar = document.createElement('progress');
+    bar.max = 100; bar.value = value;
+    bar.setAttribute('aria-label', `${label} 剩余 ${value}%`);
+    const text = document.createElement('b');
+    text.textContent = `${value}%`;
+    node.append(name, bar, text);
+  },
+
+  paintGauges() {
+    if (!this.pane) return;
+    const bucket = this.limits || {};
+    const windows = [bucket.primary, bucket.secondary].filter(window => window && Number.isFinite(window.usedPercent));
+    const slots = {'5h': null, '7d': null};
+    const others = [];
+    for (const window of windows) {
+      const label = this.windowLabel(window.windowDurationMins);
+      if (label in slots) slots[label] = window; else others.push(window);
+    }
+    // 官方窗口是 5h 与 7d；其它时长的窗口借用空闲的格子，不丢信息。
+    for (const window of others) {
+      const free = Object.keys(slots).find(key => !slots[key]);
+      if (free) slots[free] = window;
+    }
+    for (const [slot, window] of Object.entries(slots)) {
+      if (!window) { this.gauge(slot, slot, NaN, ''); continue; }
+      const label = this.windowLabel(window.windowDurationMins);
+      const reset = window.resetsAt ? `；${new Date(window.resetsAt * 1000).toLocaleString()} 重置` : '';
+      this.gauge(slot, label, 100 - window.usedPercent,
+        `${label} 窗口剩余 ${Math.round(100 - window.usedPercent)}%，已用 ${Math.round(window.usedPercent)}%${reset}`);
+    }
+    const usage = this.summary?.usage;
+    const size = usage?.modelContextWindow;
+    const used = usage?.last?.totalTokens ?? usage?.total?.totalTokens;
+    if (size && used != null) {
+      this.gauge('context', '上下文', 100 - used / size * 100,
+        `上下文剩余 ${Math.max(0, Math.round(100 - used / size * 100))}%（${used.toLocaleString()} / ${size.toLocaleString()} tokens）`);
+    } else this.gauge('context', '上下文', NaN, '');
+    const credits = bucket.credits;
+    const creditNode = this.pane.querySelector('.sdk-credits');
+    const balance = Number(credits?.balance);
+    creditNode.hidden = !credits || (!credits.unlimited && !credits.hasCredits && !Number.isFinite(balance));
+    if (!creditNode.hidden) {
+      creditNode.textContent = credits.unlimited ? 'Credits 无限'
+        : `Credits ${Number.isFinite(balance) ? balance.toLocaleString(undefined, {maximumFractionDigits: 0}) : credits.balance}`;
+      creditNode.title = '剩余 usage credits';
+    }
+    const cards = this.resetCards?.credits || [];
+    const holder = this.pane.querySelector('.sdk-reset');
+    const select = holder.querySelector('select');
+    holder.hidden = !(this.resetCards?.availableCount > 0);
+    if (!holder.hidden) {
+      const chosen = select.value;
+      select.replaceChildren();
+      const count = this.resetCards.availableCount;
+      if (!cards.length) select.append(new Option(`重置卡 ×${count}`, ''));
+      for (const card of cards.filter(row => !row.status || row.status === 'available')) {
+        const expires = card.expiresAt ? ` · ${new Date(card.expiresAt * 1000).toLocaleDateString()} 到期` : '';
+        const option = new Option(`${card.title || '限额重置卡'}${expires}`, card.id);
+        if (card.description) option.title = card.description;
+        select.append(option);
+      }
+      if ([...select.options].some(option => option.value === chosen)) select.value = chosen;
+      select.title = `共 ${count} 张可兑换`;
+    }
+  },
+
+  async redeem() {
+    const select = this.pane?.querySelector('#sdk-reset-card');
+    if (!select) return;
+    const creditId = select.value, label = select.selectedOptions[0]?.textContent || '重置卡';
+    const ok = await appConfirm(`兑换「${label}」？将重置对应的 Codex 限额窗口，且不可撤销。`, {ok: '兑换'});
+    if (!ok || !this.pane) return;
+    // 同一张卡的重试沿用同一个幂等键；成功后才换新键。
+    const key = this.redeemKeys.get(creditId) || crypto.randomUUID();
+    this.redeemKeys.set(creditId, key);
+    const button = this.pane.querySelector('#sdk-reset-use');
+    button.disabled = select.disabled = true;
+    try {
+      const data = await this.request('api/codex-sdk/reset-credit',
+        {uid: this.uid, credit_id: creditId || null, idempotency_key: key});
+      this.redeemKeys.delete(creditId);
+      this.applyLimits(data.raw.limits);
+      const outcome = data.raw.outcome?.outcome;
+      this.setNotice({reset: '已兑换，限额窗口已重置。', alreadyRedeemed: '这张卡此前已兑换，已刷新用量。',
+        nothingToReset: '当前没有可重置的限额窗口，未消耗卡片。', noCredit: '没有可用的重置卡。'}[outcome]
+        || `兑换结果：${outcome || '未知'}`, outcome === 'reset' || outcome === 'alreadyRedeemed' ? '' : 'blocked');
+      this.noticeHold = Date.now() + 8000;
+    } catch (error) {
+      this.setNotice(`兑换失败：${error.message}`, 'blocked');
+      this.noticeHold = Date.now() + 8000;
+    } finally {
+      if (this.pane) button.disabled = select.disabled = false;
+    }
   },
 
   paintEfforts() {
@@ -229,6 +373,7 @@ const CodexSdkView = {
         this.turn = null; this.items.clear();
         if (raw.turn?.status === 'failed' && raw.turn.error && this.summary) this.summary.last_error = raw.turn.error;
         this.scheduleHistory();
+        this.loadLimits();
         break;
       case 'item/started': case 'item/completed':
         if (item?.id) { this.items.set(item.id, item); this.paintItem(item); }
@@ -257,6 +402,12 @@ const CodexSdkView = {
       case 'thread/status/changed': if (this.summary) this.summary.status = raw.status; break;
       case 'thread/settings/updated': if (this.summary) this.summary.settings = raw.threadSettings; this.paintEfforts(); break;
       case 'thread/tokenUsage/updated': if (this.summary) this.summary.usage = raw.tokenUsage; break;
+      case 'account/rateLimits/updated':
+        // 通知只带一个额度桶；只更新正在显示的那个（重置卡等不在其中，保持不变）。
+        if (raw.rateLimits && (!this.limits || !raw.rateLimits.limitId || raw.rateLimits.limitId === this.limits.limitId)) {
+          this.limits = {...this.limits, ...raw.rateLimits};
+        }
+        break;
       case 'error': if (this.summary) this.summary.last_error = raw.error; break;
       default:
         if (SDK_REQUEST_METHODS.has(method)) {
@@ -311,12 +462,12 @@ const CodexSdkView = {
     const send = this.pane.querySelector('#sdk-send');
     send.textContent = active ? '追加' : '发送';
     send.title = active ? '追加到进行中的回合（turn/steer）' : '开始新回合（turn/start）';
-    const usage = this.summary?.usage;
-    const window = usage?.modelContextWindow, used = usage?.last?.totalTokens ?? usage?.total?.totalTokens;
-    this.pane.querySelector('.sdk-usage').textContent = window && used
-      ? `上下文 ${Math.min(100, Math.round(used / window * 100))}%` : '';
+    this.paintGauges();
+    // 兑换结果提示停留几秒，不被紧随其后的状态刷新盖掉。
+    if (this.noticeHold > Date.now()) return;
     const status = this.summary?.status || {};
     const parts = [];
+    if (this.limits?.rateLimitReachedType) parts.push('已达到 Codex 用量上限。');
     if (this.summary?.last_error?.message) parts.push(`错误：${this.summary.last_error.message}`);
     if (status.type === 'systemError') parts.push('Codex 报告系统错误。');
     else if (status.activeFlags?.includes('waitingOnApproval')) parts.push('等待批准。');
