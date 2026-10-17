@@ -65,6 +65,7 @@ pub struct Conversations {
     pub driver: Arc<HostTerminalDriver>,
     pub writer: Arc<WriteService>,
     reports: Option<Arc<crate::bug_report::BugReportService>>,
+    codex_sdk: Option<Arc<crate::codex_sdk::CodexSdk>>,
     locks: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
     /// Per-session CLI state (docs/cli-state.md).
     pub cli: cli_state::Registry,
@@ -88,9 +89,14 @@ impl Conversations {
             driver,
             writer,
             reports,
+            codex_sdk: None,
             locks: Mutex::new(HashMap::new()),
             cli: cli_state::Registry::default(),
         }
+    }
+    pub fn with_codex_sdk(mut self, sdk: Option<Arc<crate::codex_sdk::CodexSdk>>) -> Self {
+        self.codex_sdk = sdk;
+        self
     }
     /// Remembers the identity key under the requested UID and, for a launch
     /// that declared its native UID, under that UID too: packets for the
@@ -367,6 +373,21 @@ impl Conversations {
         Ok(())
     }
     pub async fn identity(&self, uid: &str) -> Result<Identity, Failure> {
+        if let Some(row) = self
+            .codex_sdk
+            .as_ref()
+            .and_then(|sdk| sdk.pending().into_iter().find(|row| row["uid"] == uid))
+        {
+            return Ok(Identity {
+                key: self.store.canonical(uid),
+                uid: uid.to_owned(),
+                source: "codex".into(),
+                sid: row["sid"].as_str().unwrap_or_default().to_owned(),
+                cwd: PathBuf::from(row["cwd"].as_str().unwrap_or_default()),
+                record: None,
+                resolved: None,
+            });
+        }
         if uid.starts_with("report:") && uid.len() > 7 {
             return Ok(Identity {
                 key: self.store.canonical(uid),

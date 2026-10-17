@@ -10,7 +10,9 @@
 //! is read by the ordinary history model. Transport handlers live in
 //! `api::codex_sdk`; nothing here parses HTTP.
 
+mod actions;
 mod connection;
+mod controls;
 mod live;
 
 use std::{
@@ -333,13 +335,12 @@ impl CodexSdk {
     pub async fn send(
         &self,
         thread_id: &str,
-        text: &str,
+        input: Vec<Value>,
         model: Option<&str>,
         effort: Option<&str>,
     ) -> Result<Value, RpcError> {
         let thread = self.inner.ensure(thread_id).await?;
         let connection = self.inner.connection().await?;
-        let input = json!([{"type": "text", "text": text, "text_elements": []}]);
         if let Some(turn_id) = thread.active_turn() {
             let result = connection
                 .request(
@@ -429,6 +430,10 @@ impl Inner {
     async fn start(self: &Arc<Self>, params: Value) -> Result<Value, RpcError> {
         let connection = self.connection().await?;
         let result = connection.request("thread/start", params).await?;
+        self.adopt_result(connection.generation(), result)
+    }
+
+    fn adopt_result(&self, generation: u64, result: Value) -> Result<Value, RpcError> {
         let id = result["thread"]["id"]
             .as_str()
             .ok_or(RpcError::Disconnected)?;
@@ -439,7 +444,7 @@ impl Inner {
                 .or_insert_with(|| LiveThread::new(id))
                 .clone()
         };
-        thread.loaded(connection.generation(), result.clone());
+        thread.loaded(generation, result.clone());
         if let Some(path) = result["thread"]["path"].as_str() {
             let uid = crate::sessions::uid_for("codex", std::path::Path::new(path));
             let created = chrono::DateTime::from_timestamp(

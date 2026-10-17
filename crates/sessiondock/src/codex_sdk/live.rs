@@ -80,7 +80,13 @@ impl LiveThread {
         let mut state = self.state.lock().expect("live");
         state.generation = Some(generation);
         state.status = resume["thread"]["status"].clone();
-        state.settings = json!({"model":resume["model"],"effort":resume["reasoningEffort"]});
+        state.settings = resume.clone();
+        state
+            .settings
+            .as_object_mut()
+            .expect("resume object")
+            .remove("thread");
+        state.settings["effort"] = resume["reasoningEffort"].clone();
         state.resume = resume;
         let raw = json!({"summary": summary(&state)});
         let event = state.event("thread/resumed", raw);
@@ -201,6 +207,13 @@ impl State {
             "turn/completed" => {
                 self.turn = None;
                 self.items.clear();
+            }
+            "thread/reverted" => {
+                self.turn = None;
+                self.items.clear();
+                self.requests.clear();
+                self.usage = Value::Null;
+                self.last_error = Value::Null;
             }
             "item/started" | "item/completed" => {
                 if let Some(id) = params["item"]["id"].as_str() {

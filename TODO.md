@@ -39,10 +39,10 @@
 - [ ] 部署补发（不阻塞 [Agy](docs/agy.md) 接入）：Linux、macOS、Windows
   各一个节点网络不可达，恢复联机后用官方部署工具补发并验证。
 
-- [ ] 补齐 [Codex SDK 模式](docs/codex-sdk.md) 的其余 app-server 能力：图片/文件附件（`localImage`）、
-  `review/start`、`thread/compact/start`、`thread/fork`/`thread/revert`、目标
-  （`thread/goal/*`）与 `thread/shellCommand`；SDK 已作为 Codex 默认视图，补齐接续与
-  附件能力后退役旧对话、终端交互模式。未落盘 SDK 创建回执目前仅在节点进程内保留。
+- [ ] [Codex SDK 模式](docs/codex-sdk.md) 已接入附件、草稿、审查、压缩、分叉/回退、
+  目标、直接命令与模式/权限设置；完成实际使用验收后退役旧对话、终端交互模式。
+  未落盘 SDK 创建回执目前仅在节点进程内保留；非 Unix 节点尚未接入。
+  子代理 SDK 已支持独立文本交互，附件与服务端草稿仍需独立身份，不能复用主会话草稿。
 
 ## Operations and release engineering
 

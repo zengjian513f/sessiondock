@@ -5781,7 +5781,8 @@ function sessionUrl(uid, agent = null) {
   // A launch can follow its native history before the catalog lists that row;
   // its terminal row already names the native SID.
   const row = S.sessions.find(s => s.uid === uid)
-    || (typeof T !== 'undefined' ? (T.list || []).find(item => item.uid === uid && item.sid) : null);
+    || (typeof T !== 'undefined' ? (T.list || []).find(item => item.uid === uid && item.sid)
+      || (T.sdkSessions || []).find(item => item.uid === uid && item.sid) : null);
   const pending = !row?.sid && typeof T !== 'undefined'
     ? T.pending.find(item => pendingUid(item.name) === uid) : null;
   if (!row?.sid && !pending) return null;
@@ -11293,7 +11294,8 @@ async function openExternalSession(spec, historyMode = 'replace') {
   if (!route && spec.startsWith('codex:')) {
     await waitForTermList();
     if (sequence !== deepLinkSequence || href !== location.href || selected !== S.sel) return true;
-    const pending = CodexSdkView.pending(spec);
+    const pendingRoute = routeSession(spec, T.sdkSessions || []);
+    const pending = CodexSdkView.pending(pendingRoute?.uid || spec);
     if (pending) { await openSession(pending.uid, null, {historyMode}); return true; }
   }
   if (S.childMode === 'hidden' && (!route || !sidebarRowNode(route.uid, route.agent))) {

@@ -94,12 +94,20 @@ always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 | POST `/api/codex-sdk/discard` `{uid}` | Unsubscribe and remove an unpersisted create receipt; native history is preserved if it appeared meanwhile |
 | POST `/api/codex-sdk/open` `{uid}` | Connect/resume; returns `{thread_id, raw: summary}` |
 | GET `/api/codex-sdk/events?uid=` | SSE: first a `snapshot`, then every thread event |
-| POST `/api/codex-sdk/turn` `{uid, text, model?, effort?}` | `turn/start`; while a turn is in flight, `turn/steer` with `expectedTurnId` |
+| POST `/api/codex-sdk/turn` `{uid, text?, attachments?, quotes?, model?, effort?}` | `turn/start`; while a turn is in flight, `turn/steer` with `expectedTurnId`; attachments reference this session's staged upload IDs |
 | POST `/api/codex-sdk/interrupt` `{uid}` | `turn/interrupt` for the in-flight turn (`409 codex_sdk_idle` without one) |
 | POST `/api/codex-sdk/respond` `{uid, key, result}` | JSON-RPC result for one open server request (`409 codex_sdk_request_gone` once resolved or from an older connection) |
 | GET `/api/codex-sdk/models?uid=` | `model/list` (cached 5 minutes per node) |
 | GET `/api/codex-sdk/limits?uid=` | `account/rateLimits/read`: windows, credits and earned reset cards (account-wide) |
 | POST `/api/codex-sdk/reset-credit` `{uid, credit_id?, idempotency_key}` | `account/rateLimitResetCredit/consume` for the chosen card, then a fresh read; returns `{outcome, limits}` |
+| POST `/api/codex-sdk/turns` `{uid, cursor?}` | `thread/turns/list`, newest first, with summary items and native pagination |
+| POST `/api/codex-sdk/fork` `{uid, last_turn_id?}` | `thread/fork`; returns the new native identity and navigable session |
+| POST `/api/codex-sdk/revert` `{uid, before_turn_id}` | `thread/revert`; removes the selected turn and later conversation, without reverting workspace files |
+| POST `/api/codex-sdk/compact` `{uid}` | `thread/compact/start`; progress uses ordinary turn/item events |
+| POST `/api/codex-sdk/review` `{uid, target}` | `review/start` with inline delivery; uncommitted changes, base branch, commit or custom instructions |
+| POST `/api/codex-sdk/controls/settings` `{uid, mode?, approval_policy?, sandbox_policy?}` | `thread/settings/update`; only explicit changes are sent, effective settings arrive through notifications |
+| POST `/api/codex-sdk/controls/goal` `{uid, action, objective?, status?, token_budget?}` | Native goal get/set/clear; explicit user goals use `origin: user` |
+| POST `/api/codex-sdk/controls/shell` `{uid, command}` | `thread/shellCommand`, the CLI's direct `!command` semantics; output uses command execution items |
 
 Errors: `503 codex_sdk_unavailable` (socket unreachable / start failed),
 `409 codex_sdk_thread_busy` (the rollout's writer lock is held by an independent
@@ -198,15 +206,49 @@ before first SEND does not retain these unpersisted receipts.
   `account/rateLimits/updated`, which the node forwards to every attached page
   (that notification carries one bucket only; reset cards refresh on the reads).
 
-## Not yet covered
+## Composer and conversation controls
 
-Image/file attachments
-(`localImage`), review, compaction, fork/revert, goals and the other
-app-server management APIs are tracked in [TODO](../TODO.md). Validation:
+DELTA (SDK composer): on nodes with conversation storage, SDK uses the same
+server-owned draft, CAS saves, quotes, resumable uploads and attachment cards
+as the transitional conversation view. Selecting, pasting or dropping files
+stages them privately; only SEND publishes them into the recorded workspace.
+The app-server receives images as native `localImage` input and all files as
+textual attachment references. Empty-text sends with attachments or quotes are
+supported. Failed sends preserve the draft, and edits made during a successful
+send are retained. Unpersisted SDK creation receipts provide identity for draft
+and upload operations without creating a native rollout. Nodes without
+conversation storage retain text-only SDK input.
+The Hub checks the owning node's `term/list.capabilities.conversation_send`,
+so a node without draft storage remains usable for text even when other nodes
+support attachments. Child SDK views currently use text-only input and never
+read, publish or clear their owner's draft or staged attachments.
+
+DELTA (native controls): the operation menu starts fork, paginated turn
+selection for revert, compaction and inline review. Native APIs own every
+history mutation. A `thread/reverted` notification clears obsolete live items
+and reloads history for all attached pages. The mode selector changes Default /
+Plan; the session dialog changes approval/sandbox policy, manages the native
+goal and submits direct shell commands. Actual settings and goal notifications
+from another client update the controls, without replacing unsaved form edits.
+Direct shell commands follow CLI `!` behavior and run with full permissions,
+outside the conversation sandbox; that behavior is stated in the dialog.
+
+The composer recognizes `/fork`, `/revert`, `/compact`, `/review`, `/plan`,
+`/default`, `/permissions`, `/approval`, `/sandbox`, `/goal`, `/shell` and
+`!command`; `/model`, `/effort`, `/status`, `/stop`, `/new` and `/help` use their
+corresponding SDK controls. Unrecognized slash commands stay in the draft and
+show an explanation rather than becoming a model prompt. These are explicit
+SDK mappings, not a PTY command parser. CLI account/plugin management commands
+remain outside this view.
+
+Validation:
 [codex_sdk_browser.py](../tests/codex_sdk_browser.py) with
 [codex_sdk_fixtures.py](../tests/codex_sdk_fixtures.py), and
 [codex_sdk_create_browser.py](../tests/codex_sdk_create_browser.py) for node/Hub
 creation, lazy persistence, reload and default view selection.
+Additional browser paths: [drafts and attachments](../tests/codex_sdk_compose_browser.py),
+[native conversation actions](../tests/codex_sdk_actions_browser.py), and
+[modes, goals and commands](../tests/codex_sdk_controls_browser.py).
 
 DELTA (subagent SDK views): SDK selection, persisted history, live events, sending,
 steering, interrupt and request replies follow the selected child thread. Switching

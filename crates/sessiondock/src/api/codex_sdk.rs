@@ -22,7 +22,7 @@ use crate::{
     state::AppState,
 };
 
-fn service(state: &AppState) -> Result<Arc<CodexSdk>, ApiError> {
+pub(super) fn service(state: &AppState) -> Result<Arc<CodexSdk>, ApiError> {
     state.codex_sdk.clone().ok_or_else(|| {
         ApiError::new(
             StatusCode::NOT_IMPLEMENTED,
@@ -32,7 +32,7 @@ fn service(state: &AppState) -> Result<Arc<CodexSdk>, ApiError> {
     })
 }
 
-fn rpc(error: RpcError) -> ApiError {
+pub(super) fn rpc(error: RpcError) -> ApiError {
     let message = error.to_string();
     match error {
         RpcError::Unavailable(_) => ApiError::new(
@@ -65,7 +65,11 @@ fn rpc(error: RpcError) -> ApiError {
 
 /// Resolve the selected Codex view through inventory ownership and native identity.
 /// A child uses its own thread; only an unpersisted main view uses a start receipt.
-async fn thread_id(state: &AppState, uid: &str, agent: &str) -> Result<String, ApiError> {
+pub(super) async fn thread_id(
+    state: &AppState,
+    uid: &str,
+    agent: &str,
+) -> Result<String, ApiError> {
     if agent.is_empty()
         && let Some(thread) = state
             .codex_sdk
@@ -213,7 +217,12 @@ pub struct Turn {
     uid: String,
     #[serde(default)]
     agent: String,
+    #[serde(default)]
     text: String,
+    #[serde(default)]
+    attachments: Vec<Value>,
+    #[serde(default)]
+    quotes: Vec<Value>,
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
@@ -225,7 +234,7 @@ pub async fn turn(
     Json(body): Json<Turn>,
 ) -> Result<Json<Value>, ApiError> {
     let sdk = service(&state)?;
-    if body.text.trim().is_empty() {
+    if body.text.trim().is_empty() && body.attachments.is_empty() && body.quotes.is_empty() {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "codex_sdk_empty",
@@ -233,10 +242,39 @@ pub async fn turn(
         ));
     }
     let thread = thread_id(&state, &body.uid, &body.agent).await?;
+    let attachments = if body.attachments.is_empty() {
+        Vec::new()
+    } else {
+        let conversations = state.conversations.as_ref().ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_IMPLEMENTED,
+                "conversation_disabled",
+                "附件暂存未配置",
+            )
+        })?;
+        let identity = conversations
+            .identity(&body.uid)
+            .await
+            .map_err(super::conversation::error)?;
+        conversations
+            .publish(&identity, &body.attachments)
+            .await
+            .map_err(super::conversation::error)?
+    };
+    let text = crate::conversation::build_prompt(&body.text, &attachments, &body.quotes);
+    let mut input = Vec::new();
+    if !text.is_empty() {
+        input.push(json!({"type":"text","text":text,"text_elements":[]}));
+    }
+    for attachment in &attachments {
+        if attachment["kind"] == "image" {
+            input.push(json!({"type":"localImage","path":attachment["path"]}));
+        }
+    }
     let result = sdk
         .send(
             &thread,
-            &body.text,
+            input,
             body.model.as_deref(),
             body.effort.as_deref(),
         )

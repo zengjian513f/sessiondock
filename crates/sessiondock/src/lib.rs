@@ -532,21 +532,24 @@ fn build_app(
             );
             let events = ui_events.clone();
             store.on_draft_change(move || events.publish_drafts());
-            Some(Arc::new(conversation::Conversations::new(
-                store,
-                reader.clone(),
-                lifecycle.clone(),
-                Arc::new(delivery::target::ManagedResolver {
-                    runtime: runtime.clone(),
-                    reader: reader.clone(),
-                    lifecycle: Some(lifecycle.clone()),
-                    probes: runtime_probes.clone(),
-                    proc_scan: proc_scan.clone(),
-                }),
-                Arc::new(delivery::driver::HostTerminalDriver::new(terminal.clone())),
-                writer.clone(),
-                bug_report.as_ref().map(|ctx| ctx.service.clone()),
-            )))
+            Some(Arc::new(
+                conversation::Conversations::new(
+                    store,
+                    reader.clone(),
+                    lifecycle.clone(),
+                    Arc::new(delivery::target::ManagedResolver {
+                        runtime: runtime.clone(),
+                        reader: reader.clone(),
+                        lifecycle: Some(lifecycle.clone()),
+                        probes: runtime_probes.clone(),
+                        proc_scan: proc_scan.clone(),
+                    }),
+                    Arc::new(delivery::driver::HostTerminalDriver::new(terminal.clone())),
+                    writer.clone(),
+                    bug_report.as_ref().map(|ctx| ctx.service.clone()),
+                )
+                .with_codex_sdk(codex_sdk.clone()),
+            ))
         }
         _ => None,
     };
