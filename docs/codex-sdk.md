@@ -1,6 +1,6 @@
 # Codex SDK mode
 
-The SDK view is the default view for top-level Codex sessions. 对话 and 终端
+The SDK view is the default view for Codex sessions and their subagents. 对话 and 终端
 remain available during their retirement transition. It drives the session through the Codex app-server JSON-RPC protocol
 (the interface behind the official Codex SDKs and IDE clients) instead of
 typing into a terminal. Persisted history still comes from the ordinary read
@@ -82,8 +82,9 @@ updating the daemon ends every attached terminal.
 
 Existing-session routes take the page's opaque session `uid` (query or body), so a Hub
 forwards them to the owning node. Create takes `_node` on a Hub; model discovery
-also accepts `node` without an existing session. Only a top-level `codex` session resolves;
-other sources and subagent views answer `400 codex_sdk_unsupported`. The
+also accepts `node` without an existing session. Both main and subagent `codex` views resolve through `native_scope(uid, agent)`;
+the optional `agent` query/body field selects an exact owned child and its own
+native thread ID. Other sources answer `400 codex_sdk_unsupported`. The
 mode is declared by `capabilities.codex_sdk` (node: endpoint configured; Hub:
 always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 
@@ -149,12 +150,12 @@ before first SEND does not retain these unpersisted receipts.
 ## View
 
 - `#a-sdk` (chat bubble with brackets) sits first in the session view
-  group and is shown only for top-level Codex sessions when the capability is
+  group and is shown for Codex main sessions and subagent views when the capability is
   declared (per owning node on the Hub). Opening or reloading a Codex main
-  session selects SDK by default. An explicit switch to 对话/终端 lasts for
+  session or subagent selects SDK by default. An explicit switch to 对话/终端 lasts for
   the current page; background refreshes do not switch it back. It opens through `SessionContentView` like 信息/资源; the header
   stays, the message list, composer and terminal pane are hidden.
-- History: `fetchMessages(uid)` rendered by the same `appendMessages`, so
+- History: `fetchMessages(uid, {agent})` rendered by the same `appendMessages`, so
   persisted turns look exactly like the message view. While a turn is in
   flight, history is cut before the last user message equal to the in-flight
   turn's user message, and the turn is shown from SDK items instead. After
@@ -206,3 +207,8 @@ app-server management APIs are tracked in [TODO](../TODO.md). Validation:
 [codex_sdk_fixtures.py](../tests/codex_sdk_fixtures.py), and
 [codex_sdk_create_browser.py](../tests/codex_sdk_create_browser.py) for node/Hub
 creation, lazy persistence, reload and default view selection.
+
+DELTA (subagent SDK views): SDK selection, persisted history, live events, sending,
+steering, interrupt and request replies follow the selected child thread. Switching
+views never substitutes the owner thread. Explicit chat/terminal selection is kept
+per `(uid, agent)`. Browser coverage: [codex_sdk_subagent_browser.py](../tests/codex_sdk_subagent_browser.py).

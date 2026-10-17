@@ -214,7 +214,7 @@ const SessionContentView = {
       this.themeObserver?.disconnect(); this.themeObserver = observer;
       this.pane.append(frame);
     } else if (kind === 'sdk') {
-      CodexSdkView.open(uid, this.pane);
+      CodexSdkView.open(uid, this.pane, agent);
     } else {
       this.watchWheel(this.pane);
       SessionDockResources.open(S.sessions.find(row => row.uid === uid) || {uid}, this.pane);
@@ -240,7 +240,7 @@ function bindConsoleButton(button, uid, agent = null) {
   if (group) {
     group.querySelector('#a-chat').onclick = () => {
       if (S.sel !== uid || S.agent !== agent) return;
-      CodexSdkView.legacyViews.add(uid);
+      CodexSdkView.legacyViews.add(viewKey(uid, agent));
       SessionContentView.close();
       if (MOBILE.matches && !sessionTerminalFirst(uid)) closeTermPane();
       else {
@@ -262,7 +262,7 @@ function bindConsoleButton(button, uid, agent = null) {
     };
     const sdk = group.querySelector('#a-sdk');
     if (sdk) {
-      // 只给 Codex 主会话显示；其它来源没有 SDK 视图。
+      // Codex 主会话及其子代理共用 SDK 视图。
       sdk.hidden = !CodexSdkView.available(uid, agent);
       sdk.onclick = () => { if (CodexSdkView.available(uid, agent)) SessionContentView.open('sdk', uid, agent); };
     }
@@ -270,7 +270,7 @@ function bindConsoleButton(button, uid, agent = null) {
   button.onclick = async () => {
     const reason = consoleUnavailableReason(uid, agent, false);
     if (reason) { paintConsoleAvailability(button, uid, agent); return; }
-    CodexSdkView.legacyViews.add(uid);
+    CodexSdkView.legacyViews.add(viewKey(uid, agent));
     SessionContentView.close();
     // 上次连接失败不再拦一道确认框：点击直接重新接入并显示 pty，失败时明确提示原因。
     ConsoleUI.busy.add(uid);
