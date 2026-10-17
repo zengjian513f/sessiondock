@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import json
 import os
 from pathlib import Path
 import socket
@@ -122,6 +123,21 @@ def browser_check(corpus, base, fake, screenshots=None):
             page = context.new_page()
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
+            limits_failures = [503, "network"]
+            limits_reads = []
+
+            def read_limits(route):
+                failure = limits_failures.pop(0) if limits_failures else None
+                limits_reads.append(failure)
+                if failure == "network":
+                    route.abort("failed")
+                elif failure:
+                    route.fulfill(status=failure, content_type="application/json",
+                                  body=json.dumps({"ok": False, "error": "Temporary limits failure"}))
+                else:
+                    route.continue_()
+
+            page.route("**/api/codex-sdk/limits?*", read_limits)
             page.goto(base, wait_until="networkidle")
 
             # Codex roots and children offer the view; other sources do not.
@@ -131,6 +147,13 @@ def browser_check(corpus, base, fake, screenshots=None):
             pane = open_sdk(page, corpus, expect)
             # Resume must show persisted context before any turn is submitted.
             expect(pane.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text("20%")
+            # Failed HTTP and network reads recover without a turn, notification, or reload.
+            expect(pane.locator('.sdk-gauge[data-gauge="5h"]')).to_be_hidden()
+            expect(pane.locator('.sdk-credits')).to_be_hidden()
+            expect(pane.locator('.sdk-gauge[data-gauge="5h"] b')).to_have_text("40%", timeout=10000)
+            expect(pane.locator('.sdk-credits')).to_have_text("Credits 1,235")
+            assert limits_reads[:3] == [503, "network", None], limits_reads
+            assert not fake.methods("turn/start"), "reading usage must not start a model turn"
             page.reload(wait_until="networkidle")
             expect(pane.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text("20%")
             def toggle_processes():
@@ -160,6 +183,8 @@ def browser_check(corpus, base, fake, screenshots=None):
                     page.reload(wait_until='networkidle')
                     expect(pane).to_be_visible()
                     expect(pane.locator('.sdk-gauge[data-gauge="context"]')).to_be_visible()
+                    expect(pane.locator('.sdk-gauge[data-gauge="5h"] b')).to_have_text("40%")
+                    expect(pane.locator('.sdk-credits')).to_have_text("Credits 1,235")
                     toggle_processes()
                     expect(process.locator('.turn-process-body')).to_be_visible()
                     page.screenshot(path=str(screenshots / f"process-expanded-{width}-{theme}.png"))
@@ -238,7 +263,12 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(card).to_contain_text("需要批准执行命令")
             expect(live.locator('.msg[data-role="assistant"]')).to_contain_text("Working on it")
             assert fake.methods("thread/resume").__len__() == 1, "a reload must reuse the loaded thread"
-            card.get_by_role("button", name="批准", exact=True).click()
+            limits_failures.append(503)
+            with page.expect_response(lambda response: "/api/codex-sdk/limits?" in response.url and response.status == 503):
+                card.get_by_role("button", name="批准", exact=True).click()
+            # Refresh failure retains the last good values while retrying in the background.
+            expect(pane.locator('.sdk-gauge[data-gauge="5h"] b')).to_have_text("40%")
+            expect(pane.locator('.sdk-credits')).to_have_text("Credits 1,235")
             reply = fake.wait_for(lambda: [m for m in fake.responses() if m.get("result", {}).get("decision")])[0]
             assert reply["id"] == 0 and reply["result"] == {"decision": "accept"}, reply
             expect(live.locator(".sdk-request")).to_have_count(0)
@@ -249,6 +279,8 @@ def browser_check(corpus, base, fake, screenshots=None):
             context_bar = pane.locator('.sdk-gauge[data-gauge="context"]')
             expect(context_bar.locator("b")).to_have_text("25%")
             expect(context_bar.locator(".sdk-bar")).to_have_attribute("aria-valuenow", "25")
+            with page.expect_response(lambda response: "/api/codex-sdk/limits?" in response.url and response.status == 200):
+                expect(pane.locator('.sdk-credits')).to_have_text("Credits 1,235")
             # After completion the rollout holds the turn; it is shown exactly once.
             expect(history.locator('.msg[data-role="assistant"]').filter(has_text="All done after approval")).to_have_count(1)
             expect(pane.locator('.msg[data-role="assistant"]').filter(has_text="All done after approval")).to_have_count(1)
@@ -302,6 +334,14 @@ def browser_check(corpus, base, fake, screenshots=None):
             page.locator("#a-chat").click()
             expect(page.locator("#session-content-view")).to_have_count(0)
             expect(page.locator("#msgs")).to_contain_text("All done after approval")
+            # Closing a view with a failed read cancels its scheduled retry.
+            limits_failures.append(503)
+            with page.expect_response(lambda response: "/api/codex-sdk/limits?" in response.url and response.status == 503):
+                page.locator('#a-sdk').click()
+            page.locator('#a-chat').click()
+            read_count = len(limits_reads)
+            page.wait_for_timeout(1500)
+            assert len(limits_reads) == read_count, "closed SDK view kept retrying usage reads"
             assert not errors, errors
             context.close()
         finally:
