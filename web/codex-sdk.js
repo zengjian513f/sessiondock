@@ -353,18 +353,27 @@ const CodexSdkView = {
       if (!this.current(generation)) return;
       const stick = this.nearBottom();
       let messages = data?.messages || [];
+      let tailComplete = !this.turn && !['working', 'waiting'].includes(data?.activity?.state);
       const userText = this.activeUserText();
       if (userText) {
         // 正在进行的回合已在 SDK 实时区显示；落盘历史截到它的用户消息之前。
         for (let i = messages.length - 1; i >= 0; i--) {
           if (messages[i].role === 'user' && String(messages[i].text || '').trim() === userText) {
             messages = messages.slice(0, i);
+            tailComplete = true;
             break;
           }
         }
       }
+      const folds = new Map([...this.history.querySelectorAll(':scope > .turn-process')]
+        .map(node => [node.dataset.turnId, node.classList.contains('folded')]));
       this.history.replaceChildren();
-      appendMessages(this.history, messages);
+      buildPlan(this.history, planTurns(messages, {tailComplete, openTail: !tailComplete}), null);
+      for (const node of this.history.querySelectorAll(':scope > .turn-process')) {
+        if (folds.has(node.dataset.turnId))
+          folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
+      }
+      refreshMessageTimeDividers(this.history);
       // 已经落盘的回合从实时区移除，避免同一回合出现两次。
       for (const [id, node] of this.nodes) {
         if (!this.items.has(id)) { node.remove(); this.nodes.delete(id); }
