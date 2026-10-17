@@ -182,9 +182,15 @@ def browser_check(corpus, base, fake, screenshots=None):
                     page.emulate_media(color_scheme=theme)
                     page.reload(wait_until='networkidle')
                     expect(pane).to_be_visible()
+                    usage_toggle = pane.locator('#sdk-usage-toggle')
+                    if usage_toggle.is_visible():
+                        usage_toggle.click()
                     expect(pane.locator('.sdk-gauge[data-gauge="context"]')).to_be_visible()
                     expect(pane.locator('.sdk-gauge[data-gauge="5h"] b')).to_have_text("40%")
                     expect(pane.locator('.sdk-credits')).to_have_text("Credits 1,235")
+                    if usage_toggle.is_visible():
+                        page.screenshot(path=str(screenshots / f"usage-{width}-{theme}.png"))
+                        page.keyboard.press('Escape')
                     toggle_processes()
                     expect(process.locator('.turn-process-body')).to_be_visible()
                     page.screenshot(path=str(screenshots / f"process-expanded-{width}-{theme}.png"))
@@ -221,7 +227,8 @@ def browser_check(corpus, base, fake, screenshots=None):
 
             # Model and effort pickers come from model/list and ride on turn/start.
             model = pane.locator("#sdk-model")
-            expect(model.locator("option")).to_have_count(3)
+            expect(model.locator("option")).to_have_count(2)
+            assert all(value for value in model.locator("option").evaluate_all("nodes => nodes.map(node => node.value)"))
             expect(model).to_have_value("fake-sol")
             effort = pane.locator("#sdk-effort")
             expect(effort).to_have_value("high")  # Current thread, not model/list's low default.
@@ -251,7 +258,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(card).to_contain_text("echo synthetic")
             expect(card).to_contain_text("Synthetic approval reason")
             expect(pane.locator("#sdk-stop")).to_be_visible()
-            expect(pane.locator("#sdk-send")).to_have_text("追加")
+            expect(pane.locator("#sdk-send")).to_have_text("排队")
 
             # The open approval survives a reload: it comes back in the snapshot.
             page.reload(wait_until="networkidle")
@@ -292,6 +299,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(five.locator(".sdk-bar")).to_have_attribute("aria-valuenow", "40")
             expect(week.locator("b")).to_have_text("25%")
             expect(pane.locator(".sdk-credits")).to_have_text("Credits 1,235")
+            pane.locator('#sdk-more').click()
             reset = pane.locator("#sdk-reset-card")
             expect(reset.locator("option")).to_have_count(2)
             expect(reset.locator("option").nth(1)).to_contain_text("Reset B")
@@ -321,6 +329,8 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(pane).to_contain_text("You picked Blue")
             box.fill("steer toward tests")
             box.press("Enter")
+            expect(pane.locator(".sdk-queued")).to_contain_text("steer toward tests")
+            pane.locator('.sdk-queued [data-queue-action="steer"]').click()
             steer = fake.wait_for(lambda: fake.methods("turn/steer"))[0]["params"]
             assert steer["expectedTurnId"] == "turn-2" and steer["input"][0]["text"] == "steer toward tests", steer
             expect(pane.locator(".sdk-live")).to_contain_text("steer toward tests")

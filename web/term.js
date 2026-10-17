@@ -782,7 +782,7 @@ function carryBugReportDraft(fromUid, toUid) {
   to.attachments = [...to.attachments, ...moving];
   to.nextAttachmentNumber = Math.max(to.nextAttachmentNumber || 1, from.nextAttachmentNumber || 1);
   ensureComposerAttachmentNumbers(to);
-  for (const field of ['requestId','requestText','report_prompt','report_text','continuation_title']) {
+  for (const field of ['sdkSubmission','requestId','requestText','report_prompt','report_text','continuation_title']) {
     delete to[field]; delete from[field];
   }
   from.attachments = from.attachments.filter(item => !moving.includes(item));
@@ -4004,6 +4004,7 @@ function composerDraftRecord(draft, uid) {
       uploaded:item.uploaded, file:{name:item.file.name, size:item.file.size,
         type:item.file.type, lastModified:item.file.lastModified}})),
     nextAttachmentNumber:draft.nextAttachmentNumber, requestId:draft.requestId,
+    ...(draft.sdkSubmission ? {sdkSubmission:draft.sdkSubmission} : {}),
     ...(draft.continuation_title ? {continuation_title:draft.continuation_title} : {}),
     requestText:draft.requestText, session:{...draft.session, uid},
     ...(draft.report_prompt ? {report_prompt:draft.report_prompt,report_text:draft.report_text} : {})};
@@ -4139,7 +4140,7 @@ async function consumeComposerSubmission(uid,text,attachments,quotes) {
   const owner=composerDraftOwner(uid),draft=composerDrafts.get(owner);
   if (!draft) return;
   delete draft.sendNotice;
-  delete draft.requestId;delete draft.requestText;delete draft.report_prompt;delete draft.report_text;delete draft.continuation_title;
+  delete draft.sdkSubmission;delete draft.requestId;delete draft.requestText;delete draft.report_prompt;delete draft.report_text;delete draft.continuation_title;
   if (draft.text===text) draft.text='';
   const files=new Set(attachments.map(a=>a.id)),quoted=new Map(quotes.map(q=>[q.id,q.text]));
   for (const item of draft.attachments.filter(a=>files.has(a.id))) {
@@ -4287,7 +4288,7 @@ function hydrateComposerDraft(uid, retry = false) {
         draft.handedOffSession=row.value.session;return;
       }
       if (!draft.editVersion && row.value && !row.value.removed) {
-        for (const field of ['requestId','requestText','report_prompt','report_text','continuation_title']) delete draft[field];
+        for (const field of ['sdkSubmission','requestId','requestText','report_prompt','report_text','continuation_title']) delete draft[field];
         Object.assign(draft, restoreComposerDraftRecord(row.value, uid), {revision:row.revision});
         if (legacy?.db) await Promise.all(draft.attachments.map(async item => {
           if (item.uploaded?.upload_id) return;
@@ -4348,7 +4349,7 @@ function adoptServerDraft(draft, row, uid) {
     return local;
   });
   for (const a of draft.attachments) if (a.preview && !next.attachments.some(b => a.id === b.id)) URL.revokeObjectURL(a.preview);
-  for (const field of ['requestId','requestText','report_prompt','report_text','continuation_title']) delete draft[field];
+  for (const field of ['sdkSubmission','requestId','requestText','report_prompt','report_text','continuation_title']) delete draft[field];
   Object.assign(draft, next, {revision: row.revision, editVersion: draft.editVersion,
     savedVersion: draft.editVersion, storageError: ''});
   return draft;

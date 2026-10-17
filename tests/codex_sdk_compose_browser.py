@@ -211,7 +211,7 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
         with page.expect_response(lambda response: urlsplit(response.url).path.endswith('/api/codex-sdk/turn')) as sent:
             page.locator('#sdk-send').click()
         assert sent.value.status == 200, sent.value.text()
-        assert len(fake.methods('turn/start')) == before + 1, fake.methods('turn/start')
+        fake.wait_for(lambda: len(fake.methods('turn/start')) == before + 1)
         expect(page.locator('#sdk-compose-items .draft-card')).to_have_count(0)
         expect(page.locator('#sdk-stop')).to_be_visible()
         page.locator('#sdk-stop').click()

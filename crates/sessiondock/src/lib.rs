@@ -313,7 +313,8 @@ fn build_app(
         config.codex_app_server.as_deref(),
         config.roots.codex.as_deref(),
     )
-    .map(|endpoint| codex_sdk::CodexSdk::new(endpoint, shutdown.clone()));
+    .map(|endpoint| codex_sdk::CodexSdk::new(endpoint, shutdown.clone(), config.state_dir.clone()))
+    .transpose()?;
     capabilities["codex_sdk"] = serde_json::json!(codex_sdk.is_some());
     // Explicit private trash directory only; routes stay 501 without it.
     let trash = config

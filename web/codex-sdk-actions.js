@@ -5,21 +5,22 @@ const CodexSdkActions = {
   dialog: null, pending: false,
 
   mount(view) {
-    const holder = view.pane?.querySelector('.sdk-pickers');
+    const holder = view.pane?.querySelector('#sdk-more-menu');
     if (!holder) return;
-    const label = document.createElement('label');
-    label.className = 'new-effort sdk-actions';
-    label.title = '会话操作';
-    label.innerHTML = '<span class="visually-hidden">会话操作</span><select id="sdk-actions" aria-label="会话操作">'
-      + '<option value="">会话操作…</option><option value="fork">分叉会话</option>'
-      + '<option value="revert">回退对话</option><option value="compact">压缩上下文</option>'
-      + '<option value="review">代码审查</option></select>';
-    label.querySelector('select').onchange = event => {
-      const action = event.target.value;
-      event.target.value = '';
-      if (action) void this.command(view, `/${action}`);
-    };
-    holder.append(label);
+    const actions = document.createElement('div');
+    actions.id = 'sdk-actions'; actions.setAttribute('role', 'group');
+    actions.setAttribute('aria-label', '会话操作');
+    for (const [action, text] of [['fork', '分支会话'], ['revert', '回退对话'], ['compact', '压缩上下文'], ['review', '代码审查']]) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'new-model-option';
+      button.dataset.sdkAction = action; button.textContent = text;
+      button.onclick = () => {
+        view.closeToolbarMenus();
+        void this.command(view, `/${action}`);
+      };
+      actions.append(button);
+    }
+    holder.append(actions);
     this.paint(view);
   },
 
@@ -31,8 +32,8 @@ const CodexSdkActions = {
   },
 
   paint(view) {
-    const select = view.pane?.querySelector('#sdk-actions');
-    if (select) select.disabled = this.pending || !view.summary;
+    for (const button of view.pane?.querySelectorAll('[data-sdk-action]') || [])
+      button.disabled = !view.summary || !!this.pending;
   },
 
   // Returns true only for these exact slash commands; quoted prose is chat.
@@ -51,22 +52,12 @@ const CodexSdkActions = {
       if (action === 'fork') {
         const response = await view.request('api/codex-sdk/fork', {uid, last_turn_id: argument || null});
         if (!current()) return true;
-        if (response.session) T.sdkSessions = [...T.sdkSessions.filter(row => row.uid !== response.uid), response.session];
-        CodexSdkView.legacyViews.delete(response.uid);
         // Clear the source command before opening the new session (draft hooks).
         if (input?.value === text) {
           input.value = ''; view.fitInput();
           if (typeof CodexSdkCompose !== 'undefined') CodexSdkCompose.input(view);
         }
-        // Native forks are normally persisted immediately, so hydrate their
-        // inventory before opening instead of treating them as empty starts.
-        if (!response.session?.sdk_pending) await loadSessions(true, true);
-        // An explicit fork keeps both branches available. Reuse the durable
-        // parent visibility preference; child views must not reveal their owner.
-        if (!view.agent && S.sessions.some(row => row.uid === uid && row.fork_parent))
-          await setForkParentVisibility([uid], true);
-        await openSession(response.uid);
-        void loadSessions(true, true);
+        await this.openFork(view, response);
         return true;
       }
       if (action === 'revert') {
@@ -104,6 +95,80 @@ const CodexSdkActions = {
       if (current()) this.paint(view);
     }
     return true;
+  },
+
+  async openFork(view, response) {
+    const sourceUid = view.uid, sourceAgent = view.agent;
+    if (response.session) T.sdkSessions = [...T.sdkSessions.filter(row => row.uid !== response.uid), response.session];
+    CodexSdkView.legacyViews.delete(response.uid);
+    // Native forks are normally persisted immediately, so hydrate their
+    // inventory before opening instead of treating them as empty starts.
+    if (!response.session?.sdk_pending) await loadSessions(true, true);
+    // An explicit fork keeps both branches available. Reuse the durable
+    // parent visibility preference; child views must not reveal their owner.
+    if (!sourceAgent && S.sessions.some(row => row.uid === sourceUid && row.fork_parent))
+      await setForkParentVisibility([sourceUid], true);
+    await loadSessions(true, true);
+    await openSession(response.uid);
+  },
+
+  decorate(view, node, message) {
+    if (message?.role !== 'user' || !message.turn_id || node.querySelector('.sdk-bubble-toggle')) return;
+    node.classList.add('sdk-user-actions');
+    const toggle = document.createElement('button');
+    toggle.type = 'button'; toggle.className = 'sdk-bubble-toggle'; toggle.textContent = '⋯';
+    toggle.setAttribute('aria-label', '消息操作'); toggle.setAttribute('aria-expanded', 'false');
+    const menu = document.createElement('div');
+    menu.className = 'new-model-menu sdk-bubble-menu'; menu.setAttribute('popover', 'auto');
+    menu.setAttribute('aria-label', '消息操作');
+    menu.addEventListener('beforetoggle', event => toggle.setAttribute('aria-expanded', String(event.newState === 'open')));
+    for (const [action, label] of [['revert', '回退'], ['fork', '分支']]) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'new-model-option'; button.textContent = label;
+      button.onclick = () => { menu.hidePopover(); void this.messageAction(view, message, action); };
+      menu.append(button);
+    }
+    toggle.onclick = () => {
+      if (menu.matches(':popover-open')) { menu.hidePopover(); return; }
+      view.closeToolbarMenus(); menu.showPopover(); view.placeMenu(menu, toggle, 180);
+    };
+    node.append(toggle, menu);
+  },
+
+  async restoreInput(view, text) {
+    const generation = view.generation;
+    await CodexSdkCompose.states.get(view)?.ready;
+    if (!view.current(generation)) return;
+    const input = view.input;
+    if (!input) return;
+    if (input.value.trim() && input.value !== text) input.value += '\n\n' + text;
+    else input.value = text;
+    view.fitInput(); CodexSdkCompose.input(view); input.focus();
+    if (CodexSdkCompose.states.get(view)?.draft) await persistComposerDraft(view.uid);
+  },
+
+  async messageAction(view, message, action) {
+    if (this.pending) return;
+    const generation = view.generation, uid = view.uid, operation = {};
+    const current = () => view.current(generation) && view.uid === uid;
+    this.pending = operation; this.paint(view);
+    try {
+      if (action === 'revert') {
+        if (!await appConfirm('回退到这条消息之前？该条及之后的对话会被移除，消息内容将放回输入框。工作区文件保持原样。', {ok:'回退'})) return;
+        if (!current()) return;
+        await view.request('api/codex-sdk/revert', {uid, before_turn_id:message.turn_id});
+        if (!current()) return;
+        view.turn = null; view.items.clear(); view.nodes.clear(); view.live.replaceChildren();
+        await view.refreshHistory(generation, true);
+        if (current()) await this.restoreInput(view, String(message.text || ''));
+      } else {
+        const response = await view.request('api/codex-sdk/fork', {uid, last_turn_id:message.turn_id, before_turn_id:message.turn_id});
+        if (!current()) return;
+        await this.openFork(view, response);
+        if (view.uid === response.uid) await this.restoreInput(view, String(message.text || ''));
+      }
+    } catch (error) { if (current()) view.setNotice(`消息操作失败：${error.message}`, 'blocked', true); }
+    finally { if (this.pending === operation) this.pending = false; this.paint(view); }
   },
 
   reviewTarget(argument) {

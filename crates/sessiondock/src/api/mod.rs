@@ -272,6 +272,7 @@ pub fn router() -> Router<AppState> {
         .route("/codex-sdk/open", post(codex_sdk::open))
         .route("/codex-sdk/events", get(codex_sdk::events))
         .route("/codex-sdk/turn", post(codex_sdk::turn))
+        .route("/codex-sdk/queue", post(codex_sdk::queue_action))
         .route("/codex-sdk/interrupt", post(codex_sdk::interrupt))
         .route("/codex-sdk/respond", post(codex_sdk::respond))
         .route("/codex-sdk/models", get(codex_sdk::models))
@@ -282,7 +283,6 @@ pub fn router() -> Router<AppState> {
         .route("/codex-sdk/revert", post(codex_sdk_actions::revert))
         .route("/codex-sdk/compact", post(codex_sdk_actions::compact))
         .route("/codex-sdk/review", post(codex_sdk_actions::review))
-        .route("/codex-sdk/controls/goal", post(codex_sdk_controls::goal))
         .route(
             "/codex-sdk/controls/settings",
             post(codex_sdk_controls::settings),

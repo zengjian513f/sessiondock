@@ -134,12 +134,17 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     source_uid = row.get_attribute("data-uid")
     row.click()
     pane = page.locator("#session-content-view.sdk-pane")
-    expect(pane.locator("#sdk-actions")).to_be_enabled()
+    expect(pane.locator('[data-sdk-action="revert"]')).to_be_enabled()
     expect(pane.locator(".sdk-history")).to_contain_text("remove this answer")
     box, send = pane.locator("#sdk-input"), pane.locator("#sdk-send")
 
+    def choose_action(action):
+        button = pane.locator(f'[data-sdk-action="{action}"]')
+        if not button.is_visible(): pane.locator('#sdk-more').click()
+        button.click()
+
     # The menu selects actual native turn IDs, including additional pages.
-    pane.locator("#sdk-actions").select_option("revert")
+    choose_action("revert")
     dialog = page.locator("#sdk-action-dialog")
     expect(dialog).to_contain_text("不回滚工作区文件")
     expect(dialog.locator("#sdk-revert-turn")).to_have_value(TURN2)
@@ -157,11 +162,11 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     confirmation = page.locator("dialog.app-popup[open]")
     expect(confirmation).to_contain_text("不回滚工作区文件")
     confirmation.get_by_role("button", name="取消", exact=True).click()
-    expect(pane.locator("#sdk-actions")).to_be_enabled()
+    expect(pane.locator('[data-sdk-action="revert"]')).to_be_enabled()
     expect(box).to_have_value("/revert " + TURN2)
     assert len(fake.methods("thread/revert")) == 1
 
-    pane.locator("#sdk-actions").select_option("compact")
+    choose_action("compact")
     expect(pane.locator(".sdk-live")).to_contain_text("正在压缩上下文")
     expect(pane.locator(".sdk-live")).not_to_contain_text("上下文已压缩")
     progress = pane.get_by_role("progressbar", name="正在压缩上下文")
@@ -187,7 +192,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     expect(box).to_have_value("/compact extra")
     assert len(fake.methods("thread/compact/start")) == 1
 
-    pane.locator("#sdk-actions").select_option("review")
+    choose_action("review")
     dialog = page.locator("#sdk-action-dialog")
     dialog.locator("#sdk-review-target").select_option("custom")
     dialog.locator("#sdk-review-detail").fill("检查异常处理和中文路径")
@@ -195,7 +200,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
         page.screenshot(path=str(screenshots / f"actions-{label}-review.png"))
     dialog.get_by_role("button", name="开始审查", exact=True).click()
     expect(pane.locator(".sdk-live")).to_contain_text("Synthetic review result: no findings")
-    expect(pane.locator("#sdk-actions")).to_be_enabled()
+    expect(pane.locator('[data-sdk-action="revert"]')).to_be_enabled()
     assert fake.methods("review/start")[-1]["params"]["target"] == {"type": "custom", "instructions": "检查异常处理和中文路径"}
     for command, target in [("/review uncommitted", {"type": "uncommittedChanges"}),
                             ("/review branch main", {"type": "baseBranch", "branch": "main"}),

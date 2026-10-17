@@ -4,40 +4,6 @@ use serde_json::{Value, json};
 use super::{CodexSdk, RpcError};
 
 impl CodexSdk {
-    pub async fn controls_goal(
-        &self,
-        thread_id: &str,
-        action: &str,
-        objective: Option<&str>,
-        status: Option<&str>,
-        token_budget: Option<i64>,
-    ) -> Result<Value, RpcError> {
-        self.inner.ensure(thread_id).await?;
-        let connection = self.inner.connection().await?;
-        let mut params = json!({"threadId":thread_id});
-        let method = match action {
-            "set" => {
-                params["origin"] = json!("user");
-                if let Some(objective) = objective {
-                    params["objective"] = json!(objective);
-                }
-                if let Some(status) = status {
-                    params["status"] = json!(status);
-                }
-                if let Some(budget) = token_budget {
-                    params["tokenBudget"] = json!(budget);
-                }
-                "thread/goal/set"
-            }
-            "clear" => {
-                params["origin"] = json!("user");
-                "thread/goal/clear"
-            }
-            _ => "thread/goal/get",
-        };
-        connection.request(method, params).await
-    }
-
     pub async fn controls_settings(
         &self,
         thread_id: &str,

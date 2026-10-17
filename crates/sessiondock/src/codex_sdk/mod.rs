@@ -14,6 +14,7 @@ mod actions;
 mod connection;
 mod controls;
 mod live;
+mod queue;
 mod usage;
 
 use std::{
@@ -190,6 +191,7 @@ pub(crate) struct Inner {
     creates: Mutex<HashMap<String, CreateReceipt>>,
     pending: Mutex<HashMap<String, Value>>,
     shutdown: CancellationToken,
+    queue: queue::Queue,
 }
 
 /// What a page receives when it attaches to a thread.
@@ -229,10 +231,16 @@ impl CodexSdk {
             .is_some_and(|thread| thread.loaded_on() == Some(connection.generation()))
     }
 
-    pub fn new(endpoint: Endpoint, shutdown: CancellationToken) -> Arc<Self> {
+    pub fn new(
+        endpoint: Endpoint,
+        shutdown: CancellationToken,
+        state_dir: Option<PathBuf>,
+    ) -> std::io::Result<Arc<Self>> {
+        let queue = queue::Queue::open(state_dir)?;
         let sdk = Arc::new(Self {
             inner: Arc::new(Inner {
                 endpoint,
+                queue,
                 connection: tokio::sync::Mutex::new(None),
                 threads: Mutex::new(HashMap::new()),
                 models: Mutex::new(None),
@@ -243,7 +251,9 @@ impl CodexSdk {
         });
         let inner = sdk.inner.clone();
         tokio::spawn(async move { inner.reap_idle().await });
-        sdk
+        let inner = sdk.inner.clone();
+        tokio::spawn(async move { inner.run_queue().await });
+        Ok(sdk)
     }
 
     /// Keep an explicit create attempt alive across HTTP disconnects. Retrying
@@ -329,37 +339,6 @@ impl CodexSdk {
             events,
             guard: SubscriberGuard { thread },
         })
-    }
-
-    /// Start a turn, or steer the turn already in flight (`turn/steer` with
-    /// the expected id) so a second message never races a new turn.
-    pub async fn send(
-        &self,
-        thread_id: &str,
-        input: Vec<Value>,
-        model: Option<&str>,
-        effort: Option<&str>,
-    ) -> Result<Value, RpcError> {
-        let thread = self.inner.ensure(thread_id).await?;
-        let connection = self.inner.connection().await?;
-        if let Some(turn_id) = thread.active_turn() {
-            let result = connection
-                .request(
-                    "turn/steer",
-                    json!({"threadId": thread_id, "input": input, "expectedTurnId": turn_id}),
-                )
-                .await?;
-            return Ok(json!({"steered": true, "turn_id": result["turnId"]}));
-        }
-        let mut params = json!({"threadId": thread_id, "input": input});
-        if let Some(model) = model.filter(|value| !value.is_empty()) {
-            params["model"] = json!(model);
-        }
-        if let Some(effort) = effort.filter(|value| !value.is_empty()) {
-            params["effort"] = json!(effort);
-        }
-        let result = connection.request("turn/start", params).await?;
-        Ok(json!({"steered": false, "turn_id": result["turn"]["id"]}))
     }
 
     pub async fn interrupt(&self, thread_id: &str) -> Result<Value, RpcError> {
@@ -506,6 +485,10 @@ impl Inner {
                     }
                 }
                 thread.loaded(connection.generation(), result);
+                thread.apply(
+                    "bridge/queue",
+                    json!({"queue":self.queue.visible(thread_id)}),
+                );
                 Ok(thread)
             }
             Err(error) => {

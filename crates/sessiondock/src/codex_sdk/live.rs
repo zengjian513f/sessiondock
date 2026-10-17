@@ -30,6 +30,8 @@ pub struct LiveThread {
 #[derive(Default)]
 struct State {
     seq: u64,
+    queue: Value,
+    starting: bool,
     generation: Option<u64>,
     resume: Value,
     settings: Value,
@@ -114,6 +116,18 @@ impl LiveThread {
             .map(str::to_string)
     }
 
+    pub fn ready_to_start(&self) -> bool {
+        let state = self.state.lock().expect("live");
+        !state.starting
+            && state.turn.is_none()
+            && state.requests.is_empty()
+            && state.status["type"] == "idle"
+    }
+
+    pub fn starting(&self, value: bool) {
+        self.state.lock().expect("live").starting = value;
+    }
+
     pub fn attach(&self) -> (Value, broadcast::Receiver<Arc<str>>) {
         let mut state = self.state.lock().expect("live");
         self.subscribers.fetch_add(1, Ordering::SeqCst);
@@ -191,7 +205,7 @@ impl LiveThread {
 fn summary(state: &State) -> Value {
     json!({
         "resume": state.resume, "settings": state.settings, "status": state.status,
-        "usage": state.usage, "last_error": state.last_error,
+        "usage": state.usage, "last_error": state.last_error, "queue":state.queue,
     })
 }
 
@@ -207,12 +221,15 @@ impl State {
         let item_id = params["itemId"].as_str().unwrap_or_default().to_string();
         let delta = params["delta"].as_str().unwrap_or_default();
         match method {
+            "bridge/queue" => self.queue = params["queue"].clone(),
             "turn/started" => {
+                self.starting = false;
                 self.turn = Some(params["turn"].clone());
                 self.items.clear();
                 self.last_error = Value::Null;
             }
             "turn/completed" => {
+                self.starting = false;
                 self.turn = None;
                 self.items.clear();
             }

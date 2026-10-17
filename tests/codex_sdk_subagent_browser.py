@@ -177,6 +177,8 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     expect(pane.locator('#sdk-stop')).to_be_visible()
     box.fill('steer selected child ' + label)
     pane.locator('#sdk-send').click()
+    expect(pane.locator('.sdk-queued')).to_contain_text('steer selected child ' + label)
+    pane.locator('.sdk-queued [data-queue-action="steer"]').click()
     expect(pane.locator('.sdk-live')).to_contain_text('steer selected child ' + label)
     assert fake.methods('turn/steer')[-1]['params']['threadId'] == CHILD
     pane.locator('#sdk-stop').click()

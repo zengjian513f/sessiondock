@@ -218,6 +218,16 @@ const CodexSdkCompose = {
     if (state?.uid === payload.uid) { this.paint(view, state); view.fitInput(); }
   },
 
+  async submission(payload, model, effort, agent) {
+    const holder = payload.draft || payload.state;
+    const key = JSON.stringify({uid: payload.uid, agent, text: payload.text,
+      attachments: payload.attachments, quotes: payload.quotes, model, effort});
+    if (holder.sdkSubmission?.key !== key) holder.sdkSubmission = {key, id: crypto.randomUUID()};
+    if (payload.draft && !await persistComposerDraft(payload.uid))
+      throw new Error(payload.draft.storageError || '草稿尚未保存');
+    return holder.sdkSubmission.id;
+  },
+
   failed(view) {
     const state = this.states.get(view);
     if (state) state.sending = false;
