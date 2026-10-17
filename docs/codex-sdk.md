@@ -163,12 +163,15 @@ before first SEND does not retain these unpersisted receipts.
   session or subagent selects SDK by default. An explicit switch to 对话/终端 lasts for
   the current page; background refreshes do not switch it back. It opens through `SessionContentView` like 信息/资源; the header
   stays, the message list, composer and terminal pane are hidden.
-- History: `fetchMessages(uid, {agent})` rendered by the same `appendMessages`, so
+- History: `fetchMessages(uid, {agent})` rendered by the same `planTurns` / `buildPlan`, so
   persisted turns look exactly like the message view. While a turn is in
   flight, history is cut before the last user message equal to the in-flight
   turn's user message, and the turn is shown from SDK items instead. After
   `turn/completed` the history is reloaded and SDK items that are now on disk
-  are removed, so each turn appears once.
+  are removed, so each turn appears once. Completed processes use the shared
+  fold/expand cards and header toggle; prompts and final answers stay visible.
+  In-flight SDK items remain visible. History refresh preserves individual
+  process folds, and the global preference also applies after page reload.
 - Live items map to message objects for `msgNode`: user/assistant/thinking
   bubbles, command/file/MCP/web-search tool cards (in-progress cards show
   `运行中…`).

@@ -38,6 +38,8 @@ def build(root):
     meta = {"id": THREAD, "cwd": "/synthetic/sdk", "timestamp": "2026-09-11T10:00:00Z"}
     corpus.put("sdk", "codex", [codex_row("session_meta", meta),
                                 codex_message("user", "earlier synthetic question"),
+                                codex_row("response_item", {"type": "reasoning", "summary": [
+                                    {"type": "summary_text", "text": "Earlier process to fold and expand"}]}),
                                 codex_message("assistant", "earlier synthetic answer"),
                                 codex_row("event_msg", {"type": "token_count", "info": {
                                     "last_token_usage": {"total_tokens": 800},
@@ -131,14 +133,38 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(pane.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text("20%")
             page.reload(wait_until="networkidle")
             expect(pane.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text("20%")
+            def toggle_processes():
+                if not page.locator('#a-turns').is_visible():
+                    page.locator('#a-more').click()
+                page.locator('#a-turns').click()
+
+            process = pane.locator('.sdk-history > .turn-process')
+            expect(process).to_have_count(1)
+            expect(process).to_have_class('msg turn-process folded')
+            toggle_processes()
+            expect(process.locator('.turn-process-body')).to_be_visible()
+            expect(process).to_contain_text('Earlier process to fold and expand')
+            page.reload(wait_until='networkidle')
+            expect(process.locator('.turn-process-body')).to_be_visible()
+            process.locator('.fold-toggle').first.click()
+            expect(process.locator('.turn-process-body')).to_be_hidden()
+            process.locator('.fold-toggle').first.click()
+            expect(process.locator('.turn-process-body')).to_be_visible()
+            toggle_processes()
+            expect(process.locator('.turn-process-body')).to_be_hidden()
             if screenshots:
                 screenshots.mkdir(parents=True, exist_ok=True)
                 for width, theme in [(1280, "light"), (390, "dark"), (1280, "dark"), (390, "light")]:
                     page.set_viewport_size({"width": width, "height": 900})
                     page.emulate_media(color_scheme=theme)
-                    if not pane.is_visible():
-                        page.locator('#side .item').filter(has_text="earlier synthetic question").click()
+                    page.reload(wait_until='networkidle')
+                    expect(pane).to_be_visible()
                     expect(pane.locator('.sdk-gauge[data-gauge="context"]')).to_be_visible()
+                    toggle_processes()
+                    expect(process.locator('.turn-process-body')).to_be_visible()
+                    page.screenshot(path=str(screenshots / f"process-expanded-{width}-{theme}.png"))
+                    toggle_processes()
+                    expect(process.locator('.turn-process-body')).to_be_hidden()
                     page.screenshot(path=str(screenshots / f"context-{width}-{theme}.png"))
                 page.set_viewport_size({"width": 1280, "height": 900})
             history = pane.locator(".sdk-history")

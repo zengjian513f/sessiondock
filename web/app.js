@@ -5973,13 +5973,13 @@ function stickBottom(box, force) {
  *  这一段，不再属于“持续跟随最底部”；否则 ResizeObserver 会把按钮直接
  *  推出屏幕。补两帧可覆盖语法高亮等紧随其后的同步布局变化。 */
 function mutateKeepingMessageAnchor(anchor, mutate) {
-  const box = $('#msgs');
+  const box = anchor?.closest('.msgs');
   if (!box || !box.contains(anchor)) return mutate();
   const top = anchor.getBoundingClientRect().top;
   _stick = false;
   _lastTop = box.scrollTop;
   const restore = () => {
-    if (!anchor.isConnected || box !== $('#msgs')) return;
+    if (!anchor.isConnected || box !== anchor.closest('.msgs')) return;
     const delta = anchor.getBoundingClientRect().top - top;
     if (Math.abs(delta) < .5) return;
     _selfScroll = true;
@@ -5997,7 +5997,7 @@ function mutateKeepingMessageAnchor(anchor, mutate) {
 }
 
 function jumpWithinConversation(target, block = 'center') {
-  const box = $('#msgs');
+  const box = target?.closest('.msgs');
   if (!target || !box?.contains(target)) return;
   _stick = false;
   _lastTop = box.scrollTop;
@@ -7031,10 +7031,11 @@ function head(m, total) {
     const label = S.compactTurns ? '展开所有过程' : '折叠已完成过程';
     turnMode.title = turnMode.ariaLabel = label;
     labelSessionAction(turnMode);
-    document.querySelectorAll('#msgs > .turn-process').forEach(
+    const box = SessionContentView.kind === 'sdk' ? CodexSdkView.history : $('#msgs');
+    box?.querySelectorAll(':scope > .turn-process').forEach(
       node => S.compactTurns ? node._fold?.() : node._open?.());
-    refreshMessageTimeDividers();
-    settle($('#msgs'));
+    refreshMessageTimeDividers(box);
+    if (SessionContentView.kind !== 'sdk') settle(box);
   };
   const viewSwitch = h.querySelector('#a-view-switch');
   const viewMenu = h.querySelector('#session-view-menu');
