@@ -99,7 +99,9 @@ def main():
                 page = browser.new_page(viewport={'width': 1280, 'height': 960})
                 page.goto(base, wait_until='networkidle')
                 page.locator('#side .item').first.click()
-                assert page.locator('.session-views button').evaluate_all('(buttons) => buttons.map(b => b.getAttribute("aria-label"))') == ['对话', '终端', '信息', '资源']
+                # A Codex session also offers the SDK view (docs/codex-sdk.md).
+                codex = page.locator('#side .item').first.get_attribute('data-uid').startswith('codex:')
+                assert page.locator('.session-views button:not([hidden])').evaluate_all('(buttons) => buttons.map(b => b.getAttribute("aria-label"))') == (['对话', '终端', 'Codex SDK', '信息', '资源'] if codex else ['对话', '终端', '信息', '资源'])
                 for width, theme in [(1280, 'light'), (390, 'light'), (390, 'dark'), (1280, 'dark')]:
                     page.set_viewport_size({'width':width, 'height':960})
                     page.evaluate('(theme) => document.documentElement.dataset.theme = theme', theme)
@@ -107,7 +109,7 @@ def main():
                         page.locator('#side .item').first.click()
                     page.locator('#a-chat').click()
                     expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
-                    for button in page.locator('.session-views button').all():
+                    for button in page.locator('.session-views button:not([hidden])').all():
                         expect(button).to_be_in_viewport()
                     if args.screenshots:
                         args.screenshots.mkdir(parents=True, exist_ok=True)

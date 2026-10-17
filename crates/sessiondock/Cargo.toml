@@ -30,6 +30,9 @@ memchr = "2"
 getrandom = "0.3"
 subtle = "2"
 futures-util = { version = "0.3", features = ["sink"] }
+# Codex SDK mode: WebSocket client over the app-server Unix control socket;
+# the same tungstenite build axum's `ws` feature already locks.
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
 ptyhost-client = { path = "../ptyhost-client" }
 process-links = { path = "../process-links" }
 cap-std = "4"

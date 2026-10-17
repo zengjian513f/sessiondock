@@ -72,6 +72,10 @@ pub struct Config {
     pub adapters: Vec<Adapter>,
     #[serde(default)]
     pub profiles: Vec<CliProfile>,
+    /// Set by the service from its Codex app-server endpoint, never read from
+    /// the file: managed Codex terminals join the shared daemon.
+    #[serde(skip)]
+    pub codex_remote: Option<crate::codex_sdk::TuiRemote>,
 }
 
 /// One real CLI installation. `args` is the fixed prefix. Legacy `new_args`
@@ -330,6 +334,7 @@ pub struct Launcher {
     updates: super::clients::Updates,
     /// Catalogs whose CLI list command is slow, warmed by each probe.
     catalogs: super::models::CatalogCache,
+    codex_remote: Option<crate::codex_sdk::TuiRemote>,
 }
 
 /// Upper bound of one `--version` probe (a wrapper may first load a shell rc).
@@ -434,6 +439,7 @@ impl Launcher {
             missing: std::sync::Mutex::new(missing),
             updates: super::clients::Updates::default(),
             catalogs: super::models::CatalogCache::default(),
+            codex_remote: config.codex_remote,
         })
     }
 
@@ -570,7 +576,7 @@ impl Launcher {
     /// substitutions being whole-argument `{session_id}` / `{sid}` from the
     /// receipt's validated identity. No shell, quoting or joining step. The
     /// executable is the file currently behind the configured path.
-    pub fn argv(&self, record: &Record) -> Result<Vec<OsString>, Error> {
+    pub fn argv(&self, record: &Record, remote: bool) -> Result<Vec<OsString>, Error> {
         let spec = record.spec();
         if let Some(adapter) = self.adapters.get(spec.adapter_id()) {
             if *spec.launch() != Launch::Fixed {
@@ -642,6 +648,17 @@ impl Launcher {
                 OsString::from("-c"),
                 OsString::from("check_for_update_on_startup=false"),
             ]);
+            // Join the shared app-server (docs/codex-sdk.md). The thread then
+            // lives in the daemon, which starts it in its own directory
+            // unless told: `-C` keeps the session's launch directory.
+            if let (true, Some(remote)) = (remote, &self.codex_remote) {
+                argv.extend([
+                    OsString::from("--remote"),
+                    OsString::from(&remote.arg),
+                    OsString::from("-C"),
+                    spec.cwd().as_os_str().to_os_string(),
+                ]);
+            }
         }
         argv.extend(choice_args(spec).into_iter().map(OsString::from));
         Ok(argv)
@@ -751,7 +768,16 @@ impl Launcher {
         if let Err(error) = checked {
             return Err(LaunchFailure { authority, error });
         }
-        let argv = match self.argv(record) {
+        let remote = record.spec().source() == Source::Codex
+            && self
+                .codex_remote
+                .as_ref()
+                .zip(self.profiles.get(record.spec().adapter_id()))
+                .is_some_and(|(remote, profile)| {
+                    current_executable(&profile.executable)
+                        .is_ok_and(|executable| remote.ensure(&executable))
+                });
+        let argv = match self.argv(record, remote) {
             Ok(argv) => argv,
             Err(error) => return Err(LaunchFailure { authority, error }),
         };

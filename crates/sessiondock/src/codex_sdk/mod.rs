@@ -1,0 +1,506 @@
+//! Codex SDK mode: one JSON-RPC connection from this node to the shared Codex
+//! app-server daemon (`codex app-server --listen unix://`, the same server a
+//! default `codex` TUI starts and reuses). Contract: docs/codex-sdk.md.
+//!
+//! The daemon owns model context, turns and approvals; this module only
+//! multiplexes it for browsers: it resumes a thread once per connection,
+//! keeps the in-flight turn and open server requests for late joiners, fans
+//! notifications out per thread and returns browser answers to the exact
+//! request id it received. Persisted history stays in the native rollout and
+//! is read by the ordinary history model. Transport handlers live in
+//! `api::codex_sdk`; nothing here parses HTTP.
+
+mod connection;
+mod live;
+
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+
+use serde_json::{Value, json};
+use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
+
+use connection::Connection;
+pub use connection::RpcError;
+use live::LiveThread;
+
+/// How long a thread with no page attached and no turn in flight stays
+/// subscribed before the bridge unsubscribes it from the daemon.
+const IDLE_UNSUBSCRIBE: Duration = Duration::from_secs(10 * 60);
+const MODEL_CACHE: Duration = Duration::from_secs(300);
+
+/// Where the app-server lives and whether this node may start it.
+#[derive(Clone, Debug)]
+pub struct Endpoint {
+    pub socket: PathBuf,
+    /// `CODEX_HOME` for `codex app-server daemon start`; `None` never starts.
+    pub autostart_home: Option<PathBuf>,
+    /// The socket was named by `SESSIONDOCK_CODEX_APP_SERVER`.
+    pub explicit: bool,
+}
+
+/// How a SessionDock-launched Codex TUI joins the shared daemon (`codex
+/// --remote …`), so a terminal and the SDK view drive one live thread
+/// instead of two runtimes fighting over the rollout's writer lock.
+#[derive(Clone, Debug)]
+pub struct TuiRemote {
+    /// Value of `--remote`: `unix://` (the default control socket of the
+    /// TUI's own `CODEX_HOME`) or `unix://<path>` for an explicit socket.
+    pub arg: String,
+    pub socket: PathBuf,
+    /// `CODEX_HOME` the daemon is started in; `None` never starts one.
+    pub home: Option<PathBuf>,
+}
+
+impl TuiRemote {
+    /// Make the daemon reachable before a launch: connect, else start it once
+    /// (`codex app-server daemon start`, idempotent) and wait for the socket.
+    /// Blocking and bounded; `false` means launch the TUI the old way rather
+    /// than fail the launch. A TUI given `--remote` does not start the daemon
+    /// itself and exits with a connection error when none runs.
+    pub fn ensure(&self, codex: &std::path::Path) -> bool {
+        #[cfg(unix)]
+        {
+            use std::{os::unix::net::UnixStream, process::Stdio};
+            let reachable = || UnixStream::connect(&self.socket).is_ok();
+            if reachable() {
+                return true;
+            }
+            let Some(home) = &self.home else {
+                return false;
+            };
+            let Ok(mut child) = std::process::Command::new(codex)
+                .args(["app-server", "daemon", "start"])
+                .env("CODEX_HOME", home)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            else {
+                return false;
+            };
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let started = loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break status.success(),
+                    Ok(None) if Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    _ => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break false;
+                    }
+                }
+            };
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while started && !reachable() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            started && reachable()
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = codex;
+            false
+        }
+    }
+}
+
+impl Endpoint {
+    /// `SESSIONDOCK_CODEX_APP_SERVER` wins (`off` disables the mode, any other
+    /// value is an explicit socket that is never auto-started); otherwise the
+    /// default control socket beside the Codex sessions root.
+    pub fn from_config(
+        explicit: Option<&str>,
+        codex_root: Option<&std::path::Path>,
+    ) -> Option<Self> {
+        if !cfg!(unix) {
+            return None;
+        }
+        match explicit {
+            Some("off") => None,
+            Some(value) => Some(Self {
+                socket: PathBuf::from(value.strip_prefix("unix://").unwrap_or(value)),
+                autostart_home: None,
+                explicit: true,
+            }),
+            None => {
+                let home = codex_root?.parent()?.to_path_buf();
+                Some(Self {
+                    socket: home
+                        .join("app-server-control")
+                        .join("app-server-control.sock"),
+                    autostart_home: Some(home),
+                    explicit: false,
+                })
+            }
+        }
+    }
+}
+
+impl Endpoint {
+    /// The TUI's view of this endpoint. A default endpoint applies only when
+    /// it is the `CODEX_HOME` the CLI itself resolves (`$CODEX_HOME`, else
+    /// `~/.codex`): `--remote unix://` finds its socket there, so a different
+    /// configured sessions root (an isolated or test home) must not be joined.
+    pub fn tui_remote(&self) -> Option<TuiRemote> {
+        if self.explicit {
+            return Some(TuiRemote {
+                arg: format!("unix://{}", self.socket.display()),
+                socket: self.socket.clone(),
+                home: None,
+            });
+        }
+        let home = self.autostart_home.as_ref()?;
+        let own = std::env::var_os("CODEX_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))?;
+        let same = match (home.canonicalize(), own.canonicalize()) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => home == &own,
+        };
+        same.then(|| TuiRemote {
+            arg: "unix://".to_string(),
+            socket: self.socket.clone(),
+            home: Some(home.clone()),
+        })
+    }
+}
+
+pub struct CodexSdk {
+    inner: Arc<Inner>,
+}
+
+pub(crate) struct Inner {
+    endpoint: Endpoint,
+    connection: tokio::sync::Mutex<Option<Arc<Connection>>>,
+    threads: Mutex<HashMap<String, Arc<LiveThread>>>,
+    models: Mutex<Option<(Instant, Value)>>,
+    shutdown: CancellationToken,
+}
+
+/// What a page receives when it attaches to a thread.
+pub struct Attached {
+    pub snapshot: Value,
+    pub events: broadcast::Receiver<Arc<str>>,
+    pub guard: SubscriberGuard,
+}
+
+/// Counts attached pages; dropping it starts the idle clock.
+pub struct SubscriberGuard {
+    thread: Arc<LiveThread>,
+}
+
+impl Drop for SubscriberGuard {
+    fn drop(&mut self) {
+        self.thread.detach();
+    }
+}
+
+impl CodexSdk {
+    pub fn new(endpoint: Endpoint, shutdown: CancellationToken) -> Arc<Self> {
+        let sdk = Arc::new(Self {
+            inner: Arc::new(Inner {
+                endpoint,
+                connection: tokio::sync::Mutex::new(None),
+                threads: Mutex::new(HashMap::new()),
+                models: Mutex::new(None),
+                shutdown,
+            }),
+        });
+        let inner = sdk.inner.clone();
+        tokio::spawn(async move { inner.reap_idle().await });
+        sdk
+    }
+
+    /// Resume `thread_id` on the shared connection (once per connection) and
+    /// return the thread metadata the daemon reported.
+    pub async fn open(&self, thread_id: &str) -> Result<Value, RpcError> {
+        let thread = self.inner.ensure(thread_id).await?;
+        Ok(thread.summary())
+    }
+
+    /// Snapshot plus the event stream from the same instant: no gap, no
+    /// duplicate between the two.
+    pub async fn attach(&self, thread_id: &str) -> Result<Attached, RpcError> {
+        let thread = self.inner.ensure(thread_id).await?;
+        let (snapshot, events) = thread.attach();
+        Ok(Attached {
+            snapshot,
+            events,
+            guard: SubscriberGuard { thread },
+        })
+    }
+
+    /// Start a turn, or steer the turn already in flight (`turn/steer` with
+    /// the expected id) so a second message never races a new turn.
+    pub async fn send(
+        &self,
+        thread_id: &str,
+        text: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<Value, RpcError> {
+        let thread = self.inner.ensure(thread_id).await?;
+        let connection = self.inner.connection().await?;
+        let input = json!([{"type": "text", "text": text, "text_elements": []}]);
+        if let Some(turn_id) = thread.active_turn() {
+            let result = connection
+                .request(
+                    "turn/steer",
+                    json!({"threadId": thread_id, "input": input, "expectedTurnId": turn_id}),
+                )
+                .await?;
+            return Ok(json!({"steered": true, "turn_id": result["turnId"]}));
+        }
+        let mut params = json!({"threadId": thread_id, "input": input});
+        if let Some(model) = model.filter(|value| !value.is_empty()) {
+            params["model"] = json!(model);
+        }
+        if let Some(effort) = effort.filter(|value| !value.is_empty()) {
+            params["effort"] = json!(effort);
+        }
+        let result = connection.request("turn/start", params).await?;
+        Ok(json!({"steered": false, "turn_id": result["turn"]["id"]}))
+    }
+
+    pub async fn interrupt(&self, thread_id: &str) -> Result<Value, RpcError> {
+        let thread = self.inner.ensure(thread_id).await?;
+        let Some(turn_id) = thread.active_turn() else {
+            return Err(RpcError::NoActiveTurn);
+        };
+        let connection = self.inner.connection().await?;
+        connection
+            .request(
+                "turn/interrupt",
+                json!({"threadId": thread_id, "turnId": turn_id}),
+            )
+            .await?;
+        Ok(json!({"turn_id": turn_id}))
+    }
+
+    /// Answer one open server request of this thread with the browser's
+    /// result. The key must still be open on the current connection.
+    pub async fn respond(&self, thread_id: &str, key: &str, result: Value) -> Result<(), RpcError> {
+        let thread = self.inner.ensure(thread_id).await?;
+        let connection = self.inner.connection().await?;
+        let id = thread
+            .request_id(key, connection.generation())
+            .ok_or(RpcError::UnknownRequest)?;
+        connection.reply(id, result)
+    }
+
+    /// `account/rateLimits/read`: the 5 h / weekly windows, credits and the
+    /// earned reset cards. Account-wide, so it needs no thread.
+    pub async fn rate_limits(&self) -> Result<Value, RpcError> {
+        let connection = self.inner.connection().await?;
+        connection
+            .request("account/rateLimits/read", json!({}))
+            .await
+    }
+
+    /// `account/rateLimitResetCredit/consume` for one chosen card. The caller's
+    /// `idempotency_key` makes a retried redemption of the same attempt safe.
+    pub async fn consume_reset(
+        &self,
+        credit_id: Option<&str>,
+        idempotency_key: &str,
+    ) -> Result<Value, RpcError> {
+        let connection = self.inner.connection().await?;
+        let mut params = json!({"idempotencyKey": idempotency_key});
+        if let Some(id) = credit_id.filter(|id| !id.is_empty()) {
+            params["creditId"] = json!(id);
+        }
+        connection
+            .request("account/rateLimitResetCredit/consume", params)
+            .await
+    }
+
+    pub async fn models(&self) -> Result<Value, RpcError> {
+        if let Some((at, value)) = self.inner.models.lock().expect("models").clone()
+            && at.elapsed() < MODEL_CACHE
+        {
+            return Ok(value);
+        }
+        let connection = self.inner.connection().await?;
+        let value = connection.request("model/list", json!({})).await?;
+        *self.inner.models.lock().expect("models") = Some((Instant::now(), value.clone()));
+        Ok(value)
+    }
+}
+
+impl Inner {
+    async fn connection(self: &Arc<Self>) -> Result<Arc<Connection>, RpcError> {
+        let mut slot = self.connection.lock().await;
+        if let Some(connection) = slot.as_ref()
+            && !connection.is_closed()
+        {
+            return Ok(connection.clone());
+        }
+        let generation = slot.as_ref().map_or(1, |old| old.generation() + 1);
+        let connection = Connection::open(self.clone(), &self.endpoint, generation).await?;
+        *slot = Some(connection.clone());
+        Ok(connection)
+    }
+
+    async fn ensure(self: &Arc<Self>, thread_id: &str) -> Result<Arc<LiveThread>, RpcError> {
+        let connection = self.connection().await?;
+        let thread = {
+            let mut threads = self.threads.lock().expect("threads");
+            threads
+                .entry(thread_id.to_string())
+                .or_insert_with(|| LiveThread::new(thread_id))
+                .clone()
+        };
+        let lock = thread.clone();
+        let _resume = lock.resume_lock.lock().await;
+        if thread.loaded_on() == Some(connection.generation()) {
+            return Ok(thread);
+        }
+        match connection
+            .request(
+                "thread/resume",
+                json!({"threadId": thread_id, "excludeTurns": true}),
+            )
+            .await
+        {
+            Ok(result) => {
+                thread.loaded(connection.generation(), result);
+                Ok(thread)
+            }
+            Err(error) => {
+                let mut threads = self.threads.lock().expect("threads");
+                if threads
+                    .get(thread_id)
+                    .is_some_and(|current| Arc::ptr_eq(current, &thread))
+                    && thread.loaded_on().is_none()
+                {
+                    threads.remove(thread_id);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// A notification from the daemon: route by `threadId`, apply to the
+    /// live state and fan out under the same lock.
+    pub(crate) fn notify(&self, method: &str, params: Value) {
+        let Some(thread_id) = thread_of(&params) else {
+            // Account-wide limit changes reach every attached page.
+            if method == "account/rateLimits/updated" {
+                let threads: Vec<_> = self
+                    .threads
+                    .lock()
+                    .expect("threads")
+                    .values()
+                    .cloned()
+                    .collect();
+                for thread in threads {
+                    thread.apply(method, params.clone());
+                }
+            }
+            return;
+        };
+        let thread = self
+            .threads
+            .lock()
+            .expect("threads")
+            .get(&thread_id)
+            .cloned();
+        if let Some(thread) = thread {
+            thread.apply(method, params);
+        }
+    }
+
+    /// A server-initiated request. Unroutable ones are refused at once so
+    /// the daemon never waits for an answer no page can give.
+    pub(crate) fn server_request(
+        &self,
+        connection: &Connection,
+        id: Value,
+        method: &str,
+        params: Value,
+    ) {
+        let thread = thread_of(&params).and_then(|thread_id| {
+            self.threads
+                .lock()
+                .expect("threads")
+                .get(&thread_id)
+                .cloned()
+        });
+        let supported = matches!(
+            method,
+            "item/commandExecution/requestApproval"
+                | "item/fileChange/requestApproval"
+                | "item/tool/requestUserInput"
+                | "item/permissions/requestApproval"
+                | "mcpServer/elicitation/request"
+        );
+        match thread {
+            Some(thread) if supported => {
+                thread.request(connection.generation(), id, method, params)
+            }
+            _ => connection.refuse(id, method),
+        }
+    }
+
+    /// The connection ended: every attached page gets `reset` and every
+    /// thread is dropped, so the next attach resumes on a new connection.
+    pub(crate) fn disconnected(&self, generation: u64, reason: &str) {
+        let threads: Vec<_> = {
+            let mut threads = self.threads.lock().expect("threads");
+            let gone: Vec<String> = threads
+                .iter()
+                .filter(|(_, thread)| thread.loaded_on().is_none_or(|g| g <= generation))
+                .map(|(id, _)| id.clone())
+                .collect();
+            gone.into_iter()
+                .filter_map(|id| threads.remove(&id))
+                .collect()
+        };
+        for thread in threads {
+            thread.reset(reason);
+        }
+    }
+
+    async fn reap_idle(self: Arc<Self>) {
+        let mut tick = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            tokio::select! {
+                _ = self.shutdown.cancelled() => return,
+                _ = tick.tick() => {}
+            }
+            let idle: Vec<Arc<LiveThread>> = {
+                let threads = self.threads.lock().expect("threads");
+                threads
+                    .values()
+                    .filter(|t| t.idle_for(IDLE_UNSUBSCRIBE))
+                    .cloned()
+                    .collect()
+            };
+            for thread in idle {
+                self.threads.lock().expect("threads").remove(thread.id());
+                let current = self.connection.lock().await.clone();
+                if let Some(connection) = current.filter(|c| !c.is_closed()) {
+                    let _ = connection
+                        .request("thread/unsubscribe", json!({"threadId": thread.id()}))
+                        .await;
+                }
+                thread.reset("idle");
+            }
+        }
+    }
+}
+
+fn thread_of(params: &Value) -> Option<String> {
+    params["threadId"]
+        .as_str()
+        .or_else(|| params["thread"]["id"].as_str())
+        .map(str::to_string)
+}

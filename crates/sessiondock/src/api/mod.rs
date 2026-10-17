@@ -7,6 +7,7 @@
 mod audit;
 mod bug_report;
 pub(crate) mod cleanup;
+mod codex_sdk;
 mod conversation;
 mod events;
 mod files;
@@ -263,6 +264,15 @@ pub fn router() -> Router<AppState> {
                 "/api/term/scroll",
             ))),
         )
+        // Codex SDK mode: the shared app-server daemon behind one connection.
+        .route("/codex-sdk/open", post(codex_sdk::open))
+        .route("/codex-sdk/events", get(codex_sdk::events))
+        .route("/codex-sdk/turn", post(codex_sdk::turn))
+        .route("/codex-sdk/interrupt", post(codex_sdk::interrupt))
+        .route("/codex-sdk/respond", post(codex_sdk::respond))
+        .route("/codex-sdk/models", get(codex_sdk::models))
+        .route("/codex-sdk/limits", get(codex_sdk::limits))
+        .route("/codex-sdk/reset-credit", post(codex_sdk::reset_credit))
         .route("/live", get(runtime::live))
         .route("/shell-env", get(shell_env::status))
         .route("/shell-env/restart", post(shell_env::restart))

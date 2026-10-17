@@ -17,6 +17,9 @@ pub struct Config {
     pub roots: SessionRoots,
     /// Names file; defaults beside the configured Codex sessions root.
     pub codex_index: Option<PathBuf>,
+    /// Codex app-server control socket: a socket path, or `off`. Unset uses
+    /// the shared daemon beside the Codex sessions root and may start it.
+    pub codex_app_server: Option<String>,
     /// Opt-in isolated terminal transport. No implicit host discovery.
     pub ptyhost_dir: Option<PathBuf>,
     /// SessionDock-owned preferences and grants.
@@ -264,6 +267,7 @@ impl Default for Config {
                 agy: None,
             },
             codex_index: None,
+            codex_app_server: None,
             ptyhost_dir: None,
             state_dir: None,
             lifecycle_dir: None,
@@ -418,6 +422,16 @@ impl Config {
                     .and_then(|root| root.parent())
                     .map(|home| home.join("session_index.jsonl"))
             });
+        config.codex_app_server = match env::var("SESSIONDOCK_CODEX_APP_SERVER") {
+            Ok(value) if !value.trim().is_empty() => Some(value.trim().to_string()),
+            Ok(_) | Err(env::VarError::NotPresent) => None,
+            Err(env::VarError::NotUnicode(_)) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SESSIONDOCK_CODEX_APP_SERVER must be a socket path or off",
+                ));
+            }
+        };
         if let Some(path) = env::var_os("SESSIONDOCK_PROC_ROOT") {
             config.proc_root = PathBuf::from(path);
         }

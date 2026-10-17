@@ -39,6 +39,12 @@
 - [ ] 部署补发（不阻塞 [Agy](docs/agy.md) 接入）：Linux、macOS、Windows
   各一个节点网络不可达，恢复联机后用官方部署工具补发并验证。
 
+- [ ] 补齐 [Codex SDK 模式](docs/codex-sdk.md) 的其余 app-server 能力：从 SDK 视图
+  新建会话（`thread/start` 后在列表出现）、图片/文件附件（`localImage`）、
+  `review/start`、`thread/compact/start`、`thread/fork`/`thread/revert`、目标
+  （`thread/goal/*`）与 `thread/shellCommand`；评估让 SessionDock 启动的 Codex 终端
+  使用 `--remote unix://` 共用 daemon，使终端与 SDK 视图实时共享同一运行实例。
+
 ## Operations and release engineering
 
 - [ ] 在现有 16 个 CI 浏览器回归套件之上，评估按改动范围选套件及周期性完整合成

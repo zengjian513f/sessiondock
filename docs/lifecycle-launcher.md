@@ -95,7 +95,12 @@ resume and report-worker launches. An interactive startup update exits Codex
 before native session creation, abandoning the pending session. Update Codex
 outside managed sessions instead (the machine settings below, a scheduled
 `codex update`, or an external terminal); this per-invocation override leaves
-user configuration and model/effort defaults untouched. Fixed-argv adapters are
+user configuration and model/effort defaults untouched. When the node has a
+Codex app-server endpoint ([codex-sdk.md](codex-sdk.md#terminal-coexistence)) the
+same profiles also append `--remote unix://[PATH] -C <launch directory>`; the
+launcher first makes the daemon reachable (`codex app-server daemon start`,
+bounded) and falls back to the arguments above without `--remote` if it cannot.
+Fixed-argv adapters are
 unchanged. See the [official configuration reference](https://developers.openai.com/codex/config-reference).
 
 ## Client versions and manual updates
