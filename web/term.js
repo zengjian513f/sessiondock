@@ -4386,6 +4386,7 @@ async function followServerDraft(uid, revision = null) {
 /** A draft changed on the server (UI event): read it now instead of at the
  *  next input CHECK. A read already in flight may predate that write. */
 function followPushedDraft() {
+  if (CodexSdkView.pane) void CodexSdkCompose.follow(CodexSdkView);
   if (!composerUid) return;
   if (composerFollowBusy) { composerFollowPushed = true; return; }
   void followServerDraft(composerUid, Infinity);

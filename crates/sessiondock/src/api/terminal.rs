@@ -882,6 +882,7 @@ pub async fn list(
         "unavailable_reason":"没有通过完整会话 UID 和实例校验的运行中终端；创建和 CLI 接管尚未启用。",
         "sources":{},"home":home,"sessions":[],"pending":[],"hosts":[],
         "codex_sdk": state.codex_sdk.is_some(),
+        "conversation_send": state.conversations.is_some(),
         "sdk_sessions": sdk_sessions,
         "bug_report": state.capabilities["bug_report"],
         "bug_report_worker": state.capabilities["bug_report_worker"]});

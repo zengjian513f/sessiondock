@@ -11,6 +11,7 @@ const CodexSdkView = {
   summary: null, models: [], historyTimer: 0, snapshotReady: null,
   limits: null, resetCards: null, redeemKeys: new Map(),
   modelChoice: null, effortChoice: null,
+  pendingAtOpen: false,
   legacyViews: new Set(),
 
   defaultFor(uid, agent) { return this.available(uid, agent) && !this.legacyViews.has(viewKey(uid, agent)); },
@@ -35,6 +36,7 @@ const CodexSdkView = {
     this.legacyViews.delete(viewKey(uid, agent));
     this.close();
     this.uid = uid; this.agent = agent; this.pane = pane;
+    this.pendingAtOpen = !agent && !!this.pending(uid);
     const generation = ++this.generation;
     pane.setAttribute('aria-label', 'Codex SDK');
     pane.classList.add('sdk-pane');
@@ -71,7 +73,7 @@ const CodexSdkView = {
     this.live = pane.querySelector('.sdk-live');
     this.notice = pane.querySelector('.sdk-status');
     this.input = pane.querySelector('#sdk-input');
-    this.input.oninput = () => this.fitInput();
+    this.input.oninput = () => { this.fitInput(); CodexSdkCompose.input(this); };
     this.input.onkeydown = event => {
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !MOBILE.matches) {
         event.preventDefault();
@@ -87,11 +89,17 @@ const CodexSdkView = {
     };
     pane.querySelector('#sdk-effort').onchange = event => { this.effortChoice = event.target.value || null; };
     pane.querySelector('#sdk-reset-use').onclick = () => this.redeem();
+    CodexSdkCompose.mount(this);
+    CodexSdkActions.mount(this);
+    CodexSdkControls.mount(this);
     this.setNotice('正在连接 Codex app-server…');
     this.start(generation);
   },
 
   close() {
+    CodexSdkCompose.close(this);
+    CodexSdkActions.close(this);
+    CodexSdkControls.close(this);
     this.generation++;
     this.es?.close();
     this.es = null;
@@ -333,10 +341,13 @@ const CodexSdkView = {
   async refreshHistory(generation, afterTurn = false) {
     if (this.pending(this.uid) && !afterTurn) return;
     try {
-      if (afterTurn && this.pending(this.uid)) {
+      if (afterTurn && this.pendingAtOpen) {
         await loadSessions(true, true);
         if (!this.current(generation)) return;
-        if (!this.pending(this.uid)) await openSession(this.uid, null, {follow:true, historyMode:'none'});
+        if (!this.pending(this.uid)) {
+          this.pendingAtOpen = false;
+          await openSession(this.uid, this.agent, {follow:true, historyMode:'replace'});
+        }
       }
       const [{data}] = await Promise.all([fetchMessages(this.uid, {agent: this.agent}), this.snapshotReady]);
       if (!this.current(generation)) return;
@@ -374,7 +385,7 @@ const CodexSdkView = {
   activeUserText() {
     if (!this.turn) return '';
     for (const item of this.items.values()) {
-      if (item.type === 'userMessage') return userMessageText(item).trim();
+      if (item.type === 'userMessage') return (item.content || []).filter(part => part.type === 'text').map(part => part.text || '').join('\n').trim();
     }
     return '';
   },
@@ -390,11 +401,14 @@ const CodexSdkView = {
     for (const item of this.items.values()) this.paintItem(item);
     for (const request of this.requests.values()) this.paintRequest(request);
     this.paintPickers();
+    CodexSdkActions.paint(this);
+    CodexSdkControls.paint(this);
     this.paintStatus();
     this.scrollBottom();
   },
 
   applyEvent(method, raw) {
+    CodexSdkControls.event(this, method, raw);
     const stick = this.nearBottom();
     const item = raw.item;
     switch (method) {
@@ -413,6 +427,12 @@ const CodexSdkView = {
         if (raw.turn?.status === 'failed' && raw.turn.error && this.summary) this.summary.last_error = raw.turn.error;
         this.scheduleHistory();
         this.loadLimits();
+        break;
+      case 'thread/reverted':
+        this.turn = null; this.items.clear(); this.requests.clear(); this.nodes.clear();
+        this.live.replaceChildren();
+        if (this.summary) { this.summary.usage = null; this.summary.last_error = null; }
+        this.refreshHistory(this.generation, true);
         break;
       case 'item/started': case 'item/completed':
         if (item?.id) { this.items.set(item.id, item); this.paintItem(item); }
@@ -455,6 +475,8 @@ const CodexSdkView = {
           this.paintRequest(request);
         }
     }
+    CodexSdkActions.paint(this);
+    CodexSdkControls.paint(this);
     this.paintStatus();
     if (stick) this.scrollBottom();
   },
@@ -543,15 +565,26 @@ const CodexSdkView = {
   // ---------------------------------------------------------------- 操作
   async send() {
     const input = this.input;
-    const text = input?.value || '';
-    if (!text.trim()) return;
+    if (!input || !this.pane) return;
+    const generation = this.generation;
     const button = this.pane.querySelector('#sdk-send');
+    if (button.disabled) return;
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');
     const model = this.modelChoice, effort = this.effortChoice;
     try {
+      const payload = await CodexSdkCompose.collect(this);
+      if (!payload || !this.current(generation)) return;
+      const text = payload.text;
+      if (await this.command(text)) {
+        return;
+      }
+      if (text.trimStart().startsWith('/') || text.trimStart().startsWith('!')) {
+        this.setNotice('不支持的命令。输入 /help 查看可用命令；草稿已保留。', 'blocked');
+        return;
+      }
       const response = await this.request('api/codex-sdk/turn', {
-        uid: this.uid, text,
+        uid: payload.uid, text, attachments: payload.attachments, quotes: payload.quotes,
         model, effort,
       });
       if (this.input === input) {
@@ -560,14 +593,38 @@ const CodexSdkView = {
           if (this.effortChoice === effort) this.effortChoice = null;
         }
         this.paintPickers();
-        input.value = ''; this.fitInput();
       }
+      await CodexSdkCompose.sent(this, payload);
     } catch (error) {
-      this.setNotice(`发送失败：${error.message}`, 'blocked');
+      if (this.current(generation)) this.setNotice(`发送失败：${error.message}`, 'blocked');
     } finally {
+      if (this.current(generation)) CodexSdkCompose.failed(this);
       button.disabled = false;
       button.removeAttribute('aria-busy');
     }
+  },
+
+  async command(text) {
+    if (await CodexSdkActions.command(this, text) || await CodexSdkControls.command(this, text)) return true;
+    const match = text.trim().match(/^\/(help|model|effort|status|stop|new)(?:\s+([\s\S]*))?$/);
+    if (!match) return false;
+    const [, command, value] = match;
+    switch (command) {
+      case 'help': this.setNotice('可用命令：/model [模型]、/effort [强度]、/plan、/default、/permissions、/goal、/shell 命令（或 !命令）、/fork、/revert、/compact、/review、/status、/stop、/new。'); break;
+      case 'model': case 'effort': {
+        const select = this.pane.querySelector(`#sdk-${command}`);
+        if (value) {
+          if (![...select.options].some(option => option.value === value)) throw new Error(`${command === 'model' ? '模型' : '推理强度'}不在可选列表中`);
+          select.value = value; select.dispatchEvent(new Event('change'));
+        } else select.focus();
+        break;
+      }
+      case 'status': this.setNotice(`模型：${this.summary?.settings?.model || '未返回'}；推理强度：${this.summary?.settings?.effort || '未返回'}；${this.turn ? '运行中' : '空闲'}`); break;
+      case 'stop': await this.request('api/codex-sdk/interrupt', {uid: this.uid}); break;
+      case 'new': document.querySelector('#new-session')?.click(); break;
+    }
+    if (this.input?.value === text) { this.input.value = ''; this.fitInput(); CodexSdkCompose.input(this); }
+    return true;
   },
 
   async interrupt() {

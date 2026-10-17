@@ -8,6 +8,8 @@ mod audit;
 mod bug_report;
 pub(crate) mod cleanup;
 mod codex_sdk;
+mod codex_sdk_actions;
+mod codex_sdk_controls;
 mod conversation;
 mod events;
 mod files;
@@ -275,6 +277,17 @@ pub fn router() -> Router<AppState> {
         .route("/codex-sdk/models", get(codex_sdk::models))
         .route("/codex-sdk/limits", get(codex_sdk::limits))
         .route("/codex-sdk/reset-credit", post(codex_sdk::reset_credit))
+        .route("/codex-sdk/turns", post(codex_sdk_actions::turns))
+        .route("/codex-sdk/fork", post(codex_sdk_actions::fork))
+        .route("/codex-sdk/revert", post(codex_sdk_actions::revert))
+        .route("/codex-sdk/compact", post(codex_sdk_actions::compact))
+        .route("/codex-sdk/review", post(codex_sdk_actions::review))
+        .route("/codex-sdk/controls/goal", post(codex_sdk_controls::goal))
+        .route(
+            "/codex-sdk/controls/settings",
+            post(codex_sdk_controls::settings),
+        )
+        .route("/codex-sdk/controls/shell", post(codex_sdk_controls::shell))
         .route("/live", get(runtime::live))
         .route("/shell-env", get(shell_env::status))
         .route("/shell-env/restart", post(shell_env::restart))

@@ -50,6 +50,10 @@ def server(corpus, binary, app_socket, extra_env=None):
         port = reservation.getsockname()[1]
     environment.update(SESSIONDOCK_BIND=f"127.0.0.1:{port}", SESSIONDOCK_WEB_DIR=str(frontend_dir()),
                        SESSIONDOCK_CODEX_APP_SERVER=str(app_socket))
+    proc_root = corpus.root / 'sdk-proc'
+    proc_root.mkdir(exist_ok=True)
+    (proc_root / 'stat').write_text('btime 1700000000\n')
+    environment['SESSIONDOCK_PROC_ROOT'] = str(proc_root)
     for source in ("claude", "codex", "grok"):
         environment["SESSIONDOCK_" + source.upper() + "_ROOT"] = str(corpus.root / source)
     environment.update(extra_env or {})
@@ -123,6 +127,27 @@ def browser_check(corpus, base, fake):
             expect(history.locator('.msg[data-role="user"]')).to_contain_text("earlier synthetic question")
             expect(history.locator('.msg[data-role="assistant"]')).to_contain_text("earlier synthetic answer")
             fake.wait_for(lambda: fake.methods("thread/resume"))
+
+            # SDK commands dispatch locally and never become a model turn.
+            command_box = pane.locator('#sdk-input')
+            command_box.fill('/help')
+            pane.locator('#sdk-send').click()
+            expect(pane.locator('.sdk-status')).to_contain_text('可用命令')
+            expect(command_box).to_have_value('')
+            command_box.fill('/model')
+            pane.locator('#sdk-send').click()
+            expect(pane.locator('#sdk-model')).to_be_focused()
+            command_box.fill('/effort')
+            pane.locator('#sdk-send').click()
+            expect(pane.locator('#sdk-effort')).to_be_focused()
+            command_box.fill('/status')
+            pane.locator('#sdk-send').click()
+            expect(pane.locator('.sdk-status')).to_contain_text('fake-sol')
+            command_box.fill('/unknown-sdk-command')
+            pane.locator('#sdk-send').click()
+            expect(pane.locator('.sdk-status')).to_contain_text('不支持的命令')
+            expect(command_box).to_have_value('/unknown-sdk-command')
+            assert not fake.methods('turn/start')
 
             # Model and effort pickers come from model/list and ride on turn/start.
             model = pane.locator("#sdk-model")

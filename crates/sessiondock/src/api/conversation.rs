@@ -15,7 +15,7 @@ use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
-fn error(e: Failure) -> ApiError {
+pub(super) fn error(e: Failure) -> ApiError {
     ApiError::new(
         StatusCode::from_u16(e.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
         e.code,
