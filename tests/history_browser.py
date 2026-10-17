@@ -304,6 +304,43 @@ def main():
                 select("native-fork", "Native fork of reverted thread")
                 expect(page.locator("#msgs")).to_contain_text("Native middle answer")
                 print("PASS Codex immutable rollout IDs: three versions, archived dependency, fork of revert, search, missing/duplicate dependency and recovery")
+                # Before-first-prompt rewind: a physical generation starts over
+                # without inheriting any of the thread's previous history.
+                reset_id = "00000000-0000-7000-8000-000000000005"
+                reset_meta = batch35_meta(native_sid, "2026-09-11T10:00:00Z")
+                reset = native_file("native-empty", native_sid, reset_id, 10, [reset_meta])
+                page.reload(wait_until="networkidle")
+                page.locator(f'#side .item[data-uid="{corpus.uid("native-empty")}"]').click()
+                expect(page.locator('#msgs')).to_be_visible()
+                expect(page.locator('#msgs .msg')).to_have_count(0)
+                for key in ('native-original', 'native-middle', 'native-latest'):
+                    expect(page.locator(f'#side .item[data-uid="{corpus.uid(key)}"]')).to_have_count(0)
+                # A nonzero reset is still an ordinary duplicate, not evidence
+                # of a physical generation; recovering it needs no restart.
+                reset_meta['ordinal'] = 1
+                reset.write_bytes(encoded(reset_meta))
+                page.reload(wait_until='networkidle')
+                expect(page.locator(f'#side .item[data-uid="{corpus.uid("native-latest")}"]')).to_be_visible()
+                reset_meta['ordinal'] = 0
+                reset.write_bytes(encoded(reset_meta) + encoded(codex_message('user', 'After empty rewind', 1)))
+                page.reload(wait_until='networkidle')
+                select('native-empty', 'After empty rewind')
+                expect(page.locator('#msgs')).not_to_contain_text('Native physical inherited')
+                meta = batch35_meta(native_sid, '2026-09-11T11:00:00Z', history_base={
+                    'thread_id': reset_id, 'end_byte_offset': reset.stat().st_size, 'end_ordinal_exclusive': 2})
+                meta['ordinal'] = 2
+                native_file('native-after-empty', native_sid,
+                    '00000000-0000-7000-8000-000000000006', 11,
+                    [meta, codex_message('user', 'Inherited reset prefix only', 3)])
+                page.reload(wait_until='networkidle')
+                select('native-after-empty', 'Inherited reset prefix only')
+                expect(page.locator('#msgs')).to_contain_text('After empty rewind')
+                expect(page.locator('#msgs')).not_to_contain_text('Native physical inherited')
+                hits = get_json(opener, base, '/api/search?q=Native%20middle%20answer')['results']
+                assert not any(hit['uid'] == corpus.uid('native-after-empty') for hit in hits), hits
+                select('native-fork', 'Native fork of reverted thread')
+                expect(page.locator('#msgs')).to_contain_text('Native middle answer')
+                print('PASS Codex empty reset: no inherited history, nonzero conflict/recovery, continuation/search, older fork preserved')
                 select("claude-pasted", "Pasted needle 正文")
                 # Assert the wire result too: a renderer-only fix is insufficient.
                 wire = get_json(opener, base, "/api/messages/" + corpus.uid("claude-pasted"))

@@ -139,9 +139,9 @@ pub(super) fn mains_by_sid(
     mains
 }
 
-/// Codex can rotate a rollout while preserving its native thread id. Only
-/// explicit same-thread history_base generations qualify; ordinary duplicate
-/// IDs remain conflicts. Native timestamps order generations, never filenames.
+/// Codex can rotate a rollout while preserving its native thread id.
+/// Explicit history_base generations and native empty-history resets qualify;
+/// ordinary duplicate IDs remain conflicts. Native timestamps order generations.
 pub(super) fn generations(mut entries: Vec<&CandidateRef>) -> Option<Vec<&CandidateRef>> {
     if entries.len() < 2
         || entries.iter().any(|e| {
@@ -169,8 +169,24 @@ pub(super) fn generations(mut entries: Vec<&CandidateRef>) -> Option<Vec<&Candid
     }
     for (index, entry) in entries.iter().enumerate().skip(1) {
         let codex = entry.summary.codex.as_ref()?;
-        let parent = codex.history_base["thread_id"].as_str()?;
         let prior = &entries[..index];
+        if &entry.summary.sid != sid {
+            return None;
+        }
+        // Reverting before the first prompt starts at ordinal zero with no
+        // inherited prefix. The native filename/header pair still identifies
+        // a new physical rollout of this thread; no ancestor bytes are read.
+        if codex.history_base.is_null()
+            && codex.start_ordinal == Some(0)
+            && let Some(rollout) = entry.codex_rollout_id()
+            && rollout != sid
+            && prior
+                .iter()
+                .all(|e| e.codex_rollout_id().is_some_and(|id| id != rollout))
+        {
+            continue;
+        }
+        let parent = codex.history_base["thread_id"].as_str()?;
         let inherits_prior = if let Some(rollout) = entry.codex_rollout_id() {
             // Each new physical version must name an earlier physical version,
             // and cannot reuse another file's immutable identity.
@@ -179,8 +195,7 @@ pub(super) fn generations(mut entries: Vec<&CandidateRef>) -> Option<Vec<&Candid
         } else {
             parent == sid
         };
-        if &entry.summary.sid != sid
-            || !inherits_prior
+        if !inherits_prior
             || codex.start_ordinal.is_none()
             || codex.history_base["end_ordinal_exclusive"].as_u64() != codex.start_ordinal
             || codex.history_base["end_byte_offset"].as_u64().is_none()

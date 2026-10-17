@@ -164,6 +164,12 @@ thread UUID). When the filename's thread UUID agrees with `session_meta.id`,
 files indexed from the archive; it does not select the thread's latest version.
 Later generations may inherit a previous rollout UUID, and a fork of a reverted
 thread may therefore reference a UUID that is not any visible session's ID.
+DELTA (BUG-20261017-000948-cf9aee): Codex 0.163.0 also resets the same thread
+before its first prompt: a new unique
+physical rollout UUID has ordinal zero and absent/null `history_base`. This is
+a generation with empty history, not a duplicate SID or an inherited prefix
+(BUG-20261017-000948-cf9aee). Its native filename/header identity must agree;
+unnamed duplicate files, reused rollout UUIDs and nonzero resets remain ambiguous.
 The independently read prefix checks the same filename/header identity.
 Missing or ambiguous physical dependencies surface the existing 501/409 errors.
 Both physical rows remain readable by uid, but older generations carry
@@ -174,6 +180,9 @@ aliases for that same native session once all generation chains validate.
 This is an intentional extension beyond the frozen Python oracle for a newer
 native format. Regression: `tests/history_browser.py` and
 `tests/lifecycle_cli_browser.py` use synthetic rollouts and fake CLIs.
+`tests/codex_empty_rewind_browser.py` uses real double-Esc/Enter keys in a
+synthetic TUI, checks empty history and repeat resets, and reconnects/input-tests
+the same guarded host through both node and Hub at desktop/mobile widths.
 
 Per-session codes (they concern this one session; the list is unaffected):
 
