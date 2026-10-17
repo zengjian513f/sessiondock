@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN" class="session-info-root">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="sessiondock-build" content="__SESSIONDOCK_ASSET_VERSION__">
+<meta name="sessiondock-mode" content="__SESSIONDOCK_MODE__">
+<title>Agent 额度 · SessionDock</title>
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="stylesheet" href="typography.css?v=__SESSIONDOCK_ASSET_VERSION__">
+<link rel="stylesheet" href="session-card.css?v=__SESSIONDOCK_ASSET_VERSION__">
+<link rel="stylesheet" href="style.css?v=__SESSIONDOCK_ASSET_VERSION__">
+<link rel="stylesheet" href="session-info.css?v=__SESSIONDOCK_ASSET_VERSION__">
+<script src="capabilities.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<script>
+(() => {
+  const root = new URL('./', location.href).pathname;
+  const prefix = SessionDockCapabilities.config.hub ? `sessiondock.hub.${root}.` : 'sessiondock.';
+  let theme = 'system';
+  try { theme = JSON.parse(SessionDockCapabilities.stored('theme', prefix)) || 'system'; } catch {}
+  document.documentElement.dataset.theme = theme === 'system'
+    ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme;
+})();
+</script>
+<link rel="stylesheet" href="quotas.css?v=__SESSIONDOCK_ASSET_VERSION__">
+<script defer src="quotas.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+</head>
+<body class="session-info-page">
+<header class="si-header"><a href="./">← 会话列表</a><h1>Agent 额度</h1><button id="quota-refresh" type="button">刷新</button></header>
+<main class="si-main">
+<p id="quota-status" class="si-caption" role="status">正在读取…</p>
+<div id="quota-agents"></div>
+</main>
+</body></html>

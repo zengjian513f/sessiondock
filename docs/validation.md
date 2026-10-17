@@ -28,6 +28,9 @@ being wrong. A suite whose first 40 lines carry `# run_validation: serial` runs
 alone after both pools (timing assertions). Summary and JSON keep the plan
 order; `--jobs 1` runs everything serially in that order.
 
+[quotas_browser.py](../tests/quotas_browser.py) covers the account quota page,
+Codex/Agy collectors, Claude statusLine snapshots, Hub proxying and failure recovery.
+
 ## When to run which tier
 
 The full sweep covers many independent surfaces and is not a per-edit gate.

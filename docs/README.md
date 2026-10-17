@@ -91,6 +91,8 @@
 | [delegation.md](delegation.md) | 委派本机 grok CLI（grok-4.6）做简单任务 | 用户已授权：在本仓库的开发过程中，可以把**边界清楚、可机械验证、独立成文件**的 任务交给本机 `grok` CLI 以 headless 方式完成（全局调用法：`/lyra-share/agent-rules/references/grok-cli.md`）。 默认使用 `grok-4.6`，用户明确指定时按本次指令；产出须人工审阅并按批次记账。 不得让 grok 触碰生产服务、原 Python 仓库、凭据或运行数据。 | 149 |
 | [validation.md](validation.md) | Validation suites | Tables of the headless Chromium browser suites run by `python3 tests/run_validation.py`, plus the explicit real-CLI/SSH-peer browser suites. A documented direct command does not imply inclusion in the default sweep. Narrative rules stay in  | 344 |
 
+[Agent 额度](quotas.md)：三种 CLI 的结构化采集、快照页面与 Claude 接入。
+
 ## 历史审计（按需查阅）
 
 | Doc | Title | Summary | Lines |

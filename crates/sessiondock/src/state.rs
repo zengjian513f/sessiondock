@@ -23,6 +23,7 @@ pub struct LaunchAdapter {
 
 #[derive(Clone)]
 pub struct AppState {
+    pub quotas: Arc<crate::quotas::Quotas>,
     pub(crate) cleanup_counts: Arc<crate::cleanup::Counts>,
     pub transfer: Option<Arc<crate::transfer::service::TransferService>>,
     pub assets: Arc<Assets>,

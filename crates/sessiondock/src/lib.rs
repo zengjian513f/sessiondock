@@ -31,6 +31,8 @@ pub mod metadata;
 mod native_replay;
 mod observe;
 pub mod polls;
+pub mod quota_statusline;
+pub mod quotas;
 pub mod runtime;
 pub mod search;
 mod security;
@@ -76,7 +78,8 @@ pub fn app_pair_with_shutdown(
         ));
     }
     let terminal = prepare_terminal(&config)?;
-    let built = build_app(config, shutdown.clone(), None, terminal, Vec::new())?;
+    let quotas = Arc::new(quotas::Quotas::new(config.state_dir.as_deref(), None));
+    let built = build_app(config, shutdown.clone(), None, terminal, Vec::new(), quotas)?;
     Ok((built.router, built.node_router))
 }
 
@@ -116,6 +119,10 @@ pub async fn prepare_app(
         let terminal = prepare_terminal(&config)?;
         Ok((config, launcher, terminal, adapters))
     }).await.map_err(io::Error::other)??;
+    let quotas = Arc::new(quotas::Quotas::new(
+        config.state_dir.as_deref(),
+        launcher.as_ref(),
+    ));
     let lifecycle = match (config.lifecycle_dir.clone(), launcher) {
         (Some(directory), Some(launcher)) => {
             let result = lifecycle::service::LifecycleService::open(
@@ -142,7 +149,14 @@ pub async fn prepare_app(
     };
     let worker_lifecycle = lifecycle.clone();
     let result = tokio::task::spawn_blocking(move || {
-        build_app(config, shutdown, worker_lifecycle, terminal, adapters)
+        build_app(
+            config,
+            shutdown,
+            worker_lifecycle,
+            terminal,
+            adapters,
+            quotas,
+        )
     })
     .await
     .map_err(io::Error::other)
@@ -216,6 +230,7 @@ fn build_app(
     lifecycle: Option<Arc<lifecycle::service::LifecycleService>>,
     terminal: Option<Arc<terminal::TerminalService>>,
     launch_adapters: Vec<state::LaunchAdapter>,
+    quotas: Arc<quotas::Quotas>,
 ) -> io::Result<BuiltApp> {
     let audit = config
         .audit_dir
@@ -540,6 +555,7 @@ fn build_app(
         service.clone().housekeeping(shutdown.clone());
     }
     let state = AppState {
+        quotas,
         cleanup_counts: Arc::new(cleanup::Counts::default()),
         transfer,
         shell_env,

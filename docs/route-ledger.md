@@ -14,6 +14,7 @@ linked from [the documentation index](README.md).
 | Background unread | POST `/api/sessions/unread` (read-only cursor summaries, node-scoped through Hub) | current |
 | Sync and search | GET `/api/events` (lightweight UI changes), `/api/watch`, `/api/search` (including `progress=1` NDJSON) | current |
 | Session resources | GET `/api/resources`, `/api/resources/summary` (batch direct-owner sidebar metrics), `/api/session/resources` (`uid`, `scope=direct` or `inclusive`); POST `/api/session/resources/probe`, `/api/resources/probe`; GET/POST `/api/process-links` | shared collector; session view resolves opaque UI UID to native identity, Hub aggregates execution nodes; link writes require node authentication |
+| Account quotas | GET `/api/quotas`; POST `/api/quotas/refresh` (node-scoped through Hub; [contract](quotas.md)) | snapshot reads and manual refresh |
 | Runtime state | GET `/api/live`, `/api/term/list` | capability-gated |
 | Preferences and timeline | GET/POST `/api/groups`, POST `/api/session/group`, `/api/session/star`, `/api/session/nest`, `/api/sessions/fork-visibility` | capability-gated |
 | Group copies | POST `/api/session/clone/plan`, `/api/session/clone`, `/api/session/clone/cancel`, `/api/session/clone/progress`; Hub POST `/api/session/transfer/clone`, `/api/session/transfer/cancel`, `/api/session/transfer/progress`; GET `/api/session/transfers` | capability-gated |
