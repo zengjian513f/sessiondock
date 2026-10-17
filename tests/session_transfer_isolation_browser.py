@@ -20,6 +20,7 @@ from session_transfer_browser import ident
 from hub_fixtures import Hub, free_port, scoped
 from node_auth_fixtures import node_env, TOKEN
 from session_bundle_browser import node_call
+from session_transfer_cache_fixtures import Opens
 
 
 def main():
@@ -30,6 +31,12 @@ def main():
         for corpus in (source,destination):
             for name in ('state','proc','ids','trash'): (corpus.root/name).mkdir(parents=True)
         roots['codex']=str(source.root/'codex')
+        unrelated=source.root/'grok/project'/ident(900)
+        (unrelated/'compaction_checkpoints').mkdir(parents=True)
+        (unrelated/'summary.json').write_text(json.dumps({'info':{'id':ident(900),'cwd':str(source.root/'cwd')},'generated_title':'Unrelated target history'}))
+        (unrelated/'chat_history.jsonl').write_text('{"type":"user","content":"Unrelated"}\n')
+        checkpoint=unrelated/'compaction_checkpoints/unrelated.json'
+        checkpoint.write_text(json.dumps({'compacted_history':[{'type':'user','content':'unrelated '*10000}]}))
         # Neither unreadable/dangling project content nor a huge sparse build
         # output is part of a session migration.
         cwd=source.root/'cwd';(cwd/'dangling-project').symlink_to(root/'missing')
@@ -106,11 +113,16 @@ def main():
         assert blocked.wait(5),'first transfer never reached preparation'
         expect(dialog.locator('.transfer-progress')).to_have_attribute('data-phase','preparing',timeout=10000)
         second=context.new_page();other=open_dialog(second,uid('grok',source.root/'grok/project'/ident(10)),False)
+        unrelated_watch=Opens([checkpoint]);stack.callback(unrelated_watch.close)
         with second.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=15000) as copied:
             other.locator('.clone-confirm').click()
         assert copied.value.ok,copied.value.text()
         assert not release.is_set()
         expect(second.locator('#msgs')).to_contain_text('Grok answer 10')
+        assert not unrelated_watch.take(),'target publication scanned unrelated checkpoint history'
+        target_cache=json.loads((destination.root/'state/transfers/relationships-v1.json').read_text())
+        assert str(unrelated/'chat_history.jsonl') not in {row[0] for row in target_cache},'target rebuilt whole-store relationships'
+        print('PASS cold target verifies only delivered histories without scanning unrelated checkpoints',flush=True)
         assert (cwd/'build-output').stat().st_atime_ns==huge_atime
         print('PASS independent group finishes while another transfer is stalled; huge/unrelated cwd content is never read',flush=True)
         started=time.monotonic()

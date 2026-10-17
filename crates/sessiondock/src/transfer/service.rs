@@ -363,9 +363,6 @@ impl TransferService {
         );
         result
     }
-    fn group(&self, selected: &str) -> Result<group::Group, TransferError> {
-        self.group_in(selected, &self.inventory_snapshot()?)
-    }
     pub(crate) fn group_in(
         &self,
         selected: &str,
@@ -1067,7 +1064,25 @@ impl TransferService {
             if op.incoming_digest.is_none() {
                 self.recheck(&op)?;
             }
-            let group = self.group(op.target_uid.as_ref().unwrap())?;
+            let target_uids = op
+                .group()
+                .members
+                .iter()
+                .map(|member| self.member_target_uid(&op, member, op.staged.as_ref().unwrap()))
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            let snapshot = self.inventory_snapshot()?;
+            let group = {
+                let _guard = self
+                    .relationship_refresh
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                group::derive_published(
+                    &snapshot,
+                    op.target_uid.as_ref().unwrap(),
+                    &self.references,
+                    &target_uids,
+                )?
+            };
             if !group.blockers.is_empty() || group.members.len() != op.group().members.len() {
                 return Err(TransferError::new("move_verify", "克隆后的历史关系不完整"));
             }

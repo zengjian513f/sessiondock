@@ -58,12 +58,38 @@ pub(super) fn derive_cached(
     selected: &str,
     cache: &super::references::Cache,
 ) -> Result<Group, TransferError> {
+    derive_scope(snapshot, selected, cache, None)
+}
+
+/// Publication verifies the delivered graph, not a new migration of the target
+/// machine's entire connected component. Source discovery still uses all rows.
+pub(super) fn derive_published(
+    snapshot: &SessionSnapshot,
+    selected: &str,
+    cache: &super::references::Cache,
+    uids: &BTreeSet<String>,
+) -> Result<Group, TransferError> {
+    derive_scope(snapshot, selected, cache, Some(uids))
+}
+
+fn derive_scope(
+    snapshot: &SessionSnapshot,
+    selected: &str,
+    cache: &super::references::Cache,
+    scope: Option<&BTreeSet<String>>,
+) -> Result<Group, TransferError> {
     let index = snapshot.index();
-    let entries: BTreeMap<_, _> = index.candidates().map(|e| (e.uid.clone(), e)).collect();
+    let entries: BTreeMap<_, _> = index
+        .candidates()
+        .filter(|e| scope.is_none_or(|uids| uids.contains(&e.uid)))
+        .map(|e| (e.uid.clone(), e))
+        .collect();
     if !entries.contains_key(selected) {
         return Err(TransferError::new("not_found", "会话不在当前索引中"));
     }
-    cache.retain(&entries.values().map(|e| e.data.clone()).collect());
+    if scope.is_none() {
+        cache.retain(&entries.values().map(|e| e.data.clone()).collect());
+    }
     let progress = super::progress::Task::new("检查关联会话", "份历史", Some(entries.len() as u64));
     let links: BTreeMap<_, _> = entries
         .values()
@@ -298,6 +324,12 @@ pub(super) fn derive_cached(
     }
     let mut adjacency: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for edge in &edges {
+        if !entries.contains_key(&edge.from) || !entries.contains_key(&edge.to) {
+            return Err(TransferError::new(
+                "move_verify",
+                "目标历史引用了迁移清单以外的会话",
+            ));
+        }
         adjacency.entry(&edge.from).or_default().push(&edge.to);
         adjacency.entry(&edge.to).or_default().push(&edge.from);
     }
