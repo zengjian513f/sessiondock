@@ -15,8 +15,9 @@ import json
 import struct
 import threading
 import time
+import uuid
 
-from history_fixtures import codex_message, encoded
+from history_fixtures import codex_message, codex_row, encoded
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
@@ -26,6 +27,9 @@ class FakeAppServer:
         self.socket_path = str(socket_path)
         self.rollout = rollout
         self.thread_id = thread_id
+        self.created = {}
+        self.settings = {"model": "fake-sol", "effort": "high"}
+        self.rollout_root = rollout.parent
         self.received = []          # every client message, in order
         self.loop = asyncio.new_event_loop()
         self.ready = threading.Event()
@@ -135,9 +139,15 @@ class FakeAppServer:
         await self._write(writer, json.dumps(message).encode())
 
     async def notify(self, method, params):
+        if method == "thread/settings/updated":
+            self.settings = params["threadSettings"].copy()
         params = {"threadId": self.thread_id, **params}
         for writer in list(self.clients):
             await self.send(writer, {"method": method, "params": params})
+
+    def set_settings(self, model, effort):
+        asyncio.run_coroutine_threadsafe(self.notify("thread/settings/updated", {
+            "threadSettings": {"model": model, "effort": effort}}), self.loop).result(timeout=5)
 
     # ------------------------------------------------------------ protocol
     async def _handle(self, writer, message):
@@ -152,11 +162,22 @@ class FakeAppServer:
         reply = lambda result: self.send(writer, {"id": mid, "result": result})
         if method == "initialize":
             await reply({"userAgent": "fake/0", "codexHome": "/synthetic", "platformFamily": "unix", "platformOs": "linux"})
+        elif method == "thread/start":
+            self.thread_id = str(uuid.uuid4())
+            self.rollout = self.rollout_root / f"rollout-2026-10-17T10-00-00-{self.thread_id}.jsonl"
+            result = {"thread": {"id": self.thread_id, "path": str(self.rollout), "cwd": params["cwd"],
+                       "createdAt": 1792224000, "status": {"type": "idle"}, "turns": []},
+                      "model": params.get("model", "fake-sol"),
+                      "reasoningEffort": params.get("config", {}).get("model_reasoning_effort", "low")}
+            self.created[self.thread_id] = result
+            self.settings = {"model": result["model"], "effort": result["reasoningEffort"]}
+            await reply(result)
         elif method == "thread/resume":
             if params.get("threadId") != self.thread_id:
                 await self.send(writer, {"id": mid, "error": {"code": -32602, "message": "no rollout found"}})
                 return
-            await reply({"thread": {"id": self.thread_id, "status": {"type": "idle"}, "turns": [], "name": None}})
+            await reply({"thread": {"id": self.thread_id, "status": {"type": "idle"}, "turns": [], "name": None},
+                         "model": self.settings["model"], "reasoningEffort": self.settings["effort"]})
         elif method == "model/list":
             await reply({"data": [
                 {"id": "fake-sol", "model": "fake-sol", "displayName": "Fake Sol", "hidden": False, "isDefault": True,
@@ -177,6 +198,12 @@ class FakeAppServer:
             for client in list(self.clients):
                 await self.send(client, {"method": "account/rateLimits/updated", "params": {"rateLimits": self._bucket()}})
         elif method == "turn/start":
+            settings = {key: params.get(key, value) for key, value in self.settings.items()}
+            await self.notify("thread/settings/updated", {"threadSettings": settings})
+            if not self.rollout.exists():
+                self.rollout.write_bytes(encoded(codex_row("session_meta", {
+                    "id": self.thread_id, "cwd": self.created[self.thread_id]["thread"]["cwd"],
+                    "timestamp": "2026-10-17T10:00:00Z"})))
             text = params["input"][0]["text"]
             turn_id = f"turn-{len(self.methods('turn/start'))}"
             self.turn = turn_id

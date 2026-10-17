@@ -39,11 +39,10 @@
 - [ ] 部署补发（不阻塞 [Agy](docs/agy.md) 接入）：Linux、macOS、Windows
   各一个节点网络不可达，恢复联机后用官方部署工具补发并验证。
 
-- [ ] 补齐 [Codex SDK 模式](docs/codex-sdk.md) 的其余 app-server 能力：从 SDK 视图
-  新建会话（`thread/start` 后在列表出现）、图片/文件附件（`localImage`）、
+- [ ] 补齐 [Codex SDK 模式](docs/codex-sdk.md) 的其余 app-server 能力：图片/文件附件（`localImage`）、
   `review/start`、`thread/compact/start`、`thread/fork`/`thread/revert`、目标
-  （`thread/goal/*`）与 `thread/shellCommand`；评估让 SessionDock 启动的 Codex 终端
-  使用 `--remote unix://` 共用 daemon，使终端与 SDK 视图实时共享同一运行实例。
+  （`thread/goal/*`）与 `thread/shellCommand`；SDK 已作为 Codex 默认视图，补齐接续与
+  附件能力后退役旧对话、终端交互模式。未落盘 SDK 创建回执目前仅在节点进程内保留。
 
 ## Operations and release engineering
 

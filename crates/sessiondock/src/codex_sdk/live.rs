@@ -80,6 +80,7 @@ impl LiveThread {
         let mut state = self.state.lock().expect("live");
         state.generation = Some(generation);
         state.status = resume["thread"]["status"].clone();
+        state.settings = json!({"model":resume["model"],"effort":resume["reasoningEffort"]});
         state.resume = resume;
         let raw = json!({"summary": summary(&state)});
         let event = state.event("thread/resumed", raw);

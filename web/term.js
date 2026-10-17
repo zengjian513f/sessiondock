@@ -38,6 +38,7 @@ const T = {
   sources: {},
   home: '',
   pending: [],
+  sdkSessions: [],
   pendingModes: new Map(), // 临时会话名 → 打开前的终端布局；退出未落盘时恢复
   openViews: new Map(store.get('termviews', [])), // tmux 名 → {mode, height}
 };
@@ -196,6 +197,7 @@ async function fetchTermList(node = '') {
   const requestSeq = ++termListRequestSeq;
   const openEpoch = termOpenEpoch;
   const fingerprint = () => [
+    ...(T.sdkSessions || []).map(row => `sdk\t${row.uid}`),
     ...(T.list || []).map(x =>
       `${x.name}\t${x.cwd}\t${x.uid}\t${x.instance_id}\t${x.current_uid || ''}\t${x.frozen}`),
     ...(T.pending || []).map(x =>
@@ -239,7 +241,9 @@ async function fetchTermList(node = '') {
     T.unavailable_reason = data.unavailable_reason || '';
     T.list = mergeUnavailableTermRows(data.sessions || [], T.list, data.errors);
     T.sources = data.sources || {};
+    T.sdkSessions = data.sdk_sessions || [];
     T.resume_sources = data.resume_sources || {};
+    T.codex_sdk = data.codex_sdk === true;
     T.bug_report = data.bug_report === true;
     T.bug_report_worker = data.bug_report_worker === true;
     syncBugReportAvailability();
@@ -310,13 +314,16 @@ async function fetchTermList(node = '') {
       startShellFinalScreen(view, view.bindingUid || T.uid);
   }
   const create = $('#new-session');
-  const createEnabled = T.enabled && SessionDockCapabilities.allows('terminal_create');
+  const createEnabled = T.enabled && SessionDockCapabilities.allows('terminal_create')
+    || SessionDockCapabilities.config.codex_sdk === true;
   if (create && create.classList.contains('hidden') === createEnabled) {
     create.classList.toggle('hidden', !createEnabled);
     // 新建按钮出现/消失改变顶栏右侧占宽，放不放得下要重新量
     if (typeof layoutHeader === 'function') layoutHeader();
   }
   renderTakeoverBtn();
+  if (!SessionContentView.kind && cache.has(viewKey(S.sel, S.agent)) && CodexSdkView.defaultFor(S.sel, S.agent))
+    SessionContentView.open('sdk', S.sel, S.agent);
   for (const button of document.querySelectorAll('[data-continue-session]')) {
     button.hidden = !continueSessionEnabled();
   }
@@ -1529,8 +1536,17 @@ function fetchModelCatalog(node, source) {
     modelCatalogs.set(key, (async () => {
       try {
         const params = new URLSearchParams({source, ...(HUB_MODE ? {node} : {})});
-        const response = await fetch(appUrl(`api/term/models?${params}`), {cache: 'no-store'});
+        const sdk = source === 'codex' && SessionDockCapabilities.config.codex_sdk === true
+          && (!HUB_MODE || Nodes.capabilities[node]?.codex_sdk === true);
+        const response = await fetch(appUrl(`${sdk ? 'api/codex-sdk/models' : 'api/term/models'}?${params}`), {cache: 'no-store'});
         const data = response.ok ? await response.json() : null;
+        if (sdk && Array.isArray(data?.raw?.data)) {
+          const models = data.raw.data.filter(row => !row.hidden).map(row => ({id: row.model,
+            name: row.displayName || row.model, default_effort: row.defaultReasoningEffort,
+            efforts: (row.supportedReasoningEfforts || []).map(value => value.reasoningEffort)}));
+          return {models, default_model: data.raw.data.find(row => row.isDefault)?.model,
+            efforts: [...new Set(models.flatMap(row => row.efforts))]};
+        }
         return Array.isArray(data?.models) ? (source === 'agy' ? agyModelCatalog(data) : data) : null;
       } catch { return null; }
     })().then(catalog => {
@@ -2223,7 +2239,9 @@ async function createNewSession(e) {
     const request = { source, cwd, cols: 120, rows: newCreateAttempt.rows,
       request_id: requestId, ...(origin ? {continuation_uid:origin.uid} : {}), ...(HUB_MODE ? {_node: newNodeId()} : {}),
       ...NewModels.choice() };
-    let d = await post('api/term/create', request);
+    const sdk = source === 'codex' && newCodexSdkEnabled() && !origin;
+    const endpoint = sdk ? 'api/codex-sdk/create' : 'api/term/create';
+    let d = await post(endpoint, request);
     if (d.needs_create) {
       const target = String(d.cwd || cwd);
       if (!await appConfirm(`启动目录不存在：\n${target}\n\n是否创建该目录并继续？`)) {
@@ -2231,11 +2249,19 @@ async function createNewSession(e) {
         return;
       }
       go.textContent = '创建目录中…';
-      d = await post('api/term/create', { ...request, cwd: target, create_cwd: true });
+      d = await post(endpoint, { ...request, cwd: target, create_cwd: true });
     }
     if (d.error) { error.textContent = d.error; return; }
     const recent = [d.cwd, ...store.get(dirsKey, []).filter(x => x !== d.cwd)].slice(0, 8);
     store.set(dirsKey, recent);
+    if (sdk) {
+      if (d.session) T.sdkSessions = [...T.sdkSessions.filter(row => row.uid !== d.uid), d.session];
+      $('#new-session-dialog').close();
+      CodexSdkView.legacyViews.delete(d.uid);
+      await openSession(d.uid);
+      void loadSessions(true, true);
+      return;
+    }
     if (origin) {
       const uid = pendingUid(d.name);
       const draft = composerDraft(uid);
@@ -2342,6 +2368,8 @@ function renderTakeoverBtn() {
   const name = takenOver(S.sel);
   const paneOpen = !!name && !$('#termpane').classList.contains('hidden');
   const contentView = SessionContentView.sync();
+  const sdk = $('#a-sdk');
+  if (sdk) sdk.hidden = !CodexSdkView.available(S.sel, S.agent);
   const terminalVisible = !contentView && paneOpen && (T.mode === 'full' || (MOBILE.matches && !sessionTerminalFirst(S.sel)));
   b.innerHTML = uiIcon('terminal');
   b.title = b.ariaLabel = '终端';
@@ -2997,6 +3025,7 @@ function rememberTermOpen(name, open) {
 }
 
 function restoreTermPane(uid, agent = null) {
+  if (SessionContentView.kind || CodexSdkView.defaultFor(uid, agent)) return;
   if (T.ended.has(uid)) return;
   if (!uid || agent || S.sel !== uid || !sessionTerminalEnabled(uid) || !$('#a-term')) return;
   const name = takenOver(uid);

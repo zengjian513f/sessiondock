@@ -444,6 +444,12 @@ DELTA（BUG-20261015-135638-c5bbf6）：信息页根文档允许垂直滚动，�
 
 ### 新建会话
 
+DELTA（SDK 默认模式）：启用 SDK 的节点上，新建 Codex 直接使用 app-server
+`thread/start`，先显示未落盘创建回执，首条消息才由 Codex 写原生历史；UID 不变。
+Codex 主会话默认打开 SDK，旧对话和终端视图保留为退役过渡入口。机器能力、回执和
+模型来源见 [codex-sdk.md](codex-sdk.md)，验收见
+[`tests/codex_sdk_create_browser.py`](../tests/codex_sdk_create_browser.py)。
+
 `#new-session-dialog`（`openNewSessionDialog` / `createNewSession`）。来源：Claude（默认）、Codex、Grok、OpenCode、SSH。Hub 上先选机器。模型和推理强度按该 CLI 自己的目录（`createModelPicker`，`GET api/term/models`），可搜索。记忆的模型和 effort 按 `storeKey` 写入浏览器。工作目录：最近 8 条（`newDirs` 或 Hub 的 `newDirs.<nodeId>`）、常用目录、Tab 补全（`GET api/term/complete-dir`）。**DELTA：**Hub 新建目录候选还包含其他机器的会话目录和保存的近期目录，但须经当前所选机器确认存在；路径去重，未确认或不存在的跨机器路径不加入。打开弹窗及切换机器时重新检查，旧响应不能覆盖新列表，候选更新保留用户已输入的文字。创建后侧栏出现待落盘行，阶段文案来自 `pendingStageMessage` / `workerStatusMessage`。可停止、删除或丢弃。记录还没出现时有明确缺失文案（`pendingRecordMissing`）。启动回执在 Hub 列表不完整时仍以真实退出为准。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)、[`tests/pending_create_discard_browser.py`](../tests/pending_create_discard_browser.py)、[`tests/new_session_model_browser.py`](../tests/new_session_model_browser.py)、[`tests/new_session_follow_browser.py`](../tests/new_session_follow_browser.py)、[`tests/lifecycle_cli_browser.py`](../tests/lifecycle_cli_browser.py)。
 
 DELTA（BUG-20261012-075426-889b9d，替代 BUG-20261008-123158-ee0ab5 的旧目录默认与置顶规则）：每次打开新建弹窗，默认使用当前会话所在机器和工作目录（包括尚未落盘的启动会话），当前会话机器优先于列表机器筛选及上次新建机器；没有当前会话时，沿用机器选择回退规则，目录留空。打开及切换机器共用目录存在性检查：目录在所选机器仍存在就原样保留，否则（包括空值及无法确认存在）清空，不填入该机器的默认目录或近期目录。检查使用去除首尾空白后的路径，保留时不改写原输入。当前会话目录不再单独置顶或补入推荐列表，沿用普通最近使用与常用排序、路径去重及存在性检查。检查期间的新输入、再次切换机器或重新打开弹窗使旧结果失效；候选列表更新不改写输入。输入框右侧「×」清空目录并将焦点留在输入框，重新显示最近目录；空目录直接提交仍提示「请选择启动目录」。[`tests/hub_pending_state_browser.py`](../tests/hub_pending_state_browser.py)。

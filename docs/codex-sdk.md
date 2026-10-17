@@ -1,7 +1,7 @@
 # Codex SDK mode
 
-The SDK view is a third session view beside 对话 and 终端 for top-level Codex
-sessions. It drives the session through the Codex app-server JSON-RPC protocol
+The SDK view is the default view for top-level Codex sessions. 对话 and 终端
+remain available during their retirement transition. It drives the session through the Codex app-server JSON-RPC protocol
 (the interface behind the official Codex SDKs and IDE clients) instead of
 typing into a terminal. Persisted history still comes from the ordinary read
 model, so its bubbles are identical to the message view; only the in-flight
@@ -33,11 +33,22 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   `capabilities.experimentalApi = true`, then `initialized`.
 - A thread is resumed (`thread/resume`, `excludeTurns: true`) at most once per
   connection; later pages reuse it. A thread with no attached page, no turn in
-  flight and no open request for 10 minutes is unsubscribed
+  flight and no open request for 10 minutes is unsubscribed (except an
+  unpersisted new thread, whose live instance is its only copy)
   (`thread/unsubscribe`). When the connection closes every attached page gets
   `bridge/reset` and reconnects; the next attach opens a new connection.
 
 ### Terminal coexistence
+
+DELTA (SDK → PTY): when this bridge has the exact thread loaded on a live
+connection, and the configured Codex CLI profile joins that same Unix socket,
+opening 终端 starts or reuses a TUI client of the shared daemon. It does not
+ask to replace an external process or signal that daemon, even if process
+discovery finds it holding the rollout. An independent writer and a terminal
+lease held by another browser still follow their existing confirmation flow.
+The green marker means running without a managed PTY; an SDK view alone does
+not turn it blue. Browser coverage:
+[codex_sdk_terminal_browser.py](../tests/codex_sdk_terminal_browser.py).
 
 Two clients share one live thread only when both use the same app-server, and
 Codex 0.163 gives each of these a different runtime: a plain `codex` /
@@ -69,14 +80,17 @@ updating the daemon ends every attached terminal.
 
 ## HTTP
 
-All routes take the page's opaque session `uid` (query or body), so a Hub
-forwards them to the owning node. Only a top-level `codex` session resolves;
+Existing-session routes take the page's opaque session `uid` (query or body), so a Hub
+forwards them to the owning node. Create takes `_node` on a Hub; model discovery
+also accepts `node` without an existing session. Only a top-level `codex` session resolves;
 other sources and subagent views answer `400 codex_sdk_unsupported`. The
 mode is declared by `capabilities.codex_sdk` (node: endpoint configured; Hub:
 always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 
 | Route | Effect |
 | --- | --- |
+| POST `/api/codex-sdk/create` `{request_id, cwd, create_cwd?, model?, effort?}` | `thread/start`; returns `{uid, session, cwd, thread_id, raw}`; a missing directory returns `needs_create` before starting anything |
+| POST `/api/codex-sdk/discard` `{uid}` | Unsubscribe and remove an unpersisted create receipt; native history is preserved if it appeared meanwhile |
 | POST `/api/codex-sdk/open` `{uid}` | Connect/resume; returns `{thread_id, raw: summary}` |
 | GET `/api/codex-sdk/events?uid=` | SSE: first a `snapshot`, then every thread event |
 | POST `/api/codex-sdk/turn` `{uid, text, model?, effort?}` | `turn/start`; while a turn is in flight, `turn/steer` with `expectedTurnId` |
@@ -112,11 +126,33 @@ JSON-RPC `-32601`, so the daemon never waits on an answer nobody can give.
 `serverRequest/resolved` removes the card for every page (and for any other
 client of the daemon).
 
+## Creation
+
+DELTA (SDK default and lazy creation): choosing Codex in 新建会话 uses
+`thread/start` directly, without a PTY or `api/term/create`, on an SDK-enabled
+node. Model discovery uses `model/list`; the selected effort rides in
+`config.model_reasoning_effort`. Other sources and SDK-disabled nodes retain
+their existing launcher flow. Continuation launches retain their existing
+message/attachment contract during the transition.
+
+Like the CLI, a new thread initially has no native rollout. Its in-memory
+create receipt supplies an empty SDK page and a sidebar row through
+`api/term/list.sdk_sessions`, including after a browser reload. The node keeps
+that thread loaded. First SEND calls `turn/start`; Codex owns the first native
+write. The UID derives from the daemon's rollout path and stays identical when
+the normal inventory replaces the receipt. No placeholder file, forced name
+or synthetic history is written. The receipt and same-`request_id` retry cache
+live for this SessionDock process; retries, including a lost HTTP response,
+reuse the completed attempt rather than starting another thread. A node restart
+before first SEND does not retain these unpersisted receipts.
+
 ## View
 
-- `#a-sdk` (chat bubble with brackets) sits after 终端 in the session view
+- `#a-sdk` (chat bubble with brackets) sits first in the session view
   group and is shown only for top-level Codex sessions when the capability is
-  declared. It opens through `SessionContentView` like 信息/资源; the header
+  declared (per owning node on the Hub). Opening or reloading a Codex main
+  session selects SDK by default. An explicit switch to 对话/终端 lasts for
+  the current page; background refreshes do not switch it back. It opens through `SessionContentView` like 信息/资源; the header
   stays, the message list, composer and terminal pane are hidden.
 - History: `fetchMessages(uid)` rendered by the same `appendMessages`, so
   persisted turns look exactly like the message view. While a turn is in
@@ -131,10 +167,16 @@ client of the daemon).
   (`availableDecisions` for commands, accept/acceptForSession/decline/cancel
   for files, grant turn/session or deny for permissions, radio/text answers for
   user input, accept/decline/cancel for MCP elicitations).
+- DELTA (effective model/effort): the pickers select the thread's actual model
+  and effort from `thread/start`/`thread/resume`, then follow
+  `thread/settings/updated`, including changes made by another client. A current
+  value absent from `model/list` is still displayed verbatim. Catalog defaults
+  are not evidence of the current thread's settings. Unsent user choices survive
+  incoming settings events; after SEND the pickers follow the effective settings again.
 - Composer: same look as the message composer. Enter sends (Shift+Enter
   newline, not on mobile); the button reads 发送 or, during a turn, 追加
   (steer). 停止 interrupts. Model and effort selectors come from `model/list`;
-  an empty choice keeps the thread's current setting, a choice applies to the
+  displaying the current setting does not send an override; only a user change applies to the
   started turn and, per app-server semantics, to later turns.
 - The status line shows the last turn error, the rate-limit-reached notice and the
   waiting state.
@@ -157,8 +199,10 @@ client of the daemon).
 
 ## Not yet covered
 
-Starting a new thread from the SDK view, image/file attachments
+Image/file attachments
 (`localImage`), review, compaction, fork/revert, goals and the other
 app-server management APIs are tracked in [TODO](../TODO.md). Validation:
 [codex_sdk_browser.py](../tests/codex_sdk_browser.py) with
-[codex_sdk_fixtures.py](../tests/codex_sdk_fixtures.py).
+[codex_sdk_fixtures.py](../tests/codex_sdk_fixtures.py), and
+[codex_sdk_create_browser.py](../tests/codex_sdk_create_browser.py) for node/Hub
+creation, lazy persistence, reload and default view selection.

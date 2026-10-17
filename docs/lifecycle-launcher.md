@@ -103,6 +103,13 @@ bounded) and falls back to the arguments above without `--remote` if it cannot.
 Fixed-argv adapters are
 unchanged. See the [official configuration reference](https://developers.openai.com/codex/config-reference).
 
+DELTA (SDK terminal attachment): a live SDK subscription to the exact native
+thread plus a CLI profile targeting the same app-server socket bypasses external
+process replacement in `term/takeover`. The new terminal joins that daemon;
+the daemon and existing clients are not killed. Independent runtimes and other
+pages' terminal leases keep their confirmation behavior. See
+[codex-sdk.md](codex-sdk.md#terminal-coexistence).
+
 ## Client versions and manual updates
 
 The Machines settings tab has an AI client matrix below the machine list: one

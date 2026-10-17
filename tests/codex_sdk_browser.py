@@ -43,7 +43,7 @@ def build(root):
 
 
 @contextmanager
-def server(corpus, binary, app_socket):
+def server(corpus, binary, app_socket, extra_env=None):
     environment = {key: value for key, value in os.environ.items() if not key.startswith("SESSIONDOCK_")}
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
@@ -52,6 +52,7 @@ def server(corpus, binary, app_socket):
                        SESSIONDOCK_CODEX_APP_SERVER=str(app_socket))
     for source in ("claude", "codex", "grok"):
         environment["SESSIONDOCK_" + source.upper() + "_ROOT"] = str(corpus.root / source)
+    environment.update(extra_env or {})
     base = f"http://127.0.0.1:{port}"
     opener = build_opener(ProxyHandler({}), NoRedirects())
     with tempfile.TemporaryFile(mode="w+b") as log:
@@ -126,10 +127,20 @@ def browser_check(corpus, base, fake):
             # Model and effort pickers come from model/list and ride on turn/start.
             model = pane.locator("#sdk-model")
             expect(model.locator("option")).to_have_count(3)
-            model.select_option("fake-luna")
+            expect(model).to_have_value("fake-sol")
             effort = pane.locator("#sdk-effort")
+            expect(effort).to_have_value("high")  # Current thread, not model/list's low default.
+            fake.set_settings("fake-private-model", "xhigh")
+            expect(model).to_have_value("fake-private-model")
+            expect(effort).to_have_value("xhigh")
+            fake.set_settings("fake-sol", "high")
+            expect(model).to_have_value("fake-sol")
+            model.select_option("fake-luna")
             expect(effort.locator('option[value="medium"]')).to_have_count(1)
             effort.select_option("medium")
+            fake.set_settings("fake-sol", "low")
+            expect(model).to_have_value("fake-luna")  # Preserve an unsent choice across events.
+            expect(effort).to_have_value("medium")
 
             box = pane.locator("#sdk-input")
             box.fill("approve the synthetic command")
@@ -150,6 +161,8 @@ def browser_check(corpus, base, fake):
             # The open approval survives a reload: it comes back in the snapshot.
             page.reload(wait_until="networkidle")
             pane = open_sdk(page, corpus, expect)
+            expect(pane.locator('#sdk-model')).to_have_value('fake-luna')
+            expect(pane.locator('#sdk-effort')).to_have_value('medium')
             live = pane.locator(".sdk-live")
             card = live.locator(".sdk-request")
             expect(card).to_contain_text("需要批准执行命令")
@@ -195,6 +208,8 @@ def browser_check(corpus, base, fake):
             box = pane.locator("#sdk-input")
             box.fill("ask me something")
             pane.locator("#sdk-send").click()
+            started = fake.wait_for(lambda: fake.methods('turn/start') if len(fake.methods('turn/start')) == 2 else None)[-1]['params']
+            assert 'model' not in started and 'effort' not in started, started
             question = pane.locator(".sdk-request")
             expect(question).to_contain_text("Which color?")
             question.get_by_label("Blue").check()

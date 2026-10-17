@@ -1,7 +1,7 @@
 //! HTTP transport for the Codex SDK mode (docs/codex-sdk.md). Handlers only
 //! resolve the page's opaque session UID to a native Codex thread id and call
 //! `codex_sdk::CodexSdk`; the Hub forwards every route by that `uid`.
-use std::{convert::Infallible, sync::Arc, time::Duration};
+use std::{convert::Infallible, path::Path, sync::Arc, time::Duration};
 
 use axum::{
     Json,
@@ -64,8 +64,16 @@ fn rpc(error: RpcError) -> ApiError {
 }
 
 /// The native thread behind a top-level Codex session UID. Subagent views
-/// and other sources are refused; the read model is the only identity source.
+/// and other sources are refused. Only the native catalog or an explicit
+/// app-server start receipt supplies the identity.
 async fn thread_id(state: &AppState, uid: &str) -> Result<String, ApiError> {
+    if let Some(thread) = state
+        .codex_sdk
+        .as_ref()
+        .and_then(|sdk| sdk.pending_thread(uid))
+    {
+        return Ok(thread);
+    }
     let uid = uid.to_string();
     let scope = state
         .reader
@@ -84,6 +92,56 @@ async fn thread_id(state: &AppState, uid: &str) -> Result<String, ApiError> {
 #[derive(Deserialize)]
 pub struct Target {
     uid: String,
+}
+
+#[derive(Deserialize)]
+pub struct Create {
+    request_id: String,
+    cwd: String,
+    #[serde(default)]
+    create_cwd: bool,
+    model: Option<String>,
+    effort: Option<String>,
+}
+
+pub async fn create(
+    State(state): State<AppState>,
+    Json(body): Json<Create>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    let cwd = match super::lifecycle::prepare_cwd(body.cwd, body.create_cwd).await? {
+        super::lifecycle::PreparedCwd::Ready(cwd) => cwd,
+        super::lifecycle::PreparedCwd::Missing(cwd) => {
+            return Ok(Json(
+                json!({"needs_create":true,"cwd":cwd,"error":"启动目录不存在"}),
+            ));
+        }
+    };
+    let mut params = json!({"cwd":cwd,"ephemeral":false});
+    if let Some(model) = body.model.filter(|s| !s.is_empty()) {
+        params["model"] = json!(model);
+    }
+    if let Some(effort) = body.effort.filter(|s| !s.is_empty()) {
+        params["config"] = json!({"model_reasoning_effort":effort});
+    }
+    let result = sdk.create(&body.request_id, params).await.map_err(rpc)?;
+    let path = result["thread"]["path"]
+        .as_str()
+        .ok_or_else(|| rpc(RpcError::Disconnected))?;
+    let uid = crate::sessions::uid_for("codex", Path::new(path));
+    state.reader.store.invalidate_inventory();
+    let session = sdk.pending().into_iter().find(|row| row["uid"] == uid);
+    Ok(Json(
+        json!({"ok":true,"uid":uid,"session":session,"cwd":cwd,"thread_id":result["thread"]["id"],"raw":result}),
+    ))
+}
+
+pub async fn discard(
+    State(state): State<AppState>,
+    Json(body): Json<Target>,
+) -> Result<Json<Value>, ApiError> {
+    service(&state)?.discard(&body.uid).await.map_err(rpc)?;
+    Ok(Json(json!({"ok":true})))
 }
 
 pub async fn open(
@@ -253,13 +311,9 @@ pub async fn reset_credit(
     ))
 }
 
-pub async fn models(
-    State(state): State<AppState>,
-    Query(query): Query<Target>,
-) -> Result<Json<Value>, ApiError> {
+pub async fn models(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let sdk = service(&state)?;
-    // The UID only names the machine on a Hub; models are per daemon.
-    let _ = &query.uid;
+    // Models are per daemon. The Hub accepts either uid or an explicit node.
     let value = sdk.models().await.map_err(rpc)?;
     Ok(Json(json!({"ok": true, "raw": value})))
 }
