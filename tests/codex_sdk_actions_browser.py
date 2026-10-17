@@ -6,6 +6,7 @@ Uses private synthetic rollouts and Unix sockets. No real CLI or model.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -103,7 +104,7 @@ class ActionsServer(FakeAppServer):
                          "model": "fake-sol", "reasoningEffort": "high"})
         elif method == "thread/compact/start":
             await reply({})
-            await self.notify("item/completed", {"turnId": "compact-turn", "item": {
+            await self.notify("item/started", {"turnId": "compact-turn", "item": {
                 "id": "compact-item", "type": "contextCompaction"}})
         elif method == "review/start":
             assert params["delivery"] == "inline", params
@@ -161,7 +162,24 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     assert len(fake.methods("thread/revert")) == 1
 
     pane.locator("#sdk-actions").select_option("compact")
+    expect(pane.locator(".sdk-live")).to_contain_text("正在压缩上下文")
+    expect(pane.locator(".sdk-live")).not_to_contain_text("上下文已压缩")
+    progress = pane.get_by_role("progressbar", name="正在压缩上下文")
+    expect(progress).to_be_visible()
+    assert progress.get_attribute("aria-valuenow") is None, "native compaction has no percentage"
+    if screenshots:
+        page.screenshot(path=str(screenshots / f"actions-{label}-compacting.png"))
+    page.reload(wait_until="networkidle")
+    expect(progress).to_be_visible()
+    expect(pane.locator(".sdk-live")).not_to_contain_text("上下文已压缩")
+    asyncio.run_coroutine_threadsafe(fake.notify("item/completed", {
+        "turnId": "compact-turn", "item": {"id": "compact-item", "type": "contextCompaction"}
+    }), fake.loop).result(5)
     expect(pane.locator(".sdk-live")).to_contain_text("上下文已压缩")
+    expect(progress).to_have_count(0)
+    page.reload(wait_until="networkidle")
+    expect(pane.locator(".sdk-live")).to_contain_text("上下文已压缩")
+    expect(progress).to_have_count(0)
     assert fake.methods("thread/compact/start")[-1]["params"] == {"threadId": THREAD}
     box.fill("/compact extra")
     send.click()
