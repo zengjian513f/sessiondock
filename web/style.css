@@ -868,6 +868,12 @@ main { display: flex; flex: 1; min-height: 0; }
   transition: width .1s linear;
 }
 .search-progress-track[hidden] { display: none; }
+.sdk-compaction-progress { width: min(240px, 100%); }
+.sdk-compaction-progress i { width: 35%; animation: sdk-compacting 1.4s ease-in-out infinite alternate; }
+@keyframes sdk-compacting { from { transform: translateX(0); } to { transform: translateX(185%); } }
+@media (prefers-reduced-motion: reduce) {
+  .sdk-compaction-progress i { animation: none; }
+}
 .search-progress-nodes { max-height: 108px; overflow-y: auto; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .search-progress-node { display: flex; align-items: baseline; gap: 8px; margin-top: 4px; }
 .search-progress-node > span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

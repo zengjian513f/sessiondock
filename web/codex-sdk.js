@@ -435,6 +435,8 @@ const CodexSdkView = {
         this.refreshHistory(this.generation, true);
         break;
       case 'item/started': case 'item/completed':
+        if (item?.type === 'contextCompaction')
+          item.status = method === 'item/started' ? 'inProgress' : 'completed';
         if (item?.id) { this.items.set(item.id, item); this.paintItem(item); }
         break;
       case 'item/agentMessage/delta': case 'item/plan/delta':
@@ -498,7 +500,9 @@ const CodexSdkView = {
     if (item.status === 'inProgress' && TOOL_ROLES.has(message.role)) {
       const status = document.createElement('div');
       status.className = 'tool-status';
-      status.textContent = '运行中…';
+      if (item.type === 'contextCompaction') {
+        status.innerHTML = '<div class="search-progress-track sdk-compaction-progress" role="progressbar" aria-label="正在压缩上下文"><i></i></div>';
+      } else status.textContent = '运行中…';
       node.querySelector('.tool-entry')?.append(status);
     }
     if (old) old.replaceWith(node);
@@ -709,7 +713,8 @@ function itemMessage(item) {
     case 'imageView': return {role: 'tool', name: 'view_image', summary: `查看图片 ${item.path || ''}`, text: item.path || ''};
     case 'enteredReviewMode': return {role: 'assistant', text: `开始审查：${item.review || ''}`};
     case 'exitedReviewMode': return item.review ? {role: 'assistant', text: item.review} : null;
-    case 'contextCompaction': return {role: 'tool', name: 'compact', summary: '上下文已压缩', text: ''};
+    case 'contextCompaction': return {role: 'tool', name: 'compact',
+      summary: done ? (failed ? '上下文压缩失败' : '上下文已压缩') : '正在压缩上下文…', text: ''};
     case 'functionCallOutput':
       return {role: 'tool_result', name: item.name, text: SDK_JSON(item.output)};
     default: return {role: 'tool', name: item.type, summary: item.type, text: SDK_JSON(item)};

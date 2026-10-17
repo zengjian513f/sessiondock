@@ -217,7 +217,17 @@ impl State {
             }
             "item/started" | "item/completed" => {
                 if let Some(id) = params["item"]["id"].as_str() {
-                    self.items.insert(id.to_string(), params["item"].clone());
+                    let mut item = params["item"].clone();
+                    // Native compaction items have no status; retain their event
+                    // phase so reconnect snapshots do not report completion early.
+                    if item["type"] == "contextCompaction" {
+                        item["status"] = json!(if method == "item/started" {
+                            "inProgress"
+                        } else {
+                            "completed"
+                        });
+                    }
+                    self.items.insert(id.to_string(), item);
                 }
             }
             "item/agentMessage/delta" | "item/plan/delta" => {

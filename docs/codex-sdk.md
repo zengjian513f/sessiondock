@@ -229,7 +229,11 @@ history mutation. Explicit SDK forks of main sessions persist the source's
 `fork_parent_visible` preference, keeping both branches in the sidebar after
 reload; the fork-chain menu can still hide the parent manually.
 A `thread/reverted` notification clears obsolete live items
-and reloads history for all attached pages. The mode selector changes Default /
+and reloads history for all attached pages. Compaction items use the native
+`item/started` / `item/completed` phase, retained in reconnect snapshots:
+the running card shows an indeterminate progress bar until completion. Native
+compaction supplies no percentage, so the UI does not invent one. The mode
+selector changes Default /
 Plan; the session dialog changes approval/sandbox policy, manages the native
 goal and submits direct shell commands. Actual settings and goal notifications
 from another client update the controls, without replacing unsaved form edits.
