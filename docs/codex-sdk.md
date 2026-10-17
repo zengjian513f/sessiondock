@@ -192,7 +192,15 @@ before first SEND does not retain these unpersisted receipts.
   started turn and, per app-server semantics, to later turns.
 - The status line shows the last turn error, the rate-limit-reached notice and the
   waiting state.
-- Usage row alongside the model/effort pickers, one `.sdk-bar` progress bar per
+- Composer options stay on one line: model, effort and collaboration mode remain
+  directly accessible; More contains reset cards, native conversation actions and
+  the permissions/goal dialog. At less than 760 CSS pixels of actual toolbar
+  width (including sidebar resizing), Usage opens the same live gauges in a popover.
+  Below 360 CSS pixels, collaboration mode also moves into More so model and
+  effort remain readable, including with interface scaling.
+  Popovers use the existing menu styling, stay inside the viewport and close on
+  resize, Escape or outside click. Long model names truncate within their selector.
+- Usage alongside the model/effort pickers, one `.sdk-bar` progress bar per
   gauge showing the **used** share (`100%` = full, red at ≥ 80 %): `5h` and `7d`
   from the account bucket (`rateLimitsByLimitId.codex`, else `rateLimits`),
   labelled by `windowDurationMins` (300 → 5h, 10080 → 7d; an account with a

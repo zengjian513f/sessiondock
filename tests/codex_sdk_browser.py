@@ -182,9 +182,15 @@ def browser_check(corpus, base, fake, screenshots=None):
                     page.emulate_media(color_scheme=theme)
                     page.reload(wait_until='networkidle')
                     expect(pane).to_be_visible()
+                    usage_toggle = pane.locator('#sdk-usage-toggle')
+                    if usage_toggle.is_visible():
+                        usage_toggle.click()
                     expect(pane.locator('.sdk-gauge[data-gauge="context"]')).to_be_visible()
                     expect(pane.locator('.sdk-gauge[data-gauge="5h"] b')).to_have_text("40%")
                     expect(pane.locator('.sdk-credits')).to_have_text("Credits 1,235")
+                    if usage_toggle.is_visible():
+                        page.screenshot(path=str(screenshots / f"usage-{width}-{theme}.png"))
+                        page.keyboard.press('Escape')
                     toggle_processes()
                     expect(process.locator('.turn-process-body')).to_be_visible()
                     page.screenshot(path=str(screenshots / f"process-expanded-{width}-{theme}.png"))
@@ -292,6 +298,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(five.locator(".sdk-bar")).to_have_attribute("aria-valuenow", "40")
             expect(week.locator("b")).to_have_text("25%")
             expect(pane.locator(".sdk-credits")).to_have_text("Credits 1,235")
+            pane.locator('#sdk-more').click()
             reset = pane.locator("#sdk-reset-card")
             expect(reset.locator("option")).to_have_count(2)
             expect(reset.locator("option").nth(1)).to_contain_text("Reset B")

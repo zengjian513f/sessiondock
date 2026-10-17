@@ -13,12 +13,12 @@ const CodexSdkControls = {
     this.states.set(view, state);
     const pickers = view.pane.querySelector('.sdk-pickers');
     const label = document.createElement('label');
-    label.className = 'new-effort'; label.title = '协作模式';
+    label.className = 'new-effort sdk-mode'; label.title = '协作模式';
     label.innerHTML = '<span class="visually-hidden">协作模式</span><select id="sdk-mode" aria-label="协作模式"><option value="">读取模式…</option><option value="default">Default</option><option value="plan">Plan</option></select>';
     const button = document.createElement('button');
     button.className = 'btn'; button.id = 'sdk-controls'; button.type = 'button';
     button.textContent = '会话'; button.title = '权限与目标';
-    button.onclick = () => this.dialog(view);
+    button.onclick = () => { view.closeToolbarMenus(); this.dialog(view); };
     label.querySelector('select').onchange = async event => {
       const mode = event.target.value;
       if (!mode) return;
@@ -27,7 +27,8 @@ const CodexSdkControls = {
       catch (error) { if (this.current(view, state)) view.setNotice(`切换模式失败：${error.message}`, 'blocked', true); }
       finally { if (this.current(view, state)) { event.target.disabled = false; this.paint(view); } }
     };
-    pickers.append(label, button);
+    pickers.insertBefore(label, pickers.querySelector('#sdk-more'));
+    view.pane.querySelector('#sdk-more-menu').append(button);
   },
 
   close(view) {

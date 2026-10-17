@@ -11,6 +11,7 @@ const CodexSdkView = {
   summary: null, models: [], historyTimer: 0, snapshotReady: null,
   limits: null, resetCards: null, redeemKeys: new Map(),
   limitsRead: null, limitsRetryTimer: 0, limitsRetryDelay: 1000,
+  toolbarObserver: null, toolbarBindings: null, toolbarWidth: null,
   modelChoice: null, effortChoice: null,
   pendingAtOpen: false,
   legacyViews: new Set(),
@@ -53,12 +54,17 @@ const CodexSdkView = {
             <span class="sdk-credits" hidden></span>
           </div>
           <div class="sdk-pickers">
+            <button class="btn" id="sdk-usage-toggle" type="button" aria-expanded="false" aria-controls="sdk-usage-menu" hidden>用量</button>
             <label class="new-effort sdk-model" title="模型"><span class="visually-hidden">模型</span><select id="sdk-model"><option value="">读取模型…</option></select></label>
             <label class="new-effort sdk-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="sdk-effort"><option value="">读取强度…</option></select></label>
-            <span class="sdk-reset" hidden>
-              <label class="new-effort" title="可兑换的限额重置卡"><span class="visually-hidden">重置卡</span><select id="sdk-reset-card"></select></label>
-              <button class="btn" id="sdk-reset-use" type="button" title="兑换所选重置卡">兑换</button>
-            </span>
+            <button class="btn" id="sdk-more" type="button" title="更多会话操作" aria-label="更多会话操作" aria-expanded="false" aria-controls="sdk-more-menu">⋯</button>
+            <div class="new-model-menu sdk-toolbar-menu" id="sdk-more-menu" popover="auto" aria-label="更多会话操作">
+              <span class="sdk-reset" hidden>
+                <label class="new-effort" title="可兑换的限额重置卡"><span class="visually-hidden">重置卡</span><select id="sdk-reset-card"></select></label>
+                <button class="btn" id="sdk-reset-use" type="button" title="兑换所选重置卡">兑换</button>
+              </span>
+            </div>
+            <div class="new-model-menu sdk-toolbar-menu sdk-usage-menu" id="sdk-usage-menu" popover="auto" aria-label="用量"></div>
           </div>
         </div>
         <div class="composer-row">
@@ -93,6 +99,7 @@ const CodexSdkView = {
     CodexSdkCompose.mount(this);
     CodexSdkActions.mount(this);
     CodexSdkControls.mount(this);
+    this.mountToolbar(generation);
     this.setNotice('正在连接 Codex app-server…');
     this.start(generation);
   },
@@ -104,6 +111,10 @@ const CodexSdkView = {
     this.generation++;
     this.es?.close();
     this.es = null;
+    this.toolbarObserver?.disconnect(); this.toolbarObserver = null;
+    this.toolbarBindings?.abort(); this.toolbarBindings = null;
+    this.toolbarWidth = null;
+    this.closeToolbarMenus();
     clearTimeout(this.historyTimer);
     clearTimeout(this.limitsRetryTimer);
     this.limitsRead?.abort();
@@ -116,6 +127,58 @@ const CodexSdkView = {
   },
 
   current(generation) { return generation === this.generation && !!this.pane; },
+
+  mountToolbar(generation) {
+    this.toolbarBindings = new AbortController();
+    for (const name of ['more', 'usage']) {
+      const button = this.pane.querySelector(name === 'more' ? '#sdk-more' : '#sdk-usage-toggle');
+      const menu = this.pane.querySelector(`#sdk-${name}-menu`);
+      menu.addEventListener('beforetoggle', event => button.setAttribute('aria-expanded', String(event.newState === 'open')));
+      button.onclick = () => {
+        if (menu.matches(':popover-open')) { menu.hidePopover(); return; }
+        this.closeToolbarMenus();
+        menu.showPopover();
+        const box = button.getBoundingClientRect(), zoom = menu.currentCSSZoom || 1;
+        const edge = 8, gap = 6, width = Math.min(300, innerWidth - edge * 2);
+        const above = box.top - gap - edge, below = innerHeight - box.bottom - gap - edge;
+        const up = above > below;
+        menu.style.width = `${width / zoom}px`;
+        menu.style.maxHeight = `${Math.max(0, up ? above : below) / zoom}px`;
+        menu.style.left = `${Math.max(edge, Math.min(box.right - width, innerWidth - edge - width)) / zoom}px`;
+        menu.style.top = `${(up ? box.top - gap - menu.getBoundingClientRect().height : box.bottom + gap) / zoom}px`;
+      };
+    }
+    window.addEventListener('resize', () => this.closeToolbarMenus(), {signal: this.toolbarBindings.signal});
+    this.toolbarObserver = new ResizeObserver(([entry]) => { if (this.current(generation)) this.layoutToolbar(entry.contentRect.width); });
+    this.toolbarObserver.observe(this.pane.querySelector('.sdk-options'));
+    this.layoutToolbar();
+  },
+
+  closeToolbarMenus() {
+    for (const menu of this.pane?.querySelectorAll('.sdk-toolbar-menu') || [])
+      if (menu.matches(':popover-open')) menu.hidePopover();
+  },
+
+  layoutToolbar(width = this.toolbarWidth) {
+    if (!this.pane) return;
+    const options = this.pane.querySelector('.sdk-options'), gauges = this.pane.querySelector('.sdk-gauges');
+    this.toolbarWidth = width ?? options.clientWidth;
+    const compact = this.toolbarWidth < 760;
+    const destination = compact ? this.pane.querySelector('#sdk-usage-menu') : options;
+    if (gauges.parentElement !== destination) { this.closeToolbarMenus(); destination.prepend(gauges); }
+    const mode = this.pane.querySelector('.sdk-mode');
+    if (mode) {
+      const pickers = this.pane.querySelector('.sdk-pickers'), more = this.pane.querySelector('#sdk-more-menu');
+      const destination = this.toolbarWidth < 360 ? more : pickers;
+      if (mode.parentElement !== destination) {
+        this.closeToolbarMenus();
+        if (destination === more) more.prepend(mode);
+        else pickers.insertBefore(mode, this.pane.querySelector('#sdk-more'));
+      }
+    }
+    options.classList.toggle('compact', compact);
+    this.pane.querySelector('#sdk-usage-toggle').hidden = !compact || ![...gauges.children].some(node => !node.hidden);
+  },
 
   async request(path, body) {
     const response = await fetch(appUrl(path), {
@@ -297,12 +360,14 @@ const CodexSdkView = {
       select.title = `共 ${count} 张可兑换`;
       holder.querySelector('#sdk-reset-use').textContent = `兑换 (${count})`;
     }
+    this.layoutToolbar();
   },
 
   async redeem() {
     const select = this.pane?.querySelector('#sdk-reset-card');
     if (!select) return;
     const creditId = select.value, label = select.selectedOptions[0]?.textContent || '重置卡';
+    this.closeToolbarMenus();
     const ok = await appConfirm(`兑换「${label}」？将重置对应的 Codex 限额窗口，且不可撤销。`, {ok: '兑换'});
     if (!ok || !this.pane) return;
     // 同一张卡的重试沿用同一个幂等键；成功后才换新键。

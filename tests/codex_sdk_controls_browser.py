@@ -115,6 +115,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     send("/default")
     expect(mode).to_have_value("default")
     expect(box).to_have_value("")
+    page.locator('#sdk-more').click()
     page.locator("#sdk-controls").click()
     dialog = page.locator("#sdk-controls-dialog")
     expect(dialog).to_be_visible()
@@ -190,6 +191,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     page.wait_for_function("previous => CodexSdkView.generation > previous && !!CodexSdkView.summary", arg=generation)
     assert len(fake.methods("thread/resume")) > resumed
     expect(page.locator("#sdk-mode")).to_have_value("default")
+    page.locator('#sdk-more').click()
     page.locator("#sdk-controls").click()
     expect(dialog.locator('#sdk-control-sandbox option').first).to_contain_text("工作区写入")
     expect(dialog.locator("#sdk-goal-current")).to_have_text("尚未设置目标")

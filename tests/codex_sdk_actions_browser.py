@@ -138,8 +138,12 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     expect(pane.locator(".sdk-history")).to_contain_text("remove this answer")
     box, send = pane.locator("#sdk-input"), pane.locator("#sdk-send")
 
+    def choose_action(action):
+        pane.locator('#sdk-more').click()
+        pane.locator('#sdk-actions').select_option(action)
+
     # The menu selects actual native turn IDs, including additional pages.
-    pane.locator("#sdk-actions").select_option("revert")
+    choose_action("revert")
     dialog = page.locator("#sdk-action-dialog")
     expect(dialog).to_contain_text("不回滚工作区文件")
     expect(dialog.locator("#sdk-revert-turn")).to_have_value(TURN2)
@@ -161,7 +165,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     expect(box).to_have_value("/revert " + TURN2)
     assert len(fake.methods("thread/revert")) == 1
 
-    pane.locator("#sdk-actions").select_option("compact")
+    choose_action("compact")
     expect(pane.locator(".sdk-live")).to_contain_text("正在压缩上下文")
     expect(pane.locator(".sdk-live")).not_to_contain_text("上下文已压缩")
     progress = pane.get_by_role("progressbar", name="正在压缩上下文")
@@ -187,7 +191,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     expect(box).to_have_value("/compact extra")
     assert len(fake.methods("thread/compact/start")) == 1
 
-    pane.locator("#sdk-actions").select_option("review")
+    choose_action("review")
     dialog = page.locator("#sdk-action-dialog")
     dialog.locator("#sdk-review-target").select_option("custom")
     dialog.locator("#sdk-review-detail").fill("检查异常处理和中文路径")

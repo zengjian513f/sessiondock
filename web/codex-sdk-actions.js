@@ -5,7 +5,7 @@ const CodexSdkActions = {
   dialog: null, pending: false,
 
   mount(view) {
-    const holder = view.pane?.querySelector('.sdk-pickers');
+    const holder = view.pane?.querySelector('#sdk-more-menu');
     if (!holder) return;
     const label = document.createElement('label');
     label.className = 'new-effort sdk-actions';
@@ -17,6 +17,7 @@ const CodexSdkActions = {
     label.querySelector('select').onchange = event => {
       const action = event.target.value;
       event.target.value = '';
+      view.closeToolbarMenus();
       if (action) void this.command(view, `/${action}`);
     };
     holder.append(label);
