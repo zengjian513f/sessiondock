@@ -5,7 +5,7 @@
 // 审批和提问来自节点与共享 Codex app-server 的连接（/api/codex-sdk/*）。
 // 这里只负责呈现与交互，不解析终端画面，也不另存历史。
 const CodexSdkView = {
-  uid: '', pane: null, es: null, generation: 0,
+  uid: '', agent: null, pane: null, es: null, generation: 0,
   box: null, history: null, live: null, notice: null, input: null,
   turn: null, items: new Map(), nodes: new Map(), requests: new Map(),
   summary: null, models: [], historyTimer: 0, snapshotReady: null,
@@ -13,29 +13,28 @@ const CodexSdkView = {
   modelChoice: null, effortChoice: null,
   legacyViews: new Set(),
 
-  defaultFor(uid, agent) { return this.available(uid, agent) && !this.legacyViews.has(uid); },
+  defaultFor(uid, agent) { return this.available(uid, agent) && !this.legacyViews.has(viewKey(uid, agent)); },
   pending(uid) {
     return typeof T === 'undefined' || S.sessions.some(row => row.uid === uid) ? null
       : T.sdkSessions?.find(row => row.uid === uid) || null;
   },
 
   available(uid, agent) {
-    return SessionDockCapabilities.config.codex_sdk === true && !agent
+    return SessionDockCapabilities.config.codex_sdk === true
       && (!HUB_MODE || Nodes.capabilities[nodeOf(uid)]?.codex_sdk === true)
       && String(uid || '').startsWith('codex:') && !String(uid).startsWith('tmux:');
   },
 
   unavailableReason(uid, agent) {
     if (SessionDockCapabilities.config.codex_sdk !== true) return '此服务未启用 Codex SDK 模式。';
-    if (agent) return '请切换到主会话使用 SDK 模式。';
     if (!String(uid || '').startsWith('codex:')) return 'SDK 模式只支持 Codex 会话。';
     return '';
   },
 
-  open(uid, pane) {
-    this.legacyViews.delete(uid);
+  open(uid, pane, agent = null) {
+    this.legacyViews.delete(viewKey(uid, agent));
     this.close();
-    this.uid = uid; this.pane = pane;
+    this.uid = uid; this.agent = agent; this.pane = pane;
     const generation = ++this.generation;
     pane.setAttribute('aria-label', 'Codex SDK');
     pane.classList.add('sdk-pane');
@@ -101,14 +100,14 @@ const CodexSdkView = {
     this.turn = null; this.summary = null; this.limits = null; this.resetCards = null;
     this.models = []; this.modelChoice = this.effortChoice = null;
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
-    this.uid = '';
+    this.uid = ''; this.agent = null;
   },
 
   current(generation) { return generation === this.generation && !!this.pane; },
 
   async request(path, body) {
     const response = await fetch(appUrl(path), {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({agent: this.agent || '', ...body}),
     });
     let data = null;
     try { data = await response.json(); } catch { /* 下面按 HTTP 状态说明 */ }
@@ -130,7 +129,7 @@ const CodexSdkView = {
     this.loadLimits(generation);
     let ready;
     this.snapshotReady = new Promise(resolve => { ready = resolve; });
-    const es = new EventSource(appUrl(`api/codex-sdk/events?${new URLSearchParams({uid})}`));
+    const es = new EventSource(appUrl(`api/codex-sdk/events?${new URLSearchParams({uid, agent: this.agent || ''})}`));
     this.es = es;
     es.addEventListener('sdk', event => {
       if (!this.current(generation)) return;
@@ -148,8 +147,8 @@ const CodexSdkView = {
 
   reconnect() {
     if (!this.pane) return;
-    const uid = this.uid, pane = this.pane;
-    this.open(uid, pane);
+    const uid = this.uid, pane = this.pane, agent = this.agent;
+    this.open(uid, pane, agent);
   },
 
   async loadModels(generation) {
@@ -339,7 +338,7 @@ const CodexSdkView = {
         if (!this.current(generation)) return;
         if (!this.pending(this.uid)) await openSession(this.uid, null, {follow:true, historyMode:'none'});
       }
-      const [{data}] = await Promise.all([fetchMessages(this.uid), this.snapshotReady]);
+      const [{data}] = await Promise.all([fetchMessages(this.uid, {agent: this.agent}), this.snapshotReady]);
       if (!this.current(generation)) return;
       const stick = this.nearBottom();
       let messages = data?.messages || [];

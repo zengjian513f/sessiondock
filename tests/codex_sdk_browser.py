@@ -7,7 +7,7 @@ SessionDock connects to it through `SESSIONDOCK_CODEX_APP_SERVER`. Desktop
 Chromium opens a synthetic Codex session, switches to the SDK view, and checks
 history bubbles, model/effort overrides, streamed replies, a command approval
 that survives a page reload, a user-input question, steering and interrupt.
-Other sources and subagent views do not offer it. No real CLI or daemon is involved.
+Other sources do not offer it; Codex subagents use the same view. No real CLI or daemon is involved.
 """
 from __future__ import annotations
 
@@ -113,9 +113,9 @@ def browser_check(corpus, base, fake):
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(base, wait_until="networkidle")
 
-            # Only top-level Codex sessions offer the view.
+            # Codex roots and children offer the view; other sources do not.
             assert page.evaluate("CodexSdkView.available('claude:0123456789abcdef', null)") is False
-            assert page.evaluate("CodexSdkView.available('codex:0123456789abcdef', 'helper')") is False
+            assert page.evaluate("CodexSdkView.available('codex:0123456789abcdef', 'helper')") is True
 
             pane = open_sdk(page, corpus, expect)
             history = pane.locator(".sdk-history")

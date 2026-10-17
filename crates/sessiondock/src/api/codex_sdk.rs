@@ -63,27 +63,28 @@ fn rpc(error: RpcError) -> ApiError {
     }
 }
 
-/// The native thread behind a top-level Codex session UID. Subagent views
-/// and other sources are refused. Only the native catalog or an explicit
-/// app-server start receipt supplies the identity.
-async fn thread_id(state: &AppState, uid: &str) -> Result<String, ApiError> {
-    if let Some(thread) = state
-        .codex_sdk
-        .as_ref()
-        .and_then(|sdk| sdk.pending_thread(uid))
+/// Resolve the selected Codex view through inventory ownership and native identity.
+/// A child uses its own thread; only an unpersisted main view uses a start receipt.
+async fn thread_id(state: &AppState, uid: &str, agent: &str) -> Result<String, ApiError> {
+    if agent.is_empty()
+        && let Some(thread) = state
+            .codex_sdk
+            .as_ref()
+            .and_then(|sdk| sdk.pending_thread(uid))
     {
         return Ok(thread);
     }
     let uid = uid.to_string();
+    let agent = agent.to_string();
     let scope = state
         .reader
-        .run(move |sessions| sessions.native_scope(&uid, ""))
+        .run(move |sessions| sessions.native_scope(&uid, &agent))
         .await?;
-    if scope.source != "codex" || scope.agent_id.is_some() || scope.session_id.is_empty() {
+    if scope.source != "codex" || scope.session_id.is_empty() {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "codex_sdk_unsupported",
-            "SDK 模式只支持 Codex 主会话",
+            "SDK 模式只支持 Codex 会话",
         ));
     }
     Ok(scope.session_id)
@@ -92,6 +93,8 @@ async fn thread_id(state: &AppState, uid: &str) -> Result<String, ApiError> {
 #[derive(Deserialize)]
 pub struct Target {
     uid: String,
+    #[serde(default)]
+    agent: String,
 }
 
 #[derive(Deserialize)]
@@ -149,7 +152,7 @@ pub async fn open(
     Json(body): Json<Target>,
 ) -> Result<Json<Value>, ApiError> {
     let sdk = service(&state)?;
-    let thread = thread_id(&state, &body.uid).await?;
+    let thread = thread_id(&state, &body.uid, &body.agent).await?;
     let summary = sdk.open(&thread).await.map_err(rpc)?;
     Ok(Json(
         json!({"ok": true, "thread_id": thread, "raw": summary}),
@@ -161,7 +164,7 @@ pub async fn events(
     Query(query): Query<Target>,
 ) -> Result<Response, ApiError> {
     let sdk = service(&state)?;
-    let thread = thread_id(&state, &query.uid).await?;
+    let thread = thread_id(&state, &query.uid, &query.agent).await?;
     let attached = sdk.attach(&thread).await.map_err(rpc)?;
     let shutdown = state.shutdown.clone();
     let stream = async_stream::stream! {
@@ -208,6 +211,8 @@ pub async fn events(
 #[derive(Deserialize)]
 pub struct Turn {
     uid: String,
+    #[serde(default)]
+    agent: String,
     text: String,
     #[serde(default)]
     model: Option<String>,
@@ -227,7 +232,7 @@ pub async fn turn(
             "消息内容为空",
         ));
     }
-    let thread = thread_id(&state, &body.uid).await?;
+    let thread = thread_id(&state, &body.uid, &body.agent).await?;
     let result = sdk
         .send(
             &thread,
@@ -245,7 +250,7 @@ pub async fn interrupt(
     Json(body): Json<Target>,
 ) -> Result<Json<Value>, ApiError> {
     let sdk = service(&state)?;
-    let thread = thread_id(&state, &body.uid).await?;
+    let thread = thread_id(&state, &body.uid, &body.agent).await?;
     let result = sdk.interrupt(&thread).await.map_err(rpc)?;
     Ok(Json(json!({"ok": true, "raw": result})))
 }
@@ -253,6 +258,8 @@ pub async fn interrupt(
 #[derive(Deserialize)]
 pub struct Answer {
     uid: String,
+    #[serde(default)]
+    agent: String,
     key: String,
     result: Value,
 }
@@ -262,7 +269,7 @@ pub async fn respond(
     Json(body): Json<Answer>,
 ) -> Result<Json<Value>, ApiError> {
     let sdk = service(&state)?;
-    let thread = thread_id(&state, &body.uid).await?;
+    let thread = thread_id(&state, &body.uid, &body.agent).await?;
     sdk.respond(&thread, &body.key, body.result)
         .await
         .map_err(rpc)?;
