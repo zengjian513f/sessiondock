@@ -93,7 +93,7 @@ class ActionsServer(FakeAppServer):
                 await self.send(writer, {"id": mid, "error": {"code": -32602, "message": "turn not found"}})
                 return
             branch = self.source_path.parent / ("rollout-2026-10-17T12-00-00-" + FORK + ".jsonl")
-            branch_rows = [codex_row("session_meta", {"id": FORK,
+            branch_rows = [codex_row("session_meta", {"id": FORK, "forked_from_id": THREAD,
                 "cwd": "/synthetic/sdk-actions/项目-long-workspace", "timestamp": "2026-10-17T12:00:00Z"}),
                 codex_message("user", "分叉后的 retained question"), codex_message("assistant", "fork retained answer")]
             branch.write_bytes(b"".join(encoded(row) for row in branch_rows))
@@ -216,11 +216,24 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     new_uid = page.evaluate("S.sel")
     assert new_uid.startswith("codex:") and new_uid != source_uid
     assert ("~" in new_uid) == (mode == "hub"), "fork lost its Hub namespace"
+    expect(page.locator(f'#side .item[data-uid="{source_uid}"]')).to_have_count(1)
+    expect(page.locator(f'#side .item[data-uid="{new_uid}"]')).to_have_count(1)
+    if width < 500:
+        page.get_by_role("button", name="返回会话列表", exact=True).click()
+    expect(page.locator(f'#side .item[data-uid="{source_uid}"]')).to_be_visible()
+    expect(page.locator(f'#side .item[data-uid="{new_uid}"]')).to_be_visible()
     if screenshots:
         page.screenshot(path=str(screenshots / f"actions-{label}-fork.png"))
+    page.locator(f'#side .item[data-uid="{source_uid}"]').click()
+    expect(page.locator(".sdk-history")).to_contain_text("retained answer")
+    if width < 500:
+        page.get_by_role("button", name="返回会话列表", exact=True).click()
+    page.locator(f'#side .item[data-uid="{new_uid}"]').click()
     page.reload(wait_until="networkidle")
     expect(page.locator(".sdk-history")).to_contain_text("fork retained answer")
     assert page.evaluate("S.sel") == new_uid
+    expect(page.locator(f'#side .item[data-uid="{source_uid}"]')).to_have_count(1)
+    expect(page.locator(f'#side .item[data-uid="{new_uid}"]')).to_have_count(1)
     assert not errors, errors
     context.close()
 
