@@ -244,7 +244,7 @@ const CodexSdkView = {
     }
     const usage = this.summary?.usage;
     const size = usage?.modelContextWindow;
-    const used = usage?.last?.totalTokens ?? usage?.total?.totalTokens;
+    const used = usage?.last?.totalTokens;
     if (size && used != null) {
       this.gauge('context', '上下文', used / size * 100,
         `上下文已用 ${Math.min(100, Math.round(used / size * 100))}%（${used.toLocaleString()} / ${size.toLocaleString()} tokens）`);

@@ -38,7 +38,12 @@ def build(root):
     meta = {"id": THREAD, "cwd": "/synthetic/sdk", "timestamp": "2026-09-11T10:00:00Z"}
     corpus.put("sdk", "codex", [codex_row("session_meta", meta),
                                 codex_message("user", "earlier synthetic question"),
-                                codex_message("assistant", "earlier synthetic answer")], [])
+                                codex_message("assistant", "earlier synthetic answer"),
+                                codex_row("event_msg", {"type": "token_count", "info": {
+                                    "last_token_usage": {"total_tokens": 800},
+                                    "total_token_usage": {"total_tokens": 90000},
+                                    "model_context_window": 4000}}),
+                                codex_row("event_msg", {"type": "token_count", "info": None})], [])
     return corpus
 
 
@@ -102,7 +107,7 @@ def open_sdk(page, corpus, expect):
     return pane
 
 
-def browser_check(corpus, base, fake):
+def browser_check(corpus, base, fake, screenshots=None):
     from playwright.sync_api import expect, sync_playwright
     with sync_playwright() as playwright:
         launch = {"headless": True}
@@ -122,6 +127,20 @@ def browser_check(corpus, base, fake):
             assert page.evaluate("CodexSdkView.available('codex:0123456789abcdef', 'helper')") is True
 
             pane = open_sdk(page, corpus, expect)
+            # Resume must show persisted context before any turn is submitted.
+            expect(pane.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text("20%")
+            page.reload(wait_until="networkidle")
+            expect(pane.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text("20%")
+            if screenshots:
+                screenshots.mkdir(parents=True, exist_ok=True)
+                for width, theme in [(1280, "light"), (390, "dark"), (1280, "dark"), (390, "light")]:
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.emulate_media(color_scheme=theme)
+                    if not pane.is_visible():
+                        page.locator('#side .item').filter(has_text="earlier synthetic question").click()
+                    expect(pane.locator('.sdk-gauge[data-gauge="context"]')).to_be_visible()
+                    page.screenshot(path=str(screenshots / f"context-{width}-{theme}.png"))
+                page.set_viewport_size({"width": 1280, "height": 900})
             history = pane.locator(".sdk-history")
             # Persisted history uses the same bubbles as the message view.
             expect(history.locator('.msg[data-role="user"]')).to_contain_text("earlier synthetic question")
@@ -266,6 +285,7 @@ def browser_check(corpus, base, fake):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
+    parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="sessiondock-sdk-") as temporary:
         root = Path(temporary)
@@ -273,7 +293,7 @@ def main():
         app_socket = root / "app-server.sock"
         with FakeAppServer(app_socket, corpus.paths["sdk"], THREAD) as fake:
             with server(corpus, args.binary, app_socket) as base:
-                browser_check(corpus, base, fake)
+                browser_check(corpus, base, fake, args.screenshots)
     print("PASS Codex SDK view: history bubbles, model/effort override, streaming, approval across reload, "
           "user-input answer, steer, interrupt, non-Codex excluded")
 
