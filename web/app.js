@@ -2293,6 +2293,7 @@ function paintHeaderTurn() {
   h.classList.toggle('turn-waiting', turn === 'waiting');
   h.title = h.ariaLabel = frozen ? '会话已暂停' : liveStatusTitle(tmux)
     + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
+  paintTransferAvailability($('#a-clone-group'), S.sel);
 }
 
 function addUnread(uid, count) {
@@ -6509,7 +6510,7 @@ function bindSessionActions(heading) {
   // 记住菜单里的原始顺序，layoutSessionHead 在各级排版之间搬动后还能按它归位
   [...menu.querySelector('[role="menu"]').children].forEach((node, i) => { node.dataset.order = i; });
   [...menu.querySelector('.dmeta')?.children || []].forEach((item, i) => { item.dataset.order = i; });
-  const items = () => [...menu.querySelectorAll('button:not(:disabled)')];
+  const items = () => [...menu.querySelectorAll('button:not(:disabled):not([hidden])')];
   const open = () => {
     menu.hidden = false;
     button.setAttribute('aria-expanded', 'true');
@@ -11367,14 +11368,22 @@ loadSessions(!!DEEP_SID).then(async ok => {
 /** Whole-group transfer preview. A confirmed local clone keeps its operation ID
  * across uncertain responses; unsupported selections never use the local API. */
 function transferUnavailableReason(uid) {
-  return uid && sessionStoppable(uid) ? '会话正在运行，请先停止后再迁移会话树。' : '';
+  const draft = typeof composerDrafts !== 'undefined'
+    ? composerDrafts.get(composerDraftOwner(uid)) : null;
+  const running = sessionStoppable(uid)
+    || (draft?.cli?.instance?.running === true && !!takenOver(uid));
+  return uid && running ? '会话正在运行，请先停止后再迁移会话树。' : '';
 }
 function paintTransferAvailability(button, uid) {
+  if (!button) return;
   const row = button?.closest('#item-menu')
     ? sidebarSessions().find(session => session.uid === uid) : null;
   const unavailable = button?.closest('#item-menu') && (!row || row.pending
     || SessionDockCapabilities.config.session_clone_local_codex !== true);
-  setControlUnavailable(button, unavailable ? '此会话当前不支持迁移会话树。' : transferUnavailableReason(uid));
+  const runningReason = transferUnavailableReason(uid);
+  const reason = unavailable ? '此会话当前不支持迁移会话树。' : runningReason;
+  button.hidden = !!runningReason;
+  setControlUnavailable(button, reason);
 }
 function setupTransferTarget(dialog, machines, sourceId, selectedId) {
   const button = dialog.querySelector('#transfer-target');
