@@ -21,6 +21,7 @@ pub struct Fork {
     #[serde(default)]
     agent: String,
     last_turn_id: Option<String>,
+    before_turn_id: Option<String>,
 }
 
 pub async fn fork(
@@ -33,6 +34,12 @@ pub async fn fork(
         .fork_thread(&id, body.last_turn_id.as_deref())
         .await
         .map_err(rpc)?;
+    if let Some(before) = body.before_turn_id.as_deref() {
+        let child = result["thread"]["id"]
+            .as_str()
+            .ok_or_else(|| rpc(RpcError::Disconnected))?;
+        sdk.revert_thread(child, before).await.map_err(rpc)?;
+    }
     let path = result["thread"]["path"]
         .as_str()
         .ok_or_else(|| rpc(RpcError::Disconnected))?;

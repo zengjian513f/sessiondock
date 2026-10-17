@@ -40,6 +40,11 @@ pub(super) fn rpc(error: RpcError) -> ApiError {
             "codex_sdk_unavailable",
             message,
         ),
+        RpcError::Storage(_) => ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "codex_sdk_storage",
+            message,
+        ),
         RpcError::Disconnected => {
             ApiError::new(StatusCode::BAD_GATEWAY, "codex_sdk_disconnected", message)
         }
@@ -214,6 +219,7 @@ pub async fn events(
 
 #[derive(Deserialize)]
 pub struct Turn {
+    request_id: Option<String>,
     uid: String,
     #[serde(default)]
     agent: String,
@@ -271,16 +277,50 @@ pub async fn turn(
             input.push(json!({"type":"localImage","path":attachment["path"]}));
         }
     }
+    let request_id = match body.request_id {
+        Some(id) => id,
+        None => crate::conversation::random_id().map_err(super::conversation::error)?,
+    };
     let result = sdk
-        .send(
-            &thread,
-            input,
-            body.model.as_deref(),
-            body.effort.as_deref(),
-        )
+        .send(&thread, request_id, text, input, body.model, body.effort)
         .await
         .map_err(rpc)?;
     Ok(Json(json!({"ok": true, "raw": result})))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QueueAction {
+    Cancel,
+    Steer,
+    Retry,
+}
+
+#[derive(Deserialize)]
+pub struct QueueInput {
+    uid: String,
+    #[serde(default)]
+    agent: String,
+    id: String,
+    action: QueueAction,
+}
+
+pub async fn queue_action(
+    State(state): State<AppState>,
+    Json(body): Json<QueueInput>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    let thread = thread_id(&state, &body.uid, &body.agent).await?;
+    let action = match body.action {
+        QueueAction::Cancel => "cancel",
+        QueueAction::Steer => "steer",
+        QueueAction::Retry => "retry",
+    };
+    let raw = tokio::spawn(async move { sdk.queue_action(&thread, &body.id, action).await })
+        .await
+        .map_err(|_| rpc(RpcError::Disconnected))?
+        .map_err(rpc)?;
+    Ok(Json(json!({"ok":true,"raw":raw})))
 }
 
 pub async fn interrupt(

@@ -33,6 +33,7 @@ pub enum RpcError {
         code: i64,
         message: String,
     },
+    Storage(String),
     NoActiveTurn,
     UnknownRequest,
 }
@@ -43,6 +44,7 @@ impl std::fmt::Display for RpcError {
             Self::Unavailable(reason) => write!(f, "无法连接 Codex app-server：{reason}"),
             Self::Disconnected => f.write_str("与 Codex app-server 的连接中断；请求可能已执行"),
             Self::Remote { message, .. } => write!(f, "Codex app-server：{message}"),
+            Self::Storage(message) => f.write_str(message),
             Self::NoActiveTurn => f.write_str("当前没有进行中的回合"),
             Self::UnknownRequest => f.write_str("该请求已被处理或已失效"),
         }

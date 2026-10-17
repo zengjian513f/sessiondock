@@ -134,13 +134,14 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     source_uid = row.get_attribute("data-uid")
     row.click()
     pane = page.locator("#session-content-view.sdk-pane")
-    expect(pane.locator("#sdk-actions")).to_be_enabled()
+    expect(pane.locator('[data-sdk-action="revert"]')).to_be_enabled()
     expect(pane.locator(".sdk-history")).to_contain_text("remove this answer")
     box, send = pane.locator("#sdk-input"), pane.locator("#sdk-send")
 
     def choose_action(action):
-        pane.locator('#sdk-more').click()
-        pane.locator('#sdk-actions').select_option(action)
+        button = pane.locator(f'[data-sdk-action="{action}"]')
+        if not button.is_visible(): pane.locator('#sdk-more').click()
+        button.click()
 
     # The menu selects actual native turn IDs, including additional pages.
     choose_action("revert")
@@ -161,7 +162,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     confirmation = page.locator("dialog.app-popup[open]")
     expect(confirmation).to_contain_text("不回滚工作区文件")
     confirmation.get_by_role("button", name="取消", exact=True).click()
-    expect(pane.locator("#sdk-actions")).to_be_enabled()
+    expect(pane.locator('[data-sdk-action="revert"]')).to_be_enabled()
     expect(box).to_have_value("/revert " + TURN2)
     assert len(fake.methods("thread/revert")) == 1
 
@@ -199,7 +200,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
         page.screenshot(path=str(screenshots / f"actions-{label}-review.png"))
     dialog.get_by_role("button", name="开始审查", exact=True).click()
     expect(pane.locator(".sdk-live")).to_contain_text("Synthetic review result: no findings")
-    expect(pane.locator("#sdk-actions")).to_be_enabled()
+    expect(pane.locator('[data-sdk-action="revert"]')).to_be_enabled()
     assert fake.methods("review/start")[-1]["params"]["target"] == {"type": "custom", "instructions": "检查异常处理和中文路径"}
     for command, target in [("/review uncommitted", {"type": "uncommittedChanges"}),
                             ("/review branch main", {"type": "baseBranch", "branch": "main"}),

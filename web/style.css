@@ -2539,37 +2539,33 @@ header .btn[data-session-docked] { display: none; }
 .sdk-pickers { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex: 1; min-width: 0; }
 .sdk-pickers > .new-effort { flex: 0 1 128px; min-width: 0; }
 .sdk-pickers > .sdk-effort { flex-basis: 84px; }
-.sdk-pickers > .sdk-mode { flex-basis: 84px; }
+.sdk-pickers > .sdk-mode { flex-basis: 96px; }
 .sdk-pickers .new-effort > select { height: 28px; width: 100%; font-size: 12.5px; text-overflow: ellipsis; }
 .sdk-pickers > .btn { flex: none; height: 28px; min-height: 28px; padding: 0 8px; white-space: nowrap; }
 #sdk-more { width: 28px; padding: 0; font-size: 18px; }
 .sdk-options.compact .sdk-pickers > .sdk-model { flex: 1 1 100px; }
 .sdk-options.compact .sdk-pickers > .sdk-effort { flex: 0 1 72px; }
-.sdk-options.compact .sdk-pickers > .sdk-mode { flex: 0 1 80px; }
+.sdk-options.compact .sdk-pickers > .sdk-mode { flex: 0 1 96px; }
 .sdk-toolbar-menu { gap: 8px; padding: 8px; overflow-y: auto; }
 .sdk-toolbar-menu:not(:popover-open) { display: none; }
 .sdk-toolbar-menu .new-effort { flex: none; min-width: 0; }
-.sdk-toolbar-menu > .btn { min-height: 28px; }
+#sdk-actions { display: grid; gap: 2px; }
+#sdk-actions .new-model-option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#sdk-actions .new-model-option:disabled { color: var(--muted); opacity: .55; cursor: default; background: transparent; }
 .sdk-usage-menu .sdk-gauges { flex-direction: column; align-items: stretch; gap: 10px; }
 .sdk-usage-menu .sdk-gauge { display: grid; grid-template-columns: 3.5em minmax(0, 1fr) 3.4ch; gap: 8px; }
 .sdk-usage-menu .sdk-bar { width: 100%; }
 .sdk-reset { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .sdk-reset .new-effort { flex: 1; }
 .sdk-reset .btn { flex: none; white-space: nowrap; height: 28px; min-height: 28px; padding: 0 10px; }
-#sdk-controls-dialog { width: min(560px, calc(100vw - 24px)); }
+#sdk-permissions { padding-top: 8px; border-top: 1px solid var(--border); }
+#sdk-permissions .sdk-control-note:empty { display: none; }
 .sdk-action-fields { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .sdk-action-fields > input { width: 100%; box-sizing: border-box; }
-.sdk-control-body { display: grid; gap: 10px; }
 .sdk-control-section { display: grid; gap: 7px; }
 .sdk-control-section h3 { margin: 0; font-size: 13px; }
 .sdk-control-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .sdk-control-row .new-effort { flex: 1 1 160px; }
-.sdk-control-field { display: grid; gap: 4px; font-size: 12px; }
-.sdk-control-field input, .sdk-control-field textarea {
-  width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--border);
-  border-radius: 8px; background: var(--panel-2); color: var(--text); font: inherit;
-}
-.sdk-control-field textarea { resize: vertical; min-height: 60px; }
 .sdk-control-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .sdk-control-error { color: #e5484d; }
 .sdk-request .mb pre { white-space: pre-wrap; word-break: break-word; }
@@ -2583,3 +2579,33 @@ header .btn[data-session-docked] { display: none; }
   border-radius: 7px; background: var(--panel-2); color: var(--text); font: inherit;
 }
 .sdk-request .sdk-json { min-height: 64px; font-family: var(--terminal-font); }
+
+.sdk-queue:empty { display: none; }
+.sdk-queued .mb { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow-y: auto; }
+.sdk-queued .queued-send-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sdk-queued .queued-send-dismiss { margin-left: 0; min-height: 24px; }
+.sdk-queued .queued-send-state { flex: 1 1 160px; }
+
+.sdk-pickers > .sdk-model { min-width: 96px; }
+.sdk-pickers > .sdk-effort { min-width: 72px; }
+.sdk-pickers > .sdk-mode { min-width: 96px; }
+.sdk-options.narrow .sdk-pickers > .sdk-model { min-width: 64px; }
+.sdk-options.narrow .sdk-pickers > .sdk-effort { min-width: 50px; }
+.sdk-pickers > #sdk-permissions { flex: none; width: 268px; padding: 0; border: 0; }
+.sdk-pickers > #sdk-permissions > :not(.sdk-control-row) { display: none; }
+.sdk-pickers > #sdk-permissions .sdk-control-row { flex-wrap: nowrap; align-items: center; }
+.sdk-pickers > #sdk-permissions .new-effort { flex: 1 1 0; min-width: 0; }
+.sdk-pickers > #sdk-permissions .btn { flex: none; height: 28px; min-height: 28px; padding: 0 6px; }
+.sdk-pickers > .new-model-option { flex: none; width: auto; height: 28px; white-space: nowrap; }
+
+.msg.sdk-user-actions { overflow: visible; max-width: calc(100% - 34px); }
+.sdk-bubble-toggle { position: absolute; right: calc(100% + 4px); top: 3px; width: 28px; height: 28px;
+  padding: 0; border: 0; border-radius: 4px; color: var(--muted); background: transparent; font: inherit; cursor: pointer; }
+.sdk-bubble-toggle:hover { background: var(--hover); color: var(--text); }
+.sdk-bubble-toggle:focus-visible { outline: 2px solid var(--accent); }
+.sdk-bubble-menu:not(:popover-open) { display: none; }
+
+.msg.sdk-queued { opacity: 1; }
+.sdk-queued .queued-send-foot { font-size: 11px; line-height: 1.4; }
+.sdk-queue-actions { display: inline-flex; flex: none; gap: 6px; margin-left: auto; }
+.sdk-queued .queued-send-dismiss { color: var(--text); }

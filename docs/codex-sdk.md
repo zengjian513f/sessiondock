@@ -94,19 +94,19 @@ always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 | POST `/api/codex-sdk/discard` `{uid}` | Unsubscribe and remove an unpersisted create receipt; native history is preserved if it appeared meanwhile |
 | POST `/api/codex-sdk/open` `{uid}` | Connect/resume; returns `{thread_id, raw: summary}` |
 | GET `/api/codex-sdk/events?uid=` | SSE: first a `snapshot`, then every thread event |
-| POST `/api/codex-sdk/turn` `{uid, text?, attachments?, quotes?, model?, effort?}` | `turn/start`; while a turn is in flight, `turn/steer` with `expectedTurnId`; attachments reference this session's staged upload IDs |
+| POST `/api/codex-sdk/turn` `{uid, request_id?, text?, attachments?, quotes?, model?, effort?}` | Server-owned FIFO input; starts immediately when idle, otherwise waits; repeated `request_id` returns the same submission; staged attachments are resolved once |
+| POST `/api/codex-sdk/queue` `{uid, agent?, id, action}` | `cancel`, `retry`, or explicit `steer` of one queued input (`expectedTurnId`); no implicit steering |
 | POST `/api/codex-sdk/interrupt` `{uid}` | `turn/interrupt` for the in-flight turn (`409 codex_sdk_idle` without one) |
 | POST `/api/codex-sdk/respond` `{uid, key, result}` | JSON-RPC result for one open server request (`409 codex_sdk_request_gone` once resolved or from an older connection) |
 | GET `/api/codex-sdk/models?uid=` | `model/list` (cached 5 minutes per node) |
 | GET `/api/codex-sdk/limits?uid=` | `account/rateLimits/read`: windows, credits and earned reset cards (account-wide) |
 | POST `/api/codex-sdk/reset-credit` `{uid, credit_id?, idempotency_key}` | `account/rateLimitResetCredit/consume` for the chosen card, then a fresh read; returns `{outcome, limits}` |
 | POST `/api/codex-sdk/turns` `{uid, cursor?}` | `thread/turns/list`, newest first, with summary items and native pagination |
-| POST `/api/codex-sdk/fork` `{uid, last_turn_id?}` | `thread/fork`; returns the new native identity and navigable session |
+| POST `/api/codex-sdk/fork` `{uid, last_turn_id?, before_turn_id?}` | `thread/fork`; optional native child revert before a selected turn; returns the new identity and navigable session |
 | POST `/api/codex-sdk/revert` `{uid, before_turn_id}` | `thread/revert`; removes the selected turn and later conversation, without reverting workspace files |
 | POST `/api/codex-sdk/compact` `{uid}` | `thread/compact/start`; progress uses ordinary turn/item events |
 | POST `/api/codex-sdk/review` `{uid, target}` | `review/start` with inline delivery; uncommitted changes, base branch, commit or custom instructions |
 | POST `/api/codex-sdk/controls/settings` `{uid, mode?, approval_policy?, sandbox_policy?}` | `thread/settings/update`; only explicit changes are sent, effective settings arrive through notifications |
-| POST `/api/codex-sdk/controls/goal` `{uid, action, objective?, status?, token_budget?}` | Native goal get/set/clear; explicit user goals use `origin: user` |
 | POST `/api/codex-sdk/controls/shell` `{uid, command}` | `thread/shellCommand`, the CLI's direct `!command` semantics; output uses command execution items |
 
 Errors: `503 codex_sdk_unavailable` (socket unreachable / start failed),
@@ -186,20 +186,42 @@ before first SEND does not retain these unpersisted receipts.
   are not evidence of the current thread's settings. Unsent user choices survive
   incoming settings events; after SEND the pickers follow the effective settings again.
 - Composer: same look as the message composer. Enter sends (Shift+Enter
-  newline, not on mobile); the button reads 发送 or, during a turn, 追加
-  (steer). 停止 interrupts. Model and effort selectors come from `model/list`;
+  newline, not on mobile); the button reads 发送 or, during a turn, 排队.
+  Inputs are queued by default. Each pending bubble has 撤销 and 立即引导
+  (explicit steer); failed deliveries have 重试. 停止 interrupts the current turn. Model and effort selectors come from `model/list`;
   displaying the current setting does not send an override; only a user change applies to the
   started turn and, per app-server semantics, to later turns.
 - The status line shows the last turn error, the rate-limit-reached notice and the
   waiting state.
-- Composer options stay on one line: model, effort and collaboration mode remain
-  directly accessible; More contains reset cards, native conversation actions and
-  the permissions/goal dialog. At less than 760 CSS pixels of actual toolbar
-  width (including sidebar resizing), Usage opens the same live gauges in a popover.
-  Below 360 CSS pixels, collaboration mode also moves into More so model and
-  effort remain readable, including with interface scaling.
-  Popovers use the existing menu styling, stay inside the viewport and close on
+- Composer options stay on one line. Model and effort stay directly accessible;
+  execution/plan mode, permissions, then compaction/fork/revert/review are exposed
+  in that priority as actual toolbar space permits. The ⋯ menu is overflow:
+  it contains the actual remaining buttons and permission selectors, not nested
+  action selectors or a session dialog. Goal controls and `/goal` are removed.
+  Mode moves into overflow below 380 CSS pixels. Live gauges use spare space,
+  otherwise Usage opens those same gauges. Sidebar resizing recalculates overflow.
+  Model/effort/mode/permission selectors show actual values. No selectable
+  “inherit” or “not returned” sentinel is inserted; unloaded controls use a hidden,
+  disabled field-name placeholder. Modes are 执行模式 / 计划模式.
+  Popovers use existing menu styling, stay inside the viewport and close on
   resize, Escape or outside click. Long model names truncate within their selector.
+- Input queues are owned by the node, shared in SSE snapshots and `bridge/queue`
+  events, and continue after a page closes. With `SESSIONDOCK_STATE_DIR` they
+  persist in private `codex-sdk-queue.json`; without it they are memory-only.
+  Each thread serializes submit/dispatch/cancel/steer; FIFO starts require an idle
+  native thread with no outstanding request. An active thread is never implicitly
+  steered. Queued inputs capture model/effort and published attachment paths at
+  submission. Native rejection stays visible and blocks later queued inputs until
+  explicit retry or cancellation. An uncertain/disconnected native RPC is never
+  automatically replayed; an in-flight entry recovered on restart is marked for
+  manual verification. Submission IDs survive draft reload and lost HTTP replies.
+- User bubbles with a native turn identity have a ⋯ button on their left. 回退
+  reverts before that turn; 分支 forks through that turn and reverts only the new
+  child before it. Both restore the selected message text into the composer,
+  preserving an existing draft by appending it, and never send it automatically.
+  Revert uses the existing confirmation; cancelling it preserves history and draft.
+  Fork preserves the source and opens the new branch. Missing native identities
+  are never guessed from display text or context records.
 - Usage alongside the model/effort pickers, one `.sdk-bar` progress bar per
   gauge showing the **used** share (`100%` = full, red at ≥ 80 %): `5h` and `7d`
   from the account bucket (`rateLimitsByLimitId.codex`, else `rateLimits`),
@@ -251,15 +273,16 @@ and reloads history for all attached pages. Compaction items use the native
 `item/started` / `item/completed` phase, retained in reconnect snapshots:
 the running card shows an indeterminate progress bar until completion. Native
 compaction supplies no percentage, so the UI does not invent one. The mode
-selector changes Default /
-Plan; the session dialog changes approval/sandbox policy, manages the native
-goal. Direct shell commands are entered in the composer only. Actual settings and goal notifications
-from another client update the controls, without replacing unsaved form edits.
+selector changes 执行模式 /
+计划模式; approval/sandbox selectors and their Apply button appear directly in the
+toolbar or its ⋯ overflow menu. Goal controls and `/goal` are removed. Direct shell
+commands are entered in the composer only. Actual settings notifications from
+another client update the controls without replacing unsaved form edits.
 Direct shell commands follow CLI `!` behavior and run with full permissions,
 outside the conversation sandbox.
 
 The composer recognizes `/fork`, `/revert`, `/compact`, `/review`, `/plan`,
-`/default`, `/permissions`, `/approval`, `/sandbox`, `/goal`, `/shell` and
+`/default`, `/permissions`, `/approval`, `/sandbox`, `/shell` and
 `!command`; `/model`, `/effort`, `/status`, `/stop`, `/new` and `/help` use their
 corresponding SDK controls. Unrecognized slash commands stay in the draft and
 show an explanation rather than becoming a model prompt. These are explicit
@@ -273,7 +296,9 @@ Validation:
 creation, lazy persistence, reload and default view selection.
 Additional browser paths: [drafts and attachments](../tests/codex_sdk_compose_browser.py),
 [native conversation actions](../tests/codex_sdk_actions_browser.py), and
-[modes, goals and commands](../tests/codex_sdk_controls_browser.py).
+[modes, permissions and commands](../tests/codex_sdk_controls_browser.py),
+[FIFO input queues](../tests/codex_sdk_queue_browser.py), and
+[user bubble actions](../tests/codex_sdk_message_actions_browser.py).
 
 DELTA (subagent SDK views): SDK selection, persisted history, live events, sending,
 steering, interrupt and request replies follow the selected child thread. Switching

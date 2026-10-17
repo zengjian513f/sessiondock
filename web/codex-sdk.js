@@ -11,7 +11,7 @@ const CodexSdkView = {
   summary: null, models: [], historyTimer: 0, snapshotReady: null,
   limits: null, resetCards: null, redeemKeys: new Map(),
   limitsRead: null, limitsRetryTimer: 0, limitsRetryDelay: 1000,
-  toolbarObserver: null, toolbarBindings: null, toolbarWidth: null,
+  toolbarObserver: null, toolbarBindings: null, toolbarWidth: null, toolbarLayout: null,
   modelChoice: null, effortChoice: null,
   pendingAtOpen: false,
   legacyViews: new Set(),
@@ -43,7 +43,7 @@ const CodexSdkView = {
     pane.setAttribute('aria-label', 'Codex SDK');
     pane.classList.add('sdk-pane');
     pane.innerHTML = `<div class="sdk-view">
-      <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div></div>
+      <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div></div>
       <div id="sdk-composer">
         <div class="sdk-status" role="status" aria-live="polite"></div>
         <div class="sdk-options">
@@ -55,10 +55,10 @@ const CodexSdkView = {
           </div>
           <div class="sdk-pickers">
             <button class="btn" id="sdk-usage-toggle" type="button" aria-expanded="false" aria-controls="sdk-usage-menu" hidden>用量</button>
-            <label class="new-effort sdk-model" title="模型"><span class="visually-hidden">模型</span><select id="sdk-model"><option value="">读取模型…</option></select></label>
-            <label class="new-effort sdk-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="sdk-effort"><option value="">读取强度…</option></select></label>
-            <button class="btn" id="sdk-more" type="button" title="更多会话操作" aria-label="更多会话操作" aria-expanded="false" aria-controls="sdk-more-menu">⋯</button>
-            <div class="new-model-menu sdk-toolbar-menu" id="sdk-more-menu" popover="auto" aria-label="更多会话操作">
+            <label class="new-effort sdk-model" title="模型"><span class="visually-hidden">模型</span><select id="sdk-model"><option value="" disabled hidden>模型</option></select></label>
+            <label class="new-effort sdk-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="sdk-effort"><option value="" disabled hidden>推理强度</option></select></label>
+            <button class="btn" id="sdk-more" type="button" title="会话操作" aria-label="会话操作" aria-expanded="false" aria-controls="sdk-more-menu">⋯</button>
+            <div class="new-model-menu sdk-toolbar-menu" id="sdk-more-menu" popover="auto" aria-label="会话操作">
               <span class="sdk-reset" hidden>
                 <label class="new-effort" title="可兑换的限额重置卡"><span class="visually-hidden">重置卡</span><select id="sdk-reset-card"></select></label>
                 <button class="btn" id="sdk-reset-use" type="button" title="兑换所选重置卡">兑换</button>
@@ -113,7 +113,7 @@ const CodexSdkView = {
     this.es = null;
     this.toolbarObserver?.disconnect(); this.toolbarObserver = null;
     this.toolbarBindings?.abort(); this.toolbarBindings = null;
-    this.toolbarWidth = null;
+    this.toolbarWidth = null; this.toolbarLayout = null;
     this.closeToolbarMenus();
     clearTimeout(this.historyTimer);
     clearTimeout(this.limitsRetryTimer);
@@ -138,14 +138,7 @@ const CodexSdkView = {
         if (menu.matches(':popover-open')) { menu.hidePopover(); return; }
         this.closeToolbarMenus();
         menu.showPopover();
-        const box = button.getBoundingClientRect(), zoom = menu.currentCSSZoom || 1;
-        const edge = 8, gap = 6, width = Math.min(300, innerWidth - edge * 2);
-        const above = box.top - gap - edge, below = innerHeight - box.bottom - gap - edge;
-        const up = above > below;
-        menu.style.width = `${width / zoom}px`;
-        menu.style.maxHeight = `${Math.max(0, up ? above : below) / zoom}px`;
-        menu.style.left = `${Math.max(edge, Math.min(box.right - width, innerWidth - edge - width)) / zoom}px`;
-        menu.style.top = `${(up ? box.top - gap - menu.getBoundingClientRect().height : box.bottom + gap) / zoom}px`;
+        this.placeMenu(menu, button);
       };
     }
     window.addEventListener('resize', () => this.closeToolbarMenus(), {signal: this.toolbarBindings.signal});
@@ -154,8 +147,19 @@ const CodexSdkView = {
     this.layoutToolbar();
   },
 
+  placeMenu(menu, button, preferredWidth = 300) {
+    const box = button.getBoundingClientRect(), zoom = menu.currentCSSZoom || 1;
+    const edge = 8, gap = 6, width = Math.min(preferredWidth, innerWidth - edge * 2);
+    const above = box.top - gap - edge, below = innerHeight - box.bottom - gap - edge;
+    const up = above > below;
+    menu.style.width = `${width / zoom}px`;
+    menu.style.maxHeight = `${Math.max(0, up ? above : below) / zoom}px`;
+    menu.style.left = `${Math.max(edge, Math.min(box.right - width, innerWidth - edge - width)) / zoom}px`;
+    menu.style.top = `${(up ? box.top - gap - menu.getBoundingClientRect().height : box.bottom + gap) / zoom}px`;
+  },
+
   closeToolbarMenus() {
-    for (const menu of this.pane?.querySelectorAll('.sdk-toolbar-menu') || [])
+    for (const menu of this.pane?.querySelectorAll('.sdk-toolbar-menu, .sdk-bubble-menu') || [])
       if (menu.matches(':popover-open')) menu.hidePopover();
   },
 
@@ -163,21 +167,45 @@ const CodexSdkView = {
     if (!this.pane) return;
     const options = this.pane.querySelector('.sdk-options'), gauges = this.pane.querySelector('.sdk-gauges');
     this.toolbarWidth = width ?? options.clientWidth;
-    const compact = this.toolbarWidth < 760;
-    const destination = compact ? this.pane.querySelector('#sdk-usage-menu') : options;
-    if (gauges.parentElement !== destination) { this.closeToolbarMenus(); destination.prepend(gauges); }
+    const knownUsage = [...gauges.children].some(node => !node.hidden);
+    const signature = `${this.toolbarWidth}:${[...gauges.children].filter(node => !node.hidden).map(node => node.dataset.gauge || node.textContent).join('|')}`;
+    if (signature === this.toolbarLayout) return;
+    this.toolbarLayout = signature;
+    this.closeToolbarMenus();
+    const pickers = this.pane.querySelector('.sdk-pickers'), more = this.pane.querySelector('#sdk-more-menu');
+    const trigger = this.pane.querySelector('#sdk-more'), usage = this.pane.querySelector('#sdk-usage-toggle');
+    const actions = this.pane.querySelector('#sdk-actions'), permissions = this.pane.querySelector('#sdk-permissions');
     const mode = this.pane.querySelector('.sdk-mode');
+    options.classList.add('compact'); options.classList.toggle('narrow', this.toolbarWidth < 360);
+    this.pane.querySelector('#sdk-usage-menu').prepend(gauges);
+    usage.hidden = !knownUsage;
     if (mode) {
-      const pickers = this.pane.querySelector('.sdk-pickers'), more = this.pane.querySelector('#sdk-more-menu');
-      const destination = this.toolbarWidth < 360 ? more : pickers;
-      if (mode.parentElement !== destination) {
-        this.closeToolbarMenus();
-        if (destination === more) more.prepend(mode);
-        else pickers.insertBefore(mode, this.pane.querySelector('#sdk-more'));
+      if (this.toolbarWidth < 380) more.prepend(mode);
+      else pickers.insertBefore(mode, trigger);
+    }
+    if (permissions) more.append(permissions);
+    const fits = () => {
+      const bounds = pickers.getBoundingClientRect();
+      return [...pickers.children].filter(node => node.getClientRects().length)
+        .every(node => { const box = node.getBoundingClientRect(); return box.left >= bounds.left - 1 && box.right <= bounds.right + 1; });
+    };
+    const buttons = ['compact', 'fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
+    for (const button of buttons) actions.append(button);
+    more.append(this.pane.querySelector('.sdk-reset'));
+    // Promote actual controls by priority until readable controls no longer fit.
+    for (const control of [permissions, ...buttons].filter(Boolean)) {
+      const parent = control.parentElement, next = control.nextSibling;
+      pickers.insertBefore(control, trigger);
+      if (!fits()) { parent.insertBefore(control, next); break; }
+    }
+    // Gauges use spare space after the primary controls and shortcuts.
+    if (knownUsage) {
+      usage.hidden = true; options.classList.remove('compact'); options.prepend(gauges);
+      if (!fits()) {
+        this.pane.querySelector('#sdk-usage-menu').prepend(gauges);
+        usage.hidden = false; options.classList.add('compact');
       }
     }
-    options.classList.toggle('compact', compact);
-    this.pane.querySelector('#sdk-usage-toggle').hidden = !compact || ![...gauges.children].some(node => !node.hidden);
   },
 
   async request(path, body) {
@@ -398,27 +426,39 @@ const CodexSdkView = {
     const modelSelect = this.pane.querySelector('#sdk-model');
     const currentModel = this.summary?.settings?.model || '';
     const modelName = this.modelChoice ?? currentModel;
-    modelSelect.replaceChildren(new Option(currentModel ? '沿用会话模型' : this.summary ? '当前模型未返回' : '读取模型…', ''));
-    for (const model of this.models) modelSelect.append(new Option(model.displayName || model.model, model.model));
+    modelSelect.replaceChildren();
+    for (const model of this.models) modelSelect.append(new Option(model.model, model.model));
     if (modelName && ![...modelSelect.options].some(option => option.value === modelName))
       modelSelect.append(new Option(modelName, modelName));
-    modelSelect.value = modelName;
+    this.selectValue(modelSelect, modelName, '模型');
     modelSelect.title = modelName;
     const select = this.pane.querySelector('#sdk-effort');
     const model = this.models.find(row => row.model === modelName);
     let chosen = this.effortChoice ?? this.summary?.settings?.effort ?? '';
     const switching = modelName !== currentModel;
-    select.replaceChildren(new Option(switching ? '沿用会话强度' : this.summary ? '当前强度未返回' : '读取强度…', ''));
+    select.replaceChildren();
     for (const effort of model?.supportedReasoningEfforts || []) {
-      const option = new Option(effort.reasoningEffort, effort.reasoningEffort);
+      const option = new Option(({none:'无', minimal:'最低', low:'低', medium:'中', high:'高', xhigh:'极高'})[effort.reasoningEffort] || effort.reasoningEffort, effort.reasoningEffort);
       option.title = effort.description || '';
       select.append(option);
     }
     if (chosen && ![...select.options].some(option => option.value === chosen)) {
       if (switching && this.effortChoice === null) chosen = '';
-      else select.append(new Option(chosen, chosen));
+      else select.append(new Option(({none:'无', minimal:'最低', low:'低', medium:'中', high:'高', xhigh:'极高'})[chosen] || chosen, chosen));
     }
-    select.value = chosen;
+    this.selectValue(select, chosen, '推理强度');
+  },
+
+  selectValue(select, value, label) {
+    select.querySelector('option[value=""]')?.remove();
+    if (value) {
+      if (![...select.options].some(option => option.value === value)) select.append(new Option(value, value));
+      select.value = value;
+    }
+    else {
+      const placeholder = new Option(label, ''); placeholder.disabled = placeholder.hidden = true;
+      select.prepend(placeholder); select.value = '';
+    }
   },
 
   // ---------------------------------------------------------------- 历史
@@ -452,7 +492,9 @@ const CodexSdkView = {
       const folds = new Map([...this.history.querySelectorAll(':scope > .turn-process')]
         .map(node => [node.dataset.turnId, node.classList.contains('folded')]));
       this.history.replaceChildren();
-      buildPlan(this.history, planTurns(messages, {tailComplete, openTail: !tailComplete}), null);
+      const plan = planTurns(messages, {tailComplete, openTail: !tailComplete});
+      const built = buildPlan(this.history, plan, null);
+      built.forEach((node, index) => CodexSdkActions.decorate(this, node, plan[index].m));
       for (const node of this.history.querySelectorAll(':scope > .turn-process')) {
         if (folds.has(node.dataset.turnId))
           folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
@@ -497,14 +539,18 @@ const CodexSdkView = {
     CodexSdkActions.paint(this);
     CodexSdkControls.paint(this);
     this.paintStatus();
+    this.paintQueue();
     this.scrollBottom();
   },
 
   applyEvent(method, raw) {
-    CodexSdkControls.event(this, method, raw);
     const stick = this.nearBottom();
     const item = raw.item;
     switch (method) {
+      case 'bridge/queue':
+        if (this.summary) this.summary.queue = raw.queue;
+        this.paintQueue();
+        break;
       case 'bridge/reset':
         this.setNotice('与 Codex app-server 的连接已重置，正在重新连接…', 'blocked');
         this.es?.close();
@@ -590,6 +636,7 @@ const CodexSdkView = {
     if (!message) { old?.remove(); this.nodes.delete(item.id); return; }
     const node = msgNode(message);
     node.dataset.sdkItem = item.id;
+    CodexSdkActions.decorate(this, node, {...message, turn_id: this.turn?.id});
     if (item.status === 'inProgress' && TOOL_ROLES.has(message.role)) {
       const status = document.createElement('div');
       status.className = 'tool-status';
@@ -618,8 +665,9 @@ const CodexSdkView = {
     const active = !!this.turn;
     this.pane.querySelector('#sdk-stop').hidden = !active;
     const send = this.pane.querySelector('#sdk-send');
-    send.textContent = active ? '追加' : '发送';
-    send.title = active ? '追加到进行中的回合（turn/steer）' : '开始新回合（turn/start）';
+    send.textContent = active ? '排队' : '发送';
+    send.title = active ? '当前回合结束后发送；排队消息可撤销或立即引导' : '开始新回合';
+    this.paintQueue();
     this.paintGauges();
     // 兑换结果提示停留几秒，不被紧随其后的状态刷新盖掉。
     if (this.noticeHold > Date.now()) return;
@@ -660,6 +708,47 @@ const CodexSdkView = {
   },
 
   // ---------------------------------------------------------------- 操作
+  paintQueue() {
+    const holder = this.pane?.querySelector('.sdk-queue');
+    if (!holder) return;
+    holder.replaceChildren();
+    for (const item of this.summary?.queue || []) {
+      const card = document.createElement('div');
+      card.className = 'msg queued-send sdk-queued'; card.dataset.role = 'user'; card.dataset.queueId = item.id;
+      const text = document.createElement('div'); text.className = 'mb'; text.textContent = item.text;
+      const foot = document.createElement('div'); foot.className = 'queued-send-foot';
+      const status = document.createElement('span'); status.className = 'queued-send-state';
+      status.textContent = item.state === 'failed' ? (item.error || '发送失败') : item.state === 'sending' ? '正在发送…' : '已排队，当前回合结束后发送';
+      const controls = document.createElement('span'); controls.className = 'sdk-queue-actions';
+      foot.append(status, controls);
+      for (const [action, label] of [['cancel', '撤销'], [item.state === 'failed' ? 'retry' : 'steer', item.state === 'failed' ? '重试' : '立即引导']]) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'queued-send-dismiss';
+        button.dataset.queueAction = action; button.textContent = label;
+        button.title = action === 'steer' ? '将这条消息立即引导到正在进行的回合（steer）' : label;
+        button.disabled = item.state === 'sending' || (action === 'steer' && !this.turn);
+        button.onclick = async () => {
+          const generation = this.generation;
+          for (const node of foot.querySelectorAll('button')) node.disabled = true;
+          try {
+            await this.request('api/codex-sdk/queue', {uid: this.uid, id: item.id, action});
+            if (action === 'cancel' && this.current(generation)) {
+              const state = CodexSdkCompose.states.get(this), holder = state?.draft || state;
+              if (holder?.sdkSubmission?.id === item.id) {
+                delete holder.sdkSubmission;
+                if (state.draft) void persistComposerDraft(this.uid);
+              }
+            }
+          }
+          catch (error) { if (this.current(generation)) this.setNotice(`队列操作失败：${error.message}`, 'blocked', true); }
+          finally { if (this.current(generation)) this.paintQueue(); }
+        };
+        controls.append(button);
+      }
+      card.append(text, foot); holder.append(card);
+    }
+  },
+
   async send() {
     const input = this.input;
     if (!input || !this.pane) return;
@@ -680,9 +769,10 @@ const CodexSdkView = {
         this.setNotice('不支持的命令。输入 /help 查看可用命令；草稿已保留。', 'blocked');
         return;
       }
+      const request_id = await CodexSdkCompose.submission(payload, model, effort, this.agent);
       const response = await this.request('api/codex-sdk/turn', {
         uid: payload.uid, text, attachments: payload.attachments, quotes: payload.quotes,
-        model, effort,
+        model, effort, request_id,
       });
       if (this.input === input) {
         if (!response.raw?.steered) {
@@ -707,7 +797,7 @@ const CodexSdkView = {
     if (!match) return false;
     const [, command, value] = match;
     switch (command) {
-      case 'help': this.setNotice('可用命令：/model [模型]、/effort [强度]、/plan、/default、/permissions、/goal、/shell 命令（或 !命令）、/fork、/revert、/compact、/review、/status、/stop、/new。'); break;
+      case 'help': this.setNotice('可用命令：/model [模型]、/effort [强度]、/plan、/default、/permissions、/shell 命令（或 !命令）、/fork、/revert、/compact、/review、/status、/stop、/new。'); break;
       case 'model': case 'effort': {
         const select = this.pane.querySelector(`#sdk-${command}`);
         if (value) {

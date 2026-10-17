@@ -227,7 +227,8 @@ def browser_check(corpus, base, fake, screenshots=None):
 
             # Model and effort pickers come from model/list and ride on turn/start.
             model = pane.locator("#sdk-model")
-            expect(model.locator("option")).to_have_count(3)
+            expect(model.locator("option")).to_have_count(2)
+            assert all(value for value in model.locator("option").evaluate_all("nodes => nodes.map(node => node.value)"))
             expect(model).to_have_value("fake-sol")
             effort = pane.locator("#sdk-effort")
             expect(effort).to_have_value("high")  # Current thread, not model/list's low default.
@@ -257,7 +258,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(card).to_contain_text("echo synthetic")
             expect(card).to_contain_text("Synthetic approval reason")
             expect(pane.locator("#sdk-stop")).to_be_visible()
-            expect(pane.locator("#sdk-send")).to_have_text("追加")
+            expect(pane.locator("#sdk-send")).to_have_text("排队")
 
             # The open approval survives a reload: it comes back in the snapshot.
             page.reload(wait_until="networkidle")
@@ -328,6 +329,8 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(pane).to_contain_text("You picked Blue")
             box.fill("steer toward tests")
             box.press("Enter")
+            expect(pane.locator(".sdk-queued")).to_contain_text("steer toward tests")
+            pane.locator('.sdk-queued [data-queue-action="steer"]').click()
             steer = fake.wait_for(lambda: fake.methods("turn/steer"))[0]["params"]
             assert steer["expectedTurnId"] == "turn-2" and steer["input"][0]["text"] == "steer toward tests", steer
             expect(pane.locator(".sdk-live")).to_contain_text("steer toward tests")
