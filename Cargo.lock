@@ -1387,6 +1387,7 @@ dependencies = [
  "tar",
  "tokio",
  "tokio-native-tls",
+ "tokio-tungstenite",
  "tokio-util",
  "windows-sys 0.61.2",
 ]

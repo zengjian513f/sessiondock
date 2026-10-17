@@ -26,6 +26,7 @@ linked from [the documentation index](README.md).
 | Terminal final screen | GET `/api/term/final` (an exited session's last screen, read-only, no lease) | capability-gated |
 | Files and media | POST `/api/session/resolve-files`, `/api/session/attachment`; GET `/api/session/file`, `/api/media/{token}` | capability-gated |
 | Conversation drafts | GET/POST `/api/session/conversation`; POST `/api/session/conversation/{send,check,restart,attachment,attachment/discard,queued/dismiss,import}`; GET `/api/session/conversation/drafts` | capability-gated |
+| Codex SDK mode | POST `/api/codex-sdk/open`, `/api/codex-sdk/turn`, `/api/codex-sdk/interrupt`, `/api/codex-sdk/respond`; GET `/api/codex-sdk/events` (SSE), `/api/codex-sdk/models` ([contract](codex-sdk.md)) | capability-gated |
 | Trash | DELETE `/api/session/{uid}`; POST `/api/sessions/delete`, `/api/trash/restore`, `/api/trash/purge`; GET `/api/trash` | capability-gated |
 | Diagnostics | POST `/api/audit/browser`, `/api/bug-report` | capability-gated |
 | Hub | node registry and display settings; authenticated node proxy; HTTP/SSE/NDJSON/WS forwarding; UID/reference namespace conversion | hub mode |

@@ -1,0 +1,213 @@
+//! HTTP transport for the Codex SDK mode (docs/codex-sdk.md). Handlers only
+//! resolve the page's opaque session UID to a native Codex thread id and call
+//! `codex_sdk::CodexSdk`; the Hub forwards every route by that `uid`.
+use std::{convert::Infallible, sync::Arc, time::Duration};
+
+use axum::{
+    Json,
+    extract::{Query, State},
+    http::StatusCode,
+    response::{
+        IntoResponse, Response,
+        sse::{Event, Sse},
+    },
+};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use tokio::sync::broadcast;
+
+use crate::{
+    codex_sdk::{CodexSdk, RpcError},
+    error::ApiError,
+    state::AppState,
+};
+
+fn service(state: &AppState) -> Result<Arc<CodexSdk>, ApiError> {
+    state.codex_sdk.clone().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "codex_sdk_disabled",
+            "此机器未启用 Codex SDK 模式",
+        )
+    })
+}
+
+fn rpc(error: RpcError) -> ApiError {
+    let message = error.to_string();
+    match error {
+        RpcError::Unavailable(_) => ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "codex_sdk_unavailable",
+            message,
+        ),
+        RpcError::Disconnected => {
+            ApiError::new(StatusCode::BAD_GATEWAY, "codex_sdk_disconnected", message)
+        }
+        RpcError::Remote { .. } => {
+            ApiError::new(StatusCode::BAD_GATEWAY, "codex_sdk_rejected", message)
+        }
+        RpcError::NoActiveTurn => ApiError::new(StatusCode::CONFLICT, "codex_sdk_idle", message),
+        RpcError::UnknownRequest => {
+            ApiError::new(StatusCode::CONFLICT, "codex_sdk_request_gone", message)
+        }
+    }
+}
+
+/// The native thread behind a top-level Codex session UID. Subagent views
+/// and other sources are refused; the read model is the only identity source.
+async fn thread_id(state: &AppState, uid: &str) -> Result<String, ApiError> {
+    let uid = uid.to_string();
+    let scope = state
+        .reader
+        .run(move |sessions| sessions.native_scope(&uid, ""))
+        .await?;
+    if scope.source != "codex" || scope.agent_id.is_some() || scope.session_id.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "codex_sdk_unsupported",
+            "SDK 模式只支持 Codex 主会话",
+        ));
+    }
+    Ok(scope.session_id)
+}
+
+#[derive(Deserialize)]
+pub struct Target {
+    uid: String,
+}
+
+pub async fn open(
+    State(state): State<AppState>,
+    Json(body): Json<Target>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    let thread = thread_id(&state, &body.uid).await?;
+    let summary = sdk.open(&thread).await.map_err(rpc)?;
+    Ok(Json(
+        json!({"ok": true, "thread_id": thread, "raw": summary}),
+    ))
+}
+
+pub async fn events(
+    State(state): State<AppState>,
+    Query(query): Query<Target>,
+) -> Result<Response, ApiError> {
+    let sdk = service(&state)?;
+    let thread = thread_id(&state, &query.uid).await?;
+    let attached = sdk.attach(&thread).await.map_err(rpc)?;
+    let shutdown = state.shutdown.clone();
+    let stream = async_stream::stream! {
+        let guard = attached.guard;
+        let mut events = attached.events;
+        yield Ok::<_, Infallible>(Event::default().event("sdk").data(attached.snapshot.to_string()));
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        heartbeat.tick().await;
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => break,
+                _ = heartbeat.tick() => {
+                    yield Ok(Event::default().event("heartbeat").data("{}"));
+                }
+                received = events.recv() => match received {
+                    Ok(text) => {
+                        let reset = text.contains("\"method\":\"bridge/reset\"");
+                        yield Ok(Event::default().event("sdk").data(&*text));
+                        if reset { break; }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // A page that fell behind reloads instead of guessing.
+                        yield Ok(Event::default().event("sdk").data(
+                            json!({"seq": 0, "method": "bridge/reset", "raw": {"reason": "lagged"}}).to_string()));
+                        break;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+            }
+        }
+        drop(guard);
+    };
+    let mut response = Sse::new(stream).into_response();
+    response
+        .headers_mut()
+        .insert("x-accel-buffering", "no".parse().unwrap());
+    response
+        .headers_mut()
+        .insert("cache-control", "no-cache".parse().unwrap());
+    Ok(response)
+}
+
+#[derive(Deserialize)]
+pub struct Turn {
+    uid: String,
+    text: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
+}
+
+pub async fn turn(
+    State(state): State<AppState>,
+    Json(body): Json<Turn>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    if body.text.trim().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "codex_sdk_empty",
+            "消息内容为空",
+        ));
+    }
+    let thread = thread_id(&state, &body.uid).await?;
+    let result = sdk
+        .send(
+            &thread,
+            &body.text,
+            body.model.as_deref(),
+            body.effort.as_deref(),
+        )
+        .await
+        .map_err(rpc)?;
+    Ok(Json(json!({"ok": true, "raw": result})))
+}
+
+pub async fn interrupt(
+    State(state): State<AppState>,
+    Json(body): Json<Target>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    let thread = thread_id(&state, &body.uid).await?;
+    let result = sdk.interrupt(&thread).await.map_err(rpc)?;
+    Ok(Json(json!({"ok": true, "raw": result})))
+}
+
+#[derive(Deserialize)]
+pub struct Answer {
+    uid: String,
+    key: String,
+    result: Value,
+}
+
+pub async fn respond(
+    State(state): State<AppState>,
+    Json(body): Json<Answer>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    let thread = thread_id(&state, &body.uid).await?;
+    sdk.respond(&thread, &body.key, body.result)
+        .await
+        .map_err(rpc)?;
+    Ok(Json(json!({"ok": true})))
+}
+
+pub async fn models(
+    State(state): State<AppState>,
+    Query(query): Query<Target>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    // The UID only names the machine on a Hub; models are per daemon.
+    let _ = &query.uid;
+    let value = sdk.models().await.map_err(rpc)?;
+    Ok(Json(json!({"ok": true, "raw": value})))
+}

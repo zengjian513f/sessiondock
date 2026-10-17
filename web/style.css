@@ -1824,8 +1824,8 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .page-sleep-dialog .session-freeze-line { margin: 0; }
 .page-sleep-dialog .btn { width: auto; padding: 0 10px; gap: 6px; }
 
-/* 已接管会话的输入框 */
-#composer {
+/* 已接管会话的输入框；SDK 视图的输入框沿用同一外观。 */
+#composer, #sdk-composer {
   flex: none; display: flex; flex-direction: column; gap: 7px;
   position: relative; z-index: 2;
   width: 100%;
@@ -1950,14 +1950,14 @@ body.stale-build #composer-input-status { display: none; }
   font: inherit; font-size: 12px; line-height: 1.45;
 }
 #composer.dragover { box-shadow: inset 0 0 0 2px var(--accent); }
-#cinput, #bug-report-description, #continue-session-description {
+#cinput, #sdk-input, #bug-report-description, #continue-session-description {
   display: block; width: 100%; min-width: 0; resize: none; overflow-y: hidden;
   min-height: var(--composer-control-height);
   padding: 7px 11px; border: 1px solid var(--border); border-radius: 9px;
   background: var(--panel-2); color: var(--text); outline: none;
   font: inherit; line-height: 1.5;
 }
-#cinput:focus, #bug-report-description:focus, #continue-session-description:focus { border-color: var(--accent); }
+#cinput:focus, #sdk-input:focus, #bug-report-description:focus, #continue-session-description:focus { border-color: var(--accent); }
 .cbtns { display: flex; gap: 6px; flex: none; height: var(--composer-control-height); }
 .cbtns .btn {
   display: inline-flex; align-items: center; justify-content: center;
@@ -2176,7 +2176,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   .diff-split > section { border-right: 0; border-bottom: 1px solid var(--border); }
   .diff-split > section:last-child { border-bottom: 0; }
 
-  #composer {
+  #composer, #sdk-composer {
     max-width: none; gap: 6px;
     padding: 7px 8px max(7px, env(safe-area-inset-bottom));
   }
@@ -2188,7 +2188,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     flex: 1 1 calc(50% - 3px); max-width: calc(50% - 3px);
   }
   .draft-card.draft-quote { max-width: 100%; }
-  #cinput, #bug-report-description, #continue-session-description { padding: 7px 9px; }
+  #cinput, #sdk-input, #bug-report-description, #continue-session-description { padding: 7px 9px; }
   .cbtns { gap: 4px; }
   .cbtns .btn { padding-inline: 9px; }
 
@@ -2509,3 +2509,26 @@ header .btn[data-session-docked] { display: none; }
 .dhead-actions > .session-run-actions {
   padding-inline: 6px; border-inline: 1px solid var(--border);
 }
+
+/* Codex SDK 视图：消息区复用 .msgs/.msg 气泡，输入区复用 #composer 外观。 */
+#session-content-view.sdk-pane { flex-direction: column; }
+.sdk-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.sdk-view > .sdk-msgs { flex: 1; min-height: 0; }
+.sdk-status { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.sdk-status[hidden], #sdk-composer .btn[hidden] { display: none; }
+.sdk-status.blocked { color: var(--danger); }
+.sdk-options { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sdk-options .new-effort { flex: 0 1 180px; }
+.sdk-options .new-effort > select { height: 30px; font-size: 12.5px; }
+.sdk-usage { margin-left: auto; white-space: nowrap; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.sdk-request .mb pre { white-space: pre-wrap; word-break: break-word; }
+.sdk-request-title { font-weight: 600; }
+.sdk-request-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
+.sdk-request.sdk-answered { opacity: .72; }
+.sdk-question { margin: 6px 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; }
+.sdk-question label { display: block; margin: 3px 0; cursor: pointer; }
+.sdk-question input[type="text"], .sdk-question input[type="password"], .sdk-request .sdk-json {
+  display: block; width: 100%; margin-top: 4px; padding: 5px 8px; border: 1px solid var(--border);
+  border-radius: 7px; background: var(--panel-2); color: var(--text); font: inherit;
+}
+.sdk-request .sdk-json { min-height: 64px; font-family: var(--terminal-font); }

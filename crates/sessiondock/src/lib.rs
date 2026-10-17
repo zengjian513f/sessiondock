@@ -13,6 +13,7 @@ pub mod audit;
 pub mod bridge;
 pub mod bug_report;
 mod cleanup;
+pub mod codex_sdk;
 pub mod config;
 pub mod conversation;
 pub mod delivery;
@@ -303,6 +304,12 @@ fn build_app(
     capabilities["session_relations"] = serde_json::json!(metadata.is_some());
     capabilities["files"] = serde_json::json!(files.is_some());
     capabilities["audit"] = serde_json::json!(audit.is_some());
+    let codex_sdk = codex_sdk::Endpoint::from_config(
+        config.codex_app_server.as_deref(),
+        config.roots.codex.as_deref(),
+    )
+    .map(|endpoint| codex_sdk::CodexSdk::new(endpoint, shutdown.clone()));
+    capabilities["codex_sdk"] = serde_json::json!(codex_sdk.is_some());
     // Explicit private trash directory only; routes stay 501 without it.
     let trash = config
         .trash_dir
@@ -602,6 +609,7 @@ fn build_app(
         prompts,
         polls: Arc::new(polls::PollCache::default()),
         ui_events,
+        codex_sdk,
     };
     api::cleanup::spawn(state.clone());
     runtime::process_links::spawn(state.clone());

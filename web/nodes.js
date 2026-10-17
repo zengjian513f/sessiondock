@@ -170,6 +170,7 @@ const SessionContentView = {
     this.kind = '';
     this.themeObserver?.disconnect();
     SessionDockResources.closeEmbedded();
+    CodexSdkView.close();
     this.pane?.remove();
     this.pane = null;
     $('#right').classList.remove('session-content-view');
@@ -177,7 +178,7 @@ const SessionContentView = {
   },
   sync() {
     if (this.kind && (this.uid !== S.sel || this.agent !== S.agent)) this.close();
-    for (const kind of ['info', 'resources']) {
+    for (const kind of ['info', 'resources', 'sdk']) {
       const button = $(`#a-${kind}`);
       button?.classList.toggle('on', this.kind === kind);
       button?.setAttribute('aria-pressed', String(this.kind === kind));
@@ -190,7 +191,7 @@ const SessionContentView = {
     this.kind = kind; this.uid = uid; this.agent = agent;
     this.pane = document.createElement('section');
     this.pane.id = 'session-content-view';
-    this.pane.setAttribute('aria-label', kind === 'info' ? '会话信息' : '会话资源');
+    this.pane.setAttribute('aria-label', {info: '会话信息', sdk: 'Codex SDK'}[kind] || '会话资源');
     $('#right').append(this.pane);
     $('#right').classList.add('session-content-view');
     if (kind === 'info') {
@@ -210,6 +211,8 @@ const SessionContentView = {
       observer.observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
       this.themeObserver?.disconnect(); this.themeObserver = observer;
       this.pane.append(frame);
+    } else if (kind === 'sdk') {
+      CodexSdkView.open(uid, this.pane);
     } else {
       this.watchWheel(this.pane);
       SessionDockResources.open(S.sessions.find(row => row.uid === uid) || {uid}, this.pane);
@@ -223,6 +226,7 @@ function consoleButtonMarkup() {
   return `<div class="seg session-views" role="group" aria-label="会话视图">
     <button id="a-chat" type="button" title="对话" aria-label="对话" aria-pressed="true" class="on">${uiIcon('chat')}</button>
     <button id="a-term" type="button" title="终端" aria-label="终端" aria-pressed="false">${uiIcon('terminal')}</button>
+    <button id="a-sdk" type="button" title="SDK" aria-label="Codex SDK" aria-pressed="false" hidden>${uiIcon('sdk')}</button>
     <button id="a-info" type="button" title="信息" aria-label="信息">${uiIcon('info')}</button>
     <button id="a-resources" type="button" title="资源" aria-label="资源" data-session-resources>${uiIcon('resource-cpu')}</button>
   </div>`;
@@ -253,6 +257,12 @@ function bindConsoleButton(button, uid, agent = null) {
     group.querySelector('#a-resources').onclick = () => {
       SessionContentView.open('resources', uid, agent);
     };
+    const sdk = group.querySelector('#a-sdk');
+    if (sdk) {
+      // 只给 Codex 主会话显示；其它来源没有 SDK 视图。
+      sdk.hidden = !CodexSdkView.available(uid, agent);
+      sdk.onclick = () => { if (CodexSdkView.available(uid, agent)) SessionContentView.open('sdk', uid, agent); };
+    }
   }
   button.onclick = async () => {
     const reason = consoleUnavailableReason(uid, agent, false);
