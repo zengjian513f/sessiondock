@@ -38,6 +38,17 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 async fn run() -> Result<(), Box<dyn Error>> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    if arguments.len() == 2 && arguments[0] == "quota-statusline" {
+        sessiondock::quota_statusline::run(std::path::Path::new(&arguments[1])).await;
+        return Ok(());
+    }
+    if arguments.len() == 3 && arguments[0] == "quota-install" {
+        sessiondock::quota_statusline::install(
+            std::path::Path::new(&arguments[1]),
+            std::path::Path::new(&arguments[2]),
+        )?;
+        return Ok(());
+    }
     if arguments.len() == 1 && arguments[0] == "--help" {
         println!(
             "sessiondock [--check-config | --initialize-lifecycle DIRECTORY | --write-bridge-settings ABSOLUTE_FILE | claude-hook [--state-dir ABSOLUTE_DIRECTORY]]\nNo option starts the loopback development Web service.\n--check-config validates SESSIONDOCK_* like startup, prints the effective paths and exits.\nInitialization creates the requested state directory as needed and exits without starting Web or any CLI.\n--write-bridge-settings writes the Claude `--settings` hooks file (0600) that runs this binary as `claude-hook --state-dir $SESSIONDOCK_STATE_DIR`.\nclaude-hook reads one Claude Code hook payload from stdin and records an AskUserQuestion card under <state dir>/claude-prompts; it never prints and always exits 0."

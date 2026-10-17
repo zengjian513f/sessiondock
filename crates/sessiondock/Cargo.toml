@@ -40,7 +40,7 @@ libc = "0.2"
 rustix = { version = "1", features = ["fs"] }
 axum.workspace = true
 serde.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["process", "fs"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 indexmap.workspace = true
 sha1.workspace = true
