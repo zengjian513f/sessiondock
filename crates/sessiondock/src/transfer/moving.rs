@@ -326,7 +326,7 @@ impl TransferService {
             calls_by_thread
                 .entry(e.summary.sid.clone())
                 .or_default()
-                .extend(self.references.get(e)?.calls.clone());
+                .extend(self.references.get_indexed(e)?.calls.clone());
         }
         for e in snapshot
             .index()
@@ -353,7 +353,7 @@ impl TransferService {
             {
                 return Err(changed());
             }
-            let links = self.references.get(e)?;
+            let links = self.references.get_indexed(e)?;
             if let Some((code, message)) = links.errors.first() {
                 return Err(TransferError::new(code, message));
             }

@@ -23,13 +23,14 @@ from session_transfer_cache_fixtures import Opens
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary',type=Path,default=BINARY)
+    parser.add_argument('--unrelated',type=int,default=128,help='Unrelated native histories for index scaling')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='sessiondock-transfer-cache-') as tmp, sync_playwright() as pw, ExitStack() as stack:
         root=Path(tmp);roots,claude,side,agent=fixture(root/'node');corpus=Corpus(root/'node')
         with claude[2].open('ab') as stream:
             stream.write(encoded({'type':'mode','sessionId':ident(2),'fixture_padding':'x'*(2400*1024)}))
         unrelated=[]
-        for number in range(1000,1128):
+        for number in range(1000,1000+args.unrelated):
             path=claude[2].parent/(ident(number)+'.jsonl')
             path.write_bytes(encoded(claude_row(ident(number),'user',ident(number*10),None,'Unrelated '+str(number),cwd=str(corpus.root/'cwd')))+
                 encoded(claude_row(ident(number),'assistant',ident(number*10+1),ident(number*10),'x'*(128*1024),cwd=str(corpus.root/'cwd'))))
@@ -50,10 +51,11 @@ def main():
         cache=corpus.root/'state/transfers/relationships-v1.json'
         node=SimpleNamespace(name='source',nid='c'*32,port=free_port(),token=TOKEN)
         (corpus.root/'ids/node-id').write_text(node.nid+'\n')
-        env=node_env(corpus.root,node.port,'127.0.0.0/8');env.update(SESSIONDOCK_CLAUDE_ROOT=roots['claude'],SESSIONDOCK_PROC_ROOT=str(corpus.root/'proc'))
+        env=node_env(corpus.root,node.port,'127.0.0.0/8');env.update(SESSIONDOCK_CLAUDE_ROOT=roots['claude'],SESSIONDOCK_PROC_ROOT=str(corpus.root/'proc'),SESSIONDOCK_RUNTIME_LOG_DIR='-')
+        server_log=corpus.root/'relationship-server.log'
         servers=stack.enter_context(ExitStack())
         def start():
-            servers.enter_context(isolated_server(corpus,args.binary,state_dir=corpus.root/'state',extra_env=env))
+            servers.enter_context(isolated_server(corpus,args.binary,state_dir=corpus.root/'state',extra_env=env,log_path=server_log))
         start()
         # A bounded observation window catches eager background discovery without
         # waiting for the former 60-second timer. No list/preview request yet.
@@ -63,6 +65,7 @@ def main():
         browser=pw.chromium.launch(headless=True);stack.callback(browser.close)
         page=browser.new_page();page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
         selected=scoped(node.nid,uid('claude',claude[2]))
+        page.locator('#q').fill(selected)
         page.locator(f'#side .item[data-uid="{selected}"]').click()
         page.wait_for_function('(uid)=>S.sel===uid',arg=selected)
         assert not idle_watch.take(),'ordinary browsing scanned unrelated compacted history'
@@ -74,7 +77,11 @@ def main():
                 page.locator('#a-clone-group').click()
             assert planned.value.ok,planned.value.text()
             dialog=page.locator('#clone-group-dialog')
-            expect(dialog.locator('.clone-confirm')).to_be_enabled()
+            try:expect(dialog.locator('.clone-confirm')).to_be_enabled()
+            except AssertionError:
+                print('Preview phase/count/error:',{k:planned.value.json().get(k) for k in ('phase','session_count','error')},flush=True)
+                print('Preview dialog:',dialog.inner_text(),flush=True)
+                raise
             return dialog,planned.value.json(),time.monotonic()-started
         dialog,plan,cold=preview();assert plan['session_count']==4,plan
         operation_dir=corpus.root/'state/transfers'/plan['operation_id']
@@ -85,6 +92,21 @@ def main():
         assert {str(p) for p in unrelated}.issubset({row[0] for row in saved})
         dialog.locator('.clone-cancel').click()
         dialog,plan,warm=preview();assert not watch.take(),'warm preview reread unrelated histories'
+        deadline=time.monotonic()+3
+        while True:
+            records=[json.loads(line) for line in server_log.read_text().splitlines() if line.startswith('{')]
+            if any(row.get('event')=='transfer.relationship_index.query' and row.get('updated')==0 for row in records):break
+            assert time.monotonic()<deadline,'warm preview rebuilt the relationship graph'
+            page.wait_for_timeout(50)
+        print('PASS Chromium warm preview queries the reverse index with zero history updates',flush=True)
+        shots=Path('target/transfer-source-index');shots.mkdir(parents=True,exist_ok=True)
+        for width in (1280,390):
+            page.set_viewport_size({'width':width,'height':900})
+            for theme in ('light','dark'):
+                page.emulate_media(color_scheme=theme)
+                expect(page.locator('html')).to_have_attribute('data-theme',theme)
+                dialog.screenshot(path=str(shots/f'preview-{width}-{theme}.png'))
+        page.set_viewport_size({'width':1280,'height':900})
         progress_watch=Opens([corpus.root/'state/transfers'/plan['operation_id']/'operation.json'],shared=idle_watch)
         stack.callback(progress_watch.close)
         for _ in range(2):
@@ -116,6 +138,7 @@ def main():
         # Let the existing abandoned-preview worker observe new terminal entries
         # once; it is independent of the on-demand lock/ownership summary cache.
         page.wait_for_timeout(11000)
+        page.locator('#q').fill(selected)
         page.locator(f'#side .item[data-uid="{selected}"]').click()
         dialog,_,journal_cold=preview();dialog.locator('.clone-cancel').click()
         journal_watch=Opens(journals,shared=idle_watch);stack.callback(journal_watch.close)
@@ -133,6 +156,7 @@ def main():
         # original native sessions remain unchanged throughout these fixtures.
         changed=copy.deepcopy(old);changed.update(id=journals[0].parent.name,phase='retired',moving=True)
         replacement=journals[0].with_suffix('.tmp');replacement.write_text(json.dumps(changed));replacement.replace(journals[0])
+        page.locator('#q').fill(selected)
         page.locator(f'#side .item[data-uid="{selected}"]').click()
         page.locator('#a-clone-group').click()
         expect(page.locator('#clone-group-dialog .transfer-error')).to_contain_text('会话组有尚未恢复的复制操作')
@@ -145,6 +169,7 @@ def main():
         # Add a reverse edge from an already cached, unrelated transcript.
         with unrelated[0].open('ab') as stream:
             stream.write(encoded({'type':'fork-context-ref','sessionId':ident(1000),'parentSessionId':ident(2)}))
+        page.locator('#q').fill(selected)
         page.locator(f'#side .item[data-uid="{selected}"]').click()
         page.wait_for_function('(uid)=>S.sel===uid',arg=selected)
         watch.take()
@@ -154,6 +179,8 @@ def main():
         # The old process-only cache lost all relationships on every deployment.
         servers.close();start()
         page.reload(wait_until='networkidle')
+        page.wait_for_function('(id)=>Nodes.list.find(n=>n.id===id)?.online===true',arg=node.nid,timeout=20000)
+        page.locator('#q').fill(selected)
         page.locator(f'#side .item[data-uid="{selected}"]').click()
         page.wait_for_function('(uid)=>S.sel===uid',arg=selected)
         watch.take() # List discovery reads native headers on process startup.
@@ -174,12 +201,33 @@ def main():
         assert watch.take()=={unrelated[0].name}
         print('PASS Chromium detects added and removed reverse fork edges without rescanning unchanged histories',flush=True)
         dialog.locator('.clone-cancel').click()
+        # A newly created reverse ref and its deletion invalidate the graph.
+        added=claude[2].parent/(ident(900000)+'.jsonl')
+        added.write_bytes(encoded(claude_row(ident(900000),'user',ident(9000000),None,'New outside fork',cwd=str(corpus.root/'cwd')))+
+            encoded({'type':'fork-context-ref','sessionId':ident(900000),'parentSessionId':ident(2)}))
+        dialog,plan,_=preview();assert plan['session_count']==5,plan
+        dialog.locator('.clone-cancel').click()
+        added.unlink()
+        dialog,plan,_=preview();assert plan['session_count']==4,plan
+        dialog.locator('.clone-cancel').click()
+        print('PASS Chromium reverse index includes newly created references and drops deleted histories',flush=True)
         grok_selected=scoped(node.nid,uid('grok',corpus.root/'grok/project'/ident(10)))
-        page.locator(f'#side .item[data-uid="{grok_selected}"]').click()
+        page.goto(f'http://127.0.0.1:{hub.port}/?sid={grok_selected}&node={node.nid}',wait_until='networkidle')
         page.wait_for_function('(uid)=>S.sel===uid',arg=grok_selected)
         dialog,plan,_=preview();assert plan['session_count']==5,plan
         dialog.locator('.clone-cancel').click()
         print('PASS Chromium idle startup leaves compacted history unread; on-demand preview includes checkpoint-only agent',flush=True)
+        # The ordinary native row signature need not change when only a Grok
+        # checkpoint changes. Its additional dependency must invalidate the graph.
+        original_checkpoint=checkpoint.read_bytes()
+        checkpoint.write_bytes(encoded({'compacted_history':[]}))
+        dialog,plan,_=preview();assert plan['session_count']==4,plan
+        dialog.locator('.clone-cancel').click()
+        checkpoint.write_bytes(original_checkpoint)
+        dialog,plan,_=preview();assert plan['session_count']==5,plan
+        dialog.locator('.clone-cancel').click()
+        print('PASS Chromium checkpoint-only changes invalidate reverse links with unchanged list rows',flush=True)
+
 
 
 

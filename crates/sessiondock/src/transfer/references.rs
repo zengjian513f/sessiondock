@@ -35,6 +35,37 @@ pub(super) struct Cache {
     dirty: AtomicBool,
 }
 impl Cache {
+    pub fn get_indexed(&self, e: &CandidateRef) -> Result<Arc<Links>, TransferError> {
+        self.cached_indexed(e).map_or_else(|| self.get(e), Ok)
+    }
+    /// The inventory already stat'ed native transcripts. Do not repeat that
+    /// work for every relationship lookup. Grok has additional native inputs
+    /// absent from the list summary (updates, checkpoints and agent metadata).
+    pub fn cached_indexed(&self, e: &CandidateRef) -> Option<Arc<Links>> {
+        if e.source == "grok" {
+            let current = key(e).ok()?;
+            return self
+                .entries
+                .lock()
+                .ok()?
+                .get(&e.data)
+                .filter(|(key, _)| *key == current)
+                .map(|(_, links)| links.clone());
+        }
+        let current = e.stamp?;
+        let entries = self.entries.lock().ok()?;
+        let (key, links) = entries.get(&e.data)?;
+        let [(path, Some(saved))] = key.as_slice() else {
+            return None;
+        };
+        let (seconds, nanos) = saved.modified?;
+        (path == &e.data
+            && saved.device == current.dev
+            && saved.inode == current.ino
+            && saved.length == current.size
+            && u128::from(seconds) * 1_000_000_000 + u128::from(nanos) == current.mtime_ns)
+            .then(|| links.clone())
+    }
     pub fn open(path: PathBuf) -> Self {
         let entries = fs::read(&path)
             .ok()

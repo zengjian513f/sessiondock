@@ -7,12 +7,15 @@ pub(super) mod claude_tools;
 #[path = "grok_tools.rs"]
 pub(super) mod grok_tools;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use serde::{Deserialize, Serialize};
 
 use super::TransferError;
-use crate::sessions::SessionSnapshot;
+use crate::sessions::{CandidateRef, SessionSnapshot};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Edge {
@@ -58,7 +61,7 @@ pub(super) fn derive_cached(
     selected: &str,
     cache: &super::references::Cache,
 ) -> Result<Group, TransferError> {
-    derive_scope(snapshot, selected, cache, None)
+    Inventory::default().group(snapshot, selected, cache)
 }
 
 /// Publication verifies the delivered graph, not a new migration of the target
@@ -69,38 +72,33 @@ pub(super) fn derive_published(
     cache: &super::references::Cache,
     uids: &BTreeSet<String>,
 ) -> Result<Group, TransferError> {
-    derive_scope(snapshot, selected, cache, Some(uids))
+    build(snapshot, cache, Some(uids))?.select(selected)
 }
 
-fn derive_scope(
+fn build(
     snapshot: &SessionSnapshot,
-    selected: &str,
     cache: &super::references::Cache,
     scope: Option<&BTreeSet<String>>,
-) -> Result<Group, TransferError> {
+) -> Result<Graph, TransferError> {
     let index = snapshot.index();
     let entries: BTreeMap<_, _> = index
         .candidates()
         .filter(|e| scope.is_none_or(|uids| uids.contains(&e.uid)))
         .map(|e| (e.uid.clone(), e))
         .collect();
-    if !entries.contains_key(selected) {
-        return Err(TransferError::new("not_found", "会话不在当前索引中"));
-    }
     if scope.is_none() {
         cache.retain(&entries.values().map(|e| e.data.clone()).collect());
     }
-    let progress = super::progress::Task::new("检查关联会话", "份历史", Some(entries.len() as u64));
-    let links: BTreeMap<_, _> = entries
-        .values()
-        .map(|e| {
-            let links = cache.get(e)?;
-            progress.add(1);
-            Ok((e.uid.clone(), links))
-        })
-        .collect::<Result<_, TransferError>>()?;
-    drop(progress);
-    cache.save();
+    let links = refresh_links(&entries, cache)?;
+    build_links(snapshot, entries, links)
+}
+
+fn build_links(
+    snapshot: &SessionSnapshot,
+    entries: BTreeMap<String, &CandidateRef>,
+    links: BTreeMap<String, Arc<super::references::Links>>,
+) -> Result<Graph, TransferError> {
+    let index = snapshot.index();
     let grok_aliases: Vec<_> = entries
         .values()
         .filter(|e| e.source == "grok")
@@ -322,7 +320,7 @@ fn derive_scope(
             }
         }
     }
-    let mut adjacency: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut adjacency: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for edge in &edges {
         if !entries.contains_key(&edge.from) || !entries.contains_key(&edge.to) {
             return Err(TransferError::new(
@@ -330,52 +328,189 @@ fn derive_scope(
                 "目标历史引用了迁移清单以外的会话",
             ));
         }
-        adjacency.entry(&edge.from).or_default().push(&edge.to);
-        adjacency.entry(&edge.to).or_default().push(&edge.from);
-    }
-    let mut seen = BTreeSet::new();
-    let mut pending = vec![selected];
-    while let Some(uid) = pending.pop() {
-        if seen.insert(uid) {
-            pending.extend(adjacency.get(uid).into_iter().flatten().copied());
-        }
+        adjacency
+            .entry(edge.from.clone())
+            .or_default()
+            .push(edge.to.clone());
+        adjacency
+            .entry(edge.to.clone())
+            .or_default()
+            .push(edge.from.clone());
     }
     let titles: BTreeMap<_, _> = index
         .sessions()
         .iter()
         .filter_map(|row| Some((row["uid"].as_str()?, row["title"].as_str()?)))
         .collect();
-    let members = seen
-        .iter()
-        .map(|uid| {
-            let e = entries[*uid];
-            Member {
-                uid: e.uid.clone(),
-                source: e.source.into(),
-                sid: e.summary.sid.clone(),
-                title: titles
-                    .get(e.uid.as_str())
-                    .copied()
-                    .unwrap_or(&e.summary.title)
-                    .to_owned(),
-                cwd: e.summary.cwd.clone(),
-                agent: e.is_agent(),
-                path: e.data.clone(),
-                root: e.root.clone(),
-                rollout_id: e.codex_rollout_id().map(str::to_owned),
-            }
+    let members = entries
+        .values()
+        .map(|e| {
+            (
+                e.uid.clone(),
+                Member {
+                    uid: e.uid.clone(),
+                    source: e.source.into(),
+                    sid: e.summary.sid.clone(),
+                    title: titles
+                        .get(e.uid.as_str())
+                        .copied()
+                        .unwrap_or(&e.summary.title)
+                        .to_owned(),
+                    cwd: e.summary.cwd.clone(),
+                    agent: e.is_agent(),
+                    path: e.data.clone(),
+                    root: e.root.clone(),
+                    rollout_id: e.codex_rollout_id().map(str::to_owned),
+                },
+            )
         })
         .collect();
-    blockers.retain(|b| seen.contains(b.uid.as_str()));
-    let edges = edges
-        .iter()
-        .filter(|e| seen.contains(e.from.as_str()))
-        .cloned()
-        .collect();
-    Ok(Group {
-        selected: selected.into(),
+    Ok(Graph {
         members,
         edges,
         blockers,
+        adjacency,
     })
+}
+
+struct Graph {
+    members: BTreeMap<String, Member>,
+    edges: BTreeSet<Edge>,
+    blockers: Vec<Blocker>,
+    adjacency: BTreeMap<String, Vec<String>>,
+}
+impl Graph {
+    fn select(&self, selected: &str) -> Result<Group, TransferError> {
+        if !self.members.contains_key(selected) {
+            return Err(TransferError::new("not_found", "会话不在当前索引中"));
+        }
+        let mut seen = BTreeSet::new();
+        let mut pending = vec![selected];
+        while let Some(uid) = pending.pop() {
+            if seen.insert(uid) {
+                pending.extend(
+                    self.adjacency
+                        .get(uid)
+                        .into_iter()
+                        .flatten()
+                        .map(String::as_str),
+                );
+            }
+        }
+        Ok(Group {
+            selected: selected.into(),
+            members: seen.iter().map(|uid| self.members[*uid].clone()).collect(),
+            edges: seen
+                .iter()
+                .flat_map(|uid| {
+                    self.edges
+                        .range(
+                            Edge {
+                                from: (*uid).into(),
+                                to: String::new(),
+                                kind: String::new(),
+                            }..,
+                        )
+                        .take_while(move |edge| edge.from == *uid)
+                        .cloned()
+                })
+                .collect(),
+            blockers: self
+                .blockers
+                .iter()
+                .filter(|b| seen.contains(b.uid.as_str()))
+                .cloned()
+                .collect(),
+        })
+    }
+}
+
+fn refresh_links(
+    entries: &BTreeMap<String, &CandidateRef>,
+    cache: &super::references::Cache,
+) -> Result<BTreeMap<String, Arc<super::references::Links>>, TransferError> {
+    let mut links = BTreeMap::new();
+    let mut pending = Vec::new();
+    for e in entries.values() {
+        if let Some(link) = cache.cached_indexed(e) {
+            links.insert(e.uid.clone(), link);
+        } else {
+            pending.push(*e);
+        }
+    }
+    let progress = super::progress::Task::new("更新关联索引", "份历史", Some(pending.len() as u64));
+    for e in pending {
+        links.insert(e.uid.clone(), cache.get(e)?);
+        progress.add(1);
+    }
+    cache.save();
+    Ok(links)
+}
+
+/// One reusable reverse graph. Native catalog discovery provides versions;
+/// only changed transcripts are read, and an unchanged graph is queried by UID.
+#[derive(Default)]
+pub(super) struct Inventory {
+    rows: BTreeMap<String, CandidateRef>,
+    links: BTreeMap<String, Arc<super::references::Links>>,
+    signature: serde_json::Value,
+    graph: Option<Graph>,
+}
+impl Inventory {
+    pub fn group(
+        &mut self,
+        snapshot: &SessionSnapshot,
+        selected: &str,
+        cache: &super::references::Cache,
+    ) -> Result<Group, TransferError> {
+        let entries: BTreeMap<_, _> = snapshot
+            .index()
+            .candidates()
+            .map(|e| (e.uid.clone(), e))
+            .collect();
+        if !entries.contains_key(selected) {
+            return Err(TransferError::new("not_found", "会话不在当前索引中"));
+        }
+        cache.retain(&entries.values().map(|e| e.data.clone()).collect());
+        let links = refresh_links(&entries, cache)?;
+        let unchanged = self.graph.is_some()
+            && self.signature == snapshot.list["sig"]
+            && entries.len() == self.rows.len()
+            && entries.iter().all(|(uid, e)| {
+                self.rows.get(uid).is_some_and(|old| {
+                    old.stamp == e.stamp
+                        && old.summary_stamp == e.summary_stamp
+                        && old.owner == e.owner
+                        && old.owner_error.as_ref().map(|e| (e.status, &e.message))
+                            == e.owner_error.as_ref().map(|e| (e.status, &e.message))
+                        && Arc::ptr_eq(&old.summary, &e.summary)
+                        && self
+                            .links
+                            .get(uid)
+                            .is_some_and(|old| Arc::ptr_eq(old, &links[uid]))
+                })
+            });
+        crate::log::info(
+            if unchanged {
+                "transfer.relationship_index.query"
+            } else {
+                "transfer.relationship_index.update"
+            },
+            serde_json::json!({
+                "reused": unchanged, "candidates": entries.len(),
+                "updated": links.iter().filter(|(uid, link)| self.links.get(*uid).is_none_or(|old| !Arc::ptr_eq(old, link))).count()
+            }),
+        );
+        if !unchanged {
+            let graph = build_links(snapshot, entries.clone(), links.clone())?;
+            self.rows = entries
+                .into_iter()
+                .map(|(uid, e)| (uid, e.clone()))
+                .collect();
+            self.links = links;
+            self.signature = snapshot.list["sig"].clone();
+            self.graph = Some(graph);
+        }
+        self.graph.as_ref().unwrap().select(selected)
+    }
 }
