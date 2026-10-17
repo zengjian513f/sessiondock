@@ -61,6 +61,10 @@ const CodexSdkActions = {
         // Native forks are normally persisted immediately, so hydrate their
         // inventory before opening instead of treating them as empty starts.
         if (!response.session?.sdk_pending) await loadSessions(true, true);
+        // An explicit fork keeps both branches available. Reuse the durable
+        // parent visibility preference; child views must not reveal their owner.
+        if (!view.agent && S.sessions.some(row => row.uid === uid && row.fork_parent))
+          await setForkParentVisibility([uid], true);
         await openSession(response.uid);
         void loadSessions(true, true);
         return true;

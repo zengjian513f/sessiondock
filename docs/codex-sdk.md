@@ -225,7 +225,10 @@ read, publish or clear their owner's draft or staged attachments.
 
 DELTA (native controls): the operation menu starts fork, paginated turn
 selection for revert, compaction and inline review. Native APIs own every
-history mutation. A `thread/reverted` notification clears obsolete live items
+history mutation. Explicit SDK forks of main sessions persist the source's
+`fork_parent_visible` preference, keeping both branches in the sidebar after
+reload; the fork-chain menu can still hide the parent manually.
+A `thread/reverted` notification clears obsolete live items
 and reloads history for all attached pages. The mode selector changes Default /
 Plan; the session dialog changes approval/sandbox policy, manages the native
 goal and submits direct shell commands. Actual settings and goal notifications
