@@ -162,20 +162,20 @@ def browser_check(corpus, base, fake):
             expect(pane.locator(".tool-entry").filter(has_text="echo synthetic")).to_have_count(1)
             expect(pane).to_contain_text("All done after approval")
             expect(pane.locator("#sdk-stop")).to_be_hidden()
-            # Context joins the limit bars: 1000 of a 4000-token window used.
+            # Context joins the limit bars: 1000 of a 4000-token window used (25%).
             context_bar = pane.locator('.sdk-gauge[data-gauge="context"]')
-            expect(context_bar.locator("b")).to_have_text("75%")
-            expect(context_bar.locator(".sdk-bar")).to_have_attribute("aria-valuenow", "75")
+            expect(context_bar.locator("b")).to_have_text("25%")
+            expect(context_bar.locator(".sdk-bar")).to_have_attribute("aria-valuenow", "25")
             # After completion the rollout holds the turn; it is shown exactly once.
             expect(history.locator('.msg[data-role="assistant"]').filter(has_text="All done after approval")).to_have_count(1)
             expect(pane.locator('.msg[data-role="assistant"]').filter(has_text="All done after approval")).to_have_count(1)
             expect(pane.locator('.msg[data-role="user"]').filter(has_text="approve the synthetic command")).to_have_count(1)
 
-            # Account limits as bars (remaining), credits, and redeemable reset cards.
+            # Account limits as bars (used %, 100% = full), credits, and redeemable reset cards.
             five, week = pane.locator('.sdk-gauge[data-gauge="5h"]'), pane.locator('.sdk-gauge[data-gauge="7d"]')
-            expect(five.locator("b")).to_have_text("60%")
-            expect(five.locator(".sdk-bar")).to_have_attribute("aria-valuenow", "60")
-            expect(week.locator("b")).to_have_text("75%")
+            expect(five.locator("b")).to_have_text("40%")
+            expect(five.locator(".sdk-bar")).to_have_attribute("aria-valuenow", "40")
+            expect(week.locator("b")).to_have_text("25%")
             expect(pane.locator(".sdk-credits")).to_have_text("Credits 1,235")
             reset = pane.locator("#sdk-reset-card")
             expect(reset.locator("option")).to_have_count(2)
@@ -185,8 +185,8 @@ def browser_check(corpus, base, fake):
             page.locator("dialog[open] button", has_text="兑换").click()
             consumed = fake.wait_for(lambda: fake.methods("account/rateLimitResetCredit/consume"))[0]["params"]
             assert consumed["creditId"] == "card-b" and len(consumed["idempotencyKey"]) >= 16, consumed
-            expect(five.locator("b")).to_have_text("100%")
-            expect(week.locator("b")).to_have_text("100%")
+            expect(five.locator("b")).to_have_text("0%")
+            expect(week.locator("b")).to_have_text("0%")
             expect(reset.locator("option")).to_have_count(1)
             expect(reset.locator("option")).to_contain_text("Reset A")
             expect(pane.locator(".sdk-status")).to_contain_text("已兑换")

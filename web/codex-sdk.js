@@ -177,13 +177,13 @@ const CodexSdkView = {
     return `${minutes}m`;
   },
 
-  gauge(slot, label, remaining, title) {
+  gauge(slot, label, used, title) {
     const node = this.pane?.querySelector(`[data-gauge="${slot}"]`);
     if (!node) return;
-    node.hidden = !Number.isFinite(remaining);
+    node.hidden = !Number.isFinite(used);
     if (node.hidden) return;
-    const value = Math.max(0, Math.min(100, Math.round(remaining)));
-    node.classList.toggle('low', value <= 20);
+    const value = Math.max(0, Math.min(100, Math.round(used)));
+    node.classList.toggle('low', value >= 80);
     node.title = title;
     node.replaceChildren();
     const name = document.createElement('span');
@@ -191,7 +191,7 @@ const CodexSdkView = {
     const bar = document.createElement('i');
     bar.className = 'sdk-bar';
     bar.setAttribute('role', 'progressbar');
-    bar.setAttribute('aria-label', `${label} 剩余`);
+    bar.setAttribute('aria-label', `${label} 已用`);
     bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
     bar.setAttribute('aria-valuenow', String(value));
     const fill = document.createElement('u');
@@ -221,15 +221,15 @@ const CodexSdkView = {
       if (!window) { this.gauge(slot, slot, NaN, ''); continue; }
       const label = this.windowLabel(window.windowDurationMins);
       const reset = window.resetsAt ? `；${new Date(window.resetsAt * 1000).toLocaleString()} 重置` : '';
-      this.gauge(slot, label, 100 - window.usedPercent,
-        `${label} 窗口剩余 ${Math.round(100 - window.usedPercent)}%，已用 ${Math.round(window.usedPercent)}%${reset}`);
+      this.gauge(slot, label, window.usedPercent,
+        `${label} 窗口已用 ${Math.round(window.usedPercent)}%，剩余 ${Math.max(0, Math.round(100 - window.usedPercent))}%${reset}`);
     }
     const usage = this.summary?.usage;
     const size = usage?.modelContextWindow;
     const used = usage?.last?.totalTokens ?? usage?.total?.totalTokens;
     if (size && used != null) {
-      this.gauge('context', '上下文', 100 - used / size * 100,
-        `上下文剩余 ${Math.max(0, Math.round(100 - used / size * 100))}%（${used.toLocaleString()} / ${size.toLocaleString()} tokens）`);
+      this.gauge('context', '上下文', used / size * 100,
+        `上下文已用 ${Math.min(100, Math.round(used / size * 100))}%（${used.toLocaleString()} / ${size.toLocaleString()} tokens）`);
     } else this.gauge('context', '上下文', NaN, '');
     const credits = bucket.credits;
     const creditNode = this.pane.querySelector('.sdk-credits');

@@ -85,8 +85,6 @@ always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 | GET `/api/codex-sdk/models?uid=` | `model/list` (cached 5 minutes per node) |
 | GET `/api/codex-sdk/limits?uid=` | `account/rateLimits/read`: windows, credits and earned reset cards (account-wide) |
 | POST `/api/codex-sdk/reset-credit` `{uid, credit_id?, idempotency_key}` | `account/rateLimitResetCredit/consume` for the chosen card, then a fresh read; returns `{outcome, limits}` |
-| GET `/api/codex-sdk/limits?uid=` | `account/rateLimits/read`: windows, credits and earned reset cards (account-wide) |
-| POST `/api/codex-sdk/reset-credit` `{uid, credit_id?, idempotency_key}` | `account/rateLimitResetCredit/consume` for the chosen card, then a fresh read; returns `{outcome, limits}` |
 
 Errors: `503 codex_sdk_unavailable` (socket unreachable / start failed),
 `409 codex_sdk_thread_busy` (the rollout's writer lock is held by an independent
@@ -140,13 +138,14 @@ client of the daemon).
   started turn and, per app-server semantics, to later turns.
 - The status line shows the last turn error, the rate-limit-reached notice and the
   waiting state.
-- Usage row under the model/effort pickers, one `<progress>` per gauge showing the
-  **remaining** share (red at ≤ 20 %): `5h` and `7d` from the account bucket
-  (`rateLimitsByLimitId.codex`, else `rateLimits`), labelled by `windowDurationMins`
-  (300 → 5h, 10080 → 7d; an account with a single window shows only that one),
-  and 上下文 (`1 − last.totalTokens / modelContextWindow`). Tooltips give used
-  percent, reset time and token counts. `Credits N` is `credits.balance`
-  (`无限` when unlimited). The row is hidden while nothing is known.
+- Usage row alongside the model/effort pickers, one `.sdk-bar` progress bar per
+  gauge showing the **used** share (`100%` = full, red at ≥ 80 %): `5h` and `7d`
+  from the account bucket (`rateLimitsByLimitId.codex`, else `rateLimits`),
+  labelled by `windowDurationMins` (300 → 5h, 10080 → 7d; an account with a
+  single window shows only that one), and 上下文 (`last.totalTokens /
+  modelContextWindow`). Tooltips give used/remaining percent, reset time and
+  token counts. `Credits N` is `credits.balance` (`无限` when unlimited). The
+  row is hidden while nothing is known.
 - 重置卡: shown when `rateLimitResetCredits.availableCount > 0`; a selector lists
   the available cards (title, expiry) and 兑换 asks for confirmation, then posts the
   chosen `credit_id` with an idempotency key that is reused for retries of the
