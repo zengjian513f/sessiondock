@@ -177,8 +177,9 @@ const CodexSdkView = {
     const actions = this.pane.querySelector('#sdk-actions'), permissions = this.pane.querySelector('#sdk-permissions');
     const mode = this.pane.querySelector('.sdk-mode');
     options.classList.add('compact'); options.classList.toggle('narrow', this.toolbarWidth < 360);
-    this.pane.querySelector('#sdk-usage-menu').prepend(gauges);
-    usage.hidden = !knownUsage;
+    options.prepend(gauges);
+    usage.hidden = true;
+    options.classList.remove('usage-stacked');
     if (mode) {
       if (this.toolbarWidth < 380) more.prepend(mode);
       else pickers.insertBefore(mode, trigger);
@@ -192,20 +193,18 @@ const CodexSdkView = {
     const buttons = ['compact', 'fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
     for (const button of buttons) actions.append(button);
     more.append(this.pane.querySelector('.sdk-reset'));
+    if (knownUsage && !fits()) options.classList.add('usage-stacked');
+    const model = pickers.querySelector('.sdk-model');
+    const modelWidth = model.getBoundingClientRect().width;
     // Promote actual controls by priority until readable controls no longer fit.
-    for (const control of [permissions, ...buttons].filter(Boolean)) {
+    for (const control of buttons) {
       const parent = control.parentElement, next = control.nextSibling;
       pickers.insertBefore(control, trigger);
-      if (!fits()) { parent.insertBefore(control, next); break; }
-    }
-    // Gauges use spare space after the primary controls and shortcuts.
-    if (knownUsage) {
-      usage.hidden = true; options.classList.remove('compact'); options.prepend(gauges);
-      if (!fits()) {
-        this.pane.querySelector('#sdk-usage-menu').prepend(gauges);
-        usage.hidden = false; options.classList.add('compact');
+      if (!fits() || model.getBoundingClientRect().width < modelWidth - 1) {
+        parent.insertBefore(control, next); break;
       }
     }
+
   },
 
   async request(path, body) {

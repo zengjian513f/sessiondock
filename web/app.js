@@ -9080,6 +9080,19 @@ function renderFormulae(root) {
 }
 
 function msgNode(m) {
+  // A complete native shell envelope is a user action, not an assistant tool
+  // call. Keep its turn boundary while reusing the command/result presentation.
+  if (m.role === 'user' && String(S.sel || '').startsWith('codex:') && !m.media?.length) {
+    const shell = String(m.text || '').match(/^\s*<user_shell_command>\s*<command>\s*([\s\S]*?)\s*<\/command>\s*<result>\s*Exit code: (-?\d+)\s*\r?\nDuration: ([\d.]+) seconds\s*\r?\nOutput:\r?\n([\s\S]*?)\s*<\/result>\s*<\/user_shell_command>\s*$/);
+    if (shell && Number.isFinite(Number(shell[3]))) {
+      const n = el('div', 'msg tool-msg user-shell-command');
+      n.dataset.role = 'user';
+      n.appendChild(toolEntry({role: 'tool', name: 'shell', summary: `$ ${shell[1]}`, text: shell[1],
+        result: {role: 'tool_result', text: shell[4], exit_code: Number(shell[2]),
+          duration_s: Number(shell[3]), error: Number(shell[2]) !== 0}}));
+      return n;
+    }
+  }
   if (m.silent) {
     const n = el('span', 'silent-tool-result');
     n.hidden = true;

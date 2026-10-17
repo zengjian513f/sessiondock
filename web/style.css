@@ -2543,9 +2543,12 @@ header .btn[data-session-docked] { display: none; }
 .sdk-pickers .new-effort > select { height: 28px; width: 100%; font-size: 12.5px; text-overflow: ellipsis; }
 .sdk-pickers > .btn { flex: none; height: 28px; min-height: 28px; padding: 0 8px; white-space: nowrap; }
 #sdk-more { width: 28px; padding: 0; font-size: 18px; }
-.sdk-options.compact .sdk-pickers > .sdk-model { flex: 1 1 100px; }
-.sdk-options.compact .sdk-pickers > .sdk-effort { flex: 0 1 72px; }
-.sdk-options.compact .sdk-pickers > .sdk-mode { flex: 0 1 96px; }
+.sdk-options.compact .sdk-pickers > .sdk-model { flex: 0 1 160px; min-width: 100px; }
+.sdk-options.usage-stacked { flex-direction: column; align-items: stretch; gap: 6px; }
+.sdk-options.usage-stacked > .sdk-gauges { flex-wrap: wrap; }
+.sdk-options.usage-stacked > .sdk-pickers { flex: none; }
+.sdk-options.compact .sdk-pickers > .sdk-effort { flex: 0 1 72px; min-width: 60px; }
+.sdk-options.compact .sdk-pickers > .sdk-mode { flex: 0 1 96px; min-width: 80px; }
 .sdk-toolbar-menu { gap: 8px; padding: 8px; overflow-y: auto; }
 .sdk-toolbar-menu:not(:popover-open) { display: none; }
 .sdk-toolbar-menu .new-effort { flex: none; min-width: 0; }

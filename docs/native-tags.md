@@ -64,3 +64,9 @@ searches, and observes a live append. Positive cases are paired with literal,
 malformed or unknown-field controls. Test histories remain byte-for-byte
 unchanged except for the suite's explicit synthetic append. No production
 histories or paid CLIs are used.
+
+DELTA (Codex user shell display): a complete `user_shell_command` with command,
+exit code, duration and output renders as the existing shell/result card in both
+SDK and conversation views. Its user role, turn boundary, original search text
+and native record remain unchanged. This is frontend presentation only; partial,
+quoted or unknown envelopes remain literal. No command is executed by rendering.

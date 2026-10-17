@@ -193,16 +193,18 @@ before first SEND does not retain these unpersisted receipts.
   started turn and, per app-server semantics, to later turns.
 - The status line shows the last turn error, the rate-limit-reached notice and the
   waiting state.
-- Composer options stay on one line. Model and effort stay directly accessible;
-  execution/plan mode, permissions, then compaction/fork/revert/review are exposed
-  in that priority as actual toolbar space permits. The ⋯ menu is overflow:
-  it contains the actual remaining buttons and permission selectors, not nested
-  action selectors or a session dialog. Goal controls and `/goal` are removed.
-  Mode moves into overflow below 380 CSS pixels. Live gauges use spare space,
-  otherwise Usage opens those same gauges. Sidebar resizing recalculates overflow.
-  Model/effort/mode/permission selectors show actual values. No selectable
-  “inherit” or “not returned” sentinel is inserted; unloaded controls use a hidden,
-  disabled field-name placeholder. Modes are 执行模式 / 计划模式.
+- Model and effort stay directly accessible, with a bounded model width.
+  Known usage gauges stay visible: when they cannot fit beside the selectors,
+  they occupy a separate compact row instead of becoming a Usage button.
+  Compaction/fork/revert/review use remaining space, otherwise the ⋯ menu.
+  Approval and sandbox policies live in two checked submenus under ⋯. Selecting
+  an option applies that policy immediately; checks follow server-confirmed
+  settings, including changes from another client. Failed changes retain the
+  actual selection and display the error. No Apply button is needed.
+  Mode moves into overflow below 380 CSS pixels. Sidebar resizing recalculates
+  available space. Goal controls and `/goal` are removed.
+  Model/effort/mode selectors show actual values with hidden placeholders when
+  not loaded. Modes are 执行模式 / 计划模式.
   Popovers use existing menu styling, stay inside the viewport and close on
   resize, Escape or outside click. Long model names truncate within their selector.
 - Input queues are owned by the node, shared in SSE snapshots and `bridge/queue`
@@ -274,10 +276,9 @@ and reloads history for all attached pages. Compaction items use the native
 the running card shows an indeterminate progress bar until completion. Native
 compaction supplies no percentage, so the UI does not invent one. The mode
 selector changes 执行模式 /
-计划模式; approval/sandbox selectors and their Apply button appear directly in the
-toolbar or its ⋯ overflow menu. Goal controls and `/goal` are removed. Direct shell
+计划模式; approval/sandbox choices apply directly from checked ⋯ submenus. Goal controls and `/goal` are removed. Direct shell
 commands are entered in the composer only. Actual settings notifications from
-another client update the controls without replacing unsaved form edits.
+another client update the controls and checked selections.
 Direct shell commands follow CLI `!` behavior and run with full permissions,
 outside the conversation sandbox.
 

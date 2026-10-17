@@ -24,7 +24,7 @@ def single_row(page):
       return bar && Math.abs(CodexSdkView.toolbarWidth - bar.clientWidth) <= 1;
     }""")
     measurements = page.locator('.sdk-options').evaluate("""bar => {
-      const bounds = bar.getBoundingClientRect();
+      const bounds = bar.querySelector('.sdk-pickers').getBoundingClientRect();
       const controls = [...bar.querySelectorAll('.sdk-pickers > label, .sdk-pickers > button, .sdk-pickers > #sdk-permissions')]
         .filter(node => node.getClientRects().length && !node.hidden)
         .map(node => { const r = node.getBoundingClientRect(); return {id: node.id || node.className,
@@ -75,6 +75,8 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         if not page.locator('#sdk-input').is_visible():
             page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
         single_row(page)
+        expect(page.locator('.sdk-options > .sdk-gauges')).to_be_visible()
+        assert page.locator('#sdk-model').bounding_box()['width'] <= 160 * scale / 100 + 2
         usage = page.locator('#sdk-usage-toggle')
         if usage.is_visible():
             usage.click()

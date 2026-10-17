@@ -49,12 +49,19 @@ const CodexSdkControls = {
     }
     const dialog = state.panel;
     if (!dialog) return;
-    const approval = dialog.querySelector('#sdk-control-approval');
-    if (!state.approvalEdited) view.selectValue(approval, typeof settings.approvalPolicy === 'string' ? settings.approvalPolicy : '', '审批');
-    const sandbox = dialog.querySelector('#sdk-control-sandbox');
-    if (!state.sandboxEdited) view.selectValue(sandbox, settings.sandboxPolicy?.type || '', '沙箱');
-    const native = dialog.querySelector('#sdk-permission-current');
-    native.textContent = settings.activePermissionProfile?.id ? `权限配置：${settings.activePermissionProfile.id}` : '';
+    for (const [kind, value, names] of [
+      ['approval', typeof settings.approvalPolicy === 'string' ? settings.approvalPolicy : '', this.approvalNames],
+      ['sandbox', settings.sandboxPolicy?.type || '', this.sandboxNames],
+    ]) {
+      const trigger = dialog.querySelector(`#sdk-control-${kind}`);
+      trigger.querySelector('small').textContent = names[value] || '未返回';
+      for (const button of dialog.querySelectorAll(`[data-policy="${kind}"]`)) {
+        const checked = button.dataset.value === value;
+        button.setAttribute('aria-checked', String(checked));
+        button.querySelector('.group-menu-check').textContent = checked ? '✓' : '';
+        button.disabled = !!state.saving;
+      }
+    }
   },
 
   async request(view, action, body) {
@@ -92,26 +99,53 @@ const CodexSdkControls = {
     const dialog = document.createElement('section');
     dialog.id = 'sdk-permissions'; dialog.className = 'sdk-control-section';
     dialog.setAttribute('aria-label', '权限');
-    dialog.innerHTML = `<h3>权限</h3>
-      <div class="sdk-control-row">
-        <label class="new-effort"><span class="visually-hidden">审批策略</span><select id="sdk-control-approval" aria-label="审批策略"><option value="" disabled hidden>审批</option><option value="on-request">按需审批</option><option value="untrusted">不可信命令需审批</option><option value="never">不请求审批</option></select></label>
-        <label class="new-effort"><span class="visually-hidden">沙箱策略</span><select id="sdk-control-sandbox" aria-label="沙箱策略"><option value="" disabled hidden>沙箱</option><option value="readOnly">只读</option><option value="workspaceWrite">工作区写入</option><option value="dangerFullAccess">完全访问</option></select></label>
-      <button class="btn" id="sdk-permission-save" type="button">应用</button></div>
-      <p id="sdk-permission-current" class="sdk-control-note"></p>
-      <p id="sdk-controls-result" class="sdk-control-note" role="status"></p><p class="sdk-control-note sdk-control-error" role="alert" hidden></p>`;
+    dialog.innerHTML = '<p id="sdk-controls-result" class="sdk-control-note" role="status"></p><p class="sdk-control-note sdk-control-error" role="alert" hidden></p>';
     state.panel = dialog;
     view.pane.querySelector('#sdk-more-menu').append(dialog);
-    dialog.querySelector('#sdk-control-approval').onchange = () => { state.approvalEdited = true; };
-    dialog.querySelector('#sdk-control-sandbox').onchange = () => { state.sandboxEdited = true; };
-    dialog.querySelector('#sdk-permission-save').onclick = event => this.run(view, event.target, async () => {
-      const approval = dialog.querySelector('#sdk-control-approval'), sandbox = dialog.querySelector('#sdk-control-sandbox');
-      const values = {};
-      if (state.approvalEdited && approval.value) values.approval_policy = approval.value;
-      if (state.sandboxEdited && sandbox.value) values.sandbox_policy = {type: sandbox.value};
-      if (!Object.keys(values).length) throw new Error('请先选择要修改的权限。');
-      await this.settings(view, values);
-      if (this.current(view, state)) { state.approvalEdited = state.sandboxEdited = false; }
-    }, '权限设置已应用；正在进行的回合保持原策略。');
+    for (const [kind, label, names] of [
+      ['approval', '审批策略', this.approvalNames],
+      ['sandbox', '沙箱策略', {readOnly: '只读', workspaceWrite: '工作区写入', dangerFullAccess: '完全访问'}],
+    ]) {
+      const trigger = document.createElement('button');
+      trigger.id = `sdk-control-${kind}`; trigger.type = 'button'; trigger.className = 'new-model-option';
+      trigger.setAttribute('aria-haspopup', 'menu'); trigger.setAttribute('aria-expanded', 'false');
+      trigger.innerHTML = `<span>${label}</span><small></small><span aria-hidden="true">›</span>`;
+      const menu = document.createElement('div');
+      menu.id = `sdk-policy-${kind}`; menu.className = 'new-model-menu sdk-toolbar-menu';
+      menu.setAttribute('popover', 'auto'); menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', label);
+      trigger.setAttribute('aria-controls', menu.id);
+      menu.addEventListener('beforetoggle', event => trigger.setAttribute('aria-expanded', String(event.newState === 'open')));
+      trigger.onclick = () => {
+        if (menu.matches(':popover-open')) { menu.hidePopover(); return; }
+        menu.showPopover(); view.placeMenu(menu, trigger);
+        menu.querySelector('[aria-checked="true"]')?.focus();
+      };
+      for (const [value, title] of Object.entries(names)) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'new-model-option';
+        button.dataset.policy = kind; button.dataset.value = value;
+        button.setAttribute('role', 'menuitemradio');
+        button.innerHTML = `<span class="group-menu-check" aria-hidden="true"></span><span>${title}</span>`;
+        button.onclick = async () => {
+          if (state.saving) return;
+          state.saving = true; this.paint(view);
+          await this.run(view, button, () => this.settings(view, kind === 'approval'
+            ? {approval_policy: value} : {sandbox_policy: {type: value}}), '权限设置已应用。');
+          if (!this.current(view, state)) return;
+          state.saving = false; this.paint(view);
+        };
+        menu.append(button);
+      }
+      menu.onkeydown = event => {
+        const buttons = [...menu.querySelectorAll('button:not(:disabled)')];
+        const index = buttons.indexOf(document.activeElement);
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault(); buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
+        }
+      };
+      dialog.insertBefore(trigger, dialog.querySelector('#sdk-controls-result'));
+      dialog.append(menu);
+    }
     this.paint(view);
   },
 
