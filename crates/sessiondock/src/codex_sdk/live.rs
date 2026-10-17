@@ -73,6 +73,14 @@ impl LiveThread {
         self.state.lock().expect("live").generation
     }
 
+    pub fn seed_usage(&self, usage: Value) {
+        let mut state = self.state.lock().expect("live");
+        // A live notification arriving during disk recovery is newer.
+        if state.usage.is_null() {
+            state.usage = usage;
+        }
+    }
+
     pub fn loaded(&self, generation: u64, mut resume: Value) {
         if let Some(thread) = resume.get_mut("thread").and_then(Value::as_object_mut) {
             thread.remove("turns");

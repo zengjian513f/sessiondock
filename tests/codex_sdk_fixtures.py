@@ -176,7 +176,7 @@ class FakeAppServer:
             if params.get("threadId") != self.thread_id:
                 await self.send(writer, {"id": mid, "error": {"code": -32602, "message": "no rollout found"}})
                 return
-            await reply({"thread": {"id": self.thread_id, "status": {"type": "idle"}, "turns": [], "name": None},
+            await reply({"thread": {"id": self.thread_id, "path": str(self.rollout), "status": {"type": "idle"}, "turns": [], "name": None},
                          "model": self.settings["model"], "reasoningEffort": self.settings["effort"]})
         elif method == "model/list":
             await reply({"data": [

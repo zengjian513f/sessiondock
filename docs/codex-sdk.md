@@ -196,7 +196,11 @@ before first SEND does not retain these unpersisted receipts.
   single window shows only that one), and 上下文 (`last.totalTokens /
   modelContextWindow`). Tooltips give used/remaining percent, reset time and
   token counts. `Credits N` is `credits.balance` (`无限` when unlimited). The
-  row is hidden while nothing is known.
+  row is hidden while nothing is known. On resume, the node reads the latest
+  native `token_count.info` from the rollout returned by app-server, so context
+  appears before the next message. It uses the last request's token usage,
+  never cumulative session tokens, and does not reuse pre-compaction counts.
+  Live usage notifications take precedence over this initial measurement.
 - 重置卡: shown when `rateLimitResetCredits.availableCount > 0`; a selector lists
   the available cards (title, expiry) and 兑换 asks for confirmation, then posts the
   chosen `credit_id` with an idempotency key that is reused for retries of the
@@ -235,10 +239,10 @@ the running card shows an indeterminate progress bar until completion. Native
 compaction supplies no percentage, so the UI does not invent one. The mode
 selector changes Default /
 Plan; the session dialog changes approval/sandbox policy, manages the native
-goal and submits direct shell commands. Actual settings and goal notifications
+goal. Direct shell commands are entered in the composer only. Actual settings and goal notifications
 from another client update the controls, without replacing unsaved form edits.
 Direct shell commands follow CLI `!` behavior and run with full permissions,
-outside the conversation sandbox; that behavior is stated in the dialog.
+outside the conversation sandbox.
 
 The composer recognizes `/fork`, `/revert`, `/compact`, `/review`, `/plan`,
 `/default`, `/permissions`, `/approval`, `/sandbox`, `/goal`, `/shell` and

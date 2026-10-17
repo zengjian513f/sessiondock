@@ -14,6 +14,7 @@ mod actions;
 mod connection;
 mod controls;
 mod live;
+mod usage;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -496,6 +497,14 @@ impl Inner {
             .await
         {
             Ok(result) => {
+                if let Some(path) = result["thread"]["path"].as_str() {
+                    let path = PathBuf::from(path);
+                    if let Ok(Some(usage)) =
+                        tokio::task::spawn_blocking(move || usage::latest(&path)).await
+                    {
+                        thread.seed_usage(usage);
+                    }
+                }
                 thread.loaded(connection.generation(), result);
                 Ok(thread)
             }

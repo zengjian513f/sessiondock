@@ -118,6 +118,8 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     page.locator("#sdk-controls").click()
     dialog = page.locator("#sdk-controls-dialog")
     expect(dialog).to_be_visible()
+    expect(dialog.locator('#sdk-shell-command, #sdk-shell-run')).to_have_count(0)
+    expect(dialog).not_to_contain_text('直接执行命令')
     if fake.fail_read:
         expect(dialog.locator("#sdk-goal-current")).to_contain_text("读取目标失败")
         expect(dialog.locator("#sdk-goal-save")).to_be_disabled()
@@ -152,6 +154,11 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     send("/goal resume")
     expect(box).to_have_value("")
     assert fake.goal["status"] == "active"
+    for empty in ["!", "/shell"]:
+        send(empty)
+        expect(page.locator(".sdk-status")).to_contain_text("用法")
+        expect(box).to_have_value(empty)
+        expect(page.locator("#sdk-controls-dialog")).to_have_count(0)
     send("!printf 'synthetic output' | cat")
     expect(box).to_have_value("")
     expect(page.locator(".sdk-live")).to_contain_text("synthetic shell output")

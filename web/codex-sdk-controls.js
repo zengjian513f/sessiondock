@@ -17,7 +17,7 @@ const CodexSdkControls = {
     label.innerHTML = '<span class="visually-hidden">协作模式</span><select id="sdk-mode" aria-label="协作模式"><option value="">读取模式…</option><option value="default">Default</option><option value="plan">Plan</option></select>';
     const button = document.createElement('button');
     button.className = 'btn'; button.id = 'sdk-controls'; button.type = 'button';
-    button.textContent = '会话'; button.title = '权限、目标与直接执行命令';
+    button.textContent = '会话'; button.title = '权限与目标';
     button.onclick = () => this.dialog(view);
     label.querySelector('select').onchange = async event => {
       const mode = event.target.value;
@@ -55,7 +55,7 @@ const CodexSdkControls = {
       mode.options[0].textContent = view.summary ? '当前模式未返回' : '读取模式…';
     }
     const button = view.pane.querySelector('#sdk-controls');
-    if (button) button.title = state.goal ? `目标：${this.goalText(state.goal)}` : '权限、目标与直接执行命令';
+    if (button) button.title = state.goal ? `目标：${this.goalText(state.goal)}` : '权限与目标';
     if (view.summary && !state.readAttempted && !state.loading) this.refreshGoal(view);
     const dialog = state.dialog;
     if (!dialog) return;
@@ -153,7 +153,7 @@ const CodexSdkControls = {
   dialog(view, section = '') {
     const state = this.states.get(view);
     if (!state) return;
-    if (state.dialog) { state.dialog.querySelector(section === 'goal' ? '#sdk-goal-objective' : section === 'shell' ? '#sdk-shell-command' : '#sdk-control-approval').focus(); return; }
+    if (state.dialog) { state.dialog.querySelector(section === 'goal' ? '#sdk-goal-objective' : '#sdk-control-approval').focus(); return; }
     const dialog = document.createElement('dialog');
     dialog.id = 'sdk-controls-dialog'; dialog.className = 'app-dialog app-popup';
     dialog.setAttribute('aria-labelledby', 'sdk-controls-title');
@@ -172,10 +172,6 @@ const CodexSdkControls = {
           <label class="sdk-control-field">Token 预算<input id="sdk-goal-budget" type="number" min="1" step="1" placeholder="留空沿用预算；新目标不限额"></label>
           <div class="sdk-control-row"><label class="new-effort"><span class="visually-hidden">目标状态</span><select id="sdk-goal-status" aria-label="目标状态"><option value="active">进行中</option><option value="paused">暂停</option><option value="complete">完成</option></select></label>
             <button class="btn" id="sdk-goal-clear" type="button">清除目标</button><button class="btn" id="sdk-goal-save" type="button">保存目标</button></div>
-        </section>
-        <section class="sdk-control-section"><h3>直接执行命令</h3><p class="sdk-control-note">与 CLI 的 !命令 相同：在服务器上以完全权限执行，不使用会话沙箱。输出显示在会话中。</p>
-          <label class="sdk-control-field"><span class="visually-hidden">Shell 命令</span><textarea id="sdk-shell-command" rows="2" placeholder="输入 Shell 命令，支持管道和重定向"></textarea></label>
-          <div class="modal-actions"><button class="btn" id="sdk-shell-run" type="button">执行命令</button></div>
         </section>
         <p id="sdk-controls-result" class="sdk-control-note" role="status"></p><p class="sdk-control-note sdk-control-error" role="alert" hidden></p>
       </div></div>`;
@@ -208,15 +204,9 @@ const CodexSdkControls = {
       await this.request(view, 'goal', {action: 'clear'});
       if (this.current(view, state)) { state.goal = null; dialog.dataset.goalEdited = ''; this.fillGoal(view); }
     }, '目标已清除。');
-    dialog.querySelector('#sdk-shell-run').onclick = event => this.run(view, event.target, async () => {
-      const command = dialog.querySelector('#sdk-shell-command');
-      if (!command.value.trim()) throw new Error('请输入 Shell 命令。');
-      await this.request(view, 'shell', {command: command.value});
-      if (this.current(view, state)) command.value = '';
-    }, '命令已提交，输出显示在会话中。');
     document.body.append(dialog); this.paint(view); this.fillGoal(view); dialog.showModal();
     if (state.goalError) this.error(dialog, state.goalError);
-    dialog.querySelector(section === 'goal' ? '#sdk-goal-objective' : section === 'shell' ? '#sdk-shell-command' : '#sdk-control-approval').focus();
+    dialog.querySelector(section === 'goal' ? '#sdk-goal-objective' : '#sdk-control-approval').focus();
   },
 
   async command(view, text) {
@@ -233,7 +223,7 @@ const CodexSdkControls = {
     const value = text.trim();
     if (value.startsWith('!')) {
       const command = value.slice(1).trim();
-      if (!command) this.dialog(view, 'shell');
+      if (!command) throw new Error('用法：!命令 或 /shell 命令');
       else await this.request(view, 'shell', {command});
       return true;
     }
@@ -256,7 +246,7 @@ const CodexSdkControls = {
         if (!(argument in this.approvalNames)) throw new Error('用法：/approval on-request | untrusted | never');
         await this.settings(view, {approval_policy: argument}); return true;
       case 'shell':
-        if (!argument) this.dialog(view, 'shell');
+        if (!argument) throw new Error('用法：/shell 命令（或 !命令）');
         else await this.request(view, 'shell', {command: argument});
         return true;
       case 'goal': {
