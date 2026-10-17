@@ -4,8 +4,10 @@
 独立入口 `quotas.html` 继续可用。只显示 `/api/clients` 确认已安装的客户端；
 未安装的机器行和空分组隐藏，缺失数据统一显示 `N/A`。
 Codex、Claude Code、Agy 各一个表格，复用客户端矩阵的表格样式；
-列为机器、额度组、窗口、剩余、重置/到期、采集；错误和过期说明放在悬停提示中。
-同一机器的多个窗口合并机器与采集时间单元格，三张表列宽一致；窄屏表格内部横向滚动。
+Agy 保留额度组，Claude 不显示额度组，Codex 的特殊模型额度在窗口列注明。
+Codex 固定显示 Credits 和重置卡列，即使旧快照尚无这些字段也显示 N/A。
+各表独立列宽；同一机器的多个窗口合并机器与采集时间单元格，窄屏内部横向滚动。
+重置和卡片到期显示倒计时，每秒只更新本地时钟，不请求接口；绝对时间放在悬停提示中。
 同一账号可能跨机器共享额度，页面不相加，也不根据相同百分比猜测账号身份。
 Agy 中的 Claude/GPT 组属于 Agy，与独立 Claude Code、Codex 分开。
 
@@ -58,5 +60,5 @@ CLI 调用 `sessiondock quota-statusline STATE_DIRECTORY` 时先保存额度，�
 
 Codex 同时展示结构化 credits 余额与重置卡：数量取 availableCount，
 到期时间取已返回的可用卡片中最近的一次，不用明细条数推算总数，不提供兑换操作。
-Claude statusline 尚无 Usage credits 余额，显示 N/A。
+Claude statusline 尚无 Usage credits 余额，不生成虚构的额度组占位行。
 接口依据：[Codex App Server](https://learn.chatgpt.com/docs/app-server)。

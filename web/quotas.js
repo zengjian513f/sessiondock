@@ -20,56 +20,92 @@ async function initQuotas(container) {
     if(typeof value==='number') return value%1440===0 ? `${value/1440} 天` : value%60===0 ? `${value/60} 小时` : `${value} 分钟`;
     return {five_hour:'5 小时',seven_day:'每周',weekly:'每周','5h':'5 小时',spend_limit:'消费限额'}[value] || value || 'N/A';
   }
+  function countdown(value) {
+    const end=Date.parse(value);
+    if (!Number.isFinite(end)) return 'N/A';
+    let seconds=Math.max(0,Math.ceil((end-Date.now())/1000));
+    if (!seconds) return '已到期';
+    const days=Math.floor(seconds/86400);seconds%=86400;
+    const hours=Math.floor(seconds/3600);seconds%=3600;
+    const minutes=Math.floor(seconds/60);seconds%=60;
+    return (days ? days+'天 ' : '')+(hours ? hours+'小时 ' : '')+minutes+'分 '+seconds+'秒';
+  }
+  function deadline(value, expiry=false) {
+    const cell=el('td','quota-time',countdown(value));
+    if (value) {
+      cell.dataset.deadline=value;
+      cell.title=(expiry ? '已返回卡片的最近到期：' : '')+new Date(value).toLocaleString();
+    }
+    return cell;
+  }
+  function tick() {
+    for (const cell of root.querySelectorAll('[data-deadline]')) cell.textContent=countdown(cell.dataset.deadline);
+  }
   function render() {
     const offsets = new Map([...root.querySelectorAll('.quota-scroll')].map(n => [n.dataset.source, n.scrollLeft]));
     root.replaceChildren();
-    if (!nodes.length) return;
     for (const [source, name] of Object.entries(names)) {
       const installedNodes=nodes.filter(node => node.clients?.some(client => client.source===source && client.installed));
       if (!installedNodes.length) continue;
+      const grouped=source==='agy', codex=source==='codex';
       const section=el('section','quota-agent');section.dataset.source=source;
       const heading=el('h2','',name);heading.id=`quota-${source}-heading`;section.append(heading);
       const scroll=el('div','quota-scroll');scroll.dataset.source=source;
       scroll.tabIndex=0;scroll.setAttribute('role','region');scroll.setAttribute('aria-label',`${name} 额度表，可横向滚动`);
       const table=el('table','client-matrix quota-table');table.setAttribute('aria-labelledby',heading.id);
-      const columns=el('colgroup');
-      for (const cls of ['machine','group','window','remaining','reset','captured']) columns.append(el('col',`quota-col-${cls}`));
-      table.append(columns);
-      const head=el('thead'), labels=el('tr');
-      for (const label of ['机器','额度组','窗口','剩余','重置 / 到期','采集']) {
+      const fields=[['machine','机器'],...(grouped ? [['group','额度组']] : []),['window','窗口'],['remaining','剩余'],['reset','重置倒计时'],
+        ...(codex ? [['credits','Credits'],['cards','重置卡']] : []),['captured','采集']];
+      const columns=el('colgroup'), head=el('thead'), labels=el('tr');
+      for (const [key,label] of fields) {
+        columns.append(el('col',`quota-col-${key}`));
         const cell=el('th','',label);cell.scope='col';labels.append(cell);
       }
-      head.append(labels);table.append(head);
+      head.append(labels);table.append(columns,head);
       for (const node of installedNodes) {
         const agent=(node.data?.agents || []).find(a => a.source===source);
-        const buckets=[...(agent?.buckets || [])];
-        if (source==='claude') buckets.push({group:'Usage credits',remaining_text:null});
+        const all=agent?.buckets || [];
+        const credits=all.filter(b=>b.id==='credits' || b.id?.endsWith(':credits'));
+        const cards=all.find(b=>b.id==='reset-credits');
+        const buckets=codex ? all.filter(b=>!credits.includes(b) && b!==cards) : all;
+        const rows=buckets.length ? buckets : [null];
         const body=el('tbody','quota-node');body.dataset.node=node.id;
-        for (const [index, bucket] of (buckets.length ? buckets : [null]).entries()) {
+        for (const [index, bucket] of rows.entries()) {
           const row=el('tr');
           if (index===0) {
-            const machine=el('th','quota-machine-name',node.name);machine.scope='rowgroup';machine.rowSpan=Math.max(1,buckets.length);row.append(machine);
+            const machine=el('th','quota-machine-name',node.name);machine.scope='rowgroup';machine.rowSpan=rows.length;row.append(machine);
           }
-          if (bucket) {
-            row.append(el('td','',bucket.group || 'N/A'),el('td','',windowName(bucket.window)));
-            const remaining=el('td','quota-remaining');
-            const valid=typeof bucket.remaining_percent==='number' && Number.isFinite(bucket.remaining_percent);
-            remaining.append(el('strong','',valid ? `${Math.max(0,bucket.remaining_percent).toLocaleString(undefined,{maximumFractionDigits:1})}%` : (bucket.remaining_text ?? 'N/A')));
-            if (valid) {
-              const bar=el('progress');bar.max=100;bar.value=Math.max(0,Math.min(100,bucket.remaining_percent));
-              bar.setAttribute('aria-label',`${node.name} ${bucket.group} ${windowName(bucket.window)} 剩余额度`);remaining.append(bar);
-            }
-            row.append(remaining);
-            const reset=el('td','quota-time',time(bucket.resets_at || bucket.expires_at));
-            if (bucket.resets_at || bucket.expires_at) reset.title=(bucket.expires_at ? '已返回卡片的最近到期：' : '')+new Date(bucket.resets_at || bucket.expires_at).toLocaleString();
-            if (bucket.resets_at && Date.parse(bucket.resets_at)<=Date.now()) reset.title='已过重置时间，等待新快照';
-            row.append(reset);
-          } else {
-            for (let i=0;i<4;i++) row.append(el('td','','N/A'));
+          if (grouped) row.append(el('td','',bucket?.group || 'N/A'));
+          let window=windowName(bucket?.window);
+          if (codex && bucket?.group && bucket.group.toLowerCase()!=='codex') window=bucket.group+' · '+window;
+          row.append(el('td','',window));
+          const remaining=el('td','quota-remaining');
+          const valid=typeof bucket?.remaining_percent==='number' && Number.isFinite(bucket.remaining_percent);
+          remaining.append(el('strong','',valid ? `${Math.max(0,bucket.remaining_percent).toLocaleString(undefined,{maximumFractionDigits:1})}%` : (bucket?.remaining_text ?? 'N/A')));
+          if (valid) {
+            const bar=el('progress');bar.max=100;bar.value=Math.max(0,Math.min(100,bucket.remaining_percent));
+            bar.setAttribute('aria-label',`${node.name} ${window} 剩余额度`);remaining.append(bar);
           }
+          row.append(remaining,deadline(bucket?.resets_at));
           if (index===0) {
-            const captured=el('td','quota-time',agent?.captured_at ? time(agent.captured_at) : 'N/A');if (agent?.captured_at) captured.title=new Date(agent.captured_at).toLocaleString();captured.rowSpan=Math.max(1,buckets.length);
-            const error=node.error ? `读取失败 · ${node.error}，可点击刷新重试` : agent?.error;
+            if (codex) {
+              const balance=el('td','quota-credits');balance.rowSpan=rows.length;
+              for (const credit of (credits.length ? credits : [null])) {
+                balance.append(el('div','',credit?.remaining_text ?? 'N/A'));
+                if (credits.length>1) balance.lastChild.title=credit.group || '';
+              }
+              const card=el('td','quota-cards',cards?.remaining_text ?? 'N/A');card.rowSpan=rows.length;
+              if (cards?.expires_at) {
+                const expiry=deadline(cards.expires_at,true);
+                const detail=el('div','quota-card-expiry');
+                detail.textContent=expiry.textContent;detail.dataset.deadline=cards.expires_at;detail.title=expiry.title;
+                card.append(detail);
+              }
+              row.append(balance,card);
+            }
+            const captured=el('td','quota-time',time(agent?.captured_at));
+            if (agent?.captured_at) captured.title=new Date(agent.captured_at).toLocaleString();
+            captured.rowSpan=rows.length;
+            const error=node.error || agent?.error;
             if (error) { const warning=el('div','quota-error','查询失败');warning.title=error;captured.append(warning); }
             row.append(captured);
           }
@@ -108,6 +144,11 @@ async function initQuotas(container) {
     finally {refresh.disabled=false;}
   }
   refresh.addEventListener('click',()=>load(true));
+  // Only update the local clock; quota collection remains manual.
+  const timer=setInterval(tick,1000);
+  const stopClock=()=>{clearInterval(timer);window.removeEventListener('pagehide',stopClock);};
+  container.addEventListener('close',stopClock,{once:true});
+  window.addEventListener('pagehide',stopClock,{once:true});
   await load();
 }
 (() => {

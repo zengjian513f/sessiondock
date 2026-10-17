@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 
 from playwright.sync_api import sync_playwright, expect
@@ -16,7 +17,7 @@ from hub_fixtures import Hub, free_port
 from node_auth_fixtures import node_env, TOKEN
 
 FAKE = r'''
-import sys,json,os
+import sys,json,os,time
 from pathlib import Path
 source=sys.argv[1]
 if '--version' in sys.argv:
@@ -28,7 +29,7 @@ if (root/'fail').exists(): sys.exit(1)
 if source=='agy':
  assert sys.argv[2:]==['-p','/usage','--output-format','json'],sys.argv
  print(json.dumps({'status':'SUCCESS','num_turns':0,'command':{'name':'usage','data':{'groups':[
- {'name':'Gemini Models','buckets':[{'id':'gemini-weekly','window':'weekly','remaining_fraction':.85,'reset_time':'2099-10-23T22:06:57Z'},{'id':'gemini-5h','window':'5h','remaining_fraction':0,'reset_time':'2020-10-17T03:06:57Z'}]},
+ {'name':'Gemini Models','buckets':[{'id':'gemini-weekly','window':'weekly','remaining_fraction':.85,'reset_time':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(time.time()+604800))},{'id':'gemini-5h','window':'5h','remaining_fraction':0,'reset_time':'2020-10-17T03:06:57Z'}]},
  {'name':'Claude and GPT models','buckets':[{'id':'3p-5h','window':'5h','remaining_fraction':1}]}]}}}));sys.exit()
 assert sys.argv[2:]==['app-server','--stdio'],sys.argv
 for line in sys.stdin:
@@ -37,7 +38,7 @@ for line in sys.stdin:
  elif q['method']=='initialized': pass
  elif q['method']=='account/rateLimits/read':
   with (root/'calls').open('a') as f:f.write('query\n')
-  print(json.dumps({'id':2,'result':{'rateLimitResetCredits':{'availableCount':3,'credits':[{'status':'available','expiresAt':4096400000}]},'rateLimitsByLimitId':{'codex':{'credits':{'balance':'123.45','hasCredits':True,'unlimited':False},'primary':{'usedPercent':25,'windowDurationMins':300,'resetsAt':4096400000},'secondary':{'usedPercent':60,'windowDurationMins':10080,'resetsAt':4096500000}},'extra':{'limitName':'Long model bucket 模型专用额度组','primary':{'windowDurationMins':60}}}}}),flush=True)
+  print(json.dumps({'id':2,'result':{'rateLimitResetCredits':{'availableCount':3,'credits':[{'status':'available','expiresAt':int(time.time())+7200}]},'rateLimitsByLimitId':{'codex':{'credits':{'balance':'123.45','hasCredits':True,'unlimited':False},'primary':{'usedPercent':25,'windowDurationMins':300,'resetsAt':int(time.time())+7200},'secondary':{'usedPercent':60,'windowDurationMins':10080,'resetsAt':int(time.time())+172800}},'extra':{'limitName':'Long model bucket 模型专用额度组','primary':{'windowDurationMins':60}}}}}),flush=True)
  else: raise AssertionError(q)
 '''
 
@@ -55,7 +56,7 @@ def main():
         subprocess.run([str(binary),'quota-install',str(root/'state'),str(settings)],check=True)
         installed=settings.read_text();subprocess.run([str(binary),'quota-install',str(root/'state'),str(settings)],check=True);assert settings.read_text()==installed
         assert json.loads(installed)['unrelated'] and json.loads(installed)['statusLine']['padding']==2
-        payload=json.dumps({'rate_limits':{'five_hour':{'used_percentage':12.5,'resets_at':4096400000},'seven_day':{'used_percentage':100}},'private_fixture':'must not be cached'})
+        payload=json.dumps({'rate_limits':{'five_hour':{'used_percentage':12.5,'resets_at':int(time.time())+7200},'seven_day':{'used_percentage':100}},'private_fixture':'must not be cached'})
         result=subprocess.run([str(binary),'quota-statusline',str(root/'state')],input=payload,text=True,capture_output=True,check=True)
         assert result.stdout==payload
         assert 'private_fixture' not in (root/'state/quotas/claude.json').read_text()
@@ -74,7 +75,7 @@ def main():
             options={'headless':True}
             if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):options['executable_path']=os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
             browser=pw.chromium.launch(**options)
-            context=browser.new_context(viewport={'width':1280,'height':950},service_workers='block');page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+            context=browser.new_context(viewport={'width':1280,'height':950},service_workers='block');page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)));page.clock.install()
             hubbase=f'http://127.0.0.1:{hub.port}'
             page.goto(hubbase);page.locator('#settings').click();page.get_by_role('tab',name='机器',exact=True).click()
             link=page.get_by_role('link',name='Agent 额度 →')
@@ -87,7 +88,10 @@ def main():
             expect(machine.get_by_role('table')).to_have_count(3)
             for name in ('Codex','Claude Code','Agy'):
                 table=machine.get_by_role('table',name=name,exact=True)
-                expect(table.get_by_role('columnheader')).to_have_text(['机器','额度组','窗口','剩余','重置 / 到期','采集'])
+                headers={'Codex':['机器','窗口','剩余','重置倒计时','Credits','重置卡','采集'],
+                         'Claude Code':['机器','窗口','剩余','重置倒计时','采集'],
+                         'Agy':['机器','额度组','窗口','剩余','重置倒计时','采集']}
+                expect(table.get_by_role('columnheader')).to_have_text(headers[name])
                 expect(table.get_by_role('rowheader',name='Empty Node',exact=True)).to_have_count(0)
             expect(machine.locator('section[data-source=claude]')).to_contain_text('87.5%')
             expect(machine.locator('section[data-source=codex]')).to_contain_text('N/A')
@@ -97,10 +101,14 @@ def main():
             expect(machine.locator('section[data-source=codex]')).to_contain_text('123.45')
             expect(machine.locator('section[data-source=codex]')).to_contain_text('3 张')
             expect(machine.locator('section[data-source=agy]')).to_contain_text('85%')
-            expect(machine.locator('section[data-source=agy] [title="已过重置时间，等待新快照"]')).to_have_count(1)
+            expect(machine.locator('section[data-source=agy]')).to_contain_text('已到期')
             expect(machine.locator('section[data-source=claude]')).to_contain_text('0%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             assert (root/'calls').read_text().count('query')==1
+            deadline=machine.locator('section[data-source=codex] [data-deadline]').first
+            before=deadline.inner_text();page.clock.fast_forward(65000)
+            assert deadline.inner_text()!=before
+            assert (root/'calls').read_text().count('query')==1, 'countdown must not query CLIs'
             for theme in ('light','dark'):
                 page.evaluate("theme => localStorage.setItem('sessiondock.hub./.theme', JSON.stringify(theme))", theme)
                 for width in (1280,390):
@@ -136,6 +144,11 @@ def main():
             page.screenshot(path=str(out/'installed-only.png'))
             page.keyboard.press('Escape')
             page.unroute('**/api/clients')
+            page.route('**/api/quotas',lambda route:route.fulfill(json={'agents':[{'source':'codex','buckets':[{'id':'codex:primary','group':'codex','window':300,'remaining_percent':75}]}]}))
+            page.locator('#quota-open').click()
+            expect(machine.locator('.quota-credits')).to_have_text(['N/A'])
+            expect(machine.locator('.quota-cards')).to_have_text(['N/A'])
+            page.keyboard.press('Escape');page.unroute('**/api/quotas')
             page.goto(base+'/quotas.html');machine=page;expect(machine.locator('section[data-source=claude]')).to_contain_text('87.5%')
             page.get_by_role('link',name='← 会话列表').click();expect(page.locator('#header-more-btn')).to_be_visible()
             assert not errors,errors
