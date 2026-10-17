@@ -29,6 +29,8 @@ function nodeDirectoryMarkup(row, length = 999) {
 function newNodeId() { return HUB_MODE ? document.querySelector('#new-node')?.value || '' : ''; }
 function newDirsKey() { return HUB_MODE ? 'newDirs.' + newNodeId() : 'newDirs'; }
 function newNodeCapabilities() { return HUB_MODE ? Nodes.capabilities[newNodeId()] || {} : T; }
+function newCodexSdkEnabled() { return SessionDockCapabilities.config.codex_sdk === true
+  && (!HUB_MODE || newNodeCapabilities().codex_sdk === true); }
 function sessionTerminalEnabled(uid) {
   return typeof T !== 'undefined' && (HUB_MODE ? !!Nodes.capabilities[nodeOf(uid)]?.enabled : T.enabled);
 }
@@ -224,9 +226,9 @@ const SessionContentView = {
 
 function consoleButtonMarkup() {
   return `<div class="seg session-views" role="group" aria-label="会话视图">
+    <button id="a-sdk" type="button" title="SDK" aria-label="Codex SDK" aria-pressed="false" hidden>${uiIcon('sdk')}</button>
     <button id="a-chat" type="button" title="对话" aria-label="对话" aria-pressed="true" class="on">${uiIcon('chat')}</button>
     <button id="a-term" type="button" title="终端" aria-label="终端" aria-pressed="false">${uiIcon('terminal')}</button>
-    <button id="a-sdk" type="button" title="SDK" aria-label="Codex SDK" aria-pressed="false" hidden>${uiIcon('sdk')}</button>
     <button id="a-info" type="button" title="信息" aria-label="信息">${uiIcon('info')}</button>
     <button id="a-resources" type="button" title="资源" aria-label="资源" data-session-resources>${uiIcon('resource-cpu')}</button>
   </div>`;
@@ -238,6 +240,7 @@ function bindConsoleButton(button, uid, agent = null) {
   if (group) {
     group.querySelector('#a-chat').onclick = () => {
       if (S.sel !== uid || S.agent !== agent) return;
+      CodexSdkView.legacyViews.add(uid);
       SessionContentView.close();
       if (MOBILE.matches && !sessionTerminalFirst(uid)) closeTermPane();
       else {
@@ -249,7 +252,7 @@ function bindConsoleButton(button, uid, agent = null) {
       }
     };
     const info = group.querySelector('#a-info');
-    const infoReason = String(uid).startsWith('tmux:') ? '会话尚未落盘，暂时没有会话信息。'
+    const infoReason = String(uid).startsWith('tmux:') || CodexSdkView.pending(uid) ? '会话尚未落盘，暂时没有会话信息。'
       : agent ? '请切换到主会话查看会话信息。'
       : SessionDockCapabilities.config.session_relations !== true ? '此服务尚未提供会话信息。' : '';
     setControlUnavailable(info, infoReason);
@@ -267,6 +270,7 @@ function bindConsoleButton(button, uid, agent = null) {
   button.onclick = async () => {
     const reason = consoleUnavailableReason(uid, agent, false);
     if (reason) { paintConsoleAvailability(button, uid, agent); return; }
+    CodexSdkView.legacyViews.add(uid);
     SessionContentView.close();
     // 上次连接失败不再拦一道确认框：点击直接重新接入并显示 pty，失败时明确提示原因。
     ConsoleUI.busy.add(uid);
@@ -431,10 +435,12 @@ function prepareNewNode() {
     : previous || store.get('newNode', ''));
   select.replaceChildren();
   for (const n of Nodes.list) {
+    const available = Nodes.capabilities[n.id]?.enabled
+      || (!newContinueOrigin && Nodes.capabilities[n.id]?.codex_sdk === true);
     const option = document.createElement('option');
     option.value = n.id;
-    option.textContent = n.name + (Nodes.capabilities[n.id]?.enabled ? '' : '（离线）');
-    option.disabled = !Nodes.capabilities[n.id]?.enabled;
+    option.textContent = n.name + (available ? '' : '（离线）');
+    option.disabled = !available;
     select.appendChild(option);
   }
   if ([...select.options].some(o => o.value === preferred && !o.disabled)) select.value = preferred;
@@ -475,7 +481,8 @@ function refreshNewNodeFields() {
   cwdCompletion.common = commonSessionDirs();
   cwdCompletion.commonLoading = true;
   for (const input of document.querySelectorAll('input[name="new-source"]')) {
-    input.disabled = !cap.sources?.[input.value] || (input.value === 'shell' && !!newContinueOrigin);
+    input.disabled = !(input.value === 'codex' && !newContinueOrigin && newCodexSdkEnabled())
+      && !cap.sources?.[input.value] || (input.value === 'shell' && !!newContinueOrigin);
     const name = SOURCES[input.value]?.name || (input.value === 'shell' ? 'SSH' : input.value);
     input.closest('label').title = input.disabled ? `${name}：此机器未安装或未配置该客户端` : name;
   }
@@ -490,7 +497,7 @@ function refreshNewNodeFields() {
     renderCommonCwdOptions();
   });
   document.querySelector('#new-session-error').textContent = '';
-  document.querySelector('#new-session-go').disabled = !cap.enabled;
+  document.querySelector('#new-session-go').disabled = !cap.enabled && !newCodexSdkEnabled();
   renderCommonCwdOptions();
   void loadSharedCwdOptions();
 }

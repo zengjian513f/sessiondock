@@ -265,6 +265,8 @@ pub fn router() -> Router<AppState> {
             ))),
         )
         // Codex SDK mode: the shared app-server daemon behind one connection.
+        .route("/codex-sdk/create", post(codex_sdk::create))
+        .route("/codex-sdk/discard", post(codex_sdk::discard))
         .route("/codex-sdk/open", post(codex_sdk::open))
         .route("/codex-sdk/events", get(codex_sdk::events))
         .route("/codex-sdk/turn", post(codex_sdk::turn))

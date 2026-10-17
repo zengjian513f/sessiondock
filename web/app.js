@@ -2646,9 +2646,10 @@ function forkLeaf(session) {
 function forkLeafUid(uid) {
   return forkLeaf(S.sessions.find(s => s.uid === uid))?.uid || uid;
 }
-const sidebarSessions = () => [...pendingTmuxSessions(), ...S.sessions]
+const sidebarSessions = () => [...pendingTmuxSessions(),
+  ...(typeof T === 'undefined' ? [] : T.sdkSessions.filter(row => !S.sessions.some(native => native.uid === row.uid))), ...S.sessions]
   .filter(s => !sessionHidden(s) && sidebarChildVisible(s));
-const sessionScopeActive = s => s.pending || S.live.has(s.uid);
+const sessionScopeActive = s => s.pending || s.sdk_pending || S.live.has(s.uid);
 const sessionInScope = s => !S.activeOnly || sessionScopeActive(s);
 
 function cursorViews(sessions) {
@@ -3554,7 +3555,8 @@ async function deleteSessions(uids, button = null) {
     if (!sessionsByUid.has(session.uid)) sessionsByUid.set(session.uid, session);
   }
   const requested = new Set(uids);
-  const pending = pendingTmuxSessions().filter(session => requested.has(session.uid));
+  const pending = [...pendingTmuxSessions(), ...T.sdkSessions.filter(row => CodexSdkView.pending(row.uid))]
+    .filter(session => requested.has(session.uid));
   const pendingIds = new Set(pending.map(session => session.uid));
   const recorded = uids.filter(uid => !pendingIds.has(uid));
   const action = pending.length ? (recorded.length ? '删除 / 丢弃' : '丢弃') : '删除';
@@ -3583,7 +3585,11 @@ async function deleteSessions(uids, button = null) {
   try {
     for (const info of pending) {
       try {
-        await discardPendingSession(info);
+        if (info.sdk_pending) {
+          const result = await post('api/codex-sdk/discard', {uid:info.uid});
+          if (result.error) throw new Error(result.error);
+          T.sdkSessions = T.sdkSessions.filter(row => row.uid !== info.uid);
+        } else await discardPendingSession(info);
         d.deleted.push({ uid: info.uid });
       } catch (e) {
         d.errors.push({ uid: info.uid, title: info.title, error: e.message });
@@ -4010,7 +4016,7 @@ function openItemMenu(uid, x, y) {
     button.hidden = false;
     if (button.dataset.act !== 'clone') setControlUnavailable(button, unavailable[button.dataset.act]);
   }
-  menu.querySelector('[data-act="delete"]').textContent = ((row?.pending && row?.source !== 'shell') || unusedLaunch) ? '丢弃会话' : '删除会话';
+  menu.querySelector('[data-act="delete"]').textContent = (row?.sdk_pending || (row?.pending && row?.source !== 'shell') || unusedLaunch) ? '丢弃会话' : '删除会话';
   paintSessionRunControl(menu.querySelector('[data-act="stop"]'), row);
   paintTransferAvailability(menu.querySelector('[data-act="clone"]'), uid);
   menu.hidden = false;
@@ -5885,6 +5891,11 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   updateSessionUrl(uid, selectedAgent, historyMode);
 
   const key = viewKey(uid, selectedAgent);
+  const sdkPending = !selectedAgent && CodexSdkView.pending(uid);
+  if (sdkPending) {
+    await renderSession(sdkPending, [], null, {startWatch:false});
+    return;
+  }
   const hit = cacheGet(key);
   if (hit) {
     // 先把缓存立即画出来，但暂不占一个长期 SSE 连接。补齐缓存游标之后再
@@ -6443,7 +6454,8 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
   if (seq === renderSeq && S.sel === uid && S.agent === agent) {
     renderMigrationReadFailure(uid, agent);
     if (startWatch) watchSession(meta.uid, agent); // 之后的更新由服务端推过来
-    if (typeof restoreTermPane === 'function') restoreTermPane(uid, agent);
+    if (!SessionContentView.kind && CodexSdkView.defaultFor(uid, agent)) SessionContentView.open('sdk', uid, agent);
+    if (!SessionContentView.kind && typeof restoreTermPane === 'function') restoreTermPane(uid, agent);
     scheduleBrowserSnapshot('rendered');
   }
 }
@@ -7455,6 +7467,7 @@ const opencodeDeleteNote = () => 'OpenCode 会话会从 OpenCode 直接删除（
 const agyDeleteNote = () => 'Agy 会话会永久删除，不进回收站，无法恢复。';
 
 async function del(m) {
+  if (CodexSdkView.pending(m.uid)) return deleteSessions([m.uid]);
   const opencode = m.source === 'opencode';
   const agy = m.source === 'agy';
   if (!await appConfirm(`删除会话「${m.title}」?\n\n${opencode ? opencodeDeleteNote() : agy ? agyDeleteNote() : trashLocationNote()}`)) return;
@@ -11277,6 +11290,12 @@ async function openExternalSession(spec, historyMode = 'replace') {
     return true;
   }
   let route = routeSession(spec), sidebarCatalog = null;
+  if (!route && spec.startsWith('codex:')) {
+    await waitForTermList();
+    if (sequence !== deepLinkSequence || href !== location.href || selected !== S.sel) return true;
+    const pending = CodexSdkView.pending(spec);
+    if (pending) { await openSession(pending.uid, null, {historyMode}); return true; }
+  }
   if (S.childMode === 'hidden' && (!route || !sidebarRowNode(route.uid, route.agent))) {
     try {
       // The compact list deliberately omits this target/its ancestors. Resolve
@@ -11347,6 +11366,11 @@ loadSessions(!!DEEP_SID).then(async ok => {
   const restoreDetail = !MOBILE.matches || store.get('mobilePage', 'list') === 'detail';
   if (restoreDetail && last && S.sessions.some(s => s.uid === last)) {
     openSession(last, savedAgent?.uid === last ? savedAgent.id : null);
+  } else if (restoreDetail && last?.startsWith('codex:')) {
+    await waitForTermList();
+    if (S.sel || store.get('sel', null) !== last) return;
+    if (CodexSdkView.pending(last)) await openSession(last, null, {historyMode:'replace'});
+    else leaveBootDetail();
   } else if (restoreDetail && last?.startsWith('tmux:')) {
     // New launches have no native history yet. Their durable identity comes
     // from term/list, which can arrive after the native catalog on reload.

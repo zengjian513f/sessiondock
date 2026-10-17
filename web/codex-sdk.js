@@ -1,6 +1,6 @@
 'use strict';
 
-// Codex SDK 视图（docs/codex-sdk.md）：与“对话/终端”并列的第三种会话视图。
+// Codex SDK 默认视图（docs/codex-sdk.md）；旧“对话/终端”入口保留为退役过渡。
 // 已落盘的历史仍由普通读模型给出，气泡与消息模式完全相同；进行中的回合、
 // 审批和提问来自节点与共享 Codex app-server 的连接（/api/codex-sdk/*）。
 // 这里只负责呈现与交互，不解析终端画面，也不另存历史。
@@ -10,9 +10,17 @@ const CodexSdkView = {
   turn: null, items: new Map(), nodes: new Map(), requests: new Map(),
   summary: null, models: [], historyTimer: 0, snapshotReady: null,
   limits: null, resetCards: null, redeemKeys: new Map(),
+  legacyViews: new Set(),
+
+  defaultFor(uid, agent) { return this.available(uid, agent) && !this.legacyViews.has(uid); },
+  pending(uid) {
+    return typeof T === 'undefined' || S.sessions.some(row => row.uid === uid) ? null
+      : T.sdkSessions?.find(row => row.uid === uid) || null;
+  },
 
   available(uid, agent) {
     return SessionDockCapabilities.config.codex_sdk === true && !agent
+      && (!HUB_MODE || Nodes.capabilities[nodeOf(uid)]?.codex_sdk === true)
       && String(uid || '').startsWith('codex:') && !String(uid).startsWith('tmux:');
   },
 
@@ -24,6 +32,7 @@ const CodexSdkView = {
   },
 
   open(uid, pane) {
+    this.legacyViews.delete(uid);
     this.close();
     this.uid = uid; this.pane = pane;
     const generation = ++this.generation;
@@ -307,8 +316,14 @@ const CodexSdkView = {
   },
 
   // ---------------------------------------------------------------- 历史
-  async refreshHistory(generation) {
+  async refreshHistory(generation, afterTurn = false) {
+    if (this.pending(this.uid) && !afterTurn) return;
     try {
+      if (afterTurn && this.pending(this.uid)) {
+        await loadSessions(true, true);
+        if (!this.current(generation)) return;
+        if (!this.pending(this.uid)) await openSession(this.uid, null, {follow:true, historyMode:'none'});
+      }
       const [{data}] = await Promise.all([fetchMessages(this.uid), this.snapshotReady]);
       if (!this.current(generation)) return;
       const stick = this.nearBottom();
@@ -339,7 +354,7 @@ const CodexSdkView = {
   scheduleHistory() {
     clearTimeout(this.historyTimer);
     const generation = this.generation;
-    this.historyTimer = setTimeout(() => this.refreshHistory(generation), 600);
+    this.historyTimer = setTimeout(() => this.refreshHistory(generation, true), 600);
   },
 
   activeUserText() {

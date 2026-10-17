@@ -410,12 +410,12 @@ fn normalize_missing(path: &Path) -> Result<PathBuf, ApiError> {
     }
 }
 
-enum PreparedCwd {
+pub(super) enum PreparedCwd {
     Ready(String),
     Missing(String),
 }
 
-async fn prepare_cwd(raw: String, create: bool) -> Result<PreparedCwd, ApiError> {
+pub(super) async fn prepare_cwd(raw: String, create: bool) -> Result<PreparedCwd, ApiError> {
     tokio::task::spawn_blocking(move || {
         let text = raw.trim();
         if text.is_empty() || text.contains('\0') {

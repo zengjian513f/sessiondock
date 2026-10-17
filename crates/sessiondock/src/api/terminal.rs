@@ -833,7 +833,16 @@ pub async fn list(
         .as_deref()
         .is_some_and(|query| query.split('&').any(|pair| pair == "force=1"));
     let generation = super::runtime::lifecycle_generation(&state);
-    if !force && let Some(bytes) = state.polls.term_list(generation) {
+    let sdk_sessions = state
+        .codex_sdk
+        .as_ref()
+        .map(|sdk| sdk.pending())
+        .unwrap_or_default();
+    let has_sdk_receipts = !sdk_sessions.is_empty();
+    if !force
+        && !has_sdk_receipts
+        && let Some(bytes) = state.polls.term_list(generation)
+    {
         return Ok(super::lifecycle::response_bytes(bytes, permit));
     }
     // The frontend abbreviates cwd with it.
@@ -872,6 +881,8 @@ pub async fn list(
     let mut response = json!({"enabled":false, "transport_enabled":state.terminal.is_some(),
         "unavailable_reason":"没有通过完整会话 UID 和实例校验的运行中终端；创建和 CLI 接管尚未启用。",
         "sources":{},"home":home,"sessions":[],"pending":[],"hosts":[],
+        "codex_sdk": state.codex_sdk.is_some(),
+        "sdk_sessions": sdk_sessions,
         "bug_report": state.capabilities["bug_report"],
         "bug_report_worker": state.capabilities["bug_report_worker"]});
     if let Some(service) = &state.terminal {
@@ -1043,7 +1054,9 @@ pub async fn list(
         response["enabled"] = json!(!sessions.is_empty());
     }
     let (bytes, permit) = super::lifecycle::serialize(response, permit).await?;
-    state.polls.store_term_list(generation, bytes.clone());
+    if !has_sdk_receipts {
+        state.polls.store_term_list(generation, bytes.clone());
+    }
     Ok(super::lifecycle::response_bytes(bytes, permit))
 }
 

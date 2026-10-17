@@ -43,7 +43,7 @@ def build(root):
 
 
 @contextmanager
-def server(corpus, binary, app_socket):
+def server(corpus, binary, app_socket, extra_env=None):
     environment = {key: value for key, value in os.environ.items() if not key.startswith("SESSIONDOCK_")}
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
@@ -52,6 +52,7 @@ def server(corpus, binary, app_socket):
                        SESSIONDOCK_CODEX_APP_SERVER=str(app_socket))
     for source in ("claude", "codex", "grok"):
         environment["SESSIONDOCK_" + source.upper() + "_ROOT"] = str(corpus.root / source)
+    environment.update(extra_env or {})
     base = f"http://127.0.0.1:{port}"
     opener = build_opener(ProxyHandler({}), NoRedirects())
     with tempfile.TemporaryFile(mode="w+b") as log:

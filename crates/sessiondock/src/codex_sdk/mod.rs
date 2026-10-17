@@ -14,14 +14,14 @@ mod connection;
 mod live;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use serde_json::{Value, json};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 
 use connection::Connection;
@@ -177,11 +177,15 @@ pub struct CodexSdk {
     inner: Arc<Inner>,
 }
 
+type CreateReceipt = watch::Receiver<Option<Result<Value, RpcError>>>;
+
 pub(crate) struct Inner {
     endpoint: Endpoint,
     connection: tokio::sync::Mutex<Option<Arc<Connection>>>,
     threads: Mutex<HashMap<String, Arc<LiveThread>>>,
     models: Mutex<Option<(Instant, Value)>>,
+    creates: Mutex<HashMap<String, CreateReceipt>>,
+    pending: Mutex<HashMap<String, Value>>,
     shutdown: CancellationToken,
 }
 
@@ -211,12 +215,80 @@ impl CodexSdk {
                 connection: tokio::sync::Mutex::new(None),
                 threads: Mutex::new(HashMap::new()),
                 models: Mutex::new(None),
+                creates: Mutex::new(HashMap::new()),
+                pending: Mutex::new(HashMap::new()),
                 shutdown,
             }),
         });
         let inner = sdk.inner.clone();
         tokio::spawn(async move { inner.reap_idle().await });
         sdk
+    }
+
+    /// Keep an explicit create attempt alive across HTTP disconnects. Retrying
+    /// its request id returns the same result, including uncertain failures.
+    pub async fn create(&self, request_id: &str, params: Value) -> Result<Value, RpcError> {
+        let mut result = {
+            let mut creates = self.inner.creates.lock().expect("creates");
+            creates
+                .entry(request_id.to_owned())
+                .or_insert_with(|| {
+                    let (send, receive) = watch::channel(None);
+                    let inner = self.inner.clone();
+                    tokio::spawn(async move {
+                        let result = inner.start(params).await;
+                        send.send_replace(Some(result));
+                    });
+                    receive
+                })
+                .clone()
+        };
+        result
+            .wait_for(Option::is_some)
+            .await
+            .map_err(|_| RpcError::Disconnected)?;
+        let completed = result.borrow().as_ref().expect("completed create").clone();
+        if matches!(
+            completed,
+            Err(RpcError::Unavailable(_) | RpcError::Remote { .. })
+        ) {
+            let mut creates = self.inner.creates.lock().expect("creates");
+            if creates
+                .get(request_id)
+                .is_some_and(|current| current.same_channel(&result))
+            {
+                creates.remove(request_id);
+            }
+        }
+        completed
+    }
+
+    /// Start receipts only, never invented native files or history. A native
+    /// rollout takes over this identity as soon as the daemon writes it.
+    pub fn pending(&self) -> Vec<Value> {
+        let mut pending = self.inner.pending.lock().expect("pending");
+        pending
+            .retain(|_, row| !std::path::Path::new(row["path"].as_str().unwrap_or("")).is_file());
+        pending.values().cloned().collect()
+    }
+
+    pub fn pending_thread(&self, uid: &str) -> Option<String> {
+        self.inner.pending.lock().expect("pending").get(uid)?["sid"]
+            .as_str()
+            .map(str::to_owned)
+    }
+
+    pub async fn discard(&self, uid: &str) -> Result<(), RpcError> {
+        let Some(id) = self.pending_thread(uid) else {
+            return Ok(());
+        };
+        let connection = self.inner.connection().await?;
+        connection
+            .request("thread/unsubscribe", json!({"threadId":id}))
+            .await?;
+        self.inner.pending.lock().expect("pending").remove(uid);
+        self.inner.threads.lock().expect("threads").remove(&id);
+        Ok(())
     }
 
     /// Resume `thread_id` on the shared connection (once per connection) and
@@ -336,6 +408,36 @@ impl CodexSdk {
 }
 
 impl Inner {
+    async fn start(self: &Arc<Self>, params: Value) -> Result<Value, RpcError> {
+        let connection = self.connection().await?;
+        let result = connection.request("thread/start", params).await?;
+        let id = result["thread"]["id"]
+            .as_str()
+            .ok_or(RpcError::Disconnected)?;
+        let thread = {
+            let mut threads = self.threads.lock().expect("threads");
+            threads
+                .entry(id.to_owned())
+                .or_insert_with(|| LiveThread::new(id))
+                .clone()
+        };
+        thread.loaded(connection.generation(), result.clone());
+        if let Some(path) = result["thread"]["path"].as_str() {
+            let uid = crate::sessions::uid_for("codex", std::path::Path::new(path));
+            let created = chrono::DateTime::from_timestamp(
+                result["thread"]["createdAt"].as_i64().unwrap_or(0),
+                0,
+            )
+            .unwrap_or_default()
+            .to_rfc3339();
+            let row = json!({"uid":uid,"source":"codex","sid":id,"title":"新建 Codex 会话",
+                "cwd":result["thread"]["cwd"],"path":path,"created":created,"updated":created,
+                "model":result["model"],"size":0,"agent_items":[],"sdk_pending":true});
+            self.pending.lock().expect("pending").insert(uid, row);
+        }
+        Ok(result)
+    }
+
     async fn connection(self: &Arc<Self>) -> Result<Arc<Connection>, RpcError> {
         let mut slot = self.connection.lock().await;
         if let Some(connection) = slot.as_ref()
@@ -477,10 +579,17 @@ impl Inner {
                 _ = tick.tick() => {}
             }
             let idle: Vec<Arc<LiveThread>> = {
+                let pending: HashSet<String> = self
+                    .pending
+                    .lock()
+                    .expect("pending")
+                    .values()
+                    .filter_map(|row| row["sid"].as_str().map(str::to_owned))
+                    .collect();
                 let threads = self.threads.lock().expect("threads");
                 threads
                     .values()
-                    .filter(|t| t.idle_for(IDLE_UNSUBSCRIBE))
+                    .filter(|t| !pending.contains(t.id()) && t.idle_for(IDLE_UNSUBSCRIBE))
                     .cloned()
                     .collect()
             };
