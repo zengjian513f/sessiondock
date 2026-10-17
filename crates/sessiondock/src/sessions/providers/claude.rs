@@ -8,6 +8,9 @@ use super::{
     ParseOptions, Parser, Skipped, first_nonempty, normalized, string, timeline_protocol, truthy,
 };
 
+/// Claude 2.1.302 names the empty conversation with this explicit native leaf.
+const EMPTY_LEAF: &str = "00000000-0000-0000-0000-000000000000";
+
 pub(super) struct Lineage {
     pub active: Option<HashSet<String>>,
     /// User inputs off the active lineage that stay
@@ -242,6 +245,8 @@ pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Li
     let mut scan_tip = None;
     let declared = options.declared_tip.filter(|tip| !tip.is_empty());
     let mut tip = declared.map(str::to_owned);
+    let mut empty_tip = false;
+    let mut abandoned_after = options.abandoned_after;
     for (record, end) in records {
         if let Some(id) = graph_id(record, options.agent) {
             let parent = record["parentUuid"]
@@ -269,9 +274,17 @@ pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Li
             }
         }
         if let Some(next) = signal(record, options.agent) {
+            let explicit = record["type"] == "last-prompt" && record["explicit"] == true;
+            if explicit {
+                // A native rewind may be flushed after the replacement input,
+                // then followed by its ordinary last-prompt. Keep the boundary
+                // even when that later signal chooses the new active branch.
+                abandoned_after = abandoned_after.max(*end);
+            }
             scan_tip = Some(next.to_owned());
             if declared.is_none() {
-                tip = scan_tip.clone()
+                tip = scan_tip.clone();
+                empty_tip = explicit && next == EMPTY_LEAF;
             }
         }
     }
@@ -293,7 +306,11 @@ pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Li
     // leaf with no record leaves every graph node out.
     let mut active = HashSet::<String>::new();
     let mut warnings = Vec::new();
-    let mut node = Some(tip_id.as_str());
+    let mut node = if empty_tip {
+        None
+    } else {
+        Some(tip_id.as_str())
+    };
     while let Some(id) = node {
         if !active.insert(id.to_owned()) {
             warnings.push(format!("Claude 祖先链存在循环，已在 {id} 处截断"));
@@ -366,7 +383,7 @@ pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Li
             && parent.is_some_and(|parent| {
                 active.contains(parent) && active_user_parents.contains(parent)
             })
-            && end > options.abandoned_after
+            && end > abandoned_after
     };
     let mut abandoned = users
         .iter()
