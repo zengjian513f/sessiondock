@@ -407,6 +407,9 @@ impl LifecycleService {
     pub fn entries(&self) -> &[launcher::Entry] {
         self.launcher.entries()
     }
+    pub fn codex_remote_socket(&self, entry: &launcher::Entry) -> Option<&std::path::Path> {
+        self.launcher.codex_remote_socket(entry)
+    }
     /// Whether the source's CLI is configured but not installed on this
     /// machine (last periodic probe); the picker disables such a source.
     pub fn cli_missing(&self, source: Source) -> bool {

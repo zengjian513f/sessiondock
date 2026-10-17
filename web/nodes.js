@@ -176,7 +176,7 @@ const SessionContentView = {
     this.pane?.remove();
     this.pane = null;
     $('#right').classList.remove('session-content-view');
-    renderTakeoverBtn();
+    if (typeof renderTakeoverBtn === 'function') renderTakeoverBtn();
   },
   sync() {
     if (this.kind && (this.uid !== S.sel || this.agent !== S.agent)) this.close();
@@ -219,7 +219,7 @@ const SessionContentView = {
       this.watchWheel(this.pane);
       SessionDockResources.open(S.sessions.find(row => row.uid === uid) || {uid}, this.pane);
     }
-    renderTakeoverBtn();
+    if (typeof renderTakeoverBtn === 'function') renderTakeoverBtn();
     this.receipt('changed', {action: 'open'});
   },
 };

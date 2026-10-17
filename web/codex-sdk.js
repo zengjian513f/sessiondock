@@ -10,6 +10,7 @@ const CodexSdkView = {
   turn: null, items: new Map(), nodes: new Map(), requests: new Map(),
   summary: null, models: [], historyTimer: 0, snapshotReady: null,
   limits: null, resetCards: null, redeemKeys: new Map(),
+  modelChoice: null, effortChoice: null,
   legacyViews: new Set(),
 
   defaultFor(uid, agent) { return this.available(uid, agent) && !this.legacyViews.has(uid); },
@@ -50,8 +51,8 @@ const CodexSdkView = {
             <span class="sdk-credits" hidden></span>
           </div>
           <div class="sdk-pickers">
-            <label class="new-effort sdk-model" title="模型"><span class="visually-hidden">模型</span><select id="sdk-model"><option value="">默认模型</option></select></label>
-            <label class="new-effort sdk-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="sdk-effort"><option value="">默认强度</option></select></label>
+            <label class="new-effort sdk-model" title="模型"><span class="visually-hidden">模型</span><select id="sdk-model"><option value="">读取模型…</option></select></label>
+            <label class="new-effort sdk-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="sdk-effort"><option value="">读取强度…</option></select></label>
             <span class="sdk-reset" hidden>
               <label class="new-effort" title="可兑换的限额重置卡"><span class="visually-hidden">重置卡</span><select id="sdk-reset-card"></select></label>
               <button class="btn" id="sdk-reset-use" type="button" title="兑换所选重置卡">兑换</button>
@@ -80,7 +81,12 @@ const CodexSdkView = {
     };
     pane.querySelector('#sdk-send').onclick = () => this.send();
     pane.querySelector('#sdk-stop').onclick = () => this.interrupt();
-    pane.querySelector('#sdk-model').onchange = () => this.paintEfforts();
+    pane.querySelector('#sdk-model').onchange = event => {
+      this.modelChoice = event.target.value || null;
+      this.effortChoice = null;
+      this.paintPickers();
+    };
+    pane.querySelector('#sdk-effort').onchange = event => { this.effortChoice = event.target.value || null; };
     pane.querySelector('#sdk-reset-use').onclick = () => this.redeem();
     this.setNotice('正在连接 Codex app-server…');
     this.start(generation);
@@ -93,6 +99,7 @@ const CodexSdkView = {
     clearTimeout(this.historyTimer);
     this.items.clear(); this.nodes.clear(); this.requests.clear();
     this.turn = null; this.summary = null; this.limits = null; this.resetCards = null;
+    this.models = []; this.modelChoice = this.effortChoice = null;
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
     this.uid = '';
   },
@@ -151,12 +158,7 @@ const CodexSdkView = {
       const data = await response.json();
       if (!this.current(generation) || !data?.ok) return;
       this.models = (data.raw?.data || []).filter(model => !model.hidden);
-      const select = this.pane.querySelector('#sdk-model');
-      const chosen = select.value;
-      select.replaceChildren(new Option('默认模型', ''));
-      for (const model of this.models) select.append(new Option(model.displayName || model.model, model.model));
-      select.value = chosen;
-      this.paintEfforts();
+      this.paintPickers();
     } catch { /* 模型列表只影响选择器，发送仍使用会话当前设置 */ }
   },
 
@@ -300,19 +302,32 @@ const CodexSdkView = {
     }
   },
 
-  paintEfforts() {
+  paintPickers() {
     if (!this.pane) return;
+    const modelSelect = this.pane.querySelector('#sdk-model');
+    const currentModel = this.summary?.settings?.model || '';
+    const modelName = this.modelChoice ?? currentModel;
+    modelSelect.replaceChildren(new Option(currentModel ? '沿用会话模型' : this.summary ? '当前模型未返回' : '读取模型…', ''));
+    for (const model of this.models) modelSelect.append(new Option(model.displayName || model.model, model.model));
+    if (modelName && ![...modelSelect.options].some(option => option.value === modelName))
+      modelSelect.append(new Option(modelName, modelName));
+    modelSelect.value = modelName;
+    modelSelect.title = modelName;
     const select = this.pane.querySelector('#sdk-effort');
-    const chosen = select.value;
-    const modelName = this.pane.querySelector('#sdk-model').value || this.summary?.settings?.model || '';
-    const model = this.models.find(row => row.model === modelName) || this.models.find(row => row.isDefault);
-    select.replaceChildren(new Option('默认强度', ''));
+    const model = this.models.find(row => row.model === modelName);
+    let chosen = this.effortChoice ?? this.summary?.settings?.effort ?? '';
+    const switching = modelName !== currentModel;
+    select.replaceChildren(new Option(switching ? '沿用会话强度' : this.summary ? '当前强度未返回' : '读取强度…', ''));
     for (const effort of model?.supportedReasoningEfforts || []) {
       const option = new Option(effort.reasoningEffort, effort.reasoningEffort);
       option.title = effort.description || '';
       select.append(option);
     }
-    if ([...select.options].some(option => option.value === chosen)) select.value = chosen;
+    if (chosen && ![...select.options].some(option => option.value === chosen)) {
+      if (switching && this.effortChoice === null) chosen = '';
+      else select.append(new Option(chosen, chosen));
+    }
+    select.value = chosen;
   },
 
   // ---------------------------------------------------------------- 历史
@@ -375,7 +390,7 @@ const CodexSdkView = {
     this.requests = new Map((raw.requests || []).map(request => [request.key, request]));
     for (const item of this.items.values()) this.paintItem(item);
     for (const request of this.requests.values()) this.paintRequest(request);
-    this.paintEfforts();
+    this.paintPickers();
     this.paintStatus();
     this.scrollBottom();
   },
@@ -389,7 +404,7 @@ const CodexSdkView = {
         this.es?.close();
         setTimeout(() => this.reconnect(), 800);
         return;
-      case 'thread/resumed': this.summary = raw.summary || this.summary; break;
+      case 'thread/resumed': this.summary = raw.summary || this.summary; this.paintPickers(); break;
       case 'turn/started':
         this.turn = raw.turn; this.items.clear();
         if (this.summary) this.summary.last_error = null;
@@ -425,7 +440,7 @@ const CodexSdkView = {
         break;
       }
       case 'thread/status/changed': if (this.summary) this.summary.status = raw.status; break;
-      case 'thread/settings/updated': if (this.summary) this.summary.settings = raw.threadSettings; this.paintEfforts(); break;
+      case 'thread/settings/updated': if (this.summary) this.summary.settings = raw.threadSettings; this.paintPickers(); break;
       case 'thread/tokenUsage/updated': if (this.summary) this.summary.usage = raw.tokenUsage; break;
       case 'account/rateLimits/updated':
         // 通知只带一个额度桶；只更新正在显示的那个（重置卡等不在其中，保持不变）。
@@ -534,13 +549,20 @@ const CodexSdkView = {
     const button = this.pane.querySelector('#sdk-send');
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');
+    const model = this.modelChoice, effort = this.effortChoice;
     try {
-      await this.request('api/codex-sdk/turn', {
+      const response = await this.request('api/codex-sdk/turn', {
         uid: this.uid, text,
-        model: this.pane.querySelector('#sdk-model').value || null,
-        effort: this.pane.querySelector('#sdk-effort').value || null,
+        model, effort,
       });
-      if (this.input === input) { input.value = ''; this.fitInput(); }
+      if (this.input === input) {
+        if (!response.raw?.steered) {
+          if (this.modelChoice === model) this.modelChoice = null;
+          if (this.effortChoice === effort) this.effortChoice = null;
+        }
+        this.paintPickers();
+        input.value = ''; this.fitInput();
+      }
     } catch (error) {
       this.setNotice(`发送失败：${error.message}`, 'blocked');
     } finally {

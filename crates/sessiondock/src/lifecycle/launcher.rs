@@ -405,6 +405,11 @@ fn cli_absent(profile: &CliProfile) -> bool {
 }
 
 impl Launcher {
+    pub fn codex_remote_socket(&self, entry: &Entry) -> Option<&Path> {
+        (entry.source == Source::Codex && entry.profile && self.profiles.contains_key(&entry.id))
+            .then_some(self.codex_remote.as_ref()?.socket.as_path())
+    }
+
     pub fn new(config: Config) -> Result<Self, Error> {
         config_bounds(&config)?;
         if config.host_dir.parent().is_none() {

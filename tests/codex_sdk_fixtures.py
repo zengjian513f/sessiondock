@@ -28,6 +28,7 @@ class FakeAppServer:
         self.rollout = rollout
         self.thread_id = thread_id
         self.created = {}
+        self.settings = {"model": "fake-sol", "effort": "high"}
         self.rollout_root = rollout.parent
         self.received = []          # every client message, in order
         self.loop = asyncio.new_event_loop()
@@ -138,9 +139,15 @@ class FakeAppServer:
         await self._write(writer, json.dumps(message).encode())
 
     async def notify(self, method, params):
+        if method == "thread/settings/updated":
+            self.settings = params["threadSettings"].copy()
         params = {"threadId": self.thread_id, **params}
         for writer in list(self.clients):
             await self.send(writer, {"method": method, "params": params})
+
+    def set_settings(self, model, effort):
+        asyncio.run_coroutine_threadsafe(self.notify("thread/settings/updated", {
+            "threadSettings": {"model": model, "effort": effort}}), self.loop).result(timeout=5)
 
     # ------------------------------------------------------------ protocol
     async def _handle(self, writer, message):
@@ -163,12 +170,14 @@ class FakeAppServer:
                       "model": params.get("model", "fake-sol"),
                       "reasoningEffort": params.get("config", {}).get("model_reasoning_effort", "low")}
             self.created[self.thread_id] = result
+            self.settings = {"model": result["model"], "effort": result["reasoningEffort"]}
             await reply(result)
         elif method == "thread/resume":
             if params.get("threadId") != self.thread_id:
                 await self.send(writer, {"id": mid, "error": {"code": -32602, "message": "no rollout found"}})
                 return
-            await reply({"thread": {"id": self.thread_id, "status": {"type": "idle"}, "turns": [], "name": None}})
+            await reply({"thread": {"id": self.thread_id, "status": {"type": "idle"}, "turns": [], "name": None},
+                         "model": self.settings["model"], "reasoningEffort": self.settings["effort"]})
         elif method == "model/list":
             await reply({"data": [
                 {"id": "fake-sol", "model": "fake-sol", "displayName": "Fake Sol", "hidden": False, "isDefault": True,
@@ -189,6 +198,8 @@ class FakeAppServer:
             for client in list(self.clients):
                 await self.send(client, {"method": "account/rateLimits/updated", "params": {"rateLimits": self._bucket()}})
         elif method == "turn/start":
+            settings = {key: params.get(key, value) for key, value in self.settings.items()}
+            await self.notify("thread/settings/updated", {"threadSettings": settings})
             if not self.rollout.exists():
                 self.rollout.write_bytes(encoded(codex_row("session_meta", {
                     "id": self.thread_id, "cwd": self.created[self.thread_id]["thread"]["cwd"],

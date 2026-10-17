@@ -800,7 +800,12 @@ pub async fn takeover(
         .copied()
         .filter(|pid| *pid > 0)
         .collect();
-    if !external.is_empty() && !processes.hosted && !body.force {
+    let entry = select_entry(service, source, true)?.clone();
+    let shared_sdk = match (&state.codex_sdk, service.codex_remote_socket(&entry)) {
+        (Some(sdk), Some(socket)) => sdk.shares_thread(&scope.session_id, socket).await,
+        _ => false,
+    };
+    if !external.is_empty() && !processes.hosted && !shared_sdk && !body.force {
         return response(
             json!({"needs_confirm":true,"pids":external,
                 "reason": if processes.tmux {"会话正在 tmux 中运行；当前宿主不能直接附加该 pane"}
@@ -809,7 +814,7 @@ pub async fn takeover(
         )
         .await;
     }
-    let killed = if !external.is_empty() && !processes.hosted && body.force {
+    let killed = if !external.is_empty() && !processes.hosted && !shared_sdk && body.force {
         let outcome = processes
             .scanner
             .kill_pids(&external)
@@ -825,7 +830,6 @@ pub async fn takeover(
     } else {
         false
     };
-    let entry = select_entry(service, source, true)?.clone();
     let cwd = cwd.ok_or_else(|| {
         ApiError::new(
             StatusCode::CONFLICT,

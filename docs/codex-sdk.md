@@ -40,6 +40,16 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
 
 ### Terminal coexistence
 
+DELTA (SDK → PTY): when this bridge has the exact thread loaded on a live
+connection, and the configured Codex CLI profile joins that same Unix socket,
+opening 终端 starts or reuses a TUI client of the shared daemon. It does not
+ask to replace an external process or signal that daemon, even if process
+discovery finds it holding the rollout. An independent writer and a terminal
+lease held by another browser still follow their existing confirmation flow.
+The green marker means running without a managed PTY; an SDK view alone does
+not turn it blue. Browser coverage:
+[codex_sdk_terminal_browser.py](../tests/codex_sdk_terminal_browser.py).
+
 Two clients share one live thread only when both use the same app-server, and
 Codex 0.163 gives each of these a different runtime: a plain `codex` /
 `codex resume` joins the shared daemon, but any `-c` override makes it run an
@@ -157,10 +167,16 @@ before first SEND does not retain these unpersisted receipts.
   (`availableDecisions` for commands, accept/acceptForSession/decline/cancel
   for files, grant turn/session or deny for permissions, radio/text answers for
   user input, accept/decline/cancel for MCP elicitations).
+- DELTA (effective model/effort): the pickers select the thread's actual model
+  and effort from `thread/start`/`thread/resume`, then follow
+  `thread/settings/updated`, including changes made by another client. A current
+  value absent from `model/list` is still displayed verbatim. Catalog defaults
+  are not evidence of the current thread's settings. Unsent user choices survive
+  incoming settings events; after SEND the pickers follow the effective settings again.
 - Composer: same look as the message composer. Enter sends (Shift+Enter
   newline, not on mobile); the button reads 发送 or, during a turn, 追加
   (steer). 停止 interrupts. Model and effort selectors come from `model/list`;
-  an empty choice keeps the thread's current setting, a choice applies to the
+  displaying the current setting does not send an override; only a user change applies to the
   started turn and, per app-server semantics, to later turns.
 - The status line shows the last turn error, the rate-limit-reached notice and the
   waiting state.

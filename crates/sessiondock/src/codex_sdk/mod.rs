@@ -208,6 +208,24 @@ impl Drop for SubscriberGuard {
 }
 
 impl CodexSdk {
+    /// A live subscription proves this exact thread belongs to our shared
+    /// daemon. A terminal joining the same socket adds a client, not a writer.
+    pub async fn shares_thread(&self, thread_id: &str, socket: &std::path::Path) -> bool {
+        if self.inner.endpoint.socket != socket {
+            return false;
+        }
+        let slot = self.inner.connection.lock().await;
+        let Some(connection) = slot.as_ref().filter(|connection| !connection.is_closed()) else {
+            return false;
+        };
+        self.inner
+            .threads
+            .lock()
+            .expect("threads")
+            .get(thread_id)
+            .is_some_and(|thread| thread.loaded_on() == Some(connection.generation()))
+    }
+
     pub fn new(endpoint: Endpoint, shutdown: CancellationToken) -> Arc<Self> {
         let sdk = Arc::new(Self {
             inner: Arc::new(Inner {

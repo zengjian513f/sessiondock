@@ -56,6 +56,8 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
     expect(page.locator("#new-session-dialog")).to_be_hidden()
     expect(page.locator("#sdk-input")).to_be_visible()
     expect(page.locator("#a-sdk")).to_have_attribute("aria-pressed", "true")
+    expect(page.locator('#sdk-model')).to_have_value('fake-luna')
+    expect(page.locator('#sdk-effort')).to_have_value('medium')
     assert len(fake.methods("thread/start")) == before + 1, "retry created a second thread"
     start = fake.methods("thread/start")[-1]["params"]
     assert start["cwd"] == str(work) and start["model"] == "fake-luna"
@@ -75,6 +77,8 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
     page.reload(wait_until="domcontentloaded")
     expect(page.locator("#sdk-input")).to_be_visible()
     assert page.evaluate("S.sel") == uid
+    expect(page.locator('#sdk-model')).to_have_value('fake-luna')
+    expect(page.locator('#sdk-effort')).to_have_value('medium')
     assert not fake.rollout.exists()
     expect(page.locator(".sdk-status")).not_to_contain_text("失败")
     text = "approve SDK 首条消息 creates the native rollout"
