@@ -107,7 +107,7 @@ pub struct TransferService {
     pub progress: super::progress::Registry,
     progress_public: std::sync::Mutex<BTreeMap<String, Value>>,
     pub(super) references: super::references::Cache,
-    relationship_refresh: std::sync::Mutex<()>,
+    relationship_refresh: std::sync::Mutex<group::Inventory>,
     journals: journal::Cache,
     link_records: std::sync::Mutex<BTreeMap<String, crate::session_links::Record>>,
     pub directory: PathBuf,
@@ -368,16 +368,16 @@ impl TransferService {
         selected: &str,
         snapshot: &SessionSnapshot,
     ) -> Result<group::Group, TransferError> {
-        // Discover and refresh relationships on demand, including reverse links
-        // from histories outside the selected group. No background warm-up is needed.
+        // Query the reverse index after refreshing changed native inputs.
+        // The first request builds it on demand; unchanged histories are reused.
         // Only the relationship inventory is serialized; page, composer and
         // history readers use their own store and never wait on this lock.
-        let _guard = self
+        let mut inventory = self
             .relationship_refresh
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let started = std::time::Instant::now();
-        let result = group::derive_cached(snapshot, selected, &self.references);
+        let result = inventory.group(snapshot, selected, &self.references);
         crate::log::info(
             "transfer.relationships",
             serde_json::json!({"ms": started.elapsed().as_millis()}),
