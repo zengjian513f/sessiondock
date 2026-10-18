@@ -196,6 +196,13 @@ before first SEND does not retain these unpersisted receipts.
   session or subagent selects SDK by default. An explicit switch to 对话/终端 lasts for
   the current page; background refreshes do not switch it back. It opens through `SessionContentView` like 信息/资源; the header
   stays, the message list, composer and terminal pane are hidden.
+- Cold entry selects SDK immediately, before the native history response. The
+  SDK connects while the existing history request is pending; its loading state
+  stays inside the SDK surface instead of showing the console placeholder.
+  The history consumer waits for that request's cache admission, so complete
+  history is not fetched twice. A manual switch away while it loads is preserved.
+  BUG-20261018-040613-165ffa established a 5.9-second history request; this fixes
+  the delayed SDK entry, not the still-unresolved server read delay.
 - History is displayed independently of app-server open and the first SSE snapshot.
   Complete history already read for the selected `(uid, agent)` is reused on entry;
   partial windows still fetch full SDK history. The snapshot reconciles live items

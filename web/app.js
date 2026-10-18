@@ -5728,11 +5728,11 @@ function updateMatchNav({jump = false} = {}) {
 // ---------------------------------------------------------------- 详情
 let inflight = null;
 
-function ensureConsolePlaceholder() {
+function ensureConsolePlaceholder(title = '控制台') {
   if ($('#a-term')) return;
   const heading = el('div', 'dhead');
   heading.innerHTML = `<div class="dtitle"><button class="mobile-back" type="button"
-    title="返回会话列表" aria-label="返回会话列表">←</button><h2>控制台</h2>
+    title="返回会话列表" aria-label="返回会话列表">←</button><h2>${esc(title)}</h2>
     <div class="dhead-actions">${consoleButtonMarkup()}</div></div>`;
   heading.querySelector('.mobile-back').onclick = showMobileList;
   $('#detail').prepend(heading);
@@ -5759,7 +5759,8 @@ const openRetries = new Map();
 function scheduleOpenRetry(uid, agent, ac) {
   const key = viewKey(uid, agent);
   const attempt = (openRetries.get(key) || 0) + 1;
-  const box = $('#detail .empty');
+  const box = SessionContentView.kind === 'sdk'
+    ? CodexSdkView.history?.querySelector('.empty') : $('#detail .empty');
   const retry = () => {
     if (S.sel !== uid || S.agent !== agent || inflight !== ac) return;
     openRetries.set(key, attempt);
@@ -5936,34 +5937,50 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
 
   if (!follow) {
     $('#detail').innerHTML = '<div class="spin">正在读取会话…</div>';
-    ensureConsolePlaceholder();
+    ensureConsolePlaceholder(CodexSdkView.defaultFor(uid, selectedAgent)
+      ? S.sessions.find(row => row.uid === uid)?.title || 'Codex SDK' : '控制台');
     auditDetailRendered('loading');
   }
   // Following a launch is background synchronization of the page already on
   // screen. Keep its header/composer intact until the native view is ready.
   let res;
   try {
-    res = await fetchMessages(uid, {
+    const historyReady = fetchMessages(uid, {
       agent: selectedAgent, signal: ac.signal,
       windowed: true,
+    }).then(result => {
+      if (S.sel !== uid || S.agent !== selectedAgent || inflight !== ac) return result;
+      const {data, bytes} = result;
+      cachePut(key, {meta: data.meta, msgs: data.messages, version: data.version,
+        end: data.end, anchor: data.anchor, activity: data.activity, bytes,
+        prompt: data.prompt || null, cli: data.cli ?? null,
+        total: data.message_total, partial: data.partial || null});
+      return result;
     });
+    // Choose the requested surface before waiting for history. Its independent
+    // SDK connection can start now; history reuses this read once cached.
+    if (!SessionContentView.kind && CodexSdkView.defaultFor(uid, selectedAgent))
+      SessionContentView.open('sdk', uid, selectedAgent, {historyReady});
+    else if (SessionContentView.kind === 'sdk' && CodexSdkView.historyFailed) {
+      CodexSdkView.historyReady = historyReady;
+      CodexSdkView.refreshHistory(CodexSdkView.generation);
+    }
+    res = await historyReady;
   } catch (e) {
     if (e.name === 'AbortError') return;      // 已经切到别的会话了
     if (S.sel !== uid || S.agent !== selectedAgent) return;
     progressDone();
     $('#detail').innerHTML = `<div class="empty">读取失败: ${esc(e.message)}</div>`;
-    ensureConsolePlaceholder();
+    ensureConsolePlaceholder(CodexSdkView.defaultFor(uid, selectedAgent)
+      ? S.sessions.find(row => row.uid === uid)?.title || 'Codex SDK' : '控制台');
     if (!reportReadFailure(uid, selectedAgent, e)) scheduleOpenRetry(uid, selectedAgent, ac);
     auditDetailRendered('load-failed', {error: String(e.message || e).slice(0, 300)});
     return;
   }
   if (S.sel !== uid || S.agent !== selectedAgent) return; // 期间切了别的视图
-  const { data, bytes } = res;
+  const { data } = res;
   migrationReadFailures.delete(key); openRetries.delete(key);
-  cachePut(key, { meta: data.meta, msgs: data.messages, version: data.version,
-                  end: data.end, anchor: data.anchor, activity: data.activity, bytes,
-                  prompt: data.prompt || null, cli: data.cli ?? null,
-                  total: data.message_total, partial: data.partial || null });
+
   S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
   await renderSession(data.meta, data.messages, data.activity);
 }
