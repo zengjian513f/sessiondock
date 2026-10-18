@@ -737,6 +737,11 @@ const CodexSdkView = {
       old._updateMessage(message);
       return;
     }
+    const toolControls = ['.tool-out-actions .more', '.tool-toggle', '.tool-wrap'];
+    const toolState = TOOL_ROLES.has(message.role) && old
+      ? toolControls.map(selector => [...old.querySelectorAll(selector)].map(control =>
+          control.getAttribute(selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded')))
+      : null;
     const node = msgNode(message);
     node.dataset.sdkItem = item.id;
     CodexSdkActions.decorate(this, node, {...message, turn_id: this.turn?.id});
@@ -753,6 +758,13 @@ const CodexSdkView = {
       const firstRequest = this.live.querySelector('[data-sdk-request]');
       this.live.insertBefore(node, firstRequest);
     }
+    if (toolState) toolControls.forEach((selector, group) => {
+      node.querySelectorAll(selector).forEach((control, index) => {
+        const attribute = selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded';
+        const previous = toolState[group][index];
+        if (previous != null && control.getAttribute(attribute) !== previous) control.click();
+      });
+    });
     this.nodes.set(item.id, node);
   },
 
