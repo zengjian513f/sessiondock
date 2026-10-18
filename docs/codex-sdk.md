@@ -234,8 +234,13 @@ before first SEND does not retain these unpersisted receipts.
   the delayed SDK entry. The collector contention fix and its measured limits
   are recorded in [history opening phases](logging.md#history-opening-phases).
 - History is displayed independently of app-server open and the first SSE snapshot.
-  Complete history already read for the selected `(uid, agent)` is reused on entry;
-  partial windows still fetch full SDK history. The snapshot reconciles live items
+  The native JSONL head/tail window already read for `(uid, agent)` is reused on
+  entry, including its omitted middle. SDK entry never silently fills this gap.
+  The existing “加载中间 N 条消息” control reads finite native-history pages only
+  on an explicit click; a second click stops a chain. Failures, explicit reload
+  and view-generation guards share the conversation view's page implementation.
+  Fallback catch-up also requests a window if the native checkpoint resets.
+  The snapshot reconciles live items
   against that history without a second read. Connection errors remain visible
   alongside readable history. BUG-20261018-014447-60f001 recorded a 2,262 ms
   initial history read followed by another identical 1,068,259-byte response;
@@ -249,11 +254,16 @@ before first SEND does not retain these unpersisted receipts.
   the last matching user text for older records), and the turn is shown from
   SDK items instead. If recovery omits the user item after compaction, its
   persisted prompt stays visible. After
-  `turn/completed` the history is reloaded and SDK items that are now on disk
+  `turn/completed` native history catches up incrementally without filling the
+  middle, and SDK items that are now on disk
   are removed, so each turn appears once. Completed processes use the shared
   fold/expand cards and header toggle; prompts and final answers stay visible.
   In-flight SDK items remain visible. History refresh preserves individual
   process folds, and the global preference also applies after page reload.
+  The active SDK turn is still recovered in full separately from the native
+  history window; partial history does not discard current-turn progress.
+  [SDK page coverage](../tests/codex_sdk_history_pages_browser.py) checks window-only
+  entry, page/live races, retries, switching views, completion and explicit chains.
 - DELTA (bubble types, BUG-20261018-040836-e49b26 follow-up): assistant prose,
   including streaming commentary, plans and final answers, renders in full.
   User input and reasoning retain height/length-based previews; tools and diffs

@@ -1727,7 +1727,11 @@ function applyMigrationMeta(uid, agent, entry, meta) {
 async function applyDiff(uid, data, bytes = 0, agent = null) {
   try { return await applyDiffPacket(uid, data, bytes, agent); }
   // activity 与 CLI 画面都随数据包到达，左栏和会话头的回合状态跟着重画。
-  finally { if (!agent) paintTurn(uid); }
+  finally {
+    if (!agent) paintTurn(uid);
+    if (typeof CodexSdkView !== 'undefined' && CodexSdkView.uid === uid && CodexSdkView.agent === agent)
+      CodexSdkView.useHistory(cache.get(viewKey(uid, agent)));
+  }
 }
 
 async function applyDiffPacket(uid, data, bytes = 0, agent = null) {
@@ -2043,6 +2047,8 @@ function syncSession(uid, agent = S.agent) {
       keepAlive();
       const { data, bytes } = await fetchMessages(uid, {
         agent, start: e.end, head: e.version.head, anchor: e.anchor,
+        windowed: !!e.partial || (typeof CodexSdkView !== 'undefined'
+          && CodexSdkView.uid === uid && CodexSdkView.agent === agent),
         signal: ac.signal, onActivity: keepAlive });
       return await applyDiff(uid, data, bytes, agent);
     } catch (error) {
@@ -6173,9 +6179,22 @@ const historyPageRequests = new Map();
 let HISTORY_PAGE_CHAIN = true;
 
 function currentHistoryPage(request) {
-  return S.sel === request.uid && S.agent === request.agent
-    && inflight === request.viewRequest && cache.get(request.key) === request.entry
+  return currentHistoryPageEntry(request)
     && request.entry.partial?.cursor === request.cursor;
+}
+
+function sdkHistoryPageGeneration(uid, agent, button) {
+  return typeof CodexSdkView !== 'undefined' && CodexSdkView.uid === uid
+    && CodexSdkView.agent === agent && CodexSdkView.history?.contains(button)
+    ? CodexSdkView.generation : null;
+}
+
+function historyPageRoot(request) {
+  return request.sdkGeneration != null ? CodexSdkView.history : $('#msgs');
+}
+
+function historyPageBox(request) {
+  return request.sdkGeneration != null ? CodexSdkView.box : $('#msgs');
 }
 
 const HISTORY_PAGE_MAX_EVENTS = 10000;   // 服务端 SESSIONDOCK_HISTORY_PAGE_EVENTS 的上限
@@ -6264,17 +6283,18 @@ function historyPageFailure(request, button, error) {
   gap.appendChild(reload);
 }
 
-function restoreHistoryPageScroll(top, scrollTop, entry) {
-  const box = $('#msgs');
+function restoreHistoryPageScroll(top, scrollTop, entry, request) {
+  const box = historyPageBox(request);
   if (!box) return;
   const restore = () => {
-    if (box !== $('#msgs') || cache.get(viewKey(S.sel, S.agent)) !== entry) return;
-    _stick = false;
-    _selfScroll = true;
+    if (!currentHistoryPageEntry(request) || box !== historyPageBox(request)) return;
+    if (request.sdkGeneration == null) { _stick = false; _selfScroll = true; }
     const gap = box.querySelector('.history-gap');
     box.scrollTop = gap ? box.scrollTop + gap.getBoundingClientRect().top - top : scrollTop;
-    _lastTop = box.scrollTop;
-    requestAnimationFrame(() => { _selfScroll = false; });
+    if (request.sdkGeneration == null) {
+      _lastTop = box.scrollTop;
+      requestAnimationFrame(() => { _selfScroll = false; });
+    }
   };
   restore();
   requestAnimationFrame(() => { restore(); requestAnimationFrame(restore); });
@@ -6292,7 +6312,7 @@ async function loadHistoryPage(uid, agent, button) {
   }
   if (previous) { previous.ac?.abort(); historyPageRequests.delete(key); }
   const request = {key, uid, agent, entry, cursor: entry.partial.cursor, viewRequest: inflight,
-    chain: HISTORY_PAGE_CHAIN, aborted: false};
+    sdkGeneration: sdkHistoryPageGeneration(uid, agent, button), chain: HISTORY_PAGE_CHAIN, aborted: false};
   if (!currentHistoryPage(request)) return;
   const ac = new AbortController();
   request.ac = ac;
@@ -6300,7 +6320,7 @@ async function loadHistoryPage(uid, agent, button) {
   historyPageRequests.set(key, request);
   const target = Number(entry.partial.omitted || 0);
   let loaded = 0;
-  const gap = button.parentElement, box = $('#msgs');
+  const gap = button.parentElement, box = historyPageBox(request);
   const top = gap.getBoundingClientRect().top, scrollTop = box?.scrollTop || 0;
   // 连续翻页时按钮保持可点（用于中止），并显示进度。
   button.disabled = !request.chain;
@@ -6337,11 +6357,13 @@ async function loadHistoryPage(uid, agent, button) {
   if (changed && currentHistoryPageEntry(request)) {
     trimCache();
     await renderSession(entry.meta, entry.msgs, entry.activity, {startWatch: false, historyPageEntry: entry});
-    if (S.sel === uid && S.agent === agent && cache.get(key) === entry && inflight === request.viewRequest) {
-      restoreHistoryPageScroll(top, scrollTop, entry);
-      if (failure) historyPageFailure(request, $('#msgs .history-gap-load'), failure);
+    if (currentHistoryPageEntry(request)) {
+      if (request.sdkGeneration != null) CodexSdkView.useHistory(entry, true);
+      restoreHistoryPageScroll(top, scrollTop, entry, request);
+      if (failure) historyPageFailure(request, historyPageRoot(request)?.querySelector('.history-gap-load'), failure);
     }
-  } else if (failure) historyPageFailure(request, button, failure);
+  } else if (failure) historyPageFailure(request,
+    historyPageRoot(request)?.querySelector('.history-gap-load') || button, failure);
   else if (request.aborted && currentHistoryPageEntry(request) && button.isConnected) {
     button.disabled = false;
     button.textContent = `加载中间 ${Number(entry.partial?.omitted || 0).toLocaleString()} 条消息`;
@@ -6351,14 +6373,17 @@ async function loadHistoryPage(uid, agent, button) {
 /** 页已取到、只等渲染：视图与缓存条目仍是发起时的那份即可（游标已推进）。 */
 function currentHistoryPageEntry(request) {
   return S.sel === request.uid && S.agent === request.agent
-    && inflight === request.viewRequest && cache.get(request.key) === request.entry;
+    && inflight === request.viewRequest && cache.get(request.key) === request.entry
+    && (request.sdkGeneration == null || (CodexSdkView.current(request.sdkGeneration)
+      && CodexSdkView.uid === request.uid && CodexSdkView.agent === request.agent));
 }
 
 async function reloadHistoryWindow(uid, agent, button) {
   agent = agent || null;
   const key = viewKey(uid, agent), entry = cache.get(key), viewRequest = inflight;
   if (!historyPagesEnabled() || !entry?.partial || S.sel !== uid || S.agent !== agent || historyPageRequests.has(key)) return;
-  const request = {key, uid, agent, entry, cursor: entry?.partial?.cursor, viewRequest};
+  const request = {key, uid, agent, entry, cursor: entry?.partial?.cursor, viewRequest,
+    sdkGeneration: sdkHistoryPageGeneration(uid, agent, button)};
   // Unlike a gap page, a window reset replaces the complete cached snapshot.
   // An SSE update accepted after this request started must never be rolled back.
   const observed = {msgs: entry.msgs, version: entry.version, end: entry.end, anchor: entry.anchor,
@@ -6377,7 +6402,7 @@ async function reloadHistoryWindow(uid, agent, button) {
     }
     if (!data?.reset || !data.meta || !data.version || !Array.isArray(data.messages)) throw new Error('服务端没有返回有效的当前历史窗口。');
     await applyDiff(uid, data, bytes, agent);
-  } catch (error) { historyPageFailure(request, button.parentElement.querySelector('.history-gap-load'), error); }
+  } catch (error) { historyPageFailure(request, historyPageRoot(request)?.querySelector('.history-gap-load'), error); }
   finally {
     clearTimeout(timer);
     button.disabled = false;
@@ -6407,6 +6432,8 @@ async function loadFullHistory(uid, agent, button) {
     S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
     if (S.sel === uid && S.agent === agent) {
       await renderSession(data.meta, data.messages, data.activity, {showProgress: true});
+      if (CodexSdkView.uid === uid && CodexSdkView.agent === agent)
+        CodexSdkView.useHistory(cache.get(key), true);
     }
   } catch (e) {
     if (e.name !== 'AbortError') {
