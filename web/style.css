@@ -755,11 +755,11 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   align-items: center; justify-content: center; font-variant-numeric: tabular-nums;
 }
 .item-status.visible { display: flex; }
-.item-status.tmux { background: var(--live-tmux); }
+.item-status.tmux, .item-status.sdk { background: var(--live-tmux); }
 .item-status.idle { background: var(--muted); }   /* 已退出，只剩没看的新内容 */
 /* 回合状态（进程在跑时）：轮转中外圈持续扩散，等你回答变琥珀色，空闲保持静止圆点。 */
 .item-status { --turn-ring: var(--live-direct); }
-.item-status.tmux { --turn-ring: var(--live-tmux); }
+.item-status.tmux, .item-status.sdk { --turn-ring: var(--live-tmux); }
 .item-status.turn-working { animation: turn-pulse 1.4s ease-out infinite; }
 .item-status.turn-waiting { background: var(--turn-waiting); }
 @media (prefers-reduced-motion: reduce) {

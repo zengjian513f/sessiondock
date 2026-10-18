@@ -324,7 +324,13 @@ pub async fn live(
 fn live_body(nodes: Vec<Value>, answers: &[Answer]) -> Value {
     let mut result = envelope(nodes, answers);
     // `remote_working` names sessions by native node/source/sid, unscoped.
-    for key in ["uids", "tmux_uids", "working_uids", "remote_working"] {
+    for key in [
+        "uids",
+        "tmux_uids",
+        "sdk_uids",
+        "working_uids",
+        "remote_working",
+    ] {
         let rows: Vec<Value> = answers
             .iter()
             .filter(|answer| answer.ok())

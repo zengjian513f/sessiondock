@@ -105,7 +105,7 @@ impl Snapshot {
             }
             rows.sort_by_key(|row| row["uid"].as_str().unwrap_or_default().to_owned());
         }
-        for field in ["uids", "tmux_uids"] {
+        for field in ["uids", "tmux_uids", "sdk_uids"] {
             if let Some(items) = live[field].as_array_mut() {
                 items.sort_by_key(Value::to_string);
             }

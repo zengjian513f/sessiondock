@@ -562,6 +562,9 @@ const CodexSdkView = {
 
   // ---------------------------------------------------------------- 事件
   applySnapshot(raw) {
+    // The SDK may attach between two identical global live snapshots.
+    // Reconcile ownership on this connection's snapshot as well.
+    queueUiChange({live: true});
     this.summary = raw.summary || {};
     this.turn = raw.turn || null;
     this.items = new Map((raw.items || []).map(item => [item.id, item]));
@@ -588,6 +591,7 @@ const CodexSdkView = {
         this.paintQueue();
         break;
       case 'bridge/reset':
+        queueUiChange({live: true});
         this.setNotice('与 Codex app-server 的连接已重置，正在重新连接…', 'blocked');
         this.es?.close();
         setTimeout(() => this.reconnect(), 800);

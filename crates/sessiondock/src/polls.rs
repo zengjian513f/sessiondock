@@ -73,6 +73,7 @@ pub struct LiveKey {
     pub runtime: Option<Arc<RuntimeSnapshot>>,
     pub generation: Generation,
     pub rows: Vec<SessionRow>,
+    pub sdk_uids: Vec<String>,
 }
 
 impl LiveKey {
@@ -85,6 +86,7 @@ impl LiveKey {
             }
             && self.generation == other.generation
             && self.rows == other.rows
+            && self.sdk_uids == other.sdk_uids
     }
 }
 

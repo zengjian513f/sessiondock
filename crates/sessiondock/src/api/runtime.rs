@@ -185,6 +185,24 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
         }
         Err(_) => Vec::new(),
     };
+    let mut sdk_uids = BTreeSet::new();
+    if let Some(sdk) = &state.codex_sdk {
+        let loaded = sdk.loaded_threads().await;
+        sdk_uids.extend(
+            rows.iter()
+                .filter(|row| row.source == "codex" && loaded.contains(&row.sid))
+                .map(|row| row.uid.clone()),
+        );
+        for row in sdk.pending() {
+            if row["sid"]
+                .as_str()
+                .is_some_and(|sid| loaded.iter().any(|id| id == sid))
+                && let Some(uid) = row["uid"].as_str()
+            {
+                sdk_uids.insert(uid.to_owned());
+            }
+        }
+    }
     let key = LiveKey {
         scan: match &scanned {
             Ok(snapshot) => ScanState::Scan(snapshot.scan.clone()),
@@ -193,6 +211,7 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
         },
         runtime: shared.as_ref().map(|shared| shared.snapshot.clone()),
         generation,
+        sdk_uids: sdk_uids.into_iter().collect(),
         rows,
     };
     let managed_report = match (&shared, &state.runtime) {
@@ -217,7 +236,16 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
             },
         ));
     }
-    let response = assemble(state, shared.as_ref(), scanned, &key).await?;
+    let mut response = assemble(state, shared.as_ref(), scanned, &key).await?;
+    response["sdk_uids"] = json!(key.sdk_uids);
+    if let Some(uids) = response["uids"].as_array_mut() {
+        for uid in &key.sdk_uids {
+            let uid = json!(uid);
+            if !uids.contains(&uid) {
+                uids.push(uid);
+            }
+        }
+    }
     let response = Arc::new(response);
     state.polls.store_live(key, response.clone());
     Ok(finish(
