@@ -187,7 +187,7 @@ const SessionContentView = {
     }
     return this.kind;
   },
-  open(kind, uid, agent) {
+  open(kind, uid, agent, options = {}) {
     if (this.kind === kind && this.uid === uid && this.agent === agent) {
       if (kind === 'sdk') CodexSdkView.retryOpen();
       return;
@@ -217,7 +217,7 @@ const SessionContentView = {
       this.themeObserver?.disconnect(); this.themeObserver = observer;
       this.pane.append(frame);
     } else if (kind === 'sdk') {
-      CodexSdkView.open(uid, this.pane, agent);
+      CodexSdkView.open(uid, this.pane, agent, options);
     } else {
       this.watchWheel(this.pane);
       SessionDockResources.open(S.sessions.find(row => row.uid === uid) || {uid}, this.pane);

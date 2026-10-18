@@ -35,10 +35,11 @@ const CodexSdkView = {
     return '';
   },
 
-  open(uid, pane, agent = null) {
+  open(uid, pane, agent = null, {historyReady = null} = {}) {
     this.legacyViews.delete(viewKey(uid, agent));
     this.close();
     this.uid = uid; this.agent = agent; this.pane = pane;
+    this.historyReady = historyReady;
     this.pendingAtOpen = !agent && !!this.pending(uid);
     const generation = ++this.generation;
     pane.setAttribute('aria-label', 'Codex SDK');
@@ -83,6 +84,7 @@ const CodexSdkView = {
     this.box = pane.querySelector('.sdk-msgs');
     observeMessageLayout(this.box);
     this.history = pane.querySelector('.sdk-history');
+    if (historyReady) this.history.innerHTML = '<div class="spin">正在读取会话…</div>';
     this.live = pane.querySelector('.sdk-live');
     this.notice = pane.querySelector('.sdk-status');
     this.input = pane.querySelector('#sdk-input');
@@ -138,7 +140,7 @@ const CodexSdkView = {
     this.turn = null; this.summary = null; this.limits = null; this.resetCards = null;
     this.models = []; this.modelChoice = this.effortChoice = null;
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
-    this.uid = ''; this.agent = null; this.historyData = null;
+    this.uid = ''; this.agent = null; this.historyData = null; this.historyReady = null; this.historyFailed = false;
   },
 
   current(generation) { return generation === this.generation && !!this.pane; },
@@ -505,6 +507,12 @@ const CodexSdkView = {
   async refreshHistory(generation, afterTurn = false) {
     if (this.pending(this.uid) && !afterTurn) return;
     try {
+      if (this.historyReady) {
+        const ready = this.historyReady;
+        try { await ready; }
+        finally { if (this.historyReady === ready) this.historyReady = null; }
+        if (!this.current(generation)) return;
+      }
       if (afterTurn && this.pendingAtOpen) {
         await loadSessions(true, true);
         if (!this.current(generation)) return;
@@ -521,10 +529,15 @@ const CodexSdkView = {
         ? {messages: cached.msgs, activity: cached.activity}
         : (await fetchMessages(this.uid, {agent: this.agent})).data;
       if (!this.current(generation)) return;
+      this.historyFailed = false;
       this.historyData = data;
       this.paintHistory();
     } catch (error) {
-      if (this.current(generation)) this.setNotice(`读取历史失败：${error.message || error}`, 'blocked');
+      if (this.current(generation)) {
+        this.historyFailed = true;
+        if (!this.historyData) this.history.innerHTML = `<div class="empty">读取历史失败：${esc(error.message || error)}</div>`;
+        this.setNotice(`读取历史失败：${error.message || error}`, 'blocked');
+      }
     }
   },
 

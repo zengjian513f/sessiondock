@@ -158,6 +158,58 @@ def opening_check(browser, corpus, base, expect, screenshots):
         corpus.paths["sdk"].write_text(before)
 
 
+def loading_check(browser, corpus, base, expect, screenshots):
+    """Cold history cannot delay SDK selection, connection or draft editing."""
+    for width, theme in ((1280, 'light'), (1280, 'dark'), (390, 'light'), (390, 'dark')):
+        context = browser.new_context(viewport={"width": width, "height": 900}, service_workers="block")
+        context.add_init_script("localStorage.setItem('sessiondock.theme', JSON.stringify(" + json.dumps(theme) + "));")
+        page = context.new_page()
+        pending, reads, errors = [], [], []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.route('**/api/messages/**', lambda route: pending.append(route))
+        page.on('request', lambda request: reads.append(request.url) if '/api/messages/' in request.url else None)
+        page.goto(base, wait_until='networkidle')
+        expect(page.locator('html')).to_have_attribute('data-theme', theme)
+        page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+        expect(page.locator('.sdk-pane')).to_be_visible()
+        expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
+        expect(page.locator('#detail h2')).not_to_have_text('控制台')
+        expect(page.locator('#termpane')).to_be_hidden()
+        expect(page.locator('.sdk-gauge[data-gauge="5h"] b')).to_have_text('40%')
+        assert len(pending) == len(reads) == 1, reads
+        page.locator('#sdk-input').fill('Draft while history is loading')
+        if screenshots:
+            screenshots.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(screenshots / f'loading-{width}-{theme}.png'))
+        pending.pop().continue_()
+        expect(page.locator('.sdk-history')).to_contain_text('earlier synthetic answer')
+        expect(page.locator('#sdk-input')).to_have_value('Draft while history is loading')
+        assert len(reads) == 1, reads
+        if width == 1280 and theme == 'light':
+            page.reload(wait_until='domcontentloaded')
+            expect(page.locator('.sdk-history .spin')).to_be_visible()
+            page.locator('#sdk-input').fill('Draft survives a failed history read')
+            assert len(pending) == 1
+            pending.pop().fulfill(status=503, content_type='application/json',
+                body=json.dumps({'error': 'Synthetic history temporarily unavailable'}))
+            expect(page.locator('.sdk-history .empty')).to_contain_text('Synthetic history temporarily unavailable')
+            page.unroute('**/api/messages/**')
+            expect(page.locator('.sdk-history')).to_contain_text('earlier synthetic answer')
+            expect(page.locator('#sdk-input')).to_have_value('Draft survives a failed history read')
+            page.route('**/api/messages/**', lambda route: pending.append(route))
+        # Explicitly leaving SDK while the initial request is pending must stick.
+        page.reload(wait_until='domcontentloaded')
+        expect(page.locator('.sdk-pane')).to_be_visible()
+        page.locator('#a-chat').click()
+        expect(page.locator('.sdk-pane')).to_have_count(0)
+        assert len(pending) == 1
+        pending.pop().continue_()
+        expect(page.locator('#msgs')).to_contain_text('earlier synthetic answer')
+        expect(page.locator('.sdk-pane')).to_have_count(0)
+        assert not errors, errors
+        context.close()
+
+
 def browser_check(corpus, base, fake, screenshots=None):
     from playwright.sync_api import expect, sync_playwright
     with sync_playwright() as playwright:
@@ -166,6 +218,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             launch["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
         browser = playwright.chromium.launch(**launch)
         try:
+            loading_check(browser, corpus, base, expect, screenshots)
             opening_check(browser, corpus, base, expect, screenshots)
             context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
             context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
