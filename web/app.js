@@ -9200,7 +9200,8 @@ function msgNode(m) {
   };
   n.appendChild(body);
   const setAction = addAction(n);
-  const long = m.text.length > CLIP;
+  const collapsible = !['assistant', 'assistant·subagent'].includes(m.role);
+  let long = collapsible && m.text.length > CLIP;
   let expanded = false, needsMore = long;
   const full = () => {
     expanded = true;
@@ -9212,7 +9213,8 @@ function msgNode(m) {
     body.classList.add('clip'); paint(false);
     setAction(`展开全文 (${m.text.length.toLocaleString()} 字符)`, full, false);
   };
-  if (long) hit ? full() : clipped();
+  if (!collapsible) full();
+  else if (long) hit ? full() : clipped();
   else { body.classList.toggle('clip', !hit); expanded = hit; paint(hit); }
   body._refreshClip = () => {
     if (!body.isConnected || expanded) return;
@@ -9220,6 +9222,14 @@ function msgNode(m) {
     body.classList.toggle('has-overflow', needsMore);
     setAction(needsMore ? `展开全文 (${m.text.length.toLocaleString()} 字符)` : '',
       needsMore ? full : null, needsMore ? false : null);
+  };
+  // Preserve the disclosure button and its state while SDK text keeps arriving.
+  n._updateMessage = next => {
+    m = next;
+    long = collapsible && m.text.length > CLIP;
+    needsMore = collapsible && (needsMore || long);
+    if (expanded) full();
+    else { paint(false); body._refreshClip(); }
   };
   if (S.term && S.opts.regex && !found && SEARCH_ROLES.has(m.role)) {
     const generation = regexGeneration;

@@ -253,12 +253,9 @@ def run(binary, screenshots):
                             expect(file_result.locator(':scope > .tool-out')).to_contain_text('1: print("agyfilepreview")')
                             expect(file_result).not_to_contain_text('The following code has been modified')
                             multiline = page.locator('#msgs .msg[data-role=assistant]').filter(has_text='多行短正文 79')
-                            expect(multiline.get_by_role('button', name='展开全文', exact=False)).to_be_visible()
-                            assert multiline.locator('.mb').evaluate('(e) => e.clientHeight') <= 340
-                            multiline.get_by_role('button', name='展开全文', exact=False).click()
+                            expect(multiline.get_by_role('button', name='展开全文', exact=False)).to_have_count(0)
+                            assert multiline.locator('.mb').evaluate('(e) => e.scrollHeight <= e.clientHeight + 1')
                             assert multiline.locator('.mb').evaluate('(e) => e.clientHeight') > 1000
-                            multiline.get_by_role('button', name='收起', exact=True).click()
-                            assert multiline.locator('.mb').evaluate('(e) => e.clientHeight') <= 340
                             multiline.scroll_into_view_if_needed()
                             page.screenshot(path=str(screenshots / f'{theme}-{width}-multiline.png'))
                             command.scroll_into_view_if_needed()

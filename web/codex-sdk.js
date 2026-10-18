@@ -637,7 +637,8 @@ const CodexSdkView = {
   },
 
   applyEvent(method, raw) {
-    const stick = this.nearBottom();
+    // Do not move a disclosure away from the pointer between press and release.
+    const stick = this.nearBottom() && !this.box?.querySelector('.more:active');
     const item = raw.item;
     switch (method) {
       case 'bridge/queue':
@@ -729,6 +730,10 @@ const CodexSdkView = {
     const message = itemMessage(item);
     const old = this.nodes.get(item.id);
     if (!message) { old?.remove(); this.nodes.delete(item.id); return; }
+    if (old?._updateMessage && old.dataset.role === message.role) {
+      old._updateMessage(message);
+      return;
+    }
     const node = msgNode(message);
     node.dataset.sdkItem = item.id;
     CodexSdkActions.decorate(this, node, {...message, turn_id: this.turn?.id});
