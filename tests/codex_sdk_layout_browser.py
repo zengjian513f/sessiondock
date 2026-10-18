@@ -206,6 +206,15 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     rates = fake._bucket(); rates['secondary'] = None; rates['credits']['balance'] = '12345.6'
     asyncio.run_coroutine_threadsafe(fake.notify('account/rateLimits/updated', {'rateLimits': rates}), fake.loop).result(timeout=5)
     expect(page.locator('.sdk-credits')).to_have_text('Credits 12,346')
+    # Rolling notifications are sparse: null is unavailable, not a deletion.
+    expect(page.locator('[data-gauge="7d"]')).to_be_visible()
+    single_row(page)
+    # Only the authoritative account read may remove a missing quota window.
+    page.route('**/api/codex-sdk/limits?*', lambda route: route.fulfill(status=200,
+        content_type='application/json', body=json.dumps({'ok': True, 'raw': {
+            'rateLimits': rates, 'rateLimitsByLimitId': {'codex': rates},
+            'rateLimitResetCredits': {'availableCount': len(fake.cards), 'credits': fake.cards}}})), times=1)
+    notify('turn/completed', {'turn': {'id': 'layout-status-turn', 'status': 'completed', 'items': []}})
     expect(page.locator('[data-gauge="7d"]')).to_be_hidden()
     single_row(page)
     asyncio.run_coroutine_threadsafe(fake.notify('account/rateLimits/updated', {'rateLimits': fake._bucket()}), fake.loop).result(timeout=5)

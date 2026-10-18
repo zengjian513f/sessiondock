@@ -719,10 +719,14 @@ const CodexSdkView = {
       case 'thread/resumed': this.summary = raw.summary || this.summary; this.paintPickers(); break;
       case 'turn/started':
         this.turn = raw.turn; this.items.clear();
-        if (this.summary) this.summary.last_error = null;
+        if (this.summary) { this.summary.last_error = null; this.summary.retry_error = null; }
         break;
       case 'turn/completed':
         this.turn = null; this.items.clear();
+        if (this.summary) {
+          this.summary.retry_error = null;
+          if (raw.turn?.status === 'completed') this.summary.last_error = null;
+        }
         if (raw.turn?.status === 'failed' && raw.turn.error && this.summary) this.summary.last_error = raw.turn.error;
         this.scheduleHistory();
         this.loadLimits();
@@ -730,10 +734,11 @@ const CodexSdkView = {
       case 'thread/reverted':
         this.turn = null; this.items.clear(); this.requests.clear(); this.nodes.clear();
         this.live.replaceChildren();
-        if (this.summary) { this.summary.usage = null; this.summary.last_error = null; }
+        if (this.summary) { this.summary.usage = null; this.summary.last_error = null; this.summary.retry_error = null; }
         this.refreshHistory(this.generation, true);
         break;
       case 'item/started': case 'item/completed':
+        if (this.summary) this.summary.retry_error = null;
         if (item?.type === 'contextCompaction')
           item.status = method === 'item/started' ? 'inProgress' : 'completed';
         if (item?.id) { this.items.set(item.id, item); this.paintItem(item); }
@@ -742,7 +747,11 @@ const CodexSdkView = {
         this.appendDelta(raw.itemId, 'text', raw.delta); break;
       case 'item/commandExecution/outputDelta':
         this.appendDelta(raw.itemId, 'aggregatedOutput', raw.delta); break;
+      case 'item/reasoning/textDelta':
+        if (this.summary) this.summary.retry_error = null;
+        break;
       case 'item/reasoning/summaryTextDelta': {
+        if (this.summary) this.summary.retry_error = null;
         const target = this.items.get(raw.itemId);
         if (target) {
           const parts = Array.isArray(target.summary) ? target.summary : (target.summary = []);
@@ -763,14 +772,20 @@ const CodexSdkView = {
       case 'thread/settings/updated': if (this.summary) this.summary.settings = raw.threadSettings; this.paintPickers(); break;
       case 'thread/tokenUsage/updated': if (this.summary) this.summary.usage = raw.tokenUsage; break;
       case 'account/rateLimits/updated':
-        // 通知只带一个额度桶；只更新正在显示的那个（重置卡等不在其中，保持不变）。
+        // Rolling notifications are sparse: null means unavailable, including
+        // account metadata and windows. Only a complete read removes a window.
         if (raw.rateLimits && (!this.limits || !raw.rateLimits.limitId || raw.rateLimits.limitId === this.limits.limitId)) {
-          this.limits = {...this.limits, ...raw.rateLimits};
+          this.limits = mergeSdkLimits(this.limits, raw.rateLimits);
           this.limitsRecordedAt = null;
           this.limitsFresh = true;
         }
         break;
-      case 'error': if (this.summary) this.summary.last_error = raw.error; break;
+      case 'error':
+        if (this.summary) {
+          this.summary.retry_error = raw.willRetry === true ? raw.error : null;
+          this.summary.last_error = raw.willRetry === true ? null : raw.error;
+        }
+        break;
       default:
         if (SDK_REQUEST_METHODS.has(method)) {
           const request = {key: raw.key, method, params: raw.params || {}};
@@ -786,6 +801,7 @@ const CodexSdkView = {
   },
 
   appendDelta(id, field, delta) {
+    if (this.summary) this.summary.retry_error = null;
     const target = this.items.get(id);
     if (!target) return;
     target[field] = (target[field] || '') + (delta || '');
@@ -854,6 +870,7 @@ const CodexSdkView = {
     const parts = [];
     if (this.limits?.rateLimitReachedType) parts.push('用量已满');
     if (this.summary?.last_error?.message) parts.push(`错误：${this.summary.last_error.message}`);
+    else if (this.summary?.retry_error?.message) parts.push(`正在重试：${this.summary.retry_error.message}`);
     if (!parts.length) {
       if (status.type === 'systemError') parts.push('系统错误');
       else if (status.activeFlags?.includes('waitingOnApproval')) parts.push('待批准');
@@ -911,6 +928,10 @@ const CodexSdkView = {
   paintQueue() {
     const holder = this.pane?.querySelector('.sdk-queue');
     if (!holder) return;
+    // Status/usage deltas must not replace the button between pointerdown/up.
+    const contents = JSON.stringify([!!this.turn, this.summary?.queue || []]);
+    if (holder._sdkQueueBusy || holder._sdkQueueContents === contents) return;
+    holder._sdkQueueContents = contents;
     holder.replaceChildren();
     for (const item of this.summary?.queue || []) {
       const card = document.createElement('div');
@@ -929,6 +950,7 @@ const CodexSdkView = {
         button.disabled = item.state === 'sending' || (action === 'steer' && !this.turn);
         button.onclick = async () => {
           const generation = this.generation;
+          holder._sdkQueueBusy = true;
           for (const node of foot.querySelectorAll('button')) node.disabled = true;
           try {
             await this.request('api/codex-sdk/queue', {uid: this.uid, id: item.id, action});
@@ -941,7 +963,11 @@ const CodexSdkView = {
             }
           }
           catch (error) { if (this.current(generation)) this.setNotice(`队列操作失败：${error.message}`, 'blocked', true); }
-          finally { if (this.current(generation)) this.paintQueue(); }
+          finally {
+            holder._sdkQueueBusy = false;
+            holder._sdkQueueContents = null;
+            if (this.current(generation)) this.paintQueue();
+          }
         };
         controls.append(button);
       }
@@ -974,6 +1000,7 @@ const CodexSdkView = {
         uid: payload.uid, text, attachments: payload.attachments, quotes: payload.quotes,
         model, effort, request_id,
       });
+      if (!await CodexSdkCompose.accepted(this, payload, response, request_id)) return;
       if (this.input === input) {
         if (!response.raw?.steered) {
           if (this.modelChoice === model) this.modelChoice = null;
@@ -1051,6 +1078,16 @@ function userMessageText(item) {
 
 const SDK_JSON = value => typeof value === 'string' ? value : JSON.stringify(value ?? null, null, 2);
 
+function mergeSdkLimits(previous, update) {
+  const merged = {...previous};
+  for (const [key, value] of Object.entries(update)) {
+    if (value == null) continue;
+    merged[key] = typeof value === 'object' && !Array.isArray(value)
+      ? mergeSdkLimits(previous?.[key], value) : value;
+  }
+  return merged;
+}
+
 /** app-server ThreadItem → 消息模式的消息对象，由同一个 msgNode 渲染。 */
 function itemMessage(item) {
   const done = ['completed', 'failed', 'declined'].includes(item.status);
@@ -1087,9 +1124,10 @@ function itemMessage(item) {
     case 'dynamicToolCall':
       return {role: 'tool', name: item.tool, summary: item.tool, text: SDK_JSON(item.arguments),
         result: done ? {role: 'tool_result', text: SDK_JSON(item.contentItems), error: item.success === false || failed} : null};
-    case 'collabToolCall':
+    case 'collabAgentToolCall':
       return {role: 'tool', name: item.tool, summary: `${item.tool}${item.prompt ? ' · ' + item.prompt : ''}`,
-        text: SDK_JSON(item), result: done ? {role: 'tool_result', text: SDK_JSON(item.agentStatus || ''), error: failed} : null};
+        text: SDK_JSON(item), result: done || item.status === 'interrupted'
+          ? {role: 'tool_result', text: SDK_JSON(item.agentsStates || {}), error: failed || item.status === 'interrupted'} : null};
     case 'webSearch':
       return {role: 'tool', name: 'web_search', summary: `搜索 ${item.query || item.action?.query || item.action?.url || ''}`,
         text: SDK_JSON(item.action || item.query)};
@@ -1145,7 +1183,10 @@ function requestCard(request, submit) {
     b.type = 'button';
     b.className = 'btn' + (go ? ' go' : '');
     b.textContent = label;
-    b.onclick = () => submit(typeof result === 'function' ? result() : result);
+    b.onclick = () => {
+      const value = typeof result === 'function' ? result() : result;
+      if (value != null) submit(value);
+    };
     actions.append(b);
     return b;
   };
@@ -1226,9 +1267,19 @@ function requestCard(request, submit) {
         input.placeholder = '按上面的结构填写 JSON';
         input.value = '{}';
         body.append(input);
+        const error = document.createElement('p');
+        error.className = 'sdk-control-error'; error.setAttribute('role', 'alert'); error.hidden = true;
+        body.append(error);
         button('提交', () => {
-          try { return {action: 'accept', content: JSON.parse(input.value || '{}')}; }
-          catch { return {action: 'accept', content: {}}; }
+          try {
+            const content = JSON.parse(input.value);
+            error.hidden = true; input.removeAttribute('aria-invalid');
+            return {action: 'accept', content};
+          } catch (failure) {
+            error.textContent = `JSON 格式无效：${failure.message}`; error.hidden = false;
+            input.setAttribute('aria-invalid', 'true'); input.focus();
+            return null;
+          }
         }, true);
       }
       button('拒绝', {action: 'decline', content: null});

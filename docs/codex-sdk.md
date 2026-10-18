@@ -192,6 +192,11 @@ JSON-RPC `-32601`, so the daemon never waits on an answer nobody can give.
 `serverRequest/resolved` removes the card for every page (and for any other
 client of the daemon).
 
+MCP form answers retain their entered JSON on a parse error and show the error
+inside the request card; invalid JSON never becomes an accepted empty object.
+Native `collabAgentToolCall` items use `agentsStates` for child results and
+statuses, through the existing expandable tool cards.
+
 DELTA (BUG-20261018-050342-5d4448): `request_user_input_async` emits an
 `agentMessage` with `delivery: "async"` and `questions: [{title, options?}]`,
 not a server request. SDK renders these as the existing radio/free-text cards;
@@ -320,7 +325,11 @@ before first SEND does not retain these unpersisted receipts.
   displaying the current setting does not send an override; only a user change applies to the
   started turn and, per app-server semantics, to later turns.
 - The status line shows the last turn error, the rate-limit-reached notice and the
-  waiting state. Status, model/effort/mode selectors, action icons and usage all
+  waiting state. Recoverable errors (`willRetry: true`) show a temporary retry
+  status, cleared by resumed item activity or turn completion. Successful
+  completion clears the prior error; failed completion retains its native
+  `turn.error`, including after a snapshot reload.
+  Status, model/effort/mode selectors, action icons and usage all
   share one toolbar row above the input, with status left and usage/context immediately before the GPT model picker;
   routine labels are 就绪 / 连接中 / 重连中 / 处理中 / 待批准 / 待回答 / 用量已满 /
   系统错误. Status reserves four character widths before optional controls,
@@ -355,6 +364,10 @@ before first SEND does not retain these unpersisted receipts.
   explicit retry or cancellation. An uncertain/disconnected native RPC is never
   automatically replayed; an in-flight entry recovered on restart is marked for
   manual verification. Submission IDs survive draft reload and lost HTTP replies.
+  A cancelled receipt never consumes the composer draft. A retry that discovers
+  that state preserves text, attachments and quotes, clears only that submission
+  ID, and waits for another explicit SEND with a new ID. Unchanged queue entries
+  retain their controls during streamed progress, including a pointer click.
   RPC acceptance is not input consumption: keep the input in `sending` until a
   matching native `item/completed` userMessage confirms it in the returned turn.
   Pre-input compaction can end or be interrupted without consuming that input.
@@ -409,6 +422,9 @@ before first SEND does not retain these unpersisted receipts.
   Failed reads retain the last known values and retry automatically with backoff
   from 1 second up to 30 seconds, without starting a model turn. Only one read is
   in flight per view; closing or switching the view cancels its read and retry.
+  Rolling notifications merge available values into the current bucket; missing
+  or null fields do not erase known windows, credits or account metadata. A full
+  account read replaces the snapshot and can remove a window no longer present.
 
 ## Composer and conversation controls
 
@@ -468,6 +484,9 @@ Additional browser paths: [drafts and attachments](../tests/codex_sdk_compose_br
 [modes, permissions and commands](../tests/codex_sdk_controls_browser.py),
 [FIFO input queues](../tests/codex_sdk_queue_browser.py), and
 [user bubble actions](../tests/codex_sdk_message_actions_browser.py).
+Additional recovery coverage: [cancelled submissions](../tests/codex_sdk_cancel_recovery_browser.py),
+[turn errors](../tests/codex_sdk_errors_browser.py), and
+[native tool, MCP form and sparse quota events](../tests/codex_sdk_protocol_browser.py).
 
 DELTA (subagent SDK views): SDK selection, persisted history, live events, sending,
 steering, interrupt and request replies follow the selected child thread. Switching

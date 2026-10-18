@@ -218,6 +218,21 @@ const CodexSdkCompose = {
     if (state?.uid === payload.uid) { this.paint(view, state); view.fitInput(); }
   },
 
+  async accepted(view, payload, response, requestId) {
+    if (response.raw?.state !== 'cancelled') return true;
+    // A lost cancel reply can leave the draft pointing at a cancelled receipt.
+    // Keep every draft field, but let the next explicit SEND use a fresh ID.
+    const holder = payload.draft || payload.state;
+    if (holder.sdkSubmission?.id === requestId) {
+      delete holder.sdkSubmission;
+      if (payload.draft && !await persistComposerDraft(payload.uid))
+        throw new Error(payload.draft.storageError || '草稿尚未保存');
+    }
+    if (this.states.get(view) === payload.state)
+      view.setNotice('该消息已撤销，草稿已保留；请再次发送。', 'blocked');
+    return false;
+  },
+
   async submission(payload, model, effort, agent) {
     const holder = payload.draft || payload.state;
     const key = JSON.stringify({uid: payload.uid, agent, text: payload.text,
