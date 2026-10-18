@@ -16,6 +16,7 @@ import asyncio
 from contextlib import contextmanager
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -47,7 +48,12 @@ def build(root):
                                     "last_token_usage": {"total_tokens": 800},
                                     "total_token_usage": {"total_tokens": 90000},
                                     "model_context_window": 4000}}),
-                                codex_row("event_msg", {"type": "token_count", "info": None})], [])
+                                codex_row("event_msg", {"type": "token_count", "info": None,
+                                    "rate_limits": {"limit_id": "codex", "primary": {
+                                        "used_percent": 9, "window_minutes": 10080,
+                                        "resets_at": 1800000000}, "secondary": None}}),
+                                codex_row("event_msg", {"type": "token_count", "info": None,
+                                    "rate_limits": None})], [])
     return corpus
 
 
@@ -126,6 +132,8 @@ def opening_check(browser, corpus, base, expect, screenshots):
     expect(page.locator('.sdk-status')).to_have_text("连接中")
     assert len(reads) == 1, reads
     assert held, "SDK connection was not started"
+    # Account reads are independent of a slow thread/resume or active-turn recovery.
+    expect(page.locator('.sdk-gauge[data-gauge="5h"] b')).to_have_text("40%")
     if screenshots:
         screenshots.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(screenshots / "opening-pending.png"))
@@ -137,13 +145,15 @@ def opening_check(browser, corpus, base, expect, screenshots):
     snapshots = []
     page.route("**/api/codex-sdk/events?*", lambda route: snapshots.append(route))
     # A failed open can be retried through the already-selected SDK button.
-    page.locator('#a-sdk').click()
+    with page.expect_request('**/api/codex-sdk/events?*'):
+        page.locator('#a-sdk').click()
     expect(history).to_contain_text("earlier synthetic answer")
     expect(page.locator('.sdk-gauge[data-gauge="5h"] b')).to_have_text("40%")
     assert snapshots, "SDK snapshot was not requested"
     assert len(reads) == 1, reads
     snapshots.pop().continue_()
     expect(page.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text("20%")
+    expect(page.locator('.sdk-gauge[data-gauge="7d"] b')).to_have_text("25%")
     expect(history.locator('.msg[data-role="assistant"]')).to_have_count(1)
     assert len(reads) == 1, reads
     # Re-entering a cached session must include records written while away.
@@ -157,6 +167,62 @@ def opening_check(browser, corpus, base, expect, screenshots):
     finally:
         context.close()
         corpus.paths["sdk"].write_text(before)
+
+
+def usage_opening_check(browser, corpus, base, expect, screenshots):
+    """Recorded gauges appear before a slow account read and the first SSE snapshot."""
+    for width, theme in ((1280, 'light'), (1280, 'dark'), (390, 'light'), (390, 'dark')):
+        context = browser.new_context(viewport={"width": width, "height": 900}, service_workers="block")
+        context.add_init_script("localStorage.setItem('sessiondock.theme', JSON.stringify(" + json.dumps(theme) + "));")
+        page = context.new_page()
+        limits, snapshots = [], []
+        page.route('**/api/codex-sdk/limits?*', lambda route: limits.append(route))
+        page.route('**/api/codex-sdk/events?*', lambda route: snapshots.append(route))
+        page.goto(base, wait_until='networkidle')
+        page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+        pane = page.locator('.sdk-pane')
+        week = pane.locator('.sdk-gauge[data-gauge="7d"]')
+        expect(week.locator('b')).to_have_text('9%')
+        expect(week).to_have_attribute('title', re.compile('上次记录'))
+        expect(pane.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text('20%')
+        assert limits and snapshots, 'the fresh read and live snapshot must still be pending'
+        assert not page.evaluate('CodexSdkView.connected'), 'gauges must not claim a live connection'
+        page.locator('#sdk-input').fill('Draft while account usage refresh is pending')
+        toggle = pane.locator('#sdk-usage-toggle')
+        if toggle.is_visible():
+            toggle.click()
+        expect(week).to_be_visible()
+        if screenshots:
+            screenshots.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(screenshots / f'usage-recorded-{width}-{theme}.png'))
+        # A failed refresh retains the recorded values, then the ordinary retry replaces them.
+        limits.pop(0).fulfill(status=502, content_type='application/json',
+                             body=json.dumps({'ok': False, 'error': 'Synthetic upstream rejection'}))
+        expect(week.locator('b')).to_have_text('9%')
+        page.wait_for_function('CodexSdkView.limitsRetryTimer !== 0')
+        page.unroute('**/api/codex-sdk/limits?*')
+        expect(week.locator('b')).to_have_text('25%', timeout=10000)
+        expect(week).not_to_have_attribute('title', re.compile('上次记录'))
+        snapshots.pop(0).continue_()
+        page.wait_for_function('CodexSdkView.connected')
+        expect(week.locator('b')).to_have_text('25%')
+        expect(page.locator('#sdk-input')).to_have_value('Draft while account usage refresh is pending')
+        if width == 1280 and theme == 'light':
+            # A successful empty account result also outranks recorded windows.
+            page.unroute('**/api/codex-sdk/events?*')
+            pending_open = []
+            page.route('**/api/codex-sdk/open', lambda route: pending_open.append(route))
+            page.route('**/api/codex-sdk/limits?*', lambda route: route.fulfill(
+                status=200, content_type='application/json', body=json.dumps({'ok': True, 'raw': {}})))
+            page.locator('#a-chat').click()
+            with page.expect_response('**/api/codex-sdk/limits?*'):
+                page.locator('#a-sdk').click()
+            page.wait_for_function('CodexSdkView.limitsFresh')
+            pending_open.pop().continue_()
+            page.wait_for_function('CodexSdkView.connected')
+            expect(week).to_be_hidden()
+            expect(pane.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text('20%')
+        context.close()
 
 
 def loading_check(browser, corpus, base, expect, screenshots):
@@ -219,6 +285,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             launch["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
         browser = playwright.chromium.launch(**launch)
         try:
+            usage_opening_check(browser, corpus, base, expect, screenshots)
             loading_check(browser, corpus, base, expect, screenshots)
             opening_check(browser, corpus, base, expect, screenshots)
             context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")

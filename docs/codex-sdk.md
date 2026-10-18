@@ -349,6 +349,19 @@ before first SEND does not retain these unpersisted receipts.
   appears before the next message. It uses the last request's token usage,
   never cumulative session tokens, and does not reuse pre-compaction counts.
   Live usage notifications take precedence over this initial measurement.
+  DELTA (BUG-20261018-094314-a4fd77): the same tail read also recovers recorded
+  Codex quota windows and their timestamp. Open's summary paints context and
+  these windows immediately, before the first SSE snapshot; recorded windows
+  show their capture time in the tooltip. The independent account read starts
+  alongside open, replaces recorded values on success and retains them on failure.
+  Fresh reads/notifications are never replaced by the recorded fallback. Missing
+  native fields stay unknown; compaction still invalidates earlier context counts.
+  The report had native weekly usage of 9% while the server logged a 2.6-second
+  account read and a later 3.2-second rejected read. Previously the page discarded
+  open's summary and waited for SSE plus the separate account round trip. Browser
+  audit did not record SDK RPCs, so it cannot establish the exact first paint time.
+  [SDK browser coverage](../tests/codex_sdk_browser.py) holds both the live read and
+  SSE, verifies recorded gauges, then exercises failed refresh and recovery.
 - 重置卡: shown when `rateLimitResetCredits.availableCount > 0`; a selector lists
   the available cards (title, expiry) and 兑换 asks for confirmation, then posts the
   chosen `credit_id` with an idempotency key that is reused for retries of the
