@@ -35,12 +35,10 @@ async fn tick(
         .collect();
     let reports: Vec<process_links::Report> = stream::iter(targets.clone())
         .map(|(id, target)| async move {
-            let (status, value) = client
-                .json(
+            let (status, report) = client
+                .get_typed::<process_links::Report>(
                     &target,
-                    "GET",
                     "/api/process-links",
-                    None,
                     Duration::from_secs(3),
                 )
                 .await
@@ -48,7 +46,6 @@ async fn tick(
             if status != 200 {
                 return None;
             }
-            let report: process_links::Report = serde_json::from_value(value).ok()?;
             (report.node_id == id).then_some(report)
         })
         .buffer_unordered(8)

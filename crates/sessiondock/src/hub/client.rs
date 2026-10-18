@@ -313,6 +313,37 @@ impl Client {
         Ok((status, value))
     }
 
+    /// A typed GET for large protocol documents: decode once on the bounded
+    /// blocking pool, without an intermediate Value tree on the async worker.
+    pub(crate) async fn get_typed<T: serde::de::DeserializeOwned + Send + 'static>(
+        &self,
+        target: &Target,
+        path: &str,
+        timeout: Duration,
+    ) -> Result<(u16, T), ClientError> {
+        let response = self
+            .open(
+                target,
+                Request {
+                    method: "GET",
+                    target: path,
+                    headers: &[],
+                    body: None,
+                    connect: timeout,
+                    idle: timeout,
+                },
+            )
+            .await?;
+        let status = response.status;
+        let raw = response.into_body().read_to_end(JSON_LIMIT).await?;
+        let value = self
+            .work(move || {
+                serde_json::from_slice(&raw).map_err(|_| ClientError::Invalid("body is not JSON"))
+            })
+            .await??;
+        Ok((status, value))
+    }
+
     /// Connect, send the whole request and read the response head.
     pub async fn open(
         &self,

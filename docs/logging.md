@@ -124,6 +124,14 @@ read phase, 0 ms retiring echoes and 4 ms probing the prompt. The native turn
 had completed before the click, and the lifecycle binding still named its
 running instance; no delivery directory existed. A synthetic five-screenshot
 Chromium open took approximately 0.4 seconds and did not reproduce the stall.
-Concurrent slow live/process requests are correlation, not proof of contention.
-The added phases resolve the diagnostic gap; they do not establish or fix the
-historical delay's cause.
+Follow-up phase logs captured 1519–2271 ms in snapshots with no admission delay.
+The collector returned 71.8 MB / 103k boot-long connection records: liveness,
+catalog acknowledgements and coordinator reads expanded them into a generic JSON
+tree, cloned it and converted it again. Typed decoding on blocking workers and
+bindings-only decoding for liveness remove those unnecessary allocations; the
+coordinator still receives full evidence. In the synthetic 92 MB / 100k-record
+Chromium regression, the old release peaked at 8776 MiB and cold opens took
+468–1838 ms; the fixed release peaked at 285 MiB and took 34–343 ms.
+This reproduces and fixes contention under collector load; the old combined
+trace cannot retrospectively assign every millisecond of its 5830 ms stall.
+See [collector regression](../tests/history_collector_browser.py).

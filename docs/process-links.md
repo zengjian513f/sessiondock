@@ -232,6 +232,14 @@ catalog immediately recomputes attribution against the current process snapshot.
 Catalog delivery still occurs on every existing refresh, including after collector
 restart. Resource sampling remains every two seconds, background catalog refresh
 every five seconds and independent local parent discovery every ten seconds.
+The application decodes collector responses directly into the requested type on
+its blocking worker, without cloning a generic JSON tree. Local liveness,
+background catalog delivery and publication acknowledgements decode only the
+binding fields they consume; unknown fields are validated and skipped. Full
+`/api/process-links` responses still include every retained connection for the
+coordinator. The Hub also decodes the full report directly on its bounded blocking pool.
+The wire requests, boot-long evidence and identity checks are unchanged.
+The large-report Chromium regression is [`history_collector_browser.py`](../tests/history_collector_browser.py).
 Report and resource reads capture immutable snapshots under the attribution
 lock, then serialize and aggregate outside it. Boot-long SSH evidence is streamed
 without first expanding it into a JSON value tree; concurrent readers must not

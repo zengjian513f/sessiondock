@@ -84,7 +84,10 @@ pub struct Resources {
 }
 /// One bounded-time local exchange. Application requests never enter SSH's path.
 #[cfg(unix)]
-pub fn request(path: &Path, request: &Request) -> std::io::Result<serde_json::Value> {
+fn response<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    request: &Request,
+) -> std::io::Result<Option<T>> {
     use std::io::{BufRead, BufReader, BufWriter, Write};
     use std::os::unix::net::UnixStream;
     let mut stream = UnixStream::connect(path)?;
@@ -100,14 +103,25 @@ pub fn request(path: &Path, request: &Request) -> std::io::Result<serde_json::Va
     drop(writer);
     let mut line = String::new();
     BufReader::new(stream).read_line(&mut line)?;
-    let response: serde_json::Value = serde_json::from_str(&line)?;
-    if response["ok"] != true {
+    #[derive(Deserialize)]
+    struct Envelope<T> {
+        ok: bool,
+        result: Option<T>,
+        error: Option<String>,
+    }
+    let response: Envelope<T> = serde_json::from_str(&line)?;
+    if !response.ok {
         return Err(std::io::Error::other(
-            response["error"].as_str().unwrap_or("agent unavailable"),
+            response.error.as_deref().unwrap_or("agent unavailable"),
         ));
     }
-    Ok(response["result"].clone())
+    Ok(response.result)
 }
+#[cfg(unix)]
+pub fn request(path: &Path, request: &Request) -> std::io::Result<serde_json::Value> {
+    response(path, request).map(|result| result.unwrap_or(serde_json::Value::Null))
+}
+
 #[cfg(not(unix))]
 pub fn request(_: &Path, _: &Request) -> std::io::Result<serde_json::Value> {
     Err(std::io::Error::new(
@@ -115,6 +129,47 @@ pub fn request(_: &Path, _: &Request) -> std::io::Result<serde_json::Value> {
         "resource-agent requires Unix",
     ))
 }
-pub fn report(path: &Path) -> std::io::Result<Report> {
-    serde_json::from_value(request(path, &Request::Report)?).map_err(std::io::Error::other)
+/// Decode on the blocking caller directly into the consumer's type. Avoid
+/// constructing, cloning and then consuming a boot-long JSON value tree.
+#[cfg(unix)]
+pub fn request_typed<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    request: &Request,
+) -> std::io::Result<T> {
+    response(path, request)?.ok_or_else(|| std::io::Error::other("agent response has no result"))
+}
+#[cfg(not(unix))]
+pub fn request_typed<T: serde::de::DeserializeOwned>(_: &Path, _: &Request) -> std::io::Result<T> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "resource-agent requires Unix",
+    ))
+}
+
+/// Local liveness/catalog consumers need bindings, not historical TCP evidence.
+/// Skipped fields are still parsed/validated, but never allocated as Values or
+/// connection records. The full report remains available to the coordinator.
+pub fn bindings(path: &Path, request: &Request) -> std::io::Result<Report> {
+    #[derive(Deserialize)]
+    struct Bindings {
+        version: u32,
+        node_id: String,
+        boot_id: String,
+        supported: bool,
+        sampled_at: f64,
+        bindings: Vec<Binding>,
+    }
+    let result: Bindings = request_typed(path, request)?;
+    Ok(Report {
+        version: result.version,
+        node_id: result.node_id,
+        boot_id: result.boot_id,
+        supported: result.supported,
+        sampled_at: result.sampled_at,
+        bindings: result.bindings,
+        outgoing: Vec::new(),
+        incoming: Vec::new(),
+        connections: Vec::new(),
+        collector: None,
+    })
 }

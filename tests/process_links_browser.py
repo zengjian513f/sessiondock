@@ -180,6 +180,7 @@ def standalone_resources(browser, binary, corpus, proc, with_agent, screenshots=
                     page.goto(base, wait_until='networkidle')
                     uid = corpus.uid('parent')
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    expect(page.locator('#msgs')).to_contain_text('a parent')
                     meta = get_json(opener, base, '/api/meta')
                     assert meta['node_id'] == 'a' * 32 and meta['protocol'] == 0, meta
                     report = get_json(opener, base, '/api/process-links')
@@ -187,7 +188,7 @@ def standalone_resources(browser, binary, corpus, proc, with_agent, screenshots=
                     assert any(b['process']['pid'] == 100 and b['session']['sid'] == 'parent'
                                for b in report['bindings']), report
                     page.get_by_role('button', name='列表资源', exact=True).click()
-                    page.locator('#side .item.sel .item-resources').click()
+                    page.locator('#a-resources').click()
                     page.locator('.session-resources .sr-node').first.wait_for()
                     page.get_by_role('button', name='仅当前会话', exact=True).click()
                     page.get_by_role('button', name='刷新资源').click()
@@ -207,7 +208,7 @@ def standalone_resources(browser, binary, corpus, proc, with_agent, screenshots=
                     if screenshots:
                         screenshots.mkdir(parents=True, exist_ok=True)
                         page.screenshot(path=str(screenshots / f'collector-{mode}-{observed}.png'), full_page=True)
-                    page.get_by_role('button', name='关闭资源面板').click()
+                    page.locator('#a-chat').click()
                 finally:
                     context.close()
             print(f'PASS standalone identity; collector {mode}, observed={observed}; browser resources and auth gates', flush=True)
@@ -461,7 +462,7 @@ def main():
                             page.locator(f'[data-uid="{parent}"]').first.click()
                             if page.get_by_role('button', name='列表资源', exact=True).get_attribute('aria-pressed') != 'true':
                                 page.get_by_role('button', name='列表资源', exact=True).click()
-                            page.locator('#side .item.sel .item-resources').click()
+                            page.locator('#a-resources').click()
                             page.locator('.session-resources .sr-node').first.wait_for()
                             gpu = page.locator('.sr-totals .sr-metric').nth(1).locator('dd')
                             expect(gpu).to_have_text('2 张')
@@ -496,14 +497,14 @@ def main():
                             print('PASS local child/grandchild GPU union, independent resume exclusion, worker exit, PID reuse and live-process CUDA release', flush=True)
                             assert page.locator('.session-resources .sr-node').count() == 2
                             assert page.locator('.session-resources [data-scope]').count() == 2
-                            page.get_by_role('button', name='关闭资源面板').click()
+                            page.locator('#a-chat').click()
                             page.locator(f'[data-uid="{uid}"]').first.click()
                             if page.get_by_role('button', name='列表资源', exact=True).get_attribute('aria-pressed') != 'true':
                                 page.get_by_role('button', name='列表资源', exact=True).click()
-                            page.locator('#side .item.sel .item-resources').click()
+                            page.locator('#a-resources').click()
                             page.wait_for_function("document.querySelectorAll('.session-resources .sr-node').length === 1")
                             assert page.locator('.session-resources .sr-node h3').inner_text() == 'b'
-                            page.get_by_role('button', name='关闭资源面板').click()
+                            page.locator('#a-chat').click()
                             print('PASS unrelated online/offline machines hidden, SSH target retained, totals filtered', flush=True)
                             print('PASS real session resources API, opaque UID resolution, remote direct/inclusive PSS, browser resource panel', flush=True)
                         # Once destination reports acknowledge the successful publication,

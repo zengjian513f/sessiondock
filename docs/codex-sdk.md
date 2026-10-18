@@ -41,6 +41,14 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   unpersisted new thread, whose live instance is its only copy)
   (`thread/unsubscribe`). When the connection closes every attached page gets
   `bridge/reset` and reconnects; the next attach opens a new connection.
+  A permanently closed browser EventSource also schedules a reconnect; closing
+  or switching the view cancels that timer. Reconnection retains the unsent draft
+  and recovers the server snapshot without submitting another turn.
+  BUG-20261018-040613-165ffa follow-up: browser audit selected another session
+  from 04:20:53 to 04:31:18 UTC, while this task's native record contains 73 tool
+  calls in that interval. This case did not kill execution on view detach.
+  The browser regression closes the SDK view during a live turn, generates
+  progress while detached and restores it without resume/unsubscribe/interrupt.
 
 ### Terminal coexistence
 
@@ -202,7 +210,8 @@ before first SEND does not retain these unpersisted receipts.
   The history consumer waits for that request's cache admission, so complete
   history is not fetched twice. A manual switch away while it loads is preserved.
   BUG-20261018-040613-165ffa established a 5.9-second history request; this fixes
-  the delayed SDK entry, not the still-unresolved server read delay.
+  the delayed SDK entry. The collector contention fix and its measured limits
+  are recorded in [history opening phases](logging.md#history-opening-phases).
 - History is displayed independently of app-server open and the first SSE snapshot.
   Complete history already read for the selected `(uid, agent)` is reused on entry;
   partial windows still fetch full SDK history. The snapshot reconciles live items
