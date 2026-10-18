@@ -138,7 +138,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
         pane = page.locator('.sdk-pane')
         expect(pane.locator('.sdk-history')).to_contain_text('Child history sentinel ' + agent if agent else 'earlier synthetic answer')
-        page.wait_for_function('CodexSdkView.snapshotReady && CodexSdkView.summary?.settings?.model === "fake-sol"')
+        expect(pane.locator("#sdk-model")).to_have_value("fake-sol")
         assert page.evaluate('CodexSdkView.agent') == agent
         return pane
     root_before = fake.paths[THREAD].read_bytes()
