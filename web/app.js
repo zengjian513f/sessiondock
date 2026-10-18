@@ -6057,12 +6057,17 @@ function watchBottom(box) {
     }
     _lastTop = top;
   });
+  observeMessageLayout(box, () => settle(box));
+}
+
+// Both conversation surfaces need height-based expansion after insertion and resize.
+function observeMessageLayout(box, onLayout = () => {}) {
   // 内容高度变化 (展开消息、渲染完成、字体加载…) 时跟随
   if (window.ResizeObserver) {
     disposeMessageObservers(box);
     const ro = new ResizeObserver(entries => {
       for (const entry of entries) entry.target._refreshClip?.();
-      settle(box);
+      onLayout();
     });
     ro.observe(box);
     // 普通消息只盯底部 30 条，避免上万节点的观察成本；但图片、公式、表格即使
@@ -6088,7 +6093,7 @@ function watchBottom(box) {
         if (n.nodeType === 1) observeRich(n);
       }
       syncTail();
-      settle(box);
+      onLayout();
     });
     mo.observe(box, { childList: true, subtree: true });
     box._mo = mo;

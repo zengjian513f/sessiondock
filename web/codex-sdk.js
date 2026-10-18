@@ -77,6 +77,7 @@ const CodexSdkView = {
         </div>
       </div></div>`;
     this.box = pane.querySelector('.sdk-msgs');
+    observeMessageLayout(this.box);
     this.history = pane.querySelector('.sdk-history');
     this.live = pane.querySelector('.sdk-live');
     this.notice = pane.querySelector('.sdk-status');
@@ -118,6 +119,7 @@ const CodexSdkView = {
     this.es?.close();
     this.es = null;
     this.toolbarObserver?.disconnect(); this.toolbarObserver = null;
+    disposeMessageObservers(this.box);
     this.toolbarBindings?.abort(); this.toolbarBindings = null;
     this.toolbarWidth = null; this.toolbarLayout = null;
     this.closeToolbarMenus();
