@@ -2554,6 +2554,7 @@ header .btn[data-session-docked] { display: none; }
 .sdk-pickers > .new-effort { position: relative; flex: none; min-width: 0; }
 .sdk-pickers > .sdk-model { width: var(--sdk-model-width, 160px); }
 .sdk-pickers > .sdk-effort { width: var(--sdk-effort-width, 72px); }
+.native-sdk-pane { --sdk-model-width: clamp(72px, calc(100vw - 240px), 160px); }
 .sdk-pickers > .sdk-mode { width: 96px; }
 .sdk-pickers > .sdk-tier { width: 84px; }
 /* Native select painting ignores line-height; use the toolbar text line box. */

@@ -1729,8 +1729,8 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
   // activity 与 CLI 画面都随数据包到达，左栏和会话头的回合状态跟着重画。
   finally {
     if (!agent) paintTurn(uid);
-    if (typeof CodexSdkView !== 'undefined' && CodexSdkView.uid === uid && CodexSdkView.agent === agent)
-      CodexSdkView.useHistory(cache.get(viewKey(uid, agent)));
+    if (typeof SdkView !== 'undefined' && SdkView.uid === uid && SdkView.agent === agent)
+      SdkView.useHistory(cache.get(viewKey(uid, agent)));
   }
 }
 
@@ -2047,8 +2047,8 @@ function syncSession(uid, agent = S.agent) {
       keepAlive();
       const { data, bytes } = await fetchMessages(uid, {
         agent, start: e.end, head: e.version.head, anchor: e.anchor,
-        windowed: !!e.partial || (typeof CodexSdkView !== 'undefined'
-          && CodexSdkView.uid === uid && CodexSdkView.agent === agent),
+        windowed: !!e.partial || (typeof SdkView !== 'undefined'
+          && SdkView.uid === uid && SdkView.agent === agent),
         signal: ac.signal, onActivity: keepAlive });
       return await applyDiff(uid, data, bytes, agent);
     } catch (error) {
@@ -2237,8 +2237,8 @@ function sessionLiveStatus(uid) {
     ? composerDrafts.get(composerDraftOwner(uid)) : null;
   const tmux = S.liveTmux.has(uid)
     || (draft?.cli?.instance?.running === true && !!takenOver(uid));
-  const sdk = S.liveSdk.has(uid) || (typeof CodexSdkView !== 'undefined'
-    && CodexSdkView.uid === uid && !CodexSdkView.agent && CodexSdkView.connected === true);
+  const sdk = S.liveSdk.has(uid) || (typeof SdkView !== 'undefined'
+    && SdkView.uid === uid && !SdkView.agent && SdkView.connected === true);
   return {live: S.live.has(uid) || tmux || sdk, tmux, sdk};
 }
 
@@ -3579,7 +3579,7 @@ async function deleteSessions(uids, button = null) {
     if (!sessionsByUid.has(session.uid)) sessionsByUid.set(session.uid, session);
   }
   const requested = new Set(uids);
-  const pending = [...pendingTmuxSessions(), ...T.sdkSessions.filter(row => CodexSdkView.pending(row.uid))]
+  const pending = [...pendingTmuxSessions(), ...T.sdkSessions.filter(row => SdkView.pending(row.uid))]
     .filter(session => requested.has(session.uid));
   const pendingIds = new Set(pending.map(session => session.uid));
   const recorded = uids.filter(uid => !pendingIds.has(uid));
@@ -3610,7 +3610,7 @@ async function deleteSessions(uids, button = null) {
     for (const info of pending) {
       try {
         if (info.sdk_pending) {
-          const result = await post('api/codex-sdk/discard', {uid:info.uid});
+          const result = await post(String(info.uid).startsWith('codex:') ? 'api/codex-sdk/discard' : 'api/native-sdk/discard', {uid:info.uid});
           if (result.error) throw new Error(result.error);
           T.sdkSessions = T.sdkSessions.filter(row => row.uid !== info.uid);
         } else await discardPendingSession(info);
@@ -4015,7 +4015,7 @@ function openItemMenu(uid, x, y) {
   const row = list.find(session => session.uid === uid);
   const parent = !!row?.fork_parent;
   const running = sessionStoppable(uid);
-  const unusedLaunch = CodexSdkView.pending(uid) || (!row?.pending && unusedNewAssignedLaunch(row));
+  const unusedLaunch = SdkView.pending(uid) || (!row?.pending && unusedNewAssignedLaunch(row));
   // 运行中的 SSH 会话先停止，结束后才删除；未使用的原生启动仍可直接丢弃。
   const shellRunning = typeof pendingShellRunning === 'function' && pendingShellRunning(row);
   const nested = !!(row?.nest_parent?.source && row.nest_parent.sid);
@@ -5766,7 +5766,7 @@ function scheduleOpenRetry(uid, agent, ac) {
   const key = viewKey(uid, agent);
   const attempt = (openRetries.get(key) || 0) + 1;
   const box = SessionContentView.kind === 'sdk'
-    ? CodexSdkView.history?.querySelector('.empty') : $('#detail .empty');
+    ? SdkView.history?.querySelector('.empty') : $('#detail .empty');
   const retry = () => {
     if (S.sel !== uid || S.agent !== agent || inflight !== ac) return;
     openRetries.set(key, attempt);
@@ -5911,7 +5911,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   S.sel = uid;
   S.agent = selectedAgent;
   SessionContentView.sync();
-  if (SessionContentView.kind === 'sdk') CodexSdkView.retryOpen();
+  if (SessionContentView.kind === 'sdk') SdkView.retryOpen();
   renderNetworkNotice();
   syncSessionNotices();
   clearUnread(uid);
@@ -5922,7 +5922,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   updateSessionUrl(uid, selectedAgent, historyMode);
 
   const key = viewKey(uid, selectedAgent);
-  const sdkPending = !selectedAgent && CodexSdkView.pending(uid);
+  const sdkPending = !selectedAgent && SdkView.pending(uid);
   if (sdkPending) {
     await renderSession(sdkPending, [], null, {startWatch:false});
     return;
@@ -5934,8 +5934,8 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     await renderSession(hit.meta, hit.msgs, hit.activity, { startWatch: false });
     if (S.sel === uid && S.agent === selectedAgent) {
       await syncSession(uid, selectedAgent);
-      if (CodexSdkView.uid === uid && CodexSdkView.agent === selectedAgent && CodexSdkView.pane)
-        await CodexSdkView.refreshHistory(CodexSdkView.generation);
+      if (SdkView.uid === uid && SdkView.agent === selectedAgent && SdkView.pane)
+        await SdkView.refreshHistory(SdkView.generation);
       if (S.sel === uid && S.agent === selectedAgent) watchSession(uid, selectedAgent);
     }
     return;
@@ -5943,7 +5943,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
 
   if (!follow) {
     $('#detail').innerHTML = '<div class="spin">正在读取会话…</div>';
-    ensureConsolePlaceholder(CodexSdkView.defaultFor(uid, selectedAgent)
+    ensureConsolePlaceholder(SdkView.defaultFor(uid, selectedAgent)
       ? S.sessions.find(row => row.uid === uid)?.title || 'Codex SDK' : '控制台');
     auditDetailRendered('loading');
   }
@@ -5965,11 +5965,11 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     });
     // Choose the requested surface before waiting for history. Its independent
     // SDK connection can start now; history reuses this read once cached.
-    if (!SessionContentView.kind && CodexSdkView.defaultFor(uid, selectedAgent))
+    if (!SessionContentView.kind && SdkView.defaultFor(uid, selectedAgent))
       SessionContentView.open('sdk', uid, selectedAgent, {historyReady});
-    else if (SessionContentView.kind === 'sdk' && CodexSdkView.historyFailed) {
-      CodexSdkView.historyReady = historyReady;
-      CodexSdkView.refreshHistory(CodexSdkView.generation);
+    else if (SessionContentView.kind === 'sdk' && SdkView.historyFailed) {
+      SdkView.historyReady = historyReady;
+      SdkView.refreshHistory(SdkView.generation);
     }
     res = await historyReady;
   } catch (e) {
@@ -5977,7 +5977,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     if (S.sel !== uid || S.agent !== selectedAgent) return;
     progressDone();
     $('#detail').innerHTML = `<div class="empty">读取失败: ${esc(e.message)}</div>`;
-    ensureConsolePlaceholder(CodexSdkView.defaultFor(uid, selectedAgent)
+    ensureConsolePlaceholder(SdkView.defaultFor(uid, selectedAgent)
       ? S.sessions.find(row => row.uid === uid)?.title || 'Codex SDK' : '控制台');
     if (!reportReadFailure(uid, selectedAgent, e)) scheduleOpenRetry(uid, selectedAgent, ac);
     auditDetailRendered('load-failed', {error: String(e.message || e).slice(0, 300)});
@@ -6184,17 +6184,17 @@ function currentHistoryPage(request) {
 }
 
 function sdkHistoryPageGeneration(uid, agent, button) {
-  return typeof CodexSdkView !== 'undefined' && CodexSdkView.uid === uid
-    && CodexSdkView.agent === agent && CodexSdkView.history?.contains(button)
-    ? CodexSdkView.generation : null;
+  return typeof SdkView !== 'undefined' && SdkView.uid === uid
+    && SdkView.agent === agent && SdkView.history?.contains(button)
+    ? SdkView.generation : null;
 }
 
 function historyPageRoot(request) {
-  return request.sdkGeneration != null ? CodexSdkView.history : $('#msgs');
+  return request.sdkGeneration != null ? SdkView.history : $('#msgs');
 }
 
 function historyPageBox(request) {
-  return request.sdkGeneration != null ? CodexSdkView.box : $('#msgs');
+  return request.sdkGeneration != null ? SdkView.box : $('#msgs');
 }
 
 const HISTORY_PAGE_MAX_EVENTS = 10000;   // 服务端 SESSIONDOCK_HISTORY_PAGE_EVENTS 的上限
@@ -6358,7 +6358,7 @@ async function loadHistoryPage(uid, agent, button) {
     trimCache();
     await renderSession(entry.meta, entry.msgs, entry.activity, {startWatch: false, historyPageEntry: entry});
     if (currentHistoryPageEntry(request)) {
-      if (request.sdkGeneration != null) CodexSdkView.useHistory(entry, true);
+      if (request.sdkGeneration != null) SdkView.useHistory(entry, true);
       restoreHistoryPageScroll(top, scrollTop, entry, request);
       if (failure) historyPageFailure(request, historyPageRoot(request)?.querySelector('.history-gap-load'), failure);
     }
@@ -6374,8 +6374,8 @@ async function loadHistoryPage(uid, agent, button) {
 function currentHistoryPageEntry(request) {
   return S.sel === request.uid && S.agent === request.agent
     && inflight === request.viewRequest && cache.get(request.key) === request.entry
-    && (request.sdkGeneration == null || (CodexSdkView.current(request.sdkGeneration)
-      && CodexSdkView.uid === request.uid && CodexSdkView.agent === request.agent));
+    && (request.sdkGeneration == null || (SdkView.current(request.sdkGeneration)
+      && SdkView.uid === request.uid && SdkView.agent === request.agent));
 }
 
 async function reloadHistoryWindow(uid, agent, button) {
@@ -6432,8 +6432,8 @@ async function loadFullHistory(uid, agent, button) {
     S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
     if (S.sel === uid && S.agent === agent) {
       await renderSession(data.meta, data.messages, data.activity, {showProgress: true});
-      if (CodexSdkView.uid === uid && CodexSdkView.agent === agent)
-        CodexSdkView.useHistory(cache.get(key), true);
+      if (SdkView.uid === uid && SdkView.agent === agent)
+        SdkView.useHistory(cache.get(key), true);
     }
   } catch (e) {
     if (e.name !== 'AbortError') {
@@ -6529,7 +6529,7 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
   if (seq === renderSeq && S.sel === uid && S.agent === agent) {
     renderMigrationReadFailure(uid, agent);
     if (startWatch) watchSession(meta.uid, agent); // 之后的更新由服务端推过来
-    if (!SessionContentView.kind && CodexSdkView.defaultFor(uid, agent)) SessionContentView.open('sdk', uid, agent);
+    if (!SessionContentView.kind && SdkView.defaultFor(uid, agent)) SessionContentView.open('sdk', uid, agent);
     if (!SessionContentView.kind && typeof restoreTermPane === 'function') restoreTermPane(uid, agent);
     scheduleBrowserSnapshot('rendered');
   }
@@ -7105,7 +7105,7 @@ function head(m, total) {
     const label = S.compactTurns ? '展开所有过程' : '折叠已完成过程';
     turnMode.title = turnMode.ariaLabel = label;
     labelSessionAction(turnMode);
-    const box = SessionContentView.kind === 'sdk' ? CodexSdkView.history : $('#msgs');
+    const box = SessionContentView.kind === 'sdk' ? SdkView.history : $('#msgs');
     box?.querySelectorAll(':scope > .turn-process').forEach(
       node => S.compactTurns ? node._fold?.() : node._open?.());
     refreshMessageTimeDividers(box);
@@ -7412,7 +7412,7 @@ function renderSessionAction(m, button = $('#a-session-action')) {
     button.onclick = () => deletePendingSession(launch, button);
     return;
   }
-  setControlUnavailable(button, !CodexSdkView.pending(m.uid) && sessionStoppable(m.uid) ? '请先停止会话再删除。' : '');
+  setControlUnavailable(button, !SdkView.pending(m.uid) && sessionStoppable(m.uid) ? '请先停止会话再删除。' : '');
   button.onclick = () => del(m);
 }
 
@@ -7543,7 +7543,7 @@ const opencodeDeleteNote = () => 'OpenCode 会话会从 OpenCode 直接删除（
 const agyDeleteNote = () => 'Agy 会话会永久删除，不进回收站，无法恢复。';
 
 async function del(m) {
-  if (CodexSdkView.pending(m.uid)) return deleteSessions([m.uid]);
+  if (SdkView.pending(m.uid)) return deleteSessions([m.uid]);
   const opencode = m.source === 'opencode';
   const agy = m.source === 'agy';
   if (!await appConfirm(`删除会话「${m.title}」?\n\n${opencode ? opencodeDeleteNote() : agy ? agyDeleteNote() : trashLocationNote()}`)) return;
@@ -11389,11 +11389,11 @@ async function openExternalSession(spec, historyMode = 'replace') {
     return true;
   }
   let route = routeSession(spec), sidebarCatalog = null;
-  if (!route && spec.startsWith('codex:')) {
+  if (!route && /^(codex|claude|grok|opencode|agy):/.test(spec)) {
     await waitForTermList();
     if (sequence !== deepLinkSequence || href !== location.href || selected !== S.sel) return true;
     const pendingRoute = routeSession(spec, T.sdkSessions || []);
-    const pending = CodexSdkView.pending(pendingRoute?.uid || spec);
+    const pending = SdkView.pending(pendingRoute?.uid || spec);
     if (pending) { await openSession(pending.uid, null, {historyMode}); return true; }
   }
   if (S.childMode === 'hidden' && (!route || !sidebarRowNode(route.uid, route.agent))) {
@@ -11466,10 +11466,10 @@ loadSessions(!!DEEP_SID).then(async ok => {
   const restoreDetail = !MOBILE.matches || store.get('mobilePage', 'list') === 'detail';
   if (restoreDetail && last && S.sessions.some(s => s.uid === last)) {
     openSession(last, savedAgent?.uid === last ? savedAgent.id : null);
-  } else if (restoreDetail && last?.startsWith('codex:')) {
+  } else if (restoreDetail && /^(codex|claude|grok|opencode|agy):/.test(last || '')) {
     await waitForTermList();
     if (S.sel || store.get('sel', null) !== last) return;
-    if (CodexSdkView.pending(last)) await openSession(last, null, {historyMode:'replace'});
+    if (SdkView.pending(last)) await openSession(last, null, {historyMode:'replace'});
     else leaveBootDetail();
   } else if (restoreDetail && last?.startsWith('tmux:')) {
     // New launches have no native history yet. Their durable identity comes

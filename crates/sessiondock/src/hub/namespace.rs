@@ -156,8 +156,10 @@ fn rewrite(data: Value, node: &Node, path: &str, strict: bool) -> Result<Value, 
             decorate_rows(rows, node, false, false)?;
         }
     }
-    if matches!(path, "/api/codex-sdk/create" | "/api/codex-sdk/fork")
-        && let Some(row) = result.get_mut("session").and_then(Value::as_object_mut)
+    if matches!(
+        path,
+        "/api/codex-sdk/create" | "/api/codex-sdk/fork" | "/api/native-sdk/create"
+    ) && let Some(row) = result.get_mut("session").and_then(Value::as_object_mut)
     {
         decorate_row(row, node, false, false)?;
     }

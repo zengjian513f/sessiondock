@@ -31,6 +31,14 @@ function newDirsKey() { return HUB_MODE ? 'newDirs.' + newNodeId() : 'newDirs'; 
 function newNodeCapabilities() { return HUB_MODE ? Nodes.capabilities[newNodeId()] || {} : T; }
 function newCodexSdkEnabled() { return SessionDockCapabilities.config.codex_sdk === true
   && (!HUB_MODE || newNodeCapabilities().codex_sdk === true); }
+function newSdkEnabled(source) {
+  if (source === 'codex') return newCodexSdkEnabled();
+  return SessionDockCapabilities.config.native_sdks?.[source] === true
+    && (!HUB_MODE || newNodeCapabilities().native_sdks?.[source] === true);
+}
+function anyNewSdkEnabled() {
+  return ['codex','claude','grok','opencode','agy'].some(newSdkEnabled);
+}
 function sessionTerminalEnabled(uid) {
   return typeof T !== 'undefined' && (HUB_MODE ? !!Nodes.capabilities[nodeOf(uid)]?.enabled : T.enabled);
 }
@@ -172,7 +180,7 @@ const SessionContentView = {
     this.kind = '';
     this.themeObserver?.disconnect();
     SessionDockResources.closeEmbedded();
-    CodexSdkView.close();
+    SdkView.close();
     this.pane?.remove();
     this.pane = null;
     $('#right').classList.remove('session-content-view');
@@ -189,14 +197,14 @@ const SessionContentView = {
   },
   open(kind, uid, agent, options = {}) {
     if (this.kind === kind && this.uid === uid && this.agent === agent) {
-      if (kind === 'sdk') CodexSdkView.retryOpen();
+      if (kind === 'sdk') SdkView.retryOpen();
       return;
     }
     this.close();
     this.kind = kind; this.uid = uid; this.agent = agent;
     this.pane = document.createElement('section');
     this.pane.id = 'session-content-view';
-    this.pane.setAttribute('aria-label', {info: '会话信息', sdk: 'Codex SDK'}[kind] || '会话资源');
+    this.pane.setAttribute('aria-label', {info: '会话信息', sdk: 'SDK'}[kind] || '会话资源');
     $('#right').append(this.pane);
     $('#right').classList.add('session-content-view');
     if (kind === 'info') {
@@ -217,7 +225,7 @@ const SessionContentView = {
       this.themeObserver?.disconnect(); this.themeObserver = observer;
       this.pane.append(frame);
     } else if (kind === 'sdk') {
-      CodexSdkView.open(uid, this.pane, agent, options);
+      SdkView.open(uid, this.pane, agent, options);
     } else {
       this.watchWheel(this.pane);
       SessionDockResources.open(S.sessions.find(row => row.uid === uid) || {uid}, this.pane);
@@ -229,7 +237,7 @@ const SessionContentView = {
 
 function consoleButtonMarkup() {
   return `<div class="seg session-views" role="group" aria-label="会话视图">
-    <button id="a-sdk" type="button" title="SDK" aria-label="Codex SDK" aria-pressed="false" hidden>${uiIcon('sdk')}</button>
+    <button id="a-sdk" type="button" title="SDK" aria-label="SDK" aria-pressed="false" hidden>${uiIcon('sdk')}</button>
     <button id="a-chat" type="button" title="对话" aria-label="对话" aria-pressed="true" class="on">${uiIcon('chat')}</button>
     <button id="a-term" type="button" title="终端" aria-label="终端" aria-pressed="false">${uiIcon('terminal')}</button>
     <button id="a-info" type="button" title="信息" aria-label="信息">${uiIcon('info')}</button>
@@ -243,7 +251,7 @@ function bindConsoleButton(button, uid, agent = null) {
   if (group) {
     group.querySelector('#a-chat').onclick = () => {
       if (S.sel !== uid || S.agent !== agent) return;
-      CodexSdkView.legacyViews.add(viewKey(uid, agent));
+      SdkView.legacyViews.add(viewKey(uid, agent));
       SessionContentView.close();
       if (MOBILE.matches && !sessionTerminalFirst(uid)) closeTermPane();
       else {
@@ -255,7 +263,7 @@ function bindConsoleButton(button, uid, agent = null) {
       }
     };
     const info = group.querySelector('#a-info');
-    const infoReason = String(uid).startsWith('tmux:') || CodexSdkView.pending(uid) ? '会话尚未落盘，暂时没有会话信息。'
+    const infoReason = String(uid).startsWith('tmux:') || SdkView.pending(uid) ? '会话尚未落盘，暂时没有会话信息。'
       : agent ? '请切换到主会话查看会话信息。'
       : SessionDockCapabilities.config.session_relations !== true ? '此服务尚未提供会话信息。' : '';
     setControlUnavailable(info, infoReason);
@@ -265,15 +273,15 @@ function bindConsoleButton(button, uid, agent = null) {
     };
     const sdk = group.querySelector('#a-sdk');
     if (sdk) {
-      // Codex 主会话及其子代理共用 SDK 视图。
-      sdk.hidden = !CodexSdkView.available(uid, agent);
-      sdk.onclick = () => { if (CodexSdkView.available(uid, agent)) SessionContentView.open('sdk', uid, agent); };
+      // 各来源按节点原生协议能力开放 SDK 视图。
+      sdk.hidden = !SdkView.available(uid, agent);
+      sdk.onclick = () => { if (SdkView.available(uid, agent)) SessionContentView.open('sdk', uid, agent); };
     }
   }
   button.onclick = async () => {
     const reason = consoleUnavailableReason(uid, agent, false);
     if (reason) { paintConsoleAvailability(button, uid, agent); return; }
-    CodexSdkView.legacyViews.add(viewKey(uid, agent));
+    SdkView.legacyViews.add(viewKey(uid, agent));
     SessionContentView.close();
     // 上次连接失败不再拦一道确认框：点击直接重新接入并显示 pty，失败时明确提示原因。
     ConsoleUI.busy.add(uid);
@@ -439,7 +447,7 @@ function prepareNewNode() {
   select.replaceChildren();
   for (const n of Nodes.list) {
     const available = Nodes.capabilities[n.id]?.enabled
-      || (!newContinueOrigin && Nodes.capabilities[n.id]?.codex_sdk === true);
+      || (!newContinueOrigin && (Nodes.capabilities[n.id]?.codex_sdk === true || Object.values(Nodes.capabilities[n.id]?.native_sdks || {}).some(Boolean)));
     const option = document.createElement('option');
     option.value = n.id;
     option.textContent = n.name + (available ? '' : '（离线）');
@@ -484,7 +492,7 @@ function refreshNewNodeFields() {
   cwdCompletion.common = commonSessionDirs();
   cwdCompletion.commonLoading = true;
   for (const input of document.querySelectorAll('input[name="new-source"]')) {
-    input.disabled = !(input.value === 'codex' && !newContinueOrigin && newCodexSdkEnabled())
+    input.disabled = !(!newContinueOrigin && newSdkEnabled(input.value))
       && !cap.sources?.[input.value] || (input.value === 'shell' && !!newContinueOrigin);
     const name = SOURCES[input.value]?.name || (input.value === 'shell' ? 'SSH' : input.value);
     input.closest('label').title = input.disabled ? `${name}：此机器未安装或未配置该客户端` : name;
@@ -500,7 +508,7 @@ function refreshNewNodeFields() {
     renderCommonCwdOptions();
   });
   document.querySelector('#new-session-error').textContent = '';
-  document.querySelector('#new-session-go').disabled = !cap.enabled && !newCodexSdkEnabled();
+  document.querySelector('#new-session-go').disabled = !cap.enabled && !anyNewSdkEnabled();
   renderCommonCwdOptions();
   void loadSharedCwdOptions();
 }

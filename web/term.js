@@ -244,6 +244,7 @@ async function fetchTermList(node = '') {
     T.sdkSessions = data.sdk_sessions || [];
     T.resume_sources = data.resume_sources || {};
     T.codex_sdk = data.codex_sdk === true;
+    T.native_sdks = data.native_sdks || {};
     T.bug_report = data.bug_report === true;
     T.bug_report_worker = data.bug_report_worker === true;
     syncBugReportAvailability();
@@ -322,7 +323,7 @@ async function fetchTermList(node = '') {
     if (typeof layoutHeader === 'function') layoutHeader();
   }
   renderTakeoverBtn();
-  if (!SessionContentView.kind && cache.has(viewKey(S.sel, S.agent)) && CodexSdkView.defaultFor(S.sel, S.agent))
+  if (!SessionContentView.kind && cache.has(viewKey(S.sel, S.agent)) && SdkView.defaultFor(S.sel, S.agent))
     SessionContentView.open('sdk', S.sel, S.agent);
   for (const button of document.querySelectorAll('[data-continue-session]')) {
     button.hidden = !continueSessionEnabled();
@@ -2245,8 +2246,8 @@ async function createNewSession(e) {
     const request = { source, cwd, cols: 120, rows: newCreateAttempt.rows,
       request_id: requestId, ...(origin ? {continuation_uid:origin.uid} : {}), ...(HUB_MODE ? {_node: newNodeId()} : {}),
       ...NewModels.choice() };
-    const sdk = source === 'codex' && newCodexSdkEnabled() && !origin;
-    const endpoint = sdk ? 'api/codex-sdk/create' : 'api/term/create';
+    const sdk = newSdkEnabled(source) && !origin;
+    const endpoint = sdk ? (source === 'codex' ? 'api/codex-sdk/create' : 'api/native-sdk/create') : 'api/term/create';
     let d = await post(endpoint, request);
     if (d.needs_create) {
       const target = String(d.cwd || cwd);
@@ -2263,7 +2264,7 @@ async function createNewSession(e) {
     if (sdk) {
       if (d.session) T.sdkSessions = [...T.sdkSessions.filter(row => row.uid !== d.uid), d.session];
       $('#new-session-dialog').close();
-      CodexSdkView.legacyViews.delete(d.uid);
+      SdkView.legacyViews.delete(d.uid);
       await openSession(d.uid);
       void loadSessions(true, true);
       return;
@@ -2375,7 +2376,7 @@ function renderTakeoverBtn() {
   const paneOpen = !!name && !$('#termpane').classList.contains('hidden');
   const contentView = SessionContentView.sync();
   const sdk = $('#a-sdk');
-  if (sdk) sdk.hidden = !CodexSdkView.available(S.sel, S.agent);
+  if (sdk) sdk.hidden = !SdkView.available(S.sel, S.agent);
   const terminalVisible = !contentView && paneOpen && (T.mode === 'full' || (MOBILE.matches && !sessionTerminalFirst(S.sel)));
   b.innerHTML = uiIcon('terminal');
   b.title = b.ariaLabel = '终端';
@@ -3031,7 +3032,7 @@ function rememberTermOpen(name, open) {
 }
 
 function restoreTermPane(uid, agent = null) {
-  if (SessionContentView.kind || CodexSdkView.defaultFor(uid, agent)) return;
+  if (SessionContentView.kind || SdkView.defaultFor(uid, agent)) return;
   if (T.ended.has(uid)) return;
   if (!uid || agent || S.sel !== uid || !sessionTerminalEnabled(uid) || !$('#a-term')) return;
   const name = takenOver(uid);
@@ -4393,7 +4394,7 @@ async function followServerDraft(uid, revision = null) {
 /** A draft changed on the server (UI event): read it now instead of at the
  *  next input CHECK. A read already in flight may predate that write. */
 function followPushedDraft() {
-  if (CodexSdkView.pane) void CodexSdkCompose.follow(CodexSdkView);
+  if (SdkView.pane) void CodexSdkCompose.follow(SdkView.active);
   if (!composerUid) return;
   if (composerFollowBusy) { composerFollowPushed = true; return; }
   void followServerDraft(composerUid, Infinity);
@@ -4592,7 +4593,7 @@ function pendingStartedAt(info, fallback = Date.now() / 1000) {
 }
 
 function rememberComposerSession(draft, info) {
-  const previous = draft.session?.name === info.name ? Number(draft.session.started) : 0;
+  const previous = draft.session && draft.session.name === info.name ? Number(draft.session.started) : 0;
   draft.session = Object.fromEntries(['uid', 'name', 'source', 'cwd', 'node_id', 'node_name',
     'record_id', 'launch_id', 'instance_id', 'title', 'kind', 'report_id']
     .filter(key => info[key] != null).map(key => [key, info[key]]));

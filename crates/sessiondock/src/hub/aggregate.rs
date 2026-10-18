@@ -407,6 +407,7 @@ fn term_list_body(nodes: Vec<Value>, answers: &[Answer]) -> Value {
                 "unavailable_reason": reason,
                 "sources": get("sources", json!({})),
                 "codex_sdk": answer.ok() && get("codex_sdk", json!(false)) == true,
+                "native_sdks": if answer.ok() { get("native_sdks", json!({})) } else { json!({}) },
                 "conversation_send": answer.ok() && get("conversation_send", json!(false)) == true,
                 "conversation_path_completion": answer.ok() && get("conversation_path_completion", json!(false)) == true,
                 "bug_report": answer.ok() && get("bug_report", json!(false)) == true,

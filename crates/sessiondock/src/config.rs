@@ -20,6 +20,9 @@ pub struct Config {
     /// Codex app-server control socket: a socket path, or `off`. Unset uses
     /// the shared daemon beside the Codex sessions root and may start it.
     pub codex_app_server: Option<String>,
+    /// `SESSIONDOCK_NATIVE_SDKS=off` keeps configured CLI profiles in their
+    /// ordinary terminal mode. Otherwise native SDK bridges are available.
+    pub native_sdk_enabled: bool,
     /// Opt-in isolated terminal transport. No implicit host discovery.
     pub ptyhost_dir: Option<PathBuf>,
     /// SessionDock-owned preferences and grants.
@@ -268,6 +271,7 @@ impl Default for Config {
             },
             codex_index: None,
             codex_app_server: None,
+            native_sdk_enabled: true,
             ptyhost_dir: None,
             state_dir: None,
             lifecycle_dir: None,
@@ -432,6 +436,7 @@ impl Config {
                 ));
             }
         };
+        config.native_sdk_enabled = env::var("SESSIONDOCK_NATIVE_SDKS").as_deref() != Ok("off");
         if let Some(path) = env::var_os("SESSIONDOCK_PROC_ROOT") {
             config.proc_root = PathBuf::from(path);
         }

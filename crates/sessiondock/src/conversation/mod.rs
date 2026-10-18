@@ -67,6 +67,7 @@ pub struct Conversations {
     pub writer: Arc<WriteService>,
     reports: Option<Arc<crate::bug_report::BugReportService>>,
     codex_sdk: Option<Arc<crate::codex_sdk::CodexSdk>>,
+    native_sdks: Option<Arc<crate::native_sdk::NativeSdks>>,
     locks: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
     /// Per-session CLI state (docs/cli-state.md).
     pub cli: cli_state::Registry,
@@ -91,12 +92,17 @@ impl Conversations {
             writer,
             reports,
             codex_sdk: None,
+            native_sdks: None,
             locks: Mutex::new(HashMap::new()),
             cli: cli_state::Registry::default(),
         }
     }
     pub fn with_codex_sdk(mut self, sdk: Option<Arc<crate::codex_sdk::CodexSdk>>) -> Self {
         self.codex_sdk = sdk;
+        self
+    }
+    pub fn with_native_sdks(mut self, sdks: Arc<crate::native_sdk::NativeSdks>) -> Self {
+        self.native_sdks = Some(sdks);
         self
     }
     /// Remembers the identity key under the requested UID and, for a launch
@@ -374,6 +380,17 @@ impl Conversations {
         Ok(())
     }
     pub async fn identity(&self, uid: &str) -> Result<Identity, Failure> {
+        if let Some(row) = self.native_sdks.as_ref().and_then(|sdks| sdks.receipt(uid)) {
+            return Ok(Identity {
+                key: self.store.canonical(uid),
+                uid: uid.to_owned(),
+                source: row["source"].as_str().unwrap_or_default().to_owned(),
+                sid: row["sid"].as_str().unwrap_or_default().to_owned(),
+                cwd: PathBuf::from(row["cwd"].as_str().unwrap_or_default()),
+                record: None,
+                resolved: None,
+            });
+        }
         if let Some(row) = self
             .codex_sdk
             .as_ref()
@@ -783,6 +800,28 @@ impl Conversations {
     }
     pub async fn send(&self, input: SendInput) -> Result<Value, Failure> {
         self.send_with_prompt(input, None).await
+    }
+    /// A native SDK accepted this input. Consume the same submitted draft
+    /// fields as ordinary SEND, including after the requesting page leaves.
+    pub async fn sdk_accepted(
+        &self,
+        uid: &str,
+        id: &str,
+        draft: &Value,
+        result: Value,
+    ) -> Result<(), Failure> {
+        let identity = self.identity(uid).await?;
+        let payload = json!({"text":draft["text"],
+            "attachments":draft["attachments"].as_array().into_iter().flatten().map(|a|json!({"upload_id":a["upload_id"],"number":a["number"]})).collect::<Vec<_>>(),
+            "quotes":draft["quotes"].as_array().cloned().unwrap_or_default()});
+        self.store.begin(&identity.key, id, payload)?;
+        self.store.finish(
+            &identity.key,
+            id,
+            "sent",
+            result,
+            draft["draft_revision"].as_u64(),
+        )
     }
     pub async fn send_with_prompt(
         &self,
