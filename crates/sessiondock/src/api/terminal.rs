@@ -833,11 +833,12 @@ pub async fn list(
         .as_deref()
         .is_some_and(|query| query.split('&').any(|pair| pair == "force=1"));
     let generation = super::runtime::lifecycle_generation(&state);
-    let sdk_sessions = state
+    let mut sdk_sessions = state
         .codex_sdk
         .as_ref()
         .map(|sdk| sdk.pending())
         .unwrap_or_default();
+    sdk_sessions.extend(state.native_sdks.pending());
     let has_sdk_receipts = !sdk_sessions.is_empty();
     if !force
         && !has_sdk_receipts
@@ -882,6 +883,7 @@ pub async fn list(
         "unavailable_reason":"没有通过完整会话 UID 和实例校验的运行中终端；创建和 CLI 接管尚未启用。",
         "sources":{},"home":home,"sessions":[],"pending":[],"hosts":[],
         "codex_sdk": state.codex_sdk.is_some(),
+        "native_sdks": state.native_sdks.capabilities(),
         "conversation_send": state.conversations.is_some(),
         "conversation_path_completion": state.conversations.is_some(),
         "sdk_sessions": sdk_sessions,

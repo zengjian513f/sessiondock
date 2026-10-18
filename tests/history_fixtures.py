@@ -497,6 +497,7 @@ def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Pat
     base = f"http://127.0.0.1:{port}"
     environment.update({"SESSIONDOCK_BIND": f"127.0.0.1:{port}",
                         "SESSIONDOCK_CODEX_APP_SERVER": "off",
+                        "SESSIONDOCK_NATIVE_SDKS": "off",
                         "SESSIONDOCK_WEB_DIR": str(frontend_dir())})
     if state_dir is not None:
         assert state_dir.resolve().is_relative_to(corpus.root.resolve())

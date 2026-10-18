@@ -94,7 +94,9 @@ fn completed_editor_value(
     key: &str,
     value: &Value,
 ) -> Option<Value> {
-    let id = value["requestId"].as_str()?;
+    let id = value["requestId"]
+        .as_str()
+        .or_else(|| value["sdkSubmission"]["id"].as_str())?;
     let row = requests.get(&format!("{key}\0{id}"))?;
     if row.phase != "sent" {
         return None;
@@ -107,6 +109,7 @@ fn completed_editor_value(
     let mut candidates = Vec::new();
     if let Some(body) = value["requestText"]
         .as_str()
+        .or_else(|| value["sdkSubmission"]["key"].as_str())
         .and_then(|s| serde_json::from_str::<Value>(s).ok())
     {
         candidates.push(normalize(&body));
@@ -134,6 +137,9 @@ fn completed_editor_value(
         .into_iter()
         .find(|body| fingerprint(body) == row.payload)?;
     let mut next = value.clone();
+    if next["sdkSubmission"]["id"] == id {
+        next.as_object_mut()?.remove("sdkSubmission");
+    }
     if next["text"] == submitted["text"] {
         next["text"] = json!("");
     }

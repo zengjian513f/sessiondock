@@ -186,6 +186,7 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
         Err(_) => Vec::new(),
     };
     let mut sdk_uids = BTreeSet::new();
+    sdk_uids.extend(state.native_sdks.loaded_uids());
     if let Some(sdk) = &state.codex_sdk {
         let loaded = sdk.live_threads().await;
         sdk_uids.extend(

@@ -26,6 +26,7 @@ pub(crate) use views::{
 };
 mod providers;
 mod records;
+pub(crate) use records::scanner as native_json;
 pub(crate) use records::string_reader::JsonStringReader;
 mod scope;
 pub(crate) mod sidebar;

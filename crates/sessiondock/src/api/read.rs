@@ -64,6 +64,7 @@ pub async fn list(
         .unwrap_or_default();
     let scanner = state.proc_scan.clone();
     let metadata = state.metadata.clone();
+    let native_sdks = state.native_sdks.clone();
     state
         .reader
         .run(move |store| {
@@ -72,6 +73,12 @@ pub async fn list(
                 &query.sig,
                 (query.children == "hidden").then_some((expanded.as_slice(), node_id.as_str())),
                 |rows| {
+                    native_sdks
+                        .observe_inventory(rows)
+                        .map_err(|message| SessionError {
+                            status: 503,
+                            message,
+                        })?;
                     if let (Some(scanner), Some(metadata)) = (&scanner, &metadata) {
                         crate::runtime::spawn::prepare_list(scanner, metadata, rows).map_err(
                             |error| SessionError {

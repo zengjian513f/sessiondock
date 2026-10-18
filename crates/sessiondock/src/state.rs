@@ -89,6 +89,7 @@ pub struct AppState {
     pub ui_events: Arc<crate::ui_events::EventBus>,
     /// Shared Codex app-server bridge; `None` keeps `/api/codex-sdk/*` 501.
     pub codex_sdk: Option<Arc<crate::codex_sdk::CodexSdk>>,
+    pub native_sdks: Arc<crate::native_sdk::NativeSdks>,
     /// Login-shell environment drift (`SESSIONDOCK_SHELL_ENV_COMMAND`);
     /// `None` answers `/api/shell-env` with `configured: false`.
     pub shell_env: Option<Arc<crate::shell_env::ShellEnv>>,

@@ -7,11 +7,13 @@
 //! The hub binary has its own configuration and router:
 //! `hub_config::HubConfig` + `hub_api::hub_app`.
 
+pub mod agy_sdk;
 mod api;
 mod assets;
 pub mod audit;
 pub mod bridge;
 pub mod bug_report;
+pub mod claude_sdk;
 mod cleanup;
 pub mod codex_sdk;
 pub mod config;
@@ -20,6 +22,7 @@ pub mod delivery;
 mod error;
 pub mod files;
 pub mod fingerprint;
+pub mod grok_sdk;
 pub mod hub;
 pub mod hub_config;
 pub mod integrations;
@@ -30,7 +33,9 @@ pub mod log;
 pub mod media;
 pub mod metadata;
 mod native_replay;
+pub mod native_sdk;
 mod observe;
+pub mod opencode_sdk;
 pub mod polls;
 pub mod quota_statusline;
 pub mod quotas;
@@ -238,6 +243,7 @@ fn build_app(
     launch_adapters: Vec<state::LaunchAdapter>,
     quotas: Arc<quotas::Quotas>,
 ) -> io::Result<BuiltApp> {
+    let native_sdks = native_sdk::NativeSdks::new(&config, shutdown.clone())?;
     let audit = config
         .audit_dir
         .clone()
@@ -316,6 +322,8 @@ fn build_app(
     .map(|endpoint| codex_sdk::CodexSdk::new(endpoint, shutdown.clone(), config.state_dir.clone()))
     .transpose()?;
     capabilities["codex_sdk"] = serde_json::json!(codex_sdk.is_some());
+    capabilities["native_sdks"] = native_sdks.capabilities();
+    capabilities["native_sdk_unavailable"] = native_sdks.unavailable();
     // Explicit private trash directory only; routes stay 501 without it.
     let trash = config
         .trash_dir
@@ -550,7 +558,8 @@ fn build_app(
                     writer.clone(),
                     bug_report.as_ref().map(|ctx| ctx.service.clone()),
                 )
-                .with_codex_sdk(codex_sdk.clone()),
+                .with_codex_sdk(codex_sdk.clone())
+                .with_native_sdks(native_sdks.clone()),
             ))
         }
         _ => None,
@@ -620,6 +629,7 @@ fn build_app(
         polls: Arc::new(polls::PollCache::default()),
         ui_events,
         codex_sdk,
+        native_sdks,
     };
     api::cleanup::spawn(state.clone());
     runtime::process_links::spawn(state.clone());

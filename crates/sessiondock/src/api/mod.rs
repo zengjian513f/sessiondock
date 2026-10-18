@@ -19,6 +19,7 @@ pub mod hub;
 pub(crate) mod lifecycle;
 mod media;
 mod metadata;
+mod native_sdk;
 pub(crate) mod node_auth;
 mod process_links;
 mod quotas;
@@ -271,6 +272,8 @@ pub fn router() -> Router<AppState> {
             ))),
         )
         // Codex SDK mode: the shared app-server daemon behind one connection.
+        .route("/native-sdk/events", get(native_sdk::events))
+        .route("/native-sdk/{method}", post(native_sdk::call))
         .route("/codex-sdk/create", post(codex_sdk::create))
         .route("/codex-sdk/discard", post(codex_sdk::discard))
         .route("/codex-sdk/open", post(codex_sdk::open))

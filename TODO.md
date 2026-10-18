@@ -23,6 +23,12 @@
 
 ## Native interaction semantics
 
+- [ ] 按[五种 SDK 功能审计](docs/sdk-feature-audit.md)补齐已确认的遗漏：优先
+  Agy 等来源的用量底栏、Agy effort 控件、明确的命令分流；随后处理持久队列/
+  撤销重试/原生消费确认、各来源支持的分支/回退/压缩/模式权限、结构化图片和
+  Grok 问答/计划批准。审计表中的“待”先核实原生语义，“限”和 Codex 专有能力
+  不伪造；本次只完成审计，没有交付这些运行功能。
+
 - [ ] 跟进 BUG-20261018-122932-0e7a3c 另报的 SDK 等待现象：原生回复和工具调用
   均早于 PTY 点击/连接，尚不能确认执行停滞；旧审计缺少 SDK 包，无法还原准确显示延迟。
   [时间线与回归](docs/codex-sdk.md#terminal-coexistence) 已记录；隔离测试确认无 PTY
