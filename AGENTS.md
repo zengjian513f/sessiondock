@@ -29,13 +29,30 @@
 - Never commit deployment addresses, personal absolute paths, credentials,
   runtime data, build outputs, or local environment files.
 - `origin` is `zengjian513f/sessiondock`. Every completed change must be
-  validated, committed, pushed and deployed immediately, without another
-  confirmation. Do not stop at a local commit. Stage only this task's changes;
+  validated, committed and pushed immediately, without another confirmation.
+  Deploy runtime changes under the scope rules below. Do not stop at a local commit. Stage only this task's changes;
   preserve concurrent edits. Report validation, push and deployment failures
   accurately, including which targets remain incomplete.
 - Hub SSH: `ecs-user@driftnode.cn`.
-- Every change includes build as applicable, validation, push, deployment,
-  restart and health check. Deployment is sufficient when at least one
+- Match validation and delivery to the changed artifacts:
+  - Frontend-only changes run the affected Chromium suites and visual checks,
+    then deploy with `--web-only --targets <affected-node-and-hub-targets>`.
+    Select only targets that serve the frontend; exclude resource-agent targets.
+    Do not rebuild or replace backend/ptyhost binaries, restart resource agents,
+    or run unrelated suites for a frontend fix. Keep the required web-service
+    restart, health check and rollback through the deployment tool.
+  - Rules/docs-only changes run doc checks, commit and push; no production
+    build, deployment or restart. Test-only and deploy-script-only changes also
+    do not publish unchanged runtime artifacts; validate their affected scope.
+  - Backend or resource-agent changes build, validate and deploy only affected
+    artifacts and targets. Full-fleet publication is not the default.
+  - A deployment-tool bug or overly broad test mapping is not a reason to widen
+    the release. Select the proper targets/checks or fix the tool; never work
+    around frontend-only failures by doing a full deployment. If targeted checks
+    already passed, `--test none` may avoid repeating unrelated mapped suites;
+    record the actual checks and do not describe this flag as validation.
+- Runtime releases include build as applicable, validation, push, deployment,
+  restart and health check. For frontend/service releases, deployment is sufficient when at least one
   SessionDock node AND the Hub have successfully deployed, restarted and
   passed health checks. Other offline or unsuccessful targets are recorded
   for later delivery; they do not block engineering completion or its goal.
@@ -44,7 +61,8 @@
   Deploy the committed HEAD unless the user names another source; the build
   ignores other sessions' uncommitted edits (`--allow-dirty PATH` names extras).
   Preserve sessions, state and concurrent changes; keep a rollback.
-  Use `python3 deploy/deploy.py deploy --all` (build once, push every target,
+  Use `python3 deploy/deploy.py deploy` with the scoped flags above (`--all`
+  only when every target is affected; build once, push selected targets,
   verify, auto-rollback; `docs/deployment.md`) and `deploy/fleet_status.py`
   for the read-only fleet table; do not hand-roll scp/restart sequences.
 

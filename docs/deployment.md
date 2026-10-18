@@ -22,12 +22,25 @@
 
 Linux 节点及 Hub 可在 `extra.expected_hostname` 填写目标 `hostname` 的完整输出。
 部署 probe 会核对实际主机名，不一致则跳过该目标并使整轮失败，上传和重启均不会执行。
-先用 `python3 deploy/fleet_status.py` 检查连通性、节点标识和现有版本，
-再运行 `python3 deploy/deploy.py deploy --all`。Linux 产物在当前构建机编译一次；
+先按改动范围选择产物与目标；需要发布时用 `python3 deploy/fleet_status.py` 检查连通性、节点标识和现有版本，
+再运行 `python3 deploy/deploy.py deploy` 并指定对应参数。Linux 产物在当前构建机编译一次；
 构建机的架构和 glibc 基线须兼容 Linux 目标，macOS/Windows 仍在目标机原生构建。
 不同构建机的独立 checkout 不共享部署锁，执行前须确认没有另一轮部署。
 
 ## 命令
+
+发布范围遵循 [AGENTS.md](../AGENTS.md#scope-and-boundaries)：
+
+- 纯前端修正只运行受影响的 Chromium 套件和看图验收，使用
+  `deploy --web-only --targets <相关节点及Hub名称>`；从本地清单选出提供前端的目标，
+  排除 `resource-agent`。不重建或替换后端、ptyhost，不重启资源代理。
+  Web 服务的重启、健康检查和回滚仍由部署工具完成。
+- 纯规则/文档只做文档检查、提交和推送，不构建、部署或重启生产服务。
+  纯测试或部署脚本修改同样不发布未变化的运行产物，只验证相关范围。
+- 后端、资源代理按实际受影响的产物和目标发布；仅全部目标都受影响时用 `--all`。
+- 工具故障或测试映射过宽不能扩大发布范围。特别是纯前端发布遇到资源代理缺产物错误，
+  应排除无关目标或修工具，不得改成全量发布。已独立完成针对性验证时可用 `--test none`
+  避免重复执行无关套件，但必须记录实际验证结果，不能把该参数当成验证。
 
 ```sh
 python3 deploy/deploy.py build    [--allow-dirty PATH ...] [--without-ptyhost] [--web-only]
@@ -53,7 +66,7 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 - `push`：默认取 `target/deploy/` 下最新的 stage，默认并行 4、保留 5 份备份（`0` = 不清理）、健康
   超时 45 s。`--dry-run` 只做 probe 并打印每台的计划，什么都不上传。离线或禁用的目标记为
   `SKIPPED`（未更新），不使命令失败；真实部署失败仍退出 1。全离线也会逐项报告跳过，不声称已部署。
-  每次改动仍须立即部署、重启和健康检查；至少一台 SessionDock 节点和 Hub 成功
+  运行产物改动仍须按上述范围立即部署、重启和健康检查；前端/服务发布至少一台 SessionDock 节点和 Hub 成功
   即满足部署要求。其余节点离线或部署失败逐项记录待补发，不阻塞工程或 goal，
   不要求反复轮询；不能把全部节点成功或整轮退出码为零另加为完成条件。
   `push` 在构建机上**从不跑测试**（它只是把已构建的 stage 发出去），但会先打印这个 stage 是按哪种模式
