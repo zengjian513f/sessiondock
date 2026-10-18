@@ -33,3 +33,10 @@ directly until you initialize the independent public repository.
 
 The exporter appends the complete Python entry-point inventory below. This list
 records available tools, not a claim that every suite was run for this release.
+
+## CI scope
+
+`deploy/ci_plan.py` selects suites from changed files and helper imports. Docs-only
+changes run checks without building the app; frontend jobs build only browser
+prerequisites. Rust jobs check affected packages. Manual `full` requests complete
+synthetic acceptance; real CLI suites remain opt-in.

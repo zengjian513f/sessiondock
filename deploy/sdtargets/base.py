@@ -85,7 +85,7 @@ class DeployOptions:
     keep_backups: int = 5
     health_timeout: float = 45.0
     log_dir: Path = Path("target/deploy")
-    # Test mode the stage was built with (deploy.py --test): tests run once per PLATFORM.
+    # Test mode recorded by the snapshot validation gate.
     # Linux nodes and the hub receive the binary already tested on the build machine;
     # kinds that build natively (macos-node, windows-node) run a Rust compile check inside
     # stage() after extracting the source and before building, unless "none".

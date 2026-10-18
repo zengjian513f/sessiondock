@@ -80,8 +80,8 @@ copy /y "%SD_RUNTIME%\bin\sessiondock.exe" "%SD_BACKUP%\sessiondock.exe"
 
 ```sh
 python3 deploy/deploy.py build
-python3 deploy/deploy.py push --targets <name> --dry-run   # 只 probe，并把要上传的三份 .cmd 全文打印出来
-python3 deploy/deploy.py push --targets <name>
+python3 deploy/deploy.py push --stage <stage> --targets <name> --dry-run   # 只 probe，并把要上传的三份 .cmd 全文打印出来
+python3 deploy/deploy.py push --stage <stage> --targets <name>
 python3 deploy/deploy.py rollback --targets <name> --backup <SD_RUNTIME>\backup-deploy-<short>-<UTC stamp>
 ```
 

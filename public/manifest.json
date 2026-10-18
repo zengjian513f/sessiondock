@@ -4,7 +4,8 @@
     "Cargo.toml", "Cargo.lock", ".gitignore",
     "crates/sessiondock/", "crates/process-links/", "crates/resource-agent/",
     "crates/ptyhost/", "crates/ptyhost-client/", "crates/ptyhost-screen/",
-    "web/", "tests/", "deploy/release.py", "deploy/resource-agent.service",
+    "web/", "tests/", "deploy/release.py", "deploy/ci_plan.py", "deploy/testplan.py", "deploy/check.py",
+    "deploy/resource-agent.service",
     "deploy/sys-fs-resctrl.mount", "docs/resource-agent.md"
   ],
   "optional": ["LICENSE", "LICENSE.md", "LICENSE.txt"],

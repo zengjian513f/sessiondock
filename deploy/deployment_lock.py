@@ -19,7 +19,7 @@ def repository_lock(root: Path) -> Path:
 class DeploymentLock:
     """Never unlink the lock file: crash recovery is the kernel's responsibility."""
 
-    def __init__(self, path: Path, command: str, timeout: float | None = None):
+    def __init__(self, path: Path, command: str, timeout: float | None = 30):
         self.path, self.command, self.timeout = path, command, timeout
         self.fd: int | None = None
 

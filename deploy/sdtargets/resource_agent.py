@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import shlex
 import time
+import tarfile
+import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 from .base import TargetHandler, ProbeResult, VerifyResult, register, failed_probe
@@ -10,7 +12,6 @@ from .base import TargetHandler, ProbeResult, VerifyResult, register, failed_pro
 q = shlex.quote
 UNIT = 'resource-agent.service'
 SOCKET = '/run/resource-agent/agent.sock'
-ROOT = Path(__file__).resolve().parents[2]
 HEALTH = """import socket,json
 try:
  s=socket.socket(socket.AF_UNIX);s.settimeout(3);s.connect('/run/resource-agent/agent.sock');s.sendall(b'{"op":"health"}\\n');r=json.loads(s.makefile('rb').readline());print(json.dumps(r.get('result',{})))
@@ -42,8 +43,16 @@ class ResourceAgentHandler(TargetHandler):
         _, temp = self.sh.run('mktemp -d /tmp/resource-agent-deploy.XXXXXX', check=True)
         self.temp = temp.strip()
         self.sh.upload(self.a.binaries['resource-agent'], self.temp+'/resource-agent')
-        self.sh.upload(ROOT/'deploy/resource-agent.service', self.temp+'/resource-agent.service')
-        self.sh.upload(ROOT/'deploy/sys-fs-resctrl.mount', self.temp+'/sys-fs-resctrl.mount')
+        if not self.a.source_archive:
+            raise RuntimeError('collector requires the committed source archive')
+        with tarfile.open(self.a.source_archive) as archive, tempfile.TemporaryDirectory(prefix='sd-collector-units-') as tmp:
+            for name in ('resource-agent.service', 'sys-fs-resctrl.mount'):
+                data = archive.extractfile('deploy/' + name)
+                if data is None:
+                    raise RuntimeError('missing snapshot unit: ' + name)
+                local = Path(tmp) / name
+                local.write_bytes(data.read())
+                self.sh.upload(local, self.temp + '/' + name)
         self.sh.run("printf '%s\n' "+q(self.a.version)+' > '+q(self.temp+'/resource-agent.version'), check=True)
         config = f'MONITOR_UID={self.uid}\nNODE_ID_FILE={self.node_file}\n'
         self.sh.run("printf '%s' "+q(config)+' > '+q(self.temp+'/resource-agent.env'),check=True)

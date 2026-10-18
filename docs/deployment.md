@@ -1,10 +1,7 @@
 # 舰队部署工具 `deploy/deploy.py`
 
-`deploy/deploy.py` 把"在构建机上 release 构建一次，再推到每台机器"的手工流程固定下来：每台目标机
-按同一套步骤走，失败自动回滚，最后给出对齐表格和 JSON 报告。它取代的手工做法（备份到
-`backup-deploy-*`、`bin/sessiondock.new` + `mv`、`rsync -a --delete web/ <PREFIX>/web/`、重启、curl
-`/api/meta`）形状不变，所以旧备份和新备份长得一样。不要把真实地址写进任何被跟踪的文件；
-真实清单只在未跟踪的 `deploy/targets.local.json`。
+`deploy/deploy.py` 从同一提交快照构建、验证并发布到选定目标，失败自动回滚。
+真实清单只在未跟踪的 `deploy/targets.local.json`；不要把真实地址写进被跟踪文件。
 
 ## 从任意构建机执行
 
@@ -32,21 +29,21 @@ Linux 节点及 Hub 可在 `extra.expected_hostname` 填写目标 `hostname` 的
 发布范围遵循 [AGENTS.md](../AGENTS.md#scope-and-boundaries)：
 
 - 纯前端修正只运行受影响的 Chromium 套件和看图验收，使用
-  `deploy --web-only --targets <相关节点及Hub名称>`；从本地清单选出提供前端的目标，
+  `deploy --web-only --targets <相关节点及Hub名称> --test-suites <相关套件>`；从本地清单选出提供前端的目标，
   排除 `resource-agent`。不重建或替换后端、ptyhost，不重启资源代理。
   Web 服务的重启、健康检查和回滚仍由部署工具完成。
 - 纯规则/文档只做文档检查、提交和推送，不构建、部署或重启生产服务。
   纯测试或部署脚本修改同样不发布未变化的运行产物，只验证相关范围。
 - 后端、资源代理按实际受影响的产物和目标发布；仅全部目标都受影响时用 `--all`。
-- 工具故障或测试映射过宽不能扩大发布范围。特别是纯前端发布遇到资源代理缺产物错误，
-  应排除无关目标或修工具，不得改成全量发布。已独立完成针对性验证时可用 `--test none`
-  避免重复执行无关套件，但必须记录实际验证结果，不能把该参数当成验证。
+- 共享文件可用 `--test-suites <名称,名称>` 明确本次行为所需的套件。已经独立完成
+  同一产物的相关验证时，可用 `--test none` 避免重复，记录实际结果。
+- 修改服务 unit、mount 等运行配置仍按相关组件验收和发布，不能当作纯脚本文档修改。
 
 ```sh
-python3 deploy/deploy.py build    [--allow-dirty PATH ...] [--without-ptyhost] [--web-only]
-                                  [--test none|affected|full] [--test-base REF] [--test-timeout S]
-python3 deploy/deploy.py push     [--targets a,b | --all] [--stage DIR] [--web-only | --bin-only]
-                                  [--without-ptyhost] [--dry-run] [--parallel N] [--keep-backups N]
+python3 deploy/deploy.py build    [--allow-dirty PATH ...] [--with-ptyhost] [--web-only]
+                                  [--test none|affected|full] [--test-base REF] [--test-suites NAMES]
+python3 deploy/deploy.py push     [--targets a,b | --all] --stage DIR [--web-only | --bin-only]
+                                  [--with-ptyhost] [--dry-run] [--parallel N] [--keep-backups N]
                                   [--health-timeout S] [--targets-file PATH] [-v]
 python3 deploy/deploy.py deploy   # build → test → push，标志相同；--test 在这里默认 affected
 python3 deploy/deploy.py rollback --targets X [--backup DIR]
@@ -57,13 +54,15 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
   stage，构建只列出它们。源码树检出到私有构建 worktree `target/deploy/tree`，在那里用独立的
   `--target-dir target/deploy/cargo-target` 编译，web 快照也取自同一棵树；固定路径让增量缓存在
   多次部署间有效。
-  ptyhost 默认一并构建和发布（`--without-ptyhost` 关闭；`--with-ptyhost` 仍可用，要求 stage 带
-  ptyhost）。`--web-only` 完全不跑 cargo。默认 `--targets-file` 是
+  `deploy` 只构建选定 Linux 目标声明的二进制；原生构建目标从同一 source.tar 构建。
+  ptyhost 仅在相关代码变化时用 `--with-ptyhost` 加入。单独 `build` 使用清单中的
+  `build.packages`；二进制名只选择该二进制。`--web-only` 不跑 Cargo。默认 `--targets-file` 是
   `deploy/targets.local.json`（缺省时退回 `targets.example.json`），其中 `build` 段给出 cargo
   路径与包名；`sessiondock-hub` 是 `sessiondock` 包里的第二个 bin，工具用 `cargo metadata` 解析。
   前端 `web/` 按快照原样进入 stage，不执行任何 Node 构建。
-  `--test`（默认 `none`，build 常用来做 dry run）在构建完成后按[测试门](#测试门build--test--push)跑测试。
-- `push`：默认取 `target/deploy/` 下最新的 stage，默认并行 4、保留 5 份备份（`0` = 不清理）、健康
+  `--test`（单独 build 默认 `none`）在构建完成后按[测试门](#测试门build--test--push)跑测试。
+- `push`：必须显式传入 `--stage DIR`，不自动取其他任务的最新 stage。默认并行 4、
+  保留 5 份备份（`0` = 不清理）、健康
   超时 45 s。`--dry-run` 只做 probe 并打印每台的计划，什么都不上传。离线或禁用的目标记为
   `SKIPPED`（未更新），不使命令失败；真实部署失败仍退出 1。全离线也会逐项报告跳过，不声称已部署。
   运行产物改动仍须按上述范围立即部署、重启和健康检查；前端/服务发布至少一台 SessionDock 节点和 Hub 成功
@@ -72,7 +71,10 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
   不要求反复轮询；不能把全部节点成功或整轮退出码为零另加为完成条件。
   `push` 在构建机上**从不跑测试**（它只是把已构建的 stage 发出去），但会先打印这个 stage 是按哪种模式
   验证过的（`stage tests: mode=… result=… base=… suites=…`）。
-- `deploy`：build → test → push。`--test` 默认 `affected`；任一套件失败就退出 1，**什么都不上传**。
+- `deploy`：build → test → push。`--test` 默认 `affected`；验证失败则不上传。
+  `deploy --dry-run` 只输出本地目标、产物和测试计划，不构建、不跑测试、不访问远端。
+  `push --stage DIR --dry-run` 只探测目标并打印已有产物的发布计划。
+  web-only 自动排除无前端的资源代理；缺少目标所需二进制在上传前报错。
 - `rollback`：不给 `--backup` 时取目标机上**mtime 最新**的 `backup-deploy-*`（手工备份的时间戳是
   本地时间、本工具是 UTC，按名字排不可靠）。`--backup` 只接受匹配
   `backup-deploy-<hex>-<YYYYmmdd>-<HHMMSS>` 的目录。
@@ -83,14 +85,14 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 
 `build`、`deploy`、`push`、`rollback` 启动后先获取 Git common directory 下的
 `sessiondock-deploy.lock`，整个命令结束才释放；`deploy` 的 build → test → push 共用一次
-持锁。同一仓库的多个会话及所有 worktree 互斥，不同目标也排队。默认持续等待，
-每 30 秒显示持锁 PID、命令和开始时间；`--lock-timeout SECONDS` 限制等待，`0` 立即失败。
+持锁。同一仓库的多个会话及所有 worktree 互斥，不同目标也排队。默认最多等待 30 秒，
+`--lock-timeout SECONDS` 可调整，`0` 立即失败。等待时显示持锁者，不终止其他部署。
 等待者拿锁后才读取工作区、目标清单和默认 stage，避免使用等待前的旧状态。
 
 锁由操作系统管理，正常退出、异常和进程终止都会释放；文件保留，里面的旧 PID 只供
 诊断。**不要删除锁文件来解锁**，删除会让不同进程锁住不同 inode，破坏互斥。
 锁覆盖同一 Git 仓库及 worktree；独立 clone 或不同构建机之间仍须协调部署。
-只读的 `fleet_status.py` 不持锁。部署自检使用临时仓库或临时锁，避免与运行自检的外层部署互锁。
+只读的 `fleet_status.py` 和 `deploy --dry-run` 不持锁。部署自检使用临时仓库或临时锁，避免与运行自检的外层部署互锁。
 
 ## 三种产物（`target/deploy/<UTC 时间戳>-<short>/`，同一秒内再建则加 `-2`、`-3` 后缀）
 
@@ -111,73 +113,51 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 
 ## 测试门（build → test → push）
 
-`deploy/testplan.py`（仅标准库）实现三种模式，`--test` 选择：
+`deploy/testplan.py` 实现三种模式：
 
-| 模式 | 含义 | 跑什么 |
-| --- | --- | --- |
-| `none` | 不重复运行部署测试门（须有相关验证结果） | 打印 `tests skipped by --test none` 后继续；`build` 的默认值 |
-| `affected` | 按路径粗粒度映射（可能大于实际影响范围） | 把 `git diff --name-only <base>..HEAD`（并上 `--allow-dirty` 点名的文件）按下表映射到套件，`python3 tests/run_validation.py --only <names> --binary <stage 的 bin/sessiondock，web-only 时退回 target/release/sessiondock>`；`deploy` 的默认值 |
-| `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描（含 Rust 车道和文档等检查）；付费 `*_real` 套件默认排除 |
-
-`--web-only --test affected` 不纳入未随页面更新发布的 `crates/`、`Cargo.toml` 与
-`Cargo.lock` 改动；前端及对应浏览器测试仍走测试门。
-
-测试门显式传入 `--web-dir <stage>/web`，浏览器使用本次已构建的发布资源，
-不再重新构建或默认读取工作区旧入口。独立验收也可用此参数验证已有构建；
-未指定时仍保留验证器原有的自动构建行为。
-
-顺序固定为 build → test → push：测试失败先于任何上传，退出 1，并在 stderr 列出失败套件名与各自的日志
-路径（`<stage>/logs/validation/<suite>.log`）。测试输出实时流到控制台（run_validation 自己的进度行）并
-落盘到 `<stage>/logs/tests.log`；整轮超时 `--test-timeout`（默认 2400 s）。跑之前一定先打印计划：
-base commit 及其来源、改动文件（数量 + 前 20 个及命中的规则）、选中的套件（或 `full sweep` 与触发它的
-路径）、额外脚本。
-
-**测试按平台跑，一个平台一次，绝不按节点跑。** Linux：构建机上 push 之前跑一次，覆盖所有 `linux-node`
-和 Hub（它们拿的是同一个二进制）。macOS / Windows 在节点上原生构建，所以同一个模式（记录在 stage 的
-`test_mode` 里，随 `push` 传给处理器的 `DeployOptions.test_mode`）在它们的 `stage()` 里驱动一步原生编译检查（不执行单元测试）：
-解出源码之后、构建之前，macOS 跑 `TMPDIR=/private/tmp/sdtest <cargo> check --workspace --all-targets --locked`
-（[deploy-macos.md](deploy-macos.md) §2），Windows 在 `build.cmd` 里跑
-`<toolchain_bin>\cargo.exe check -p sessiondock --all-targets --locked`（`RUSTC`/`RUSTDOC` 指向同一工具链，
-[deploy-windows.md](deploy-windows.md) §2）；失败即该目标 `FAILED`，在换入任何东西之前中止，错误信息带
-节点上的 `.deploy-test.log` 路径和本地的 `<stage>/logs/<name>.log`；`none` 则跳过。Python/浏览器套件只在
-Linux 构建机上跑。
-
-当前映射不是最小验证范围：任何 `web/**` 都选全部浏览器套件，未知路径及部分共享
-文件会退回全量。执行前审阅计划；普通小修应先独立跑受影响套件，再以 `--test none`
-发布，记录实际结果。不能因工具默认映射而扩大任务。选择目标也不会自动缩减
-`build.packages`；后端发布前检查构建配置，未修改 ptyhost 时使用 `--without-ptyhost`。
-
-### base commit（`affected` 从哪里开始算"改动"）
-
-1. `--test-base REF` 显式指定；
-2. 否则取所选目标 `etc/deployed-commit` 标记里的 commit（`deploy` 在测试前对每台目标做一次只读 probe）。
-   多台不一致时取**最旧**的那个（`git rev-list --count <sha>..HEAD` 最大，即 diff 最大）；
-3. 没有任何目标给出标记（或 `build` 单独运行——它没有目标可 probe）时退回 `origin/main`，没有 `origin/main`
-   再退回 `HEAD~1`。
-
-标记跨度可能包含其他任务，`origin/main` 在刚推送后也可能等于 HEAD，导致空计划。
-这两种情况都不能直接代表本任务验证范围。先核对文件/套件计划；无有效发布基线时
-显式指定经过核实的 `--test-base`，或独立完成针对性验证。空计划不等于功能已验证。
-
-### 映射表（`deploy/testplan.py` 的 `RULES` / `MODULE_SUITES`）
-
-规则只写"路径前缀 → 套件名模式"；套件名**从不硬编码**，每个模式在运行时对 `run_validation.py --list`
-的输出做 fnmatch，取所有改动文件结果的并集。带 `/` 的条目是不在扫描里的脚本，直接 `python3` 跑（若它的
-stem 恰好是套件名则按套件跑；某条改动触发全量时这些脚本仍照跑）。按顺序首个命中的规则生效；没有规则
-命中 → 全量。
-
-| 改动路径 | 选中 |
+| 模式 | 行为 |
 | --- | --- |
-| `.gitignore`、`.gitattributes`、`.editorconfig` | 不测（不影响产物） |
-| `docs/**`、任何 `*.md` | 只跑文档检查：`tests/check_docs_links.py`、`tests/check_agents_md.py` |
-| `crates/ptyhost/**`、`crates/ptyhost-client/**` | `cargo_*`（run_validation 没有按 crate 的 Rust 车道，这里是 fmt/clippy/check/build）+ 依赖 ptyhost 的 Python 套件：`terminal*`、`term_*`、`lifecycle*`、`cutover*`、`host*`、`native_*`、`managed_*`、`send_*`、`live_*`、`session_stop_*`、`pending_*`、`restart_state_*`、`bug_report_*`、`grok_raw_send_*` |
-| `crates/sessiondock/src/<module>/**`、`src/<module>.rs` | `cargo_*` + 模块别名：`sessions` → `history_*`、`sessions_*`、`messages_*`、`native_*`、`*_parity`、`codex_*`、`claude_*`、`grok_*`、`agent_*`、`orphan_*`、`continued_*`、`fork_*`、`list_rows_*`、`input_history_*`、`inventory_*`、`symlink_*`、`unicode_*`、`names_*`、`budget_*`、`reader_pool_*`、`sse_*`、`rewind_*`；`terminal` → `terminal_*`、`term_*`、`managed_*`、`session_stop_*`、`grok_raw_send_*`；`lifecycle` → `lifecycle_*`、`send_*`、`outbox*`、`pending_*`、`restart_state_*`、`live_*`、`session_stop_*`；`hub`/`hub_config`/`bin` → `hub_*`（`hub` 另加 `node_auth_*`）；`search` → `search_*`；`media` → `media_*`、`native_*`；`files` → `file*`；`delivery` → `delivery_*`、`send_*`、`outbox*`；`bug_report` → `bug_report_*`；`audit` → `audit_*`；`metadata` → `metadata_*`、`prefs_*`；`trash` → `trash_*`；`runtime` → `live_*`、`spawned_by_*`、`managed_*`、`restart_state_*`、`lifecycle_*`；`bridge` → `claude_prompt_*`、`prompt_*`、`live_*`；`native_replay` → `native_*`；`assets` → `static_assets_*`、`meta_*`、`prefs_*`。表里没有的模块用 `<module>*`，一个都匹配不上就全量 |
-| `crates/sessiondock/src/api/**`、`main.rs`、`lib.rs`、`config.rs`、`security.rs`、`state.rs`、`error.rs` | 横切面 → 全量 |
-| `crates/sessiondock/tests/fixtures/**` | 全量（浏览器套件也用这些 fixture） |
-| `web/**` | 所有 `*_browser*` + `brand_names_check` |
-| `deploy/**` | 只跑文档检查（仓库没有部署脚本的非浏览器测试） |
-| `tests/<stem>.py` | 若 `<stem>` 是套件 → 该套件及 `<stem>_*`（如 `lifecycle_browser` 带上 `lifecycle_browser_native_binding`）；否则取同前缀的套件（`hub_fake_node.py` → `hub_*`）；仍没有（`fake_claude_cli.py`）或是共享夹具 `*_fixtures.py` → 全量；其它非 `.py` 文件与 `tests/fixtures/**` → 全量；`check_docs_links.py`、`check_agents_md.py` 改自己就跑自己 |
-| `Cargo.toml`、`Cargo.lock`、`.github/**`、其它任何未命中路径（`reference/**` …） | 全量 |
+| `affected` | 默认。按受影响功能、fixture 引用链和 Rust 包选检查；先打印计划 |
+| `none` | 跳过部署测试门，记录 `skipped`；只在已完成相关独立验证时使用 |
+| `full` | 显式完整验收；付费真实 CLI 仍不自动运行 |
+
+`--test-suites a,b` 明确指定本次浏览器套件，适用于共享样式等跨功能文件；保留相关
+文档/脚本检查和包级 Rust 检查。未知路径不自动升级全量，而是提示指定套件或补映射。
+没有检查需要执行时记录 `not-needed`，不能当作功能验证通过。
+
+测试脚本、fixture、Cargo 源码与发布产物使用同一 source tree，不读取他人的工作区
+未提交代码。Cargo 验证仅对相关包运行 fmt/clippy；普通验收不重复 release 构建，
+不自动加入 Windows 车道。浏览器显式使用 stage 的 web；前端发布可通过
+`--test-binary PATH` 复用已有兼容测试二进制（默认 `target/release/sessiondock`）。
+测试所需的其他二进制复用开发目录的构建结果，不使用生产目录或会话。
+
+套件日志在 `<stage>/logs/`，总超时由 `--test-timeout` 控制。macOS/Windows 只有发布
+二进制且测试模式不为 `none` 时才执行相关包的原生编译检查。检查失败先于换入。
+
+### base commit（`affected` 的起点）
+
+1. 显式 `--test-base REF`；多提交任务可指定本任务起点。
+2. 所选目标有效部署标记中距发布提交最远的版本。
+3. 无部署标记时使用发布提交的父提交；初始提交使用空树。
+
+终点固定为本次发布快照；不会因为刚推送使 `origin/main` 等于 HEAD 而得到空差异。
+目标版本较旧时，审阅计划并按实际兼容范围选择套件。
+
+### 映射表
+
+| 改动 | 默认检查 |
+| --- | --- |
+| SDK、额度等独立前端 | 对应功能的浏览器套件 |
+| 共享 style/app/index | 可识别的单一 SDK/额度改动走对应套件；其余走页面、顶栏、菜单基础回归，可用 `--test-suites` 指定实际功能 |
+| fixture/helper | 直接和传递导入该文件的已登记套件 |
+| 后端模块/API | 对应功能套件，加相关 Rust 包的 fmt/clippy |
+| ptyhost / collector | 各自的集成套件与相关包检查 |
+| 文档 | 文档链接及规则入口检查 |
+| 部署/CI 脚本 | 文档检查和 `python3 deploy/check.py`，实际逻辑改动另做隔离 CLI 验收 |
+| unit/mount | 服务模板结构检查和资源集成浏览器路径 |
+
+资源代理的服务文件从 stage 的 source.tar 读取，与二进制同源。并行目标按完成顺序
+报告结果；只选本次相关目标，不为无关节点扩大发布或延长等待。
 
 ## 每台目标的步骤与不变量
 
@@ -232,7 +212,7 @@ probe 时的 ptyhost PID 仍在、host 记录数不少于之前。没有版本�
 - swap：`mv -f bin/<name>.new bin/<name>`；在目标机上 `rsync -a --delete web.staging/ web/` 后删掉 staging。
 - restart：`systemctl --user restart <unit>`；节点单元是 `KillMode=process`，分离的 ptyhost 不受影响。
 - 备份始终同时拷 `bin/` 里声明的二进制和整个 `web/`；rollback 用同一条 `.new` + `mv` 路径恢复二进制、
-  `rsync -a --delete` 恢复 web，再重启。ptyhost 默认随行（`--without-ptyhost` 除外），同样走 `.new` + rename，
+  `rsync -a --delete` 恢复 web，再重启。ptyhost 仅在指定 `--with-ptyhost` 时随行，同样走 `.new` + rename，
   正在跑的宿主继续用旧 inode 直到退出。
 - prune 只删匹配 `^backup-deploy-[0-9a-f]+-[0-9]{8}-[0-9]{6}$` 的目录，按 mtime 保留最新 N 份。
 - Hub 是同一处理器的子类：`sessiondock-hub.service`、二进制 `sessiondock-hub`、没有 `host/` 也不发

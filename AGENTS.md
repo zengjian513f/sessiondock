@@ -49,11 +49,13 @@
     do not publish unchanged runtime artifacts; validate their affected scope.
   - Backend or resource-agent changes build, validate and deploy only affected
     artifacts and targets. Full-fleet publication is not the default.
-  - A deployment-tool bug or overly broad test mapping is not a reason to widen
-    the release. Select the proper targets/checks or fix the tool; never work
-    around frontend-only failures by doing a full deployment. If targeted checks
-    already passed, `--test none` may avoid repeating unrelated mapped suites;
-    record the actual checks and do not describe this flag as validation.
+  - Inspect the scoped plan with `deploy --dry-run`. Use `--test-suites` for the
+    affected behavior in shared files; `--test full` is explicit. Already completed
+    checks can use `--test none` with the actual validation recorded.
+  - Include ptyhost only with `--with-ptyhost` when affected. Standalone `push`
+    requires an explicit `--stage`. Service unit/mount changes are runtime
+    configuration, not docs-only work. Tests and service files use the same
+    committed snapshot as the published artifacts.
 - Runtime releases include build as applicable, validation, push, deployment,
   restart and health check. Shared frontend/service releases require at least one
   SessionDock node AND the Hub successfully deployed, restarted and healthy.
