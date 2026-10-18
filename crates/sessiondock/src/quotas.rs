@@ -163,6 +163,7 @@ fn source_name(source: Source) -> &'static str {
 }
 async fn query(profile: &CliProfile) -> Result<Value, ()> {
     let mut command = Command::new(&profile.executable);
+    crate::lifecycle::launcher::background_command(command.as_std_mut());
     command
         .args(&profile.args)
         .envs(&profile.env)

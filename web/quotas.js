@@ -27,8 +27,8 @@ async function initQuotas(container) {
     if (!seconds) return '已到期';
     const days=Math.floor(seconds/86400);seconds%=86400;
     const hours=Math.floor(seconds/3600);seconds%=3600;
-    const minutes=Math.floor(seconds/60);seconds%=60;
-    return (days ? days+'天 ' : '')+(hours ? hours+'小时 ' : '')+minutes+'分 '+seconds+'秒';
+    const minutes=Math.floor(seconds/60);
+    return (days ? days+'d ' : '')+String(hours).padStart(2,'0')+':'+String(minutes).padStart(2,'0');
   }
   function deadline(value, expiry=false) {
     const cell=el('td','quota-time',countdown(value));

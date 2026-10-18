@@ -341,7 +341,7 @@ pub struct Launcher {
 const CLI_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Background CLI commands must not create a transient desktop console.
-pub(super) fn background_command(command: &mut Command) {
+pub(crate) fn background_command(command: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

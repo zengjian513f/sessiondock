@@ -4,6 +4,7 @@ import argparse
 from contextlib import ExitStack
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -117,6 +118,22 @@ def main():
             expect(page.locator('#quota-refresh')).to_be_enabled()
             assert (root/'calls').read_text().count('query')==1
             deadline=machine.locator('section[data-source=codex] [data-deadline]').first
+            # Freeze the browser clock against the returned deadline, not wall time.
+            end=page.evaluate('value => Date.parse(value)/1000',deadline.get_attribute('data-deadline'))
+            page.clock.set_fixed_time(end-(3*86400+5*3600+33*60))
+            page.clock.run_for(1000)
+            expect(deadline).to_have_text('3d 05:33')
+            expect(machine.locator('.quota-card-expiry')).to_have_text('3d 05:33')
+            assert deadline.get_attribute('title')
+            for remaining,label in ((5*3600+33*60,'05:33'),(86400,'1d 00:00'),(59,'00:00'),(0,'已到期')):
+                page.clock.set_fixed_time(end-remaining)
+                page.clock.run_for(1000)
+                expect(deadline).to_have_text(label)
+            page.clock.set_fixed_time(time.time())
+            page.clock.run_for(1000)
+            for cell in machine.locator('[data-deadline]').all():
+                assert re.fullmatch(r'(?:\d+d )?\d{2}:\d{2}|已到期',cell.inner_text())
+            page.clock.set_system_time(time.time())
             before=deadline.inner_text();page.clock.fast_forward(65000)
             assert deadline.inner_text()!=before
             assert (root/'calls').read_text().count('query')==1, 'countdown must not query CLIs'
