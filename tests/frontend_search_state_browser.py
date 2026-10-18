@@ -31,7 +31,7 @@ def corpus(root):
         ("search-state-quiet", "Quiet synthetic session", "Quiet response"),
     ):
         data.put(sid, "claude", [claude_row(sid, "user", "u", None, title),
-                                claude_row(sid, "assistant", "a", "u", answer)], [])
+                                claude_row(sid, "user" if sid == MAIN else "assistant", "a", "u", answer)], [])
     return data
 
 
@@ -62,7 +62,7 @@ async def exercise(browser, base, data, stale_payload, width, height):
         nonlocal pane
         await page.locator(f'#side .item[data-uid="{data.uid(MAIN)}"]').click()
         await expect(page.locator("#msgs")).to_contain_text("PaneSentinel")
-        disclosure = page.locator('#msgs .msg[data-role="assistant"] button.disclosure')
+        disclosure = page.locator('#msgs .msg[data-role="user"] button.disclosure').last
         await expect(disclosure).to_contain_text("展开全文")
         await disclosure.click()
         await expect(disclosure).to_have_attribute("aria-expanded", "true")
@@ -74,7 +74,7 @@ async def exercise(browser, base, data, stale_payload, width, height):
             # Keep references to rendered DOM only, including the disclosure.
             await page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
             pane = await page.locator("#msgs").evaluate_handle("""root => {
-                const message = root.querySelector('.msg[data-role="assistant"]');
+                const message = [...root.querySelectorAll('.msg[data-role="user"]')].at(-1);
                 const body = message.querySelector('.mb');
                 return {root, message, body, text: body.textContent, scroll: root.scrollTop,
                     disclosure: message.querySelector('button.disclosure')};

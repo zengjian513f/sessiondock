@@ -82,7 +82,7 @@ def main():
         ):
             corpus.put(sid, 'claude', [
                 claude_row(sid, 'user', 'u', None, title),
-                claude_row(sid, 'assistant', 'a', 'u', body),
+                claude_row(sid, 'user' if sid == 'code' else 'assistant', 'a', 'u', body),
             ], [])
         corpus.put('batched', 'claude', [
             claude_row('batched', 'user', f'u{i}', f'u{i-1}' if i else None,
@@ -118,18 +118,18 @@ def main():
                   window.syntaxTicks = 0;
                   window.syntaxClock = setInterval(() => syntaxTicks++, 10);
                 }''')
-                page.locator('#msgs .msg[data-role="assistant"] button').filter(has_text='展开全文').click()
+                page.locator('#msgs .msg[data-role="user"] button').filter(has_text='展开全文').click()
                 expect(block).to_have_attribute('data-syntax-done', '1', timeout=15000)
                 assert block.text_content() == code
                 assert block.locator('.hljs-keyword').count() == 16000
                 assert page.evaluate('syntaxTicks') > 0
                 page.evaluate('clearInterval(syntaxClock)')
                 # Rapid preview changes must not receive a stale full-code reply.
-                page.locator('#msgs .msg[data-role="assistant"] button').filter(has_text='收起').click()
+                page.locator('#msgs .msg[data-role="user"] button').filter(has_text='收起').click()
                 expect(block).to_have_attribute('data-syntax-done', '1')
                 assert len(block.text_content()) < 5000
-                page.locator('#msgs .msg[data-role="assistant"] button').filter(has_text='展开全文').click()
-                page.locator('#msgs .msg[data-role="assistant"] button').filter(has_text='收起').click()
+                page.locator('#msgs .msg[data-role="user"] button').filter(has_text='展开全文').click()
+                page.locator('#msgs .msg[data-role="user"] button').filter(has_text='收起').click()
                 expect(block).to_have_attribute('data-syntax-done', '1')
                 assert len(block.text_content()) < 5000
                 open_session('batched')
