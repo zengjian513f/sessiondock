@@ -38,7 +38,9 @@ for line in sys.stdin:
  elif q['method']=='initialized': pass
  elif q['method']=='account/rateLimits/read':
   with (root/'calls').open('a') as f:f.write('query\n')
-  print(json.dumps({'id':2,'result':{'rateLimitResetCredits':{'availableCount':3,'credits':[{'status':'available','expiresAt':int(time.time())+7200}]},'rateLimitsByLimitId':{'codex':{'credits':{'balance':'123.45','hasCredits':True,'unlimited':False},'primary':{'usedPercent':25,'windowDurationMins':300,'resetsAt':int(time.time())+7200},'secondary':{'usedPercent':60,'windowDurationMins':10080,'resetsAt':int(time.time())+172800}},'extra':{'limitName':'Long model bucket 模型专用额度组','primary':{'windowDurationMins':60}}}}}),flush=True)
+  while (root/'hold').exists(): time.sleep(.02)
+  used=float((root/'used').read_text()) if (root/'used').exists() else 25
+  print(json.dumps({'id':2,'result':{'rateLimitResetCredits':{'availableCount':3,'credits':[{'status':'available','expiresAt':int(time.time())+7200}]},'rateLimitsByLimitId':{'codex':{'credits':{'balance':'123.45','hasCredits':True,'unlimited':False},'primary':{'usedPercent':used,'windowDurationMins':300,'resetsAt':int(time.time())+7200},'secondary':{'usedPercent':60,'windowDurationMins':10080,'resetsAt':int(time.time())+172800}},'extra':{'limitName':'Long model bucket 模型专用额度组','primary':{'windowDurationMins':60}}}}}),flush=True)
  else: raise AssertionError(q)
 '''
 
@@ -47,7 +49,7 @@ def main():
     binary=Path(args.binary).resolve();out=Path(args.output);out.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-quotas-') as tmp, ExitStack() as stack:
         root=Path(tmp)
-        for name in ('state','host','ledger','home','claude','codex','grok'): (root/name).mkdir(mode=0o700)
+        for name in ('state','host','ledger','home','claude','codex','grok','proc'): (root/name).mkdir(mode=0o700)
         script=root/'fake.py';script.write_text(FAKE)
         profiles=[{'id':source+'-fixture','source':source,'executable':sys.executable,'args':[str(script),source],'env':{'QUOTA_FIXTURE':str(root),'HOME':str(root/'home')}} for source in ('codex','claude','agy')]
         config=root/'launcher.json';config.write_text(json.dumps({'schema':2,'host_binary':str(binary.parent/'ptyhost'),'host_dir':str(root/'host'),'profiles':profiles}));config.chmod(0o600)
@@ -62,13 +64,16 @@ def main():
         assert 'private_fixture' not in (root/'state/quotas/claude.json').read_text()
         # A callback without limits must not turn an existing snapshot into zero usage.
         subprocess.run([str(binary),'quota-statusline',str(root/'state')],input='{}',text=True,capture_output=True,check=True)
-        port=free_port();extra=node_env(root,port,'127.0.0.0/8')
+        # Yesterday's snapshot must be replaced merely by opening the page.
+        (root/'state/quotas/codex.json').write_text(json.dumps({'source':'codex','captured_at':'2020-10-17T03:02:16Z','buckets':[{'id':'codex:primary','group':'codex','window':10080,'remaining_percent':9}]}))
+        (root/'hold').touch()
+        port=free_port();extra=node_env(root,port,'127.0.0.0/8');extra['SESSIONDOCK_PROC_ROOT']=str(root/'proc')
         base,_=stack.enter_context(isolated_server(Corpus(root),binary,state_dir=root/'state',host_dir=root/'host',lifecycle_dir=root/'ledger',launcher_config=config,extra_env=extra))
         hubroot=root/'hub';hubroot.mkdir()
         node=SimpleNamespace(port=port,token=TOKEN,name='Quota Node 长机器名')
-        other=root/'other';other.mkdir()
+        other=root/'other';other.mkdir();(other/'proc').mkdir()
         otherport=free_port()
-        stack.enter_context(isolated_server(Corpus(other),binary,extra_env=node_env(other,otherport,'127.0.0.0/8')))
+        stack.enter_context(isolated_server(Corpus(other),binary,extra_env={**node_env(other,otherport,'127.0.0.0/8'),'SESSIONDOCK_PROC_ROOT':str(other/'proc')}))
         othernode=SimpleNamespace(port=otherport,token=TOKEN,name='Empty Node')
         hub=Hub(binary.parent/'sessiondock-hub',hubroot,[node,othernode]);hub.start();stack.callback(hub.stop)
         with sync_playwright() as pw:
@@ -94,8 +99,10 @@ def main():
                 expect(table.get_by_role('columnheader')).to_have_text(headers[name])
                 expect(table.get_by_role('rowheader',name='Empty Node',exact=True)).to_have_count(0)
             expect(machine.locator('section[data-source=claude]')).to_contain_text('87.5%')
-            expect(machine.locator('section[data-source=codex]')).to_contain_text('N/A')
-            page.get_by_role('button',name='刷新').click()
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('9%')
+            expect(page.locator('#quota-refresh')).to_be_disabled()
+            page.screenshot(path=str(out/'cached-loading.png'))
+            (root/'hold').unlink()
             expect(machine.locator('section[data-source=codex]')).to_contain_text('75%',timeout=30000)
             expect(machine.locator('section[data-source=codex]')).to_contain_text('N/A')
             expect(machine.locator('section[data-source=codex]')).to_contain_text('123.45')
@@ -109,12 +116,20 @@ def main():
             before=deadline.inner_text();page.clock.fast_forward(65000)
             assert deadline.inner_text()!=before
             assert (root/'calls').read_text().count('query')==1, 'countdown must not query CLIs'
+            # Explicit refresh still queries, then reopening queries again.
+            (root/'used').write_text('26')
+            page.get_by_role('button',name='刷新').click()
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('74%')
+            expect(page.locator('#quota-refresh')).to_be_enabled()
+            assert (root/'calls').read_text().count('query')==2
+            (root/'used').write_text('25')
             for theme in ('light','dark'):
                 page.evaluate("theme => localStorage.setItem('sessiondock.hub./.theme', JSON.stringify(theme))", theme)
                 for width in (1280,390):
                     page.set_viewport_size({'width':width,'height':950});page.reload()
                     if width==390: page.locator('#header-more-btn').click()
                     page.locator('#settings').click();page.get_by_role('tab',name='机器',exact=True).click();page.locator('#quota-open').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('75%')
+                    expect(page.locator('#quota-refresh')).to_be_enabled()
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                     page.screenshot(path=str(out/f'{theme}-{width}.png'),full_page=True)
                     if width==390:
@@ -123,7 +138,7 @@ def main():
                         expect(machine.get_by_role('table',name='Codex',exact=True).get_by_role('columnheader',name='采集')).to_be_in_viewport()
                         assert scroll.evaluate('n => n.scrollLeft > 0')
                         page.screenshot(path=str(out/f'{theme}-390-scrolled.png'),full_page=True)
-            assert (root/'calls').read_text().count('query')==1, 'GET must not query CLIs'
+            assert (root/'calls').read_text().count('query')==6, 'each opening must query once'
             (root/'fail').touch();page.get_by_role('button',name='刷新').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('查询失败',timeout=30000);expect(machine.locator('section[data-source=codex]')).to_contain_text('75%');expect(machine.locator('section[data-source=agy]')).to_contain_text('85%')
             page.screenshot(path=str(out/'query-failure.png'),full_page=True)
             # A node transport failure leaves its displayed snapshot in place.
@@ -134,6 +149,7 @@ def main():
             expect(page.locator('#settings-dialog')).to_be_visible()
             page.locator('#quota-open').click()
             expect(machine.locator('section[data-source=claude]')).to_contain_text('87.5%')
+            expect(page.locator('#quota-refresh')).to_be_enabled()
             page.keyboard.press('Escape')
             expect(machine).to_have_count(0)
             # Explicitly uninstalled clients stay hidden even with stale quota snapshots.
@@ -142,14 +158,24 @@ def main():
             expect(machine.get_by_role('table')).to_have_count(1)
             expect(machine.get_by_role('table',name='Codex',exact=True)).to_be_visible()
             page.screenshot(path=str(out/'installed-only.png'))
+            expect(page.locator('#quota-refresh')).to_be_enabled()
             page.keyboard.press('Escape')
             page.unroute('**/api/clients')
+            page.unroute('**/api/quotas/refresh')
+            page.route('**/api/quotas/refresh',lambda route:route.fulfill(json={'agents':[{'source':'codex','buckets':[{'id':'codex:primary','group':'codex','window':300,'remaining_percent':75}]}]}))
             page.route('**/api/quotas',lambda route:route.fulfill(json={'agents':[{'source':'codex','buckets':[{'id':'codex:primary','group':'codex','window':300,'remaining_percent':75}]}]}))
             page.locator('#quota-open').click()
             expect(machine.locator('.quota-credits')).to_have_text(['N/A'])
             expect(machine.locator('.quota-cards')).to_have_text(['N/A'])
-            page.keyboard.press('Escape');page.unroute('**/api/quotas')
+            expect(page.locator('#quota-refresh')).to_be_enabled()
+            page.keyboard.press('Escape');page.unroute('**/api/quotas');page.unroute('**/api/quotas/refresh')
+            (root/'fail').unlink();(root/'used').write_text('31')
             page.goto(base+'/quotas.html');machine=page;expect(machine.locator('section[data-source=claude]')).to_contain_text('87.5%')
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('69%')
+            expect(page.locator('#quota-refresh')).to_be_enabled()
+            page.reload()
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('69%')
+            expect(page.locator('#quota-refresh')).to_be_enabled()
             page.get_by_role('link',name='← 会话列表').click();expect(page.locator('#header-more-btn')).to_be_visible()
             assert not errors,errors
             context.close();browser.close()

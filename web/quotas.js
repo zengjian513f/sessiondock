@@ -1,11 +1,11 @@
-/* Account quotas are snapshots: no polling and no inferred reset to 100%. */
+/* Refresh on open; snapshots remain available while querying. No inferred reset. */
 async function initQuotas(container) {
   'use strict';
   const root = container.querySelector('#quota-agents');
   const status = container.querySelector('#quota-status');
   const refresh = container.querySelector('#quota-refresh');
   const names = {codex:'Codex', claude:'Claude Code', agy:'Agy'};
-  let nodes = [], hub = false;
+  let nodes = [], hub = false, stopped = false;
   const el = (tag, cls, text) => {const n=document.createElement(tag);n.className=cls || '';if(text!=null)n.textContent=text;return n;};
   async function request(path, method='GET') {
     const response=await fetch(path,{method,cache:'no-store'});
@@ -118,7 +118,7 @@ async function initQuotas(container) {
     }
   }
   async function load(collect=false) {
-    refresh.disabled=true;status.textContent=collect?'正在查询额度…':'正在读取快照…';
+    refresh.disabled=true;status.textContent='正在查询额度…';
     try {
       if(!nodes.length) {
         const data=await request('api/nodes');hub=data.mode==='hub';
@@ -134,8 +134,14 @@ async function initQuotas(container) {
             request(base.replace(/quotas$/, 'clients'))
           ]);
           if(clients.status==='fulfilled') node.clients=clients.value.clients || [];
-          if(quotas.status==='rejected') throw quotas.reason;
-          node.data=quotas.value;node.error=null;render();
+          if(quotas.status==='fulfilled') {node.data=quotas.value;node.error=null;}
+          else if(collect) throw quotas.reason;
+          else node.error=quotas.reason.message;
+          render();
+          // Each node refreshes after its own cached read, without waiting for peers.
+          if(!collect && !stopped) {
+            node.data=await request(base+'/refresh','POST');node.error=null;render();
+          }
         }
         catch(error) {failures++;node.error=error.message;render();}
       }));
@@ -144,9 +150,9 @@ async function initQuotas(container) {
     finally {refresh.disabled=false;}
   }
   refresh.addEventListener('click',()=>load(true));
-  // Only update the local clock; quota collection remains manual.
+  // Only update the local clock; opening and the refresh button collect quotas.
   const timer=setInterval(tick,1000);
-  const stopClock=()=>{clearInterval(timer);window.removeEventListener('pagehide',stopClock);};
+  const stopClock=()=>{stopped=true;clearInterval(timer);window.removeEventListener('pagehide',stopClock);};
   container.addEventListener('close',stopClock,{once:true});
   window.addEventListener('pagehide',stopClock,{once:true});
   await load();
