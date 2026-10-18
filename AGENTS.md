@@ -34,7 +34,10 @@
   preserve concurrent edits. Report validation, push and deployment failures
   accurately, including which targets remain incomplete.
 - Hub SSH: `ecs-user@driftnode.cn`.
-- Match validation and delivery to the changed artifacts:
+- Match validation and delivery to the changed artifacts. This section is the
+  workflow authority for this repository; command examples, historical delivery
+  records and tool defaults do not expand the current task. Apply mixed changes
+  as the union of their affected scopes, not an automatic full release.
   - Frontend-only changes run the affected Chromium suites and visual checks,
     then deploy with `--web-only --targets <affected-node-and-hub-targets>`.
     Select only targets that serve the frontend; exclude resource-agent targets.
@@ -52,9 +55,11 @@
     already passed, `--test none` may avoid repeating unrelated mapped suites;
     record the actual checks and do not describe this flag as validation.
 - Runtime releases include build as applicable, validation, push, deployment,
-  restart and health check. For frontend/service releases, deployment is sufficient when at least one
-  SessionDock node AND the Hub have successfully deployed, restarted and
-  passed health checks. Other offline or unsuccessful targets are recorded
+  restart and health check. Shared frontend/service releases require at least one
+  SessionDock node AND the Hub successfully deployed, restarted and healthy.
+  A change confined to the Hub, node service or collector requires a healthy
+  deployment of that affected component, not restarts of unrelated components.
+  Other offline or unsuccessful targets are recorded
   for later delivery; they do not block engineering completion or its goal.
   Do not require every machine to succeed or keep polling remaining targets.
   If the minimum is not yet met, continue other actionable engineering work.
@@ -132,15 +137,24 @@
   tests or non-browser suites; add or extend a browser suite instead. Shared
   helpers live in `tests/*_fixtures.py`. Historical lessons are in
   [docs/delegation.md](docs/delegation.md); consult them only for related issues.
-- Docs-only and deploy-script-only changes run the doc checks
-  (`check_docs_links.py`, `check_agents_md.py`), not a token browser run. Anything the page can show still needs the browser path.
-- Full sweep: `python3 tests/run_validation.py`. Use `--list`, `--dry-run`,
-  `--tags` or `--only` to narrow it. See `docs/validation.md` for every suite.
+- Docs/rules-only changes run `check_docs_links.py` and `check_agents_md.py`.
+  Deploy-script-only changes also exercise the changed planning/CLI path with
+  temporary inputs or a non-mutating dry run; doc checks alone do not validate
+  script behavior. Neither needs a token browser run or a production rollout.
+  Anything the page can show still needs the browser path.
+- Select checks from the changed behavior and dependencies, not directory names
+  alone. Reuse a compatible existing test binary for frontend-only checks; build
+  only missing prerequisites. Passing checks need no repeat without a relevant
+  change or unresolved failure. Full sweep (`python3 tests/run_validation.py`)
+  is for explicit release acceptance or justified cross-cutting changes, not
+  every fix. Use `--list`, `--dry-run`, `--tags` or `--only`; see
+  `docs/validation.md` for suites.
 - Before committing docs, run `python3 tests/check_docs_links.py`.
-- History changes: `python3 tests/history_browser.py` and
-  `python3 tests/history_pages_browser.py` (plus `rich_tools_browser.py`,
-  `grok_metadata_browser.py` or `codex_names_browser.py` when those surfaces
-  change). Every intentional difference from the frozen Python behavior must be
+- History read-model/pagination changes run `python3 tests/history_browser.py`
+  and `python3 tests/history_pages_browser.py`; presentation-only changes run
+  the browser suite covering that presentation. Add `rich_tools_browser.py`,
+  `grok_metadata_browser.py` or `codex_names_browser.py` only when affected.
+  Every intentional difference from the frozen Python behavior must be
   a documented DELTA in the affected contract.
 - Behavioral authority: match the frozen Python behavior. Remove
   Rust-only input, path, size, depth, capacity, format and queue rejection rules

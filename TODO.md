@@ -48,11 +48,14 @@
 
 - [ ] 收窄部署工具的影响分析：`deploy/testplan.py` 将任意 `web/**` 映射到全部
   浏览器套件，未知路径退回全量；`deploy/deploy.py` 的构建包不随目标缩减，
-  `resource_agent.py` 未排除 web-only stage。补齐精确套件/产物选择与目标兼容检查。
+  `resource_agent.py` 未排除 web-only stage。无发布标记时回退 `origin/main`，
+  刚推送后可能形成空计划；旧节点标记又可能带入无关任务。补齐精确套件/产物选择、
+  目标兼容检查与基线/空计划提示。
   当前按 [部署范围](docs/deployment.md#命令) 显式选目标、独立验证，禁止扩大发布绕过。
 
 - [ ] CI 当前每次 main 推送/PR 都触发三平台 Rust 构建与固定浏览器回归，
-  没有文档/前端路径分流。为现有 16 个 CI 浏览器套件和 Rust job 增加按改动
+  没有文档/前端路径分流；`public/workflows/ci.yml` 模板也对所有推送构建 core
+  并运行浏览器。为现有 16 个 CI 浏览器套件和 Rust job 增加按改动
   范围选择，保留显式版本发布与周期性完整合成数据验收；复用
   `run_validation.py` 的 JSON 结果与失败重跑能力。
 

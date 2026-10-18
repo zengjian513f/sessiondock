@@ -67,7 +67,8 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
   超时 45 s。`--dry-run` 只做 probe 并打印每台的计划，什么都不上传。离线或禁用的目标记为
   `SKIPPED`（未更新），不使命令失败；真实部署失败仍退出 1。全离线也会逐项报告跳过，不声称已部署。
   运行产物改动仍须按上述范围立即部署、重启和健康检查；前端/服务发布至少一台 SessionDock 节点和 Hub 成功
-  即满足部署要求。其余节点离线或部署失败逐项记录待补发，不阻塞工程或 goal，
+  即满足共享前端/服务的部署要求；只改 Hub、节点服务或采集器时，只验收相关组件，
+  不为凑节点与 Hub 数量重启无关组件。其余节点离线或部署失败逐项记录待补发，不阻塞工程或 goal，
   不要求反复轮询；不能把全部节点成功或整轮退出码为零另加为完成条件。
   `push` 在构建机上**从不跑测试**（它只是把已构建的 stage 发出去），但会先打印这个 stage 是按哪种模式
   验证过的（`stage tests: mode=… result=… base=… suites=…`）。
@@ -153,6 +154,10 @@ Linux 构建机上跑。
    多台不一致时取**最旧**的那个（`git rev-list --count <sha>..HEAD` 最大，即 diff 最大）；
 3. 没有任何目标给出标记（或 `build` 单独运行——它没有目标可 probe）时退回 `origin/main`，没有 `origin/main`
    再退回 `HEAD~1`。
+
+标记跨度可能包含其他任务，`origin/main` 在刚推送后也可能等于 HEAD，导致空计划。
+这两种情况都不能直接代表本任务验证范围。先核对文件/套件计划；无有效发布基线时
+显式指定经过核实的 `--test-base`，或独立完成针对性验证。空计划不等于功能已验证。
 
 ### 映射表（`deploy/testplan.py` 的 `RULES` / `MODULE_SUITES`）
 
