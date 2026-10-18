@@ -23,6 +23,19 @@ const CodexSdkControls = {
       finally { if (this.current(view, state)) { event.target.disabled = false; this.paint(view); } }
     };
     pickers.insertBefore(label, pickers.querySelector('#sdk-more'));
+    const tier = document.createElement('label');
+    tier.className = 'new-effort sdk-tier'; tier.title = '服务档位';
+    tier.innerHTML = '<span class="visually-hidden">服务档位</span><select id="sdk-tier" aria-label="服务档位"><option value="" disabled hidden>Tier</option></select>';
+    tier.querySelector('select').onchange = async event => {
+      const service_tier = event.target.value;
+      if (!service_tier) return;
+      event.target.disabled = true;
+      this.paintTier(view);
+      try { await this.settings(view, {service_tier}); }
+      catch (error) { if (this.current(view, state)) view.setNotice(`切换服务档位失败：${error.message}`, 'blocked', true); }
+      finally { if (this.current(view, state)) { event.target.disabled = false; this.paintTier(view); } }
+    };
+    pickers.insertBefore(tier, label);
     this.mountPermissions(view, state);
   },
 
@@ -42,6 +55,7 @@ const CodexSdkControls = {
   paint(view) {
     const state = this.states.get(view);
     if (!state || !view.pane) return;
+    this.paintTier(view);
     const settings = this.effective(view);
     const mode = view.pane.querySelector('#sdk-mode');
     if (mode) {
@@ -62,6 +76,32 @@ const CodexSdkControls = {
         button.disabled = !!state.saving;
       }
     }
+  },
+
+  paintTier(view) {
+    const select = view.pane?.querySelector('#sdk-tier');
+    if (!select) return;
+    const settings = this.effective(view);
+    const model = view.models.find(row => row.model === settings.model);
+    // Native IDs can differ from their labels (e.g. priority is Fast).
+    // Catalog defaults do not establish this thread's effective setting.
+    const tiers = [{id: 'default', name: 'Normal', description: '普通服务档位'}, ...(model?.serviceTiers || [])];
+    const value = Object.hasOwn(settings, 'serviceTier') ? (settings.serviceTier || 'default') : '';
+    const signature = JSON.stringify([tiers, value]);
+    if (select.dataset.options !== signature) {
+      select.replaceChildren();
+      for (const tier of tiers) {
+        if ([...select.options].some(option => option.value === tier.id)) continue;
+        const option = new Option(tier.name, tier.id);
+        option.title = tier.description || '';
+        select.append(option);
+      }
+      view.selectValue(select, value, 'Tier');
+      select.dataset.options = signature;
+      view.toolbarLayout = null;
+      view.layoutToolbar();
+    } else select.value = value;
+    select.title = `服务档位：${select.selectedOptions[0]?.textContent || '未返回'}`;
   },
 
   async request(view, action, body) {

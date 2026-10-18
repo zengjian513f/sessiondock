@@ -82,6 +82,17 @@ same report). Browser coverage:
 [codex_sdk_create_browser.py](../tests/codex_sdk_create_browser.py),
 [codex_sdk_terminal_browser.py](../tests/codex_sdk_terminal_browser.py).
 
+The separate SDK-stall observation reported with BUG-20261018-122932-0e7a3c
+does not establish execution waiting for PTY: the delivery receipt was sent,
+native input was recorded at 12:29:40.997 UTC, assistant output at
+12:29:52.909 and a tool call at 12:29:53.898. The browser clicked terminal
+at 12:29:53.936; ptyhost recorded its first attach at 12:29:54.269. Browser
+snapshots already showed SDK and working before the click. The audit did not
+record SDK packets, so exact SDK rendering latency remains undetermined.
+The terminal browser regression now requires SDK output and an approval card
+before any private PTY exists, then completes that same turn after switching
+views, with no second submission.
+
 Two clients share one live thread only when both use the same app-server, and
 Codex 0.163 gives each of these a different runtime: a plain `codex` /
 `codex resume` joins the shared daemon, but any `-c` override makes it run an
@@ -152,7 +163,7 @@ always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 | POST `/api/codex-sdk/revert` `{uid, before_turn_id}` | `thread/revert`; removes the selected turn and later conversation, without reverting workspace files |
 | POST `/api/codex-sdk/compact` `{uid}` | `thread/compact/start`; progress uses ordinary turn/item events |
 | POST `/api/codex-sdk/review` `{uid, target}` | `review/start` with inline delivery; uncommitted changes, base branch, commit or custom instructions |
-| POST `/api/codex-sdk/controls/settings` `{uid, mode?, approval_policy?, sandbox_policy?}` | `thread/settings/update`; only explicit changes are sent, effective settings arrive through notifications |
+| POST `/api/codex-sdk/controls/settings` `{uid, mode?, approval_policy?, sandbox_policy?, service_tier?}` | `thread/settings/update`; only explicit changes are sent, effective settings arrive through notifications |
 | POST `/api/codex-sdk/controls/shell` `{uid, command}` | `thread/shellCommand`, the CLI's direct `!command` semantics; output uses command execution items |
 
 Errors: `503 codex_sdk_unavailable` (socket unreachable / start failed),
@@ -288,6 +299,20 @@ before first SEND does not retain these unpersisted receipts.
   value absent from `model/list` is still displayed verbatim. Catalog defaults
   are not evidence of the current thread's settings. Unsent user choices survive
   incoming settings events; after SEND the pickers follow the effective settings again.
+- DELTA (service tier, BUG-20261018-122932-0e7a3c): the composer toolbar also
+  shows the current thread's service tier. Choices use the effective model's
+  `model/list.serviceTiers` names, descriptions and native IDs (Fast may use
+  `priority`; Ultrafast uses the advertised ID). Normal sends the native
+  `default` value, explicitly disabling a faster catalog default. Selecting a
+  tier immediately calls `thread/settings/update.serviceTier`, without sending
+  a turn or clearing the draft. The control follows confirmed settings on open,
+  notifications, reload and reconnect; rejected changes retain the actual value.
+  A returned null tier displays Normal, an absent field stays unknown, and an
+  unlisted current value is displayed verbatim. Catalog defaults never replace
+  the current setting. Tier stays alongside model and effort where space permits;
+  at the narrowest pane/scale it moves into the existing toolbar overflow menu.
+  Coverage: [controls](../tests/codex_sdk_controls_browser.py) and
+  [layout](../tests/codex_sdk_layout_browser.py).
 - Composer: same look as the message composer. Enter sends (Shift+Enter
   newline, not on mobile); the button reads 发送 or, during a turn, 排队.
   Inputs are queued by default. Each pending bubble has 撤销 and 立即引导

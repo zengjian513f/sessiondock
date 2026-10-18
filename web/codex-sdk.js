@@ -198,13 +198,14 @@ const CodexSdkView = {
     const pickers = this.pane.querySelector('.sdk-pickers'), more = this.pane.querySelector('#sdk-more-menu');
     const trigger = this.pane.querySelector('#sdk-more'), usage = this.pane.querySelector('#sdk-usage-toggle');
     const usageMenu = this.pane.querySelector('#sdk-usage-menu'), actions = this.pane.querySelector('#sdk-actions');
-    const mode = this.pane.querySelector('.sdk-mode');
+    const mode = this.pane.querySelector('.sdk-mode'), tier = this.pane.querySelector('.sdk-tier');
     const buttons = ['compact', 'fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
     // Start with only the essential controls. Every promotion must fit the
     // entire row, including status and usage, at the current interface scale.
     usageMenu.append(gauges);
     usage.hidden = !visibleGauges.length;
     if (mode) more.prepend(mode);
+    if (tier) pickers.insertBefore(tier, trigger);
     for (const button of buttons) actions.append(button);
     more.append(this.pane.querySelector('#sdk-permissions'), this.pane.querySelector('.sdk-reset'));
     const fits = () => {
@@ -228,12 +229,13 @@ const CodexSdkView = {
     }
     // At the narrowest pane/scale, usage must yield before the status text.
     if (!fits()) { more.prepend(gauges); usage.hidden = true; }
+    if (!fits() && tier) more.prepend(tier);
     if (visibleGauges.length) {
       const fallback = gauges.parentElement;
       row.insertBefore(gauges, usage); usage.hidden = true;
       if (!fits()) { fallback.append(gauges); usage.hidden = fallback === more; }
     }
-    for (const control of [mode, ...buttons].filter(Boolean)) {
+    for (const control of [tier, mode, ...buttons].filter(Boolean)) {
       const parent = control.parentElement, next = control.nextSibling;
       pickers.insertBefore(control, trigger);
       if (!fits()) parent.insertBefore(control, next);
@@ -532,6 +534,7 @@ const CodexSdkView = {
       else select.append(new Option(({none:'无', minimal:'最低', low:'低', medium:'中', high:'高', xhigh:'极高'})[chosen] || chosen, chosen));
     }
     this.selectValue(select, chosen, '推理强度');
+    CodexSdkControls.paintTier(this);
   },
 
   selectValue(select, value, label) {
