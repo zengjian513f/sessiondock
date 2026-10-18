@@ -666,6 +666,18 @@ impl MetadataSnapshot {
         for row in rows.iter_mut() {
             self.decorate(row, &parents)
         }
+        // A saved attachment may predate the native continued-in marker.
+        // Resolving its parent to this very continuation would nest the view
+        // under itself and hide it from the compact catalog. Project that edge
+        // away without changing the user's saved metadata.
+        let self_parents = continued_self_parents(rows);
+        for row in rows.iter_mut() {
+            if self_parents.contains(row["uid"].as_str().unwrap_or_default()) {
+                row.as_object_mut()
+                    .expect("session row")
+                    .remove("nest_parent");
+            }
+        }
         super::relations::decorate(rows);
     }
 
@@ -717,6 +729,47 @@ impl MetadataSnapshot {
             );
         }
     }
+}
+
+fn continued_self_parents(rows: &[Value]) -> BTreeSet<String> {
+    let identity = |row: &Value| {
+        ["node_id", "source", "sid"].map(|key| row[key].as_str().unwrap_or_default().to_owned())
+    };
+    let by_identity: BTreeMap<_, _> = rows.iter().map(|row| (identity(row), row)).collect();
+    let by_uid: BTreeMap<_, _> = rows
+        .iter()
+        .filter_map(|row| row["uid"].as_str().map(|uid| (uid, row)))
+        .collect();
+    rows.iter()
+        .filter_map(|row| {
+            let uid = row["uid"].as_str()?;
+            let [node, source, _] = identity(row);
+            let parent = &row["nest_parent"];
+            let parent_node = parent["node_id"]
+                .as_str()
+                .filter(|node| !node.is_empty())
+                .unwrap_or(&node);
+            let mut current = *by_identity.get(&[
+                parent_node.to_owned(),
+                parent["source"].as_str()?.to_owned(),
+                parent["sid"].as_str()?.to_owned(),
+            ])?;
+            let mut seen = BTreeSet::new();
+            while current["source"] == source
+                && current["node_id"].as_str().unwrap_or_default() == node
+            {
+                let next = current["continued_in"].as_str()?;
+                if next == uid {
+                    return Some(uid.to_owned());
+                }
+                if !seen.insert(next) {
+                    break;
+                }
+                current = *by_uid.get(next)?;
+            }
+            None
+        })
+        .collect()
 }
 
 /// Source and optional node identity both constrain SID relationships. Invalid
