@@ -8,6 +8,7 @@ Desktop/mobile and light/dark. No PTY, native CLI, account or production data.
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -56,6 +57,7 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
     expect(page.locator("#new-session-dialog")).to_be_hidden()
     expect(page.locator("#sdk-input")).to_be_visible()
     expect(page.locator("#a-sdk")).to_have_attribute("aria-pressed", "true")
+    expect(page.locator("#dlive")).to_have_class(re.compile(r"\bsdk\b"))
     expect(page.locator('#sdk-model')).to_have_value('fake-luna')
     expect(page.locator('#sdk-effort')).to_have_value('medium')
     assert len(fake.methods("thread/start")) == before + 1, "retry created a second thread"

@@ -121,7 +121,7 @@ fn rewrite(data: Value, node: &Node, path: &str, strict: bool) -> Result<Value, 
         }
     }
     if path == "/api/live" {
-        for key in ["uids", "tmux_uids", "working_uids"] {
+        for key in ["uids", "tmux_uids", "sdk_uids", "working_uids"] {
             let mut scoped = Vec::new();
             if let Some(items) = result.get(key).and_then(Value::as_array) {
                 for item in items {

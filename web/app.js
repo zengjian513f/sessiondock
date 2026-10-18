@@ -187,6 +187,7 @@ const S = {
   agent: null,        // 当前查看的子代理 id；null = 主会话
   syncGap: 350,       // 当前会话的同步间隔, 随有无新内容自适应
   live: new Set(),    // 仍在运行的会话 uid
+  liveSdk: new Set(), // threads loaded on the node’s live SDK bridge
   liveTmux: new Set(),// 其中运行在 tmux 里的会话 uid
   liveWorking: new Set(),// 有明确归属的后台命令进程仍在运行
   liveStarted: new Map(), // uid → 当前 CLI 主进程启动时间（Unix 秒）
@@ -745,14 +746,14 @@ const el = (tag, cls, html) => {
 };
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const icon = src => `<svg class="ico source-icon" data-source="${src}" aria-hidden="true" style="color:${SOURCES[src].color}"><use href="#${SOURCES[src].icon}"/></svg>`;
-// 会话头的图标：右上角的运行点和左栏列表一致（绿=直接进程，蓝=受管终端）
-const liveStatusTitle = tmux => !SessionDockCapabilities.allows('live') ? '运行状态未知，尚未实现进程探测'
-  : tmux ? '运行于受管终端' : '运行中';
+// 会话头的图标：右上角的运行点和左栏列表一致（绿=直接进程，蓝=受管终端或 SDK）
+const liveStatusTitle = (tmux, uid = S.sel) => !SessionDockCapabilities.allows('live') ? '运行状态未知，尚未实现进程探测'
+  : S.liveSdk.has(uid) ? '运行于受管 SDK' : tmux ? '运行于受管终端' : '运行中';
 const sessionIconMarkup = (src, live, tmux, turn = '', uid = S.sel) => {
   const frozen = sessionFrozen(uid);
-  const label = frozen ? '会话已暂停' : liveStatusTitle(tmux) + turnLabel(turn);
+  const label = frozen ? '会话已暂停' : liveStatusTitle(tmux, uid) + turnLabel(turn);
   return `<span class="ico">${icon(src)}<span
-    class="item-status${live || frozen ? ' visible' : ''}${tmux ? ' tmux' : ''}${frozen ? ' frozen' : turn ? ` turn-${turn}` : ''}" id="dlive"
+    class="item-status${live || frozen ? ' visible' : ''}${tmux ? ' tmux' : ''}${S.liveSdk.has(uid) ? ' sdk' : ''}${frozen ? ' frozen' : turn ? ` turn-${turn}` : ''}" id="dlive"
     title="${esc(label)}" aria-label="${esc(label)}">${frozen ? uiIcon('pause') : ''}</span></span>`;
 };
 const uiIcon = name => `<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
@@ -2219,7 +2220,7 @@ const inputAttentionLabel = attention => attention === 'question' ? ' · 等待�
 
 const pendingRowRunning = row => !!row && !row.stale && pendingPhase(row) === 'running';
 
-/** 角标颜色只说现在：绿 = 在跑，蓝 = 在跑且在受管终端里，灰 = 已退出但还有没看的新内容。
+/** 角标颜色只说现在：绿 = 在跑，蓝 = 由受管终端或 SDK 连接承载，灰 = 已退出但还有没看的新内容。
  *  颜色不随计数固化——以前把计数时的 tmux 态存进 localStorage，会话退出后角标还是蓝的。 */
 function paintItemStatus(node) {
   if (!node) return;
@@ -2240,11 +2241,12 @@ function paintItemStatus(node) {
   badge.classList.toggle('visible', frozen || active || row.count > 0);
   badge.classList.toggle('counted', row.count > 0);
   badge.classList.toggle('tmux', tmux);
+  badge.classList.toggle('sdk', S.liveSdk.has(node.dataset.uid));
   badge.classList.toggle('idle', !active);
   const turn = frozen || pending ? '' : sessionTurn(node.dataset.uid);
   badge.classList.toggle('turn-working', turn === 'working' && !attention);
   badge.classList.toggle('turn-waiting', turn === 'waiting');
-  const running = frozen ? '会话已暂停' : (tmux ? '受管会话运行中' : '会话运行中')
+  const running = frozen ? '会话已暂停' : (S.liveSdk.has(node.dataset.uid) ? '受管 SDK 会话运行中' : tmux ? '受管会话运行中' : '会话运行中')
     + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
   badge.title = badge.ariaLabel = row.count
     ? `${row.count} 条新内容，${!active && !frozen ? '会话已退出' : running}`
@@ -2288,6 +2290,7 @@ function paintHeaderTurn() {
   paintStatusMarker(h, frozen, 0, attention);
   h.classList.toggle('visible', frozen || active);
   h.classList.toggle('tmux', tmux);
+  h.classList.toggle('sdk', S.liveSdk.has(S.sel));
   const turn = frozen || row?.dataset.tmuxName ? '' : sessionTurn(S.sel);
   h.classList.toggle('turn-working', turn === 'working' && !attention);
   h.classList.toggle('turn-waiting', turn === 'waiting');
@@ -2348,6 +2351,7 @@ async function refreshLive(force = false, onlineOnly = false) {
   applyNodeState(d, 'live');
   const next = new Set(d.uids);
   const nextTmux = new Set((d.tmux_uids || []).filter(u => next.has(u)));
+  const nextSdk = new Set((d.sdk_uids || []).filter(u => next.has(u)));
   const nextWorking = new Set((d.working_uids || []).filter(u => next.has(u)));
   // Work another machine runs for a session, named by native node/source/sid.
   const remoteKey = (node, source, sid) => JSON.stringify([node || '', source, String(sid)]);
@@ -2361,10 +2365,12 @@ async function refreshLive(force = false, onlineOnly = false) {
   const mapChanged = (a, b) => a.size !== b.size
     || [...a].some(([u, t]) => b.get(u) !== t);
   const changed = setChanged(next, S.live) || setChanged(nextTmux, S.liveTmux)
+    || setChanged(nextSdk, S.liveSdk)
     || setChanged(nextWorking, S.liveWorking)
     || mapChanged(nextStarted, S.liveStarted);
   S.live = next;
   S.liveTmux = nextTmux;
+  S.liveSdk = nextSdk;
   S.liveWorking = nextWorking;
   S.liveStarted = nextStarted;
   trimCache();
@@ -3991,7 +3997,7 @@ function openItemMenu(uid, x, y) {
   const row = list.find(session => session.uid === uid);
   const parent = !!row?.fork_parent;
   const running = sessionStoppable(uid);
-  const unusedLaunch = !row?.pending && unusedNewAssignedLaunch(row);
+  const unusedLaunch = CodexSdkView.pending(uid) || (!row?.pending && unusedNewAssignedLaunch(row));
   // 运行中的 SSH 会话先停止，结束后才删除；未使用的原生启动仍可直接丢弃。
   const shellRunning = typeof pendingShellRunning === 'function' && pendingShellRunning(row);
   const nested = !!(row?.nest_parent?.source && row.nest_parent.sid);
@@ -7345,7 +7351,7 @@ function renderSessionAction(m, button = $('#a-session-action')) {
     button.onclick = () => deletePendingSession(launch, button);
     return;
   }
-  setControlUnavailable(button, sessionStoppable(m.uid) ? '请先停止会话再删除。' : '');
+  setControlUnavailable(button, !CodexSdkView.pending(m.uid) && sessionStoppable(m.uid) ? '请先停止会话再删除。' : '');
   button.onclick = () => del(m);
 }
 

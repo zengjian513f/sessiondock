@@ -231,6 +231,23 @@ impl CodexSdk {
             .is_some_and(|thread| thread.loaded_on() == Some(connection.generation()))
     }
 
+    /// Threads actually loaded on this bridge's current live connection.
+    /// Selecting an SDK view or a failed resume is not ownership evidence.
+    pub async fn loaded_threads(&self) -> Vec<String> {
+        let slot = self.inner.connection.lock().await;
+        let Some(connection) = slot.as_ref().filter(|connection| !connection.is_closed()) else {
+            return Vec::new();
+        };
+        self.inner
+            .threads
+            .lock()
+            .expect("threads")
+            .iter()
+            .filter(|(_, thread)| thread.loaded_on() == Some(connection.generation()))
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
     pub fn new(
         endpoint: Endpoint,
         shutdown: CancellationToken,

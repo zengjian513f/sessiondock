@@ -143,6 +143,18 @@ tmux server is only recognised through the process-tree walk, never
 inherited; that is the expected `tmux_uids` difference between the two
 services on one machine.
 
+## SDK ownership
+
+`/api/live.sdk_uids` lists threads loaded on SessionDock's current live SDK
+connection, including pending creation receipts before the first native write.
+They also appear in `uids`; changes to the currently loaded identities invalidate
+the response cache. Disconnect/unsubscribe removes SDK evidence. The Hub scopes
+these UIDs and live events propagate changes. This does not add terminal ownership
+to `tmux_uids` or grant process control. The sidebar/header reuse the blue managed
+marker for SDK sessions (DELTA, BUG-20261018-030737-e115f2); failed SDK opens and
+external processes alone remain green. Browser coverage:
+[codex_sdk_status_browser.py](../tests/codex_sdk_status_browser.py).
+
 ## `/api/live` with the scan
 
 `working_uids` lists already-live sessions with attributed command processes;

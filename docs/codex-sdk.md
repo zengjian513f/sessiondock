@@ -50,8 +50,17 @@ opening 终端 starts or reuses a TUI client of the shared daemon. It does not
 ask to replace an external process or signal that daemon, even if process
 discovery finds it holding the rollout. An independent writer and a terminal
 lease held by another browser still follow their existing confirmation flow.
-The green marker means running without a managed PTY; an SDK view alone does
-not turn it blue. Browser coverage:
+DELTA (BUG-20261018-030737-e115f2): a thread loaded on SessionDock's current
+live SDK connection is a managed session and shows the existing blue marker
+in the sidebar and header, including idle and newly created threads. Merely
+selecting SDK or failing to resume does not establish ownership. Disconnect
+or unsubscribe removes that evidence; an external process alone stays green.
+`/api/live.sdk_uids` carries this evidence through the Hub and live events,
+separately from `tmux_uids`, which continues to mean console ownership. SDK
+connection snapshots also reconcile live state, so opening/reconnecting between
+global observer samples cannot leave a stale green marker. Browser coverage:
+[codex_sdk_status_browser.py](../tests/codex_sdk_status_browser.py),
+[codex_sdk_create_browser.py](../tests/codex_sdk_create_browser.py),
 [codex_sdk_terminal_browser.py](../tests/codex_sdk_terminal_browser.py).
 
 Two clients share one live thread only when both use the same app-server, and
