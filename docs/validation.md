@@ -71,8 +71,9 @@ keep its activity dot breathing after the turn ends (BUG-20261004-070702-c1ac6b)
 
 - **Small change / one bug fix** — run the affected headless browser suite
   (`--only <name>`); a full sweep is not required for every edit. Once the change
-  is complete and validated, commit, push and deploy the current workspace to
-  the fleet under `AGENTS.md`, without asking for confirmation again.
+  is complete and validated, commit and push only the task changes. Deploy
+  committed runtime changes to affected targets under `AGENTS.md`; docs, rules,
+  tests and deployment tooling alone do not require a production release.
 - **Paid CLI checks** — the `*_real` suites spawn real Claude/Codex/Grok and are
   excluded by default; run them deliberately with `--include-real`, per batch,
   not unattended. `--real-only` runs just those suites: the release acceptance

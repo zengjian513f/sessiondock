@@ -114,9 +114,9 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 
 | 模式 | 含义 | 跑什么 |
 | --- | --- | --- |
-| `none` | **1 不测试直接上线** | 打印 `tests skipped by --test none` 后继续；`build` 的默认值 |
-| `affected` | **2 只测本次改动影响到的组件** | 把 `git diff --name-only <base>..HEAD`（并上 `--allow-dirty` 点名的文件）按下表映射到套件，`python3 tests/run_validation.py --only <names> --binary <stage 的 bin/sessiondock，web-only 时退回 target/release/sessiondock>`；`deploy` 的默认值 |
-| `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描（全部为浏览器套件）；付费 `*_real` 套件默认排除 |
+| `none` | 不重复运行部署测试门（须有相关验证结果） | 打印 `tests skipped by --test none` 后继续；`build` 的默认值 |
+| `affected` | 按路径粗粒度映射（可能大于实际影响范围） | 把 `git diff --name-only <base>..HEAD`（并上 `--allow-dirty` 点名的文件）按下表映射到套件，`python3 tests/run_validation.py --only <names> --binary <stage 的 bin/sessiondock，web-only 时退回 target/release/sessiondock>`；`deploy` 的默认值 |
+| `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描（含 Rust 车道和文档等检查）；付费 `*_real` 套件默认排除 |
 
 `--web-only --test affected` 不纳入未随页面更新发布的 `crates/`、`Cargo.toml` 与
 `Cargo.lock` 改动；前端及对应浏览器测试仍走测试门。
@@ -140,6 +140,11 @@ base commit 及其来源、改动文件（数量 + 前 20 个及命中的规则�
 [deploy-windows.md](deploy-windows.md) §2）；失败即该目标 `FAILED`，在换入任何东西之前中止，错误信息带
 节点上的 `.deploy-test.log` 路径和本地的 `<stage>/logs/<name>.log`；`none` 则跳过。Python/浏览器套件只在
 Linux 构建机上跑。
+
+当前映射不是最小验证范围：任何 `web/**` 都选全部浏览器套件，未知路径及部分共享
+文件会退回全量。执行前审阅计划；普通小修应先独立跑受影响套件，再以 `--test none`
+发布，记录实际结果。不能因工具默认映射而扩大任务。选择目标也不会自动缩减
+`build.packages`；后端发布前检查构建配置，未修改 ptyhost 时使用 `--without-ptyhost`。
 
 ### base commit（`affected` 从哪里开始算"改动"）
 
