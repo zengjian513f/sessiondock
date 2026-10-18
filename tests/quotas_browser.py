@@ -107,9 +107,9 @@ def main():
             expect(machine.locator('section[data-source=codex]')).to_contain_text('N/A')
             expect(machine.locator('td.quota-credits')).to_have_text('12,345')
             assert machine.locator('td.quota-credits').evaluate("n => getComputedStyle(n).textAlign")=='right'
-            expect(machine.locator('section[data-source=codex] progress').first).to_have_attribute('aria-label','Quota Node 长机器名 5 小时 已使用额度')
-            assert machine.locator('section[data-source=codex] progress').first.evaluate('n => n.value')==25
-            expect(machine.locator('section[data-source=agy] .quota-remaining strong')).to_have_text(['15%','100%','0%'])
+            expect(machine.locator('section[data-source=codex] [role=progressbar]').first).to_have_attribute('aria-label','Quota Node 长机器名 5 小时 已使用额度')
+            assert machine.locator('section[data-source=codex] [role=progressbar]').first.get_attribute('aria-valuenow')=='25'
+            expect(machine.locator('section[data-source=agy] .quota-remaining b')).to_have_text(['15%','100%','0%'])
             expect(machine.locator('section[data-source=codex]')).to_contain_text('3 张')
             expect(machine.locator('section[data-source=agy]')).to_contain_text('15%')
             expect(machine.locator('section[data-source=agy]')).to_contain_text('已到期')
@@ -134,6 +134,13 @@ def main():
                     if width==390: page.locator('#header-more-btn').click()
                     page.locator('#settings').click();page.get_by_role('tab',name='机器',exact=True).click();page.locator('#quota-open').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('25%')
                     expect(page.locator('#quota-refresh')).to_be_enabled()
+                    for bar in machine.get_by_role('progressbar').all():
+                        geometry=bar.evaluate("n => {const s=getComputedStyle(n),b=n.nextElementSibling,r=n.getBoundingClientRect(),t=b.getBoundingClientRect();return [s.width,s.height,s.borderRadius,Math.abs((r.y+r.height/2)-(t.y+t.height/2))<1,t.x>=r.right]}")
+                        assert geometry==['40px','6px','3px',True,True],geometry
+                    high=machine.locator('section[data-source=claude] .sdk-gauge.low')
+                    expect(high).to_have_count(1)
+                    assert high.locator('u').evaluate('n => getComputedStyle(n).backgroundColor')=='rgb(229, 72, 77)'
+                    assert high.locator('b').evaluate('n => getComputedStyle(n).color')=='rgb(229, 72, 77)'
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                     page.screenshot(path=str(out/f'{theme}-{width}.png'),full_page=True)
                     if width==390:

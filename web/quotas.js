@@ -80,11 +80,18 @@ async function initQuotas(container) {
           row.append(el('td','',window));
           const remaining=el('td','quota-remaining');
           const valid=typeof bucket?.remaining_percent==='number' && Number.isFinite(bucket.remaining_percent);
-          remaining.append(el('strong','',valid ? `${Math.max(0,100-bucket.remaining_percent).toLocaleString(undefined,{maximumFractionDigits:1})}%` : (bucket?.remaining_text ?? 'N/A')));
           if (valid) {
-            const bar=el('progress');bar.max=100;bar.value=Math.max(0,Math.min(100,100-bucket.remaining_percent));
-            bar.setAttribute('aria-label',`${node.name} ${window} 已使用额度`);remaining.append(bar);
-          }
+            const used=Math.max(0,100-bucket.remaining_percent);
+            const value=Math.min(100,used);
+            const gauge=el('span','sdk-gauge');gauge.classList.toggle('low',Math.round(value)>=80);
+            const bar=el('i','sdk-bar');bar.setAttribute('role','progressbar');
+            bar.setAttribute('aria-label',`${node.name} ${window} 已使用额度`);
+            bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax','100');
+            bar.setAttribute('aria-valuenow',String(value));
+            const fill=el('u');fill.style.width=`${value}%`;bar.append(fill);
+            gauge.append(bar,el('b','',`${used.toLocaleString(undefined,{maximumFractionDigits:1})}%`));
+            remaining.append(gauge);
+          } else remaining.append(el('b','',bucket?.remaining_text ?? 'N/A'));
           row.append(remaining,deadline(bucket?.resets_at));
           if (index===0) {
             if (codex) {
