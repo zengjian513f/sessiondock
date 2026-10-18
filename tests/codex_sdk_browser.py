@@ -378,6 +378,14 @@ def browser_check(corpus, base, fake, screenshots=None):
             # A permanently closed EventSource will not retry by itself.
             # Keep the real SSE/snapshot path; inject only the transport failure.
             box.fill('draft survives a disconnected stream')
+            reconnect_failures = [503]
+            def reconnect_open(route):
+                if reconnect_failures:
+                    route.fulfill(status=reconnect_failures.pop(), content_type='application/json',
+                                  body=json.dumps({'ok': False, 'error': 'temporary service restart'}))
+                else:
+                    route.continue_()
+            page.route('**/api/codex-sdk/open', reconnect_open)
             page.evaluate('''() => {
                 window.closedSdkStream = CodexSdkView.es;
                 closedSdkStream.close();
@@ -387,6 +395,8 @@ def browser_check(corpus, base, fake, screenshots=None):
             page.wait_for_function('CodexSdkView.es !== closedSdkStream && CodexSdkView.es?.readyState === 1')
             expect(pane).to_contain_text('Progress while the view is closed')
             expect(box).to_have_value('draft survives a disconnected stream')
+            assert not reconnect_failures
+            page.unroute('**/api/codex-sdk/open', reconnect_open)
             box.fill('')
 
             # The open approval survives a reload: it comes back in the snapshot.

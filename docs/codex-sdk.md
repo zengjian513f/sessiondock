@@ -44,6 +44,8 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   A permanently closed browser EventSource also schedules a reconnect; closing
   or switching the view cancels that timer. Reconnection retains the unsent draft
   and recovers the server snapshot without submitting another turn.
+  A transient network/server failure during reconnect keeps retrying; a browser
+  regression injects a 503 before allowing the real snapshot stream to recover.
   BUG-20261018-040613-165ffa follow-up: browser audit selected another session
   from 04:20:53 to 04:31:18 UTC, while this task's native record contains 73 tool
   calls in that interval. This case did not kill execution on view detach.

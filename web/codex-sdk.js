@@ -239,11 +239,11 @@ const CodexSdkView = {
     });
     let data = null;
     try { data = await response.json(); } catch { /* 下面按 HTTP 状态说明 */ }
-    if (!response.ok || !data?.ok) throw Object.assign(new Error(data?.error || `请求失败（HTTP ${response.status}）`), {code: data?.code});
+    if (!response.ok || !data?.ok) throw Object.assign(new Error(data?.error || `请求失败（HTTP ${response.status}）`), {code: data?.code, status: response.status});
     return data;
   },
 
-  async start(generation) {
+  async start(generation, reconnecting = false) {
     if (!this.current(generation) || this.openRead || this.es) return;
     clearTimeout(this.openRetryTimer);
     this.openRetryTimer = 0;
@@ -261,6 +261,8 @@ const CodexSdkView = {
       if (error.code === 'codex_sdk_thread_busy') {
         this.openRetryTimer = setTimeout(() => this.start(generation), this.openRetryDelay);
         this.openRetryDelay = Math.min(this.openRetryDelay * 2, 30000);
+      } else if (reconnecting && (!error.status || error.status >= 500)) {
+        this.scheduleReconnect();
       }
       return;
     } finally {
@@ -294,7 +296,7 @@ const CodexSdkView = {
     if (!this.pane) return;
     this.es?.close();
     this.es = null;
-    this.start(this.generation);
+    this.start(this.generation, true);
   },
 
   scheduleReconnect() {
