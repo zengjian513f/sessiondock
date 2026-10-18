@@ -1965,6 +1965,7 @@ body.stale-build #composer-input-status { display: none; }
   font: inherit; line-height: 1.5;
 }
 #cinput:focus, #sdk-input:focus, #bug-report-description:focus, #continue-session-description:focus { border-color: var(--accent); }
+#sdk-input.shell-mode { color: var(--tool); border-color: var(--tool); }
 .cbtns { display: flex; gap: 6px; flex: none; height: var(--composer-control-height); }
 .cbtns .btn {
   display: inline-flex; align-items: center; justify-content: center;

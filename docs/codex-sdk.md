@@ -334,6 +334,18 @@ another client update the controls and checked selections.
 Direct shell commands follow CLI `!` behavior and run with full permissions,
 outside the conversation sandbox.
 
+DELTA (BUG-20261018-035503-dd075f): the SDK composer immediately uses the
+existing tool color for `!` and `/shell` input, including restored drafts.
+Tab offers local common command templates and Git subcommands at the caret:
+a unique match fills directly; multiple matches reuse the input-history popup.
+Tab/Shift+Tab or arrows select, Enter or a click fills, Escape dismisses.
+Completion saves through the normal draft path and never executes; a subsequent
+send uses the existing shell control. Editing, blur and session changes dismiss
+the popup. Ordinary prose, selections and IME retain their existing behavior.
+These are common suggestions, not the target machine's executable inventory;
+filesystem paths, aliases and shell-specific dynamic completion are not provided.
+
+
 The composer recognizes `/fork`, `/revert`, `/compact`, `/review`, `/plan`,
 `/default`, `/permissions`, `/approval`, `/sandbox`, `/shell` and
 `!command`; `/model`, `/effort`, `/status`, `/stop`, `/new` and `/help` use their
