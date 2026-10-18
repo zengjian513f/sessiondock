@@ -382,6 +382,7 @@ fn build_app(
     capabilities["conversation_send"] = serde_json::json!(
         metadata.is_some() && terminal.is_some() && lifecycle.is_some() && files_write.is_some()
     );
+    capabilities["conversation_path_completion"] = capabilities["conversation_send"].clone();
     capabilities["session_delete_tree"] = serde_json::json!(
         trash.is_some()
             && cfg!(target_os = "linux")

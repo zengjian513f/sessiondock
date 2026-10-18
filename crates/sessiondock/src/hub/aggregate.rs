@@ -408,6 +408,7 @@ fn term_list_body(nodes: Vec<Value>, answers: &[Answer]) -> Value {
                 "sources": get("sources", json!({})),
                 "codex_sdk": answer.ok() && get("codex_sdk", json!(false)) == true,
                 "conversation_send": answer.ok() && get("conversation_send", json!(false)) == true,
+                "conversation_path_completion": answer.ok() && get("conversation_path_completion", json!(false)) == true,
                 "bug_report": answer.ok() && get("bug_report", json!(false)) == true,
                 "bug_report_worker": answer.ok() && get("bug_report_worker", json!(false)) == true,
                 "resume_sources": if answer.ok() { get("resume_sources", json!({})) } else { json!({}) },

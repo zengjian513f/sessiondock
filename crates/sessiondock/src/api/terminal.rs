@@ -883,6 +883,7 @@ pub async fn list(
         "sources":{},"home":home,"sessions":[],"pending":[],"hosts":[],
         "codex_sdk": state.codex_sdk.is_some(),
         "conversation_send": state.conversations.is_some(),
+        "conversation_path_completion": state.conversations.is_some(),
         "sdk_sessions": sdk_sessions,
         "bug_report": state.capabilities["bug_report"],
         "bug_report_worker": state.capabilities["bug_report_worker"]});

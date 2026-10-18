@@ -24,6 +24,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from private_hosts import private_hosts
+from path_completion_fixtures import create_paths, exercise_paths
 from popups import on_popup
 from send_browser import FAKE_CLI, initialize, wait_history
 
@@ -32,6 +33,7 @@ def fixture(root, binary):
     for name in ('host', 'work', 'work/claude-area', 'ledger', 'state', 'home',
                  'claude', 'codex', 'grok'):
         (root / name).mkdir(mode=0o700)
+    create_paths(root / 'work/claude-area')
     launcher = root / 'launcher.json'
     launcher.touch(mode=0o600)
     launcher.write_text(json.dumps({'schema': 2,
@@ -77,10 +79,10 @@ def history_paths(page, editor):
     type_text(editor, '')
     editor.press('ArrowUp')
     expect(picker).to_be_visible()
-    expect(options).to_have_count(2)
+    expect(options).to_have_count(3)
     expect(selected).to_contain_text('editor history second')
     expect(editor).to_have_attribute('aria-expanded', 'true')
-    expect(editor).to_have_attribute('aria-activedescendant', 'input-history-option-1')
+    expect(editor).to_have_attribute('aria-activedescendant', 'input-history-option-2')
     composing_key(editor, 'ArrowUp')
     composing_key(editor, 'Enter')
     expect(picker).to_be_visible()
@@ -263,10 +265,10 @@ def stale_completions(page):
         print(f'PASS composer stale build after delayed {phase} completion', flush=True)
 
 
-def exercise(browser, base, root, mobile=False):
+def exercise(browser, base, root, mobile=False, screenshots=None):
     context = browser.new_context(viewport={'width': 390 if mobile else 1280,
                                            'height': 844 if mobile else 900},
-                                  service_workers='block')
+                                  color_scheme='dark' if mobile else 'light', service_workers='block')
     context.route('**/*', lambda route: route.continue_()
                   if route.request.url.startswith(base + '/') else route.abort())
     page = context.new_page()
@@ -292,6 +294,14 @@ def exercise(browser, base, root, mobile=False):
         expect(editor).to_be_enabled()
         page.evaluate('() => document.fonts.ready')
         page.wait_for_function('composerUid && !composerDraft()?.loading')
+        exercise_paths(page, editor, root / 'work/claude-area',
+                       screenshots / f'ordinary-{mobile}.png' if screenshots else None)
+        page.wait_for_function('composerDraft().editVersion === composerDraft().savedVersion')
+        page.reload(wait_until='domcontentloaded')
+        expect(editor).to_have_value('请检查 ./readme-one.md')
+        page.locator('#csend').click()
+        expect(editor).to_have_value('')
+        wait_history(page, '请检查 ./readme-one.md')
         if mobile:
             type_text(editor, 'mobile first')
             expect(page.locator('#csend')).to_be_enabled()
@@ -337,7 +347,10 @@ def exercise(browser, base, root, mobile=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
-    binary = parser.parse_args().binary.resolve(strict=True)
+    parser.add_argument('--screenshots', type=Path)
+    args = parser.parse_args()
+    if args.screenshots: args.screenshots.mkdir(parents=True, exist_ok=True)
+    binary = args.binary.resolve(strict=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-composer-editor-') as temporary, private_hosts(Path(temporary)):
         root = Path(temporary).resolve()
         launcher = fixture(root, binary)
@@ -349,8 +362,8 @@ def main():
                 options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
             browser = pw.chromium.launch(**options)
             try:
-                exercise(browser, base, root)
-                exercise(browser, base, root, mobile=True)
+                exercise(browser, base, root, screenshots=args.screenshots)
+                exercise(browser, base, root, mobile=True, screenshots=args.screenshots)
             finally:
                 browser.close()
 

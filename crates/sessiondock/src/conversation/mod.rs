@@ -1,6 +1,7 @@
 //! One conversation send path: drafts are server-owned, successful SEND belongs to the CLI.
 pub mod cli_state;
 mod input;
+pub(crate) mod paths;
 pub(crate) use input::agy_editor;
 mod report_name;
 pub mod rewind;

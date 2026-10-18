@@ -4400,7 +4400,7 @@ function followPushedDraft() {
 }
 function refreshComposerDraft(uid) {
   if (composerUid === uid) {
-    const ta = $('#cinput'),text=composerDrafts.get(uid)?.text || ''; if (ta.value!==text) ta.value=text;
+    const ta = $('#cinput'),text=composerDrafts.get(uid)?.text || ''; if (ta.value!==text) { PathCompletion.close(ta); ta.value=text; }
     renderComposerItems(); autoGrow(ta);
   }
   if (uid === BUG_REPORT_DRAFT_UID) {
@@ -4820,6 +4820,7 @@ function switchComposerDraft(uid) {
   if (composerUid === uid) return;
   resetComposerPendingNotice();
   closeComposerHistory();
+  PathCompletion.close($('#cinput'));
   composerUid = uid;
   const draft = composerDraft(uid, !!uid);
   if (draft) {draft.inputStatus = null; draft.inputPrompt = null; draft.inputAnswer = null;
@@ -5966,6 +5967,8 @@ $('#cinput').addEventListener('input', e => {
   autoGrow(e.target);
 });
 $('#cinput').addEventListener('keydown', e => {
+  if (e.key === 'Tab') e.preventDefault();
+  if (!composerHistoryPicker.open && PathCompletion.key(e.currentTarget, e, () => composerUid)) return;
   if (e.isComposing) return;
   if (composerHistoryPicker.open) {
     if (e.key === 'ArrowUp') {
