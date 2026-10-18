@@ -333,7 +333,10 @@ before first SEND does not retain these unpersisted receipts.
   waiting state. Recoverable errors (`willRetry: true`) show a temporary retry
   status, cleared by resumed item activity or turn completion. Successful
   completion clears the prior error; failed completion retains its native
-  `turn.error`, including after a snapshot reload.
+  `turn.error`, including after a snapshot reload. DELTA
+  (BUG-20261018-233652-c23d56): when the app-server reports only
+  `systemError`, the SDK status uses the latest native `task_complete.error.message`
+  so a model capacity failure shows its actual explanation after reload.
   Status, model/effort/mode selectors, action icons and usage all
   share one toolbar row above the input, with status left and usage/context immediately before the GPT model picker;
   routine labels are 就绪 / 连接中 / 重连中 / 处理中 / 待批准 / 待回答 / 用量已满 /
@@ -362,8 +365,10 @@ before first SEND does not retain these unpersisted receipts.
 - Input queues are owned by the node, shared in SSE snapshots and `bridge/queue`
   events, and continue after a page closes. With `SESSIONDOCK_STATE_DIR` they
   persist in private `codex-sdk-queue.json`; without it they are memory-only.
-  Each thread serializes submit/dispatch/cancel/steer; FIFO starts require an idle
-  native thread with no outstanding request. An active thread is never implicitly
+  Each thread serializes submit/dispatch/cancel/steer; FIFO starts require no
+  active turn or outstanding request. A completed failed turn may leave the
+  daemon in `systemError`; this state also permits a new turn, as in the TUI.
+  An active thread is never implicitly
   steered. Queued inputs capture model/effort and published attachment paths at
   submission. Native rejection stays visible and blocks later queued inputs until
   explicit retry or cancellation. An uncertain/disconnected native RPC is never

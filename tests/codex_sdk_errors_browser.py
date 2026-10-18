@@ -16,7 +16,7 @@ from playwright.sync_api import expect, sync_playwright
 from codex_sdk_actions_browser import environment
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_queue_browser import QueueServer
-from history_fixtures import BINARY
+from history_fixtures import BINARY, codex_row, encoded
 
 
 class ErrorsServer(QueueServer):
@@ -37,15 +37,20 @@ class ErrorsServer(QueueServer):
         asyncio.run_coroutine_threadsafe(self.notify(method, {'turnId': self.turn, **params}),
                                         self.loop).result(timeout=5)
 
-    def finish(self, status, message=None):
+    def finish(self, status, message=None, *, native_error=None, status_type='idle'):
         async def complete():
             turn, self.turn = self.turn, None
+            if native_error:
+                with self.rollout.open('ab') as native:
+                    native.write(encoded(codex_row('event_msg', {'type': 'task_complete',
+                        'turn_id': turn, 'error': {'message': native_error,
+                            'codex_error_info': 'server_overloaded'}})))
             error = ({'message': message, 'codexErrorInfo': 'other', 'additionalDetails': None}
                      if message else None)
             await self.notify('turn/completed', {'turn': {
                 'id': turn, 'status': status, 'items': [], 'error': error,
             }})
-            await self.notify('thread/status/changed', {'status': {'type': 'idle'}})
+            await self.notify('thread/status/changed', {'status': {'type': status_type}})
         asyncio.run_coroutine_threadsafe(complete(), self.loop).result(timeout=5)
 
 
@@ -161,6 +166,29 @@ def exercise(browser, base, fake, width, theme, screenshots):
     expect(status).to_contain_text('Failure supplied only by turn.error')
     expect(status).to_have_class('sdk-status blocked')
     screenshot('turn-failure')
+
+    submit('容量错误前的用户请求 · ' + label)
+    capacity = 'Selected model is at capacity. Please try a different model.'
+    fake.finish('failed', native_error=capacity, status_type='systemError')
+    expect(send).to_have_text('发送')
+    expect(status).to_contain_text(capacity)
+    screenshot('capacity-failure')
+    reload()
+    expect(status).to_contain_text(capacity)
+    starts = len(fake.methods('turn/start'))
+    submit('容量错误后再次发送 · ' + label)
+    expect(page.locator('.sdk-live')).to_contain_text('容量错误后再次发送')
+    expect(page.locator('.sdk-queued')).to_have_count(0)
+    assert len(fake.methods('turn/start')) == starts + 1, 'systemError left the next input queued'
+    submit('失败回合结束后自动续发 · ' + label)
+    expect(page.locator('.sdk-queued')).to_have_count(1)
+    fake.finish('failed', status_type='systemError')
+    expect(page.locator('.sdk-live')).to_contain_text('失败回合结束后自动续发')
+    expect(page.locator('.sdk-queued')).to_have_count(0)
+    assert len(fake.methods('turn/start')) == starts + 2, 'queued input did not resume after failure'
+    fake.finish('completed')
+    expect(send).to_have_text('发送')
+    expect(status).not_to_contain_text(capacity)
 
     # A native successful completion always supersedes earlier error notices.
     submit('最终成功应清除本轮较早的错误通知 · ' + label)
