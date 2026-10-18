@@ -11,6 +11,7 @@ const CodexSdkView = {
   summary: null, models: [], historyTimer: 0, historyData: null,
   limits: null, resetCards: null, redeemKeys: new Map(),
   limitsRead: null, limitsRetryTimer: 0, limitsRetryDelay: 1000,
+  openRead: null, openFailed: false, openRetryTimer: 0, openRetryDelay: 1000,
   toolbarObserver: null, toolbarBindings: null, toolbarWidth: null, toolbarLayout: null,
   modelChoice: null, effortChoice: null,
   pendingAtOpen: false,
@@ -117,6 +118,9 @@ const CodexSdkView = {
     this.toolbarWidth = null; this.toolbarLayout = null;
     this.closeToolbarMenus();
     clearTimeout(this.historyTimer);
+    clearTimeout(this.openRetryTimer);
+    this.openRead?.abort();
+    this.openRead = null; this.openFailed = false; this.openRetryTimer = 0; this.openRetryDelay = 1000;
     clearTimeout(this.limitsRetryTimer);
     this.limitsRead?.abort();
     this.limitsRead = null; this.limitsRetryTimer = 0; this.limitsRetryDelay = 1000;
@@ -208,26 +212,43 @@ const CodexSdkView = {
 
   },
 
-  async request(path, body) {
+  async request(path, body, signal) {
     const response = await fetch(appUrl(path), {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({agent: this.agent || '', ...body}),
+      signal,
     });
     let data = null;
     try { data = await response.json(); } catch { /* 下面按 HTTP 状态说明 */ }
-    if (!response.ok || !data?.ok) throw new Error(data?.error || `请求失败（HTTP ${response.status}）`);
+    if (!response.ok || !data?.ok) throw Object.assign(new Error(data?.error || `请求失败（HTTP ${response.status}）`), {code: data?.code});
     return data;
   },
 
   async start(generation) {
+    if (!this.current(generation) || this.openRead || this.es) return;
+    clearTimeout(this.openRetryTimer);
+    this.openRetryTimer = 0;
+    const read = new AbortController();
+    this.openRead = read;
     const uid = this.uid;
     try {
-      await this.request('api/codex-sdk/open', {uid});
+      await this.request('api/codex-sdk/open', {uid}, read.signal);
     } catch (error) {
       if (!this.current(generation)) return;
+      this.openFailed = true;
       this.setNotice(`无法打开 SDK 模式：${error.message}`, 'blocked', true);
+      // An independent writer can exit outside this page. Resume again after
+      // it releases the lock; never replay a turn or rebuild the draft/history.
+      if (error.code === 'codex_sdk_thread_busy') {
+        this.openRetryTimer = setTimeout(() => this.start(generation), this.openRetryDelay);
+        this.openRetryDelay = Math.min(this.openRetryDelay * 2, 30000);
+      }
       return;
+    } finally {
+      if (this.openRead === read) this.openRead = null;
     }
     if (!this.current(generation)) return;
+    this.openFailed = false; this.openRetryDelay = 1000;
+    this.setNotice('正在连接 Codex app-server…');
     this.loadModels(generation);
     this.loadLimits(generation);
     const es = new EventSource(appUrl(`api/codex-sdk/events?${new URLSearchParams({uid, agent: this.agent || ''})}`));
@@ -249,6 +270,10 @@ const CodexSdkView = {
     if (!this.pane) return;
     const uid = this.uid, pane = this.pane, agent = this.agent;
     this.open(uid, pane, agent);
+  },
+
+  retryOpen() {
+    if (this.openFailed) this.start(this.generation);
   },
 
   async loadModels(generation) {

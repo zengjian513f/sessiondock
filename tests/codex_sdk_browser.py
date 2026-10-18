@@ -135,7 +135,7 @@ def opening_check(browser, corpus, base, expect, screenshots):
     page.unroute("**/api/codex-sdk/open")
     snapshots = []
     page.route("**/api/codex-sdk/events?*", lambda route: snapshots.append(route))
-    page.locator('#a-chat').click()
+    # A failed open can be retried through the already-selected SDK button.
     page.locator('#a-sdk').click()
     expect(history).to_contain_text("earlier synthetic answer")
     expect(page.locator('.sdk-gauge[data-gauge="5h"] b')).to_have_text("40%")

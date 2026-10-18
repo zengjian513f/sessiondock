@@ -5886,6 +5886,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   S.sel = uid;
   S.agent = selectedAgent;
   SessionContentView.sync();
+  if (SessionContentView.kind === 'sdk') CodexSdkView.retryOpen();
   renderNetworkNotice();
   syncSessionNotices();
   clearUnread(uid);
