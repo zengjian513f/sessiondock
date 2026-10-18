@@ -28,6 +28,7 @@ from media_browser import PNG
 from new_session_model_browser import open_dialog
 from node_auth_fixtures import TOKEN, node_env
 from private_hosts import private_hosts
+from path_completion_fixtures import create_paths, exercise_paths
 
 
 def saved(page, uid, text):
@@ -64,19 +65,20 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
         page.locator('input[name="new-source"][value="codex"]').check()
         work = root / f'{label}-工作目录-with-a-realistic-project-name'
         work.mkdir()
+        create_paths(work)
         page.locator('#new-cwd').fill(str(work))
         page.locator('#new-session-go').click()
         expect(page.locator('#sdk-input')).to_be_enabled()
         expect(page.locator('#sdk-add')).to_be_visible()
         uid = page.evaluate('S.sel')
         editor = page.locator('#sdk-input')
-        editor.fill('!pw')
+        editor.fill('查看 ~/home-n')
         editor.press('Tab')
-        expect(editor).to_have_value('!pwd ')
-        saved(page, uid, '!pwd ')
+        expect(editor).to_have_value('查看 ~/home-note.txt')
+        exercise_paths(page, editor, work, screenshots / f'{label}-paths.png' if screenshots else None)
+        saved(page, uid, '请检查 ./readme-one.md')
         page.reload(wait_until='domcontentloaded')
-        expect(editor).to_have_value('!pwd ')
-        expect(editor).to_have_class('shell-mode')
+        expect(editor).to_have_value('请检查 ./readme-one.md')
         assert not fake.methods('thread/shellCommand'), 'completion or reload executed shell'
         rollout = fake.rollout
         assert not rollout.exists(), 'SDK create wrote a native history before SEND'
@@ -266,7 +268,9 @@ def main():
         subprocess.run([str(args.binary.resolve()), '--initialize-lifecycle', str(root/'ledger')],
                        check=True, capture_output=True, timeout=20)
         port = free_port()
-        environment = {**node_env(root, port, '127.0.0.0/8'),
+        (root / 'home').mkdir()
+        (root / 'home' / 'home-note.txt').write_text('home fixture')
+        environment = {'HOME': str(root / 'home'), **node_env(root, port, '127.0.0.0/8'),
             'SESSIONDOCK_STATE_DIR': str(root/'state'), 'SESSIONDOCK_PTYHOST_DIR': str(root/'host'),
             'SESSIONDOCK_LIFECYCLE_DIR': str(root/'ledger'), 'SESSIONDOCK_LAUNCHER_CONFIG': str(config),
             'SESSIONDOCK_PROC_ROOT': str(root/'proc'),

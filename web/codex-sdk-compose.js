@@ -95,89 +95,8 @@ const CodexSdkCompose = {
     bindFileDrop(composer, files => this.add(view, state, files));
   },
 
-  // Suggestions are local text templates, never shell evaluation or execution.
-  shellCommands: ['cat', 'cd', 'echo', 'find', 'git', 'head', 'ls', 'mkdir', 'pwd', 'rg', 'tail'],
-  shellGitCommands: ['add', 'branch', 'checkout', 'commit', 'diff', 'fetch', 'log', 'pull', 'push', 'restore', 'show', 'stash', 'status', 'switch'],
-
-  closeCompletion(view) {
-    view.pane?.querySelector('#sdk-shell-completion')?.remove();
-    view.input?.setAttribute('aria-expanded', 'false');
-    view.input?.removeAttribute('aria-activedescendant');
-    view.input?.removeAttribute('aria-controls');
-    view.shellCompletion = null;
-  },
-
-  shellKey(view, event) {
-    if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey
-        || ['Shift', 'Control', 'Meta', 'Alt'].includes(event.key)) return false;
-    const input = view.input;
-    let completion = view.shellCompletion;
-    if (completion && (completion.text !== input.value || completion.cursor !== input.selectionStart
-        || input.selectionStart !== input.selectionEnd)) {
-      this.closeCompletion(view); completion = null;
-    }
-    const accept = value => {
-      input.setRangeText(value + ' ', completion.start, completion.cursor, 'end');
-      this.closeCompletion(view);
-      input.focus(); view.fitInput(); this.input(view);
-    };
-    if (completion) {
-      if (event.key === 'Escape') { event.preventDefault(); this.closeCompletion(view); return true; }
-      if (event.key === 'Enter') { event.preventDefault(); accept(completion.rows[completion.active]); return true; }
-      if (['Tab', 'ArrowDown', 'ArrowUp'].includes(event.key)) {
-        event.preventDefault();
-        const step = event.key === 'ArrowUp' || event.shiftKey ? -1 : 1;
-        completion.active = (completion.active + step + completion.rows.length) % completion.rows.length;
-        completion.buttons.forEach((button, index) => {
-          button.classList.toggle('selected', index === completion.active);
-          button.setAttribute('aria-selected', String(index === completion.active));
-        });
-        const button = completion.buttons[completion.active];
-        input.setAttribute('aria-activedescendant', button.id);
-        button.scrollIntoView({block: 'nearest'});
-        return true;
-      }
-      this.closeCompletion(view);
-    }
-    if (event.key !== 'Tab' || event.shiftKey || input.selectionStart !== input.selectionEnd) return false;
-    if (/[^\s]/.test(input.value.charAt(input.selectionStart))) return false;
-    const before = input.value.slice(0, input.selectionStart);
-    const match = before.match(/^\s*(?:!\s*|\/shell\s+)(git\s+)?([a-z]*)$/);
-    if (!match) return false;
-    const prefix = match[2];
-    const rows = (match[1] ? this.shellGitCommands : this.shellCommands).filter(value => value.startsWith(prefix));
-    if (!rows.length) return false;
-    event.preventDefault();
-    completion = {text: input.value, cursor: input.selectionStart,
-      start: input.selectionStart - prefix.length, rows, active: 0, buttons: []};
-    if (rows.length === 1) { accept(rows[0]); return true; }
-    view.shellCompletion = completion;
-    const box = el('div', 'input-history');
-    box.id = 'sdk-shell-completion';
-    box.append(el('div', 'input-history-head', '常用命令 · Tab / ↑↓ 选择 · Enter 填入 · Esc 关闭'));
-    const list = el('div', 'input-history-list');
-    list.setAttribute('role', 'listbox');
-    list.setAttribute('aria-label', '常用命令建议');
-    list.id = 'sdk-shell-options';
-    for (const [index, value] of rows.entries()) {
-      const button = el('button', 'input-history-item' + (index === 0 ? ' selected' : ''), value);
-      button.type = 'button'; button.tabIndex = -1;
-      button.id = `sdk-shell-option-${index}`;
-      button.setAttribute('role', 'option');
-      button.setAttribute('aria-selected', String(index === 0));
-      button.onmousedown = event => event.preventDefault();
-      button.onclick = () => accept(value);
-      completion.buttons.push(button); list.append(button);
-    }
-    box.append(list); input.parentElement.append(box);
-    input.setAttribute('aria-controls', list.id);
-    input.setAttribute('aria-expanded', 'true');
-    input.setAttribute('aria-activedescendant', completion.buttons[0].id);
-    return true;
-  },
-
   input(view) {
-    this.closeCompletion(view);
+    PathCompletion.close(view.input);
     const state = this.states.get(view);
     if (!state?.draft) return;
     state.draft.text = state.input.value;
@@ -223,7 +142,7 @@ const CodexSdkCompose = {
     const focused = document.activeElement;
     const focusedQuote = focused?.closest?.('.draft-quote')?.dataset.quoteId;
     const selection = focusedQuote ? [focused.selectionStart, focused.selectionEnd] : null;
-    if (state.input.value !== draft.text) { this.closeCompletion(view); state.input.value = draft.text; view.fitInput(); }
+    if (state.input.value !== draft.text) { PathCompletion.close(view.input); state.input.value = draft.text; view.fitInput(); }
     state.input.disabled = !!draft.loading;
     state.add.disabled = !!draft.loading;
     renderAttachmentCards(state.cards, draft.attachments, {

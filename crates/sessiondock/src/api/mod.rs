@@ -121,6 +121,10 @@ pub fn router() -> Router<AppState> {
         )
         .route("/session/conversation/check", post(conversation::check))
         .route(
+            "/session/conversation/complete-path",
+            get(conversation::complete_path),
+        )
+        .route(
             "/session/conversation/queued/dismiss",
             post(conversation::dismiss_queued),
         )

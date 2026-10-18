@@ -702,3 +702,37 @@ fn stale_build(state: &AppState, build: &str, hub: bool) -> Option<Response> {
             .into_response()
     })
 }
+
+#[derive(Deserialize)]
+pub struct PathQuery {
+    uid: String,
+    #[serde(default)]
+    path: String,
+}
+
+pub async fn complete_path(
+    State(s): State<AppState>,
+    Query(q): Query<PathQuery>,
+) -> Result<Response, ApiError> {
+    let service = enabled(&s)?;
+    let identity = service.identity(&q.uid).await.map_err(error)?;
+    let permit = crate::state::admit(&s.file_jobs, "files_busy").await?;
+    let rows = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        crate::conversation::paths::complete(&identity.cwd, &q.path)
+    })
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "completion_failed",
+            "路径补全任务失败",
+        )
+    })?
+    .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "completion_failed", e.to_string()))?;
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(json!({"entries": rows})),
+    )
+        .into_response())
+}

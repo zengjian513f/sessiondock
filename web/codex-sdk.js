@@ -89,9 +89,9 @@ const CodexSdkView = {
     this.notice = pane.querySelector('.sdk-status');
     this.input = pane.querySelector('#sdk-input');
     this.input.oninput = () => { this.fitInput(); CodexSdkCompose.input(this); };
-    this.input.onblur = () => CodexSdkCompose.closeCompletion(this);
+    this.input.onblur = () => PathCompletion.close(this.input);
     this.input.onkeydown = event => {
-      if (CodexSdkCompose.shellKey(this, event)) return;
+      if (PathCompletion.key(this.input, event, () => this.uid)) return;
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !MOBILE.matches) {
         event.preventDefault();
         this.send();
@@ -117,7 +117,7 @@ const CodexSdkView = {
 
   close() {
     this.setConnected(false);
-    CodexSdkCompose.closeCompletion(this);
+    if (this.input) PathCompletion.close(this.input);
     CodexSdkCompose.close(this);
     CodexSdkActions.close(this);
     CodexSdkControls.close(this);
