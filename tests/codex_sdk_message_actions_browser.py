@@ -2,6 +2,7 @@
 """User-bubble revert/fork menus and restored drafts through node/Hub Chromium."""
 from __future__ import annotations
 import argparse
+import asyncio
 import json
 from pathlib import Path
 import tempfile
@@ -14,7 +15,17 @@ from history_fixtures import BINARY, codex_row, encoded
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
 
-TEXT = '第二轮 remove this question · 请检查真实长度的项目路径 /workspace/projects/sessiondock/long-project-name\n保留中文、换行及 `quoted code`，重新编辑后发送。'
+TEXT = ('第二轮 remove this question · 请检查真实长度的项目路径 /workspace/projects/sessiondock/long-project-name\n保留中文、换行及 `quoted code`，重新编辑后发送。'
+        + '\n\n'.join(f'\n第 {i} 段：检查多行绿气泡的消息操作按钮在展开和收起后仍然居中。' for i in range(16)))
+
+
+def aligned(bubble):
+    toggle = bubble.get_by_role('button', name='消息操作', exact=True)
+    toggle.scroll_into_view_if_needed()
+    button_box, bubble_box = toggle.bounding_box(), bubble.bounding_box()
+    assert abs(button_box['y'] + button_box['height']/2 - bubble_box['y'] - bubble_box['height']/2) <= 1, (button_box, bubble_box)
+    assert button_box['x'] >= 0 and button_box['x'] + button_box['width'] <= bubble_box['x'], (button_box, bubble_box)
+    assert toggle.evaluate('(n) => { const r = n.getBoundingClientRect(); return n.contains(document.elementFromPoint(r.x + r.width/2, r.y + r.height/2)); }')
 
 
 class MessageServer(ActionsServer):
@@ -47,10 +58,12 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     page.on('pageerror', lambda error: errors.append(str(error)))
     page.goto(base, wait_until='networkidle')
     page.locator('#side .item').filter(has_text='第一轮 retained question').first.click()
+    page.wait_for_function('CodexSdkView.connected && !!CodexSdkView.historyData')
     source = page.evaluate('S.sel')
     def bubble():
         return page.locator('.sdk-history .msg[data-role="user"]').filter(has_text='第二轮 remove this question')
     def menu():
+        aligned(bubble())
         bubble().get_by_role('button', name='消息操作', exact=True).click()
         popup = bubble().locator('.sdk-bubble-menu')
         expect(popup).to_be_visible()
@@ -61,6 +74,14 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         assert bounds['x'] >= 0 and bounds['x'] + bounds['width'] <= width + 1
         assert bounds['y'] >= 0 and bounds['y'] + bounds['height'] <= 845
         return popup
+    aligned(page.locator('.sdk-history .msg[data-role="user"]').first)
+    aligned(bubble())
+    if screenshots: page.screenshot(path=str(screenshots/f'{label}-collapsed.png'))
+    bubble().get_by_role('button', name='展开全文', exact=False).click()
+    aligned(bubble())
+    if screenshots: page.screenshot(path=str(screenshots/f'{label}-expanded.png'))
+    bubble().get_by_role('button', name='收起', exact=True).click()
+    aligned(bubble())
     popup = menu()
     if screenshots: page.screenshot(path=str(screenshots/f'{label}-menu.png'))
     popup.get_by_role('button', name='分支', exact=True).click()
@@ -92,6 +113,18 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     saved(page, source, '原本尚未发送的草稿\n\n' + TEXT)
     page.reload(wait_until='networkidle')
     expect(page.locator('#sdk-input')).to_have_value('原本尚未发送的草稿\n\n' + TEXT)
+    # A user message started by another client uses the same menu on a live bubble.
+    async def live_message():
+        await fake.notify('turn/started', {'threadId': THREAD, 'turn': {'id': 'alignment-live', 'status': 'inProgress', 'items': []}})
+        await fake.notify('item/completed', {'threadId': THREAD, 'turnId': 'alignment-live', 'item': {
+            'id': 'alignment-user', 'type': 'userMessage', 'content': [{'type': 'text', 'text': '实时绿气泡 Live message'}]}})
+    asyncio.run_coroutine_threadsafe(live_message(), fake.loop).result(timeout=5)
+    live = page.locator('.sdk-live .msg[data-role="user"]')
+    expect(live).to_contain_text('实时绿气泡')
+    aligned(live)
+    live.get_by_role('button', name='消息操作', exact=True).click()
+    expect(live.locator('.sdk-bubble-menu')).to_be_visible()
+    if screenshots: page.screenshot(path=str(screenshots/f'{label}-live.png'))
     assert branch != source and not errors, errors
     context.close()
     print('PASS ' + label + ': bubble menu, branch before selected turn, source preservation, revert/cancel, restored drafts/reload', flush=True)
@@ -106,7 +139,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='sd-sdk-bubbles-') as tmp, sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
-            for mode, width, theme in [('node', 1280, 'light'), ('node', 390, 'dark'), ('hub', 1280, 'dark'), ('hub', 390, 'light')]:
+            for mode, width, theme in [('node', 1280, 'light'), ('node', 390, 'dark'), ('hub', 1280, 'dark'), ('hub', 390, 'light'), ('node', 3406, 'dark')]:
                 label = f'{mode}-{width}-{theme}'; root = Path(tmp)/label; root.mkdir()
                 corpus, retained = build(root)
                 path = corpus.paths['sdk']
