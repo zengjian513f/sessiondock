@@ -285,7 +285,9 @@ before first SEND does not retain these unpersisted receipts.
   messages; the browser audit did not capture SDK RPCs or compaction events.
   [Compaction regression](../tests/codex_sdk_compaction_browser.py) covers both
   successful consumption and interruption/reload/restart before consumption.
-- User bubbles with a native turn identity have a ⋯ button on their left. 回退
+- User bubbles with a native turn identity have a ⋯ button on their left,
+  vertically centered on the bubble, including expanded long messages and live items
+  (BUG-20261018-043107-c69063). 回退
   reverts before that turn; 分支 forks through that turn and reverts only the new
   child before it. Both restore the selected message text into the composer,
   preserving an existing draft by appending it, and never send it automatically.

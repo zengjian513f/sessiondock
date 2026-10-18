@@ -2610,7 +2610,7 @@ header .btn[data-session-docked] { display: none; }
 #sdk-actions > .sdk-action { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
 
 .msg.sdk-user-actions { overflow: visible; max-width: calc(100% - 34px); }
-.sdk-bubble-toggle { position: absolute; right: calc(100% + 4px); top: 3px; width: 28px; height: 28px;
+.sdk-bubble-toggle { position: absolute; right: calc(100% + 4px); top: 50%; transform: translateY(-50%); width: 28px; height: 28px;
   padding: 0; border: 0; border-radius: 4px; color: var(--muted); background: transparent; font: inherit; cursor: pointer; }
 .sdk-bubble-toggle:hover { background: var(--hover); color: var(--text); }
 .sdk-bubble-toggle:focus-visible { outline: 2px solid var(--accent); }
