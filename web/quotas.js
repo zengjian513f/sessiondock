@@ -53,12 +53,12 @@ async function initQuotas(container) {
       const scroll=el('div','quota-scroll');scroll.dataset.source=source;
       scroll.tabIndex=0;scroll.setAttribute('role','region');scroll.setAttribute('aria-label',`${name} 额度表，可横向滚动`);
       const table=el('table','client-matrix quota-table');table.setAttribute('aria-labelledby',heading.id);
-      const fields=[['machine','机器'],...(grouped ? [['group','额度组']] : []),['window','窗口'],['remaining','剩余'],['reset','重置倒计时'],
+      const fields=[['machine','机器'],...(grouped ? [['group','额度组']] : []),['window','窗口'],['remaining','已使用'],['reset','重置倒计时'],
         ...(codex ? [['credits','Credits'],['cards','重置卡']] : []),['captured','采集']];
       const columns=el('colgroup'), head=el('thead'), labels=el('tr');
       for (const [key,label] of fields) {
         columns.append(el('col',`quota-col-${key}`));
-        const cell=el('th','',label);cell.scope='col';labels.append(cell);
+        const cell=el('th',key==='credits'?'quota-credits':'',label);cell.scope='col';labels.append(cell);
       }
       head.append(labels);table.append(columns,head);
       for (const node of installedNodes) {
@@ -80,17 +80,26 @@ async function initQuotas(container) {
           row.append(el('td','',window));
           const remaining=el('td','quota-remaining');
           const valid=typeof bucket?.remaining_percent==='number' && Number.isFinite(bucket.remaining_percent);
-          remaining.append(el('strong','',valid ? `${Math.max(0,bucket.remaining_percent).toLocaleString(undefined,{maximumFractionDigits:1})}%` : (bucket?.remaining_text ?? 'N/A')));
           if (valid) {
-            const bar=el('progress');bar.max=100;bar.value=Math.max(0,Math.min(100,bucket.remaining_percent));
-            bar.setAttribute('aria-label',`${node.name} ${window} 剩余额度`);remaining.append(bar);
-          }
+            const used=Math.max(0,100-bucket.remaining_percent);
+            const value=Math.min(100,used);
+            const gauge=el('span','sdk-gauge');gauge.classList.toggle('low',Math.round(value)>=80);
+            const bar=el('i','sdk-bar');bar.setAttribute('role','progressbar');
+            bar.setAttribute('aria-label',`${node.name} ${window} 已使用额度`);
+            bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax','100');
+            bar.setAttribute('aria-valuenow',String(value));
+            const fill=el('u');fill.style.width=`${value}%`;bar.append(fill);
+            gauge.append(bar,el('b','',`${used.toLocaleString(undefined,{maximumFractionDigits:1})}%`));
+            remaining.append(gauge);
+          } else remaining.append(el('b','',bucket?.remaining_text ?? 'N/A'));
           row.append(remaining,deadline(bucket?.resets_at));
           if (index===0) {
             if (codex) {
               const balance=el('td','quota-credits');balance.rowSpan=rows.length;
               for (const credit of (credits.length ? credits : [null])) {
-                balance.append(el('div','',credit?.remaining_text ?? 'N/A'));
+                const value=credit?.remaining_text;
+                const number=(typeof value==='number' || (typeof value==='string' && value.trim())) ? Number(value) : NaN;
+                balance.append(el('div','',Number.isFinite(number) ? Math.trunc(number).toLocaleString('en-US') : (value ?? 'N/A')));
                 if (credits.length>1) balance.lastChild.title=credit.group || '';
               }
               const card=el('td','quota-cards',cards?.remaining_text ?? 'N/A');card.rowSpan=rows.length;
