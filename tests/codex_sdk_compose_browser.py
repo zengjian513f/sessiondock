@@ -178,6 +178,7 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
         }""")
         page.locator('#sdk-send').click()
         expect(page.locator('.sdk-request')).to_contain_text('需要批准执行命令')
+        expect(page.locator('.sdk-queued')).to_have_count(0)
         params = fake.methods('turn/start')[-1]['params']
         native_input = params['input']
         images = [item for item in native_input if item['type'] == 'localImage']

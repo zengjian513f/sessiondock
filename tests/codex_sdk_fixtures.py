@@ -208,7 +208,7 @@ class FakeAppServer:
             turn_id = f"turn-{len(self.methods('turn/start'))}"
             self.turn = turn_id
             await reply({"turn": {"id": turn_id, "status": "inProgress", "items": []}})
-            asyncio.ensure_future(self._script(turn_id, text))
+            asyncio.ensure_future(self._script(turn_id, text, params["input"]))
         elif method == "turn/steer":
             assert params.get("expectedTurnId") == self.turn, params
             await reply({"turnId": self.turn})
@@ -230,8 +230,8 @@ class FakeAppServer:
                 "secondary": {"usedPercent": self.used["secondary"], "windowDurationMins": 10080, "resetsAt": 1791000000},
                 "credits": {"hasCredits": True, "unlimited": False, "balance": "1234.5"}}
 
-    async def _user_item(self, turn_id, text, suffix="user"):
-        item = {"type": "userMessage", "id": f"{turn_id}-{suffix}", "content": [{"type": "text", "text": text}]}
+    async def _user_item(self, turn_id, text, suffix="user", content=None):
+        item = {"type": "userMessage", "id": f"{turn_id}-{suffix}", "content": content if content is not None else [{"type": "text", "text": text}]}
         await self.notify("item/started", {"turnId": turn_id, "item": item})
         await self.notify("item/completed", {"turnId": turn_id, "item": item})
 
@@ -250,10 +250,10 @@ class FakeAppServer:
             await self.send(writer, {"method": method, "id": request_id, "params": {"threadId": self.thread_id, **params}})
         return request_id
 
-    async def _script(self, turn_id, text):
+    async def _script(self, turn_id, text, content=None):
         await self.notify("thread/status/changed", {"status": {"type": "active", "activeFlags": []}})
         await self.notify("turn/started", {"turn": {"id": turn_id, "status": "inProgress", "items": []}})
-        await self._user_item(turn_id, text)
+        await self._user_item(turn_id, text, content=content)
         if text.startswith("approve"):
             await self._agent(turn_id, f"{turn_id}-c1", "Working on it", "commentary")
             command = {"type": "commandExecution", "id": f"{turn_id}-cmd", "command": "/bin/sh -lc 'echo synthetic'",

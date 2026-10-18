@@ -231,6 +231,15 @@ before first SEND does not retain these unpersisted receipts.
   explicit retry or cancellation. An uncertain/disconnected native RPC is never
   automatically replayed; an in-flight entry recovered on restart is marked for
   manual verification. Submission IDs survive draft reload and lost HTTP replies.
+  RPC acceptance is not input consumption: keep the input in `sending` until a
+  matching native `item/completed` userMessage confirms it in the returned turn.
+  Pre-input compaction can end or be interrupted without consuming that input.
+  End/reset before confirmation retains its text and attachments as a failed entry
+  for explicit verification/retry, never automatic replay. BUG-20261018-015243-e40d02
+  showed sent receipts but four started/interrupted turns without native user
+  messages; the browser audit did not capture SDK RPCs or compaction events.
+  [Compaction regression](../tests/codex_sdk_compaction_browser.py) covers both
+  successful consumption and interruption/reload/restart before consumption.
 - User bubbles with a native turn identity have a ⋯ button on their left. 回退
   reverts before that turn; 分支 forks through that turn and reverts only the new
   child before it. Both restore the selected message text into the composer,
