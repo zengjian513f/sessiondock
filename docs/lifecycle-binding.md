@@ -17,6 +17,23 @@ unchanged. `BindingRecord` carries `method`, `evidence` and `bound_at` (Unix
 seconds of the first confirmation); an operator retry of the same spec keeps
 the first method/evidence.
 
+DELTA: Codex report and continuation naming already reads `/status` through the
+exact launch guard. Its successful rename receipt now retains that full SID.
+Automatic binding may resolve that SID in the native catalog with
+`method: "process"` and a `guarded Codex /status` evidence note; it still
+requires the same running host instance and
+the ordinary durable Intent → guarded Info confirmation. This works when a
+shared app-server owns the rollout outside the TUI's process tree.
+
+Upgrade recovery reads a retained status card without sending another command.
+If the card is gone, an old report's completed rename and guarded SEND receipts
+may correlate its server-generated report ID with the first native user task
+(`method: "process"`, `completed guarded SEND` evidence). Only one newly
+created, verified main session
+may match; inherited forks and history bases do not count. Missing or ambiguous
+evidence stays pending. Display titles never establish identity, and neither
+recovery path resends the report or edits native history.
+
 ## Confirmation and private data
 
 The transport must obtain a current main `NativeScope` from the configured native

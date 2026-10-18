@@ -20,7 +20,7 @@
 //!    whose native record did not exist before the intent was persisted
 //!    (Python's `before` set).
 //!
-//! Then the ordinary `bind` path runs with `BindingMethod::Process`: the
+//! Then the ordinary `bind` path runs with `EvidenceKind::Process`: the
 //! durable intent carries the evidence note, the host publishes the
 //! one-time binding, and only a matching guarded Info confirms it. Zero or
 //! several candidates keep the receipt pending; `POST /api/term/bind` remains
@@ -54,6 +54,14 @@ struct Match {
     record: Record,
     uid: String,
     evidence: String,
+    method: EvidenceKind,
+}
+
+#[derive(PartialEq, Eq)]
+enum EvidenceKind {
+    Process,
+    CliStatus,
+    ReportSubmission,
 }
 
 enum Pairing {
@@ -114,6 +122,14 @@ pub async fn tick(state: &AppState) -> Result<Option<usize>, ServiceError> {
     if candidates.is_empty() {
         return Ok(None);
     }
+    let mut status_ids = std::collections::HashMap::new();
+    if let Some(conversations) = &state.conversations {
+        for record in &candidates {
+            if let Some(sid) = conversations.codex_status_identity(record).await {
+                status_ids.insert(record.record_id().to_owned(), sid);
+            }
+        }
+    }
     let observed = crate::api::runtime::observe(state)
         .await
         .map_err(|_| ServiceError::Busy)?
@@ -123,10 +139,71 @@ pub async fn tick(state: &AppState) -> Result<Option<usize>, ServiceError> {
         .await
         .map_err(|_| ServiceError::WorkerFailed)?
         .scan;
-    let (document, catalog) = state
+    let (document, catalog, report_ids) = state
         .reader
-        .run_wait(&state.shutdown, |store| {
-            Ok((store.list(false)?, store.native_catalog()?))
+        .run_wait(&state.shutdown, {
+            let records = candidates.clone();
+            let conversations = state.conversations.clone();
+            move |store| {
+                let document = store.list(false)?;
+                let sessions = SessionRow::from_list(&document);
+                let mut report_ids = std::collections::HashMap::new();
+                if let Some(conversations) = conversations {
+                    for record in &records {
+                        let Some(report_id) = conversations.sent_report_identity(record) else {
+                            continue;
+                        };
+                        let mut found = Vec::new();
+                        for session in sessions.iter().filter(|session| {
+                            session.source == "codex" && !predates(session, record)
+                        }) {
+                            let Ok(scope) = store.native_scope(&session.uid, "") else {
+                                continue;
+                            };
+                            if scope.agent_id.is_some() {
+                                continue;
+                            }
+                            // Forks inherit the original task; they are not the
+                            // launch that accepted this report's first SEND.
+                            let Ok(view) = store.snapshot(&session.uid, "") else {
+                                continue;
+                            };
+                            let meta = view.metadata();
+                            if meta["forked_from_id"]
+                                .as_str()
+                                .is_some_and(|id| !id.is_empty())
+                                || !meta["history_base"].is_null()
+                            {
+                                continue;
+                            }
+                            if view
+                                .view
+                                .events()
+                                .filter(|event| event.message["role"] == "user")
+                                .take(1)
+                                .any(|event| {
+                                    event.message["text"].as_str().is_some_and(|text| {
+                                        text.lines().any(|line| {
+                                            line == format!("处理 sessiondock 缺陷报告 {report_id}")
+                                                || line
+                                                    == format!(
+                                                        "处理 sessiondock 功能需求 {report_id}"
+                                                    )
+                                        })
+                                    })
+                                })
+                            {
+                                found.push(session.sid.clone());
+                            }
+                        }
+                        if let [sid] = found.as_slice() {
+                            report_ids
+                                .insert(record.record_id().to_owned(), (sid.clone(), report_id));
+                        }
+                    }
+                }
+                Ok((document, store.native_catalog()?, report_ids))
+            }
         })
         .await
         .map_err(|_| ServiceError::Busy)?;
@@ -161,17 +238,19 @@ pub async fn tick(state: &AppState) -> Result<Option<usize>, ServiceError> {
             // CLI may briefly hold such a record open (Codex reads old
             // rollouts for its resume picker) without owning it. `created_at`
             // is whole seconds; the slack keeps a same-second record.
-            let launched = record.created_at().map(|at| at as f64);
-            let predates = |session: &SessionRow| {
-                launched.is_some_and(|launched| {
-                    parse_created(&session.created).is_some_and(|created| created + 2.0 < launched)
-                })
-            };
             let mut found: Vec<(&SessionRow, Vec<i64>)> = Vec::new();
+            let report = report_ids.get(record.record_id());
+            let status_sid = status_ids.get(record.record_id()).or_else(|| report.map(|(sid, _)| sid));
             for session in sessions
                 .iter()
-                .filter(|session| session.source == source && !predates(session))
+                .filter(|session| session.source == source && !predates(session, &record))
             {
+                if let Some(sid) = status_sid {
+                    if &session.sid == sid {
+                        found.push((session, Vec::new()));
+                    }
+                    continue;
+                }
                 let Some(pids) = active.owned.get(session.uid.as_str()) else {
                     continue;
                 };
@@ -190,15 +269,27 @@ pub async fn tick(state: &AppState) -> Result<Option<usize>, ServiceError> {
                         .copied()
                         .filter(|pid| descends_from(&scan.tree, *pid, child))
                         .collect();
-                    let evidence = format!(
+                    let method = if status_ids.contains_key(record.record_id()) {
+                        EvidenceKind::CliStatus
+                    } else if report.is_some() {
+                        EvidenceKind::ReportSubmission
+                    } else { EvidenceKind::Process };
+                    let evidence = if method == EvidenceKind::ReportSubmission {
+                        format!("completed guarded SEND {}; native first user task; host child pid {child} ({}); native record {}",
+                            report.unwrap().1, record.host_name(), session.path)
+                    } else if method == EvidenceKind::CliStatus {
+                        format!("guarded Codex /status session {}; host child pid {child} ({}); native record {}",
+                            session.sid, record.host_name(), session.path)
+                    } else { format!(
                         "cli_pids={held:?} under host child pid {child} ({}); native record {path}",
                         record.host_name(),
                         path = session.path.as_str()
-                    );
+                    ) };
                     pairings.push(Pairing::Unique(Box::new(Match {
                         record,
                         uid: session.uid.clone(),
                         evidence,
+                        method,
                     })));
                 }
                 many => {
@@ -238,11 +329,12 @@ pub async fn tick(state: &AppState) -> Result<Option<usize>, ServiceError> {
                         continue;
                     }
                 };
-                let verified = match VerifiedNativeBinding::from_process_evidence(
-                    &scope,
-                    &found.record,
-                    found.evidence.clone(),
-                ) {
+                let verify = match found.method {
+                    EvidenceKind::CliStatus => VerifiedNativeBinding::from_cli_status,
+                    EvidenceKind::ReportSubmission => VerifiedNativeBinding::from_report_submission,
+                    _ => VerifiedNativeBinding::from_process_evidence,
+                };
+                let verified = match verify(&scope, &found.record, found.evidence.clone()) {
                     Ok(verified) => verified,
                     Err(_) => continue,
                 };
@@ -280,6 +372,12 @@ pub async fn tick(state: &AppState) -> Result<Option<usize>, ServiceError> {
         }
     }
     Ok(Some(bound))
+}
+
+fn predates(session: &SessionRow, record: &Record) -> bool {
+    record.created_at().is_some_and(|launched| {
+        parse_created(&session.created).is_some_and(|created| created + 2.0 < launched as f64)
+    })
 }
 
 /// `descendant_of(pid, root, barrier=live.is_cli_process)`:

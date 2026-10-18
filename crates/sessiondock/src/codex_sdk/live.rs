@@ -30,6 +30,7 @@ pub struct LiveThread {
 #[derive(Default)]
 struct State {
     seq: u64,
+    turn_revision: u64,
     queue: Value,
     starting: bool,
     generation: Option<u64>,
@@ -114,6 +115,37 @@ impl LiveThread {
             .as_ref()
             .and_then(|turn| turn["id"].as_str())
             .map(str::to_string)
+    }
+
+    pub(super) fn missing_active_turn(&self) -> Option<u64> {
+        let state = self.state.lock().expect("live");
+        (state.turn.is_none() && state.status["type"] == "active").then_some(state.turn_revision)
+    }
+
+    /// A turn that began before subscription has no turn/started event here.
+    /// Its paginated snapshot must not resurrect a turn completed meanwhile.
+    pub(super) fn recover_active_turn(&self, revision: u64, turn: &Value) {
+        let mut state = self.state.lock().expect("live");
+        if state.turn_revision != revision
+            || state.turn.is_some()
+            || state.status["type"] != "active"
+            || turn["status"] != "inProgress"
+            || turn["id"].as_str().is_none_or(str::is_empty)
+        {
+            return;
+        }
+        state.turn = Some(turn.clone());
+        state.starting = false;
+        for item in turn["items"].as_array().into_iter().flatten() {
+            if let Some(id) = item["id"].as_str() {
+                state
+                    .items
+                    .entry(id.to_owned())
+                    .or_insert_with(|| item.clone());
+            }
+        }
+        let event = state.event("turn/started", json!({"threadId":self.id,"turn":turn}));
+        let _ = self.tx.send(event);
     }
 
     pub fn ready_to_start(&self) -> bool {
@@ -218,6 +250,12 @@ impl State {
     }
 
     fn reduce(&mut self, method: &str, params: &Value) {
+        if matches!(
+            method,
+            "turn/started" | "turn/completed" | "thread/reverted"
+        ) {
+            self.turn_revision += 1;
+        }
         let item_id = params["itemId"].as_str().unwrap_or_default().to_string();
         let delta = params["delta"].as_str().unwrap_or_default();
         match method {

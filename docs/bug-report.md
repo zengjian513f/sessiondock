@@ -352,6 +352,23 @@ window's dates line by line (≤ 100 000 rows).
 
 ## Validation
 
+`python3 tests/bug_report_identity_browser.py` checks shared-daemon report
+identity with two identical report titles and an unrelated same-title history,
+delayed native publication, current/old rename receipts, restart, history and
+terminal clicks in Chromium. Both workers bind their own complete native SID
+without another task SEND or `/status` command.
+
+BUG-20261018-012536-a4c05c: the earlier report's worker started at 01:14:59 UTC
+and completed SEND at 01:15:04. Its native Codex history existed, but the
+lifecycle receipt retained `binding: null`. At 01:25:03 the browser opened its
+same-title pending row, still labelled “等待首条消息”, then at 01:25:08 opened
+the separate native history. The rollout writer was the shared app-server,
+outside the TUI ancestry required by process autobinding. Naming had already
+confirmed the guarded TUI's full `/status` SID but discarded it. The
+[binding recovery](lifecycle-binding.md) now preserves that identity and also
+recovers old submitted workers whose status card has disappeared. No duplicate
+worker launch or duplicate task SEND was found.
+
 - `python3 tests/bug_report_upload_browser.py`: real Hub and authenticated Rust
   node, 831 KiB image, lost upload replies after durable staging, bounded retries
   and manual recovery, followed by one report with the exact published bytes.
