@@ -44,6 +44,7 @@ struct State {
     usage: Value,
     recorded_limits: Value,
     last_error: Value,
+    retry_error: Value,
     idle_since: Option<Instant>,
 }
 
@@ -241,7 +242,8 @@ impl LiveThread {
 fn summary(state: &State) -> Value {
     json!({
         "resume": state.resume, "settings": state.settings, "status": state.status,
-        "usage": state.usage, "last_error": state.last_error, "queue":state.queue,
+        "usage": state.usage, "last_error": state.last_error, "retry_error": state.retry_error,
+        "queue":state.queue,
         "recorded_limits": state.recorded_limits,
     })
 }
@@ -263,6 +265,20 @@ impl State {
         }
         let item_id = params["itemId"].as_str().unwrap_or_default().to_string();
         let delta = params["delta"].as_str().unwrap_or_default();
+        // Native item activity means a recoverable error's retry resumed.
+        // Keep final failures until a new turn or a successful completion.
+        if matches!(
+            method,
+            "item/started"
+                | "item/completed"
+                | "item/agentMessage/delta"
+                | "item/plan/delta"
+                | "item/commandExecution/outputDelta"
+                | "item/reasoning/summaryTextDelta"
+                | "item/reasoning/textDelta"
+        ) {
+            self.retry_error = Value::Null;
+        }
         match method {
             "bridge/queue" => self.queue = params["queue"].clone(),
             "turn/started" => {
@@ -270,11 +286,19 @@ impl State {
                 self.turn = Some(params["turn"].clone());
                 self.items.clear();
                 self.last_error = Value::Null;
+                self.retry_error = Value::Null;
             }
             "turn/completed" => {
                 self.starting = false;
                 self.turn = None;
                 self.items.clear();
+                self.retry_error = Value::Null;
+                if params["turn"]["status"] == "completed" {
+                    self.last_error = Value::Null;
+                } else if params["turn"]["status"] == "failed" && !params["turn"]["error"].is_null()
+                {
+                    self.last_error = params["turn"]["error"].clone();
+                }
             }
             "thread/reverted" => {
                 self.turn = None;
@@ -282,6 +306,7 @@ impl State {
                 self.requests.clear();
                 self.usage = Value::Null;
                 self.last_error = Value::Null;
+                self.retry_error = Value::Null;
             }
             "item/started" | "item/completed" => {
                 if let Some(id) = params["item"]["id"].as_str() {
@@ -334,7 +359,15 @@ impl State {
                     self.resume["thread"]["name"] = params["name"].clone();
                 }
             }
-            "error" => self.last_error = params["error"].clone(),
+            "error" => {
+                if params["willRetry"] == true {
+                    self.retry_error = params["error"].clone();
+                    self.last_error = Value::Null;
+                } else {
+                    self.last_error = params["error"].clone();
+                    self.retry_error = Value::Null;
+                }
+            }
             _ => {}
         }
     }
