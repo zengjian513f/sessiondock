@@ -240,17 +240,21 @@ before first SEND does not retain these unpersisted receipts.
   displaying the current setting does not send an override; only a user change applies to the
   started turn and, per app-server semantics, to later turns.
 - The status line shows the last turn error, the rate-limit-reached notice and the
-  waiting state.
+  waiting state. Status, model/effort/mode selectors, action icons and usage all
+  share one toolbar row above the input, with status left and usage/context immediately before the GPT model picker;
+  long status text has an ellipsis; clicking, tapping or pressing Enter on the
+  status opens its full text in a popover. Escape or an outside click closes it.
 - Model and effort stay directly accessible, with a bounded model width.
-  Known usage gauges stay visible: when they cannot fit beside the selectors,
-  they occupy a separate compact row instead of becoming a Usage button.
-  Compaction/fork/revert/review use remaining space, otherwise the ⋯ menu.
+  Usage shares the status line; on narrow panes a Usage button opens the gauges
+  in a popover. Compaction/fork/revert/review use header-style icon buttons with
+  tooltips and accessible names; overflow entries retain their text in the ⋯ menu.
   Approval and sandbox policies live in two checked submenus under ⋯. Selecting
   an option applies that policy immediately; checks follow server-confirmed
   settings, including changes from another client. Failed changes retain the
   actual selection and display the error. No Apply button is needed.
-  Mode moves into overflow below 380 CSS pixels. Sidebar resizing recalculates
-  available space. Goal controls and `/goal` are removed.
+  Controls move into overflow according to measured space for the entire row,
+  including status and usage. Sidebar resizing and interface scaling recalculate
+  available space; model and effort remain directly accessible. Goal controls and `/goal` are removed.
   Model/effort/mode selectors show actual values with hidden placeholders when
   not loaded. Modes are 执行模式 / 计划模式.
   Popovers use existing menu styling, stay inside the viewport and close on

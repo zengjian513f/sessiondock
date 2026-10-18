@@ -141,6 +141,11 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     def choose_action(action):
         button = pane.locator(f'[data-sdk-action="{action}"]')
         if not button.is_visible(): pane.locator('#sdk-more').click()
+        expect(button).to_have_attribute('title', {'compact':'压缩上下文','fork':'分支会话','revert':'回退对话','review':'代码审查'}[action])
+        expect(button.locator('svg use')).to_have_count(1)
+        if button.evaluate("n => n.parentElement.classList.contains('sdk-pickers')"):
+            expect(button.locator('.sdk-action-label')).to_be_hidden()
+            assert button.evaluate('n => n.getBoundingClientRect().width')==28
         button.click()
 
     # The menu selects actual native turn IDs, including additional pages.
@@ -172,6 +177,35 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     progress = pane.get_by_role("progressbar", name="正在压缩上下文")
     expect(progress).to_be_visible()
     assert progress.get_attribute("aria-valuenow") is None, "native compaction has no percentage"
+    status=pane.locator('.sdk-status')
+    expect(status).to_be_visible()
+    right=pane.locator('#sdk-usage-toggle') if pane.locator('#sdk-usage-toggle').is_visible() else pane.locator('.sdk-status-row > .sdk-gauges')
+    expect(right).to_be_visible()
+    left_box,right_box=status.bounding_box(),right.bounding_box()
+    model_box=pane.locator('#sdk-model').bounding_box()
+    gap=model_box['x']-right_box['x']-right_box['width']
+    assert 0 <= gap <= 11, 'usage/context must sit immediately before GPT: '+str(gap)
+    assert left_box['x']+left_box['width']<=right_box['x']+1
+    assert right_box['x'] - left_box['x'] - left_box['width'] <= 11, 'status must use all space before usage'
+    assert abs(left_box['y']+left_box['height']/2-right_box['y']-right_box['height']/2)<1
+    assert pane.locator('.sdk-status-row').evaluate('n => n.scrollWidth<=n.clientWidth')
+    row=pane.locator('.sdk-status-row').bounding_box()
+    assert row['height']<=30
+    assert left_box['width'] >= min(60, row['width'] * .22) - 1, 'action icons must not consume the status space'
+    for control in pane.locator('.sdk-pickers > *').all():
+        if control.is_visible() and control.get_attribute('popover') is None:
+            rect=control.bounding_box()
+            assert rect['y']>=row['y']-1 and rect['y']+rect['height']<=row['y']+row['height']+1
+    assert pane.locator('#sdk-composer > .sdk-options').count()==0
+    typography = pane.locator('.sdk-status-row').evaluate("""row => {
+        const controls = [...row.querySelectorAll('.sdk-status, .sdk-gauges, select, #sdk-usage-toggle')]
+            .filter(el => el.getClientRects().length);
+        return controls.map(el => {
+            const s = getComputedStyle(el);
+            return [s.fontFamily, s.fontSize, s.lineHeight];
+        });
+    }""")
+    assert all(style == typography[0] for style in typography), typography
     if screenshots:
         page.screenshot(path=str(screenshots / f"actions-{label}-compacting.png"))
     page.reload(wait_until="networkidle")

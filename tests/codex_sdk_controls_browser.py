@@ -91,11 +91,27 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(shell).to_contain_text('127')
     if screenshots:
         page.screenshot(path=str(screenshots / (label + '-native-shell.png')))
+    def check_mode_label():
+        # Account for both text padding and the native dropdown arrow.
+        assert mode.evaluate("""el => {
+            const style = getComputedStyle(el);
+            const ctx = document.createElement('canvas').getContext('2d');
+            ctx.font = style.font;
+            const textWidth = ctx.measureText(el.selectedOptions[0].textContent).width;
+            return textWidth + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) + (style.appearance === "none" ? 0 : 24) <= el.clientWidth;
+        }"""), 'selected collaboration mode must fit without an ellipsis'
+        row = page.locator('.sdk-status-row')
+        assert row.evaluate('el => el.scrollWidth <= el.clientWidth && el.offsetHeight <= 30')
+
     starts = len(fake.methods("turn/start"))
     if not mode.is_visible(): page.locator('#sdk-more').click()
+    check_mode_label()
     mode.select_option("plan")
     page.wait_for_function("CodexSdkView.summary?.settings?.collaborationMode?.mode === 'plan'")
     expect(mode).to_have_value("plan")
+    check_mode_label()
+    if screenshots:
+        page.screenshot(path=str(screenshots / (label + "-mode-label.png")))
     changed = fake.methods("thread/settings/update")[-1]["params"]
     assert changed["collaborationMode"]["settings"] == {"model": "fake-sol", "reasoning_effort": "high", "developer_instructions": None}, changed
     assert "approvalPolicy" not in changed and "sandboxPolicy" not in changed

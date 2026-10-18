@@ -46,27 +46,31 @@ const CodexSdkView = {
     pane.innerHTML = `<div class="sdk-view">
       <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div></div>
       <div id="sdk-composer">
-        <div class="sdk-status" role="status" aria-live="polite"></div>
-        <div class="sdk-options">
+        <div class="sdk-status-row">
+          <button class="sdk-status" type="button" aria-expanded="false" aria-controls="sdk-status-menu" aria-haspopup="dialog"><span role="status" aria-live="polite"></span></button>
+          <div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" role="dialog" aria-label="完整状态"></div>
           <div class="sdk-gauges" aria-label="用量">
             <span class="sdk-gauge" data-gauge="5h" hidden></span>
             <span class="sdk-gauge" data-gauge="7d" hidden></span>
             <span class="sdk-gauge" data-gauge="context" hidden></span>
             <span class="sdk-credits" hidden></span>
           </div>
-          <div class="sdk-pickers">
-            <button class="btn" id="sdk-usage-toggle" type="button" aria-expanded="false" aria-controls="sdk-usage-menu" hidden>用量</button>
-            <label class="new-effort sdk-model" title="模型"><span class="visually-hidden">模型</span><select id="sdk-model"><option value="" disabled hidden>模型</option></select></label>
-            <label class="new-effort sdk-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="sdk-effort"><option value="" disabled hidden>推理强度</option></select></label>
-            <button class="btn" id="sdk-more" type="button" title="会话操作" aria-label="会话操作" aria-expanded="false" aria-controls="sdk-more-menu">⋯</button>
-            <div class="new-model-menu sdk-toolbar-menu" id="sdk-more-menu" popover="auto" aria-label="会话操作">
-              <span class="sdk-reset" hidden>
-                <label class="new-effort" title="可兑换的限额重置卡"><span class="visually-hidden">重置卡</span><select id="sdk-reset-card"></select></label>
-                <button class="btn" id="sdk-reset-use" type="button" title="兑换所选重置卡">兑换</button>
-              </span>
+          <button class="btn" id="sdk-usage-toggle" type="button" aria-expanded="false" aria-controls="sdk-usage-menu" hidden>用量</button>
+          <div class="sdk-options">
+            <div class="sdk-pickers">
+              <label class="new-effort sdk-model" title="模型"><span class="visually-hidden">模型</span><select id="sdk-model"><option value="" disabled hidden>模型</option></select></label>
+              <label class="new-effort sdk-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="sdk-effort"><option value="" disabled hidden>推理强度</option></select></label>
+              <button class="btn" id="sdk-more" type="button" title="会话操作" aria-label="会话操作" aria-expanded="false" aria-controls="sdk-more-menu">⋯</button>
+              <div class="new-model-menu sdk-toolbar-menu" id="sdk-more-menu" popover="auto" aria-label="会话操作">
+                <span class="sdk-reset" hidden>
+                  <label class="new-effort" title="可兑换的限额重置卡"><span class="visually-hidden">重置卡</span><select id="sdk-reset-card"></select></label>
+                  <button class="btn" id="sdk-reset-use" type="button" title="兑换所选重置卡">兑换</button>
+                </span>
+              </div>
+              <div class="new-model-menu sdk-toolbar-menu sdk-usage-menu" id="sdk-usage-menu" popover="auto" aria-label="用量"></div>
             </div>
-            <div class="new-model-menu sdk-toolbar-menu sdk-usage-menu" id="sdk-usage-menu" popover="auto" aria-label="用量"></div>
           </div>
+
         </div>
         <div class="composer-row">
           <div class="composer-input-wrap"><textarea id="sdk-input" rows="1" enterkeyhint="enter" placeholder="通过 Codex SDK 发送"></textarea></div>
@@ -141,8 +145,8 @@ const CodexSdkView = {
 
   mountToolbar(generation) {
     this.toolbarBindings = new AbortController();
-    for (const name of ['more', 'usage']) {
-      const button = this.pane.querySelector(name === 'more' ? '#sdk-more' : '#sdk-usage-toggle');
+    for (const name of ['more', 'usage', 'status']) {
+      const button = this.pane.querySelector({more: '#sdk-more', usage: '#sdk-usage-toggle', status: '.sdk-status'}[name]);
       const menu = this.pane.querySelector(`#sdk-${name}-menu`);
       menu.addEventListener('beforetoggle', event => button.setAttribute('aria-expanded', String(event.newState === 'open')));
       button.onclick = () => {
@@ -154,7 +158,7 @@ const CodexSdkView = {
     }
     window.addEventListener('resize', () => this.closeToolbarMenus(), {signal: this.toolbarBindings.signal});
     this.toolbarObserver = new ResizeObserver(([entry]) => { if (this.current(generation)) this.layoutToolbar(entry.contentRect.width); });
-    this.toolbarObserver.observe(this.pane.querySelector('.sdk-options'));
+    this.toolbarObserver.observe(this.pane.querySelector('.sdk-status-row'));
     this.layoutToolbar();
   },
 
@@ -176,44 +180,51 @@ const CodexSdkView = {
 
   layoutToolbar(width = this.toolbarWidth) {
     if (!this.pane) return;
-    const options = this.pane.querySelector('.sdk-options'), gauges = this.pane.querySelector('.sdk-gauges');
-    this.toolbarWidth = width ?? options.clientWidth;
-    const knownUsage = [...gauges.children].some(node => !node.hidden);
-    const signature = `${this.toolbarWidth}:${[...gauges.children].filter(node => !node.hidden).map(node => node.dataset.gauge || node.textContent).join('|')}`;
+    const row = this.pane.querySelector('.sdk-status-row'), gauges = this.pane.querySelector('.sdk-gauges');
+    this.toolbarWidth = width ?? row.clientWidth;
+    const visibleGauges = [...gauges.children].filter(node => !node.hidden);
+    const signature = `${this.toolbarWidth}:${visibleGauges.map(node => node.textContent).join('|')}`;
     if (signature === this.toolbarLayout) return;
     this.toolbarLayout = signature;
     this.closeToolbarMenus();
     const pickers = this.pane.querySelector('.sdk-pickers'), more = this.pane.querySelector('#sdk-more-menu');
     const trigger = this.pane.querySelector('#sdk-more'), usage = this.pane.querySelector('#sdk-usage-toggle');
-    const actions = this.pane.querySelector('#sdk-actions'), permissions = this.pane.querySelector('#sdk-permissions');
+    const usageMenu = this.pane.querySelector('#sdk-usage-menu'), actions = this.pane.querySelector('#sdk-actions');
     const mode = this.pane.querySelector('.sdk-mode');
-    options.classList.add('compact'); options.classList.toggle('narrow', this.toolbarWidth < 360);
-    options.prepend(gauges);
-    usage.hidden = true;
-    options.classList.remove('usage-stacked');
-    if (mode) {
-      if (this.toolbarWidth < 380) more.prepend(mode);
-      else pickers.insertBefore(mode, trigger);
-    }
-    if (permissions) more.append(permissions);
-    const fits = () => {
-      const bounds = pickers.getBoundingClientRect();
-      return [...pickers.children].filter(node => node.getClientRects().length)
-        .every(node => { const box = node.getBoundingClientRect(); return box.left >= bounds.left - 1 && box.right <= bounds.right + 1; });
-    };
     const buttons = ['compact', 'fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
+    // Start with only the essential controls. Every promotion must fit the
+    // entire row, including status and usage, at the current interface scale.
+    usageMenu.append(gauges);
+    usage.hidden = !visibleGauges.length;
+    if (mode) more.prepend(mode);
     for (const button of buttons) actions.append(button);
-    more.append(this.pane.querySelector('.sdk-reset'));
-    if (knownUsage && !fits()) options.classList.add('usage-stacked');
-    const model = pickers.querySelector('.sdk-model');
-    const modelWidth = model.getBoundingClientRect().width;
-    // Promote actual controls by priority until readable controls no longer fit.
-    for (const control of buttons) {
+    more.append(this.pane.querySelector('#sdk-permissions'), this.pane.querySelector('.sdk-reset'));
+    const fits = () => {
+      const bounds = row.getBoundingClientRect(), zoom = bounds.width / row.clientWidth;
+      const status = this.notice.getBoundingClientRect();
+      const controls = [this.notice, gauges, usage, ...pickers.children]
+        .filter(node => !node.hasAttribute('popover') && node.getClientRects().length);
+      let right = bounds.left;
+      return status.width >= 60 * zoom - 1 && row.scrollWidth <= row.clientWidth + 1
+        && controls.every(node => {
+          const box = node.getBoundingClientRect(), inside = box.left >= right - 1 && box.right <= bounds.right + 1;
+          right = box.right;
+          return inside;
+        });
+    };
+    for (const [model, effort] of [[160, 72], [100, 60], [64, 50]]) {
+      pickers.style.setProperty('--sdk-model-width', `${model}px`);
+      pickers.style.setProperty('--sdk-effort-width', `${effort}px`);
+      if (fits()) break;
+    }
+    if (visibleGauges.length) {
+      row.insertBefore(gauges, usage); usage.hidden = true;
+      if (!fits()) { usageMenu.append(gauges); usage.hidden = false; }
+    }
+    for (const control of [mode, ...buttons].filter(Boolean)) {
       const parent = control.parentElement, next = control.nextSibling;
       pickers.insertBefore(control, trigger);
-      if (!fits() || model.getBoundingClientRect().width < modelWidth - 1) {
-        parent.insertBefore(control, next); break;
-      }
+      if (!fits()) parent.insertBefore(control, next);
     }
 
   },
@@ -740,7 +751,11 @@ const CodexSdkView = {
 
   setNotice(text, kind = '', sticky = false) {
     if (!this.notice) return;
-    this.notice.textContent = text;
+    this.notice.firstElementChild.textContent = text;
+    const details = this.pane.querySelector('#sdk-status-menu');
+    details.textContent = text;
+    if (!text && details.matches(':popover-open')) details.hidePopover();
+    this.notice.title = text;
     this.notice.hidden = !text;
     this.notice.className = 'sdk-status' + (kind ? ` ${kind}` : '');
     this.notice.dataset.sticky = sticky ? '1' : '';
