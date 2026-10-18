@@ -87,18 +87,13 @@ def exercise(browser, binary, root, width, theme, screenshots):
         assert page.locator('.sdk-msgs').inner_text().count('后台进度 00 /') == 1
         assert page.locator('.sdk-msgs').inner_text().count('后台进度 47 /') == 1
         status = page.locator('.sdk-status')
-        expect(status).to_have_text('Codex 正在处理…')
-        if status.evaluate('e => e.scrollWidth > e.clientWidth + 1'):
-            expect(status).to_be_enabled()
-            status.click()
-            expect(page.locator('#sdk-status-menu')).to_have_text('Codex 正在处理…')
-            page.keyboard.press('Escape')
-        else:
-            expect(status).to_be_disabled()
-            assert status.evaluate('e => getComputedStyle(e).cursor') == 'default'
-            bounds = status.bounding_box()
-            page.mouse.click(bounds['x'] + bounds['width']/2, bounds['y'] + bounds['height']/2)
-            expect(page.locator('#sdk-status-menu')).to_be_hidden()
+        expect(status).to_have_text('处理中')
+        assert status.evaluate('e => e.scrollWidth <= e.clientWidth + 1')
+        expect(status).to_be_disabled()
+        assert status.evaluate('e => getComputedStyle(e).cursor') == 'default'
+        bounds = status.bounding_box()
+        page.mouse.click(bounds['x'] + bounds['width']/2, bounds['y'] + bounds['height']/2)
+        expect(page.locator('#sdk-status-menu')).to_be_hidden()
         page.locator('#a-chat').click()
         fake.progress('离开 SDK 页面期间产生的进度，回到页面应完整显示。')
         page.locator('#a-sdk').click()
