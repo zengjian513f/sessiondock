@@ -62,6 +62,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     page.goto(base, wait_until='networkidle')
     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
     expect(page.locator('#sdk-mode')).to_have_value('default')
+    expect(page.locator('.sdk-status')).to_have_text('就绪')
     for selector in ('#sdk-model', '#sdk-effort', '#sdk-tier', '#sdk-mode', '#sdk-control-approval', '#sdk-control-sandbox'):
         assert not page.locator(selector + ' option[value=""]').count(), selector
         assert not any(word in page.locator(selector).text_content() for word in ('沿用', '未返回', 'Default')), selector
@@ -213,6 +214,17 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     assert not errors, errors
     notify('turn/completed', {'turn': {'id': 'layout-status-turn', 'status': 'completed', 'items': []}})
     notify('thread/status/changed', {'status': {'type': 'idle'}})
+    expect(page.locator('.sdk-status')).to_have_text('就绪')
+    for width in (1440, 390, 320):
+        page.set_viewport_size({'width': width, 'height': 844})
+        single_row(page)
+        expect(page.locator('.sdk-status')).to_have_text('就绪')
+        expect(page.locator('.sdk-status')).to_be_visible()
+        expect(page.locator('.sdk-status')).to_be_disabled()
+        expect(page.locator('#sdk-send')).to_have_text('发送')
+        expect(page.locator('#sdk-stop')).to_be_hidden()
+        if screenshots:
+            page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-ready.png'))
     print(f'PASS compact SDK composer: {theme}, {scale}%, {len(widths)} widths, popovers/actions/draft/sidebar', flush=True)
     context.close()
 
