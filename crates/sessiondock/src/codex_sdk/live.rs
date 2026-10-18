@@ -42,6 +42,7 @@ struct State {
     /// Open server requests keyed by the JSON spelling of their id.
     requests: IndexMap<String, Request>,
     usage: Value,
+    recorded_limits: Value,
     last_error: Value,
     idle_since: Option<Instant>,
 }
@@ -76,12 +77,13 @@ impl LiveThread {
         self.state.lock().expect("live").generation
     }
 
-    pub fn seed_usage(&self, usage: Value) {
+    pub fn seed_usage(&self, snapshot: super::usage::Snapshot) {
         let mut state = self.state.lock().expect("live");
         // A live notification arriving during disk recovery is newer.
         if state.usage.is_null() {
-            state.usage = usage;
+            state.usage = snapshot.usage;
         }
+        state.recorded_limits = snapshot.limits;
     }
 
     pub fn loaded(&self, generation: u64, mut resume: Value) {
@@ -240,6 +242,7 @@ fn summary(state: &State) -> Value {
     json!({
         "resume": state.resume, "settings": state.settings, "status": state.status,
         "usage": state.usage, "last_error": state.last_error, "queue":state.queue,
+        "recorded_limits": state.recorded_limits,
     })
 }
 

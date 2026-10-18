@@ -6,10 +6,17 @@ use std::{
     path::Path,
 };
 
-pub(super) fn latest(path: &Path) -> Option<Value> {
+#[derive(Default)]
+pub(super) struct Snapshot {
+    pub usage: Value,
+    pub limits: Value,
+}
+
+pub(super) fn latest(path: &Path) -> Option<Snapshot> {
     let mut file = File::open(path).ok()?;
     let mut offset = file.metadata().ok()?.len();
     let mut carry = Vec::new();
+    let mut snapshot = Snapshot::default();
     while offset > 0 {
         let size = offset.min(64 * 1024) as usize;
         offset -= size as u64;
@@ -31,19 +38,41 @@ pub(super) fn latest(path: &Path) -> Option<Value> {
             };
             // A measurement from before compaction is no longer current.
             if row["type"] == "compacted" {
-                return None;
+                return Some(snapshot);
             }
             if row["type"] != "event_msg" || row["payload"]["type"] != "token_count" {
                 continue;
+            }
+            let limits = &row["payload"]["rate_limits"];
+            if snapshot.limits.is_null()
+                && limits.is_object()
+                && (limits["limit_id"].is_null() || limits["limit_id"] == "codex")
+            {
+                let window = |name: &str| {
+                    let value = &limits[name];
+                    if value["used_percent"].is_number() {
+                        json!({"usedPercent":value["used_percent"],
+                            "windowDurationMins":value["window_minutes"], "resetsAt":value["resets_at"]})
+                    } else {
+                        Value::Null
+                    }
+                };
+                let primary = window("primary");
+                let secondary = window("secondary");
+                if !primary.is_null() || !secondary.is_null() {
+                    snapshot.limits = json!({"capturedAt":row["timestamp"], "rateLimits":{
+                        "limitId":"codex", "primary":primary, "secondary":secondary}});
+                }
             }
             let info = &row["payload"]["info"];
             let used = info["last_token_usage"]["total_tokens"].as_u64();
             let window = info["model_context_window"].as_u64();
             if let (Some(used), Some(window)) = (used, window.filter(|v| *v > 0)) {
-                return Some(json!({"last":{"totalTokens":used}, "modelContextWindow":window}));
+                snapshot.usage = json!({"last":{"totalTokens":used}, "modelContextWindow":window});
+                return Some(snapshot);
             }
         }
         carry = bytes[..boundary].to_vec();
     }
-    None
+    Some(snapshot)
 }

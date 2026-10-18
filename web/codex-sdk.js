@@ -10,7 +10,7 @@ const CodexSdkView = {
   turn: null, items: new Map(), nodes: new Map(), requests: new Map(),
   summary: null, models: [], historyTimer: 0, historyData: null,
   limits: null, resetCards: null, redeemKeys: new Map(),
-  limitsRead: null, limitsRetryTimer: 0, limitsRetryDelay: 1000,
+  limitsRead: null, limitsRetryTimer: 0, limitsRetryDelay: 1000, limitsRecordedAt: null, limitsFresh: false,
   openRead: null, openFailed: false, openRetryTimer: 0, openRetryDelay: 1000,
   toolbarObserver: null, toolbarBindings: null, toolbarWidth: null, toolbarLayout: null,
   modelChoice: null, effortChoice: null,
@@ -138,7 +138,7 @@ const CodexSdkView = {
     this.limitsRead?.abort();
     this.limitsRead = null; this.limitsRetryTimer = 0; this.limitsRetryDelay = 1000;
     this.items.clear(); this.nodes.clear(); this.requests.clear();
-    this.turn = null; this.summary = null; this.limits = null; this.resetCards = null;
+    this.turn = null; this.summary = null; this.limits = null; this.resetCards = null; this.limitsRecordedAt = null; this.limitsFresh = false;
     this.models = []; this.modelChoice = this.effortChoice = null;
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
     this.uid = ''; this.agent = null; this.historyData = null; this.historyReady = null; this.historyFailed = false;
@@ -258,8 +258,13 @@ const CodexSdkView = {
     const read = new AbortController();
     this.openRead = read;
     const uid = this.uid;
+    // Account reads do not depend on resuming this thread or recovering its turn.
+    this.loadLimits(generation);
     try {
-      await this.request('api/codex-sdk/open', {uid}, read.signal);
+      const opened = await this.request('api/codex-sdk/open', {uid}, read.signal);
+      if (!this.current(generation)) return;
+      this.summary = opened.raw || {};
+      this.seedGauges();
     } catch (error) {
       if (!this.current(generation)) return;
       this.openFailed = true;
@@ -280,7 +285,6 @@ const CodexSdkView = {
     this.openFailed = false; this.openRetryDelay = 1000;
     this.setNotice('连接中');
     this.loadModels(generation);
-    this.loadLimits(generation);
     const es = new EventSource(appUrl(`api/codex-sdk/events?${new URLSearchParams({uid, agent: this.agent || ''})}`));
     this.es = es;
     es.addEventListener('sdk', event => {
@@ -356,7 +360,20 @@ const CodexSdkView = {
 
   applyLimits(raw) {
     this.limits = raw?.rateLimitsByLimitId?.codex || raw?.rateLimits || null;
+    this.limitsRecordedAt = null;
+    this.limitsFresh = true;
     this.resetCards = raw?.rateLimitResetCredits || null;
+    this.paintGauges();
+  },
+
+  seedGauges() {
+    // The local rollout is already available; a slow/failed account request
+    // must not hide its last recorded windows. Fresh account data always wins.
+    const recorded = this.summary?.recorded_limits;
+    if (!this.limitsFresh && !this.limits && recorded?.rateLimits) {
+      this.limits = recorded.rateLimits;
+      this.limitsRecordedAt = recorded.capturedAt || '';
+    }
     this.paintGauges();
   },
 
@@ -414,8 +431,10 @@ const CodexSdkView = {
       if (!window) { this.gauge(slot, slot, NaN, ''); continue; }
       const label = this.windowLabel(window.windowDurationMins);
       const reset = window.resetsAt ? `；${new Date(window.resetsAt * 1000).toLocaleString()} 重置` : '';
+      const recorded = this.limitsRecordedAt != null
+        ? `；上次记录${this.limitsRecordedAt ? ` ${new Date(this.limitsRecordedAt).toLocaleString()}` : ''}` : '';
       this.gauge(slot, label, window.usedPercent,
-        `${label} 窗口已用 ${Math.round(window.usedPercent)}%，剩余 ${Math.max(0, Math.round(100 - window.usedPercent))}%${reset}`);
+        `${label} 窗口已用 ${Math.round(window.usedPercent)}%，剩余 ${Math.max(0, Math.round(100 - window.usedPercent))}%${reset}${recorded}`);
     }
     const usage = this.summary?.usage;
     const size = usage?.modelContextWindow;
@@ -634,6 +653,7 @@ const CodexSdkView = {
     // Reconcile ownership on this connection's snapshot as well.
     queueUiChange({live: true});
     this.summary = raw.summary || {};
+    this.seedGauges();
     this.turn = raw.turn || null;
     this.items = new Map((raw.items || []).map(item => [item.id, item]));
     this.live.replaceChildren();
@@ -717,6 +737,8 @@ const CodexSdkView = {
         // 通知只带一个额度桶；只更新正在显示的那个（重置卡等不在其中，保持不变）。
         if (raw.rateLimits && (!this.limits || !raw.rateLimits.limitId || raw.rateLimits.limitId === this.limits.limitId)) {
           this.limits = {...this.limits, ...raw.rateLimits};
+          this.limitsRecordedAt = null;
+          this.limitsFresh = true;
         }
         break;
       case 'error': if (this.summary) this.summary.last_error = raw.error; break;
