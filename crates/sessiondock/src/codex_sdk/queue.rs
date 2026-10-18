@@ -200,7 +200,7 @@ impl CodexSdk {
             .queue
             .get(thread, id)
             .ok_or(RpcError::UnknownRequest)?;
-        if item.state == "sent" {
+        if matches!(item.state.as_str(), "sent" | "sending") {
             return Err(RpcError::UnknownRequest);
         }
         if item.state == "cancelled" {
@@ -237,7 +237,7 @@ impl Inner {
         );
     }
 
-    async fn dispatch(self: &Arc<Self>, live: &super::LiveThread) -> Result<(), RpcError> {
+    async fn dispatch(self: &Arc<Self>, live: &Arc<super::LiveThread>) -> Result<(), RpcError> {
         if !live.ready_to_start() {
             return Ok(());
         }
@@ -253,7 +253,7 @@ impl Inner {
 
     async fn deliver(
         self: &Arc<Self>,
-        live: &super::LiveThread,
+        live: &Arc<super::LiveThread>,
         mut item: Input,
         steer: Option<String>,
     ) -> Result<(), RpcError> {
@@ -276,18 +276,88 @@ impl Inner {
             live.starting(true);
             "turn/start"
         };
+        // Subscribe before the RPC: userMessage can precede its response. An
+        // accepted turn may compact before consuming any input at all.
+        let (_, events) = live.attach();
         let result = connection.request(method, params).await;
         match result {
-            Ok(_) => item.state = "sent".into(),
+            Ok(result) => {
+                let turn = result["turn"]["id"]
+                    .as_str()
+                    .or_else(|| result["turnId"].as_str())
+                    .map(str::to_owned);
+                let inner = self.clone();
+                let live = live.clone();
+                tokio::spawn(async move {
+                    inner.confirm_input(live, item, turn, events).await;
+                });
+                return Ok(());
+            }
             Err(error) => {
                 live.starting(false);
                 item.state = "failed".into();
                 item.error = Some(error.to_string());
             }
         }
+        live.detach();
         self.queue.update(live.id(), item)?;
         self.queue_event(live);
         Ok(())
+    }
+
+    async fn confirm_input(
+        self: Arc<Self>,
+        live: Arc<super::LiveThread>,
+        mut item: Input,
+        turn: Option<String>,
+        mut events: tokio::sync::broadcast::Receiver<Arc<str>>,
+    ) {
+        let confirmed = loop {
+            if turn.is_none() {
+                break false;
+            }
+            let event = tokio::select! {
+                _ = self.shutdown.cancelled() => break false,
+                event = events.recv() => event,
+            };
+            let Ok(event) = event else { break false };
+            let Ok(event) = serde_json::from_str::<Value>(&event) else {
+                continue;
+            };
+            let raw = &event["raw"];
+            let method = event["method"].as_str().unwrap_or_default();
+            if method == "bridge/reset" || method == "thread/reverted" {
+                break false;
+            }
+            if turn.as_deref().is_some_and(|id| raw["turnId"] == id)
+                && method == "item/completed"
+                && raw["item"]["type"] == "userMessage"
+                && input_content(&item.input)
+                    == input_content(
+                        raw["item"]["content"]
+                            .as_array()
+                            .map(Vec::as_slice)
+                            .unwrap_or_default(),
+                    )
+            {
+                break true;
+            }
+            if method == "turn/completed"
+                && turn.as_deref().is_some_and(|id| raw["turn"]["id"] == id)
+            {
+                break false;
+            }
+        };
+        live.detach();
+        let lock = self.queue.lock(live.id());
+        let _guard = lock.lock().await;
+        item.state = if confirmed { "sent" } else { "failed" }.into();
+        item.error = (!confirmed).then(|| {
+            "回合结束或连接中断，尚未确认消息进入会话；内容已保留，请核对后重试或撤销。".into()
+        });
+        if self.queue.update(live.id(), item).is_ok() {
+            self.queue_event(&live);
+        }
     }
 
     pub(super) async fn run_queue(self: Arc<Self>) {
@@ -309,4 +379,16 @@ impl Inner {
             }
         }
     }
+}
+
+// Native user items may add text annotations; compare the actual input content.
+fn input_content(input: &[Value]) -> Vec<Value> {
+    input
+        .iter()
+        .map(|part| match part["type"].as_str() {
+            Some("text") => json!({"type":"text", "text":part["text"]}),
+            Some("localImage") => json!({"type":"localImage", "path":part["path"]}),
+            _ => part.clone(),
+        })
+        .collect()
 }
