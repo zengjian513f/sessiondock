@@ -188,7 +188,10 @@ const SessionContentView = {
     return this.kind;
   },
   open(kind, uid, agent) {
-    if (this.kind === kind && this.uid === uid && this.agent === agent) return;
+    if (this.kind === kind && this.uid === uid && this.agent === agent) {
+      if (kind === 'sdk') CodexSdkView.retryOpen();
+      return;
+    }
     this.close();
     this.kind = kind; this.uid = uid; this.agent = agent;
     this.pane = document.createElement('section');

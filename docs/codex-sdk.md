@@ -82,6 +82,20 @@ runs inherit the *daemon's* environment (the one SessionDock or the first TUI
 had when it started the daemon), not each terminal's; and restarting or
 updating the daemon ends every attached terminal.
 
+An SDK view rejected with `codex_sdk_thread_busy` retries only its open request
+with backoff from 1 second up to 30 seconds, so an independent writer's exit
+allows the same page to connect. The error stays visible until open succeeds.
+Clicking the selected SDK button or reselecting the session retries a failed
+open immediately; a healthy connection is reused. Closing or switching the
+view cancels pending retries and open reads. Recovery preserves history and
+the unsent draft and never replays SEND. BUG-20261018-030340-bc6f60 showed a
+successful host exit at `03:02:59.251Z` (code 0), an Exited lifecycle receipt
+and browser `running: false`, followed by an SDK click and same-session
+selection that both returned without retrying the failed open. The audit did
+not capture the original SDK RPC error; the attachment shows the writer-lock
+notice. [Recovery browser coverage](../tests/codex_sdk_recovery_browser.py)
+exercises native lock rejection, a real private PTY stop and subsequent SDK SEND.
+
 ## HTTP
 
 Existing-session routes take the page's opaque session `uid` (query or body), so a Hub
