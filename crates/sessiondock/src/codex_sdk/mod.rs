@@ -14,6 +14,7 @@ mod actions;
 mod connection;
 mod controls;
 mod live;
+mod observation;
 mod queue;
 mod usage;
 
@@ -190,6 +191,7 @@ pub(crate) struct Inner {
     models: Mutex<Option<(Instant, Value)>>,
     creates: Mutex<HashMap<String, CreateReceipt>>,
     pending: Mutex<HashMap<String, Value>>,
+    observation: tokio::sync::Mutex<observation::Sample>,
     shutdown: CancellationToken,
     queue: queue::Queue,
 }
@@ -263,6 +265,7 @@ impl CodexSdk {
                 models: Mutex::new(None),
                 creates: Mutex::new(HashMap::new()),
                 pending: Mutex::new(HashMap::new()),
+                observation: tokio::sync::Mutex::new(observation::Sample::default()),
                 shutdown,
             }),
         });
@@ -459,6 +462,13 @@ impl Inner {
     }
 
     async fn connection(self: &Arc<Self>) -> Result<Arc<Connection>, RpcError> {
+        self.connection_mode(true).await
+    }
+
+    async fn connection_mode(
+        self: &Arc<Self>,
+        autostart: bool,
+    ) -> Result<Arc<Connection>, RpcError> {
         let mut slot = self.connection.lock().await;
         if let Some(connection) = slot.as_ref()
             && !connection.is_closed()
@@ -466,7 +476,11 @@ impl Inner {
             return Ok(connection.clone());
         }
         let generation = slot.as_ref().map_or(1, |old| old.generation() + 1);
-        let connection = Connection::open(self.clone(), &self.endpoint, generation).await?;
+        let mut endpoint = self.endpoint.clone();
+        if !autostart {
+            endpoint.autostart_home = None;
+        }
+        let connection = Connection::open(self.clone(), &endpoint, generation).await?;
         *slot = Some(connection.clone());
         Ok(connection)
     }

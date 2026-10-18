@@ -187,7 +187,7 @@ pub(crate) async fn live_document(state: &AppState, force: bool) -> Result<Value
     };
     let mut sdk_uids = BTreeSet::new();
     if let Some(sdk) = &state.codex_sdk {
-        let loaded = sdk.loaded_threads().await;
+        let loaded = sdk.live_threads().await;
         sdk_uids.extend(
             rows.iter()
                 .filter(|row| row.source == "codex" && loaded.contains(&row.sid))

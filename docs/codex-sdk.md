@@ -63,11 +63,16 @@ opening 终端 starts or reuses a TUI client of the shared daemon. It does not
 ask to replace an external process or signal that daemon, even if process
 discovery finds it holding the rollout. An independent writer and a terminal
 lease held by another browser still follow their existing confirmation flow.
-DELTA (BUG-20261018-030737-e115f2): a thread loaded on SessionDock's current
-live SDK connection is a managed session and shows the existing blue marker
+DELTA (BUG-20261018-030737-e115f2, BUG-20261018-153253-e86c26): a thread loaded
+on the configured shared daemon is a managed session and shows the existing blue marker
 in the sidebar and header, including idle and newly created threads. Merely
 selecting SDK or failing to resume does not establish ownership. Disconnect
-or unsubscribe removes that evidence; an external process alone stays green.
+or unsubscribe removes the bridge's subscription evidence; a read-only
+`thread/loaded/list` observation still identifies threads retained by the daemon,
+including before the first click and after a service restart. Observation never
+starts the daemon, resumes threads or grants terminal coexistence authority;
+unload or failed observation withdraws discovered evidence. An external process
+alone stays green.
 `/api/live.sdk_uids` carries this evidence through the Hub and live events,
 separately from `tmux_uids`, which continues to mean console ownership. SDK
 connection snapshots also reconcile live state, so opening/reconnecting between

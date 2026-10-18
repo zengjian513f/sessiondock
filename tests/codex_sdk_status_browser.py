@@ -20,7 +20,13 @@ from spawned_by_fixtures import proc_pid
 
 
 class StatusDaemon(FakeAppServer):
+    listed = True
+
     async def _handle(self, writer, message):
+        if message.get('method') == 'thread/loaded/list':
+            await self.send(writer, {'id': message['id'], 'result': {
+                'data': [THREAD] if self.listed else [], 'nextCursor': None}})
+            return
         if message.get('method') == 'thread/resume' and message['params']['threadId'] != THREAD:
             await self.send(writer, {'id': message['id'], 'error': {
                 'code': -32000, 'message': 'thread already has an active writer'}})
@@ -43,6 +49,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     page.set_default_timeout(15000)
     errors = []
     page.on('pageerror', lambda error: errors.append(error.stack))
+    resumes = len(fake.methods('thread/resume'))
     page.goto(base, wait_until='domcontentloaded')
     page.wait_for_function('T.listLoaded && S.sessions.length === 2')
     uid = page.evaluate('S.sessions.find(r => r.sid === "' + THREAD + '").uid')
@@ -50,6 +57,13 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     card = page.locator(f'#side .item[data-uid="{uid}"]')
     external = page.locator(f'#side .item[data-uid="{independent}"]')
     marker = card.locator(':scope > .ico > .item-status')
+    # The daemon already owns this thread, before this browser ever opens it.
+    # Listing must observe that ownership without resuming/subscribing threads.
+    expect(marker).to_have_class(re.compile(r'\bsdk\b'))
+    expect(external.locator(':scope > .ico > .item-status')).not_to_have_class(re.compile(r'\bsdk\b'))
+    assert len(fake.methods('thread/resume')) == resumes
+    if screenshots:
+        page.screenshot(path=str(screenshots / (label + '-before-click.png')))
     # A slow/partial fleet read can lack SDK ownership while this exact
     # thread's independent SDK stream has already delivered its snapshot.
     def stale_live(route):
@@ -90,15 +104,26 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     expect(page.locator('#sdk-model')).to_have_value('fake-sol')
     page.locator('#a-chat').click()
     expect(page.locator('#msgs')).to_contain_text('SDK 状态回归')
-    # Let the global 2-second observer sample ownership before disconnecting
-    # without an SDK subscriber; that is the background invalidation path.
-    page.wait_for_timeout(2500)
+    # Losing only the bridge connection must not hide a still-loaded daemon
+    # thread. Observe it again while there is no SDK view/subscriber.
+    resumes = len(fake.methods('thread/resume'))
+    lists = len(fake.methods('thread/loaded/list'))
     fake.disconnect()
+    fake.wait_for(lambda: len(fake.methods('thread/loaded/list')) > lists)
+    expect(marker).to_have_class(re.compile(r'\bsdk\b'))
+    page.wait_for_function('S.liveSdk.has(S.sel)')
+    assert len(fake.methods('thread/resume')) == resumes
+    # The daemon then unloads it; exact subscription evidence was withdrawn
+    # by disconnect above, so the remaining external process stays green.
+    fake.listed = False
     expect(marker).not_to_have_class(re.compile(r'\bsdk\b'), timeout=20000)
     expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\bsdk\b'))
     expect(page.locator('#dlive')).to_have_class(re.compile(r'\bvisible\b'))
     data = page.request.get(base + '/api/live').json()
     assert uid not in data['sdk_uids'] and uid in data['uids'], data
+    fake.listed = True
+    expect(marker).to_have_class(re.compile(r'\bsdk\b'))
+    assert len(fake.methods('thread/resume')) == resumes
     page.locator('#a-sdk').click()
     expect(page.locator('#sdk-model')).to_have_value('fake-sol')
     expect(page.locator('#dlive')).to_have_class(re.compile(r'\bsdk\b'))
@@ -153,7 +178,7 @@ def main():
                             browser.close()
                 finally:
                     hub.stop()
-    print('PASS SDK blue markers: node/Hub, reload, failed resume stays green, disconnect/reconnect, widths/themes')
+    print('PASS SDK blue markers: node/Hub, blue before click, reload, external stays green, daemon unload/reload, widths/themes')
 
 
 if __name__ == '__main__':
