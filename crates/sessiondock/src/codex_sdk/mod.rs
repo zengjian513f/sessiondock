@@ -466,6 +466,7 @@ impl Inner {
         let lock = thread.clone();
         let _resume = lock.resume_lock.lock().await;
         if thread.loaded_on() == Some(connection.generation()) {
+            self.recover_active_turn(&connection, &thread).await?;
             return Ok(thread);
         }
         match connection
@@ -485,6 +486,7 @@ impl Inner {
                     }
                 }
                 thread.loaded(connection.generation(), result);
+                self.recover_active_turn(&connection, &thread).await?;
                 thread.apply(
                     "bridge/queue",
                     json!({"queue":self.queue.visible(thread_id)}),
@@ -503,6 +505,30 @@ impl Inner {
                 Err(error)
             }
         }
+    }
+
+    async fn recover_active_turn(
+        &self,
+        connection: &Connection,
+        thread: &LiveThread,
+    ) -> Result<(), RpcError> {
+        if let Some(revision) = thread.missing_active_turn() {
+            // Resume deliberately excludes history. Read only the newest turn
+            // to recover a running TUI's exact expectedTurnId for steer/stop.
+            let turns = connection
+                .request(
+                    "thread/turns/list",
+                    json!({
+                        "threadId":thread.id(), "sortDirection":"desc", "limit":1,
+                        "itemsView":"summary",
+                    }),
+                )
+                .await?;
+            if let Some(turn) = turns["data"].as_array().and_then(|turns| turns.first()) {
+                thread.recover_active_turn(revision, turn);
+            }
+        }
+        Ok(())
     }
 
     /// A notification from the daemon: route by `threadId`, apply to the

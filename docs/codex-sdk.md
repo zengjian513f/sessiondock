@@ -32,7 +32,11 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
 - Handshake: `initialize` with `clientInfo.name = "sessiondock"` and
   `capabilities.experimentalApi = true`, then `initialized`.
 - A thread is resumed (`thread/resume`, `excludeTurns: true`) at most once per
-  connection; later pages reuse it. A thread with no attached page, no turn in
+  connection; later pages reuse it. If it is already active without a local
+  turn ID, the bridge reads the newest turn (`thread/turns/list`, `limit: 1`,
+  descending, summary items) before publishing its snapshot. This restores
+  explicit steer and interrupt for work started in a TUI before subscription.
+  A turn completed during recovery is never resurrected. A thread with no attached page, no turn in
   flight and no open request for 10 minutes is unsubscribed (except an
   unpersisted new thread, whose live instance is its only copy)
   (`thread/unsubscribe`). When the connection closes every attached page gets

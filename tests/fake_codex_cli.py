@@ -337,6 +337,9 @@ class Fake:
             return
         if text == '/status':
             from pathlib import Path
+            if trace := os.environ.get('SESSIONDOCK_TEST_STATUS_LOG'):
+                with open(trace, 'a') as stream:
+                    stream.write('/status\n')
             if hidden := os.environ.get('SESSIONDOCK_TEST_STATUS_HIDE_FILE'):
                 if Path(hidden).exists():
                     self.render()
@@ -378,6 +381,8 @@ class Fake:
         if trace := os.environ.get('SESSIONDOCK_TEST_SUBMISSIONS'):
             with open(trace, 'a', encoding='utf-8') as stream:
                 stream.write(json.dumps({'text': text}) + '\n')
+        if os.environ.get('SESSIONDOCK_TEST_STATUS_EPHEMERAL'):
+            self.transcript = [line for line in self.transcript if not line.startswith('Session: ')]
         self.transcript.append(text)
         self.submitted += 1
         if self.options["swallow"] == self.submitted:
@@ -398,6 +403,8 @@ class Fake:
         saved = termios.tcgetattr(fd)
         tty.setraw(fd)
         try:
+            if os.environ.get('SESSIONDOCK_TEST_STATUS_EPHEMERAL'):
+                self.write('\x1b[?1049h')
             self.write("\x1b[?2004h")  # bracketed paste on, like Codex
             self.render()
             pending = b""

@@ -70,7 +70,7 @@ pub enum BindingState {
 /// Who asserted the association. `Operator` is the explicit confirmation
 /// dialog; `Process` is the server's own process-tree/file-descriptor
 /// evidence (the launched host's child holds the native record open), the
-/// `new-status` resolution.
+/// `new-status` resolution, guarded Codex status or report SEND evidence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BindingMethod {

@@ -39,6 +39,17 @@ class QueueServer(ControlsServer):
             await self.send(writer, {'id': message['id'], 'result': {'thread': {'id': THREAD,
                 'status': {'type': 'active' if self.turn else 'idle'}, 'turns': []},
                 'model': self.settings['model'], 'reasoningEffort': self.settings['effort']}})
+        elif method == 'thread/turns/list':
+            assert params['limit'] == 1 and params['sortDirection'] == 'desc', params
+            data = ([{
+                'id': self.turn, 'status': 'inProgress', 'items': [],
+            }] if self.turn else [])
+            if getattr(self, 'complete_during_hydration', False):
+                self.complete_during_hydration = False
+                turn, self.turn = self.turn, None
+                await self.notify('turn/completed', {'turn': {'id': turn, 'status': 'completed', 'items': []}})
+                await self.notify('thread/status/changed', {'status': {'type': 'idle'}})
+            await self.send(writer, {'id': message['id'], 'result': {'data': data, 'nextCursor': None}})
         else:
             await super()._handle(writer, message)
 
@@ -126,6 +137,49 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     print('PASS ' + label + ': queue/cancel/explicit steer/FIFO/reload/retry', flush=True)
 
 
+def exercise_existing(browser, base, fake, screenshots):
+    # The turn began in a TUI before this bridge connected. Resume metadata
+    # intentionally excludes turns; no new turn/started notification follows.
+    fake.turn = 'already-running-in-terminal'
+    context, page = open_page(browser, base, 1280, 'light')
+    page.locator('#sdk-input').fill('引导已经运行的终端回合')
+    page.locator('#sdk-send').click()
+    row = page.locator('.sdk-queued').filter(has_text='引导已经运行')
+    button = row.locator('[data-queue-action="steer"]')
+    expect(button).to_be_enabled()
+    page.reload(wait_until='networkidle')
+    expect(button).to_be_enabled()
+    # A daemon reconnect must recover the same turn without another SEND.
+    resumes = len(fake.methods('thread/resume'))
+    fake.disconnect()
+    page.wait_for_function("() => document.querySelector('#sdk-model')?.value === 'fake-sol'")
+    expect(button).to_be_enabled(timeout=15000)
+    before = len(fake.methods('turn/steer'))
+    button.click()
+    expect(row).to_have_count(0)
+    assert len(fake.methods('turn/steer')) == before + 1
+    assert fake.methods('turn/steer')[-1]['params']['expectedTurnId'] == fake.turn
+    assert fake.methods('thread/turns/list'), 'missing active-turn recovery'
+    if screenshots:
+        page.screenshot(path=str(screenshots / 'existing-turn-steered.png'))
+    fake.complete()
+    expect(page.locator('#sdk-send')).to_have_text('发送')
+    context.close()
+    print('PASS existing TUI turn: steer after initial attach, reload and daemon reconnect', flush=True)
+    assert len(fake.methods('thread/resume')) > resumes
+    fake.turn = 'completes-during-recovery'
+    fake.complete_during_hydration = True
+    fake.disconnect()
+    context, page = open_page(browser, base, 390, 'dark')
+    expect(page.locator('#sdk-send')).to_have_text('发送')
+    page.locator('#sdk-input').fill('结束后的新回合')
+    page.locator('#sdk-send').click()
+    expect(page.locator('.sdk-live')).to_contain_text('结束后的新回合')
+    fake.complete()
+    context.close()
+    print('PASS completion during active-turn recovery does not resurrect stale work', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -141,6 +195,7 @@ def main():
         try:
             with QueueServer(root/'app.sock', corpus.paths['sdk'], THREAD) as fake:
                 with server(corpus, args.binary, root/'app.sock', env) as base:
+                    exercise_existing(browser, base, fake, args.screenshots)
                     hub_root = root/'hub'; hub_root.mkdir()
                     hub = Hub(args.binary.with_name('sessiondock-hub').resolve(), hub_root,
                               [SimpleNamespace(name='QueueNode', token=TOKEN, port=port)])

@@ -120,6 +120,28 @@ impl VerifiedNativeBinding {
     ) -> Result<Self, Error> {
         Self::verified(scope, receipt, BindingMethod::Process, Some(evidence))
     }
+    /// The caller resolved the SID from this launch's guarded Codex /status
+    /// handshake and then verified that exact identity in the native catalog.
+    pub(crate) fn from_cli_status(
+        scope: &crate::sessions::NativeScope,
+        receipt: &Record,
+        evidence: String,
+    ) -> Result<Self, Error> {
+        if receipt.spec().source() != Source::Codex {
+            return Err(Error::InvalidBinding);
+        }
+        Self::verified(scope, receipt, BindingMethod::Process, Some(evidence))
+    }
+    pub(crate) fn from_report_submission(
+        scope: &crate::sessions::NativeScope,
+        receipt: &Record,
+        evidence: String,
+    ) -> Result<Self, Error> {
+        if receipt.spec().source() != Source::Codex {
+            return Err(Error::InvalidBinding);
+        }
+        Self::verified(scope, receipt, BindingMethod::Process, Some(evidence))
+    }
     fn verified(
         scope: &crate::sessions::NativeScope,
         receipt: &Record,
