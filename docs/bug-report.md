@@ -316,11 +316,13 @@ published copy (`BUG-20260929-162939-2fafba`).
 first event that diverges across layers, keep the user's working-tree changes,
 make the minimal complete fix, run only the validation proportionate to the
 change, then commit only the fix's own files (other sessions' uncommitted
-changes stay untouched, no `git add -A`), then **immediately push and deploy
-with `python3 deploy/deploy.py deploy --all`, including restart and health
-checks, without another confirmation**. Preserve production sessions, state
-and rollback backups. Failed pushes and individual deployment targets must
-be reported explicitly.
+changes stay untouched, no `git add -A`). Publication follows the current
+repository workflow and user authorization; the diagnostic report grants no
+additional publication permission. Apply the scope rules in
+[AGENTS.md](../AGENTS.md#scope-and-boundaries): frontend-only releases use
+`--web-only` and affected frontend targets; rules/docs-only fixes are not
+deployed. Preserve production sessions, state and rollback backups. Failed
+pushes and individual deployment targets must be reported explicitly.
 The header names the machine the problem was seen
 on (`问题机器：Lyra（主机 lyra）`); a worker on another machine is told that
 the bundle's session row, ledger, terminal frame and audit rows were fetched

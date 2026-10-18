@@ -22,12 +22,25 @@
 
 Linux 节点及 Hub 可在 `extra.expected_hostname` 填写目标 `hostname` 的完整输出。
 部署 probe 会核对实际主机名，不一致则跳过该目标并使整轮失败，上传和重启均不会执行。
-先用 `python3 deploy/fleet_status.py` 检查连通性、节点标识和现有版本，
-再运行 `python3 deploy/deploy.py deploy --all`。Linux 产物在当前构建机编译一次；
+先按改动范围选择产物与目标；需要发布时用 `python3 deploy/fleet_status.py` 检查连通性、节点标识和现有版本，
+再运行 `python3 deploy/deploy.py deploy` 并指定对应参数。Linux 产物在当前构建机编译一次；
 构建机的架构和 glibc 基线须兼容 Linux 目标，macOS/Windows 仍在目标机原生构建。
 不同构建机的独立 checkout 不共享部署锁，执行前须确认没有另一轮部署。
 
 ## 命令
+
+发布范围遵循 [AGENTS.md](../AGENTS.md#scope-and-boundaries)：
+
+- 纯前端修正只运行受影响的 Chromium 套件和看图验收，使用
+  `deploy --web-only --targets <相关节点及Hub名称>`；从本地清单选出提供前端的目标，
+  排除 `resource-agent`。不重建或替换后端、ptyhost，不重启资源代理。
+  Web 服务的重启、健康检查和回滚仍由部署工具完成。
+- 纯规则/文档只做文档检查、提交和推送，不构建、部署或重启生产服务。
+  纯测试或部署脚本修改同样不发布未变化的运行产物，只验证相关范围。
+- 后端、资源代理按实际受影响的产物和目标发布；仅全部目标都受影响时用 `--all`。
+- 工具故障或测试映射过宽不能扩大发布范围。特别是纯前端发布遇到资源代理缺产物错误，
+  应排除无关目标或修工具，不得改成全量发布。已独立完成针对性验证时可用 `--test none`
+  避免重复执行无关套件，但必须记录实际验证结果，不能把该参数当成验证。
 
 ```sh
 python3 deploy/deploy.py build    [--allow-dirty PATH ...] [--without-ptyhost] [--web-only]
@@ -53,8 +66,9 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 - `push`：默认取 `target/deploy/` 下最新的 stage，默认并行 4、保留 5 份备份（`0` = 不清理）、健康
   超时 45 s。`--dry-run` 只做 probe 并打印每台的计划，什么都不上传。离线或禁用的目标记为
   `SKIPPED`（未更新），不使命令失败；真实部署失败仍退出 1。全离线也会逐项报告跳过，不声称已部署。
-  每次改动仍须立即部署、重启和健康检查；至少一台 SessionDock 节点和 Hub 成功
-  即满足部署要求。其余节点离线或部署失败逐项记录待补发，不阻塞工程或 goal，
+  运行产物改动仍须按上述范围立即部署、重启和健康检查；前端/服务发布至少一台 SessionDock 节点和 Hub 成功
+  即满足共享前端/服务的部署要求；只改 Hub、节点服务或采集器时，只验收相关组件，
+  不为凑节点与 Hub 数量重启无关组件。其余节点离线或部署失败逐项记录待补发，不阻塞工程或 goal，
   不要求反复轮询；不能把全部节点成功或整轮退出码为零另加为完成条件。
   `push` 在构建机上**从不跑测试**（它只是把已构建的 stage 发出去），但会先打印这个 stage 是按哪种模式
   验证过的（`stage tests: mode=… result=… base=… suites=…`）。
@@ -101,9 +115,9 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 
 | 模式 | 含义 | 跑什么 |
 | --- | --- | --- |
-| `none` | **1 不测试直接上线** | 打印 `tests skipped by --test none` 后继续；`build` 的默认值 |
-| `affected` | **2 只测本次改动影响到的组件** | 把 `git diff --name-only <base>..HEAD`（并上 `--allow-dirty` 点名的文件）按下表映射到套件，`python3 tests/run_validation.py --only <names> --binary <stage 的 bin/sessiondock，web-only 时退回 target/release/sessiondock>`；`deploy` 的默认值 |
-| `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描（全部为浏览器套件）；付费 `*_real` 套件默认排除 |
+| `none` | 不重复运行部署测试门（须有相关验证结果） | 打印 `tests skipped by --test none` 后继续；`build` 的默认值 |
+| `affected` | 按路径粗粒度映射（可能大于实际影响范围） | 把 `git diff --name-only <base>..HEAD`（并上 `--allow-dirty` 点名的文件）按下表映射到套件，`python3 tests/run_validation.py --only <names> --binary <stage 的 bin/sessiondock，web-only 时退回 target/release/sessiondock>`；`deploy` 的默认值 |
+| `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描（含 Rust 车道和文档等检查）；付费 `*_real` 套件默认排除 |
 
 `--web-only --test affected` 不纳入未随页面更新发布的 `crates/`、`Cargo.toml` 与
 `Cargo.lock` 改动；前端及对应浏览器测试仍走测试门。
@@ -128,6 +142,11 @@ base commit 及其来源、改动文件（数量 + 前 20 个及命中的规则�
 节点上的 `.deploy-test.log` 路径和本地的 `<stage>/logs/<name>.log`；`none` 则跳过。Python/浏览器套件只在
 Linux 构建机上跑。
 
+当前映射不是最小验证范围：任何 `web/**` 都选全部浏览器套件，未知路径及部分共享
+文件会退回全量。执行前审阅计划；普通小修应先独立跑受影响套件，再以 `--test none`
+发布，记录实际结果。不能因工具默认映射而扩大任务。选择目标也不会自动缩减
+`build.packages`；后端发布前检查构建配置，未修改 ptyhost 时使用 `--without-ptyhost`。
+
 ### base commit（`affected` 从哪里开始算"改动"）
 
 1. `--test-base REF` 显式指定；
@@ -135,6 +154,10 @@ Linux 构建机上跑。
    多台不一致时取**最旧**的那个（`git rev-list --count <sha>..HEAD` 最大，即 diff 最大）；
 3. 没有任何目标给出标记（或 `build` 单独运行——它没有目标可 probe）时退回 `origin/main`，没有 `origin/main`
    再退回 `HEAD~1`。
+
+标记跨度可能包含其他任务，`origin/main` 在刚推送后也可能等于 HEAD，导致空计划。
+这两种情况都不能直接代表本任务验证范围。先核对文件/套件计划；无有效发布基线时
+显式指定经过核实的 `--test-base`，或独立完成针对性验证。空计划不等于功能已验证。
 
 ### 映射表（`deploy/testplan.py` 的 `RULES` / `MODULE_SUITES`）
 

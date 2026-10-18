@@ -14,7 +14,9 @@
 
 ## 2. 发布与验收
 
-1. 使用 `python3 deploy/deploy.py deploy --all` 构建、验证、发布、重启并健康检查。
+1. 按 [AGENTS.md](../AGENTS.md#scope-and-boundaries) 选择发布范围，用官方
+   `python3 deploy/deploy.py deploy --targets <相关目标>`；纯前端加 `--web-only`，
+   只验证相关路径。纯规则、文档、测试或部署脚本变更不发布未变化的运行产物。
 2. 保留 SessionDock 的状态、原生历史和所有现存 ptyhost；只重启 Web 服务。
 3. 通过 `python3 deploy/fleet_status.py` 核对可达节点的版本、运行状态与部署标记。
 4. 反向代理继续使用认证后的 `/sessiondock/`，不恢复退休入口。

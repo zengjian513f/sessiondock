@@ -40,11 +40,18 @@ Historical timings below describe their dated runs, not today's full-sweep durat
 the change, run the `*_browser.py` suite that covers the affected path end to
 end in Chromium. If no suite covers it, add or extend one. Docs-only and
 deploy-script-only work run the doc checks (`check_docs_links.py`,
-`check_agents_md.py`).
+`check_agents_md.py`); changed deployment logic additionally needs an isolated
+CLI/planning check or a non-mutating dry run. These are not production releases.
 
 **Do not add unit tests or non-browser test suites.** Cover new behavior by
 adding or extending a browser suite. For the historical removal and its audit,
 consult [historical lessons](delegation.md#历史踩坑) only when relevant.
+
+Choose suites by changed behavior and dependencies, including the users of a
+shared helper; a filename under history or a fixture suffix does not by itself
+require the full sweep. Reuse compatible existing binaries for frontend-only
+validation; build missing prerequisites only. See the authoritative scope rules
+in [AGENTS.md](../AGENTS.md#scope-and-boundaries).
 
 The frontend `web/` is served as committed and needs no build.
 `--web-dir` (or `SESSIONDOCK_TEST_WEB_DIR`) points the browser suites at another
@@ -71,8 +78,9 @@ keep its activity dot breathing after the turn ends (BUG-20261004-070702-c1ac6b)
 
 - **Small change / one bug fix** — run the affected headless browser suite
   (`--only <name>`); a full sweep is not required for every edit. Once the change
-  is complete and validated, commit, push and deploy the current workspace to
-  the fleet under `AGENTS.md`, without asking for confirmation again.
+  is complete and validated, commit and push only the task changes. Deploy
+  committed runtime changes to affected targets under `AGENTS.md`; docs, rules,
+  tests and deployment tooling alone do not require a production release.
 - **Paid CLI checks** — the `*_real` suites spawn real Claude/Codex/Grok and are
   excluded by default; run them deliberately with `--include-real`, per batch,
   not unattended. `--real-only` runs just those suites: the release acceptance

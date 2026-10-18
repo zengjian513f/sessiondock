@@ -40,11 +40,16 @@ Fleet deployment does not use this package; it keeps using
 
 ## Release acceptance
 
+This section applies to an explicitly requested versioned release, not ordinary
+fixes or documentation changes; those follow the scoped workflow in
+[AGENTS.md](../AGENTS.md#scope-and-boundaries).
+
 Before tagging `v*`, on a development node with Playwright and the CLIs logged
 in (cygnus has Claude and Codex; lyra has Grok and Agy, with Playwright in its
 `p311` Conda environment):
 
-1. Commit everything and run the full sweep: `python3 tests/run_validation.py`
+1. Commit only the release's reviewed changes, preserving concurrent edits,
+   and run the full sweep: `python3 tests/run_validation.py`
    (the Cargo lanes on lyra).
 2. Run the paid real-CLI suites once:
    `python3 tests/run_validation.py --real-only --browser-jobs 1`. They use the
