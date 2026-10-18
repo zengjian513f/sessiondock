@@ -215,6 +215,11 @@ before first SEND does not retain these unpersisted receipts.
   fold/expand cards and header toggle; prompts and final answers stay visible.
   In-flight SDK items remain visible. History refresh preserves individual
   process folds, and the global preference also applies after page reload.
+- SDK history and live bubbles share the conversation layout observer, so content
+  below 4,000 characters that exceeds the 340 px preview still gets 展开全文/收起,
+  including after resize and view reentry. BUG-20261018-040836-e49b26 had complete
+  native and terminal output but omitted this observer in SDK. Coverage:
+  [bubble expansion](../tests/codex_sdk_bubbles_browser.py).
 - Live items map to message objects for `msgNode`: user/assistant/thinking
   bubbles, command/file/MCP/web-search tool cards (in-progress cards show
   `运行中…`).
