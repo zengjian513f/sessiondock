@@ -178,6 +178,22 @@ JSON-RPC `-32601`, so the daemon never waits on an answer nobody can give.
 `serverRequest/resolved` removes the card for every page (and for any other
 client of the daemon).
 
+DELTA (BUG-20261018-050342-5d4448): `request_user_input_async` emits an
+`agentMessage` with `delivery: "async"` and `questions: [{title, options?}]`,
+not a server request. SDK renders these as the existing radio/free-text cards;
+continuing output preserves selections. Explicit 提交回答 sends the question
+and chosen/free-text answer through the durable SDK queue, then explicitly
+steers if the turn is still active; idle answers start a turn. A failed steer
+leaves the saved answer visible in the queue. No JSON-RPC request result is
+invented, and the composer draft is preserved. Reload recovers live questions
+from the snapshot and historical async tool arguments after the latest user
+message, deduplicated by native call/item ID; ordinary user replies supersede
+those earlier cards. `accepted: true` is the tool acknowledgment, not an answer.
+The report's native event at 05:02:55 UTC contained the structured questions,
+while the SDK item-to-message conversion discarded them; its terminal capture
+showed one queued question. Browser audit had no SDK reply attempt. Coverage:
+[async question browser suite](../tests/codex_sdk_questions_browser.py).
+
 ## Creation
 
 DELTA (SDK default and lazy creation): choosing Codex in 新建会话 uses

@@ -584,6 +584,7 @@ const CodexSdkView = {
         folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
     }
     refreshMessageTimeDividers(this.history);
+    CodexSdkQuestions.paint(this);
     // 已经落盘的回合从实时区移除，避免同一回合出现两次。
     for (const [id, node] of this.nodes) {
       if (!this.items.has(id)) { node.remove(); this.nodes.delete(id); }
@@ -627,6 +628,7 @@ const CodexSdkView = {
     this.requests = new Map((raw.requests || []).map(request => [request.key, request]));
     for (const item of this.items.values()) this.paintItem(item);
     for (const request of this.requests.values()) this.paintRequest(request);
+    CodexSdkQuestions.paint(this);
     this.paintHistory();
     this.paintPickers();
     CodexSdkActions.paint(this);
@@ -712,6 +714,7 @@ const CodexSdkView = {
           this.paintRequest(request);
         }
     }
+    CodexSdkQuestions.paint(this);
     CodexSdkActions.paint(this);
     CodexSdkControls.paint(this);
     this.paintStatus();
@@ -727,7 +730,7 @@ const CodexSdkView = {
 
   // ---------------------------------------------------------------- 渲染
   paintItem(item) {
-    const message = itemMessage(item);
+    const message = item.questions?.length ? null : itemMessage(item);
     const old = this.nodes.get(item.id);
     if (!message) { old?.remove(); this.nodes.delete(item.id); return; }
     if (old?._updateMessage && old.dataset.role === message.role) {
@@ -1147,3 +1150,77 @@ function requestCard(request, submit) {
   card.append(actions);
   return card;
 }
+
+
+// Async questions arrive as agentMessage.questions, not server requests. Their
+// answer is an ordinary user message; explicit submission may steer a live turn.
+const CodexSdkQuestions = {
+  answered: new Set(),
+
+  paint(view) {
+    if (!view.live) return;
+    const pending = new Map();
+    let lastUser = '';
+    for (const message of view.historyData?.messages || []) {
+      if (message.role === 'user') { pending.clear(); lastUser = String(message.text || '').trim(); }
+      if (message.role !== 'tool' || !/(^|[._])request_user_input_async$/.test(message.name || '')) continue;
+      try {
+        const questions = JSON.parse(message.text).questions;
+        if (questions?.length) pending.set(message.call_id, questions);
+      } catch (_) { /* A malformed historical tool call is still shown as a tool. */ }
+    }
+    for (const item of view.items.values()) {
+      if (item.type === 'userMessage') {
+        const text = userMessageText(item).trim();
+        if (text !== lastUser) pending.clear();
+        lastUser = text;
+      }
+      if (item.type === 'agentMessage' && item.questions?.length) pending.set(item.id, item.questions);
+    }
+    const scope = JSON.stringify([view.uid, view.agent]);
+    for (const card of view.live.querySelectorAll('[data-sdk-async-question]')) {
+      if (!pending.has(card.dataset.sdkAsyncQuestion)) card.remove();
+    }
+    for (const [id, questions] of pending) {
+      if (!id) continue;
+      const requestId = `sdk-question:${id}`;
+      const key = `${scope}:${id}`;
+      if (this.answered.has(key) || (view.summary?.queue || []).some(row => row.id === requestId)) continue;
+      if (view.live.querySelector(`[data-sdk-async-question="${CSS.escape(id)}"]`)) continue;
+      const request = {key: id, method: 'item/tool/requestUserInput', params: {questions: questions.map((q, i) => ({
+        id: String(i), question: q.title, isOther: true,
+        options: (q.options || []).map(label => ({label})),
+      }))}};
+      const card = requestCard(request, async result => {
+        const answers = questions.map((q, i) => result.answers[String(i)]?.answers?.[0] || '');
+        if (answers.some(answer => !answer)) {
+          view.setNotice('请回答每个问题后提交。', 'blocked');
+          return;
+        }
+        const generation = view.generation;
+        const text = questions.map((q, i) => `${q.title}\n• ${answers[i]}`).join('\n\n');
+        card.querySelectorAll('button, input').forEach(control => { control.disabled = true; });
+        try {
+          const response = await view.request('api/codex-sdk/turn', {uid: view.uid, request_id: requestId, text});
+          this.answered.add(key);
+          card.classList.add('sdk-answered');
+          card.querySelector('button').textContent = '已提交';
+          if (view.current(generation) && view.turn && response.raw?.state === 'queued') {
+            await view.request('api/codex-sdk/queue', {uid: view.uid, id: requestId, action: 'steer'});
+          }
+        } catch (error) {
+          if (!view.current(generation)) return;
+          if (this.answered.has(key)) {
+            view.setNotice(`回答已保存到队列，立即引导失败：${error.message}。可在队列中重试。`, 'blocked');
+          } else {
+            card.querySelectorAll('button, input').forEach(control => { control.disabled = false; });
+            view.setNotice(`回答失败：${error.message}`, 'blocked');
+          }
+        }
+      });
+      card.dataset.sdkAsyncQuestion = id;
+      card.querySelector('button').textContent = '提交回答';
+      view.live.append(card);
+    }
+  },
+};
