@@ -103,3 +103,27 @@ message text or native contents.
 
 [`tests/server_log_browser.py`](../tests/server_log_browser.py) drives the page on
 a node and through the Hub and parses every line.
+
+## History opening phases
+
+`history.open.slow` retains the existing two-second threshold. In request-log
+`all` mode, faster successful opens emit `history.open.ready` as well. Both
+carry the validated browser `trace`/`page` identifiers and these durations:
+`queued_ms` (reader admission plus blocking executor scheduling), `snapshot_ms`
+(index/view acquisition and parsing), `body_ms` (message/media projection and
+prompt/echo extraction), and `read_resume_ms` (return to the async task).
+Their sum is `read_ms`; `echo_ms` and `prompt_ms` complete the handler timing.
+These are elapsed wall times, not CPU measurements. Failed or cancelled opens
+may have no completion record. `tests/server_log_browser.py` opens native
+history through node and Hub pages and verifies the phase totals and IDs.
+
+BUG-20261018-040613-165ffa: the browser sent the opening request 8 ms after
+clicking and received its parsed body after 5902.6 ms, then rendered within
+9 ms. The matching node trace recorded 5830 ms in the previously combined
+read phase, 0 ms retiring echoes and 4 ms probing the prompt. The native turn
+had completed before the click, and the lifecycle binding still named its
+running instance; no delivery directory existed. A synthetic five-screenshot
+Chromium open took approximately 0.4 seconds and did not reproduce the stall.
+Concurrent slow live/process requests are correlation, not proof of contention.
+The added phases resolve the diagnostic gap; they do not establish or fix the
+historical delay's cause.

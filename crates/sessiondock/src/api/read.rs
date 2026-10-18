@@ -10,7 +10,7 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 use axum::{
     body::{Body, Bytes},
     extract::{Path, Query, State, rejection::QueryRejection},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{
         IntoResponse, Response, Sse,
         sse::{Event, KeepAlive},
@@ -133,6 +133,7 @@ pub async fn messages(
     State(state): State<AppState>,
     Path(uid): Path<String>,
     query: Result<Query<MessageQuery>, QueryRejection>,
+    headers: HeaderMap,
 ) -> Result<JsonBytes, ApiError> {
     let Query(query) = query.map_err(query_error)?;
     let media = state.media.clone();
@@ -142,10 +143,12 @@ pub async fn messages(
     let uid_for_cli = uid.clone();
     let query_agent_empty = query.agent.is_empty();
     let started = std::time::Instant::now();
-    let (body, scope, mut prompt, echoes) = state
+    let (body, scope, mut prompt, echoes, queued_ms, snapshot_ms, body_ms) = state
         .reader
         .run(move |store| {
+            let queued_ms = started.elapsed().as_millis();
             let snapshot = store.snapshot(&uid, &query.agent)?;
+            let snapshot_done_ms = started.elapsed().as_millis();
             let scope = query.agent.is_empty().then(|| PromptScope::of(&snapshot));
             // A hot read splices retained bytes and leaves no projection
             // temporaries behind (a cold open's parse trims its own in
@@ -162,7 +165,16 @@ pub async fn messages(
             } else {
                 Vec::new()
             };
-            Ok((body, scope, prompt, echoes))
+            let body_done_ms = started.elapsed().as_millis();
+            Ok((
+                body,
+                scope,
+                prompt,
+                echoes,
+                queued_ms,
+                snapshot_done_ms - queued_ms,
+                body_done_ms - snapshot_done_ms,
+            ))
         })
         .await?;
     let read_ms = started.elapsed().as_millis();
@@ -180,11 +192,21 @@ pub async fn messages(
         .await;
     }
     let elapsed_ms = started.elapsed().as_millis();
-    if elapsed_ms >= crate::log::SLOW_MS {
-        crate::log::warn(
-            "history.open.slow",
+    let slow = elapsed_ms >= crate::log::SLOW_MS;
+    if slow || crate::log::RequestLog::from_env() == crate::log::RequestLog::All {
+        crate::log::emit(
+            if slow { "warn" } else { "info" },
+            if slow {
+                "history.open.slow"
+            } else {
+                "history.open.ready"
+            },
             json!({
                 "uid": uid_for_cli, "read_ms": read_ms, "echo_ms": echo_ms,
+                "queued_ms": queued_ms, "snapshot_ms": snapshot_ms, "body_ms": body_ms,
+                "read_resume_ms": read_ms - queued_ms - snapshot_ms - body_ms,
+                "trace": crate::log::id_header(&headers, "x-sessiondock-trace"),
+                "page": crate::log::id_header(&headers, "x-sessiondock-page"),
                 "prompt_ms": elapsed_ms - read_ms - echo_ms, "ms": elapsed_ms,
             }),
         );

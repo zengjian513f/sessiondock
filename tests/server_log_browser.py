@@ -100,6 +100,16 @@ def main():
             assert failed and failed[0]['level'] == 'error' and failed[0]['code'] == 'terminal_disabled' \
                 and failed[0]['trace'] == 'trace-log-fixture', failed
             assert any(row['path'] == '/api/session/star' for row in requests)
+            opens = [row for row in rows if row['event'] in ('history.open.ready', 'history.open.slow')]
+            assert opens, rows
+            for opened in opens:
+                assert opened['trace'] and opened['page'], opened
+                assert opened['read_ms'] == sum(opened[key] for key in
+                    ('queued_ms', 'snapshot_ms', 'body_ms', 'read_resume_ms')), opened
+                assert opened['ms'] == sum(opened[key] for key in
+                    ('read_ms', 'echo_ms', 'prompt_ms')), opened
+                assert all(opened[key] >= 0 for key in
+                    ('queued_ms', 'snapshot_ms', 'body_ms', 'read_resume_ms')), opened
             print('PASS node: one JSON line per request, error code and trace kept, no query or body', flush=True)
 
             hub_rows = lines(hub_text)
@@ -113,6 +123,7 @@ def main():
                 drive(browser, base, uid)
             quiet_rows = lines(quiet.read_text())
             assert quiet_rows[0]['requests'] == 'errors', quiet_rows[0]
+            assert not any(row['event'] == 'history.open.ready' for row in quiet_rows), quiet_rows
             logged = [row for row in quiet_rows if row['event'] == 'http.request']
             assert any(row['path'] == '/api/term/final' for row in logged), logged
             assert all(row['status'] >= 500 or row['ms'] >= 2000 for row in logged), logged
