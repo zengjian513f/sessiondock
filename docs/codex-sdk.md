@@ -322,9 +322,10 @@ before first SEND does not retain these unpersisted receipts.
 - The status line shows the last turn error, the rate-limit-reached notice and the
   waiting state. Status, model/effort/mode selectors, action icons and usage all
   share one toolbar row above the input, with status left and usage/context immediately before the GPT model picker;
-  routine labels are 连接中 / 重连中 / 处理中 / 待批准 / 待回答 / 用量已满 /
+  routine labels are 就绪 / 连接中 / 重连中 / 处理中 / 待批准 / 待回答 / 用量已满 /
   系统错误. Status reserves four character widths before optional controls,
   including on narrow panes at 125% interface scale.
+  It displays 就绪 when there is no active turn, waiting state or error.
   Long status text has an ellipsis; only truncated status text can be clicked,
   tapped or activated with Enter to open its full text in a popover. Fully
   visible status text is passive. Escape or an outside click closes the popover.

@@ -859,6 +859,7 @@ const CodexSdkView = {
       else if (status.activeFlags?.includes('waitingOnApproval')) parts.push('待批准');
       else if (status.activeFlags?.includes('waitingOnUserInput')) parts.push('待回答');
       else if (active) parts.push('处理中');
+      else parts.push('就绪');
     }
     this.setNotice(parts.join(' '), this.summary?.last_error || status.type === 'systemError' ? 'blocked' : '');
   },
