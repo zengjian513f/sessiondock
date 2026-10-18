@@ -145,15 +145,36 @@ services on one machine.
 
 ## SDK ownership
 
-`/api/live.sdk_uids` lists threads loaded on SessionDock's current live SDK
-connection, including pending creation receipts before the first native write.
+`/api/live.sdk_uids` lists threads already loaded on the configured shared Codex
+daemon, observed with read-only `thread/loaded/list`, plus exact live bridge
+subscriptions (including pending creation receipts before the first native write).
+The observation connects only to an existing daemon, never starts it or resumes
+threads, and is shared/cached for two seconds with a bounded read. An unsupported
+or failed list falls back to exact live subscriptions; process evidence alone
+does not establish SDK ownership. This is display evidence only, separate from
+the exact subscription required for terminal coexistence.
 They also appear in `uids`; changes to the currently loaded identities invalidate
-the response cache. Disconnect/unsubscribe removes SDK evidence. The Hub scopes
+the response cache. A bridge disconnect/unsubscribe withdraws its subscription
+evidence; a thread still loaded on the daemon remains blue without opening it.
+Daemon unload or loss of the observation removes discovered evidence. The Hub scopes
 these UIDs and live events propagate changes. This does not add terminal ownership
 to `tmux_uids` or grant process control. The sidebar/header reuse the blue managed
 marker for SDK sessions (DELTA, BUG-20261018-030737-e115f2); failed SDK opens and
-external processes alone remain green. Browser coverage:
+external processes alone remain green. BUG-20261018-153253-e86c26 exposed the
+old dependency on clicking each thread after a service restart. Browser coverage:
 [codex_sdk_status_browser.py](../tests/codex_sdk_status_browser.py).
+
+For that report, all 265 bundled browser events, the manifest, browser state,
+environment and attachment were read. No terminal capture or delivery directory
+was present; the lifecycle ledger had no binding for the reported native thread.
+Its native JSONL recorded a completed turn. Browser event 23 on the report page
+already showed `live: true, sdk: true` but `aggregate_sdk: false`; event 39 later
+showed aggregate SDK evidence after the view opened. The earlier list source
+only enumerated bridge subscriptions, so daemon-owned threads were omitted until
+an open/resume. Read-only daemon discovery confirmed loaded threads independently
+of the browser. The private browser regression fails on the old binary at the
+blue-before-click assertion and checks daemon discovery/unload through node and
+Hub without extra resume requests.
 
 ## `/api/live` with the scan
 
