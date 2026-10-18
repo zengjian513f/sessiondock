@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
 import threading
@@ -27,6 +28,8 @@ class GrokFixture:
         self.work.mkdir()
         self.log = self.root / "acp-received.jsonl"
         self.active = self.home / "active_sessions.json"
+        self.capability_marker = self.root / "image-capability.json"
+        self.capability_marker.write_text(json.dumps({"image":True}))
         self.launcher = self.root / "launcher.json"
         (self.root / "unused-host").mkdir()
         self.proc = self.root / "proc"
@@ -42,7 +45,8 @@ class GrokFixture:
             "host_dir": str(self.root / "unused-host"), "profiles": [{"id": "grok", "source": "grok",
                 "executable": sys.executable, "args": [str(Path(__file__).resolve()), "--fake-grok"],
                 "env": {"HOME": str(self.root / "private-home"), "GROK_HOME": str(self.home),
-                        "GROK_SDK_FAKE_LOG": str(self.log)}}]}))
+                        "GROK_SDK_FAKE_LOG": str(self.log),
+                        "GROK_SDK_FAKE_CAPABILITY":str(self.capability_marker)}}]}))
 
     @staticmethod
     def write_summary(path, sid, cwd, title):
@@ -61,7 +65,8 @@ class GrokFixture:
         if not self.log.exists():
             return []
         rows = [json.loads(line) for line in self.log.read_text().splitlines() if line]
-        return [row for row in rows if method is None or row.get("method") == method]
+        wire_method = "_" + method if method and method.startswith("x.ai/") else method
+        return [row for row in rows if method is None or row.get("method") == wire_method]
 
 
 class FakeGrok:
@@ -74,6 +79,9 @@ class FakeGrok:
         self.cwd = None
         self.model = "fake-grok"
         self.effort = "low"
+        self.mode = "default"
+        self.extensions = True
+        self.prompt_count = 0
         self.cancel = threading.Event()
         self.permission = threading.Event()
         self.permission_result = None
@@ -92,11 +100,13 @@ class FakeGrok:
         self.send({"jsonrpc": "2.0", "id": request["id"], "error": {"code": code, "message": message}})
 
     def update(self, update_type, **fields):
-        self.send({"jsonrpc": "2.0", "method": "session/update",
+        native = update_type not in {"agent_message_chunk","agent_thought_chunk","tool_call","tool_call_update","config_option_update","current_mode_update"}
+        self.send({"jsonrpc": "2.0", "method": "_x.ai/session/update" if native else "session/update",
                    "params": {"sessionId": self.sid, "update": {"sessionUpdate": update_type, **fields}}})
 
     def settings(self):
-        return {"models": {"currentModelId": self.model, "availableModels": [
+        return {"modes":{"currentModeId":self.mode,"availableModes":[
+                    {"id":"default","name":"执行"},{"id":"plan","name":"计划"}]},"models": {"currentModelId": self.model, "availableModels": [
                     {"modelId": "fake-grok", "name": "Fake Grok"},
                     {"modelId": "fake-other", "name": "Fake Other"}]},
                 "configOptions": [{"id": "model", "name": "Model", "category": "model", "type": "select",
@@ -112,6 +122,11 @@ class FakeGrok:
         with self.log.open("a") as log:
             log.write(json.dumps(message) + "\n")
         method, params = message.get("method"), message.get("params", {})
+        if method and method.startswith("x.ai/"):
+            self.error(message,-32601,"ACP extension wire methods require underscore prefix")
+            return
+        if method and method.startswith("_x.ai/"):
+            method = method[1:]
         if method is None:
             if message.get("id") == self.permission_id:
                 self.permission_result = message.get("result")
@@ -119,7 +134,7 @@ class FakeGrok:
             return
         if method == "initialize":
             assert sys.argv[-3:] == ["agent", "--no-leader", "stdio"], sys.argv
-            self.reply(message, {"protocolVersion": 1, "agentCapabilities": {"loadSession": True},
+            self.reply(message, {"protocolVersion": 1, "agentCapabilities": {"loadSession": True,"promptCapabilities":{"image":json.loads(Path(os.environ["GROK_SDK_FAKE_CAPABILITY"]).read_text())["image"]}},
                 "_meta": {"modelState": self.settings()["models"]}})
         elif method in {"session/new", "session/load"}:
             assert params.get("_meta", {}).get("yoloMode") is False
@@ -138,6 +153,46 @@ class FakeGrok:
                             _meta={"isReplay": True})
             self.reply(message, {**self.settings(), "sessionId": self.sid,
                                 "_meta": {"currentWorkingDirectory": self.cwd}})
+        elif method == "session/set_mode":
+            assert params["sessionId"] == self.sid and params["modeId"] in {"default","plan"}
+            self.mode = params["modeId"]
+            self.reply(message, self.settings())
+            self.update("current_mode_update",currentModeId=self.mode)
+        elif method in {"x.ai/session/usage","x.ai/session/info","x.ai/billing","x.ai/rewind/points","x.ai/compact_conversation","x.ai/rewind/execute","x.ai/session/fork"}:
+            if not self.extensions:
+                self.error(message,-32601,"Synthetic unsupported extension")
+                return
+            if method == "x.ai/session/usage":
+                self.reply(message,{"usage":{"inputTokens":1200,"outputTokens":300,"totalTokens":1500,
+                    "cachedReadTokens":200,"cacheCreationTokens":50,"reasoningTokens":100,"numTurns":self.prompt_count,
+                    "costUsdTicks":250000000,"costIsPartial":False,"usageIsIncomplete":False}})
+            elif method == "x.ai/session/info":
+                self.reply(message,{"result":{"sessionId":self.sid,"cwd":self.cwd,"context":{"used":32000,"total":128000,"usagePct":25}}})
+            elif method == "x.ai/billing":
+                self.reply(message,{"config":{"creditUsagePercent":42.5,"currentPeriod":{"start":"2026-10-19T00:00:00Z","end":"2026-10-26T00:00:00Z"}},"onDemandEnabled":False})
+            elif method == "x.ai/rewind/points":
+                self.reply(message,{"rewind_points":[{"prompt_index":0,"created_at":"2026-10-19T00:00:00Z","num_file_snapshots":0,"has_file_changes":False,"prompt_preview":"first synthetic prompt"}]})
+            elif method == "x.ai/compact_conversation":
+                assert params["sessionId"] == self.sid
+                self.update("auto_compact_started",tokens_used=1500,context_window=128000)
+                self.update("auto_compact_completed",tokens_after=300)
+                self.reply(message,{})
+            elif method == "x.ai/rewind/execute":
+                assert params["sessionId"] == self.sid and params["mode"] == "conversation_only" and params["force"] is False
+                assert params["targetPromptIndex"] == 0
+                (self.path / "chat_history.jsonl").write_text("")
+                self.reply(message,{"success":True,"mode":"conversation_only"})
+            elif method == "x.ai/session/fork":
+                assert params["sourceSessionId"] == self.sid and params["sourceCwd"] == self.cwd
+                sid = str(uuid.uuid4())
+                path = self.home / "sessions" / quote(params["newCwd"],safe="-_.~") / sid
+                shutil.copytree(self.path,path)
+                GrokFixture.write_summary(path,sid,params["newCwd"],"Synthetic Grok fork")
+                if "targetPromptIndex" in params:
+                    assert params["targetPromptIndex"] == 0
+                    (path / "chat_history.jsonl").write_text("")
+                self.reply(message,{"newSessionId":sid,"newCwd":params["newCwd"],"parentSessionId":self.sid,
+                    "chatMessagesCopied":0,"updatesCopied":0,"planStateCopied":False})
         elif method == "session/set_config_option":
             assert params["sessionId"] == self.sid
             value = params["value"]["value"]
@@ -183,9 +238,43 @@ class FakeGrok:
             return
         if text == "disconnect":
             os._exit(17)  # Only this test's fake native child.
+        self.prompt_count += 1
+        blocks = message["params"]["prompt"]
+        if blocks[0].get("_meta",{}).get("bash_command"):
+            assert blocks[0]["_meta"]["bash_command"] == text
+            self.update("tool_call",toolCallId="shell-"+uuid.uuid4().hex,title="shell",kind="execute",status="completed",
+                        rawInput={"command":text},rawOutput={"output":"Grok direct shell output"})
+            self.reply(message,{"stopReason":"end_turn"})
+            return
+        if len(blocks)>1:
+            assert blocks[1]["type"] == "image" and blocks[1]["mimeType"] == "image/png" and blocks[1]["data"]
+        if text == "disable-extensions":
+            self.extensions = False
         self.append("user", text)
         self.update("agent_thought_chunk", content={"type": "text", "text": "Grok synthetic reasoning"})
         self.update("agent_message_chunk", content={"type": "text", "text": "Grok streaming "})
+        if text in {"question","question-plan","plan-approval"}:
+            self.permission_id = "interaction-" + uuid.uuid4().hex
+            if text == "plan-approval":
+                method = "_x.ai/exit_plan_mode"
+                params = {"sessionId":self.sid,"toolCallId":"plan-exit","planContent":"# Synthetic native plan\nKeep files unchanged"}
+            else:
+                method = "_x.ai/ask_user_question"
+                params = {"sessionId":self.sid,"toolCallId":"question","mode":"plan" if text == "question-plan" else "default",
+                    "questions":[{"question":"Which database?","options":[{"label":"Redis","description":"Memory"},{"label":"Postgres","description":"Relational"}],"multiSelect":False},
+                                 {"question":"Which features?","options":[{"label":"Search","description":"Find"},{"label":"Cache","description":"Reuse"}],"multiSelect":True}]}
+            self.send({"jsonrpc":"2.0","id":self.permission_id,"method":method,"params":params})
+            self.permission.wait(30)
+            assert self.permission_result is not None,"bridge never answered question/plan"
+            outcome = self.permission_result["outcome"]
+            if text == "plan-approval":
+                assert outcome in {"approved","cancelled","abandoned"}
+            elif outcome == "accepted":
+                assert self.permission_result["answers"]["Which database?"] == ["Postgres"]
+                assert self.permission_result["answers"]["Which features?"] == ["Search","Cache"]
+            else:
+                assert outcome in {"cancelled","chat_about_this","skip_interview"}
+            self.update("agent_message_chunk",content={"type":"text","text":"Native interaction " + outcome})
         if text.startswith("approval"):
             call_id = "tool-" + uuid.uuid4().hex
             self.update("tool_call", toolCallId=call_id, title="Synthetic command", kind="execute",
@@ -213,7 +302,8 @@ class FakeGrok:
         else:
             self.update("agent_message_chunk", content={"type": "text", "text": "Grok final answer"})
             self.append("assistant", "Grok final answer")
-            self.reply(message, {"stopReason": "end_turn"})
+            self.reply(message, {"stopReason": "end_turn","_meta":{"usage":{"inputTokens":100,"outputTokens":20,
+                "totalTokens":120,"costUsdTicks":999,"usageIsIncomplete":True,"costIsPartial":True}}})
 
     def run(self):
         for line in sys.stdin:

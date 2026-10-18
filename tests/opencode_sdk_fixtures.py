@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import socket
 import sys
 import threading
 import time
@@ -41,6 +42,9 @@ class FakeOpenCode:
         self.forms = {}
         self.received = []
         self.pending = {}
+        self.inbox = {}
+        self.forks = 0
+        self.lose_ack = None
         self.lock = threading.RLock()
         self.closed = threading.Event()
         self.threads = []
@@ -55,11 +59,14 @@ class FakeOpenCode:
     def create(self, sid, cwd, model=None):
         info = {'id': sid, 'projectID': 'sdkproject', 'location': {'directory': cwd},
                 'model': model or dict(MODEL), 'title': 'OpenCode SDK synthetic',
+                'agent': 'build', 'permissions': [], 'cost': 0,
+                'tokens': {'input': 0, 'output': 0, 'reasoning': 0, 'cache': {'read': 0, 'write': 0}},
                 'time': {'created': 1, 'updated': 1}}
         self.sessions[sid] = info
         self.messages[sid] = []
         self.permissions[sid] = []
         self.forms[sid] = []
+        self.inbox[sid] = []
         with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute('INSERT INTO session_v2 '
                                '(id,project_id,slug,directory,title,version,agent,model,time_created,time_updated) '
@@ -84,6 +91,22 @@ class FakeOpenCode:
                                    (record['id'], sid, record['type'], seq, seq, time.time_ns() // 1000000,
                                     json.dumps(data)))
 
+    def projected(self, sid):
+        rows = self.messages[sid]
+        boundary = self.sessions[sid].get('revert', {}).get('messageID')
+        if boundary:
+            index = next((i for i, row in enumerate(rows) if row['id'] == boundary), len(rows))
+            rows = rows[:index]
+        return rows
+
+    def sync_projection(self, sid):
+        # The ordinary read-only mirror must observe native revert projection,
+        # rather than displaying stale messages removed by the native boundary.
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute('DELETE FROM session_message WHERE session_id=?', (sid,))
+        for record in list(self.projected(sid)):
+            self.append(sid, record)
+
     def __enter__(self):
         fixture = self
 
@@ -97,12 +120,25 @@ class FakeOpenCode:
             def do_POST(self):
                 self.dispatch()
 
+            def do_PATCH(self):
+                self.dispatch()
+
+            def do_DELETE(self):
+                self.dispatch()
+
             def dispatch(self):
                 body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
                 data = json.loads(body) if body else None
                 with fixture.lock:
                     fixture.received.append((self.command, self.path, data))
                     status, response = fixture.handle(self.command, self.path, data)
+                    drop_ack = fixture.lose_ack and self.command == 'POST' and urlsplit(self.path).path.endswith('/' + fixture.lose_ack)
+                    if drop_ack:
+                        fixture.lose_ack = None
+                if drop_ack:
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                    self.connection.close()
+                    return
                 encoded = b'' if response is None else json.dumps(response).encode()
                 self.send_response(status)
                 self.send_header('Content-Type', 'application/json')
@@ -148,25 +184,88 @@ class FakeOpenCode:
         if path == '/api/model':
             return 200, {'location': {'directory': str(self.cwd)}, 'data': [
                 {'id': MODEL['id'], 'providerID': MODEL['providerID'], 'name': 'Synthetic OpenCode',
-                 'variants': [{'id': 'low', 'name': 'Low'}, {'id': 'high', 'name': 'High'}], 'enabled': True}]}
+                 'variants': [{'id': 'low', 'name': 'Low'}, {'id': 'high', 'name': 'High'}], 'enabled': True,
+                 'limit': {'context': 100000, 'input': 90000, 'output': 10000},
+                 'capabilities': {'input': ['text', 'image'], 'output': ['text'], 'tools': True}}]}
+        if path == '/api/agent':
+            return 200, {'data': [{'id': 'build', 'name': 'Build', 'mode': 'primary', 'hidden': False},
+                                   {'id': 'plan', 'name': 'Plan', 'mode': 'primary', 'hidden': False}]}
+        if path == '/api/command':
+            return 200, {'data': [{'name': 'synthetic-command', 'description': 'Synthetic native callback'}]}
         if len(parts) < 3 or parts[2] not in self.sessions:
             return 404, {'message': 'Session not found', '_tag': 'SessionNotFoundError'}
         sid = parts[2]
         operation = parts[3:]
+        if not operation and method == 'PATCH':
+            self.sessions[sid].update(body)
+            return 204, None
         if not operation:
             return 200, {'data': self.sessions[sid]}
+        if operation == ['agent']:
+            self.sessions[sid]['agent'] = body['agent']
+            return 204, None
+        if operation == ['fork']:
+            self.forks += 1
+            fork = f'ses_synthetic_fork_{self.forks}'
+            info = self.create(fork, self.sessions[sid]['location']['directory'], self.sessions[sid]['model'])
+            for index, record in enumerate(self.projected(sid)):
+                if record['id'] == body.get('before'):
+                    break
+                self.append(fork, dict(record, id=f'msg_fork_{self.forks}_{index}'))
+            return 200, {'data': info}
+        if operation == ['revert', 'stage']:
+            assert body['files'] is False, 'conversation revert must never touch files'
+            self.sessions[sid]['revert'] = {'messageID': body['messageID']}
+            self.sync_projection(sid)
+            return 200, {'data': self.sessions[sid]['revert']}
+        if operation == ['revert'] and method == 'DELETE':
+            self.sessions[sid].pop('revert', None)
+            self.sync_projection(sid)
+            return 204, None
+        if operation == ['revert', 'commit']:
+            boundary = self.sessions[sid].pop('revert', {}).get('messageID')
+            index = next((i for i, row in enumerate(self.messages[sid]) if row['id'] == boundary), len(self.messages[sid]))
+            self.messages[sid] = self.messages[sid][:index]
+            self.sync_projection(sid)
+            return 204, None
+        if operation == ['compact']:
+            mid = body['id']
+            record = {'id': mid, 'type': 'compaction', 'status': 'completed', 'reason': 'manual',
+                      'summary': 'synthetic native compact', 'recent': '', 'time': {'created': time.time() * 1000}}
+            self.append(sid, record)
+            return 200, {'data': {'id': mid, 'type': 'compaction', 'delivery': body['delivery'], 'payload': {}}}
+        if operation == ['shell']:
+            self.append(sid, {'id': body['id'], 'type': 'shell', 'command': body['command'],
+                              'shellID': 'shell_synthetic', 'status': 'exited', 'exit': 0,
+                              'output': {'output': 'synthetic shell output', 'cursor': 22, 'size': 22, 'truncated': False},
+                              'time': {'created': time.time() * 1000}})
+            return 204, None
+        if operation == ['command']:
+            self.append(sid, {'id': f'msg_command_{len(self.messages[sid])}', 'type': 'system',
+                              'text': f"native command: {body['name']} {body['text']}",
+                              'time': {'created': time.time() * 1000}})
+            return 204, None
         if operation == ['model']:
             self.sessions[sid]['model'] = body['model']
             return 204, None
         if operation == ['message']:
             # Always paginate: a bridge that forgets cursor.next loses data.
             start = int(query.get('cursor', ['0'])[0])
-            rows = list(reversed(self.messages[sid]))
+            rows = list(reversed(self.projected(sid)))
             end = min(start + 2, len(rows))
             return 200, {'data': rows[start:end], 'cursor': {'previous': None,
                         'next': str(end) if end < len(rows) else None}}
         if operation == ['inbox']:
-            return 200, {'data': []}
+            return 200, {'data': self.inbox[sid]}
+        if len(operation) == 2 and operation[0] == 'inbox':
+            if method == 'DELETE':
+                self.inbox[sid] = [entry for entry in self.inbox[sid] if entry['id'] != operation[1]]
+            elif method == 'PATCH':
+                entry = next((entry for entry in self.inbox[sid] if entry['id'] == operation[1]), None)
+                if not entry:
+                    return 409, {'message': 'input already delivered'}
+                entry['delivery'] = body['delivery']
+            return 204, None
         if operation == ['permission']:
             return 200, {'data': self.permissions[sid]}
         if operation == ['form']:
@@ -194,7 +293,13 @@ class FakeOpenCode:
             mid = body['id']
             if any(row['id'] == mid for row in self.messages[sid]):
                 return 409, {'message': 'duplicate native message'}
-            self.append(sid, {'id': mid, 'type': 'user', 'text': body['text'],
+            assert body.get('delivery') in ('queue', 'steer'), 'bridge must choose explicit native delivery'
+            if sid in self.active:
+                entry = {'id': mid, 'sessionID': sid, 'type': 'user', 'payload': {'text': body['text'], 'files': body.get('files', [])},
+                         'delivery': body['delivery'], 'time': {'created': time.time() * 1000}}
+                self.inbox[sid].append(entry)
+                return 200, {'data': entry}
+            self.append(sid, {'id': mid, 'type': 'user', 'text': body['text'], 'files': body.get('files', []),
                               'time': {'created': time.time() * 1000}})
             self.active.add(sid)
             cancelled = threading.Event()
@@ -234,7 +339,7 @@ class FakeOpenCode:
             while not event.wait(0.1):
                 if self.closed.is_set():
                     return
-        if text == 'slow':
+        if text.startswith('slow'):
             while not self.closed.wait(0.1):
                 if cancelled.is_set():
                     break
@@ -245,6 +350,14 @@ class FakeOpenCode:
                                              'input': {'path': 'synthetic-file'}, 'error': 'synthetic tool error'}})
             assistant['content'][1]['text'] = 'native reply completed: ' + text
             assistant['time']['completed'] = time.time() * 1000
+            assistant['tokens'] = {'input': 1200, 'output': 100, 'reasoning': 40, 'cache': {'read': 600, 'write': 200}}
+            assistant['cost'] = 0.0125
+            info = self.sessions[sid]
+            info['cost'] += assistant['cost']
+            for key in ('input', 'output', 'reasoning'):
+                info['tokens'][key] += assistant['tokens'][key]
+            for key in ('read', 'write'):
+                info['tokens']['cache'][key] += assistant['tokens']['cache'][key]
             assistant['finish'] = 'error' if interrupted or text == 'error' else 'stop'
             if interrupted or text == 'error':
                 assistant['error'] = {'type': 'aborted' if interrupted else 'provider.synthetic',

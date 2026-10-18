@@ -14,6 +14,12 @@ pub(super) struct Live {
     pub error: Option<String>,
     pub config: Value,
     pub models: Value,
+    pub modes: Value,
+    pub usage: Value,
+    pub billing: Value,
+    pub context: Value,
+    pub extensions: HashMap<String, bool>,
+    pub images: bool,
     pub seq: u64,
     pub turn: u64,
     pub generation: u64,
@@ -35,6 +41,12 @@ impl Live {
             error: None,
             config: Value::Null,
             models: Value::Null,
+            modes: Value::Null,
+            usage: Value::Null,
+            billing: Value::Null,
+            context: Value::Null,
+            extensions: HashMap::new(),
+            images: false,
             seq: 0,
             turn: 0,
             generation: 0,
@@ -56,7 +68,8 @@ impl Live {
             item
         }).collect();
         let mut raw = json!({"session_id":self.sid,"running":self.running,"items":items,"requests":requests,
-            "configOptions":self.config});
+            "configOptions":self.config,"modes":self.modes,"mode":self.modes["currentModeId"],
+            "usage":self.usage,"billing":self.billing,"context_usage":self.context,"extension_support":self.extensions});
         for (id, name) in [("model", "model"), ("reasoning_effort", "effort")] {
             if let Some(option) = self
                 .config
@@ -79,6 +92,9 @@ impl Live {
         if let Some(config) = result.get("configOptions") {
             self.config = config.clone();
         }
+        if let Some(modes) = result.get("modes") {
+            self.modes = modes.clone();
+        }
         if let Some(models) = result.get("models") {
             self.models = models.clone();
         }
@@ -88,6 +104,39 @@ impl Live {
         let sid = params["sessionId"].as_str();
         let ours = sid.is_some_and(|sid| self.sid.is_empty() || sid == self.sid);
         if let Some(id) = message.get("id") {
+            let method = message["method"].as_str().unwrap_or("");
+            let method = method.strip_prefix('_').unwrap_or(method);
+            if ours && matches!(method, "x.ai/ask_user_question" | "x.ai/exit_plan_mode") {
+                let key = format!("{}:{}", self.generation, id);
+                let mut request =
+                    json!({"key":key,"native_method":method,"native":params,"rpc_id":id});
+                if method == "x.ai/ask_user_question" {
+                    let mut questions = params["questions"].clone();
+                    if let Some(questions) = questions.as_array_mut() {
+                        for question in questions {
+                            question["key"] = question["question"].clone();
+                            if let Some(multiple) = question.get("multi_select").cloned() {
+                                question["multiSelect"] = multiple;
+                            }
+                        }
+                    }
+                    request["type"] = json!("question");
+                    request["title"] = json!("Grok 需要回答");
+                    request["questions"] = questions;
+                    request["mode"] = params["mode"].clone();
+                } else {
+                    request["type"] = json!("approval");
+                    request["title"] = json!("Grok 计划批准");
+                    request["description"] = params["planContent"].clone();
+                    request["options"] = json!([
+                        {"label":"批准计划","value":{"outcome":"approved"}},
+                        {"label":"要求修改","value":{"outcome":"cancelled"}},
+                        {"label":"放弃计划","value":{"outcome":"abandoned"}}]);
+                }
+                self.requests.insert(key, request);
+                self.publish();
+                return None;
+            }
             if message["method"] == "session/request_permission" && ours {
                 let key = format!("{}:{}", self.generation, id);
                 let options = params["options"]
@@ -115,7 +164,7 @@ impl Live {
         if !ours
             || !matches!(
                 message["method"].as_str(),
-                Some("session/update" | "x.ai/session/update")
+                Some("session/update" | "x.ai/session/update" | "_x.ai/session/update")
             )
         {
             return None;
@@ -175,6 +224,29 @@ impl Live {
                 item["native"] = json!(native);
             }
             "config_option_update" => self.config = update["configOptions"].clone(),
+            "current_mode_update" => self.modes["currentModeId"] = update["currentModeId"].clone(),
+            "turn_completed" => {
+                if let Some(usage) = update.get("usage").filter(|v| !v.is_null()) {
+                    // Per-turn usage is distinct from the process-lifetime ledger.
+                    self.usage["last_turn"] = scrub_usage(usage);
+                }
+            }
+            "interaction_resolved" => {
+                self.requests
+                    .retain(|_, r| r["native"]["toolCallId"] != update["tool_call_id"]);
+            }
+            "auto_compact_started"
+            | "auto_compact_completed"
+            | "auto_compact_failed"
+            | "retry_state"
+            | "image_dropped"
+            | "image_compressed" => {
+                self.segment += 1;
+                self.items.push(
+                    json!({"id":format!("grok:{}:status:{}:{}",self.sid,self.turn,self.segment),
+                    "role":"system","content":content_text(update),"native":update}),
+                );
+            }
             "plan" => {
                 self.segment += 1;
                 self.items.push(
@@ -228,4 +300,22 @@ fn content_text(content: &Value) -> String {
     } else {
         content.to_string()
     }
+}
+
+// Unknown/partial cost is not a zero bill. Keep token counters and diagnostics.
+pub(super) fn scrub_usage(value: &Value) -> Value {
+    let mut usage = value.clone();
+    if usage["usageIsIncomplete"] == true || usage["costIsPartial"] == true {
+        if let Some(object) = usage.as_object_mut() {
+            object.remove("costUsdTicks");
+        }
+        if let Some(models) = usage["modelUsage"].as_object_mut() {
+            for model in models.values_mut() {
+                if let Some(object) = model.as_object_mut() {
+                    object.remove("costUsdTicks");
+                }
+            }
+        }
+    }
+    usage
 }

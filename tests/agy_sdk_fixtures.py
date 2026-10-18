@@ -35,6 +35,8 @@ def option(name):
     return args[args.index(name)+1] if name in args else None
 record({'kind':'launch','argv':args,'cwd':os.getcwd(),'pid':os.getpid()})
 if '--version' in args:print('1.4.2');sys.exit(0)
+if option('-p')=='/usage':
+    emit({'status':'SUCCESS','num_turns':0,'command':{'name':'usage','data':{'groups':[{'name':'Agy Standard','buckets':[{'id':'standard','window':'5h','remaining_fraction':0.72,'reset_time':'2026-10-20T00:00:00Z'}]}]}}});sys.exit(0)
 if 'models' in args:
     print('synthetic-agy-low\tSynthetic Agy Low\nsynthetic-agy-high\tSynthetic Agy High');sys.exit(0)
 assert not sys.stdin.isatty(), 'SDK must not use a PTY'
@@ -70,7 +72,7 @@ def advance():
     connection.execute('UPDATE fixture_steps SET next_index=?',(index,));connection.commit()
 def result(status,response='',error=None):
     payload=dict(conversation_id=sid,status=status,response=response,num_turns=index,
-                 duration_seconds=0.01,usage=dict(input_tokens=1,output_tokens=1))
+                 duration_seconds=0.01,usage=dict(input_tokens=12000,output_tokens=800,thinking_tokens=300,cache_read_tokens=9000,total_tokens=12800))
     if error:payload['error']=error
     emit({'event':'result','result':payload})
 def interrupted(*_):
@@ -84,7 +86,7 @@ for line in sys.stdin:
     message=json.loads(line)
     assert message['event']=='user',message
     text=message['message']['content']
-    record({'kind':'input','sid':sid,'text':text,'model':option('--model'),'effort':option('--effort'),'pid':os.getpid()})
+    record({'kind':'input','sid':sid,'text':text,'model':option('--model'),'effort':option('--effort'),'mode':option('--mode'),'pid':os.getpid()})
     native_record('USER_INPUT','<USER_REQUEST>\n'+text+'\n</USER_REQUEST>')
     step('user_input',state='DONE');advance()
     if text=='__CRASH__':os._exit(7)

@@ -204,10 +204,12 @@ impl NativeSdks {
             .providers
             .get(source)
             .ok_or_else(|| format!("此机器未配置 {source} SDK 模式"))?;
-        if method == "create" {
+        if matches!(method, "create" | "fork") {
             let rows = self.receipts.lock().expect("SDK receipts");
             if let Some(row) = rows.values().find(|row| {
                 row["source"] == source
+                    && row["sdk_operation"].as_str().unwrap_or("create") == method
+                    && (method != "fork" || row["sdk_parent"] == target["uid"])
                     && row["request_id"] == input["request_id"]
                     && row["request_id"].is_string()
             }) {
@@ -224,7 +226,7 @@ impl NativeSdks {
             bridge,
             bridge.call(method, target.clone(), input.clone()).await
         )?;
-        if method == "create" {
+        if matches!(method, "create" | "fork") {
             let uid = result["uid"].as_str().ok_or("SDK 未返回原生会话身份")?;
             let mut row = result
                 .get("session")
@@ -239,6 +241,12 @@ impl NativeSdks {
                 row["title"] = json!("新会话");
             }
             row["sdk"] = json!(true);
+            if !row["size"].is_number() {
+                row["size"] = json!(0);
+            }
+            if !row["agent_items"].is_array() {
+                row["agent_items"] = json!([]);
+            }
             // Native SDK receipts have a UID/SID already. `pending` belongs
             // to a PTY launch and would route clicks to tmux:undefined.
             row.as_object_mut()
@@ -246,6 +254,10 @@ impl NativeSdks {
                 .remove("pending");
             row["sdk_pending"] = json!(true);
             row["request_id"] = input["request_id"].clone();
+            row["sdk_operation"] = json!(method);
+            if method == "fork" {
+                row["sdk_parent"] = target["uid"].clone();
+            }
             row["sdk_model"] = input["model"].clone();
             row["sdk_effort"] = input["effort"].clone();
             let mut rows = self.receipts.lock().expect("SDK receipts");

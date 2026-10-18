@@ -39,6 +39,9 @@ impl Connection {
         let generation = {
             let mut state = live.lock().unwrap();
             state.generation += 1;
+            state.usage = Value::Null;
+            state.context = Value::Null;
+            state.extensions.clear();
             state.generation
         };
         let mut child = command
@@ -165,6 +168,13 @@ impl Connection {
         method: &str,
         params: Value,
     ) -> Result<oneshot::Receiver<Result<Value, String>>, String> {
+        // ACP reserves leading-underscore methods for extensions; the Grok
+        // handler API strips that prefix before matching logical x.ai names.
+        let method = if method.starts_with("x.ai/") {
+            format!("_{method}")
+        } else {
+            method.to_owned()
+        };
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, tx);

@@ -3,6 +3,7 @@
 
 mod protocol;
 mod transport;
+mod usage;
 use crate::sessions::native_json;
 
 use std::{
@@ -54,6 +55,7 @@ struct Live {
     requests: BTreeMap<String, Value>,
     controls: BTreeMap<String, ControlReply>,
     accepted: BTreeMap<String, Value>,
+    actions: BTreeMap<String, Value>,
     turns: VecDeque<String>,
     outbound: Option<mpsc::UnboundedSender<Value>>,
     ready: bool,
@@ -64,6 +66,17 @@ struct Live {
     model: Option<String>,
     effort: Option<String>,
     models: Value,
+    settings: Value,
+    usage: Value,
+    message_usage: BTreeMap<String, Value>,
+    model_usage: Value,
+    context_usage: Value,
+    rate_limits: Value,
+    usage_errors: BTreeMap<String, String>,
+    refreshing_usage: bool,
+    status: Value,
+    retry: Value,
+    compact: Value,
     error: Option<String>,
     // Diagnostic tail is private and redacted, never returned in snapshots.
     stderr: VecDeque<String>,
@@ -129,7 +142,9 @@ fn parse_json(text: &str) -> Result<Value, String> {
 fn capabilities() -> Value {
     json!({"send":true,"interrupt":true,"respond":true,"approval":true,"question":true,
         "models":true,"create":true,"resume":cfg!(target_os="linux"),"shared_tui":false,
-        "subagents":false,"effort":true,"mcp_elicitation":false,"user_dialog":false,
+        "subagents":false,"effort":true,"settings":true,"permission_mode":true,"fast_mode":true,
+        "images":true,"usage":true,"context_usage":true,"compact":true,
+        "mcp_elicitation":true,"user_dialog":true,
         "limitations":["Claude stream-json owns an independent CLI runtime; an active independent TUI cannot be attached or taken over.",
             "Claude subagent transcripts cannot be resumed as independent SDK sessions."]})
 }
@@ -202,6 +217,7 @@ impl Session {
                 requests: BTreeMap::new(),
                 controls: BTreeMap::new(),
                 accepted: BTreeMap::new(),
+                actions: BTreeMap::new(),
                 turns: VecDeque::new(),
                 outbound: None,
                 ready: false,
@@ -212,6 +228,17 @@ impl Session {
                 model: input["model"].as_str().map(str::to_owned),
                 effort: input["effort"].as_str().map(str::to_owned),
                 models: Value::Null,
+                settings: json!({}),
+                usage: json!({}),
+                message_usage: BTreeMap::new(),
+                model_usage: Value::Null,
+                context_usage: Value::Null,
+                rate_limits: Value::Null,
+                usage_errors: BTreeMap::new(),
+                refreshing_usage: false,
+                status: Value::Null,
+                retry: Value::Null,
+                compact: Value::Null,
                 error: None,
                 stderr: VecDeque::new(),
                 streaming_message: String::new(),
@@ -225,6 +252,9 @@ impl Session {
         json!({"seq":live.seq,"type":"snapshot","raw":{
             "session_id":self.sid,"running":!live.turns.is_empty() || live.native_running,"items":live.items,
             "requests":live.requests.values().collect::<Vec<_>>(),"model":live.model,"effort":live.effort,
+            "settings":live.settings,"usage":live.usage,"model_usage":live.model_usage,
+            "context_usage":live.context_usage,"rate_limits":live.rate_limits,
+            "usage_errors":live.usage_errors,"status":live.status,"retry":live.retry,"compact":live.compact,
             "error":live.error,"capabilities":capabilities()}})
     }
 
@@ -509,6 +539,7 @@ impl Bridge {
             }
             "open" | "models" => {
                 self.ensure(&session).await?;
+                session.schedule_usage();
                 if method == "models" {
                     return Ok(
                         json!({"models":lock(&session.live).models,"capabilities":capabilities()}),
@@ -516,20 +547,119 @@ impl Bridge {
                 }
                 Ok(session.receipt())
             }
-            "turn" => {
+            "usage" => {
+                self.ensure(&session).await?;
+                session.refresh_usage().await;
+                Ok(session.receipt())
+            }
+            "settings" => {
+                let request_id = input["request_id"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .ok_or("claude_sdk: settings request_id is required")?;
+                {
+                    let live = lock(&session.live);
+                    if let Some(previous) = live.actions.get(request_id) {
+                        if previous["input"] != input {
+                            return Err(
+                                "claude_sdk: settings request_id already used with different input"
+                                    .into(),
+                            );
+                        }
+                        return previous.get("receipt").cloned().ok_or_else(||
+                            "claude_sdk: settings already attempted; native outcome may be unknown, inspect current settings before retrying".into());
+                    }
+                }
+                self.ensure(&session).await?;
+                // Reserve before the first native write. A failed or uncertain
+                // control must not be replayed by an HTTP retry.
+                lock(&session.live)
+                    .actions
+                    .insert(request_id.into(), json!({"input":input}));
+                if let Some(mode) = input["permission_mode"].as_str() {
+                    session
+                        .control(json!({"subtype":"set_permission_mode","mode":mode}))
+                        .await?;
+                    let mut live = lock(&session.live);
+                    live.settings["permission_mode"] = json!(mode);
+                    session.publish(&mut live);
+                }
+                if let Some(model) = input["model"].as_str() {
+                    session
+                        .control(json!({"subtype":"set_model","model":model}))
+                        .await?;
+                    let mut live = lock(&session.live);
+                    live.model = Some(model.into());
+                    session.publish(&mut live);
+                }
+                let mut flags = json!({});
+                if let Some(fast) = input["fast_mode"].as_bool() {
+                    flags["fastMode"] = json!(fast);
+                }
+                if let Some(effort) = input["effort"].as_str() {
+                    flags["effortLevel"] = json!(effort);
+                }
+                if !flags.as_object().unwrap().is_empty() {
+                    session
+                        .control(json!({"subtype":"apply_flag_settings","settings":flags}))
+                        .await?;
+                    let mut live = lock(&session.live);
+                    if let Some(fast) = input["fast_mode"].as_bool() {
+                        live.settings["fast_mode"] = json!(fast);
+                    }
+                    if let Some(effort) = input["effort"].as_str() {
+                        live.effort = Some(effort.into());
+                    }
+                    session.publish(&mut live);
+                }
+                let receipt = json!({"configured":true,"request_id":request_id,"session_id":session.sid,
+                    "settings":lock(&session.live).settings});
+                lock(&session.live).actions.get_mut(request_id).unwrap()["receipt"] =
+                    receipt.clone();
+                Ok(receipt)
+            }
+            "turn" | "compact" => {
+                if method == "compact" && input["request_id"].as_str().is_none_or(str::is_empty) {
+                    return Err("claude_sdk: compact request_id is required".into());
+                }
                 let request_id = input["request_id"]
                     .as_str()
                     .filter(|s| !s.is_empty())
                     .map(str::to_owned)
                     .unwrap_or(uuid()?);
-                if let Some(receipt) = lock(&session.live).accepted.get(&request_id).cloned() {
+                let dedup_key = if method == "compact" {
+                    format!("compact:{request_id}")
+                } else {
+                    request_id.clone()
+                };
+                if let Some(receipt) = lock(&session.live).accepted.get(&dedup_key).cloned() {
                     return Ok(receipt);
                 }
                 self.ensure(&session).await?;
                 self.check_conflict(&session).await?;
-                let text = input["text"]
-                    .as_str()
-                    .ok_or("claude_sdk: text must be a string")?;
+                let text = if method == "compact" {
+                    "/compact"
+                } else {
+                    input["text"]
+                        .as_str()
+                        .ok_or("claude_sdk: text must be a string")?
+                };
+                let mut content = json!(text);
+                if method == "turn"
+                    && let Some(images) = input["images"].as_array().filter(|v| !v.is_empty())
+                {
+                    let mut blocks = vec![json!({"type":"text","text":text})];
+                    for image in images {
+                        let data = image["data"]
+                            .as_str()
+                            .ok_or("claude_sdk: image data must be base64 text")?;
+                        let mime = image["mimeType"]
+                            .as_str()
+                            .ok_or("claude_sdk: image mimeType is required")?;
+                        blocks.push(json!({"type":"image","source":{"type":"base64","media_type":mime,"data":data}}));
+                    }
+                    content = json!(blocks);
+                }
                 let (model, effort) = {
                     let live = lock(&session.live);
                     (live.model.clone(), live.effort.clone())
@@ -557,14 +687,17 @@ impl Bridge {
                     .clone()
                     .ok_or("claude_sdk: native transport disconnected")?;
                 let frame = json!({"type":"user","session_id":session.sid,"uuid":message_id,
-                    "parent_tool_use_id":null,"message":{"role":"user","content":text}});
+                    "parent_tool_use_id":null,"message":{"role":"user","content":content}});
                 sender
                     .send(frame)
                     .map_err(|_| "claude_sdk: native transport disconnected")?;
                 let receipt = json!({"accepted":true,"request_id":request_id,"session_id":session.sid,"message_id":message_id});
-                live.accepted.insert(request_id.clone(), receipt.clone());
+                live.accepted.insert(dedup_key, receipt.clone());
                 live.turns.push_back(request_id.clone());
                 live.items.push(json!({"id":message_id,"native_id":message_id,"role":"user","content":text,"text":text,"request_id":request_id}));
+                if method == "compact" {
+                    live.compact = json!({"state":"requested","request_id":request_id});
+                }
                 live.error = None;
                 session.publish(&mut live);
                 Ok(receipt)
@@ -592,6 +725,8 @@ impl Bridge {
             .ok_or("claude_sdk: native transport disconnected")?;
         sender.send(json!({"type":"control_response","response":{"subtype":"success","request_id":key,"response":result}}))
             .map_err(|_| "claude_sdk: native transport disconnected")?;
+        let card = card.clone();
+        protocol::retire_dialog(&mut live, &card);
         live.requests.remove(key);
         session.publish(&mut live);
         Ok(json!({"responded":true,"key":key}))

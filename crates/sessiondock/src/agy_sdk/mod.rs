@@ -45,6 +45,9 @@ struct Data {
     effort: Option<String>,
     error: Option<String>,
     diagnostics: String,
+    usage: Value,
+    step_usage: Value,
+    mode: Option<String>,
 }
 
 #[derive(Clone)]
@@ -53,6 +56,7 @@ struct Turn {
     text: String,
     model: Option<String>,
     effort: Option<String>,
+    mode: Option<String>,
 }
 
 enum Command {
@@ -94,7 +98,7 @@ pub fn new(
 fn capabilities() -> Value {
     json!({"send":true,"create":true,"resume":true,"stream":true,
         "interrupt":cfg!(unix),"respond":false,"approvals":false,"questions":false,
-        "models":true,"model_per_turn":true,"shared_tui":false,
+        "models":true,"model_per_turn":true,"shared_tui":false,"usage":true,"settings":true,"mode":true,
         "limitations":["Agy headless 由原生策略允许或软拒绝审批；stream-json 不支持 control_request/control_response。",
         "独立 TUI 与 SDK 没有共享运行时；原生数据库被外部进程打开时拒绝恢复/发送。",
         "每轮原生 headless 恢复同一 SID；实时快照仅保存在当前服务进程。"]})
@@ -161,6 +165,15 @@ impl Bridge {
         match method {
             "models" => self.process.models(self.shutdown.clone()).await,
             "create" => self.create(target, input).await,
+            "usage" => { let live=self.open(&target).await?;let data=live.data.lock().unwrap();Ok(json!({"usage":data.usage,"step_usage":data.step_usage})) },
+            "settings" => {
+                let live=self.open(&target).await?;let mut data=live.data.lock().unwrap();
+                if let Some(mode)=choice(&input,"mode") { data.mode=Some(mode); }
+                if let Some(model)=choice(&input,"model") { data.model=Some(model); }
+                if let Some(effort)=choice(&input,"effort") { data.effort=Some(effort); }
+                live.publish(&mut data);
+                Ok(json!({"settings":{"mode":data.mode,"model":data.model,"effort":data.effort},"applies":"next_turn"}))
+            },
             "open" => {
                 let live = self.open(&target).await?;
                 self.process.check_available(live.sid.clone()).await?;
@@ -180,7 +193,8 @@ impl Bridge {
                 let content = input["text"].as_str().ok_or("agy_sdk_missing_text")?.to_owned();
                 let turn = Turn { id: request.clone(), text: content.clone(),
                     model: choice(&input,"model").or_else(|| data.model.clone()),
-                    effort: choice(&input,"effort").or_else(|| data.effort.clone()) };
+                    effort: choice(&input,"effort").or_else(|| data.effort.clone()),
+                    mode: choice(&input,"mode").or_else(|| data.mode.clone()) };
                 let receipt = json!({"accepted":true,"request_id":request,"session_id":live.sid,"capabilities":capabilities()});
                 live.commands.send(Command::Turn(turn)).map_err(|_| "agy_sdk_shutdown")?;
                 data.items.push(json!({"id":format!("agy:request:{request}"),"role":"user","content":content,"request_id":request,"status":"queued"}));
@@ -270,6 +284,9 @@ impl Bridge {
                 effort,
                 error: None,
                 diagnostics: String::new(),
+                usage: Value::Null,
+                step_usage: Value::Null,
+                mode: None,
             }),
         });
         sessions.native.insert(sid, live.clone());
@@ -315,6 +332,7 @@ impl Bridge {
             &cwd,
             model.as_deref(),
             effort.as_deref(),
+            choice(&input, "mode").as_deref(),
             self.shutdown.clone(),
         )
         .await?;
@@ -352,7 +370,9 @@ impl Live {
     fn raw(&self, data: &Data) -> Value {
         json!({"session_id":self.sid,"cwd":self.cwd,"running":data.outstanding>0,
             "items":data.items,"requests":[],"model":data.model,"effort":data.effort,
-            "error":data.error,"diagnostics":data.diagnostics,"capabilities":capabilities()})
+            "error":data.error,"diagnostics":data.diagnostics,"capabilities":capabilities(),
+            "usage":data.usage,"step_usage":data.step_usage,"settings":{"mode":data.mode,"applies":"next_turn"},
+            "modes":[{"id":"accept-edits","name":"接受编辑"},{"id":"auto","name":"自动"},{"id":"plan","name":"计划"}]})
     }
     fn snapshot(&self, data: &Data) -> Value {
         json!({"seq":data.seq,"type":"snapshot","raw":self.raw(data)})
@@ -465,6 +485,7 @@ async fn execute(
         std::path::Path::new(&live.cwd),
         turn.model.as_deref(),
         turn.effort.as_deref(),
+        turn.mode.as_deref(),
         shutdown.clone(),
     )
     .await?;
@@ -502,6 +523,7 @@ async fn execute(
                     Some("step_update")=>{ saw_assistant |= event["step_update"]["step_type"]=="agent_response" && event["step_update"]["text_delta"].as_str().is_some_and(|s|!s.is_empty()); project(live,turn,&event["step_update"]); }
                     Some("result")=>{
                         let value=&event["result"];
+                        if value["usage"].is_object() { let mut data=live.data.lock().unwrap();data.usage=value["usage"].clone();live.publish(&mut data); }
                         if !saw_assistant && value["response"].as_str().is_some_and(|text|!text.is_empty()) {
                             let mut data=live.data.lock().unwrap();
                             data.items.push(json!({"id":format!("agy:result:{}",turn.id),"role":"assistant","content":value["response"],"phase":"final","native":value}));live.publish(&mut data);
@@ -546,6 +568,9 @@ async fn execute(
 
 fn project(live: &Live, turn: &Turn, step: &Value) {
     let mut data = live.data.lock().unwrap();
+    if step["usage"].is_object() {
+        data.step_usage = step["usage"].clone();
+    }
     let kind = step["step_type"].as_str().unwrap_or("unknown");
     let native_id = format!("agy:{}:step:{}", live.sid, step["step_index"]);
     if kind == "user_input" {

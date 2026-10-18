@@ -34,6 +34,9 @@
 | `respond` | 按原生 request ID 回送一条 `control_response`；已取消或已回答的卡片返回 request-gone 错误 |
 | `models` | 使用 `initialize.response.models`；保留原生字段并添加 `id/name/efforts` 对应 `value/displayName/supportedEffortLevels`。无 uid 时用仅初始化的临时原生进程查询，之后清理该进程 |
 | `discard` | 仅空闲时释放桥接运行时与 pending create 缓存；保留所有原生历史 |
+| `settings` | 显式更新 `permission_mode/fast_mode/model/effort`；逐项等待原生确认，仅更新进程级设置。必填 `request_id`；相同请求不重放已尝试的控制 |
+| `usage` | 查询 `get_context_usage {detail:"summary"}` 和实验性 `get_usage {skip_behaviors:true}`；失败按字段降级并保留最近有效数据 |
+| `compact` | 将原生 `/compact` 作为 user 命令写入 stream；必填 `request_id`，重试不重复提交。接受不等于完成，进度与结果来自原生事件 |
 
 `turn` 的模型变化通过原生 `set_model`，effort 通过原生
 `apply_flag_settings {settings:{effortLevel}}`。首次启动的选择用
@@ -41,6 +44,10 @@
 多个接受的输入交给 Claude 自己的 streaming input 队列；桥接不添加输入长度、
 行长、总量或排队数量拒绝规则。相同 `request_id` 在本桥接进程生命周期内
 只发送一次；断线和不确定的写入结果不自动重放。
+
+已由共享 HTTP 附件授权解析的 `images:[{data,mimeType}]` 转成官方
+`image/source:{type:"base64",media_type,data}` block，与文本同一条 user 消息发送。
+客户端直接传入的本地路径或图片字段不授予文件访问权。没有图片时仍发送字符串正文。
 
 ## 快照与回答
 
@@ -71,9 +78,40 @@
 - 问题：`respond {key,result:{answers:{"原生问题全文":"回答"}}}`，
   写入原生 `updatedInput.answers`。多选按 Claude 的字符串答案约定由 UI 组合；
   不把自由文本或缺失回答冒充 allow。问题也可以明确 deny。
-- 其他原生控制请求明确回送 unsupported 错误；未实现新的
-  `request_user_dialog`、MCP elicitation、OAuth 回调或 MCP SDK server。
-  本实现不向 initialize 宣告这些能力。
+- MCP `elicitation` 保留 form 的 `requested_schema/property_order` 和 URL 模式的
+  `url/elicitation_id`。显式回答 `{action:"accept"|"decline"|"cancel",content?:{…}}`；
+  form accept 必须有对象内容，不把空回答或取消解释为许可。
+- `request_user_dialog` 只支持官方 `refusal_fallback_prompt`，initialize 只声明该种类。
+  保留 `originalModel/fallbackModel/guidanceText`；显式回答
+  `{behavior:"completed",result:"retry_fallback"|"edit_prompt"|"cancelled"}` 或
+  `{behavior:"cancelled"}`。原生 `retractedMessageUuids` 仅在回答或取消后撤去，
+  不在收卡时删除。未知 dialog kind 不自动回答或取消，由原生 deadline 处理。
+- initialize 返回的 pending permission/dialog 请求与实时请求按同一 request ID 对账。
+  OAuth 回调、MCP SDK server 及其他控制请求仍未实现；其他控制明确 unsupported。
+
+## 用量、状态与设置
+
+`raw.usage.tokens` 给出 `input/output/reasoning/cache.read/cache.write/total_tokens`；
+`reasoning` 已包含在 output 中，不再加进 total。缺少 thinking 统计时为 null。
+恢复旧版原生历史时，已有 thinking 字段也可能只覆盖记录过该字段的部分回合。
+`result.modelUsage` 与 `total_cost_usd` 是跨 streaming turns 的原生累计估计，
+每次覆盖，绝不逐 result 累加；`result.usage` 只作为最近一轮主循环统计保留。
+crash/startup error 携带的占位零累计不会抹掉已观测的有效累计，原始错误统计单独保留。
+原生累计数据到达前，同一 API message ID 的多个 assistant block 合并计数，
+不重复计入。`model_usage` 保留原生模型细分，成本是估计而非账单。
+
+`raw.usage.context` 使用原生 summary 的已用 tokens、有效窗口和百分比，
+明确标注最近响应与本地估计；不拿会话累计 tokens 当上下文。
+open、result 和 compact boundary 后刷新；手动 usage 也可刷新。
+实验性 get_usage 不可用、账号无计划额度或查询失败时不伪造零值，
+`usage_errors` 保留失败原因，最近有效上下文和额度仍可查看。
+`rate_limit_event` 保留本来源窗口、利用率、重置时间与 overage 信息；
+`api_retry`、`status.compacting` 和 `compact_boundary` 分别投影重试、压缩进度及结果。
+
+权限通过 `set_permission_mode`，Fast 通过
+`apply_flag_settings {settings:{fastMode}}`；不写日常配置、不自动放宽权限。
+`raw.settings` 记录原生确认的选择，并保留 `fast_mode_state/fast_mode_disabled_reason`，
+不能把 Fast 选择已接收解释为账号或模型一定可用。
 
 ## 生命周期与限制
 
@@ -89,7 +127,8 @@ stderr 的诊断尾部经过配置/环境中的 secret 值及 token 形态脱敏
 不返回 argv、环境或凭据；原生退出错误会附带已脱敏的末条诊断。
 
 能力包括 send、interrupt、respond、approval、question、models、create、resume、
-effort；`shared_tui:false`、`subagents:false`。这是独立原生 runtime，
+effort、settings、permission_mode、fast_mode、images、usage、context_usage、compact、
+mcp_elicitation 和限定种类的 user_dialog；`shared_tui:false`、`subagents:false`。这是独立原生 runtime，
 无法加入一个独立 TUI 正在使用的 runtime。Linux 在首次连接和每次发送前
 复用既有 procscan，检查 SID、完整原生文件持有者及同 cwd 尚未明确身份的裸
 Claude 进程，排除本桥接的进程树。发现冲突返回
@@ -101,6 +140,8 @@ Claude 进程，排除本桥接的进程树。发现冲突返回
 需要切换到独立 TUI 时先显式结束 SDK 工作并 discard。
 节点重启会丢失内存中的 pending 回执、请求去重缓存与实时快照；已存在的原生
 历史仍可按同一 SID 恢复。不承诺从桥接崩溃中重放未确认输入。
+原生 fork 尚未接入；不会自行复制或改写 transcript 代替官方实现。
+`rewindFiles` 是工作区文件回滚，不能代替 conversation-only revert，后者仍未实现。
 
 新建路径使用 Claude Code 2.1.302 包内 `sanitizePath` 的确切算法：
 按 JS UTF-16 把非 ASCII 字母数字替为 `-`，超过 200 个编码单元时取前
@@ -136,6 +177,8 @@ JSONL 路径与桥接算法完全一致。没有调用真实账号或真实模�
 合成夹具在 [claude_sdk_fixtures.py](../tests/claude_sdk_fixtures.py)，
 浏览器验收在 [claude_sdk_browser.py](../tests/claude_sdk_browser.py)。
 该套件通过 Chromium 操作发送、停止、流式内容、工具失败、审批和问题回传、
-刷新恢复、去重、新建及独立 writer 冲突。共享 Hub 的真实审批/问题控件和草稿恢复
+刷新恢复、去重、新建及独立 writer 冲突，并覆盖用量/上下文、设置、图片、
+MCP form/URL、refusal dialog、压缩、重试、限流和实验查询降级。
+共享 Hub 的真实审批/问题控件和草稿恢复
 见 [native_sdk_hub_browser.py](../tests/native_sdk_hub_browser.py)。
 验证命令见[验证清单](validation.md)；合成协议验收不扩大上述实机实验的证据范围。

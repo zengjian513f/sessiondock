@@ -92,6 +92,11 @@ pub(super) fn observe(session: &Session, frame: Value) {
         session.publish(&mut live);
         return;
     }
+    for field in ["fast_mode_state", "fast_mode_disabled_reason"] {
+        if let Some(value) = frame.get(field) {
+            live.settings[field] = value.clone();
+        }
+    }
     match frame["type"].as_str().unwrap_or("") {
         "control_response" => {
             let response = &frame["response"];
@@ -136,6 +141,29 @@ pub(super) fn observe(session: &Session, frame: Value) {
                     card["options"] = json!([{"label":"允许本次","value":"allow"},{"label":"拒绝","value":"deny"}]);
                 }
                 live.requests.insert(key.into(), card);
+            } else if native["subtype"] == "elicitation" {
+                let card = json!({"key":key,"type":"elicitation",
+                    "title":native.get("title").unwrap_or(&native["mcp_server_name"]),
+                    "description":native["description"],"message":native["message"],
+                    "mode":native.get("mode").cloned().unwrap_or(json!("form")),
+                    "requested_schema":native["requested_schema"],"property_order":native["property_order"],
+                    "url":native["url"],"elicitation_id":native["elicitation_id"],"native":native});
+                live.requests.insert(key.into(), card);
+            } else if native["subtype"] == "request_user_dialog" {
+                if native["dialog_kind"] == "refusal_fallback_prompt" {
+                    let payload = &native["payload"];
+                    live.requests.insert(key.into(), json!({"key":key,"type":"user_dialog",
+                        "dialog_kind":native["dialog_kind"],"title":"Claude 模型拒绝",
+                        "description":payload["guidanceText"],"payload":payload,"native":native,
+                        "options":[{"label":"使用备用模型重试","value":"retry_fallback"},
+                            {"label":"修改输入","value":"edit_prompt"},{"label":"取消","value":"cancelled"}]}));
+                } else {
+                    // Exact per-kind renderer opt-in: never settle an unknown
+                    // kind as a real user dismissal.
+                    live.items.push(json!({"id":format!("unsupported:{key}"),"role":"system",
+                        "content":format!("Unsupported Claude dialog kind: {}",native["dialog_kind"]),
+                        "text":format!("Unsupported Claude dialog kind: {}",native["dialog_kind"]),"error":true}));
+                }
             } else {
                 if let Some(sender) = &live.outbound {
                     let _=sender.send(json!({"type":"control_response","response":{"subtype":"error","request_id":key,
@@ -148,7 +176,9 @@ pub(super) fn observe(session: &Session, frame: Value) {
         }
         "control_cancel_request" => {
             if let Some(key) = frame["request_id"].as_str() {
-                live.requests.remove(key);
+                if let Some(card) = live.requests.remove(key) {
+                    retire_dialog(&mut live, &card);
+                }
             }
         }
         "assistant" => {
@@ -160,6 +190,14 @@ pub(super) fn observe(session: &Session, frame: Value) {
                 .as_str()
                 .or_else(|| frame["uuid"].as_str())
                 .unwrap_or("assistant");
+            usage::assistant(&mut live, id, &message["usage"]);
+            if frame["context_usage"].is_object() {
+                usage::context(
+                    &mut live,
+                    &frame["context_usage"],
+                    "native /context summary",
+                );
+            }
             if let Some(model) = message["model"].as_str() {
                 live.model = Some(model.into());
             }
@@ -238,6 +276,7 @@ pub(super) fn observe(session: &Session, frame: Value) {
             let event = &frame["event"];
             match event["type"].as_str().unwrap_or("") {
                 "message_start" => {
+                    live.retry = Value::Null;
                     live.streaming_message =
                         event["message"]["id"].as_str().unwrap_or("stream").into();
                     live.streaming_blocks.clear();
@@ -299,6 +338,13 @@ pub(super) fn observe(session: &Session, frame: Value) {
             }
         }
         "result" => {
+            // modelUsage/cost are native running totals, while usage is the
+            // main-loop-only value for this turn. Neither is added to itself.
+            usage::result(&mut live, &frame);
+            if frame["usage"].is_object() {
+                live.usage["last_turn"] = frame["usage"].clone();
+            }
+            live.retry = Value::Null;
             live.turns.pop_front();
             if !live.state_observed {
                 live.native_running = false;
@@ -339,6 +385,29 @@ pub(super) fn observe(session: &Session, frame: Value) {
                 if let Some(model) = frame["model"].as_str() {
                     live.model = Some(model.into());
                 }
+                if let Some(mode) = frame.get("permissionMode") {
+                    live.settings["permission_mode"] = mode.clone();
+                }
+            } else if frame["subtype"] == "api_retry" {
+                live.retry = frame.clone();
+            } else if frame["subtype"] == "status" {
+                live.status = frame["status"].clone();
+                if let Some(mode) = frame.get("permissionMode") {
+                    live.settings["permission_mode"] = mode.clone();
+                }
+                if frame["status"] == "compacting" {
+                    live.compact = json!({"state":"compacting"});
+                }
+                if let Some(result) = frame.get("compact_result") {
+                    live.compact = json!({"state":result,"error":frame["compact_error"]});
+                    if result == "failed" {
+                        live.error = frame["compact_error"].as_str().map(str::to_owned);
+                    }
+                }
+            } else if frame["subtype"] == "compact_boundary" {
+                live.compact = json!({"state":"success","native":frame});
+                live.context_usage = Value::Null;
+                live.usage.as_object_mut().unwrap().remove("context");
             } else if frame["subtype"] == "session_state_changed" {
                 // Stream-json can continue background work after a result. The
                 // native state is observed separately from accepted input count.
@@ -357,6 +426,15 @@ pub(super) fn observe(session: &Session, frame: Value) {
                 );
             }
         }
+        "rate_limit_event" => {
+            let info = &frame["rate_limit_info"];
+            let key = info["rateLimitType"].as_str().unwrap_or("current");
+            if !live.rate_limits.is_object() {
+                live.rate_limits = json!({});
+            }
+            live.rate_limits[key] = info.clone();
+            live.usage["rate_limit_event"] = info.clone();
+        }
         _ => {}
     }
     session.publish(&mut live);
@@ -365,6 +443,36 @@ pub(super) fn observe(session: &Session, frame: Value) {
 /// The caller answers one native card. Permission suggestions are displayed
 /// as data; no blanket allow, permanent rule update or guessed RPC response.
 pub(super) fn permission_result(card: &Value, result: &Value) -> Result<Value, String> {
+    if card["type"] == "user_dialog" {
+        if result["behavior"] == "cancelled" {
+            return Ok(json!({"behavior":"cancelled"}));
+        }
+        let choice = result["result"]
+            .as_str()
+            .ok_or("claude_sdk: dialog requires explicit result")?;
+        if result["behavior"] != "completed"
+            || !["retry_fallback", "edit_prompt", "cancelled"].contains(&choice)
+        {
+            return Err("claude_sdk: invalid refusal fallback dialog choice".into());
+        }
+        return Ok(json!({"behavior":"completed","result":choice}));
+    }
+    if card["type"] == "elicitation" {
+        let action = result["action"]
+            .as_str()
+            .ok_or("claude_sdk: elicitation requires explicit action")?;
+        if !["accept", "decline", "cancel"].contains(&action) {
+            return Err("claude_sdk: invalid elicitation action".into());
+        }
+        let mut response = json!({"action":action});
+        if action == "accept" && card["mode"] != "url" {
+            if !result["content"].is_object() {
+                return Err("claude_sdk: accepted form requires content object".into());
+            }
+            response["content"] = result["content"].clone();
+        }
+        return Ok(response);
+    }
     let behavior = result.as_str().or_else(|| result["behavior"].as_str());
     if behavior == Some("deny") {
         return Ok(
@@ -390,4 +498,15 @@ pub(super) fn permission_result(card: &Value, result: &Value) -> Result<Value, S
         );
     }
     Err("claude_sdk: approval requires an explicit allow or deny behavior".into())
+}
+
+pub(super) fn retire_dialog(live: &mut Live, card: &Value) {
+    if card["type"] == "user_dialog"
+        && let Some(ids) = card["payload"]["retractedMessageUuids"].as_array()
+    {
+        live.items.retain(|row| {
+            !ids.iter()
+                .any(|id| id == &row["native_id"] || id == &row["id"])
+        });
+    }
 }

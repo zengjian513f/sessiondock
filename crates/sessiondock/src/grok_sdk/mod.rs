@@ -1,5 +1,6 @@
 //! Grok's native ACP bridge. Contract and protocol evidence: docs/grok-sdk.md.
 //! No HTTP, PTY keystrokes, native transcript writes or implicit CLI discovery.
+mod actions;
 mod live;
 mod transport;
 
@@ -43,6 +44,7 @@ pub struct Bridge {
     // Serialize native attach/create, including retries of lost HTTP receipts.
     attach: AsyncMutex<()>,
     creates: AsyncMutex<HashMap<String, Result<Value, String>>>,
+    mutations: AsyncMutex<HashMap<String, Result<Value, String>>>,
 }
 
 /// Configuration only: a read root without a Grok launcher profile never
@@ -119,6 +121,7 @@ pub fn new(config: &Config, shutdown: CancellationToken) -> io::Result<Option<Ar
         sessions: Mutex::new(HashMap::new()),
         attach: AsyncMutex::new(()),
         creates: AsyncMutex::new(HashMap::new()),
+        mutations: AsyncMutex::new(HashMap::new()),
     })))
 }
 
@@ -193,7 +196,20 @@ impl Bridge {
         }
         if !matches!(
             method,
-            "open" | "turn" | "interrupt" | "respond" | "models" | "discard"
+            "open"
+                | "turn"
+                | "interrupt"
+                | "respond"
+                | "models"
+                | "discard"
+                | "usage"
+                | "billing"
+                | "settings"
+                | "compact"
+                | "fork"
+                | "rewind_points"
+                | "rewind"
+                | "shell"
         ) {
             return Err(format!("grok_sdk_unsupported_method: {method}"));
         }
@@ -213,7 +229,12 @@ impl Bridge {
                     json!({"models":live.models["availableModels"],"native":live.models,"configOptions":live.config,"capabilities":capabilities(&live)}),
                 )
             }
-            "turn" => self.turn(session, &input).await,
+            "turn" => self.turn(session, &input, false).await,
+            "shell" => self.turn(session, &input, true).await,
+            "usage" | "billing" | "rewind_points" => self.read_extension(&session, method).await,
+            "settings" | "compact" | "fork" | "rewind" => {
+                self.mutate(session, method, &input).await
+            }
             "interrupt" => {
                 let mut live = session.live.lock().unwrap();
                 if live.generation != session.connection.generation {
@@ -261,7 +282,11 @@ impl Bridge {
         cwd: &str,
         live: Arc<Mutex<Live>>,
     ) -> Result<Arc<Connection>, String> {
-        let connection = Connection::spawn(self.command(cwd)?, live, self.shutdown.child_token())?;
+        let connection = Connection::spawn(
+            self.command(cwd)?,
+            live.clone(),
+            self.shutdown.child_token(),
+        )?;
         let result = connection
             .request(
                 "initialize",
@@ -272,6 +297,10 @@ impl Bridge {
             .await;
         match result {
             Ok(result) if result["protocolVersion"] == 1 => {
+                // ACP explicitly advertises image support. Missing/false support
+                // remains a text/path fallback, never a fake image acceptance.
+                live.lock().unwrap().images =
+                    result["agentCapabilities"]["promptCapabilities"]["image"] == true;
                 *connection.initialized.lock().unwrap() = result;
                 Ok(connection)
             }
@@ -452,6 +481,25 @@ impl Bridge {
         input: &Value,
         live: &Mutex<Live>,
     ) -> Result<(), String> {
+        if let Some(mode) = input.get("mode").filter(|v| !v.is_null()) {
+            let mode = mode.as_str().ok_or("grok_sdk_invalid_mode")?;
+            {
+                let state = live.lock().unwrap();
+                if !state.modes["availableModes"]
+                    .as_array()
+                    .is_some_and(|modes| modes.iter().any(|m| m["id"] == mode))
+                {
+                    return Err("grok_sdk_mode_unsupported".into());
+                }
+            }
+            let result = connection
+                .request("session/set_mode", json!({"sessionId":sid,"modeId":mode}))
+                .await?;
+            let mut state = live.lock().unwrap();
+            state.settings(&result);
+            state.modes["currentModeId"] = json!(mode);
+            state.publish();
+        }
         for (field, config_id) in [("model", "model"), ("effort", "reasoning_effort")] {
             if let Some(value) = input.get(field).filter(|v| !v.is_null()) {
                 let value = value
@@ -474,8 +522,32 @@ impl Bridge {
         Ok(())
     }
 
-    async fn turn(self: &Arc<Self>, session: Arc<Session>, input: &Value) -> Result<Value, String> {
-        let text = required(input, "text")?.to_owned();
+    async fn turn(
+        self: &Arc<Self>,
+        session: Arc<Session>,
+        input: &Value,
+        shell: bool,
+    ) -> Result<Value, String> {
+        let text = if shell {
+            required(input, "command").or_else(|_| required(input, "text"))?
+        } else {
+            required(input, "text")?
+        }
+        .to_owned();
+        let mut prompt = vec![json!({"type":"text","text":text})];
+        if shell {
+            // Native direct shell path bypasses the model, preserving its own
+            // execution/permission semantics. Never send a model instruction.
+            prompt[0]["_meta"] = json!({"bash_command":text});
+        } else if let Some(images) = input.get("images").filter(|v| !v.is_null()) {
+            let images = images.as_array().ok_or("grok_sdk_invalid_images")?;
+            if !images.is_empty() && !session.live.lock().unwrap().images {
+                return Err("grok_sdk_images_unsupported: native initialize did not advertise image support".into());
+            }
+            for image in images {
+                prompt.push(json!({"type":"image","data":required(image,"data")?,"mimeType":required(image,"mimeType")?}));
+            }
+        }
         let request_id = input["request_id"]
             .as_str()
             .filter(|s| !s.is_empty())
@@ -507,7 +579,7 @@ impl Bridge {
             state.prompt_started = false;
             state.error = None;
             state.turn += 1;
-            state.items.push(json!({"id":format!("grok:{}:user:{}",session.sid,request_id),"role":"user","content":text,"request_id":request_id}));
+            state.items.push(json!({"id":format!("grok:{}:user:{}",session.sid,request_id),"role":if shell {"tool"} else {"user"},"content":text,"tool_name":if shell {json!("shell")} else {Value::Null},"request_id":request_id}));
             state.publish();
             receipt
         };
@@ -531,7 +603,7 @@ impl Bridge {
                     // notification from overtaking the prompt it targets.
                     let response = session.connection.begin_request(
                         "session/prompt",
-                        json!({"sessionId":session.sid,"prompt":[{"type":"text","text":text}]}),
+                        json!({"sessionId":session.sid,"prompt":prompt}),
                     )?;
                     state.prompt_started = true;
                     response
@@ -548,8 +620,13 @@ impl Bridge {
             state.running = false;
             state.prompt_started = false;
             state.requests.clear();
-            if let Err(error) = result {
-                state.error = Some(error);
+            match result {
+                Ok(result) => {
+                    if let Some(usage) = result["_meta"].get("usage") {
+                        state.usage["last_turn"] = live::scrub_usage(usage);
+                    }
+                }
+                Err(error) => state.error = Some(error),
             }
             state.publish();
         });
@@ -564,26 +641,10 @@ impl Bridge {
         }
         let request = state.requests.get(key).ok_or("grok_sdk_request_gone")?;
         let result = &input["result"];
-        let outcome =
-            if result["outcome"]["outcome"] == "cancelled" || result["outcome"] == "cancelled" {
-                json!({"outcome":"cancelled"})
-            } else {
-                let option = result["outcome"]["optionId"]
-                    .as_str()
-                    .or_else(|| result["optionId"].as_str())
-                    .or_else(|| result.as_str())
-                    .ok_or("grok_sdk_invalid_permission_result")?;
-                if !request["options"]
-                    .as_array()
-                    .is_some_and(|options| options.iter().any(|o| o["value"] == option))
-                {
-                    return Err("grok_sdk_unknown_permission_option".into());
-                }
-                json!({"outcome":"selected","optionId":option})
-            };
+        let response = actions::response_result(request, result)?;
         session
             .connection
-            .send(json!({"jsonrpc":"2.0","id":request["rpc_id"],"result":{"outcome":outcome}}))?;
+            .send(json!({"jsonrpc":"2.0","id":request["rpc_id"],"result":response}))?;
         state.requests.remove(key);
         state.publish();
         Ok(json!({"accepted":true}))
@@ -651,9 +712,14 @@ impl Bridge {
 }
 
 fn capabilities(live: &Live) -> Value {
-    json!({"send":true,"interrupt":true,"respond":true,"approval":true,"question":false,
+    let supported = |name: &str| live.extensions.get(name).copied().unwrap_or(true);
+    json!({"send":true,"interrupt":true,"respond":true,"approval":true,"question":true,
+        "images":live.images,"usage":supported("usage"),"billing":supported("billing"),
+        "settings":!live.modes.is_null() || !live.config.is_null(),"mode":!live.modes.is_null(),
+        "compact":supported("compact"),"fork":supported("fork"),"rewind_points":supported("rewind_points"),
+        "rewind":supported("rewind"),"shell":true,
         "models":!live.models.is_null() || !live.config.is_null(),"effort":live.config.as_array().is_some_and(|options|options.iter().any(|o|o["id"] == "reasoning_effort")),
-        "shared_tui":false,"transport":"grok-acp-stdio","limitations":["独立 TUI 无法共享本桥接的 ACP 进程；外部占用会话拒绝发送", "仅转发原生 session/request_permission；未声明题卡协议支持", "连接丢失后不重放已接受的 turn"]})
+        "shared_tui":false,"transport":"grok-acp-stdio","limitations":["独立 TUI 无法共享本桥接的 ACP 进程；外部占用会话拒绝发送", "扩展按原生返回判断支持；未认证安装版只验证过握手", "连接丢失后不重放已接受的 turn", "原生 shell 按 CLI 的直接执行权限运行"]})
 }
 fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
     value[key]

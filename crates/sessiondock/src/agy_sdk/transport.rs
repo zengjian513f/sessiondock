@@ -211,7 +211,7 @@ impl ProcessConfig {
         let models:Vec<_>=String::from_utf8_lossy(&output.stdout).lines().filter_map(|line| {
             let (id,label)=line.split_once('\t')?;
             if id.is_empty(){return None;}
-            Some(json!({"id":id,"model":id,"name":label.trim(),"displayName":label.trim(),"efforts":[]}))
+            Some(json!({"id":id,"model":id,"name":label.trim(),"displayName":label.trim(),"efforts":["low","medium","high","xhigh","max"]}))
         }).collect();
         Ok(json!({"models":models,"data":models,"capabilities":super::capabilities()}))
     }
@@ -244,6 +244,7 @@ impl Native {
         cwd: &Path,
         model: Option<&str>,
         effort: Option<&str>,
+        mode: Option<&str>,
         shutdown: CancellationToken,
     ) -> Result<Self, String> {
         if shutdown.is_cancelled() {
@@ -264,6 +265,9 @@ impl Native {
         }
         if let Some(effort) = effort {
             command.arg("--effort").arg(effort);
+        }
+        if let Some(mode) = mode {
+            command.arg("--mode").arg(mode);
         }
         command
             .stdin(Stdio::piped())

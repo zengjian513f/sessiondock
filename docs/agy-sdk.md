@@ -80,7 +80,7 @@ stderr 保存在实时快照的 `diagnostics`；已知敏感环境值及常见�
 否则返回明确配置错误，由 facade 降级该能力；不回退到另一个 HOME。
 
 `target` 使用 inventory 已解析的 `{uid,session_id,cwd,agent}`，create 使用
-`{source:"agy",cwd}`。`call` 支持 open/create/turn/interrupt/respond/models/discard。
+`{source:"agy",cwd}`。`call` 支持 open/create/turn/interrupt/respond/models/discard/usage/settings。
 create 必须提供 request_id，成功及失败回执在桥接进程内去重；持久 pending 列表、
 草稿身份与跨重启创建回执由共享 facade 保存。discard 不删除原生数据库。
 
@@ -115,3 +115,16 @@ snapshot 与 receiver 在同一发布锁中取得；每次发布完整快照：
 共享 Hub、草稿恢复与网页请求卡路径见
 [native_sdk_hub_browser.py](../tests/native_sdk_hub_browser.py)。
 完整验证命令与套件入口见[验证清单](validation.md)，协议实验的实机范围仍以上述证据为准。
+
+## 本轮补齐
+
+DELTA：SDK 底栏展示原生 result.usage 累计 Token，step_update.usage 在明细单独
+标注，不相加，也不伪装为上下文百分比。额度复用独立 print /usage collector，
+只查询 Agy；打开/手动刷新取额度，失败保留旧快照和时间，不开启模型 turn。
+原生目录提供 low/medium/high/xhigh/max 独立 effort。settings.mode 可显式选择
+accept-edits/auto/plan，显示下一轮生效，并以独立 --mode argv 传入，不制造在线控制 RPC。
+网页 /usage、/model、/effort 与正文分流，未知 slash 保留草稿，不破坏 NDJSON。
+图片维持路径引用，明确提示不传图像内容；headless 审批回传限制仍有效。
+
+扩展 Chromium 覆盖 effort/mode 的实际 argv、累计用量/额度查询、slash 不入原生
+user 流，及 1280/390/320 明暗默认、用量和设置菜单；合成 CLI 不访问真实账户。

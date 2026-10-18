@@ -7,22 +7,78 @@ binary. No real OpenCode, provider, credentials, model call, or production home.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
 
 from browser_runtime import wait_for_async
 from history_fixtures import BINARY, Corpus, isolated_server
+from hub_fixtures import Hub, free_port
+from node_auth_fixtures import TOKEN, node_env
 from opencode_sdk_fixtures import FakeOpenCode, SID
+from media_browser import PNG
 from send_browser import initialize
+
+
+
+def exercise_hub_fork(browser, native, node_port, binary, root, screenshot):
+    hub_root = root / 'hub'
+    hub_root.mkdir()
+    hub = Hub(binary.resolve(strict=True), hub_root,
+              [SimpleNamespace(name='OpenCodeSdkNode', token=TOKEN, port=node_port)])
+    hub.start()
+    context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
+    base = f'http://127.0.0.1:{hub.port}'
+    context.route('**/*', lambda route: route.continue_()
+                  if route.request.url.startswith(base + '/') else route.abort())
+    page = context.new_page()
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    try:
+        page.goto(base, wait_until='domcontentloaded')
+        page.wait_for_function('sid => S.sessions.some(row => row.sid === sid)', arg=SID)
+        parent = page.evaluate('sid => S.sessions.find(row => row.sid === sid).uid', SID)
+        assert parent.startswith('opencode:') and '~' in parent, parent
+        page.locator(f'#side .item[data-uid="{parent}"]').click()
+        expect(page.locator('#sdk-input')).to_be_visible()
+        page.locator('#sdk-more').click()
+        with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/fork')) as forked:
+            page.locator('[data-sdk-action="fork"]').click()
+        assert forked.value.ok, forked.value.text()
+        receipt = forked.value.json()
+        uid = receipt['uid']
+        assert uid.startswith('opencode:') and '~' in uid and uid != parent, receipt
+        assert receipt['session']['uid'] == uid, receipt
+        assert receipt['session_id'] in native.sessions
+        page.wait_for_function('uid => S.sel === uid', arg=uid)
+        expect(page.locator('#sdk-input')).to_be_enabled()
+        page.locator('#sdk-input').fill('Hub fork native input')
+        page.locator('#sdk-send').click()
+        expect(page.locator('.sdk-live')).to_contain_text('native reply completed: Hub fork native input', timeout=20000)
+        assert any(row.get('text') == 'Hub fork native input' for row in native.messages[receipt['session_id']])
+        assert not any(row.get('text') == 'Hub fork native input' for row in native.messages[SID])
+        count = native.forks
+        repeated = page.request.post(base + '/api/native-sdk/fork', data=forked.value.request.post_data_json)
+        assert repeated.ok and repeated.json()['uid'] == uid, repeated.text()
+        assert repeated.json()['session']['uid'] == uid and native.forks == count
+        if screenshot:
+            page.screenshot(path=str(screenshot.with_name('opencode-hub-fork.png')), full_page=True)
+        assert not errors, errors
+        print('OpenCode SDK Hub Chromium: fork namespace, scoped reopening/SSE/SEND, successful receipt retry passed', flush=True)
+    finally:
+        context.close()
+        hub.stop()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--hub-binary', type=Path, help='also validate native fork namespace through the Hub')
     parser.add_argument('--host-binary', type=Path, default=BINARY.parent / 'ptyhost')
     parser.add_argument('--screenshot', type=Path)
     args = parser.parse_args()
@@ -39,6 +95,9 @@ def main():
             env = {'SESSIONDOCK_NATIVE_SDKS': 'auto', 'SESSIONDOCK_OPENCODE_DB': str(native.db),
                    'SESSIONDOCK_OPENCODE_ROOT': str(root / 'mirror'),
                    'SESSIONDOCK_PROC_ROOT': str(root / 'proc')}
+            node_port = free_port() if args.hub_binary else None
+            if node_port:
+                env.update(node_env(root, node_port, '127.0.0.0/8'))
             with isolated_server(Corpus(root), args.binary, host_dir=root / 'host',
                                  state_dir=root / 'state', lifecycle_dir=root / 'ledger', launcher_config=launcher,
                                  extra_env=env) as (base, _), sync_playwright() as pw:
@@ -90,6 +149,16 @@ def main():
                     page.locator('#sdk-input').fill(text)
                     page.locator('#sdk-send').click()
 
+                def action(method):
+                    page.locator('#sdk-more').click()
+                    page.locator(f'[data-sdk-action="{method}"]').click()
+
+                def return_to_seed():
+                    page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    if not page.locator('#sdk-input').is_visible():
+                        page.locator('#a-sdk').click()
+                    listen(uid)
+
                 try:
                     uid = open_page()
                     listen(uid)
@@ -107,6 +176,54 @@ def main():
                     final = snapshot("r => !r.running && r.items.some(m => m.content === 'native reply completed: first SDK turn')")
                     assert any(m.get('error') == 'synthetic tool error' and
                                m.get('input') == {'path': 'synthetic-file'} for m in final['raw']['items'])
+
+                    # Native totals and estimated latest-provider context remain
+                    # distinct; opening a detail menu exercises the actual UI.
+                    assert final['raw']['usage']['tokens']['total_tokens'] == 2100
+                    assert final['raw']['usage']['tokens']['input'] == 1200
+                    assert final['raw']['usage']['tokens']['cache']['read'] == 600
+                    assert final['raw']['usage']['cost_usd'] == 0.0125
+                    assert final['raw']['usage']['context']['used_tokens'] == 2100
+                    page.locator('#sdk-usage-toggle').click()
+                    expect(page.locator('#native-usage-detail')).to_contain_text('1,200')
+                    expect(page.locator('#native-usage-detail')).to_contain_text('0.0125')
+                    expect(page.locator('#native-usage-detail')).to_contain_text('上下文')
+                    page.locator('#sdk-usage-toggle').click()
+
+                    # Queue entries are native durable inbox items. Steering only
+                    # changes delivery, while cancel removes undelivered input.
+                    send('slow queue blocker')
+                    snapshot("r => r.running && r.items.some(m => m.content === 'partial native reply')")
+                    send('queue cancel from browser')
+                    queued = snapshot("r => r.queue?.some(q => q.text === 'queue cancel from browser')")
+                    entry = next(q for q in queued['raw']['queue'] if q['text'] == 'queue cancel from browser')
+                    assert entry['delivery'] == 'queue'
+                    if args.screenshot:
+                        args.screenshot.parent.mkdir(parents=True, exist_ok=True)
+                        for width, theme in ((1280, 'light'), (390, 'dark')):
+                            page.set_viewport_size({'width': width, 'height': 900})
+                            page.emulate_media(color_scheme=theme)
+                            if width < 500 and not page.locator('#sdk-input').is_visible():
+                                page.locator(f'#side .item[data-uid="{uid}"]').click()
+                            expect(page.locator('.sdk-queue')).to_contain_text('queue cancel from browser')
+                            page.screenshot(path=str(args.screenshot.with_name(f'opencode-queue-{width}-{theme}.png')), full_page=True)
+                        page.set_viewport_size({'width': 1280, 'height': 900})
+                        page.emulate_media(color_scheme='light')
+                    card = page.locator(f'.sdk-queue [data-queue-id="{entry["id"]}"]')
+                    card.get_by_role('button', name='撤销', exact=True).click()
+                    snapshot('r => r.queue?.length === 0')
+                    send('queue steer from browser')
+                    queued = snapshot("r => r.queue?.some(q => q.text === 'queue steer from browser')")
+                    entry = next(q for q in queued['raw']['queue'] if q['text'] == 'queue steer from browser')
+                    card = page.locator(f'.sdk-queue [data-queue-id="{entry["id"]}"]')
+                    card.get_by_role('button', name='立即引导', exact=True).click()
+                    snapshot("r => r.queue?.some(q => q.delivery === 'steer')")
+                    expect(card).to_contain_text('等待引导')
+                    card.get_by_role('button', name='撤销', exact=True).click()
+                    snapshot('r => r.queue?.length === 0')
+                    page.locator('#sdk-stop').click()
+                    snapshot('r => !r.running')
+                    assert not any(row.get('text', '').startswith('queue ') for row in native.messages[SID])
 
                     # Same request_id while running admits exactly one native input.
                     post('turn', {'uid': uid, 'text': 'slow', 'request_id': 'dedup-inflight',
@@ -145,6 +262,118 @@ def main():
                     send('error')
                     snapshot("r => !r.running && r.items.some(m => m.content === 'synthetic provider failure')")
 
+                    # A real staged image upload becomes structured native
+                    # multimodal input, rather than just a path in prompt text.
+                    page.locator('#sdk-add').click()
+                    with page.expect_file_chooser() as chooser:
+                        page.locator('#sdk-attach-menu [data-attach="image"]').click()
+                    chooser.value.set_files({'name': 'sdk-image.png', 'mimeType': 'image/png',
+                                            'buffer': base64.b64decode(PNG)})
+                    expect(page.locator('#sdk-compose-items')).to_contain_text('sdk-image.png')
+                    send('native structured image')
+                    snapshot("r => !r.running && r.items.some(m => m.content?.startsWith('native reply completed: native structured image'))")
+                    image_prompt = next(r[2] for r in native.received if r[1].endswith('/prompt')
+                                        and r[0] == 'POST' and r[2]['text'].startswith('native structured image'))
+                    assert image_prompt['files'][0]['uri'].startswith('data:image/png;base64,')
+                    assert image_prompt['files'][0]['name'] == 'sdk-image.png'
+
+                    page.locator('#sdk-more').click()
+                    page.locator('#native-sdk-native_agent').select_option('plan')
+                    snapshot("r => r.agent === 'plan'")
+                    page.locator('#sdk-more').click()
+                    action('permissions')
+                    permissions = [{'action': 'shell', 'resource': '*', 'effect': 'ask'}]
+                    page.locator('textarea[aria-label="权限规则 JSON"]').fill(json.dumps(permissions))
+                    page.locator('#sdk-action-dialog button[type="submit"]').click()
+                    snapshot("r => r.permissions?.some(rule => rule.action === 'shell' && rule.effect === 'ask')")
+                    assert native.sessions[SID]['permissions'] == permissions
+                    action('command')
+                    page.locator('select[aria-label="原生命令"]').select_option('synthetic-command')
+                    page.locator('textarea[aria-label="命令参数"]').fill('browser parameters')
+                    page.locator('#sdk-action-dialog button[type="submit"]').click()
+                    snapshot("r => r.items.some(m => m.content === 'native command: synthetic-command browser parameters')")
+                    command = [r for r in native.received if r[0] == 'POST' and r[1].endswith('/command')][-1]
+                    assert command[2] == {'name': 'synthetic-command', 'text': 'browser parameters', 'delivery': 'queue'}
+
+                    action('compact')
+                    snapshot("r => r.items.some(m => m.content === 'OpenCode 上下文压缩完成') && r.usage.context === null")
+                    compaction = [r for r in native.received if r[0] == 'POST' and r[1].endswith('/compact')]
+                    assert compaction[-1][2]['delivery'] == 'steer'
+                    action('shell')
+                    page.locator('textarea[aria-label="命令"]').fill('printf synthetic-shell')
+                    page.locator('#sdk-action-dialog button[type="submit"]').click()
+                    snapshot("r => r.items.some(m => m.tool_name === 'shell' && m.output === 'synthetic shell output')")
+                    assert not any(r[0] == 'POST' and r[1].endswith('/prompt') and 'printf synthetic-shell' in r[2]['text'] for r in native.received)
+
+                    # Revert is reversible and conversation-only. It stages a
+                    # native message boundary rather than editing transcript files.
+                    send('revert this message')
+                    before_revert = snapshot("r => !r.running && r.items.some(m => m.content === 'native reply completed: revert this message')")
+                    boundary = next(m['native_id'] for m in before_revert['raw']['items'] if m.get('role') == 'user' and m.get('content') == 'revert this message')
+                    action('revert')
+                    page.locator('select[aria-label="回退消息"]').select_option(boundary)
+                    page.locator('#sdk-action-dialog button[type="submit"]').click()
+                    snapshot('r => !!r.revert?.messageID')
+                    staged = [r for r in native.received if r[1].endswith('/revert/stage')][-1]
+                    assert staged[2] == {'messageID': boundary, 'files': False}
+                    action('unrevert')
+                    snapshot('r => r.revert === null')
+
+                    # Native full-history and per-message forks receive their
+                    # own identity and must not steal the source SID.
+                    action('fork')
+                    page.wait_for_function('uid => S.sel !== uid && S.sel?.startsWith("opencode:")', arg=uid)
+                    assert native.forks == 1
+                    return_to_seed()
+                    send('fork before this message')
+                    snapshot("r => !r.running && r.items.some(m => m.content === 'native reply completed: fork before this message')")
+                    bubble = page.locator('.sdk-live .msg').filter(has=page.locator('.mb')).filter(has_text='fork before this message').filter(has=page.locator('.sdk-bubble-toggle')).last
+                    bubble.get_by_role('button', name='消息操作', exact=True).click()
+                    page.get_by_role('button', name='从此处之前分支', exact=True).click()
+                    page.wait_for_function('uid => S.sel !== uid && S.sel?.startsWith("opencode:")', arg=uid)
+                    assert native.forks == 2
+                    forks = [r for r in native.received if r[0] == 'POST' and r[1].endswith('/fork')]
+                    assert forks[0][2] == {} and forks[1][2].get('before')
+                    return_to_seed()
+
+                    send('commit this conversation boundary')
+                    before_commit = snapshot("r => !r.running && r.items.some(m => m.content === 'native reply completed: commit this conversation boundary')")
+                    boundary = next(m['native_id'] for m in before_commit['raw']['items'] if m.get('role') == 'user' and m.get('content') == 'commit this conversation boundary')
+                    action('revert')
+                    page.locator('select[aria-label="回退消息"]').select_option(boundary)
+                    page.locator('#sdk-action-dialog button[type="submit"]').click()
+                    snapshot('r => !!r.revert?.messageID')
+                    action('revert_commit')
+                    page.get_by_role('button', name='提交回退', exact=True).click()
+                    snapshot('r => r.revert === null')
+                    assert all(record['id'] != boundary for record in native.messages[SID])
+                    assert any(r[0] == 'POST' and r[1].endswith('/revert/commit') for r in native.received)
+
+                    # A native operation can succeed while its CLI loses the
+                    # HTTP acknowledgement. Same-ID retries must not execute it
+                    # again, including fork which has no native request-ID slot.
+                    native.lose_ack = 'shell'
+                    action('shell')
+                    page.locator('textarea[aria-label="命令"]').fill('lost-ack-shell')
+                    with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/shell')) as lost:
+                        page.locator('#sdk-action-dialog button[type="submit"]').click()
+                    assert not lost.value.ok
+                    shell_retry = lost.value.request.post_data_json
+                    retry = page.request.post(base + '/api/native-sdk/shell', data=shell_retry)
+                    assert not retry.ok and '不会重复' in retry.text()
+                    native_shells = [r for r in native.received if r[0] == 'POST' and r[1].endswith('/shell')
+                                     and r[2]['command'] == 'lost-ack-shell']
+                    assert len(native_shells) == 1, native_shells
+                    native.lose_ack = 'fork'
+                    with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/fork')) as lost:
+                        action('fork')
+                    assert not lost.value.ok
+                    forks_before_retry = native.forks
+                    fork_retry = lost.value.request.post_data_json
+                    retry = page.request.post(base + '/api/native-sdk/fork', data=fork_retry)
+                    assert not retry.ok and '不会重复' in retry.text()
+                    assert native.forks == forks_before_retry
+
                     created = post('create', {'source': 'opencode', 'cwd': str(native.cwd),
                                              'request_id': 'create-native', 'model': 'synthetic/fake-opencode', 'effort': 'high'})
                     again = post('create', {'source': 'opencode', 'cwd': str(native.cwd), 'request_id': 'create-native'})
@@ -155,7 +384,7 @@ def main():
                     post('open', {'uid': created['uid']})
                     models = post('models', {'uid': created['uid']})
                     assert any(m['id'] == 'synthetic/fake-opencode' for m in models['models'])
-                    assert not any(r[1].startswith('/api/session/') and r[0] == 'DELETE' for r in native.received)
+                    assert not any(r[1].startswith('/api/session/') and r[1].count('/') == 3 and r[0] == 'DELETE' for r in native.received)
 
                     # Linux's synthetic proc tree gives reproducible independent
                     # TUI conflict evidence without starting a second real CLI.
@@ -182,8 +411,21 @@ def main():
                             for theme in ('light','dark'):
                                 page.emulate_media(color_scheme=theme)
                                 page.screenshot(path=str(args.screenshot.with_name(f'opencode-{width}-{theme}.png')),full_page=True)
+                                for toggle, label in (('#sdk-usage-toggle', 'usage'), ('#sdk-more', 'actions')):
+                                    page.locator(toggle).click()
+                                    page.screenshot(path=str(args.screenshot.with_name(f'opencode-{width}-{theme}-{label}.png')), full_page=True)
+                                    page.locator(toggle).click()
+                    if args.hub_binary:
+                        exercise_hub_fork(browser, native, node_port, args.hub_binary, root, args.screenshot)
                     assert not errors, errors
-                    print('OpenCode SDK Chromium: native create/resume, streaming, tools, errors, dedup, interrupt, reconnect, approval/question and writer conflict passed')
+                    print('OpenCode SDK Chromium: native lifecycle, streaming, tools/errors, dedup/interrupt, queue cancel/steer, usage/context, image upload, compact/shell and lost-ACK safety, reversible conversation revert, full/message forks, approvals/forms and writer conflict passed')
+                except Exception:
+                    print('OpenCode browser diagnostics', page.locator('.sdk-status').all_text_contents(),
+                          errors, native.received[-16:], flush=True)
+                    if args.screenshot:
+                        args.screenshot.parent.mkdir(parents=True, exist_ok=True)
+                        page.screenshot(path=str(args.screenshot.with_name('opencode-failure.png')), full_page=True)
+                    raise
                 finally:
                     context.close()
                     browser.close()

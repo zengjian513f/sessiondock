@@ -105,7 +105,15 @@ impl Bridge {
                         match lines.next_line().await {
                             Ok(Some(line)) if line.trim().is_empty() => {}
                             Ok(Some(line)) => match parse_json(&line) {
-                                Ok(frame) => protocol::observe(&reader_session, frame),
+                                Ok(frame) => {
+                                    let refresh = frame["type"] == "result"
+                                        || (frame["type"] == "system"
+                                            && frame["subtype"] == "compact_boundary");
+                                    protocol::observe(&reader_session, frame);
+                                    if refresh {
+                                        reader_session.schedule_usage();
+                                    }
+                                }
                                 Err(_) => {
                                     let mut live = lock(&reader_session.live);
                                     live.error = Some(
@@ -209,7 +217,7 @@ impl Bridge {
             });
         }
         match session
-            .control(json!({"subtype":"initialize","hooks":null}))
+            .control(json!({"subtype":"initialize","hooks":null,"supportedDialogKinds":["refusal_fallback_prompt"]}))
             .await
         {
             Ok(initialized) => {
@@ -218,6 +226,9 @@ impl Bridge {
                     return Err("claude_sdk: CLI exited during initialize".into());
                 }
                 live.models = initialized["models"].clone();
+                for field in ["fast_mode_state", "fast_mode_disabled_reason"] {
+                    if let Some(value) = initialized.get(field) { live.settings[field] = value.clone(); }
+                }
                 if let Some(models) = live.models.as_array_mut() {
                     for model in models {
                         if model["id"].is_null() {
@@ -233,6 +244,12 @@ impl Bridge {
                 }
                 live.ready = true;
                 session.publish(&mut live);
+                drop(live);
+                for field in ["pending_permission_requests", "pending_user_dialog_requests"] {
+                    if let Some(requests) = initialized[field].as_array() {
+                        for request in requests { protocol::observe(session, request.clone()); }
+                    }
+                }
                 Ok(())
             }
             Err(error) => {
