@@ -256,6 +256,8 @@ before first SEND does not retain these unpersisted receipts.
   that exposes 展开全文/收起 for content below 4,000 characters but above 340 px.
   Streaming text updates reuse the bubble and disclosure button, preserving a
   click in progress and the user's expanded/collapsed choice across deltas.
+  Live tool rerenders likewise preserve output expansion, raw-argument disclosure
+  and wrapping choices across output deltas and item completion.
   The first fix installed the missing observer but missed replacement on each
   delta. Coverage: [bubble expansion](../tests/codex_sdk_bubbles_browser.py).
 - Live items map to message objects for `msgNode`: user/assistant/thinking
