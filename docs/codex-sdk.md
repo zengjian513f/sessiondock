@@ -2,7 +2,7 @@
 
 The SDK view is the default view for Codex sessions and their subagents. 对话 and 终端
 remain available during their retirement transition. It drives the session through the Codex app-server JSON-RPC protocol
-(the interface behind the official Codex SDKs and IDE clients) instead of
+(the interface used by rich Codex clients such as the IDE extension) instead of
 typing into a terminal. Persisted history still comes from the ordinary read
 model, so its bubbles are identical to the message view; only the in-flight
 turn, approvals and questions come from the app-server.
