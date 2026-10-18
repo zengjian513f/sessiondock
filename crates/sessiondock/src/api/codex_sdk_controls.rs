@@ -14,6 +14,7 @@ pub struct Settings {
     mode: Option<String>,
     approval_policy: Option<Value>,
     sandbox_policy: Option<Value>,
+    service_tier: Option<String>,
 }
 
 pub async fn settings(
@@ -28,6 +29,7 @@ pub async fn settings(
             body.mode.as_deref(),
             body.approval_policy,
             body.sandbox_policy,
+            body.service_tier,
         )
         .await
         .map_err(rpc)?;

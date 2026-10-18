@@ -23,6 +23,7 @@ class ControlsServer(FakeAppServer):
     def __init__(self, *args):
         super().__init__(*args)
         self.settings.update(approvalPolicy="on-request", sandboxPolicy={"type": "readOnly", "networkAccess": False},
+                             serviceTier="priority",
                              collaborationMode={"mode": "default", "settings": {"model": "fake-sol", "reasoning_effort": "high", "developer_instructions": None}})
 
     reject_policy = False
@@ -35,12 +36,23 @@ class ControlsServer(FakeAppServer):
             await reply({"thread": {"id": self.thread_id, "status": {"type": "idle"}, "turns": []},
                          "model": self.settings["model"], "reasoningEffort": self.settings["effort"],
                          "approvalPolicy": self.settings["approvalPolicy"], "sandbox": self.settings["sandboxPolicy"],
+                         "serviceTier": self.settings.get("serviceTier"),
                          "collaborationMode": self.settings["collaborationMode"]})
+        elif method == "model/list":
+            await reply({"data": [
+                {"id": "fake-sol", "model": "fake-sol", "displayName": "Fake Sol", "isDefault": True,
+                 "supportedReasoningEfforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "high"}],
+                 "defaultReasoningEffort": "low", "defaultServiceTier": "ultrafast",
+                 "serviceTiers": [{"id": "priority", "name": "Fast", "description": "Faster responses"},
+                                  {"id": "ultrafast", "name": "Ultrafast", "description": "Fastest responses"}]},
+                {"id": "fake-luna", "model": "fake-luna", "displayName": "Fake Luna", "isDefault": False,
+                 "supportedReasoningEfforts": [{"reasoningEffort": "medium"}],
+                 "defaultReasoningEffort": "medium", "serviceTiers": []}], "nextCursor": None})
         elif method == "thread/settings/update":
             if self.reject_policy:
                 await self.send(writer, {"id": mid, "error": {"code": -32000, "message": "Synthetic policy rejected"}})
                 return
-            self.settings.update({key: params[key] for key in ("approvalPolicy", "sandboxPolicy", "collaborationMode") if key in params})
+            self.settings.update({key: params[key] for key in ("approvalPolicy", "sandboxPolicy", "collaborationMode", "serviceTier") if key in params})
             await self.notify("thread/settings/updated", {"threadSettings": self.settings.copy()})
             await reply({})
         elif method == "thread/shellCommand":
@@ -61,6 +73,10 @@ class ControlsServer(FakeAppServer):
             self.settings['approvalPolicy'] = 'on-request'
             await self.notify('thread/settings/updated', {'threadSettings': self.settings.copy()})
         asyncio.run_coroutine_threadsafe(update(), self.loop).result(timeout=5)
+
+    def set_settings(self, model, effort):
+        asyncio.run_coroutine_threadsafe(self.notify('thread/settings/updated', {
+            'threadSettings': {**self.settings, 'model': model, 'effort': effort}}), self.loop).result(timeout=5)
 
     def disconnect(self):
         async def close():
@@ -104,6 +120,36 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
         assert row.evaluate('el => el.scrollWidth <= el.clientWidth && el.offsetHeight <= 30')
 
     starts = len(fake.methods("turn/start"))
+    tier = page.get_by_role('combobox', name='服务档位')
+    def choose_tier(value):
+        if not tier.is_visible(): page.locator('#sdk-more').click()
+        tier.select_option(value)
+        expect(tier).to_have_value(value)
+        expect(tier).to_be_enabled()
+        assert fake.methods('thread/settings/update')[-1]['params'] == {'threadId': THREAD, 'serviceTier': value}
+        page.keyboard.press('Escape')
+    expect(tier).to_have_value(fake.settings['serviceTier'])
+    expect(tier.locator('option:checked')).to_have_text('Fast')
+    box.fill('尚未发送的草稿 / tier choice')
+    for value in ('ultrafast', 'default', 'priority'):
+        choose_tier(value)
+        expect(box).to_have_value('尚未发送的草稿 / tier choice')
+    assert len(fake.methods('turn/start')) == starts
+    if screenshots:
+        page.screenshot(path=str(screenshots / (label + '-tier.png')))
+    fake.reject_policy = True
+    if not tier.is_visible(): page.locator('#sdk-more').click()
+    tier.select_option('ultrafast')
+    expect(page.locator('.sdk-status')).to_contain_text('切换服务档位失败')
+    expect(tier).to_have_value('priority')
+    expect(tier).to_be_enabled()
+    fake.reject_policy = False
+    for value in ('future-tier', None, 'priority'):
+        asyncio.run_coroutine_threadsafe(fake.notify('thread/settings/updated', {
+            'threadSettings': {**fake.settings, 'serviceTier': value}}), fake.loop).result(timeout=5)
+        expect(tier).to_have_value(value or 'default')
+    page.keyboard.press('Escape')
+    box.fill('')
     if not mode.is_visible(): page.locator('#sdk-more').click()
     check_mode_label()
     mode.select_option("plan")
@@ -192,6 +238,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     page.reload(wait_until="domcontentloaded")
     expect(page.locator("#sdk-input")).to_be_visible()
     expect(page.locator("#sdk-mode")).to_have_value("default")
+    expect(page.locator('#sdk-tier')).to_have_value('priority')
     expect(page.locator("#sdk-input")).to_have_value("")
     # A reset reconnects to this same thread and reads its current controls.
     resumed = len(fake.methods("thread/resume"))
@@ -200,6 +247,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
         fake.disconnect()
     assert reopened.value.ok
     assert len(fake.methods("thread/resume")) > resumed
+    expect(page.locator('#sdk-tier')).to_have_value('priority')
     expect(page.locator("#sdk-mode")).to_have_value("default")
     if not page.locator('#sdk-control-approval').is_visible(): page.locator('#sdk-more').click()
     expect(dialog.locator('#sdk-control-sandbox')).to_contain_text('工作区写入')

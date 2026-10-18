@@ -10,6 +10,7 @@ impl CodexSdk {
         mode: Option<&str>,
         approval_policy: Option<Value>,
         sandbox_policy: Option<Value>,
+        service_tier: Option<String>,
     ) -> Result<Value, RpcError> {
         let thread = self.inner.ensure(thread_id).await?;
         let connection = self.inner.connection().await?;
@@ -31,6 +32,9 @@ impl CodexSdk {
         }
         if let Some(policy) = sandbox_policy {
             params["sandboxPolicy"] = policy;
+        }
+        if let Some(tier) = service_tier {
+            params["serviceTier"] = json!(tier);
         }
         connection.request("thread/settings/update", params).await
     }

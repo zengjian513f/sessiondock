@@ -62,11 +62,14 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     page.goto(base, wait_until='networkidle')
     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
     expect(page.locator('#sdk-mode')).to_have_value('default')
-    for selector in ('#sdk-model', '#sdk-effort', '#sdk-mode', '#sdk-control-approval', '#sdk-control-sandbox'):
+    for selector in ('#sdk-model', '#sdk-effort', '#sdk-tier', '#sdk-mode', '#sdk-control-approval', '#sdk-control-sandbox'):
         assert not page.locator(selector + ' option[value=""]').count(), selector
         assert not any(word in page.locator(selector).text_content() for word in ('沿用', '未返回', 'Default')), selector
     fake.set_settings('gpt-6.1-sol-realistic-long-model-name-2026-10-17', 'xhigh')
     expect(page.locator('#sdk-model')).to_have_value('gpt-6.1-sol-realistic-long-model-name-2026-10-17')
+    fake.settings['serviceTier'] = 'ultrafast'
+    fake.set_settings(fake.settings['model'], fake.settings['effort'])
+    expect(page.locator('#sdk-tier')).to_have_value('ultrafast')
     def notify(method, params):
         asyncio.run_coroutine_threadsafe(fake.notify(method, params), fake.loop).result(timeout=5)
     notify('turn/started', {'turn': {'id': 'layout-status-turn', 'status': 'inProgress', 'items': []}})
@@ -141,6 +144,9 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         menu = page.locator('#sdk-more-menu')
         expect(menu).to_be_visible()
         expect(menu.locator('#sdk-reset-card')).to_be_visible()
+        expect(page.locator('#sdk-tier')).to_be_visible()
+        if page.locator('.sdk-status-row').evaluate('row => row.clientWidth') >= 320:
+            expect(page.locator('.sdk-pickers > .sdk-tier')).to_be_visible()
         expect(page.locator('[data-sdk-action]')).to_have_count(4)
         expect(page.locator('#sdk-actions select, #sdk-controls, #sdk-controls-dialog')).to_have_count(0)
         if menu.locator('#sdk-mode').count():

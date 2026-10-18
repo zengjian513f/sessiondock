@@ -70,6 +70,13 @@ def main():
                         expect(page.locator('#sdk-model')).to_have_value('fake-sol')
                         expect(page.locator('#sdk-effort')).to_have_value('high')
                         expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_have_class(re.compile(r'.*\blive\b.*'))
+                        page.locator('#sdk-input').fill('approve before terminal attach')
+                        page.locator('#sdk-send').click()
+                        expect(page.locator('.sdk-request')).to_contain_text('需要批准执行命令')
+                        assert not [argv for argv in argv_lines(log) if 'resume' in argv], 'SDK progress must not require launching a PTY'
+                        assert not list((root / 'host').glob('*.sock')), 'SDK progress must not require a PTY host'
+                        if args.screenshots:
+                            page.screenshot(path=str(args.screenshots/'sdk-before-terminal.png'))
                         with page.expect_response(lambda r: '/api/term/takeover' in r.url) as response:
                             page.locator('#a-term').click()
                         receipt = response.value.json()
@@ -87,11 +94,10 @@ def main():
                         if args.screenshots:
                             page.screenshot(path=str(args.screenshots/'shared-terminal.png'))
                         page.locator('#a-sdk').click()
-                        page.locator('#sdk-input').fill('approve after terminal attach')
-                        page.locator('#sdk-send').click()
                         expect(page.locator('.sdk-request')).to_contain_text('需要批准执行命令')
                         page.locator('.sdk-request').get_by_role('button', name='批准', exact=True).click()
                         expect(page.locator('.sdk-history')).to_contain_text('All done after approval')
+                        assert len(fake.methods('turn/start')) == 1
                         assert len(fake.methods('thread/resume')) == 1, fake.methods('thread/resume')
                         # The fleet snapshot misses the node, while CHECK/SSE
                         # still observes this exact managed CLI as running.
