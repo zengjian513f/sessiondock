@@ -20,28 +20,27 @@ from history_fixtures import BINARY
 
 def single_row(page):
     page.wait_for_function("""() => {
-      const bar = document.querySelector('.sdk-options');
-      return bar && Math.abs(CodexSdkView.toolbarWidth - bar.clientWidth) <= 1;
+      const row = document.querySelector('.sdk-status-row');
+      return row && Math.abs(CodexSdkView.toolbarWidth - row.clientWidth) <= 1;
     }""")
-    measurements = page.locator('.sdk-options').evaluate("""bar => {
-      const bounds = bar.querySelector('.sdk-pickers').getBoundingClientRect();
-      const controls = [...bar.querySelectorAll('.sdk-pickers > label, .sdk-pickers > button, .sdk-pickers > #sdk-permissions')]
+    measurements = page.locator('.sdk-status-row').evaluate("""row => {
+      const bounds = row.getBoundingClientRect();
+      const controls = [...row.querySelectorAll(':scope > .sdk-status, :scope > .sdk-gauges, :scope > #sdk-usage-toggle, .sdk-pickers > label, .sdk-pickers > button')]
         .filter(node => node.getClientRects().length && !node.hidden)
         .map(node => { const r = node.getBoundingClientRect(); return {id: node.id || node.className,
           left:r.left, right:r.right, top:r.top, bottom:r.bottom}; });
       return {left:bounds.left, right:bounds.right, top:bounds.top, bottom:bounds.bottom,
-        overflow:bar.scrollWidth - bar.clientWidth, controls};
+        overflow:row.scrollWidth - row.clientWidth, controls};
     }""")
     assert measurements['overflow'] <= 1, measurements
+    previous = measurements['left']
     for control in measurements['controls']:
-        assert control['left'] >= measurements['left'] - 1, measurements
+        assert control['left'] >= previous - 1, measurements
         assert control['right'] <= measurements['right'] + 1, measurements
-        assert abs(control['top'] - measurements['top']) <= 2, measurements
-        assert abs(control['bottom'] - measurements['bottom']) <= 2, measurements
-    expect(page.locator('#sdk-model')).to_be_visible()
-    expect(page.locator('#sdk-effort')).to_be_visible()
-    expect(page.locator('#sdk-more')).to_be_visible()
-    expect(page.locator('#sdk-input')).to_be_visible()
+        assert abs((control['top'] + control['bottom']) / 2 - (measurements['top'] + measurements['bottom']) / 2) <= 1, measurements
+        previous = control['right']
+    for selector in ('#sdk-model', '#sdk-effort', '#sdk-more', '#sdk-input'):
+        expect(page.locator(selector)).to_be_visible()
     assert page.locator('#sdk-input').bounding_box()['width'] > 80
 
 
@@ -54,7 +53,7 @@ def within_viewport(page, menu):
 
 def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     context = browser.new_context(viewport={'width': 1440, 'height': 900}, color_scheme=theme,
-                                  service_workers='block')
+                                  service_workers='block', has_touch=True)
     context.add_init_script("localStorage.setItem('sessiondock.interfaceScale', " + json.dumps(str(scale)) + ");")
     context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
     page = context.new_page()
@@ -74,8 +73,25 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         page.set_viewport_size({'width': width, 'height': 844})
         if not page.locator('#sdk-input').is_visible():
             page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+        page.locator('#sdk-input').fill('/unsupported-command')
+        page.locator('#sdk-send').click()
+        status = page.locator('.sdk-status')
+        expect(status).to_contain_text('不支持的命令')
         single_row(page)
-        expect(page.locator('.sdk-options > .sdk-gauges')).to_be_visible()
+        full_status = status.text_content()
+        status.tap()
+        details = page.get_by_role('dialog', name='完整状态')
+        expect(details).to_be_visible()
+        expect(details).to_have_text(full_status)
+        within_viewport(page, details)
+        if screenshots and width in (390, 320):
+            page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-status.png'))
+        page.keyboard.press('Escape')
+        expect(details).to_be_hidden()
+        status.press('Enter')
+        expect(details).to_be_visible()
+        page.locator('#sdk-input').click()
+        expect(details).to_be_hidden()
         assert page.locator('#sdk-model').bounding_box()['width'] <= 160 * scale / 100 + 2
         usage = page.locator('#sdk-usage-toggle')
         if usage.is_visible():
@@ -90,6 +106,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
             page.keyboard.press('Escape')
             expect(menu).to_be_hidden()
         else:
+            expect(page.locator('.sdk-status-row > .sdk-gauges')).to_be_visible()
             expect(page.locator('.sdk-credits')).to_be_visible()
         page.locator('#sdk-more').click()
         menu = page.locator('#sdk-more-menu')

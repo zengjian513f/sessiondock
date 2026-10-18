@@ -1,4 +1,5 @@
 :root {
+  --sans: -apple-system, "Segoe UI", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
   color-scheme: light;
   --bg: #f6f7f9;
   --panel: #ffffff;
@@ -112,7 +113,7 @@
 html, body {
   margin: 0; height: 100%; overflow: hidden;
   background: var(--bg); color: var(--text);
-  font: 14px/1.55 -apple-system, "Segoe UI", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font: 14px/1.55 var(--sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -2522,14 +2523,24 @@ header .btn[data-session-docked] { display: none; }
 #session-content-view.sdk-pane { flex-direction: column; }
 .sdk-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .sdk-view > .sdk-msgs { flex: 1; min-height: 0; }
-.sdk-status { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.sdk-status-row { font: 12px/20px var(--sans); display: flex; align-items: center; gap: 10px; min-width: 0; }
+.sdk-status-row > .sdk-status[hidden] { display: block; visibility: hidden; }
+.sdk-status-row > .sdk-status { flex: 1 1 0; }
+.sdk-status-row > .sdk-options { flex: none; }
+.sdk-status-row > .sdk-gauges, .sdk-status-row > #sdk-usage-toggle { margin-left: auto; }
+.sdk-status-row > #sdk-usage-toggle { font: inherit; flex: none; height: 24px; padding: 0 6px; }
+.sdk-status { min-width: 0; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: inherit; }
+.sdk-status:hover { color: var(--text); }
+.sdk-status:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sdk-status-menu { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--sans); }
 .sdk-status[hidden], #sdk-composer .btn[hidden] { display: none; }
 .sdk-status.blocked { color: #e5484d; }
-/* 常用选择器只占一行；次要操作折入更多，用量在窄会话栏中展开。 */
-.sdk-options { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+/* 状态居左；用量紧邻模型选择器；放不下的控件进入菜单。 */
+.sdk-options { display: flex; align-items: center; }
 .sdk-gauges { display: flex; align-items: center; gap: 10px; flex: none; min-width: 0; color: var(--muted); font-size: 12px; }
 .sdk-gauges:not(:has(> :not([hidden]))) { display: none; }
-.sdk-options [hidden] { display: none; }
+.sdk-status-row [hidden], .sdk-options [hidden] { display: none; }
 .sdk-gauge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .sdk-bar { display: block; flex: none; width: 40px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--border); }
 .sdk-bar > u { display: block; height: 100%; border-radius: inherit; background: var(--accent); text-decoration: none; transition: width .2s; }
@@ -2537,25 +2548,29 @@ header .btn[data-session-docked] { display: none; }
 .sdk-gauge.low .sdk-bar > u { background: #e5484d; }
 .sdk-gauge.low b { color: #e5484d; }
 .sdk-credits { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text); }
-.sdk-pickers { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex: 1; min-width: 0; }
-.sdk-pickers > .new-effort { flex: 0 1 128px; min-width: 0; }
-.sdk-pickers > .sdk-effort { flex-basis: 84px; }
-.sdk-pickers > .sdk-mode { flex-basis: 96px; }
-.sdk-pickers .new-effort > select { height: 28px; width: 100%; font-size: 12.5px; text-overflow: ellipsis; }
+.sdk-pickers { display: flex; align-items: center; gap: 6px; }
+.sdk-pickers > .new-effort { position: relative; flex: none; min-width: 0; }
+.sdk-pickers > .sdk-model { width: var(--sdk-model-width, 160px); }
+.sdk-pickers > .sdk-effort { width: var(--sdk-effort-width, 72px); }
+.sdk-pickers > .sdk-mode { width: 96px; }
+/* Native select painting ignores line-height; use the toolbar text line box. */
+.sdk-pickers > .new-effort::after {
+  content: ""; position: absolute; right: 10px; top: 50%; width: 5px; height: 5px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: translateY(-70%) rotate(45deg); pointer-events: none;
+}
+.sdk-pickers .new-effort > select {
+  appearance: none; box-sizing: border-box; height: 28px; width: 100%;
+  padding: 4px 22px 4px 6px; font: inherit; text-overflow: ellipsis;
+}
 .sdk-pickers > .btn { flex: none; height: 28px; min-height: 28px; padding: 0 8px; white-space: nowrap; }
 #sdk-more { width: 28px; padding: 0; font-size: 18px; }
-.sdk-options.compact .sdk-pickers > .sdk-model { flex: 0 1 160px; min-width: 100px; }
-.sdk-options.usage-stacked { flex-direction: column; align-items: stretch; gap: 6px; }
-.sdk-options.usage-stacked > .sdk-gauges { flex-wrap: wrap; }
-.sdk-options.usage-stacked > .sdk-pickers { flex: none; }
-.sdk-options.compact .sdk-pickers > .sdk-effort { flex: 0 1 72px; min-width: 60px; }
-.sdk-options.compact .sdk-pickers > .sdk-mode { flex: 0 1 96px; min-width: 80px; }
 .sdk-toolbar-menu { gap: 8px; padding: 8px; overflow-y: auto; }
 .sdk-toolbar-menu:not(:popover-open) { display: none; }
 .sdk-toolbar-menu .new-effort { flex: none; min-width: 0; }
 #sdk-actions { display: grid; gap: 2px; }
-#sdk-actions .new-model-option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-#sdk-actions .new-model-option:disabled { color: var(--muted); opacity: .55; cursor: default; background: transparent; }
+#sdk-actions .sdk-action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#sdk-actions .sdk-action:disabled { color: var(--muted); opacity: .55; cursor: default; background: transparent; }
 .sdk-usage-menu .sdk-gauges { flex-direction: column; align-items: stretch; gap: 10px; }
 .sdk-usage-menu .sdk-gauge { display: grid; grid-template-columns: 3.5em minmax(0, 1fr) 3.4ch; gap: 8px; }
 .sdk-usage-menu .sdk-bar { width: 100%; }
@@ -2590,17 +2605,9 @@ header .btn[data-session-docked] { display: none; }
 .sdk-queued .queued-send-dismiss { margin-left: 0; min-height: 24px; }
 .sdk-queued .queued-send-state { flex: 1 1 160px; }
 
-.sdk-pickers > .sdk-model { min-width: 96px; }
-.sdk-pickers > .sdk-effort { min-width: 72px; }
-.sdk-pickers > .sdk-mode { min-width: 96px; }
-.sdk-options.narrow .sdk-pickers > .sdk-model { min-width: 64px; }
-.sdk-options.narrow .sdk-pickers > .sdk-effort { min-width: 50px; }
-.sdk-pickers > #sdk-permissions { flex: none; width: 268px; padding: 0; border: 0; }
-.sdk-pickers > #sdk-permissions > :not(.sdk-control-row) { display: none; }
-.sdk-pickers > #sdk-permissions .sdk-control-row { flex-wrap: nowrap; align-items: center; }
-.sdk-pickers > #sdk-permissions .new-effort { flex: 1 1 0; min-width: 0; }
-.sdk-pickers > #sdk-permissions .btn { flex: none; height: 28px; min-height: 28px; padding: 0 6px; }
-.sdk-pickers > .new-model-option { flex: none; width: auto; height: 28px; white-space: nowrap; }
+.sdk-pickers > .sdk-action { flex: none; width: 28px; min-width: 28px; height: 28px; padding: 4px; }
+.sdk-pickers > .sdk-action .sdk-action-label { display: none; }
+#sdk-actions > .sdk-action { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
 
 .msg.sdk-user-actions { overflow: visible; max-width: calc(100% - 34px); }
 .sdk-bubble-toggle { position: absolute; right: calc(100% + 4px); top: 3px; width: 28px; height: 28px;
