@@ -19,6 +19,7 @@ const NativeSdkView = {
   useHistory: CodexSdkView.useHistory,
   scheduleHistory: CodexSdkView.scheduleHistory,
   setConnected: CodexSdkView.setConnected,
+  closeToolbarMenus: CodexSdkView.closeToolbarMenus,
 
   open(uid, pane, agent = null, {historyReady = null} = {}) {
     this.close();
@@ -26,6 +27,7 @@ const NativeSdkView = {
     this.historyReady = historyReady;
     this.pendingAtOpen = !agent && !!this.pending(uid);
     this.items = []; this.requests = new Map(); this.nodes = new Map();
+    this.nativeAgents = null; this.loadingUsage = false; this.raw = {}; this.usageData = {}; this.usageError = null;
     this.models = []; this.capabilities = {}; this.running = false; this.seq = -1;
     this.historyRenderedData = null; this.historyCut = null;
     this.modelChoice = this.effortChoice = this.nativeModel = this.nativeEffort = null;
@@ -72,6 +74,7 @@ const NativeSdkView = {
       this.modelChoice = event.target.value || null; this.effortChoice = null; this.paintPickers();
     };
     pane.querySelector('#sdk-effort').onchange = event => { this.effortChoice = event.target.value || null; };
+    NativeSdkControls.mount(this);
     CodexSdkCompose.mount(this);
     void this.refreshHistory(generation);
     void this.start(generation);
@@ -81,6 +84,7 @@ const NativeSdkView = {
     this.setConnected(false);
     CodexSdkCompose.close(this);
     if (this.input) PathCompletion.close(this.input);
+    NativeSdkControls.close(this);
     this.generation++;
     this.es?.close(); this.es = null;
     this.openRead?.abort(); this.openRead = null;
@@ -108,6 +112,8 @@ const NativeSdkView = {
       this.capabilities = data.capabilities || data.raw?.capabilities || {};
       this.openFailed = false;
       void this.loadModels(generation);
+      if (this.capabilities.agents) void this.request('api/native-sdk/agents',{uid:this.uid}).then(response => {if(this.current(generation)){this.nativeAgents=response.agents || response.raw?.agents || response.raw?.data || response.raw;NativeSdkControls.paintSettings(this);}}).catch(()=>{});
+      void NativeSdkControls.loadUsage(this, true);
       const es = new EventSource(appUrl(`api/native-sdk/events?${new URLSearchParams({uid:this.uid,agent:this.agent || ''})}`));
       this.es = es;
       es.addEventListener('sdk', event => {
@@ -176,11 +182,13 @@ const NativeSdkView = {
     for (const row of efforts) { const id = typeof row === 'string' ? row : row.reasoningEffort || row.id; if (id) effort.add(new Option(id, id)); }
     effort.value = this.effortChoice || '';
     effort.closest('label').hidden = efforts.length === 0;
+    NativeSdkControls.layout(this);
   },
 
   applySnapshot(raw) {
     const stick = this.nearBottom();
     const completed = this.running && !raw.running;
+    this.raw = raw;
     this.running = !!raw.running;
     const model = typeof raw.model === 'string' ? raw.model : raw.model?.providerID && raw.model?.id
       ? `${raw.model.providerID}/${raw.model.id}` : raw.model?.id || raw.model?.modelID || null;
@@ -198,8 +206,15 @@ const NativeSdkView = {
       const id = String(item.id); ids.add(id);
       const old = this.nodes.get(id);
       if (old?._updateMessage && old.dataset.role === item.role) { old._updateMessage(item); continue; }
+      const selectors = ['.tool-out-actions .more','.tool-toggle','.tool-wrap'];
+      const toolState = item.role === 'tool' && old ? selectors.map(selector => [...old.querySelectorAll(selector)].map(control => control.getAttribute(selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded'))) : null;
       const node = msgNode(item); node.dataset.sdkItem = id;
+      NativeSdkControls.decorate(this,node,item);
       if (old) old.replaceWith(node); else this.live.append(node);
+      if (toolState) selectors.forEach((selector,group) => node.querySelectorAll(selector).forEach((control,index) => {
+        const attribute = selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded', previous = toolState[group][index];
+        if (previous != null && control.getAttribute(attribute) !== previous) control.click();
+      }));
       this.nodes.set(id, node);
     }
     for (const [id,node] of this.nodes) if (!ids.has(id)) { node.remove(); this.nodes.delete(id); }
@@ -209,8 +224,9 @@ const NativeSdkView = {
     this.requests = requests;
     this.pane.querySelector('#sdk-stop').hidden = !this.running || this.capabilities.interrupt === false;
     this.setNotice(raw.error ? `错误：${typeof raw.error === 'string' ? raw.error : raw.error.message || JSON.stringify(raw.error)}`
-      : requests.size ? '等待回答' : this.running ? '处理中' : '就绪', raw.error ? 'blocked' : '');
-    if (completed) this.scheduleHistory();
+      : requests.size ? '等待回答' : raw.status === 'compacting' || raw.compact?.state === 'compacting' ? '正在压缩上下文' : raw.retry ? `请求重试中${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}` : this.running ? '处理中' : '就绪', raw.error ? 'blocked' : '');
+    NativeSdkControls.paint(this);
+    if (completed) { this.scheduleHistory(); void NativeSdkControls.loadUsage(this, false); }
     if (stick) this.scrollBottom();
   },
 
@@ -237,11 +253,13 @@ const NativeSdkView = {
   },
 
   requestCard(request) {
+    if (request.type === 'elicitation') return NativeSdkControls.elicitation(this,request);
     const card = el('div', 'msg sdk-request'); card.dataset.sdkRequest = request.key;
     card.dataset.role = 'question';
     const body = el('div', 'mb'); card.append(body);
     body.append(el('p', 'sdk-request-title', request.title || (request.type === 'approval' ? '需要批准' : '需要回答')));
     if (request.description) body.append(el('pre', '', request.description));
+    if (request.type === 'user_dialog') body.append(el('p','sdk-control-note',`模型：${request.payload?.originalModel || '当前模型'} → ${request.payload?.fallbackModel || '备用模型'}`));
     if (request.input || request.resources) body.append(el('pre','',JSON.stringify(request.input || request.resources,null,2)));
     const actions = el('div', 'sdk-request-actions');
     const add = (label, value) => {
@@ -272,7 +290,7 @@ const NativeSdkView = {
           const picked = [...group.querySelectorAll('input:checked')].map(input => input.value);
           const typed = other.value.trim();
           let value = multiple ? (typed ? [...picked,typed] : picked) : typed || picked[0] || '';
-          if (request.questions && Array.isArray(value)) value = value.join(', ');
+          if (request.questions && Array.isArray(value) && !this.uid.startsWith('grok:')) value = value.join(', ');
           if (field.type === 'number' || field.type === 'integer') value = value === '' ? '' : Number(value);
           if (field.type === 'boolean') value = value === 'true';
           return [field.key || field.question || String(index),value];
@@ -294,6 +312,7 @@ const NativeSdkView = {
   },
 
   async answer(request, result, card) {
+    if (request.type === 'user_dialog' && typeof result === 'string') result={behavior:'completed',result};
     const generation = this.generation;
     card.querySelectorAll('button,input,textarea').forEach(control => { control.disabled = true; });
     try { await this.request('api/native-sdk/respond', {uid:this.uid,key:request.key,result}); }
@@ -311,6 +330,7 @@ const NativeSdkView = {
     if (button.disabled) return;
     button.disabled = true;
     try {
+      if (await NativeSdkControls.command(this, this.input.value)) return;
       const payload = await CodexSdkCompose.collect(this);
       if (!payload || !this.current(generation)) return;
       const request_id = await CodexSdkCompose.submission(payload,this.modelChoice,this.effortChoice,this.agent);

@@ -7,6 +7,7 @@ builds or calls a real Grok/model. Run with --binary after the shared build.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 from pathlib import Path
 import tempfile
@@ -53,13 +54,36 @@ def watch(page, uid):
     page.wait_for_function("window.__grokSnapshot !== null")
 
 
+def capture_state(page, screenshots, name, target=None, popover=False):
+    if not screenshots:
+        return
+    for width in (1280,390,320):
+        if popover and page.locator("#sdk-usage-menu").is_visible():
+            page.locator("#sdk-usage-toggle").click()
+        page.set_viewport_size({"width":width,"height":900})
+        # Resize handlers settle asynchronously; selecting a sidebar row during
+        # that transition races the mobile pane becoming visible.
+        expect(page.locator("#sdk-input")).to_be_visible()
+        if popover:
+            page.locator("#sdk-usage-toggle").click()
+        if target is not None:
+            target.scroll_into_view_if_needed()
+        for theme in ("light","dark"):
+            page.emulate_media(color_scheme=theme)
+            page.screenshot(path=str(screenshots / f"grok-{name}-{width}-{theme}.png"),full_page=True)
+    page.set_viewport_size({"width":1280,"height":900})
+    page.emulate_media(color_scheme="light")
+
+
 def exercise(browser, base, fixture, screenshots):
     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
     context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
     page = context.new_page()
     page.on('response', lambda response: print('SDK HTTP error', response.status, response.url, response.text(), flush=True) if '/api/native-sdk/' in response.url and response.status >= 400 else None)
     page.set_default_timeout(15000)
-    failures, sends = [], []
+    failures, sends, operations = [], [], []
+    page.on("request", lambda request: operations.append((request.url.rsplit("/",1)[-1],request.post_data_json))
+            if "/api/native-sdk/" in request.url and request.method == "POST" else None)
     page.on("pageerror", lambda error: failures.append(str(error)))
     page.on('console', lambda message: print('console',message.type,message.text,flush=True) if message.type=='error' else None)
     page.on("request", lambda request: sends.append(request.post_data_json)
@@ -73,7 +97,7 @@ def exercise(browser, base, fixture, screenshots):
     opened = api(page, "open", {"uid": uid})
     assert opened["session_id"] == fixture.sid and opened["cwd"] == str(fixture.work), opened
     assert opened["capabilities"]["send"] and opened["capabilities"]["interrupt"]
-    assert opened["capabilities"]["respond"] and not opened["capabilities"]["question"]
+    assert opened["capabilities"]["respond"] and opened["capabilities"]["question"]
     assert not opened["capabilities"]["shared_tui"]
     assert not any("Replay is ordinary history" in item.get("content", "") for item in opened["raw"]["items"])
     watch(page, uid)
@@ -124,6 +148,106 @@ def exercise(browser, base, fixture, screenshots):
     page.get_by_role("button", name="Reject", exact=True).click()
     page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && window.__grokSnapshot.items.some(i=>i.error)")
     assert not page.evaluate("window.__grokSnapshot.requests.length")
+
+    # A selected browser image is privately published and reaches ACP as an
+    # image block, rather than a client-controlled filesystem path.
+    page.locator("#sdk-add").click()
+    with page.expect_file_chooser() as chooser:
+        page.locator('#sdk-attach-menu [data-attach=image]').click()
+    image = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
+    chooser.value.set_files({"name":"grok-synthetic-image.png","mimeType":"image/png","buffer":image})
+    expect(page.locator("#sdk-compose-items")).to_contain_text("grok-synthetic-image.png")
+    page.locator("#sdk-input").fill("Grok structured image")
+    page.locator("#sdk-send").click()
+    page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && window.__grokSnapshot.items.some(i=>i.content?.includes('Grok structured image'))")
+    structured = fixture.received("session/prompt")[-1]["params"]["prompt"]
+    assert structured[1] == {"type":"image","data":base64.b64encode(image).decode(),"mimeType":"image/png"},structured
+
+    # Native question labels and multi-select arrays survive a real form submit.
+    page.locator("#sdk-input").fill("question")
+    page.locator("#sdk-send").click()
+    question_card = page.locator(".sdk-request").filter(has_text="Grok 需要回答")
+    expect(question_card).to_be_visible()
+    question_card.get_by_label("Postgres",exact=True).check()
+    question_card.get_by_label("Search",exact=True).check()
+    question_card.get_by_label("Cache",exact=True).check()
+    capture_state(page,screenshots,"question",question_card)
+    question_card.get_by_role("button",name="提交",exact=True).click()
+    page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running")
+    expect(page.locator(".sdk-live")).to_contain_text("Native interaction accepted")
+    answered = [row for row in fixture.received() if str(row.get("id","")).startswith("interaction-") and "method" not in row]
+    assert answered[-1]["result"]["answers"]["Which features?"] == ["Search","Cache"],answered[-1]
+
+    # Plan exit remains an explicit native approval, never auto-approved.
+    page.locator("#sdk-input").fill("plan-approval")
+    page.locator("#sdk-send").click()
+    plan_card = page.locator(".sdk-request").filter(has_text="Grok 计划批准")
+    expect(plan_card).to_contain_text("Synthetic native plan")
+    capture_state(page,screenshots,"plan",plan_card)
+    plan_card.get_by_role("button",name="批准计划",exact=True).click()
+    page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running")
+    answered = [row for row in fixture.received() if str(row.get("id","")).startswith("interaction-") and "method" not in row]
+    assert answered[-1]["result"] == {"outcome":"approved"},answered[-1]
+    # Prompt partial cost is hidden rather than shown as a zero or full bill.
+    assert "costUsdTicks" not in snapshot(page,uid)["usage"]["last_turn"]
+
+    # Read the native process ledger and account billing through the toolbar.
+    page.locator("#sdk-usage-toggle").click()
+    page.locator("#native-usage-refresh").click()
+    expect(page.locator("#native-usage-detail")).to_contain_text("1,500")
+    expect(page.locator("#native-usage-detail")).to_contain_text("42.5")
+    assert fixture.received("x.ai/session/usage") and fixture.received("x.ai/billing")
+    capture_state(page,screenshots,"usage",popover=True)
+    page.keyboard.press("Escape")
+    page.locator("#sdk-more").click()
+    page.locator("#native-sdk-mode").select_option("plan")
+    page.wait_for_function("window.__grokSnapshot?.mode === 'plan'")
+    assert fixture.received("session/set_mode")[-1]["params"]["modeId"] == "plan"
+    page.keyboard.press("Escape")
+
+    # Native compaction and direct shell use their own protocol operations.
+    page.locator("#sdk-more").click()
+    with page.expect_response(lambda response: response.url.endswith("/api/native-sdk/compact") and response.request.method == "POST"):
+        page.locator('[data-sdk-action="compact"]').click()
+    expect(page.locator(".sdk-status")).to_contain_text("原生操作已接受")
+    compact_body = next(body for method,body in reversed(operations) if method == "compact")
+    count = len(fixture.received("x.ai/compact_conversation"))
+    api(page,"compact",compact_body)
+    assert len(fixture.received("x.ai/compact_conversation")) == count == 1
+    page.locator("#sdk-more").click()
+    page.locator('[data-sdk-action="shell"]').click()
+    page.get_by_role("textbox",name="命令",exact=True).fill("printf direct-native-shell")
+    page.get_by_role("button",name="运行",exact=True).click()
+    expect(page.locator(".sdk-live")).to_contain_text("Grok direct shell output")
+    shell = fixture.received("session/prompt")[-1]["params"]["prompt"][0]
+    assert shell["_meta"] == {"bash_command":"printf direct-native-shell"}
+    page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running")
+
+    # Only native rewind points are selectable; file rewind is never requested.
+    page.locator("#sdk-more").click()
+    page.locator('[data-sdk-action="rewind"]').click()
+    page.get_by_role("combobox",name="回退消息",exact=True).select_option("0")
+    with page.expect_response(lambda response: response.url.endswith("/api/native-sdk/rewind") and response.request.method == "POST"):
+        page.get_by_role("button",name="回退",exact=True).click()
+    expect(page.locator(".sdk-status")).to_contain_text("原生操作已接受")
+    rewind = fixture.received("x.ai/rewind/execute")[-1]["params"]
+    assert rewind["mode"] == "conversation_only" and rewind["force"] is False
+    rewind_body = next(body for method,body in reversed(operations) if method == "rewind")
+    api(page,"rewind",rewind_body)
+    assert len(fixture.received("x.ai/rewind/execute")) == 1
+
+    # Native fork returns its new exact identity and the UI navigates there.
+    page.locator("#sdk-more").click()
+    page.locator('[data-sdk-action="fork"]').click()
+    page.wait_for_function("uid => S.sel !== uid",arg=uid)
+    fork_body = next(body for method,body in reversed(operations) if method == "fork")
+    forked = api(page,"fork",fork_body)
+    assert forked["uid"] != uid and forked["session_id"] != fixture.sid
+    assert page.evaluate("S.sel") == forked["uid"]
+    assert len(fixture.received("x.ai/session/fork")) == 1
+    assert fixture.path.is_dir() and (fixture.path/"summary.json").exists()
+    select(page,uid)
+    watch(page,uid)
 
     # Closing every EventSource/page does not cancel an accepted native turn.
     page.locator("#sdk-input").fill("detached")
@@ -188,6 +312,8 @@ def exercise(browser, base, fixture, screenshots):
     api(page, "discard", {"uid": created["uid"]})
     assert native.is_dir(), "discard deleted native files"
 
+    # The new native process models installed builds that advertise image:false.
+    fixture.capability_marker.write_text(json.dumps({"image":False}))
     # Disconnect recovery must load the same SID and retain accepted ids.
     api(page, "turn", {"uid": uid, "request_id": "disconnect-once", "text": "disconnect"})
     page.wait_for_function("window.__grokSnapshot?.error?.includes('grok_sdk_disconnected')")
@@ -196,6 +322,45 @@ def exercise(browser, base, fixture, screenshots):
     count = len(fixture.received("session/prompt"))
     api(page, "turn", {"uid": uid, "request_id": "disconnect-once", "text": "disconnect"})
     assert len(fixture.received("session/prompt")) == count
+    assert recovered["capabilities"]["images"] is False
+
+    # An image:false handshake preserves the established file-path send flow.
+    # The browser explains the downgrade and HTTP does not manufacture ACP image
+    # support; the selected picture is still privately published exactly once.
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_function("T.listLoaded")
+    select(page,uid)
+    watch(page,uid)
+    expect(page.locator("#native-media-note")).to_be_visible()
+    expect(page.locator("#native-media-note")).to_contain_text("仅发送图片路径引用")
+    page.locator("#sdk-add").click()
+    with page.expect_file_chooser() as chooser:
+        page.locator('#sdk-attach-menu [data-attach=image]').click()
+    chooser.value.set_files({"name":"grok-path-only.png","mimeType":"image/png","buffer":image})
+    expect(page.locator("#sdk-compose-items")).to_contain_text("grok-path-only.png")
+    page.locator("#sdk-input").fill("Grok image path fallback")
+    page.locator("#sdk-send").click()
+    page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && window.__grokSnapshot.items.some(i=>i.content?.includes('Grok image path fallback'))")
+    fallback = fixture.received("session/prompt")[-1]["params"]["prompt"]
+    assert len(fallback) == 1 and fallback[0]["type"] == "text",fallback
+    assert "grok-path-only.png" in fallback[0]["text"] and "sessiondock_attachments" in fallback[0]["text"],fallback
+    assert any(path.name == "grok-path-only.png" for path in fixture.work.rglob("grok-path-only.png"))
+    expect(page.locator("#sdk-input")).to_have_value("")
+    expect(page.locator("#native-media-note")).to_contain_text("不传递图像内容")
+    capture_state(page,screenshots,"image-path-fallback",page.locator("#native-media-note"))
+
+    # Old/native builds report unsupported extensions honestly; refresh errors
+    # stay visible and the next open removes the corresponding capability.
+    page.locator("#sdk-input").fill("disable-extensions")
+    page.locator("#sdk-send").click()
+    page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && window.__grokSnapshot.items.some(i=>i.content==='disable-extensions')")
+    page.locator("#sdk-usage-toggle").click()
+    page.locator("#native-usage-refresh").click()
+    expect(page.locator("#native-usage-detail")).to_contain_text("grok_sdk_native_error")
+    unsupported = api(page,"open",{"uid":uid})
+    assert unsupported["capabilities"]["usage"] is False
+    assert unsupported["raw"]["extension_support"]["usage"] is False
+    page.keyboard.press("Escape")
 
     # A synthetic independently owned TUI is refused and never signalled.
     pid = 987654

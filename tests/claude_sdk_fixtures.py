@@ -146,7 +146,8 @@ def fake_cli():
     log = Path(os.environ["SESSIONDOCK_FAKE_CLAUDE_LOG"])
     mutex = threading.Lock()
     output_lock = threading.Lock()
-    state = {"model": value("--model") or "fake-claude", "effort": value("--effort") or "low"}
+    state = {"model": value("--model") or "fake-claude", "effort": value("--effort") or "low",
+        "permission_mode": "default", "fast_mode": False, "completed": 0, "context": 1200, "usage_available": True}
     pending = {}
     inputs = queue.Queue()
     interrupted = threading.Event()
@@ -167,7 +168,8 @@ def fake_cli():
 
     def assistant(content, message_id):
         frame_id = str(uuid.uuid4())
-        message = {"role": "assistant", "id": message_id, "model": state["model"], "content": content}
+        message = {"role": "assistant", "id": message_id, "model": state["model"], "content": content,
+            "usage": {"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 30, "cache_creation_input_tokens": 10}}
         record("assistant", frame_id, message)
         send({"type": "assistant", "uuid": frame_id, "message": message})
 
@@ -179,13 +181,12 @@ def fake_cli():
         send({"type": "stream_event", "event": {"type": "content_block_stop", "index": 0}})
         assistant([{"type": "text", "text": content}], message_id)
 
-    def request_permission(tool, tool_input, call_id):
+    def request_control(request):
         key = str(uuid.uuid4())
         event = threading.Event()
         with mutex:
             pending[key] = [event, None]
-        send({"type": "control_request", "request_id": key, "request": {"subtype": "can_use_tool",
-            "tool_name": tool, "input": tool_input, "tool_use_id": call_id, "decision_reason": "synthetic browser permission"}})
+        send({"type": "control_request", "request_id": key, "request": request})
         while not event.wait(.05):
             if interrupted.is_set():
                 send({"type": "control_cancel_request", "request_id": key})
@@ -195,24 +196,52 @@ def fake_cli():
         with mutex:
             return pending.pop(key)[1]
 
+    def model_usage():
+        count = state["completed"]
+        return {state["model"]: {"inputTokens": count * 100, "outputTokens": count * 20,
+            "thinkingTokens": count * 5, "cacheReadInputTokens": count * 30,
+            "cacheCreationInputTokens": count * 10, "costUSD": count * .01,
+            "contextWindow": 200000, "maxOutputTokens": 32000, "webSearchRequests": 0}}
+
     def turns():
         while True:
             frame = inputs.get()
             interrupted.clear()
             content = frame["message"]["content"]
+            if isinstance(content, list):
+                assert any(block.get("type") == "image" and block["source"]["type"] == "base64" for block in content), content
+                content = " ".join(block.get("text", "") for block in content if block.get("type") == "text")
             message_id = "msg-" + str(uuid.uuid4())
             record("user", frame["uuid"], frame["message"])
             send(frame)
-            send({"type": "system", "subtype": "init", "cwd": cwd, "model": state["model"]})
+            send({"type": "system", "subtype": "init", "cwd": cwd, "model": state["model"],
+                "permissionMode": state["permission_mode"], "fast_mode_state": "on" if state["fast_mode"] else "off"})
             send({"type": "system", "subtype": "session_state_changed", "state": "running", "sdk_host_only": True})
             if content == "crash":
                 print("synthetic stderr token=should-not-leak", file=sys.stderr, flush=True)
                 os._exit(7)
             if content == "error":
                 send({"type": "result", "subtype": "error_during_execution", "is_error": True,
-                    "uuid": str(uuid.uuid4()), "errors": ["synthetic native execution failure"]})
+                    "uuid": str(uuid.uuid4()), "errors": ["synthetic native execution failure"],
+                    "modelUsage": {}, "total_cost_usd": 0})
                 send({"type": "system", "subtype": "session_state_changed", "state": "idle", "sdk_host_only": True})
                 continue
+            if content == "/compact":
+                send({"type": "system", "subtype": "status", "status": "compacting", "uuid": str(uuid.uuid4())})
+                time.sleep(.3)
+                state["context"] = 200
+                send({"type": "system", "subtype": "compact_boundary", "uuid": str(uuid.uuid4()),
+                    "compact_metadata": {"trigger": "manual", "pre_tokens": 1200}})
+                send({"type": "system", "subtype": "status", "status": None, "compact_result": "success", "uuid": str(uuid.uuid4())})
+            if content == "retry":
+                send({"type": "system", "subtype": "api_retry", "attempt": 1, "max_retries": 3,
+                    "retry_delay_ms": 2000, "error_status": 429, "error": "rate_limit", "uuid": str(uuid.uuid4())})
+                interrupted.wait(2)
+            if content == "rate-limit":
+                send({"type": "rate_limit_event", "uuid": str(uuid.uuid4()), "rate_limit_info": {
+                    "status": "allowed_warning", "rateLimitType": "five_hour", "utilization": .8, "resetsAt": 1900000000}})
+            if content == "usage-unavailable": state["usage_available"] = False
+            if content == "usage-available": state["usage_available"] = True
             stream_text("streaming Claude progress", message_id)
             if content == "hold":
                 interrupted.wait(30)
@@ -222,7 +251,8 @@ def fake_cli():
                 tool_input = {"command": "printf synthetic"} if content == "approval" else {"questions": [{"question": "Choose a synthetic answer?", "header": "Choice", "multiSelect": False,
                     "options": [{"label": "Alpha", "description": "synthetic Alpha"}, {"label": "Beta", "description": "synthetic Beta"}]}]}
                 assistant([{"type": "tool_use", "id": call_id, "name": tool, "input": tool_input}], "msg-tool-" + call_id)
-                response = request_permission(tool, tool_input, call_id)
+                response = request_control({"subtype": "can_use_tool", "tool_name": tool, "input": tool_input,
+                    "tool_use_id": call_id, "decision_reason": "synthetic browser permission"})
                 outcome = ((response or {}).get("response") or {}).get("response", {})
                 output = "synthetic tool allowed" if outcome.get("behavior") == "allow" else "synthetic tool denied"
                 if tool == "AskUserQuestion" and outcome.get("behavior") == "allow":
@@ -232,8 +262,27 @@ def fake_cli():
                 result_id = str(uuid.uuid4())
                 record("user", result_id, result_message)
                 send({"type": "user", "uuid": result_id, "message": result_message})
+            elif content in ("elicitation", "elicitation-url"):
+                request = {"subtype": "elicitation", "mcp_server_name": "Synthetic MCP", "message": "Synthetic MCP input",
+                    "title": "Synthetic MCP form", "mode": "url" if content.endswith("url") else "form"}
+                if request["mode"] == "url": request.update(url="https://example.invalid/authorize", elicitation_id="synthetic-url")
+                else: request.update(requested_schema={"type": "object", "properties": {
+                    "choice": {"type": "string", "title": "Synthetic choice", "enum": ["Alpha", "Beta"]},
+                    "enabled": {"type": "boolean", "title": "Synthetic enabled", "default": True},
+                    "count": {"type": "integer", "title": "Synthetic count", "minimum": 1}}, "required": ["choice", "count"]},
+                    property_order=["choice", "enabled", "count"])
+                response = request_control(request)
+                stream_text("MCP response " + json.dumps(((response or {}).get("response") or {}).get("response", {})), "mcp-response-" + message_id)
+            elif content == "dialog":
+                assert "refusal_fallback_prompt" in state.get("dialog_kinds", []), "host did not declare a dialog renderer"
+                response = request_control({"subtype": "request_user_dialog", "dialog_kind": "refusal_fallback_prompt",
+                    "payload": {"originalModel": state["model"], "fallbackModel": "synthetic-fallback", "guidanceText": "Synthetic fallback choice"}})
+                stream_text("Dialog response " + json.dumps(((response or {}).get("response") or {}).get("response", {})), "dialog-response-" + message_id)
             stream_text("Claude interrupted" if interrupted.is_set() else "Claude synthetic final " + content, "msg-final-" + message_id)
-            send({"type": "result", "subtype": "success", "is_error": False, "uuid": str(uuid.uuid4()), "result": "final"})
+            state["completed"] += 1
+            send({"type": "result", "subtype": "success", "is_error": False, "uuid": str(uuid.uuid4()), "result": "final",
+                "usage": {"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 30, "cache_creation_input_tokens": 10},
+                "modelUsage": model_usage(), "total_cost_usd": state["completed"] * .01})
             send({"type": "system", "subtype": "session_state_changed", "state": "idle", "sdk_host_only": True})
 
     threading.Thread(target=turns, daemon=True).start()
@@ -256,11 +305,29 @@ def fake_cli():
             subtype = request["subtype"]
             response = {}
             if subtype == "initialize":
-                response = {"models": [{"value": "fake-claude", "displayName": "Synthetic Claude", "supportsEffort": True, "supportedEffortLevels": ["low", "high"]}], "commands": [], "pid": os.getpid()}
+                state["dialog_kinds"] = request.get("supportedDialogKinds", [])
+                response = {"models": [{"value": "fake-claude", "displayName": "Synthetic Claude", "supportsEffort": True, "supportedEffortLevels": ["low", "high"]}],
+                    "commands": [{"name": "compact", "description": "Compact synthetic context"}], "pid": os.getpid(), "fast_mode_state": "off"}
             elif subtype == "set_model":
                 state["model"] = request["model"]
+            elif subtype == "set_permission_mode":
+                state["permission_mode"] = request["mode"]
             elif subtype == "apply_flag_settings":
-                state["effort"] = request["settings"]["effortLevel"]
+                if "effortLevel" in request["settings"]: state["effort"] = request["settings"]["effortLevel"]
+                if "fastMode" in request["settings"]: state["fast_mode"] = request["settings"]["fastMode"]
+            elif subtype in ("get_context_usage", "get_usage"):
+                if not state["usage_available"]:
+                    send({"type": "control_response", "response": {"subtype": "error", "request_id": frame["request_id"], "error": "synthetic experimental usage unavailable"}})
+                    continue
+                if subtype == "get_context_usage":
+                    assert request["detail"] == "summary", request
+                    response = {"totalTokens": state["context"], "maxTokens": 200000, "rawMaxTokens": 250000,
+                        "percentage": state["context"] / 2000, "categories": [{"name": "Messages", "tokens": state["context"], "kind": "used"}]}
+                else:
+                    assert request["skip_behaviors"] is True, request
+                    response = {"session": {"total_cost_usd": state["completed"] * .01, "model_usage": model_usage()},
+                        "subscription_type": "pro", "rate_limits_available": True,
+                        "rate_limits": {"five_hour": {"utilization": 80, "resets_at": "2030-03-17T17:46:40Z"}}, "behaviors": None}
             elif subtype == "interrupt":
                 interrupted.set()
             else:

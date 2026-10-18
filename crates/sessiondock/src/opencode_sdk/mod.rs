@@ -1,5 +1,6 @@
 //! OpenCode v2 native API bridge. Contract and protocol evidence:
 //! docs/opencode-sdk.md. No HTTP facade or native file writer lives here.
+mod actions;
 mod project;
 mod transport;
 
@@ -42,6 +43,8 @@ struct Live {
     requests: Vec<Value>,
     turns: HashMap<String, String>,
     sending: usize,
+    catalog: Vec<Value>,
+    controls: HashMap<String, Value>,
     tx: broadcast::Sender<Arc<str>>,
 }
 
@@ -169,7 +172,9 @@ impl Bridge {
                     json!({"uid":session.uid,"session_id":session.sid,"cwd":session.cwd,"key":key,"capabilities":capabilities()}),
                 )
             }
-            "turn" | "interrupt" | "respond" | "models" | "discard" => {
+            "turn" | "interrupt" | "respond" | "models" | "discard" | "queue_cancel"
+            | "queue_update" | "fork" | "revert" | "unrevert" | "revert_commit" | "compact"
+            | "shell" | "command" | "settings" | "agents" | "commands" | "usage" => {
                 let (session, _) = self.open(&target).await?;
                 match method {
                     "turn" => self.turn(session, input).await,
@@ -183,7 +188,7 @@ impl Bridge {
                     // Native remove is irreversible. Discard only releases the
                     // browser draft; ordinary delete owns native destruction.
                     "discard" => Err("OpenCode 原生会话没有可撤销 discard；请使用已确认的原生删除操作 (capability discard=false)".into()),
-                    _ => unreachable!(),
+                    _ => self.action(&session, method, input).await,
                 }
             }
             _ => Err(format!("OpenCode SDK 不支持 {method}")),
@@ -321,6 +326,14 @@ impl Bridge {
             })
             .flat_map(project::messages)
             .collect();
+        // Model catalog is credential-free and supplies the native context limit.
+        // A failed catalog request must not make an otherwise usable session fail.
+        let catalog = self
+            .models(&cwd)
+            .await
+            .ok()
+            .and_then(|v| v["models"].as_array().cloned())
+            .unwrap_or_default();
         let (tx, _) = broadcast::channel(128);
         let session = Arc::new(Session {
             uid,
@@ -338,6 +351,8 @@ impl Bridge {
                 requests: Vec::new(),
                 turns: HashMap::new(),
                 sending: 0,
+                catalog,
+                controls: HashMap::new(),
                 tx,
             }),
             operation: Arc::new(tokio::sync::Mutex::new(())),
@@ -384,6 +399,11 @@ impl Bridge {
             .as_str()
             .ok_or("OpenCode SDK 缺少 text 字符串")?
             .to_owned();
+        let files = input.get("files").cloned().unwrap_or_else(|| json!([]));
+        if !files.is_array() {
+            return Err("OpenCode files 需要原生附件数组".into());
+        }
+        let delivery = actions::delivery(&input, "queue")?;
         self.check_runtime(&session.sid, &session.cwd)?;
         // Reserve native operation order before acknowledging. An interrupt
         // following an accepted turn cannot overtake its prompt admission.
@@ -406,7 +426,7 @@ impl Bridge {
             state.sending += 1;
             state.raw["running"] = json!(true);
             state.raw["error"] = Value::Null;
-            state.items.push(json!({"id":native_id,"native_id":native_id,"role":"user","content":text,"text":text,"request_id":request}));
+            state.items.push(json!({"id":native_id,"native_id":native_id,"role":"user","content":text,"text":text,"request_id":request,"delivery_state":"admitting"}));
             state.publish();
         }
         session.wake.notify_one();
@@ -439,7 +459,7 @@ impl Bridge {
                         &task_session.cwd,
                         "POST",
                         &format!("/api/session/{}/prompt", encoded(&task_session.sid)),
-                        Some(json!({"id":task_id,"text":text})),
+                        Some(json!({"id":task_id,"text":text,"files":files,"delivery":delivery})),
                     )
                     .await
             }
@@ -534,7 +554,8 @@ impl Bridge {
             .await?;
         let models:Vec<_>=response["data"].as_array().ok_or("OpenCode model.list 返回格式未知")?.iter().map(|m|json!({
             "id":format!("{}/{}",m["providerID"].as_str().unwrap_or_default(),m["id"].as_str().unwrap_or_default()),
-            "model":m["id"],"providerID":m["providerID"],"name":m["name"],"variants":m["variants"],"enabled":m["enabled"]})).collect();
+            "model":m["id"],"providerID":m["providerID"],"name":m["name"],"variants":m["variants"],"enabled":m["enabled"],
+            "limit":m["limit"],"capabilities":m["capabilities"]})).collect();
         Ok(json!({"models":models,"capabilities":capabilities()}))
     }
 
@@ -655,6 +676,10 @@ impl Bridge {
                 None,
             )
             .await?;
+        let info = self
+            .transport
+            .api(&session.cwd, "GET", &format!("/api/session/{sid}"), None)
+            .await?;
         let mut state = session
             .state
             .lock()
@@ -682,6 +707,25 @@ impl Bridge {
             state.records.insert(id.to_owned(), record);
         }
         state.requests = project::requests(&permissions, &forms);
+        state.raw["queue"] = project::queue(&inbox);
+        for entry in inbox["data"].as_array().into_iter().flatten() {
+            if let Some(item) = state
+                .items
+                .iter_mut()
+                .find(|item| item["native_id"] == entry["id"])
+            {
+                item["delivery_state"] = json!("queued");
+                item["delivery"] = entry["delivery"].clone();
+            }
+        }
+        if info["data"]["model"].is_object() {
+            state.raw["model"] = info["data"]["model"].clone();
+            state.raw["effort"] = info["data"]["model"]["variant"].clone();
+        }
+        state.raw["agent"] = info["data"]["agent"].clone();
+        state.raw["permissions"] = info["data"]["permissions"].clone();
+        state.raw["revert"] = info["data"]["revert"].clone();
+        state.raw["usage"] = project::usage(&info["data"], &state.records, &state.catalog);
         state.raw["running"] = json!(
             state.sending > 0
                 || active["data"].get(&session.sid).is_some()
@@ -753,7 +797,10 @@ impl Bridge {
 
 fn capabilities() -> Value {
     json!({"send":true,"interrupt":true,"respond":true,"models":true,"create":true,
-    "discard":false,"effort":true,"effort_kind":"native model variant","stream":"native API projection polling",
+    "discard":false,"queue_cancel":true,"queue_update":true,"fork":true,
+    "revert":true,"unrevert":true,"revert_commit":true,"compact":true,"shell":true,
+    "command":true,"settings":true,"agents":true,"commands":true,"files":true,"usage":true,
+    "effort":true,"effort_kind":"native model variant","stream":"native API projection polling",
         "terminal_coexistence":"default shared native service only","autostart":false})
 }
 

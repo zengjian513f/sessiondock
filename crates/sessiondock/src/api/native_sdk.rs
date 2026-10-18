@@ -65,7 +65,29 @@ async fn execute(
     }
     if !matches!(
         method.as_str(),
-        "open" | "create" | "turn" | "interrupt" | "respond" | "models" | "discard"
+        "open"
+            | "create"
+            | "turn"
+            | "interrupt"
+            | "respond"
+            | "models"
+            | "discard"
+            | "usage"
+            | "billing"
+            | "settings"
+            | "compact"
+            | "fork"
+            | "rewind_points"
+            | "rewind"
+            | "shell"
+            | "queue_cancel"
+            | "queue_update"
+            | "revert"
+            | "unrevert"
+            | "revert_commit"
+            | "agents"
+            | "commands"
+            | "command"
     ) {
         return Err(ApiError::new(
             StatusCode::NOT_FOUND,
@@ -73,6 +95,8 @@ async fn execute(
             "没有这个 SDK 操作",
         ));
     }
+    body.as_object_mut().unwrap().remove("images");
+    body.as_object_mut().unwrap().remove("files");
     let target = if method == "create" {
         let cwd = body["cwd"].as_str().unwrap_or_default().to_owned();
         let cwd = match super::lifecycle::prepare_cwd(cwd, body["create_cwd"] == true).await? {
@@ -105,6 +129,24 @@ async fn execute(
                 .map(str::to_owned)
                 .unwrap_or_else(|| format!("此机器未配置 {source} SDK 模式")),
         ));
+    }
+    if method == "usage" && matches!(source, "agy" | "claude") {
+        let quotas = if body["refresh"] == true {
+            state.quotas.collect_source(source).await
+        } else {
+            state.quotas.read().await
+        };
+        let mut result = state
+            .native_sdks
+            .call(source, &method, target.clone(), body.clone())
+            .await
+            .map_err(failure)?;
+        result["quota"] = quotas["agents"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["source"] == source))
+            .cloned()
+            .unwrap_or(Value::Null);
+        return Ok(Json(response(result)));
     }
     let mut submission = if method == "turn" {
         let id = body["request_id"]
@@ -163,6 +205,46 @@ async fn execute(
             &published,
             &quotes
         ));
+        // Only read attachments produced by the existing authenticated publication path.
+        // Client-provided paths/images/files never grant filesystem access.
+        let images_supported = if source == "grok"
+            && published
+                .iter()
+                .any(|attachment| attachment["kind"] == "image")
+        {
+            let opened = state
+                .native_sdks
+                .call(source, "open", target.clone(), json!({}))
+                .await
+                .map_err(failure)?;
+            opened["capabilities"]["images"] == true
+        } else {
+            true
+        };
+        let mut images = Vec::new();
+        let mut files = Vec::new();
+        for attachment in &published {
+            if images_supported
+                && attachment["kind"] == "image"
+                && matches!(source, "grok" | "claude" | "opencode")
+            {
+                use base64::Engine;
+                let path = attachment["path"]
+                    .as_str()
+                    .ok_or_else(|| failure("附件缺少路径".into()))?;
+                let bytes = tokio::fs::read(path)
+                    .await
+                    .map_err(|error| failure(format!("读取图片失败：{error}")))?;
+                let mime = attachment["mime"].as_str().unwrap_or("image/png");
+                let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+                images.push(json!({"data":data,"mimeType":mime}));
+                files.push(
+                    json!({"uri":format!("data:{mime};base64,{data}"),"name":attachment["name"]}),
+                );
+            }
+        }
+        body["images"] = json!(images);
+        body["files"] = json!(files);
         body["attachments"] = json!(published);
         if let Some(submission) = submission.as_mut() {
             submission.input = Some(body.clone());
@@ -190,7 +272,7 @@ async fn execute(
         }
         submission.result = Some(result.clone());
     }
-    if method == "create" {
+    if matches!(method.as_str(), "create" | "fork") {
         state.reader.store.invalidate_inventory();
         let mut result = result;
         result["ok"] = json!(true);

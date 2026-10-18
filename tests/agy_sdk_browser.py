@@ -93,6 +93,11 @@ def exercise(browser, base, fixture, screenshots=None):
         assert MODEL in [row['id'] for row in models['models']], models
         assert not fixture.inputs(), 'open/model discovery must not submit a prompt'
         page.locator('#sdk-model').select_option(MODEL)
+        expect(page.locator('#sdk-effort')).to_be_visible()
+        page.locator('#sdk-effort').select_option('high')
+        page.locator('#sdk-more').click()
+        page.locator('#native-sdk-mode').select_option('plan')
+        page.locator('#sdk-more').click()
         print('Agy: click SDK, type/send, sparse tool result, idempotent retry', flush=True)
         receipt = send(page, 'SDK 中文\nsecond line')
         expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: SDK 中文')
@@ -101,6 +106,25 @@ def exercise(browser, base, fixture, screenshots=None):
         post(page, base, 'turn', {'uid': uid, 'text': 'SDK 中文\nsecond line', 'request_id': receipt['request_id']})
         assert len(fixture.inputs('SDK 中文\nsecond line')) == 1
         assert fixture.inputs('SDK 中文\nsecond line')[0]['model'] == MODEL
+        assert fixture.inputs('SDK 中文\nsecond line')[0]['effort'] == 'high'
+        assert fixture.inputs('SDK 中文\nsecond line')[0]['mode'] == 'plan'
+        page.locator('#sdk-usage-toggle').click()
+        expect(page.locator('#native-usage-detail')).to_contain_text('12,800')
+        page.locator('#native-usage-refresh').click()
+        expect(page.locator('#native-usage-detail')).to_contain_text('72%')
+        page.locator('#sdk-usage-toggle').click()
+        before = len(fixture.inputs())
+        page.locator('#sdk-input').fill('/usage')
+        page.locator('#sdk-send').click()
+        expect(page.locator('#sdk-input')).to_have_value('')
+        assert len(fixture.inputs()) == before, 'slash query must never reach NDJSON user input'
+        page.locator('#sdk-usage-toggle').click()
+        page.locator('#sdk-input').fill('/unknown-native-command')
+        page.locator('#sdk-send').click()
+        expect(page.locator('.sdk-status')).to_contain_text('尚未映射')
+        expect(page.locator('#sdk-input')).to_have_value('/unknown-native-command')
+        assert len(fixture.inputs()) == before
+        page.locator('#sdk-input').fill('')
         snapshot = page.evaluate('window.__agySnapshot')
         tool = next(item for item in snapshot['raw']['items'] if item['role'] == 'tool')
         assert tool['input']['AbsolutePath'] == str(fixture.work / 'synthetic.txt')
@@ -180,7 +204,7 @@ def exercise(browser, base, fixture, screenshots=None):
         assert not list((fixture.root / 'host').glob('sessiondock-*.json')), 'SDK must not create a PTY'
         if screenshots:
             screenshots.mkdir(parents=True, exist_ok=True)
-            for width in (1280, 390):
+            for width in (1280, 390, 320):
                 page.set_viewport_size({'width': width, 'height': 900})
                 if width < 500 and not page.locator('#sdk-input').is_visible():
                     selected = page.evaluate('S.sel')
@@ -189,6 +213,13 @@ def exercise(browser, base, fixture, screenshots=None):
                 for theme in ('light', 'dark'):
                     page.emulate_media(color_scheme=theme)
                     page.screenshot(path=str(screenshots / f'agy-sdk-{width}-{theme}.png'), full_page=True)
+                    page.locator('#sdk-usage-toggle').click()
+                    expect(page.locator('#native-usage-detail')).to_contain_text('12,800')
+                    page.screenshot(path=str(screenshots / f'agy-sdk-usage-{width}-{theme}.png'), full_page=True)
+                    page.locator('#sdk-usage-toggle').click()
+                    page.locator('#sdk-more').click()
+                    page.screenshot(path=str(screenshots / f'agy-sdk-settings-{width}-{theme}.png'), full_page=True)
+                    page.locator('#sdk-more').click()
         assert not errors, errors
     finally:
         context.close()

@@ -31,15 +31,36 @@
 该源码快照与已安装二进制的 commit 不同；无账号实验只证明上述握手与认证失败路径，
 不能替代认证后的 create/load/prompt 验收。
 
+2026-10-19 再次用清空继承环境、临时 HOME/GROK_HOME/cwd 的安装版 1.0.62
+执行无账号 initialize；命令显式选择 grok-4.6 / low，返回 currentModelId 也断言为
+`grok-4.6`。原生明确广告 `promptCapabilities.image:false`、`audio:false`、
+`embeddedContext:true`。因此本安装版不能按 ACP 能力承诺结构化图片；桥接保留
+路径引用；共享 HTTP 在协商 image:false 时只发布已有路径引用，并在网页明确提示不传图像内容。
+直接向 bridge 提供非空 images 仍明确 unsupported。合成 `image:true` 对端只验证后续
+原生版本广告支持时的图片适配，不扩大为本机真实多模态验收。
+
+下表及 facade 说明使用 Grok handler 的逻辑扩展名 `x.ai/...`。
+ACP JSON-RPC wire 的自定义方法必须带前导下划线，即 `_x.ai/...`；桥接在 transport
+统一编码，并将原生反向 `_x.ai/ask_user_question`、`_x.ai/exit_plan_mode` 规范为逻辑名。
+2026-10-19 隔离安装版无账号只读核验：无下划线的上述扩展均返回 -32601；
+正确 wire 的 `_x.ai/session/usage`、`_x.ai/rewind/points` 对不存在 SID 返回 -32002，
+`_x.ai/billing` 返回 -32000（未认证），`_x.ai/session/info` 返回 `{result:{}}`。
+这些结果确认安装版识别了扩展，不证明认证后账号数据和会话 mutation 已验收。
+
 | 原生操作 | 桥接行为 |
 | --- | --- |
 | `initialize` | 协议版本 1；不声明客户端文件读写或 terminal 能力 |
 | `session/new` | 由 Grok 生成 SID、建立原生记录；取返回的 cwd 元数据 |
 | `session/load` | 使用 inventory 已解析的同一 SID/cwd，不 fork、不 restore-code |
-| `session/prompt` | 文本 content block；异步完成，实时接收 session/update |
+| `session/prompt` | 文本及已协商的 image content block；异步完成，实时接收 session/update |
 | `session/cancel` | 不带 RPC id 的原生通知；不结束 ACP 进程 |
 | `session/request_permission` | 显示原生选项，明确选择后回送原生 outcome |
 | `session/set_config_option` | model / reasoning_effort；保留原生完整 configOptions |
+| `session/set_mode` | 只使用原生 modes.availableModes 的 ID |
+| `x.ai/ask_user_question` / `x.ai/exit_plan_mode` | 原生问题及计划批准反向请求，网页明确提交后才回复 |
+| `x.ai/session/usage` / `x.ai/session/info` / `x.ai/billing` | 进程累计用量、独立的原生上下文估计、账号额度 |
+| `x.ai/compact_conversation` / `x.ai/session/fork` | 原生压缩及分支，不用模型提示词模拟 |
+| `x.ai/rewind/points` / `x.ai/rewind/execute` | 原生 prompt index；明确 conversation_only、force:false |
 
 ## 启用与进程归属
 
@@ -86,7 +107,7 @@ PID 为空的匹配原生活动标记也会报告冲突；已退出或 zombie PI
   缓存该次结果，不因同 request_id 重试而再创建一份。
 - open 返回 `{uid, session_id, cwd, capabilities, raw}`。raw 是快照内部 raw。
   同一存活进程重复 open 不重新 load；原生回放标记 `isReplay` 的消息不放入实时区。
-- turn 的 input 为 `{text, request_id?, model?, effort?}`。
+- turn 的 input 为 `{text, request_id?, model?, effort?, images?}`。
   运行中相同 request_id 返回原收据；已接受的 id 在本服务生命周期内也不会再次送出。
   不同输入按会话串行等待前一原生 turn 结束，HTTP 请求等待本次准入；网页断开不撤销提交，不提供隐式 steer。
   model/effort 设置失败会使该收据对应的实时快照出错，不偷偷改用另一个模型。
@@ -99,6 +120,39 @@ PID 为空的匹配原生活动标记也会报告冲突；已退出或 zombie PI
   随后关闭该探测进程，不创建会话。没有原生模型数据时明确报 unsupported。
 - discard 只释放空闲桥接进程和本地连接；原生文件始终保留。
   正在运行或仍有审批时拒绝 discard。
+
+新增 facade 方法及边界：
+
+- `usage` 原样保留原生 input/output/cache/reasoning/modelUsage 计数；原生输入包含缓存，
+  思考是输出的子集，不能把这些桶再相加。`raw.usage` 为当前 ACP 进程的累计 ledger，
+  新进程恢复会重置；每次读取替换累计值，不重复相加。`last_turn` 单独保存原生 prompt
+  `_meta.usage` 或 `turn_completed.usage`。缺成本、`usageIsIncomplete` 或 `costIsPartial`
+  不显示完整成本；`costUsdTicks` 的单位为 1e10 ticks/USD。
+- `usage` 同时尝试 `x.ai/session/info` 获取独立上下文，支持 `{result:{context:{used,total,usagePct}}}`。
+  `raw.context_usage` 明确标为原生估计；读取失败/total=0 保持未知，不把累计 tokens 当占用。
+  `billing` 只通过原生 `x.ai/billing` 读取，不直接访问账号或凭据文件。
+- `settings` 接 `{request_id,mode?,model?,effort?}`，空闲时应用；mode 必须来自原生
+  `modes.availableModes[].id`。不把执行/计划模式映射为自动批准。
+- `compact`、`fork`、`rewind` 必带 request_id。空闲会话串行执行，并缓存已派发的成功和
+  不确定失败结果；同一 ID 不重复执行。活跃工作/待答审批时明确 busy。
+  `fork` 由原生创建新 SID、复制并记录父子关系；返回与 create 同结构的
+  uid/session_id/cwd/session，不自动发 prompt。可传原生 `prompt_index`，转为
+  `targetPromptIndex`；不自写或重序列化历史。分支仍使用原会话 cwd。
+- `rewind_points` 保留原生 `rewind_points` 数组的 `prompt_index`、`prompt_preview`；
+  `rewind` 用精确 prompt_index，始终显式 `mode:"conversation_only"`、`force:false`，
+  不回滚工作区文件，不猜文本匹配点。回退成功清除旧实时投影，历史由现有 read model 刷新。
+- `shell` 接 `{command,request_id?}`，通过原生 `session/prompt` 文本块
+  `_meta.bash_command` 直接执行，使用 CLI 的实际执行权限；不经过模型。其回执沿用 turn 去重。
+- `images:[{data,mimeType}]` 仅由共享 HTTP 层从已发布、可信附件生成；
+  initialize 的 `agentCapabilities.promptCapabilities.image` 必须明确为 true 才能作为
+  ACP 图像块发送。共享 HTTP 在 image:false 时继续发布附件及发送已有路径引用，
+  不生成结构化 images；网页明确显示“仅发送图片路径引用，不传递图像内容”。
+  直接向 bridge 传非空 images 则返回 images_unsupported。不会把路径文字冒充多模态输入。
+
+扩展支持以原生结果为准。只读用量/额度/回退点及显式操作可尝试已有官方方法；
+原生 `-32601` 记录到 `raw.extension_support` 并关闭对应 capability；认证、账号、模型、
+参数错误仍明确失败，不假报成功或回退成普通 prompt。桥接声明处理能力不代表本机
+1.0.62 已认证实测这些扩展；安装版与官方源码快照的版本差异仍以上述证据边界为准。
 
 订阅 key 为主会话 `target.uid`；agent 非空时为 `uid + ":" + agent`。
 snapshot 与 broadcast receiver 在同一 live mutex 下建立，没有丢事件窗口。
@@ -113,7 +167,11 @@ items 使用稳定 id、role、content，并提供现有 renderer 的 text、nam
 普通历史与实时 items 分开；桥接不读取历史来伪造实时回复。
 requests 的 key 带连接 generation，晚到的旧网页回答无法批准重连后的另一个请求。
 审批选项保留原生 kind，只有用户明确选择才发送 outcome。
-question 为 false；未实现的客户端 RPC 返回 `-32601`，不会假造题卡/响应协议。
+question 为 true，表示桥接能处理实际收到的 `x.ai/ask_user_question`，不是原生每个模型均会出题。
+问题按原文索引，选项使用原生 label；多选传数组，自填文字编码为 `Other` 加 annotations.notes。
+`accepted`、`cancelled` 以及计划模式的 `chat_about_this`、`skip_interview` 保持原生 outcome。
+计划批准保留 `approved`、`cancelled`（可带 feedback）、`abandoned`。
+未实现的客户端 RPC 返回 `-32601`。
 
 facade 应将 snapshots 作为 SSE `sdk` 事件转发；broadcast lag 时重新订阅取得快照，
 不能把 lag/HTTP 断开解释成 interrupt。无需把 native 错误当作 Codex app-server 事件。
@@ -128,7 +186,10 @@ facade 应将 snapshots 作为 SSE `sdk` 事件转发；broadcast lag 时重新�
 
 [grok_sdk_browser.py](../tests/grok_sdk_browser.py) 使用临时原生目录和合成协议对端，
 通过 Chromium 实际操作 SDK 页面，覆盖本来源的新建/恢复、发送、流式消息和工具、
-去重、中断、重开及外部 writer 冲突；审批和问题按本来源声明的能力验收。
+去重、中断、重开及外部 writer 冲突；新增原生问题多选、计划批准、用量/额度、
+模式、压缩、直接 shell、对话回退和分支的真实点击路径及 mutation 丢 ACK 重试断言。
+另覆盖先 image:true、断线后新进程 image:false 时的实际图片上传、路径发布及可见降级说明。
+合成对端证明桥接行为，不替代已认证安装版的真实模型/账号验收。
 共享 Hub、草稿恢复与网页请求卡路径见
 [native_sdk_hub_browser.py](../tests/native_sdk_hub_browser.py)。
 完整验证命令与套件入口见[验证清单](validation.md)，协议实验的实机范围仍以上述证据为准。

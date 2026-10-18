@@ -71,7 +71,7 @@ inbox 的空响应结构；没有提交 prompt 或调用账号/模型。服务 s
 共享 `native_sdk` dispatcher 分派来源；target 已由 inventory
 解析为 `{uid,session_id,cwd,agent}`，create 为 `{source:"opencode",cwd}`。
 
-`call` 支持 `open/create/turn/interrupt/respond/models/discard`；原生不支持
+`call` 支持 `open/create/turn/interrupt/respond/models/discard`，以及下面的原生控制；原生不支持
 可撤销 discard，明确返回错误，`capabilities.discard:false`。原生删除属于
 既有已确认的删除路径，不借 discard 悄悄执行不可撤销删除。
 
@@ -102,7 +102,7 @@ result、error、status 和原生 part。原生 provider error 独立呈现；ab
 保留部分文本与 interrupted 标记。
 
 turn 以原生消息 ID 去重，正在运行的同 request_id 返回原接收回执；不同
-request_id 使用原生持久 inbox 排队，不通过 PTY。请求独立后台任务运行，
+request_id 使用原生持久 inbox 排队，普通输入显式发送 `delivery:"queue"`，不通过 PTY。请求独立后台任务运行，
 操作锁在回执之前取得，后续 interrupt 不会抢在已接受 prompt 之前执行。
 input.model 接受 `provider/model` 或 `{providerID,id,variant?}`；effort 是
 原生 **variant** 字符串，不假装通用推理档位。模型设置仅通过原生 session
@@ -114,6 +114,49 @@ result 是按原生 field key 编码的对象，也接受 `{answer:{...}}`；单
 可直接传该字段值。多个字段、条件字段和 external 类型需要共享 UI 按原生
 fields 渲染或提交完整 JSON。桥接不自动批准任何审批，不自动回答表单。
 models 只返回模型标识、名称、variants、enabled，不回传 provider 凭据设置。
+
+## 用量、队列与原生控制
+
+`raw.usage.tokens` 和 `cost_usd` 直接取原生 `Session.Info.tokens/cost`，包括
+输入、输出、思考、缓存读写细分；观察流重复更新不会反复累加。它们是会话累计
+用量与美元成本，不是账号额度。`quota:null` 表示没有经验证的账号额度接口。
+`models` 只额外暴露无凭据的 `limit` 和 `capabilities`，不回传模型 headers/body。
+
+`usage.context` 是明确标记 `estimated:true` 的最近 provider 请求估计：
+`input + cache.read + cache.write + output` 对原生 `Model.Info.limit.context`
+的比例；思考 token 不重复加到 output。它不把会话累计 tokens 当作上下文。
+已完成 compaction 晚于最近带 usage 的 assistant、切换模型，或缺少原生 limit
+时返回 null，等待下一次 provider usage。此估计不含之后尚未计量的新输入，
+也不冒充原生账号或精确即时占用仪表。
+
+`raw.queue` 投影原生持久 inbox，保留 `id/type/delivery/native` 和 user text；
+这是尚未投递的工作，不能把 HTTP 已准入回执等同于已被模型消费。
+`queue_cancel({id})` 使用 DELETE inbox，原生已不可用项目为 no-op；
+`queue_update({id,delivery})` 使用 PATCH，支持 queue/steer。Steer 在原生
+安全点引导，不保证立即打断当前工具。中断保持 `resume=false`，不主动清队列。
+
+| facade 操作 | 原生语义 |
+| --- | --- |
+| `fork({request_id,before?})` | POST fork；省略 before 复制全部投影历史，before 为原生消息 ID，复制该消息之前的历史；返回独立 SID/UID 和 create 同形的 session |
+| `revert({message_id})` | POST revert/stage，始终 `files:false`，只暂存可撤销的对话边界，不恢复工作区文件 |
+| `unrevert` / `revert_commit` | DELETE revert 撤销暂存 / POST revert/commit 永久提交边界；提交须在 UI 明确区分 |
+| `compact({request_id,delivery?})` | POST compact，默认显式 steer；原生持久压缩请求，不发送“请总结”提示词 |
+| `shell({request_id,command})` | POST session shell；直接执行命令，原生 shell 消息投影保留输出、状态与退出码，不调用模型 |
+| `commands` / `command({request_id,name,text,files?,delivery?})` | 查询原生 command 目录 / 执行原生回调；默认 delivery queue，不把任意斜杠文本假装成已注册命令 |
+| `agents` / `settings({native_agent?,permissions?})` | 查询原生 agent 目录，POST agent 切换后续 provider turn；PATCH session 的原生 Permission.Ruleset，不套用 Codex policy 枚举 |
+
+fork、shell、command、compact 在调用前按 request_id 在当前桥接进程预留回执，
+成功后保存结果；失败或响应丢失时保留未确认状态，同 ID 重试明确报错，不重发
+原生操作。原生 fork/command 没有可预留的幂等请求身份，未确认状态须核对原生
+记录，不能自动推断原生没有执行。进程重启后只有共享 facade 已保存的成功 fork
+回执继续去重；不承诺未确认操作跨节点重启的 exactly-once。原生删除、永久回退
+提交与可撤销 discard 仍是不同操作。
+
+`turn.files` 与 `command.files` 使用 v2 `PromptInput.FileAttachment` 的
+`{uri,name?,description?,mention?}`；共享 HTTP 只从已授权发布的附件生成
+URI，不接受客户端任意路径。OpenAPI 只约束 uri 为字符串；file URI 和 data URL
+的实际读取、图片格式及模型媒体能力由原生服务决定并保留其错误，合成测试不代表
+所有 provider/模型都经过真实图片验收。普通文本路径引用仍可降级工作。
 
 ## 并存限制
 
@@ -128,8 +171,11 @@ runtime、进程启动后才选择的其他 SID、以及非 Linux 的外部 writ
 ## 验证
 
 [opencode_sdk_browser.py](../tests/opencode_sdk_browser.py) 使用临时原生目录和合成协议对端，
-通过 Chromium 实际操作 SDK 页面，覆盖本来源的新建/恢复、发送、流式消息和工具、
-去重、中断、重开及外部 writer 冲突；审批和问题按本来源声明的能力验收。
-共享 Hub、草稿恢复与网页请求卡路径见
+通过 Chromium 实际操作 SDK 页面，覆盖新建/恢复、发送、流式消息和工具、
+去重、中断、重开、外部 writer 冲突、审批/问题，以及用量/上下文、原生 inbox
+撤销/steer、图片上传、agent/permissions、原生命令、shell/compact、分支、
+暂存/撤销/提交对话回退。原生执行后故意断开 ACK，验证 shell/fork 同 request_id
+重试不重复执行。加 `--hub-binary` 使用真实 Hub 验证 fork 命名空间、重新打开
+新身份、SSE/SEND 路由和成功回执重试。共享 Hub、草稿恢复与网页请求卡路径见
 [native_sdk_hub_browser.py](../tests/native_sdk_hub_browser.py)。
 完整验证命令与套件入口见[验证清单](validation.md)，协议实验的实机范围仍以上述证据为准。

@@ -17,7 +17,7 @@ pub(super) fn messages(record: &Value) -> Vec<Value> {
             "",
             "user",
             record["text"].clone(),
-            json!({"files":record["files"]}),
+            json!({"files":record["files"],"delivery_state":"consumed"}),
         ),
         "assistant" => {
             if let Some(parts) = record["content"].as_array() {
@@ -87,6 +87,27 @@ pub(super) fn messages(record: &Value) -> Vec<Value> {
                 );
             }
         }
+        "shell" => emit(
+            "",
+            "tool",
+            record["command"].clone(),
+            json!({
+            "name":"shell","tool_name":"shell","status":record["status"],
+            "input":{"command":record["command"]},"native":record,
+            "result":{"role":"tool_result","text":record["output"]["output"],
+                "content":record["output"]["output"],"error":record["exit"].as_i64().is_some_and(|v| v != 0)},
+            "output":record["output"]["output"]}),
+        ),
+        "compaction" => emit(
+            "",
+            "system",
+            json!(match record["status"].as_str() {
+                Some("running") => "OpenCode 正在压缩上下文",
+                Some("completed") => "OpenCode 上下文压缩完成",
+                _ => "OpenCode 上下文压缩失败",
+            }),
+            json!({"compaction":record,"error":record["error"]}),
+        ),
         "idle" if record["outcome"] == "failed" => emit(
             "",
             "system",
@@ -129,4 +150,74 @@ pub(super) fn requests(permissions: &Value, forms: &Value) -> Vec<Value> {
         }
     }
     output
+}
+
+pub(super) fn queue(inbox: &Value) -> Value {
+    json!(
+        inbox["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|entry| {
+                json!({"id":entry["id"],"native_id":entry["id"],"type":entry["type"],
+            "delivery":entry["delivery"],"text":entry["payload"]["text"],
+            "status":"queued","native":entry})
+            })
+            .collect::<Vec<_>>()
+    )
+}
+
+/// Session totals come from native Session.Info, never by summing repeatedly
+/// observed streaming snapshots. Context is explicitly a last-request estimate.
+pub(super) fn usage(
+    info: &Value,
+    records: &std::collections::HashMap<String, Value>,
+    catalog: &[Value],
+) -> Value {
+    let latest = records
+        .values()
+        .filter(|r| {
+            (r["type"] == "assistant" && r["tokens"].is_object())
+                || (r["type"] == "compaction" && r["status"] == "completed")
+        })
+        .max_by(|a, b| {
+            let time = |r: &Value| r["time"]["created"].as_f64().unwrap_or_default();
+            time(a)
+                .total_cmp(&time(b))
+                .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
+        });
+    let mut context = Value::Null;
+    if let Some(record) = latest.filter(|r| r["type"] == "assistant") {
+        let current_model = &info["model"];
+        let native_model = &record["model"];
+        if current_model["id"] == native_model["id"]
+            && current_model["providerID"] == native_model["providerID"]
+        {
+            if let Some(model) = catalog.iter().find(|m| {
+                m["model"] == native_model["id"] && m["providerID"] == native_model["providerID"]
+            }) {
+                if let Some(max) = model["limit"]["context"].as_f64().filter(|v| *v > 0.0) {
+                    let tokens = &record["tokens"];
+                    let used = tokens["input"].as_f64().unwrap_or_default()
+                        + tokens["cache"]["read"].as_f64().unwrap_or_default()
+                        + tokens["cache"]["write"].as_f64().unwrap_or_default()
+                        + tokens["output"].as_f64().unwrap_or_default();
+                    context = json!({"used_tokens":used,"max_tokens":max,"percent":used/max*100.0,
+                        "estimated":true,"basis":"最近一次模型请求估计（含缓存及输出）；压缩后重新计量",
+                        "message_id":record["id"]});
+                }
+            }
+        }
+    }
+    let mut tokens = info["tokens"].clone();
+    if tokens.is_object() && tokens["input"].is_number() && tokens["output"].is_number() {
+        tokens["total_tokens"] = json!(
+            tokens["input"].as_f64().unwrap_or_default()
+                + tokens["output"].as_f64().unwrap_or_default()
+                + tokens["cache"]["read"].as_f64().unwrap_or_default()
+                + tokens["cache"]["write"].as_f64().unwrap_or_default()
+        );
+    }
+    json!({"tokens":tokens,"cost_usd":info["cost"],"context":context,
+        "basis":"原生会话累计","quota":null})
 }

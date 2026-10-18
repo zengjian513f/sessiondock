@@ -104,11 +104,20 @@ impl Quotas {
         json!({"agents":agents})
     }
     pub async fn collect(&self) -> Value {
+        self.collect_selected(None).await
+    }
+    pub async fn collect_source(&self, source: &str) -> Value {
+        self.collect_selected(Some(source)).await
+    }
+    async fn collect_selected(&self, selected: Option<&str>) -> Value {
         let _guard = self.refresh.lock().await;
         let Some(dir) = &self.directory else {
             return self.read().await;
         };
         let collect = async |source: &str| {
+            if selected.is_some_and(|selected| selected != source) {
+                return None;
+            }
             let profile = self
                 .profiles
                 .iter()

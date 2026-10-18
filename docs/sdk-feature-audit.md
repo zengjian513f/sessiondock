@@ -1,14 +1,15 @@
 # 五种 SDK 功能与漏实现审计
 
-2026-10-19，对照代码快照 `25178c71`，以 SessionDock 已实现的 Codex SDK
+2026-10-19，最初对照代码快照 `25178c71`，现已更新本轮补实现状态，以 SessionDock 已实现的 Codex SDK
 视图为基准，核对 Grok、Agy、OpenCode、Claude 的桥接、HTTP、网页和浏览器用例，
 再用官方文档、官方源码及固定版本接口证据判断可实现范围。
-这是功能审计，不是新增功能交付或一次新的运行验收；后续工作统一登记在
-[TODO](../TODO.md)。
+本轮已交付部分原生接线与网页交互；仍未完成的项目统一登记在
+[TODO](../TODO.md)。表中“部/漏/待/限”保留真实边界，不表示已全量对齐。
 
 结论：四种新 SDK 已有主要会话闭环，但没有完整对齐 Codex。用量、队列管理、
-会话操作和设置中存在可补齐的遗漏；不能把当前 capability=false 或没有按钮
-直接解释成原生协议不支持。Agy 的用量底栏属于明确遗漏。
+会话操作和设置中仍存在遗漏。Agy 用量底栏、effort、命令分流已补齐；
+Grok/Claude 问答、三家用量及部分原生会话操作也已接通。不能把 capability=false
+一概解释成产品永久不支持；Grok 当前安装版 image:false 则是已实际协商的限制。
 
 ## 范围、版本和判定口径
 
@@ -79,7 +80,7 @@ stream-json。官方同名 SDK 包不一定使用同一协议，不能把别的 
 | B02 | 服务端草稿、CAS 保存、刷新恢复、跨页跟随；不覆盖未保存编辑 | 已；主会话 | 已；主会话 | 已；主会话 | 已；主会话 | 已；主会话 |
 | B03 | 文件选择/粘贴/拖放、私有暂存、续传、附件卡片与移除 | 已；主会话 | 已；共用 composer | 已；共用 composer | 已；共用 composer | 已；共用 composer |
 | B04 | 引用文字、附件或引用单独发送；普通文件作为路径引用发布 | 已 | 已 | 已 | 已 | 已 |
-| B05 | 图片作为原生多模态内容传给模型，不只发送路径文本 | 已；`localImage` | 漏；支持 ACP image，桥接只发 text | 限；此 stream-json 输入只支持 text block | 漏；v2 prompt 有原生 files，适配仍需验证模型媒体能力 | 漏；streaming user content 支持 image，桥接只发字符串 |
+| B05 | 图片作为原生多模态内容传给模型，不只发送路径文本 | 已；`localImage` | 部；按 ACP image 能力协商；本机 1.0.62 为 false，明确提示路径引用 | 限；此 stream-json 输入只支持 text block | 已；发布图片转原生 files data URI；真实 provider 媒体能力未实测 | 已；发布图片转 stream-json base64 image |
 | B06 | 发布附件一次；相同提交 ID 重试不重复上传发布/原生输入 | 已 | 已；当前进程回执 | 已；当前进程回执 | 已；桥接回执，原生消息另有 ID | 已；当前进程回执 |
 | B07 | 原生准入后清本次草稿；保留发送期间新增编辑、失败时保留输入 | 已 | 已 | 已 | 已 | 已 |
 | B08 | 确认输入真正被原生用户消息消费，而非仅 RPC/write 接受；压缩中断时可找回未消费输入 | 已；队列状态和原生 echo 对账 | 漏；没有同等消费确认状态机 | 漏；无同等消费确认状态机 | 部；有持久 inbox，网页未区分准入/消费 | 部；有 replay UUID，但清草稿仍以写入准入为准 |
@@ -98,20 +99,19 @@ stream-json。官方同名 SDK 包不一定使用同一协议，不能把别的 
 
 | ID | Codex 已实现的功能与口径 | Codex | Grok | Agy | OpenCode | Claude |
 | --- | --- | --- | --- | --- | --- | --- |
-| C01 | 活跃时继续接收输入；按明确的队列语义等待，不隐式 steer | 已；节点 FIFO | 部；后续 HTTP 等待 turn gate，没有已准入队列快照 | 已；桥接 FIFO | 部；原生 inbox，但未显式传 `delivery:queue`，默认语义还需核实 | 部；原生 streaming 队列，可能合并/在中途消费，不等于独立 FIFO |
-| C02 | 网页显示待发送/发送中/失败项；不同页面同步同一队列 | 已 | 漏 | 漏 | 漏；inbox 已查询但未展示成队列控件 | 漏 |
-| C03 | 未消费项显式撤销，不误取消当前任务 | 已 | 漏；先建本地队列再撤销 | 漏；已有本地 FIFO 可扩展 | 漏；v2 `DELETE inbox/{id}` | 漏；本地队列可做，原生取消还要处理合并边界 |
+| C01 | 活跃时继续接收输入；按明确的队列语义等待，不隐式 steer | 已；节点 FIFO | 部；后续 HTTP 等待 turn gate，没有已准入队列快照 | 已；桥接 FIFO | 已；prompt 显式 delivery:queue | 部；原生 streaming 队列，可能合并/在中途消费，不等于独立 FIFO |
+| C02 | 网页显示待发送/发送中/失败项；不同页面同步同一队列 | 已 | 漏 | 漏 | 部；inbox 队列展示/投递状态；失败队列待补 | 漏 |
+| C03 | 未消费项显式撤销，不误取消当前任务 | 已 | 漏；先建本地队列再撤销 | 漏；已有本地 FIFO 可扩展 | 已；仅删除原生未投递 inbox 项 | 漏；本地队列可做，原生取消还要处理合并边界 |
 | C04 | 失败项显式重试；失败阻塞后续项；不确定投递不自动重放 | 已 | 部；不重放，但没有失败项管理/阻塞界面 | 部；不重放，无同等失败队列 | 部；有原生 inbox，无同等失败队列 | 部；不重放，无同等失败队列 |
-| C05 | 用户显式“立即引导”当前 turn，避免默认插入当前任务 | 已；`turn/steer` | 漏；`x.ai/interject` 候选扩展已存在 | 待；未发现同义 headless 控制接口 | 漏；v2 inbox delivery 可改 `steer` | 待；原生队列可能中途合并，尚无等价显式 steer 控件/确认语义 |
+| C05 | 用户显式“立即引导”当前 turn，避免默认插入当前任务 | 已；`turn/steer` | 漏；`x.ai/interject` 候选扩展已存在 | 待；未发现同义 headless 控制接口 | 已；显式修改原生 inbox delivery:steer | 待；原生队列可能中途合并，尚无等价显式 steer 控件/确认语义 |
 | C06 | 队列、提交 ID、失败状态持久化，节点重启不静默丢失 | 已；有 state dir 时 | 漏 | 漏 | 部；已进入原生 inbox 的项目持久，桥接请求 ID 映射/在途任务不持久 | 漏 |
 | C07 | 重启后不确定在途输入标记待人工核实，不自动再发 | 已 | 漏；目前没有可恢复的在途账本 | 漏 | 部；有原生持久记录，缺桥接恢复和可见状态 | 漏 |
 | C08 | 停止当前任务；不把页面关闭当停止，不杀外部会话 | 已；原生 interrupt | 已；`session/cancel` | 已；仅自己 child 的 SIGINT | 已；原生 interrupt | 已；原生 interrupt，原生回执保留 |
 
 代码依据：[Codex 队列](../crates/sessiondock/src/codex_sdk/queue.rs)、
 [Codex 队列 UI](../web/codex-sdk.js)、[NativeSdkView.send](../web/native-sdk.js)。
-四种新 SDK 虽然模板含 `.sdk-queue`，却没有 `paintQueue` 或 queue 操作路由，不能
-据空容器认定已经实现。OpenCode prompt 当前只发 `{id,text}`，本次不能确认它保证
-默认排队；需要按 v2 原生 delivery 定义显式实现和验收。
+OpenCode 已接原生 inbox、显式 queue/steer、撤销；其他三种尚无等价的
+可持久恢复队列管理。原生准入、输入消费和节点重启恢复仍是不同保证。
 
 ### D．历史、流式消息和状态
 
@@ -124,18 +124,17 @@ stream-json。官方同名 SDK 包不一定使用同一协议，不能把别的 
 | D05 | 独立 reasoning/thinking 气泡 | 已；summary delta | 已；thought chunk | 待；当前协议/实验没有独立 thinking 正文 | 已；reasoning part | 已；thinking block/delta |
 | D06 | 工具参数、输出、错误、运行状态；命令/文件 diff/MCP 等卡片 | 已；按原生类型细分 | 部；通用工具卡接通，未覆盖全部扩展类型 | 部；通用工具卡接通 | 部；通用 tool part 接通 | 部；tool_use/result 接通，专用状态更少 |
 | D07 | 子代理工具结果/状态、web search、image view 等原生项目投影 | 已；有对应 mapper | 部；通用 tool 原文，缺等价专门投影 | 部；subagent_info 未做等价状态界面 | 部；通用 tool，缺等价专门投影 | 部；保留 parent_tool_use_id，缺完整任务状态投影 |
-| D08 | 长正文/思考/工具展开与折叠，流更新保留用户展开选择 | 已 | 部；文本可复用，工具重绘未保留展开/换行状态 | 部；同左 | 部；同左 | 部；同左 |
+| D08 | 长正文/思考/工具展开与折叠，流更新保留用户展开选择 | 已 | 已；共用工具展开/参数/换行状态保留 | 已；同左 | 已；同左 | 已；同左 |
 | D09 | SSE 首快照与订阅原子取得、心跳、lag/reset 后重连 | 已 | 已 | 已 | 已；原生观察为轮询，非原生 SSE 直转 | 已 |
 | D10 | 就绪/处理中/待批准/待回答/连接失败与完整错误可见 | 已 | 已；状态种类较少 | 已；状态种类较少 | 已；状态种类较少 | 已；状态种类较少 |
-| D11 | 恢复中可重试错误、willRetry 提示、用量已满等专门状态 | 已 | 漏；扩展 retry/status 未接 | 待；尚无对等结构化事件证据 | 漏；assistant.retry/原生错误可投影 | 漏；api_retry/rate_limit_event 未投影 |
-| D12 | 压缩专用进度卡，快照恢复；不编造百分比 | 已 | 漏；有原生压缩与通知，未接 | 待；须先确认 headless 压缩接口 | 漏；v2 compaction 消息未投影 | 漏；compacting/compact_boundary 未完整投影 |
+| D11 | 恢复中可重试错误、willRetry 提示、用量已满等专门状态 | 已 | 漏；扩展 retry/status 未接 | 待；尚无对等结构化事件证据 | 漏；assistant.retry/原生错误可投影 | 部；api_retry、rate_limit_event 与错误已投影 |
+| D12 | 压缩专用进度卡，快照恢复；不编造百分比 | 已 | 部；原生压缩通知/状态与计数失效 | 待；须先确认 headless 压缩接口 | 部；原生 compaction 状态消息 | 部；compacting/boundary 已接，状态栏展示 |
 
 代码依据：[Codex itemMessage/applyEvent](../web/codex-sdk.js)、
 [共享 nativeSdkMessage/paintHistory](../web/native-sdk.js)、各来源投影模块。
 “调用了同一 renderer”不能替代针对原生输入形状、折叠选择和历史竞态的验证。
 具体地，Codex.paintItem 保存并恢复工具输出展开、参数展开和换行开关；
-NativeSdkView.applySnapshot 对没有 `_updateMessage` 的工具节点直接替换，尚未
-复用这段状态保留逻辑。D08 的“部”有代码差异依据，不只是缺少测试。
+NativeSdkView 现已复用同样的三类控件状态保留，避免快照刷新重置工具卡。
 
 ### E．审批、问题和表单
 
@@ -143,15 +142,15 @@ NativeSdkView.applySnapshot 对没有 `_updateMessage` 的工具节点直接替�
 | --- | --- | --- | --- | --- | --- | --- |
 | E01 | 工具审批：显示原生操作、参数和允许/拒绝选项 | 已；命令、文件、权限请求 | 已；ACP permission options | 限；headless 不支持 control_request/response | 已；once/always/reject | 已；本次 allow/deny |
 | E02 | 会话内批准或记住规则等原生选项，用户明确选择才应用 | 已；按 availableDecisions | 已；仅原生实际给的 options | 限；无网页回传 | 已；原生 always | 漏；当前只 allow/deny，未用 permission suggestions/updatedPermissions |
-| E03 | 阻塞问题卡：多题、单选/多选/自由输入、原生键值回答 | 已 | 漏；官方问答反向请求存在，当前一律 unsupported | 限；当前 headless 无可回答控制协议 | 部；基本 fields 可填，复杂字段见 E06 | 已；AskUserQuestion，按问题全文编码 |
+| E03 | 阻塞问题卡：多题、单选/多选/自由输入、原生键值回答 | 已 | 已；原生问题键、多选数组及取消/失效 | 限；当前 headless 无可回答控制协议 | 部；基本 fields 可填，复杂字段见 E06 | 已；AskUserQuestion，按问题全文编码 |
 | E04 | 异步问题卡：输出继续、显式答复、保存选项、刷新恢复、显式 steer | 已；Codex async questions | 待；问答扩展与此异步语义不同 | 限；当前 headless 无该接口 | 待；表单不等价于 Codex async question | 待；user_dialog/AskUserQuestion 与此语义不同 |
-| E05 | MCP elicitation：表单接受/拒绝/取消，非法 JSON 保留并提示 | 已 | 待；须确认实际 Grok 客户端扩展 | 限；当前 headless 无回传协议 | 待；已有 form，MCP 映射/完整 schema 需验证 | 漏；官方 elicitation 回调与控制类型存在，当前未宣告 |
-| E06 | 复杂表单 schema 的完整处理；不是把所有字段都当文本 | 部；MCP 用 JSON 编辑，不是完整 schema 表单生成器 | 待 | 限 | 部；条件/external 等未完整处理，数值/布尔输入也需专测 | 部；AskUserQuestion 已接，request_user_dialog 未接 |
+| E05 | MCP elicitation：表单接受/拒绝/取消，非法 JSON 保留并提示 | 已 | 待；须确认实际 Grok 客户端扩展 | 限；当前 headless 无回传协议 | 待；已有 form，MCP 映射/完整 schema 需验证 | 已；form/URL 接受、拒绝、取消，原生 schema 字段 |
+| E06 | 复杂表单 schema 的完整处理；不是把所有字段都当文本 | 部；MCP 用 JSON 编辑，不是完整 schema 表单生成器 | 待 | 限 | 部；条件/external 等未完整处理，数值/布尔输入也需专测 | 部；MCP 基础字段及已核实 refusal dialog；不是任意 schema/dialog 渲染器 |
 | E07 | 原生取消/别处已回答后撤卡；旧 key 不可误答另一个请求 | 已 | 已；generation key/断线清理 | — | 已；原生列表观察撤卡 | 已；control_cancel_request |
 | E08 | 刷新/重开恢复仍未回答的原生请求，不重复发起审批 | 已 | 已；同一桥接运行时 | —；没有可回答请求 | 已；从原生服务重读 | 已；同一桥接运行时 |
 
-Grok 当前 `Live.receive` 只接受 `session/request_permission`，其他反向 RPC
-都回 `-32601`。这证明的是桥接未实现，不是 Grok 无问题协议。
+Grok 已接原生问题与退出计划批准；真实安装版核验确认扩展 wire 名需 `_x.ai/`
+前缀，逻辑方法名则为 `x.ai/`，夹具也按实际 wire 编码。
 [官方问答类型](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-tools/src/implementations/grok_build/ask_user_question/types.rs)
 定义了选项、答案和 mode，
 [计划批准调用](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs)
@@ -161,7 +160,7 @@ Agy 的限制则是官方 headless 文档明确规定的，不应用自动放宽
 Claude 的完整输入能力还包含 user dialog 与 elicitation，不能把 AskUserQuestion
 接通等同于全部接通。[Claude 用户输入文档](https://code.claude.com/docs/en/agent-sdk/user-input)
 和 [权限文档](https://code.claude.com/docs/en/agent-sdk/permissions)给出了相关机制。
-Grok 的专门计划退出批准也未接；Codex 目前是模式切换与通用请求卡，不宣称
+Grok 的专门计划退出批准已接；Codex 目前是模式切换与通用请求卡，不宣称
 实现了与 Grok `x.ai/exit_plan_mode` 一一对应的专门协议。
 
 ### F．模型、强度、模式、权限和命令
@@ -169,22 +168,21 @@ Grok 的专门计划退出批准也未接；Codex 目前是模式切换与通用
 | ID | Codex 已实现的功能与口径 | Codex | Grok | Agy | OpenCode | Claude |
 | --- | --- | --- | --- | --- | --- | --- |
 | F01 | 原生模型目录；能选模型；目录失败仍可沿用当前会话模型 | 已 | 已 | 已 | 已 | 已 |
-| F02 | 独立 effort 选择，并映射本来源真正的原生字段 | 已 | 已；reasoning_effort | 部；后端接受，目录 `efforts:[]` 导致网页隐藏选择器 | 已；本来源是 model variant | 已；effortLevel |
+| F02 | 独立 effort 选择，并映射本来源真正的原生字段 | 已 | 已；reasoning_effort | 已；独立 low/medium/high/xhigh/max，逐轮 --effort | 已；本来源是 model variant | 已；effortLevel |
 | F03 | 显示原生有效模型/effort；保留目录外当前值和未发送用户选择 | 已；settings 通知 | 部；仅 configOptions 的 model/effort，其他模型事件未接 | 部；init 有 model，但没有完整有效 effort 回读 | 部；跟随 assistant model，未完整跟随 model_selected 等状态 | 部；model 从 init/assistant 更新，未完整跟随 settings/effort 通知 |
-| F04 | 执行/计划模式切换及原生生效反馈 | 已 | 漏；`session/set_mode` | 漏；可在逐轮 argv 用 `--mode`，须显示实际模式 | 漏；可用原生 agent 目录与 switchAgent，不能硬造同名通用 mode | 漏；`setPermissionMode('plan'/'default')` |
-| F05 | 审批策略切换，显示原生确认值，失败恢复实际状态 | 已 | 漏；本来源 ask/auto/yolo，不能照抄 Codex 枚举 | 部；沿用 profile，网页无显式策略入口；可用 CLI mode/参数 | 漏；session.update.permissions，不能照抄 Codex 枚举 | 漏；setPermissionMode/会话 settings |
+| F04 | 执行/计划模式切换及原生生效反馈 | 已 | 已；session/set_mode，原生 modes 与 currentModeId | 部；网页选择后逐轮 --mode；标明下一轮生效，非实时回读 | 已；原生 agent 目录和切换 | 已；原生 permission_mode 的 plan/default |
+| F05 | 审批策略切换，显示原生确认值，失败恢复实际状态 | 已 | 部；已接原生 modes；额外 auto/yolo 控制仍待补 | 部；显式 mode 逐轮传入，headless 仍无法回答审批 | 已；原生 permissions JSON 显式保存 | 已；set_permission_mode，失败保留原值 |
 | F06 | 沙箱策略选择 | 已；Codex 原生 policy | 待；CLI 有 sandbox，ACP 中途等价变更尚待核实 | 部；已有原生 `--sandbox`，网页/逐轮选项未接；无 Codex 三档等价承诺 | 待；当前 v2 无 Codex 三档对等证据 | 漏；官方 SDK sandbox 设置可用，在线变更/重启边界需适配 |
-| F07 | 服务档位 Normal/Fast 等，使用原生 ID 并立即更新 | 已 | 待；未证明同义档位接口 | 待；boost 不等于 Codex serviceTier | 待；模型 variant 不等于通用 serviceTier | 漏；本来源 fastMode 有设置，需能力/账号限制处理，不冒充相同档位 |
-| F08 | 明确的 slash 映射：model/effort/status/stop/new/help | 已 | 部；直接发给原生 prompt，不是网页控件映射 | 漏；直接进入 stream，`/model`、`/usage` 会破坏 JSON 流 | 部；当前只发 prompt.text，未接原生 command API | 部；原生可能处理部分 slash，但无网页明确映射/目录 |
-| F09 | fork/revert/compact/review/plan/default/permissions/approval/sandbox 的网页命令映射 | 已 | 漏/待；必须逐命令用 ACP 扩展，不能用普通 text 冒充 | 漏/待；须独立 print 命令验证，不能塞 stream | 漏；已有多项 v2 原生接口 | 漏/待；已有多项原生能力，不能全照抄 Codex 命令名 |
-| F10 | `!command`、`/shell` 直接执行并显示原生输出；输入使用工具色 | 已 | 漏；官方 TextContent `_meta.bash_command` 入口 | 待；未找到同义 headless 原生入口 | 漏；v2 session.shell | 待；需确认 headless 的本地命令语义，不能用“让模型执行”替代 |
-| F11 | 未知 slash/命令保留草稿并解释，不意外当推理提示词 | 已 | 漏；当前直接转发全部正文 | 漏；同左，且有原生流破坏风险 | 漏；当前未区分 prompt/command | 漏；当前未区分网页支持/不支持的命令 |
+| F07 | 服务档位 Normal/Fast 等，使用原生 ID 并立即更新 | 已 | 待；未证明同义档位接口 | 待；boost 不等于 Codex serviceTier | 待；模型 variant 不等于通用 serviceTier | 部；fastMode 设置和原生状态，账号资格/冷却仍由原生控制 |
+| F08 | 明确的 slash 映射：model/effort/status/stop/new/help | 已 | 部；model/effort/status/usage/stop/help 明确分流；new 未接 | 部；同左；usage 独立 print 查询 | 部；网页映射及原生命令目录；new 未接 | 部；网页明确映射；new 未接 |
+| F09 | fork/revert/compact/review/plan/default/permissions/approval/sandbox 的网页命令映射 | 已 | 部；fork/compact/revert 原生动作已接，其他按能力开放 | 部；用量/设置已接；高级原生命令待核实 | 部；fork/revert/compact/shell/command 已接，review 待核实 | 部；compact/settings 已接；fork/revert/review 未接 |
+| F10 | `!command`、`/shell` 直接执行并显示原生输出；输入使用工具色 | 已 | 已；原生 TextContent._meta.bash_command | 待；未找到同义 headless 原生入口 | 已；原生 session.shell，输出工具卡 | 待；需确认 headless 的本地命令语义，不能用“让模型执行”替代 |
+| F11 | 未知 slash/命令保留草稿并解释，不意外当推理提示词 | 已 | 已；共用网页命令分流并保留未识别输入 | 已；同左，不进入 NDJSON | 已；同左，原生命令另有显式入口 | 已；同左 |
 | F12 | 新建前无需现有 UID 即可查询 SDK 原生模型目录 | 已；models 支持 node | 部；新建沿用 term/models，未开放共享无 UID native models 路由 | 部；同左 | 部；同左 | 部；同左 |
 
 代码依据：[Codex controls](../web/codex-sdk-controls.js)、
 [Codex command](../web/codex-sdk.js)、[四来源 pickers/send](../web/native-sdk.js)。
-Agy 模型目录解析器明确生成 `efforts:[]`；`NativeSdkView.paintPickers` 仅在 efforts
-非空时显示强度选择。这不是 CLI 不接受 `--effort`。
+Agy 目录现提供 CLI 接受的 effort 档位，网页实际选择后按每轮 argv 传入。
 新建弹窗已有 `agyModelCatalog` 合并具体模型/强度组合，但 SDK 内的选择器没有
 复用它；选到带强度后缀的完整 model ID 不等于已有独立 effort 控件。
 新建目录的协议差异可见 [fetchModelCatalog](../web/term.js)：目前只有 Codex
@@ -196,18 +194,18 @@ Agy 官方还明确要求 `/model`、`/usage` 独立 print 执行，不能送进
 
 | ID | Codex 已实现的功能与口径 | Codex | Grok | Agy | OpenCode | Claude |
 | --- | --- | --- | --- | --- | --- | --- |
-| G01 | 账号额度窗口：已用百分比、原生窗口名、重置时间 | 已；rateLimits | 漏；billing 有原生 credits 使用率/周期，显示本来源口径 | 漏；现成 quotas collector 未接 SDK 底栏 | 待；多 provider，没有统一账号额度 API 证据 | 漏；已有 statusLine 快照，SDK 另有 rate_limit_event/get_usage 候选 |
-| G02 | 当前上下文占用百分比、tokens/窗口；压缩后不沿用旧计数 | 已；last usage / context window | 漏；原生通知/模型信息有上下文数据，需选对分母 | 待；TUI statusLine 有字段，但 headless 是否触发未验证 | 漏；assistant.tokens + Model.Info.limit，需核对缓存及压缩口径 | 漏；原生 get_context_usage 返回 total/max/percentage |
-| G03 | 重开立即显示已有用量，不等下一条模型输出 | 已；原生尾部恢复 context/recorded limits | 漏；可查询原生 usage/上下文并保存快照 | 部；额度页有快照，SDK 不展示；上下文恢复待核 | 漏；可读原生 messages/模型限制 | 漏；可主动查询上下文/额度或复用已有额度快照 |
-| G04 | 独立读取失败保留旧值及采集时间；retry，不因失败变成 0 | 已 | 漏 | 部；collector 已保留旧值，SDK 未接 | 漏；可先实现已有 token 数据的陈旧标记 | 部；已有 quota 快照，SDK 未接 |
-| G05 | 余额/credits：按本来源单位显示，缺字段不猜 | 已；balance/unlimited | 漏；billing.prepaidBalance 等原生字段 | 待；当前 collector 不采 credits，需核对独立 credits JSON | 待；没有跨 provider 统一余额语义 | 待；API cost/overage 不等于余额，未确认等价 credits |
+| G01 | 账号额度窗口：已用百分比、原生窗口名、重置时间 | 已；rateLimits | 已；原生 billing 额度与周期 | 已；既有 source-specific quota 查询、时间与重置 | 待；多 provider，没有统一账号额度 API 证据 | 部；原生 rate_limits 详情及既有 quota 快照，非全部限额条归一 |
+| G02 | 当前上下文占用百分比、tokens/窗口；压缩后不沿用旧计数 | 已；last usage / context window | 已；原生 session/info 上下文；无数据不猜 | 待；TUI statusLine 有字段，但 headless 是否触发未验证 | 已；最近原生请求估计，压缩后失效 | 已；原生 summary total/max/percentage |
+| G03 | 重开立即显示已有用量，不等下一条模型输出 | 已；原生尾部恢复 context/recorded limits | 部；重开主动读取；ledger 是当前 ACP 进程累计 | 部；账号额度快照可恢复；token live 不跨服务重启 | 已；原生 session/message/模型目录读取 | 已；主动读取原生 context/usage，失败保留已知值 |
+| G04 | 独立读取失败保留旧值及采集时间；retry，不因失败变成 0 | 已 | 部；失败可见与重试；没有完整陈旧时间标记 | 已；quota 保留旧值/采集时间，累计与步骤分开 | 部；读取失败保留快照，完整陈旧标记待补 | 部；错误/实验接口降级可见；没有完整陈旧时间标记 |
+| G05 | 余额/credits：按本来源单位显示，缺字段不猜 | 已；balance/unlimited | 已；prepaidBalance 按美分换算，字段缺失隐藏 | 待；当前 collector 不采 credits，需核对独立 credits JSON | 待；没有跨 provider 统一余额语义 | 待；API cost/overage 不等于余额，未确认等价 credits |
 | G06 | 重置卡数量、到期、选择与确认兑换、幂等结果、刷新额度 | 已 | —；无同义重置卡证据 | —；无同义重置卡证据 | —；无同义重置卡证据 | —；无同义重置卡证据 |
-| G07 | 通知/每轮完成刷新额度；已知字段合并、不被空值擦除 | 已 | 漏 | 漏；可复用 collector，刷新频率按来源开销设计 | 待；账号额度未确认；token 刷新可补 | 漏；rate_limit_event/每轮查询未接 |
-| G08 | 底栏 gauge、阈值色、tooltip；无数据时隐藏 | 已 | 漏 | 漏 | 漏；至少上下文可做 | 漏 |
-| G09 | 窄屏 Usage popover/更多菜单，按实测宽度让位状态、模型/effort | 已 | 漏 | 漏 | 漏 | 漏 |
+| G07 | 通知/每轮完成刷新额度；已知字段合并、不被空值擦除 | 已 | 部；回合完成主动读 usage/billing；采集失败保留 | 部；回合结果更新 Token；额度打开/显式刷新 | 待；账号额度未确认；token 刷新可补 | 已；rate_limit_event、每轮原生查询 |
+| G08 | 底栏 gauge、阈值色、tooltip；无数据时隐藏 | 已 | 已；使用原生单位与上下文 | 已；累计 Token/额度；不伪造上下文 | 已；Token/上下文；不伪造账号额度 | 已；Token/上下文及限额详情 |
+| G09 | 窄屏 Usage popover/更多菜单，按实测宽度让位状态、模型/effort | 已 | 已；共用用量/更多菜单，320/390/1280 验收 | 已；同左 | 已；同左 | 已；1280/390 验收 |
 
-四种新视图的模板没有 `.sdk-gauges`，没有 loadLimits/paintGauges；各桥接也没有
-统一 usage 状态。即便通用工具/消息保留了某条 native 记录，也不等于底栏已接。
+四种新视图现共用 [Native SDK controls](../web/native-sdk-controls.js) 的用量底栏、
+明细与窄屏菜单；各桥接仍保留本来源计量口径。缺数据不显示 0，不把累计值当上下文。
 对照 [Codex 用量读取](../crates/sessiondock/src/codex_sdk/usage.rs)、
 [现有账号额度采集](../crates/sessiondock/src/quotas.rs)和[额度合同](quotas.md)。
 
@@ -221,14 +219,14 @@ Agy 的 `step_update.usage` 是步骤统计，`result.usage` 是累计统计；�
 
 | ID | Codex 已实现的功能与口径 | Codex | Grok | Agy | OpenCode | Claude |
 | --- | --- | --- | --- | --- | --- | --- |
-| H01 | 整会话原生 fork，保留来源，返回新 UID 并导航 | 已 | 漏；x.ai/session/fork | 待；TUI 有 /fork，headless 返回新身份/落盘语义未确认 | 漏；v2 session.fork | 漏；官方 forkSession / resume+forkSession |
-| H02 | 从指定用户消息之前分支；恢复该输入，不自动发送 | 已 | 漏；fork+子会话 conversation-only rewind 可组合，需验证身份 | 待；未确认 headless 按消息分叉接口 | 漏；fork.before 接原生 message ID | 漏；官方 upToMessageId/resumeSessionAt，须正确选保留边界 |
-| H03 | 原生回合分页选择，回退指定消息及之后对话，确认后执行 | 已 | 漏；rewind/points 与 execute | 待；未确认同义原生机器接口 | 漏；revert stage/commit | 待；resumeSessionAt 是截断恢复，不是已证明的同 SID 原地 revert |
-| H04 | 回退只改对话，不回滚工作区文件；其他页面同步失效历史 | 已 | 漏；必须显式选 conversation 模式，不能默认 All | 待 | 漏；必须明确 `files:false` 并验证 commit/通知 | 待；rewindFiles 是文件回滚，不能用它代替对话回退 |
-| H05 | 压缩上下文：原生执行、进度、错误和历史/计数更新 | 已 | 漏；x.ai/compact_conversation | 待；未确认 print 模式命令能力及回执 | 漏；v2 session.compact | 漏；官方支持 /compact，需接命令输出/compact_boundary |
+| H01 | 整会话原生 fork，保留来源，返回新 UID 并导航 | 已 | 已；原生 fork，持久网页回执和新 UID | 待；TUI 有 /fork，headless 返回新身份/落盘语义未确认 | 已；原生 fork，持久网页回执和新 UID | 漏；官方 forkSession / resume+forkSession |
+| H02 | 从指定用户消息之前分支；恢复该输入，不自动发送 | 已 | 部；原生 targetPromptIndex 已接；输入恢复/完整消息入口待补 | 待；未确认 headless 按消息分叉接口 | 部；原生 before ID 与 live 消息入口；历史消息菜单/原输入恢复待补 | 漏；官方 upToMessageId/resumeSessionAt，须正确选保留边界 |
+| H03 | 原生回合分页选择，回退指定消息及之后对话，确认后执行 | 已 | 已；原生 rewind_points 选择与 conversation_only | 待；未确认同义原生机器接口 | 部；可见消息选择和 stage/commit；完整分页选择待补 | 待；resumeSessionAt 是截断恢复，不是已证明的同 SID 原地 revert |
+| H04 | 回退只改对话，不回滚工作区文件；其他页面同步失效历史 | 已 | 部；明确 conversation_only；跨页面历史失效需专项验收 | 待 | 部；明确 files:false，stage/撤销/commit；跨页需专项验收 | 待；rewindFiles 是文件回滚，不能用它代替对话回退 |
+| H05 | 压缩上下文：原生执行、进度、错误和历史/计数更新 | 已 | 已；原生 compact，计数失效/刷新 | 待；未确认 print 模式命令能力及回执 | 已；原生 compact 消息/状态 | 已；原生 /compact、status、boundary、错误 |
 | H06 | 原生代码审查：未提交/base branch/commit/custom，inline 显示 | 已；review/start | 待；源码 x.ai/review/* 是记录评论，不是启动 reviewer | 待；未确认同义审查接口 | 待；自定义 command/agent 可以审查，但不是已证明的同义原生 API | 待；CLI ultrareview/技能不是本会话 inline review/start 的同义物 |
-| H07 | 用户消息 ⋯ 回退/分支；保留已有草稿并追加原输入 | 已 | 漏；底层 H02/H03 接通后可复用 | 待；先确认底层能力 | 漏；底层接口存在 | 部/待；分支可补，原地回退待核 |
-| H08 | 会话操作图标、对话框、取消不改历史、响应错误可见 | 已 | 漏/待；按实际支持操作显示 | 漏/待 | 漏 | 漏/待 |
+| H07 | 用户消息 ⋯ 回退/分支；保留已有草稿并追加原输入 | 已 | 部；有原生分支/回退；完整消息操作/草稿恢复待补 | 待；先确认底层能力 | 部；live 消息分支入口；历史菜单/回退入口与输入恢复待补 | 部/待；分支可补，原地回退待核 |
+| H08 | 会话操作图标、对话框、取消不改历史、响应错误可见 | 已 | 已；按能力显示菜单/对话框/错误 | 部；设置与用量；高级动作待核实 | 已；菜单/对话框/显式永久回退确认 | 部；设置/压缩入口；fork/revert 未接 |
 
 代码依据：[Codex actions](../web/codex-sdk-actions.js)、
 [原生动作](../crates/sessiondock/src/codex_sdk/actions.rs)、
@@ -261,7 +259,7 @@ Grok 回退默认 `RewindMode::All`，OpenCode revert 可涉及文件；实现�
 | 中途引导 | `x.ai/interject`，有 text/content 与 interjectionId | 原生是安全点插入，仍需实现可见回执和去重 |
 | 分支/回退/压缩 | `x.ai/session/fork`、`x.ai/rewind/points`、`x.ai/rewind/execute`、`x.ai/compact_conversation` | 回退显式 conversation-only；安装版扩展需协商 |
 | 图片 | ACP image content，包括原生 interject 的 structured content | 只在原生/模型声明支持时发送 |
-| 问题卡和计划批准 | 官方 AskUserQuestionExtRequest/Response、`x.ai/exit_plan_mode` | 当前桥接拒绝这些反向 RPC，必须完整处理取消/失效请求 |
+| 问题卡和计划批准 | 官方 AskUserQuestionExtRequest/Response、`x.ai/exit_plan_mode` | 现已接反向 RPC 与取消/失效请求；只宣告已验证的类型 |
 | 直接 shell | TextContent `_meta.bash_command` | 不用普通提示词让模型代跑；显示其实际权限口径 |
 | 队列管理、持久化、闲置回收、完整 toolbar | SessionDock 层，复用 Codex 模式 | 不依赖 Grok 新增 API；不能把原生在途调用不确定性隐藏掉 |
 
@@ -282,7 +280,7 @@ ACP 通用 [session modes](https://agentclientprotocol.com/protocol/v1/session-m
 | --- | --- | --- |
 | Token 用量显示 | 提取 step_update.usage/result.usage，快照和底栏展示 | 步骤值与累计值分别标注，不相加 |
 | 账号额度、重置时间 | 复用现有 `Quotas` 的独立 `-p /usage --output-format json` 查询和快照 | 不开模型 turn；沿用 SUCCESS、num_turns=0、command.name 校验 |
-| 独立 effort 选择 | CLI `--effort` 和本桥接既有参数 | 需要给网页可用档位/当前值；不再返回空列表后宣称已支持 UI |
+| 独立 effort 选择 | CLI `--effort` 和本桥接既有参数 | 现已给网页可用档位；原生有效 effort 回读仍有边界 |
 | 执行/计划及权限模式 | 逐轮进程可显式传 `--mode accept-edits/auto/plan` | 每轮生效，不伪造实时设置 RPC；权限放宽只由明确选择发起 |
 | 持久队列、撤销/重试、输入消费状态、统一 toolbar | 既有 FIFO 与共用服务可扩展 | 仍不等同原生中途 steer |
 | 安全的网页 slash 映射 | 把网页命令与 stream user 消息分开，查询走独立 print | 不把 `/usage` 塞进 stream 破坏 NDJSON |
@@ -311,7 +309,7 @@ SDK 是候选路线，但它是否能完整兼容现有 CLI DB、身份和多模
 | 压缩 | `POST .../compact`，`id?`、`delivery?` | 默认原生可在安全点引导；与默认普通输入排队分开 |
 | 队列展示、取消、立即引导 | `GET .../inbox`、`DELETE .../inbox/{id}`、`PATCH .../inbox/{id}` | delivery 枚举为 queue/steer；应明确传入选择 |
 | 模式/agent、权限设置 | `POST .../agent`、`PATCH ...` 的 permissions | 用原生 agent ID/permissions，不套 Codex policy 枚举 |
-| 图片/文件结构化输入 | prompt.files：uri/name/description/mention | 当前只发 `{id,text}`；需补模型媒体能力和 URI 语义验证 |
+| 图片/文件结构化输入 | prompt.files：uri/name/description/mention | 现已接 data URI；真实 provider 媒体能力仍需按模型核验 |
 | 直接 shell、原生命令 | `POST .../shell`、`POST .../command`、`GET /api/command` | shell 输出用原生消息/事件，不经过模型 |
 | 完整表单、错误重试/压缩状态、toolbar | 既有 form/assistant.retry/compaction 与共用 UI | 不能把条件字段/external 简化成所有字段文本框 |
 
@@ -332,8 +330,8 @@ SDK 是候选路线，但它是否能完整兼容现有 CLI DB、身份和多模
 | Fast 设置 | applyFlagSettings 的 fastMode/相关原生状态 | 模型、账号和服务端资格限制，保留失败/冷却真实状态 |
 | 分支、按历史点分支 | forkSession、upToMessageId、resume+forkSession/resumeSessionAt | 应调用官方原生实现；本仓库不能自行改写 transcript |
 | 压缩及进度 | 原生 /compact，status.compacting、compact_boundary | 须接命令完成和计数失效；不是普通提示词“请总结” |
-| 图片 | streaming user content 的 image/base64 block | 当前桥接仅字符串正文，未接 |
-| MCP elicitation、user dialog、更完整权限建议 | 官方回调、控制类型、updatedPermissions | 当前 capabilities 显式为 false/未声明；不能自动批准或改永久规则 |
+| 图片 | streaming user content 的 image/base64 block | 现已接发布图片的原生 base64 block |
+| MCP elicitation、user dialog、更完整权限建议 | 官方回调、控制类型、updatedPermissions | 现已接 elicitation 和核实的 refusal dialog；完整权限建议仍待补，不能自动批准 |
 | 队列管理和消费确认 | SDKUserMessage.uuid、用户回显、原生 consumed UUID/取消控制；SessionDock 可持久排队 | 原生队列可合并，撤销和 Stop 的 still_queued 必须对账，不能宣称普通 FIFO |
 | toolbar、闲置回收、错误/限流状态 | 共用 UI 和原生 api_retry/rate_limit_event | 属接线与状态投影工作 |
 
@@ -360,7 +358,7 @@ Codex 是本次基准，不是“全部官方 API 都已实现”。以下独立
 | --- | --- | --- |
 | 未落盘新建回执跨节点服务重启保留 | 漏；目前仅内存 | 四来源共享创建回执已落盘，但 live/运行队列恢复仍不同 |
 | 子代理独立服务端草稿/附件身份 | 漏；目前文本-only，刻意不借父草稿 | Grok/Agy/OpenCode 同样未提供完整独立草稿附件；Claude 不独立恢复子代理 |
-| 输入/输出/缓存/思考 tokens 的详细面板和会话成本 | 部；usage 数据可得，底栏只有 context tooltip 等，没有完整细分面板 | Grok/Agy/OpenCode/Claude 均有不同程度原生 token 数据；Grok/OpenCode/Claude 有成本数据；全部未接完整 SDK 面板 |
+| 输入/输出/缓存/思考 tokens 的详细面板和会话成本 | 部；usage 数据可得，底栏只有 context tooltip 等，没有完整细分面板 | 四来源已接 Token 明细，Grok/OpenCode/Claude 接本来源成本；范围/缺字段/陈旧时间仍各异 |
 | 账号累计 Token 活动/每日用量 | 漏；官方 account/usage/read，项目未接 | 不是 G01 的限额，也不是 G02 的上下文；其他来源未证明统一同义 API |
 | 后台 terminal 列表、逐个 terminate、clean | 漏；官方实验 API 可用，当前 SDK 未接 | 其他来源任务管理需分别设计，不把一般停止按钮当逐任务管理 |
 | 登录/账号切换、插件/MCP 管理、完整 skills 工具面板 | 未作为现有 SDK 视图功能实现，属于另一个产品范围 | 原生 CLI/SDK 有不同能力，不以继承 CLI 配置冒充网页管理面板 |
@@ -389,11 +387,14 @@ quota collector，以及与各功能对应的浏览器套件。已有覆盖包�
   来源都经过独立 Hub 实机验收。[额度 suite](../tests/quotas_browser.py)验证额度页，
   不验证目前不存在的四来源 SDK gauge。
 
-既有真实协议实验的范围也不同：Grok 只验证未认证 initialize 和创建认证失败；
+既有真实协议实验的范围也不同：Grok 验证未认证 initialize、创建认证失败及只读扩展 wire 识别；
 Agy 用真实 CLI 对 loopback 合成模型验证协议；OpenCode 用隔离原生服务验证
 OpenAPI 与空会话接口；Claude 用临时官方固定版本 CLI 对合成网关验证协议。
-它们均不能扩大为真实账号、全部工具、后台任务和高级功能已验收，详情见各来源合同。
+Grok 1.0.62 的真实 initialize 另确认 image:false；本轮已加入结构化图片能力分支与
+路径降级的浏览器验收。它们均不能扩大为真实账号、全部工具、后台任务和高级功能
+已验收，详情见各来源合同。
 
-“已有套件”表示代码中存在相关回归，本次未重跑这些 runtime suites。上一轮通过
-的基础 SDK 用例也不能证明本表标为“漏/待/部”的高级功能已经实现。
-本次只新增/纠正文档，运行文档链接和 AGENTS 一致性检查，不发布生产运行产物。
+本轮补实现扩展并重跑四来源 Chromium、共享 Hub、quota 回归，验证真实网页
+点击/输入/上传/回答/队列/会话操作，使用隔离合成原生对端；宽窄屏与明暗截图
+已人工查看。它们验证桥接与 UI，不替代真实账号/全部模型的生产协议验收。
+仍未补齐持久队列/消费对账、Grok/Claude 闲置回收、Claude 分支与若干高级能力。

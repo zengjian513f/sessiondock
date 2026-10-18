@@ -27,12 +27,13 @@ PTY。原生 CLI 是否立即落盘由各协议决定。已配置的普通对话
 Claude 的原生子代理归档不能作为独立 SDK 会话，隐藏其入口。
 
 输入共用服务端草稿。失败保留输入，成功只清本次提交，发送期间的新编辑保留。
-文件和图片经现有上传/发布边界放到本会话 cwd，完整路径及引用作为原生输入文本；
-这四种桥接不宣称提供 Codex 的 `localImage` 多模态输入。
+文件和图片经现有上传/发布边界放到本会话 cwd。Claude、OpenCode 将可信发布的
+图片转为原生多模态内容；Grok 按 initialize 的 image 能力协商，当前安装版 false
+时与 Agy 一样仅发路径引用，网页明确提示。客户端自报 images/files/path 不授予读取权限。
 已加载的原生 SDK 会话通过 `/api/live.sdk_uids` 标记为受管 SDK，沿用蓝色状态点。
-模型目录来自原生接口，目录失败不妨碍沿用会话当前模型。目前四种视图尚未接入
-用量底栏、完整队列管理和高级会话操作/设置；其中多项已有原生接口，不能将
-没有按钮或 capability=false 一概解释成原生不支持。已实现范围、可补齐遗漏与
+模型目录来自原生接口，目录失败不妨碍沿用会话当前模型。现已接用量明细/底栏、
+各来源可用设置、OpenCode inbox、Grok/OpenCode 会话动作和 Claude 压缩。
+完整持久队列与输入消费对账尚未对齐 Codex。已实现范围、可补齐遗漏与
 协议限制见[五种 SDK 功能审计](sdk-feature-audit.md)。
 
 网页离开、SSE 断开或切换视图不取消已接受工作；重开取桥接快照，不重发输入。
@@ -56,6 +57,14 @@ Claude 的原生子代理归档不能作为独立 SDK 会话，隐藏其入口�
 | POST `/api/native-sdk/interrupt` | `{uid, agent?}`；原生中断，只针对桥接所属任务 |
 | POST `/api/native-sdk/respond` | `{uid, agent?, key, result}`；回答该会话仍未解决的原生审批或问题 |
 | POST `/api/native-sdk/models` | `{uid, agent?}`；原生模型目录 |
+| POST `/api/native-sdk/usage` | 原生 Token/上下文；Agy/Claude 合并已有 quota；`refresh:true` 仅查询本来源 |
+| POST `/api/native-sdk/settings` | 来源自己的模式/权限/effort/Fast；OpenCode `native_agent` 与身份字段 `agent` 分开 |
+| POST `/api/native-sdk/fork` | Grok/OpenCode 原生分支，返回稳定身份；成功网页回执持久化、Hub 命名空间处理 |
+| POST `/api/native-sdk/compact`、`shell` | 按 capability 走原生操作；mutation 带 request_id |
+| POST `/api/native-sdk/queue_cancel`、`queue_update` | OpenCode 未投递 inbox 撤销与显式 steer |
+| POST `/api/native-sdk/revert`、`unrevert`、`revert_commit` | OpenCode 对话-only stage/撤销/永久提交，固定 files:false |
+| POST `/api/native-sdk/rewind_points`、`rewind`、`billing` | Grok 原生选择点、conversation_only 回退和额度 |
+| POST `/api/native-sdk/agents`、`commands`、`command` | OpenCode 原生目录与命令；不把命令伪装成普通提示词 |
 | POST `/api/native-sdk/discard` | `{uid}`；释放未落盘创建回执，保留原生历史；能力与拒绝条件由来源声明 |
 
 普通操作响应为 `{ok, raw, ...原生桥接结果}`，创建结果直接位于顶层。
@@ -68,3 +77,8 @@ Agy headless 没有审批回答协议，按 CLI 自身策略允许或软拒绝�
 Grok、Agy、Claude 的独立 TUI 不能像 Codex daemon 那样共享实时上下文；
 桥接报告原生占用冲突，不结束或接管独立 TUI。OpenCode 共享服务与 standalone
 运行时的边界见其合同。
+
+网页未知 slash 保留输入并说明；`/usage` 与聊天发送分开。原生操作失败/不支持
+明确显示，不自动放宽权限。用量详情区分累计 Token、步骤用量、上下文估计和
+额度窗口；不可用的实验接口保留旧值与错误。创建/分支回执持久化不意味着所有
+在途操作具有跨进程 exactly-once 保证。
