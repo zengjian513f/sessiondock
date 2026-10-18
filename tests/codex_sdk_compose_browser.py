@@ -69,6 +69,15 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
         expect(page.locator('#sdk-input')).to_be_enabled()
         expect(page.locator('#sdk-add')).to_be_visible()
         uid = page.evaluate('S.sel')
+        editor = page.locator('#sdk-input')
+        editor.fill('!pw')
+        editor.press('Tab')
+        expect(editor).to_have_value('!pwd ')
+        saved(page, uid, '!pwd ')
+        page.reload(wait_until='domcontentloaded')
+        expect(editor).to_have_value('!pwd ')
+        expect(editor).to_have_class('shell-mode')
+        assert not fake.methods('thread/shellCommand'), 'completion or reload executed shell'
         rollout = fake.rollout
         assert not rollout.exists(), 'SDK create wrote a native history before SEND'
         text = f'approve {label} 请检查图片和任意文件，保留这份尚未发送的草稿。'

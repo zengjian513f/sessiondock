@@ -82,7 +82,9 @@ const CodexSdkView = {
     this.notice = pane.querySelector('.sdk-status');
     this.input = pane.querySelector('#sdk-input');
     this.input.oninput = () => { this.fitInput(); CodexSdkCompose.input(this); };
+    this.input.onblur = () => CodexSdkCompose.closeCompletion(this);
     this.input.onkeydown = event => {
+      if (CodexSdkCompose.shellKey(this, event)) return;
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !MOBILE.matches) {
         event.preventDefault();
         this.send();
@@ -108,6 +110,7 @@ const CodexSdkView = {
 
   close() {
     this.setConnected(false);
+    CodexSdkCompose.closeCompletion(this);
     CodexSdkCompose.close(this);
     CodexSdkActions.close(this);
     CodexSdkControls.close(this);
@@ -753,6 +756,7 @@ const CodexSdkView = {
   fitInput() {
     const input = this.input;
     if (!input) return;
+    input.classList.toggle('shell-mode', /^\s*(?:!|\/shell(?:\s|$))/.test(input.value));
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 240) + 'px';
     input.style.overflowY = input.scrollHeight > 240 ? 'auto' : 'hidden';
