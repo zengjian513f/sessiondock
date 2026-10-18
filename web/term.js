@@ -358,7 +358,8 @@ function sessionTermMeta(uid) {
 function termBindingServes(boundUid, uid) {
   if (!boundUid || !uid) return false;
   const current = (T.list || []).filter(row => row.uid === boundUid && row.current_uid);
-  if (current.length === 1) return current[0].current_uid === uid;
+  if (current.length === 1) return followContinuedSession(current[0].current_uid) === uid;
+  if (followContinuedSession(boundUid) === uid) return true;
   if (boundUid === uid) return true;
   if (typeof forkAncestors !== 'function') return false;
   const session = sessionTermMeta(uid);
@@ -373,7 +374,9 @@ function termBindingServes(boundUid, uid) {
  */
 function linkedTermSession(uid, { followReplacement = false } = {}) {
   const panes = [...(T.list || []), ...(T.pending || [])];
-  const current = panes.filter(pane => pane.instance_id && pane.current_uid === uid);
+  const current = panes.filter(pane => pane.instance_id
+    && (pane.current_uid || followContinuedSession(pane.uid) !== pane.uid)
+    && followContinuedSession(pane.current_uid || pane.uid) === uid);
   if (current.length === 1) return {name: current[0].name, uid};
   if (current.length > 1) return null;
   const session = sessionTermMeta(uid);
@@ -395,7 +398,10 @@ function linkedTermSession(uid, { followReplacement = false } = {}) {
   }
   const exactFor = target => panes.filter(pane => pane.instance_id && (pane.uid === target
     || (pane.record_id && pane.launch_id && !pane.stale && pendingUid(pane.name) === target)));
-  const leafOf = target => (typeof forkLeafUid === 'function' ? forkLeafUid(target) : target);
+  const leafOf = target => {
+    target = followContinuedSession(target);
+    return typeof forkLeafUid === 'function' ? forkLeafUid(target) : target;
+  };
   const exact = exactFor(uid);
   if (exact.length === 1) {
     const leaf = leafOf(uid);

@@ -2956,7 +2956,7 @@ async function loadSessions(force, preserveList = false) {
   renderSide();
   showSessionCount(sidebarSessions().length);
   seedCursors ? seedSidebarCursors(d.sessions) : syncSidebarUpdates(d.sessions);
-  if (wasListed) void followSelectedFork();
+  void followSelectedTimeline(wasListed);
   return true;
 }
 
@@ -3000,7 +3000,7 @@ async function runSessionPoll() {
     refreshSessionMeta();
     renderChips();
     syncSidebarUpdates(d.sessions);
-    if (wasListed) await followSelectedFork();
+    await followSelectedTimeline(wasListed);
     if (S.results) {
       // 搜索结果集合保持不变，只合入 rename 等最新元数据。
       const fresh = new Map(S.sessions.map(s => [s.uid, s]));
@@ -5721,16 +5721,18 @@ function ensureConsolePlaceholder() {
   bindConsoleButton(heading.querySelector('#a-term'), S.sel, S.agent);
 }
 
-function followContinuedSession(uid) {
+function followContinuedSession(uid, sessions = S.sessions) {
+  const byUid = sessions === S.sessions ? indexedSessions().byUid
+    : new Map(sessions.map(row => [row.uid, row]));
   const seen = new Set();
   let cur = uid;
   while (cur && !seen.has(cur)) {
     seen.add(cur);
-    const next = S.sessions.find(s => s.uid === cur)?.continued_in;
-    if (!next || next === cur || !S.sessions.some(s => s.uid === next)) return cur;
-    cur = next;
+    const row = byUid.get(cur), next = byUid.get(row?.continued_in);
+    if (!next || next.source !== row.source || (next.node_id || '') !== (row.node_id || '')) return cur;
+    cur = next.uid;
   }
-  return cur;
+  return uid;
 }
 
 // 首次打开时的瞬时失败（503、断网）：正文保留“读取失败”，按退避自动重试
@@ -5759,17 +5761,19 @@ function scheduleOpenRetry(uid, agent, ac) {
   } else openRetries.delete(key);
 }
 
-// 当前会话被 Codex 回退成隐藏的父会话后，对话页和控制台一起跟到最深的分支：
-// 同一个 pty 仍在写，只是原生叶子换了。用户主动打开的父会话（父会话链、
-// 显示父会话）不在此列。
-async function followSelectedFork() {
+// 原生续接或 Codex 回退换了叶子时，对话页和控制台一起跟随，同一个 pty 保持连接。
+// 用户主动打开的 fork 父会话（父会话链、显示父会话）不自动跟随分支。
+async function followSelectedTimeline(followFork = true) {
   const current = S.sessions.find(s => s.uid === S.sel);
-  if (!current || S.agent || !hiddenForkParent(current)) return false;
+  if (!current || S.agent) return false;
   // 手机停在列表页时不把人拽进详情；父会话已从列表消失，点开分支即可。
   if (MOBILE.matches && store.get('mobilePage', 'list') !== 'detail') return false;
-  const leaf = forkLeaf(current);
+  const continued = followContinuedSession(current.uid);
+  const leaf = continued !== current.uid ? S.sessions.find(row => row.uid === continued)
+    : followFork && hiddenForkParent(current) ? forkLeaf(current) : null;
   if (!leaf || leaf.uid === S.sel) return false;
-  browserAuditEvent('session.fork_followed', {from_uid: S.sel}, {uid: leaf.uid});
+  browserAuditEvent(continued !== current.uid ? 'session.continuation_followed' : 'session.fork_followed',
+    {from_uid: S.sel}, {uid: leaf.uid});
   if (typeof migrateComposerDraft === 'function') migrateComposerDraft(S.sel, leaf.uid);
   if (typeof T !== 'undefined' && T.uid === S.sel) T.uid = leaf.uid;
   await openSession(leaf.uid, null, {exact: true});
@@ -5862,7 +5866,7 @@ function revealSessionInSidebar(uid, agent, catalog = null) {
  *  stage up until the conversation replaces it instead of flashing a spinner. */
 async function openSession(uid, agent = null, {exact = false, historyMode = 'push', follow = false, sidebarCatalog = null} = {}) {
   const selectedAgent = agent || null;
-  if (!selectedAgent) uid = followContinuedSession(uid);
+  if (!selectedAgent) uid = followContinuedSession(uid, sidebarCatalog || S.sessions);
   if (!selectedAgent && !exact && hiddenForkParent(S.sessions.find(s => s.uid === uid))) {
     uid = forkLeafUid(uid);
   }

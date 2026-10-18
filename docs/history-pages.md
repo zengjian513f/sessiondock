@@ -168,6 +168,26 @@ No native files or production ledgers were changed during diagnosis.
 covers live resets, reload, search, first/later-input rewinds, delayed markers,
 empty history and later ordinary interruptions using synthetic native records.
 
+**Live Claude continuations (DELTA, BUG-20261018-011458-26720b).** When a
+`continued-in` marker selects another native session, the selected main view
+follows that session on catalog refresh, preserving its PTY connection and
+composer draft. Old-SID links also follow it on reload. A saved `nest_parent`
+whose same-source, same-node continuation chain reaches the child itself is
+omitted from the published display metadata before compact child filtering;
+the stored attachment remains unchanged. Other attachments and agent views
+keep their existing behavior. The incident's first observable divergence was
+the 00:48:34 UTC native continuation: the old JSONL stopped at 6,847,209 bytes,
+while its successor received later terminal inputs. The successor's saved
+attachment to the origin hid it from the compact catalog, and live navigation
+only followed fork transitions. All 621 captured SSE packets were applied;
+they kept the old checkpoint. The lifecycle receipt still named the same
+running origin PTY, and no delivery directory existed. Diagnosis changed no
+native records or production ledgers.
+[claude_continuation_browser.py](../tests/claude_continuation_browser.py)
+covers native continuation over an existing hidden attachment, live switching,
+the same terminal socket/instance, input, old links and reload on node/Hub at
+desktop/mobile widths in both themes.
+
 **Codex rollout rotation.** Codex 0.156.1 can keep a native thread ID while
 starting a new physical rollout whose `history_base.thread_id` is that same
 ID. The new header's ordinal equals `end_ordinal_exclusive`. These explicit
