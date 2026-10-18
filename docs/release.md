@@ -78,30 +78,22 @@ The Agy suites run the installed real CLI against a local synthetic model, so
 they need no login and spend no credits; they still need the CLI installed.
 A suite on a machine without its CLI fails rather than skipping.
 
-Run on 2026-10-07 on lyra: `send_grok_browser_real` and the three Agy suites
-passed (Agy 1.3.0, Grok 1.0.44).
-
-Run on 2026-10-06: `prompt_claude_real` passed after the launcher began
-clearing Claude Code's in-session markers (`CLAUDE_CODE_CHILD_SESSION` from a
-service started inside a Claude Code session had turned transcript saving
-off); both Codex suites reached the CLI with Luna at low effort, then failed
-on the account's usage limit, so they were not run to completion.
-
 ## CI
 
-`.github/workflows/ci.yml` runs on pushes to `main`, pull requests, `v*` tags
-and manual dispatch:
+Both private and public workflows use `deploy/ci_plan.py` and the deployment
+suite mappings. The plan is saved as a CI artifact and consumed by later jobs.
 
-| Job | Runner | Steps |
-| --- | --- | --- |
-| `rust` | Ubuntu 24.04, Windows, macOS | `cargo fmt --all --check` (Linux), `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo build --release --workspace --locked`; Linux installs `clang-18` for resource-agent |
-| `checks` | Ubuntu 24.04 | `check_docs_links.py`, `check_agents_md.py`, `brand_names_check.py`, `env_reference.py --check` |
-| `browser` | Ubuntu 24.04 | debug/release `sessiondock` and `ptyhost`, Playwright Chromium; 16 suites cover the page, logs, final screen, history, native touches/appends/rewrites, flat timeline scrolling, cross-node nesting/scale/cache, list deltas, UI events, weak-network recovery, resumable attachments, draft sync, conversation performance and search state. JSON results go to `target/validation/ci.json`; results and logs are uploaded on success or failure and retained for 14 days |
-| `release` | Ubuntu 24.04, `v*` tags only, after the others | `deploy/release.py --check`, package uploaded as the `linux-package` artifact |
+| Change | CI work |
+| --- | --- |
+| Docs/rules/tooling only | Documentation, source checks and deployment syntax/template checks; no Rust/browser job |
+| Frontend | Affected browser suites; build only their missing test prerequisites, no Rust matrix job |
+| Rust | Relevant package fmt/clippy on Linux; native Windows/macOS checks when platform paths change |
+| Version tag or explicit `full` | Full synthetic acceptance and platform matrix; paid real CLIs remain opt-in |
 
-CI compiles on the hosted Windows and macOS runners; it does not replace the
-real-machine checks on vela and cetus, nor the full browser sweep
-([validation](validation.md)), which stays on the development machines.
+The optional collector is selected when its source changes or the manual
+`collector` input requests it. `v*` tags additionally build the reproducible
+Linux release package after validation. Browser results/logs are retained for
+14 days. Hosted checks do not claim validation on the user's production machines.
 
 ## Separate optional collector package
 

@@ -1,8 +1,4 @@
-# Compile and lint on Linux, Windows and macOS; doc checks and a headless
-# Chromium regressions on Linux; a reproducible Linux package on version tags.
-# The toolchain is pinned to the development machines' rustc (1.98.1) so CI
-# and the reproducible package match them. See docs/release.md.
-name: CI
+name: Scoped validation
 
 on:
   push:
@@ -10,40 +6,44 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      full:
+        description: Run complete release acceptance
+        type: boolean
+        default: false
+      collector:
+        description: Also validate the optional Linux collector
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  CARGO_TERM_COLOR: never
-  CARGO_INCREMENTAL: "0"
-
 jobs:
-  rust:
-    name: rust (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+      browser: ${{ steps.scope.outputs.browser }}
+      collector: ${{ steps.scope.outputs.collector }}
+      platforms: ${{ steps.scope.outputs.platforms }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.98.1"
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
-      - name: clang for the resource-agent BPF object
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang-18
-      - name: fmt
-        if: runner.os == 'Linux'
-        run: cargo fmt --all --check
-      - name: clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: build
-        run: cargo build --release --workspace --locked
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: scope
+        run: python3 deploy/ci_plan.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-plan
+          path: ci-plan.json
 
   checks:
     runs-on: ubuntu-24.04
@@ -55,32 +55,56 @@ jobs:
       - run: python3 tests/check_docs_links.py
       - run: python3 tests/check_agents_md.py
       - run: python3 tests/brand_names_check.py
+      - run: python3 deploy/check.py
       - run: python3 tests/env_reference.py --check
 
+  rust:
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.plan.outputs.platforms) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-plan
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Collector build prerequisites
+        if: runner.os == 'Linux' && needs.plan.outputs.collector == 'true'
+        run: sudo apt-get update && sudo apt-get install -y clang-18 linux-libc-dev
+      - run: python deploy/ci_plan.py --run rust
+
   browser:
+    needs: plan
+    if: needs.plan.outputs.browser == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-plan
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.98.1"
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: debug and release binaries
-        run: |
-          cargo build --locked -p sessiondock -p ptyhost
-          cargo build --release --locked -p sessiondock -p ptyhost
-      - name: Playwright Chromium
+      - name: Chromium
         run: |
           python3 -m pip install playwright
           python3 -m playwright install --with-deps chromium
-      - name: browser regression suites
-        run: >-
-          python3 tests/run_validation.py --keep-going --browser-jobs 2
-          --only legacy_browser,server_log_browser,terminal_final_screen_browser,history_browser,index_append_browser,sidebar_flat_scroll_browser,hub_nest_browser,hub_scale_browser,hub_cache_browser,list_delta_browser,ui_events_browser,network_recovery_browser,attachment_resume_browser,draft_sync_browser,conversation_performance_browser,frontend_search_state_browser
-          --json target/validation/ci.json
+      - run: python3 deploy/ci_plan.py --run browser
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -99,8 +123,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.98.1"
-      - name: reproducible package
-        run: python3 deploy/release.py --check
+      - run: python3 deploy/release.py --check
       - uses: actions/upload-artifact@v4
         with:
           name: linux-package

@@ -1,56 +1,110 @@
-name: Public source validation
+name: Scoped validation
 
 on:
   push:
   pull_request:
   workflow_dispatch:
     inputs:
+      full:
+        description: Run complete release acceptance
+        type: boolean
+        default: false
       collector:
-        description: Also compile the optional Linux resource collector
+        description: Also validate the optional Linux collector
         type: boolean
         default: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  core:
+  plan:
     runs-on: ubuntu-24.04
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+      browser: ${{ steps.scope.outputs.browser }}
+      collector: ${{ steps.scope.outputs.collector }}
+      platforms: ${{ steps.scope.outputs.platforms }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.98.1"
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build core without collector dependencies
-        run: |
-          cargo build --locked -p sessiondock -p ptyhost
-          cargo build --release --locked -p sessiondock -p ptyhost
-      - name: Check public documentation
-        run: |
-          python3 tests/check_docs_links.py
-          python3 tests/check_agents_md.py
-          python3 tests/brand_names_check.py
-      - name: Install browser
-        run: |
-          python3 -m pip install playwright
-          python3 -m playwright install --with-deps chromium
-      - name: Exercise local and Hub pages
-        run: python3 tests/run_validation.py --only legacy_browser,hub_browser,files_browser,session_research_browser --browser-jobs 2
+      - id: scope
+        run: python3 deploy/ci_plan.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-plan
+          path: ci-plan.json
 
-  collector:
-    if: github.event_name == 'workflow_dispatch' && inputs.collector
+  checks:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 tests/check_docs_links.py
+      - run: python3 tests/check_agents_md.py
+      - run: python3 tests/brand_names_check.py
+      - run: python3 deploy/check.py
+
+  rust:
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.plan.outputs.platforms) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-plan
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.98.1"
-      - name: Install optional BPF compiler
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Collector build prerequisites
+        if: runner.os == 'Linux' && needs.plan.outputs.collector == 'true'
         run: sudo apt-get update && sudo apt-get install -y clang-18 linux-libc-dev
-      - name: Build optional collector
-        env:
-          BPF_CLANG: clang-18
-        run: cargo build --release --locked -p resource-agent
+      - run: python deploy/ci_plan.py --run rust
+
+  browser:
+    needs: plan
+    if: needs.plan.outputs.browser == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-plan
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+      - uses: Swatinem/rust-cache@v2
+      - name: Chromium
+        run: |
+          python3 -m pip install playwright
+          python3 -m playwright install --with-deps chromium
+      - run: python3 deploy/ci_plan.py --run browser
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-logs
+          path: target/validation/
+          retention-days: 14

@@ -44,34 +44,6 @@
   未落盘 SDK 创建回执目前仅在节点进程内保留；非 Unix 节点尚未接入。
   子代理 SDK 已支持独立文本交互，附件与服务端草稿仍需独立身份，不能复用主会话草稿。
 
-## Operations and release engineering
-
-- [ ] 收窄部署测试映射（`deploy/testplan.py:85`）：2026-10-18 只读计划检查中，
-  单个 `web/codex-sdk.js` 或 `web/style.css` 各选 226 项；SDK fixture 和额度 API
-  文件均退回全量；单个 search 模块也选全部四条 Cargo 车道（含 Windows）。
-  按行为依赖选择，保持 [部署范围](docs/deployment.md#命令)，不能扩大任务绕过工具。
-- [ ] 修正测试基线及空计划结果（`deploy/testplan.py:157`、`:238`）：无发布标记时
-  回退 `origin/main`，刚推送后可等于 HEAD；空计划实测返回 `passed`，没有运行测试。
-  旧节点标记也可能把其他任务纳入。区分无须测试、未验证与已通过。
-- [ ] 让发布验证绑定同一提交快照（`deploy/testplan.py:199`）：stage 的二进制和 web
-  来自快照，测试脚本和 Cargo 车道仍在共享 ROOT 运行，可能纳入他人未提交改动，
-  并在 release 构建后重复编译。资源代理的 unit/mount 上传也直接取共享 ROOT
-  （`deploy/sdtargets/resource_agent.py:45`），须与二进制同源，保留并发改动。
-- [ ] 让产物与目标真正对应（`deploy/deploy.py:189`、`:435`）：构建包不随目标缩减，
-  ptyhost 默认随行；资源代理未排除 web-only stage，缺二进制直到 stage 才报错。
-  `push` 未指定 stage 时还会取最新目录，应避免误取另一任务的产物。
-- [ ] 区分部署脚本与运行配置（`deploy/testplan.py:86`）：`deploy/**` 一律只选文档
-  检查，连 `resource-agent.service` 也一样；修改 unit、mount 等应按运行配置验收
-  和发布。这不代表任何部署脚本修改都要触发生产发布。
-- [ ] 明确 dry-run 和等待范围（`deploy/deploy.py:684`、`:570`）：`deploy --dry-run`
-  仍先构建、测试，只有 push 阶段跳过写入；只看已有产物计划应使用
-  `push --stage <已核实的stage> --dry-run`。部署锁默认无限等，整轮等待所有已选目标，
-  并按目标顺序读取结果，后面已成功的目标可能迟迟不显示；小改动不应被无关目标拖住。
-- [ ] CI 按范围分流：`.github/workflows/ci.yml` 对每次 main 推送/PR 都触发三平台
-  Rust 构建与固定浏览器回归；`public/workflows/ci.yml` 模板也对所有推送构建 core
-  并运行浏览器。文档检查、前端验收、后端编译应分流，显式版本发布保留完整验收。
-  本轮仅检查配置，未查询远端 CI 运行结果。
-
 ## Architecture follow-up
 
 - [ ] 搜索控制器已独立管理请求、取消和计时器；继续按职责拆分侧栏、会话同步、

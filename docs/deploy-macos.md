@@ -24,7 +24,7 @@
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
 # 源码用 git archive 导出到独立目录（不在运行目录里跑 Cargo）
 cd <SD_SOURCE>
-~/.cargo/bin/cargo check --workspace --all-targets --locked
+~/.cargo/bin/cargo check -p sessiondock --all-targets --locked
 ~/.cargo/bin/cargo build --release --workspace --locked
 shasum -a 256 target/release/sessiondock target/release/ptyhost
 ```
@@ -94,8 +94,8 @@ launchctl kickstart -k gui/$(id -u)/<label>      # 只重启 sessiondock；ptyho
 
 ```sh
 python3 deploy/deploy.py build                    # 产出 source.tar（git archive HEAD）+ web 快照
-python3 deploy/deploy.py push --targets <name> --dry-run   # 只 probe 并打印计划
-python3 deploy/deploy.py push --targets <name>    # 完整一轮；--web-only 跳过构建；ptyhost 默认一并构建（--without-ptyhost 关闭）
+python3 deploy/deploy.py push --stage <stage> --targets <name> --dry-run   # 只 probe 并打印计划
+python3 deploy/deploy.py push --stage <stage> --targets <name>    # 完整一轮；--web-only 跳过构建；ptyhost 仅在相关改动时加 --with-ptyhost
 python3 deploy/deploy.py rollback --targets <name> --backup <PREFIX>/backup-deploy-<short>-<UTC stamp>
 ```
 
@@ -105,7 +105,7 @@ python3 deploy/deploy.py rollback --targets <name> --backup <PREFIX>/backup-depl
 - stage：`source.tar` 上传到 `<SD_SOURCE>/.deploy/`，清空 `<SD_SOURCE>` 里 `target/` 以外的一切再
   `tar -x`；stage 的测试模式（`deploy.py --test`，见 [deployment.md](deployment.md#测试门build--test--push)）
   不是 `none` 时先按第 2 节跑 `mkdir -p /private/tmp/sdtest && TMPDIR=/private/tmp/sdtest <cargo> check
-  --workspace --all-targets --locked`（超时 1800 s；失败即该目标 `FAILED`，在构建和换入之前中止，`.deploy-test.log`
+  -p sessiondock（含 ptyhost 改动时再加 -p ptyhost）--all-targets --locked`（超时 1800 s；失败即该目标 `FAILED`，在构建和换入之前中止，`.deploy-test.log`
   留在 `<SD_SOURCE>` 供查看）；`cargo build --release --locked -p sessiondock`（超时 900 s，M4 上热构建约 30–40 s）；
   产物拷成 `<PREFIX>/bin/<name>.new` 并记录与 stage 相同的日期版本号；
   web 快照 rsync 到 `<PREFIX>/web.staging/`，携带 `release-version.txt` 日期版本号。

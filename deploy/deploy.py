@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""SessionDock fleet deployment: build once on this machine, test, push to every target, roll back.
+"""SessionDock deployment: build and validate a snapshot, publish to selected targets.
 
-    deploy.py build    [--allow-dirty PATH ...] [--without-ptyhost] [--web-only]
+    deploy.py build    [--allow-dirty PATH ...] [--with-ptyhost] [--web-only]
                        [--test none|affected|full] [--test-base REF] [--test-timeout S]
-    deploy.py push     [--targets a,b | --all] [--stage DIR] [--web-only | --bin-only]
-                       [--without-ptyhost] [--dry-run] [--parallel N] [--keep-backups N]
+    deploy.py push     [--targets a,b | --all] --stage DIR [--web-only | --bin-only]
+                       [--with-ptyhost] [--dry-run] [--parallel N] [--keep-backups N]
                        [--health-timeout S] [--targets-file PATH] [-v]
     deploy.py deploy   (build, then test, then push, with the same flags; --test defaults
                         to `affected` here and to `none` for a bare build)
@@ -13,21 +13,20 @@
 The build never reads the shared checkout's uncommitted edits: it checks the commit
 (plus only the files named with --allow-dirty) out into the private build worktree
 target/deploy/tree and compiles there, so another session's unfinished work neither
-blocks a deploy nor ships with it. ptyhost is built and shipped by default
-(--without-ptyhost opts out); running hosts keep their old binary until they exit.
+blocks a deploy nor ships with it. ptyhost is included only with --with-ptyhost; running hosts keep their old binary until they exit.
 Targets come from deploy/targets.local.json (gitignored, the real fleet);
 deploy/targets.example.json shows the shape with placeholders. Per-kind steps live
 in deploy/sdtargets/<kind>.py; the shared contract and the invariants every handler
 keeps are documented in deploy/sdtargets/base.py. Fleet status is a separate
 read-only tool (deploy/fleet_status.py).
 
-Test gate (deploy/testplan.py): `--test none` ships untested, `affected` maps the files
+Test gate (deploy/testplan.py): `--test none` skips the gate after independent validation, `affected` maps the files
 changed since the targets' oldest `etc/deployed-commit` (or --test-base) to validation
 suites, `full` runs the whole sweep. A failing suite stops before anything is uploaded
 (exit 1, failing suite names and log paths printed). The stage records the mode and
 result in artifacts.json; `push` prints them and never tests on this machine, while
 macOS/Windows nodes that build natively run a Rust compile check in their own stage() when
-the recorded mode is not `none`. Tests are per platform, once each, never per node.
+the recorded mode is not `none`. Linux validation runs once; selected native-build targets check their affected binaries.
 
 Per target: probe -> plan -> stage -> backup -> swap -> restart -> verify ->
 write_marker -> prune_backups. Any failure after a successful backup rolls that
@@ -49,7 +48,7 @@ import sys
 import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -93,14 +92,14 @@ def git(*args: str, timeout: float = 60) -> str:
 
 
 
-def source_tree(paths: list[str]) -> str:
+def source_tree(paths: list[str], ref: str = "HEAD") -> str:
     """HEAD's tree with `paths` taken from the working tree, without touching
     the shared Git index (a private index file is used)."""
     if not paths:
-        return git("rev-parse", "HEAD^{tree}")
+        return git("rev-parse", f"{ref}^{{tree}}")
     with tempfile.TemporaryDirectory(prefix="sessiondock-source-index-") as temporary:
         env = dict(os.environ, GIT_INDEX_FILE=str(Path(temporary) / "index"))
-        subprocess.run(["git", "read-tree", "HEAD"], cwd=ROOT, env=env, check=True, timeout=300)
+        subprocess.run(["git", "read-tree", ref], cwd=ROOT, env=env, check=True, timeout=300)
         subprocess.run(["git", "add", "--all", "--", *paths], cwd=ROOT, env=env, check=True, timeout=300)
         return subprocess.run(["git", "write-tree"], cwd=ROOT, env=env,
                               capture_output=True, text=True, check=True, timeout=300).stdout.strip()
@@ -192,12 +191,12 @@ def resolve_build(cfg: dict, with_ptyhost: bool) -> tuple[list[str], list[str]]:
     packages: list[str] = []
     names: list[str] = []
     for item in wanted:
-        if item in bins.values():
-            packages.append(item)
-            names += [b for b, pkg in bins.items() if pkg == item]
-        elif item in bins:
+        if item in bins:
             packages.append(bins[item])
             names.append(item)
+        elif item in bins.values():
+            packages.append(item)
+            names += [b for b, pkg in bins.items() if pkg == item]
         else:
             die(f"build.packages entry {item!r} is neither a package nor a bin target")
     names = list(dict.fromkeys(names))
@@ -209,7 +208,7 @@ def resolve_build(cfg: dict, with_ptyhost: bool) -> tuple[list[str], list[str]]:
     return argv, names
 
 
-def cmd_build(args) -> Path:
+def cmd_build(args, targets: list[Target] | None = None) -> Path:
     dirty = dirty_files()
     named = [path.rstrip("/") for path in args.allow_dirty or []]
     covered = lambda path: any(path == n or path.startswith(n + "/") for n in named)
@@ -225,7 +224,11 @@ def cmd_build(args) -> Path:
         for line in ignored[:20]:
             print("  " + line)
     cfg = build_config(args)
-    commit, short = git("rev-parse", "HEAD"), git("rev-parse", "--short", "HEAD")
+    if targets is not None:
+        cfg['packages'] = sorted({name for t in targets if t.enabled and not t.build_on_target
+                                  for name in t.binaries})
+    commit = git("rev-parse", "HEAD")
+    short = git("rev-parse", "--short", commit)
     started = utc_now()
     stage = STAGE_ROOT / f"{stamp_of(started)}-{short}"
     for n in range(2, 100):   # never reuse a stage another build made in the same second
@@ -236,7 +239,7 @@ def cmd_build(args) -> Path:
         (stage / sub).mkdir(parents=True, exist_ok=True)
     print(f"stage {stage}")
 
-    snapshot_tree = source_tree(dirty_paths(included))
+    snapshot_tree = source_tree(dirty_paths(included), commit)
     subprocess.run(["git", "archive", "--format=tar", snapshot_tree, "-o", str(stage / "source.tar")],
                    cwd=ROOT, check=True, timeout=300)
     print(f"source: HEAD{' + ' + str(len(included)) + ' named uncommitted file(s)' if included else ''}"
@@ -255,8 +258,9 @@ def cmd_build(args) -> Path:
 
     binaries: dict[str, Path] = {}
     cargo_argv: list[str] = []
-    if not args.web_only:
-        cargo_argv, names = resolve_build(cfg, args.ptyhost is not False)
+    local_ptyhost = bool(args.ptyhost) and (targets is None or any(t.kind == 'linux-node' for t in targets))
+    if not args.web_only and (cfg['packages'] or local_ptyhost):
+        cargo_argv, names = resolve_build(cfg, local_ptyhost)
         cargo_argv += ["--target-dir", str(BUILD_TARGET)]
         log_path = stage / "logs" / "cargo-build.log"
         print(f"cargo: {' '.join(cargo_argv)}  (log {log_path.relative_to(ROOT)})")
@@ -433,6 +437,8 @@ def run_push(t: Target, art: Artifacts, opts: DeployOptions, log_path: Path, ech
     if not t.enabled:
         return finish("SKIPPED", "disabled in targets file")
     frontend = t.extra.get("frontend", "legacy")
+    if t.kind == "resource-agent" and opts.web_only:
+        return finish("SKIPPED", "resource-agent has no frontend")
     if t.kind != "resource-agent" and not opts.bin_only and frontend != art.frontend:
         return finish("SKIPPED", f"target frontend={frontend}; stage frontend={art.frontend}")
     try:
@@ -571,7 +577,7 @@ def run_all(rows_fn, targets: list[Target], parallel: int) -> list[dict]:
     with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
         futures = [pool.submit(rows_fn, t) for t in targets]
         rows = []
-        for fut in futures:
+        for fut in as_completed(futures):
             row = fut.result()
             with PRINT_LOCK:
                 print(f"{row['target']:12} {row['result']:16} {row['seconds']:6.1f}s  {row['detail'][:120]}", flush=True)
@@ -600,60 +606,79 @@ def probe_markers(targets: list[Target], stage: Path, args) -> dict[str, str | N
         return dict(pool.map(one, [t for t in targets if t.enabled]))
 
 
-def run_test_gate(args, stage: Path, targets: list[Target] | None) -> None:
-    """Run the suites the change needs against the stage; exit 1 before any upload on failure."""
-    binary = str(stage / "bin" / "sessiondock") if (stage / "bin" / "sessiondock").is_file() \
-        else "target/release/sessiondock"
+def test_plan(args, root: Path, head: str, targets=None, stage=None, source=None):
     base = how = None
-    changed: list[str] = []
-    names: list[str] = []
-    if args.test == "affected":
-        try:
-            base, how = testplan.resolve_base(args.test_base, probe_markers(targets, stage, args) if targets else {})
-        except ValueError as e:
-            die(str(e))
-        changed, names = testplan.changed_files(base, dirty_paths(load_dirty_included(stage))), testplan.list_suites(binary)
+    changed, names, patches = [], [], {}
+    if args.test == 'affected':
+        markers = probe_markers(targets, stage, args) if targets and stage else {}
+        base, how = testplan.resolve_base(args.test_base, markers, head)
+        included = dirty_paths(load_dirty_included(stage)) if stage else []
+        changed = testplan.changed_files(base, included, source or head)
         if args.web_only:
-            # This stage ships no Rust sources or binaries. Concurrent backend
-            # edits must not force their Cargo validation into a page update.
-            changed = [path for path in changed if not path.startswith("crates/")
-                       and path not in {"Cargo.toml", "Cargo.lock"}]
-    plan = testplan.plan_for(args.test, changed, names)
-    testplan.print_plan(plan, base, how or "")
-    res = testplan.run(plan, binary, stage, args.test_timeout)
-    doc = json.loads((stage / "artifacts.json").read_text(encoding="utf-8"))
-    doc.update({"test_mode": args.test, "test_base": base, "test_full": plan["full"],
-                "test_suites": plan["suites"] + plan["scripts"], "test_result": res["result"],
-                "test_log": res["log"] if res["result"] != "skipped" else None})
-    (stage / "artifacts.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
-    print(f"tests: {res['result']} (mode {args.test}" + (f", log {res['log']})" if res["result"] != "skipped" else ")"),
-          flush=True)
-    if res["result"] not in ("passed", "skipped"):
-        print("failing suites (nothing was uploaded):", file=sys.stderr)
-        for name, log in res["failed"]:
-            print(f"  {name}  {log}", file=sys.stderr)
-        sys.exit(1)
+            changed = [p for p in changed if p.startswith(('web/', 'tests/')) or p.endswith('.md')]
+        for path in changed:
+            if path.startswith('web/'):
+                patches[path] = git('diff', '--unified=0', base, source or head, '--', path)
+        names = testplan.list_suites('target/release/sessiondock', root)
+    suites = [n.strip() for n in (args.test_suites or '').split(',') if n.strip()]
+    if suites and args.test != 'affected':
+        die('--test-suites requires --test affected')
+    plan = testplan.plan_for(args.test, changed, names, root=root, suites=suites, patches=patches)
+    testplan.print_plan(plan, base, how or '')
+    return plan, base
+
+
+def run_test_gate(args, stage: Path, targets: list[Target] | None) -> None:
+    """Validate exactly the snapshot used by build, with separate runtime fixtures."""
+    stage = stage.resolve()
+    doc = json.loads((stage / 'artifacts.json').read_text())
+    checkout_build_tree(doc['source_tree'])
+    plan, base = test_plan(args, BUILD_TREE, doc['commit'], targets, stage, source=doc['source_tree'])
+    binary = stage / 'bin/sessiondock'
+    if not binary.is_file():
+        binary = Path(args.test_binary).resolve()
+    # Some fixtures need a sibling hub and a debug ptyhost. Reuse existing test
+    # binaries, never the live service directories, without publishing them.
+    test_target = BUILD_TREE / 'target'
+    test_target.mkdir(exist_ok=True)
+    for profile in ('debug', 'release'):
+        link = test_target / profile
+        if not link.exists() and not link.is_symlink():
+            link.symlink_to(ROOT / 'target' / profile, target_is_directory=True)
+    env = dict(os.environ, CARGO_TARGET_DIR=str(BUILD_TARGET))
+    res = testplan.run(plan, str(binary), stage, args.test_timeout, root=BUILD_TREE,
+                       cargo=build_config(args)['cargo'], env=env)
+    doc.update(test_mode=args.test, test_base=base, test_full=plan['full'],
+               test_suites=plan['suites'] + plan['scripts'], test_result=res['result'],
+               test_log=res['log'] if res['result'] not in ('skipped', 'not-needed') else None)
+    (stage / 'artifacts.json').write_text(json.dumps(doc, indent=2) + '\n')
+    print(f"tests: {res['result']} (mode {args.test})", flush=True)
+    if res['result'] not in ('passed', 'skipped', 'not-needed'):
+        die(f"validation {res['result']}; nothing uploaded; see {stage / 'logs'}", 1)
 
 
 # -- commands --------------------------------------------------------------------------------
 def cmd_push(args, stage: Path | None = None) -> int:
     if args.web_only and args.bin_only:
         die("--web-only and --bin-only exclude each other")
-    stage = stage or (Path(args.stage) if args.stage else newest_stage())
+    stage = stage or (Path(args.stage) if args.stage else None)
     if stage is None:
-        die("no stage under target/deploy; run `deploy.py build` first or pass --stage DIR")
+        die("push requires --stage DIR; deploy builds and uses its own stage")
     art = load_stage(stage)
     if art.web_only and not args.web_only:
         die(f"stage {stage.name} was built --web-only; push it with --web-only")
-    if args.ptyhost and "ptyhost" not in art.binaries and not args.web_only:
-        die(f"stage {stage.name} has no ptyhost binary; build it without --without-ptyhost")
-    # Default: ship ptyhost whenever the stage has it.
-    with_ptyhost = args.ptyhost is not False and "ptyhost" in art.binaries
+    with_ptyhost = bool(args.ptyhost)
     try:
         targets = load_targets(targets_file(args))
     except (OSError, ValueError, TypeError, KeyError) as e:
         die(f"cannot load {targets_file(args)}: {e}")
-    chosen = select_targets(args, targets)
+    chosen = scoped_targets(args, select_targets(args, targets))
+    for target in chosen:
+        if not args.web_only and not target.build_on_target and target.enabled:
+            required = set(target.binaries) | ({"ptyhost"} if with_ptyhost and target.kind == "linux-node" else set())
+            missing = required - set(art.binaries)
+            if missing:
+                die(f"stage lacks {sorted(missing)} for {target.name}; nothing uploaded")
     info = stage_test_info(stage)
     if info:
         print(f"stage tests: mode={info.get('test_mode')} result={info.get('test_result')} "
@@ -681,14 +706,32 @@ def cmd_push(args, stage: Path | None = None) -> int:
     return 0 if all(r["result"] in GOOD for r in rows) else 1
 
 
+def scoped_targets(args, targets: list[Target]) -> list[Target]:
+    chosen = [t for t in targets if t.enabled and not (args.web_only and t.kind == 'resource-agent')]
+    if not chosen:
+        die('no enabled targets serve the selected artifacts')
+    return chosen
+
+
 def cmd_deploy(args) -> int:
-    """build -> test -> push; the targets are loaded first so the test base can use their markers."""
+    """Preview is read-only; execution builds, validates and publishes one snapshot."""
     try:
         targets = load_targets(targets_file(args))
     except (OSError, ValueError, TypeError, KeyError) as e:
         die(f"cannot load {targets_file(args)}: {e}")
-    chosen = select_targets(args, targets)
-    stage = cmd_build(args)
+    chosen = scoped_targets(args, select_targets(args, targets))
+    if args.web_only and args.bin_only:
+        die('--web-only and --bin-only exclude each other')
+    if args.dry_run:
+        print('DRY RUN: no build, test execution, remote probe, upload or restart')
+        print('targets: ' + ', '.join(t.name for t in chosen))
+        bins = sorted({b for t in chosen for b in t.binaries}) if not args.web_only else []
+        if args.ptyhost and not args.web_only:
+            bins.append('ptyhost')
+        print('artifacts: ' + ', '.join(bins + ([] if args.bin_only else ['web'])))
+        test_plan(args, ROOT, 'HEAD')
+        return 0
+    stage = cmd_build(args, chosen)
     run_test_gate(args, stage, chosen)
     return cmd_push(args, stage)
 
@@ -719,8 +762,8 @@ def main(argv: list[str] | None = None) -> int:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--targets-file", help="default deploy/targets.local.json (else targets.example.json)")
     common.add_argument("-v", "--verbose", action="store_true", help="echo per-target log lines to stdout")
-    common.add_argument("--lock-timeout", type=float, metavar="SECONDS",
-                        help="wait for the repository deployment lock (default: indefinitely; 0: fail immediately)")
+    common.add_argument("--lock-timeout", type=float, default=30, metavar="SECONDS",
+                        help="seconds to wait for the deployment lock (default: 30; 0: fail immediately)")
     build_flags = argparse.ArgumentParser(add_help=False)
     build_flags.add_argument("--allow-dirty", nargs="+", metavar="PATH",
                              help="also build these uncommitted files or directories of the working tree; "
@@ -730,25 +773,27 @@ def main(argv: list[str] | None = None) -> int:
     def test_flags(default: str) -> argparse.ArgumentParser:   # a fresh parent per command: its own default
         tf = argparse.ArgumentParser(add_help=False)
         tf.add_argument("--test", choices=testplan.MODES, default=default,
-                        help="1 none: ship untested; 2 affected: suites mapped from the files changed since the "
-                             f"targets' deployed commit; 3 full: the whole sweep (default here: {default})")
+                        help="none: skip gate after independent validation; affected: scoped suites since the "
+                             f"targets' deployed commit; full: the whole sweep (default here: {default})")
         tf.add_argument("--test-base", metavar="REF",
                         help="diff base for --test affected (default: oldest etc/deployed-commit of the targets, "
-                             "else origin/main, else HEAD~1)")
+                             "else release parent)")
+        tf.add_argument('--test-suites', help='comma-separated browser suites for shared/unmapped changes')
+        tf.add_argument('--test-binary', default='target/release/sessiondock', help='existing test binary for web-only validation')
         tf.add_argument("--test-timeout", type=float, default=2400, help="seconds for the whole test run")
         return tf
     ship_flags = argparse.ArgumentParser(add_help=False)
-    ship_flags.add_argument("--with-ptyhost", dest="ptyhost", action="store_true", default=None,
-                            help="require the ptyhost binary (it is built and shipped by default)")
+    ship_flags.add_argument("--with-ptyhost", dest="ptyhost", action="store_true", default=False,
+                            help="also build and ship ptyhost when its code changed")
     ship_flags.add_argument("--without-ptyhost", dest="ptyhost", action="store_false",
                             help="do not build or ship the ptyhost binary")
     ship_flags.add_argument("--web-only", action="store_true", help="no cargo build / no binary steps")
     push_flags = argparse.ArgumentParser(add_help=False)
     push_flags.add_argument("--targets", help="comma-separated target names")
     push_flags.add_argument("--all", action="store_true", help="every target in the targets file")
-    push_flags.add_argument("--stage", help="stage dir (default: newest under target/deploy)")
+    push_flags.add_argument("--stage", help="explicit stage directory for push")
     push_flags.add_argument("--bin-only", action="store_true", help="skip web (keep its release version)")
-    push_flags.add_argument("--dry-run", action="store_true", help="probe, print the plan, upload nothing")
+    push_flags.add_argument("--dry-run", action="store_true", help="deploy: local plan only; push: probe and plan only; no publication")
     push_flags.add_argument("--parallel", type=int, default=4)
     push_flags.add_argument("--keep-backups", type=int, default=5, help="0 = never prune")
     push_flags.add_argument("--health-timeout", type=float, default=45.0)
@@ -773,9 +818,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.lock_timeout is not None and (args.lock_timeout < 0 or not math.isfinite(args.lock_timeout)):
         ap.error("--lock-timeout must be a finite nonnegative number")
     try:
+        if args.command == "deploy" and args.dry_run:
+            return args.func(args)
         with DeploymentLock(repository_lock(ROOT), args.command, args.lock_timeout):
             return args.func(args)
-    except TimeoutError as exc:
+    except (TimeoutError, ValueError) as exc:
         die(str(exc))
 
 

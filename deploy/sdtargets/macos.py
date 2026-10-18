@@ -111,8 +111,9 @@ class MacOSNode(TargetHandler):
 
     def test_cmd(self) -> str:
         """Section 2 of docs/deploy-macos.md; the log stays on the node when tests fail."""
+        packages = " ".join(f"-p {name}" for name in self.bins)
         return (f"cd {_q(self.source_dir)} && mkdir -p {TEST_TMPDIR} && TMPDIR={TEST_TMPDIR} {self.cargo} check "
-                f"--workspace --all-targets --locked >{TEST_LOG} 2>&1; rc=$?; tail -n 40 {TEST_LOG}; "
+                f"{packages} --all-targets --locked >{TEST_LOG} 2>&1; rc=$?; tail -n 40 {TEST_LOG}; "
                 f"[ $rc -eq 0 ] && rm -f {TEST_LOG}; exit $rc")
 
     # -- remote helpers -----------------------------------------------------------
@@ -175,7 +176,7 @@ class MacOSNode(TargetHandler):
             pk = " ".join(f"-p {n}" for n in self.bins)
             steps.append(f"rsync {self.a.source_archive} -> {src}/.deploy/source.tar; wipe {src}/* except target/ ; tar -x")
             if self.run_tests:
-                steps.append(f"test ({self.o.test_mode}): cd {src} && TMPDIR={TEST_TMPDIR} {self.cargo} check --workspace "
+                steps.append(f"test ({self.o.test_mode}): cd {src} && TMPDIR={TEST_TMPDIR} {self.cargo} check {pk} "
                              f"--all-targets --locked   (timeout {int(TEST_TIMEOUT)}s; failure = FAILED before anything is staged)")
             steps += [
                 f"cd {src} && {self.cargo} build --release --locked {pk}   (timeout {int(BUILD_TIMEOUT)}s)",
