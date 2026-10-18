@@ -93,6 +93,25 @@ def main():
                         page.locator('.sdk-request').get_by_role('button', name='批准', exact=True).click()
                         expect(page.locator('.sdk-history')).to_contain_text('All done after approval')
                         assert len(fake.methods('thread/resume')) == 1, fake.methods('thread/resume')
+                        # The fleet snapshot misses the node, while CHECK/SSE
+                        # still observes this exact managed CLI as running.
+                        page.locator('#a-chat').click()
+                        def omit_managed_live(route):
+                            response = route.fetch()
+                            data = response.json()
+                            for key in ['uids', 'tmux_uids', 'sdk_uids']:
+                                data[key] = [value for value in data.get(key, []) if value != uid]
+                            route.fulfill(response=response, json=data)
+                        page.route('**/api/live*', omit_managed_live)
+                        page.reload(wait_until='domcontentloaded')
+                        expect(page.locator('#msgs')).to_contain_text('All done after approval')
+                        expect(page.locator('#dlive')).to_have_class(re.compile(r'\btmux\b'), timeout=15000)
+                        expect(page.locator('#dlive')).to_have_class(re.compile(r'\bvisible\b'))
+                        expect(page.locator(f'#side .item[data-uid="{uid}"] .item-status')).to_have_class(re.compile(r'\btmux\b'))
+                        assert not page.evaluate('uid => S.live.has(uid)', uid)
+                        if args.screenshots:
+                            page.screenshot(path=str(args.screenshots/'managed-live-fallback.png'))
+                        page.unroute('**/api/live*', omit_managed_live)
                         independent = corpus.uid('independent')
                         page.locator(f'#side .item[data-uid="{independent}"]').click()
                         with page.expect_response(lambda r: '/api/term/takeover' in r.url) as response:
