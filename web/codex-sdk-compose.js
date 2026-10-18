@@ -96,7 +96,6 @@ const CodexSdkCompose = {
   },
 
   input(view) {
-    PathCompletion.close(view.input);
     const state = this.states.get(view);
     if (!state?.draft) return;
     state.draft.text = state.input.value;

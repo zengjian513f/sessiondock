@@ -14,6 +14,13 @@ def create_paths(work):
 
 def exercise_paths(page, editor, work, screenshot=None):
     popup = page.locator('[aria-label="路径补全"]')
+    for value in ('', 'https://example.invalid/path'):
+        editor.fill(value)
+        editor.press('Tab')
+        expect(editor).to_be_focused()
+        editor.press('Shift+Tab')
+        expect(editor).to_be_focused()
+        expect(popup).to_have_count(0)
     editor.fill('请检查 ./路径')
     editor.press('Tab')
     expect(editor).to_have_value('请检查 ./路径目录/')
@@ -28,6 +35,29 @@ def exercise_paths(page, editor, work, screenshot=None):
     editor.press('Enter')
     expect(editor).to_have_value('请检查 "./路径目录/中文 report.txt"')
     expect(editor).to_be_focused()
+    # Continued edits retain the same popup and refresh without filling text.
+    editor.fill('readme-')
+    editor.press('Tab')
+    expect(popup.get_by_role('option')).to_have_count(2)
+    popup_id = popup.get_attribute('id')
+    editor.press_sequentially('o')
+    expect(popup.get_by_role('option')).to_have_count(1)
+    expect(popup).to_have_attribute('id', popup_id)
+    expect(editor).to_have_value('readme-o')
+    if screenshot:
+        page.screenshot(path=str(screenshot.with_stem(screenshot.stem + '-filtered')))
+    editor.press('Backspace')
+    expect(popup.get_by_role('option')).to_have_count(2)
+    editor.press_sequentially('x')
+    expect(popup).to_contain_text('没有匹配的路径')
+    expect(editor).to_be_focused()
+    editor.press('Backspace')
+    expect(popup.get_by_role('option')).to_have_count(2)
+    editor.press_sequentially('o')
+    expect(popup.get_by_role('option')).to_have_count(1)
+    editor.press('Tab')
+    expect(editor).to_have_value('readme-one.md')
+    expect(popup).to_have_count(0)
     # Bare filename and selection by mouse, without executing/sending.
     editor.fill('readme-')
     editor.press('Tab')
@@ -81,7 +111,8 @@ def exercise_paths(page, editor, work, screenshot=None):
     # A delayed real request must not replace later edits.
     held = []
     def hold(route):
-        held.append((route, route.fetch()))
+        if held: route.continue_()
+        else: held.append((route, route.fetch()))
     page.route('**/api/session/conversation/complete-path?*', hold)
     editor.fill('./readme-o')
     editor.press('Tab')
@@ -89,15 +120,18 @@ def exercise_paths(page, editor, work, screenshot=None):
     page.wait_for_timeout(150)
     assert held
     editor.fill('后续输入保留')
+    expect(popup).to_contain_text('没有匹配的路径')
     for route, response in held:
         route.fulfill(response=response)
     page.unroute('**/api/session/conversation/complete-path?*', hold)
-    expect(popup).to_have_count(0)
+    expect(popup).to_contain_text('没有匹配的路径')
     expect(editor).to_have_value('后续输入保留')
+    editor.press('Escape')
     editor.fill('./readme-o')
     editor.press('ControlOrMeta+A')
     editor.press('Tab')
     expect(editor).to_have_value('./readme-o')
+    expect(editor).to_be_focused()
     expect(popup).to_have_count(0)
     # Leave a completed path for caller's real save/reload/send checks.
     editor.fill('请检查 ./readme-o')

@@ -5967,6 +5967,7 @@ $('#cinput').addEventListener('input', e => {
   autoGrow(e.target);
 });
 $('#cinput').addEventListener('keydown', e => {
+  if (e.key === 'Tab') e.preventDefault();
   if (!composerHistoryPicker.open && PathCompletion.key(e.currentTarget, e, () => composerUid)) return;
   if (e.isComposing) return;
   if (composerHistoryPicker.open) {

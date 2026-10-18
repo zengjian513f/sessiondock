@@ -38,7 +38,7 @@ const PathCompletion = {
 
   close(input) {
     const state = this.states.get(input);
-    state?.abort.abort(); clearTimeout(state?.timeout); state?.box.remove();
+    state?.abort.abort(); clearTimeout(state?.timeout); clearTimeout(state?.refresh); state?.box.remove();
     this.states.delete(input);
     input.removeAttribute('aria-controls');
     input.removeAttribute('aria-activedescendant');
@@ -48,7 +48,12 @@ const PathCompletion = {
   bind(input) {
     if (input.dataset.pathCompletion) return;
     input.dataset.pathCompletion = 'true';
-    for (const event of ['input', 'blur', 'click']) input.addEventListener(event, () => this.close(input));
+    for (const event of ['blur', 'click']) input.addEventListener(event, () => this.close(input));
+    const refresh = event => {
+      const state = this.states.get(input);
+      if (state) this.open(input, state.getUid, false, event.isComposing || event.type === 'compositionstart');
+    };
+    for (const event of ['input', 'compositionstart', 'compositionend']) input.addEventListener(event, refresh);
   },
 
   valid(input, state) {
@@ -83,8 +88,12 @@ const PathCompletion = {
 
   key(input, event, getUid) {
     this.bind(input);
+    // In a composer Tab belongs to completion, including empty/unsupported
+    // input and reverse traversal; never hand it to browser focus navigation.
+    const tab = event.key === 'Tab';
+    if (tab) event.preventDefault();
     if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey
-        || ['Shift', 'Control', 'Meta', 'Alt'].includes(event.key)) return false;
+        || ['Shift', 'Control', 'Meta', 'Alt'].includes(event.key)) return tab;
     let state = this.states.get(input);
     if (state && !this.valid(input, state)) { this.close(input); state = null; }
     if (state) {
@@ -92,34 +101,51 @@ const PathCompletion = {
       if (['Tab', 'ArrowUp', 'ArrowDown', 'Enter'].includes(event.key)) {
         event.preventDefault();
         if (state.entries.length) {
-          if (event.key === 'Enter') this.insert(input, state, state.entries[state.active]);
+          if (event.key === 'Enter' || (tab && state.entries.length === 1))
+            this.insert(input, state, state.entries[state.active]);
           else this.select(input, state, state.active + (event.shiftKey || event.key === 'ArrowUp' ? -1 : 1));
         } else if (event.key === 'Enter') this.close(input);
+        else if (tab && !state.loading) this.open(input, getUid);
         return true;
       }
-      this.close(input);
+      // Typing/backspace/delete/paste refresh via input. Cursor navigation has
+      // no input event, so dismiss its now unrelated suggestions.
+      if (['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) this.close(input);
     }
-    if (event.key !== 'Tab' || event.shiftKey || input.disabled) return false;
+    if (!tab) return false;
+    if (!event.shiftKey && !input.disabled) this.open(input, getUid);
+    return true;
+  },
+
+  open(input, getUid, autoFill = true, composing = false) {
     const uid = getUid();
     const capabilities = HUB_MODE ? Nodes.capabilities[nodeOf(uid)] : SessionDockCapabilities.config;
-    if (!uid || capabilities?.conversation_path_completion !== true) return false;
     const token = this.token(input);
-    if (!token) return false;
-    event.preventDefault();
-    const box = el('div', 'input-history');
-    box.id = `path-completion-${++this.nextId}`;
-    box.setAttribute('aria-label', '路径补全');
+    if (!uid || capabilities?.conversation_path_completion !== true || !token) {
+      this.close(input); return;
+    }
+    const previous = this.states.get(input);
+    previous?.abort.abort(); clearTimeout(previous?.timeout); clearTimeout(previous?.refresh);
+    // Keep the same popup in place while its query changes.
+    const box = previous?.box || el('div', 'input-history');
+    if (!previous) {
+      box.id = `path-completion-${++this.nextId}`;
+      box.setAttribute('aria-label', '路径补全');
+      input.parentElement.append(box);
+    }
     const head = el('div', 'input-history-head', '路径 · Tab / ↑↓ 选择 · Enter 填入 · Esc 关闭');
-    const status = el('div', 'input-history-empty', '正在读取路径…');
+    const status = el('div', 'input-history-empty', composing ? '输入完成后更新…' : '正在读取路径…');
     status.setAttribute('role', 'status');
-    box.append(head, status); input.parentElement.append(box);
-    state = {uid, getUid, token, text: input.value, cursor: input.selectionStart,
-      box, status, entries: [], buttons: [], active: 0, abort: new AbortController()};
+    box.replaceChildren(head, status);
+    const state = {uid, getUid, token, text: input.value, cursor: input.selectionStart,
+      box, status, autoFill, loading: true, entries: [], buttons: [], active: 0, abort: new AbortController()};
     this.states.set(input, state);
     input.setAttribute('aria-controls', box.id);
+    input.removeAttribute('aria-activedescendant');
     input.setAttribute('aria-expanded', 'true');
-    void this.load(input, state);
-    return true;
+    if (composing) return;
+    if (autoFill) void this.load(input, state);
+    else state.refresh = setTimeout(() => { if (this.valid(input, state)) void this.load(input, state); }, 100);
   },
 
   async load(input, state) {
@@ -133,7 +159,7 @@ const PathCompletion = {
       if (!response.ok) throw new Error(data.error || '路径补全暂不可用');
       state.entries = data.entries || [];
       if (!state.entries.length) { state.status.textContent = '没有匹配的路径'; return; }
-      if (state.entries.length === 1) { this.insert(input, state, state.entries[0]); return; }
+      if (state.autoFill && state.entries.length === 1) { this.insert(input, state, state.entries[0]); return; }
       state.status.remove();
       const list = el('div', 'input-history-list'); list.setAttribute('role', 'listbox');
       list.setAttribute('aria-label', '路径候选');
@@ -149,6 +175,6 @@ const PathCompletion = {
     } catch (error) {
       if (this.valid(input, state)) state.status.textContent = error.name === 'AbortError'
         ? '路径读取超时，请按 Esc 后重试' : `路径补全失败：${error.message}`;
-    } finally { clearTimeout(state.timeout); }
+    } finally { state.loading = false; clearTimeout(state.timeout); }
   },
 };
