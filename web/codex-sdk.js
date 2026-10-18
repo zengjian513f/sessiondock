@@ -141,7 +141,8 @@ const CodexSdkView = {
     this.turn = null; this.summary = null; this.limits = null; this.resetCards = null; this.limitsRecordedAt = null; this.limitsFresh = false;
     this.models = []; this.modelChoice = this.effortChoice = null;
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
-    this.uid = ''; this.agent = null; this.historyData = null; this.historyReady = null; this.historyFailed = false;
+    this.uid = ''; this.agent = null; this.historyData = null; this.historyEntry = null;
+    this.historyReady = null; this.historyFailed = false;
   },
 
   current(generation) { return generation === this.generation && !!this.pane; },
@@ -563,17 +564,24 @@ const CodexSdkView = {
           await openSession(this.uid, this.agent, {follow:true, historyMode:'replace'});
         }
       }
-      // The ordinary view already read this scope. Reuse complete history;
-      // partial windows still need the SDK's full history read, independently
-      // of app-server availability and its first live snapshot.
-      const cached = !afterTurn && cacheGet(viewKey(this.uid, this.agent));
-      const data = cached && !cached.partial
-        ? {messages: cached.msgs, activity: cached.activity}
-        : (await fetchMessages(this.uid, {agent: this.agent})).data;
+      // History is the same native head/tail window as the conversation view.
+      // Catch up through its accepted live checkpoint; never fill the gap just
+      // because an SDK view opened or a turn completed.
+      const key = viewKey(this.uid, this.agent);
+      if (afterTurn && cache.has(key)) await syncSession(this.uid, this.agent);
       if (!this.current(generation)) return;
+      let cached = cacheGet(key);
+      if (!cached) {
+        const {data, bytes} = await fetchMessages(this.uid, {agent: this.agent, windowed: true});
+        if (!this.current(generation)) return;
+        cachePut(key, {meta: data.meta, msgs: data.messages, version: data.version,
+          end: data.end, anchor: data.anchor, activity: data.activity, bytes,
+          prompt: data.prompt || null, cli: data.cli ?? null,
+          total: data.message_total, partial: data.partial || null});
+        cached = cacheGet(key);
+      }
       this.historyFailed = false;
-      this.historyData = data;
-      this.paintHistory();
+      this.useHistory(cached, true);
     } catch (error) {
       if (this.current(generation)) {
         this.historyFailed = true;
@@ -581,6 +589,18 @@ const CodexSdkView = {
         this.setNotice(`读取历史失败：${error.message || error}`, 'blocked');
       }
     }
+  },
+
+  useHistory(entry, force = false) {
+    if (!this.pane || !entry) return;
+    const data = this.historyData;
+    if (!force && this.historyEntry === entry && data?.end === entry.end
+        && data.messages === entry.msgs && data.length === entry.msgs.length
+        && data.partial === entry.partial && data.activity === entry.activity) return;
+    this.historyEntry = entry;
+    this.historyData = {messages: entry.msgs, partial: entry.partial,
+      activity: entry.activity, end: entry.end, length: entry.msgs.length};
+    this.paintHistory();
   },
 
   paintHistory() {
@@ -608,7 +628,13 @@ const CodexSdkView = {
     const folds = new Map([...this.history.querySelectorAll(':scope > .turn-process')]
       .map(node => [node.dataset.turnId, node.classList.contains('folded')]));
     this.history.replaceChildren();
-    const plan = planTurns(messages, {tailComplete, openTail: !tailComplete});
+    const partial = data.partial;
+    const split = partial ? Math.min(partial.head, messages.length) : 0;
+    const plan = partial
+      ? [...planTurns(messages.slice(0, split), {tailComplete: false, foldTail: true}),
+         {gap: {uid: this.uid, agent: this.agent, omitted: partial.omitted}},
+         ...planTurns(messages.slice(split), {tailComplete, openTail: !tailComplete})]
+      : planTurns(messages, {tailComplete, openTail: !tailComplete});
     const built = buildPlan(this.history, plan, null);
     built.forEach((node, index) => CodexSdkActions.decorate(this, node, plan[index].m));
     for (const node of this.history.querySelectorAll(':scope > .turn-process')) {
