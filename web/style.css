@@ -2530,7 +2530,7 @@ header .btn[data-session-docked] { display: none; }
 .sdk-status-row > .sdk-options { flex: none; }
 .sdk-status-row > .sdk-gauges, .sdk-status-row > #sdk-usage-toggle { margin-left: auto; }
 .sdk-status-row > #sdk-usage-toggle { font: inherit; flex: none; height: 24px; padding: 0 6px; }
-.sdk-status { min-width: 0; padding: 0; border: 0; background: transparent; text-align: left; cursor: default;
+.sdk-status { min-width: 4em; padding: 0; border: 0; background: transparent; text-align: left; cursor: default;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: inherit; }
 .sdk-status:enabled { cursor: pointer; }
 .sdk-status:enabled:hover { color: var(--text); }
@@ -2573,9 +2573,9 @@ header .btn[data-session-docked] { display: none; }
 #sdk-actions { display: grid; gap: 2px; }
 #sdk-actions .sdk-action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 #sdk-actions .sdk-action:disabled { color: var(--muted); opacity: .55; cursor: default; background: transparent; }
-.sdk-usage-menu .sdk-gauges { flex-direction: column; align-items: stretch; gap: 10px; }
-.sdk-usage-menu .sdk-gauge { display: grid; grid-template-columns: 3.5em minmax(0, 1fr) 3.4ch; gap: 8px; }
-.sdk-usage-menu .sdk-bar { width: 100%; }
+.sdk-toolbar-menu .sdk-gauges { flex-direction: column; align-items: stretch; gap: 10px; }
+.sdk-toolbar-menu .sdk-gauge { display: grid; grid-template-columns: 3.5em minmax(0, 1fr) 3.4ch; gap: 8px; }
+.sdk-toolbar-menu .sdk-bar { width: 100%; }
 .sdk-reset { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .sdk-reset .new-effort { flex: 1; }
 .sdk-reset .btn { flex: none; white-space: nowrap; height: 28px; min-height: 28px; padding: 0 10px; }

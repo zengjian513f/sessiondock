@@ -67,12 +67,29 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         assert not any(word in page.locator(selector).text_content() for word in ('沿用', '未返回', 'Default')), selector
     fake.set_settings('gpt-6.1-sol-realistic-long-model-name-2026-10-17', 'xhigh')
     expect(page.locator('#sdk-model')).to_have_value('gpt-6.1-sol-realistic-long-model-name-2026-10-17')
+    def notify(method, params):
+        asyncio.run_coroutine_threadsafe(fake.notify(method, params), fake.loop).result(timeout=5)
+    notify('turn/started', {'turn': {'id': 'layout-status-turn', 'status': 'inProgress', 'items': []}})
 
     widths = (1440, 1280, 1100, 1024, 900, 820, 768, 720, 600, 500, 430, 390, 360, 320)
     for width in widths:
         page.set_viewport_size({'width': width, 'height': 844})
         if not page.locator('#sdk-input').is_visible():
             page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+        status = page.locator('.sdk-status')
+        for native_status, label in [
+            ({'type': 'active', 'activeFlags': []}, '处理中'),
+            ({'type': 'active', 'activeFlags': ['waitingOnApproval']}, '待批准'),
+            ({'type': 'active', 'activeFlags': ['waitingOnUserInput']}, '待回答'),
+            ({'type': 'systemError'}, '系统错误'),
+        ]:
+            notify('thread/status/changed', {'status': native_status})
+            expect(status).to_have_text(label)
+            single_row(page)
+            assert status.evaluate('e => e.scrollWidth <= e.clientWidth + 1'), (width, scale, label)
+            expect(status).to_be_disabled()
+            if screenshots and label == '处理中' and width in (1440, 390, 320):
+                page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-working.png'))
         page.locator('#sdk-input').fill('/unsupported-command')
         page.locator('#sdk-send').click()
         status = page.locator('.sdk-status')
@@ -110,9 +127,16 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
                 page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-usage.png'))
             page.keyboard.press('Escape')
             expect(menu).to_be_hidden()
-        else:
+        elif page.locator('.sdk-status-row > .sdk-gauges').is_visible():
             expect(page.locator('.sdk-status-row > .sdk-gauges')).to_be_visible()
             expect(page.locator('.sdk-credits')).to_be_visible()
+        else:
+            # Usage yields its toolbar slot before a short status is truncated.
+            page.locator('#sdk-more').click()
+            expect(page.locator('#sdk-more-menu .sdk-gauges')).to_be_visible()
+            expect(page.locator('#sdk-more-menu .sdk-credits')).to_have_text('Credits 1,235')
+            within_viewport(page, page.locator('#sdk-more-menu'))
+            page.keyboard.press('Escape')
         page.locator('#sdk-more').click()
         menu = page.locator('#sdk-more-menu')
         expect(menu).to_be_visible()
@@ -181,6 +205,8 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     expect(page.locator('.sdk-credits')).to_have_text('Credits 1,235')
     single_row(page)
     assert not errors, errors
+    notify('turn/completed', {'turn': {'id': 'layout-status-turn', 'status': 'completed', 'items': []}})
+    notify('thread/status/changed', {'status': {'type': 'idle'}})
     print(f'PASS compact SDK composer: {theme}, {scale}%, {len(widths)} widths, popovers/actions/draft/sidebar', flush=True)
     context.close()
 

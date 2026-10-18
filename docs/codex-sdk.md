@@ -287,12 +287,16 @@ before first SEND does not retain these unpersisted receipts.
 - The status line shows the last turn error, the rate-limit-reached notice and the
   waiting state. Status, model/effort/mode selectors, action icons and usage all
   share one toolbar row above the input, with status left and usage/context immediately before the GPT model picker;
-  long status text has an ellipsis; only truncated status text can be clicked,
+  routine labels are 连接中 / 重连中 / 处理中 / 待批准 / 待回答 / 用量已满 /
+  系统错误. Status reserves four character widths before optional controls,
+  including on narrow panes at 125% interface scale.
+  Long status text has an ellipsis; only truncated status text can be clicked,
   tapped or activated with Enter to open its full text in a popover. Fully
   visible status text is passive. Escape or an outside click closes the popover.
 - Model and effort stay directly accessible, with a bounded model width.
   Usage shares the status line; on narrow panes a Usage button opens the gauges
-  in a popover. Compaction/fork/revert/review use header-style icon buttons with
+  in a popover; at the narrowest pane/scale, the gauges move into ⋯ to keep
+  routine status text fully visible. Compaction/fork/revert/review use header-style icon buttons with
   tooltips and accessible names; overflow entries retain their text in the ⋯ menu.
   Approval and sandbox policies live in two checked submenus under ⋯. Selecting
   an option applies that policy immediately; checks follow server-confirmed

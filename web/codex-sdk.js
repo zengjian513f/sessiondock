@@ -111,7 +111,7 @@ const CodexSdkView = {
     CodexSdkControls.mount(this);
     this.mountToolbar(generation);
     this.refreshHistory(generation);
-    this.setNotice('正在连接 Codex app-server…');
+    this.setNotice('连接中');
     this.start(generation);
   },
 
@@ -212,7 +212,8 @@ const CodexSdkView = {
       const controls = [this.notice, gauges, usage, ...pickers.children]
         .filter(node => !node.hasAttribute('popover') && node.getClientRects().length);
       let right = bounds.left;
-      return status.width >= 60 * zoom - 1 && row.scrollWidth <= row.clientWidth + 1
+      return status.width >= parseFloat(getComputedStyle(this.notice).minWidth) * zoom - 1
+        && row.scrollWidth <= row.clientWidth + 1
         && controls.every(node => {
           const box = node.getBoundingClientRect(), inside = box.left >= right - 1 && box.right <= bounds.right + 1;
           right = box.right;
@@ -224,9 +225,12 @@ const CodexSdkView = {
       pickers.style.setProperty('--sdk-effort-width', `${effort}px`);
       if (fits()) break;
     }
+    // At the narrowest pane/scale, usage must yield before the status text.
+    if (!fits()) { more.prepend(gauges); usage.hidden = true; }
     if (visibleGauges.length) {
+      const fallback = gauges.parentElement;
       row.insertBefore(gauges, usage); usage.hidden = true;
-      if (!fits()) { usageMenu.append(gauges); usage.hidden = false; }
+      if (!fits()) { fallback.append(gauges); usage.hidden = fallback === more; }
     }
     for (const control of [mode, ...buttons].filter(Boolean)) {
       const parent = control.parentElement, next = control.nextSibling;
@@ -274,7 +278,7 @@ const CodexSdkView = {
     }
     if (!this.current(generation)) return;
     this.openFailed = false; this.openRetryDelay = 1000;
-    this.setNotice('正在连接 Codex app-server…');
+    this.setNotice('连接中');
     this.loadModels(generation);
     this.loadLimits(generation);
     const es = new EventSource(appUrl(`api/codex-sdk/events?${new URLSearchParams({uid, agent: this.agent || ''})}`));
@@ -290,7 +294,7 @@ const CodexSdkView = {
       if (!this.current(generation) || this.es !== es) return;
       this.setConnected(false);
       if (es.readyState === EventSource.CLOSED) {
-        this.setNotice('SDK 事件流已断开，正在重新连接…', 'blocked');
+        this.setNotice('重连中', 'blocked');
         this.scheduleReconnect();
       }
     };
@@ -659,7 +663,7 @@ const CodexSdkView = {
       case 'bridge/reset':
         this.setConnected(false);
         queueUiChange({live: true});
-        this.setNotice('与 Codex app-server 的连接已重置，正在重新连接…', 'blocked');
+        this.setNotice('重连中', 'blocked');
         this.es?.close();
         this.scheduleReconnect();
         return;
@@ -797,12 +801,14 @@ const CodexSdkView = {
     if (this.noticeHold > Date.now()) return;
     const status = this.summary?.status || {};
     const parts = [];
-    if (this.limits?.rateLimitReachedType) parts.push('已达到 Codex 用量上限。');
+    if (this.limits?.rateLimitReachedType) parts.push('用量已满');
     if (this.summary?.last_error?.message) parts.push(`错误：${this.summary.last_error.message}`);
-    if (status.type === 'systemError') parts.push('Codex 报告系统错误。');
-    else if (status.activeFlags?.includes('waitingOnApproval')) parts.push('等待批准。');
-    else if (status.activeFlags?.includes('waitingOnUserInput')) parts.push('等待回答。');
-    else if (active) parts.push('Codex 正在处理…');
+    if (!parts.length) {
+      if (status.type === 'systemError') parts.push('系统错误');
+      else if (status.activeFlags?.includes('waitingOnApproval')) parts.push('待批准');
+      else if (status.activeFlags?.includes('waitingOnUserInput')) parts.push('待回答');
+      else if (active) parts.push('处理中');
+    }
     this.setNotice(parts.join(' '), this.summary?.last_error || status.type === 'systemError' ? 'blocked' : '');
   },
 
