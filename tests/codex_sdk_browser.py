@@ -12,6 +12,7 @@ Other sources do not offer it; Codex subagents use the same view. No real CLI or
 from __future__ import annotations
 
 import argparse
+import asyncio
 from contextlib import contextmanager
 import json
 import os
@@ -362,6 +363,42 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(pane.locator("#sdk-stop")).to_be_visible()
             expect(pane.locator("#sdk-send")).to_have_text("排队")
 
+            # Closing the SDK surface detaches only the browser subscriber.
+            # Daemon work and its server-side snapshot continue without a page.
+            page.locator('#a-chat').click()
+            expect(page.locator('#session-content-view')).to_have_count(0)
+            asyncio.run_coroutine_threadsafe(fake._agent(fake.turn, 'away-progress',
+                'Progress while the view is closed', 'commentary'), fake.loop).result(timeout=5)
+            page.locator('#a-sdk').click()
+            expect(pane).to_contain_text('Progress while the view is closed')
+            assert len(fake.methods('thread/resume')) == 1
+            assert not fake.methods('thread/unsubscribe')
+            assert not fake.methods('turn/interrupt')
+
+            # A permanently closed EventSource will not retry by itself.
+            # Keep the real SSE/snapshot path; inject only the transport failure.
+            box.fill('draft survives a disconnected stream')
+            reconnect_failures = [503]
+            def reconnect_open(route):
+                if reconnect_failures:
+                    route.fulfill(status=reconnect_failures.pop(), content_type='application/json',
+                                  body=json.dumps({'ok': False, 'error': 'temporary service restart'}))
+                else:
+                    route.continue_()
+            page.route('**/api/codex-sdk/open', reconnect_open)
+            page.evaluate('''() => {
+                window.closedSdkStream = CodexSdkView.es;
+                closedSdkStream.close();
+                closedSdkStream.dispatchEvent(new Event('error'));
+            }''')
+            expect(pane.locator('.sdk-status')).to_contain_text('正在重新连接')
+            page.wait_for_function('CodexSdkView.es !== closedSdkStream && CodexSdkView.es?.readyState === 1')
+            expect(pane).to_contain_text('Progress while the view is closed')
+            expect(box).to_have_value('draft survives a disconnected stream')
+            assert not reconnect_failures
+            page.unroute('**/api/codex-sdk/open', reconnect_open)
+            box.fill('')
+
             # The open approval survives a reload: it comes back in the snapshot.
             page.reload(wait_until="networkidle")
             pane = open_sdk(page, corpus, expect)
@@ -370,7 +407,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             live = pane.locator(".sdk-live")
             card = live.locator(".sdk-request")
             expect(card).to_contain_text("需要批准执行命令")
-            expect(live.locator('.msg[data-role="assistant"]')).to_contain_text("Working on it")
+            expect(live.locator('.msg[data-role="assistant"]').filter(has_text='Working on it')).to_have_count(1)
             assert fake.methods("thread/resume").__len__() == 1, "a reload must reuse the loaded thread"
             limits_failures.append(503)
             with page.expect_response(lambda response: "/api/codex-sdk/limits?" in response.url and response.status == 503):

@@ -131,6 +131,7 @@ const CodexSdkView = {
     this.closeToolbarMenus();
     clearTimeout(this.historyTimer);
     clearTimeout(this.openRetryTimer);
+    clearTimeout(this.reconnectTimer);
     this.openRead?.abort();
     this.openRead = null; this.openFailed = false; this.openRetryTimer = 0; this.openRetryDelay = 1000;
     clearTimeout(this.limitsRetryTimer);
@@ -238,11 +239,11 @@ const CodexSdkView = {
     });
     let data = null;
     try { data = await response.json(); } catch { /* 下面按 HTTP 状态说明 */ }
-    if (!response.ok || !data?.ok) throw Object.assign(new Error(data?.error || `请求失败（HTTP ${response.status}）`), {code: data?.code});
+    if (!response.ok || !data?.ok) throw Object.assign(new Error(data?.error || `请求失败（HTTP ${response.status}）`), {code: data?.code, status: response.status});
     return data;
   },
 
-  async start(generation) {
+  async start(generation, reconnecting = false) {
     if (!this.current(generation) || this.openRead || this.es) return;
     clearTimeout(this.openRetryTimer);
     this.openRetryTimer = 0;
@@ -260,6 +261,8 @@ const CodexSdkView = {
       if (error.code === 'codex_sdk_thread_busy') {
         this.openRetryTimer = setTimeout(() => this.start(generation), this.openRetryDelay);
         this.openRetryDelay = Math.min(this.openRetryDelay * 2, 30000);
+      } else if (reconnecting && (!error.status || error.status >= 500)) {
+        this.scheduleReconnect();
       }
       return;
     } finally {
@@ -273,23 +276,35 @@ const CodexSdkView = {
     const es = new EventSource(appUrl(`api/codex-sdk/events?${new URLSearchParams({uid, agent: this.agent || ''})}`));
     this.es = es;
     es.addEventListener('sdk', event => {
-      if (!this.current(generation)) return;
+      if (!this.current(generation) || this.es !== es) return;
       let packet;
       try { packet = JSON.parse(event.data); } catch { return; }
       if (packet.type === 'snapshot') { this.applySnapshot(packet.raw); return; }
       this.applyEvent(packet.method, packet.raw || {});
     });
     es.onerror = () => {
-      if (!this.current(generation)) return;
+      if (!this.current(generation) || this.es !== es) return;
       this.setConnected(false);
-      if (es.readyState === EventSource.CLOSED) this.setNotice('SDK 事件流已断开，正在重新连接…', 'blocked');
+      if (es.readyState === EventSource.CLOSED) {
+        this.setNotice('SDK 事件流已断开，正在重新连接…', 'blocked');
+        this.scheduleReconnect();
+      }
     };
   },
 
   reconnect() {
     if (!this.pane) return;
-    const uid = this.uid, pane = this.pane, agent = this.agent;
-    this.open(uid, pane, agent);
+    this.es?.close();
+    this.es = null;
+    this.start(this.generation, true);
+  },
+
+  scheduleReconnect() {
+    clearTimeout(this.reconnectTimer);
+    const generation = this.generation;
+    this.reconnectTimer = setTimeout(() => {
+      if (this.current(generation)) this.reconnect();
+    }, 800);
   },
 
   retryOpen() {
@@ -634,7 +649,7 @@ const CodexSdkView = {
         queueUiChange({live: true});
         this.setNotice('与 Codex app-server 的连接已重置，正在重新连接…', 'blocked');
         this.es?.close();
-        setTimeout(() => this.reconnect(), 800);
+        this.scheduleReconnect();
         return;
       case 'thread/resumed': this.summary = raw.summary || this.summary; this.paintPickers(); break;
       case 'turn/started':

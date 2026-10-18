@@ -630,15 +630,23 @@ async fn remember_agent_parents(
     Ok(())
 }
 pub async fn report(state: &AppState) -> Result<Report, ApiError> {
+    catalog_report(state, true).await
+}
+
+async fn catalog_report(state: &AppState, connections: bool) -> Result<Report, ApiError> {
     if let Some(path) = agent_socket(state) {
         let (catalog, rows) = agent_catalog(state).await?;
         let node_id = catalog.node_id.clone();
         let boot_id = catalog.boot_id.clone();
-        if let Ok(Ok(value)) = tokio::task::spawn_blocking(move || {
-            process_links::agent::request(&path, &process_links::agent::Request::Catalog(catalog))
+        if let Ok(Ok(report)) = tokio::task::spawn_blocking(move || {
+            let request = process_links::agent::Request::Catalog(catalog);
+            if connections {
+                process_links::agent::request_typed::<Report>(&path, &request)
+            } else {
+                process_links::agent::bindings(&path, &request)
+            }
         })
         .await
-            && let Ok(report) = serde_json::from_value::<Report>(value)
             && report.node_id == node_id
             && report.boot_id == boot_id
         {
@@ -658,11 +666,13 @@ pub async fn remote_bindings(state: &AppState) -> Vec<Binding> {
     };
     let mut report = None;
     if let Some(path) = agent_socket(state) {
-        report = tokio::task::spawn_blocking(move || process_links::agent::report(&path))
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .filter(|report| report.node_id == node_id);
+        report = tokio::task::spawn_blocking(move || {
+            process_links::agent::bindings(&path, &process_links::agent::Request::Report)
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .filter(|report| report.node_id == node_id);
     }
     if report.is_none() {
         report = legacy_report(state).await.ok();
@@ -681,11 +691,10 @@ pub async fn remote_bindings(state: &AppState) -> Vec<Binding> {
 pub async fn publish(state: &AppState, published: Published) -> Result<usize, ApiError> {
     if let Some(path) = agent_socket(state) {
         let payload = published.clone();
-        if let Ok(Ok(value)) = tokio::task::spawn_blocking(move || {
-            process_links::agent::request(&path, &process_links::agent::Request::Publish(payload))
+        if let Ok(Ok(report)) = tokio::task::spawn_blocking(move || {
+            process_links::agent::bindings(&path, &process_links::agent::Request::Publish(payload))
         })
         .await
-            && let Ok(report) = serde_json::from_value::<Report>(value)
             && Some(report.node_id.as_str()) == state.local_node_id.as_deref()
         {
             remember_agent_parents(state, &report, None).await?;
@@ -718,7 +727,7 @@ pub fn spawn(state: AppState) {
         loop {
             tokio::select! {
                 _ = state.shutdown.cancelled() => break,
-                _ = async { if agent_socket(&state).is_some() { let _ = report(&state).await; } } => {},
+                _ = async { if agent_socket(&state).is_some() { let _ = catalog_report(&state, false).await; } } => {},
             }
             tokio::select! { _ = state.shutdown.cancelled() => break, _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {} }
         }
