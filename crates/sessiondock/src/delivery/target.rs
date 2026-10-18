@@ -24,6 +24,8 @@ pub trait TargetResolver: Send + Sync {
 /// with no binding of its own resolves to the host bound to its ancestor when
 /// that host's pane runs the branch's process (`RuntimeSnapshot::fork_host`),
 /// so the console taken over for the parent keeps delivering after `Esc Esc`.
+/// Claude's explicit continued-in chain likewise keeps the origin host guard
+/// while CHECK/SEND operate on the continued conversation.
 pub struct ManagedResolver {
     pub runtime: Arc<crate::runtime::ManagedRuntime>,
     pub reader: Reader,
@@ -82,7 +84,10 @@ impl TargetResolver for ManagedResolver {
                 (Some(target), _) => target,
                 (None, Some(_)) if matches.next().is_some() => return Err(unlinked()),
                 (None, Some(target)) => target,
-                (None, None) => return Err(unlinked()),
+                (None, None) => self
+                    .continued_target(&observed, uid)
+                    .await
+                    .ok_or_else(unlinked)?,
             };
             if target.origin_launch_id().is_some() {
                 let lifecycle = self.lifecycle.as_ref().ok_or_else(unlinked)?;
@@ -104,6 +109,42 @@ impl TargetResolver for ManagedResolver {
 }
 
 impl ManagedResolver {
+    /// Claude's explicit continued-in record moves the conversation to a new
+    /// SID while its TUI and immutable host binding keep the origin identity.
+    /// Follow the same catalog relationship as console discovery; never bind
+    /// the host again or infer a continuation from cwd, title or child PIDs.
+    async fn continued_target<'a>(
+        &self,
+        observed: &'a crate::runtime::RuntimeSnapshot,
+        uid: &str,
+    ) -> Option<&'a ptyhost_client::BoundTarget> {
+        if !uid.starts_with("claude:") {
+            return None;
+        }
+        let document = self.reader.run(|store| store.list_recent()).await.ok()?;
+        let rows = crate::runtime::procscan::SessionRow::from_list(&document);
+        let mut current = rows
+            .iter()
+            .find(|row| row.uid == uid && row.source == "claude")?;
+        for _ in 0..8 {
+            let origin = rows.iter().find(|row| {
+                row.source == "claude"
+                    && row.uid != current.uid
+                    && row.continued_in.as_deref() == Some(current.uid.as_str())
+            })?;
+            let mut matches = observed
+                .hosts
+                .iter()
+                .filter_map(|host| host.bound_target())
+                .filter(|target| target.uid() == origin.uid);
+            if let Some(target) = matches.next() {
+                return matches.next().is_none().then_some(target);
+            }
+            current = origin;
+        }
+        None
+    }
+
     /// Prefer the TUI actually holding the rollout after /new or a fork to
     /// a second resume that declares this SID but is waiting for its lock.
     async fn process_evidence(

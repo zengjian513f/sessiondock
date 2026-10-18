@@ -25,34 +25,33 @@ from codex_empty_rewind_browser import GRID
 
 OLD = '10000000-0000-4000-8000-000000000001'
 NEW = '10000000-0000-4000-8000-000000000002'
-FAKE = r'''import json, os, pathlib, sys, tty
-old, new, old_sid, new_sid = map(str, sys.argv[1:])
-text = ''
-def output(value):
-    os.write(1, (value + '\r\n').encode())
-tty.setraw(0)
-output('RS_READY')
-while True:
-    char = os.read(0, 1)
-    if not char:
-        break
-    if char in (b'\r', b'\n'):
-        if text == 'continue':
+MIDDLE = '10000000-0000-4000-8000-000000000003'
+UNRELATED = '10000000-0000-4000-8000-000000000004'
+FAKE = r'''import json, sys
+sys.path.insert(0, sys.argv[5])
+from fake_claude_cli import Fake, parse
+old, new, old_sid, new_sid = sys.argv[1:5]
+class ContinuedFake(Fake):
+    def submit(self):
+        if self.buffer == 'continue':
             row = {'type':'continued-in', 'sessionId':old_sid,
-                   'continuedInSessionId':new_sid, 'timestamp':'2026-09-11T10:01:00Z'}
+                   'continuedInSessionId':sys.argv[6], 'timestamp':'2026-09-11T10:01:00Z'}
             with open(old, 'a') as stream:
                 stream.write(json.dumps(row) + '\n')
-            output('RS_CONTINUED: New continuation answer 最新会话内容')
-        elif text:
-            row = {'type':'user', 'uuid':text, 'parentUuid':'new-answer', 'sessionId':new_sid,
-                   'cwd':'/synthetic/history', 'timestamp':'2026-09-11T10:02:00Z',
-                   'message':{'role':'user','content':text}}
-            with open(new, 'a') as stream:
-                stream.write(json.dumps(row) + '\n')
-            output('RS_INPUT_OK ' + text)
-        text = ''
-    else:
-        text += char.decode('ascii')
+            self.sid, self.path, self.parent = new_sid, new, 'new-answer'
+            self.buffer = ''
+            self.transcript.append('RS_CONTINUED: New continuation answer 最新会话内容')
+            self.render()
+            return
+        text = self.buffer
+        super().submit()
+        if text:
+            self.transcript.append('RS_INPUT_OK ' + text)
+            self.render()
+fake = ContinuedFake(parse(['--session-id', old_sid, '--reply']))
+fake.path, fake.parent = old, 'old-answer'
+fake.transcript.append('RS_READY')
+fake.run()
 '''
 
 
@@ -70,6 +69,13 @@ def check(browser, binary, output, hub_mode, width, theme):
             'New continuation question 续接后的问题'),
             claude_row(NEW, 'assistant', 'new-answer', 'new-input', 'New continuation answer 最新会话内容')], [])
         old_uid, new_uid = corpus.uid(OLD), corpus.uid(NEW)
+        # Hub cases also cross two explicit continuation links.
+        if hub_mode:
+            corpus.put(MIDDLE, 'claude', [claude_row(MIDDLE, 'user', 'middle-input', None,
+                'Intermediate continuation'), {'type':'continued-in', 'sessionId':MIDDLE,
+                'continuedInSessionId':NEW, 'timestamp':'2026-09-11T10:01:00Z'}], [])
+        corpus.put(UNRELATED, 'claude', [claude_row(UNRELATED, 'user', 'unrelated', None,
+            'Unrelated session in the same directory 独立会话')], [])
         state = root / 'state'
         state.mkdir(mode=0o700)
         saved = state / 'session-metadata.json'
@@ -93,7 +99,8 @@ def check(browser, binary, output, hub_mode, width, theme):
         process = subprocess.Popen([str(REPO / 'target/debug/ptyhost'), '--dir', str(root / 'host'),
             'run', '--name', name, '--cwd', str(root), '--cols', '100', '--rows', '30',
             '--meta', json.dumps({'source':'claude','sid':OLD,'uid':old_uid,'instance_id':instance}),
-            '--', sys.executable, str(script), str(old), str(new), OLD, NEW],
+            '--', sys.executable, str(script), str(old), str(new), OLD, NEW, str(REPO/'tests'),
+            MIDDLE if hub_mode else NEW],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         hub, context = None, None
         try:
@@ -161,6 +168,19 @@ def check(browser, binary, output, hub_mode, width, theme):
                 expect(page.locator('#msgs')).to_contain_text('New continuation answer')
                 expect(page.locator('#cinput')).to_have_value('保留未发送草稿 continuation draft')
                 page.screenshot(path=str(output / (label+'-followed.png')))
+                # CHECK and SEND must resolve the continued conversation to this
+                # same guarded host, even though it still declares OLD/old_uid.
+                expect(page.locator('#csend')).to_be_enabled(timeout=10000)
+                with page.expect_response(lambda r: r.url.endswith('/api/session/conversation/send')) as sent:
+                    page.locator('#csend').click()
+                assert sent.value.status == 200, sent.value.text()
+                expect(page.locator('#cinput')).to_have_value('')
+                expect(page.locator('#msgs')).to_contain_text('OK: 保留未发送草稿 continuation draft')
+                native = [json.loads(line) for line in new.read_text().splitlines()]
+                assert sum(row.get('message', {}).get('content') == '保留未发送草稿 continuation draft'
+                           for row in native if row.get('type') == 'user') == 1
+                assert json.loads((root/'host'/(name+'.json')).read_text())['meta']['uid'] == old_uid
+                page.screenshot(path=str(output / (label+'-sent.png')))
                 page.locator('#a-term').click()
                 terminal.press_sequentially('after-continuation')
                 terminal.press('Enter')
@@ -180,9 +200,24 @@ def check(browser, binary, output, hub_mode, width, theme):
                 page.locator('#termpane .xterm-helper-textarea').press_sequentially('after-reload')
                 page.locator('#termpane .xterm-helper-textarea').press('Enter')
                 page.wait_for_function(GRID, arg='RS_INPUT_OK after-reload')
+                page.locator('#a-chat').click()
+                page.locator('#cinput').fill('conversation send after reload')
+                expect(page.locator('#csend')).to_be_enabled(timeout=10000)
+                with page.expect_response(lambda r: r.url.endswith('/api/session/conversation/send')) as sent:
+                    page.locator('#csend').click()
+                assert sent.value.status == 200, sent.value.text()
+                expect(page.locator('#msgs')).to_contain_text('OK: conversation send after reload')
                 assert json.loads(saved.read_text())['sessions'][new_uid] == metadata['sessions'][new_uid]
+                # Same cwd without continued-in must never inherit this host.
+                page.goto(base+'/?sid=claude:'+UNRELATED+('&node='+node.nid if hub_mode else ''),
+                          wait_until='networkidle')
+                expect(page.locator('#msgs')).to_contain_text('独立会话')
+                refused = context.request.post(base+'/api/session/conversation/check', data={
+                    'uid':view_uid(corpus.uid(UNRELATED)),
+                    '_build':context.request.get(base+'/api/meta').json()['build']})
+                assert refused.status == 409 and refused.json()['code'] == 'terminal_unlinked', refused.text()
                 assert not errors, errors
-                print('PASS Claude continuation',label,'live history, same socket/guard, input, old link, reload, saved relationship preserved',flush=True)
+                print('PASS Claude continuation',label,'live history, same socket/guard, CHECK/SEND, input, old link, reload, saved relationship preserved',flush=True)
                 context.close()
                 context = None
                 if hub:
