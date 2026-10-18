@@ -2530,9 +2530,10 @@ header .btn[data-session-docked] { display: none; }
 .sdk-status-row > .sdk-options { flex: none; }
 .sdk-status-row > .sdk-gauges, .sdk-status-row > #sdk-usage-toggle { margin-left: auto; }
 .sdk-status-row > #sdk-usage-toggle { font: inherit; flex: none; height: 24px; padding: 0 6px; }
-.sdk-status { min-width: 0; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer;
+.sdk-status { min-width: 0; padding: 0; border: 0; background: transparent; text-align: left; cursor: default;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: inherit; }
-.sdk-status:hover { color: var(--text); }
+.sdk-status:enabled { cursor: pointer; }
+.sdk-status:enabled:hover { color: var(--text); }
 .sdk-status:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sdk-status-menu { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--sans); }
 .sdk-status[hidden], #sdk-composer .btn[hidden] { display: none; }

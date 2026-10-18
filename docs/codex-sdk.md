@@ -34,8 +34,11 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
 - A thread is resumed (`thread/resume`, `excludeTurns: true`) at most once per
   connection; later pages reuse it. If it is already active without a local
   turn ID, the bridge reads the newest turn (`thread/turns/list`, `limit: 1`,
-  descending, summary items) before publishing its snapshot. This restores
-  explicit steer and interrupt for work started in a TUI before subscription.
+  descending, full items) before publishing its snapshot. This restores
+  explicit steer, interrupt and all replies/tools for work started in a TUI
+  before subscription. Summary items omit replies/tools and cannot replace
+  the active turn's native history (BUG-20261018-091356-69d2ff). Notifications
+  received during recovery keep their newer bodies in the native item order.
   A turn completed during recovery is never resurrected. A thread with no attached page, no turn in
   flight and no open request for 10 minutes is unsubscribed (except an
   unpersisted new thread, whose live instance is its only copy)
@@ -242,8 +245,10 @@ before first SEND does not retain these unpersisted receipts.
   on failure, and asserts a single history read on complete-cache entry.
 - History: `fetchMessages(uid, {agent})` rendered by the same `planTurns` / `buildPlan`, so
   persisted turns look exactly like the message view. While a turn is in
-  flight, history is cut before the last user message equal to the in-flight
-  turn's user message, and the turn is shown from SDK items instead. After
+  flight, history is cut at the matching native turn identity (falling back to
+  the last matching user text for older records), and the turn is shown from
+  SDK items instead. If recovery omits the user item after compaction, its
+  persisted prompt stays visible. After
   `turn/completed` the history is reloaded and SDK items that are now on disk
   are removed, so each turn appears once. Completed processes use the shared
   fold/expand cards and header toggle; prompts and final answers stay visible.
@@ -282,8 +287,9 @@ before first SEND does not retain these unpersisted receipts.
 - The status line shows the last turn error, the rate-limit-reached notice and the
   waiting state. Status, model/effort/mode selectors, action icons and usage all
   share one toolbar row above the input, with status left and usage/context immediately before the GPT model picker;
-  long status text has an ellipsis; clicking, tapping or pressing Enter on the
-  status opens its full text in a popover. Escape or an outside click closes it.
+  long status text has an ellipsis; only truncated status text can be clicked,
+  tapped or activated with Enter to open its full text in a popover. Fully
+  visible status text is passive. Escape or an outside click closes the popover.
 - Model and effort stay directly accessible, with a bounded model width.
   Usage shares the status line; on narrow panes a Usage button opens the gauges
   in a popover. Compaction/fork/revert/review use header-style icon buttons with

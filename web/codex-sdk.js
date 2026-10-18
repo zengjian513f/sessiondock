@@ -153,6 +153,7 @@ const CodexSdkView = {
       const menu = this.pane.querySelector(`#sdk-${name}-menu`);
       menu.addEventListener('beforetoggle', event => button.setAttribute('aria-expanded', String(event.newState === 'open')));
       button.onclick = () => {
+        if (button.disabled) return;
         if (menu.matches(':popover-open')) { menu.hidePopover(); return; }
         this.closeToolbarMenus();
         menu.showPopover();
@@ -160,8 +161,11 @@ const CodexSdkView = {
       };
     }
     window.addEventListener('resize', () => this.closeToolbarMenus(), {signal: this.toolbarBindings.signal});
-    this.toolbarObserver = new ResizeObserver(([entry]) => { if (this.current(generation)) this.layoutToolbar(entry.contentRect.width); });
+    this.toolbarObserver = new ResizeObserver(() => {
+      if (this.current(generation)) this.layoutToolbar(this.pane.querySelector('.sdk-status-row').clientWidth);
+    });
     this.toolbarObserver.observe(this.pane.querySelector('.sdk-status-row'));
+    this.toolbarObserver.observe(this.notice);
     this.layoutToolbar();
   },
 
@@ -187,7 +191,7 @@ const CodexSdkView = {
     this.toolbarWidth = width ?? row.clientWidth;
     const visibleGauges = [...gauges.children].filter(node => !node.hidden);
     const signature = `${this.toolbarWidth}:${visibleGauges.map(node => node.textContent).join('|')}`;
-    if (signature === this.toolbarLayout) return;
+    if (signature === this.toolbarLayout) { this.updateStatusDisclosure(); return; }
     this.toolbarLayout = signature;
     this.closeToolbarMenus();
     const pickers = this.pane.querySelector('.sdk-pickers'), more = this.pane.querySelector('#sdk-more-menu');
@@ -229,7 +233,7 @@ const CodexSdkView = {
       pickers.insertBefore(control, trigger);
       if (!fits()) parent.insertBefore(control, next);
     }
-
+    this.updateStatusDisclosure();
   },
 
   async request(path, body, signal) {
@@ -563,7 +567,12 @@ const CodexSdkView = {
     let messages = data?.messages || [];
     let tailComplete = !this.turn && !['working', 'waiting'].includes(data?.activity?.state);
     const userText = this.activeUserText();
-    if (userText) {
+    const nativeStart = this.turn?.id ? messages.findIndex(message =>
+      message.turn_id === this.turn.id && (userText || message.role !== 'user')) : -1;
+    if (nativeStart >= 0) {
+      messages = messages.slice(0, nativeStart);
+      tailComplete = true;
+    } else if (userText) {
       // 正在进行的回合已在 SDK 实时区显示；落盘历史截到它的用户消息之前。
       for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].role === 'user' && String(messages[i].text || '').trim() === userText) {
@@ -807,6 +816,19 @@ const CodexSdkView = {
     this.notice.hidden = !text;
     this.notice.className = 'sdk-status' + (kind ? ` ${kind}` : '');
     this.notice.dataset.sticky = sticky ? '1' : '';
+    this.updateStatusDisclosure();
+  },
+
+  updateStatusDisclosure() {
+    if (!this.notice) return;
+    const clipped = !this.notice.hidden && this.notice.scrollWidth > this.notice.clientWidth + 1;
+    this.notice.disabled = !clipped;
+    if (clipped) this.notice.setAttribute('aria-haspopup', 'dialog');
+    else {
+      this.notice.removeAttribute('aria-haspopup');
+      const menu = this.pane.querySelector('#sdk-status-menu');
+      if (menu.matches(':popover-open')) menu.hidePopover();
+    }
   },
 
   nearBottom() {
