@@ -167,6 +167,16 @@ before first SEND does not retain these unpersisted receipts.
   session or subagent selects SDK by default. An explicit switch to 对话/终端 lasts for
   the current page; background refreshes do not switch it back. It opens through `SessionContentView` like 信息/资源; the header
   stays, the message list, composer and terminal pane are hidden.
+- History is displayed independently of app-server open and the first SSE snapshot.
+  Complete history already read for the selected `(uid, agent)` is reused on entry;
+  partial windows still fetch full SDK history. The snapshot reconciles live items
+  against that history without a second read. Connection errors remain visible
+  alongside readable history. BUG-20261018-014447-60f001 recorded a 2,262 ms
+  initial history read followed by another identical 1,068,259-byte response;
+  SDK entry additionally awaited open and the snapshot. The audit did not time
+  SDK RPCs, so it does not establish their share of the reported delay.
+  `codex_sdk_browser.py` holds open and SSE independently, checks readable history
+  on failure, and asserts a single history read on complete-cache entry.
 - History: `fetchMessages(uid, {agent})` rendered by the same `planTurns` / `buildPlan`, so
   persisted turns look exactly like the message view. While a turn is in
   flight, history is cut before the last user message equal to the in-flight

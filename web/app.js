@@ -5908,6 +5908,8 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     await renderSession(hit.meta, hit.msgs, hit.activity, { startWatch: false });
     if (S.sel === uid && S.agent === selectedAgent) {
       await syncSession(uid, selectedAgent);
+      if (CodexSdkView.uid === uid && CodexSdkView.agent === selectedAgent && CodexSdkView.pane)
+        await CodexSdkView.refreshHistory(CodexSdkView.generation);
       if (S.sel === uid && S.agent === selectedAgent) watchSession(uid, selectedAgent);
     }
     return;

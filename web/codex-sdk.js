@@ -8,7 +8,7 @@ const CodexSdkView = {
   uid: '', agent: null, pane: null, es: null, generation: 0,
   box: null, history: null, live: null, notice: null, input: null,
   turn: null, items: new Map(), nodes: new Map(), requests: new Map(),
-  summary: null, models: [], historyTimer: 0, snapshotReady: null,
+  summary: null, models: [], historyTimer: 0, historyData: null,
   limits: null, resetCards: null, redeemKeys: new Map(),
   limitsRead: null, limitsRetryTimer: 0, limitsRetryDelay: 1000,
   toolbarObserver: null, toolbarBindings: null, toolbarWidth: null, toolbarLayout: null,
@@ -100,6 +100,7 @@ const CodexSdkView = {
     CodexSdkActions.mount(this);
     CodexSdkControls.mount(this);
     this.mountToolbar(generation);
+    this.refreshHistory(generation);
     this.setNotice('正在连接 Codex app-server…');
     this.start(generation);
   },
@@ -123,7 +124,7 @@ const CodexSdkView = {
     this.turn = null; this.summary = null; this.limits = null; this.resetCards = null;
     this.models = []; this.modelChoice = this.effortChoice = null;
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
-    this.uid = ''; this.agent = null;
+    this.uid = ''; this.agent = null; this.historyData = null;
   },
 
   current(generation) { return generation === this.generation && !!this.pane; },
@@ -229,22 +230,19 @@ const CodexSdkView = {
     if (!this.current(generation)) return;
     this.loadModels(generation);
     this.loadLimits(generation);
-    let ready;
-    this.snapshotReady = new Promise(resolve => { ready = resolve; });
     const es = new EventSource(appUrl(`api/codex-sdk/events?${new URLSearchParams({uid, agent: this.agent || ''})}`));
     this.es = es;
     es.addEventListener('sdk', event => {
       if (!this.current(generation)) return;
       let packet;
       try { packet = JSON.parse(event.data); } catch { return; }
-      if (packet.type === 'snapshot') { this.applySnapshot(packet.raw); ready(); return; }
+      if (packet.type === 'snapshot') { this.applySnapshot(packet.raw); return; }
       this.applyEvent(packet.method, packet.raw || {});
     });
     es.onerror = () => {
       if (!this.current(generation)) return;
       if (es.readyState === EventSource.CLOSED) this.setNotice('SDK 事件流已断开，正在重新连接…', 'blocked');
     };
-    this.refreshHistory(generation);
   },
 
   reconnect() {
@@ -472,42 +470,55 @@ const CodexSdkView = {
           await openSession(this.uid, this.agent, {follow:true, historyMode:'replace'});
         }
       }
-      const [{data}] = await Promise.all([fetchMessages(this.uid, {agent: this.agent}), this.snapshotReady]);
+      // The ordinary view already read this scope. Reuse complete history;
+      // partial windows still need the SDK's full history read, independently
+      // of app-server availability and its first live snapshot.
+      const cached = !afterTurn && cacheGet(viewKey(this.uid, this.agent));
+      const data = cached && !cached.partial
+        ? {messages: cached.msgs, activity: cached.activity}
+        : (await fetchMessages(this.uid, {agent: this.agent})).data;
       if (!this.current(generation)) return;
-      const stick = this.nearBottom();
-      let messages = data?.messages || [];
-      let tailComplete = !this.turn && !['working', 'waiting'].includes(data?.activity?.state);
-      const userText = this.activeUserText();
-      if (userText) {
-        // 正在进行的回合已在 SDK 实时区显示；落盘历史截到它的用户消息之前。
-        for (let i = messages.length - 1; i >= 0; i--) {
-          if (messages[i].role === 'user' && String(messages[i].text || '').trim() === userText) {
-            messages = messages.slice(0, i);
-            tailComplete = true;
-            break;
-          }
-        }
-      }
-      const folds = new Map([...this.history.querySelectorAll(':scope > .turn-process')]
-        .map(node => [node.dataset.turnId, node.classList.contains('folded')]));
-      this.history.replaceChildren();
-      const plan = planTurns(messages, {tailComplete, openTail: !tailComplete});
-      const built = buildPlan(this.history, plan, null);
-      built.forEach((node, index) => CodexSdkActions.decorate(this, node, plan[index].m));
-      for (const node of this.history.querySelectorAll(':scope > .turn-process')) {
-        if (folds.has(node.dataset.turnId))
-          folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
-      }
-      refreshMessageTimeDividers(this.history);
-      // 已经落盘的回合从实时区移除，避免同一回合出现两次。
-      for (const [id, node] of this.nodes) {
-        if (!this.items.has(id)) { node.remove(); this.nodes.delete(id); }
-      }
-      this.paintStatus();
-      if (stick) this.scrollBottom();
+      this.historyData = data;
+      this.paintHistory();
     } catch (error) {
       if (this.current(generation)) this.setNotice(`读取历史失败：${error.message || error}`, 'blocked');
     }
+  },
+
+  paintHistory() {
+    const data = this.historyData;
+    if (!data || !this.history) return;
+    const stick = this.nearBottom();
+    let messages = data?.messages || [];
+    let tailComplete = !this.turn && !['working', 'waiting'].includes(data?.activity?.state);
+    const userText = this.activeUserText();
+    if (userText) {
+      // 正在进行的回合已在 SDK 实时区显示；落盘历史截到它的用户消息之前。
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user' && String(messages[i].text || '').trim() === userText) {
+          messages = messages.slice(0, i);
+          tailComplete = true;
+          break;
+        }
+      }
+    }
+    const folds = new Map([...this.history.querySelectorAll(':scope > .turn-process')]
+      .map(node => [node.dataset.turnId, node.classList.contains('folded')]));
+    this.history.replaceChildren();
+    const plan = planTurns(messages, {tailComplete, openTail: !tailComplete});
+    const built = buildPlan(this.history, plan, null);
+    built.forEach((node, index) => CodexSdkActions.decorate(this, node, plan[index].m));
+    for (const node of this.history.querySelectorAll(':scope > .turn-process')) {
+      if (folds.has(node.dataset.turnId))
+        folds.get(node.dataset.turnId) ? node._fold?.() : node._open?.();
+    }
+    refreshMessageTimeDividers(this.history);
+    // 已经落盘的回合从实时区移除，避免同一回合出现两次。
+    for (const [id, node] of this.nodes) {
+      if (!this.items.has(id)) { node.remove(); this.nodes.delete(id); }
+    }
+    if (this.summary) this.paintStatus();
+    if (stick) this.scrollBottom();
   },
 
   scheduleHistory() {
@@ -534,6 +545,7 @@ const CodexSdkView = {
     this.requests = new Map((raw.requests || []).map(request => [request.key, request]));
     for (const item of this.items.values()) this.paintItem(item);
     for (const request of this.requests.values()) this.paintRequest(request);
+    this.paintHistory();
     this.paintPickers();
     CodexSdkActions.paint(this);
     CodexSdkControls.paint(this);

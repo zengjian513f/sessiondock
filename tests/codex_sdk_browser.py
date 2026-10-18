@@ -110,6 +110,54 @@ def open_sdk(page, corpus, expect):
     return pane
 
 
+def opening_check(browser, corpus, base, expect, screenshots):
+    """History must not wait for open or SSE, or be fetched twice on entry."""
+    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+    page = context.new_page()
+    held = []
+    reads = []
+    page.route("**/api/codex-sdk/open", lambda route: held.append(route))
+    page.on("request", lambda request: reads.append(request.url) if "/api/messages/" in request.url else None)
+    page.goto(base, wait_until="networkidle")
+    page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+    history = page.locator('.sdk-history')
+    expect(history).to_contain_text("earlier synthetic answer")
+    expect(page.locator('.sdk-status')).to_contain_text("正在连接")
+    assert len(reads) == 1, reads
+    assert held, "SDK connection was not started"
+    if screenshots:
+        screenshots.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(screenshots / "opening-pending.png"))
+    held.pop().fulfill(status=503, content_type="application/json",
+                       body=json.dumps({"ok": False, "error": "Synthetic unavailable daemon"}))
+    expect(page.locator('.sdk-status')).to_contain_text("Synthetic unavailable daemon")
+    expect(history).to_contain_text("earlier synthetic answer")
+    page.unroute("**/api/codex-sdk/open")
+    snapshots = []
+    page.route("**/api/codex-sdk/events?*", lambda route: snapshots.append(route))
+    page.locator('#a-chat').click()
+    page.locator('#a-sdk').click()
+    expect(history).to_contain_text("earlier synthetic answer")
+    expect(page.locator('.sdk-gauge[data-gauge="5h"] b')).to_have_text("40%")
+    assert snapshots, "SDK snapshot was not requested"
+    assert len(reads) == 1, reads
+    snapshots.pop().continue_()
+    expect(page.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text("20%")
+    expect(history.locator('.msg[data-role="assistant"]')).to_have_count(1)
+    assert len(reads) == 1, reads
+    # Re-entering a cached session must include records written while away.
+    page.unroute("**/api/codex-sdk/events?*")
+    before = corpus.paths["sdk"].read_text()
+    try:
+        with corpus.paths["sdk"].open("a") as native:
+            native.write(json.dumps(codex_message("assistant", "cached reentry sentinel")) + "\n")
+        page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
+        expect(history).to_contain_text("cached reentry sentinel")
+    finally:
+        context.close()
+        corpus.paths["sdk"].write_text(before)
+
+
 def browser_check(corpus, base, fake, screenshots=None):
     from playwright.sync_api import expect, sync_playwright
     with sync_playwright() as playwright:
@@ -118,6 +166,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             launch["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
         browser = playwright.chromium.launch(**launch)
         try:
+            opening_check(browser, corpus, base, expect, screenshots)
             context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
             context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
             page = context.new_page()
