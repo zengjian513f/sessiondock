@@ -136,14 +136,16 @@ impl LiveThread {
         }
         state.turn = Some(turn.clone());
         state.starting = false;
+        let mut recovered = IndexMap::new();
         for item in turn["items"].as_array().into_iter().flatten() {
             if let Some(id) = item["id"].as_str() {
-                state
-                    .items
-                    .entry(id.to_owned())
-                    .or_insert_with(|| item.clone());
+                recovered.insert(id.to_owned(), item.clone());
             }
         }
+        // Keep native order while giving notifications received during the
+        // read precedence over the older recovered bodies.
+        recovered.extend(std::mem::take(&mut state.items));
+        state.items = recovered;
         let event = state.event("turn/started", json!({"threadId":self.id,"turn":turn}));
         let _ = self.tx.send(event);
     }

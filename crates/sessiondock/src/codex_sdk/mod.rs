@@ -531,13 +531,15 @@ impl Inner {
     ) -> Result<(), RpcError> {
         if let Some(revision) = thread.missing_active_turn() {
             // Resume deliberately excludes history. Read only the newest turn
-            // to recover a running TUI's exact expectedTurnId for steer/stop.
+            // to recover both its expectedTurnId and the items written before
+            // this bridge attached. The browser replaces that native turn's
+            // history with these items; summary view omits its replies/tools.
             let turns = connection
                 .request(
                     "thread/turns/list",
                     json!({
                         "threadId":thread.id(), "sortDirection":"desc", "limit":1,
-                        "itemsView":"summary",
+                        "itemsView":"full",
                     }),
                 )
                 .await?;

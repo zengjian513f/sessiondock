@@ -202,9 +202,9 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     pane = visit(NESTED)
     expect(pane.locator('.sdk-history')).not_to_contain_text('Child history sentinel ' + CHILD)
     resumes = sum(m['params']['threadId'] == NESTED for m in fake.methods('thread/resume'))
-    generation = page.evaluate('CodexSdkView.generation')
+    page.evaluate('window.previousSdkStream = CodexSdkView.es')
     fake.disconnect()
-    page.wait_for_function('previous => CodexSdkView.generation > previous && !!CodexSdkView.summary', arg=generation)
+    page.wait_for_function('CodexSdkView.es !== previousSdkStream && CodexSdkView.connected && CodexSdkView.es?.readyState === 1')
     assert sum(m['params']['threadId'] == NESTED for m in fake.methods('thread/resume')) > resumes
     expect(pane.locator('#sdk-model')).to_have_value('fake-sol')
     page.wait_for_function('CodexSdkView.summary?.resume?.thread?.id === ' + repr(NESTED))

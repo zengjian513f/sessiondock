@@ -79,19 +79,24 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         expect(status).to_contain_text('不支持的命令')
         single_row(page)
         full_status = status.text_content()
-        status.tap()
         details = page.get_by_role('dialog', name='完整状态')
-        expect(details).to_be_visible()
-        expect(details).to_have_text(full_status)
-        within_viewport(page, details)
-        if screenshots and width in (390, 320):
-            page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-status.png'))
-        page.keyboard.press('Escape')
-        expect(details).to_be_hidden()
-        status.press('Enter')
-        expect(details).to_be_visible()
-        page.locator('#sdk-input').click()
-        expect(details).to_be_hidden()
+        if status.evaluate('e => e.scrollWidth > e.clientWidth + 1'):
+            expect(status).to_be_enabled()
+            status.tap()
+            expect(details).to_be_visible()
+            expect(details).to_have_text(full_status)
+            within_viewport(page, details)
+            if screenshots and width in (390, 320):
+                page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-status.png'))
+            page.keyboard.press('Escape')
+            expect(details).to_be_hidden()
+            status.press('Enter')
+            expect(details).to_be_visible()
+            page.locator('#sdk-input').click()
+            expect(details).to_be_hidden()
+        else:
+            expect(status).to_be_disabled()
+            expect(details).to_be_hidden()
         assert page.locator('#sdk-model').bounding_box()['width'] <= 160 * scale / 100 + 2
         usage = page.locator('#sdk-usage-toggle')
         if usage.is_visible():
