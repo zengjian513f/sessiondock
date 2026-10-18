@@ -107,6 +107,7 @@ const CodexSdkView = {
   },
 
   close() {
+    this.setConnected(false);
     CodexSdkCompose.close(this);
     CodexSdkActions.close(this);
     CodexSdkControls.close(this);
@@ -262,6 +263,7 @@ const CodexSdkView = {
     });
     es.onerror = () => {
       if (!this.current(generation)) return;
+      this.setConnected(false);
       if (es.readyState === EventSource.CLOSED) this.setNotice('SDK 事件流已断开，正在重新连接…', 'blocked');
     };
   },
@@ -561,7 +563,15 @@ const CodexSdkView = {
   },
 
   // ---------------------------------------------------------------- 事件
+  setConnected(connected) {
+    this.connected = connected;
+    if (!this.uid || this.agent) return;
+    paintItemStatus(document.querySelector(`.item[data-uid="${CSS.escape(this.uid)}"]`));
+    if (S.sel === this.uid) paintHeaderTurn();
+  },
+
   applySnapshot(raw) {
+    this.setConnected(true);
     // The SDK may attach between two identical global live snapshots.
     // Reconcile ownership on this connection's snapshot as well.
     queueUiChange({live: true});
@@ -591,6 +601,7 @@ const CodexSdkView = {
         this.paintQueue();
         break;
       case 'bridge/reset':
+        this.setConnected(false);
         queueUiChange({live: true});
         this.setNotice('与 Codex app-server 的连接已重置，正在重新连接…', 'blocked');
         this.es?.close();

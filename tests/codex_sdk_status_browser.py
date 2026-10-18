@@ -50,6 +50,14 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     card = page.locator(f'#side .item[data-uid="{uid}"]')
     external = page.locator(f'#side .item[data-uid="{independent}"]')
     marker = card.locator(':scope > .ico > .item-status')
+    # A slow/partial fleet read can lack SDK ownership while this exact
+    # thread's independent SDK stream has already delivered its snapshot.
+    def stale_live(route):
+        response = route.fetch()
+        data = response.json()
+        data['sdk_uids'] = []
+        route.fulfill(response=response, json=data)
+    page.route('**/api/live*', stale_live)
     card.click()
     expect(page.locator('#sdk-model')).to_have_value('fake-sol')
     expect(page.locator('#dlive')).to_have_class(re.compile(r'\bsdk\b'))
@@ -64,6 +72,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         "e => { const c = getComputedStyle(e); return c.backgroundColor; }")
     if screenshots:
         page.screenshot(path=str(screenshots / (label + '-sdk.png')))
+    page.unroute('**/api/live*', stale_live)
     page.reload(wait_until='domcontentloaded')
     expect(page.locator('#sdk-input')).to_be_visible()
     expect(page.locator('#dlive')).to_have_class(re.compile(r'\bsdk\b'))

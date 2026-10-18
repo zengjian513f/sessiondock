@@ -58,7 +58,13 @@ or unsubscribe removes that evidence; an external process alone stays green.
 `/api/live.sdk_uids` carries this evidence through the Hub and live events,
 separately from `tmux_uids`, which continues to mean console ownership. SDK
 connection snapshots also reconcile live state, so opening/reconnecting between
-global observer samples cannot leave a stale green marker. Browser coverage:
+global observer samples cannot leave a stale green marker. An attached main-thread
+SDK snapshot is also direct display evidence, independent of delayed/partial fleet
+reads; close, stream error or bridge reset withdraws that local evidence. A live
+CLI observation with an exact managed terminal binding likewise stays blue when
+the fleet response is missing it. These display fallbacks do not alter process
+control or claim that a failed SDK open succeeded (follow-up screenshot to the
+same report). Browser coverage:
 [codex_sdk_status_browser.py](../tests/codex_sdk_status_browser.py),
 [codex_sdk_create_browser.py](../tests/codex_sdk_create_browser.py),
 [codex_sdk_terminal_browser.py](../tests/codex_sdk_terminal_browser.py).

@@ -551,6 +551,8 @@ function browserStateSnapshot(reason = '') {
       cache: entry ? {messages: entry.msgs?.length || 0, end: entry.end,
         anchor: entry.anchor, activity: entry.activity?.state || ''} : null,
       dom_messages: nodes.length, terminal: termState,
+      live_status: {aggregate: S.live.has(S.sel), aggregate_sdk: S.liveSdk.has(S.sel),
+        ...sessionLiveStatus(S.sel), marker: $('#dlive')?.className || ''},
       cli: typeof queuedSendDiagnostics === 'function' ? queuedSendDiagnostics() : null,
       view: SessionContentView.kind || (termState?.visible ? 'terminal' : 'chat'),
       content_view: SessionContentView.kind ? SessionContentView.snapshot() : null,
@@ -748,12 +750,14 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 const icon = src => `<svg class="ico source-icon" data-source="${src}" aria-hidden="true" style="color:${SOURCES[src].color}"><use href="#${SOURCES[src].icon}"/></svg>`;
 // 会话头的图标：右上角的运行点和左栏列表一致（绿=直接进程，蓝=受管终端或 SDK）
 const liveStatusTitle = (tmux, uid = S.sel) => !SessionDockCapabilities.allows('live') ? '运行状态未知，尚未实现进程探测'
-  : S.liveSdk.has(uid) ? '运行于受管 SDK' : tmux ? '运行于受管终端' : '运行中';
+  : sessionLiveStatus(uid).sdk ? '运行于受管 SDK' : tmux ? '运行于受管终端' : '运行中';
 const sessionIconMarkup = (src, live, tmux, turn = '', uid = S.sel) => {
+  const status = sessionLiveStatus(uid);
+  live ||= status.live; tmux ||= status.tmux;
   const frozen = sessionFrozen(uid);
   const label = frozen ? '会话已暂停' : liveStatusTitle(tmux, uid) + turnLabel(turn);
   return `<span class="ico">${icon(src)}<span
-    class="item-status${live || frozen ? ' visible' : ''}${tmux ? ' tmux' : ''}${S.liveSdk.has(uid) ? ' sdk' : ''}${frozen ? ' frozen' : turn ? ` turn-${turn}` : ''}" id="dlive"
+    class="item-status${live || frozen ? ' visible' : ''}${tmux ? ' tmux' : ''}${status.sdk ? ' sdk' : ''}${frozen ? ' frozen' : turn ? ` turn-${turn}` : ''}" id="dlive"
     title="${esc(label)}" aria-label="${esc(label)}">${frozen ? uiIcon('pause') : ''}</span></span>`;
 };
 const uiIcon = name => `<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
@@ -2220,6 +2224,18 @@ const inputAttentionLabel = attention => attention === 'question' ? ' · 等待�
 
 const pendingRowRunning = row => !!row && !row.stale && pendingPhase(row) === 'running';
 
+// Display evidence is independent of a fleet poll: an exact managed CLI
+// observation or an attached SDK snapshot may arrive while that poll is stale.
+function sessionLiveStatus(uid) {
+  const draft = typeof composerDrafts !== 'undefined'
+    ? composerDrafts.get(composerDraftOwner(uid)) : null;
+  const tmux = S.liveTmux.has(uid)
+    || (draft?.cli?.instance?.running === true && !!takenOver(uid));
+  const sdk = S.liveSdk.has(uid) || (typeof CodexSdkView !== 'undefined'
+    && CodexSdkView.uid === uid && !CodexSdkView.agent && CodexSdkView.connected === true);
+  return {live: S.live.has(uid) || tmux || sdk, tmux, sdk};
+}
+
 /** 角标颜色只说现在：绿 = 在跑，蓝 = 由受管终端或 SDK 连接承载，灰 = 已退出但还有没看的新内容。
  *  颜色不随计数固化——以前把计数时的 tmux 态存进 localStorage，会话退出后角标还是蓝的。 */
 function paintItemStatus(node) {
@@ -2230,23 +2246,21 @@ function paintItemStatus(node) {
   // 临时会话没有 live 集合里的 uid，跑没跑以行上已算好的 live 类为准；已结束的行不亮点。
   const isPending = !!node.dataset.tmuxName;
   const pending = isPending && node.classList.contains('live');
-  const draft = typeof composerDrafts !== 'undefined'
-    ? composerDrafts.get(composerDraftOwner(node.dataset.uid)) : null;
-  const active = isPending ? pending : S.live.has(node.dataset.uid)
-    || (draft?.cli?.instance?.running === true && !!takenOver(node.dataset.uid));
-  const tmux = isPending ? pending : S.liveTmux.has(node.dataset.uid);
+  const status = sessionLiveStatus(node.dataset.uid);
+  const active = isPending ? pending : status.live;
+  const tmux = isPending ? pending : status.tmux;
   const frozen = sessionFrozen(node.dataset.uid);
   const attention = !frozen && active ? sessionInputAttention(node.dataset.uid) : '';
   paintStatusMarker(badge, frozen, row.count, attention);
   badge.classList.toggle('visible', frozen || active || row.count > 0);
   badge.classList.toggle('counted', row.count > 0);
   badge.classList.toggle('tmux', tmux);
-  badge.classList.toggle('sdk', S.liveSdk.has(node.dataset.uid));
+  badge.classList.toggle('sdk', status.sdk);
   badge.classList.toggle('idle', !active);
   const turn = frozen || pending ? '' : sessionTurn(node.dataset.uid);
   badge.classList.toggle('turn-working', turn === 'working' && !attention);
   badge.classList.toggle('turn-waiting', turn === 'waiting');
-  const running = frozen ? '会话已暂停' : (S.liveSdk.has(node.dataset.uid) ? '受管 SDK 会话运行中' : tmux ? '受管会话运行中' : '会话运行中')
+  const running = frozen ? '会话已暂停' : (status.sdk ? '受管 SDK 会话运行中' : tmux ? '受管会话运行中' : '会话运行中')
     + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
   badge.title = badge.ariaLabel = row.count
     ? `${row.count} 条新内容，${!active && !frozen ? '会话已退出' : running}`
@@ -2280,17 +2294,15 @@ function paintHeaderTurn() {
   const h = $('#dlive');
   if (!h) return;
   const row = document.querySelector(`.item[data-uid="${CSS.escape(S.sel || '')}"]`);
-  const tmux = row ? row.classList.contains('live-tmux') : S.liveTmux.has(S.sel);
+  const status = sessionLiveStatus(S.sel);
+  const tmux = status.tmux || !!row?.classList.contains('live-tmux');
   const frozen = sessionFrozen(S.sel);
-  const draft = typeof composerDrafts !== 'undefined'
-    ? composerDrafts.get(composerDraftOwner(S.sel)) : null;
-  const active = (row ? row.classList.contains('live') : S.live.has(S.sel))
-    || (draft?.cli?.instance?.running === true && !!takenOver(S.sel));
+  const active = status.live || !!row?.classList.contains('live');
   const attention = !frozen && active ? sessionInputAttention(S.sel) : '';
   paintStatusMarker(h, frozen, 0, attention);
   h.classList.toggle('visible', frozen || active);
   h.classList.toggle('tmux', tmux);
-  h.classList.toggle('sdk', S.liveSdk.has(S.sel));
+  h.classList.toggle('sdk', status.sdk);
   const turn = frozen || row?.dataset.tmuxName ? '' : sessionTurn(S.sel);
   h.classList.toggle('turn-working', turn === 'working' && !attention);
   h.classList.toggle('turn-waiting', turn === 'waiting');
