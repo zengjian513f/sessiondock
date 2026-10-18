@@ -828,7 +828,8 @@ impl Parser<'_> {
                         "idle"
                     },
                     &ts,
-                    json!({"duration_ms": payload["duration_ms"]}),
+                    json!({"duration_ms": payload["duration_ms"],
+                           "error": payload["error"]["message"]}),
                 ),
                 "turn_aborted" => {
                     for event in self.events.iter_mut().rev() {

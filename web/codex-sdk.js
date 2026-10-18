@@ -869,7 +869,11 @@ const CodexSdkView = {
     const status = this.summary?.status || {};
     const parts = [];
     if (this.limits?.rateLimitReachedType) parts.push('用量已满');
-    if (this.summary?.last_error?.message) parts.push(`错误：${this.summary.last_error.message}`);
+    const nativeError = !active && status.type === 'systemError'
+      && this.historyData?.activity?.state === 'failed'
+      ? this.historyData.activity.error : null;
+    const errorText = this.summary?.last_error?.message || nativeError;
+    if (errorText) parts.push(`错误：${errorText}`);
     else if (this.summary?.retry_error?.message) parts.push(`正在重试：${this.summary.retry_error.message}`);
     if (!parts.length) {
       if (status.type === 'systemError') parts.push('系统错误');

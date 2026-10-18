@@ -158,7 +158,7 @@ impl LiveThread {
         !state.starting
             && state.turn.is_none()
             && state.requests.is_empty()
-            && state.status["type"] == "idle"
+            && matches!(state.status["type"].as_str(), Some("idle" | "systemError"))
     }
 
     pub fn starting(&self, value: bool) {
