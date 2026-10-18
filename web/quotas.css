@@ -23,6 +23,7 @@
 [data-source="codex"] .quota-col-captured { width: 14%; }
 .quota-card-expiry { color: var(--muted); font-size: 11px; margin-top: 4px; }
 .quota-table th, .quota-table td { padding: 5px 8px; white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
+.quota-table .quota-credits { text-align: right; font-variant-numeric: tabular-nums; }
 .quota-table tbody + tbody { border-top: 1px solid var(--border); }
 .quota-table .quota-machine-name { position: sticky; left: 0; background: var(--panel); }
 .quota-table thead th:first-child { position: sticky; left: 0; background: var(--panel); }

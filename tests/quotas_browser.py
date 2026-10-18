@@ -40,7 +40,7 @@ for line in sys.stdin:
   with (root/'calls').open('a') as f:f.write('query\n')
   while (root/'hold').exists(): time.sleep(.02)
   used=float((root/'used').read_text()) if (root/'used').exists() else 25
-  print(json.dumps({'id':2,'result':{'rateLimitResetCredits':{'availableCount':3,'credits':[{'status':'available','expiresAt':int(time.time())+7200}]},'rateLimitsByLimitId':{'codex':{'credits':{'balance':'123.45','hasCredits':True,'unlimited':False},'primary':{'usedPercent':used,'windowDurationMins':300,'resetsAt':int(time.time())+7200},'secondary':{'usedPercent':60,'windowDurationMins':10080,'resetsAt':int(time.time())+172800}},'extra':{'limitName':'Long model bucket 模型专用额度组','primary':{'windowDurationMins':60}}}}}),flush=True)
+  print(json.dumps({'id':2,'result':{'rateLimitResetCredits':{'availableCount':3,'credits':[{'status':'available','expiresAt':int(time.time())+7200}]},'rateLimitsByLimitId':{'codex':{'credits':{'balance':'12345.89','hasCredits':True,'unlimited':False},'primary':{'usedPercent':used,'windowDurationMins':300,'resetsAt':int(time.time())+7200},'secondary':{'usedPercent':60,'windowDurationMins':10080,'resetsAt':int(time.time())+172800}},'extra':{'limitName':'Long model bucket 模型专用额度组','primary':{'windowDurationMins':60}}}}}),flush=True)
  else: raise AssertionError(q)
 '''
 
@@ -93,23 +93,27 @@ def main():
             expect(machine.get_by_role('table')).to_have_count(3)
             for name in ('Codex','Claude Code','Agy'):
                 table=machine.get_by_role('table',name=name,exact=True)
-                headers={'Codex':['机器','窗口','剩余','重置倒计时','Credits','重置卡','采集'],
-                         'Claude Code':['机器','窗口','剩余','重置倒计时','采集'],
-                         'Agy':['机器','额度组','窗口','剩余','重置倒计时','采集']}
+                headers={'Codex':['机器','窗口','已使用','重置倒计时','Credits','重置卡','采集'],
+                         'Claude Code':['机器','窗口','已使用','重置倒计时','采集'],
+                         'Agy':['机器','额度组','窗口','已使用','重置倒计时','采集']}
                 expect(table.get_by_role('columnheader')).to_have_text(headers[name])
                 expect(table.get_by_role('rowheader',name='Empty Node',exact=True)).to_have_count(0)
-            expect(machine.locator('section[data-source=claude]')).to_contain_text('87.5%')
-            expect(machine.locator('section[data-source=codex]')).to_contain_text('9%')
+            expect(machine.locator('section[data-source=claude]')).to_contain_text('12.5%')
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('91%')
             expect(page.locator('#quota-refresh')).to_be_disabled()
             page.screenshot(path=str(out/'cached-loading.png'))
             (root/'hold').unlink()
-            expect(machine.locator('section[data-source=codex]')).to_contain_text('75%',timeout=30000)
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('25%',timeout=30000)
             expect(machine.locator('section[data-source=codex]')).to_contain_text('N/A')
-            expect(machine.locator('section[data-source=codex]')).to_contain_text('123.45')
+            expect(machine.locator('td.quota-credits')).to_have_text('12,345')
+            assert machine.locator('td.quota-credits').evaluate("n => getComputedStyle(n).textAlign")=='right'
+            expect(machine.locator('section[data-source=codex] progress').first).to_have_attribute('aria-label','Quota Node 长机器名 5 小时 已使用额度')
+            assert machine.locator('section[data-source=codex] progress').first.evaluate('n => n.value')==25
+            expect(machine.locator('section[data-source=agy] .quota-remaining strong')).to_have_text(['15%','100%','0%'])
             expect(machine.locator('section[data-source=codex]')).to_contain_text('3 张')
-            expect(machine.locator('section[data-source=agy]')).to_contain_text('85%')
+            expect(machine.locator('section[data-source=agy]')).to_contain_text('15%')
             expect(machine.locator('section[data-source=agy]')).to_contain_text('已到期')
-            expect(machine.locator('section[data-source=claude]')).to_contain_text('0%')
+            expect(machine.locator('section[data-source=claude]')).to_contain_text('100%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             assert (root/'calls').read_text().count('query')==1
             deadline=machine.locator('section[data-source=codex] [data-deadline]').first
@@ -119,7 +123,7 @@ def main():
             # Explicit refresh still queries, then reopening queries again.
             (root/'used').write_text('26')
             page.get_by_role('button',name='刷新').click()
-            expect(machine.locator('section[data-source=codex]')).to_contain_text('74%')
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('26%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             assert (root/'calls').read_text().count('query')==2
             (root/'used').write_text('25')
@@ -128,7 +132,7 @@ def main():
                 for width in (1280,390):
                     page.set_viewport_size({'width':width,'height':950});page.reload()
                     if width==390: page.locator('#header-more-btn').click()
-                    page.locator('#settings').click();page.get_by_role('tab',name='机器',exact=True).click();page.locator('#quota-open').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('75%')
+                    page.locator('#settings').click();page.get_by_role('tab',name='机器',exact=True).click();page.locator('#quota-open').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('25%')
                     expect(page.locator('#quota-refresh')).to_be_enabled()
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                     page.screenshot(path=str(out/f'{theme}-{width}.png'),full_page=True)
@@ -139,16 +143,16 @@ def main():
                         assert scroll.evaluate('n => n.scrollLeft > 0')
                         page.screenshot(path=str(out/f'{theme}-390-scrolled.png'),full_page=True)
             assert (root/'calls').read_text().count('query')==6, 'each opening must query once'
-            (root/'fail').touch();page.get_by_role('button',name='刷新').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('查询失败',timeout=30000);expect(machine.locator('section[data-source=codex]')).to_contain_text('75%');expect(machine.locator('section[data-source=agy]')).to_contain_text('85%')
+            (root/'fail').touch();page.get_by_role('button',name='刷新').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('查询失败',timeout=30000);expect(machine.locator('section[data-source=codex]')).to_contain_text('25%');expect(machine.locator('section[data-source=agy]')).to_contain_text('15%')
             page.screenshot(path=str(out/'query-failure.png'),full_page=True)
             # A node transport failure leaves its displayed snapshot in place.
             page.route('**/api/quotas/refresh',lambda route:route.fulfill(status=503,body='offline') if (root/'ids/node-id').read_text().strip() in route.request.url else route.continue_())
-            page.get_by_role('button',name='刷新').click();expect(page.locator('#quota-status')).to_contain_text('1 台读取失败');expect(machine.locator('section[data-source=codex]')).to_contain_text('75%')
+            page.get_by_role('button',name='刷新').click();expect(page.locator('#quota-status')).to_contain_text('1 台读取失败');expect(machine.locator('section[data-source=codex]')).to_contain_text('25%')
             machine.get_by_role('button',name='关闭',exact=True).click()
             expect(machine).to_have_count(0)
             expect(page.locator('#settings-dialog')).to_be_visible()
             page.locator('#quota-open').click()
-            expect(machine.locator('section[data-source=claude]')).to_contain_text('87.5%')
+            expect(machine.locator('section[data-source=claude]')).to_contain_text('12.5%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             page.keyboard.press('Escape')
             expect(machine).to_have_count(0)
@@ -165,16 +169,16 @@ def main():
             page.route('**/api/quotas/refresh',lambda route:route.fulfill(json={'agents':[{'source':'codex','buckets':[{'id':'codex:primary','group':'codex','window':300,'remaining_percent':75}]}]}))
             page.route('**/api/quotas',lambda route:route.fulfill(json={'agents':[{'source':'codex','buckets':[{'id':'codex:primary','group':'codex','window':300,'remaining_percent':75}]}]}))
             page.locator('#quota-open').click()
-            expect(machine.locator('.quota-credits')).to_have_text(['N/A'])
+            expect(machine.locator('td.quota-credits')).to_have_text(['N/A'])
             expect(machine.locator('.quota-cards')).to_have_text(['N/A'])
             expect(page.locator('#quota-refresh')).to_be_enabled()
             page.keyboard.press('Escape');page.unroute('**/api/quotas');page.unroute('**/api/quotas/refresh')
             (root/'fail').unlink();(root/'used').write_text('31')
-            page.goto(base+'/quotas.html');machine=page;expect(machine.locator('section[data-source=claude]')).to_contain_text('87.5%')
-            expect(machine.locator('section[data-source=codex]')).to_contain_text('69%')
+            page.goto(base+'/quotas.html');machine=page;expect(machine.locator('section[data-source=claude]')).to_contain_text('12.5%')
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('31%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             page.reload()
-            expect(machine.locator('section[data-source=codex]')).to_contain_text('69%')
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('31%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             page.get_by_role('link',name='← 会话列表').click();expect(page.locator('#header-more-btn')).to_be_visible()
             assert not errors,errors
