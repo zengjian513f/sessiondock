@@ -2550,7 +2550,7 @@ header .btn[data-session-docked] { display: none; }
 .sdk-status:enabled:hover { text-decoration: underline; text-underline-offset: 3px; }
 .sdk-status:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sdk-status-menu { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--sans); }
-.sdk-status[hidden], #sdk-composer .btn[hidden] { display: none; }
+.sdk-status[hidden], #sdk-composer[hidden], #sdk-composer .btn[hidden] { display: none; }
 /* 单行：状态优先，其次用量；其余控件按剩余空间进入菜单。 */
 .sdk-options { display: flex; align-items: center; }
 .sdk-gauges { display: flex; align-items: center; gap: 10px; flex: none; min-width: 0; color: var(--muted); font-size: 12px; }

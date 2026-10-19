@@ -33,6 +33,8 @@ struct Live {
     data: Mutex<Data>,
     events: broadcast::Sender<Arc<str>>,
     commands: mpsc::UnboundedSender<Command>,
+    stop: CancellationToken,
+    done: CancellationToken,
 }
 
 struct Data {
@@ -129,6 +131,25 @@ fn key(target: &Value) -> Result<String, String> {
 }
 
 impl Bridge {
+    pub async fn stop(&self, uid: &str) -> Result<bool, String> {
+        let live = {
+            let mut sessions = self.sessions.lock().unwrap();
+            let Some(live) = sessions.keys.remove(uid) else {
+                return Ok(false);
+            };
+            sessions.native.remove(&live.sid);
+            live
+        };
+        let _ = live
+            .events
+            .send(Arc::from(json!({"method":"bridge/stopped"}).to_string()));
+        live.stop.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(10), live.done.cancelled())
+            .await
+            .map_err(|_| "Agy SDK 停止尚未确认")?;
+        Ok(true)
+    }
+
     pub fn loaded_uids(&self) -> Vec<String> {
         self.sessions
             .lock()
@@ -275,6 +296,8 @@ impl Bridge {
             sid: sid.clone(),
             cwd,
             commands,
+            stop: self.shutdown.child_token(),
+            done: CancellationToken::new(),
             events,
             data: Mutex::new(Data {
                 seq: 0,
@@ -294,12 +317,12 @@ impl Bridge {
         });
         sessions.native.insert(sid, live.clone());
         sessions.keys.insert(key, live.clone());
-        tokio::spawn(actor(
-            self.process.clone(),
-            live.clone(),
-            receiver,
-            self.shutdown.clone(),
-        ));
+        let process = self.process.clone();
+        let running = live.clone();
+        tokio::spawn(async move {
+            actor(process, running.clone(), receiver, running.stop.clone()).await;
+            running.done.cancel();
+        });
         Ok(live)
     }
 
@@ -402,6 +425,9 @@ async fn actor(
 ) {
     let mut pending = std::collections::VecDeque::new();
     loop {
+        if shutdown.is_cancelled() {
+            break;
+        }
         let command = if let Some(turn) = pending.pop_front() {
             Some(Command::Turn(turn))
         } else {

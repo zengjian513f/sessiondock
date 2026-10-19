@@ -281,6 +281,7 @@ pub fn router() -> Router<AppState> {
         .route("/codex-sdk/turn", post(codex_sdk::turn))
         .route("/codex-sdk/queue", post(codex_sdk::queue_action))
         .route("/codex-sdk/interrupt", post(codex_sdk::interrupt))
+        .route("/codex-sdk/stop", post(codex_sdk::stop))
         .route("/codex-sdk/respond", post(codex_sdk::respond))
         .route("/codex-sdk/models", get(codex_sdk::models))
         .route("/codex-sdk/limits", get(codex_sdk::limits))

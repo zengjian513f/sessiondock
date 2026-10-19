@@ -70,6 +70,7 @@ async fn execute(
             | "turn"
             | "steer"
             | "interrupt"
+            | "stop"
             | "respond"
             | "models"
             | "discard"
@@ -268,6 +269,10 @@ async fn execute(
                 .map_err(super::conversation::error)?;
         }
         return Ok(Json(response(result)));
+    }
+    if method == "stop" {
+        let stopped = state.native_sdks.stop(&target).await.map_err(failure)?;
+        return Ok(Json(json!({"ok":true,"stopped":stopped})));
     }
     if method == "interrupt" {
         state

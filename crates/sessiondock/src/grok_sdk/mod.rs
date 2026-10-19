@@ -131,6 +131,28 @@ pub fn new(config: &Config, shutdown: CancellationToken) -> io::Result<Option<Ar
 }
 
 impl Bridge {
+    pub async fn stop(&self, uid: &str) -> Result<bool, String> {
+        let _gate = self.attach.lock().await;
+        let session = self.sessions.lock().unwrap().remove(uid);
+        let Some(session) = session else {
+            return Ok(false);
+        };
+        {
+            let live = session.live.lock().unwrap();
+            let _ = live
+                .events
+                .send(Arc::from(json!({"method":"bridge/stopped"}).to_string()));
+        }
+        session.connection.stop.cancel();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            session.connection.done.cancelled(),
+        )
+        .await
+        .map_err(|_| "Grok SDK 停止尚未确认")?;
+        Ok(true)
+    }
+
     pub fn loaded_uids(&self) -> Vec<String> {
         self.sessions
             .lock()

@@ -40,6 +40,7 @@ pub struct NativeSdks {
     path: Option<PathBuf>,
     input_queue: input_queue::Journal,
     queue_workers: Mutex<BTreeSet<String>>,
+    stopped: Mutex<BTreeSet<String>>,
     queue_wake: tokio::sync::Notify,
     shutdown: CancellationToken,
 }
@@ -97,6 +98,7 @@ impl NativeSdks {
             path,
             input_queue,
             queue_workers: Mutex::new(BTreeSet::new()),
+            stopped: Mutex::new(BTreeSet::new()),
             queue_wake: tokio::sync::Notify::new(),
             shutdown,
         });
@@ -151,6 +153,27 @@ impl NativeSdks {
             .values()
             .flat_map(|provider| dispatch!(provider, bridge, bridge.loaded_uids()))
             .collect()
+    }
+
+    pub async fn stop(&self, target: &Value) -> Result<bool, String> {
+        let source = target["source"].as_str().unwrap_or_default();
+        let uid = target["uid"].as_str().ok_or("SDK 缺少 UID")?;
+        let key = target["agent"]
+            .as_str()
+            .filter(|agent| !agent.is_empty())
+            .map_or_else(|| uid.to_owned(), |agent| format!("{uid}:{agent}"));
+        let Some(provider) = self.providers.get(source) else {
+            return Ok(false);
+        };
+        // Cancel pending admission before releasing the runtime: queued work must
+        // not reopen a session the user has explicitly stopped.
+        let scope = input_queue::scope(target);
+        self.stopped
+            .lock()
+            .expect("SDK stopped scopes")
+            .insert(scope.clone());
+        self.input_queue.stop(&scope)?;
+        dispatch!(provider, bridge, bridge.stop(&key).await)
     }
 
     pub fn unavailable(&self) -> Value {
@@ -238,6 +261,20 @@ impl NativeSdks {
         target: Value,
         input: Value,
     ) -> Result<Value, String> {
+        let scope = input_queue::scope(&target);
+        if method == "open" {
+            self.stopped
+                .lock()
+                .expect("SDK stopped scopes")
+                .remove(&scope);
+        } else if self
+            .stopped
+            .lock()
+            .expect("SDK stopped scopes")
+            .contains(&scope)
+        {
+            return Err("SDK 会话已停止，请先启动会话".into());
+        }
         if self.cli_missing(source) {
             return Err(format!("此机器未安装或无法执行 {source} 客户端"));
         }
@@ -551,6 +588,14 @@ impl NativeSdks {
         target: Value,
         input: Value,
     ) -> Result<Value, String> {
+        if self
+            .stopped
+            .lock()
+            .expect("SDK stopped scopes")
+            .contains(&input_queue::scope(&target))
+        {
+            return Err("SDK 会话已停止".into());
+        }
         let provider = self
             .providers
             .get(source)
@@ -654,6 +699,9 @@ impl NativeSdks {
                         .provider_call(source, "turn", target.clone(), input)
                         .await;
                     let saved = self.input_queue.change(key, &row.id, |entry| {
+                        if entry.state == "cancelled" {
+                            return Ok(());
+                        }
                         match result {
                             Ok(result) => {
                                 entry.result = Some(result);

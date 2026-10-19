@@ -7071,7 +7071,7 @@ function head(m, total) {
           <button class="session-menu-action" id="m-prev" title="上一处" aria-label="上一处匹配">↑</button>
           <button class="session-menu-action" id="m-next" title="下一处" aria-label="下一处匹配">↓</button></div>` : ''}
         <div class="session-menu-diagnostics session-run-actions">
-          ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-toggle" type="button"></button>'}
+          ${m.agent_id && !SdkView.available(m.uid, m.agent_id) ? '' : '<button class="session-menu-action" id="a-session-toggle" type="button"></button>'}
           ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-freeze" hidden></button>'}
           ${continueSessionButtonMarkup(m)}
         </div>
@@ -7332,6 +7332,7 @@ function sessionRunRow(uid) {
     || (typeof sessionTermMeta === 'function' ? sessionTermMeta(uid) : null);
 }
 function sessionRunActive(row) {
+  if (row?.agent_id) return SdkView.uid === row.uid && SdkView.agent === row.agent_id && !SdkView.readOnly;
   return !!row && (row.pending ? !!row.running && !row.stale : sessionStoppable(row.uid));
 }
 function sessionStopUnavailable(row) {
@@ -7345,6 +7346,8 @@ function sessionRunUnavailable(row) {
   if (row.pending) return row.source === 'shell'
     ? '已结束的 SSH 会话不能续接，请新建 SSH 会话。'
     : '此启动记录尚无可续接的原生会话，请从新建会话重新启动。';
+  if (SdkView.available(row.uid, row.agent_id || null)
+      && (SdkView.defaultFor(row.uid, row.agent_id || null) || (S.sel === row.uid && SessionContentView.kind === 'sdk'))) return '';
   const reason = consoleUnavailableReason(row.uid, row.agent_id || null, false);
   if (reason) return reason;
   const capabilities = HUB_MODE ? Nodes.capabilities[nodeOf(row.uid)] : T;
@@ -7362,14 +7365,14 @@ function paintSessionRunControl(button, row) {
     button.innerHTML = uiIcon('power');
     button.classList.toggle('danger', running);
     labelSessionAction(button);
-    button.onclick = () => toggleSessionRun(sessionRunRow(row?.uid) || row, button, button.dataset.runIntent);
+    button.onclick = () => toggleSessionRun(row?.agent_id ? row : sessionRunRow(row?.uid) || row, button, button.dataset.runIntent);
   }
   button.dataset.runIntent = running ? 'stop' : 'start';
   setControlUnavailable(button, sessionRunUnavailable(row));
 }
 function refreshSessionRunControls() {
   const button = $('#a-session-toggle');
-  const row = sessionRunRow(S.sel);
+  const row = S.agent ? {...sessionRunRow(S.sel), agent_id: S.agent} : sessionRunRow(S.sel);
   // A bound launch can leave the sidebar before resolveNewSession follows it.
   // Missing from that projection does not mean its running host has stopped.
   if (row && button?.closest('.dhead')?.dataset.uid === S.sel)
@@ -7389,9 +7392,11 @@ async function toggleSessionRun(row, button = null, intent = null) {
   ConsoleUI.errors.delete(row.uid);
   refreshSessionRunControls();
   try {
-    if (S.sel !== row.uid || S.agent) await openSession(row.uid);
+    if (S.sel !== row.uid || S.agent !== (row.agent_id || null)) await openSession(row.uid, row.agent_id || null);
     // Reuse the existing exact-UID resume and its idempotent launch receipt.
-    await takeover(row.uid, null);
+    if (SessionContentView.kind === 'sdk' && SdkView.available(row.uid, row.agent_id || null))
+      await SdkView.startSession(row.uid, row.agent_id || null);
+    else await takeover(row.uid, null);
   } catch (error) {
     await appAlert(`启动失败：${error.message || error}`);
   } finally {
@@ -7505,20 +7510,19 @@ const STOP_STAGE_TEXT = {
 };
 
 async function requestSessionStop(m) {
-  const body = { uid: m.uid };
+  const body = { uid: m.uid, ...(m.agent_id ? {agent:m.agent_id} : {}) };
   if (sessionStopCapable()) body.request_id = requestId();
-  const response = await fetch(appUrl('api/session/stop'), {
+  const sdk = m.agent_id || sessionLiveStatus(m.uid).sdk;
+  const endpoint = !sdk ? 'api/session/stop' : !String(m.uid).startsWith('codex:') ? 'api/native-sdk/stop'
+    : m.agent_id || SdkView.pending(m.uid) ? 'api/codex-sdk/stop' : 'api/session/stop';
+  const response = await fetch(appUrl(endpoint), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   const result = await response.json();
   if (!response.ok || result.error) throw new Error(result.error || response.status);
-  if (sessionStopCapable() && result.stopped) S.live.delete(m.uid);
-  // An unreadable native rollout may have prevented the SDK event stream
-  // from attaching. The successful stop receipt also closes that view.
-  if (result.stopped && typeof CodexSdkView !== 'undefined'
-      && CodexSdkView.uid === m.uid && !CodexSdkView.agent)
-    CodexSdkView.applyEvent('bridge/stopped', {});
+  if (sessionStopCapable() && result.stopped && !m.agent_id) S.live.delete(m.uid);
+  if (result.stopped || result.raw?.stopped) SdkView.stopped(m.uid, m.agent_id || null);
   return result;
 }
 

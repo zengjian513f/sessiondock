@@ -322,6 +322,16 @@ pub async fn queue_action(
     Ok(Json(json!({"ok":true,"raw":raw})))
 }
 
+pub async fn stop(
+    State(state): State<AppState>,
+    Json(body): Json<Target>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    let thread = thread_id(&state, &body.uid, &body.agent).await?;
+    sdk.stop_thread(&thread).await.map_err(rpc)?;
+    Ok(Json(json!({"ok":true,"stopped":true})))
+}
+
 pub async fn interrupt(
     State(state): State<AppState>,
     Json(body): Json<Target>,
