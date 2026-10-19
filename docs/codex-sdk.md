@@ -159,7 +159,7 @@ always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 | POST `/api/codex-sdk/revert` `{uid, before_turn_id}` | `thread/revert`; removes the selected turn and later conversation, without reverting workspace files |
 | POST `/api/codex-sdk/compact` `{uid}` | `thread/compact/start`; progress uses ordinary turn/item events |
 | POST `/api/codex-sdk/review` `{uid, target}` | `review/start` with inline delivery; uncommitted changes, base branch, commit or custom instructions |
-| POST `/api/codex-sdk/controls/settings` `{uid, mode?, approval_policy?, sandbox_policy?, service_tier?}` | `thread/settings/update`; only explicit changes are sent, effective settings arrive through notifications |
+| POST `/api/codex-sdk/controls/settings` `{uid, model?, effort?, mode?, approval_policy?, sandbox_policy?, service_tier?}` | `thread/settings/update`; only explicit changes are sent, effective settings arrive through notifications |
 | POST `/api/codex-sdk/controls/shell` `{uid, command}` | `thread/shellCommand`, the CLI's direct `!command` semantics; output uses command execution items |
 
 Errors: `503 codex_sdk_unavailable` (socket unreachable / start failed),
@@ -306,8 +306,15 @@ behavior; they do not require other sources to expose unsupported controls.
   and effort from `thread/start`/`thread/resume`, then follow
   `thread/settings/updated`, including changes made by another client. A current
   value absent from `model/list` is still displayed verbatim. Catalog defaults
-  are not evidence of the current thread's settings. Unsent user choices survive
-  incoming settings events; after SEND the pickers follow the effective settings again.
+  are not evidence of the current thread's settings. Selecting model/effort
+  immediately calls `thread/settings/update`, independently of SEND. The requested
+  value stays disabled until native confirmation; rejection restores the last
+  confirmed value. Incoming settings from another client remain authoritative.
+  Model/effort/tier changes also call `turn/settings/update` for a known active
+  turn, publishing settings for subsequent native captures without restarting
+  an already captured request. `targetUnavailable` means that turn already ended;
+  the thread setting still applies. Mode and permissions follow their native
+  thread-setting boundary rather than inventing unsupported active-turn fields.
 - DELTA (service tier, BUG-20261018-122932-0e7a3c): the composer toolbar also
   shows the current thread's service tier. Choices use the effective model's
   `model/list.serviceTiers` names, descriptions and native IDs (Fast may use
@@ -370,8 +377,13 @@ behavior; they do not require other sources to expose unsupported controls.
   active turn or outstanding request. A completed failed turn may leave the
   daemon in `systemError`; this state also permits a new turn, as in the TUI.
   An active thread is never implicitly
-  steered. Queued inputs capture model/effort and published attachment paths at
-  submission. Native rejection stays visible and blocks later queued inputs until
+  steered. Queued inputs capture published attachment paths at submission.
+  The page submits model/effort through the settings route when selected; ordinary
+  sends and explicit steer carry no stale picker overrides. While settings await
+  native confirmation, controls and SEND stay disabled without consuming the draft.
+  Already captured native inference steps retain their original settings. Covered by the
+  [queued model browser regression](../tests/codex_sdk_model_queue_browser.py).
+  Native rejection stays visible and blocks later queued inputs until
   explicit retry or cancellation. An uncertain/disconnected native RPC is never
   automatically replayed; an in-flight entry recovered on restart is marked for
   manual verification. Submission IDs survive draft reload and lost HTTP replies.

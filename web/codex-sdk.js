@@ -13,7 +13,6 @@ const CodexSdkView = {
   limitsRead: null, limitsRetryTimer: 0, limitsRetryDelay: 1000, limitsRecordedAt: null, limitsFresh: false,
   openRead: null, openFailed: false, openRetryTimer: 0, openRetryDelay: 1000,
   toolbarObserver: null, toolbarBindings: null, toolbarWidth: null, toolbarLayout: null,
-  modelChoice: null, effortChoice: null,
   pendingAtOpen: false,
   legacyViews: new Set(),
 
@@ -103,12 +102,14 @@ const CodexSdkView = {
     };
     pane.querySelector('#sdk-send').onclick = () => this.send();
     pane.querySelector('#sdk-stop').onclick = () => this.interrupt();
-    pane.querySelector('#sdk-model').onchange = event => {
-      this.modelChoice = event.target.value || null;
-      this.effortChoice = null;
-      this.paintPickers();
-    };
-    pane.querySelector('#sdk-effort').onchange = event => { this.effortChoice = event.target.value || null; };
+    for (const kind of ['model', 'effort']) {
+      pane.querySelector(`#sdk-${kind}`).onchange = async event => {
+        const generation = this.generation, value = event.target.value;
+        if (!value) return;
+        try { await CodexSdkControls.settings(this, {[kind]: value}); }
+        catch (error) { if (this.current(generation)) this.setNotice(`设置失败：${error.message}`, 'blocked', true); }
+      };
+    }
     pane.querySelector('#sdk-reset-use').onclick = () => this.redeem();
     CodexSdkCompose.mount(this);
     CodexSdkActions.mount(this);
@@ -163,7 +164,7 @@ const CodexSdkView = {
     this.limitsRead = null; this.limitsRetryTimer = 0; this.limitsRetryDelay = 1000;
     this.items.clear(); this.nodes.clear(); this.requests.clear();
     this.turn = null; this.summary = null; this.cachedUsage = null; this.limits = null; this.resetCards = null; this.limitsRecordedAt = null; this.limitsFresh = false;
-    this.models = []; this.modelChoice = this.effortChoice = null;
+    this.models = [];
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
     this.uid = ''; this.agent = null; this.historyData = null; this.historyEntry = null;
     this.historyReady = null; this.historyFailed = false;
@@ -482,7 +483,7 @@ const CodexSdkView = {
     if (!this.pane) return;
     const modelSelect = this.pane.querySelector('#sdk-model');
     const currentModel = this.summary?.settings?.model || '';
-    const modelName = this.modelChoice ?? currentModel;
+    const modelName = sdkSettingValue(this, 'model', currentModel);
     modelSelect.replaceChildren();
     for (const model of this.models) modelSelect.append(new Option(model.model, model.model));
     if (modelName && ![...modelSelect.options].some(option => option.value === modelName))
@@ -491,7 +492,7 @@ const CodexSdkView = {
     modelSelect.title = modelName;
     const select = this.pane.querySelector('#sdk-effort');
     const model = this.models.find(row => row.model === modelName);
-    let chosen = this.effortChoice ?? this.summary?.settings?.effort ?? '';
+    let chosen = sdkSettingValue(this, 'effort', this.summary?.settings?.effort || '');
     const switching = modelName !== currentModel;
     select.replaceChildren();
     for (const effort of model?.supportedReasoningEfforts || []) {
@@ -500,11 +501,12 @@ const CodexSdkView = {
       select.append(option);
     }
     if (chosen && ![...select.options].some(option => option.value === chosen)) {
-      if (switching && this.effortChoice === null) chosen = '';
+      if (switching && !this.settingChoices.has('effort')) chosen = '';
       else select.append(new Option(UsageUI.effort(chosen), chosen));
     }
     this.selectValue(select, chosen, '选择强度');
     CodexSdkControls.paintTier(this);
+    sdkSyncSettings(this);
     this.layoutToolbar();
   },
 
@@ -859,6 +861,7 @@ const CodexSdkView = {
     const active = !!this.turn;
     this.pane.querySelector('#sdk-stop').hidden = !active;
     const send = this.pane.querySelector('#sdk-send');
+    sdkSyncSettings(this);
     send.textContent = active ? '排队' : '发送';
     send.title = active ? '当前回合结束后发送；排队消息可撤销或立即引导' : '开始新回合';
     this.paintQueue();
@@ -993,7 +996,6 @@ const CodexSdkView = {
     if (button.disabled) return;
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');
-    const model = this.modelChoice, effort = this.effortChoice;
     try {
       const payload = await CodexSdkCompose.collect(this);
       if (!payload || !this.current(generation)) return;
@@ -1005,17 +1007,13 @@ const CodexSdkView = {
         this.setNotice('不支持的命令。输入 /help 查看可用命令；草稿已保留。', 'blocked');
         return;
       }
-      const request_id = await CodexSdkCompose.submission(payload, model, effort, this.agent);
+      const request_id = await CodexSdkCompose.submission(payload, null, null, this.agent);
       const response = await this.request('api/codex-sdk/turn', {
         uid: payload.uid, text, attachments: payload.attachments, quotes: payload.quotes,
-        model, effort, request_id,
+        request_id,
       });
       if (!await CodexSdkCompose.accepted(this, payload, response, request_id)) return;
       if (this.input === input) {
-        if (!response.raw?.steered) {
-          if (this.modelChoice === model) this.modelChoice = null;
-          if (this.effortChoice === effort) this.effortChoice = null;
-        }
         this.paintPickers();
       }
       await CodexSdkCompose.sent(this, payload);
@@ -1025,6 +1023,7 @@ const CodexSdkView = {
       if (this.current(generation)) CodexSdkCompose.failed(this);
       button.disabled = false;
       button.removeAttribute('aria-busy');
+      if (this.current(generation)) sdkSyncSettings(this);
     }
   },
 
@@ -1039,7 +1038,7 @@ const CodexSdkView = {
         const select = this.pane.querySelector(`#sdk-${command}`);
         if (value) {
           if (![...select.options].some(option => option.value === value)) throw new Error(`${command === 'model' ? '模型' : '推理强度'}不在可选列表中`);
-          select.value = value; select.dispatchEvent(new Event('change'));
+          await CodexSdkControls.settings(this, {[command]:value});
         } else select.focus();
         break;
       }

@@ -59,6 +59,14 @@ DELTA：五种 SDK 的文件与图片统一沿用原版 SessionDock 附件逻辑
 离开 SDK 后恢复当前会话的历史 watch，不恢复旧会话连接。共享 facade 负责切换，
 [双标签页回归](../tests/sdk_multitab_browser.py)覆盖发送与撤销。
 
+五种 SDK 的模型、强度、模式、权限、Fast、服务档位和原生代理选中后立即调用本来源设置接口，
+不等待发送正文。HTTP 回执早于原生通知时保留所选值，禁用设置与 SEND，确认后恢复；
+失败回到已确认值并保留草稿。普通发送、排队及 Codex 立即引导不携带选择器的旧模型/强度覆盖。
+已经执行的原生步骤不回溯更换。Agy 没有运行中配置协议，立即保存会话设置，
+当前回合仍使用启动时参数；页面明确说明该边界，不停止或重启正在执行的任务。覆盖：
+[Codex 排队与设置](../tests/codex_sdk_model_queue_browser.py)、
+[四来源选择与设置](../tests/native_sdk_selection_browser.py)。
+
 同一会话再次打开时，SDK 历史跟随新的读取请求；已被替代的旧请求取消不显示
 历史错误，也不覆盖新请求成功得到的内容。
 提交 ID 和明确的重试/撤销操作 ID 保存在私有输入账本，完整节点重启后的
@@ -83,7 +91,7 @@ DELTA：五种 SDK 的文件与图片统一沿用原版 SessionDock 附件逻辑
 | POST `/api/native-sdk/respond` | `{uid, agent?, key, result}`；回答该会话仍未解决的原生审批或问题 |
 | POST `/api/native-sdk/models` | `{uid, agent?}`；原生模型目录 |
 | POST `/api/native-sdk/usage` | 原生 Token/上下文；Agy/Claude 合并已有 quota；`refresh:true` 仅查询本来源 |
-| POST `/api/native-sdk/settings` | 来源自己的模式/权限/effort/Fast；OpenCode `native_agent` 与身份字段 `agent` 分开 |
+| POST `/api/native-sdk/settings` | 来源自己的模型/effort/模式/权限/Fast；OpenCode `native_agent` 与身份字段 `agent` 分开 |
 | POST `/api/native-sdk/fork` | Grok/OpenCode/Claude 原生分支，返回稳定身份；成功网页回执持久化、Hub 命名空间处理 |
 | POST `/api/native-sdk/compact`、`shell` | 按 capability 走原生操作；mutation 带 request_id |
 | POST `/api/native-sdk/queue_cancel`、`queue_retry` | 本地队列撤销/重试，`id` 以 bridge: 开头；未知结果须 confirmed:true；操作带 request_id |

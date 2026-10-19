@@ -159,6 +159,9 @@ def exercise(browser, base, fixture, screenshots=None):
         page.locator('#sdk-effort').select_option('high')
         if not page.locator('#native-sdk-mode').is_visible():page.locator('#sdk-more').click()
         page.locator('#native-sdk-mode').select_option('plan')
+        expect(page.locator('#sdk-send')).to_be_enabled()
+        assert not fixture.inputs(), 'selection must save settings without submitting a prompt'
+        page.wait_for_function('model => NativeSdkView.nativeModel === model && NativeSdkView.nativeEffort === "high"', arg=MODEL)
         page.keyboard.press('Escape')
         print('Agy: click SDK, type/send, sparse tool result, idempotent retry', flush=True)
         receipt = send(page, 'SDK 中文\nsecond line')

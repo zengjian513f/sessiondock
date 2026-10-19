@@ -197,6 +197,14 @@ class FakeAppServer:
             await reply({"outcome": "reset"})
             for client in list(self.clients):
                 await self.send(client, {"method": "account/rateLimits/updated", "params": {"rateLimits": self._bucket()}})
+        elif method == "turn/settings/update":
+            assert params['turnId'] == self.turn, params
+            self.active_settings = {key:value for key,value in params.items() if key not in ('threadId','turnId')}
+            await reply({'status':'applied'})
+        elif method == "thread/settings/update":
+            self.settings.update({key: value for key, value in params.items() if key != 'threadId'})
+            await self.notify('thread/settings/updated', {'threadSettings': self.settings.copy()})
+            await reply({})
         elif method == "turn/start":
             settings = {key: params.get(key, value) for key, value in self.settings.items()}
             await self.notify("thread/settings/updated", {"threadSettings": settings})

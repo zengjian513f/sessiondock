@@ -154,7 +154,7 @@ unknown，不自动重发。
 | `compact({request_id,delivery?})` | POST compact，默认显式 steer；原生持久压缩请求，不发送“请总结”提示词 |
 | `shell({request_id,command})` | POST session shell；直接执行命令，原生 shell 消息投影保留输出、状态与退出码，不调用模型 |
 | `commands` / `command({request_id,name,text,delivery?})` | 查询原生 command 目录 / 执行原生回调；默认 delivery queue，不把任意斜杠文本假装成已注册命令 |
-| `agents` / `settings({native_agent?,permissions?})` | 查询原生 agent 目录，POST agent 切换后续 provider turn；PATCH session 的原生 Permission.Ruleset，不套用 Codex policy 枚举 |
+| `agents` / `settings({model?,effort?,native_agent?,permissions?})` | 模型/variant 立即 POST session model；查询原生 agent 目录，POST agent 切换后续 provider turn；PATCH session 的原生 Permission.Ruleset，不套用 Codex policy 枚举 |
 
 fork、shell、command、compact 在调用前按 request_id 在当前桥接进程预留回执，
 成功后保存结果；失败或响应丢失时保留未确认状态，同 ID 重试明确报错，不重发

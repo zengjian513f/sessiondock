@@ -15,6 +15,8 @@ pub struct Settings {
     approval_policy: Option<Value>,
     sandbox_policy: Option<Value>,
     service_tier: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
 }
 
 pub async fn settings(
@@ -30,6 +32,7 @@ pub async fn settings(
             body.approval_policy,
             body.sandbox_policy,
             body.service_tier,
+            (body.model, body.effort),
         )
         .await
         .map_err(rpc)?;

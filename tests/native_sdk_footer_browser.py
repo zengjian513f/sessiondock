@@ -22,37 +22,7 @@ from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from opencode_sdk_fixtures import FakeOpenCode
 from sdk_usage_fixtures import assert_inline_usage, assert_single_status_row, toggle_usage_details
 from send_browser import initialize
-
-
-@contextmanager
-def native_events():
-    stop = threading.Event()
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.send_header('Content-Type','text/event-stream')
-            self.send_header('Access-Control-Allow-Origin','*')
-            self.end_headers()
-            try:
-                self.wfile.write(('event: sdk\ndata: '+json.dumps(self.server.packet)+'\n\n').encode())
-                self.wfile.flush()
-                stop.wait()
-            except (BrokenPipeError,ConnectionResetError):
-                pass
-        def log_message(self,*args):
-            pass
-    server = ThreadingHTTPServer(('127.0.0.1',0),Handler)
-    server.daemon_threads = True
-    server.url = f'http://127.0.0.1:{server.server_port}/events'
-    worker = threading.Thread(target=server.serve_forever,daemon=True)
-    worker.start()
-    try:
-        yield server
-    finally:
-        stop.set()
-        server.shutdown()
-        server.server_close()
-        worker.join()
+from sdk_selection_fixtures import snapshots as native_events
 
 
 @contextmanager
@@ -127,6 +97,17 @@ def exercise(browser, base, source, screenshots, events):
             'usage': {'tokens': {'total_tokens': 123456789},
                       'context': {'percent': 25.4, 'used_tokens': 50800, 'max_tokens': 200000}}}}
         events.packet = packet
+        def update_settings(route):
+            body=route.request.post_data_json
+            for key in ('model','effort'):
+                if key in body:packet['raw'][key]=body[key]
+            for key in ('permission_mode','fast_mode'):
+                if key in body:packet['raw']['settings'][key]=body[key]
+            if 'mode' in body:packet['raw']['modes']['currentModeId']=body['mode']
+            if 'native_agent' in body:packet['raw']['agent']=body['native_agent']
+            events.publish()
+            route.fulfill(json={'ok':True})
+        context.route('**/api/native-sdk/settings',update_settings)
         context.route('**/api/native-sdk/events?*', lambda route: route.continue_(url=events.url))
         context.route('**/api/native-sdk/models', lambda route: route.fulfill(json={'ok': True, 'raw': models}))
         context.route('**/api/native-sdk/usage', lambda route: route.fulfill(json={
@@ -221,7 +202,6 @@ def exercise(browser, base, source, screenshots, events):
             page.screenshot(path=str(screenshots/f'{source}-{width}-{theme}.png'))
         if source=='claude':
             page.locator('#sdk-more').click()
-            page.route('**/api/native-sdk/settings',lambda route:route.fulfill(json={'ok':True}))
             with page.expect_request('**/api/native-sdk/settings') as changed:
                 page.locator('#native-sdk-permission_mode').select_option('plan')
             assert changed.value.post_data_json['permission_mode']=='plan'
@@ -243,15 +223,15 @@ def exercise(browser, base, source, screenshots, events):
         expect(page.locator('#sdk-send')).to_have_attribute('aria-busy','true')
         page.locator('#sdk-model').select_option('short')
         page.locator('#sdk-effort').select_option('low')
-        assert submitted[0].request.post_data_json['model']=='long'
-        assert submitted[0].request.post_data_json['effort']=='high'
+        assert 'model' not in submitted[0].request.post_data_json
+        assert 'effort' not in submitted[0].request.post_data_json
         submitted[0].fulfill(json={'ok':True,'accepted':True})
         expect(page.locator('#sdk-send')).to_be_enabled()
-        assert page.evaluate('NativeSdkView.modelChoice')=='short'
-        assert page.evaluate('NativeSdkView.effortChoice')=='low'
+        expect(page.locator('#sdk-model')).to_have_value('short')
+        expect(page.locator('#sdk-effort')).to_have_value('low')
         page.locator('#sdk-input').fill('choice B')
         page.locator('#sdk-send').click()
-        page.wait_for_function('NativeSdkView.modelChoice===null && NativeSdkView.effortChoice===null')
+        expect(page.locator('#sdk-input')).to_have_value('')
         expect(page.locator('#sdk-send')).not_to_have_attribute('aria-busy','true')
         page.set_viewport_size({'width':320,'height':900})
         initial = dict(packet['raw'])

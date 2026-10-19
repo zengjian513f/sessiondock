@@ -52,7 +52,7 @@ class ControlsServer(FakeAppServer):
             if self.reject_policy:
                 await self.send(writer, {"id": mid, "error": {"code": -32000, "message": "Synthetic policy rejected"}})
                 return
-            self.settings.update({key: params[key] for key in ("approvalPolicy", "sandboxPolicy", "collaborationMode", "serviceTier") if key in params})
+            self.settings.update({key: params[key] for key in ("model", "effort", "approvalPolicy", "sandboxPolicy", "collaborationMode", "serviceTier") if key in params})
             await self.notify("thread/settings/updated", {"threadSettings": self.settings.copy()})
             await reply({})
         elif method == "thread/shellCommand":

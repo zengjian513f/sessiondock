@@ -186,7 +186,8 @@ fake native CLI、浏览器及生产时长不被修改；生产没有测试 time
 - `usage` 同时尝试 `x.ai/session/info` 获取独立上下文，支持 `{result:{context:{used,total,usagePct}}}`。
   `raw.context_usage` 明确标为原生估计；读取失败/total=0 保持未知，不把累计 tokens 当占用。
   `billing` 只通过原生 `x.ai/billing` 读取，不直接访问账号或凭据文件。
-- `settings` 接 `{request_id,mode?,model?,effort?}`，空闲时应用；mode 必须来自原生
+- `settings` 接 `{request_id,mode?,model?,effort?}`，立即调用原生设置接口，包括 prompt
+  运行期间；原生是否支持当前变更及其错误由 ACP 决定。mode 必须来自原生
   `modes.availableModes[].id`。不把执行/计划模式映射为自动批准。
 - `compact`、`fork`、`rewind` 必带 request_id。空闲会话串行执行，并缓存已派发的成功和
   不确定失败结果；同一 ID 不重复执行。活跃工作/待答审批时明确 busy。

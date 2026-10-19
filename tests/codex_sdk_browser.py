@@ -129,7 +129,7 @@ def opening_check(browser, corpus, base, expect, screenshots):
     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
     history = page.locator('.sdk-history')
     expect(history).to_contain_text("earlier synthetic answer")
-    expect(page.locator('.sdk-status')).to_have_text("连接中")
+    expect(page.locator('.sdk-pane .sdk-status')).to_have_text("连接中")
     assert len(reads) == 1, reads
     assert held, "SDK connection was not started"
     # Account reads are independent of a slow thread/resume or active-turn recovery.
@@ -316,7 +316,7 @@ def browser_check(corpus, base, fake, screenshots=None):
 
             pane = open_sdk(page, corpus, expect)
             # Resume must show persisted context before any turn is submitted.
-            expect(pane.locator('.sdk-gauge[data-gauge="context"] > span')).to_have_text("Ctx")
+            expect(pane.locator('.sdk-gauge[data-gauge="context"] > span')).to_have_text("上下文")
             expect(pane.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text("20%")
             # Failed HTTP and network reads recover without a turn, notification, or reload.
             expect(pane.locator('.sdk-gauge[data-gauge="5h"]')).to_be_hidden()
@@ -396,7 +396,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(command_box).to_have_value('/unknown-sdk-command')
             assert not fake.methods('turn/start')
 
-            # Model and effort pickers come from model/list and ride on turn/start.
+            # Model and effort pickers update native settings before any SEND.
             model = pane.locator("#sdk-model")
             expect(model.locator("option")).to_have_count(2)
             assert all(value for value in model.locator("option").evaluate_all("nodes => nodes.map(node => node.value)"))
@@ -411,15 +411,22 @@ def browser_check(corpus, base, fake, screenshots=None):
             model.select_option("fake-luna")
             expect(effort.locator('option[value="medium"]')).to_have_count(1)
             effort.select_option("medium")
+            expect(effort).to_be_enabled()
             fake.set_settings("fake-sol", "low")
-            expect(model).to_have_value("fake-luna")  # Preserve an unsent choice across events.
-            expect(effort).to_have_value("medium")
+            expect(model).to_have_value("fake-sol")
+            expect(effort).to_have_value("low")
+            model.select_option("fake-luna")
+            expect(model).to_be_enabled()
+            effort.select_option("medium")
+            expect(effort).to_be_enabled()
 
             box = pane.locator("#sdk-input")
             box.fill("approve the synthetic command")
             box.press("Enter")
             started = fake.wait_for(lambda: fake.methods("turn/start"))[0]["params"]
-            assert started["threadId"] == THREAD and started["model"] == "fake-luna" and started["effort"] == "medium", started
+            assert started["threadId"] == THREAD and 'model' not in started and 'effort' not in started, started
+            changes = fake.methods('thread/settings/update')
+            assert changes[-2]['params']['model'] == 'fake-luna' and changes[-1]['params']['effort'] == 'medium', changes
             expect(box).to_have_value("")
             live = pane.locator(".sdk-live")
             expect(live.locator('.msg[data-role="user"]')).to_contain_text("approve the synthetic command")
