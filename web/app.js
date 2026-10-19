@@ -9509,6 +9509,31 @@ function questionNode(m, {answer = answerCliQuestion, cancel: cancelAnswer = can
 
 const conversationUsage = new Map();
 
+function renderConversationBalances(holder, quota) {
+  const balances = (quota?.buckets || []).filter(bucket =>
+    bucket.id === 'credits' || bucket.id?.endsWith(':credits'));
+  for (const bucket of quota?.buckets || []) {
+    const credits = bucket.id === 'credits' || bucket.id?.endsWith(':credits');
+    const cards = bucket.id === 'reset-credits';
+    const raw = bucket.remaining_text;
+    if ((!credits && !cards) || raw == null || String(raw).trim() === '') continue;
+    const number = Number(raw);
+    const value = credits && Number.isFinite(number)
+      ? number.toLocaleString(undefined, {maximumFractionDigits: 0})
+      : String(raw).replace('不限量', '无限');
+    const label = credits ? '金币' : '重置卡';
+    const group = credits && balances.length > 1 ? `${bucket.group || bucket.id} ` : '';
+    const node = el('span', credits ? 'sdk-credits' : 'sdk-gauge');
+    node.dataset.balance = bucket.id;
+    node.textContent = `${group}${credits ? '🪙' : label} ${value}`;
+    node.setAttribute('aria-label', `${group}${label} ${value}`);
+    node.title = `${bucket.group || label}：${value}`
+      + (bucket.expires_at ? `；最近到期 ${new Date(bucket.expires_at).toLocaleString()}` : '')
+      + (quota.captured_at ? `；记录于 ${new Date(quota.captured_at).toLocaleString()}` : '');
+    holder.append(node);
+  }
+}
+
 function renderConversationUsage(row, uid) {
   const node = HUB_MODE ? nodeOf(uid) : '';
   const source = String(uid || '').split(':')[0];
@@ -9532,6 +9557,7 @@ function renderConversationUsage(row, uid) {
       gauge.append(el('span', '', label), bar, el('b', '', `${Math.round(used)}%`));
       gauges.append(gauge);
     }
+    renderConversationBalances(gauges, agent);
     if (!gauges.childElementCount) gauges.append(el('span', '', '用量暂无数据'));
   };
   const saved = conversationUsage.get(key);
@@ -9560,6 +9586,7 @@ function renderActivity(activity) {
     row.append(gauges);
     box.after(row);
   }
+  row.classList.toggle('hidden', $('#composer').classList.contains('hidden'));
   const compacting = !S.agent && S.live.has(S.sel)
     && cache.get(viewKey(S.sel))?.cli?.instance?.phase === 'compacting';
   if (compacting) activity = {state: 'working'};
