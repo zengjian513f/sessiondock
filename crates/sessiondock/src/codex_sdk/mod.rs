@@ -16,6 +16,7 @@ mod controls;
 mod live;
 mod observation;
 mod queue;
+mod receipts;
 mod usage;
 
 use std::{
@@ -190,7 +191,7 @@ pub(crate) struct Inner {
     threads: Mutex<HashMap<String, Arc<LiveThread>>>,
     models: Mutex<Option<(Instant, Value)>>,
     creates: Mutex<HashMap<String, CreateReceipt>>,
-    pending: Mutex<HashMap<String, Value>>,
+    receipts: receipts::Receipts,
     observation: tokio::sync::Mutex<observation::Sample>,
     shutdown: CancellationToken,
     queue: queue::Queue,
@@ -255,7 +256,8 @@ impl CodexSdk {
         shutdown: CancellationToken,
         state_dir: Option<PathBuf>,
     ) -> std::io::Result<Arc<Self>> {
-        let queue = queue::Queue::open(state_dir)?;
+        let queue = queue::Queue::open(state_dir.clone())?;
+        let receipts = receipts::Receipts::open(state_dir)?;
         let sdk = Arc::new(Self {
             inner: Arc::new(Inner {
                 endpoint,
@@ -264,7 +266,7 @@ impl CodexSdk {
                 threads: Mutex::new(HashMap::new()),
                 models: Mutex::new(None),
                 creates: Mutex::new(HashMap::new()),
-                pending: Mutex::new(HashMap::new()),
+                receipts,
                 observation: tokio::sync::Mutex::new(observation::Sample::default()),
                 shutdown,
             }),
@@ -279,6 +281,9 @@ impl CodexSdk {
     /// Keep an explicit create attempt alive across HTTP disconnects. Retrying
     /// its request id returns the same result, including uncertain failures.
     pub async fn create(&self, request_id: &str, params: Value) -> Result<Value, RpcError> {
+        if let Some(result) = self.inner.receipts.completed(request_id) {
+            return Ok(result);
+        }
         let mut result = {
             let mut creates = self.inner.creates.lock().expect("creates");
             creates
@@ -286,8 +291,9 @@ impl CodexSdk {
                 .or_insert_with(|| {
                     let (send, receive) = watch::channel(None);
                     let inner = self.inner.clone();
+                    let request_id = request_id.to_owned();
                     tokio::spawn(async move {
-                        let result = inner.start(params).await;
+                        let result = inner.start(&request_id, params).await;
                         send.send_replace(Some(result));
                     });
                     receive
@@ -316,17 +322,16 @@ impl CodexSdk {
 
     /// Start receipts only, never invented native files or history. A native
     /// rollout takes over this identity as soon as the daemon writes it.
-    pub fn pending(&self) -> Vec<Value> {
-        let mut pending = self.inner.pending.lock().expect("pending");
-        pending
-            .retain(|_, row| !std::path::Path::new(row["path"].as_str().unwrap_or("")).is_file());
-        pending.values().cloned().collect()
+    pub fn pending(&self) -> Result<Vec<Value>, RpcError> {
+        self.inner.receipts.pending()
     }
 
     pub fn pending_thread(&self, uid: &str) -> Option<String> {
-        self.inner.pending.lock().expect("pending").get(uid)?["sid"]
-            .as_str()
-            .map(str::to_owned)
+        self.inner.receipts.thread(uid)
+    }
+
+    pub fn pending_session(&self, uid: &str) -> Option<Value> {
+        self.inner.receipts.session(uid)
     }
 
     pub async fn discard(&self, uid: &str) -> Result<(), RpcError> {
@@ -337,7 +342,7 @@ impl CodexSdk {
         connection
             .request("thread/unsubscribe", json!({"threadId":id}))
             .await?;
-        self.inner.pending.lock().expect("pending").remove(uid);
+        self.inner.receipts.discard(uid)?;
         self.inner.threads.lock().expect("threads").remove(&id);
         Ok(())
     }
@@ -427,13 +432,18 @@ impl CodexSdk {
 }
 
 impl Inner {
-    async fn start(self: &Arc<Self>, params: Value) -> Result<Value, RpcError> {
+    async fn start(self: &Arc<Self>, request_id: &str, params: Value) -> Result<Value, RpcError> {
         let connection = self.connection().await?;
         let result = connection.request("thread/start", params).await?;
-        self.adopt_result(connection.generation(), result)
+        self.adopt_result(connection.generation(), result, Some(request_id))
     }
 
-    fn adopt_result(&self, generation: u64, result: Value) -> Result<Value, RpcError> {
+    fn adopt_result(
+        &self,
+        generation: u64,
+        result: Value,
+        request_id: Option<&str>,
+    ) -> Result<Value, RpcError> {
         let id = result["thread"]["id"]
             .as_str()
             .ok_or(RpcError::Disconnected)?;
@@ -456,7 +466,7 @@ impl Inner {
             let row = json!({"uid":uid,"source":"codex","sid":id,"title":"新建 Codex 会话",
                 "cwd":result["thread"]["cwd"],"path":path,"created":created,"updated":created,
                 "model":result["model"],"size":0,"agent_items":[],"sdk_pending":true});
-            self.pending.lock().expect("pending").insert(uid, row);
+            self.receipts.insert(request_id, result.clone(), row)?;
         }
         Ok(result)
     }
@@ -653,13 +663,8 @@ impl Inner {
                 _ = tick.tick() => {}
             }
             let idle: Vec<Arc<LiveThread>> = {
-                let pending: HashSet<String> = self
-                    .pending
-                    .lock()
-                    .expect("pending")
-                    .values()
-                    .filter_map(|row| row["sid"].as_str().map(str::to_owned))
-                    .collect();
+                let pending: HashSet<String> =
+                    self.receipts.pending_threads().into_iter().collect();
                 let threads = self.threads.lock().expect("threads");
                 threads
                     .values()
