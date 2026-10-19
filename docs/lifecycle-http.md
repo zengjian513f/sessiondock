@@ -413,6 +413,17 @@ Stop ignores unrelated request fields and observes current state
 again on every call.
 No operator flag is required — confirmation is the browser dialog.
 
+DELTA (BUG-20261019-074243-f51db5): a Codex shared app-server may hold a
+parent and several independent fork threads. Its open rollout files are not
+process-control targets and do not supersede the parent's guarded TUI instance.
+Stopping a loaded SDK thread interrupts only its active turn, unsubscribes that
+thread, pauses its queued inputs and notifies attached pages to stop reconnecting.
+The existing guarded stop also closes that session's TUI, when present. Other
+threads and the daemon remain running. Native unload grace periods do not
+keep a stopped bridge thread marked live; explicitly reopening SDK resumes it.
+`tests/codex_sdk_stop_browser.py` covers a middle-message fork, subsequent
+parent/branch stops and shared-daemon preservation through node and Hub browsers.
+
 Browser leases: stop neither needs nor fails on a browser
 terminal lease. The EOF keys are server-originated host input; the WebSocket
 ends with the host's own exit marker, and the receipt path retires

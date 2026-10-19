@@ -66,7 +66,7 @@ impl Queue {
         })
     }
 
-    fn lock(&self, thread: &str) -> Arc<tokio::sync::Mutex<()>> {
+    pub(super) fn lock(&self, thread: &str) -> Arc<tokio::sync::Mutex<()>> {
         self.locks
             .lock()
             .expect("queue locks")
@@ -238,6 +238,9 @@ impl Inner {
     }
 
     async fn dispatch(self: &Arc<Self>, live: &Arc<super::LiveThread>) -> Result<(), RpcError> {
+        if self.stopped.lock().expect("stopped").contains(live.id()) {
+            return Ok(());
+        }
         if !live.ready_to_start() {
             return Ok(());
         }
@@ -367,6 +370,9 @@ impl Inner {
         loop {
             tokio::select! { _ = self.shutdown.cancelled() => return, _ = tick.tick() => {} }
             for thread in self.queue.threads() {
+                if self.stopped.lock().expect("stopped").contains(&thread) {
+                    continue;
+                }
                 let lock = self.queue.lock(&thread);
                 let Ok(guard) = lock.try_lock_owned() else {
                     continue;

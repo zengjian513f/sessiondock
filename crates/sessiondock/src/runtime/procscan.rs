@@ -774,11 +774,29 @@ impl Scan {
         }
         found.extend(self.session_path_pids(session));
         found.extend(self.bare_claude_pids(session));
+        if session.source == "codex" {
+            // One app-server can hold many independent threads. Its file
+            // descriptors never grant permission to terminate that daemon.
+            found.retain(|pid| {
+                !self
+                    .tree
+                    .cmdline(pid.unsigned_abs() as u32)
+                    .is_some_and(|cmd| {
+                        let mut args = cmd.split_ascii_whitespace();
+                        args.next()
+                            .is_some_and(|exe| cli_family(exe) == Some("codex"))
+                            && args.next() == Some("app-server")
+                    })
+            });
+        }
         found
     }
 
     /// A listed Grok session id counts even without a pid.
     pub fn is_live(&self, session: &SessionRow) -> bool {
+        if session.source == "codex" {
+            return !self.pids_of(session).is_empty();
+        }
         let sid = Self::identity_key(session);
         (!sid.is_empty() && self.sids.contains_key(&sid))
             || !self.session_path_pids(session).is_empty()

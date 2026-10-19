@@ -64,6 +64,8 @@ impl CodexSdk {
         ids.extend(self.loaded_threads().await);
         ids.sort();
         ids.dedup();
+        let stopped = self.inner.stopped.lock().expect("stopped");
+        ids.retain(|id| !stopped.contains(id));
         ids
     }
 }

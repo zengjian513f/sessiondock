@@ -189,6 +189,7 @@ pub(crate) struct Inner {
     endpoint: Endpoint,
     connection: tokio::sync::Mutex<Option<Arc<Connection>>>,
     threads: Mutex<HashMap<String, Arc<LiveThread>>>,
+    stopped: Mutex<HashSet<String>>,
     models: Mutex<Option<(Instant, Value)>>,
     creates: Mutex<HashMap<String, CreateReceipt>>,
     receipts: receipts::Receipts,
@@ -264,6 +265,7 @@ impl CodexSdk {
                 queue,
                 connection: tokio::sync::Mutex::new(None),
                 threads: Mutex::new(HashMap::new()),
+                stopped: Mutex::new(HashSet::new()),
                 models: Mutex::new(None),
                 creates: Mutex::new(HashMap::new()),
                 receipts,
@@ -350,8 +352,44 @@ impl CodexSdk {
     /// Resume `thread_id` on the shared connection (once per connection) and
     /// return the thread metadata the daemon reported.
     pub async fn open(&self, thread_id: &str) -> Result<Value, RpcError> {
+        self.inner
+            .stopped
+            .lock()
+            .expect("stopped")
+            .remove(thread_id);
         let thread = self.inner.ensure(thread_id).await?;
         Ok(thread.summary())
+    }
+
+    /// Stop just this thread, preserving the shared daemon and other threads.
+    pub async fn stop_thread(&self, thread_id: &str) -> Result<(), RpcError> {
+        let lock = self.inner.queue.lock(thread_id);
+        let _dispatch = lock.lock().await;
+        let thread = self.inner.ensure(thread_id).await?;
+        let connection = self.inner.connection().await?;
+        if let Some(turn_id) = thread.active_turn() {
+            connection
+                .request(
+                    "turn/interrupt",
+                    json!({"threadId":thread_id,"turnId":turn_id}),
+                )
+                .await?;
+        }
+        connection
+            .request("thread/unsubscribe", json!({"threadId":thread_id}))
+            .await?;
+        self.inner
+            .stopped
+            .lock()
+            .expect("stopped")
+            .insert(thread_id.to_owned());
+        self.inner
+            .threads
+            .lock()
+            .expect("threads")
+            .remove(thread_id);
+        thread.apply("bridge/stopped", json!({}));
+        Ok(())
     }
 
     /// Snapshot plus the event stream from the same instant: no gap, no
