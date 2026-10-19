@@ -1,6 +1,7 @@
 //! Session recycle bin. Native files move into recoverable entries; fork
-//! parents and currently running sessions remain protected.
+//! parents retain history for their descendants; running sessions are protected.
 
+mod deferred;
 pub mod manifest;
 mod plan;
 pub mod tree;
@@ -20,7 +21,7 @@ use manifest::{
     EntryState, FILES_DIR, FileRecord, MANIFEST_NAME, MANIFEST_TEMP, Manifest, RunStateNote,
     now_unix, rfc3339,
 };
-pub use plan::{Plan, protection_set};
+pub use plan::Plan;
 
 pub const LIST_DEFAULT: usize = usize::MAX;
 
@@ -125,6 +126,7 @@ pub struct Deleted {
     pub bytes: u64,
     pub run_state: RunStateNote,
     pub forced: bool,
+    pub deferred: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -140,7 +142,7 @@ pub struct Refused {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct DeleteOutcome {
     pub deleted: Vec<Deleted>,
-    /// Policy refusals: protected parents and running sessions.
+    /// Policy refusals: running sessions and already-trashed sessions.
     pub skipped: Vec<Refused>,
     /// Missing sessions and filesystem failures.
     pub failed: Vec<Refused>,
@@ -232,7 +234,7 @@ impl TrashService {
     }
 
     /// Batch soft delete against one frozen snapshot. Never all-or-nothing:
-    /// each UID gets its own result; the protection set is fixed up front.
+    /// each UID gets its own result; dependencies are fixed up front.
     pub fn delete(
         &self,
         rows: &[Value],
@@ -241,7 +243,24 @@ impl TrashService {
         force: bool,
     ) -> DeleteOutcome {
         let _guard = self.guard();
-        let protected = protection_set(rows);
+        let universe = match self.dependency_rows(rows) {
+            Ok(rows) => rows,
+            Err(error) => {
+                return DeleteOutcome {
+                    failed: uids
+                        .iter()
+                        .map(|uid| Refused {
+                            uid: uid.clone(),
+                            title: String::new(),
+                            code: error.code,
+                            error: error.message.clone(),
+                            run_state: None,
+                        })
+                        .collect(),
+                    ..Default::default()
+                };
+            }
+        };
         let mut outcome = DeleteOutcome::default();
         let mut seen = BTreeSet::new();
         for uid in uids {
@@ -268,14 +287,6 @@ impl TrashService {
                     .push(refused("not_found", "会话不存在".into(), None));
                 continue;
             };
-            if protected.contains(uid) {
-                outcome.skipped.push(refused(
-                    "fork_parent_protected",
-                    "父会话只能隐藏，不能删除".into(),
-                    None,
-                ));
-                continue;
-            }
             let (note, forced) = match liveness.state(uid) {
                 RunState::Running(evidence) => {
                     outcome.skipped.push(refused(
@@ -303,7 +314,7 @@ impl TrashService {
                     (note, force)
                 }
             };
-            let plan = match Plan::derive(row, &self.roots) {
+            let plan = match self.logical_plan(row, rows) {
                 Ok(plan) => plan,
                 Err(error) => {
                     outcome
@@ -312,7 +323,26 @@ impl TrashService {
                     continue;
                 }
             };
-            match self.move_into_trash(&plan, note.clone(), forced) {
+            let deferred = Self::descendants(&universe, &plan.sessions)
+                .iter()
+                .any(|child| child["source"] != row["source"] || child["sid"] != row["sid"]);
+            let already = self
+                .scan()
+                .ok()
+                .into_iter()
+                .flat_map(|(entries, _)| entries)
+                .any(|(_, m)| {
+                    m.is_ok_and(|m| m.deferred && m.source == plan.source && m.sid == plan.sid)
+                });
+            if already {
+                outcome.skipped.push(refused(
+                    "already_trashed",
+                    "会话已在回收站".into(),
+                    Some(note),
+                ));
+                continue;
+            }
+            match self.move_into_entry_mode(&plan, note.clone(), forced, None, deferred) {
                 Ok(deleted) => outcome.deleted.push(deleted),
                 Err(error) => outcome
                     .failed
@@ -343,6 +373,17 @@ impl TrashService {
         forced: bool,
         id: Option<&str>,
     ) -> Result<Deleted, TrashError> {
+        self.move_into_entry_mode(plan, run_state, forced, id, false)
+    }
+
+    fn move_into_entry_mode(
+        &self,
+        plan: &Plan,
+        run_state: RunStateNote,
+        forced: bool,
+        id: Option<&str>,
+        deferred: bool,
+    ) -> Result<Deleted, TrashError> {
         let entry_id = match id {
             Some(id) => id.to_owned(),
             None => self.new_entry_id(&plan.source, &plan.uid)?,
@@ -357,6 +398,7 @@ impl TrashService {
         let deleted_at_unix = now_unix();
         let mut manifest = Manifest {
             sessions: plan.sessions.clone(),
+            deferred,
             version: manifest::MANIFEST_VERSION,
             entry_id: entry_id.clone(),
             uid: plan.uid.clone(),
@@ -398,7 +440,7 @@ impl TrashService {
             Some(manifest.files.len() as u64),
         );
         let mut failure = None;
-        for index in 0..manifest.files.len() {
+        for index in 0..if deferred { 0 } else { manifest.files.len() } {
             let record = &manifest.files[index];
             let destination = files_dir.join(&record.name);
             let result = move_entry(&record.origin, &destination);
@@ -460,6 +502,7 @@ impl TrashService {
             bytes: manifest.bytes,
             run_state: manifest.run_state,
             forced,
+            deferred,
         })
     }
 
@@ -532,7 +575,7 @@ impl TrashService {
             Ok(manifest) => {
                 let restorable = self.restorable(manifest);
                 let mut item = json!({
-                    "sessions": manifest.sessions,
+                    "sessions": manifest.sessions, "deferred": manifest.deferred,
                     "id": id, "entry_id": id, "uid": manifest.uid, "source": manifest.source,
                     "sid": manifest.sid, "name": manifest.origin.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
                     "title": manifest.title, "cwd": manifest.cwd, "updated": manifest.updated,
@@ -567,6 +610,9 @@ impl TrashService {
                 "会话已迁出，请从目标机器复制或移动回来",
             ));
         }
+        if manifest.deferred {
+            return Ok(());
+        }
         for file in &manifest.files {
             match fs::symlink_metadata(&file.origin) {
                 Ok(_) => {
@@ -586,8 +632,12 @@ impl TrashService {
     }
 
     pub fn list(&self, limit: usize, cursor: Option<&str>) -> Result<Listing, TrashError> {
-        let limit = limit.max(1);
         let _guard = self.guard();
+        self.list_inner(limit, cursor)
+    }
+
+    fn list_inner(&self, limit: usize, cursor: Option<&str>) -> Result<Listing, TrashError> {
+        let limit = limit.max(1);
         let (entries, truncated) = self.scan()?;
         let size = entries
             .iter()
@@ -658,7 +708,12 @@ impl TrashService {
         let files_dir = entry_dir.join(FILES_DIR);
         let mut restored = Vec::new();
         let mut failure = None;
-        for (index, record) in manifest.files.iter().enumerate() {
+        for (index, record) in manifest
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, _)| !manifest.deferred)
+        {
             let result = ensure_parent(&record.origin)
                 .and_then(|()| match fs::symlink_metadata(&record.origin) {
                     Ok(_) => Err(TrashError::new(
@@ -737,70 +792,6 @@ impl TrashService {
         })
     }
 
-    /// Remove explicit entries. Each id gets its own result.
-    pub fn purge_ids(&self, ids: &[String]) -> Result<PurgeOutcome, TrashError> {
-        if ids.is_empty() {
-            return Err(TrashError::new(400, "invalid_purge", "需要回收站条目 ID"));
-        }
-        let _guard = self.guard();
-        let mut outcome = PurgeOutcome::default();
-        let mut seen = BTreeSet::new();
-        for id in ids {
-            if !seen.insert(id.clone()) {
-                continue;
-            }
-            match self.purge_one(id) {
-                Ok(freed) => {
-                    outcome.removed += 1;
-                    outcome.freed += freed;
-                }
-                Err(error) => {
-                    outcome.errors.push(format!("{id}: {}", error.message));
-                    outcome
-                        .failed
-                        .push(json!({"id": id, "code": error.code, "error": error.message}));
-                }
-            }
-        }
-        outcome.remaining = self.scan()?.0.len();
-        Ok(outcome)
-    }
-
-    /// Remove all entries deleted at least `days` days ago, oldest first.
-    pub fn purge_older_than(&self, days: u64) -> Result<PurgeOutcome, TrashError> {
-        let _guard = self.guard();
-        let cutoff = now_unix().saturating_sub(days.saturating_mul(86_400));
-        let (entries, _) = self.scan()?;
-        let candidates: Vec<_> = entries
-            .iter()
-            .rev()
-            .filter(|(_, manifest)| match manifest {
-                Ok(manifest) => manifest.deleted_at_unix <= cutoff,
-                // A corrupt entry has no reliable timestamp; only an explicit
-                // full purge (days = 0) removes it.
-                Err(_) => days == 0,
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
-        let mut outcome = PurgeOutcome::default();
-        for id in &candidates {
-            match self.purge_one(id) {
-                Ok(freed) => {
-                    outcome.removed += 1;
-                    outcome.freed += freed;
-                }
-                Err(error) => {
-                    outcome.errors.push(format!("{id}: {}", error.message));
-                    outcome
-                        .failed
-                        .push(json!({"id": id, "code": error.code, "error": error.message}));
-                }
-            }
-        }
-        outcome.remaining = self.scan()?.0.len();
-        Ok(outcome)
-    }
-
     /// Only the entry's own manifest and `files/*` regular files are removed.
     /// Anything unexpected inside the entry leaves it untouched.
     fn purge_one(&self, id: &str) -> Result<u64, TrashError> {
@@ -818,6 +809,13 @@ impl TrashService {
                     "回收站条目暂时不可检查",
                 ));
             }
+        }
+        if Manifest::read(&entry_dir).is_ok_and(|manifest| manifest.deferred) {
+            return Err(TrashError::new(
+                409,
+                "cascade_confirmation_required",
+                "待删除父会话需要确认连同子会话彻底删除",
+            ));
         }
         let freed = manifest::directory_bytes(&entry_dir.join(FILES_DIR));
         fs::remove_dir_all(&entry_dir)

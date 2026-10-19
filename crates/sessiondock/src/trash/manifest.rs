@@ -193,6 +193,9 @@ pub struct Manifest {
     pub files: Vec<FileRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sessions: Vec<serde_json::Value>,
+    /// Keep native history in place while descendants still depend on it.
+    #[serde(default)]
+    pub deferred: bool,
 }
 
 impl Manifest {

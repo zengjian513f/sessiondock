@@ -862,7 +862,13 @@ async fn handle(
                 .and_then(|map| map.get("all"))
                 .is_some_and(truthy)
         {
-            return ok(&aggregate::purge_all(registry, client, &pairs).await?);
+            return ok(&aggregate::purge_all(
+                registry,
+                client,
+                &pairs,
+                &Value::Object(body.as_ref().unwrap().clone()),
+            )
+            .await?);
         }
         if path == "/api/audit/browser" {
             return browser_audit(&state, &body.unwrap_or_default()).await;

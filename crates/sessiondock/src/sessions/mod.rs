@@ -310,6 +310,7 @@ impl Candidate {
 struct Published {
     index: Arc<IndexSnapshot>,
     metadata: Option<Arc<MetadataSnapshot>>,
+    pending_deletions: BTreeSet<(String, String)>,
     document: Arc<Value>,
     /// uid → position in `document["sessions"]`.
     positions: BTreeMap<String, usize>,
@@ -473,6 +474,7 @@ struct Prepared {
 }
 
 pub struct SessionStore {
+    trash: Option<Arc<crate::trash::TrashService>>,
     index: index::Index,
     metadata: Option<Arc<MetadataStore>>,
     list: Mutex<ListState>,
@@ -506,6 +508,7 @@ impl SessionStore {
         let views = Views::new();
         let views_revision = views.revision_handle();
         Self {
+            trash: None,
             index: index::Index::new(roots, index_path),
             metadata,
             list: Mutex::new(ListState {
@@ -519,6 +522,11 @@ impl SessionStore {
             views_revision,
             serialized: Mutex::new([None, None]),
         }
+    }
+
+    pub fn with_trash(mut self, trash: Option<Arc<crate::trash::TrashService>>) -> Self {
+        self.trash = trash;
+        self
     }
 
     fn list_state(&self) -> Result<MutexGuard<'_, ListState>, SessionError> {
@@ -599,18 +607,32 @@ impl SessionStore {
             state.prepared_identities = identities;
             state.prepared_signature = Some(index.sig().to_owned());
         }
+        let pending_deletions = self
+            .trash
+            .as_ref()
+            .map(|trash| trash.pending_deletions())
+            .transpose()
+            .map_err(|error| SessionError::new(error.status, error.message))?
+            .unwrap_or_default();
         let metadata = self.metadata_snapshot()?;
         let revision = metadata.as_ref().map(|snapshot| snapshot.revision());
         if let Some(previous) = &state.published {
-            if Arc::ptr_eq(&previous.index, &index) && previous.metadata_revision() == revision {
+            if Arc::ptr_eq(&previous.index, &index)
+                && previous.metadata_revision() == revision
+                && previous.pending_deletions == pending_deletions
+            {
                 return Ok(previous.clone());
             }
-            if previous.index.sig() == index.sig() && previous.metadata_revision() == revision {
+            if previous.index.sig() == index.sig()
+                && previous.metadata_revision() == revision
+                && previous.pending_deletions == pending_deletions
+            {
                 // Same rows from a fresh walk: keep the document (and its
                 // built_at), adopt the newest stamps.
                 let published = Arc::new(Published {
                     index,
                     metadata,
+                    pending_deletions,
                     document: previous.document.clone(),
                     positions: previous.positions.clone(),
                 });
@@ -626,6 +648,15 @@ impl SessionStore {
             metadata.enrich(&mut rows);
             for row in &mut rows {
                 timeline_pin_row(row, &index, metadata);
+            }
+        }
+        for row in &mut rows {
+            let identity = (
+                row["source"].as_str().unwrap_or_default().to_owned(),
+                row["sid"].as_str().unwrap_or_default().to_owned(),
+            );
+            if pending_deletions.contains(&identity) {
+                row["pending_delete"] = json!(true);
             }
         }
         let mut document = index::signed_document(rows);
@@ -653,6 +684,7 @@ impl SessionStore {
         let published = Arc::new(Published {
             index,
             metadata,
+            pending_deletions,
             document: Arc::new(document),
             positions,
         });

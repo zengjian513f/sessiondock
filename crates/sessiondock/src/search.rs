@@ -760,7 +760,9 @@ pub fn execute(
     let pool: Vec<_> = rows
         .iter()
         .filter(|row| {
-            query.sources.is_empty() || query.sources.contains(row["source"].as_str().unwrap_or(""))
+            row["pending_delete"] != true
+                && (query.sources.is_empty()
+                    || query.sources.contains(row["source"].as_str().unwrap_or("")))
         })
         .collect();
     emit(json!({"type": "progress", "done": 0, "total": pool.len()}))?;

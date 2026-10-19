@@ -4,7 +4,7 @@
 With SESSIONDOCK_TRASH_DIR configured (and no host directory, so every run
 state is unknown) the untouched legacy delete flow shows the explicit force
 confirmation, the detail pane's "已移入回收站" receipt, the trash dialog with
-restore/purge/clear-all, and the visible refusal reasons (fork parent, unknown state
+restore/purge/clear-all, deferred parent deletion, and the visible refusal reasons (unknown state
 declined, restore conflict). Desktop and 390px. Synthetic corpus only.
 """
 
@@ -97,13 +97,15 @@ def main():
             assert status_of(opener, base, "/api/session/" + corpus.uid("claude-abandoned"), "DELETE") == 501
             assert status_of(opener, base, "/api/trash") == 501
         assert not any(trash.iterdir())
+        state=corpus.root/'state';state.mkdir()
+        (state/'session-metadata.json').write_text(json.dumps({'schema_version':1,'revision':1,'sessions':{corpus.uid(name):{'fork_parent_visible':True} for name in corpus.paths}}))
         with sync_playwright() as playwright:
             launch = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
                 launch["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
             browser = playwright.chromium.launch(**launch)
             try:
-                with isolated_server(corpus, args.binary, trash_dir=trash) as (base, opener):
+                with isolated_server(corpus, args.binary, trash_dir=trash, state_dir=state) as (base, opener):
                     assert get_json(opener, base, "/api/meta")["capabilities"]["trash"] is True
                     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
                     context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
@@ -146,15 +148,22 @@ def main():
                     assert corpus.paths["claude-abandoned"].read_bytes() == native_before["claude-abandoned"]
                     assert not any(trash.iterdir())
 
-                    # Fork parent: the server refuses with a visible reason.
+                    # The parent remains available to children while recoverable.
                     parent = corpus.uid("codex-parent")
                     open_session(page, corpus, "codex-parent", "Codex inherited answer")
-                    dialogs.expect(("服务端回收站", True), ("删除失败: 父会话只能隐藏，不能删除", True))
+                    dialogs.expect(("父会话将标记待删除", True))
                     click_delete(page, narrow=False)
-                    page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
-                    dialogs.drained()
-                    expect(page.locator(f'#side .item[data-uid="{parent}"]')).to_have_count(1)
+                    expect(page.locator(f'#side .item[data-uid="{parent}"]')).to_have_count(0)
                     assert corpus.paths["codex-parent"].exists()
+                    page.locator("#detail-open-trash").click()
+                    entry=next(row for row in get_json(opener,base,'/api/trash')['items'] if row['uid']==parent)
+                    row=page.locator(f'.trash-item[data-id="{entry["id"]}"]')
+                    expect(row).to_contain_text('待删除')
+                    row.locator('button[data-act="restore"]').click()
+                    expect(page.locator('#trash-note')).to_contain_text('已恢复')
+                    page.locator('#trash-done').click()
+                    expect(page.locator(f'#side .item[data-uid="{parent}"]')).to_have_count(1)
+                    dialogs.drained()
 
                     # Cancelling the initial confirmation keeps the session.
                     open_session(page, corpus, "claude-compact", "Claude post compact answer")
@@ -281,7 +290,7 @@ def main():
                         clear_button.click()
                     response = purge_response.value
                     assert response.status == 200
-                    assert response.request.post_data_json == {"all": True}
+                    assert response.request.post_data_json == {"all": True, "uids": []}
                     purged = response.json()
                     assert purged["removed"] == 2 and purged["remaining"] == 0, purged
                     assert purged["freed"] > 0 and purged["errors"] == [] and purged["failed"] == [], purged
@@ -294,7 +303,7 @@ def main():
                     expect(clear_button).to_be_disabled()
                     dialogs.drained()
                     assert dialogs.seen[-1] == ("confirm", confirmation)
-                    assert purge_requests == [{"all": True}]
+                    assert purge_requests == [{"all": True, "uids": []}]
                     page.remove_listener("request", record_purge)
                     empty = get_json(opener, base, "/api/trash")
                     assert empty["count"] == 0 and empty["items"] == [], empty
@@ -310,7 +319,7 @@ def main():
             finally:
                 browser.close()
     print("PASS trash browser: delete needs explicit force while run state is unknown, detail receipt → trash dialog → restore, "
-          "fork parent and declined force refused visibly, restore conflict never overwrites, purge removes the entry; "
+          "parent deletion deferred and declined force refused visibly, restore conflict never overwrites, purge removes the entry; "
           "390px clear-all cancellation preserves entries, confirmation removes all via API and disk and shows the empty state; desktop + 390px")
 
 

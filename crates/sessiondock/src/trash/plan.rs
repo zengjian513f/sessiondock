@@ -2,10 +2,9 @@
 //!
 //! Every path comes from the published session rows (which the lazy index
 //! derived from its own directory walk), never from the request. The fork
-//! protection set is computed once from the same rows so that a batch cannot
-//! delete a child first and then its now "childless" parent.
+//! dependencies are captured from the same rows and recycle-bin manifests.
 
-use std::{collections::BTreeSet, fs, io, path::PathBuf};
+use std::{fs, io, path::PathBuf};
 
 use serde_json::Value;
 
@@ -17,45 +16,6 @@ use crate::sessions::SessionRoots;
 
 fn text<'a>(value: &'a Value, field: &str) -> &'a str {
     value[field].as_str().unwrap_or("")
-}
-
-/// UIDs of rows that some other row of the same source names as its fork
-/// parent. A row with a Codex `history_base` object asserts a fixed-prefix
-/// dependency on `thread_id` (or `forked_from_id` when the object has no
-/// thread) whether or not the child currently renders; a row without one
-/// asserts `forked_from_id` only while it is supported, so unsupported orphan
-/// subagent rows (whose `forked_from_id` is ownership, not history) cannot
-/// pin each other. This matches the rows the UI marks as fork parents, plus
-/// every fixed-prefix parent the Rust read model actually depends on.
-pub fn protection_set(rows: &[Value]) -> BTreeSet<String> {
-    let mut edges: BTreeSet<(String, String)> = BTreeSet::new();
-    for row in rows {
-        let source = text(row, "source");
-        let base = &row["history_base"];
-        let parent = if base.is_object() {
-            let declared = text(base, "thread_id");
-            if declared.is_empty() {
-                text(row, "forked_from_id")
-            } else {
-                declared
-            }
-        } else if row["supported"] != false {
-            text(row, "forked_from_id")
-        } else {
-            ""
-        };
-        if !parent.is_empty() && !source.is_empty() {
-            edges.insert((source.to_owned(), parent.to_owned()));
-        }
-    }
-    rows.iter()
-        .filter(|row| {
-            let sid = text(row, "sid");
-            !sid.is_empty() && edges.contains(&(text(row, "source").to_owned(), sid.to_owned()))
-        })
-        .filter_map(|row| row["uid"].as_str().filter(|uid| !uid.is_empty()))
-        .map(str::to_owned)
-        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

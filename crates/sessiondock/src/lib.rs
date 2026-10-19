@@ -461,11 +461,14 @@ fn build_app(
         None
     };
     let reader = Reader {
-        store: Arc::new(sessions::SessionStore::with_metadata_and_names(
-            config.roots.clone(),
-            metadata.clone(),
-            config.codex_index,
-        )),
+        store: Arc::new(
+            sessions::SessionStore::with_metadata_and_names(
+                config.roots.clone(),
+                metadata.clone(),
+                config.codex_index,
+            )
+            .with_trash(trash.clone()),
+        ),
         workers: Arc::new(Semaphore::new(pools.read_workers)),
     };
     let runtime_probes = Arc::new(Semaphore::new(pools.runtime_probes()));

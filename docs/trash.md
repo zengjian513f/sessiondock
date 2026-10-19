@@ -23,8 +23,25 @@ refreshing the mirror and retiring launch receipts. Running sessions remain
 protected; failures remain visible. See [Agy](agy.md) for the verified interface
 and its evidence boundary. Whole-tree deletion remains unsupported for Agy.
 
-Fork parents referenced by another session and currently running sessions remain
-protected. Liveness uses fresh managed-host and native CLI observations over the
+DELTA: deleting a fork parent marks it **待删除**, hides it from the ordinary
+list and search, and creates a recoverable trash entry. Its native histories stay
+in place while any descendant exists, including descendants in the recycle bin.
+Deleting a child to the recycle bin does not release that dependency. Permanently
+removing the final descendant also permanently removes pending ancestors. A
+restore cancels pending deletion without moving the histories.
+
+Permanently deleting a pending parent explicitly includes all descendants. The
+confirmation names those sessions, including descendants still in the ordinary
+list. The server checks that exact preview again and refuses changed membership
+or running members before moving any native file. It first stages surviving
+native histories into recoverable trash, then purges the entries. A shared native
+thread's immutable rollout generations are one logical deletion, so older
+versions cannot reappear afterward. Unrelated sessions are excluded.
+
+Pending manifests are authoritative. The list projects their visibility directly,
+including after service restart, without another state cache or native-file writes
+on ordinary reads.
+Currently running sessions remain protected. Liveness uses fresh managed-host and native CLI observations over the
 same inventory. An absent managed receipt does not prevent deleting an inactive
 session. Hub requests preserve the caller's `force` argument.
 
@@ -35,10 +52,12 @@ files could not be returned. Purge removes the complete selected trash entry.
 
 The default listing includes all entries; optional `limit` and `cursor` provide
 pagination. Batch deletion returns individual `deleted`, `skipped`, `failed` and
-`errors` results. Purge accepts `id`, `ids`, `all:true`, or `days:N` and reports
+`errors` results. Purge accepts `id`, `ids`, `all:true`, or `days:N`; a pending-parent purge also
+requires `uids` matching the `sessions` and `cascade_sessions` preview from
+`GET /api/trash`. Hub requests retain each node's confirmed UID set. It reports
 `removed`, `freed`, `errors`, `failed`, and `remaining`.
 
-Regression coverage includes native process protection, changed-content and
+Regression coverage includes deferred parent restore/restart/cascade and final-child collection (`parent_trash_browser.py`), native process protection, changed-content and
 cross-filesystem round trips, symlink moves, restore conflicts, and batch results.
 
 ## Whole session trees
@@ -47,8 +66,8 @@ cross-filesystem round trips, symlink moves, restore conflicts, and batch result
 and detail actions. Its scope is the same connected component as whole-group
 copy: ancestors, sibling branches, descendants, subagents, manually nested
 sessions and every physical history generation. Claude, Codex and Grok may
-coexist in one tree. Ordinary single-session and batch deletion keep their
-existing parent protections. The tree-delete entry is disabled while the selected
+coexist in one tree. Ordinary single-session and batch deletion use the deferred-parent behavior
+above. The tree-delete entry is disabled while the selected
 session is running, with the same unavailable styling and input guard as tree
 migration. Both the detail action and an open sidebar menu update when liveness
 changes; execution still checks every member on the server.
