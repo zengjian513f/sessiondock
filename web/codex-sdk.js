@@ -1388,6 +1388,7 @@ function sdkLayoutFooter(view, controls) {
   const trigger = view.pane.querySelector('#sdk-more');
   const signature = JSON.stringify([row.clientWidth, view.notice.textContent, gauges.textContent,
     [...pickers.querySelectorAll('.sdk-policy')].map(n => n.textContent),
+    [...menu.querySelectorAll('.sdk-control-note, .sdk-reset')].map(n => [n.hidden, n.textContent]),
     controls.filter(Boolean).map(n => [n.hidden, n.textContent, n.querySelector('select')?.value])]);
   if (row.dataset.footerLayout === signature) return;
   row.dataset.footerLayout = signature;
@@ -1395,6 +1396,7 @@ function sdkLayoutFooter(view, controls) {
   if (row.dataset.footerWidth && Number(row.dataset.footerWidth) !== row.clientWidth) view.closeToolbarMenus();
   row.dataset.footerWidth = row.clientWidth;
   // Start with status, usage and ⋯; optional controls never displace usage.
+  trigger.hidden = false;
   const overflow = control => control.classList.contains('sdk-action') ? view.pane.querySelector('#sdk-actions') : menu;
   for (const control of controls.filter(Boolean)) overflow(control).append(control);
   const fits = () => row.scrollWidth <= row.clientWidth + 1 && gauges.scrollWidth <= gauges.clientWidth + 1;
@@ -1402,5 +1404,19 @@ function sdkLayoutFooter(view, controls) {
   for (const control of controls.filter(Boolean)) {
     pickers.insertBefore(control, anchor);
     if (!fits()) { overflow(control).append(control); break; }
+  }
+  // Empty wrappers and hidden reset cards are not menu contents. The same
+  // contents decide both disclosure visibility and boundaries between groups.
+  const hasContent = node => !node.hidden && (node.matches('button, input, select, textarea')
+    || [...node.childNodes].some(child => child.nodeType === Node.TEXT_NODE
+      ? !!child.textContent.trim() : child.nodeType === Node.ELEMENT_NODE && hasContent(child)));
+  for (const group of menu.querySelectorAll(':scope > #sdk-actions, :scope > #sdk-permissions')) {
+    group.hidden = false;
+    group.hidden = !hasContent(group);
+  }
+  trigger.hidden = !hasContent(menu);
+  if (trigger.hidden && menu.matches(':popover-open')) {
+    menu.hidePopover();
+    view.input?.focus();
   }
 }

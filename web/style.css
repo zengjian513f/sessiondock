@@ -2611,7 +2611,7 @@ header .btn[data-session-docked] { display: none; }
 .sdk-reset { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .sdk-reset .new-effort { flex: 1; }
 .sdk-reset .btn { flex: none; white-space: nowrap; height: 28px; min-height: 28px; padding: 0 10px; }
-#sdk-permissions { padding-top: 8px; border-top: 1px solid var(--border); }
+.sdk-toolbar-menu > :not([hidden]) ~ #sdk-permissions:not([hidden]) { padding-top: 8px; border-top: 1px solid var(--border); }
 #sdk-permissions .sdk-control-note:empty { display: none; }
 .sdk-action-fields { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .sdk-action-fields > input { width: 100%; box-sizing: border-box; }

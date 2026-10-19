@@ -390,6 +390,9 @@ Browser regression: [creation retention](../tests/sdk_creation_retention_browser
   not loaded. Modes are 执行模式 / 计划模式.
   Popovers use existing menu styling, stay inside the viewport and close on
   resize, Escape or outside click. Long model names truncate within their selector.
+  DELTA (BUG-20261019-112331-45e344): hide ⋯ when no controls or messages remain
+  in its menu. Empty groups and hidden reset cards do not count as content;
+  the permissions separator appears only between two populated menu groups.
 - Input queues are owned by the node, shared in SSE snapshots and `bridge/queue`
   events, and continue after a page closes. With `SESSIONDOCK_STATE_DIR` they
   persist in private `codex-sdk-queue.json`; without it they are memory-only.

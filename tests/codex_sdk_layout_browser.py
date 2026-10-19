@@ -175,7 +175,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     dialog.get_by_role('button', name='取消', exact=True).click()
     page.locator('#sdk-more').click()
     dialog = page.locator('#sdk-permissions')
-    expect(dialog).to_be_visible()
+    expect(dialog).to_be_hidden()  # Empty permissions feedback is not a menu section.
     expect(dialog.locator('[id^="sdk-goal-"]')).to_have_count(0)
     expect(page.locator('.sdk-pickers > #sdk-control-approval')).to_be_visible()
     expect(page.locator('.sdk-pickers > #sdk-control-sandbox')).to_be_visible()
