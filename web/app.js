@@ -1752,9 +1752,17 @@ async function applyDiffPacket(uid, data, bytes = 0, agent = null) {
     // sends) without new records (docs/cli-state.md).
     if (!agent && Object.prototype.hasOwnProperty.call(data, 'cli')) {
       const priorPhase = e.cli?.instance?.phase;
+      const priorBusy = e.cli?.instance?.busy;
+      const priorInput = e.cli?.input?.state;
+      const activityAt = Date.parse(e.activity?.ts) / 1000;
+      const readyAfterTurn = Number.isFinite(activityAt)
+        && Number(e.cli?.observed_at) < activityAt + 2
+        && Number(data.cli?.observed_at) >= activityAt + 2;
       e.cli = data.cli || null;
       globalThis.applyCliState?.(uid, e.cli);
-      if (S.sel === uid && !S.agent && priorPhase !== e.cli?.instance?.phase) {
+      if (S.sel === uid && !S.agent && (priorPhase !== e.cli?.instance?.phase
+          || priorBusy !== e.cli?.instance?.busy || priorInput !== e.cli?.input?.state
+          || readyAfterTurn)) {
         renderConversationTail(e.activity, uid);
         globalThis.renderQueuedSends?.(uid);
       }
@@ -9591,10 +9599,19 @@ function renderActivity(activity) {
     && cache.get(viewKey(S.sel))?.cli?.instance?.phase === 'compacting';
   if (compacting) activity = {state: 'working'};
   if (activity?.state === 'working' && !compacting) {
+    const cli = !S.agent && cache.get(viewKey(S.sel))?.cli;
     const processStart = S.liveStarted.get(S.sel);
     const activityAt = Date.parse(activity.ts) / 1000;
-    if (!S.live.has(S.sel) || (Number.isFinite(processStart) && Number.isFinite(activityAt)
-        && activityAt < processStart - 2)) activity = null;
+    if (!S.live.has(S.sel)) activity = null;
+    else if (S.sel.startsWith('codex:') && !S.liveWorking.has(S.sel)
+        && cli?.instance?.running === true && cli.instance.busy === false
+        && cli.input?.state === 'ready' && Number.isFinite(activityAt)
+        && Number(cli.observed_at) >= activityAt + 2) {
+      // Codex can stop a turn without writing turn_aborted to its rollout.
+      // A newer, ready CLI observation closes the stale native working label.
+      activity = {...activity, state: 'aborted', reason: '终端已回到输入状态，原生回合未写入结束事件'};
+    } else if (Number.isFinite(processStart) && Number.isFinite(activityAt)
+        && activityAt < processStart - 2) activity = null;
   }
   const labels = {working: 'Working…', waiting: '等待回答', aborted: '已中断', failed: '执行失败'};
   const label = compacting ? '正在压缩上下文…' : labels[activity?.state]

@@ -21,6 +21,7 @@ native CLI home or production host is touched.
 """
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -46,7 +47,9 @@ printf "RS_SHELL_READY\\n"
 while IFS= read -r line; do
   case "$line" in
     busy) printf "Working (3s - esc to interrupt)\\n" ;;
-    idle) printf "\\033[2J\\033[HRS_IDLE\\n" ;;
+    idle|idle-later)
+      if [ "$line" = idle-later ]; then sleep 2; fi
+      printf "\\033[2J\\033[HRS_IDLE\\n\\n› \\033[2mAsk Codex to do anything\\033[0m\\n\\n  GPT-6-Astra high · Context 73%% used\\n  ? for shortcuts\\n" ;;
     compacting|compact-quoted|compact-draft)
       printf "\\033[2J\\033[HRS_SHELL_READY\\nRS_SCREEN_%s\\nSynthetic answer\\n\\n" "$line"
       if [ "$line" = compact-draft ]; then printf "› "; fi
@@ -126,7 +129,7 @@ def row_turn(opener, base, uid, size):
     return row.get("turn")
 
 
-def main(binary=BINARY):
+def main(binary=BINARY, interrupt_only=False):
     if os.name != "posix":
         raise SystemExit("Real launch acceptance currently requires POSIX; no Windows/macOS claim.")
     with tempfile.TemporaryDirectory(prefix="sessiondock-turn-state-") as temporary, private_hosts(Path(temporary)):
@@ -202,6 +205,50 @@ def main(binary=BINARY):
                     expect(badge(claude_uid)).to_be_visible()
                     expect(badge(claude_uid)).not_to_have_class(TURN)
                     expect(badge(claude_uid)).to_have_attribute("title", re.compile("空闲"))
+
+                    # BUG-20261019-040722-bf9e08: Codex can return to a ready
+                    # prompt without writing turn_aborted to its rollout.
+                    started = codex_row("event_msg", {"type": "task_started", "turn_id": "missing-abort"})
+                    started["timestamp"] = datetime.now(timezone.utc).isoformat()
+                    append(codex_path, started)
+                    page.locator("#xterm").click()
+                    page.keyboard.type("busy")
+                    page.keyboard.press("Enter")
+                    wait_busy(page, codex_uid, True)
+                    page.locator("#a-chat").click()
+                    expect(page.locator("#conversation-status .sdk-status")).to_have_text(
+                        re.compile(r"处理中|Working…"))
+                    page.locator("#a-term").click()
+                    page.locator("#xterm").click()
+                    page.keyboard.type("idle-later")
+                    page.keyboard.press("Enter")
+                    page.locator("#a-chat").click()
+                    wait_busy(page, codex_uid, False)
+                    footer = page.locator("#conversation-status .sdk-status")
+                    expect(footer).to_have_text("已中断", timeout=20000)
+                    screenshots = os.environ.get("SESSIONDOCK_TEST_SCREENSHOTS")
+                    if screenshots:
+                        directory = Path(screenshots)
+                        directory.mkdir(parents=True, exist_ok=True)
+                        for width, theme in [(1280, "light"), (1280, "dark"),
+                                             (390, "light"), (390, "dark")]:
+                            page.set_viewport_size({"width": width, "height": 900})
+                            page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
+                            if not footer.is_visible():
+                                page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
+                                page.locator("#a-chat").click()
+                            expect(footer).to_be_visible()
+                            page.screenshot(path=str(directory / f"interrupted-{width}-{theme}.png"))
+                        page.set_viewport_size({"width": 1280, "height": 900})
+                        page.evaluate("theme => document.documentElement.dataset.theme = theme", "light")
+                    page.reload(wait_until="networkidle")
+                    expect(page.locator("#conversation-status .sdk-status")).to_have_text("已中断", timeout=20000)
+                    append(codex_path, codex_row("event_msg", {"type": "task_complete", "turn_id": "missing-abort"}))
+                    expect(page.locator("#conversation-status .sdk-status")).to_have_text("就绪", timeout=20000)
+                    if interrupt_only:
+                        assert not errors, errors
+                        print("PASS Codex interrupted footer: live CLI, watch update, reload and completion", flush=True)
+                        return
 
                     # ---- Claude is not open: its dot follows the list row's turn.
                     append(claude_path, claude_row(CLAUDE_SID, "user", "u1", "a0", "Synthetic next input", cwd=work))
@@ -714,4 +761,6 @@ def main(binary=BINARY):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
-    sys.exit(main(parser.parse_args().binary))
+    parser.add_argument("--interrupt-only", action="store_true")
+    args = parser.parse_args()
+    sys.exit(main(args.binary, args.interrupt_only))
