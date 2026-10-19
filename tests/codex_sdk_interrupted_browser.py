@@ -42,14 +42,17 @@ def exercise(browser, base, fake, corpus, screenshots, label, width, theme):
     cli = {'observed_at': time.time(), 'instance': {'running': True, 'busy': False},
            'input': {'state': 'ready', 'code': ''}, 'queued': []}
     only_cli = False
+    cli_missing = False
 
     def messages(route):
         response = route.fetch()
         data = response.json()
         if only_cli:
             data = {'cli_only': True, 'cli': cli.copy()}
-        else:
+        elif not cli_missing:
             data['cli'] = cli.copy()
+        else:
+            data['cli'] = None
         route.fulfill(response=response, json=data)
 
     page.route('**/api/messages/*', messages)
@@ -61,10 +64,12 @@ def exercise(browser, base, fake, corpus, screenshots, label, width, theme):
     status = page.locator('.sdk-pane .sdk-status')
 
     def capture(name):
-        status.click()
-        expect(page.locator('#sdk-status-menu')).to_be_visible()
+        if status.is_enabled():
+            status.click()
+            expect(page.locator('#sdk-status-menu')).to_be_visible()
         page.screenshot(path=str(screenshots / f'{label}-{width}-{theme}-{name}.png'))
-        page.keyboard.press('Escape')
+        if status.is_enabled():
+            page.keyboard.press('Escape')
 
     def reload():
         page.reload(wait_until='networkidle')
@@ -104,6 +109,21 @@ def exercise(browser, base, fake, corpus, screenshots, label, width, theme):
 
     # Releasing the subscription drops the bridge cache. Re-entry must use
     # persisted native evidence instead of requiring a prior browser event.
+    page.locator('#a-chat').click()
+    fake.disconnect()
+    # A Codex turn can stop without writing an ending while the SDK daemon
+    # later reports idle. No CLI observation or live outcome is available.
+    cli_missing = True
+    append('task_started', turn_id='sdk-idle-missing-ending')
+    reload()
+    expect(status).to_have_text('已中断')
+    expect(status).to_have_attribute('data-state', 'warning')
+    capture('sdk-idle-missing-ending')
+    append('task_complete', turn_id='sdk-idle-missing-ending')
+    reload()
+    expect(status).to_have_text('就绪')
+    cli_missing = False
+
     page.locator('#a-chat').click()
     fake.disconnect()
     append('turn_aborted', turn_id='persisted-interruption')
