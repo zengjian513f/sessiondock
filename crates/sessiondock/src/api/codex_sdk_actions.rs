@@ -30,6 +30,14 @@ pub async fn fork(
 ) -> Result<Json<Value>, ApiError> {
     let sdk = service(&state)?;
     let id = thread_id(&state, &body.uid, &body.agent).await?;
+    // Persist the explicit main-thread fork's display intent before native
+    // files become observable. Inventory polling can otherwise follow the
+    // child before the browser gets a chance to reveal its parent.
+    if body.agent.is_empty()
+        && let Some(metadata) = &state.metadata
+    {
+        metadata.set_fork_visibility(std::slice::from_ref(&body.uid), true)?;
+    }
     let mut result = sdk
         .fork_thread(&id, body.last_turn_id.as_deref())
         .await

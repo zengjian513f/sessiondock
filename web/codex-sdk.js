@@ -38,6 +38,7 @@ const CodexSdkView = {
   open(uid, pane, agent = null, {historyReady = null} = {}) {
     this.legacyViews.delete(viewKey(uid, agent));
     this.close();
+    this.stopped = false;
     this.uid = uid; this.agent = agent; this.pane = pane;
     this.historyReady = historyReady;
     this.pendingAtOpen = !agent && !!this.pending(uid);
@@ -669,6 +670,13 @@ const CodexSdkView = {
     const stick = this.nearBottom() && !this.box?.querySelector('.more:active');
     const item = raw.item;
     switch (method) {
+      case 'bridge/stopped':
+        clearTimeout(this.historyTimer); clearTimeout(this.reconnectTimer);
+        this.es?.close(); this.es = null;
+        this.turn = null; this.items.clear(); this.requests.clear(); this.live.replaceChildren();
+        this.stopped = true; this.setConnected(false); this.paintStatus();
+        queueUiChange({live: true});
+        return;
       case 'bridge/queue':
         if (this.summary) this.summary.queue = raw.queue;
         this.paintQueue();
@@ -819,6 +827,12 @@ const CodexSdkView = {
 
   paintStatus() {
     if (!this.pane) return;
+    if (this.stopped) {
+      this.pane.querySelector('#sdk-send').disabled = true;
+      this.pane.querySelector('#sdk-stop').hidden = true;
+      this.setNotice('会话已停止；重新打开 SDK 可继续。', 'idle', true);
+      return;
+    }
     const active = !!this.turn;
     this.pane.querySelector('#sdk-stop').hidden = !active;
     const send = this.pane.querySelector('#sdk-send');

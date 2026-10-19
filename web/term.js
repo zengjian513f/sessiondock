@@ -401,7 +401,9 @@ function linkedTermSession(uid, { followReplacement = false } = {}) {
     || (pane.record_id && pane.launch_id && !pane.stale && pendingUid(pane.name) === target)));
   const leafOf = target => {
     target = followContinuedSession(target);
-    return typeof forkLeafUid === 'function' ? forkLeafUid(target) : target;
+    // Explicit SDK forks leave the parent's console on its own thread.
+    return typeof forkLeafUid === 'function' && hiddenForkParent(sessionTermMeta(target))
+      ? forkLeafUid(target) : target;
   };
   const exact = exactFor(uid);
   if (exact.length === 1) {

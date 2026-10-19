@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Middle-message fork and exact thread/PTY stop on one shared daemon."""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import tempfile
+from types import SimpleNamespace
+
+from playwright.sync_api import expect, sync_playwright
+from codex_sdk_actions_browser import build, environment, THREAD, TURN2
+from codex_sdk_message_actions_browser import MessageServer, FORK
+from codex_sdk_browser import server
+from history_fixtures import BINARY, codex_row, codex_message, encoded
+from hub_fixtures import Hub, free_port
+from node_auth_fixtures import TOKEN, node_env
+from private_hosts import private_hosts
+from popups import on_popup
+from spawned_by_fixtures import proc_pid
+
+OTHER = '01a1adc0-0000-7000-8000-000000000098'
+LATER = '分支点之后的第三轮 Later question'
+
+
+class StopServer(MessageServer):
+    def __init__(self, socket, source, retained, other):
+        super().__init__(socket, source, retained)
+        self.paths[OTHER] = other
+        self.loaded = set()
+
+    async def _handle(self, writer, message):
+        method, params = message.get('method'), message.get('params') or {}
+        if method == 'thread/loaded/list':
+            await self.send(writer, {'id': message['id'], 'result': {'data': sorted(self.loaded)}})
+            return
+        if method == 'thread/resume':
+            self.loaded.add(params['threadId'])
+        if method == 'thread/unsubscribe':
+            # Keep loaded/list deliberately stale: a native daemon may retain
+            # an unsubscribed thread during its unload grace period.
+            await self.send(writer, {'id': message['id'], 'result': {'status': 'unsubscribed'}})
+            return
+        await super()._handle(writer, message)
+        if method == 'thread/fork': self.loaded.add(FORK)
+
+
+def exercise(browser, base, corpus, fake, proc, screenshots, label):
+    context = browser.new_context(viewport={'width': 1280 if 'wide' in label else 390, 'height': 900},
+                                  color_scheme='light' if 'light' in label else 'dark', service_workers='block')
+    context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
+    page = context.new_page()
+    on_popup(page, lambda dialog: dialog.accept())
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.goto(base, wait_until='networkidle')
+    page.locator('#side .item').filter(has_text='第一轮 retained question').first.click()
+    page.wait_for_function('CodexSdkView.connected && !!CodexSdkView.historyData')
+    source = page.evaluate('S.sel')
+    bubble = page.locator('.sdk-history .msg[data-role="user"]').filter(has_text='第二轮 remove this question')
+    bubble.get_by_role('button', name='消息操作', exact=True).click()
+    bubble.get_by_role('button', name='分支', exact=True).click()
+    expect(page.locator('#sdk-input')).to_have_value('第二轮 remove this question')
+    branch = page.evaluate('S.sel')
+    expect(page.locator('.sdk-history')).not_to_contain_text(LATER)
+    expect(page.locator('.sdk-history')).not_to_contain_text('remove this answer')
+    expect(page.locator('#side .item')).to_have_count(2)
+    # One shared process holds every native file. It is not a CLI instance
+    # owned by the deepest fork and must never receive process termination.
+    for fd, path in [(4, fake.fork_path), (5, fake.paths[FORK]), (6, fake.paths[OTHER])]:
+        (proc / '400' / 'fd' / str(fd)).symlink_to(path)
+    if 'narrow' in label: page.get_by_role('button', name='返回会话列表', exact=True).click()
+    page.locator(f'#side .item[data-uid="{source}"]').click()
+    expect(page.locator('.sdk-history')).to_contain_text(LATER)
+    # Joining a real private PTY adds only this source's guarded client.
+    with page.expect_response(lambda response: '/api/term/takeover' in response.url) as takeover:
+        page.locator('#a-term').click()
+    result = takeover.value.json()
+    assert takeover.value.status == 200 and not result.get('needs_confirm'), result
+    try:
+        page.wait_for_function('uid => T.list.some(row => row.uid === uid && row.instance_id)', arg=source, timeout=7000)
+    except Exception as error:
+        raise AssertionError({'takeover': result, 'list': page.evaluate('T.list'), 'source': source}) from error
+    page.locator('#a-sdk').click()
+    page.wait_for_function('CodexSdkView.connected')
+    action = page.locator('#a-session-toggle')
+    if not action.is_visible(): page.locator('#a-more').click()
+    with page.expect_response(lambda response: response.url.endswith('/api/session/stop')) as stopped:
+        action.click()
+    result = stopped.value.json()
+    assert stopped.value.status == 200 and result['stopped'], result
+    assert fake.methods('thread/unsubscribe') and fake.methods('thread/unsubscribe')[-1]['params'] == {'threadId': THREAD}, {
+        'stop': result, 'rpc': fake.received[-12:],
+        'view': page.evaluate('({uid:CodexSdkView.uid,connected:CodexSdkView.connected,stopped:CodexSdkView.stopped,sel:S.sel})')}
+    expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('会话已停止')
+    assert page.evaluate('S.sel') == source
+    page.wait_for_function('uid => !T.list.some(row => row.uid === uid && row.instance_id && !row.stale)', arg=source)
+    assert fake.methods('thread/unsubscribe')[-1]['params'] == {'threadId': THREAD}
+    live = page.request.get(base + '/api/live?force=1').json()
+    assert source not in live['uids'] and branch in live['sdk_uids'], live
+    assert not errors, errors
+    if screenshots: page.screenshot(path=str(screenshots / f'{label}-parent-stopped.png'))
+    # The branch stays usable, then stopping it unsubscribes only its thread.
+    if 'narrow' in label: page.get_by_role('button', name='返回会话列表', exact=True).click()
+    page.locator(f'#side .item[data-uid="{branch}"]').click()
+    page.wait_for_function('CodexSdkView.connected')
+    action = page.locator('#a-session-toggle')
+    if not action.is_visible(): page.locator('#a-more').click()
+    with page.expect_response(lambda response: response.url.endswith('/api/session/stop')) as stopped:
+        action.click()
+    result = stopped.value.json()
+    assert stopped.value.status == 200 and result['stopped'], result
+    expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('会话已停止')
+    assert fake.methods('thread/unsubscribe')[-1]['params'] == {'threadId': FORK}
+    live = page.request.get(base + '/api/live?force=1').json()
+    assert branch not in live['uids'] and source not in live['uids'], live
+    expect(page.locator('#side .item')).to_have_count(2)
+    if screenshots: page.screenshot(path=str(screenshots / f'{label}-branch-stopped.png'))
+    context.close()
+    print('PASS ' + label + ': middle fork excludes later messages; exact parent PTY/SDK stop; independent branch stop; daemon retained', flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--screenshots', type=Path)
+    args = parser.parse_args()
+    if args.screenshots: args.screenshots.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='sd-sdk-stop-') as temporary, sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            for mode, size, theme in [('node', 'wide', 'light'), ('hub', 'narrow', 'dark')]:
+                label = f'{mode}-{size}-{theme}'
+                root = Path(temporary) / label
+                root.mkdir()
+                corpus, _ = build(root)
+                path = corpus.paths['sdk']
+                rows = [json.loads(line) for line in path.read_text().splitlines()]
+                (root / 'work').mkdir()
+                rows[0]['payload']['cwd'] = str(root / 'work')
+                turn = None
+                for row in rows:
+                    if row['type'] == 'turn_context': turn = row['payload']['turn_id']
+                    elif row['type'] == 'response_item': row['payload']['turn_id'] = turn
+                rows += [codex_row('turn_context', {'turn_id': 'third-turn'}), codex_message('user', LATER)]
+                for ordinal, row in enumerate(rows): row['ordinal'] = ordinal
+                path.write_bytes(b''.join(encoded(row) for row in rows))
+                stop = next(i for i, row in enumerate(rows) if row.get('type') == 'turn_context' and row['payload']['turn_id'] == TURN2)
+                retained = b''.join(encoded(row) for row in rows[:stop])
+                # An unrelated thread on the same daemon need not be listed.
+                other = root / 'other.jsonl'
+                other.write_bytes(encoded(codex_row('session_meta', {'id': OTHER})))
+                env = environment(root, args.binary)
+                config = root / 'launcher.json'
+                settings = json.loads(config.read_text())
+                settings['profiles'][0]['env'] = {'PATH': os.environ['PATH'],
+                    'SESSIONDOCK_TEST_ARGV_LOG': str(root / 'argv.jsonl')}
+                config.write_text(json.dumps(settings))
+                proc = root / 'proc'
+                (proc / 'stat').write_text('btime 1700000000\n')
+                proc_pid(proc, 400, 'codex', ['codex', 'app-server'], 1, fds={3: path})
+                port = free_port()
+                env.update(node_env(root, port, '127.0.0.0/8'))
+                with private_hosts(root), StopServer(root / 'app.sock', path, retained, other) as fake, server(corpus, args.binary, root / 'app.sock', env) as base:
+                    if mode == 'hub':
+                        hub_root = root / 'hub'
+                        hub_root.mkdir()
+                        hub = Hub(args.binary.with_name('sessiondock-hub').resolve(), hub_root,
+                                  [SimpleNamespace(name='StopNode', token=TOKEN, port=port)])
+                        hub.start()
+                        try: exercise(browser, f'http://127.0.0.1:{hub.port}', corpus, fake, proc, args.screenshots, label)
+                        finally: hub.stop()
+                    else: exercise(browser, base, corpus, fake, proc, args.screenshots, label)
+        finally: browser.close()
+
+
+if __name__ == '__main__': main()

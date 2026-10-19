@@ -1142,13 +1142,6 @@ pub async fn stop(
         ));
     }
     let external = external_processes(&state, &uid).await?;
-    if external.raw && external.pids.is_empty() {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "stop_superseded",
-            "该回滚分支已不是当前运行分支，未停止共享的子会话",
-        ));
-    }
     let observed = super::runtime::observe(&state)
         .await?
         .ok_or_else(|| ApiError::unavailable("受管实例停止"))?;
@@ -1163,11 +1156,38 @@ pub async fn stop(
             )
         })
         .collect();
+    if targets.is_empty() && external.raw && external.pids.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "stop_superseded",
+            "该回滚分支已不是当前运行分支，未停止共享的子会话",
+        ));
+    }
+    let sdk_stopped = if let Some(sdk) = &state.codex_sdk {
+        let selected = uid.clone();
+        let scope = state
+            .reader
+            .run(move |store| store.native_scope(&selected, ""))
+            .await;
+        if let Ok(scope) = scope
+            && scope.source == "codex"
+            && sdk.live_threads().await.contains(&scope.session_id)
+        {
+            sdk.stop_thread(&scope.session_id)
+                .await
+                .map_err(super::codex_sdk::rpc)?;
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
     if targets.is_empty() {
         let pids: Vec<i64> = external.pids.into_iter().filter(|pid| *pid > 0).collect();
         if pids.is_empty() {
             return response(
-                json!({"ok":true,"stopped":false,"tmux":external.tmux,
+                json!({"ok":true,"stopped":sdk_stopped,"tmux":external.tmux,
                     "external_detection":"proc_scan"}),
                 permit,
             )
@@ -1181,7 +1201,7 @@ pub async fn stop(
             )
         })?;
         return response(
-            json!({"ok":true,"stopped":!killed.killed.is_empty(),"tmux":external.tmux,
+            json!({"ok":true,"stopped":sdk_stopped || !killed.killed.is_empty(),"tmux":external.tmux,
                 "external_detection":"proc_scan"}),
             permit,
         )
