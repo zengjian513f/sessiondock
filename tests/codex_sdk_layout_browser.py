@@ -64,6 +64,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
     expect(page.locator('#sdk-mode')).to_have_value('default')
     expect(page.locator('.sdk-status')).to_have_text('就绪')
+    expect(page.locator('.sdk-status')).to_have_attribute('data-state', 'ready')
     for selector in ('#sdk-model', '#sdk-effort', '#sdk-tier', '#sdk-mode', '#sdk-control-approval', '#sdk-control-sandbox'):
         assert not page.locator(selector + ' option[value=""]').count(), selector
         assert not any(word in page.locator(selector).text_content() for word in ('沿用', '未返回', 'Default')), selector
@@ -90,6 +91,14 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         ]:
             notify('thread/status/changed', {'status': native_status})
             expect(status).to_have_text(label)
+            expect(status).to_have_attribute('data-state', {
+                '处理中': 'working', '待批准': 'waiting', '待回答': 'waiting', '系统错误': 'blocked'}[label])
+            assert status.evaluate("e => getComputedStyle(e, '::before').backgroundColor === getComputedStyle(e).color")
+            assert status.evaluate("e => getComputedStyle(e, '::before').animationName") == ('sdk-status-breathe' if label == '处理中' else 'none')
+            if width == 390 and label == '处理中':
+                page.emulate_media(reduced_motion='reduce')
+                assert status.evaluate("e => getComputedStyle(e, '::before').animationName") == 'none'
+                page.emulate_media(reduced_motion='no-preference')
             single_row(page)
             assert status.evaluate('e => e.scrollWidth <= e.clientWidth + 1'), (width, scale, label)
             expect(status).to_be_disabled()
@@ -99,6 +108,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         page.locator('#sdk-send').click()
         status = page.locator('.sdk-status')
         expect(status).to_contain_text('不支持的命令')
+        expect(status).to_have_attribute('data-state', 'blocked')
         single_row(page)
         full_status = status.text_content()
         details = page.get_by_role('dialog', name='完整状态')
@@ -167,10 +177,11 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     page.locator('#sdk-effort').select_option('medium')
     expect(page.locator('#sdk-input')).to_have_value('窄屏下保留尚未发送的草稿 / realistic project')
 
-    # Actual sidebar resizing must switch layout even without a viewport resize.
+    # Actual sidebar resizing must preserve status/usage without a viewport resize.
     if scale == 100:
         page.set_viewport_size({'width': 1280, 'height': 900})
         single_row(page)
+        prior_width = page.locator('.sdk-status-row').bounding_box()['width']
         exposed = page.locator('.sdk-pickers > [data-sdk-action], .sdk-pickers > #sdk-permissions').count()
         assert exposed > 0, 'wide composer forcibly hid every secondary control'
         grip = page.locator('#drag').bounding_box()
@@ -179,8 +190,9 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         page.mouse.down()
         page.mouse.move(x + 320, y, steps=12)
         page.mouse.up()
-        page.wait_for_function('prior => document.querySelectorAll(".sdk-pickers > [data-sdk-action], .sdk-pickers > #sdk-permissions").length < prior', arg=exposed)
+        page.wait_for_function('prior => document.querySelector(".sdk-status-row").getBoundingClientRect().width < prior - 200', arg=prior_width)
         single_row(page)
+        assert_inline_usage(page)
         expect(page.locator('#sdk-model')).to_have_value('fake-luna')
         expect(page.locator('#sdk-effort')).to_have_value('medium')
     # Live gauge composition changes must reflow without a viewport resize.

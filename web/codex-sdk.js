@@ -111,7 +111,7 @@ const CodexSdkView = {
     CodexSdkControls.mount(this);
     this.mountToolbar(generation);
     this.refreshHistory(generation);
-    this.setNotice('连接中');
+    this.setNotice('连接中', 'connecting');
     this.start(generation);
   },
 
@@ -281,7 +281,7 @@ const CodexSdkView = {
     }
     if (!this.current(generation)) return;
     this.openFailed = false; this.openRetryDelay = 1000;
-    this.setNotice('连接中');
+    this.setNotice('连接中', 'connecting');
     this.loadModels(generation);
     const es = new EventSource(appUrl(`api/codex-sdk/events?${new URLSearchParams({uid, agent: this.agent || ''})}`));
     this.es = es;
@@ -296,7 +296,7 @@ const CodexSdkView = {
       if (!this.current(generation) || this.es !== es) return;
       this.setConnected(false);
       if (es.readyState === EventSource.CLOSED) {
-        this.setNotice('重连中', 'blocked');
+        this.setNotice('重连中', 'connecting');
         this.scheduleReconnect();
       }
     };
@@ -633,10 +633,10 @@ const CodexSdkView = {
     const partial = data.partial;
     const split = partial ? Math.min(partial.head, messages.length) : 0;
     const plan = partial
-      ? [...planTurns(messages.slice(0, split), {tailComplete: false, foldTail: true}),
+      ? [...planTurns(messages.slice(0, split).filter(sdkHistoryMessageVisible), {tailComplete: false, foldTail: true}),
          {gap: {uid: this.uid, agent: this.agent, omitted: partial.omitted}},
-         ...planTurns(messages.slice(split), {tailComplete, openTail: !tailComplete})]
-      : planTurns(messages, {tailComplete, openTail: !tailComplete});
+         ...planTurns(messages.slice(split).filter(sdkHistoryMessageVisible), {tailComplete, openTail: !tailComplete})]
+      : planTurns(messages.filter(sdkHistoryMessageVisible), {tailComplete, openTail: !tailComplete});
     const built = buildPlan(this.history, plan, null);
     built.forEach((node, index) => CodexSdkActions.decorate(this, node, plan[index].m));
     for (const node of this.history.querySelectorAll(':scope > .turn-process')) {
@@ -711,7 +711,7 @@ const CodexSdkView = {
       case 'bridge/reset':
         this.setConnected(false);
         queueUiChange({live: true});
-        this.setNotice('重连中', 'blocked');
+        this.setNotice('重连中', 'connecting');
         this.es?.close();
         this.scheduleReconnect();
         return;
@@ -827,9 +827,7 @@ const CodexSdkView = {
     if (item.status === 'inProgress' && TOOL_ROLES.has(message.role)) {
       const status = document.createElement('div');
       status.className = 'tool-status';
-      if (item.type === 'contextCompaction') {
-        status.innerHTML = '<div class="search-progress-track sdk-compaction-progress" role="progressbar" aria-label="正在压缩上下文"><i></i></div>';
-      } else status.textContent = '运行中…';
+      status.textContent = '运行中…';
       node.querySelector('.tool-entry')?.append(status);
     }
     if (old) old.replaceWith(node);
@@ -866,22 +864,26 @@ const CodexSdkView = {
     // 兑换结果提示停留几秒，不被紧随其后的状态刷新盖掉。
     if (this.noticeHold > Date.now()) return;
     const status = this.summary?.status || {};
+    const compact = [...this.items.values()].findLast(item => item.type === 'contextCompaction');
     const parts = [];
-    if (this.limits?.rateLimitReachedType) parts.push('用量已满');
+    let kind = 'ready';
+    if (this.limits?.rateLimitReachedType) { parts.push('用量已满'); kind = 'waiting'; }
     const nativeError = !active && status.type === 'systemError'
       && this.historyData?.activity?.state === 'failed'
       ? this.historyData.activity.error : null;
     const errorText = this.summary?.last_error?.message || nativeError;
-    if (errorText) parts.push(`错误：${errorText}`);
-    else if (this.summary?.retry_error?.message) parts.push(`正在重试：${this.summary.retry_error.message}`);
+    if (errorText) { parts.push(`错误：${errorText}`); kind = 'blocked'; }
+    else if (this.summary?.retry_error?.message) { parts.push(`正在重试：${this.summary.retry_error.message}`); kind = 'retrying'; }
     if (!parts.length) {
-      if (status.type === 'systemError') parts.push('系统错误');
-      else if (status.activeFlags?.includes('waitingOnApproval')) parts.push('待批准');
-      else if (status.activeFlags?.includes('waitingOnUserInput')) parts.push('待回答');
-      else if (active) parts.push('处理中');
+      if (status.type === 'systemError') { parts.push('系统错误'); kind = 'blocked'; }
+      else if (status.activeFlags?.includes('waitingOnApproval')) { parts.push('待批准'); kind = 'waiting'; }
+      else if (status.activeFlags?.includes('waitingOnUserInput')) { parts.push('待回答'); kind = 'waiting'; }
+      else if (compact?.status === 'inProgress') { parts.push('压缩中'); kind = 'maintenance'; }
+      else if (active) { parts.push('处理中'); kind = 'working'; }
+      else if (compact?.status === 'completed') parts.push('压缩完成');
       else parts.push('就绪');
     }
-    this.setNotice(parts.join(' '), this.summary?.last_error || status.type === 'systemError' ? 'blocked' : '');
+    this.setNotice(parts.join(' '), this.summary?.last_error || status.type === 'systemError' ? 'blocked' : kind);
   },
 
   setNotice(text, kind = '', sticky = false) {
@@ -893,6 +895,7 @@ const CodexSdkView = {
     this.notice.title = text;
     this.notice.hidden = !text;
     this.notice.className = 'sdk-status' + (kind ? ` ${kind}` : '');
+    this.notice.dataset.state = kind || 'neutral';
     this.notice.dataset.sticky = sticky ? '1' : '';
     this.updateStatusDisclosure();
   },
@@ -1092,6 +1095,8 @@ function mergeSdkLimits(previous, update) {
 }
 
 /** app-server ThreadItem → 消息模式的消息对象，由同一个 msgNode 渲染。 */
+function sdkHistoryMessageVisible(message) { return message.event_kind !== 'compact'; }
+
 function itemMessage(item) {
   const done = ['completed', 'failed', 'declined'].includes(item.status);
   const failed = item.status === 'failed' || item.status === 'declined';
@@ -1137,8 +1142,7 @@ function itemMessage(item) {
     case 'imageView': return {role: 'tool', name: 'view_image', summary: `查看图片 ${item.path || ''}`, text: item.path || ''};
     case 'enteredReviewMode': return {role: 'assistant', text: `开始审查：${item.review || ''}`};
     case 'exitedReviewMode': return item.review ? {role: 'assistant', text: item.review} : null;
-    case 'contextCompaction': return {role: 'tool', name: 'compact',
-      summary: done ? (failed ? '上下文压缩失败' : '上下文已压缩') : '正在压缩上下文…', text: ''};
+    case 'contextCompaction': return null;
     case 'functionCallOutput':
       return {role: 'tool_result', name: item.name, text: SDK_JSON(item.output)};
     default: return {role: 'tool', name: item.type, summary: item.type, text: SDK_JSON(item)};

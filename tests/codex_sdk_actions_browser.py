@@ -32,6 +32,7 @@ def build(root):
         (root / source).mkdir()
     rows = [codex_row("session_meta", {"id": THREAD, "cwd": "/synthetic/sdk-actions/项目-long-workspace",
                                       "timestamp": "2026-09-11T10:00:00Z"}),
+            codex_row("compacted", {}, ordinal=10),
             codex_row("turn_context", {"turn_id": TURN1}),
             codex_message("user", "第一轮 retained question with enough context"),
             codex_message("assistant", "retained answer")]
@@ -136,6 +137,8 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     pane = page.locator("#session-content-view.sdk-pane")
     expect(pane.locator('[data-sdk-action="revert"]')).to_be_enabled()
     expect(pane.locator(".sdk-history")).to_contain_text("remove this answer")
+    expect(pane.locator('.sdk-history')).not_to_contain_text('已压缩')
+    assert page.evaluate('CodexSdkView.historyData.messages.some(m => m.event_kind === "compact")'), 'native compaction record must remain available'
     box, send = pane.locator("#sdk-input"), pane.locator("#sdk-send")
 
     def choose_action(action):
@@ -172,25 +175,31 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     assert len(fake.methods("thread/revert")) == 1
 
     choose_action("compact")
-    expect(pane.locator(".sdk-live")).to_contain_text("正在压缩上下文")
+    expect(pane.locator('.sdk-status')).to_have_text('压缩中')
+    expect(pane.locator('.sdk-status')).to_have_attribute('data-state', 'maintenance')
+    expect(pane.locator('[data-sdk-item="compact-item"]')).to_have_count(0)
     expect(pane.locator(".sdk-live")).not_to_contain_text("上下文已压缩")
     progress = pane.get_by_role("progressbar", name="正在压缩上下文")
-    expect(progress).to_be_visible()
-    assert progress.get_attribute("aria-valuenow") is None, "native compaction has no percentage"
+    expect(progress).to_have_count(0)
     status=pane.locator('.sdk-status')
     expect(status).to_be_visible()
     right=pane.locator('#sdk-usage-toggle') if pane.locator('#sdk-usage-toggle').is_visible() else pane.locator('.sdk-status-row > .sdk-gauges')
     expect(right).to_be_visible()
     left_box,right_box=status.bounding_box(),right.bounding_box()
     model_box=pane.locator('#sdk-model').bounding_box()
-    gap=model_box['x']-right_box['x']-right_box['width']
-    assert 0 <= gap <= 11, 'usage/context must sit immediately before GPT: '+str(gap)
-    assert left_box['x']+left_box['width']<=right_box['x']+1
-    assert right_box['x'] - left_box['x'] - left_box['width'] <= 11, 'status must use all space before usage'
-    assert abs(left_box['y']+left_box['height']/2-right_box['y']-right_box['height']/2)<1
+    wrapped = 'sdk-gauges-wrapped' in (right.get_attribute('class') or '')
+    if wrapped:
+        assert right_box['y'] + right_box['height'] <= left_box['y'] + 1
+        assert left_box['x'] + left_box['width'] <= model_box['x'] + 1
+    else:
+        gap=model_box['x']-right_box['x']-right_box['width']
+        assert 0 <= gap <= 11, 'usage/context must sit immediately before GPT: '+str(gap)
+        assert left_box['x']+left_box['width']<=right_box['x']+1
+        assert right_box['x'] - left_box['x'] - left_box['width'] <= 11, 'status must use all space before usage'
+        assert abs(left_box['y']+left_box['height']/2-right_box['y']-right_box['height']/2)<1
     assert pane.locator('.sdk-status-row').evaluate('n => n.scrollWidth<=n.clientWidth')
     row=pane.locator('.sdk-status-row').bounding_box()
-    assert row['height']<=30
+    assert row['height'] <= (60 if wrapped else 30)
     assert left_box['width'] >= min(60, row['width'] * .22) - 1, 'action icons must not consume the status space'
     for control in pane.locator('.sdk-pickers > *').all():
         if control.is_visible() and control.get_attribute('popover') is None:
@@ -209,15 +218,18 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     if screenshots:
         page.screenshot(path=str(screenshots / f"actions-{label}-compacting.png"))
     page.reload(wait_until="networkidle")
-    expect(progress).to_be_visible()
+    expect(pane.locator('.sdk-status')).to_have_text('压缩中')
     expect(pane.locator(".sdk-live")).not_to_contain_text("上下文已压缩")
     asyncio.run_coroutine_threadsafe(fake.notify("item/completed", {
         "turnId": "compact-turn", "item": {"id": "compact-item", "type": "contextCompaction"}
     }), fake.loop).result(5)
-    expect(pane.locator(".sdk-live")).to_contain_text("上下文已压缩")
+    expect(pane.locator('.sdk-status')).to_have_text('压缩完成')
+    expect(pane.locator('.sdk-status')).to_have_attribute('data-state', 'ready')
+    expect(pane.locator(".sdk-live")).not_to_contain_text("上下文已压缩")
     expect(progress).to_have_count(0)
     page.reload(wait_until="networkidle")
-    expect(pane.locator(".sdk-live")).to_contain_text("上下文已压缩")
+    expect(pane.locator('.sdk-status')).to_have_text('压缩完成')
+    expect(pane.locator(".sdk-live")).not_to_contain_text("上下文已压缩")
     expect(progress).to_have_count(0)
     assert fake.methods("thread/compact/start")[-1]["params"] == {"threadId": THREAD}
     box.fill("/compact extra")
