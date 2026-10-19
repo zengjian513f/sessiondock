@@ -19,7 +19,8 @@ python3 tests/docs_index.py --write
 | [codex-commands.md](codex-commands.md) | Codex 命令与原生回显 | 父合同：会话草稿与 SEND、CLI 状态对象。BUG-20260930-150246-0774e3 的首个错误发生在成功投递之后：服务端把 `/model` 当作需要同文原生回显的普通输入入账，而 Codex 只打开本地菜单。相同假设也不适用于其它内置命令。 | 33 |
 | [codex-names.md](codex-names.md) | Codex name metadata | With `SESSIONDOCK_CODEX_ROOT` configured, the service defaults to the sibling `session_index.jsonl` in that root's parent directory. This reads native `/rename` updates without requiring a second environment setting. No user home is searche | 69 |
 | [native-sdk.md](native-sdk.md) | 多来源 SDK 模式 | Grok、Agy、OpenCode 和 Claude 使用各自的原生机器接口，复用 Codex SDK 视图的消息样式、历史分页、草稿、附件暂存和会话导航，不通过 PTY 输入。 各来源的协议、版本证据与能力边界分别见： | 70 |
-| [sdk-feature-audit.md](sdk-feature-audit.md) | 五种 SDK 功能与漏实现审计 | 2026-10-19，对照代码快照 `25178c71`，以 SessionDock 已实现的 Codex SDK 视图为基准，核对 Grok、Agy、OpenCode、Claude 的桥接、HTTP、网页和浏览器用例， 再用官方文档、官方源码及固定版本接口证据判断可实现范围。 这是功能审计，不是新增功能交付或一次新的运行验收；后续工作统一登记在 TODO。 | 399 |
+| [sdk-feature-audit.md](sdk-feature-audit.md) | 五种 SDK 功能与漏实现审计 | 原生协议、已交付范围、真实验收和待补齐边界。 | 489 |
+| [codex-fix-history.md](codex-fix-history.md) | Codex 历史修复传播与五种状态栏核验 | 历史提交索引、逐项漏同步清单及共享实现证据。 | 504 |
 | [codex-sdk.md](codex-sdk.md) | Codex SDK mode | The SDK view is the default view for Codex sessions and their subagents. 对话 and 终端 remain available during their retirement transition. It drives the session through the Codex app-server JSON-RPC protocol (the interface used by rich Codex c | 499 |
 | [composer-input.md](composer-input.md) | 对话输入就绪 | 父合同：会话草稿与 SEND。本文只定义 AI 对话输入是否就绪：以当前 PTY 画面为唯一判定源。`POST /api/session/conversation/check` 与 `POST /api/session/conversation/send` 使用同一分类器。终端传输所有权、会话身份、草稿持久化与提交去重仍由父合同及其他合同处理，本文不改写、不合并。 | 115 |
 | [conversation.md](conversation.md) | 会话草稿与 SEND | 问题报告和普通会话共用服务端 conversation 服务。每个逻辑会话只有一个编辑草稿，保存文本、引用、附件元数据和提交 ID；修订号通过 CAS 防止页面互相覆盖。草稿位于私有 state/conversations 目录，原生 UID、经验证的启动记录和恢复实例关联到同一身份，不按目录或时间猜测、不拼接不同会话。 | 71 |

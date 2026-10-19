@@ -25,7 +25,7 @@ const CodexSdkControls = {
     pickers.insertBefore(label, pickers.querySelector('#sdk-more'));
     const tier = document.createElement('label');
     tier.className = 'new-effort sdk-tier'; tier.title = '服务档位';
-    tier.innerHTML = '<span class="visually-hidden">服务档位</span><select id="sdk-tier" aria-label="服务档位"><option value="" disabled hidden>Tier</option></select>';
+    tier.innerHTML = '<span class="visually-hidden">服务档位</span><select id="sdk-tier" aria-label="服务档位"><option value="" disabled hidden>档位</option></select>';
     tier.querySelector('select').onchange = async event => {
       const service_tier = event.target.value;
       if (!service_tier) return;
@@ -93,7 +93,7 @@ const CodexSdkControls = {
         option.title = tier.description || '';
         select.append(option);
       }
-      view.selectValue(select, value, 'Tier');
+      view.selectValue(select, value, '档位');
       select.dataset.options = signature;
       view.toolbarLayout = null;
       view.layoutToolbar();

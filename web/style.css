@@ -2573,6 +2573,7 @@ header .btn[data-session-docked] { display: none; }
 .sdk-pickers > .sdk-model-fit { width: auto; }
 .sdk-pickers > .sdk-model-fit > select { width: auto; max-width: var(--sdk-model-width, 160px); }
 .sdk-pickers > .sdk-effort { width: var(--sdk-effort-width, 72px); }
+.sdk-pickers > .sdk-native-setting { width: 112px; }
 .native-sdk-pane { --sdk-model-width: clamp(72px, calc(100vw - 240px), 160px); }
 .sdk-pickers > .sdk-mode { width: 96px; }
 .sdk-pickers > .sdk-tier { width: 84px; }
@@ -2605,16 +2606,17 @@ header .btn[data-session-docked] { display: none; }
 .sdk-action-fields { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .sdk-action-fields > input { width: 100%; box-sizing: border-box; }
 .sdk-control-section { display: grid; gap: 7px; }
-.sdk-native-menu { gap: 0; padding: 12px; }
+#sdk-more-menu { gap: 0; padding: 12px; }
 .sdk-native-menu > #sdk-actions:not(:has(> :not([hidden]))) { display: none; }
 .sdk-native-menu > #native-sdk-settings { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
 .sdk-native-menu > #native-sdk-settings:empty { display: none; }
 #sdk-actions > .sdk-action { width: 100%; min-height: 30px; padding: 5px 8px; border: 0; border-radius: 5px; background: transparent; font: 12.5px/1.4 var(--sans); }
 #sdk-actions > .sdk-action:hover { background: var(--hover); }
 #sdk-actions > .sdk-action[hidden] { display: none; }
-.sdk-native-menu > .new-effort { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: auto; min-height: 30px; border: 0; border-radius: 0; background: transparent; }
-.sdk-native-menu > .new-effort > .sdk-picker-label { flex: none; color: var(--text); white-space: nowrap; }
-.sdk-native-menu > .new-effort > select { flex: none; width: 128px; box-sizing: border-box; height: 28px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.sdk-toolbar-menu > .new-effort { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: auto; min-height: 30px; border: 0; border-radius: 0; background: transparent; }
+.sdk-toolbar-menu > .new-effort[hidden] { display: none; }
+.sdk-toolbar-menu > .new-effort > .sdk-picker-label { flex: none; color: var(--text); white-space: nowrap; }
+.sdk-toolbar-menu > .new-effort > select { flex: none; width: 128px; box-sizing: border-box; height: 28px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
 .sdk-native-menu > #sdk-actions:has(> :not([hidden])) { padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
 .sdk-native-menu > #native-sdk-settings { gap: 2px; }
 .sdk-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; font-size: 12px; }

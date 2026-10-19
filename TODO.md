@@ -24,7 +24,9 @@
 ## Native interaction semantics
 
 - [ ] 继续[五种 SDK 功能审计](docs/sdk-feature-audit.md)中剩余遗漏：完整消息操作/输入恢复、
-  子代理专项验收、原生消费证据与高级设置/动作。已补持久输入队列及失败恢复、
+  子代理专项验收、原生消费证据与高级设置/动作；[历史传播核验](docs/codex-fix-history.md)
+  另确认原生完整 turn 对账、Grok/OpenCode 重试事件、最后中断结果跨重开及设置通知仍待补齐。
+  已补持久输入队列及失败恢复、
   Grok 显式引导、Grok/Claude 闲置回收、Claude 原生分支；用量底栏、Agy effort/mode、
   命令分流、问答/图片/表单/设置及原生会话操作的具体边界见审计表。
   “待”先核实原生语义；Agy headless 限制不伪造。五种 SDK 的专用图片适配

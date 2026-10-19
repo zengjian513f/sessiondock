@@ -180,22 +180,27 @@ const NativeSdkView = {
   paintPickers() {
     if (!this.pane) return;
     const model = this.pane.querySelector('#sdk-model');
-    model.replaceChildren(new Option(this.nativeModel || '模型', ''));
+    model.replaceChildren();
     for (const row of this.models) {
       const id = typeof row === 'string' ? row : row.id || row.model || row.modelId;
-      if (id) model.add(new Option(row.displayName || row.name || id, id));
+      if (id && ![...model.options].some(option=>option.value===id)) model.add(new Option(row.displayName || row.name || id, id));
     }
-    model.value = this.modelChoice || '';
+    CodexSdkView.selectValue(model,this.modelChoice || this.nativeModel || '','模型');
     model.title = model.selectedOptions[0]?.textContent || '模型';
-    model.closest('label').hidden = this.models.length === 0;
+    model.closest('label').hidden = !this.models.length && !this.modelChoice && !this.nativeModel;
     const selected = this.models.find(row => (row.id || row.model || row.modelId) === (this.modelChoice || this.nativeModel));
     const efforts = selected?.supportedReasoningEfforts || selected?.efforts || [];
     const effort = this.pane.querySelector('#sdk-effort');
-    effort.replaceChildren(new Option(UsageUI.effort(this.nativeEffort) || '强度', ''));
-    for (const row of efforts) { const id = typeof row === 'string' ? row : row.reasoningEffort || row.id; if (id) effort.add(new Option(UsageUI.effort(id), id)); }
-    effort.value = this.effortChoice || '';
+    effort.replaceChildren();
+    for (const row of efforts) { const id = typeof row === 'string' ? row : row.reasoningEffort || row.id; if (id && ![...effort.options].some(option=>option.value===id)) effort.add(new Option(UsageUI.effort(id), id)); }
+    let chosen=this.effortChoice || this.nativeEffort || '';
+    if(chosen && ![...effort.options].some(option=>option.value===chosen)){
+      if(this.modelChoice && this.modelChoice!==this.nativeModel && !this.effortChoice)chosen='';
+      else effort.add(new Option(UsageUI.effort(chosen),chosen));
+    }
+    CodexSdkView.selectValue(effort,chosen,'强度');
     effort.title = effort.selectedOptions[0]?.textContent || '强度';
-    effort.closest('label').hidden = efforts.length === 0;
+    effort.closest('label').hidden = !efforts.length && !chosen;
     NativeSdkControls.layout(this);
   },
 
@@ -252,12 +257,15 @@ const NativeSdkView = {
 
   paintStatus() {
     const raw=this.raw || {},pending=(raw.input_queue || []).find(item=>item.operation!=='steer');
+    const send=this.pane.querySelector('#sdk-send');send.textContent=this.running?'排队':'发送';
+    send.title=this.running?'当前任务结束后发送；尚未投递的排队消息可撤销':'开始新回合';
+    const retryReason=raw.retry?.error?.message || raw.retry?.message || raw.retry?.reason;
     const paused=!this.running && !this.requests.size && ['failed','unknown'].includes(pending?.state);
     const compacting = raw.status === 'compacting' || raw.compact?.state === 'compacting';
     const kind = raw.error ? 'blocked' : this.requests.size ? 'waiting' : compacting ? 'maintenance'
       : raw.retry ? 'retrying' : this.running ? 'working' : paused ? 'warning' : pending ? 'waiting' : 'ready';
     this.setNotice(raw.error ? `错误：${typeof raw.error === 'string' ? raw.error : raw.error.message || JSON.stringify(raw.error)}`
-      : this.requests.size ? ([...this.requests.values()].some(request=>request.type==='approval')?'待批准':'待回答') : compacting ? '压缩中' : raw.retry ? `正在重试${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}` : this.running ? '处理中' : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送' : '就绪', kind);
+      : this.requests.size ? ([...this.requests.values()].some(request=>request.type==='approval')?'待批准':'待回答') : compacting ? '压缩中' : raw.retry ? `正在重试${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}${retryReason?`：${retryReason}`:''}` : this.running ? '处理中' : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送' : '就绪', kind);
   },
 
   paintHistory() {
@@ -359,19 +367,26 @@ const NativeSdkView = {
     const generation = this.generation, button = this.pane.querySelector('#sdk-send');
     if (button.disabled) return;
     button.disabled = true;
+    button.setAttribute('aria-busy','true');
+    const model=this.modelChoice,effort=this.effortChoice;
     try {
       if (await NativeSdkControls.command(this, this.input.value)) return;
       const payload = await CodexSdkCompose.collect(this);
       if (!payload || !this.current(generation)) return;
-      const request_id = await CodexSdkCompose.submission(payload,this.modelChoice,this.effortChoice,this.agent);
+      const request_id = await CodexSdkCompose.submission(payload,model,effort,this.agent);
       const response = await this.request('api/native-sdk/turn', {uid:payload.uid,text:payload.text,attachments:payload.attachments,quotes:payload.quotes,
-        request_id,draft_revision:payload.draft_revision,model:this.modelChoice,effort:this.effortChoice});
+        request_id,draft_revision:payload.draft_revision,model,effort});
       if (!await CodexSdkCompose.accepted(this,payload,{raw:response.raw || response},request_id)) return;
       if ((response.accepted ?? response.raw?.accepted) === false)
         throw new Error(response.error || response.raw?.error || '这次提交未进入发送队列，请查看队列记录');
+      if(this.current(generation)){
+        if(this.modelChoice===model)this.modelChoice=null;
+        if(this.effortChoice===effort)this.effortChoice=null;
+        this.paintPickers();
+      }
       await CodexSdkCompose.sent(this,payload);
     } catch (error) { if (this.current(generation)) this.setNotice(`发送失败：${error.message}`, 'blocked'); }
-    finally { if (this.current(generation)) CodexSdkCompose.failed(this); button.disabled = false; }
+    finally { if (this.current(generation)) CodexSdkCompose.failed(this); button.disabled = false;button.removeAttribute('aria-busy'); }
   },
   async interrupt() {
     const generation = this.generation;

@@ -61,7 +61,7 @@ def native(browser, base, source, events, shots):
     for width, theme in ((1912, 'light'), (390, 'dark'), (320, 'light'), (1440, 'dark')):
         print(f'Checking {source} {width}/{theme}', flush=True)
         context = browser.new_context(viewport={'width': width, 'height': 948}, color_scheme=theme,
-                                      service_workers='block')
+                                      service_workers='block', permissions=['local-network-access'])
         page = context.new_page()
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))

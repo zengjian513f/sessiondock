@@ -3,6 +3,8 @@
 // Native capabilities share presentation, never another provider's wire semantics.
 const NativeSdkControls = {
   mount(view) {
+    view.usageRead=null;view.usageRetryTimer=0;view.usageRetryDelay=1000;
+    view.nativeSettings=[];
     const row = view.pane.querySelector('.sdk-status-row');
     const gauges = el('div','sdk-gauges'); gauges.setAttribute('aria-label','用量');
     const more = el('button','btn','⋯'); more.id='sdk-more'; more.type='button'; more.setAttribute('aria-label','会话操作');
@@ -19,7 +21,8 @@ const NativeSdkControls = {
     more.onclick=event=>{event.preventDefault();if(menu.matches(':popover-open'))menu.hidePopover();else{menu.showPopover();CodexSdkView.placeMenu(menu,more);}};
     const actions = el('div',''); actions.id = 'sdk-actions'; menu.append(actions);
     for (const [method,label] of [['fork','分支会话'],['steer','引导当前任务'],['compact','压缩上下文'],['revert','回退对话'],['unrevert','撤销回退'],['revert_commit','提交回退'],['rewind','回退对话'],['shell','运行命令'],['command','原生命令'],['permissions','权限规则']]) {
-      const button = el('button','new-model-option sdk-action',label); button.type = 'button';button.dataset.sdkAction = method;
+      const button = el('button','new-model-option sdk-action'); button.type = 'button';button.dataset.sdkAction = method;button.title=label;button.setAttribute('aria-label',label);
+      button.innerHTML=uiIcon(({fork:'fork',compact:'compact',revert:'undo',unrevert:'undo',revert_commit:'continue',rewind:'undo',steer:'continue',shell:'terminal',command:'list',permissions:'settings'})[method]);button.append(el('span','sdk-action-label',label));
       button.onclick = () => { view.closeToolbarMenus(); void this.action(view,method); }; actions.append(button);
     }
     const settings = el('div','sdk-control-section'); settings.id = 'native-sdk-settings'; menu.append(settings);
@@ -27,14 +30,19 @@ const NativeSdkControls = {
     view.nativeResize = new ResizeObserver(() => this.layout(view)); view.nativeResize.observe(row);
     this.paint(view);
   },
-  close(view) { view.nativeResize?.disconnect(); view.nativeResize = null; CodexSdkActions.close(); },
+  close(view) {
+    view.nativeResize?.disconnect();view.nativeResize=null;
+    clearTimeout(view.usageRetryTimer);view.usageRetryTimer=0;
+    view.usageRead?.abort();view.usageRead=null;
+    CodexSdkActions.close();
+  },
   layout(view) {
     if (!view.pane) return;
     const row=view.pane.querySelector('.sdk-status-row'),gauges=view.pane.querySelector('.sdk-gauges'),menu=view.pane.querySelector('#sdk-usage-menu');
     if (!gauges || !menu) return;
     const more=view.pane.querySelector('#sdk-more-menu');
-    sdkLayoutFooter(view, ['.sdk-model', '.sdk-effort'].map(selector => view.pane.querySelector(selector)));
-    for(const selector of ['.sdk-effort','.sdk-model']){const control=view.pane.querySelector(selector);if(!control)continue;const inMenu=control.parentElement===more;if(inMenu)more.prepend(control);const label=control.querySelector('span');label?.classList.toggle('visually-hidden',!inMenu);label?.classList.toggle('sdk-picker-label',inMenu);}
+    sdkLayoutFooter(view, ['.sdk-model', '.sdk-effort'].map(selector => view.pane.querySelector(selector))
+      .concat(view.nativeSettings || [],[...view.pane.querySelectorAll('[data-sdk-action]')]));
     for (const [popover,trigger] of [[menu,'#sdk-more'],[more,'#sdk-more']])
       if (popover.matches(':popover-open')) CodexSdkView.placeMenu(popover,view.pane.querySelector(trigger));
     CodexSdkView.updateStatusDisclosure.call(view);
@@ -42,25 +50,33 @@ const NativeSdkControls = {
   async loadUsage(view,refresh) {
     const generation=view.generation;
     if (!view.uid || view.loadingUsage) return;
+    clearTimeout(view.usageRetryTimer);view.usageRetryTimer=0;
+    const read=new AbortController();view.usageRead=read;
     view.loadingUsage=true;
     const button=view.pane?.querySelector('#native-usage-refresh'); if (button) button.disabled=true;
     try {
-      let response=await view.request('api/native-sdk/usage',{uid:view.uid,refresh:refresh === 'auto' ? false : refresh});
+      let response=await view.request('api/native-sdk/usage',{uid:view.uid,refresh:refresh === 'auto' ? false : refresh},read.signal);
       if (!view.current(generation)) return;
-      view.usageData={...response,...response.raw};view.usageError=null;
+      view.usageData={billing:view.usageData?.billing,...response,...response.raw};view.usageError=null;
       this.paintUsage(view);
       if (refresh === 'auto') {
-        response=await view.request('api/native-sdk/usage',{uid:view.uid,refresh});
+        response=await view.request('api/native-sdk/usage',{uid:view.uid,refresh},read.signal);
         if (!view.current(generation)) return;
-        view.usageData={...response,...response.raw};
+        view.usageData={billing:view.usageData?.billing,...response,...response.raw};
         this.paintUsage(view);
       }
       if (view.capabilities.billing) {
-        try { const billing=await view.request('api/native-sdk/billing',{uid:view.uid}); if (view.current(generation)) view.usageData.billing=billing.raw?.billing || billing.raw; }
+        try { const billing=await view.request('api/native-sdk/billing',{uid:view.uid},read.signal); if (view.current(generation)) view.usageData.billing=billing.raw?.billing || billing.raw; }
         catch (error) { if (view.current(generation)) view.usageError=`额度：${error.message}`; }
       }
     } catch (error) { if (view.current(generation)) view.usageError=error.message; }
-    finally { if (view.current(generation)) {view.loadingUsage=false;if(button)button.disabled=false;this.paintUsage(view);} }
+    finally { if (view.current(generation)) {
+      view.usageRead=null;view.loadingUsage=false;if(button)button.disabled=false;this.paintUsage(view);
+      if(view.usageError){
+        view.usageRetryTimer=setTimeout(()=>{if(view.current(generation))void this.loadUsage(view,refresh);},view.usageRetryDelay);
+        view.usageRetryDelay=Math.min(view.usageRetryDelay*2,30000);
+      }else view.usageRetryDelay=1000;
+    } }
   },
   paint(view) {
     if (!view.pane) return;
@@ -79,8 +95,7 @@ const NativeSdkControls = {
     const text=(label,value)=>{const line=el('div','sdk-control-note',`${label}：${value}`);detail.append(line);};
     const gauge=(label,used,title)=>{
       if (!Number.isFinite(used)) return;
-      const node=el('span','sdk-gauge');node.title=title;
-      node.append(el('span','',label));const bar=el('i','sdk-bar'),fill=el('u','');fill.style.width=`${Math.max(0,Math.min(100,used))}%`;bar.setAttribute('role','progressbar');bar.setAttribute('aria-label',`${label} 已用`);bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax','100');bar.setAttribute('aria-valuenow',String(Math.max(0,Math.min(100,used))));bar.append(fill);node.append(bar,el('b','',`${Math.round(used)}%`));node.classList.toggle('low',Math.round(used)>=80);gauges.append(node);text(label,title);
+      gauges.append(UsageUI.gauge(label,used,title));text(label,title);
     };
     if(total!=null){const node=el('span','sdk-credits',`${total >= 10000 ? total.toLocaleString('en', {notation:'compact', maximumFractionDigits:1}) : count(total)} tok`);node.title=`累计 ${count(total)} tokens；不是当前上下文占用`;gauges.append(node);}
     for(const [label,value] of [['输入 Token',input],['输出 Token',output],['思考 Token',number(t.reasoning,t.thinking_tokens,t.thinkingTokens,t.reasoningTokens)],['缓存读取',number(t.cache?.read,t.cache_read_tokens,t.cacheReadInputTokens,t.cachedInputTokens,t.cachedReadTokens)],['缓存写入',number(t.cache?.write,t.cache_creation_input_tokens,t.cacheCreationInputTokens,t.cacheCreationTokens)],['累计 Token',total]])if(value!=null)text(label,count(value));
@@ -162,23 +177,25 @@ const NativeSdkControls = {
     const holder=view.pane.querySelector('#native-sdk-settings'),raw=view.raw || {},source=view.uid.split(':')[0];
     const modes=raw.modes?.availableModes || raw.modes || [];
     const definitions=[];
-    if(view.capabilities.mode || (view.capabilities.settings && Array.isArray(modes) && modes.length))definitions.push(['mode','模式',Array.isArray(modes)?modes:[],raw.mode || raw.settings?.mode]);
+    if(view.capabilities.mode || (view.capabilities.settings && Array.isArray(modes) && modes.length))definitions.push(['mode','模式',Array.isArray(modes)?modes:[],raw.mode || raw.modes?.currentModeId || raw.settings?.mode]);
     if(view.capabilities.permission_mode)definitions.push(['permission_mode','权限模式',['default','acceptEdits','plan','dontAsk','auto','bypassPermissions'],raw.settings?.permission_mode]);
     if(view.capabilities.fast_mode)definitions.push(['fast_mode','Fast',['false','true'],raw.settings?.fast_mode==null?'':String(raw.settings.fast_mode)]);
     if(view.capabilities.settings && source==='opencode')definitions.push(['native_agent','代理',view.nativeAgents || raw.agents || [],raw.agent]);
-    const signature=JSON.stringify(definitions);if(holder.dataset.state===signature)return;holder.dataset.state=signature;holder.replaceChildren();
+    const signature=JSON.stringify(definitions);if(holder.dataset.state===signature)return;holder.dataset.state=signature;
+    for(const control of view.nativeSettings || [])control.remove();view.nativeSettings=[];holder.replaceChildren();
     for(const [key,title,options,current] of definitions) {
-      const label=el('label','sdk-setting-row'),picker=el('span','new-effort'),select=document.createElement('select');select.id=`native-sdk-${key}`;select.setAttribute('aria-label',title);
-      const names=key==='fast_mode'?{false:'关闭',true:'开启'}:{default:'默认',acceptEdits:'允许编辑','accept-edits':'允许编辑',plan:'计划模式',auto:'自动',dontAsk:'不询问',bypassPermissions:'跳过审批'};
-      select.add(new Option('跟随原生',''));
+      const label=el('label','new-effort sdk-native-setting'),select=document.createElement('select');label.title=title;select.id=`native-sdk-${key}`;select.setAttribute('aria-label',title);
+      const names=key==='fast_mode'?{false:'Fast 关闭',true:'Fast 开启'}:{default:key==='permission_mode'?'默认权限':'默认模式',acceptEdits:'允许编辑','accept-edits':'允许编辑',plan:'计划模式',auto:'自动模式',dontAsk:'不询问',bypassPermissions:'跳过审批',build:'构建',general:'通用',explore:'探索'};
       for(const option of options){const id=typeof option==='string'?option:option.id || option.name;select.add(new Option(names[id] || (typeof option==='string'?option:option.name || option.label || id),id));}
       if(current && ![...select.options].some(option=>option.value===current))select.add(new Option(names[current] || current,current));
-      select.value=current || '';label.append(el('span','',title));picker.append(select);label.append(picker);holder.append(label);
-      select.onchange=async()=>{const generation=view.generation;select.disabled=true;try{await view.request('api/native-sdk/settings',{uid:view.uid,[key]:key==='fast_mode'?select.value==='true':select.value,request_id:crypto.randomUUID()});if(view.current(generation))view.setNotice(source==='agy'?'设置将在下一轮生效':'设置已交给原生确认');}catch(error){if(view.current(generation))view.setNotice(`设置失败：${error.message}`,'blocked');}finally{if(view.current(generation)){select.disabled=false;holder.dataset.state='';this.paintSettings(view);}}};
+      CodexSdkView.selectValue(select,current || '','未返回');select.title=`${title}：${select.selectedOptions[0]?.textContent || '未返回'}`;
+      label.hidden=!options.length && !current;label.append(el('span','visually-hidden',title),select);holder.append(label);view.nativeSettings.push(label);
+      select.onchange=async()=>{const generation=view.generation;select.disabled=true;try{await view.request('api/native-sdk/settings',{uid:view.uid,[key]:key==='fast_mode'?select.value==='true':select.value,request_id:crypto.randomUUID()});if(view.current(generation))view.setNotice(source==='agy'?'设置将在下一轮生效':'设置已交给原生确认');}catch(error){if(view.current(generation))view.setNotice(`设置失败：${error.message}`,'blocked');}finally{if(view.current(generation)){select.disabled=false;holder.dataset.state='';this.paintSettings(view);this.layout(view);}}};
     }
   },
   paintQueue(view) {
     const holder=view.pane.querySelector('.sdk-queue');
+    if(holder._nativeQueueBusy)return;
     const nativeRows=view.raw?.queue || [],bridgeRows=view.raw?.input_queue || [],steers=view.raw?.steers || [];
     const signature=JSON.stringify([nativeRows,bridgeRows,steers]);if(holder.dataset.state===signature)return;holder.dataset.state=signature;holder.replaceChildren();
     const generation=view.generation,uid=view.uid;
@@ -191,9 +208,11 @@ const NativeSdkControls = {
         if(method==='queue_retry' && item.state==='unknown' && !await appConfirm('上次输入可能已由原生处理。请先核对会话历史；再次发送可能重复执行。确认重新发送？',{ok:'重新发送'}))return;
         if(method==='queue_cancel' && item.state==='unknown' && !await appConfirm('请先核对会话历史。移除此记录不会停止原生任务，后续排队输入将继续。',{ok:'移除记录'}))return;
         if(!view.current(generation))return;
-        button.disabled=true;
+        holder._nativeQueueBusy=true;
+        holder.querySelectorAll('button').forEach(control=>control.disabled=true);
         try{await view.request(`api/native-sdk/${method}`,{uid,id:item.id,...extra,...(item.state==='unknown'?{confirmed:true}:{}),request_id:crypto.randomUUID()});}
-        catch(error){if(view.current(generation)){view.setNotice(error.message,'blocked');button.disabled=false;}}
+        catch(error){if(view.current(generation))view.setNotice(error.message,'blocked');}
+        finally{holder._nativeQueueBusy=false;if(view.current(generation)){delete holder.dataset.state;this.paintQueue(view);}}
       };
     };
     for(const item of bridgeRows){

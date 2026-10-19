@@ -219,8 +219,13 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     # Live gauge composition changes must reflow without a viewport resize.
     page.set_viewport_size({'width': 1440, 'height': 900})
     rates = fake._bucket(); rates['secondary'] = None; rates['credits']['balance'] = '12345.6'
+    rates['primary']['usedPercent']=40.5
     asyncio.run_coroutine_threadsafe(fake.notify('account/rateLimits/updated', {'rateLimits': rates}), fake.loop).result(timeout=5)
     expect(page.locator('.sdk-credits')).to_have_text('🪙 12,346')
+    progress=page.locator('[data-gauge="5h"] [role="progressbar"]')
+    expect(progress).to_have_attribute('aria-valuenow','40.5')
+    assert progress.locator('u').evaluate('e=>e.style.width')=='40.5%'
+    assert '40.5%' in page.locator('[data-gauge="5h"]').get_attribute('title')
     # Rolling notifications are sparse: null is unavailable, not a deletion.
     expect(page.locator('[data-gauge="7d"]')).to_be_visible()
     single_row(page)

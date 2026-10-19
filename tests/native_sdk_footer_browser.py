@@ -120,11 +120,12 @@ def exercise(browser, base, source, screenshots, events):
         models = [{'id': 'short', 'efforts': ['low', 'high']},
                   {'id': 'long', 'displayName': long_model, 'efforts': ['low', 'high']}]
         context.route('**/api/native-sdk/open', lambda route: route.fulfill(json={
-            'ok': True, 'capabilities': {'models': True,'fork':True,'compact':True,'settings':True, 'permission_mode':source=='claude','fast_mode':source=='claude','mode':source=='agy'}}))
+            'ok': True, 'capabilities': {'models': True,'fork':True,'compact':True,'settings':True, 'permission_mode':source=='claude','fast_mode':source=='claude','mode':source in ('grok','agy')}}))
         packet = {'type': 'snapshot', 'seq': 1, 'raw': {'running': False, 'model': 'short', 'effort':'low',
-            'settings':{'permission_mode':'default','fast_mode':False,'mode':'auto'},'modes':['auto','plan'] if source=='agy' else [],
+            'settings':{'permission_mode':'default','fast_mode':False,'mode':'auto'},'modes':{'currentModeId':'auto','availableModes':['auto','plan']} if source in ('grok','agy') else [],
+            'agent':'build' if source=='opencode' else None,'agents':['build','plan'] if source=='opencode' else [],
             'usage': {'tokens': {'total_tokens': 123456789},
-                      'context': {'percent': 25, 'used_tokens': 50000, 'max_tokens': 200000}}}}
+                      'context': {'percent': 25.4, 'used_tokens': 50800, 'max_tokens': 200000}}}}
         events.packet = packet
         context.route('**/api/native-sdk/events?*', lambda route: route.continue_(url=events.url))
         context.route('**/api/native-sdk/models', lambda route: route.fulfill(json={'ok': True, 'raw': models}))
@@ -151,6 +152,10 @@ def exercise(browser, base, source, screenshots, events):
         expect(model.locator('option[value="long"]')).to_have_count(1)
         page.wait_for_function('NativeSdkView.nativeEffort === "low"')
         expect(model).to_be_visible()
+        expect(model.locator('option[value="short"]')).to_have_count(1)
+        expect(model.locator('option[value=""]')).to_have_count(0)
+        expect(page.locator('#sdk-effort option[value="low"]')).to_have_count(1)
+        expect(page.locator('#sdk-effort option[value=""]')).to_have_count(0)
         model.select_option('long')
         expect(model).to_have_attribute('title', long_model)
         width_long = model.bounding_box()['width']
@@ -161,6 +166,14 @@ def exercise(browser, base, source, screenshots, events):
         expect(page.locator('#sdk-effort option:checked')).to_have_text('高')
         assert abs(model.bounding_box()['width'] - width_long) <= 1
         page.locator('#sdk-input').fill('底栏测试草稿 retained while changing models')
+        page.set_viewport_size({'width':1912,'height':900})
+        key,label=({'claude':('permission_mode','默认权限'),'grok':('mode','自动模式'),
+                    'agy':('mode','自动模式'),'opencode':('native_agent','构建')})[source]
+        expect(page.locator(f'#native-sdk-{key} option:checked')).to_have_text(label)
+        if source=='claude':expect(page.locator('#native-sdk-fast_mode option:checked')).to_have_text('Fast 关闭')
+        for control in page.locator('.native-sdk-pane .sdk-native-setting:not([hidden])').all():
+            assert control.evaluate('e=>e.parentElement.classList.contains("sdk-pickers")')
+        expect(page.locator('.sdk-pickers > .sdk-action:visible')).to_have_count(3 if source=='opencode' else 2)
         for width in (1440, 390, 320):
             page.set_viewport_size({'width': width, 'height': 900})
             if not page.locator('#sdk-input').is_visible():
@@ -168,6 +181,9 @@ def exercise(browser, base, source, screenshots, events):
                 page.locator('#a-sdk').click()
             expect(pane.locator('.sdk-gauges')).to_contain_text('123.5M tok')
             expect(pane.locator('.sdk-gauges')).to_contain_text('上下文')
+            progress=pane.locator('.sdk-status-row [role="progressbar"][aria-label="上下文 已用"]')
+            expect(progress).to_have_attribute('aria-valuenow','25.4')
+            assert progress.locator('u').evaluate('e=>e.style.width')=='25.4%'
             expect(pane.locator('.sdk-gauges')).to_contain_text('7天')
             for raw_label in ('weekly','seven_day','7d'):
                 expect(pane.locator('.sdk-gauges')).not_to_contain_text(raw_label)
@@ -190,7 +206,7 @@ def exercise(browser, base, source, screenshots, events):
             expect(page.locator('#native-usage-detail')).not_to_contain_text('seven_day')
             expect(page.locator('#sdk-usage-toggle')).to_have_count(0)
             expect(page.locator('#sdk-actions .btn')).to_have_count(0)
-            expect(page.locator('#sdk-actions .sdk-action:visible')).to_have_count(3 if source=='opencode' else 2)
+            expect(page.locator('.native-sdk-pane .sdk-action:visible')).to_have_count(3 if source=='opencode' else 2)
             for picker in page.locator('#sdk-more-menu > .new-effort').all():
                 bounds=picker.locator('.sdk-picker-label').bounding_box()
                 assert bounds['x']+bounds['width'] <= picker.locator('select').bounding_box()['x']-4
@@ -210,6 +226,43 @@ def exercise(browser, base, source, screenshots, events):
                 page.locator('#native-sdk-fast_mode').select_option('true')
             assert changed.value.post_data_json['fast_mode'] is True
             page.keyboard.press('Escape')
+        page.set_viewport_size({'width':1912,'height':900})
+        submitted=[]
+        def submit(route):
+            submitted.append(route)
+            if len(submitted)>1:route.fulfill(json={'ok':True,'accepted':True})
+        page.route('**/api/native-sdk/turn',submit)
+        page.locator('#sdk-model').select_option('long')
+        page.locator('#sdk-effort').select_option('high')
+        page.locator('#sdk-input').fill('choice A')
+        with page.expect_request('**/api/native-sdk/turn'):
+            page.locator('#sdk-send').click()
+        expect(page.locator('#sdk-send')).to_have_attribute('aria-busy','true')
+        page.locator('#sdk-model').select_option('short')
+        page.locator('#sdk-effort').select_option('low')
+        assert submitted[0].request.post_data_json['model']=='long'
+        assert submitted[0].request.post_data_json['effort']=='high'
+        submitted[0].fulfill(json={'ok':True,'accepted':True})
+        expect(page.locator('#sdk-send')).to_be_enabled()
+        assert page.evaluate('NativeSdkView.modelChoice')=='short'
+        assert page.evaluate('NativeSdkView.effortChoice')=='low'
+        page.locator('#sdk-input').fill('choice B')
+        page.locator('#sdk-send').click()
+        page.wait_for_function('NativeSdkView.modelChoice===null && NativeSdkView.effortChoice===null')
+        expect(page.locator('#sdk-send')).not_to_have_attribute('aria-busy','true')
+        page.set_viewport_size({'width':320,'height':900})
+        initial = dict(packet['raw'])
+        packet['raw']={**initial,'model':'outside-catalog-model','effort':'max'}
+        page.route('**/api/native-sdk/models',lambda route:route.fulfill(status=503,json={'ok':False,'error':'catalog temporarily unavailable'}),times=1)
+        page.reload(wait_until='domcontentloaded')
+        if not page.locator('#sdk-input').is_visible():page.locator('#a-sdk').click()
+        expect(page.locator('#sdk-model')).to_have_value('outside-catalog-model')
+        expect(page.locator('#sdk-effort')).to_have_value('max')
+        if not page.locator('#sdk-model').is_visible():page.locator('#sdk-more').click()
+        expect(page.locator('#sdk-model')).to_be_visible()
+        expect(page.locator('#sdk-effort option:checked')).to_have_text('最高')
+        page.screenshot(path=str(screenshots/f'{source}-catalog-failed-{theme}.png'))
+        page.keyboard.press('Escape')
         # All native SDKs use the same state vocabulary and disclosure behavior.
         states = [
             ('ready', '就绪', {}),
@@ -217,11 +270,10 @@ def exercise(browser, base, source, screenshots, events):
             ('waiting', '待批准', {'requests': [{'key':'approval-check','type':'approval','title':'Approval fixture'}]}),
             ('waiting', '待回答', {'requests': [{'key':'question-check','type':'question','title':'Question fixture'}]}),
             ('maintenance', '压缩中', {'status':'compacting'}),
-            ('retrying','正在重试',{'retry':{'attempt':2}}),
+            ('retrying','正在重试',{'retry':{'attempt':2,'message':'provider temporarily unavailable'}}),
             ('blocked', '错误：模型暂不可用，稍后重试。Capacity unavailable for the selected model. ' * 3,
              {'error':'模型暂不可用，稍后重试。Capacity unavailable for the selected model. ' * 3}),
         ]
-        initial = dict(packet['raw'])
         for state, label, extra in states:
             packet['seq'] += 1
             packet['raw'] = {**initial, **extra}
@@ -231,6 +283,7 @@ def exercise(browser, base, source, screenshots, events):
             if not page.locator('#sdk-input').is_visible():
                 page.locator('#a-sdk').click()
             expect(status).to_have_attribute('data-state', state)
+            expect(page.locator('#sdk-send')).to_have_text('排队' if extra.get('running') else '发送')
             if state == 'blocked':
                 expect(status).to_have_text('错误')
                 expect(status).to_be_enabled()
@@ -245,6 +298,7 @@ def exercise(browser, base, source, screenshots, events):
                     expect(status).to_be_enabled()
                     status.click()
                     expect(page.get_by_role('dialog',name='完整状态')).to_be_visible()
+                    expect(page.locator('#sdk-status-menu')).to_contain_text('provider temporarily unavailable')
                     page.keyboard.press('Escape')
                 else:
                     expect(status).to_be_disabled()

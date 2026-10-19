@@ -393,7 +393,9 @@ Browser regression: [creation retention](../tests/sdk_creation_retention_browser
   Popovers use existing menu styling, stay inside the viewport and close on
   resize, Escape or outside click. Long model names truncate within their selector.
   DELTA (BUG-20261019-112331-45e344): hide ⋯ when no controls or messages remain
-  in its menu. Empty groups and hidden reset cards do not count as content;
+  in its menu. Overflow selectors use the shared name/value rows; hidden
+  selectors stay hidden. The unloaded tier label is 档位; native tier IDs and names
+  are preserved. Empty groups and hidden reset cards do not count as content;
   the permissions separator appears only between two populated menu groups.
 - Input queues are owned by the node, shared in SSE snapshots and `bridge/queue`
   events, and continue after a page closes. With `SESSIONDOCK_STATE_DIR` they
@@ -433,10 +435,10 @@ Browser regression: [creation retention](../tests/sdk_creation_retention_browser
   shrinking further when the toolbar is narrow. Switching between listed models
   keeps its width stable; the selected full name remains in the tooltip.
 - Usage alongside the model/effort pickers, one `.sdk-bar` progress bar per
-  gauge showing the **used** share (`100%` = full, red at ≥ 80 %): `5h` and `7d`
+  gauge showing the **used** share (`100%` = full, red at ≥ 80 %): `5小时` and `7天`
   from the account bucket (`rateLimitsByLimitId.codex`, else `rateLimits`),
-  labelled by `windowDurationMins` (300 → 5h, 10080 → 7d; an account with a
-  single window shows only that one), and `Ctx` (`last.totalTokens /
+  labelled by `windowDurationMins` (300 → 5小时, 10080 → 7天; an account with a
+  single window shows only that one), and `上下文` (`last.totalTokens /
   modelContextWindow`). Tooltips give used/remaining percent, reset time and
   token counts. `🪙 N` is `credits.balance` (`无限` when unlimited). The
   row is hidden while nothing is known. On resume, the node reads the latest

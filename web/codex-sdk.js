@@ -353,24 +353,9 @@ const CodexSdkView = {
     if (!node) return;
     node.hidden = !Number.isFinite(used);
     if (node.hidden) return;
-    const value = Math.max(0, Math.min(100, Math.round(used)));
-    node.classList.toggle('low', value >= 80);
-    node.title = title;
-    node.replaceChildren();
-    const name = document.createElement('span');
-    name.textContent = label;
-    const bar = document.createElement('i');
-    bar.className = 'sdk-bar';
-    bar.setAttribute('role', 'progressbar');
-    bar.setAttribute('aria-label', `${label} 已用`);
-    bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
-    bar.setAttribute('aria-valuenow', String(value));
-    const fill = document.createElement('u');
-    fill.style.width = `${value}%`;
-    bar.append(fill);
-    const text = document.createElement('b');
-    text.textContent = `${value}%`;
-    node.append(name, bar, text);
+    const gauge=UsageUI.gauge(label,used,title);
+    node.classList.toggle('low',gauge.classList.contains('low'));node.title=title;
+    node.replaceChildren(...gauge.childNodes);
   },
 
   paintGauges() {
@@ -395,7 +380,7 @@ const CodexSdkView = {
       const recorded = this.limitsRecordedAt != null
         ? `；上次记录${this.limitsRecordedAt ? ` ${new Date(this.limitsRecordedAt).toLocaleString()}` : ''}` : '';
       this.gauge(slot, label, window.usedPercent,
-        `${label} 窗口已用 ${Math.round(window.usedPercent)}%，剩余 ${Math.max(0, Math.round(100 - window.usedPercent))}%${reset}${recorded}`);
+        `${label} 窗口已用 ${UsageUI.percent(window.usedPercent)}%，剩余 ${UsageUI.percent(Math.max(0,100-window.usedPercent))}%${reset}${recorded}`);
     }
     const usage = this.summary?.usage;
     const size = usage?.modelContextWindow;
@@ -1417,6 +1402,14 @@ function sdkLayoutFooter(view, controls) {
   for (const control of controls.filter(Boolean)) {
     pickers.insertBefore(control, anchor);
     if (!fits()) { overflow(control).append(control); break; }
+  }
+  const overflowPickers=controls.filter(control=>control?.matches('.new-effort') && control.parentElement===menu);
+  menu.prepend(...overflowPickers);
+  for(const control of controls.filter(control=>control?.matches('.new-effort'))){
+    const inMenu=control.parentElement===menu,select=control.querySelector('select');
+    let label=control.querySelector(':scope > .visually-hidden, :scope > .sdk-picker-label');
+    if(!label && select){label=el('span','',select.getAttribute('aria-label') || control.title);control.prepend(label);}
+    label?.classList.toggle('visually-hidden',!inMenu);label?.classList.toggle('sdk-picker-label',inMenu);
   }
   // Empty wrappers and hidden reset cards are not menu contents. The same
   // contents decide both disclosure visibility and boundaries between groups.
