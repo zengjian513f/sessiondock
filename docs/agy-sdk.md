@@ -126,7 +126,8 @@ DELTA：SDK 底栏展示原生 result.usage 累计 Token，step_update.usage 在
 原生目录提供 low/medium/high/xhigh/max 独立 effort。settings.mode 可显式选择
 accept-edits/auto/plan，显示下一轮生效，并以独立 --mode argv 传入，不制造在线控制 RPC。
 网页 /usage、/model、/effort 与正文分流，未知 slash 保留草稿，不破坏 NDJSON。
-图片维持路径引用，明确提示不传图像内容；headless 审批回传限制仍有效。
+图片文件沿用 SessionDock 普通附件，不提供独立的原生图像能力，也不常驻显示
+图片协议提示；headless 审批回传限制仍有效。
 
 扩展 Chromium 覆盖 effort/mode 的实际 argv、累计用量/额度查询、slash 不入原生
 user 流，及 1280/390/320 明暗默认、用量和设置菜单；合成 CLI 不访问真实账户。

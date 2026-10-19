@@ -9,6 +9,7 @@ and checks the native fixture's independently recorded input/argv/signal log.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,7 @@ from agy_sdk_fixtures import AgyFixture, MODEL, SID, TITLE
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from new_session_model_browser import open_dialog
 from send_browser import initialize
+from media_browser import PNG
 
 
 WATCH = r'''uid => {
@@ -85,6 +87,7 @@ def exercise(browser, base, fixture, screenshots=None):
         page.goto(base, wait_until='domcontentloaded')
         page.wait_for_function('T.listLoaded')
         uid = select_sdk(page)
+        expect(page.locator('#native-media-note')).to_have_count(0)
         opened = post(page, base, 'open', {'uid': uid})
         assert opened['session_id'] == SID and opened['cwd'] == str(fixture.work)
         assert opened['capabilities']['send'] and opened['capabilities']['models']
@@ -227,6 +230,20 @@ def exercise(browser, base, fixture, screenshots=None):
         select_sdk(page, created['uid'])
         expect(page.locator('#sdk-input')).to_have_value('')
         expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: created native conversation')
+        # Shared SessionDock attachments work even without native image content.
+        watch(page, created['uid'])
+        page.locator('#sdk-add').click()
+        with page.expect_file_chooser() as chooser:
+            page.locator('#sdk-attach-menu [data-attach=file]').click()
+        chooser.value.set_files({'name': 'agy-attachment.png', 'mimeType': 'image/png', 'buffer': base64.b64decode(PNG)})
+        expect(page.locator('#sdk-compose-items')).to_contain_text('agy-attachment.png')
+        expect(page.locator('#native-media-note')).to_have_count(0)
+        send(page, 'shared attachment through SDK')
+        expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: shared attachment through SDK')
+        idle(page)
+        expect(page.locator('#sdk-compose-items .draft-card')).to_have_count(0)
+        assert list(fixture.work.rglob('agy-attachment.png')), 'shared upload was not published'
+        assert any('agy-attachment.png' in row['text'] for row in fixture.inputs())
         assert not list((fixture.root / 'host').glob('sessiondock-*.json')), 'SDK must not create a PTY'
         if screenshots:
             screenshots.mkdir(parents=True, exist_ok=True)
@@ -239,6 +256,7 @@ def exercise(browser, base, fixture, screenshots=None):
                 for theme in ('light', 'dark'):
                     page.emulate_media(color_scheme=theme)
                     assert_inline_usage(page)
+                    expect(page.locator('#native-media-note')).to_have_count(0)
                     page.screenshot(path=str(screenshots / f'agy-sdk-{width}-{theme}.png'), full_page=True)
                     toggle_usage_details(page)
                     expect(page.locator('#native-usage-detail')).to_contain_text('12,800')

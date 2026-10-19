@@ -29,7 +29,9 @@ Claude 的原生子代理归档不能作为独立 SDK 会话，隐藏其入口�
 输入共用服务端草稿。失败保留输入，成功只清本次提交，发送期间的新编辑保留。
 文件和图片经现有上传/发布边界放到本会话 cwd。Claude、OpenCode 将可信发布的
 图片转为原生多模态内容；Grok 按 initialize 的 image 能力协商，当前安装版 false
-时与 Agy 一样仅发路径引用，网页明确提示。客户端自报 images/files/path 不授予读取权限。
+时与 Agy 一样使用普通附件路径。DELTA：统一使用 SessionDock 附件入口，不常驻显示
+原生图片协议提示；仅支持真实图像内容的来源在后台做多模态适配，避免把路径文本
+称为模型已收到图像。客户端自报 images/files/path 不授予读取权限。
 已加载的原生 SDK 会话通过 `/api/live.sdk_uids` 标记为受管 SDK，沿用蓝色状态点。
 模型目录来自原生接口，目录失败不妨碍沿用会话当前模型。现已接用量明细/底栏、
 各来源可用设置、OpenCode inbox、Grok/OpenCode 会话动作和 Claude 压缩。
