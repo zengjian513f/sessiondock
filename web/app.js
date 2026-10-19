@@ -7371,15 +7371,11 @@ $('#session-start-menu').onkeydown = event => {
     buttons[event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + 1) % buttons.length]?.focus();
   }
 };
-$('#item-menu [data-act="stop"]').onpointerenter = event => {
-  if (event.pointerType === 'mouse') openSessionStartMenu(event.currentTarget, false);
-};
+bindSubmenuHover($('#item-menu'), $('#item-menu [data-act="stop"]'), $('#session-start-menu'),
+  () => openSessionStartMenu($('#item-menu [data-act="stop"]'), false), closeSessionStartMenu);
 $('#item-menu [data-act="stop"]').onkeydown = event => {
   if (event.key === 'ArrowRight') { event.preventDefault(); openSessionStartMenu(event.currentTarget); }
 };
-$('#item-menu').addEventListener('pointerover', event => {
-  if (event.target.closest('button[data-act]')?.dataset.act !== 'stop') closeSessionStartMenu();
-});
 
 function sessionRunRow(uid) {
   return sidebarSessions().find(row => row.uid === uid)

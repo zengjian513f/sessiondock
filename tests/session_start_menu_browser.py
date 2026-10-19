@@ -12,8 +12,39 @@ from private_hosts import private_hosts
 from popups import on_popup
 
 
+def cross_submenu(page, trigger, submenu, destination):
+    trigger.hover()
+    expect(submenu).to_be_visible()
+    parent = page.locator('#item-menu').bounding_box()
+    child = submenu.bounding_box()
+    start = trigger.bounding_box()
+    right = child['x'] >= start['x'] + start['width']
+    left = child['x'] + child['width'] <= start['x']
+    if right or left:
+        # Traverse padding and the gap, not locator.click()'s direct jump.
+        edge = parent['x'] + parent['width'] - 2 if right else parent['x'] + 2
+        y = start['y'] + start['height']/2
+        page.mouse.move(edge, y, steps=8)
+        expect(submenu).to_be_visible()
+        gap = (parent['x'] + parent['width'] + child['x'])/2 if right else (child['x'] + child['width'] + parent['x'])/2
+        page.mouse.move(gap, y, steps=4)
+    else:
+        # At narrow widths the shared positioning helper places it below.
+        gap = (start['y'] + start['height'] + child['y'])/2
+        page.mouse.move(start['x'] + start['width']/2, gap, steps=8)
+    expect(submenu).to_be_visible()
+    destination.hover()
+    expect(submenu).to_be_visible()
+    # A diagonal path to a lower entry can briefly pass over a sibling row.
+    trigger.hover()
+    target = destination.bounding_box()
+    page.mouse.move(target['x']+target['width']/2, target['y']+target['height']/2, steps=20)
+    page.wait_for_timeout(350)  # Allow any scheduled hover-close to fire.
+    expect(submenu).to_be_visible()
+
+
 def exercise(browser, base, source, shots, label):
-    for width, theme in ((1280, 'light'), (390, 'dark')):
+    for width, theme in ((1280, 'light'), (390, 'dark'), (320, 'dark')):
         print(label, source, width, flush=True)
         context = browser.new_context(viewport={'width':width, 'height':900}, color_scheme=theme,
                                       service_workers='block')
@@ -38,7 +69,11 @@ def exercise(browser, base, source, shots, label):
         page.keyboard.press('Escape')
         expect(page.locator('#session-start-menu')).to_be_hidden()
         expect(page.locator('#item-menu')).to_be_visible()
-        start.click()
+        group = page.locator('#item-menu [data-act="group"]')
+        cross_submenu(page, group, page.locator('#session-group-menu'), page.locator('#session-group-menu-add'))
+        page.locator('#item-menu [data-act="copy-identity"]').hover()
+        expect(page.locator('#session-group-menu')).to_be_hidden()
+        cross_submenu(page, start, page.locator('#session-start-menu'), page.locator('[data-start-mode="cli"]'))
         page.screenshot(path=str(shots/f'{label}-{source}-{width}-cli-menu.png'))
         with page.expect_response(lambda r: '/api/term/takeover' in r.url) as response:
             page.locator('[data-start-mode="cli"]').click()
