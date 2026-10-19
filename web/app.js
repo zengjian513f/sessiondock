@@ -9560,6 +9560,7 @@ function renderActivity(activity) {
     row.append(gauges);
     box.after(row);
   }
+  row.classList.toggle('hidden', $('#composer').classList.contains('hidden'));
   const compacting = !S.agent && S.live.has(S.sel)
     && cache.get(viewKey(S.sel))?.cli?.instance?.phase === 'compacting';
   if (compacting) activity = {state: 'working'};

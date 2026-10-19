@@ -1,5 +1,8 @@
 """Conversation footer status and cached usage through real page interactions."""
 import argparse
+import html
+import json
+import re
 from pathlib import Path
 import tempfile
 from playwright.sync_api import sync_playwright, expect
@@ -25,6 +28,19 @@ def main():
                 errors = []
                 page.on('pageerror', lambda e: errors.append(str(e)))
                 uid = corpus.uid('active')
+                def document(route):
+                    response = route.fetch()
+                    body = response.text()
+                    match = re.search(r'(<meta name="sessiondock-capabilities" content=")(.*?)(">)', body)
+                    config = json.loads(html.unescape(match[2]))
+                    config.update(conversation_send=True, terminal=True)
+                    body = body[:match.start(2)] + html.escape(json.dumps(config), quote=True) + body[match.end(2):]
+                    route.fulfill(response=response, body=body)
+                page.route(base + '/', document)
+                page.route('**/api/term/list*', lambda r: r.fulfill(json={'enabled': True,
+                    'sources': {'codex': True}, 'pending': [], 'sessions': [{'name': 'footer-fixture',
+                    'uid': uid, 'sid': 'active', 'source': 'codex', 'instance_id': '1' * 32}]}))
+                page.route('**/api/session/conversation?*', lambda r: r.fulfill(json={'draft': {'revision': 0, 'value': None}}))
                 page.route('**/api/live*', lambda r: r.fulfill(json={'known': True, 'uids': [uid], 'working_uids': [uid], 'tmux_uids': []}))
                 page.route('**/api/quotas', lambda r: r.fulfill(json={'agents': [{'source': 'codex', 'captured_at': '2026-10-19T03:00:00Z', 'buckets': [
                     {'window': 300, 'remaining_percent': 74}, {'window': 10080, 'remaining_percent': 91}]}]}))

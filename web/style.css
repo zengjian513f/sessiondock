@@ -2001,9 +2001,9 @@ body.stale-build #composer-input-status { display: none; }
 #termpane.term-collapsed .term-resizer::after { background: var(--border); }
 @media (min-width: 721px) {
   #right.term-full > #detail { flex: none; }
-  #right.term-full > #detail > .msgs,
-  #right.term-full > #composer { display: none !important; }
+  #right.term-full > #detail > .msgs { display: none !important; }
 }
+#right.term-full > #composer { display: none !important; }
 /* SSH：PTY 在输入框上方，输入框只有文字和发送；控制台纯 PTY。 */
 #right.terminal-first > #detail { flex: none; }
 #right.terminal-first > #detail > .msgs { display: none; }
@@ -2201,6 +2201,8 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     right: 0; bottom: 0; left: 0; width: 100%; height: auto !important;
     max-width: none; max-height: none; border-top: 0;
   }
+  #right:not(.terminal-first):has(> #termpane:not(.hidden)) > #composer,
+  #right:not(.terminal-first):has(> #termpane:not(.hidden)) #conversation-status { display: none !important; }
   #right.terminal-first:not(.term-full) > #termpane {
     position: relative; z-index: 0; top: auto; right: auto; bottom: auto; left: auto;
     height: auto !important; border-top: 1px solid var(--border);
