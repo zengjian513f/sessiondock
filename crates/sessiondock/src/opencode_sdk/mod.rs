@@ -107,6 +107,45 @@ pub fn new(
 }
 
 impl Bridge {
+    pub async fn stop(&self, uid: &str) -> Result<bool, String> {
+        let session = self
+            .sessions
+            .lock()
+            .map_err(|_| "OpenCode SDK state poisoned")?
+            .get(uid)
+            .cloned();
+        let Some(session) = session else {
+            return Ok(false);
+        };
+        self.check_runtime(&session.sid, &session.cwd)?;
+        let _guard = session.operation.lock().await;
+        self.transport
+            .api(
+                &session.cwd,
+                "POST",
+                &format!(
+                    "/api/session/{}/interrupt?resume=false",
+                    encoded(&session.sid)
+                ),
+                None,
+            )
+            .await?;
+        self.sessions
+            .lock()
+            .map_err(|_| "OpenCode SDK state poisoned")?
+            .remove(uid);
+        let mut state = session
+            .state
+            .lock()
+            .map_err(|_| "OpenCode SDK state poisoned")?;
+        state.raw["stopped"] = json!(true);
+        let _ = state
+            .tx
+            .send(Arc::from(json!({"method":"bridge/stopped"}).to_string()));
+        session.wake.notify_one();
+        Ok(true)
+    }
+
     pub fn loaded_uids(&self) -> Vec<String> {
         self.sessions
             .lock()
@@ -612,7 +651,13 @@ impl Bridge {
 
     async fn observe(self: Arc<Self>, session: Arc<Session>) {
         loop {
-            if self.transport.shutdown.is_cancelled() {
+            if self.transport.shutdown.is_cancelled()
+                || session
+                    .state
+                    .lock()
+                    .map(|s| s.raw["stopped"] == true)
+                    .unwrap_or(true)
+            {
                 break;
             }
             let active = session

@@ -126,6 +126,21 @@ impl Journal {
         let _=self.events.send(Arc::from(json!({"scope":key,"type":"input_queue","raw":{"input_queue":Self::visible_rows(rows,key)}}).to_string()));
     }
 
+    pub fn stop(&self, key: &str) -> Result<(), String> {
+        let mut rows = self.rows.lock().map_err(|_| "SDK input journal poisoned")?;
+        let mut next = rows.clone();
+        for row in next.get_mut(key).into_iter().flatten() {
+            if !terminal(row) {
+                row.state = "cancelled".into();
+                row.stop_requested = true;
+            }
+        }
+        self.save(&next)?;
+        *rows = next;
+        self.publish(key, &rows);
+        Ok(())
+    }
+
     pub fn begin(&self, target: &Value, operation: &str, draft: Value) -> Result<Input, String> {
         let request = draft["request_id"]
             .as_str()

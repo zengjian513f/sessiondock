@@ -34,12 +34,13 @@ const CodexSdkView = {
     return '';
   },
 
-  open(uid, pane, agent = null, {historyReady = null} = {}) {
+  open(uid, pane, agent = null, {historyReady = null, readOnly = false} = {}) {
     this.legacyViews.delete(viewKey(uid, agent));
     this.close();
     this.stopped = false;
     this.uid = uid; this.agent = agent; this.pane = pane;
     this.historyReady = historyReady;
+    this.readOnly = readOnly;
     this.pendingAtOpen = !agent && !!this.pending(uid);
     const generation = ++this.generation;
     const remembered=UsageUI.remembered(uid,agent);
@@ -91,6 +92,7 @@ const CodexSdkView = {
     this.live = pane.querySelector('.sdk-live');
     this.notice = pane.querySelector('.sdk-status');
     this.input = pane.querySelector('#sdk-input');
+    pane.querySelector('#sdk-composer').hidden = readOnly;
     this.input.oninput = () => { this.fitInput(); CodexSdkCompose.input(this); };
     this.input.onblur = () => PathCompletion.close(this.input);
     this.input.onkeydown = event => {
@@ -242,7 +244,7 @@ const CodexSdkView = {
   },
 
   async start(generation, reconnecting = false) {
-    if (!this.current(generation) || this.openRead || this.es) return;
+    if (this.readOnly || !this.current(generation) || this.openRead || this.es) return;
     clearTimeout(this.openRetryTimer);
     this.openRetryTimer = 0;
     const read = new AbortController();
@@ -691,11 +693,7 @@ const CodexSdkView = {
     const item = raw.item;
     switch (method) {
       case 'bridge/stopped':
-        clearTimeout(this.historyTimer); clearTimeout(this.reconnectTimer);
-        this.es?.close(); this.es = null;
-        this.turn = null; this.items.clear(); this.requests.clear(); this.live.replaceChildren();
-        this.stopped = true; this.setConnected(false); this.paintStatus();
-        queueUiChange({live: true});
+        SdkView.stopped(this.uid, this.agent);
         return;
       case 'bridge/queue':
         if (this.summary) this.summary.queue = raw.queue;

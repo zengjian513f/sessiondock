@@ -325,6 +325,31 @@ impl Session {
 }
 
 impl Bridge {
+    pub async fn stop(&self, uid: &str) -> Result<bool, String> {
+        let session = lock(&self.state).sessions.remove(uid);
+        let Some(session) = session else {
+            return Ok(false);
+        };
+        let mut done = {
+            let live = lock(&session.live);
+            let _ = live
+                .events
+                .send(Arc::from(json!({"method":"bridge/stopped"}).to_string()));
+            live.runtime_done.clone()
+        };
+        session.stop.cancel();
+        if let Some(done) = done.as_mut() {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                done.wait_for(|done| *done),
+            )
+            .await
+            .map_err(|_| "Claude SDK 停止尚未确认")?
+            .map_err(|_| "Claude SDK 停止确认通道已关闭")?;
+        }
+        Ok(true)
+    }
+
     pub fn loaded_uids(&self) -> Vec<String> {
         lock(&self.state)
             .sessions

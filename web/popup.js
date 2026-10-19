@@ -104,6 +104,24 @@
     menu.style.left = `${Math.max(8, Math.min(x, innerWidth - box.width - 8)) / zoom}px`;
     menu.style.top = `${Math.max(8, Math.min(y, innerHeight - box.height - 8)) / zoom}px`;
   };
+  // Padding and the inter-menu gap are part of the path into a submenu.
+  // Delay sibling-row dismissal so diagonal motion can reach the child first.
+  globalThis.bindSubmenuHover = (parent, trigger, menu, open, close) => {
+    let timer;
+    const cancel = () => { clearTimeout(timer); timer = null; };
+    trigger.addEventListener('pointerenter', event => {
+      cancel();
+      if (event.pointerType === 'mouse') open();
+    });
+    menu.addEventListener('pointerenter', cancel);
+    menu.addEventListener('focusin', cancel);
+    parent.addEventListener('pointerover', event => {
+      const item = event.target.closest('button[data-act]');
+      if (!item || item === trigger) return;
+      cancel();
+      timer = setTimeout(() => { if (!menu.matches(':hover')) close(); }, 250);
+    });
+  };
   globalThis.placeSubmenu = (menu, anchor) => {
     menu.style.maxHeight = '';
     const rect = anchor.getBoundingClientRect(), box = menu.getBoundingClientRect();

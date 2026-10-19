@@ -22,10 +22,11 @@ const NativeSdkView = {
   closeToolbarMenus: CodexSdkView.closeToolbarMenus,
   updateStatusDisclosure: CodexSdkView.updateStatusDisclosure,
 
-  open(uid, pane, agent = null, {historyReady = null} = {}) {
+  open(uid, pane, agent = null, {historyReady = null, readOnly = false} = {}) {
     this.close();
     this.uid = uid; this.agent = agent; this.pane = pane;
     this.historyReady = historyReady;
+    this.readOnly = readOnly;
     this.pendingAtOpen = !agent && !!this.pending(uid);
     this.items = []; this.requests = new Map(); this.nodes = new Map();
     this.nativeAgents = null; this.loadingUsage = false; this.raw = {}; this.usageData = {}; this.usageError = null;
@@ -54,6 +55,7 @@ const NativeSdkView = {
     this.box = pane.querySelector('.sdk-msgs'); this.history = pane.querySelector('.sdk-history');
     this.live = pane.querySelector('.sdk-live'); this.notice = pane.querySelector('.sdk-status');
     this.input = pane.querySelector('#sdk-input');
+    pane.querySelector('#sdk-composer').hidden = readOnly;
     const statusMenu = pane.querySelector('#sdk-status-menu');
     statusMenu.addEventListener('beforetoggle', event => this.notice?.setAttribute('aria-expanded', String(event.newState === 'open')));
     this.notice.onclick = () => {
@@ -113,7 +115,7 @@ const NativeSdkView = {
   },
 
   async start(generation, reconnecting = false) {
-    if (!this.current(generation) || this.openRead || this.es) return;
+    if (this.readOnly || !this.current(generation) || this.openRead || this.es) return;
     const read = new AbortController(); this.openRead = read;
     try {
       const data = await this.request('api/native-sdk/open', {uid:this.uid}, read.signal);
@@ -129,6 +131,7 @@ const NativeSdkView = {
         if (!this.current(generation) || this.es !== es) return;
         let packet;
         try { packet = JSON.parse(event.data); } catch { return; }
+        if (packet.method === 'bridge/stopped') { SdkView.stopped(this.uid, this.agent); return; }
         if (packet.method === 'bridge/reset') { this.reconnect(); return; }
         if (packet.type === 'input_queue') {
           const stick = this.nearBottom();
@@ -451,8 +454,29 @@ const SdkView = new Proxy({
     this.close(); this.legacyViews.delete(viewKey(uid,agent));
     this.rememberMode(uid, agent, 'sdk');
     this.active = String(uid).startsWith('codex:') ? CodexSdkView : NativeSdkView;
-    this.active.open(uid,pane,agent,options);
+    const running = !agent && S.liveSdk.has(uid);
+    this.active.open(uid,pane,agent,{...options, readOnly: !options?.start && !running});
     closeWatch();
+  },
+  async startSession(uid, agent = null) {
+    if (SessionContentView.kind !== 'sdk' || this.uid !== uid || this.agent !== agent)
+      SessionContentView.open('sdk', uid, agent);
+    const pane = this.pane;
+    this.active.open(uid, pane, agent, {readOnly: true});
+    this.active.readOnly = false;
+    pane.querySelector('#sdk-composer').hidden = false;
+    await this.active.start(this.active.generation);
+    await refreshLive(true);
+    refreshSessionRunControls();
+  },
+  stopped(uid, selectedAgent = null) {
+    if (!selectedAgent) { S.liveSdk.delete(uid); S.live.delete(uid); }
+    if (this.uid === uid && this.agent === selectedAgent && this.pane) {
+      const pane = this.pane, agent = this.agent;
+      this.active.open(uid, pane, agent, {readOnly: true});
+    }
+    refreshSessionRunControls();
+    paintLive();
   },
   close() {
     const uid = this.active.uid, agent = this.active.agent;

@@ -191,9 +191,8 @@ globalThis.SessionDockGroups = (() => {
     }
   };
   const trigger = $('#item-menu [data-act="group"]');
-  trigger.onpointerenter = event => { if (event.pointerType === 'mouse') showMenu([menuUid], trigger, false); };
+  bindSubmenuHover($('#item-menu'), trigger, menu, () => showMenu([menuUid], trigger, false), closeMenu);
   trigger.onkeydown = event => { if (event.key === 'ArrowRight') { event.preventDefault(); showMenu([menuUid], trigger); } };
-  $('#item-menu').addEventListener('pointerover', event => { if (event.target.closest('button[data-act]')?.dataset.act !== 'group') closeMenu(); });
   $('#side-pick-group').onclick = event => showMenu([...pickedSessions], event.currentTarget);
   document.addEventListener('pointerdown', event => { if (!event.target.closest('#session-group-menu, #item-menu, #side-pick-group')) closeMenu(); }, true);
   addEventListener('resize', closeMenu);

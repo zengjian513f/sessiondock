@@ -15,7 +15,7 @@ Grok、Agy、OpenCode 和 Claude 使用各自的原生机器接口，复用 Code
 ## 配置与页面
 
 节点必须配置该来源的原生根目录及 launcher profile；启动节点只装配桥接，
-首次打开 SDK 才连接或启动原生客户端。`capabilities.native_sdks` 按来源声明
+显式启动 SDK 会话才连接或启动原生客户端；只读打开与停止见[SDK 界面合同](sdk-ui.md#查看启动与停止)。`capabilities.native_sdks` 按来源声明
 可用性，Hub 根据所属节点的能力显示入口。SDK 配置不兼容时记录在
 `native_sdk_unavailable`，不阻止原有读模型和终端模式启动。
 `SESSIONDOCK_NATIVE_SDKS=off` 关闭这四种 SDK 桥接；Codex 保留自己的配置。
@@ -87,6 +87,7 @@ DELTA：五种 SDK 的文件与图片统一沿用原版 SessionDock 附件逻辑
 | POST `/api/native-sdk/open` | `{uid, agent?}`；恢复原生会话，返回能力 |
 | GET `/api/native-sdk/events?uid=&agent=` | SSE `sdk` 事件：原子快照与订阅，之后持续发布快照；滞后时要求重连 |
 | POST `/api/native-sdk/turn` | `{uid, agent?, request_id, text, attachments?, quotes?, model?, effort?}`；先持久排队再调用原生 |
+| POST `/api/native-sdk/stop` | `{uid, agent?}`；取消待投递输入并停止所选桥接，保留原生历史和共享服务 |
 | POST `/api/native-sdk/interrupt` | `{uid, agent?}`；原生中断，只针对桥接所属任务 |
 | POST `/api/native-sdk/respond` | `{uid, agent?, key, result}`；回答该会话仍未解决的原生审批或问题 |
 | POST `/api/native-sdk/models` | `{uid, agent?}`；原生模型目录 |

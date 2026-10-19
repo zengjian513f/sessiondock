@@ -52,6 +52,8 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
   if (ConsoleUI.busy.has(uid)) return '正在打开控制台，请等待当前连接请求完成。';
   if (T.listError) return T.listError;
   if (!T.listLoaded) return '正在读取控制台状态，请稍后重试。';
+  if (['claude', 'grok', 'agy'].includes(String(uid).split(':')[0]) && S.liveSdk.has(uid))
+    return '此会话正在 SDK 模式运行，请先停止会话，再启动 CLI。';
   const nid = nodeOf(uid), node = Nodes.list.find(n => n.id === nid);
   const cap = HUB_MODE ? Nodes.capabilities[nid] : T;
   if (HUB_MODE) {

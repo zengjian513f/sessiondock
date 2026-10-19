@@ -22,6 +22,7 @@ pub(super) struct Connection {
     next: AtomicU64,
     pub alive: Arc<AtomicBool>,
     pub stop: CancellationToken,
+    pub done: CancellationToken,
     pub pid: u32,
     pub generation: u64,
     pub initialized: Mutex<Value>,
@@ -83,12 +84,14 @@ impl Connection {
         let pending = Arc::new(Mutex::new(HashMap::<u64, oneshot::Sender<Reply>>::new()));
         let alive = Arc::new(AtomicBool::new(true));
         let diagnostics = Arc::new(Mutex::new(Vec::new()));
+        let done = CancellationToken::new();
         let connection = Arc::new(Self {
             outgoing: tx.clone(),
             pending: pending.clone(),
             next: AtomicU64::new(1),
             alive: alive.clone(),
             stop: stop.clone(),
+            done: done.clone(),
             pid,
             generation,
             initialized: Mutex::new(Value::Null),
@@ -144,6 +147,7 @@ impl Connection {
             ));
             let _ = child.start_kill();
             let _ = child.wait().await;
+            done.cancel();
             for (_, reply) in pending.lock().unwrap().drain() {
                 let _ = reply.send(Err(reason.into()));
             }
