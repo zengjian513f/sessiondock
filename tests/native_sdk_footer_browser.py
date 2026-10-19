@@ -118,9 +118,9 @@ def exercise(browser, base, source, screenshots):
             expect(pane.locator('.sdk-gauges')).to_contain_text('Ctx')
             assert_inline_usage(page)
             assert model.bounding_box()['width'] <= 160.5
-            labels = pane.locator('.sdk-gauge > span').evaluate_all('nodes => nodes.map(n => n.getBoundingClientRect().width)')
+            labels = pane.locator('.sdk-status-row .sdk-gauge > span').evaluate_all('nodes => nodes.map(n => n.getBoundingClientRect().width)')
             assert max(labels) <= 72.5, labels
-            expect(pane.locator('.sdk-gauge').filter(has_text=long_quota)).to_have_attribute('title', re.compile(long_quota))
+            expect(pane.locator('.sdk-status-row .sdk-gauge').filter(has_text=long_quota)).to_have_attribute('title', re.compile(long_quota))
             toggle_usage_details(page)
             expect(page.locator('#native-usage-detail')).to_contain_text('123,456,789')
             expect(page.locator('#native-usage-detail')).to_contain_text(long_quota)
