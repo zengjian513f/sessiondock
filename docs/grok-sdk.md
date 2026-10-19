@@ -34,10 +34,8 @@
 2026-10-19 再次用清空继承环境、临时 HOME/GROK_HOME/cwd 的安装版 1.0.62
 执行无账号 initialize；命令显式选择 grok-4.6 / low，返回 currentModelId 也断言为
 `grok-4.6`。原生明确广告 `promptCapabilities.image:false`、`audio:false`、
-`embeddedContext:true`。因此本安装版不能按 ACP 能力承诺结构化图片；桥接保留
-普通附件路径；协商 image:false 时仍可使用 SessionDock 附件，不常驻显示协议提示。
-直接向 bridge 提供非空 images 仍明确 unsupported。合成 `image:true` 对端只验证后续
-原生版本广告支持时的图片适配，不扩大为本机真实多模态验收。
+`embeddedContext:true`。该记录说明安装版的原生能力；当前产品统一使用 SessionDock
+附件路径，即使后续原生版本声明 image:true，也不构造 ACP 图像内容块。
 
 下表及 facade 说明使用 Grok handler 的逻辑扩展名 `x.ai/...`。
 ACP JSON-RPC wire 的自定义方法必须带前导下划线，即 `_x.ai/...`；桥接在 transport
@@ -107,7 +105,7 @@ PID 为空的匹配原生活动标记也会报告冲突；已退出或 zombie PI
   缓存该次结果，不因同 request_id 重试而再创建一份。
 - open 返回 `{uid, session_id, cwd, capabilities, raw}`。raw 是快照内部 raw。
   同一存活进程重复 open 不重新 load；原生回放标记 `isReplay` 的消息不放入实时区。
-- turn 的 input 为 `{text, request_id?, model?, effort?, images?}`。
+- turn 的 input 为 `{text, request_id?, model?, effort?}`。
   运行中相同 request_id 返回原收据；已接受的 id 在本服务生命周期内也不会再次送出。
   不同输入按会话串行等待前一原生 turn 结束，HTTP 请求等待本次准入；网页断开不撤销提交，不提供隐式 steer。
   model/effort 设置失败会使该收据对应的实时快照出错，不偷偷改用另一个模型。
@@ -138,12 +136,10 @@ failed 事件才显示完成/出错，停止或 turn 结束不会推断工具已
 
 ## 显式原生引导与闲置回收
 
-`steer` 独立于普通 `turn`，接 `{request_id,text,images?}`，只在本桥接的原生 prompt
+`steer` 独立于普通 `turn`，接 `{request_id,text}`，只在本桥接的原生 prompt
 已开始且仍运行时接收；普通发送继续串行等待，不隐式改变成引导。桥接发送
-`_x.ai/interject`，使用 `interjectionId=request_id`。非空结构化图片只在 initialize
-明确广告 image:true 时构造原生 `content` 文本/image 块；不接浏览器提供的任意
-原生 content 或本地文件路径。没有图片时发送向后兼容的 text wire。
-共享 HTTP 的可信附件发布及 image:false 路径降级沿用上述图片合同。
+`_x.ai/interject`，使用 `interjectionId=request_id`。附件沿用共享 HTTP 的授权发布和
+文本路径引用；引导也只发送 text，不生成原生 image/content 块。
 
 原生 handler 将输入加入 interjection buffer，在模型/工具批次的安全点排入上下文。
 临近 turn 结束的竞态由原生处理：尚未 drain 的输入可能转为独立 fallback prompt，
@@ -202,11 +198,8 @@ fake native CLI、浏览器及生产时长不被修改；生产没有测试 time
   不回滚工作区文件，不猜文本匹配点。回退成功清除旧实时投影，历史由现有 read model 刷新。
 - `shell` 接 `{command,request_id?}`，通过原生 `session/prompt` 文本块
   `_meta.bash_command` 直接执行，使用 CLI 的实际执行权限；不经过模型。其回执沿用 turn 去重。
-- `images:[{data,mimeType}]` 仅由共享 HTTP 层从已发布、可信附件生成；
-  initialize 的 `agentCapabilities.promptCapabilities.image` 必须明确为 true 才能作为
-  ACP 图像块发送。共享 HTTP 在 image:false 时继续发布附件及发送已有路径引用，
-  不生成结构化 images；沿用 SessionDock 附件入口，不增加原生图片入口或常驻提示。
-  直接向 bridge 传非空 images 则返回 images_unsupported。不会把路径文字冒充多模态输入。
+- 图片与普通文件统一经共享 HTTP 发布并追加文本路径引用；已移除原生图片适配，
+  不读取图片字节、不构造 ACP image 块，也不暴露图片 capability。
 
 扩展支持以原生结果为准。只读用量/额度/回退点及显式操作可尝试已有官方方法；
 原生 `-32601` 记录到 `raw.extension_support` 并关闭对应 capability；认证、账号、模型、
@@ -247,7 +240,7 @@ facade 应将 snapshots 作为 SSE `sdk` 事件转发；broadcast lag 时重新�
 通过 Chromium 实际操作 SDK 页面，覆盖本来源的新建/恢复、发送、流式消息和工具、
 去重、中断、重开及外部 writer 冲突；新增原生问题多选、计划批准、用量/额度、
 模式、压缩、直接 shell、对话回退和分支的真实点击路径及 mutation 丢 ACK 重试断言。
-另覆盖先 image:true、断线后新进程 image:false 时的实际图片上传、路径发布及可见降级说明。
+另覆盖原生先 image:true、断线后 image:false，两种情况下图片都只发布一次并通过文本路径发送。
 合成对端证明桥接行为，不替代已认证安装版的真实模型/账号验收。
 共享 Hub、草稿恢复与网页请求卡路径见
 [native_sdk_hub_browser.py](../tests/native_sdk_hub_browser.py)。

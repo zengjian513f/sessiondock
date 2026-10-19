@@ -193,19 +193,20 @@ def exercise(browser, base, fixture, screenshots):
     page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && window.__grokSnapshot.items.some(i=>i.error)")
     assert not page.evaluate("window.__grokSnapshot.requests.length")
 
-    # A selected browser image is privately published and reaches ACP as an
-    # image block, rather than a client-controlled filesystem path.
+    # Images use the ordinary published attachment path even when ACP advertises image:true.
     page.locator("#sdk-add").click()
     with page.expect_file_chooser() as chooser:
         page.locator('#sdk-attach-menu [data-attach=image]').click()
     image = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
     chooser.value.set_files({"name":"grok-synthetic-image.png","mimeType":"image/png","buffer":image})
     expect(page.locator("#sdk-compose-items")).to_contain_text("grok-synthetic-image.png")
-    page.locator("#sdk-input").fill("Grok structured image")
+    page.locator("#sdk-input").fill("Grok image attachment")
     page.locator("#sdk-send").click()
-    page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && window.__grokSnapshot.items.some(i=>i.content?.includes('Grok structured image'))")
+    page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && window.__grokSnapshot.items.some(i=>i.content?.includes('Grok image attachment'))")
     structured = fixture.received("session/prompt")[-1]["params"]["prompt"]
-    assert structured[1] == {"type":"image","data":base64.b64encode(image).decode(),"mimeType":"image/png"},structured
+    assert len(structured) == 1 and structured[0]["type"] == "text", structured
+    assert "grok-synthetic-image.png" in structured[0]["text"] and "sessiondock_attachments" in structured[0]["text"], structured
+    assert list(fixture.work.rglob("grok-synthetic-image.png"))
 
     # Native question labels and multi-select arrays survive a real form submit.
     page.locator("#sdk-input").fill("question")
@@ -370,7 +371,7 @@ def exercise(browser, base, fixture, screenshots):
     count = len(fixture.received("session/prompt"))
     api(page, "turn", {"uid": uid, "request_id": "disconnect-once", "text": "disconnect"})
     assert len(fixture.received("session/prompt")) == count
-    assert recovered["capabilities"]["images"] is False
+    assert "images" not in recovered["capabilities"]
 
     # An image:false handshake preserves the established file-path send flow.
     # SessionDock attachments remain available without a permanent protocol note.

@@ -151,10 +151,7 @@ impl Bridge {
                 Some(json!({"id":random_id("msg_")?,"command":string(&input,"command")?})),
             ),
             "command" => {
-                let mut body = json!({"name":string(&input,"name")?,"text":input["text"].as_str().unwrap_or_default(),"delivery":delivery(&input,"queue")?});
-                if let Some(files) = input.get("files") {
-                    body["files"] = files.clone();
-                }
+                let body = json!({"name":string(&input,"name")?,"text":input["text"].as_str().unwrap_or_default(),"delivery":delivery(&input,"queue")?});
                 ("POST", format!("{base}/command"), Some(body))
             }
             "settings" => {

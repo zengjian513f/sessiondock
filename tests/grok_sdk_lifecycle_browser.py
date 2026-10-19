@@ -97,12 +97,8 @@ def steer_checks(browser,base,fixture,marker,screenshots):
     media={"uid":uid,"request_id":"trusted-steer-image","text":"Image at the safe point","attachments":attachments}
     api(page,"steer",media)
     params=fixture.received("x.ai/interject")[-1]["params"]
-    supported=json.loads(fixture.capability_marker.read_text())["image"]
-    if supported:
-        assert params["content"][0]["type"]=="text" and params["content"][1]=={"type":"image","data":base64.b64encode(picture).decode(),"mimeType":"image/png"},params
-    else:
-        assert "content" not in params and "steer-native-image.png" in params["text"] and "sessiondock_attachments" in params["text"],params
-        expect(page.locator("#native-media-note")).to_contain_text("不传递图像内容")
+    assert "content" not in params and "steer-native-image.png" in params["text"] and "sessiondock_attachments" in params["text"],params
+    expect(page.locator("#native-media-note")).to_have_count(0)
     api(page,"steer",media)
     assert len(fixture.received("x.ai/interject"))==2,"image retry repeated native interject"
     capture_state(page,screenshots,"steer-pending",page.locator('[data-queue-origin="steer"]').first)

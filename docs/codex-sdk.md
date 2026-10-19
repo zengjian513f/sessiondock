@@ -445,8 +445,10 @@ DELTA (SDK composer): on nodes with conversation storage, SDK uses the same
 server-owned draft, CAS saves, quotes, resumable uploads and attachment cards
 as the transitional conversation view. Selecting, pasting or dropping files
 stages them privately; only SEND publishes them into the recorded workspace.
-The app-server receives images as native `localImage` input and all files as
-textual attachment references. Empty-text sends with attachments or quotes are
+DELTA: the app-server receives every attachment, including images, through
+the same textual path references as the ordinary SessionDock composer. Native
+image inputs are removed; queued inputs from older releases retain their text
+references and drop image blocks before dispatch. Empty-text sends with attachments or quotes are
 supported. Failed sends preserve the draft, and edits made during a successful
 send are retained. Unpersisted SDK creation receipts provide identity for draft
 and upload operations without creating a native rollout. Nodes without

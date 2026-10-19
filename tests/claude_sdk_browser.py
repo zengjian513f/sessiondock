@@ -230,9 +230,10 @@ def browser_check(fixture, base, screenshots):
         send(page, 'image from browser')
         expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final image from browser')
         wait_snapshot(page, fixture.uid, lambda raw: not raw['running'])
-        structured = [f for f in fixture.frames('user') if isinstance(f['message']['content'], list)]
-        assert any(block == {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': base64.b64encode(image).decode()}}
-            for f in structured for block in f['message']['content']), structured
+        prompt = fixture.frames('user')[-1]['message']['content']
+        assert isinstance(prompt, str), prompt
+        assert 'synthetic-image.png' in prompt and 'sessiondock_attachments' in prompt, prompt
+        assert list(fixture.cwd.rglob('synthetic-image.png'))
 
         send(page, 'retry')
         wait_snapshot(page, fixture.uid, lambda raw: (raw.get('retry') or {}).get('attempt') == 1)

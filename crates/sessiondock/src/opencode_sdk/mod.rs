@@ -399,10 +399,6 @@ impl Bridge {
             .as_str()
             .ok_or("OpenCode SDK 缺少 text 字符串")?
             .to_owned();
-        let files = input.get("files").cloned().unwrap_or_else(|| json!([]));
-        if !files.is_array() {
-            return Err("OpenCode files 需要原生附件数组".into());
-        }
         let delivery = actions::delivery(&input, "queue")?;
         self.check_runtime(&session.sid, &session.cwd)?;
         // Reserve native operation order before acknowledging. An interrupt
@@ -459,7 +455,7 @@ impl Bridge {
                         &task_session.cwd,
                         "POST",
                         &format!("/api/session/{}/prompt", encoded(&task_session.sid)),
-                        Some(json!({"id":task_id,"text":text,"files":files,"delivery":delivery})),
+                        Some(json!({"id":task_id,"text":text,"delivery":delivery})),
                     )
                     .await
             }
@@ -816,7 +812,7 @@ fn capabilities() -> Value {
     json!({"send":true,"interrupt":true,"respond":true,"models":true,"create":true,
     "discard":false,"queue_cancel":true,"queue_update":true,"fork":true,
     "revert":true,"unrevert":true,"revert_commit":true,"compact":true,"shell":true,
-    "command":true,"settings":true,"agents":true,"commands":true,"files":true,"usage":true,
+    "command":true,"settings":true,"agents":true,"commands":true,"usage":true,
     "effort":true,"effort_kind":"native model variant","stream":"native API projection polling",
         "terminal_coexistence":"default shared native service only","autostart":false})
 }

@@ -202,36 +202,34 @@ async fn execute(
         }
         let draft = entry.draft.clone();
         let mut body = entry.draft.clone();
-        let preparation=async {
-            let attachments=body["attachments"].as_array().cloned().unwrap_or_default();
-            let quotes=body["quotes"].as_array().cloned().unwrap_or_default();
-            let published=if attachments.is_empty(){Vec::new()}else{
-                let conversations=state.conversations.as_ref().ok_or_else(||ApiError::unavailable("附件暂存"))?;
-                let identity=conversations.identity(target["uid"].as_str().unwrap_or_default()).await.map_err(super::conversation::error)?;
-                conversations.publish(&identity,&attachments).await.map_err(super::conversation::error)?
+        let preparation = async {
+            let attachments = body["attachments"].as_array().cloned().unwrap_or_default();
+            let quotes = body["quotes"].as_array().cloned().unwrap_or_default();
+            let published = if attachments.is_empty() {
+                Vec::new()
+            } else {
+                let conversations = state
+                    .conversations
+                    .as_ref()
+                    .ok_or_else(|| ApiError::unavailable("附件暂存"))?;
+                let identity = conversations
+                    .identity(target["uid"].as_str().unwrap_or_default())
+                    .await
+                    .map_err(super::conversation::error)?;
+                conversations
+                    .publish(&identity, &attachments)
+                    .await
+                    .map_err(super::conversation::error)?
             };
-            body["text"]=json!(crate::conversation::build_prompt(body["text"].as_str().unwrap_or_default(),&published,&quotes));
-            // Only attachments published through the authenticated composer may
-            // become multimodal input. Persist the exact prepared input before ACK.
-            let images_supported=if source=="grok"&&published.iter().any(|attachment|attachment["kind"]=="image") {
-                let opened=state.native_sdks.call(source,"open",target.clone(),json!({})).await.map_err(failure)?;
-                opened["capabilities"]["images"]==true
-            } else {true};
-            let mut images=Vec::new();let mut files=Vec::new();
-            for attachment in &published {
-                if images_supported&&attachment["kind"]=="image"&&matches!(source,"grok"|"claude"|"opencode") {
-                    use base64::Engine;
-                    let path=attachment["path"].as_str().ok_or_else(||failure("附件缺少路径".into()))?;
-                    let bytes=tokio::fs::read(path).await.map_err(|error|failure(format!("读取图片失败：{error}")))?;
-                    let mime=attachment["mime"].as_str().unwrap_or("image/png");
-                    let data=base64::engine::general_purpose::STANDARD.encode(bytes);
-                    images.push(json!({"data":data,"mimeType":mime}));
-                    files.push(json!({"uri":format!("data:{mime};base64,{data}"),"name":attachment["name"]}));
-                }
-            }
-            body["images"]=json!(images);body["files"]=json!(files);body["attachments"]=json!(published);
-            Ok::<Value,ApiError>(body)
-        }.await;
+            body["text"] = json!(crate::conversation::build_prompt(
+                body["text"].as_str().unwrap_or_default(),
+                &published,
+                &quotes
+            ));
+            body["attachments"] = json!(published);
+            Ok::<Value, ApiError>(body)
+        }
+        .await;
         let prepared = match preparation {
             Ok(input) => input,
             Err(error) => {

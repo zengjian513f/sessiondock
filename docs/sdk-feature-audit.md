@@ -9,7 +9,8 @@
 结论：四种新 SDK 已有主要会话闭环，但没有完整对齐 Codex。用量、队列管理、
 会话操作和设置中仍存在遗漏。Agy 用量底栏、effort、命令分流已补齐；
 Grok/Claude 问答、三家用量及部分原生会话操作也已接通。不能把 capability=false
-一概解释成产品永久不支持；Grok 当前安装版 image:false 则是已实际协商的限制。
+一概解释成产品永久不支持。图片按用户决定统一沿用原版附件路径，五种 SDK 的
+专用图像转换均已移除，这属于产品取舍，不再列为待补齐功能。
 
 ## 范围、版本和判定口径
 
@@ -80,7 +81,7 @@ stream-json。官方同名 SDK 包不一定使用同一协议，不能把别的 
 | B02 | 服务端草稿、CAS 保存、刷新恢复、跨页跟随；不覆盖未保存编辑 | 已；主会话 | 已；主会话 | 已；主会话 | 已；主会话 | 已；主会话 |
 | B03 | 文件选择/粘贴/拖放、私有暂存、续传、附件卡片与移除 | 已；主会话 | 已；共用 composer | 已；共用 composer | 已；共用 composer | 已；共用 composer |
 | B04 | 引用文字、附件或引用单独发送；普通文件作为路径引用发布 | 已 | 已 | 已 | 已 | 已 |
-| B05 | 图片作为原生多模态内容传给模型，不只发送路径文本 | 已；`localImage` | 部；按 ACP image 能力协商；本机 1.0.62 为 false，使用普通附件路径 | 限；此 stream-json 输入只支持 text block | 已；发布图片转原生 files data URI；真实 provider 媒体能力未实测 | 已；发布图片转 stream-json base64 image |
+| B05 | 原生多模态图片输入 | 已按产品决定移除；统一附件路径 | 同左 | 同左 | 同左 | 同左 |
 | B06 | 发布附件一次；相同提交 ID 重试不重复上传发布/原生输入 | 已 | 已；私有持久提交账本 | 已；私有持久提交账本 | 已；持久桥接回执及原生消息 ID | 已；私有持久提交账本 |
 | B07 | 原生准入后清本次草稿；保留发送期间新增编辑、失败时保留输入 | 已 | 已；持久排队准入清本次草稿 | 已；同左 | 已；同左 | 已；同左 |
 | B08 | 确认输入真正被原生用户消息消费，而非仅 RPC/write 接受；压缩中断时可找回未消费输入 | 已；队列状态和原生 echo 对账 | 部；准入与消费分开，正常完成仍标未验证消费 | 部；按关联 user_input 确认，未知结果保留供核对 | 部；区分原生 inbox 与已消费消息 | 部；按原生 user UUID echo 确认，未知结果保留供核对 |
@@ -259,7 +260,7 @@ Grok 回退默认 `RewindMode::All`，OpenCode revert 可涉及文件；实现�
 | 模式/审批设置 | `session/set_mode`、原生 yolo/auto 通知 | 提供本来源模式；显式操作后以原生确认状态显示 |
 | 中途引导 | `x.ai/interject`，有 text/content 与 interjectionId | 原生是安全点插入，仍需实现可见回执和去重 |
 | 分支/回退/压缩 | `x.ai/session/fork`、`x.ai/rewind/points`、`x.ai/rewind/execute`、`x.ai/compact_conversation` | 回退显式 conversation-only；安装版扩展需协商 |
-| 图片 | ACP image content，包括原生 interject 的 structured content | 只在原生/模型声明支持时发送 |
+| 图片 | ACP 原生具有 image content 能力 | 产品决定不接，统一附件路径 |
 | 问题卡和计划批准 | 官方 AskUserQuestionExtRequest/Response、`x.ai/exit_plan_mode` | 现已接反向 RPC 与取消/失效请求；只宣告已验证的类型 |
 | 直接 shell | TextContent `_meta.bash_command` | 不用普通提示词让模型代跑；显示其实际权限口径 |
 | 队列管理、持久化、闲置回收、完整 toolbar | SessionDock 层，复用 Codex 模式 | 不依赖 Grok 新增 API；不能把原生在途调用不确定性隐藏掉 |
@@ -310,7 +311,7 @@ SDK 是候选路线，但它是否能完整兼容现有 CLI DB、身份和多模
 | 压缩 | `POST .../compact`，`id?`、`delivery?` | 默认原生可在安全点引导；与默认普通输入排队分开 |
 | 队列展示、取消、立即引导 | `GET .../inbox`、`DELETE .../inbox/{id}`、`PATCH .../inbox/{id}` | delivery 枚举为 queue/steer；应明确传入选择 |
 | 模式/agent、权限设置 | `POST .../agent`、`PATCH ...` 的 permissions | 用原生 agent ID/permissions，不套 Codex policy 枚举 |
-| 图片/文件结构化输入 | prompt.files：uri/name/description/mention | 现已接 data URI；真实 provider 媒体能力仍需按模型核验 |
+| 图片/文件结构化输入 | prompt.files：uri/name/description/mention | 产品决定不接，统一附件路径 |
 | 直接 shell、原生命令 | `POST .../shell`、`POST .../command`、`GET /api/command` | shell 输出用原生消息/事件，不经过模型 |
 | 完整表单、错误重试/压缩状态、toolbar | 既有 form/assistant.retry/compaction 与共用 UI | 不能把条件字段/external 简化成所有字段文本框 |
 
@@ -331,7 +332,7 @@ SDK 是候选路线，但它是否能完整兼容现有 CLI DB、身份和多模
 | Fast 设置 | applyFlagSettings 的 fastMode/相关原生状态 | 模型、账号和服务端资格限制，保留失败/冷却真实状态 |
 | 分支、按历史点分支 | forkSession、upToMessageId、resume+forkSession/resumeSessionAt | 应调用官方原生实现；本仓库不能自行改写 transcript |
 | 压缩及进度 | 原生 /compact，status.compacting、compact_boundary | 须接命令完成和计数失效；不是普通提示词“请总结” |
-| 图片 | streaming user content 的 image/base64 block | 现已接发布图片的原生 base64 block |
+| 图片 | streaming user content 的 image/base64 block | 产品决定不接，统一附件路径 |
 | MCP elicitation、user dialog、更完整权限建议 | 官方回调、控制类型、updatedPermissions | 现已接 elicitation 和核实的 refusal dialog；完整权限建议仍待补，不能自动批准 |
 | 队列管理和消费确认 | SDKUserMessage.uuid、用户回显、原生 consumed UUID/取消控制；SessionDock 可持久排队 | 原生队列可合并，撤销和 Stop 的 still_queued 必须对账，不能宣称普通 FIFO |
 | toolbar、闲置回收、错误/限流状态 | 共用 UI 和原生 api_retry/rate_limit_event | 属接线与状态投影工作 |
@@ -399,8 +400,8 @@ quota collector，以及与各功能对应的浏览器套件。已有覆盖包�
 既有真实协议实验的范围也不同：Grok 验证未认证 initialize、创建认证失败及只读扩展 wire 识别；
 Agy 用真实 CLI 对 loopback 合成模型验证协议；OpenCode 用隔离原生服务验证
 OpenAPI 与空会话接口；Claude 用临时官方固定版本 CLI 对合成网关验证协议。
-Grok 1.0.62 的真实 initialize 另确认 image:false；本轮已加入结构化图片能力分支与
-路径降级的浏览器验收。它们均不能扩大为真实账号、全部工具、后台任务和高级功能
+历史实验中 Grok 1.0.62 的 initialize 确认 image:false；当时测试的结构化图片适配
+现已按产品决定移除，当前浏览器验收统一检查附件发布与文本路径。它们均不能扩大为真实账号、全部工具、后台任务和高级功能
 已验收，详情见各来源合同。
 
 第一批补实现扩展并重跑四来源 Chromium、共享 Hub、quota 回归，验证真实网页

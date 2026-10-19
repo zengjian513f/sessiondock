@@ -305,10 +305,6 @@ impl Bridge {
             .await;
         match result {
             Ok(result) if result["protocolVersion"] == 1 => {
-                // ACP explicitly advertises image support. Missing/false support
-                // remains a text/path fallback, never a fake image acceptance.
-                live.lock().unwrap().images =
-                    result["agentCapabilities"]["promptCapabilities"]["image"] == true;
                 *connection.initialized.lock().unwrap() = result;
                 Ok(connection)
             }
@@ -550,14 +546,6 @@ impl Bridge {
             // Native direct shell path bypasses the model, preserving its own
             // execution/permission semantics. Never send a model instruction.
             prompt[0]["_meta"] = json!({"bash_command":text});
-        } else if let Some(images) = input.get("images").filter(|v| !v.is_null()) {
-            let images = images.as_array().ok_or("grok_sdk_invalid_images")?;
-            if !images.is_empty() && !session.live.lock().unwrap().images {
-                return Err("grok_sdk_images_unsupported: native initialize did not advertise image support".into());
-            }
-            for image in images {
-                prompt.push(json!({"type":"image","data":required(image,"data")?,"mimeType":required(image,"mimeType")?}));
-            }
         }
         let request_id = input["request_id"]
             .as_str()
@@ -747,7 +735,7 @@ impl Bridge {
 fn capabilities(live: &Live) -> Value {
     let supported = |name: &str| live.extensions.get(name).copied().unwrap_or(true);
     json!({"send":true,"interrupt":true,"respond":true,"approval":true,"question":true,
-        "images":live.images,"usage":supported("usage"),"billing":supported("billing"),
+        "usage":supported("usage"),"billing":supported("billing"),
         "settings":!live.modes.is_null() || !live.config.is_null(),"mode":!live.modes.is_null(),
         "compact":supported("compact"),"fork":supported("fork"),"rewind_points":supported("rewind_points"),
         "rewind":supported("rewind"),"shell":true,"steer":supported("steer"),

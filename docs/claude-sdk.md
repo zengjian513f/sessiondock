@@ -46,9 +46,8 @@
 行长、总量或排队数量拒绝规则。相同 `request_id` 在本桥接进程生命周期内
 只发送一次；断线和不确定的写入结果不自动重放。
 
-已由共享 HTTP 附件授权解析的 `images:[{data,mimeType}]` 转成官方
-`image/source:{type:"base64",media_type,data}` block，与文本同一条 user 消息发送。
-客户端直接传入的本地路径或图片字段不授予文件访问权。没有图片时仍发送字符串正文。
+图片与普通文件统一使用 SessionDock 附件发布后的文本路径引用，`turn` 发送字符串
+正文。已移除原生 image/base64 内容块转换；客户端直接提供图片字段不授予文件访问权。
 
 ## 快照与回答
 
@@ -136,7 +135,7 @@ stderr 的诊断尾部经过配置/环境中的 secret 值及 token 形态脱敏
 仍要求原生 `session_id` 与选定 SID 一致，不接受另一会话的内容或审批。
 
 能力包括 send、interrupt、respond、approval、question、models、create、resume、
-effort、settings、permission_mode、fast_mode、images、usage、context_usage、compact、fork、fork_before、
+effort、settings、permission_mode、fast_mode、usage、context_usage、compact、fork、fork_before、
 mcp_elicitation 和限定种类的 user_dialog；`shared_tui:false`、`subagents:false`。这是独立原生 runtime，
 无法加入一个独立 TUI 正在使用的 runtime。Linux 在首次连接和每次发送前
 复用既有 procscan，检查 SID、完整原生文件持有者及同 cwd 尚未明确身份的裸
