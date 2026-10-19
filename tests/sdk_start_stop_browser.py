@@ -18,14 +18,29 @@ from send_browser import initialize
 
 
 @contextmanager
-def provider(source, root, binary):
+def provider(source, root, binary, *, cli=False):
     extra = node_env(root, free_port(), '127.0.0.0/8')
+    if cli:
+        (root/'menu-host').mkdir()
+        from terminal_browser import SHELL_SCRIPT
+        launcher = root/'menu-cli-launcher.json'
+        launcher.write_text(json.dumps({'schema':2, 'host_binary':str(REPO/'target/debug/ptyhost'),
+            'host_dir':str(root/'menu-host'), 'profiles':[{'id':'menu-'+source, 'source':source,
+            'executable':'/bin/sh', 'args':['-c', SHELL_SCRIPT]}]}))
+        initialize('--initialize-lifecycle', root/'menu-ledger', binary.resolve())
+        extra.update(SESSIONDOCK_LAUNCHER_CONFIG=str(launcher), SESSIONDOCK_PTYHOST_DIR=str(root/'menu-host'),
+            SESSIONDOCK_LIFECYCLE_DIR=str(root/'menu-ledger'), SESSIONDOCK_NATIVE_SDKS='off',
+            SESSIONDOCK_CODEX_APP_SERVER='off')
     if source == 'claude':
         peer = ClaudeFixture(root)
         with peer.server(binary, extra) as base:
             yield base, peer, extra
     elif source == 'codex':
         corpus = build(root)
+        if cli:
+            work = root/'work'; work.mkdir()
+            path = corpus.paths['sdk']
+            path.write_text(path.read_text().replace('/synthetic/sdk', str(work)))
         with StartDaemon(root/'app.sock', corpus.paths['sdk'], '01a1sdk0-0000-7000-8000-000000000001') as peer:
             with server(corpus, binary, root/'app.sock', {**environment(root, binary), **extra}) as base:
                 yield base, peer, extra
@@ -35,10 +50,10 @@ def provider(source, root, binary):
         peer = GrokFixture(root)
         initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
         with server(SimpleNamespace(root=root), binary, 'off', {
-            **peer.env, **extra, 'SESSIONDOCK_NATIVE_SDKS': 'auto',
+            **peer.env, 'SESSIONDOCK_NATIVE_SDKS': 'auto',
             'SESSIONDOCK_LIFECYCLE_DIR': str(root/'ledger'),
             'SESSIONDOCK_PTYHOST_DIR': str(root/'unused-host'),
-            'SESSIONDOCK_STATE_DIR': str(root/'state'),
+            'SESSIONDOCK_STATE_DIR': str(root/'state'), **extra,
         }) as base:
             yield base, peer, extra
     elif source == 'agy':
@@ -59,10 +74,10 @@ def provider(source, root, binary):
                 'host_dir': str(root/'host'), 'profiles': [peer.profile()]}))
             initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
             with isolated_server(Corpus(root), binary, host_dir=root/'host', state_dir=root/'state',
-                    lifecycle_dir=root/'ledger', launcher_config=launcher, extra_env={**extra,
+                    lifecycle_dir=root/'ledger', launcher_config=launcher, extra_env={
                         'SESSIONDOCK_NATIVE_SDKS': 'auto', 'SESSIONDOCK_OPENCODE_DB': str(peer.db),
                         'SESSIONDOCK_OPENCODE_ROOT': str(root/'mirror'),
-                        'SESSIONDOCK_PROC_ROOT': str(root/'proc')}) as (base, _):
+                        'SESSIONDOCK_PROC_ROOT': str(root/'proc'), **extra}) as (base, _):
                 yield base, peer, extra
 
 
@@ -135,11 +150,29 @@ def exercise(browser, base, source, screenshots, label):
             if not button.is_visible(): page.locator('#a-more').click()
             button.click()
 
-        power()
+        # Choose SDK explicitly, even when the previous view was ordinary chat.
+        page.locator('#a-chat').click()
+        if page.locator('#detail .mobile-back').is_visible(): page.locator('#detail .mobile-back').click()
+        row.click(button='right')
+        page.locator('#item-menu [data-act="stop"]').click()
+        expect(page.locator('#session-start-menu')).to_be_visible()
+        page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-start-menu.png'))
+        page.locator('#session-start-menu [data-start-mode="sdk"]').click()
+        expect(page.locator('#session-start-menu')).to_be_hidden()
         expect(page.locator('#sdk-input')).to_be_visible()
         page.wait_for_function('SdkView.connected')
         expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')
         assert len(opens) == 1, opens
+        if source in ('claude', 'grok', 'agy'):
+            expect(page.locator('#a-term')).to_have_attribute('aria-disabled', 'true')
+            expect(page.locator('#a-term')).to_have_attribute('aria-description', '此会话正在 SDK 模式运行，请先停止会话，再启动 CLI。')
+            page.locator('#a-term').click(force=True)
+            expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
+            for force in (False, True):
+                response = page.request.post(base+'/api/term/takeover', data={'uid':uid, 'force':force})
+                assert response.status == 409, response.text()
+                assert 'sdk_session_busy' in response.text(), response.text()
+            expect(page.locator('#sdk-input')).to_be_visible()
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-started.png'))
         # A second page attaches to the live SDK; stopping must also close its stream.
         second = context.new_page()

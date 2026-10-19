@@ -768,6 +768,15 @@ pub async fn takeover(
     crate::terminal::terminal_size(body.cols.unwrap_or(120), body.rows.unwrap_or(32))?;
     let (scope, cwd) = resolve_resume(&state, body.uid).await?;
     let source = source_of(&scope).ok_or_else(invalid)?;
+    if matches!(source, Source::Claude | Source::Grok | Source::Agy)
+        && state.native_sdks.loaded_uids().contains(&scope.uid)
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "sdk_session_busy",
+            "此会话正在 SDK 模式运行，请先停止会话，再启动 CLI",
+        ));
+    }
     let processes = external_processes(&state, &scope.uid).await?;
     if let Some((host, instance)) = &processes.managed_fork {
         let records = service.list(0, usize::MAX).await.map_err(failure)?;

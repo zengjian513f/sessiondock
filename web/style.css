@@ -2440,7 +2440,7 @@ header .btn[data-session-docked] { display: none; }
 .session-row-group:empty { display: none; }
 #session-group-status { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 #session-group-status:empty { display: none; }
-#item-menu [data-act="group"] { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+#item-menu [data-act="group"], #item-menu [data-act="stop"][aria-haspopup="menu"] { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
 #session-group-menu { min-width: 170px; max-width: min(280px, calc(100vw / var(--interface-scale, 1) - 16px)); max-height: calc(100dvh / var(--interface-scale, 1) - 16px); overflow-y: auto; }
 #session-group-menu button { display: flex; gap: 8px; align-items: baseline; overflow-wrap: anywhere; }
 #session-group-menu [role="separator"] { border-top: 1px solid var(--border); margin: 4px 6px; }

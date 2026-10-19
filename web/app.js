@@ -4022,6 +4022,7 @@ let suppressItemClick = false;
 function openItemMenu(uid, x, y) {
   const menu = $('#item-menu');
   globalThis.SessionDockGroups?.closeMenu();
+  closeSessionStartMenu();
   menuUid = uid;
   const list = sidebarSessions();
   const row = list.find(session => session.uid === uid);
@@ -4060,6 +4061,7 @@ function openItemMenu(uid, x, y) {
 }
 
 function closeItemMenu() {
+  closeSessionStartMenu();
   globalThis.SessionDockGroups?.closeMenu();
   $('#item-menu').hidden = true;
   menuUid = '';
@@ -4191,6 +4193,9 @@ $('#item-menu').onclick = async e => {
   if (!button || button.getAttribute('aria-disabled') === 'true') return;
   const uid = menuUid;
   if (button.dataset.act === 'group') { globalThis.SessionDockGroups?.showMenu([uid], button); return; }
+  if (button.dataset.act === 'stop' && button.dataset.runIntent === 'start') {
+    openSessionStartMenu(button); return;
+  }
   closeItemMenu();
   if (!uid) return;
   if (button.dataset.act === 'copy-identity') {
@@ -4240,7 +4245,7 @@ $('#item-menu').onclick = async e => {
 };
 
 document.addEventListener('pointerdown', e => {
-  if (!$('#item-menu').hidden && !e.target.closest('#item-menu, #session-group-menu')) closeItemMenu();
+  if (!$('#item-menu').hidden && !e.target.closest('#item-menu, #session-group-menu, #session-start-menu')) closeItemMenu();
 }, true);
 addEventListener('resize', closeItemMenu);
 
@@ -7327,6 +7332,55 @@ function renderSessionFreeze(m, button = $('#a-session-freeze')) {
   };
 }
 
+function sessionStartUnavailable(row, mode) {
+  if (!row || row.pending) return sessionRunUnavailable(row);
+  if (ConsoleUI.busy.has(row.uid)) return '正在启动或连接会话，请稍候。';
+  if (mode === 'sdk') return SdkView.available(row.uid, row.agent_id || null) ? '' : '此会话没有可用的 SDK 启动方式。';
+  return consoleUnavailableReason(row.uid, row.agent_id || null, false);
+}
+function closeSessionStartMenu() {
+  $('#session-start-menu').hidden = true;
+  $('#item-menu [data-act="stop"]').setAttribute('aria-expanded', 'false');
+}
+function openSessionStartMenu(anchor, focus = true) {
+  if (anchor.dataset.runIntent !== 'start' || anchor.getAttribute('aria-disabled') === 'true') return;
+  globalThis.SessionDockGroups?.closeMenu();
+  const menu = $('#session-start-menu'), row = sessionRunRow(menuUid);
+  for (const button of menu.querySelectorAll('[data-start-mode]'))
+    setControlUnavailable(button, sessionStartUnavailable(row, button.dataset.startMode));
+  menu.hidden = false;
+  anchor.setAttribute('aria-expanded', 'true');
+  placeSubmenu(menu, anchor);
+  if (focus) menu.querySelector('button:not([aria-disabled="true"])')?.focus();
+}
+$('#session-start-menu').onclick = async event => {
+  const button = event.target.closest('[data-start-mode]');
+  if (!button || button.getAttribute('aria-disabled') === 'true') return;
+  const row = sessionRunRow(menuUid), mode = button.dataset.startMode;
+  closeItemMenu();
+  if (row) await toggleSessionRun(row, null, 'start', mode);
+};
+$('#session-start-menu').onkeydown = event => {
+  if (event.key === 'Escape' || event.key === 'ArrowLeft') {
+    event.preventDefault(); event.stopPropagation(); closeSessionStartMenu();
+    $('#item-menu [data-act="stop"]').focus();
+  } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+    event.preventDefault();
+    const buttons = [...event.currentTarget.querySelectorAll('button')];
+    const index = buttons.indexOf(document.activeElement);
+    buttons[event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + 1) % buttons.length]?.focus();
+  }
+};
+$('#item-menu [data-act="stop"]').onpointerenter = event => {
+  if (event.pointerType === 'mouse') openSessionStartMenu(event.currentTarget, false);
+};
+$('#item-menu [data-act="stop"]').onkeydown = event => {
+  if (event.key === 'ArrowRight') { event.preventDefault(); openSessionStartMenu(event.currentTarget); }
+};
+$('#item-menu').addEventListener('pointerover', event => {
+  if (event.target.closest('button[data-act]')?.dataset.act !== 'stop') closeSessionStartMenu();
+});
+
 function sessionRunRow(uid) {
   return sidebarSessions().find(row => row.uid === uid)
     || (typeof sessionTermMeta === 'function' ? sessionTermMeta(uid) : null);
@@ -7360,7 +7414,17 @@ function paintSessionRunControl(button, row) {
   // Restore the normal label before the shared unavailable hint is reapplied.
   setControlUnavailable(button, '');
   button.title = button.ariaLabel = label;
-  if (button.closest('#item-menu')) button.textContent = label;
+  if (button.closest('#item-menu')) {
+    button.innerHTML = running ? label : `${label} <span aria-hidden="true">›</span>`;
+    if (running) {
+      button.removeAttribute('aria-haspopup'); button.removeAttribute('aria-controls');
+      closeSessionStartMenu();
+    } else {
+      button.setAttribute('aria-haspopup', 'menu');
+      button.setAttribute('aria-controls', 'session-start-menu');
+      button.setAttribute('aria-expanded', String(!$('#session-start-menu').hidden));
+    }
+  }
   else {
     button.innerHTML = uiIcon('power');
     button.classList.toggle('danger', running);
@@ -7368,7 +7432,9 @@ function paintSessionRunControl(button, row) {
     button.onclick = () => toggleSessionRun(row?.agent_id ? row : sessionRunRow(row?.uid) || row, button, button.dataset.runIntent);
   }
   button.dataset.runIntent = running ? 'stop' : 'start';
-  setControlUnavailable(button, sessionRunUnavailable(row));
+  const reason = button.closest('#item-menu') && !running && !row?.pending
+    ? (sessionStartUnavailable(row, 'sdk') && sessionStartUnavailable(row, 'cli')) : sessionRunUnavailable(row);
+  setControlUnavailable(button, reason);
 }
 function refreshSessionRunControls() {
   const button = $('#a-session-toggle');
@@ -7379,7 +7445,7 @@ function refreshSessionRunControls() {
     paintSessionRunControl(button, row);
   if (menuUid) paintSessionRunControl($('#item-menu [data-act="stop"]'), sessionRunRow(menuUid));
 }
-async function toggleSessionRun(row, button = null, intent = null) {
+async function toggleSessionRun(row, button = null, intent = null, mode = null) {
   // A live refresh can change the row after the control was painted. Keep the
   // action the user clicked; stop is idempotent if the instance already exited.
   if (intent === 'stop' || (intent !== 'start' && sessionRunActive(row))) {
@@ -7387,16 +7453,23 @@ async function toggleSessionRun(row, button = null, intent = null) {
     else await stopSession(row, button);
     return;
   }
-  if (sessionRunUnavailable(row)) {paintSessionRunControl(button, row); return;}
+  if (mode ? sessionStartUnavailable(row, mode) : sessionRunUnavailable(row)) {paintSessionRunControl(button, row); return;}
   ConsoleUI.busy.add(row.uid);
   ConsoleUI.errors.delete(row.uid);
   refreshSessionRunControls();
   try {
-    if (S.sel !== row.uid || S.agent !== (row.agent_id || null)) await openSession(row.uid, row.agent_id || null);
+    if (mode || S.sel !== row.uid || S.agent !== (row.agent_id || null)) await openSession(row.uid, row.agent_id || null);
     // Reuse the existing exact-UID resume and its idempotent launch receipt.
-    if (SessionContentView.kind === 'sdk' && SdkView.available(row.uid, row.agent_id || null))
+    if ((mode === 'sdk' || (!mode && SessionContentView.kind === 'sdk')) && SdkView.available(row.uid, row.agent_id || null))
       await SdkView.startSession(row.uid, row.agent_id || null);
-    else await takeover(row.uid, null);
+    else {
+      if (mode === 'cli') {
+        SdkView.legacyViews.add(viewKey(row.uid));
+        SdkView.rememberMode(row.uid, null, 'terminal');
+        SessionContentView.close();
+      }
+      await takeover(row.uid, null);
+    }
   } catch (error) {
     await appAlert(`启动失败：${error.message || error}`);
   } finally {
