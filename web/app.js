@@ -4216,7 +4216,7 @@ $('#item-menu').onclick = async e => {
   }
   if (button.dataset.act === 'stop') {
     const row = S.sessions.find(x => x.uid === uid) || sidebarSessions().find(x => x.uid === uid);
-    if (row) await toggleSessionRun(row);
+    if (row) await toggleSessionRun(row, null, button.dataset.runIntent);
     return;
   }
   const row = sidebarSessions().find(session => session.uid === uid);
@@ -7350,8 +7350,9 @@ function paintSessionRunControl(button, row) {
     button.innerHTML = uiIcon('power');
     button.classList.toggle('danger', running);
     labelSessionAction(button);
-    button.onclick = () => toggleSessionRun(sessionRunRow(row?.uid) || row, button);
+    button.onclick = () => toggleSessionRun(sessionRunRow(row?.uid) || row, button, button.dataset.runIntent);
   }
+  button.dataset.runIntent = running ? 'stop' : 'start';
   setControlUnavailable(button, sessionRunUnavailable(row));
 }
 function refreshSessionRunControls() {
@@ -7363,13 +7364,15 @@ function refreshSessionRunControls() {
     paintSessionRunControl(button, row);
   if (menuUid) paintSessionRunControl($('#item-menu [data-act="stop"]'), sessionRunRow(menuUid));
 }
-async function toggleSessionRun(row, button = null) {
-  if (sessionRunUnavailable(row)) {paintSessionRunControl(button, row); return;}
-  if (sessionRunActive(row)) {
+async function toggleSessionRun(row, button = null, intent = null) {
+  // A live refresh can change the row after the control was painted. Keep the
+  // action the user clicked; stop is idempotent if the instance already exited.
+  if (intent === 'stop' || (intent !== 'start' && sessionRunActive(row))) {
     if (row.pending) await stopPendingSession(row, button);
     else await stopSession(row, button);
     return;
   }
+  if (sessionRunUnavailable(row)) {paintSessionRunControl(button, row); return;}
   ConsoleUI.busy.add(row.uid);
   ConsoleUI.errors.delete(row.uid);
   refreshSessionRunControls();

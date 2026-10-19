@@ -22,6 +22,21 @@ list must not override a newer selection or the mobile list view. Restoration
 uses the existing pending opener, including its saved terminal choice and
 confirmed native-binding transition.
 
+Starting a saved session from the row menu or header uses the same terminal
+view switch as the console button. After a successful resume receipt, the page
+leaves any SDK/info/resources panel before refreshing terminal discovery, then
+claims and attaches the verified instance. Discovery must not reopen the default
+SDK panel over that terminal. A response arriving after navigation must not
+replace the newer selected view.
+
+`BUG-20261019-003647-abbb31`: resume returned 200 and the lifecycle receipt was
+Running, but the browser's `terminal.pane open` left its SDK panel active.
+The panel's layout hid the terminal, so no claim or WebSocket attach followed.
+The captured native history had no new input. The regression
+[session_start_sdk_browser.py](../tests/session_start_sdk_browser.py) starts from
+an unavailable SDK view through node/Hub, types into the actual private PTY,
+and checks history plus discovery in desktop/mobile and both themes.
+
 A partial hub terminal list is authoritative only for nodes that answered.
 For failed nodes the page retains its known receipts and console identities,
 including a create receipt newer than the hub cache. Missing rows or saved

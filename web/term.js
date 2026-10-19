@@ -543,6 +543,11 @@ async function takeover(uid, btn) {
       ConsoleUI.errors.set(uid, d.error);
       return appAlert('打开控制台失败：' + d.error);
     }
+    if (S.sel !== uid || S.agent) return;
+    // Starting from the session menu bypasses the terminal button's view
+    // switch. Select the terminal before discovery can restore the SDK pane.
+    SdkView.legacyViews.add(viewKey(uid));
+    SessionContentView.close();
     await loadTermList();
     // The receipt is ready, but the fresh instance reaches the console
     // list only once its guarded observation matches the session row; wait
@@ -552,6 +557,7 @@ async function takeover(uid, btn) {
       await new Promise(resolve => setTimeout(resolve, 500));
       await loadTermList();
     }
+    if (S.sel !== uid || S.agent) return;
     T.uid = uid;
     S.live.add(uid);
     S.liveTmux.add(uid);
