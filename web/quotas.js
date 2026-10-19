@@ -17,8 +17,7 @@ async function initQuotas(container) {
     const d=new Date(value);return Number.isFinite(d.getTime()) ? d.toLocaleString(undefined,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : 'N/A';
   }
   function windowName(value) {
-    if(typeof value==='number') return value%1440===0 ? `${value/1440} 天` : value%60===0 ? `${value/60} 小时` : `${value} 分钟`;
-    return {five_hour:'5 小时',seven_day:'每周',weekly:'每周','5h':'5 小时',spend_limit:'消费限额'}[value] || value || 'N/A';
+    return value == null || value === '' ? 'N/A' : UsageUI.window(value);
   }
   function countdown(value) {
     const end=Date.parse(value);

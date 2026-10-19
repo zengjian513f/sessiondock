@@ -123,8 +123,8 @@ def browser_check(fixture, base, screenshots):
         assert len([frame for frame in fixture.frames("user") if frame["message"]["content"] == "hello from browser"]) == 1
         toggle_usage_details(page)
         page.locator('#native-usage-refresh').click()
-        expect(page.locator('#native-usage-detail')).to_contain_text('输入 Token：100')
-        expect(page.locator('#native-usage-detail')).to_contain_text('缓存读取：30')
+        expect(page.locator('#native-usage-detail .sdk-usage-metric').filter(has_text='输入')).to_have_text('输入100')
+        expect(page.locator('#native-usage-detail .sdk-usage-metric').filter(has_text='缓存读取')).to_have_text('缓存读取30')
         usage = wait_snapshot(page, fixture.uid, lambda raw: raw.get('usage', {}).get('tokens', {}).get('total_tokens') == 160)['raw']['usage']
         assert usage['tokens'] == {'input': 100, 'output': 20, 'reasoning': 5, 'cache': {'read': 30, 'write': 10}, 'total_tokens': 160}, usage
         assert usage['cost_usd'] == .01 and usage['context']['used_tokens'] == 1200, usage

@@ -9547,20 +9547,7 @@ function renderConversationUsage(row, uid) {
     const gauges = row.querySelector('.sdk-gauges');
     gauges.replaceChildren();
     const agent = data?.agents?.find(item => item.source === source);
-    for (const bucket of agent?.buckets || []) {
-      if (!Number.isFinite(bucket.remaining_percent)) continue;
-      const used = Math.max(0, Math.min(100, 100 - bucket.remaining_percent));
-      const window = bucket.window;
-      const label = typeof window === 'number'
-        ? (window % 1440 === 0 ? `${window / 1440}d` : window % 60 === 0 ? `${window / 60}h` : `${window}m`)
-        : {five_hour: '5h', seven_day: '7d', weekly: '7d'}[window] || window || bucket.group || '用量';
-      const gauge = el('span', 'sdk-gauge');
-      gauge.title = `${label} 已用 ${Math.round(used)}%${agent.captured_at ? `；记录于 ${new Date(agent.captured_at).toLocaleString()}` : ''}`;
-      const bar = el('span', 'sdk-bar'), fill = el('u');
-      fill.style.width = `${used}%`; bar.append(fill);
-      gauge.append(el('span', '', label), bar, el('b', '', `${Math.round(used)}%`));
-      gauges.append(gauge);
-    }
+    UsageUI.appendQuotas(gauges,agent,source);
     renderConversationBalances(gauges, agent);
     if (!gauges.childElementCount) gauges.append(el('span', '', '用量暂无数据'));
   };

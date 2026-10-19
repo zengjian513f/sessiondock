@@ -52,9 +52,9 @@ const CodexSdkView = {
           <button class="sdk-status" type="button" disabled><span role="status" aria-live="polite"></span></button>
           <div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" role="dialog" aria-label="完整状态"></div>
           <div class="sdk-gauges" aria-label="用量">
+            <span class="sdk-gauge" data-gauge="context" hidden></span>
             <span class="sdk-gauge" data-gauge="5h" hidden></span>
             <span class="sdk-gauge" data-gauge="7d" hidden></span>
-            <span class="sdk-gauge" data-gauge="context" hidden></span>
             <span class="sdk-credits" hidden></span>
           </div>
           <button class="btn" id="sdk-usage-toggle" type="button" aria-expanded="false" aria-controls="sdk-usage-menu" hidden>用量</button>
@@ -343,14 +343,9 @@ const CodexSdkView = {
     this.paintGauges();
   },
 
-  /** 窗口时长（分钟）→ 5h / 7d 等简称。 */
+  /** 与其它 agent 共用窗口名称。 */
   windowLabel(minutes) {
-    if (!Number.isFinite(minutes) || minutes <= 0) return '额度';
-    if (minutes === 300) return '5h';
-    if (minutes === 10080) return '7d';
-    if (minutes % 1440 === 0) return `${minutes / 1440}d`;
-    if (minutes % 60 === 0) return `${minutes / 60}h`;
-    return `${minutes}m`;
+    return UsageUI.window(minutes);
   },
 
   gauge(slot, label, used, title) {
@@ -385,8 +380,8 @@ const CodexSdkView = {
     const slots = {'5h': null, '7d': null};
     const others = [];
     for (const window of windows) {
-      const label = this.windowLabel(window.windowDurationMins);
-      if (label in slots) slots[label] = window; else others.push(window);
+      const slot = {300:'5h',10080:'7d'}[window.windowDurationMins];
+      if (slot) slots[slot] = window; else others.push(window);
     }
     // 官方窗口是 5h 与 7d；其它时长的窗口借用空闲的格子，不丢信息。
     for (const window of others) {
@@ -406,9 +401,9 @@ const CodexSdkView = {
     const size = usage?.modelContextWindow;
     const used = usage?.last?.totalTokens;
     if (size && used != null) {
-      this.gauge('context', 'Ctx', used / size * 100,
+      this.gauge('context', '上下文', used / size * 100,
         `上下文已用 ${Math.min(100, Math.round(used / size * 100))}%（${used.toLocaleString()} / ${size.toLocaleString()} tokens）`);
-    } else this.gauge('context', 'Ctx', NaN, '');
+    } else this.gauge('context', '上下文', NaN, '');
     const credits = bucket.credits;
     const creditNode = this.pane.querySelector('.sdk-credits');
     const balance = Number(credits?.balance);
@@ -489,13 +484,13 @@ const CodexSdkView = {
     const switching = modelName !== currentModel;
     select.replaceChildren();
     for (const effort of model?.supportedReasoningEfforts || []) {
-      const option = new Option(({none:'无', minimal:'最低', low:'低', medium:'中', high:'高', xhigh:'极高'})[effort.reasoningEffort] || effort.reasoningEffort, effort.reasoningEffort);
+      const option = new Option(UsageUI.effort(effort.reasoningEffort), effort.reasoningEffort);
       option.title = effort.description || '';
       select.append(option);
     }
     if (chosen && ![...select.options].some(option => option.value === chosen)) {
       if (switching && this.effortChoice === null) chosen = '';
-      else select.append(new Option(({none:'无', minimal:'最低', low:'低', medium:'中', high:'高', xhigh:'极高'})[chosen] || chosen, chosen));
+      else select.append(new Option(UsageUI.effort(chosen), chosen));
     }
     this.selectValue(select, chosen, '推理强度');
     CodexSdkControls.paintTier(this);

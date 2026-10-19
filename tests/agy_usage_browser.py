@@ -12,6 +12,7 @@ from agy_sdk_browser import select_sdk, send
 from agy_sdk_fixtures import AgyFixture
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from send_browser import initialize
+from sdk_usage_fixtures import assert_inline_usage
 
 
 def exercise(browser, base, fixture, screenshots):
@@ -34,6 +35,21 @@ def exercise(browser, base, fixture, screenshots):
     page.keyboard.press('Escape')
     send(page, '用量下拉实际发送 synthetic turn')
     expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply')
+    # Mirror the real four-bucket shape with deliberately different window spellings.
+    def grouped_quota(route):
+        response = route.fetch()
+        data = response.json()
+        data.get('raw', data)['quota']['buckets'] = [
+            {'id':'gemini-weekly','group':'Gemini Models','window':'weekly','remaining_percent':68.25167536735535,'resets_at':'2026-10-23T22:06:57Z'},
+            {'id':'gemini-5h','group':'Gemini Models','window':'5h','remaining_percent':99.99208450317384},
+            {'id':'3p-weekly','group':'Claude and GPT models','window':'seven_day','remaining_percent':53.429800271987915},
+            {'id':'3p-5h','group':'Claude and GPT models','window':'5h','remaining_percent':100}]
+        route.fulfill(response=response,json=data)
+    page.route('**/api/native-sdk/usage',grouped_quota)
+    page.locator('#sdk-more').click()
+    page.locator('#native-usage-refresh').click()
+    expect(detail).to_contain_text('Gemini')
+    page.keyboard.press('Escape')
     page.locator('#sdk-input').fill('保留草稿 retained draft')
     for width in (1280, 390, 320):
         page.set_viewport_size({'width': width, 'height': 900})
@@ -49,8 +65,14 @@ def exercise(browser, base, fixture, screenshots):
             expect(detail).to_contain_text('12,000')
             expect(detail).to_contain_text('800')
             expect(detail).to_contain_text('9,000')
-            expect(detail).to_contain_text('已用 28%')
-            expect(detail).to_contain_text('剩余 72%')
+            expect(detail).to_contain_text('已用 32%')
+            expect(detail).to_contain_text('剩余 68.3%')
+            expect(detail.locator('.sdk-usage-quota-heading')).to_have_text(['Gemini','Claude/GPT'])
+            expect(detail.locator('.sdk-usage-window .sdk-gauge > span')).to_have_text(['5小时','7天','5小时','7天'])
+            footer = page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')
+            expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
+            expect(footer).not_to_contain_text('weekly')
+            expect(detail).not_to_contain_text('675367')
             expect(page.locator('#native-sdk-mode')).to_be_visible()
             menu = page.locator('#sdk-more-menu')
             bounds = menu.bounding_box()
@@ -59,14 +81,17 @@ def exercise(browser, base, fixture, screenshots):
             page.screenshot(path=str(screenshots/f'agy-usage-{width}-{theme}.png'))
             page.keyboard.press('Escape')
             expect(detail).to_be_hidden()
+            assert_inline_usage(page)
+            page.screenshot(path=str(screenshots/f'agy-footer-{width}-{theme}.png'))
             expect(page.locator('#sdk-input')).to_have_value('保留草稿 retained draft')
+    page.unroute('**/api/native-sdk/usage',grouped_quota)
     # Refresh the real synthetic collector; it must not submit an inference turn.
     page.locator('#sdk-more').click()
     before = len(fixture.inputs())
     (fixture.root/'quota-hold').touch()
     page.locator('#native-usage-refresh').click()
     expect(page.locator('#native-usage-refresh')).to_be_disabled()
-    expect(detail).to_contain_text('剩余 72%')
+    expect(detail).to_contain_text('剩余 68.3%')
     page.screenshot(path=str(screenshots/'agy-usage-loading.png'))
     (fixture.root/'quota-remaining').write_text('0.09')
     (fixture.root/'quota-hold').unlink()

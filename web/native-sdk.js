@@ -20,6 +20,7 @@ const NativeSdkView = {
   scheduleHistory: CodexSdkView.scheduleHistory,
   setConnected: CodexSdkView.setConnected,
   closeToolbarMenus: CodexSdkView.closeToolbarMenus,
+  updateStatusDisclosure: CodexSdkView.updateStatusDisclosure,
 
   open(uid, pane, agent = null, {historyReady = null} = {}) {
     this.close();
@@ -139,7 +140,7 @@ const NativeSdkView = {
       });
       es.onerror = () => {
         if (!this.current(generation) || this.es !== es) return;
-        this.setConnected(false); this.setNotice('连接中断，重连中', 'connecting');
+        this.setConnected(false); this.setNotice('重连中', 'connecting');
         if (es.readyState === EventSource.CLOSED) this.reconnect();
       };
     } catch (error) {
@@ -190,8 +191,8 @@ const NativeSdkView = {
     const selected = this.models.find(row => (row.id || row.model || row.modelId) === (this.modelChoice || this.nativeModel));
     const efforts = selected?.supportedReasoningEfforts || selected?.efforts || [];
     const effort = this.pane.querySelector('#sdk-effort');
-    effort.replaceChildren(new Option(this.nativeEffort || '强度', ''));
-    for (const row of efforts) { const id = typeof row === 'string' ? row : row.reasoningEffort || row.id; if (id) effort.add(new Option(id, id)); }
+    effort.replaceChildren(new Option(UsageUI.effort(this.nativeEffort) || '强度', ''));
+    for (const row of efforts) { const id = typeof row === 'string' ? row : row.reasoningEffort || row.id; if (id) effort.add(new Option(UsageUI.effort(id), id)); }
     effort.value = this.effortChoice || '';
     effort.title = effort.selectedOptions[0]?.textContent || '强度';
     effort.closest('label').hidden = efforts.length === 0;
@@ -256,7 +257,7 @@ const NativeSdkView = {
     const kind = raw.error ? 'blocked' : this.requests.size ? 'waiting' : compacting ? 'maintenance'
       : raw.retry ? 'retrying' : this.running ? 'working' : paused ? 'warning' : pending ? 'waiting' : 'ready';
     this.setNotice(raw.error ? `错误：${typeof raw.error === 'string' ? raw.error : raw.error.message || JSON.stringify(raw.error)}`
-      : this.requests.size ? '等待回答' : compacting ? '压缩中' : raw.retry ? `请求重试中${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}` : this.running ? '处理中' : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送' : '就绪', kind);
+      : this.requests.size ? ([...this.requests.values()].some(request=>request.type==='approval')?'待批准':'待回答') : compacting ? '压缩中' : raw.retry ? `正在重试${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}` : this.running ? '处理中' : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送' : '就绪', kind);
   },
 
   paintHistory() {

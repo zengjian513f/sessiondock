@@ -150,6 +150,8 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         assert_inline_usage(page)
         expect(page.locator('.sdk-status-row > .sdk-gauges .sdk-credits')).to_have_text('🪙 1,235')
         expect(page.locator('.sdk-status-row > .sdk-gauges [data-gauge="5h"] b')).to_have_text('40%')
+        expect(page.locator('[data-gauge="5h"] > span')).to_have_text('5小时')
+        expect(page.locator('[data-gauge="7d"] > span')).to_have_text('7天')
         page.locator('#sdk-more').click()
         menu = page.locator('#sdk-more-menu')
         expect(menu).to_be_visible()

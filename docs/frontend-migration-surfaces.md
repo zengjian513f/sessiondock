@@ -155,7 +155,7 @@ DELTA（BUG-20261016-083529-776b9e）：浮动卡宽度受缩放后的容器约�
 
 左栏宽度 `width`，默认 340，最小 200。拖 `#drag`，双击回到默认。资源列打开时视觉宽度再加 144，存的仍是不含这 144 的值（`setSideWidth`）。
 
-DELTA：会话模式复用 SDK 的底部状态／用量样式；Working、等待、失败等状态移出消息列表。用量只读当前节点的额度快照，无数据时明确显示暂无数据，不启动 SDK 会话。浏览器覆盖：[`tests/conversation_status_browser.py`](../tests/conversation_status_browser.py)。
+DELTA：会话模式复用 SDK 的底部状态／用量样式；处理中、待回答、失败等状态移出消息列表。窗口名称统一为“5小时 / 7天”，Agy 按模型额度组区分，不将不同组的同周期额度混为一项。用量只读当前节点的额度快照，无数据时明确显示暂无数据，不启动 SDK 会话。浏览器覆盖：[`tests/conversation_status_browser.py`](../tests/conversation_status_browser.py)。
 
 会话用量同时展示快照中的金币余额与重置卡数量，保留零值和无限额度；缺失字段不伪装为零，悬停可见记录时间和最近到期时间。窄屏自动换行，PTY 输入提示不覆盖用量。
 

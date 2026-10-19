@@ -47,7 +47,9 @@ def main():
                 page.route('**/api/quotas', lambda r: r.fulfill(json={'agents': [{'source': 'codex', 'captured_at': '2026-10-19T03:00:00Z', 'buckets': [
                     {'id':'codex:credits','group':'Codex credits','remaining_text':'1234.6'},
                     {'id':'reset-credits','group':'重置卡','remaining_text':'3 张','expires_at':'2026-11-01T00:00:00Z'},
-                    {'window': 300, 'remaining_percent': 74}, {'window': 10080, 'remaining_percent': 91}]}]}))
+                    {'group':'Codex','window': 300, 'remaining_percent': 74},
+                    {'group':'Codex','window': 10080, 'remaining_percent': 91},
+                    {'group':'专项模型','window':'weekly','remaining_percent':9}]}]}))
                 def history(route):
                     response = route.fetch()
                     data = response.json()
@@ -68,6 +70,9 @@ def main():
                     expect(footer.locator('.sdk-status')).to_have_text({'working': '处理中', 'waiting': '待回答', 'failed': '执行失败', 'idle': '就绪', 'compacting': '压缩中'}[status])
                     expect(footer.locator('.sdk-gauges')).to_contain_text('26%')
                     expect(footer.locator('.sdk-gauges')).to_contain_text('9%')
+                    expect(footer.locator('.sdk-quota-name')).to_have_text(['Codex','专项模型'])
+                    expect(footer.locator('.sdk-gauge > span')).to_have_text(['5小时','7天','7天'])
+                    expect(footer.locator('.sdk-gauge.low')).to_contain_text('91%')
                     expect(footer.locator('[data-balance="codex:credits"]')).to_have_text('🪙 1,235')
                     expect(footer.locator('[data-balance="reset-credits"]')).to_have_text('重置卡 3 张')
                     expect(footer.locator('[data-balance="reset-credits"]')).to_have_attribute('title', re.compile('最近到期'))

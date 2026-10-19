@@ -2557,6 +2557,9 @@ header .btn[data-session-docked] { display: none; }
 .sdk-gauges:not(:has(> :not([hidden]))) { display: none; }
 .sdk-status-row [hidden], .sdk-options [hidden] { display: none; }
 .sdk-gauge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sdk-quota-group, .sdk-quota-windows { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; min-width: 0; max-width: 100%; }
+.sdk-quota-name { max-width: 12em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.sdk-quota-windows { flex: none; }
 .sdk-bar { display: block; flex: none; width: 40px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--border); }
 .sdk-bar > u { display: block; height: 100%; border-radius: inherit; background: var(--accent); text-decoration: none; transition: width .2s; }
 .sdk-gauge b { min-width: 3.4ch; color: var(--text); font-weight: 600; text-align: right; }
@@ -2602,10 +2605,21 @@ header .btn[data-session-docked] { display: none; }
 .sdk-action-fields { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .sdk-action-fields > input { width: 100%; box-sizing: border-box; }
 .sdk-control-section { display: grid; gap: 7px; }
-.sdk-agy-menu { gap: 0; padding: 12px; }
-.sdk-agy-menu > #sdk-actions:not(:has(> :not([hidden]))) { display: none; }
-.sdk-agy-menu > #native-sdk-settings { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
-.sdk-agy-menu > #native-sdk-settings:empty { display: none; }
+.sdk-native-menu { gap: 0; padding: 12px; }
+.sdk-native-menu > #sdk-actions:not(:has(> :not([hidden]))) { display: none; }
+.sdk-native-menu > #native-sdk-settings { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+.sdk-native-menu > #native-sdk-settings:empty { display: none; }
+#sdk-actions > .sdk-action { width: 100%; min-height: 30px; padding: 5px 8px; border: 0; border-radius: 5px; background: transparent; font: 12.5px/1.4 var(--sans); }
+#sdk-actions > .sdk-action:hover { background: var(--hover); }
+#sdk-actions > .sdk-action[hidden] { display: none; }
+.sdk-native-menu > .new-effort { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: auto; min-height: 30px; border: 0; border-radius: 0; background: transparent; }
+.sdk-native-menu > .new-effort > .sdk-picker-label { flex: none; color: var(--text); white-space: nowrap; }
+.sdk-native-menu > .new-effort > select { flex: none; width: 128px; box-sizing: border-box; height: 28px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.sdk-native-menu > #sdk-actions:has(> :not([hidden])) { padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.sdk-native-menu > #native-sdk-settings { gap: 2px; }
+.sdk-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; font-size: 12px; }
+.sdk-setting-row > .new-effort { width: 128px; min-width: 0; margin-left: auto; }
+.sdk-setting-row select { width: 100%; box-sizing: border-box; height: 28px; padding: 3px 6px; font: inherit; }
 .sdk-inline-usage { display: grid; gap: 12px; min-width: 0; }
 .sdk-usage-heading, .sdk-usage-quota-heading, .sdk-usage-metric { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .sdk-usage-heading h3 { margin: 0; font-size: 13px; }
@@ -2618,11 +2632,13 @@ header .btn[data-session-docked] { display: none; }
 .sdk-usage-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
 .sdk-usage-metric { min-width: 0; font-size: 12px; color: var(--muted); gap: 6px; overflow-wrap: anywhere; }
 .sdk-usage-metric b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
-.sdk-usage-quota { display: grid; gap: 6px; min-width: 0; }
+.sdk-usage-quota { display: grid; gap: 8px; min-width: 0; }
+.sdk-usage-quota + .sdk-usage-quota { margin-top: 4px; }
+.sdk-usage-window { display: grid; gap: 4px; }
 .sdk-usage-quota-heading { font-size: 12px; }
 .sdk-usage-quota-heading > :first-child { min-width: 0; overflow-wrap: anywhere; }
 .sdk-usage-quota-heading > :last-child { flex: none; }
-.sdk-inline-usage .sdk-usage-quota .sdk-gauge { grid-template-columns: minmax(0, 1fr) auto; }
+.sdk-inline-usage .sdk-usage-quota .sdk-gauge { grid-template-columns: 3.5em minmax(0, 1fr) auto; }
 .sdk-inline-usage .sdk-usage-quota .sdk-control-note { font-size: 11px; }
 .sdk-control-section h3 { margin: 0; font-size: 13px; }
 .sdk-control-row { display: flex; gap: 6px; flex-wrap: wrap; }

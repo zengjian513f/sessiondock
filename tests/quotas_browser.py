@@ -114,7 +114,7 @@ def main():
             expect(machine.locator('section[data-source=codex]')).to_contain_text('N/A')
             expect(machine.locator('td.quota-credits')).to_have_text('12,345')
             assert machine.locator('td.quota-credits').evaluate("n => getComputedStyle(n).textAlign")=='right'
-            expect(machine.locator('section[data-source=codex] [role=progressbar]').first).to_have_attribute('aria-label','Quota Node 长机器名 5 小时 已使用额度')
+            expect(machine.locator('section[data-source=codex] [role=progressbar]').first).to_have_attribute('aria-label','Quota Node 长机器名 5小时 已使用额度')
             assert machine.locator('section[data-source=codex] [role=progressbar]').first.get_attribute('aria-valuenow')=='25'
             expect(machine.locator('section[data-source=agy] .quota-remaining b')).to_have_text(['15%','100%','0%'])
             expect(machine.locator('section[data-source=codex]')).to_contain_text('3 张')
