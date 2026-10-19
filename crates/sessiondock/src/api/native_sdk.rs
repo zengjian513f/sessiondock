@@ -135,6 +135,8 @@ async fn execute(
     if method == "usage" && matches!(source, "agy" | "claude") {
         let quotas = if body["refresh"] == true {
             state.quotas.collect_source(source).await
+        } else if body["refresh"] == "auto" {
+            state.quotas.collect_cached(Some(source)).await
         } else {
             state.quotas.read().await
         };

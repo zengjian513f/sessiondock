@@ -29,6 +29,7 @@ root=Path(os.environ['QUOTA_FIXTURE'])
 if (root/'fail').exists(): sys.exit(1)
 if source=='agy':
  assert sys.argv[2:]==['-p','/usage','--output-format','json'],sys.argv
+ with (root/'agy-calls').open('a') as f:f.write('query\n')
  print(json.dumps({'status':'SUCCESS','num_turns':0,'command':{'name':'usage','data':{'groups':[
  {'name':'Gemini Models','buckets':[{'id':'gemini-weekly','window':'weekly','remaining_fraction':.85,'reset_time':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(time.time()+604800))},{'id':'gemini-5h','window':'5h','remaining_fraction':0,'reset_time':'2020-10-17T03:06:57Z'}]},
  {'name':'Claude and GPT models','buckets':[{'id':'3p-5h','window':'5h','remaining_fraction':1}]}]}}}));sys.exit()
@@ -67,6 +68,11 @@ def main():
         subprocess.run([str(binary),'quota-statusline',str(root/'state')],input='{}',text=True,capture_output=True,check=True)
         # Yesterday's snapshot must be replaced merely by opening the page.
         (root/'state/quotas/codex.json').write_text(json.dumps({'source':'codex','captured_at':'2020-10-17T03:02:16Z','buckets':[{'id':'codex:primary','group':'codex','window':10080,'remaining_percent':9}]}))
+        # A fresh snapshot from an earlier service process is already usable.
+        (root/'state/quotas/agy.json').write_text(json.dumps({'source':'agy','captured_at':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'buckets':[
+            {'id':'gemini-weekly','group':'Gemini Models','window':'weekly','remaining_percent':85},
+            {'id':'gemini-5h','group':'Gemini Models','window':'5h','remaining_percent':0,'resets_at':'2020-10-17T03:06:57Z'},
+            {'id':'3p-5h','group':'Claude and GPT models','window':'5h','remaining_percent':100}]}))
         (root/'hold').touch()
         port=free_port();extra=node_env(root,port,'127.0.0.0/8');extra['SESSIONDOCK_PROC_ROOT']=str(root/'proc')
         base,_=stack.enter_context(isolated_server(Corpus(root),binary,state_dir=root/'state',host_dir=root/'host',lifecycle_dir=root/'ledger',launcher_config=config,extra_env=extra))
@@ -117,6 +123,7 @@ def main():
             expect(machine.locator('section[data-source=claude]')).to_contain_text('100%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             assert (root/'calls').read_text().count('query')==1
+            assert not (root/'agy-calls').exists(), 'fresh persisted Agy quota must skip the CLI'
             deadline=machine.locator('section[data-source=codex] [data-deadline]').first
             # Freeze the browser clock against the returned deadline, not wall time.
             end=page.evaluate('value => Date.parse(value)/1000',deadline.get_attribute('data-deadline'))
@@ -137,13 +144,16 @@ def main():
             before=deadline.inner_text();page.clock.fast_forward(65000)
             assert deadline.inner_text()!=before
             assert (root/'calls').read_text().count('query')==1, 'countdown must not query CLIs'
-            # Explicit refresh still queries, then reopening queries again.
+            # Explicit refresh still queries; reopening reuses the shared cache.
             (root/'used').write_text('26')
             page.get_by_role('button',name='刷新').click()
             expect(machine.locator('section[data-source=codex]')).to_contain_text('26%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             assert (root/'calls').read_text().count('query')==2
             (root/'used').write_text('25')
+            page.get_by_role('button',name='刷新',exact=True).click()
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('25%')
+            expect(page.locator('#quota-refresh')).to_be_enabled()
             for theme in ('light','dark'):
                 page.evaluate("theme => localStorage.setItem('sessiondock.hub./.theme', JSON.stringify(theme))", theme)
                 for width in (1280,390):
@@ -166,11 +176,11 @@ def main():
                         expect(machine.get_by_role('table',name='Codex',exact=True).get_by_role('columnheader',name='采集')).to_be_in_viewport()
                         assert scroll.evaluate('n => n.scrollLeft > 0')
                         page.screenshot(path=str(out/f'{theme}-390-scrolled.png'),full_page=True)
-            assert (root/'calls').read_text().count('query')==6, 'each opening must query once'
+            assert (root/'calls').read_text().count('query')==3, 'fresh openings must reuse the cache'
             (root/'fail').touch();page.get_by_role('button',name='刷新').click();expect(machine.locator('section[data-source=codex]')).to_contain_text('查询失败',timeout=30000);expect(machine.locator('section[data-source=codex]')).to_contain_text('25%');expect(machine.locator('section[data-source=agy]')).to_contain_text('15%')
             page.screenshot(path=str(out/'query-failure.png'),full_page=True)
             # A node transport failure leaves its displayed snapshot in place.
-            page.route('**/api/quotas/refresh',lambda route:route.fulfill(status=503,body='offline') if (root/'ids/node-id').read_text().strip() in route.request.url else route.continue_())
+            page.route('**/api/quotas/refresh*',lambda route:route.fulfill(status=503,body='offline') if (root/'ids/node-id').read_text().strip() in route.request.url else route.continue_())
             page.get_by_role('button',name='刷新').click();expect(page.locator('#quota-status')).to_contain_text('1 台读取失败');expect(machine.locator('section[data-source=codex]')).to_contain_text('25%')
             machine.get_by_role('button',name='关闭',exact=True).click()
             expect(machine).to_have_count(0)
@@ -189,16 +199,19 @@ def main():
             expect(page.locator('#quota-refresh')).to_be_enabled()
             page.keyboard.press('Escape')
             page.unroute('**/api/clients')
-            page.unroute('**/api/quotas/refresh')
-            page.route('**/api/quotas/refresh',lambda route:route.fulfill(json={'agents':[{'source':'codex','buckets':[{'id':'codex:primary','group':'codex','window':300,'remaining_percent':75}]}]}))
+            page.unroute('**/api/quotas/refresh*')
+            page.route('**/api/quotas/refresh*',lambda route:route.fulfill(json={'agents':[{'source':'codex','buckets':[{'id':'codex:primary','group':'codex','window':300,'remaining_percent':75}]}]}))
             page.route('**/api/quotas',lambda route:route.fulfill(json={'agents':[{'source':'codex','buckets':[{'id':'codex:primary','group':'codex','window':300,'remaining_percent':75}]}]}))
             page.locator('#quota-open').click()
             expect(machine.locator('td.quota-credits')).to_have_text(['N/A'])
             expect(machine.locator('.quota-cards')).to_have_text(['N/A'])
             expect(page.locator('#quota-refresh')).to_be_enabled()
-            page.keyboard.press('Escape');page.unroute('**/api/quotas');page.unroute('**/api/quotas/refresh')
+            page.keyboard.press('Escape');page.unroute('**/api/quotas');page.unroute('**/api/quotas/refresh*')
             (root/'fail').unlink();(root/'used').write_text('31')
             page.goto(base+'/quotas.html');machine=page;expect(machine.locator('section[data-source=claude]')).to_contain_text('12.5%')
+            expect(page.locator('#quota-refresh')).to_be_enabled()
+            expect(machine.locator('section[data-source=codex]')).to_contain_text('25%')
+            page.get_by_role('button',name='刷新',exact=True).click()
             expect(machine.locator('section[data-source=codex]')).to_contain_text('31%')
             expect(page.locator('#quota-refresh')).to_be_enabled()
             page.reload()

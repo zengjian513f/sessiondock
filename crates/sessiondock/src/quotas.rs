@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
     process::Stdio,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -18,7 +18,7 @@ use tokio::{
 pub struct Quotas {
     directory: Option<PathBuf>,
     profiles: Vec<CliProfile>,
-    refresh: Mutex<()>,
+    refresh: [Mutex<Option<Instant>>; 2],
 }
 fn now() -> String {
     chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339()
@@ -69,7 +69,7 @@ impl Quotas {
         Self {
             directory: state.map(|p| p.join("quotas")),
             profiles: config.map(|c| c.profiles.clone()).unwrap_or_default(),
-            refresh: Mutex::new(()),
+            refresh: std::array::from_fn(|_| Mutex::new(None)),
         }
     }
     pub async fn read(&self) -> Value {
@@ -104,13 +104,16 @@ impl Quotas {
         json!({"agents":agents})
     }
     pub async fn collect(&self) -> Value {
-        self.collect_selected(None).await
+        self.collect_selected(None, false).await
     }
     pub async fn collect_source(&self, source: &str) -> Value {
-        self.collect_selected(Some(source)).await
+        self.collect_selected(Some(source), false).await
     }
-    async fn collect_selected(&self, selected: Option<&str>) -> Value {
-        let _guard = self.refresh.lock().await;
+    pub async fn collect_cached(&self, source: Option<&str>) -> Value {
+        self.collect_selected(source, true).await
+    }
+    async fn collect_selected(&self, selected: Option<&str>, cached: bool) -> Value {
+        let requested_at = Instant::now();
         let Some(dir) = &self.directory else {
             return self.read().await;
         };
@@ -122,16 +125,38 @@ impl Quotas {
                 .profiles
                 .iter()
                 .find(|p| source_name(p.source) == source)?;
-            let result = tokio::time::timeout(Duration::from_secs(25), query(profile)).await;
+            let mut completed = self.refresh[usize::from(source == "agy")].lock().await;
             let path = dir.join(format!("{source}.json"));
+            let previous = tokio::fs::read(&path)
+                .await
+                .ok()
+                .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+                .unwrap_or_else(|| empty(source));
+            // Share in-flight queries across settings and every SDK session.
+            // Automatic reads also reuse recent persisted successes or failures.
+            let recent = ["captured_at", "attempted_at"].into_iter().any(|key| {
+                previous[key]
+                    .as_str()
+                    .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
+                    .map(|time| {
+                        chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now())
+                            .signed_duration_since(time)
+                            .num_seconds()
+                    })
+                    .is_some_and(|age| (0..60).contains(&age))
+            });
+            if completed.is_some_and(|time| time >= requested_at)
+                || (cached
+                    && (recent
+                        || completed.is_some_and(|time| time.elapsed() < Duration::from_secs(60))))
+            {
+                return None;
+            }
+            let result = tokio::time::timeout(Duration::from_secs(25), query(profile)).await;
             let mut value = match result {
                 Ok(Ok(value)) => value,
                 _ => {
-                    let mut previous = tokio::fs::read(&path)
-                        .await
-                        .ok()
-                        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-                        .unwrap_or_else(|| empty(source));
+                    let mut previous = previous;
                     previous["error"] = json!(if result.is_err() {
                         "查询超时，保留上次快照"
                     } else {
@@ -144,6 +169,7 @@ impl Quotas {
             if save(&path, &value).is_err() {
                 value["error"] = json!("快照保存失败，本次结果仅在当前页面有效");
             }
+            *completed = Some(Instant::now());
             value["configured"] = json!(true);
             Some(value)
         };
