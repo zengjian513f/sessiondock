@@ -60,7 +60,11 @@ class StopServer(MessageServer):
             await self.send(writer, {'id': message['id'], 'result': {'status': 'notLoaded' if params['threadId'] in self.unloaded else 'unsubscribed'}})
             return
         await super()._handle(writer, message)
-        if method == 'thread/fork': self.loaded.add(FORK)
+        if method == 'thread/fork':
+            self.loaded.add(FORK)
+            meta = json.loads(self.fork_path.read_text())
+            meta['payload']['cwd'] = json.loads(self.source_path.read_text().splitlines()[0])['payload']['cwd']
+            self.fork_path.write_bytes(encoded(meta))
 
 
 def exercise(browser, base, corpus, fake, proc, screenshots, label):
@@ -101,6 +105,37 @@ def exercise(browser, base, corpus, fake, proc, screenshots, label):
         raise AssertionError({'takeover': result, 'list': page.evaluate('T.list'), 'source': source}) from error
     page.locator('#a-sdk').click()
     page.wait_for_function('CodexSdkView.connected')
+    parent_terminal = page.evaluate('T.list.find(row => row.uid === S.sel).name')
+    # BUG-20261019-111304-7ce045: an independent middle-message fork must
+    # not jump back to its visible parent's PTY and reveal the parent's tail.
+    if 'narrow' in label: page.get_by_role('button', name='返回会话列表', exact=True).click()
+    page.locator(f'#side .item[data-uid="{branch}"]').click()
+    page.wait_for_function('CodexSdkView.connected && !!CodexSdkView.historyData')
+    expect(page.locator('.sdk-history')).not_to_contain_text(LATER)
+    if screenshots: page.screenshot(path=str(screenshots / f'{label}-branch-before-terminal.png'))
+    page.locator('#a-term').click()
+    page.wait_for_function('!ConsoleUI.busy.size')
+    assert page.evaluate('S.sel') == branch, 'terminal switched the independent fork to its parent'
+    try:
+        page.wait_for_function('T.ws?.readyState === WebSocket.OPEN', timeout=10000)
+    except Exception as error:
+        raise AssertionError(page.evaluate('({selected:S.sel,uid:T.uid,name:T.name,list:T.list,errors:[...ConsoleUI.errors]})')) from error
+    assert page.evaluate('T.name') != parent_terminal
+    page.wait_for_function('uid => T.list.some(row => row.uid === uid && row.instance_id)', arg=branch)
+    assert page.evaluate('T.uid') == branch
+    assert page.evaluate('name => T.list.some(row => row.name === name)', parent_terminal)
+    page.locator('#a-sdk').click()
+    page.wait_for_function('CodexSdkView.connected && !!CodexSdkView.historyData')
+    expect(page.locator('.sdk-history')).not_to_contain_text(LATER)
+    expect(page.locator('.sdk-history')).not_to_contain_text('remove this answer')
+    expect(page.locator('#sdk-input')).to_have_value('第二轮 remove this question')
+    assert page.evaluate('S.sel') == branch
+    if screenshots: page.screenshot(path=str(screenshots / f'{label}-branch-after-terminal.png'))
+    # Opening the parent explicitly still shows its complete, separate history.
+    if 'narrow' in label: page.get_by_role('button', name='返回会话列表', exact=True).click()
+    page.locator(f'#side .item[data-uid="{source}"]').click()
+    page.wait_for_function('CodexSdkView.connected && !!CodexSdkView.historyData')
+    expect(page.locator('.sdk-history')).to_contain_text(LATER)
     action = page.locator('#a-session-toggle')
     if not action.is_visible(): page.locator('#a-more').click()
     with page.expect_response(lambda response: response.url.endswith('/api/session/stop')) as stopped:
