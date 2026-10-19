@@ -351,7 +351,20 @@ Browser regression: [creation retention](../tests/sdk_creation_retention_browser
   routine labels are 就绪 / 连接中 / 重连中 / 处理中 / 待批准 / 待回答 / 用量已满 /
   系统错误. Status uses at most six characters and reserves its space before optional controls,
   including on narrow panes at 125% interface scale.
-  It displays 就绪 when there is no active turn, waiting state or error.
+  DELTA (BUG-20261019-095333-0cd031): an idle daemon does not imply that its
+  preceding turn completed successfully. The bridge retains the last observed
+  terminal turn's ID/status as `summary.last_turn`, including `interrupted`,
+  across page reloads; starting a turn or reverting clears it. An interrupted
+  turn displays 已中断 with the existing warning color. When no live outcome
+  is retained, native `aborted` history and the shared CLI observation rule in
+  [CLI state](cli-state.md) provide the same fallback as the conversation view,
+  including a missing native ending followed by a newer ready/idle terminal.
+  CLI-only changes refresh this status even when history is unchanged.
+  New turns and explicit successful completions supersede older interruptions;
+  waiting, compaction and errors retain their precedence. The label does not
+  attribute an interruption to a user. Coverage:
+  [interrupted SDK browser suite](../tests/codex_sdk_interrupted_browser.py).
+  Otherwise it displays 就绪 when there is no active turn, waiting state or error.
   Every status can be clicked, tapped or activated with Enter to open its full
   detail, including the original error. Escape or an outside click closes it.
   DELTA: status text has a matching six-pixel dot using the shared

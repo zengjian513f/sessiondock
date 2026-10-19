@@ -562,12 +562,20 @@ const CodexSdkView = {
   useHistory(entry, force = false) {
     if (!this.pane || !entry) return;
     const data = this.historyData;
+    const observed = observedConversationActivity(entry.activity, this.uid, this.agent).activity;
     if (!force && this.historyEntry === entry && data?.end === entry.end
         && data.messages === entry.msgs && data.length === entry.msgs.length
-        && data.partial === entry.partial && data.activity === entry.activity) return;
+        && data.partial === entry.partial && data.activity === entry.activity) {
+      // CLI-only updates can close a native turn whose ending was never
+      // written. They must refresh status even when history is unchanged.
+      if (this.summary && this.connected && (data.observedActivity?.state !== observed?.state
+          || data.observedActivity?.reason !== observed?.reason)) this.paintStatus();
+      data.observedActivity = observed;
+      return;
+    }
     this.historyEntry = entry;
     this.historyData = {messages: entry.msgs, partial: entry.partial,
-      activity: entry.activity, end: entry.end, length: entry.msgs.length};
+      activity: entry.activity, observedActivity: observed, end: entry.end, length: entry.msgs.length};
     this.paintHistory();
   },
 
@@ -691,11 +699,12 @@ const CodexSdkView = {
       case 'thread/resumed': this.summary = raw.summary || this.summary; this.paintPickers(); break;
       case 'turn/started':
         this.turn = raw.turn; this.items.clear();
-        if (this.summary) { this.summary.last_error = null; this.summary.retry_error = null; }
+        if (this.summary) { this.summary.last_error = null; this.summary.retry_error = null; this.summary.last_turn = null; }
         break;
       case 'turn/completed':
         this.turn = null; this.items.clear();
         if (this.summary) {
+          this.summary.last_turn = {id: raw.turn?.id, status: raw.turn?.status};
           this.summary.retry_error = null;
           if (raw.turn?.status === 'completed') this.summary.last_error = null;
         }
@@ -706,7 +715,7 @@ const CodexSdkView = {
       case 'thread/reverted':
         this.turn = null; this.items.clear(); this.requests.clear(); this.nodes.clear();
         this.live.replaceChildren();
-        if (this.summary) { this.summary.usage = null; this.summary.last_error = null; this.summary.retry_error = null; }
+        if (this.summary) { this.summary.usage = null; this.summary.last_error = null; this.summary.retry_error = null; this.summary.last_turn = null; }
         this.refreshHistory(this.generation, true);
         break;
       case 'item/started': case 'item/completed':
@@ -843,6 +852,11 @@ const CodexSdkView = {
     // 兑换结果提示停留几秒，不被紧随其后的状态刷新盖掉。
     if (this.noticeHold > Date.now()) return;
     const status = this.summary?.status || {};
+    const observed = observedConversationActivity(this.historyData?.activity, this.uid, this.agent);
+    // Idle describes the daemon's availability, not the preceding turn's
+    // outcome. Prefer an observed native completion over older disk history.
+    const interrupted = !active && (this.summary?.last_turn?.status === 'interrupted'
+      || (!this.summary?.last_turn && observed.activity?.state === 'aborted'));
     const compact = [...this.items.values()].findLast(item => item.type === 'contextCompaction');
     const parts = [];
     let kind = 'ready';
@@ -859,6 +873,10 @@ const CodexSdkView = {
       else if (status.activeFlags?.includes('waitingOnUserInput')) { parts.push('待回答'); kind = 'waiting'; }
       else if (compact?.status === 'inProgress') { parts.push('压缩中'); kind = 'maintenance'; }
       else if (active) { parts.push('处理中'); kind = 'working'; }
+      else if (interrupted) {
+        parts.push('已中断' + (!this.summary?.last_turn && observed.activity?.reason ? '：' + observed.activity.reason : ''));
+        kind = 'warning';
+      }
       else if (compact?.status === 'completed') parts.push('压缩完成');
       else parts.push('就绪');
     }

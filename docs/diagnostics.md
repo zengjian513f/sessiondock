@@ -402,6 +402,31 @@ report submission and persisted metadata without logging message text.
 
 ## Process-owned runtime diagnostics
 
+BUG-20261019-095333-0cd031: the manifest, browser state, environment, all 1,218
+bundled audit rows and terminal capture were correlated with the conversation
+and lifecycle ledgers, native Codex JSONL, native runtime logs and the earlier
+browser audit. No delivery directory existed. The current turn began at
+08:08:44 UTC; its last output was at 08:10:55, with no native ending. At
+08:10:54 the browser selected Stop on a different thread, confirmed at
+08:10:56; the server recorded successful `/api/session/stop` at 08:11:03.
+The shared daemon restarted at 08:11:04 and the affected TUI resumed its thread
+at 08:11:10. At 08:11:38 CHECK observed ready/idle. This sequence and the old
+process-stop implementation support collateral daemon termination, not a
+manual interruption of the reported thread. The process ownership fix already
+landed in `06a7c8f9`; the interruption predates that fix's deployment.
+
+The first retained divergence is loss of the active native turn across that
+daemon restart. The SDK reducer additionally discarded `turn/completed`'s
+interrupted status and painted daemon idle as 就绪; its historical fallback
+also omitted the conversation view's missing-ending inference. The isolated
+[SDK interruption suite](../tests/codex_sdk_interrupted_browser.py) reproduces
+the reducer fault with native RPC events, without restarting production.
+The bridge now retains the last observed terminal outcome, and both views use
+the same CLI observation fallback. No native records or production receipts
+are rewritten. At report time the terminal's first snapshot already contained
+the interruption; a later three-byte browser input cannot explain its origin,
+and byte-count-only auditing does not identify those keys.
+
 The node, detached PTY hosts and resource collector share the metadata writer in
 [`crates/runtime_log.rs`](../crates/runtime_log.rs). This extends ordinary runtime
 logging; browser/audit and Hub audit retention are unchanged.

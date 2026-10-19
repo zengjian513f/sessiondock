@@ -38,6 +38,8 @@ struct State {
     settings: Value,
     status: Value,
     turn: Option<Value>,
+    /// Last observed terminal outcome, without retaining completed turn items.
+    last_turn: Value,
     items: IndexMap<String, Value>,
     /// Open server requests keyed by the JSON spelling of their id.
     requests: IndexMap<String, Request>,
@@ -243,6 +245,7 @@ fn summary(state: &State) -> Value {
     json!({
         "resume": state.resume, "settings": state.settings, "status": state.status,
         "usage": state.usage, "last_error": state.last_error, "retry_error": state.retry_error,
+        "last_turn": state.last_turn,
         "queue":state.queue,
         "recorded_limits": state.recorded_limits,
     })
@@ -284,6 +287,7 @@ impl State {
             "turn/started" => {
                 self.starting = false;
                 self.turn = Some(params["turn"].clone());
+                self.last_turn = Value::Null;
                 self.items.clear();
                 self.last_error = Value::Null;
                 self.retry_error = Value::Null;
@@ -291,6 +295,9 @@ impl State {
             "turn/completed" => {
                 self.starting = false;
                 self.turn = None;
+                self.last_turn = json!({
+                    "id": params["turn"]["id"], "status": params["turn"]["status"],
+                });
                 self.items.clear();
                 self.retry_error = Value::Null;
                 if params["turn"]["status"] == "completed" {
@@ -302,6 +309,7 @@ impl State {
             }
             "thread/reverted" => {
                 self.turn = None;
+                self.last_turn = Value::Null;
                 self.items.clear();
                 self.requests.clear();
                 self.usage = Value::Null;
