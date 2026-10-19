@@ -77,6 +77,18 @@ fn block_row(message: &str, index: u64, block: &Value, native_id: Option<&str>) 
 }
 
 pub(super) fn observe(session: &Session, frame: Value) {
+    // Native SessionStart hooks run before --resume loads its persisted SID.
+    // These unprojected startup notifications carry a temporary process UUID;
+    // discard their telemetry without accepting any of its content or identity.
+    if frame["type"] == "system"
+        && frame["hook_event"] == "SessionStart"
+        && matches!(
+            frame["subtype"].as_str(),
+            Some("hook_started" | "hook_response")
+        )
+    {
+        return;
+    }
     let mut live = lock(&session.live);
     live.idle_since = None;
     // A process is tied to one exact SID; don't let a foreign frame's content

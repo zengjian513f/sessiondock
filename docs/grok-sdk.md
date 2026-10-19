@@ -130,6 +130,12 @@ PID 为空的匹配原生活动标记也会报告冲突；已退出或 zombie PI
 - discard 只释放空闲桥接进程和本地连接；原生文件始终保留。
   正在运行或仍有审批时拒绝 discard。
 
+原生工具状态 `pending` / `in_progress` 优先于 rawOutput：安装版会在执行中
+附带默认 `exit_code:0` 和部分输出，这不是完成回执。桥接保留原始状态及
+部分 result；网页继续展示已到达输出，沿用现有工具状态样式显示等待/运行中。
+只有后续 completed /
+failed 事件才显示完成/出错，停止或 turn 结束不会推断工具已完成。
+
 ## 显式原生引导与闲置回收
 
 `steer` 独立于普通 `turn`，接 `{request_id,text,images?}`，只在本桥接的原生 prompt

@@ -217,6 +217,13 @@ const NativeSdkView = {
       const selectors = ['.tool-out-actions .more','.tool-toggle','.tool-wrap'];
       const toolState = item.role === 'tool' && old ? selectors.map(selector => [...old.querySelectorAll(selector)].map(control => control.getAttribute(selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded'))) : null;
       const node = msgNode(item); node.dataset.sdkItem = id;
+      if (item.role === 'tool' && ['pending','in_progress'].includes(item.status)) {
+        // Keep partial stdout rendered, but never label a partial rawOutput as
+        // completed just because it already contains a default exit_code:0.
+        const status = node.querySelector('.tool-status') || el('div','tool-status');
+        status.textContent = item.status === 'pending' ? '等待执行…' : '运行中…';
+        if (!status.parentElement) node.querySelector('.tool-entry')?.append(status);
+      }
       NativeSdkControls.decorate(this,node,item);
       if (old) old.replaceWith(node); else this.live.append(node);
       if (toolState) selectors.forEach((selector,group) => node.querySelectorAll(selector).forEach((control,index) => {

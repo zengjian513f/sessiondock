@@ -148,6 +148,15 @@ def exercise(browser, base, fixture, screenshots):
         raise
     pending = page.evaluate("window.__grokSnapshot")
     assert pending["running"] and pending["requests"][0]["type"] == "approval"
+    native_tool = next(item for item in pending["items"] if item["role"] == "tool")
+    assert native_tool["status"] == "in_progress" and native_tool["tool_result"]["exit_code"] == 0
+    assert native_tool["result"]["text"] == "partial native stdout", "partial native output was lost"
+    tool_card = page.locator('.sdk-live .tool-msg').filter(has_text='Synthetic command')
+    expect(tool_card.locator('.tool-status')).to_have_text('运行中…')
+    expect(tool_card).not_to_contain_text('✓ 完成')
+    expect(tool_card.locator('.tool-out')).to_contain_text('partial native stdout')
+    if screenshots:
+        page.screenshot(path=str(screenshots / 'grok-tool-in-progress.png'),full_page=True)
     assert not [m for m in fixture.received() if isinstance(m.get("id"), str) and "method" not in m], "permission was auto-answered"
     assert sends and sends[-1].get("request_id"), "UI must retain submission identity"
     prompt_count = len(fixture.received("session/prompt"))
@@ -161,6 +170,8 @@ def exercise(browser, base, fixture, screenshots):
     assert tools[-1]["tool_input"] == {"command": "printf synthetic"}
     assert tools[-1]["tool_result"] == {"output": "Grok native tool result"}
     assert tools[-1]["result"]["error"] is False
+    expect(tool_card.locator('.tool-status')).to_contain_text('✓ 完成')
+    expect(tool_card.locator('.tool-out')).to_contain_text('Grok native tool result')
     expect(page.locator(".sdk-live")).to_contain_text("Grok final answer")
     if screenshots:
         for width in (1280,390,320):

@@ -5971,7 +5971,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     // SDK connection can start now; history reuses this read once cached.
     if (!SessionContentView.kind && SdkView.defaultFor(uid, selectedAgent))
       SessionContentView.open('sdk', uid, selectedAgent, {historyReady});
-    else if (SessionContentView.kind === 'sdk' && SdkView.historyFailed) {
+    else if (SessionContentView.kind === 'sdk') {
       SdkView.historyReady = historyReady;
       SdkView.refreshHistory(SdkView.generation);
     }

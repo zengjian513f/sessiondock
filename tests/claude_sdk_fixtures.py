@@ -277,6 +277,13 @@ def fake_cli():
             if isinstance(content, list):
                 assert any(block.get("type") == "image" and block["source"]["type"] == "base64" for block in content), content
                 content = " ".join(block.get("text", "") for block in content if block.get("type") == "text")
+            if content in ('foreign-identity-user', 'foreign-identity-approval'):
+                foreign = {"type": "user", "uuid": "foreign-user", "message": {"role": "user", "content": "FOREIGN_NATIVE_CONTENT"}} if content.endswith('user') else {
+                    "type": "control_request", "request_id": "foreign-approval", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "title": "FOREIGN_NATIVE_APPROVAL", "input": {"command": "must-not-execute"}}}
+                with output_lock:
+                    print(json.dumps({**foreign, "session_id": str(uuid.uuid4())}), flush=True)
+                time.sleep(5)
+                continue
             message_id = "msg-" + str(uuid.uuid4())
             record("user", frame["uuid"], frame["message"])
             send(frame)
@@ -375,6 +382,13 @@ def fake_cli():
             subtype = request["subtype"]
             response = {}
             if subtype == "initialize":
+                if os.environ.get('SESSIONDOCK_FAKE_STARTUP_HOOKS'):
+                    temporary_sid = str(uuid.uuid4())
+                    for kind in ('hook_started', 'hook_response'):
+                        with output_lock:
+                            print(json.dumps({"type": "system", "subtype": kind, "hook_event": "SessionStart",
+                                "session_id": temporary_sid, "stdout": "startup-hook-must-not-project",
+                                "stderr": "startup-hook-must-not-project"}), flush=True)
                 if os.environ.get('SESSIONDOCK_FAKE_STARTUP_FAILURE'):
                     print('claude: command not found; token=synthetic-startup-secret', file=sys.stderr, flush=True)
                     os._exit(127)

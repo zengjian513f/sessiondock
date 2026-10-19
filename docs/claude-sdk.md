@@ -130,6 +130,10 @@ stdin 在每个 result 后保持打开。HTTP future 和 SSE receiver 都不拥�
 stderr 的诊断尾部经过配置/环境中的 secret 值及 token 形态脱敏，
 不返回 argv、环境或凭据；原生退出错误（包括 `initialize` 尚未完成的退出）
 会附带已脱敏的末条诊断，网页可直接显示 `command not found` 等启动原因。
+原生 CLI 的 `SessionStart` 启动钩子在加载 `--resume` 身份前可能使用临时 UUID。
+桥接仅丢弃 `system` 的 `hook_started` / `hook_response` 且
+`hook_event:"SessionStart"` 的遥测，不读取其输出；消息、控制请求及其余帧
+仍要求原生 `session_id` 与选定 SID 一致，不接受另一会话的内容或审批。
 
 能力包括 send、interrupt、respond、approval、question、models、create、resume、
 effort、settings、permission_mode、fast_mode、images、usage、context_usage、compact、fork、fork_before、

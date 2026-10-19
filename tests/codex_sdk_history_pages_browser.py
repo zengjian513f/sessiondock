@@ -62,7 +62,7 @@ def exercise(browser, binary, mode, width, theme, screenshots):
             expect(gap).to_be_visible()
             expect(history).to_contain_text('assistant history row 0749')
             expect(history).not_to_contain_text('history row 0300')
-            page.wait_for_function('CodexSdkView.connected && _es?.readyState === 1')
+            page.wait_for_function('CodexSdkView.connected && !_es')
             assert len(reads) == 1 and parse_qs(urlsplit(reads[0]).query).get('window') == ['1'], reads
             assert page.evaluate('cache.get(viewKey(S.sel,S.agent)).msgs.some(m=>m.text.includes("history row 0300"))') is False
             if screenshots:

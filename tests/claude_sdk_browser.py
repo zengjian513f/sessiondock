@@ -502,6 +502,31 @@ def fork_restart_check(fixture, binary):
         browser.close()
 
 
+def startup_hooks_check(fixture, binary, foreign_kind):
+    from playwright.sync_api import sync_playwright, expect
+    launcher = json.loads(fixture.launcher.read_text())
+    launcher['profiles'][0]['env']['SESSIONDOCK_FAKE_STARTUP_HOOKS'] = '1'
+    fixture.launcher.write_text(json.dumps(launcher))
+    with fixture.server(binary) as base, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True, args=['--no-sandbox'])
+        page = browser.new_page(service_workers='block')
+        page.goto(base, wait_until='networkidle')
+        open_sdk(page, fixture, expect)
+        assert '--resume=' + str(fixture.path) in fixture.frames('spawn')[-1]['args']
+        send(page, 'browser startup hook resume')
+        expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final browser startup hook resume')
+        wait_snapshot(page, fixture.uid, lambda raw: not raw['running'])
+        assert 'startup-hook-must-not-project' not in page.locator('.sdk-pane').inner_text()
+        send(page, 'foreign-identity-' + foreign_kind)
+        expect(page.locator('.sdk-status')).to_contain_text('native stream session_id differs')
+        raw = wait_snapshot(page, fixture.uid, lambda raw: raw.get('error_kind') == 'transport')['raw']
+        assert raw['session_id'] == fixture.sid
+        assert not any('FOREIGN_NATIVE_CONTENT' in json.dumps(row) for row in raw['items'])
+        assert not raw['requests'], 'foreign approval crossed the native SID guard'
+        expect(page.locator('[data-sdk-request]')).to_have_count(0)
+        browser.close()
+
+
 def startup_failure_check(fixture, binary, screenshots=None):
     from playwright.sync_api import sync_playwright, expect
     launcher = json.loads(fixture.launcher.read_text())
@@ -529,6 +554,9 @@ def main():
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
+    for kind in ('user', 'approval'):
+        with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-startup-hooks-') as temporary:
+            startup_hooks_check(ClaudeFixture(Path(temporary)), args.binary, kind)
     with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-startup-') as temporary:
         startup_failure_check(ClaudeFixture(Path(temporary)), args.binary, args.screenshots)
     with tempfile.TemporaryDirectory(prefix="sessiondock-claude-sdk-") as temporary:

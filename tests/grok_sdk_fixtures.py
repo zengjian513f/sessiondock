@@ -307,7 +307,9 @@ class FakeGrok:
         if text.startswith("approval"):
             call_id = "tool-" + uuid.uuid4().hex
             self.update("tool_call", toolCallId=call_id, title="Synthetic command", kind="execute",
-                        status="pending", rawInput={"command": "printf synthetic"})
+                        status="in_progress", rawInput={"command": "printf synthetic"},
+                        rawOutput={"output":["partial native stdout"],"exit_code":0},
+                        content=[{"type":"content","content":{"type":"text","text":"partial native stdout"}}])
             self.permission_id = "permission-" + uuid.uuid4().hex
             self.send({"jsonrpc": "2.0", "id": self.permission_id, "method": "session/request_permission",
                 "params": {"sessionId": self.sid, "toolCall": {"toolCallId": call_id, "title": "Synthetic permission"},
