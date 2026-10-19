@@ -23,10 +23,10 @@
 
 ## Native interaction semantics
 
-- [ ] 继续[五种 SDK 功能审计](docs/sdk-feature-audit.md)中剩余遗漏：持久输入队列、
-  失败重试/原生消费确认、Grok/Claude 闲置回收、Claude 原生分支、完整消息操作与
-  输入恢复、子代理专项验收。已补用量底栏、Agy effort/mode、命令分流、Grok 问答/
-  计划批准、Claude 图片/表单/设置/压缩及 OpenCode 队列/图片/会话操作。
+- [ ] 继续[五种 SDK 功能审计](docs/sdk-feature-audit.md)中剩余遗漏：完整消息操作/输入恢复、
+  子代理专项验收、原生消费证据与高级设置/动作。已补持久输入队列及失败恢复、
+  Grok 显式引导、Grok/Claude 闲置回收、Claude 原生分支；用量底栏、Agy effort/mode、
+  命令分流、问答/图片/表单/设置及原生会话操作的具体边界见审计表。
   “待”先核实原生语义；Grok 安装版 image:false 和 Agy headless 限制不伪造。
 
 - [ ] 跟进 BUG-20261018-122932-0e7a3c 另报的 SDK 等待现象：原生回复和工具调用

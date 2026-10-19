@@ -189,6 +189,11 @@ impl Session {
         }
         let session = self.clone();
         tokio::spawn(async move {
+            let _runtime = session.runtime.read().await;
+            if lock(&session.live).outbound.is_none() {
+                lock(&session.live).refreshing_usage = false;
+                return;
+            }
             session.refresh_usage().await;
             lock(&session.live).refreshing_usage = false;
         });

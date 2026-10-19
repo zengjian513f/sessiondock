@@ -1,6 +1,8 @@
 //! Claude's native, persistent stream-json SDK transport. See docs/claude-sdk.md.
 //! HTTP cancellation and broadcast receiver lifetimes never own a CLI process.
 
+mod actions;
+mod idle;
 mod protocol;
 mod transport;
 mod usage;
@@ -15,7 +17,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
-use tokio::sync::{Mutex as AsyncMutex, broadcast, mpsc, oneshot};
+use tokio::sync::{Mutex as AsyncMutex, RwLock, broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::lifecycle::{
@@ -37,6 +39,7 @@ pub struct Bridge {
 struct BridgeState {
     sessions: BTreeMap<String, Arc<Session>>,
     creates: BTreeMap<String, (Value, Value)>,
+    forks: BTreeMap<String, (Value, Option<Value>)>,
 }
 
 struct Session {
@@ -44,6 +47,9 @@ struct Session {
     sid: String,
     cwd: PathBuf,
     path: PathBuf,
+    fork: Option<(PathBuf, String)>,
+    fork_metadata: Value,
+    runtime: RwLock<()>,
     operations: AsyncMutex<()>,
     live: Mutex<Live>,
     stop: CancellationToken,
@@ -62,6 +68,9 @@ struct Live {
     native_running: bool,
     state_observed: bool,
     runtime_stop: Option<CancellationToken>,
+    idle_stop: Option<CancellationToken>,
+    runtime_done: Option<watch::Receiver<bool>>,
+    idle_since: Option<tokio::time::Instant>,
     pid: Option<u32>,
     model: Option<String>,
     effort: Option<String>,
@@ -77,7 +86,9 @@ struct Live {
     status: Value,
     retry: Value,
     compact: Value,
+    background_tasks: Vec<Value>,
     error: Option<String>,
+    error_kind: Option<&'static str>,
     // Diagnostic tail is private and redacted, never returned in snapshots.
     stderr: VecDeque<String>,
     streaming_message: String,
@@ -113,13 +124,15 @@ pub fn new(
             "claude_sdk: ambiguous Claude launcher profiles",
         ));
     }
-    Ok(Some(Arc::new(Bridge {
+    let bridge = Arc::new(Bridge {
         root: root.clone(),
         profile,
         proc_root: config.proc_root.clone(),
         shutdown,
         state: Mutex::default(),
-    })))
+    });
+    bridge.start_reaper();
+    Ok(Some(bridge))
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -144,6 +157,7 @@ fn capabilities() -> Value {
         "models":true,"create":true,"resume":cfg!(target_os="linux"),"shared_tui":false,
         "subagents":false,"effort":true,"settings":true,"permission_mode":true,"fast_mode":true,
         "images":true,"usage":true,"context_usage":true,"compact":true,
+        "fork":true,"fork_before":true,
         "mcp_elicitation":true,"user_dialog":true,
         "limitations":["Claude stream-json owns an independent CLI runtime; an active independent TUI cannot be attached or taken over.",
             "Claude subagent transcripts cannot be resumed as independent SDK sessions."]})
@@ -209,6 +223,9 @@ impl Session {
             sid,
             cwd,
             path,
+            fork: None,
+            fork_metadata: Value::Null,
+            runtime: RwLock::new(()),
             operations: AsyncMutex::new(()),
             stop: CancellationToken::new(),
             live: Mutex::new(Live {
@@ -224,6 +241,9 @@ impl Session {
                 native_running: false,
                 state_observed: false,
                 runtime_stop: None,
+                idle_stop: None,
+                runtime_done: None,
+                idle_since: None,
                 pid: None,
                 model: input["model"].as_str().map(str::to_owned),
                 effort: input["effort"].as_str().map(str::to_owned),
@@ -239,7 +259,9 @@ impl Session {
                 status: Value::Null,
                 retry: Value::Null,
                 compact: Value::Null,
+                background_tasks: vec![],
                 error: None,
+                error_kind: None,
                 stderr: VecDeque::new(),
                 streaming_message: String::new(),
                 streaming_blocks: BTreeMap::new(),
@@ -255,7 +277,8 @@ impl Session {
             "settings":live.settings,"usage":live.usage,"model_usage":live.model_usage,
             "context_usage":live.context_usage,"rate_limits":live.rate_limits,
             "usage_errors":live.usage_errors,"status":live.status,"retry":live.retry,"compact":live.compact,
-            "error":live.error,"capabilities":capabilities()}})
+            "background_tasks":live.background_tasks,"error":live.error,"error_kind":live.error_kind,
+            "capabilities":capabilities()}})
     }
 
     fn publish(&self, live: &mut Live) {
@@ -274,6 +297,7 @@ impl Session {
         let (tx, rx) = oneshot::channel();
         {
             let mut live = lock(&self.live);
+            live.idle_since = None;
             let outbound = live
                 .outbound
                 .clone()
@@ -321,7 +345,13 @@ impl Bridge {
             .get(key)
             .cloned()
             .ok_or("claude_sdk: session not open")?;
-        let live = lock(&session.live);
+        // A new subscriber cancels the idle interval before the reaper can
+        // observe it. Both operations use this same state lock.
+        let mut live = lock(&session.live);
+        if !live.ready || live.outbound.is_none() {
+            return Err("claude_sdk: native runtime is not ready; reopen this session".into());
+        }
+        live.idle_since = None;
         Ok((session.snapshot(&live), live.events.subscribe()))
     }
 
@@ -383,6 +413,11 @@ impl Bridge {
             return Ok(session.clone());
         }
         self.native_home()?;
+        if target["sdk_fork"].is_object() {
+            let session = self.restore_fork(target)?;
+            state.sessions.insert(uid.into(), session.clone());
+            return Ok(session);
+        }
         // Resolve the inventory UID, never reinterpret an arbitrary SID as a path.
         let mut path = None;
         for entry in std::fs::read_dir(&self.root)
@@ -501,6 +536,8 @@ impl Bridge {
             return result;
         }
         let session = self.select(&target)?;
+        let _runtime = session.runtime.read().await;
+        lock(&session.live).idle_since = None;
         if method == "respond" {
             return self.respond(&session, &input);
         }
@@ -518,6 +555,7 @@ impl Bridge {
         }
         let _operation = session.operations.lock().await;
         match method {
+            "fork" => self.fork_session(&session, &input).await,
             "discard" => {
                 let active = {
                     let live = lock(&session.live);
@@ -699,6 +737,7 @@ impl Bridge {
                     live.compact = json!({"state":"requested","request_id":request_id});
                 }
                 live.error = None;
+                live.error_kind = None;
                 session.publish(&mut live);
                 Ok(receipt)
             }

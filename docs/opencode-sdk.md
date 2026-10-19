@@ -134,6 +134,12 @@ models 只返回模型标识、名称、variants、enabled，不回传 provider 
 `queue_cancel({id})` 使用 DELETE inbox，原生已不可用项目为 no-op；
 `queue_update({id,delivery})` 使用 PATCH，支持 queue/steer。Steer 在原生
 安全点引导，不保证立即打断当前工具。中断保持 `resume=false`，不主动清队列。
+共享 facade 另持久保存提交 ID 和未确认准入，显示在 `raw.input_queue`，不取代原生
+inbox。原生 POST 成功标记 native_accepted，已看到原生 inbox 的回执标记
+native_queued，看到原生 user message 才标记 observed 消费。原生多次 GET 轮询可能
+跨越提交，单个陈旧的空闲快照不证明投递失败。重启后尚未确认的在途输入显示
+unknown，不自动重发。
+恢复和显式重试的边界见[持久输入账本](native-sdk.md#持久输入与失败恢复)。
 
 | facade 操作 | 原生语义 |
 | --- | --- |

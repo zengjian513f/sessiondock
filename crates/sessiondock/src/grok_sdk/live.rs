@@ -1,6 +1,10 @@
 //! Projection of observed ACP messages; persisted history remains independent.
 use serde_json::{Value, json};
-use std::{collections::HashMap, sync::Arc};
+use std::time::Instant;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::sync::broadcast;
 
 pub(super) struct Live {
@@ -12,6 +16,7 @@ pub(super) struct Live {
     pub requests: HashMap<String, Value>,
     pub receipts: HashMap<String, Value>,
     pub error: Option<String>,
+    pub error_kind: Option<&'static str>,
     pub config: Value,
     pub models: Value,
     pub modes: Value,
@@ -20,6 +25,11 @@ pub(super) struct Live {
     pub context: Value,
     pub extensions: HashMap<String, bool>,
     pub images: bool,
+    pub steers: HashMap<String, Value>,
+    pub idle_since: Option<Instant>,
+    pub idle_reclaimed: bool,
+    pub native_tasks: HashSet<String>,
+    pub incomplete_tasks: bool,
     pub seq: u64,
     pub turn: u64,
     pub generation: u64,
@@ -39,6 +49,7 @@ impl Live {
             requests: HashMap::new(),
             receipts: HashMap::new(),
             error: None,
+            error_kind: None,
             config: Value::Null,
             models: Value::Null,
             modes: Value::Null,
@@ -47,6 +58,11 @@ impl Live {
             context: Value::Null,
             extensions: HashMap::new(),
             images: false,
+            steers: HashMap::new(),
+            idle_since: None,
+            idle_reclaimed: false,
+            native_tasks: HashSet::new(),
+            incomplete_tasks: false,
             seq: 0,
             turn: 0,
             generation: 0,
@@ -57,6 +73,8 @@ impl Live {
     pub fn snapshot(&self) -> Value {
         let mut requests: Vec<_> = self.requests.values().cloned().collect();
         requests.sort_by(|a, b| a["key"].as_str().cmp(&b["key"].as_str()));
+        let mut steers: Vec<_> = self.steers.values().cloned().collect();
+        steers.sort_by_key(|r| r["order"].as_u64());
         let items: Vec<_> = self.items.iter().cloned().map(|mut item| {
             if item["role"] == "tool" {
                 item["name"] = item["tool_name"].clone();
@@ -68,7 +86,7 @@ impl Live {
             item
         }).collect();
         let mut raw = json!({"session_id":self.sid,"running":self.running,"items":items,"requests":requests,
-            "configOptions":self.config,"modes":self.modes,"mode":self.modes["currentModeId"],
+            "native_tasks":self.native_tasks,"native_tasks_incomplete":self.incomplete_tasks,"steers":steers,"idle_reclaimed":self.idle_reclaimed,"configOptions":self.config,"modes":self.modes,"mode":self.modes["currentModeId"],
             "usage":self.usage,"billing":self.billing,"context_usage":self.context,"extension_support":self.extensions});
         for (id, name) in [("model", "model"), ("reasoning_effort", "effort")] {
             if let Some(option) = self
@@ -81,8 +99,18 @@ impl Live {
         }
         if let Some(error) = &self.error {
             raw["error"] = json!(error);
+            raw["error_kind"] = json!(self.error_kind);
         }
         json!({"seq":self.seq,"type":"snapshot","raw":raw})
+    }
+    pub fn has_pending_steers(&self) -> bool {
+        self.steers.values().any(|r| {
+            r["generation"] == self.generation
+                && matches!(
+                    r["status"].as_str(),
+                    Some("dispatching" | "native_queued" | "native_received" | "uncertain")
+                )
+        })
     }
     pub fn publish(&mut self) {
         self.seq += 1;
@@ -103,6 +131,33 @@ impl Live {
         let params = &message["params"];
         let sid = params["sessionId"].as_str();
         let ours = sid.is_some_and(|sid| self.sid.is_empty() || sid == self.sid);
+        if ours
+            && matches!(
+                message["method"].as_str(),
+                Some("_x.ai/session/interjection" | "x.ai/session/interjection")
+            )
+        {
+            if params["_meta"]["isReplay"] == true {
+                return None;
+            }
+            self.idle_since = None;
+            if let Some(id) = params["interjectionId"].as_str()
+                && let Some(receipt) = self.steers.get_mut(id)
+            {
+                receipt["native_received"] = json!(true);
+                receipt["status"] = json!("native_received");
+                // Actor enqueue is observable; safe-point/model consumption is not.
+                receipt["consumed"] = Value::Null;
+                self.publish();
+                return None;
+            }
+            self.items.push(
+                json!({"id":format!("grok:{}:native-steer:{}",self.sid,self.seq),
+                "role":"user","content":params["text"],"delivery":"steer","native":params}),
+            );
+            self.publish();
+            return None;
+        }
         if let Some(id) = message.get("id") {
             let method = message["method"].as_str().unwrap_or("");
             let method = method.strip_prefix('_').unwrap_or(method);
@@ -173,6 +228,25 @@ impl Live {
         if update["_meta"]["isReplay"] == true || params["_meta"]["isReplay"] == true {
             return None;
         }
+        if matches!(
+            update["sessionUpdate"].as_str(),
+            Some(
+                "agent_message_chunk"
+                    | "agent_thought_chunk"
+                    | "user_message_chunk"
+                    | "tool_call"
+                    | "tool_call_update"
+                    | "turn_completed"
+                    | "task_backgrounded"
+                    | "subagent_spawned"
+                    | "subagent_finished"
+                    | "task_completed"
+                    | "scheduled_task_created"
+                    | "scheduled_task_deleted"
+            )
+        ) {
+            self.idle_since = None;
+        }
         match update["sessionUpdate"].as_str().unwrap_or("") {
             "agent_message_chunk" => self.chunk("assistant", &update["content"]),
             "agent_thought_chunk" => self.chunk("thinking", &update["content"]),
@@ -222,6 +296,65 @@ impl Live {
                     native.extend(update.clone());
                 }
                 item["native"] = json!(native);
+            }
+            "task_backgrounded" => {
+                if let Some(id) = update["task_id"].as_str() {
+                    self.native_tasks.insert(format!("task:{id}"));
+                } else {
+                    self.incomplete_tasks = true;
+                }
+            }
+            "background_tasks" => {
+                if update["truncated"] != true {
+                    self.native_tasks.retain(|id| !id.starts_with("task:"));
+                    self.incomplete_tasks = false;
+                } else {
+                    self.incomplete_tasks = true;
+                }
+                for task in update["tasks"].as_array().into_iter().flatten() {
+                    if !matches!(
+                        task["status"].as_str(),
+                        Some("completed" | "failed" | "cancelled" | "exited")
+                    ) {
+                        if let Some(id) = task["id"].as_str().or_else(|| task["task_id"].as_str()) {
+                            self.native_tasks.insert(format!("task:{id}"));
+                        } else {
+                            self.incomplete_tasks = true;
+                        }
+                    }
+                }
+            }
+            "subagent_spawned" | "scheduled_task_created" => {
+                let key = if update["sessionUpdate"] == "subagent_spawned" {
+                    "subagent_id"
+                } else {
+                    "task_id"
+                };
+                if let Some(id) = update[key].as_str() {
+                    self.native_tasks.insert(format!("{key}:{id}"));
+                } else {
+                    self.native_tasks.insert(format!("unknown-{key}"));
+                }
+            }
+            "subagent_finished" | "scheduled_task_deleted" => {
+                let key = if update["sessionUpdate"] == "subagent_finished" {
+                    "subagent_id"
+                } else {
+                    "task_id"
+                };
+                if let Some(id) = update[key].as_str() {
+                    self.native_tasks.remove(&format!("{key}:{id}"));
+                }
+                if update["will_wake"] == true {
+                    self.native_tasks.insert("native-wake".into());
+                }
+            }
+            "task_completed" => {
+                // A completion can schedule a hidden native wake prompt; a
+                // bridge prompt ending is not proof that wake has finished.
+                if update["will_wake"] == true {
+                    self.native_tasks.insert("native-wake".into());
+                }
             }
             "config_option_update" => self.config = update["configOptions"].clone(),
             "current_mode_update" => self.modes["currentModeId"] = update["currentModeId"].clone(),

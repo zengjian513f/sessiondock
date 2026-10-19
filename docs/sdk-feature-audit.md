@@ -64,7 +64,7 @@ stream-json。官方同名 SDK 包不一定使用同一协议，不能把别的 
 | A13 | 独立 writer 冲突可见；不强杀、不接管；退出后可重试打开 | 已 | 已；观察有竞态 | 已；观察有竞态 | 已；默认服务以外有发现边界 | 已；观察有竞态/平台边界 |
 | A14 | 丢弃空新建回执、释放桥接，保留已出现的原生记录 | 已 | 已 | 已 | 限；未提供同义可撤销 discard，不能用永久删除代替 | 已 |
 | A15 | 受管 SDK 蓝点；未成功连接不冒充 SDK 已加载 | 已；另能只读发现 daemon 已加载会话 | 部；只有本桥接已加载证据 | 部；只有本桥接已加载证据 | 部；未做 Codex 式全局已加载发现 | 部；只有本桥接已加载证据 |
-| A16 | 无页面、无任务、无审批后释放闲置订阅/运行资源 | 已；10 分钟 unsubscribe | 漏；没有同等闲置回收 | 已；每轮 EOF 退出，不是常驻订阅 | 已；无人订阅且空闲停止观察 | 漏；持久 child 未做同等闲置回收 |
+| A16 | 无页面、无任务、无审批后释放闲置订阅/运行资源 | 已；10 分钟 unsubscribe | 已；10 分钟，未确认引导/后台任务保留 | 已；每轮 EOF 退出，不是常驻订阅 | 已；无人订阅且空闲停止观察 | 已；10 分钟，审批/控制/后台任务保留 |
 
 代码依据：[Codex 生命周期](../crates/sessiondock/src/codex_sdk/mod.rs)、
 [只读 daemon 发现](../crates/sessiondock/src/codex_sdk/observation.rs)、
@@ -81,9 +81,9 @@ stream-json。官方同名 SDK 包不一定使用同一协议，不能把别的 
 | B03 | 文件选择/粘贴/拖放、私有暂存、续传、附件卡片与移除 | 已；主会话 | 已；共用 composer | 已；共用 composer | 已；共用 composer | 已；共用 composer |
 | B04 | 引用文字、附件或引用单独发送；普通文件作为路径引用发布 | 已 | 已 | 已 | 已 | 已 |
 | B05 | 图片作为原生多模态内容传给模型，不只发送路径文本 | 已；`localImage` | 部；按 ACP image 能力协商；本机 1.0.62 为 false，明确提示路径引用 | 限；此 stream-json 输入只支持 text block | 已；发布图片转原生 files data URI；真实 provider 媒体能力未实测 | 已；发布图片转 stream-json base64 image |
-| B06 | 发布附件一次；相同提交 ID 重试不重复上传发布/原生输入 | 已 | 已；当前进程回执 | 已；当前进程回执 | 已；桥接回执，原生消息另有 ID | 已；当前进程回执 |
-| B07 | 原生准入后清本次草稿；保留发送期间新增编辑、失败时保留输入 | 已 | 已 | 已 | 已 | 已 |
-| B08 | 确认输入真正被原生用户消息消费，而非仅 RPC/write 接受；压缩中断时可找回未消费输入 | 已；队列状态和原生 echo 对账 | 漏；没有同等消费确认状态机 | 漏；无同等消费确认状态机 | 部；有持久 inbox，网页未区分准入/消费 | 部；有 replay UUID，但清草稿仍以写入准入为准 |
+| B06 | 发布附件一次；相同提交 ID 重试不重复上传发布/原生输入 | 已 | 已；私有持久提交账本 | 已；私有持久提交账本 | 已；持久桥接回执及原生消息 ID | 已；私有持久提交账本 |
+| B07 | 原生准入后清本次草稿；保留发送期间新增编辑、失败时保留输入 | 已 | 已；持久排队准入清本次草稿 | 已；同左 | 已；同左 | 已；同左 |
+| B08 | 确认输入真正被原生用户消息消费，而非仅 RPC/write 接受；压缩中断时可找回未消费输入 | 已；队列状态和原生 echo 对账 | 部；准入与消费分开，正常完成仍标未验证消费 | 部；按关联 user_input 确认，未知结果保留供核对 | 部；区分原生 inbox 与已消费消息 | 部；按原生 user UUID echo 确认，未知结果保留供核对 |
 | B09 | 主会话无草稿存储能力时仍可纯文本；子代理不读写父草稿 | 已 | 已；共享 composer 降级 | 已；共享 composer 降级 | 已；共享 composer 降级 | 已；不开放独立子代理 SDK |
 | B10 | Tab 路径补全 | 已 | 已 | 已 | 已 | 已 |
 
@@ -99,19 +99,20 @@ stream-json。官方同名 SDK 包不一定使用同一协议，不能把别的 
 
 | ID | Codex 已实现的功能与口径 | Codex | Grok | Agy | OpenCode | Claude |
 | --- | --- | --- | --- | --- | --- | --- |
-| C01 | 活跃时继续接收输入；按明确的队列语义等待，不隐式 steer | 已；节点 FIFO | 部；后续 HTTP 等待 turn gate，没有已准入队列快照 | 已；桥接 FIFO | 已；prompt 显式 delivery:queue | 部；原生 streaming 队列，可能合并/在中途消费，不等于独立 FIFO |
-| C02 | 网页显示待发送/发送中/失败项；不同页面同步同一队列 | 已 | 漏 | 漏 | 部；inbox 队列展示/投递状态；失败队列待补 | 漏 |
-| C03 | 未消费项显式撤销，不误取消当前任务 | 已 | 漏；先建本地队列再撤销 | 漏；已有本地 FIFO 可扩展 | 已；仅删除原生未投递 inbox 项 | 漏；本地队列可做，原生取消还要处理合并边界 |
-| C04 | 失败项显式重试；失败阻塞后续项；不确定投递不自动重放 | 已 | 部；不重放，但没有失败项管理/阻塞界面 | 部；不重放，无同等失败队列 | 部；有原生 inbox，无同等失败队列 | 部；不重放，无同等失败队列 |
-| C05 | 用户显式“立即引导”当前 turn，避免默认插入当前任务 | 已；`turn/steer` | 漏；`x.ai/interject` 候选扩展已存在 | 待；未发现同义 headless 控制接口 | 已；显式修改原生 inbox delivery:steer | 待；原生队列可能中途合并，尚无等价显式 steer 控件/确认语义 |
-| C06 | 队列、提交 ID、失败状态持久化，节点重启不静默丢失 | 已；有 state dir 时 | 漏 | 漏 | 部；已进入原生 inbox 的项目持久，桥接请求 ID 映射/在途任务不持久 | 漏 |
-| C07 | 重启后不确定在途输入标记待人工核实，不自动再发 | 已 | 漏；目前没有可恢复的在途账本 | 漏 | 部；有原生持久记录，缺桥接恢复和可见状态 | 漏 |
+| C01 | 活跃时继续接收输入；按明确的队列语义等待，不隐式 steer | 已；节点 FIFO | 已；节点持久 FIFO | 已；节点持久 FIFO | 已；prompt 显式 delivery:queue | 已；节点串行提交，避免默认插入当前轮 |
+| C02 | 网页显示待发送/发送中/失败项；不同页面同步同一队列 | 已 | 已；共享持久队列视图 | 已；同左 | 已；原生 inbox 与桥接失败/未知回执 | 已；共享持久队列视图 |
+| C03 | 未消费项显式撤销，不误取消当前任务 | 已 | 已；尚未投递队列可撤销 | 已；同左 | 已；原生 inbox 与本地尚未投递项 | 已；尚未投递队列可撤销 |
+| C04 | 失败项显式重试；失败阻塞后续项；不确定投递不自动重放 | 已 | 已；失败/未知阻塞，显式重试 | 已；同左 | 部；桥接未确认准入可处理，已入原生 inbox 由原生调度 | 已；失败/未知阻塞，显式重试 |
+| C05 | 用户显式“立即引导”当前 turn，避免默认插入当前任务 | 已；`turn/steer` | 部；显式 `_x.ai/interject`，回执不证明消费 | 待；未发现同义 headless 控制接口 | 已；显式修改原生 inbox delivery:steer | 待；尚无同等显式 steer 控件/确认语义 |
+| C06 | 队列、提交 ID、失败状态持久化，节点重启不静默丢失 | 已；有 state dir 时 | 已；有 state dir 时，含原提交与重试操作 ID | 已；同左 | 已；桥接准入账本与原生持久 inbox | 已；有 state dir 时，含原提交与重试操作 ID |
+| C07 | 重启后不确定在途输入标记待人工核实，不自动再发 | 已 | 已；在途转 unknown，不自动重发 | 已；同左 | 已；未确认准入转 unknown，原生工作保留 | 已；在途转 unknown，不自动重发 |
 | C08 | 停止当前任务；不把页面关闭当停止，不杀外部会话 | 已；原生 interrupt | 已；`session/cancel` | 已；仅自己 child 的 SIGINT | 已；原生 interrupt | 已；原生 interrupt，原生回执保留 |
 
 代码依据：[Codex 队列](../crates/sessiondock/src/codex_sdk/queue.rs)、
 [Codex 队列 UI](../web/codex-sdk.js)、[NativeSdkView.send](../web/native-sdk.js)。
-OpenCode 已接原生 inbox、显式 queue/steer、撤销；其他三种尚无等价的
-可持久恢复队列管理。原生准入、输入消费和节点重启恢复仍是不同保证。
+四来源另有[持久输入账本](../crates/sessiondock/src/native_sdk_queue.rs)，Grok/Agy/Claude
+由节点串行提交；OpenCode 保留原生 inbox 调度。正常完成、用户消息消费和节点重启
+恢复是不同保证；Grok 普通 prompt 没有逐项消费证据，显式引导回执也不能冒充已消费。
 
 ### D．历史、流式消息和状态
 
@@ -175,7 +176,7 @@ Grok 的专门计划退出批准已接；Codex 目前是模式切换与通用请
 | F06 | 沙箱策略选择 | 已；Codex 原生 policy | 待；CLI 有 sandbox，ACP 中途等价变更尚待核实 | 部；已有原生 `--sandbox`，网页/逐轮选项未接；无 Codex 三档等价承诺 | 待；当前 v2 无 Codex 三档对等证据 | 漏；官方 SDK sandbox 设置可用，在线变更/重启边界需适配 |
 | F07 | 服务档位 Normal/Fast 等，使用原生 ID 并立即更新 | 已 | 待；未证明同义档位接口 | 待；boost 不等于 Codex serviceTier | 待；模型 variant 不等于通用 serviceTier | 部；fastMode 设置和原生状态，账号资格/冷却仍由原生控制 |
 | F08 | 明确的 slash 映射：model/effort/status/stop/new/help | 已 | 部；model/effort/status/usage/stop/help 明确分流；new 未接 | 部；同左；usage 独立 print 查询 | 部；网页映射及原生命令目录；new 未接 | 部；网页明确映射；new 未接 |
-| F09 | fork/revert/compact/review/plan/default/permissions/approval/sandbox 的网页命令映射 | 已 | 部；fork/compact/revert 原生动作已接，其他按能力开放 | 部；用量/设置已接；高级原生命令待核实 | 部；fork/revert/compact/shell/command 已接，review 待核实 | 部；compact/settings 已接；fork/revert/review 未接 |
+| F09 | fork/revert/compact/review/plan/default/permissions/approval/sandbox 的网页命令映射 | 已 | 部；fork/compact/revert 原生动作已接，其他按能力开放 | 部；用量/设置已接；高级原生命令待核实 | 部；fork/revert/compact/shell/command 已接，review 待核实 | 部；compact/settings/fork 已接；revert/review 未接 |
 | F10 | `!command`、`/shell` 直接执行并显示原生输出；输入使用工具色 | 已 | 已；原生 TextContent._meta.bash_command | 待；未找到同义 headless 原生入口 | 已；原生 session.shell，输出工具卡 | 待；需确认 headless 的本地命令语义，不能用“让模型执行”替代 |
 | F11 | 未知 slash/命令保留草稿并解释，不意外当推理提示词 | 已 | 已；共用网页命令分流并保留未识别输入 | 已；同左，不进入 NDJSON | 已；同左，原生命令另有显式入口 | 已；同左 |
 | F12 | 新建前无需现有 UID 即可查询 SDK 原生模型目录 | 已；models 支持 node | 部；新建沿用 term/models，未开放共享无 UID native models 路由 | 部；同左 | 部；同左 | 部；同左 |
@@ -219,14 +220,14 @@ Agy 的 `step_update.usage` 是步骤统计，`result.usage` 是累计统计；�
 
 | ID | Codex 已实现的功能与口径 | Codex | Grok | Agy | OpenCode | Claude |
 | --- | --- | --- | --- | --- | --- | --- |
-| H01 | 整会话原生 fork，保留来源，返回新 UID 并导航 | 已 | 已；原生 fork，持久网页回执和新 UID | 待；TUI 有 /fork，headless 返回新身份/落盘语义未确认 | 已；原生 fork，持久网页回执和新 UID | 漏；官方 forkSession / resume+forkSession |
-| H02 | 从指定用户消息之前分支；恢复该输入，不自动发送 | 已 | 部；原生 targetPromptIndex 已接；输入恢复/完整消息入口待补 | 待；未确认 headless 按消息分叉接口 | 部；原生 before ID 与 live 消息入口；历史消息菜单/原输入恢复待补 | 漏；官方 upToMessageId/resumeSessionAt，须正确选保留边界 |
+| H01 | 整会话原生 fork，保留来源，返回新 UID 并导航 | 已 | 已；原生 fork，持久网页回执和新 UID | 待；TUI 有 /fork，headless 返回新身份/落盘语义未确认 | 已；原生 fork，持久网页回执和新 UID | 已；精确路径 resume/fork-session，首次输入原生落盘 |
+| H02 | 从指定用户消息之前分支；恢复该输入，不自动发送 | 已 | 部；原生 targetPromptIndex 已接；输入恢复/完整消息入口待补 | 待；未确认 headless 按消息分叉接口 | 部；原生 before ID 与 live 消息入口；历史消息菜单/原输入恢复待补 | 部；原生 user.parentUuid 冻结边界；完整历史入口/输入恢复待补 |
 | H03 | 原生回合分页选择，回退指定消息及之后对话，确认后执行 | 已 | 已；原生 rewind_points 选择与 conversation_only | 待；未确认同义原生机器接口 | 部；可见消息选择和 stage/commit；完整分页选择待补 | 待；resumeSessionAt 是截断恢复，不是已证明的同 SID 原地 revert |
 | H04 | 回退只改对话，不回滚工作区文件；其他页面同步失效历史 | 已 | 部；明确 conversation_only；跨页面历史失效需专项验收 | 待 | 部；明确 files:false，stage/撤销/commit；跨页需专项验收 | 待；rewindFiles 是文件回滚，不能用它代替对话回退 |
 | H05 | 压缩上下文：原生执行、进度、错误和历史/计数更新 | 已 | 已；原生 compact，计数失效/刷新 | 待；未确认 print 模式命令能力及回执 | 已；原生 compact 消息/状态 | 已；原生 /compact、status、boundary、错误 |
 | H06 | 原生代码审查：未提交/base branch/commit/custom，inline 显示 | 已；review/start | 待；源码 x.ai/review/* 是记录评论，不是启动 reviewer | 待；未确认同义审查接口 | 待；自定义 command/agent 可以审查，但不是已证明的同义原生 API | 待；CLI ultrareview/技能不是本会话 inline review/start 的同义物 |
-| H07 | 用户消息 ⋯ 回退/分支；保留已有草稿并追加原输入 | 已 | 部；有原生分支/回退；完整消息操作/草稿恢复待补 | 待；先确认底层能力 | 部；live 消息分支入口；历史菜单/回退入口与输入恢复待补 | 部/待；分支可补，原地回退待核 |
-| H08 | 会话操作图标、对话框、取消不改历史、响应错误可见 | 已 | 已；按能力显示菜单/对话框/错误 | 部；设置与用量；高级动作待核实 | 已；菜单/对话框/显式永久回退确认 | 部；设置/压缩入口；fork/revert 未接 |
+| H07 | 用户消息 ⋯ 回退/分支；保留已有草稿并追加原输入 | 已 | 部；有原生分支/回退；完整消息操作/草稿恢复待补 | 待；先确认底层能力 | 部；live 消息分支入口；历史菜单/回退入口与输入恢复待补 | 部；live 用户消息之前分支；原地回退、完整历史入口/输入恢复待核 |
+| H08 | 会话操作图标、对话框、取消不改历史、响应错误可见 | 已 | 已；按能力显示菜单/对话框/错误 | 部；设置与用量；高级动作待核实 | 已；菜单/对话框/显式永久回退确认 | 部；设置/压缩/分支入口；原地回退未接 |
 
 代码依据：[Codex actions](../web/codex-sdk-actions.js)、
 [原生动作](../crates/sessiondock/src/codex_sdk/actions.rs)、
@@ -384,8 +385,8 @@ quota collector，以及与各功能对应的浏览器套件。已有覆盖包�
   仅按当前实现覆盖。
 - [共享 Hub suite](../tests/native_sdk_hub_browser.py)验证 namespace、创建、草稿、
   附件、丢 ACK 和审批/问题控件，使用的是 Claude 合成对端；不能扩大为另外三个
-  来源都经过独立 Hub 实机验收。[额度 suite](../tests/quotas_browser.py)验证额度页，
-  不验证目前不存在的四来源 SDK gauge。
+  来源都经过独立 Hub 实机验收。[额度 suite](../tests/quotas_browser.py)验证额度页；
+  四来源 SDK 底栏由各来源浏览器套件验证，不能用额度页测试代替。
 
 既有真实协议实验的范围也不同：Grok 验证未认证 initialize、创建认证失败及只读扩展 wire 识别；
 Agy 用真实 CLI 对 loopback 合成模型验证协议；OpenCode 用隔离原生服务验证
@@ -394,7 +395,13 @@ Grok 1.0.62 的真实 initialize 另确认 image:false；本轮已加入结构�
 路径降级的浏览器验收。它们均不能扩大为真实账号、全部工具、后台任务和高级功能
 已验收，详情见各来源合同。
 
-本轮补实现扩展并重跑四来源 Chromium、共享 Hub、quota 回归，验证真实网页
+第一批补实现扩展并重跑四来源 Chromium、共享 Hub、quota 回归，验证真实网页
 点击/输入/上传/回答/队列/会话操作，使用隔离合成原生对端；宽窄屏与明暗截图
 已人工查看。它们验证桥接与 UI，不替代真实账号/全部模型的生产协议验收。
-仍未补齐持久队列/消费对账、Grok/Claude 闲置回收、Claude 分支与若干高级能力。
+第二批完成四来源、共享 Hub、Grok 生命周期和持久队列七套 Chromium 验收，
+另通过历史读取/分页两套回归。覆盖双标签页真实撤销、失败与未知结果的明确重试、
+节点重启不重发、附件只发布一次、新草稿保留、Claude 原生分支及闲置重开。
+SDK 视图暂停额外历史长连接，修复 HTTP/1 双标签页操作阻塞；真实点击验证了
+离开 SDK 恢复历史 watch、跨会话不恢复旧连接。宽窄屏明暗截图已人工查看。
+已补持久队列/失败恢复、Grok/Claude 闲置回收与 Claude 原生分支；原生消费证据、
+完整历史消息操作/输入恢复、子代理专项验收及若干高级能力仍有边界。

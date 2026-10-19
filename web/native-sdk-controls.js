@@ -22,7 +22,7 @@ const NativeSdkControls = {
       button.onclick = () => { if (popover.matches(':popover-open')) popover.hidePopover(); else {popover.showPopover(); CodexSdkView.placeMenu(popover,button);} };
     }
     const actions = el('div',''); actions.id = 'sdk-actions'; menu.append(actions);
-    for (const [method,label] of [['fork','分支会话'],['compact','压缩上下文'],['revert','回退对话'],['unrevert','撤销回退'],['revert_commit','提交回退'],['rewind','回退对话'],['shell','运行命令'],['command','原生命令'],['permissions','权限规则']]) {
+    for (const [method,label] of [['fork','分支会话'],['steer','引导当前任务'],['compact','压缩上下文'],['revert','回退对话'],['unrevert','撤销回退'],['revert_commit','提交回退'],['rewind','回退对话'],['shell','运行命令'],['command','原生命令'],['permissions','权限规则']]) {
       const button = el('button','btn sdk-action',label); button.type = 'button';button.dataset.sdkAction = method;
       button.onclick = () => { view.closeToolbarMenus(); void this.action(view,method); }; actions.append(button);
     }
@@ -122,16 +122,47 @@ const NativeSdkControls = {
     }
   },
   paintQueue(view) {
-    const holder=view.pane.querySelector('.sdk-queue'),rows=view.raw?.queue;
-    if(!Array.isArray(rows))return;
-    const signature=JSON.stringify(rows);if(holder.dataset.state===signature)return;holder.dataset.state=signature;holder.replaceChildren();
-    for(const item of rows){const card=el('div','msg sdk-request'),body=el('div','mb');card.dataset.queueId=item.id;body.append(el('p','sdk-request-title',item.delivery==='steer'?'等待引导':'排队中'),el('pre','',item.text || item.prompt?.text || item.id));
-      for(const [method,title,extra] of [['queue_cancel','撤销',{}],['queue_update','立即引导',{delivery:'steer'}]]){if(!view.capabilities[method])continue;const button=el('button','btn',title);button.type='button';button.onclick=async()=>{button.disabled=true;try{await view.request(`api/native-sdk/${method}`,{uid:view.uid,id:item.id,...extra,request_id:crypto.randomUUID()});}catch(error){view.setNotice(error.message,'blocked');button.disabled=false;}};body.append(button);}card.append(body);holder.append(card);}
+    const holder=view.pane.querySelector('.sdk-queue');
+    const nativeRows=view.raw?.queue || [],bridgeRows=view.raw?.input_queue || [],steers=view.raw?.steers || [];
+    const signature=JSON.stringify([nativeRows,bridgeRows,steers]);if(holder.dataset.state===signature)return;holder.dataset.state=signature;holder.replaceChildren();
+    const generation=view.generation,uid=view.uid;
+    const labels={preparing:'准备输入',queued:'排队中',sending:'正在提交',accepted:'原生已接收',failed:'发送失败',unknown:'发送结果待核对'};
+    const cardFor=(item,title)=>{const card=el('div','msg sdk-request'),body=el('div','mb');card.dataset.queueId=item.id;body.append(el('p','sdk-request-title',title),el('pre','',item.text || item.prompt?.text || item.id));card.append(body);holder.append(card);return body;};
+    const actionsFor=body=>{let actions=body.querySelector('.sdk-request-actions');if(!actions){actions=el('div','sdk-request-actions');body.append(actions);}return actions;};
+    const operation=(body,item,method,title,extra={})=>{
+      const button=el('button','btn',title);button.type='button';actionsFor(body).append(button);
+      button.onclick=async()=>{
+        if(method==='queue_retry' && item.state==='unknown' && !await appConfirm('上次输入可能已由原生处理。请先核对会话历史；再次发送可能重复执行。确认重新发送？',{ok:'重新发送'}))return;
+        if(method==='queue_cancel' && item.state==='unknown' && !await appConfirm('请先核对会话历史。移除此记录不会停止原生任务，后续排队输入将继续。',{ok:'移除记录'}))return;
+        if(!view.current(generation))return;
+        button.disabled=true;
+        try{await view.request(`api/native-sdk/${method}`,{uid,id:item.id,...extra,...(item.state==='unknown'?{confirmed:true}:{}),request_id:crypto.randomUUID()});}
+        catch(error){if(view.current(generation)){view.setNotice(error.message,'blocked');button.disabled=false;}}
+      };
+    };
+    for(const item of bridgeRows){
+      const body=cardFor(item,labels[item.state] || item.state);body.parentElement.dataset.queueOrigin='bridge';
+      if(item.error)body.append(el('p','sdk-control-note',item.error));
+      if(item.state==='unknown')body.append(el('p','sdk-control-note',item.operation==='steer'?'引导处理结果尚未确认。请核对历史；移除记录不会停止原生任务。':'原生处理结果尚未确认，后续输入暂停。核对历史后可重试或移除此记录。'));
+      if(['failed','unknown'].includes(item.state) && item.operation!=='steer')operation(body,item,'queue_retry','重试');
+      if(['queued','failed','unknown'].includes(item.state))operation(body,item,'queue_cancel',item.state==='unknown'?'移除记录':'撤销');
+      if(['failed','unknown'].includes(item.state) && item.text){const restore=el('button','btn','恢复文字');restore.type='button';restore.onclick=()=>{if(!view.current(generation))return;view.input.value=[view.input.value,item.text].filter(Boolean).join('\n');view.fitInput();CodexSdkCompose.input(view);view.input.focus();view.setNotice('文字已追加到输入框；队列记录保留');};actionsFor(body).append(restore);}
+    }
+    for(const item of nativeRows){const body=cardFor(item,item.delivery==='steer'?'等待引导':'排队中');body.parentElement.dataset.queueOrigin='native';
+      for(const [method,title,extra] of [['queue_cancel','撤销',{}],['queue_update','立即引导',{delivery:'steer'}]])if(view.capabilities[method])operation(body,item,method,title,extra);
+    }
+    const steerLabels={dispatching:'正在提交引导',native_queued:'原生已接收引导',native_received:'原生已登记引导',rejected:'引导被拒绝',uncertain:'引导结果待核对',connection_closed:'引导连接已关闭'};
+    for(const item of steers){const body=cardFor({...item,id:item.id || item.request_id},steerLabels[item.status] || '引导回执');body.parentElement.dataset.queueOrigin='steer';body.append(el('p','sdk-control-note','原生接收回执不能确认输入已被处理；临近任务结束时可能另开一轮。'));if(item.error)body.append(el('p','sdk-control-note',item.error));}
   },
   async action(view,method,body={}) {
     const generation=view.generation;
     if(view.capabilities[method]!==true && !(method==='permissions' && view.uid.startsWith('opencode:') && view.capabilities.settings)){view.setNotice('当前原生接口未提供此操作','blocked');return false;}
     try{
+      if(method==='steer'){
+        const modal=CodexSdkActions.form('引导当前任务','原生会在可插入时处理；临近任务结束时可能另开一轮。普通发送仍进入队列。','发送引导');
+        const input=document.createElement('textarea');input.setAttribute('aria-label','引导内容');modal.fields.append(input);
+        modal.form.onsubmit=event=>{event.preventDefault();if(input.value.trim())modal.finish({text:input.value});};body=await modal.answer;if(!body)return false;
+      }
       if(method==='permissions'){
         const modal=CodexSdkActions.form('权限规则','编辑 OpenCode 原生 permissions；保存后由原生服务校验。','保存');const input=document.createElement('textarea');input.setAttribute('aria-label','权限规则 JSON');input.value=JSON.stringify(view.raw?.permissions || [],null,2);modal.fields.append(input);
         modal.form.onsubmit=event=>{event.preventDefault();try{modal.finish(JSON.parse(input.value));}catch{modal.error.textContent='请输入有效 JSON';}};
@@ -148,6 +179,7 @@ const NativeSdkControls = {
       if(!view.current(generation))return false;
       const response=await view.request(`api/native-sdk/${method}`,{uid:view.uid,...body,request_id:crypto.randomUUID()});
       if(!view.current(generation))return true;
+      if((response.accepted ?? response.raw?.accepted)===false)throw new Error(response.error || response.raw?.error || '原生未确认接收，请核对操作记录');
       if(method==='fork'){await CodexSdkActions.openFork(view,response);return true;}
       if(['revert','unrevert','revert_commit','rewind'].includes(method))await view.refreshHistory(generation,true);
       view.setNotice('原生操作已接受');return true;
@@ -174,7 +206,7 @@ const NativeSdkControls = {
     if(item.role!=='user' || !view.capabilities.fork || view.uid.startsWith('grok:') && item.prompt_index==null)return;
     const toggle=el('button','sdk-bubble-toggle','⋯');toggle.type='button';toggle.setAttribute('aria-label','消息操作');toggle.setAttribute('aria-expanded','false');
     const menu=el('div','new-model-menu sdk-bubble-menu');menu.setAttribute('popover','auto');menu.setAttribute('aria-label','消息操作');
-    const button=el('button','btn','从此处之前分支');button.type='button';button.onclick=()=>{menu.hidePopover();this.action(view,'fork',view.uid.startsWith('grok:')?{prompt_index:item.prompt_index}:{before:item.id});};menu.append(button);
+    const button=el('button','btn','从此处之前分支');button.type='button';button.onclick=()=>{menu.hidePopover();this.action(view,'fork',view.uid.startsWith('grok:')?{prompt_index:item.prompt_index}:{before:item.native_id || item.id});};menu.append(button);
     toggle.onclick=()=>{if(menu.matches(':popover-open'))menu.hidePopover();else{menu.showPopover();CodexSdkView.placeMenu(menu,toggle);}};menu.addEventListener('beforetoggle',event=>toggle.setAttribute('aria-expanded',String(event.newState==='open')));node.classList.add('sdk-user-actions');node.append(toggle,menu);
   },
   elicitation(view,request) {

@@ -167,11 +167,22 @@ def exercise(browser, base, fixture, screenshots=None):
         diagnostic = page.evaluate('window.__agySnapshot.raw.diagnostics')
         assert 'synthetic transport diagnostic' in diagnostic
         assert fixture.env['AGY_SDK_FAKE_KEY'] not in diagnostic and '[redacted]' in diagnostic
+        page.wait_for_function("NativeSdkView.raw.input_queue?.some(row=>row.text==='__ERROR__' && row.state==='failed')")
+        failed = page.evaluate("NativeSdkView.raw.input_queue.find(row=>row.text==='__ERROR__')")
+        page.locator(f'[data-queue-id="{failed["id"]}"]').get_by_role('button', name='撤销', exact=True).click()
+        expect(page.locator(f'[data-queue-id="{failed["id"]}"]')).to_have_count(0)
         fixture.occupy()
         before = len(fixture.inputs())
-        post(page, base, 'turn', {'uid': uid, 'text': 'must not take over', 'request_id': 'occupied'}, ok=False)
+        send(page, 'must not take over')
+        page.wait_for_function("NativeSdkView.raw.input_queue?.some(row=>row.text==='must not take over' && ['failed','unknown'].includes(row.state))")
+        refused = page.evaluate("NativeSdkView.raw.input_queue.find(row=>row.text==='must not take over')")
+        assert 'busy' in refused['error'] or '占用' in refused['error'], refused
         assert len(fixture.inputs()) == before
         fixture.unoccupy()
+        page.locator(f'[data-queue-id="{refused["id"]}"]').get_by_role('button', name='移除记录' if refused['state']=='unknown' else '撤销', exact=True).click()
+        if refused['state']=='unknown':
+            page.get_by_role('button', name='移除记录', exact=True).last.click()
+        expect(page.locator(f'[data-queue-id="{refused["id"]}"]')).to_have_count(0)
         send(page, 'after external writer exits')
         expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: after external writer exits')
         idle(page)

@@ -37,6 +37,7 @@
 | `settings` | 显式更新 `permission_mode/fast_mode/model/effort`；逐项等待原生确认，仅更新进程级设置。必填 `request_id`；相同请求不重放已尝试的控制 |
 | `usage` | 查询 `get_context_usage {detail:"summary"}` 和实验性 `get_usage {skip_behaviors:true}`；失败按字段降级并保留最近有效数据 |
 | `compact` | 将原生 `/compact` 作为 user 命令写入 stream；必填 `request_id`，重试不重复提交。接受不等于完成，进度与结果来自原生事件 |
+| `fork` | `request_id` 必填；全会话冻结当前原生主链 tail，`before` 接原生 user UUID 并冻结其 parentUuid。返回新 UID/SID、session 和可信 `sdk_fork` 计划；重试不会重复派发未确认操作 |
 
 `turn` 的模型变化通过原生 `set_model`，effort 通过原生
 `apply_flag_settings {settings:{effortLevel}}`。首次启动的选择用
@@ -66,6 +67,7 @@
 文本和 thinking 的稳定 ID 使用原生 API message ID 与 block index，
 工具用原生 tool-use ID；完整 assistant 帧到达后补充 `native_id`（JSONL UUID）。
 发送的 user UUID 直接作为实时 ID，便于普通历史对账。
+只有实际收到原生 user 回显才标记 `native_echo:true`；乐观消息不能充当输入已消费证据。
 工具参数保留于 `input/native_block`，参数碎片在流中累计，工具结果和
 `is_error` 保留于同一工具消息的 `result`；不会把失败工具当作成功回答。
 
@@ -123,11 +125,13 @@ stdin 在每个 result 后保持打开。HTTP future 和 SSE receiver 都不拥�
 按官方 SDK 设置进程内 `CLAUDE_CODE_SDK_READS_SESSION_STATE=1`，
 使用原生 session-state 通知区分 result 与仍在执行的后台后续工作。
 桥接 shutdown、明确 discard 或传输故障只清理自己启动的隔离进程组。
+原生回合错误标记 `error_kind:"turn"`，传输故障标记 `"transport"`；
+未确认的断线输入不能自动重放。
 stderr 的诊断尾部经过配置/环境中的 secret 值及 token 形态脱敏，
 不返回 argv、环境或凭据；原生退出错误会附带已脱敏的末条诊断。
 
 能力包括 send、interrupt、respond、approval、question、models、create、resume、
-effort、settings、permission_mode、fast_mode、images、usage、context_usage、compact、
+effort、settings、permission_mode、fast_mode、images、usage、context_usage、compact、fork、fork_before、
 mcp_elicitation 和限定种类的 user_dialog；`shared_tui:false`、`subagents:false`。这是独立原生 runtime，
 无法加入一个独立 TUI 正在使用的 runtime。Linux 在首次连接和每次发送前
 复用既有 procscan，检查 SID、完整原生文件持有者及同 cwd 尚未明确身份的裸
@@ -140,7 +144,23 @@ Claude 进程，排除本桥接的进程树。发现冲突返回
 需要切换到独立 TUI 时先显式结束 SDK 工作并 discard。
 节点重启会丢失内存中的 pending 回执、请求去重缓存与实时快照；已存在的原生
 历史仍可按同一 SID 恢复。不承诺从桥接崩溃中重放未确认输入。
-原生 fork 尚未接入；不会自行复制或改写 transcript 代替官方实现。
+没有订阅者、已接受输入、原生活动、后台任务、审批/问题、控制请求及用量查询时，
+30 秒巡检开始计算空闲期；持续满 10 分钟后回收本桥接拥有的子进程。
+调用持有 runtime 读租约，回收使用独占写租约并等旧进程组退出；
+停止与回答仍可并行发送控制，不会等待用量查询结束。
+空闲回收保留 Session、原生文件、实时去重及快照；再次打开以同 SID 原生 resume，
+并由原生重新确认本会话的 permission/Fast 选择，不写日常配置。
+队列持有的订阅也算观察者；离页不回收在途 turn、待回答请求或后台任务。
+
+fork 使用 `--resume=<精确源路径> --fork-session --session-id=<新SID>
+--resume-session-at=<原生链UUID>`，全部原生 transcript 写入仍由 CLI 完成。
+全会话和按消息 fork 都在接受请求时冻结边界，源会话随后追加内容不会被带入。
+`before` 的前驱可以是原生 attachment，不能退成“最后一条 assistant”而丢掉保留回合的尾部。
+首条用户消息的 parentUuid 为 null 时，分支没有保留历史，创建空的新原生身份。
+CLI initialize 不创建 fork JSONL；首次真实 user 输入才原生落盘，绝不发送虚构输入来触发复制。
+未落盘的分支在私有创建回执中保存 `sdk_fork`，重启后从可信回执恢复计划；
+只有其原生 JSONL 已存在才改为直接 resume 新 SID。
+桥接不自行复制、裁剪或改写源/目标 transcript。
 `rewindFiles` 是工作区文件回滚，不能代替 conversation-only revert，后者仍未实现。
 
 新建路径使用 Claude Code 2.1.302 包内 `sanitizePath` 的确切算法：
@@ -165,6 +185,16 @@ initialize 确实返回 models，首次 user 输入前没有 JSONL。
 SID 全部一致；包含非 BMP 字符且超过 200 个 UTF-16 单元的 cwd 所生成的原生
 JSONL 路径与桥接算法完全一致。没有调用真实账号或真实模型，也没有读取或修改日常配置。
 
+2026-10-19，继续使用该官方 **2.1.302** CLI、隔离 HOME 和 loopback 合成模型，
+显式 `claude-haiku-4-5-20251001 --effort low`，实际 API 请求模型全部核对一致。
+实测 `--fork-session` 全会话和 `--resume-session-at=第二条 user.parentUuid`
+分别保留三轮、第一轮历史；后者前驱含原生 attachment。
+新帧和目标 JSONL 都使用新 SID，复制的原生消息 UUID 保留，源文件未被 fork 改写。
+initialize 后等待仍无目标 JSONL；首次真实输入后才落盘。
+另在 fork initialize 后让源原生 CLI 追加一轮，再向分支发送真实输入，
+冻结 tail 的分支没有带入后加内容。以上只证明合成模型下的原生协议和落盘行为，
+不等于真实账号、工具工作区或文件回滚经过验证。
+
 依据：
 
 - [Claude CLI reference](https://code.claude.com/docs/en/cli-reference)：机器输入输出、恢复、指定 SID、partial messages 和用户回显参数。
@@ -179,6 +209,10 @@ JSONL 路径与桥接算法完全一致。没有调用真实账号或真实模�
 该套件通过 Chromium 操作发送、停止、流式内容、工具失败、审批和问题回传、
 刷新恢复、去重、新建及独立 writer 冲突，并覆盖用量/上下文、设置、图片、
 MCP form/URL、refusal dialog、压缩、重试、限流和实验查询降级。
+新增浏览器路径操作全会话/按用户消息/首消息空分支，验证来源保留和 request_id 去重。
+空闲测试通过只注入测试服务进程的 `LD_PRELOAD` 单调时钟 shim 推进固定的生产 10 分钟计时，
+没有生产超时 override；验证 active turn、待审批、后台任务和订阅者保活，
+以及真正空闲后的同 SID 恢复及已确认权限设置恢复。该测试夹具需系统 `cc`。
 共享 Hub 的真实审批/问题控件和草稿恢复
 见 [native_sdk_hub_browser.py](../tests/native_sdk_hub_browser.py)。
 验证命令见[验证清单](validation.md)；合成协议验收不扩大上述实机实验的证据范围。

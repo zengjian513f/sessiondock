@@ -104,8 +104,10 @@ snapshot 与 receiver 在同一发布锁中取得；每次发布完整快照：
 稳定 ID 为 `agy:<SID>:step:<step_index>`；接受的用户输入 ID 使用 request_id，
 收到原生 user_input 时另加 native_id。序号在当前 live session 内递增。
 广播 lag 后 facade 应使用 bridge/reset 触发重新订阅，不能把缺口解释为任务结束。
-实时消息、排队任务及 turn 去重回执不跨节点服务重启；不宣称已接受工作可在重启后
-自动恢复。原生历史仍由既有 inventory/read-model 读取。
+实时消息与正在执行的 child 不跨节点服务重启。共享 facade 的
+[持久输入账本](native-sdk.md#持久输入与失败恢复) 保存尚未投递的队列、提交去重与
+失败/未知回执；在途工作重启后须核对，不自动重发。关联的原生 user_input 提供
+消费证据，不能把准入当消费。原生历史仍由既有 inventory/read-model 读取。
 
 ## 验证
 

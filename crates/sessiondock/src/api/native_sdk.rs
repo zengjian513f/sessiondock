@@ -29,7 +29,7 @@ async fn target(state: &AppState, uid: &str, agent: &str) -> Result<Value, ApiEr
         && let Some(row) = state.native_sdks.receipt(uid)
     {
         return Ok(
-            json!({"uid":uid,"session_id":row["sid"],"cwd":row["cwd"],"source":row["source"],"agent":""}),
+            json!({"uid":uid,"session_id":row["sid"],"cwd":row["cwd"],"source":row["source"],"agent":"","sdk_fork":row["sdk_fork"]}),
         );
     }
     let uid = uid.to_owned();
@@ -68,6 +68,7 @@ async fn execute(
         "open"
             | "create"
             | "turn"
+            | "steer"
             | "interrupt"
             | "respond"
             | "models"
@@ -81,6 +82,7 @@ async fn execute(
             | "rewind"
             | "shell"
             | "queue_cancel"
+            | "queue_retry"
             | "queue_update"
             | "revert"
             | "unrevert"
@@ -148,7 +150,34 @@ async fn execute(
             .unwrap_or(Value::Null);
         return Ok(Json(response(result)));
     }
-    let mut submission = if method == "turn" {
+    if matches!(method.as_str(), "queue_cancel" | "queue_retry")
+        && (body["origin"] == "bridge"
+            || body["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("bridge:")))
+    {
+        let action = if method == "queue_cancel" {
+            "cancel"
+        } else {
+            "retry"
+        };
+        let (result, draft) = state
+            .native_sdks
+            .input_action(
+                &target,
+                body["id"].as_str().unwrap_or_default(),
+                action,
+                body["confirmed"] == true,
+                body["request_id"].as_str().unwrap_or_default(),
+            )
+            .await
+            .map_err(failure)?;
+        if let Some(draft) = draft {
+            return Box::pin(execute(state, "turn".into(), draft)).await;
+        }
+        return Ok(Json(response(result)));
+    }
+    if matches!(method.as_str(), "turn" | "steer") {
         let id = body["request_id"]
             .as_str()
             .filter(|id| !id.is_empty())
@@ -157,121 +186,106 @@ async fn execute(
             .unwrap_or_else(crate::conversation::random_id)
             .map_err(super::conversation::error)?;
         body["request_id"] = json!(id);
-        Some(
-            state
-                .native_sdks
-                .submission(&target, &id)
-                .lock_owned()
-                .await,
-        )
-    } else {
-        None
-    };
-    if let Some(result) = submission
-        .as_ref()
-        .and_then(|submission| submission.result.clone())
-    {
-        return Ok(Json(response(result)));
-    }
-    if let Some(input) = submission
-        .as_ref()
-        .and_then(|submission| submission.input.clone())
-    {
-        body = input;
-    } else if method == "turn" {
-        if let Some(submission) = submission.as_mut() {
-            submission.draft = Some(body.clone());
+        let _submission = state
+            .native_sdks
+            .submission(&target, &format!("{method}:{id}"))
+            .lock_owned()
+            .await;
+        let entry = state
+            .native_sdks
+            .begin_input(&target, &method, body)
+            .map_err(failure)?;
+        if entry.state != "preparing" {
+            return Ok(Json(response(
+                crate::native_sdk::NativeSdks::input_receipt(&entry),
+            )));
         }
-        let attachments = body["attachments"].as_array().cloned().unwrap_or_default();
-        let quotes = body["quotes"].as_array().cloned().unwrap_or_default();
-        let published = if attachments.is_empty() {
-            Vec::new()
-        } else {
-            let conversations = state
-                .conversations
-                .as_ref()
-                .ok_or_else(|| ApiError::unavailable("附件暂存"))?;
-            let identity = conversations
-                .identity(target["uid"].as_str().unwrap_or_default())
-                .await
-                .map_err(super::conversation::error)?;
-            conversations
-                .publish(&identity, &attachments)
-                .await
-                .map_err(super::conversation::error)?
+        let draft = entry.draft.clone();
+        let mut body = entry.draft.clone();
+        let preparation=async {
+            let attachments=body["attachments"].as_array().cloned().unwrap_or_default();
+            let quotes=body["quotes"].as_array().cloned().unwrap_or_default();
+            let published=if attachments.is_empty(){Vec::new()}else{
+                let conversations=state.conversations.as_ref().ok_or_else(||ApiError::unavailable("附件暂存"))?;
+                let identity=conversations.identity(target["uid"].as_str().unwrap_or_default()).await.map_err(super::conversation::error)?;
+                conversations.publish(&identity,&attachments).await.map_err(super::conversation::error)?
+            };
+            body["text"]=json!(crate::conversation::build_prompt(body["text"].as_str().unwrap_or_default(),&published,&quotes));
+            // Only attachments published through the authenticated composer may
+            // become multimodal input. Persist the exact prepared input before ACK.
+            let images_supported=if source=="grok"&&published.iter().any(|attachment|attachment["kind"]=="image") {
+                let opened=state.native_sdks.call(source,"open",target.clone(),json!({})).await.map_err(failure)?;
+                opened["capabilities"]["images"]==true
+            } else {true};
+            let mut images=Vec::new();let mut files=Vec::new();
+            for attachment in &published {
+                if images_supported&&attachment["kind"]=="image"&&matches!(source,"grok"|"claude"|"opencode") {
+                    use base64::Engine;
+                    let path=attachment["path"].as_str().ok_or_else(||failure("附件缺少路径".into()))?;
+                    let bytes=tokio::fs::read(path).await.map_err(|error|failure(format!("读取图片失败：{error}")))?;
+                    let mime=attachment["mime"].as_str().unwrap_or("image/png");
+                    let data=base64::engine::general_purpose::STANDARD.encode(bytes);
+                    images.push(json!({"data":data,"mimeType":mime}));
+                    files.push(json!({"uri":format!("data:{mime};base64,{data}"),"name":attachment["name"]}));
+                }
+            }
+            body["images"]=json!(images);body["files"]=json!(files);body["attachments"]=json!(published);
+            Ok::<Value,ApiError>(body)
+        }.await;
+        let prepared = match preparation {
+            Ok(input) => input,
+            Err(error) => {
+                state
+                    .native_sdks
+                    .input_preparation_failed(&target, &entry.id, format!("{error:?}"))
+                    .map_err(failure)?;
+                return Err(error);
+            }
         };
-        body["text"] = json!(crate::conversation::build_prompt(
-            body["text"].as_str().unwrap_or_default(),
-            &published,
-            &quotes
-        ));
-        // Only read attachments produced by the existing authenticated publication path.
-        // Client-provided paths/images/files never grant filesystem access.
-        let images_supported = if source == "grok"
-            && published
-                .iter()
-                .any(|attachment| attachment["kind"] == "image")
-        {
-            let opened = state
+        let mut result = state
+            .native_sdks
+            .prepare_input(&target, &entry.id, prepared)
+            .map_err(failure)?;
+        if method == "steer" && result["accepted"] == true {
+            result = state
                 .native_sdks
-                .call(source, "open", target.clone(), json!({}))
+                .dispatch_input_control(&target, &entry.id)
                 .await
                 .map_err(failure)?;
-            opened["capabilities"]["images"] == true
-        } else {
-            true
-        };
-        let mut images = Vec::new();
-        let mut files = Vec::new();
-        for attachment in &published {
-            if images_supported
-                && attachment["kind"] == "image"
-                && matches!(source, "grok" | "claude" | "opencode")
-            {
-                use base64::Engine;
-                let path = attachment["path"]
-                    .as_str()
-                    .ok_or_else(|| failure("附件缺少路径".into()))?;
-                let bytes = tokio::fs::read(path)
-                    .await
-                    .map_err(|error| failure(format!("读取图片失败：{error}")))?;
-                let mime = attachment["mime"].as_str().unwrap_or("image/png");
-                let data = base64::engine::general_purpose::STANDARD.encode(bytes);
-                images.push(json!({"data":data,"mimeType":mime}));
-                files.push(
-                    json!({"uri":format!("data:{mime};base64,{data}"),"name":attachment["name"]}),
-                );
-            }
         }
-        body["images"] = json!(images);
-        body["files"] = json!(files);
-        body["attachments"] = json!(published);
-        if let Some(submission) = submission.as_mut() {
-            submission.input = Some(body.clone());
-        }
-    }
-    let result = state
-        .native_sdks
-        .call(source, &method, target.clone(), body)
-        .await
-        .map_err(failure)?;
-    if let Some(submission) = submission.as_mut() {
-        if target["agent"].as_str().unwrap_or_default().is_empty()
+        if result["accepted"] == true
+            && target["agent"].as_str().unwrap_or_default().is_empty()
             && let Some(conversations) = &state.conversations
-            && let Some(draft) = &submission.draft
         {
             conversations
                 .sdk_accepted(
                     target["uid"].as_str().unwrap_or_default(),
-                    draft["request_id"].as_str().unwrap_or_default(),
-                    draft,
+                    &id,
+                    &draft,
                     result.clone(),
                 )
                 .await
                 .map_err(super::conversation::error)?;
         }
-        submission.result = Some(result.clone());
+        return Ok(Json(response(result)));
     }
+    if method == "interrupt" {
+        state
+            .native_sdks
+            .input_stop_requested(&target, true)
+            .map_err(failure)?;
+    }
+    let native_result = state
+        .native_sdks
+        .call(source, &method, target.clone(), body)
+        .await;
+    if method == "interrupt" && native_result.is_err() {
+        state
+            .native_sdks
+            .input_stop_requested(&target, false)
+            .map_err(failure)?;
+    }
+    let result = native_result.map_err(failure)?;
     if matches!(method.as_str(), "create" | "fork") {
         state.reader.store.invalidate_inventory();
         let mut result = result;
@@ -314,7 +328,17 @@ pub async fn events(
     } else {
         format!("{}:{}", query.uid, query.agent)
     };
-    let (snapshot, mut events) = state.native_sdks.subscribe(source, &key).map_err(failure)?;
+    let native = state.native_sdks.subscribe(source, &key);
+    let (snapshot, mut events) = match native {
+        Ok((snapshot, events)) => (snapshot, Some(events)),
+        Err(error) => (state.native_sdks.input_fallback(&target, &error), None),
+    };
+    let (input_snapshot, mut queue_events) = state.native_sdks.input_events(&target);
+    let mut snapshot = snapshot;
+    snapshot["raw"]["input_queue"] = input_snapshot;
+    let queue_scope = crate::native_sdk::NativeSdks::input_scope(&target);
+    let sdks = state.native_sdks.clone();
+    let source = source.to_owned();
     let shutdown = state.shutdown.clone();
     let stream = async_stream::stream! {
         yield Ok::<_,Infallible>(Event::default().event("sdk").data(snapshot.to_string()));
@@ -322,14 +346,37 @@ pub async fn events(
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,
-                _ = heartbeat.tick() => yield Ok(Event::default().event("heartbeat").data("{}")),
-                event = events.recv() => match event {
-                    Ok(event) => yield Ok(Event::default().event("sdk").data(&*event)),
+                _ = heartbeat.tick() => {
+                    if events.is_none() && let Ok((snapshot,receiver))=sdks.subscribe(&source,&key) {
+                        events=Some(receiver);
+                        yield Ok(Event::default().event("sdk").data(sdks.with_inputs(&target,snapshot).to_string()));
+                    }
+                    yield Ok(Event::default().event("heartbeat").data("{}"));
+                },
+                queue_event=queue_events.recv()=>match queue_event {
+                    Ok(event)=>{
+                        if let Ok(mut value)=serde_json::from_str::<Value>(&event) && value["scope"]==queue_scope {
+                            value.as_object_mut().unwrap().remove("scope");
+                            yield Ok(Event::default().event("sdk").data(value.to_string()));
+                        }
+                    },
+                    Err(broadcast::error::RecvError::Lagged(_))=>{
+                        yield Ok(Event::default().event("sdk").data(json!({"type":"input_queue","raw":{"input_queue":sdks.input_snapshot(&target)}}).to_string()));
+                    },
+                    Err(broadcast::error::RecvError::Closed)=>break,
+                },
+                event = async { match events.as_mut() {Some(events)=>events.recv().await,None=>std::future::pending().await} } => match event {
+                    Ok(event) => {
+                        match serde_json::from_str::<Value>(&event) {
+                            Ok(snapshot)=>yield Ok(Event::default().event("sdk").data(sdks.with_inputs(&target,snapshot).to_string())),
+                            Err(_)=>yield Ok(Event::default().event("sdk").data(&*event)),
+                        }
+                    },
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         yield Ok(Event::default().event("sdk").data(json!({"method":"bridge/reset","raw":{}}).to_string()));
                         break;
                     }
-                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Closed) => events=None,
                 }
             }
         }

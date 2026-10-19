@@ -44,6 +44,7 @@ struct Data {
     model: Option<String>,
     effort: Option<String>,
     error: Option<String>,
+    error_kind: Option<&'static str>,
     diagnostics: String,
     usage: Value,
     step_usage: Value,
@@ -201,6 +202,7 @@ impl Bridge {
                 data.receipts.insert(request, receipt.clone());
                 data.outstanding += 1;
                 data.error = None;
+                data.error_kind = None;
                 live.publish(&mut data);
                 Ok(receipt)
             }
@@ -283,6 +285,7 @@ impl Bridge {
                 model,
                 effort,
                 error: None,
+                error_kind: None,
                 diagnostics: String::new(),
                 usage: Value::Null,
                 step_usage: Value::Null,
@@ -370,7 +373,7 @@ impl Live {
     fn raw(&self, data: &Data) -> Value {
         json!({"session_id":self.sid,"cwd":self.cwd,"running":data.outstanding>0,
             "items":data.items,"requests":[],"model":data.model,"effort":data.effort,
-            "error":data.error,"diagnostics":data.diagnostics,"capabilities":capabilities(),
+            "error":data.error,"error_kind":data.error_kind,"diagnostics":data.diagnostics,"capabilities":capabilities(),
             "usage":data.usage,"step_usage":data.step_usage,"settings":{"mode":data.mode,"applies":"next_turn"},
             "modes":[{"id":"accept-edits","name":"接受编辑"},{"id":"auto","name":"自动"},{"id":"plan","name":"计划"}]})
     }
@@ -416,6 +419,7 @@ async fn actor(
                     let mut data = live.data.lock().unwrap();
                     data.active = Some(turn.id.clone());
                     data.error = None;
+                    data.error_kind = None;
                     data.model = turn.model.clone();
                     data.effort = turn.effort.clone();
                     if let Some(item) = data
@@ -451,6 +455,17 @@ async fn actor(
                     });
                 }
                 if let Err(error) = outcome {
+                    data.error_kind = Some(
+                        if error.starts_with("agy_sdk_interrupted")
+                            || error.starts_with("agy_sdk_native_INTERRUPTED")
+                        {
+                            "interrupted"
+                        } else if error.starts_with("agy_sdk_native_") {
+                            "turn"
+                        } else {
+                            "transport"
+                        },
+                    );
                     data.error = Some(error.clone());
                     data.items.push(json!({"id":format!("agy:error:{}",turn.id),"role":"system","content":error,"error":true}));
                 }
@@ -463,6 +478,7 @@ async fn actor(
     }
     let mut data = live.data.lock().unwrap();
     if data.outstanding > 0 {
+        data.error_kind = Some("transport");
         data.error = Some("agy_sdk_shutdown: 已接受工作未完成，不会自动重放。".into());
     }
     data.outstanding = 0;

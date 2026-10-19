@@ -38,12 +38,11 @@ impl Bridge {
                 let native = &context["context"];
                 if let (Some(used), Some(total)) =
                     (native["used"].as_u64(), native["total"].as_u64())
+                    && total > 0
                 {
-                    if total > 0 {
-                        state.context = json!({"used_tokens":used,"max_tokens":total,
-                            "percent":native["usagePct"].as_f64().unwrap_or(used as f64 * 100.0 / total as f64),
-                            "basis":"原生 session/info 上下文估计","native":native});
-                    }
+                    state.context = json!({"used_tokens":used,"max_tokens":total,
+                        "percent":native["usagePct"].as_f64().unwrap_or(used as f64 * 100.0 / total as f64),
+                        "basis":"原生 session/info 上下文估计","native":native});
                 }
             }
         }
@@ -207,11 +206,11 @@ pub(super) fn response_result(request: &Value, result: &Value) -> Result<Value, 
                 return Err("grok_sdk_invalid_plan_result".into());
             }
             let mut response = json!({"outcome":outcome});
-            if outcome == "cancelled" {
-                if let Some(feedback) = result.get("feedback") {
-                    response["feedback"] =
-                        json!(feedback.as_str().ok_or("grok_sdk_invalid_plan_feedback")?);
-                }
+            if outcome == "cancelled"
+                && let Some(feedback) = result.get("feedback")
+            {
+                response["feedback"] =
+                    json!(feedback.as_str().ok_or("grok_sdk_invalid_plan_feedback")?);
             }
             Ok(response)
         }

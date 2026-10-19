@@ -392,9 +392,10 @@ def main():
                     proc.mkdir()
                     (proc / 'cmdline').write_bytes(b'opencode\0--standalone\0--session\0' + SID.encode() + b'\0')
                     (proc / 'cwd').symlink_to(native.cwd)
-                    refused = page.request.post(base + '/api/native-sdk/turn', data={
-                        'uid': uid, 'text': 'must not reach native', 'request_id': 'independent-writer'})
-                    assert not refused.ok
+                    send('must not reach native')
+                    page.wait_for_function("NativeSdkView.raw.input_queue?.some(row=>row.text==='must not reach native' && row.state==='failed')")
+                    refused = page.evaluate("NativeSdkView.raw.input_queue.find(row=>row.text==='must not reach native')")
+                    assert refused['error'], refused
                     assert not any(r[0] == 'POST' and r[1].endswith('/prompt') and
                                    r[2]['text'] == 'must not reach native' for r in native.received)
                     (proc / 'cmdline').unlink()

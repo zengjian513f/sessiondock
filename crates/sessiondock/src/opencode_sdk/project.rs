@@ -192,21 +192,19 @@ pub(super) fn usage(
         let native_model = &record["model"];
         if current_model["id"] == native_model["id"]
             && current_model["providerID"] == native_model["providerID"]
-        {
-            if let Some(model) = catalog.iter().find(|m| {
+            && let Some(model) = catalog.iter().find(|m| {
                 m["model"] == native_model["id"] && m["providerID"] == native_model["providerID"]
-            }) {
-                if let Some(max) = model["limit"]["context"].as_f64().filter(|v| *v > 0.0) {
-                    let tokens = &record["tokens"];
-                    let used = tokens["input"].as_f64().unwrap_or_default()
-                        + tokens["cache"]["read"].as_f64().unwrap_or_default()
-                        + tokens["cache"]["write"].as_f64().unwrap_or_default()
-                        + tokens["output"].as_f64().unwrap_or_default();
-                    context = json!({"used_tokens":used,"max_tokens":max,"percent":used/max*100.0,
+            })
+            && let Some(max) = model["limit"]["context"].as_f64().filter(|v| *v > 0.0)
+        {
+            let tokens = &record["tokens"];
+            let used = tokens["input"].as_f64().unwrap_or_default()
+                + tokens["cache"]["read"].as_f64().unwrap_or_default()
+                + tokens["cache"]["write"].as_f64().unwrap_or_default()
+                + tokens["output"].as_f64().unwrap_or_default();
+            context = json!({"used_tokens":used,"max_tokens":max,"percent":used/max*100.0,
                         "estimated":true,"basis":"最近一次模型请求估计（含缓存及输出）；压缩后重新计量",
                         "message_id":record["id"]});
-                }
-            }
         }
     }
     let mut tokens = info["tokens"].clone();
