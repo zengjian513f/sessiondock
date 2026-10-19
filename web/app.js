@@ -9576,6 +9576,28 @@ function renderConversationUsage(row, uid) {
     .catch(() => { paint(entry.data); return entry.data; });
 }
 
+function observedConversationActivity(activity, uid, agent = null) {
+  const compacting = !agent && S.live.has(uid)
+    && cache.get(viewKey(uid, agent))?.cli?.instance?.phase === 'compacting';
+  if (compacting) activity = {state: 'working'};
+  if (activity?.state === 'working' && !compacting) {
+    const cli = !agent && cache.get(viewKey(uid, agent))?.cli;
+    const processStart = S.liveStarted.get(uid);
+    const activityAt = Date.parse(activity.ts) / 1000;
+    if (!S.live.has(uid)) activity = null;
+    else if (uid.startsWith('codex:') && !S.liveWorking.has(uid)
+        && cli?.instance?.running === true && cli.instance.busy === false
+        && cli.input?.state === 'ready' && Number.isFinite(activityAt)
+        && Number(cli.observed_at) >= activityAt + 2) {
+      // Codex can stop a turn without writing turn_aborted to its rollout.
+      // A newer, ready CLI observation closes the stale native working label.
+      activity = {...activity, state: 'aborted', reason: '终端已回到输入状态，原生回合未写入结束事件'};
+    } else if (Number.isFinite(processStart) && Number.isFinite(activityAt)
+        && activityAt < processStart - 2) activity = null;
+  }
+  return {activity, compacting};
+}
+
 function renderActivity(activity) {
   const box = $('#msgs');
   if (!box) return;
@@ -9592,24 +9614,9 @@ function renderActivity(activity) {
     box.after(row);
   }
   row.classList.toggle('hidden', $('#composer').classList.contains('hidden'));
-  const compacting = !S.agent && S.live.has(S.sel)
-    && cache.get(viewKey(S.sel))?.cli?.instance?.phase === 'compacting';
-  if (compacting) activity = {state: 'working'};
-  if (activity?.state === 'working' && !compacting) {
-    const cli = !S.agent && cache.get(viewKey(S.sel))?.cli;
-    const processStart = S.liveStarted.get(S.sel);
-    const activityAt = Date.parse(activity.ts) / 1000;
-    if (!S.live.has(S.sel)) activity = null;
-    else if (S.sel.startsWith('codex:') && !S.liveWorking.has(S.sel)
-        && cli?.instance?.running === true && cli.instance.busy === false
-        && cli.input?.state === 'ready' && Number.isFinite(activityAt)
-        && Number(cli.observed_at) >= activityAt + 2) {
-      // Codex can stop a turn without writing turn_aborted to its rollout.
-      // A newer, ready CLI observation closes the stale native working label.
-      activity = {...activity, state: 'aborted', reason: '终端已回到输入状态，原生回合未写入结束事件'};
-    } else if (Number.isFinite(processStart) && Number.isFinite(activityAt)
-        && activityAt < processStart - 2) activity = null;
-  }
+  const observed = observedConversationActivity(activity, S.sel, S.agent);
+  activity = observed.activity;
+  const compacting = observed.compacting;
   const labels = {working: '处理中', waiting: '待回答', aborted: '已中断', failed: '执行失败'};
   const label = compacting ? '压缩中' : labels[activity?.state]
     || (S.live.has(S.sel) && !S.agent ? '就绪' : '未运行');
