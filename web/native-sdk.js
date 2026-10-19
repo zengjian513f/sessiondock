@@ -39,7 +39,7 @@ const NativeSdkView = {
       <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div></div>
       <div id="sdk-composer">
         <div class="sdk-status-row">
-          <button class="sdk-status" type="button" aria-expanded="false" aria-controls="sdk-status-menu"><span role="status" aria-live="polite">连接中</span></button><div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" aria-label="完整状态"></div>
+          <button class="sdk-status" data-state="connecting" type="button" aria-expanded="false" aria-controls="sdk-status-menu"><span role="status" aria-live="polite">连接中</span></button><div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" aria-label="完整状态"></div>
           <div class="sdk-options"><div class="sdk-pickers">
             <label class="new-effort sdk-model" title="模型" hidden><span class="visually-hidden">模型</span><select id="sdk-model" aria-label="模型"></select></label>
             <label class="new-effort sdk-effort" title="推理强度" hidden><span class="visually-hidden">推理强度</span><select id="sdk-effort" aria-label="推理强度"></select></label>
@@ -100,6 +100,7 @@ const NativeSdkView = {
     if (!this.notice) return;
     this.notice.querySelector('[role=status]').textContent = text; this.notice.title = text;
     this.notice.classList.toggle('blocked', kind === 'blocked');
+    this.notice.dataset.state = kind || 'neutral';
     this.pane.querySelector('#sdk-status-menu').textContent = text;
   },
 
@@ -136,7 +137,7 @@ const NativeSdkView = {
       });
       es.onerror = () => {
         if (!this.current(generation) || this.es !== es) return;
-        this.setConnected(false); this.setNotice('连接中断，重连中', 'blocked');
+        this.setConnected(false); this.setNotice('连接中断，重连中', 'connecting');
         if (es.readyState === EventSource.CLOSED) this.reconnect();
       };
     } catch (error) {
@@ -247,8 +248,11 @@ const NativeSdkView = {
   paintStatus() {
     const raw=this.raw || {},pending=(raw.input_queue || []).find(item=>item.operation!=='steer');
     const paused=!this.running && !this.requests.size && ['failed','unknown'].includes(pending?.state);
+    const compacting = raw.status === 'compacting' || raw.compact?.state === 'compacting';
+    const kind = raw.error ? 'blocked' : this.requests.size ? 'waiting' : compacting ? 'maintenance'
+      : raw.retry ? 'retrying' : this.running ? 'working' : paused ? 'warning' : pending ? 'waiting' : 'ready';
     this.setNotice(raw.error ? `错误：${typeof raw.error === 'string' ? raw.error : raw.error.message || JSON.stringify(raw.error)}`
-      : this.requests.size ? '等待回答' : raw.status === 'compacting' || raw.compact?.state === 'compacting' ? '正在压缩上下文' : raw.retry ? `请求重试中${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}` : this.running ? '处理中' : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送' : '就绪', raw.error || paused ? 'blocked' : '');
+      : this.requests.size ? '等待回答' : compacting ? '压缩中' : raw.retry ? `请求重试中${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}` : this.running ? '处理中' : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送' : '就绪', kind);
   },
 
   paintHistory() {
@@ -266,9 +270,9 @@ const NativeSdkView = {
     this.history.replaceChildren();
     const partial = this.historyData.partial;
     const split = partial ? Math.min(partial.head, messages.length) : 0;
-    const plan = partial ? [...planTurns(messages.slice(0, split), {tailComplete:false,foldTail:true}),
+    const plan = partial ? [...planTurns(messages.slice(0, split).filter(sdkHistoryMessageVisible), {tailComplete:false,foldTail:true}),
       {gap:{uid:this.uid,agent:this.agent,omitted:partial.omitted}},
-      ...planTurns(messages.slice(split), {tailComplete:true})] : planTurns(messages, {tailComplete:true});
+      ...planTurns(messages.slice(split).filter(sdkHistoryMessageVisible), {tailComplete:true})] : planTurns(messages.filter(sdkHistoryMessageVisible), {tailComplete:true});
     buildPlan(this.history, plan, null);
     refreshMessageTimeDividers(this.history);
   },

@@ -340,12 +340,15 @@ before first SEND does not retain these unpersisted receipts.
   Status, model/effort/mode selectors, action icons and usage all
   share the toolbar above the input, with status left and usage/context immediately before the model picker when space permits;
   routine labels are 就绪 / 连接中 / 重连中 / 处理中 / 待批准 / 待回答 / 用量已满 /
-  系统错误. Status reserves four character widths before optional controls,
+  系统错误. Status reserves a dot plus four character widths before optional controls,
   including on narrow panes at 125% interface scale.
   It displays 就绪 when there is no active turn, waiting state or error.
   Long status text has an ellipsis; only truncated status text can be clicked,
   tapped or activated with Enter to open its full text in a popover. Fully
   visible status text is passive. Escape or an outside click closes the popover.
+  DELTA: status text has a matching six-pixel dot using the shared
+  [SDK status palette](native-sdk.md#配置与页面). Working, compaction,
+  retry and connection dots breathe; reduced-motion preferences disable animation.
 - Model and effort stay directly accessible, with a bounded model width.
   DELTA: usage is always visible without opening a button or menu. On narrow
   panes it wraps onto a line above status/model controls; all known gauges remain
@@ -461,8 +464,10 @@ reload; the fork-chain menu can still hide the parent manually.
 A `thread/reverted` notification clears obsolete live items
 and reloads history for all attached pages. Compaction items use the native
 `item/started` / `item/completed` phase, retained in reconnect snapshots:
-the running card shows an indeterminate progress bar until completion. Native
-compaction supplies no percentage, so the UI does not invent one. The mode
+DELTA: progress appears only in the status line with a purple breathing dot,
+and completion turns green. SDK live/history areas do not add duplicate
+compaction bubbles. Native compaction supplies no percentage, so the UI does
+not invent one. The mode
 selector changes 执行模式 /
 计划模式; approval/sandbox choices apply directly from checked ⋯ submenus. Goal controls and `/goal` are removed. Direct shell
 commands are entered in the composer only. Actual settings notifications from

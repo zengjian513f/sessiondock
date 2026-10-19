@@ -869,12 +869,6 @@ main { display: flex; flex: 1; min-height: 0; }
   transition: width .1s linear;
 }
 .search-progress-track[hidden] { display: none; }
-.sdk-compaction-progress { width: min(240px, 100%); }
-.sdk-compaction-progress i { width: 35%; animation: sdk-compacting 1.4s ease-in-out infinite alternate; }
-@keyframes sdk-compacting { from { transform: translateX(0); } to { transform: translateX(185%); } }
-@media (prefers-reduced-motion: reduce) {
-  .sdk-compaction-progress i { animation: none; }
-}
 .search-progress-nodes { max-height: 108px; overflow-y: auto; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .search-progress-node { display: flex; align-items: baseline; gap: 8px; margin-top: 4px; }
 .search-progress-node > span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2530,14 +2524,28 @@ header .btn[data-session-docked] { display: none; }
 .sdk-status-row > .sdk-options { flex: none; }
 .sdk-status-row > .sdk-gauges, .sdk-status-row > #sdk-usage-toggle { margin-left: auto; }
 .sdk-status-row > #sdk-usage-toggle { font: inherit; flex: none; height: 24px; padding: 0 6px; }
-.sdk-status { min-width: 4em; padding: 0; border: 0; background: transparent; text-align: left; cursor: default;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: inherit; }
+.sdk-status { --sdk-status-color: var(--muted); position: relative; min-width: 5em;
+  padding: 0 0 0 12px; border: 0; background: transparent; text-align: left; cursor: default;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sdk-status-color); font: inherit; }
+.sdk-status::before { content: ""; position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
+  width: 6px; height: 6px; border-radius: 50%; background: var(--sdk-status-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--sdk-status-color) 15%, transparent); }
+.sdk-status[data-state="ready"] { --sdk-status-color: var(--diff-add-fg); }
+.sdk-status[data-state="working"] { --sdk-status-color: var(--accent); }
+.sdk-status:is([data-state="waiting"], [data-state="warning"], [data-state="retrying"]) { --sdk-status-color: var(--star); }
+.sdk-status[data-state="maintenance"] { --sdk-status-color: var(--syntax-title); }
+.sdk-status.blocked { --sdk-status-color: var(--diff-del-fg); }
+.sdk-status:is([data-state="working"], [data-state="maintenance"], [data-state="connecting"], [data-state="retrying"])::before {
+  animation: sdk-status-breathe 1.6s ease-in-out infinite; }
+@keyframes sdk-status-breathe { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .sdk-status::before { animation: none !important; }
+}
 .sdk-status:enabled { cursor: pointer; }
-.sdk-status:enabled:hover { color: var(--text); }
+.sdk-status:enabled:hover { text-decoration: underline; text-underline-offset: 3px; }
 .sdk-status:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sdk-status-menu { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--sans); }
 .sdk-status[hidden], #sdk-composer .btn[hidden] { display: none; }
-.sdk-status.blocked { color: #e5484d; }
 /* 状态居左；用量紧邻模型选择器；放不下的控件进入菜单。 */
 .sdk-options { display: flex; align-items: center; }
 .sdk-gauges { display: flex; align-items: center; gap: 10px; flex: none; min-width: 0; color: var(--muted); font-size: 12px; }

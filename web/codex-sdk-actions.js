@@ -78,7 +78,7 @@ const CodexSdkActions = {
       } else if (action === 'compact') {
         if (argument) throw new Error('用法：/compact（无需参数）');
         await view.request('api/codex-sdk/compact', {uid});
-        if (current()) view.setNotice('已请求压缩上下文，进度将显示在会话中。');
+        if (current()) view.paintStatus();
         succeeded = true;
       } else if (action === 'review') {
         const target = argument ? this.reviewTarget(argument) : await this.chooseReview();

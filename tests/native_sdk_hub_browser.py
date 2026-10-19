@@ -35,11 +35,53 @@ def exercise(browser, base, fixture, width, theme, screenshots):
     expect(page.locator('#sdk-input')).to_be_visible()
     uid = page.evaluate('S.sel')
     assert '~' in uid and uid != fixture.uid
+    status = page.locator('.sdk-status')
+    colors = {}
+    def capture_status(state):
+        expect(status).to_have_attribute('data-state', state)
+        visual = status.evaluate("""e => {
+          const dot = getComputedStyle(e, '::before');
+          return {color:getComputedStyle(e).color, dot:dot.backgroundColor,
+            animation:dot.animationName, width:dot.width};
+        }""")
+        assert visual['color'] == visual['dot'] and visual['width'] == '6px', visual
+        assert visual['animation'] == ('sdk-status-breathe' if state in ('working','maintenance','retrying','connecting') else 'none'), visual
+        colors[state] = visual['color']
+        assert page.locator('.sdk-status-row').evaluate('e => e.scrollWidth <= e.clientWidth + 1')
+        if screenshots:
+            screenshots.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(screenshots/f'status-{width}-{theme}-{state}.png'),
+                            clip={'x':0,'y':680,'width':width,'height':220})
+    def status_send(text):
+        page.locator('#sdk-input').fill(text)
+        page.locator('#sdk-send').click()
+    capture_status('ready')
+    status_send('hold')
+    capture_status('working')
+    page.emulate_media(reduced_motion='reduce')
+    assert status.evaluate("e => getComputedStyle(e, '::before').animationName") == 'none'
+    page.emulate_media(reduced_motion='no-preference')
+    page.locator('#sdk-stop').click()
+    expect(status).to_have_text('就绪')
+    status_send('retry')
+    capture_status('retrying')
+    expect(status).to_have_text('就绪', timeout=15000)
+    status_send('/compact')
+    capture_status('maintenance')
+    expect(status).to_have_text('就绪', timeout=15000)
+    expect(page.locator('.sdk-msgs')).not_to_contain_text('上下文已压缩')
+    status_send('/unsupported-status-command')
+    capture_status('blocked')
+    status_send('/help')
+    capture_status('neutral')
     wait_for_async(page,"async uid => (await (await fetch('/api/live')).json()).sdk_uids.includes(uid)",arg=uid)
     page.locator('#sdk-input').fill('approval')
     page.locator('#sdk-send').click()
     card = page.locator('[data-sdk-request]').filter(has_text='printf synthetic')
     expect(card).to_be_visible()
+    capture_status('waiting')
+    assert len({colors[key] for key in ('ready','working','waiting','maintenance','blocked','neutral')}) == 6, colors
+    assert colors['retrying'] == colors['waiting'], colors
     with page.expect_response(lambda response: '/api/session/conversation' in response.url and response.request.method=='POST' and response.ok):
         page.locator('#sdk-input').fill('Hub draft 中文 retained across refresh')
     page.reload(wait_until='domcontentloaded')

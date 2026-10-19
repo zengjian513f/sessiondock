@@ -191,7 +191,7 @@ const NativeSdkControls = {
       if((response.accepted ?? response.raw?.accepted)===false)throw new Error(response.error || response.raw?.error || '原生未确认接收，请核对操作记录');
       if(method==='fork'){await CodexSdkActions.openFork(view,response);return true;}
       if(['revert','unrevert','revert_commit','rewind'].includes(method))await view.refreshHistory(generation,true);
-      view.setNotice('原生操作已接受');return true;
+      if(method==='compact')view.paintStatus();else view.setNotice('原生操作已接受');return true;
     }catch(error){if(view.current(generation))view.setNotice(`操作失败：${error.message}`,'blocked');return false;}
   },
   async command(view,text) {
