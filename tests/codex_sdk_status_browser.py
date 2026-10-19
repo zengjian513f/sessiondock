@@ -94,7 +94,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     if width < 500:
         page.locator('#detail .mobile-back').click()
     external.click()
-    expect(page.locator('.sdk-status')).to_contain_text('独立运行')
+    expect(page.locator('#sdk-status-menu')).to_contain_text('独立运行')
     expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\bsdk\b'))
     expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\btmux\b'))
     expect(page.locator('#dlive')).to_have_class(re.compile(r'\bvisible\b'))

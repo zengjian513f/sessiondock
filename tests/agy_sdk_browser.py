@@ -197,7 +197,7 @@ def exercise(browser, base, fixture, screenshots=None):
         toggle_usage_details(page)
         page.locator('#sdk-input').fill('/unknown-native-command')
         page.locator('#sdk-send').click()
-        expect(page.locator('.native-sdk-pane .sdk-status')).to_contain_text('尚未映射')
+        expect(page.locator('.native-sdk-pane #sdk-status-menu')).to_contain_text('尚未映射')
         expect(page.locator('#sdk-input')).to_have_value('/unknown-native-command')
         assert len(fixture.inputs()) == before
         page.locator('#sdk-input').fill('')

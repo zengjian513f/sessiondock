@@ -234,7 +234,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     assert fake.methods("thread/compact/start")[-1]["params"] == {"threadId": THREAD}
     box.fill("/compact extra")
     send.click()
-    expect(pane.locator(".sdk-status")).to_contain_text("无需参数")
+    expect(pane.locator("#sdk-status-menu")).to_contain_text("无需参数")
     expect(box).to_have_value("/compact extra")
     assert len(fake.methods("thread/compact/start")) == 1
 
@@ -272,7 +272,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots, mode="node"
     # A rejected native operation preserves the user's command and session.
     box.fill("/fork reject-this-turn")
     send.click()
-    expect(pane.locator(".sdk-status")).to_contain_text("turn not found")
+    expect(pane.locator("#sdk-status-menu")).to_contain_text("turn not found")
     expect(box).to_have_value("/fork reject-this-turn")
     assert page.evaluate("S.sel") == source_uid
 

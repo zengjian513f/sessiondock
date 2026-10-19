@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Four native SDK footers: bounded labels, model selection and usage disclosure."""
 import argparse
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from contextlib import contextmanager
 import json
 import os
@@ -17,8 +19,39 @@ from codex_sdk_browser import server
 from grok_sdk_fixtures import GrokFixture
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from opencode_sdk_fixtures import FakeOpenCode
-from sdk_usage_fixtures import assert_inline_usage, toggle_usage_details
+from sdk_usage_fixtures import assert_inline_usage, assert_single_status_row, toggle_usage_details
 from send_browser import initialize
+
+
+@contextmanager
+def native_events():
+    stop = threading.Event()
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header('Content-Type','text/event-stream')
+            self.send_header('Access-Control-Allow-Origin','*')
+            self.end_headers()
+            try:
+                self.wfile.write(('event: sdk\ndata: '+json.dumps(self.server.packet)+'\n\n').encode())
+                self.wfile.flush()
+                stop.wait()
+            except (BrokenPipeError,ConnectionResetError):
+                pass
+        def log_message(self,*args):
+            pass
+    server = ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    server.daemon_threads = True
+    server.url = f'http://127.0.0.1:{server.server_port}/events'
+    worker = threading.Thread(target=server.serve_forever,daemon=True)
+    worker.start()
+    try:
+        yield server
+    finally:
+        stop.set()
+        server.shutdown()
+        server.server_close()
+        worker.join()
 
 
 @contextmanager
@@ -64,7 +97,7 @@ def provider(source, root, binary):
                 yield base
 
 
-def exercise(browser, base, source, screenshots):
+def exercise(browser, base, source, screenshots, events):
     for theme in ('light', 'dark'):
         context = browser.new_context(viewport={'width': 1440, 'height': 900},
                                       color_scheme=theme, service_workers='block')
@@ -80,11 +113,11 @@ def exercise(browser, base, source, screenshots):
                   {'id': 'long', 'displayName': long_model, 'efforts': ['low', 'high']}]
         context.route('**/api/native-sdk/open', lambda route: route.fulfill(json={
             'ok': True, 'capabilities': {'models': True}}))
-        packet = {'type': 'snapshot', 'seq': 1, 'raw': {'running': False, 'model': 'short',
+        packet = {'type': 'snapshot', 'seq': 1, 'raw': {'running': False, 'model': 'short', 'error': '详细错误信息：Capacity unavailable for the selected model. ' * 3,
             'usage': {'tokens': {'total_tokens': 123456789},
                       'context': {'percent': 25, 'used_tokens': 50000, 'max_tokens': 200000}}}}
-        context.route('**/api/native-sdk/events?*', lambda route: route.fulfill(
-            content_type='text/event-stream', body='event: sdk\ndata: '+json.dumps(packet)+'\n\n'))
+        events.packet = packet
+        context.route('**/api/native-sdk/events?*', lambda route: route.continue_(url=events.url))
         context.route('**/api/native-sdk/models', lambda route: route.fulfill(json={'ok': True, 'raw': models}))
         context.route('**/api/native-sdk/usage', lambda route: route.fulfill(json={
             'ok': True, 'usage': {'tokens': {'total_tokens': 123456789},
@@ -117,7 +150,20 @@ def exercise(browser, base, source, screenshots):
             expect(pane.locator('.sdk-gauges')).to_contain_text('123.5M tok')
             expect(pane.locator('.sdk-gauges')).to_contain_text('Ctx')
             assert_inline_usage(page)
-            assert model.bounding_box()['width'] <= 160.5
+            assert_single_status_row(pane.locator('.sdk-status-row'))
+            gauges = pane.locator('.sdk-status-row > .sdk-gauges')
+            if width == 320 and gauges.evaluate('e => e.scrollWidth > e.clientWidth + 1'):
+                gauges.focus()
+                gauges.press('ArrowRight')
+                page.wait_for_function('e => e.scrollLeft > 0', arg=gauges.element_handle())
+                gauges.press('ArrowLeft')
+                page.wait_for_function('e => e.scrollLeft < 1', arg=gauges.element_handle())
+            status = pane.locator('.sdk-status')
+            expect(status).to_have_text('错误')
+            status.click()
+            expect(page.get_by_role('dialog', name='完整状态')).to_contain_text('Capacity unavailable')
+            page.screenshot(path=str(screenshots/f'{source}-detail-{width}-{theme}.png'))
+            page.keyboard.press('Escape')
             labels = pane.locator('.sdk-status-row .sdk-gauge > span').evaluate_all('nodes => nodes.map(n => n.getBoundingClientRect().width)')
             assert max(labels) <= 72.5, labels
             expect(pane.locator('.sdk-status-row .sdk-gauge').filter(has_text=long_quota)).to_have_attribute('title', re.compile(long_quota))
@@ -146,8 +192,8 @@ def main():
             for source in ('grok', 'agy', 'opencode', 'claude'):
                 root = Path(temporary)/source
                 root.mkdir()
-                with provider(source, root, args.binary) as base:
-                    exercise(browser, base, source, args.screenshots)
+                with provider(source, root, args.binary) as base, native_events() as events:
+                    exercise(browser, base, source, args.screenshots, events)
         finally:
             browser.close()
 

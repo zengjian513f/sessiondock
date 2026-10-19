@@ -728,3 +728,5 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 控制台结构性不可用和筛选不可用复用原生 tooltip。终端连接状态、输出错误、文件粘贴进度放在终端内 `#term-output-notice`，按终端视图隔离；禁用文件粘贴和剪贴板读取失败显示四秒，上传完成或连接恢复后清除相应状态。输入就绪说明沿用 composer 上方行内提示，占正常布局，不盖正文、终端和发送按钮。已结束且可重新启动的草稿说明阻塞发送的原因，其他已结束会话沿用原来的 composer 隐藏行为。
 
 无按钮的链接异常／移动／副本说明在详情标题下显示，切换会话清除；有候选按钮时保留全局浮层。版本更新、登录环境变化、登录失效、缺陷报告回执、冻结／休眠的恢复交互保持原样。
+
+DELTA（BUG-20261019-065056-5a1004）：SDK 与普通对话底栏始终单行，状态摘要最多 6 字，点击显示完整详情与错误原文。状态优先，其次用量，其余控件空间不足时收进 ⋯；超宽用量只在自身区域横向滚动。浏览器覆盖见 [`tests/codex_sdk_layout_browser.py`](../tests/codex_sdk_layout_browser.py)、[`tests/native_sdk_footer_browser.py`](../tests/native_sdk_footer_browser.py) 和 [`tests/conversation_status_browser.py`](../tests/conversation_status_browser.py)。

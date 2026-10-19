@@ -39,7 +39,7 @@ const NativeSdkView = {
       <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div></div>
       <div id="sdk-composer">
         <div class="sdk-status-row">
-          <button class="sdk-status" data-state="connecting" type="button" aria-expanded="false" aria-controls="sdk-status-menu"><span role="status" aria-live="polite">连接中</span></button><div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" aria-label="完整状态"></div>
+          <button class="sdk-status" data-state="connecting" type="button" aria-expanded="false" aria-controls="sdk-status-menu"><span role="status" aria-live="polite">连接中</span></button><div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" role="dialog" aria-label="完整状态"></div>
           <div class="sdk-options"><div class="sdk-pickers">
             <label class="new-effort sdk-model sdk-model-fit" title="模型" hidden><span class="visually-hidden">模型</span><select id="sdk-model" aria-label="模型"></select></label>
             <label class="new-effort sdk-effort" title="推理强度" hidden><span class="visually-hidden">推理强度</span><select id="sdk-effort" aria-label="推理强度"></select></label>
@@ -98,10 +98,12 @@ const NativeSdkView = {
 
   setNotice(text, kind = '') {
     if (!this.notice) return;
-    this.notice.querySelector('[role=status]').textContent = text; this.notice.title = text;
+    this.notice.querySelector('[role=status]').textContent = sdkStatusSummary(text, kind); this.notice.title = text;
     this.notice.classList.toggle('blocked', kind === 'blocked');
     this.notice.dataset.state = kind || 'neutral';
     this.pane.querySelector('#sdk-status-menu').textContent = text;
+    CodexSdkView.updateStatusDisclosure.call(this);
+    NativeSdkControls.layout(this);
   },
 
   async start(generation, reconnecting = false) {

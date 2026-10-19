@@ -86,14 +86,15 @@ def exercise(browser, binary, root, width, theme, screenshots):
             'nodes => nodes.map(n => n.dataset.sdkItem)') == [f'progress-{index}' for index in range(48)]
         assert page.locator('.sdk-msgs').inner_text().count('后台进度 00 /') == 1
         assert page.locator('.sdk-msgs').inner_text().count('后台进度 47 /') == 1
-        status = page.locator('.sdk-status')
+        status = page.locator('.sdk-pane .sdk-status')
         expect(status).to_have_text('处理中')
         assert status.evaluate('e => e.scrollWidth <= e.clientWidth + 1')
-        expect(status).to_be_disabled()
-        assert status.evaluate('e => getComputedStyle(e).cursor') == 'default'
+        expect(status).to_be_enabled()
+        assert status.evaluate('e => getComputedStyle(e).cursor') == 'pointer'
         bounds = status.bounding_box()
         page.mouse.click(bounds['x'] + bounds['width']/2, bounds['y'] + bounds['height']/2)
-        expect(page.locator('#sdk-status-menu')).to_be_hidden()
+        expect(page.locator('#sdk-status-menu')).to_be_visible()
+        page.keyboard.press('Escape')
         page.locator('#a-chat').click()
         fake.progress('离开 SDK 页面期间产生的进度，回到页面应完整显示。')
         page.locator('#a-sdk').click()

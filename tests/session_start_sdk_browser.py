@@ -42,7 +42,7 @@ def exercise(browser, base, corpus, sid, node, width, theme, output):
         page.goto(base, wait_until='domcontentloaded')
         page.wait_for_function('T.listLoaded')
         page.locator(f'#side .item[data-uid="{uid}"]').click()
-        expect(page.locator('.sdk-status')).to_contain_text('Synthetic SDK unavailable')
+        expect(page.locator('#sdk-status-menu')).to_contain_text('Synthetic SDK unavailable')
         expect(page.locator('#session-content-view')).to_be_visible()
         page.screenshot(path=str(output / f'{label}-before.png'))
         if width > 600:

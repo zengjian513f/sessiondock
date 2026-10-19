@@ -91,7 +91,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     page.route('**/api/codex-sdk/turn', lose_reply)
     box.fill(cancel_text); send.click()
     expect(row('撤销这条')).to_be_visible()
-    expect(page.locator('.sdk-status')).to_contain_text('发送失败')
+    expect(page.locator('#sdk-status-menu')).to_contain_text('发送失败')
     expect(box).to_have_value(cancel_text)
     page.unroute('**/api/codex-sdk/turn', lose_reply)
     page.reload(wait_until='networkidle')

@@ -71,7 +71,7 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
         expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_be_visible()
         page.locator('#allcount').click()
     assert not any('/api/term/create' in url for url in requests)
-    expect(page.locator(".sdk-status")).not_to_contain_text("失败")
+    expect(page.locator("#sdk-status-menu")).not_to_contain_text("失败")
     if screenshots:
         page.screenshot(path=str(screenshots / f"{label}-empty.png"))
 
@@ -82,7 +82,7 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
     expect(page.locator('#sdk-model')).to_have_value('fake-luna')
     expect(page.locator('#sdk-effort')).to_have_value('medium')
     assert not fake.rollout.exists()
-    expect(page.locator(".sdk-status")).not_to_contain_text("失败")
+    expect(page.locator("#sdk-status-menu")).not_to_contain_text("失败")
     text = "approve SDK 首条消息 creates the native rollout"
     page.locator("#sdk-input").fill(text)
     page.locator("#sdk-send").click()

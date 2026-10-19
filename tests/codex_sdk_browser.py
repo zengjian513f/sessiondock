@@ -139,7 +139,7 @@ def opening_check(browser, corpus, base, expect, screenshots):
         page.screenshot(path=str(screenshots / "opening-pending.png"))
     held.pop().fulfill(status=503, content_type="application/json",
                        body=json.dumps({"ok": False, "error": "Synthetic unavailable daemon"}))
-    expect(page.locator('.sdk-status')).to_contain_text("Synthetic unavailable daemon")
+    expect(page.locator('#sdk-status-menu')).to_contain_text("Synthetic unavailable daemon")
     expect(history).to_contain_text("earlier synthetic answer")
     page.unroute("**/api/codex-sdk/open")
     snapshots = []
@@ -379,7 +379,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             command_box = pane.locator('#sdk-input')
             command_box.fill('/help')
             pane.locator('#sdk-send').click()
-            expect(pane.locator('.sdk-status')).to_contain_text('可用命令')
+            expect(pane.locator('#sdk-status-menu')).to_contain_text('可用命令')
             expect(command_box).to_have_value('')
             command_box.fill('/model')
             pane.locator('#sdk-send').click()
@@ -389,10 +389,10 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(pane.locator('#sdk-effort')).to_be_focused()
             command_box.fill('/status')
             pane.locator('#sdk-send').click()
-            expect(pane.locator('.sdk-status')).to_contain_text('fake-sol')
+            expect(pane.locator('#sdk-status-menu')).to_contain_text('fake-sol')
             command_box.fill('/unknown-sdk-command')
             pane.locator('#sdk-send').click()
-            expect(pane.locator('.sdk-status')).to_contain_text('不支持的命令')
+            expect(pane.locator('#sdk-status-menu')).to_contain_text('不支持的命令')
             expect(command_box).to_have_value('/unknown-sdk-command')
             assert not fake.methods('turn/start')
 
@@ -519,7 +519,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(week.locator("b")).to_have_text("0%")
             expect(reset.locator("option")).to_have_count(1)
             expect(reset.locator("option")).to_contain_text("Reset A")
-            expect(pane.locator(".sdk-status")).to_contain_text("已兑换")
+            expect(pane.locator("#sdk-status-menu")).to_contain_text("已兑换")
 
             # A question card, steering into the running turn, then interrupt.
             box = pane.locator("#sdk-input")

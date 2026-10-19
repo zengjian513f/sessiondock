@@ -52,14 +52,11 @@ const NativeSdkControls = {
     if (!view.pane) return;
     const row=view.pane.querySelector('.sdk-status-row'),gauges=view.pane.querySelector('.sdk-gauges'),menu=view.pane.querySelector('#sdk-usage-menu');
     if (!gauges || !menu) return;
-    const effort=view.pane.querySelector('.sdk-effort'),more=view.pane.querySelector('#sdk-more-menu');
-    if (row.clientWidth < 400) { if (effort.parentElement !== more) more.prepend(effort); }
-    else if (effort.parentElement !== view.pane.querySelector('.sdk-pickers')) view.pane.querySelector('.sdk-pickers').insertBefore(effort,view.pane.querySelector('#sdk-more'));
-    const gaugeWidth=[...gauges.children].reduce((sum,node)=>sum+node.offsetWidth,0)+Math.max(0,gauges.childElementCount-1)*10;
-    const required=gaugeWidth+view.pane.querySelector('.sdk-options').offsetWidth+parseFloat(getComputedStyle(view.notice).minWidth)+20;
-    gauges.classList.toggle('sdk-gauges-wrapped',required > row.clientWidth);
+    const more=view.pane.querySelector('#sdk-more-menu');
+    sdkLayoutFooter(view, ['.sdk-model', '.sdk-effort'].map(selector => view.pane.querySelector(selector)));
     for (const [popover,trigger] of [[menu,'#sdk-more'],[more,'#sdk-more']])
       if (popover.matches(':popover-open')) CodexSdkView.placeMenu(popover,view.pane.querySelector(trigger));
+    CodexSdkView.updateStatusDisclosure.call(view);
   },
   async loadUsage(view,refresh) {
     const generation=view.generation;

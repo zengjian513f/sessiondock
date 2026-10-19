@@ -21,13 +21,13 @@ from sdk_usage_fixtures import assert_inline_usage
 
 def single_row(page):
     page.wait_for_function("""() => {
-      const row = document.querySelector('.sdk-status-row');
+      const row = document.querySelector('.sdk-pane .sdk-status-row');
       return row && Math.abs(CodexSdkView.toolbarWidth - row.clientWidth) <= 1;
     }""")
-    measurements = page.locator('.sdk-status-row').evaluate("""row => {
+    measurements = page.locator('.sdk-pane .sdk-status-row').evaluate("""row => {
       const bounds = row.getBoundingClientRect();
       const controls = [...row.querySelectorAll(':scope > .sdk-status, :scope > .sdk-gauges, :scope > #sdk-usage-toggle, .sdk-pickers > label, .sdk-pickers > button')]
-        .filter(node => node.getClientRects().length && !node.hidden && !node.classList.contains('sdk-gauges-wrapped'))
+        .filter(node => node.getClientRects().length && !node.hidden)
         .map(node => { const r = node.getBoundingClientRect(); return {id: node.id || node.className,
           left:r.left, right:r.right, top:r.top, bottom:r.bottom}; });
       return {left:bounds.left, right:bounds.right, top:bounds.top, bottom:bounds.bottom,
@@ -40,7 +40,7 @@ def single_row(page):
         assert control['right'] <= measurements['right'] + 1, measurements
         assert abs((control['top'] + control['bottom']) / 2 - (measurements['controls'][0]['top'] + measurements['controls'][0]['bottom']) / 2) <= 1, measurements
         previous = control['right']
-    for selector in ('#sdk-model', '#sdk-effort', '#sdk-more', '#sdk-input'):
+    for selector in ('#sdk-more', '#sdk-input', '#sdk-control-approval', '#sdk-control-sandbox'):
         expect(page.locator(selector)).to_be_visible()
     assert page.locator('#sdk-input').bounding_box()['width'] > 80
 
@@ -63,8 +63,8 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     page.goto(base, wait_until='networkidle')
     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
     expect(page.locator('#sdk-mode')).to_have_value('default')
-    expect(page.locator('.sdk-status')).to_have_text('就绪')
-    expect(page.locator('.sdk-status')).to_have_attribute('data-state', 'ready')
+    expect(page.locator('.sdk-pane .sdk-status')).to_have_text('就绪')
+    expect(page.locator('.sdk-pane .sdk-status')).to_have_attribute('data-state', 'ready')
     for selector in ('#sdk-model', '#sdk-effort', '#sdk-tier', '#sdk-mode', '#sdk-control-approval', '#sdk-control-sandbox'):
         assert not page.locator(selector + ' option[value=""]').count(), selector
         assert not any(word in page.locator(selector).text_content() for word in ('沿用', '未返回', 'Default')), selector
@@ -85,12 +85,12 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         asyncio.run_coroutine_threadsafe(fake.notify(method, params), fake.loop).result(timeout=5)
     notify('turn/started', {'turn': {'id': 'layout-status-turn', 'status': 'inProgress', 'items': []}})
 
-    widths = (1440, 1280, 1100, 1024, 900, 820, 768, 720, 600, 500, 430, 390, 360, 320)
+    widths = (1440, 1280, 1100, 1024, 900, 820, 768, 720, 675, 600, 500, 430, 390, 360, 320)
     for width in widths:
         page.set_viewport_size({'width': width, 'height': 844})
         if not page.locator('#sdk-input').is_visible():
             page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
-        status = page.locator('.sdk-status')
+        status = page.locator('.sdk-pane .sdk-status')
         for native_status, label in [
             ({'type': 'active', 'activeFlags': []}, '处理中'),
             ({'type': 'active', 'activeFlags': ['waitingOnApproval']}, '待批准'),
@@ -109,35 +109,41 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
                 page.emulate_media(reduced_motion='no-preference')
             single_row(page)
             assert status.evaluate('e => e.scrollWidth <= e.clientWidth + 1'), (width, scale, label)
-            expect(status).to_be_disabled()
+            expect(status).to_be_enabled()
             if screenshots and label == '处理中' and width in (1440, 390, 320):
                 page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-working.png'))
+        for kind in ('approval', 'sandbox'):
+            button = page.locator(f'.sdk-pickers > #sdk-control-{kind}')
+            expect(button).to_be_visible()
+            button.click()
+            policy = page.locator(f'#sdk-policy-{kind}')
+            expect(policy).to_be_visible()
+            expect(policy.locator('[aria-checked="true"]')).to_have_count(1)
+            within_viewport(page, policy)
+            if screenshots and width in (1440, 390, 320):
+                page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-{kind}.png'))
+            page.keyboard.press('Escape')
         page.locator('#sdk-input').fill('/unsupported-command')
         page.locator('#sdk-send').click()
-        status = page.locator('.sdk-status')
-        expect(status).to_contain_text('不支持的命令')
+        status = page.locator('.sdk-pane .sdk-status')
+        expect(status).to_have_text('不支持的命令')
         expect(status).to_have_attribute('data-state', 'blocked')
         single_row(page)
-        full_status = status.text_content()
+        full_status = status.get_attribute('title')
+        assert len(status.text_content()) <= 6
         details = page.get_by_role('dialog', name='完整状态')
-        if status.evaluate('e => e.scrollWidth > e.clientWidth + 1'):
-            expect(status).to_be_enabled()
-            status.tap()
-            expect(details).to_be_visible()
-            expect(details).to_have_text(full_status)
-            within_viewport(page, details)
-            if screenshots and width in (390, 320):
-                page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-status.png'))
-            page.keyboard.press('Escape')
-            expect(details).to_be_hidden()
-            status.press('Enter')
-            expect(details).to_be_visible()
-            page.locator('#sdk-input').click()
-            expect(details).to_be_hidden()
-        else:
-            expect(status).to_be_disabled()
-            expect(details).to_be_hidden()
-        assert page.locator('#sdk-model').bounding_box()['width'] <= 160 * scale / 100 + 2
+        status.tap()
+        expect(details).to_be_visible()
+        expect(details).to_have_text(full_status)
+        within_viewport(page, details)
+        if screenshots and width in (675, 390, 320):
+            page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-status.png'))
+        page.keyboard.press('Escape')
+        expect(details).to_be_hidden()
+        status.press('Enter')
+        expect(details).to_be_visible()
+        page.locator('#sdk-input').click()
+        expect(details).to_be_hidden()
         assert_inline_usage(page)
         expect(page.locator('.sdk-status-row > .sdk-gauges .sdk-credits')).to_have_text('🪙 1,235')
         expect(page.locator('.sdk-status-row > .sdk-gauges [data-gauge="5h"] b')).to_have_text('40%')
@@ -146,8 +152,6 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         expect(menu).to_be_visible()
         expect(menu.locator('#sdk-reset-card')).to_be_visible()
         expect(page.locator('#sdk-tier')).to_be_visible()
-        if page.locator('.sdk-status-row').evaluate('row => row.clientWidth') >= 320:
-            expect(page.locator('.sdk-pickers > .sdk-tier')).to_be_visible()
         expect(page.locator('[data-sdk-action]')).to_have_count(4)
         expect(page.locator('#sdk-actions select, #sdk-controls, #sdk-controls-dialog')).to_have_count(0)
         if menu.locator('#sdk-mode').count():
@@ -173,7 +177,9 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     dialog = page.locator('#sdk-permissions')
     expect(dialog).to_be_visible()
     expect(dialog.locator('[id^="sdk-goal-"]')).to_have_count(0)
-    expect(dialog.locator('#sdk-control-approval')).to_be_visible()
+    expect(page.locator('.sdk-pickers > #sdk-control-approval')).to_be_visible()
+    expect(page.locator('.sdk-pickers > #sdk-control-sandbox')).to_be_visible()
+    expect(dialog.locator('#sdk-control-approval, #sdk-control-sandbox')).to_have_count(0)
     page.keyboard.press('Escape')
     page.locator('#sdk-more').click()
     page.locator('#sdk-reset-use').click()
@@ -181,16 +187,18 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     assert len(fake.methods('turn/start')) == starts
     assert not fake.methods('account/rateLimitResetCredit/consume')
     page.locator('#sdk-input').fill('窄屏下保留尚未发送的草稿 / realistic project')
+    page.locator('#sdk-more').click()
     page.locator('#sdk-model').select_option('fake-luna')
     page.locator('#sdk-effort').select_option('medium')
+    page.keyboard.press('Escape')
     expect(page.locator('#sdk-input')).to_have_value('窄屏下保留尚未发送的草稿 / realistic project')
 
     # Actual sidebar resizing must preserve status/usage without a viewport resize.
     if scale == 100:
         page.set_viewport_size({'width': 1280, 'height': 900})
         single_row(page)
-        prior_width = page.locator('.sdk-status-row').bounding_box()['width']
-        exposed = page.locator('.sdk-pickers > [data-sdk-action], .sdk-pickers > #sdk-permissions').count()
+        prior_width = page.locator('.sdk-pane .sdk-status-row').bounding_box()['width']
+        exposed = page.locator('.sdk-pickers > [data-sdk-action], .sdk-pickers > .sdk-policy').count()
         assert exposed > 0, 'wide composer forcibly hid every secondary control'
         grip = page.locator('#drag').bounding_box()
         x, y = grip['x'] + grip['width'] / 2, grip['y'] + 100
@@ -198,7 +206,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         page.mouse.down()
         page.mouse.move(x + 320, y, steps=12)
         page.mouse.up()
-        page.wait_for_function('prior => document.querySelector(".sdk-status-row").getBoundingClientRect().width < prior - 200', arg=prior_width)
+        page.wait_for_function('prior => document.querySelector(".sdk-pane .sdk-status-row").getBoundingClientRect().width < prior - 200', arg=prior_width)
         single_row(page)
         assert_inline_usage(page)
         expect(page.locator('#sdk-model')).to_have_value('fake-luna')
@@ -225,13 +233,13 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     assert not errors, errors
     notify('turn/completed', {'turn': {'id': 'layout-status-turn', 'status': 'completed', 'items': []}})
     notify('thread/status/changed', {'status': {'type': 'idle'}})
-    expect(page.locator('.sdk-status')).to_have_text('就绪')
+    expect(page.locator('.sdk-pane .sdk-status')).to_have_text('就绪')
     for width in (1440, 390, 320):
         page.set_viewport_size({'width': width, 'height': 844})
         single_row(page)
-        expect(page.locator('.sdk-status')).to_have_text('就绪')
-        expect(page.locator('.sdk-status')).to_be_visible()
-        expect(page.locator('.sdk-status')).to_be_disabled()
+        expect(page.locator('.sdk-pane .sdk-status')).to_have_text('就绪')
+        expect(page.locator('.sdk-pane .sdk-status')).to_be_visible()
+        expect(page.locator('.sdk-pane .sdk-status')).to_be_enabled()
         expect(page.locator('#sdk-send')).to_have_text('发送')
         expect(page.locator('#sdk-stop')).to_be_hidden()
         if screenshots:

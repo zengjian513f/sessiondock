@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 import tempfile
 from playwright.sync_api import sync_playwright, expect
+from sdk_usage_fixtures import assert_single_status_row
 from history_fixtures import Corpus, codex_row, codex_message, isolated_server
 
 
@@ -50,10 +51,11 @@ def main():
                 def history(route):
                     response = route.fetch()
                     data = response.json()
-                    data['activity'] = {'state': state['value']}
+                    data['activity'] = {'state': 'working' if state['value']=='compacting' else state['value'], 'error': 'Detailed synthetic capacity error 详细错误信息' if state['value']=='failed' else None}
+                    data['cli'] = {'instance': {'phase': 'compacting', 'running': True, 'busy': True}} if state['value']=='compacting' else None
                     route.fulfill(response=response, json=data)
                 page.route('**/api/messages/**', history)
-                for status in ('working', 'waiting', 'failed', 'idle'):
+                for status in ('working', 'waiting', 'failed', 'compacting', 'idle'):
                     state['value'] = status
                     page.goto(base)
                     card = page.locator(f'#side .item[data-uid="{uid}"]')
@@ -63,7 +65,7 @@ def main():
                     card.click()
                     footer = page.locator('#conversation-status')
                     expect(footer).to_be_visible()
-                    expect(footer.locator('.sdk-status')).to_have_text({'working': 'Working…', 'waiting': '等待回答', 'failed': '执行失败', 'idle': '就绪'}[status])
+                    expect(footer.locator('.sdk-status')).to_have_text({'working': '处理中', 'waiting': '待回答', 'failed': '执行失败', 'idle': '就绪', 'compacting': '压缩中'}[status])
                     expect(footer.locator('.sdk-gauges')).to_contain_text('26%')
                     expect(footer.locator('.sdk-gauges')).to_contain_text('9%')
                     expect(footer.locator('[data-balance="codex:credits"]')).to_have_text('🪙 1,235')
@@ -72,7 +74,12 @@ def main():
                     expect(page.locator('#cinput')).to_be_visible()
                     expect(page.locator('#msgs #activity')).to_have_count(0)
                     expect(page.locator('#msgs')).to_contain_text('Existing conversation content')
-                    assert footer.evaluate('(e) => e.scrollWidth <= e.clientWidth + 1')
+                    assert_single_status_row(footer)
+                    footer.locator('.sdk-status').click()
+                    expect(page.get_by_role('dialog', name='完整状态')).to_be_visible()
+                    if status == 'failed':
+                        expect(page.get_by_role('dialog', name='完整状态')).to_contain_text('Detailed synthetic capacity error')
+                    page.keyboard.press('Escape')
                     page.screenshot(path=str(args.screenshots / f'{width}-{theme}-{status}.png'))
                 page.unroute('**/api/session/conversation/check')
                 page.route('**/api/session/conversation/check', lambda r: r.fulfill(json={'ok': False, 'input': {'state': 'blocked', 'code': 'cli_input_present', 'message': '终端已有输入；草稿已保留，请先处理终端输入'}}))

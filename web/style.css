@@ -2520,11 +2520,14 @@ header .btn[data-session-docked] { display: none; }
 #session-content-view.sdk-pane { flex-direction: column; }
 .sdk-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .sdk-view > .sdk-msgs { flex: 1; min-height: 0; }
-.sdk-status-row { font: 12px/20px var(--sans); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.sdk-status-row { container: sdk-footer / inline-size; font: 12px/20px var(--sans); display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 10px; min-width: 0; }
 .sdk-status-row > .sdk-status[hidden] { display: block; visibility: hidden; }
-.sdk-status-row > .sdk-status { flex: 1 1 0; }
+.sdk-status-row > .sdk-status { flex: none; max-width: 7em; }
 .sdk-status-row > .sdk-options { flex: none; }
-.sdk-status-row > .sdk-gauges, .sdk-status-row > #sdk-usage-toggle { margin-left: auto; }
+.sdk-status-row > .sdk-gauges { flex: 0 1 auto; margin-left: auto; overflow-x: auto; scrollbar-width: none; }
+.sdk-status-row > .sdk-gauges::-webkit-scrollbar { display: none; }
+.sdk-status-row > .sdk-gauges > * { flex-shrink: 0; }
+.sdk-status-row .sdk-quota-group, .sdk-status-row .sdk-quota-windows { flex-wrap: nowrap; max-width: none; }
 .sdk-status-row > #sdk-usage-toggle { font: inherit; flex: none; height: 24px; padding: 0 6px; }
 .sdk-status { --sdk-status-color: var(--muted); position: relative; min-width: 5em;
   padding: 0 0 0 12px; border: 0; background: transparent; text-align: left; cursor: default;
@@ -2548,10 +2551,9 @@ header .btn[data-session-docked] { display: none; }
 .sdk-status:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sdk-status-menu { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--sans); }
 .sdk-status[hidden], #sdk-composer .btn[hidden] { display: none; }
-/* 状态居左；用量紧邻模型选择器；放不下的控件进入菜单。 */
+/* 单行：状态优先，其次用量；其余控件按剩余空间进入菜单。 */
 .sdk-options { display: flex; align-items: center; }
 .sdk-gauges { display: flex; align-items: center; gap: 10px; flex: none; min-width: 0; color: var(--muted); font-size: 12px; }
-.sdk-status-row > .sdk-gauges-wrapped { order: -1; flex-basis: 100%; flex-wrap: wrap; gap: 4px 10px; }
 .sdk-gauges:not(:has(> :not([hidden]))) { display: none; }
 .sdk-status-row [hidden], .sdk-options [hidden] { display: none; }
 .sdk-gauge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -2583,6 +2585,20 @@ header .btn[data-session-docked] { display: none; }
 }
 .sdk-pickers > .btn { flex: none; height: 28px; min-height: 28px; padding: 0 8px; white-space: nowrap; }
 #sdk-more { width: 28px; padding: 0; font-size: 18px; }
+.sdk-pickers > .sdk-policy { display: inline-flex; align-items: center; gap: 4px; }
+.sdk-policy small { font: inherit; }
+.sdk-policy-label { display: none; }
+.sdk-policy-arrow { font-size: 10px; }
+@container sdk-footer (max-width: 600px) {
+  .sdk-policy-label { display: inline; }
+  .sdk-policy small { display: none; }
+}
+@container sdk-footer (max-width: 360px) {
+  .sdk-pickers { gap: 4px; }
+  .sdk-pickers > .sdk-policy { padding-inline: 4px; }
+  .sdk-policy-arrow { display: none; }
+}
+
 .sdk-toolbar-menu { gap: 8px; padding: 8px; overflow-y: auto; }
 .sdk-toolbar-menu:not(:popover-open) { display: none; }
 .sdk-toolbar-menu .new-effort { flex: none; min-width: 0; }
@@ -2664,7 +2680,7 @@ header .btn[data-session-docked] { display: none; }
 /* Conversation mode uses the SDK status/usage strip without SDK controls. */
 #right:has(#conversation-status:not(.hidden)) > #composer .composer-status-slot { position: static; }
 #conversation-status { flex: none; padding: 6px 18px; border-top: 1px solid var(--border); background: var(--panel); }
-#conversation-status .sdk-gauges { flex: 0 1 auto; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; }
+#conversation-status .sdk-gauges { flex-wrap: nowrap; }
 #right.term-full #conversation-status, #right.terminal-first #conversation-status { display: none; }
 @media (max-width: 720px) {
   #conversation-status { padding-inline: 8px; }

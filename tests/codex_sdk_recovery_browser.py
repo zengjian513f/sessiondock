@@ -79,14 +79,14 @@ def check(browser, binary, screenshots, width, theme):
                     page.goto(base, wait_until='networkidle')
                     uid = corpus.uid('sdk')
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
-                    expect(page.locator('.sdk-status')).to_contain_text('独立运行')
+                    expect(page.locator('#sdk-status-menu')).to_contain_text('独立运行')
                     # Start the fixture TUI through the real launch path.
                     page.locator('#a-term').click()
                     page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
                     page.wait_for_function("Array.from({length:T.term.buffer.active.length}, (_,i)=>"
                         "T.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('INDEPENDENT_WRITER_READY')")
                     page.locator('#a-sdk').click()
-                    expect(page.locator('.sdk-status')).to_contain_text('独立运行')
+                    expect(page.locator('#sdk-status-menu')).to_contain_text('独立运行')
                     expect(page.locator('.sdk-history')).to_contain_text('earlier synthetic answer')
                     draft = '关闭旧会话后保留这条未发送草稿 / keep unsent draft'
                     page.locator('#sdk-input').fill(draft)
@@ -114,7 +114,7 @@ def check(browser, binary, screenshots, width, theme):
                     # No SDK toggle or reload: background open retry must recover.
                     expect(page.locator('#sdk-model')).to_have_value('fake-sol', timeout=12000)
                     expect(page.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text('20%')
-                    expect(page.locator('.sdk-status')).not_to_contain_text('无法打开')
+                    expect(page.locator('#sdk-status-menu')).not_to_contain_text('无法打开')
                     expect(page.locator('#sdk-input')).to_have_value(draft)
                     expect(page.locator('.sdk-history')).to_contain_text('earlier synthetic answer')
                     assert not fake.methods('turn/start'), 'recovery sent the draft'
@@ -139,7 +139,7 @@ def check(browser, binary, screenshots, width, theme):
                                                       'code': 'codex_sdk_thread_busy'})
                     page.route('**/api/codex-sdk/open', busy_open)
                     page.locator('#a-sdk').click()
-                    expect(page.locator('.sdk-status')).to_contain_text('Synthetic active writer')
+                    expect(page.locator('#sdk-status-menu')).to_contain_text('Synthetic active writer')
                     page.locator('#a-chat').click()
                     page.wait_for_timeout(1400)  # Beyond the cancelled first retry's 1s deadline.
                     assert len(opens) == 1, 'closed view retried open'
