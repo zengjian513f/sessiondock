@@ -16,6 +16,7 @@ from playwright.sync_api import expect, sync_playwright
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_controls_browser import ControlsServer
 from history_fixtures import BINARY
+from sdk_usage_fixtures import assert_inline_usage
 
 
 def single_row(page):
@@ -26,7 +27,7 @@ def single_row(page):
     measurements = page.locator('.sdk-status-row').evaluate("""row => {
       const bounds = row.getBoundingClientRect();
       const controls = [...row.querySelectorAll(':scope > .sdk-status, :scope > .sdk-gauges, :scope > #sdk-usage-toggle, .sdk-pickers > label, .sdk-pickers > button')]
-        .filter(node => node.getClientRects().length && !node.hidden)
+        .filter(node => node.getClientRects().length && !node.hidden && !node.classList.contains('sdk-gauges-wrapped'))
         .map(node => { const r = node.getBoundingClientRect(); return {id: node.id || node.className,
           left:r.left, right:r.right, top:r.top, bottom:r.bottom}; });
       return {left:bounds.left, right:bounds.right, top:bounds.top, bottom:bounds.bottom,
@@ -37,7 +38,7 @@ def single_row(page):
     for control in measurements['controls']:
         assert control['left'] >= previous - 1, measurements
         assert control['right'] <= measurements['right'] + 1, measurements
-        assert abs((control['top'] + control['bottom']) / 2 - (measurements['top'] + measurements['bottom']) / 2) <= 1, measurements
+        assert abs((control['top'] + control['bottom']) / 2 - (measurements['controls'][0]['top'] + measurements['controls'][0]['bottom']) / 2) <= 1, measurements
         previous = control['right']
     for selector in ('#sdk-model', '#sdk-effort', '#sdk-more', '#sdk-input'):
         expect(page.locator(selector)).to_be_visible()
@@ -119,28 +120,9 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
             expect(status).to_be_disabled()
             expect(details).to_be_hidden()
         assert page.locator('#sdk-model').bounding_box()['width'] <= 160 * scale / 100 + 2
-        usage = page.locator('#sdk-usage-toggle')
-        if usage.is_visible():
-            usage.click()
-            menu = page.locator('#sdk-usage-menu')
-            expect(menu).to_be_visible()
-            expect(menu.locator('.sdk-credits')).to_have_text('Credits 1,235')
-            expect(menu.locator('[data-gauge="5h"] b')).to_have_text('40%')
-            within_viewport(page, menu)
-            if screenshots and width in (1024, 390, 320):
-                page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-usage.png'))
-            page.keyboard.press('Escape')
-            expect(menu).to_be_hidden()
-        elif page.locator('.sdk-status-row > .sdk-gauges').is_visible():
-            expect(page.locator('.sdk-status-row > .sdk-gauges')).to_be_visible()
-            expect(page.locator('.sdk-credits')).to_be_visible()
-        else:
-            # Usage yields its toolbar slot before a short status is truncated.
-            page.locator('#sdk-more').click()
-            expect(page.locator('#sdk-more-menu .sdk-gauges')).to_be_visible()
-            expect(page.locator('#sdk-more-menu .sdk-credits')).to_have_text('Credits 1,235')
-            within_viewport(page, page.locator('#sdk-more-menu'))
-            page.keyboard.press('Escape')
+        assert_inline_usage(page)
+        expect(page.locator('.sdk-status-row > .sdk-gauges .sdk-credits')).to_have_text('Credits 1,235')
+        expect(page.locator('.sdk-status-row > .sdk-gauges [data-gauge="5h"] b')).to_have_text('40%')
         page.locator('#sdk-more').click()
         menu = page.locator('#sdk-more-menu')
         expect(menu).to_be_visible()
@@ -195,7 +177,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         x, y = grip['x'] + grip['width'] / 2, grip['y'] + 100
         page.mouse.move(x, y)
         page.mouse.down()
-        page.mouse.move(x + 240, y, steps=12)
+        page.mouse.move(x + 320, y, steps=12)
         page.mouse.up()
         page.wait_for_function('prior => document.querySelectorAll(".sdk-pickers > [data-sdk-action], .sdk-pickers > #sdk-permissions").length < prior', arg=exposed)
         single_row(page)

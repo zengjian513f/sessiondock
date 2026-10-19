@@ -8,6 +8,7 @@ a real provider, reads a real CLI home, or starts a PTY.
 from __future__ import annotations
 
 import argparse
+from sdk_usage_fixtures import assert_inline_usage, toggle_usage_details
 import base64
 import json
 from pathlib import Path
@@ -120,7 +121,7 @@ def browser_check(fixture, base, screenshots):
         assert len([frame for frame in fixture.frames("user") if frame["message"]["content"] == "hello from browser"]) == 1
         post(page, "turn", turns[-1])
         assert len([frame for frame in fixture.frames("user") if frame["message"]["content"] == "hello from browser"]) == 1
-        page.locator('#sdk-usage-toggle').click()
+        toggle_usage_details(page)
         page.locator('#native-usage-refresh').click()
         expect(page.locator('#native-usage-detail')).to_contain_text('输入 Token：100')
         expect(page.locator('#native-usage-detail')).to_contain_text('缓存读取：30')
@@ -131,7 +132,7 @@ def browser_check(fixture, base, screenshots):
         capture(page, 'claude-sdk-wide-light-usage.png')
         # Multiple assistant blocks and a repeated HTTP acknowledgement never
         # add the cumulative native modelUsage a second time.
-        page.locator('#sdk-usage-toggle').click()
+        toggle_usage_details(page)
         page.locator('#sdk-more').click()
         page.locator('#native-sdk-permission_mode').select_option('plan')
         wait_snapshot(page, fixture.uid, lambda raw: raw.get('settings', {}).get('permission_mode') == 'plan')
@@ -253,13 +254,13 @@ def browser_check(fixture, base, screenshots):
 
         send(page, 'usage-unavailable')
         expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final usage-unavailable')
-        page.locator('#sdk-usage-toggle').click()
+        toggle_usage_details(page)
         page.locator('#native-usage-refresh').click()
         degraded = wait_snapshot(page, fixture.uid, lambda raw: bool(raw.get('usage_errors')) and not raw['running'])['raw']
         assert degraded['usage']['context']['used_tokens'] == 200 and not degraded['error'], degraded
         expect(page.locator('#native-usage-detail')).to_contain_text('synthetic experimental usage unavailable')
         capture(page, 'claude-sdk-mobile-dark-usage-unavailable.png')
-        page.locator('#sdk-usage-toggle').click()
+        toggle_usage_details(page)
         send(page, "error")
         error = wait_snapshot(page, fixture.uid, lambda raw: bool(raw.get("error")))
         assert "synthetic native execution failure" in error["raw"]["error"]

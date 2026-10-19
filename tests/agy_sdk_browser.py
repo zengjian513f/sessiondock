@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 from playwright.sync_api import expect, sync_playwright
+from sdk_usage_fixtures import assert_inline_usage, toggle_usage_details
 from agy_sdk_fixtures import AgyFixture, MODEL, SID, TITLE
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from new_session_model_browser import open_dialog
@@ -108,7 +109,7 @@ def exercise(browser, base, fixture, screenshots=None):
         assert fixture.inputs('SDK 中文\nsecond line')[0]['model'] == MODEL
         assert fixture.inputs('SDK 中文\nsecond line')[0]['effort'] == 'high'
         assert fixture.inputs('SDK 中文\nsecond line')[0]['mode'] == 'plan'
-        page.locator('#sdk-usage-toggle').click()
+        toggle_usage_details(page)
         expect(page.locator('#native-usage-detail')).to_contain_text('12,800')
         # Native quota may arrive after the menu opens, with a long diagnostic.
         # Reposition the growing popover so the actual refresh button is usable.
@@ -126,13 +127,13 @@ def exercise(browser, base, fixture, screenshots=None):
         assert menu_box['y'] >= 0 and menu_box['y'] + menu_box['height'] <= 900, menu_box
         page.locator('#native-usage-refresh').click()
         expect(page.locator('#native-usage-detail')).not_to_contain_text('Delayed native quota diagnostic.')
-        page.locator('#sdk-usage-toggle').click()
+        toggle_usage_details(page)
         before = len(fixture.inputs())
         page.locator('#sdk-input').fill('/usage')
         page.locator('#sdk-send').click()
         expect(page.locator('#sdk-input')).to_have_value('')
         assert len(fixture.inputs()) == before, 'slash query must never reach NDJSON user input'
-        page.locator('#sdk-usage-toggle').click()
+        toggle_usage_details(page)
         page.locator('#sdk-input').fill('/unknown-native-command')
         page.locator('#sdk-send').click()
         expect(page.locator('.sdk-status')).to_contain_text('尚未映射')
@@ -237,11 +238,12 @@ def exercise(browser, base, fixture, screenshots=None):
                 expect(page.locator('#sdk-input')).to_be_visible()
                 for theme in ('light', 'dark'):
                     page.emulate_media(color_scheme=theme)
+                    assert_inline_usage(page)
                     page.screenshot(path=str(screenshots / f'agy-sdk-{width}-{theme}.png'), full_page=True)
-                    page.locator('#sdk-usage-toggle').click()
+                    toggle_usage_details(page)
                     expect(page.locator('#native-usage-detail')).to_contain_text('12,800')
                     page.screenshot(path=str(screenshots / f'agy-sdk-usage-{width}-{theme}.png'), full_page=True)
-                    page.locator('#sdk-usage-toggle').click()
+                    toggle_usage_details(page)
                     page.locator('#sdk-more').click()
                     page.screenshot(path=str(screenshots / f'agy-sdk-settings-{width}-{theme}.png'), full_page=True)
                     page.locator('#sdk-more').click()
