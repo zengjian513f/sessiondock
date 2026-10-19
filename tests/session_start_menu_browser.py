@@ -5,7 +5,7 @@ import tempfile
 from types import SimpleNamespace
 from playwright.sync_api import sync_playwright, expect
 from history_fixtures import BINARY
-from sdk_start_stop_browser import provider
+from sdk_start_stop_fixtures import provider
 from hub_fixtures import Hub
 from node_auth_fixtures import TOKEN
 from private_hosts import private_hosts
