@@ -3,9 +3,9 @@ from playwright.sync_api import expect
 
 
 def assert_inline_usage(page):
-    gauges = page.locator('.sdk-status-row > .sdk-gauges')
+    gauges = page.locator('.sdk-pane .sdk-status-row > .sdk-gauges')
     expect(gauges).to_be_visible()
-    expect(page.locator('.sdk-status-row > #sdk-usage-toggle')).to_be_hidden()
+    expect(page.locator('.sdk-pane .sdk-status-row > #sdk-usage-toggle')).to_be_hidden()
     measurements = gauges.evaluate("""element => {
       const row = element.parentElement, bounds = row.getBoundingClientRect();
       return {left: bounds.left, right: bounds.right, overflow: row.scrollWidth - row.clientWidth,

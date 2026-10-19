@@ -41,7 +41,7 @@ const NativeSdkView = {
         <div class="sdk-status-row">
           <button class="sdk-status" data-state="connecting" type="button" aria-expanded="false" aria-controls="sdk-status-menu"><span role="status" aria-live="polite">连接中</span></button><div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" aria-label="完整状态"></div>
           <div class="sdk-options"><div class="sdk-pickers">
-            <label class="new-effort sdk-model" title="模型" hidden><span class="visually-hidden">模型</span><select id="sdk-model" aria-label="模型"></select></label>
+            <label class="new-effort sdk-model sdk-model-fit" title="模型" hidden><span class="visually-hidden">模型</span><select id="sdk-model" aria-label="模型"></select></label>
             <label class="new-effort sdk-effort" title="推理强度" hidden><span class="visually-hidden">推理强度</span><select id="sdk-effort" aria-label="推理强度"></select></label>
           </div></div>
         </div>
@@ -177,19 +177,21 @@ const NativeSdkView = {
   paintPickers() {
     if (!this.pane) return;
     const model = this.pane.querySelector('#sdk-model');
-    model.replaceChildren(new Option(this.nativeModel || '会话当前模型', ''));
+    model.replaceChildren(new Option(this.nativeModel || '模型', ''));
     for (const row of this.models) {
       const id = typeof row === 'string' ? row : row.id || row.model || row.modelId;
       if (id) model.add(new Option(row.displayName || row.name || id, id));
     }
     model.value = this.modelChoice || '';
+    model.title = model.selectedOptions[0]?.textContent || '模型';
     model.closest('label').hidden = this.models.length === 0;
     const selected = this.models.find(row => (row.id || row.model || row.modelId) === (this.modelChoice || this.nativeModel));
     const efforts = selected?.supportedReasoningEfforts || selected?.efforts || [];
     const effort = this.pane.querySelector('#sdk-effort');
-    effort.replaceChildren(new Option(this.nativeEffort || '会话当前强度', ''));
+    effort.replaceChildren(new Option(this.nativeEffort || '强度', ''));
     for (const row of efforts) { const id = typeof row === 'string' ? row : row.reasoningEffort || row.id; if (id) effort.add(new Option(id, id)); }
     effort.value = this.effortChoice || '';
+    effort.title = effort.selectedOptions[0]?.textContent || '强度';
     effort.closest('label').hidden = efforts.length === 0;
     NativeSdkControls.layout(this);
   },

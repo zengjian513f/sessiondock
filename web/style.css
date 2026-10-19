@@ -2556,6 +2556,7 @@ header .btn[data-session-docked] { display: none; }
 .sdk-bar { display: block; flex: none; width: 40px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--border); }
 .sdk-bar > u { display: block; height: 100%; border-radius: inherit; background: var(--accent); text-decoration: none; transition: width .2s; }
 .sdk-gauge b { min-width: 3.4ch; color: var(--text); font-weight: 600; text-align: right; }
+.native-sdk-pane .sdk-gauge > span { max-width: 6em; overflow: hidden; text-overflow: ellipsis; }
 .sdk-gauge.low .sdk-bar > u { background: #e5484d; }
 .sdk-gauge.low b { color: #e5484d; }
 .sdk-credits { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text); }
