@@ -109,7 +109,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
                 page.emulate_media(reduced_motion='no-preference')
             single_row(page)
             assert status.evaluate('e => e.scrollWidth <= e.clientWidth + 1'), (width, scale, label)
-            expect(status).to_be_enabled()
+            expect(status).to_be_disabled()
             if screenshots and label == '处理中' and width in (1440, 390, 320):
                 page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-working.png'))
         for kind in ('approval', 'sandbox'):
@@ -239,7 +239,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         single_row(page)
         expect(page.locator('.sdk-pane .sdk-status')).to_have_text('就绪')
         expect(page.locator('.sdk-pane .sdk-status')).to_be_visible()
-        expect(page.locator('.sdk-pane .sdk-status')).to_be_enabled()
+        expect(page.locator('.sdk-pane .sdk-status')).to_be_disabled()
         expect(page.locator('#sdk-send')).to_have_text('发送')
         expect(page.locator('#sdk-stop')).to_be_hidden()
         if screenshots:

@@ -49,7 +49,7 @@ const CodexSdkView = {
       <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div></div>
       <div id="sdk-composer">
         <div class="sdk-status-row">
-          <button class="sdk-status" type="button" aria-expanded="false" aria-controls="sdk-status-menu" aria-haspopup="dialog"><span role="status" aria-live="polite"></span></button>
+          <button class="sdk-status" type="button" disabled><span role="status" aria-live="polite"></span></button>
           <div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" role="dialog" aria-label="完整状态"></div>
           <div class="sdk-gauges" aria-label="用量">
             <span class="sdk-gauge" data-gauge="5h" hidden></span>
@@ -173,10 +173,13 @@ const CodexSdkView = {
 
   placeMenu(menu, button, preferredWidth = 300) {
     const box = button.getBoundingClientRect(), zoom = menu.currentCSSZoom || 1;
-    const edge = 8, gap = 6, width = Math.min(preferredWidth, innerWidth - edge * 2);
+    const edge = 8, gap = 6, limit = Math.min(preferredWidth, innerWidth - edge * 2);
+    const status = menu.classList.contains('sdk-status-menu');
+    menu.style.width = status ? 'max-content' : `${limit / zoom}px`;
+    if (status) menu.style.maxWidth = `${limit / zoom}px`;
+    const width = menu.getBoundingClientRect().width;
     const above = box.top - gap - edge, below = innerHeight - box.bottom - gap - edge;
     const up = above > below;
-    menu.style.width = `${width / zoom}px`;
     menu.style.maxHeight = `${Math.max(0, up ? above : below) / zoom}px`;
     menu.style.left = `${Math.max(edge, Math.min(box.right - width, innerWidth - edge - width)) / zoom}px`;
     menu.style.top = `${(up ? box.top - gap - menu.getBoundingClientRect().height : box.bottom + gap) / zoom}px`;
@@ -903,8 +906,7 @@ const CodexSdkView = {
 
   updateStatusDisclosure() {
     if (!this.notice) return;
-    this.notice.disabled = this.notice.hidden;
-    this.notice.setAttribute('aria-haspopup', 'dialog');
+    sdkUpdateStatusDisclosure(this.notice, this.pane.querySelector('#sdk-status-menu'));
   },
 
   nearBottom() {
@@ -1369,6 +1371,22 @@ const CodexSdkQuestions = {
     }
   },
 };
+
+// A complete short status is a label, not an invitation to repeat it in a menu.
+function sdkUpdateStatusDisclosure(notice, details) {
+  const full = details.textContent.trim(), summary = notice.textContent.trim();
+  const available = !notice.hidden && !!full
+    && (full !== summary || notice.scrollWidth > notice.clientWidth + 1);
+  notice.disabled = !available;
+  if (available) {
+    notice.setAttribute('aria-controls', details.id);
+    notice.setAttribute('aria-haspopup', 'dialog');
+    notice.setAttribute('aria-expanded', String(details.matches(':popover-open')));
+  } else {
+    if (details.matches(':popover-open')) details.hidePopover();
+    for (const attribute of ['aria-controls', 'aria-haspopup', 'aria-expanded']) notice.removeAttribute(attribute);
+  }
+}
 
 // Keep protocol detail intact; only the toolbar label is summarized.
 function sdkStatusSummary(text, kind) {

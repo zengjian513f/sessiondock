@@ -64,6 +64,11 @@ def main():
                 assert result['worker'] is None, result
                 expect(page.locator('#bug-report-toast')).to_contain_text('诊断已保存')
                 expect(page.locator('#bug-report-toast button', has_text='打开')).to_have_count(0)
+                toast = page.locator('#bug-report-toast')
+                assert toast.evaluate('e => e.scrollWidth <= e.clientWidth'), 'receipt text must wrap inside the card'
+                if width > 500:
+                    assert toast.bounding_box()['width'] < 430, 'a short receipt must not occupy a fixed 440px card'
+                page.screenshot(path=str(screenshots / f'receipt-{width}-{theme}.png'))
                 manifest = json.loads((Path(result['path']) / 'manifest.json').read_text())
                 assert manifest['status'] == 'captured', manifest
                 assert manifest['report_type'] == report_type, manifest

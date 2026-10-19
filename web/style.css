@@ -135,9 +135,9 @@ html, body {
   gap: 10px; padding: 12px; overflow-y: auto;
 }
 .app-float {
-  pointer-events: auto; box-sizing: border-box; width: min(440px, calc(100vw - 24px));
+  pointer-events: auto; box-sizing: border-box; width: max-content;
   /* The stack already occupies the scaled viewport; vw alone gets zoomed twice. */
-  max-width: 100%; max-height: min(calc(60dvh / var(--interface-scale, 1)), 100%);
+  max-width: min(440px, 100%); max-height: min(calc(60dvh / var(--interface-scale, 1)), 100%);
   flex-shrink: 0; overflow: auto;
   display: flex; flex-direction: column; gap: 10px; padding: 14px 16px;
   border: 1px solid var(--border); border-radius: 13px;

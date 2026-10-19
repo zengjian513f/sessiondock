@@ -366,8 +366,10 @@ Browser regression: [creation retention](../tests/sdk_creation_retention_browser
   attribute an interruption to a user. Coverage:
   [interrupted SDK browser suite](../tests/codex_sdk_interrupted_browser.py).
   Otherwise it displays 就绪 when there is no active turn, waiting state or error.
-  Every status can be clicked, tapped or activated with Enter to open its full
-  detail, including the original error. Escape or an outside click closes it.
+  Only statuses with additional detail or clipped text can be clicked, tapped or
+  activated with Enter to open their full detail, including the original error.
+  Complete short statuses are disabled labels; returning to one closes any open
+  detail. Escape or an outside click also closes it.
   DELTA: status text has a matching six-pixel dot using the shared
   [SDK status palette](native-sdk.md#配置与页面). Working, compaction,
   retry and connection dots breathe; reduced-motion preferences disable animation.

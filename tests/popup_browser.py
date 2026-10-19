@@ -93,7 +93,7 @@ def main():
                 expect(page.locator("#float-stack > .app-float:visible")).to_have_count(1)
                 assert card.evaluate("d => d.parentElement.id === 'float-stack'")
                 reference = card.evaluate("""d => { const s = getComputedStyle(d);
-                    return [s.width, s.borderRadius, s.backgroundColor, s.boxShadow,
+                    return [s.borderRadius, s.backgroundColor, s.boxShadow,
                             s.padding, s.fontSize, s.flexDirection]; }""")
                 card.get_by_role("button", name="稍后").click()
                 expect(card).to_be_hidden()
@@ -108,7 +108,7 @@ def main():
 
                 # Actionable receipts retain the update card layout; text-only floats are gone.
                 reference = card.evaluate("""d => { const s = getComputedStyle(d);
-                    return [s.width, s.borderRadius, s.backgroundColor, s.boxShadow,
+                    return [s.borderRadius, s.backgroundColor, s.boxShadow,
                             s.padding, s.fontSize, s.flexDirection]; }""")
                 for selector, trigger, clear in (
                     ('#bug-report-toast', "showBugReportToast('BUG-' + '1234567890'.repeat(8), {source:'codex', name:'fixture'})",
@@ -119,7 +119,7 @@ def main():
                     expect(notice).to_be_visible()
                     centered(page, notice, width, height)
                     appearance = notice.evaluate("""d => { const s = getComputedStyle(d);
-                        return [s.width, s.borderRadius, s.backgroundColor, s.boxShadow,
+                        return [s.borderRadius, s.backgroundColor, s.boxShadow,
                                 s.padding, s.fontSize, s.flexDirection]; }""")
                     assert appearance == reference, (selector, appearance, reference)
                     assert notice.evaluate('(d) => d.scrollWidth <= d.clientWidth')
@@ -145,7 +145,7 @@ def main():
                 expect(page.locator("#float-stack > .app-float:visible")).to_have_count(1)
                 centered(page, login, width, height)
                 appearance = login.evaluate("""d => { const s = getComputedStyle(d);
-                    return [s.width, s.borderRadius, s.backgroundColor, s.boxShadow,
+                    return [s.borderRadius, s.backgroundColor, s.boxShadow,
                             s.padding, s.fontSize, s.flexDirection]; }""")
                 assert appearance == reference, (appearance, reference)
                 assert login.evaluate("d => d.scrollWidth <= d.clientWidth")

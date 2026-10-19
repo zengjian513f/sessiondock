@@ -9639,14 +9639,13 @@ function renderActivity(activity) {
     details.addEventListener('beforetoggle', event => row.querySelector('.sdk-status')?.setAttribute('aria-expanded', String(event.newState === 'open')));
   }
   details.textContent = n.title;
-  n.setAttribute('aria-controls', details.id); n.setAttribute('aria-haspopup', 'dialog');
-  n.setAttribute('aria-expanded', String(details.matches(':popover-open')));
   n.onclick = () => {
     if (details.matches(':popover-open')) details.hidePopover();
     else { details.showPopover(); CodexSdkView.placeMenu(details, n); }
   };
   row.prepend(n);
   renderConversationUsage(row, S.sel);
+  sdkUpdateStatusDisclosure(n, details);
 }
 
 function pendingHistoryQuestion(entry) {

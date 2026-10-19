@@ -75,11 +75,13 @@ def main():
                     expect(page.locator('#msgs #activity')).to_have_count(0)
                     expect(page.locator('#msgs')).to_contain_text('Existing conversation content')
                     assert_single_status_row(footer)
-                    footer.locator('.sdk-status').click()
-                    expect(page.get_by_role('dialog', name='完整状态')).to_be_visible()
                     if status == 'failed':
+                        footer.locator('.sdk-status').click()
+                        expect(page.get_by_role('dialog', name='完整状态')).to_be_visible()
                         expect(page.get_by_role('dialog', name='完整状态')).to_contain_text('Detailed synthetic capacity error')
-                    page.keyboard.press('Escape')
+                        page.keyboard.press('Escape')
+                    else:
+                        expect(footer.locator('.sdk-status')).to_be_disabled()
                     page.screenshot(path=str(args.screenshots / f'{width}-{theme}-{status}.png'))
                 page.unroute('**/api/session/conversation/check')
                 page.route('**/api/session/conversation/check', lambda r: r.fulfill(json={'ok': False, 'input': {'state': 'blocked', 'code': 'cli_input_present', 'message': '终端已有输入；草稿已保留，请先处理终端输入'}}))
