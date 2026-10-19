@@ -156,6 +156,8 @@ DELTA（BUG-20261016-083529-776b9e）：浮动卡宽度受缩放后的容器约�
 
 DELTA：会话模式复用 SDK 的底部状态／用量样式；Working、等待、失败等状态移出消息列表。用量只读当前节点的额度快照，无数据时明确显示暂无数据，不启动 SDK 会话。浏览器覆盖：[`tests/conversation_status_browser.py`](../tests/conversation_status_browser.py)。
 
+会话用量同时展示快照中的金币余额与重置卡数量，保留零值和无限额度；缺失字段不伪装为零，悬停可见记录时间和最近到期时间。窄屏自动换行，PTY 输入提示不覆盖用量。
+
 会话状态栏与 composer 使用同一显示条件：未启动的会话和子代理不单独显示状态栏；终端全屏在所有屏宽隐藏 composer。运行中切换视图保留草稿，见 [`tests/conversation_composer_visibility_browser.py`](../tests/conversation_composer_visibility_browser.py)。
 
 ### 行上能看见的东西

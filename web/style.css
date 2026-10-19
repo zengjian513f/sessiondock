@@ -2662,8 +2662,9 @@ header .btn[data-session-docked] { display: none; }
 .sdk-queued .queued-send-dismiss { color: var(--text); }
 
 /* Conversation mode uses the SDK status/usage strip without SDK controls. */
+#right:has(#conversation-status:not(.hidden)) > #composer .composer-status-slot { position: static; }
 #conversation-status { flex: none; padding: 6px 18px; border-top: 1px solid var(--border); background: var(--panel); }
-#conversation-status .sdk-gauges { flex-wrap: wrap; justify-content: flex-end; }
+#conversation-status .sdk-gauges { flex: 0 1 auto; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; }
 #right.term-full #conversation-status, #right.terminal-first #conversation-status { display: none; }
 @media (max-width: 720px) {
   #conversation-status { padding-inline: 8px; }
