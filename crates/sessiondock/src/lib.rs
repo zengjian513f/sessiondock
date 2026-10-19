@@ -243,7 +243,7 @@ fn build_app(
     launch_adapters: Vec<state::LaunchAdapter>,
     quotas: Arc<quotas::Quotas>,
 ) -> io::Result<BuiltApp> {
-    let native_sdks = native_sdk::NativeSdks::new(&config, shutdown.clone())?;
+    let native_sdks = native_sdk::NativeSdks::new(&config, lifecycle.clone(), shutdown.clone())?;
     let audit = config
         .audit_dir
         .clone()

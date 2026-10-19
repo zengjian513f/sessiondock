@@ -328,6 +328,9 @@ impl LifecycleService {
                 return Err(Error::Closed);
             }
             let launcher = Launcher::new(config).map_err(Error::Launcher)?;
+            // Publish capabilities only after wrappers have been checked too.
+            // An existing wrapper does not establish that its CLI is installed.
+            launcher.probe_clis();
             let client = HostClient::new(
                 launcher.host_dir(),
                 ptyhost_client::Limits {
@@ -1816,11 +1819,11 @@ const CLI_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3
 
 async fn probe_clis(launcher: Arc<Launcher>, stop: CancellationToken) {
     loop {
-        let probe = launcher.clone();
-        let _ = tokio::task::spawn_blocking(move || probe.probe_clis()).await;
         tokio::select! {
             _ = stop.cancelled() => return,
             _ = tokio::time::sleep(CLI_PROBE_INTERVAL) => {}
         }
+        let probe = launcher.clone();
+        let _ = tokio::task::spawn_blocking(move || probe.probe_clis()).await;
     }
 }

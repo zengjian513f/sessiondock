@@ -33,8 +33,7 @@ function newCodexSdkEnabled() { return SessionDockCapabilities.config.codex_sdk 
   && (!HUB_MODE || newNodeCapabilities().codex_sdk === true); }
 function newSdkEnabled(source) {
   if (source === 'codex') return newCodexSdkEnabled();
-  return SessionDockCapabilities.config.native_sdks?.[source] === true
-    && (!HUB_MODE || newNodeCapabilities().native_sdks?.[source] === true);
+  return newNodeCapabilities().native_sdks?.[source] === true;
 }
 function anyNewSdkEnabled() {
   return ['codex','claude','grok','opencode','agy'].some(newSdkEnabled);

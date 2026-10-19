@@ -33,6 +33,7 @@ macro_rules! dispatch {
 
 pub struct NativeSdks {
     providers: BTreeMap<&'static str, Provider>,
+    lifecycle: Option<Arc<crate::lifecycle::service::LifecycleService>>,
     unavailable: BTreeMap<&'static str, String>,
     receipts: Mutex<BTreeMap<String, Value>>,
     submissions: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<Submission>>>>,
@@ -49,6 +50,7 @@ pub(crate) struct Submission;
 impl NativeSdks {
     pub fn new(
         config: &crate::config::Config,
+        lifecycle: Option<Arc<crate::lifecycle::service::LifecycleService>>,
         shutdown: CancellationToken,
     ) -> io::Result<Arc<Self>> {
         let mut providers = BTreeMap::new();
@@ -88,6 +90,7 @@ impl NativeSdks {
         let input_queue = input_queue::Journal::open(config.state_dir.as_ref())?;
         let sdks = Arc::new(Self {
             providers,
+            lifecycle,
             unavailable,
             receipts: Mutex::new(receipts),
             submissions: Mutex::new(BTreeMap::new()),
@@ -105,9 +108,25 @@ impl NativeSdks {
         json!(
             self.providers
                 .keys()
-                .map(|source| ((*source).to_owned(), true))
+                .map(|source| ((*source).to_owned(), !self.cli_missing(source)))
                 .collect::<BTreeMap<_, _>>()
         )
+    }
+
+    // SDK bridges are configured lazily, independently of CLI installation.
+    // Reuse the launcher's live probe, including wrappers returning 126/127,
+    // so repairing a CLI restores SDK availability without a node restart.
+    fn cli_missing(&self, source: &str) -> bool {
+        let source = match source {
+            "claude" => crate::lifecycle::model::Source::Claude,
+            "grok" => crate::lifecycle::model::Source::Grok,
+            "agy" => crate::lifecycle::model::Source::Agy,
+            "opencode" => crate::lifecycle::model::Source::Opencode,
+            _ => return false,
+        };
+        self.lifecycle
+            .as_ref()
+            .is_some_and(|service| service.cli_missing(source))
     }
 
     /// Resolve staged attachments once, including when an HTTP response is
@@ -135,7 +154,15 @@ impl NativeSdks {
     }
 
     pub fn unavailable(&self) -> Value {
-        json!(self.unavailable)
+        let mut reasons = self.unavailable.clone();
+        for source in self
+            .providers
+            .keys()
+            .filter(|source| self.cli_missing(source))
+        {
+            reasons.insert(source, format!("此机器未安装或无法执行 {source} 客户端"));
+        }
+        json!(reasons)
     }
 
     pub fn pending(&self) -> Vec<Value> {
@@ -211,6 +238,9 @@ impl NativeSdks {
         target: Value,
         input: Value,
     ) -> Result<Value, String> {
+        if self.cli_missing(source) {
+            return Err(format!("此机器未安装或无法执行 {source} 客户端"));
+        }
         let bridge = self
             .providers
             .get(source)
