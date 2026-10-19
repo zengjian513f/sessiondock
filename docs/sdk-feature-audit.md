@@ -351,6 +351,14 @@ TypeScript 大页面本次抓取超长失败，具体控制字段改以该官方
 是截断恢复入口，还不能据此承诺活跃同 SID 的原地回退。CLI 的独立 ultrareview
 也不自动等同本会话 inline reviewer。这两项保留“待”，不算已证实可完整对齐。
 
+Claude Code / Agent SDK 也可接 OpenRouter 的 Anthropic 兼容入口：
+`ANTHROPIC_BASE_URL=https://openrouter.ai/api`，用 OpenRouter key 设置
+`ANTHROPIC_AUTH_TOKEN`，并显式留空 `ANTHROPIC_API_KEY`。仅覆盖 URL 不能让
+订阅认证变成 OpenRouter key；OpenRouter 文档只保证 Anthropic 1P 兼容性。
+本轮保留现有 Claude 路由，未把此文档能力记为 Claude 经 OpenRouter 实测通过。
+依据：[Claude Code 接入](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration)、
+[Agent SDK 接入](https://openrouter.ai/docs/guides/community/anthropic-agent-sdk)。
+
 ## Codex 自己也没有接全的能力
 
 Codex 是本次基准，不是“全部官方 API 都已实现”。以下独立于上面的已有功能基准：
@@ -451,7 +459,7 @@ UID、原生 SID 与 cwd，失败创建留下的原生孤儿也纳入清理清�
 | Grok `grok-4.6` / low | 修复后正常模型目录/新建、多轮记忆、刷新、真实文件审批一次允许、Write/Read、Token/成本/上下文/额度、双标签页队列撤销、Stop、显式引导、原生 fork、压缩完成计数 | 引导只证明原生接收，consumed 仍为空；分支返回原生复制数量，本轮未验证分支首次模型回复；未测问答、图片及回退 |
 | Agy `gemini-3.8-flash-low` | 正常网页新建、多轮记忆、刷新、真实文件工具、草稿、双标签页队列撤销/Stop；当次 Token 底栏及真实额度刷新；异步用量菜单修复后按钮可点击 | Token 快照未承诺跨服务重启恢复；headless 审批/图片限制仍按合同；高级操作不因其他 SDK 通过而算通过 |
 | OpenCode `openrouter/google/gemini-2.5-flash-lite` / none | 模型目录修复后完整返回 765 个模型；真实 shell、fork、conversation-only revert stage/unrevert、原生 inbox 撤销；已 steer 项不再提供重复引导，窄屏用量可用 | 最初 free 模型拒绝非官方客户端；显式改选 Flash Lite 后原生报额度不足。未获得成功模型回复/模型工具；compact 虽准入但最终 quota error；STOP、审批/问答未覆盖 |
-| Claude `claude-haiku-4-5-20251001` / low | 使用有 CLI 的节点既有 Anthropic 认证；真实多轮、Write/Read、刷新、AskUserQuestion、用量、队列撤销/Stop、完整 fork 和选点 fork 的真实后续回复、压缩边界 | 另一节点 CLI 缺失已正确展示启动诊断；普通工具审批未触发；sleep 被原生策略拒绝，Stop 验证不声称成功运行该命令；图片/MCP 未覆盖 |
+| Claude `claude-haiku-4-5-20251001` / low | 使用有 CLI 的节点现有认证，原生报告 firstParty；真实多轮、Write/Read、刷新、AskUserQuestion、用量、队列撤销/Stop、完整 fork 和选点 fork 的真实后续回复、压缩边界 | 另一节点 CLI 缺失已正确展示启动诊断；普通工具审批未触发；sleep 被原生策略拒绝，Stop 验证不声称成功运行该命令；图片/MCP 未覆盖 |
 
 修复项包括 Grok 配置值格式与新建目录、OpenCode 大型 stdout 截断、Claude
 启动错误丢失/恢复前 SessionStart 遥测误判、SDK 额外历史 SSE、异步用量菜单
@@ -461,3 +469,18 @@ UID、原生 SID 与 cwd，失败创建留下的原生孤儿也纳入清理清�
 未在共享生产环境故意杀 daemon、制造节点崩溃、断网或耗尽真实账号额度。
 重启/未知投递等故障注入保留为临时服务合成回归。未覆盖项与两类待定位问题
 见 [TODO](../TODO.md)，本轮结果不能解释为五种 SDK 的每个功能均已验收。
+
+交付代码为 `3f6d9b0b`、`e167c0f8`，已推送；三台 Linux 节点与 Hub 均发布、
+重启并通过健康检查。相关 Chromium 回归覆盖四来源 SDK、Grok 生命周期、
+新建模型选择、持久队列、双标签页、普通历史/分页及 SDK 历史分页；另通过
+Rust 构建/格式、JavaScript 语法及文档检查。发布后 Claude 原 SID 恢复得到
+真实 `CLAUDE_LIVE_RESUME_OK`，实际模型仍为 Haiku / low；Grok 当前压缩历史
+与原生记录一致，分支保留压缩前历史；本轮刷新/重选复验未再出现历史加载的
+`AbortError`。
+
+清理按登记身份完成：10 个原生测试会话（含分支与失败创建的 Grok 孤儿）及
+1 个未落盘 Claude 创建回执均已移除；仅清空这些会话返回的回收站条目。
+OpenCode 原生数据库、Agy 原生索引/数据库/brain、Claude/Grok/Codex 原生
+文件及网页列表/待落盘行均核对不存在。Codex 使用原生精确 SID 永久删除；
+Agy 网页删除超时后使用原生当前会话确认删除。两机测试工作目录已清理，
+本轮脱敏结果、失败记录和截图作为验收证据保留在仓库外。
