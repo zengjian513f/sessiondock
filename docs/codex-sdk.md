@@ -379,10 +379,10 @@ Browser regression: [creation retention](../tests/sdk_creation_retention_browser
   horizontally within the usage area; they never wrap above status. Model width
   stays bounded. Compaction/fork/revert/review use header-style icon buttons with
   tooltips and accessible names; overflow entries retain their text in the ⋯ menu.
-  Approval and sandbox policy buttons always stay in the toolbar, including narrow
-  panes. Wide panes show their current values; narrow panes use 审批 / 沙箱 with
-  the current values retained in tooltips and checked menus. Selecting
-  an option applies that policy immediately; checks follow server-confirmed
+  Model, effort, tier, mode, approval and sandbox all use native system selects.
+  Approval and sandbox selectors follow mode in the same overflow order when
+  space runs out; their native option lists retain the full labels. Selecting
+  an option applies that policy immediately; selections follow server-confirmed
   settings, including changes from another client. Failed changes retain the
   actual selection and display the error. No Apply button is needed.
   Controls move into overflow according to measured space for the entire row,

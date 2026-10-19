@@ -201,7 +201,8 @@ const CodexSdkView = {
     const buttons = ['compact', 'fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
     more.append(this.pane.querySelector('#sdk-permissions'), this.pane.querySelector('.sdk-reset'));
     sdkLayoutFooter(this, ['.sdk-model', '.sdk-effort', '.sdk-tier', '.sdk-mode']
-      .map(selector => this.pane.querySelector(selector)).concat(buttons));
+      .map(selector => this.pane.querySelector(selector))
+      .concat([...this.pane.querySelectorAll('.sdk-policy')], buttons));
     this.updateStatusDisclosure();
   },
 
@@ -1405,7 +1406,6 @@ function sdkLayoutFooter(view, controls) {
   const pickers = row.querySelector('.sdk-pickers'), menu = view.pane.querySelector('#sdk-more-menu');
   const trigger = view.pane.querySelector('#sdk-more');
   const signature = JSON.stringify([row.clientWidth, view.notice.textContent, gauges.textContent,
-    [...pickers.querySelectorAll('.sdk-policy')].map(n => n.textContent),
     [...menu.querySelectorAll('.sdk-control-note, .sdk-reset')].map(n => [n.hidden, n.textContent]),
     controls.filter(Boolean).map(n => [n.hidden, n.textContent, n.querySelector('select')?.value])]);
   if (row.dataset.footerLayout === signature) return;
@@ -1418,7 +1418,7 @@ function sdkLayoutFooter(view, controls) {
   const overflow = control => control.classList.contains('sdk-action') ? view.pane.querySelector('#sdk-actions') : menu;
   for (const control of controls.filter(Boolean)) overflow(control).append(control);
   const fits = () => row.scrollWidth <= row.clientWidth + 1 && gauges.scrollWidth <= gauges.clientWidth + 1;
-  const anchor = pickers.querySelector('.sdk-policy') || trigger;
+  const anchor = trigger;
   for (const control of controls.filter(Boolean)) {
     pickers.insertBefore(control, anchor);
     if (!fits()) { overflow(control).append(control); break; }

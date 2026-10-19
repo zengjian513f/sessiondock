@@ -58,8 +58,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     capture('wide-empty')
 
     # A successful real policy interaction creates a message-only menu.
-    page.locator('#sdk-control-approval').click()
-    page.locator('#sdk-policy-approval [data-value="never"]').click()
+    page.locator('#sdk-control-approval').select_option('never')
     page.keyboard.press('Escape')
     expect(more).to_be_visible()
     more.click()

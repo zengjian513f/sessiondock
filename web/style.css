@@ -2573,30 +2573,16 @@ header .btn[data-session-docked] { display: none; }
 .native-sdk-pane { --sdk-model-width: clamp(72px, calc(100vw - 240px), 160px); }
 .sdk-pickers > .sdk-mode { width: 96px; }
 .sdk-pickers > .sdk-tier { width: 84px; }
-/* Native select painting ignores line-height; use the toolbar text line box. */
-.sdk-pickers > .new-effort::after {
-  content: ""; position: absolute; right: 10px; top: 50%; width: 5px; height: 5px;
-  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
-  transform: translateY(-70%) rotate(45deg); pointer-events: none;
-}
 .sdk-pickers .new-effort > select {
-  appearance: none; box-sizing: border-box; height: 28px; width: 100%;
-  padding: 4px 22px 4px 6px; font: inherit; text-overflow: ellipsis;
+  box-sizing: border-box; height: 28px; width: 100%;
+  padding: 4px 6px; font: inherit; text-overflow: ellipsis;
 }
 .sdk-pickers > .btn { flex: none; height: 28px; min-height: 28px; padding: 0 8px; white-space: nowrap; }
 #sdk-more { width: 28px; padding: 0; font-size: 18px; }
-.sdk-pickers > .sdk-policy { display: inline-flex; align-items: center; gap: 4px; }
-.sdk-policy small { font: inherit; }
-.sdk-policy-label { display: none; }
-.sdk-policy-arrow { font-size: 10px; }
-@container sdk-footer (max-width: 600px) {
-  .sdk-policy-label { display: inline; }
-  .sdk-policy small { display: none; }
-}
+.sdk-pickers > .sdk-policy { width: 128px; }
+.sdk-pickers > .sdk-policy:last-of-type { width: 112px; }
 @container sdk-footer (max-width: 360px) {
   .sdk-pickers { gap: 4px; }
-  .sdk-pickers > .sdk-policy { padding-inline: 4px; }
-  .sdk-policy-arrow { display: none; }
 }
 
 .sdk-toolbar-menu { gap: 8px; padding: 8px; overflow-y: auto; }
