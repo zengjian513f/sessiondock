@@ -35,7 +35,7 @@
 执行无账号 initialize；命令显式选择 grok-4.6 / low，返回 currentModelId 也断言为
 `grok-4.6`。原生明确广告 `promptCapabilities.image:false`、`audio:false`、
 `embeddedContext:true`。因此本安装版不能按 ACP 能力承诺结构化图片；桥接保留
-路径引用；共享 HTTP 在协商 image:false 时只发布已有路径引用，并在网页明确提示不传图像内容。
+普通附件路径；协商 image:false 时仍可使用 SessionDock 附件，不常驻显示协议提示。
 直接向 bridge 提供非空 images 仍明确 unsupported。合成 `image:true` 对端只验证后续
 原生版本广告支持时的图片适配，不扩大为本机真实多模态验收。
 
@@ -205,7 +205,7 @@ fake native CLI、浏览器及生产时长不被修改；生产没有测试 time
 - `images:[{data,mimeType}]` 仅由共享 HTTP 层从已发布、可信附件生成；
   initialize 的 `agentCapabilities.promptCapabilities.image` 必须明确为 true 才能作为
   ACP 图像块发送。共享 HTTP 在 image:false 时继续发布附件及发送已有路径引用，
-  不生成结构化 images；网页明确显示“仅发送图片路径引用，不传递图像内容”。
+  不生成结构化 images；沿用 SessionDock 附件入口，不增加原生图片入口或常驻提示。
   直接向 bridge 传非空 images 则返回 images_unsupported。不会把路径文字冒充多模态输入。
 
 扩展支持以原生结果为准。只读用量/额度/回退点及显式操作可尝试已有官方方法；

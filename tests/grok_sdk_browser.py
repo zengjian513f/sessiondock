@@ -373,8 +373,8 @@ def exercise(browser, base, fixture, screenshots):
     assert recovered["capabilities"]["images"] is False
 
     # An image:false handshake preserves the established file-path send flow.
-    # The browser explains the downgrade and HTTP does not manufacture ACP image
-    # support; the selected picture is still privately published exactly once.
+    # SessionDock attachments remain available without a permanent protocol note.
+    # HTTP does not manufacture ACP image support; the file is published once.
     page.reload(wait_until="domcontentloaded")
     page.wait_for_function("T.listLoaded")
     select(page,uid)
@@ -383,8 +383,7 @@ def exercise(browser, base, fixture, screenshots):
     unknown_card.get_by_role("button",name="移除记录",exact=True).click()
     page.get_by_role("dialog").get_by_role("button",name="移除记录",exact=True).click()
     expect(unknown_card).to_have_count(0)
-    expect(page.locator("#native-media-note")).to_be_visible()
-    expect(page.locator("#native-media-note")).to_contain_text("仅发送图片路径引用")
+    expect(page.locator("#native-media-note")).to_have_count(0)
     page.locator("#sdk-add").click()
     with page.expect_file_chooser() as chooser:
         page.locator('#sdk-attach-menu [data-attach=image]').click()
@@ -398,8 +397,8 @@ def exercise(browser, base, fixture, screenshots):
     assert "grok-path-only.png" in fallback[0]["text"] and "sessiondock_attachments" in fallback[0]["text"],fallback
     assert any(path.name == "grok-path-only.png" for path in fixture.work.rglob("grok-path-only.png"))
     expect(page.locator("#sdk-input")).to_have_value("")
-    expect(page.locator("#native-media-note")).to_contain_text("不传递图像内容")
-    capture_state(page,screenshots,"image-path-fallback",page.locator("#native-media-note"))
+    expect(page.locator("#native-media-note")).to_have_count(0)
+    capture_state(page,screenshots,"image-attachment")
 
     # Old/native builds report unsupported extensions honestly; refresh errors
     # stay visible and the next open removes the corresponding capability.

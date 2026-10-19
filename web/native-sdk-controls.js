@@ -71,10 +71,6 @@ const NativeSdkControls = {
   paint(view) {
     if (!view.pane) return;
     for (const button of view.pane.querySelectorAll('[data-sdk-action]')) button.hidden=view.capabilities[button.dataset.sdkAction] !== true && !(button.dataset.sdkAction==='permissions' && view.uid.startsWith('opencode:') && view.capabilities.settings);
-    let mediaNote=view.pane.querySelector('#native-media-note');
-    if(!mediaNote){mediaNote=el('p','sdk-control-note');mediaNote.id='native-media-note';view.pane.querySelector('#sdk-composer').append(mediaNote);}
-    mediaNote.hidden=!(view.uid.startsWith('agy:') || view.uid.startsWith('grok:') && view.capabilities.images===false);
-    mediaNote.textContent=mediaNote.hidden?'':'此原生接口仅发送图片路径引用，不传递图像内容。';
     this.paintSettings(view);this.paintUsage(view);this.paintQueue(view);this.layout(view);
   },
   paintUsage(view) {
