@@ -132,3 +132,8 @@ accept-edits/auto/plan，显示下一轮生效，并以独立 --mode argv 传入
 
 扩展 Chromium 覆盖 effort/mode 的实际 argv、累计用量/额度查询、slash 不入原生
 user 流，及 1280/390/320 明暗默认、用量和设置菜单；合成 CLI 不访问真实账户。
+
+DELTA：Agy 的 ⋯ 下拉直接展示用量，不再经过“用量明细”按钮。累计 Token、
+输入/输出、思考和缓存分列显示，账号额度按组显示已用进度、剩余与重置时间；
+刷新与用量标题同行。`/usage` 打开同一下拉，错误保留旧额度与采集时间。
+覆盖：[Agy 用量下拉](../tests/agy_usage_browser.py)。

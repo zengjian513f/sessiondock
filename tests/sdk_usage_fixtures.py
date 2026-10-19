@@ -30,5 +30,6 @@ def toggle_usage_details(page):
         assert_inline_usage(page)
     if not page.locator('#sdk-more-menu').is_visible():
         page.locator('#sdk-more').click()
-    page.get_by_role('button', name='用量明细', exact=True).click()
+    if menu.get_attribute('popover') is not None:
+        page.get_by_role('button', name='用量明细', exact=True).click()
     expect(menu).to_be_visible()

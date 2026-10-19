@@ -2598,6 +2598,28 @@ header .btn[data-session-docked] { display: none; }
 .sdk-action-fields { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .sdk-action-fields > input { width: 100%; box-sizing: border-box; }
 .sdk-control-section { display: grid; gap: 7px; }
+.sdk-agy-menu { gap: 0; padding: 12px; }
+.sdk-agy-menu > #sdk-actions:not(:has(> :not([hidden]))) { display: none; }
+.sdk-agy-menu > #native-sdk-settings { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+.sdk-agy-menu > #native-sdk-settings:empty { display: none; }
+.sdk-inline-usage { display: grid; gap: 12px; min-width: 0; }
+.sdk-usage-heading, .sdk-usage-quota-heading, .sdk-usage-metric { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.sdk-usage-heading h3 { margin: 0; font-size: 13px; }
+.sdk-usage-heading .btn { padding: 2px 8px; min-height: 24px; font-size: 12px; }
+.sdk-inline-usage #native-usage-detail { gap: 12px; }
+.sdk-usage-group { display: grid; gap: 8px; min-width: 0; }
+.sdk-usage-group + .sdk-usage-group { border-top: 1px solid var(--border); padding-top: 12px; }
+.sdk-usage-group h4 { margin: 0; color: var(--muted); font-size: 12px; font-weight: 500; }
+.sdk-usage-total { font-size: 24px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.sdk-usage-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
+.sdk-usage-metric { min-width: 0; font-size: 12px; color: var(--muted); gap: 6px; overflow-wrap: anywhere; }
+.sdk-usage-metric b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.sdk-usage-quota { display: grid; gap: 6px; min-width: 0; }
+.sdk-usage-quota-heading { font-size: 12px; }
+.sdk-usage-quota-heading > :first-child { min-width: 0; overflow-wrap: anywhere; }
+.sdk-usage-quota-heading > :last-child { flex: none; }
+.sdk-inline-usage .sdk-usage-quota .sdk-gauge { grid-template-columns: minmax(0, 1fr) auto; }
+.sdk-inline-usage .sdk-usage-quota .sdk-control-note { font-size: 11px; }
 .sdk-control-section h3 { margin: 0; font-size: 13px; }
 .sdk-control-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .sdk-control-row .new-effort { flex: 1 1 160px; }
