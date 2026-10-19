@@ -547,6 +547,7 @@ async function takeover(uid, btn) {
     // Starting from the session menu bypasses the terminal button's view
     // switch. Select the terminal before discovery can restore the SDK pane.
     SdkView.legacyViews.add(viewKey(uid));
+    SdkView.rememberMode(uid, null, 'terminal');
     SessionContentView.close();
     await loadTermList();
     // The receipt is ready, but the fresh instance reaches the console
@@ -3042,7 +3043,9 @@ function restoreTermPane(uid, agent = null) {
   if (T.ended.has(uid)) return;
   if (!uid || agent || S.sel !== uid || !sessionTerminalEnabled(uid) || !$('#a-term')) return;
   const name = takenOver(uid);
-  if (!name || !T.openViews.has(name)) return;
+  const preferred = SdkView.preferredMode(uid, agent);
+  if (!name || (!T.openViews.has(name) && preferred !== 'terminal')) return;
+  if (preferred === 'chat' && MOBILE.matches) return;
   T.uid = uid;
   const prompt = cache.get(viewKey(uid))?.prompt || null;
   // 刷新页面时可能先恢复了一个仍在等待回答的原生题目，再恢复终端布局。
@@ -3070,7 +3073,7 @@ function restoreTermPane(uid, agent = null) {
     return;
   }
   auditTermPane('restore', {target: name});
-  openTermPane(name, false, null, true);
+  openTermPane(name, false, preferred === 'chat' ? 'collapsed' : null, true);
 }
 
 /** Only hosts with the server-side screen model serve a live console. A running
@@ -3120,6 +3123,7 @@ async function openTermPane(name, autoFocus = true, requestedMode = null, auto =
   }
   rememberTermOpen(name, true);
   rememberTermLayout(name);
+  if (!auto) SdkView.rememberMode(T.uid, null, T.mode === 'collapsed' ? 'chat' : 'terminal');
   const pane = $('#termpane');
   pane.classList.remove('hidden');
   layoutTermPane();
@@ -6334,6 +6338,7 @@ function finishTermDrag(e) {
   rememberTermLayout();
   renderTakeoverBtn();
   fitTerm();
+  SdkView.rememberMode(T.uid, null, T.mode === 'collapsed' ? 'chat' : 'terminal');
 }
 document.addEventListener('pointerup', finishTermDrag);
 document.addEventListener('pointercancel', finishTermDrag);

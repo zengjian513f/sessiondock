@@ -401,10 +401,33 @@ const SdkView = new Proxy({
   active: CodexSdkView,
   legacyViews: CodexSdkView.legacyViews,
   available(uid, agent) { return CodexSdkView.available(uid,agent) || NativeSdkView.available(uid,agent); },
-  defaultFor(uid, agent) { return this.available(uid,agent) && !this.legacyViews.has(viewKey(uid,agent)); },
+  preferredMode(uid, agent) {
+    if (!String(uid).startsWith('claude:') || agent) return null;
+    // Read lazily: this script loads before the shared preference store.
+    const saved = store.get('claudeSessionViews', {})?.[viewKey(uid, agent)];
+    if (['sdk', 'chat', 'terminal'].includes(saved)) return saved;
+    // Discovery may still be in flight on reload. Do not start a competing
+    // SDK process before we know whether this session already has a console.
+    if (typeof T === 'undefined' || !T.listLoaded) return 'chat';
+    const name = takenOver(uid);
+    if (name) return T.openViews.get(name)?.mode === 'collapsed' ? 'chat' : 'terminal';
+    if (S.live.has(uid) && !S.liveSdk.has(uid)) return 'chat';
+    return 'sdk';
+  },
+  rememberMode(uid, agent, mode) {
+    if (!String(uid).startsWith('claude:') || agent) return;
+    const saved = store.get('claudeSessionViews', {}) || {};
+    saved[viewKey(uid, agent)] = mode;
+    store.set('claudeSessionViews', saved);
+  },
+  defaultFor(uid, agent) {
+    const mode = this.preferredMode(uid, agent);
+    return this.available(uid,agent) && (mode ? mode === 'sdk' : !this.legacyViews.has(viewKey(uid,agent)));
+  },
   pending(uid) { return CodexSdkView.pending(uid); },
   open(uid,pane,agent,options) {
     this.close(); this.legacyViews.delete(viewKey(uid,agent));
+    this.rememberMode(uid, agent, 'sdk');
     this.active = String(uid).startsWith('codex:') ? CodexSdkView : NativeSdkView;
     this.active.open(uid,pane,agent,options);
     closeWatch();

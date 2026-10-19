@@ -252,6 +252,7 @@ function bindConsoleButton(button, uid, agent = null) {
     group.querySelector('#a-chat').onclick = () => {
       if (S.sel !== uid || S.agent !== agent) return;
       SdkView.legacyViews.add(viewKey(uid, agent));
+      SdkView.rememberMode(uid, agent, 'chat');
       SessionContentView.close();
       if (MOBILE.matches && !sessionTerminalFirst(uid)) closeTermPane();
       else {
@@ -282,6 +283,7 @@ function bindConsoleButton(button, uid, agent = null) {
     const reason = consoleUnavailableReason(uid, agent, false);
     if (reason) { paintConsoleAvailability(button, uid, agent); return; }
     SdkView.legacyViews.add(viewKey(uid, agent));
+    SdkView.rememberMode(uid, agent, 'terminal');
     SessionContentView.close();
     // 上次连接失败不再拦一道确认框：点击直接重新接入并显示 pty，失败时明确提示原因。
     ConsoleUI.busy.add(uid);
