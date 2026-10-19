@@ -9507,37 +9507,82 @@ function questionNode(m, {answer = answerCliQuestion, cancel: cancelAnswer = can
   return n;
 }
 
+const conversationUsage = new Map();
+
+function renderConversationUsage(row, uid) {
+  const node = HUB_MODE ? nodeOf(uid) : '';
+  const source = String(uid || '').split(':')[0];
+  const key = `${node}:${source}`;
+  const paint = data => {
+    if (!row.isConnected || uid !== S.sel) return;
+    const gauges = row.querySelector('.sdk-gauges');
+    gauges.replaceChildren();
+    const agent = data?.agents?.find(item => item.source === source);
+    for (const bucket of agent?.buckets || []) {
+      if (!Number.isFinite(bucket.remaining_percent)) continue;
+      const used = Math.max(0, Math.min(100, 100 - bucket.remaining_percent));
+      const window = bucket.window;
+      const label = typeof window === 'number'
+        ? (window % 1440 === 0 ? `${window / 1440}d` : window % 60 === 0 ? `${window / 60}h` : `${window}m`)
+        : {five_hour: '5h', seven_day: '7d', weekly: '7d'}[window] || window || bucket.group || '用量';
+      const gauge = el('span', 'sdk-gauge');
+      gauge.title = `${label} 已用 ${Math.round(used)}%${agent.captured_at ? `；记录于 ${new Date(agent.captured_at).toLocaleString()}` : ''}`;
+      const bar = el('span', 'sdk-bar'), fill = el('u');
+      fill.style.width = `${used}%`; bar.append(fill);
+      gauge.append(el('span', '', label), bar, el('b', '', `${Math.round(used)}%`));
+      gauges.append(gauge);
+    }
+    if (!gauges.childElementCount) gauges.append(el('span', '', '用量暂无数据'));
+  };
+  const saved = conversationUsage.get(key);
+  paint(saved?.data);
+  if (saved && Date.now() - saved.at < 60000) { saved.pending?.then(paint); return; }
+  const entry = {at: Date.now(), data: saved?.data};
+  conversationUsage.set(key, entry);
+  const path = node ? `api/nodes/${encodeURIComponent(node)}/api/quotas` : 'api/quotas';
+  entry.pending = fetch(appUrl(path), {cache: 'no-store', signal: AbortSignal.timeout(10000)})
+    .then(response => { if (!response.ok) throw new Error(response.status); return response.json(); })
+    .then(data => { entry.data = data; paint(data); return data; })
+    .catch(() => { paint(entry.data); return entry.data; });
+}
+
 function renderActivity(activity) {
   const box = $('#msgs');
   if (!box) return;
   $('#activity')?.remove();
+  $('#conversation-idle-status')?.remove();
+  let row = $('#conversation-status');
+  if (!row) {
+    row = el('div', 'sdk-status-row');
+    row.id = 'conversation-status';
+    const gauges = el('div', 'sdk-gauges');
+    gauges.setAttribute('aria-label', '用量');
+    row.append(gauges);
+    box.after(row);
+  }
   const compacting = !S.agent && S.live.has(S.sel)
     && cache.get(viewKey(S.sel))?.cli?.instance?.phase === 'compacting';
   if (compacting) activity = {state: 'working'};
-  if (!activity || activity.state === 'idle') return;
-  if (activity.state === 'working' && !compacting) {
-    if (!S.live.has(S.sel)) return;
+  if (activity?.state === 'working' && !compacting) {
     const processStart = S.liveStarted.get(S.sel);
     const activityAt = Date.parse(activity.ts) / 1000;
-    // resume 出来的新 CLI 停在输入提示符时，旧 transcript 可能仍以一条未回答的
-    // user 消息结尾。那条 working 属于上一进程，不能带进当前进程。
-    if (Number.isFinite(processStart) && Number.isFinite(activityAt)
-        && activityAt < processStart - 2) return;
+    if (!S.live.has(S.sel) || (Number.isFinite(processStart) && Number.isFinite(activityAt)
+        && activityAt < processStart - 2)) activity = null;
   }
-  const labels = {
-    working: 'Working…', waiting: '等待回答',
-    aborted: '已中断', failed: '执行失败',
-  };
-  const label = compacting ? '正在压缩上下文…' : labels[activity.state];
-  if (!label) return;
-  const n = el('div', `activity ${activity.state}`);
-  n.id = 'activity';
-  n.dataset.state = activity.state;
+  const labels = {working: 'Working…', waiting: '等待回答', aborted: '已中断', failed: '执行失败'};
+  const label = compacting ? '正在压缩上下文…' : labels[activity?.state]
+    || (S.live.has(S.sel) && !S.agent ? '就绪' : '未运行');
+  const n = el('div', 'sdk-status');
+  n.id = compacting || labels[activity?.state] ? 'activity' : 'conversation-idle-status';
+  n.dataset.state = compacting ? 'maintenance' : ({failed: 'blocked', aborted: 'warning'}[activity?.state]
+    || (labels[activity?.state] ? activity.state : S.live.has(S.sel) && !S.agent ? 'ready' : 'idle'));
+  n.classList.toggle('blocked', activity?.state === 'failed');
   n.setAttribute('role', 'status');
   n.setAttribute('aria-live', 'polite');
-  n.innerHTML = `<i></i><span>${label}</span>`;
-  if (activity.reason) n.title = activity.reason;
-  box.appendChild(n);
+  n.textContent = label;
+  n.title = activity?.reason || label;
+  row.prepend(n);
+  renderConversationUsage(row, S.sel);
 }
 
 function pendingHistoryQuestion(entry) {
@@ -9650,7 +9695,7 @@ function renderConversationQuestion(uid = S.sel) {
   next.dataset.signature = signature;
   slot.replaceWith(next);
   slot = next;
-  if (prompt) $('#activity')?.remove();
+  if (prompt) renderActivity({state: 'waiting'});
   if (restore) {
     const input = slot.querySelector('.question-text-input');
     if (input && !input.disabled) {
@@ -9667,7 +9712,7 @@ function renderConversationTail(activity, uid = S.sel) {
   if (!box) return;
   $('#activity')?.remove();
   renderConversationQuestion(uid);
-  if (!$('#conversation-question.live-question')) renderActivity(activity);
+  renderActivity($('#conversation-question.live-question') ? {state: 'waiting'} : activity);
   renderTerminalThreadNotice(uid);
   if (typeof syncComposerSendState === 'function') syncComposerSendState();
   refreshMessageTimeDividers(box);

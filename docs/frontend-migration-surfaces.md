@@ -154,6 +154,8 @@ DELTA（BUG-20261016-083529-776b9e）：浮动卡宽度受缩放后的容器约�
 
 左栏宽度 `width`，默认 340，最小 200。拖 `#drag`，双击回到默认。资源列打开时视觉宽度再加 144，存的仍是不含这 144 的值（`setSideWidth`）。
 
+DELTA：会话模式复用 SDK 的底部状态／用量样式；Working、等待、失败等状态移出消息列表。用量只读当前节点的额度快照，无数据时明确显示暂无数据，不启动 SDK 会话。浏览器覆盖：[`tests/conversation_status_browser.py`](../tests/conversation_status_browser.py)。
+
 ### 行上能看见的东西
 
 每一行：来源图标、运行/冻结角标、标题、目录、可选星标、可选分组名、可选资源格。子代理行文案是「子代理 · 类型 · 时间」（`agentMeta`）。「按需展开」默认仅主会话，保留箭头，点击后临时加载下一层子会话；子代理在平铺和层叠模式下都挂在所属会话下面；三角折叠的是子代理行或整棵子树，分层开关只决定「由会话发起的会话」是否缩进。打开子代理深链不会因此打开分层。[`docs/external-links.md`](external-links.md)、[`tests/session_deep_link_browser.py`](../tests/session_deep_link_browser.py)、[`tests/nest_tree_browser.py`](../tests/nest_tree_browser.py)。
