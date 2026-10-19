@@ -10,6 +10,7 @@ mobile (390 px) sidebar long-press menu stops a fresh resume the same way. No
 model binary, native CLI home or production host is touched.
 """
 
+import argparse
 import json
 import os
 import re
@@ -63,6 +64,11 @@ def wait_xterm(page, text):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--screenshots', type=Path)
+    args = parser.parse_args()
+    if args.screenshots:
+        args.screenshots.mkdir(parents=True, exist_ok=True)
     if os.name != "posix":
         raise SystemExit("Real launch acceptance currently requires POSIX; no Windows/macOS claim.")
     with tempfile.TemporaryDirectory(prefix="sessiondock-session-stop-") as temporary, private_hosts(Path(temporary)):
@@ -151,6 +157,8 @@ def main():
                     page.wait_for_function("uid => (T.list || []).some(row => row.uid === uid && row.instance_id)", arg=codex_uid)
                     action = session_action(page)
                     expect(action).to_have_attribute("aria-label", "停止会话")
+                    if args.screenshots:
+                        page.screenshot(path=str(args.screenshots / 'desktop-stop-light.png'))
                     expect(action.locator('use')).to_have_attribute('href', '#i-power')
                     expect(action.locator('span')).to_be_hidden()
                     expect(action).to_have_css('width', '28px')
@@ -440,7 +448,8 @@ def main():
                     context.close()
 
                     # ---- Mobile: start through the sidebar, then stop from long press.
-                    mobile = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="block", has_touch=True)
+                    mobile = browser.new_context(viewport={"width": 390, "height": 844}, color_scheme="dark",
+                                                 service_workers="block", has_touch=True)
                     page = watch(mobile)
                     page.locator(f'#side .item[data-uid="{codex_uid}"]').click(button="right")
                     start_item=page.locator('#item-menu [data-act="stop"]')
@@ -473,10 +482,21 @@ def main():
                     delete_item.click(force=True)
                     expect(menu).to_be_visible()
                     expect(menu.locator('[data-act="group"]')).to_be_visible()
-                    expect(menu.locator('button:visible')).to_have_count(10)
+                    expect(menu.locator('[data-act="stop"]')).to_be_visible()
+                    expect(menu.locator('[data-act="delete"]')).to_be_visible()
                     expect(menu.locator('button:visible').first).to_have_attribute('data-act','stop')
                     bounds = menu.bounding_box()
                     assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 391, bounds
+                    if args.screenshots:
+                        page.screenshot(path=str(args.screenshots / 'mobile-stop-menu-dark.png'))
+                    # A stale live/list refresh after the menu was painted must not
+                    # turn a visible Stop click into a start or a silent no-op.
+                    page.evaluate('''uid => {
+                        S.live.delete(uid);
+                        for (const row of T.list || []) if (row.uid === uid) row.stale = true;
+                    }''', codex_uid)
+                    assert page.evaluate('uid => !sessionStoppable(uid)', codex_uid)
+                    expect(stop_item).to_have_text('停止会话')
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as stopped:
                         stop_item.click()
                     reply = stopped.value.json()
