@@ -115,7 +115,7 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         page.wait_for_function('!composerDraft(S.sel).sdkSubmission')
         if screenshots:
             page.screenshot(path=str(screenshots / f'{label}-cancelled-draft.png'))
-        page.locator('.sdk-status').click()
+        page.locator('#sdk-composer .sdk-status').click()
         expect(page.locator('#sdk-status-menu')).to_be_visible()
         expect(page.locator('#sdk-status-menu')).to_contain_text('该消息已撤销，草稿已保留；请再次发送。')
         if screenshots:

@@ -89,6 +89,33 @@ def run(browser, base, root, agy, records, evidence, holds):
                 assert target['sid'] in catalog()
         page.set_viewport_size({'width': 1280, 'height': 900})
         before_requests = len(records)
+        # Only this fixture's HOME is changed. A private deletion worker must
+        # surface native trust instead of waiting 25s or granting it itself.
+        settings = native / 'settings.json'
+        config = json.loads(settings.read_text())
+        config['trustedWorkspaces'] = []
+        settings.write_text(json.dumps(config))
+        popup = open_menu()
+        with page.expect_response(lambda r: r.request.method == 'DELETE', timeout=10000) as blocked:
+            popup.locator('[data-popup-action="ok"]').click()
+        assert blocked.value.status == 500, blocked.value.text()
+        expect(page.locator('dialog.app-popup[open]')).to_contain_text('工作目录信任确认')
+        assert target['sid'] in catalog() and other['sid'] in catalog()
+        assert json.loads(settings.read_text()).get('trustedWorkspaces', []) == []
+        assert len(records) == before_requests, 'blocked deletion invoked a model'
+        assert not list((root / 'host').glob('.agy-delete-*'))
+        page.screenshot(path=str(root / 'delete-trust-blocked.png'), full_page=True)
+        page.locator('dialog.app-popup[open] [data-popup-action="ok"]').click()
+        if not page.locator('#a-session-toggle').is_visible():
+            page.locator('#a-more').click()
+        page.locator('#a-session-toggle').click()
+        h.terminal(page)
+        h.wait_screen(page, 'Do you trust')
+        h.terminal(page, key='Enter')
+        h.wait_screen(page, '? for shortcuts')
+        stop()
+        assert target['sid'] in catalog()
+        evidence.pass_('untrusted workspace fails promptly without changing trust or deleting; explicit browser trust permits retry')
         popup = open_menu()
         with page.expect_response(lambda r: r.request.method == 'DELETE', timeout=40000) as response:
             popup.locator('[data-popup-action="ok"]').click()

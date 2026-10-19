@@ -106,7 +106,7 @@ class Evidence:
 def terminal(page, text='', key=None):
     if not page.locator('#termpane').is_visible():
         page.locator('#a-term').click()
-    page.locator('#termpane .xterm-helper-textarea').focus()
+    page.locator('#termpane .xterm-helper-textarea:visible').focus()
     if text:
         page.keyboard.type(text)
     if key:

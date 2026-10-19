@@ -93,15 +93,23 @@ def main():
             assert not (root/'mirror/cli'/IDS[0]).exists()
             assert exists(IDS[0]), 'the mirror must not rewrite native catalog data'
             print('PASS stale native index does not resurrect a confirmed deletion',flush=True)
-            for mode,sid in [('wrong',IDS[1]),('refuse',IDS[2])]:
+            for mode,sid in [('trust',IDS[1]),('wrong',IDS[1]),('refuse',IDS[2])]:
                 (native/'mode').write_text(mode);open_sid(base,sid);popup=menu()
-                with page.expect_response(lambda r:r.request.method=='DELETE',timeout=40000) as response:popup.locator('[data-popup-action="ok"]').click()
+                with page.expect_response(lambda r:r.request.method=='DELETE',timeout=10000 if mode=='trust' else 40000) as response:popup.locator('[data-popup-action="ok"]').click()
                 assert response.value.status==500 and response.value.json()['code']=='agy_remove_failed',response.value.text()
                 expect(page.locator('dialog.app-popup[open]')).to_contain_text('删除失败')
+                if mode=='trust':
+                    expect(page.locator('dialog.app-popup[open]')).to_contain_text('工作目录信任确认')
+                    for width,theme in [(1280,'light'),(390,'light'),(1280,'dark'),(390,'dark')]:
+                        page.set_viewport_size({'width':width,'height':900})
+                        page.evaluate('theme => document.documentElement.dataset.theme=theme',theme)
+                        page.screenshot(path=str(root/f'trust-{width}-{theme}.png'),full_page=True)
+                    page.set_viewport_size({'width':1280,'height':900})
                 page.locator('dialog.app-popup[open] [data-popup-action="ok"]').click()
                 assert exists(sid) and (native/'conversations'/(sid+'.db')).exists()
                 calls=[json.loads(l) for l in (root/'calls.jsonl').read_text().splitlines()]
-                if mode=='wrong':assert not any(c.get('sid')==sid and c.get('input') in ('\x1bOS','y') for c in calls)
+                if mode in ('trust','wrong'):assert not any(c.get('sid')==sid and c.get('input') in ('\x1bOS','y') for c in calls)
+                if mode=='trust':assert not any(c.get('sid')==sid and 'input' in c for c in calls)
                 assert not list((root/'host').glob('.agy-delete-*'))
                 print('PASS',mode,'preserves native session and cleans worker',flush=True)
             (native/'mode').unlink()

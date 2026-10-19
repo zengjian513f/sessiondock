@@ -65,6 +65,8 @@ def main():
                 page.wait_for_function('composerUid && !composerDraft().loading && takenOver(composerUid)')
 
                 def send(text):
+                    if not page.locator('#composer').is_visible():
+                        page.locator('#a-chat').click()
                     page.locator('#cinput').fill(text)
                     expect(page.locator('#csend')).to_be_enabled()
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as response:

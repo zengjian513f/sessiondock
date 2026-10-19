@@ -46,7 +46,11 @@ def picker(confirm=False):
     show('   CLI    Other   (tab to cycle)\r\n\r\n  Conversations\r\n  Search: '+sid+
         '\r\n> '+current+'Review Closed Research Reports · 同名 Agy 会话'+(' [Delete? (y/n)]' if confirm else '')+
         '  2 steps just now\r\n\r\nKeyboard: ↑/↓ Navigate  f4 Delete  esc Go back / Clear search')
-show();buf=b''
+if mode == 'trust':
+    show('Accessing workspace:\r\n\r\n'+str(Path.cwd())+'\r\n\r\nDo you trust the contents of this project?\r\n\r\nAntigravity CLI requires permission to read, edit, and execute files here.\r\n\r\n> Yes, I trust this folder\r\n  No, exit\r\n\r\n  ↑/↓ Navigate · enter Confirm')
+else:
+    show()
+buf=b''
 while True:
     data=os.read(0,4096)
     if not data:break
