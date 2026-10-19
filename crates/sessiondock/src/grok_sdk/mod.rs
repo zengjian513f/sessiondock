@@ -519,7 +519,7 @@ impl Bridge {
                 let result = connection
                     .request(
                         "session/set_config_option",
-                        json!({"sessionId":sid,"configId":config_id,"value":{"value":value}}),
+                        json!({"sessionId":sid,"configId":config_id,"value":value}),
                     )
                     .await?;
                 let mut state = live.lock().unwrap();

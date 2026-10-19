@@ -24,7 +24,6 @@ const NativeSdkView = {
   open(uid, pane, agent = null, {historyReady = null} = {}) {
     this.close();
     this.uid = uid; this.agent = agent; this.pane = pane;
-    closeWatch();
     this.historyReady = historyReady;
     this.pendingAtOpen = !agent && !!this.pending(uid);
     this.items = []; this.requests = new Map(); this.nodes = new Map();
@@ -82,7 +81,6 @@ const NativeSdkView = {
   },
 
   close() {
-    const uid = this.uid, agent = this.agent;
     this.setConnected(false);
     CodexSdkCompose.close(this);
     if (this.input) PathCompletion.close(this.input);
@@ -96,9 +94,6 @@ const NativeSdkView = {
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
     this.historyReady = this.historyData = this.historyEntry = null;
     this.historyFailed = this.openFailed = false;
-    if (uid) queueMicrotask(() => {
-      if (!this.pane && S.sel === uid && S.agent === agent) watchSession(uid, agent);
-    });
   },
 
   setNotice(text, kind = '') {
@@ -399,8 +394,15 @@ const SdkView = new Proxy({
     this.close(); this.legacyViews.delete(viewKey(uid,agent));
     this.active = String(uid).startsWith('codex:') ? CodexSdkView : NativeSdkView;
     this.active.open(uid,pane,agent,options);
+    closeWatch();
   },
-  close() { CodexSdkView.close(); NativeSdkView.close(); },
+  close() {
+    const uid = this.active.uid, agent = this.active.agent;
+    CodexSdkView.close(); NativeSdkView.close();
+    if (uid) queueMicrotask(() => {
+      if (!this.active.pane && S.sel === uid && S.agent === agent) watchSession(uid, agent);
+    });
+  },
 }, {
   get(target,key,receiver) {
     if (key in target) return Reflect.get(target,key,receiver);

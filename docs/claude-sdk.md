@@ -128,7 +128,8 @@ stdin 在每个 result 后保持打开。HTTP future 和 SSE receiver 都不拥�
 原生回合错误标记 `error_kind:"turn"`，传输故障标记 `"transport"`；
 未确认的断线输入不能自动重放。
 stderr 的诊断尾部经过配置/环境中的 secret 值及 token 形态脱敏，
-不返回 argv、环境或凭据；原生退出错误会附带已脱敏的末条诊断。
+不返回 argv、环境或凭据；原生退出错误（包括 `initialize` 尚未完成的退出）
+会附带已脱敏的末条诊断，网页可直接显示 `command not found` 等启动原因。
 
 能力包括 send、interrupt、respond、approval、question、models、create、resume、
 effort、settings、permission_mode、fast_mode、images、usage、context_usage、compact、fork、fork_before、

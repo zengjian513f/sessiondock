@@ -6,7 +6,8 @@ Every invocation appends its argv as one JSON line to
 `SESSIONDOCK_TEST_ARGV_LOG`. `--version` answers like an installed CLI;
 `models` prints `SESSIONDOCK_TEST_MODELS`
 (`provider/model` lines, like `opencode models`); `api …` answers `{}` like
-a successful OpenCode API call; anything else is an interactive CLI that
+a successful OpenCode API call; Grok agent stdio advertises its models at
+initialize without creating a session; anything else is an interactive CLI that
 just stays alive.
 """
 import json
@@ -27,6 +28,17 @@ def main():
             return 1
         with open(catalog) as source:
             print(source.read())
+        return 0
+    if sys.argv[1:] == ["agent", "--no-leader", "stdio"]:
+        request = json.loads(sys.stdin.readline())
+        assert request["method"] == "initialize", request
+        print(json.dumps({"jsonrpc":"2.0","id":request["id"],"result":{
+            "protocolVersion":1,"_meta":{"modelState":{
+                "currentModelId":"grok-fake","availableModels":[{
+                    "modelId":"grok-fake","name":"Grok Fake","_meta":{
+                        "supportsReasoningEffort":True,"reasoningEfforts":[
+                            {"value":"high","default":True},
+                            {"value":"low","default":False}]}}]}}}}),flush=True)
         return 0
     if sys.argv[1:2] == ["models"]:
         print(os.environ.get("SESSIONDOCK_TEST_MODELS", ""))

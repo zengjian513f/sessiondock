@@ -110,8 +110,22 @@ def exercise(browser, base, fixture, screenshots=None):
         assert fixture.inputs('SDK 中文\nsecond line')[0]['mode'] == 'plan'
         page.locator('#sdk-usage-toggle').click()
         expect(page.locator('#native-usage-detail')).to_contain_text('12,800')
+        # Native quota may arrive after the menu opens, with a long diagnostic.
+        # Reposition the growing popover so the actual refresh button is usable.
+        def expanded_usage(route):
+            response = route.fetch()
+            data = response.json()
+            payload = data.get('raw', data)
+            payload.setdefault('quota', {})['error'] = 'Delayed native quota diagnostic. ' * 80
+            route.fulfill(response=response, json=data)
+        page.route('**/api/native-sdk/usage', expanded_usage, times=1)
         page.locator('#native-usage-refresh').click()
         expect(page.locator('#native-usage-detail')).to_contain_text('72%')
+        expect(page.locator('#native-usage-detail')).to_contain_text('Delayed native quota diagnostic.')
+        menu_box = page.locator('#sdk-usage-menu').bounding_box()
+        assert menu_box['y'] >= 0 and menu_box['y'] + menu_box['height'] <= 900, menu_box
+        page.locator('#native-usage-refresh').click()
+        expect(page.locator('#native-usage-detail')).not_to_contain_text('Delayed native quota diagnostic.')
         page.locator('#sdk-usage-toggle').click()
         before = len(fixture.inputs())
         page.locator('#sdk-input').fill('/usage')

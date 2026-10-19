@@ -97,6 +97,34 @@ def exercise(browser, base, fixture, screenshots):
     rows = page.evaluate("S.sessions")
     uid = next(row["uid"] for row in rows if row.get("session_id", row.get("sid")) == fixture.sid
                or row.get("title") == "Synthetic Grok SDK")
+    # The real installation has no models_cache.json. New-session controls must
+    # use initialize.modelState without creating/loading any native session.
+    assert not (fixture.home / "models_cache.json").exists()
+    page.locator("#new-session").click()
+    page.locator('label:has(input[name=new-source][value=grok])').click()
+    expect(page.locator("#new-model")).to_be_enabled()
+    assert not fixture.received("session/new") and not fixture.received("session/load")
+    assert not fixture.received("session/prompt")
+    page.locator("#new-model").click()
+    page.locator('#new-model-options [title="fake-other"]').click()
+    page.locator("#new-effort").select_option("low")
+    page.locator("#new-cwd").fill(str(fixture.work))
+    with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/create')) as created:
+        page.locator("#new-session-go").click()
+    assert created.value.ok, created.value.text()
+    create_input = created.value.request.post_data_json
+    assert create_input["model"] == "fake-other" and create_input["effort"] == "low", create_input
+    receipt = created.value.json()
+    assert receipt["session_id"] != fixture.sid, receipt
+    expect(page.locator("#sdk-input")).to_be_visible()
+    created_raw = api(page,"open",{"uid":receipt["uid"]})["raw"]
+    options = {row["id"]:row["currentValue"] for row in created_raw["configOptions"]}
+    assert options == {"model":"fake-other","reasoning_effort":"low"}, options
+    configured = fixture.received("session/set_config_option")
+    assert [row["params"]["value"] for row in configured[-2:]] == ["fake-other","low"]
+    assert len(fixture.received("session/new")) == 1 and not fixture.received("session/prompt")
+    if screenshots:
+        page.screenshot(path=str(screenshots / "grok-native-catalog-create.png"),full_page=True)
     select(page, uid)
     opened = api(page, "open", {"uid": uid})
     assert opened["session_id"] == fixture.sid and opened["cwd"] == str(fixture.work), opened
@@ -297,10 +325,11 @@ def exercise(browser, base, fixture, screenshots):
     # Native create identity, retry cache and model/effort without a PTY.
     create = {"source": "grok", "cwd": str(fixture.work), "request_id": "grok-create-retry",
               "model": "fake-other", "effort": "high"}
+    create_count = len(fixture.received("session/new"))
     created = api(page, "create", create)
     retried = api(page, "create", create)
     assert created["uid"] == retried["uid"] and created["session_id"] == retried["session_id"]
-    assert len(fixture.received("session/new")) == 1
+    assert len(fixture.received("session/new")) == create_count + 1
     new_sid = created["session_id"]
     assert created["session"]["source"] == "grok" and created["cwd"] == str(fixture.work)
     native = fixture.path.parent / new_sid

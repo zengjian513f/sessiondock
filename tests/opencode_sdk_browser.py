@@ -162,6 +162,8 @@ def main():
                 try:
                     uid = open_page()
                     listen(uid)
+                    expect(page.locator('#sdk-model option[value="synthetic/catalog-tail"]')).to_have_count(1)
+                    print('OpenCode SDK: native catalog beyond 600 KB pipe boundary fully reaches browser picker', flush=True)
                     page.locator('#sdk-model').select_option('synthetic/fake-opencode')
                     page.locator('#sdk-effort').select_option('high')
                     send('first SDK turn')
@@ -194,10 +196,18 @@ def main():
                     # changes delivery, while cancel removes undelivered input.
                     send('slow queue blocker')
                     snapshot("r => r.running && r.items.some(m => m.content === 'partial native reply')")
+                    with native.lock:
+                        native.inbox[SID].append({'id': 'msg_shell_steer', 'sessionID': SID,
+                                                  'type': 'synthetic', 'delivery': 'steer',
+                                                  'payload': {'text': 'Native shell output waiting for guidance'}})
                     send('queue cancel from browser')
                     queued = snapshot("r => r.queue?.some(q => q.text === 'queue cancel from browser')")
                     entry = next(q for q in queued['raw']['queue'] if q['text'] == 'queue cancel from browser')
                     assert entry['delivery'] == 'queue'
+                    shell_card = page.locator('.sdk-queue [data-queue-id="msg_shell_steer"]')
+                    expect(shell_card).to_contain_text('等待引导')
+                    expect(shell_card.get_by_role('button', name='立即引导', exact=True)).to_have_count(0)
+                    expect(shell_card.get_by_role('button', name='撤销', exact=True)).to_be_enabled()
                     if args.screenshot:
                         args.screenshot.parent.mkdir(parents=True, exist_ok=True)
                         for width, theme in ((1280, 'light'), (390, 'dark')):
@@ -210,6 +220,8 @@ def main():
                         page.set_viewport_size({'width': 1280, 'height': 900})
                         page.emulate_media(color_scheme='light')
                     card = page.locator(f'.sdk-queue [data-queue-id="{entry["id"]}"]')
+                    shell_card.get_by_role('button', name='撤销', exact=True).click()
+                    snapshot("r => !r.queue?.some(q => q.id === 'msg_shell_steer')")
                     card.get_by_role('button', name='撤销', exact=True).click()
                     snapshot('r => r.queue?.length === 0')
                     send('queue steer from browser')
@@ -219,6 +231,7 @@ def main():
                     card.get_by_role('button', name='立即引导', exact=True).click()
                     snapshot("r => r.queue?.some(q => q.delivery === 'steer')")
                     expect(card).to_contain_text('等待引导')
+                    expect(card.get_by_role('button', name='立即引导', exact=True)).to_have_count(0)
                     card.get_by_role('button', name='撤销', exact=True).click()
                     snapshot('r => r.queue?.length === 0')
                     page.locator('#sdk-stop').click()

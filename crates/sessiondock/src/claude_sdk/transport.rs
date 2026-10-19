@@ -231,11 +231,14 @@ impl Bridge {
                     ));
                     live.error_kind = Some("transport");
                 }
+                // initialize is a control request too. Preserve the already
+                // redacted exit diagnostic when its waiter reports failure;
+                // otherwise ensure would replace it with a generic error.
+                let control_error = live.error.clone().unwrap_or_else(|| {
+                    "claude_sdk_disconnected: native CLI exited; request outcome unknown".into()
+                });
                 for (_, response) in std::mem::take(&mut live.controls) {
-                    let _ = response.send(Err(
-                        "claude_sdk_disconnected: native CLI exited; request outcome unknown"
-                            .into(),
-                    ));
+                    let _ = response.send(Err(control_error.clone()));
                 }
                 session.publish(&mut live);
                 let _ = done.send(true);

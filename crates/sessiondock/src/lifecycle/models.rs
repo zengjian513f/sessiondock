@@ -1,12 +1,12 @@
 //! Read-only model catalogs for the new-session picker. Each CLI's own list:
-//! Codex and Grok keep a models cache in their home, OpenCode prints its
+//! Codex keeps a models cache; Grok advertises models at ACP initialize. OpenCode prints its
 //! configured providers' models, Claude has no list and takes aliases. Nothing
 //! here is a policy: the chosen model is passed to the CLI, which decides.
 
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
-    io::Read,
+    io::{BufRead, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -64,7 +64,7 @@ pub fn catalog(profile: &CliProfile) -> Catalog {
     let mut catalog = match profile.source {
         Source::Claude => claude(profile),
         Source::Codex => codex_profile(profile),
-        Source::Grok => grok(&cli_home(profile, "GROK_HOME", ".grok")),
+        Source::Grok => grok(profile),
         Source::Opencode => opencode(profile),
         Source::Agy => agy(profile),
         Source::Shell => Catalog::default(),
@@ -95,7 +95,7 @@ pub struct CatalogCache {
 }
 
 fn slow(source: Source) -> bool {
-    matches!(source, Source::Agy | Source::Opencode)
+    matches!(source, Source::Agy | Source::Opencode | Source::Grok)
 }
 
 impl CatalogCache {
@@ -398,63 +398,121 @@ fn toml_top_level_string(config: &str, key: &str) -> Option<String> {
     None
 }
 
-/// `$GROK_HOME/models_cache.json`: a map of model id to `info`, with
-/// hidden models skipped and each model's reasoning efforts.
-pub(super) fn grok(home: &Path) -> Catalog {
-    let Some(cache) = read_json(&home.join("models_cache.json")) else {
+/// The installed Grok's ACP initialize modelState is authoritative. This probe
+/// never creates/loads a session or sends a prompt, and never joins a leader.
+fn grok(profile: &CliProfile) -> Catalog {
+    let Some(state) = grok_model_state(profile) else {
         return Catalog::default();
     };
-    let entries: Vec<serde_json::Value> = match cache.get("models") {
-        Some(serde_json::Value::Object(map)) => map.values().cloned().collect(),
-        Some(serde_json::Value::Array(list)) => list.clone(),
-        _ => Vec::new(),
-    };
-    let models = entries
-        .iter()
-        .map(|entry| entry.get("info").unwrap_or(entry))
-        .filter(|info| info.get("hidden").and_then(serde_json::Value::as_bool) != Some(true))
+    let models = state["availableModels"]
+        .as_array()
+        .into_iter()
+        .flatten()
         .filter_map(|info| {
-            let id = text(info, "id").or_else(|| text(info, "model"))?;
-            let supports = info
-                .get("supports_reasoning_effort")
-                .and_then(serde_json::Value::as_bool)
-                != Some(false);
-            let levels = info
-                .get("reasoning_efforts")
-                .and_then(serde_json::Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let efforts: Vec<String> = if supports {
-                let mut efforts: Vec<String> = levels
-                    .iter()
-                    .filter_map(|level| text(level, "value").or_else(|| text(level, "id")))
-                    .collect();
-                efforts.sort_by_key(|effort| effort_rank(effort));
-                efforts
-            } else {
-                Vec::new()
-            };
+            let id = text(info, "modelId")?;
+            let meta = &info["_meta"];
+            let levels = meta["reasoningEfforts"].as_array();
+            let supports = meta["supportsReasoningEffort"].as_bool() != Some(false);
+            let mut efforts: Vec<String> = levels
+                .into_iter()
+                .flatten()
+                .filter_map(|level| text(level, "value").or_else(|| text(level, "id")))
+                .filter(|_| supports)
+                .collect();
+            efforts.sort_by_key(|effort| effort_rank(effort));
             let default_effort = levels
-                .iter()
-                .find(|level| {
-                    level.get("default").and_then(serde_json::Value::as_bool) == Some(true)
-                })
+                .into_iter()
+                .flatten()
+                .find(|level| level["default"] == true)
                 .and_then(|level| text(level, "value").or_else(|| text(level, "id")))
-                .or_else(|| text(info, "reasoning_effort"))
                 .filter(|_| supports);
             Some(Model {
                 name: text(info, "name").unwrap_or_else(|| id.clone()),
+                id,
                 efforts,
                 default_effort,
-                id,
             })
         })
         .collect();
     Catalog {
         models,
         efforts: Vec::new(),
-        default_model: None,
+        default_model: text(&state, "currentModelId"),
     }
+}
+
+fn grok_model_state(profile: &CliProfile) -> Option<serde_json::Value> {
+    let executable = super::launcher::current_executable(&profile.executable).ok()?;
+    let mut command = Command::new(executable);
+    command
+        .args(&profile.args)
+        .args(["agent", "--no-leader", "stdio"]);
+    for name in &profile.env_remove {
+        command.env_remove(name);
+    }
+    command.envs(&profile.env);
+    for name in super::launcher::DENIED_ENV {
+        command.env_remove(name);
+    }
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        let parent = std::process::id();
+        // This dedicated probe owns no session or native work. Do not leave it
+        // behind if the HTTP service exits while initialize is pending.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::getppid() != parent as i32 {
+                    libc::raise(libc::SIGKILL);
+                }
+                Ok(())
+            });
+        }
+    }
+    super::launcher::background_command(&mut command);
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let outcome = (|| {
+        let mut stdin = child.stdin.take()?;
+        let stdout = child.stdout.take()?;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stdout)
+                .lines()
+                .map_while(Result::ok)
+            {
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                    continue;
+                };
+                if value["id"] == 1 {
+                    let _ = sender.send(value["result"]["_meta"]["modelState"].clone());
+                    break;
+                }
+            }
+        });
+        writeln!(stdin, "{}", serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize",
+            "params":{"protocolVersion":1,"clientInfo":{"name":"sessiondock-models","version":env!("CARGO_PKG_VERSION")},"clientCapabilities":{}}})).ok()?;
+        stdin.flush().ok()?;
+        let state = receiver.recv_timeout(Duration::from_secs(15)).ok()?;
+        state["availableModels"].is_array().then_some(state)
+    })();
+    // Terminate only this dedicated no-session probe, including its wrappers.
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(child.id() as i32), libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    outcome
 }
 
 /// `agy models`: one `id\tdisplay name` per line on stdout, with progress

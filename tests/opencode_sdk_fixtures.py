@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import sqlite3
 import socket
+import stat
 import sys
 import threading
 import time
@@ -186,7 +187,10 @@ class FakeOpenCode:
                 {'id': MODEL['id'], 'providerID': MODEL['providerID'], 'name': 'Synthetic OpenCode',
                  'variants': [{'id': 'low', 'name': 'Low'}, {'id': 'high', 'name': 'High'}], 'enabled': True,
                  'limit': {'context': 100000, 'input': 90000, 'output': 10000},
-                 'capabilities': {'input': ['text', 'image'], 'output': ['text'], 'tools': True}}]}
+                 'capabilities': {'input': ['text', 'image'], 'output': ['text'], 'tools': True},
+                 'native_catalog_metadata': 'x' * 600000},
+                {'id': 'catalog-tail', 'providerID': 'synthetic', 'name': 'Large catalog tail',
+                 'variants': [{'id': 'low', 'name': 'Low'}], 'enabled': True}]}
         if path == '/api/agent':
             return 200, {'data': [{'id': 'build', 'name': 'Build', 'mode': 'primary', 'hidden': False},
                                    {'id': 'plan', 'name': 'Plan', 'mode': 'primary', 'hidden': False}]}
@@ -264,6 +268,8 @@ class FakeOpenCode:
                 entry = next((entry for entry in self.inbox[sid] if entry['id'] == operation[1]), None)
                 if not entry:
                     return 409, {'message': 'input already delivered'}
+                if entry['delivery'] == 'steer' and body['delivery'] == 'steer':
+                    return 409, {'message': 'Pending input cannot change to steer: ' + entry['id']}
                 entry['delivery'] = body['delivery']
             return 204, None
         if operation == ['permission']:
@@ -388,7 +394,12 @@ def fake_cli():
     opener = build_opener(ProxyHandler({}))
     try:
         with opener.open(request, timeout=10) as response:
-            sys.stdout.buffer.write(response.read())
+            payload = response.read()
+            # Reproduce the real native client's exit-before-pipe-drain defect:
+            # successful exit, complete regular-file writes, truncated large pipes.
+            if stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode) and len(payload) > 262144:
+                payload = payload[:262144]
+            sys.stdout.buffer.write(payload)
     except HTTPError as error:
         sys.stdout.buffer.write(error.read())
         print(f'HTTP {error.code}', file=sys.stderr)

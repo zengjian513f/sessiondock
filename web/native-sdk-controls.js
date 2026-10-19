@@ -42,6 +42,8 @@ const NativeSdkControls = {
     const effort=view.pane.querySelector('.sdk-effort'),more=view.pane.querySelector('#sdk-more-menu');
     if (row.clientWidth < 400) { if (effort.parentElement !== more) more.prepend(effort); }
     else if (effort.parentElement !== view.pane.querySelector('.sdk-pickers')) view.pane.querySelector('.sdk-pickers').insertBefore(effort,view.pane.querySelector('#sdk-more'));
+    for (const [popover,trigger] of [[menu,'#sdk-usage-toggle'],[more,'#sdk-more']])
+      if (popover.matches(':popover-open')) CodexSdkView.placeMenu(popover,view.pane.querySelector(trigger));
   },
   async loadUsage(view,refresh) {
     const generation=view.generation;
@@ -149,7 +151,7 @@ const NativeSdkControls = {
       if(['failed','unknown'].includes(item.state) && item.text){const restore=el('button','btn','恢复文字');restore.type='button';restore.onclick=()=>{if(!view.current(generation))return;view.input.value=[view.input.value,item.text].filter(Boolean).join('\n');view.fitInput();CodexSdkCompose.input(view);view.input.focus();view.setNotice('文字已追加到输入框；队列记录保留');};actionsFor(body).append(restore);}
     }
     for(const item of nativeRows){const body=cardFor(item,item.delivery==='steer'?'等待引导':'排队中');body.parentElement.dataset.queueOrigin='native';
-      for(const [method,title,extra] of [['queue_cancel','撤销',{}],['queue_update','立即引导',{delivery:'steer'}]])if(view.capabilities[method])operation(body,item,method,title,extra);
+      for(const [method,title,extra] of [['queue_cancel','撤销',{}],['queue_update','立即引导',{delivery:'steer'}]])if(view.capabilities[method] && !(method==='queue_update' && item.delivery==='steer'))operation(body,item,method,title,extra);
     }
     const steerLabels={dispatching:'正在提交引导',native_queued:'原生已接收引导',native_received:'原生已登记引导',rejected:'引导被拒绝',uncertain:'引导结果待核对',connection_closed:'引导连接已关闭'};
     for(const item of steers){const body=cardFor({...item,id:item.id || item.request_id},steerLabels[item.status] || '引导回执');body.parentElement.dataset.queueOrigin='steer';body.append(el('p','sdk-control-note','原生接收回执不能确认输入已被处理；临近任务结束时可能另开一轮。'));if(item.error)body.append(el('p','sdk-control-note',item.error));}

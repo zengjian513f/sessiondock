@@ -2093,10 +2093,10 @@ function scheduleDiffRecovery(uid, agent = null) {
 
 function watchSession(uid, agent = S.agent) {
   closeWatch();
-  // Native SDK streams already carry live output. Keep the existing incremental
+  // SDK streams already carry live output. Keep the existing incremental
   // polling for persisted history without a third long-lived HTTP/1 connection.
-  if (typeof NativeSdkView !== 'undefined' && NativeSdkView.pane
-      && NativeSdkView.uid === uid && NativeSdkView.agent === agent) return;
+  if (typeof SdkView !== 'undefined' && SdkView.pane
+      && SdkView.uid === uid && SdkView.agent === agent) return;
   if (SessionDockNetwork.paused) return;
   if (migrationReadPaused(uid, agent)) { renderMigrationReadFailure(uid, agent); return; }
   const e = cache.get(viewKey(uid, agent));

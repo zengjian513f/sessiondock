@@ -18,8 +18,11 @@
 管理。SDK 不启动、停止或升级共享 daemon，不使用临时 standalone server。
 profile 固定参数中的 `--standalone`、`--server` 明确不支持。
 
-桥接自己启动的短命 API 客户端使用独立进程组、关闭 stdin、并行收集
-stdout/stderr。shutdown 或 30 秒 API 超时终止并回收这些客户端；已交给原生
+桥接自己启动的短命 API 客户端使用独立进程组、关闭 stdin、并行收集 stderr。
+stdout 先写入每次调用独有的私有临时文件（Unix `0600`），客户端退出后完整读取，
+成功、失败与取消均清理文件；不增加响应大小限制。本机 v2.0.32 的大型模型目录通过管道
+输出时曾在 262144 字节截断且退出码为零，普通文件输出完整，因此不能依靠并行读管道修复。
+shutdown 或 30 秒 API 超时终止并回收这些客户端；已交给原生
 daemon 的工作不因 SSE 断开、页面离开或客户端退出而取消。API 超时不重送
 已接受输入，原生记录继续用于观察和对账。stderr 的已知环境密钥、Basic、
 Bearer 和含密码 URL 脱敏后用于错误诊断，不打印原始 stdout/stderr。
@@ -133,7 +136,9 @@ models 只返回模型标识、名称、variants、enabled，不回传 provider 
 这是尚未投递的工作，不能把 HTTP 已准入回执等同于已被模型消费。
 `queue_cancel({id})` 使用 DELETE inbox，原生已不可用项目为 no-op；
 `queue_update({id,delivery})` 使用 PATCH，支持 queue/steer。Steer 在原生
-安全点引导，不保证立即打断当前工具。中断保持 `resume=false`，不主动清队列。
+安全点引导，不保证立即打断当前工具。已为 steer 的项目只显示撤销，不重复显示
+“立即引导”；原生 shell 产生的 synthetic 待引导项也遵守此规则。其他待处理项是否
+允许转换仍由原生服务判断，保留其冲突错误。中断保持 `resume=false`，不主动清队列。
 共享 facade 另持久保存提交 ID 和未确认准入，显示在 `raw.input_queue`，不取代原生
 inbox。原生 POST 成功标记 native_accepted，已看到原生 inbox 的回执标记
 native_queued，看到原生 user message 才标记 observed 消费。原生多次 GET 轮询可能

@@ -502,11 +502,35 @@ def fork_restart_check(fixture, binary):
         browser.close()
 
 
+def startup_failure_check(fixture, binary, screenshots=None):
+    from playwright.sync_api import sync_playwright, expect
+    launcher = json.loads(fixture.launcher.read_text())
+    launcher['profiles'][0]['env']['SESSIONDOCK_FAKE_STARTUP_FAILURE'] = '1'
+    fixture.launcher.write_text(json.dumps(launcher))
+    with fixture.server(binary) as base, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True, args=['--no-sandbox'])
+        page = browser.new_page(service_workers='block')
+        page.goto(base, wait_until='networkidle')
+        page.locator(f'#side .item[data-uid="{fixture.uid}"]').click()
+        page.locator('#a-sdk').click()
+        expect(page.locator('.sdk-status')).to_contain_text('command not found')
+        expect(page.locator('.sdk-status')).to_contain_text('[redacted]')
+        assert 'synthetic-startup-secret' not in page.locator('.sdk-status').inner_text()
+        assert not page.evaluate('NativeSdkView.connected')
+        assert not fixture.frames('user'), 'startup failure submitted a model prompt'
+        if screenshots:
+            screenshots.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(screenshots / 'claude-sdk-startup-error.png'), full_page=True)
+        browser.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
+    with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-startup-') as temporary:
+        startup_failure_check(ClaudeFixture(Path(temporary)), args.binary, args.screenshots)
     with tempfile.TemporaryDirectory(prefix="sessiondock-claude-sdk-") as temporary:
         fixture = ClaudeFixture(Path(temporary))
         with fixture.server(args.binary) as base:

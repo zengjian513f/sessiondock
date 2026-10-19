@@ -118,6 +118,15 @@ PID 为空的匹配原生活动标记也会报告冲突；已退出或 zombie PI
 - models 对已打开会话返回 `{models: availableModels, native, configOptions, capabilities}`。
   创建前可使用 target `{source: "grok", cwd}`，仅读 initialize.modelState，
   随后关闭该探测进程，不创建会话。没有原生模型数据时明确报 unsupported。
+  网页新建的 `/api/term/models?source=grok` 同样从当前 profile 的专用
+  `agent --no-leader stdio` 进程执行 initialize，读取原生 modelState；不依赖
+  `models_cache.json`，不加载会话、不发送 prompt。目录缓存十分钟，原生握手
+  最长等待十五秒，结束及超时均回收此探测进程组；Linux 父进程退出时也回收探测进程。
+  每个模型的推理强度来自其 `_meta.reasoningEfforts`。
+- `session/set_config_option.value` 使用原生字符串（例如 `"low"`），不是
+  `{value:"low"}`。安装版 1.0.62 对后者返回 -32602；真实 profile 验证了
+  grok-4.6 / low 设置及 configOptions 回执，未发模型请求。创建后设置失败可能
+  已生成空原生会话，不能把失败回包当作“没有创建”；验收按唯一 cwd登记并回收。
 - discard 只释放空闲桥接进程和本地连接；原生文件始终保留。
   正在运行或仍有审批时拒绝 discard。
 

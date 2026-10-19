@@ -375,6 +375,9 @@ def fake_cli():
             subtype = request["subtype"]
             response = {}
             if subtype == "initialize":
+                if os.environ.get('SESSIONDOCK_FAKE_STARTUP_FAILURE'):
+                    print('claude: command not found; token=synthetic-startup-secret', file=sys.stderr, flush=True)
+                    os._exit(127)
                 fail_once = os.environ.get('SESSIONDOCK_FAKE_FORK_FAIL_ONCE')
                 if fork and fail_once and Path(fail_once).is_file():
                     Path(fail_once).unlink()

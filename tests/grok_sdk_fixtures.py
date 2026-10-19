@@ -112,8 +112,8 @@ class FakeGrok:
     def settings(self):
         return {"modes":{"currentModeId":self.mode,"availableModes":[
                     {"id":"default","name":"执行"},{"id":"plan","name":"计划"}]},"models": {"currentModelId": self.model, "availableModels": [
-                    {"modelId": "fake-grok", "name": "Fake Grok"},
-                    {"modelId": "fake-other", "name": "Fake Other"}]},
+                    {"modelId": "fake-grok", "name": "Fake Grok", "_meta":{"supportsReasoningEffort":True,"reasoningEfforts":[{"id":"low","value":"low","default":True},{"id":"high","value":"high","default":False}]}},
+                    {"modelId": "fake-other", "name": "Fake Other", "_meta":{"supportsReasoningEffort":True,"reasoningEfforts":[{"id":"low","value":"low","default":True},{"id":"high","value":"high","default":False}]}}]},
                 "configOptions": [{"id": "model", "name": "Model", "category": "model", "type": "select",
                     "currentValue": self.model, "options": [{"value": "fake-grok", "name": "Fake Grok"},
                         {"value": "fake-other", "name": "Fake Other"}]},
@@ -218,7 +218,8 @@ class FakeGrok:
                     "chatMessagesCopied":0,"updatesCopied":0,"planStateCopied":False})
         elif method == "session/set_config_option":
             assert params["sessionId"] == self.sid
-            value = params["value"]["value"]
+            value = params["value"]
+            assert isinstance(value,str), "installed ACP SessionConfigOptionValue is a scalar string"
             if params["configId"] == "model":
                 self.model = value
             else:
