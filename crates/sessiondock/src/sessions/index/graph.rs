@@ -140,7 +140,7 @@ pub(super) fn mains_by_sid(
 }
 
 /// Codex can rotate a rollout while preserving its native thread id.
-/// Explicit history_base generations and native empty-history resets qualify;
+/// Explicit history_base continuations/rewinds and native empty resets qualify;
 /// ordinary duplicate IDs remain conflicts. Native timestamps order generations.
 pub(super) fn generations(mut entries: Vec<&CandidateRef>) -> Option<Vec<&CandidateRef>> {
     if entries.len() < 2
@@ -187,18 +187,29 @@ pub(super) fn generations(mut entries: Vec<&CandidateRef>) -> Option<Vec<&Candid
             continue;
         }
         let parent = codex.history_base["thread_id"].as_str()?;
+        let ordinal = codex.history_base["end_ordinal_exclusive"].as_u64()?;
+        let bytes = codex.history_base["end_byte_offset"].as_u64()?;
         let inherits_prior = if let Some(rollout) = entry.codex_rollout_id() {
-            // Each new physical version must name an earlier physical version,
-            // and cannot reuse another file's immutable identity.
+            // A rewind inside inherited history can point straight at the
+            // same ancestor with a shorter cut, bypassing this thread's old
+            // physical file. Its immutable rollout identity is still new.
             !prior.iter().any(|e| e.codex_rollout_id() == Some(rollout))
-                && prior.iter().any(|e| e.codex_rollout_id() == Some(parent))
+                && prior.iter().any(|e| {
+                    e.codex_rollout_id() == Some(parent)
+                        || e.summary.codex.as_ref().is_some_and(|old| {
+                            old.history_base["thread_id"].as_str() == Some(parent)
+                                && old.history_base["end_ordinal_exclusive"]
+                                    .as_u64()
+                                    .is_some_and(|end| ordinal <= end)
+                                && old.history_base["end_byte_offset"]
+                                    .as_u64()
+                                    .is_some_and(|end| bytes <= end)
+                        })
+                })
         } else {
             parent == sid
         };
-        if !inherits_prior
-            || codex.start_ordinal.is_none()
-            || codex.history_base["end_ordinal_exclusive"].as_u64() != codex.start_ordinal
-            || codex.history_base["end_byte_offset"].as_u64().is_none()
+        if !inherits_prior || codex.start_ordinal.is_none() || Some(ordinal) != codex.start_ordinal
         {
             return None;
         }

@@ -123,7 +123,7 @@ def main():
         meta["ordinal"] = 13
         middle = native_file("native-middle", native_sid, middle_id, 7, [meta,
             codex_message("user", "Native middle question", 14),
-            codex_message("assistant", "Native middle answer", 15)])
+            codex_message("assistant", "Native middle answer NativeMiddleAnswerNeedle", 15)])
         middle_cut = middle.stat().st_size
         meta = batch35_meta(native_sid, "2026-09-11T08:00:00Z", history_base={
             "thread_id": middle_id, "end_byte_offset": middle_cut, "end_ordinal_exclusive": 16})
@@ -341,6 +341,32 @@ def main():
                 select('native-fork', 'Native fork of reverted thread')
                 expect(page.locator('#msgs')).to_contain_text('Native middle answer')
                 print('PASS Codex empty reset: no inherited history, nonzero conflict/recovery, continuation/search, older fork preserved')
+                # BUG-20261019-074243-f51db5: reverting a fork inside its
+                # inherited prefix writes another version of the same thread,
+                # with a shorter cut of the same ancestor (not a second fork).
+                middle_rows = middle.read_bytes().splitlines(keepends=True)
+                shorter_cut = len(b''.join(middle_rows[:2]))
+                rewind_meta = batch35_meta(fork_sid, '2026-09-11T12:00:00Z', forked_from_id=native_sid,
+                    history_base={'thread_id': middle_id, 'end_byte_offset': shorter_cut,
+                                  'end_ordinal_exclusive': 15})
+                rewind_meta['ordinal'] = 15
+                native_file('native-fork-rewind', fork_sid,
+                    '00000000-0000-7000-8000-000000000007', 12,
+                    [rewind_meta, codex_message('user', 'Fork inherited prefix rewind', 16)])
+                page.reload(wait_until='networkidle')
+                select('native-fork-rewind', 'Fork inherited prefix rewind')
+                expect(page.locator('#msgs')).to_contain_text('Native physical inherited answer')
+                expect(page.locator('#msgs')).to_contain_text('Native middle question')
+                expect(page.locator('#msgs')).not_to_contain_text('Native middle answer')
+                expect(page.locator(f'#side .item[data-uid="{corpus.uid("native-fork")}"]')).to_have_count(0)
+                rows = get_json(opener, base, '/api/sessions')['sessions']
+                previous = next(row for row in rows if row['uid'] == corpus.uid('native-fork'))
+                assert previous['continued_in'] == corpus.uid('native-fork-rewind'), previous
+                hits = get_json(opener, base, '/api/search?q=NativeMiddleAnswerNeedle')['results']
+                assert not any(hit['uid'] == corpus.uid('native-fork-rewind') for hit in hits), hits
+                old_wire = get_json(opener, base, '/api/messages/' + corpus.uid('native-fork'))
+                assert any('Native middle answer' in m.get('text', '') for m in old_wire['messages'])
+                print('PASS Codex inherited prefix rewind: one branch, latest continuation, shorter history/search, immutable old version')
                 select("claude-pasted", "Pasted needle 正文")
                 # Assert the wire result too: a renderer-only fix is insufficient.
                 wire = get_json(opener, base, "/api/messages/" + corpus.uid("claude-pasted"))
