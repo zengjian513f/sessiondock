@@ -30,6 +30,7 @@ class GrokFixture:
         self.active = self.home / "active_sessions.json"
         self.capability_marker = self.root / "image-capability.json"
         self.capability_marker.write_text(json.dumps({"image":True}))
+        self.safe_point = self.root / "native-safe-point"
         self.launcher = self.root / "launcher.json"
         (self.root / "unused-host").mkdir()
         self.proc = self.root / "proc"
@@ -43,10 +44,11 @@ class GrokFixture:
             json.dumps({"type": "assistant", "content": "Grok earlier synthetic answer"}) + "\n")
         self.launcher.write_text(json.dumps({"schema": 2, "host_binary": sys.executable,
             "host_dir": str(self.root / "unused-host"), "profiles": [{"id": "grok", "source": "grok",
-                "executable": sys.executable, "args": [str(Path(__file__).resolve()), "--fake-grok"],
+                "executable": sys.executable, "env_remove":["LD_PRELOAD","SESSIONDOCK_TEST_CLOCK_FILE"], "args": [str(Path(__file__).resolve()), "--fake-grok"],
                 "env": {"HOME": str(self.root / "private-home"), "GROK_HOME": str(self.home),
                         "GROK_SDK_FAKE_LOG": str(self.log),
-                        "GROK_SDK_FAKE_CAPABILITY":str(self.capability_marker)}}]}))
+                        "GROK_SDK_FAKE_CAPABILITY":str(self.capability_marker),
+                        "GROK_SDK_FAKE_SAFE_POINT":str(self.safe_point)}}]}))
 
     @staticmethod
     def write_summary(path, sid, cwd, title):
@@ -87,6 +89,9 @@ class FakeGrok:
         self.permission_result = None
         self.permission_id = None
         self.turn = None
+        self.interjections = {}
+        with self.log.open("a") as log:
+            log.write(json.dumps({"fixture_start":{"pid":os.getpid()}})+"\n")
 
     def send(self, message):
         with self.lock:
@@ -107,8 +112,8 @@ class FakeGrok:
     def settings(self):
         return {"modes":{"currentModeId":self.mode,"availableModes":[
                     {"id":"default","name":"执行"},{"id":"plan","name":"计划"}]},"models": {"currentModelId": self.model, "availableModels": [
-                    {"modelId": "fake-grok", "name": "Fake Grok"},
-                    {"modelId": "fake-other", "name": "Fake Other"}]},
+                    {"modelId": "fake-grok", "name": "Fake Grok", "_meta":{"supportsReasoningEffort":True,"reasoningEfforts":[{"id":"low","value":"low","default":True},{"id":"high","value":"high","default":False}]}},
+                    {"modelId": "fake-other", "name": "Fake Other", "_meta":{"supportsReasoningEffort":True,"reasoningEfforts":[{"id":"low","value":"low","default":True},{"id":"high","value":"high","default":False}]}}]},
                 "configOptions": [{"id": "model", "name": "Model", "category": "model", "type": "select",
                     "currentValue": self.model, "options": [{"value": "fake-grok", "name": "Fake Grok"},
                         {"value": "fake-other", "name": "Fake Other"}]},
@@ -151,8 +156,26 @@ class FakeGrok:
             if method == "session/load":
                 self.update("agent_message_chunk", content={"type": "text", "text": "Replay is ordinary history"},
                             _meta={"isReplay": True})
-            self.reply(message, {**self.settings(), "sessionId": self.sid,
+            settings = {} if json.loads(Path(os.environ["GROK_SDK_FAKE_CAPABILITY"]).read_text()).get("omit_settings") else self.settings()
+            self.reply(message, {**settings, "sessionId": self.sid,
                                 "_meta": {"currentWorkingDirectory": self.cwd}})
+        elif method == "x.ai/interject":
+            assert params["sessionId"] == self.sid and self.turn and self.turn.is_alive()
+            ident = params["interjectionId"]
+            assert ident not in self.interjections,"bridge replayed native interjection"
+            blocks = params.get("content",[])
+            if blocks:
+                assert blocks[0] == {"type":"text","text":params["text"]}
+                assert all(block["type"] == "image" and block["mimeType"] == "image/png" for block in blocks[1:])
+            self.interjections[ident] = params
+            if params["text"] == "steer-native-reject":
+                self.error(message,-32601,"Synthetic unsupported interject")
+                return
+            self.send({"jsonrpc":"2.0","method":"_x.ai/session/interjection",
+                "params":{"sessionId":self.sid,"text":params["text"],"interjectionId":ident}})
+            if params["text"] == "steer-native-disconnect":
+                os._exit(19)
+            self.reply(message,{"result":{"status":"queued"}})
         elif method == "session/set_mode":
             assert params["sessionId"] == self.sid and params["modeId"] in {"default","plan"}
             self.mode = params["modeId"]
@@ -195,7 +218,8 @@ class FakeGrok:
                     "chatMessagesCopied":0,"updatesCopied":0,"planStateCopied":False})
         elif method == "session/set_config_option":
             assert params["sessionId"] == self.sid
-            value = params["value"]["value"]
+            value = params["value"]
+            assert isinstance(value,str), "installed ACP SessionConfigOptionValue is a scalar string"
             if params["configId"] == "model":
                 self.model = value
             else:
@@ -251,6 +275,11 @@ class FakeGrok:
         if text == "disable-extensions":
             self.extensions = False
         self.append("user", text)
+        if text == "background-task":
+            self.update("task_backgrounded",task_id="synthetic-bg",tool_call_id="bg-tool",command="synthetic daemon",cwd=self.cwd,output_file="private-synthetic-output")
+            self.update("background_tasks",tasks=[{"task_id":"synthetic-bg","status":"running"}],truncated=False)
+        elif text == "clear-background":
+            self.update("background_tasks",tasks=[],truncated=False)
         self.update("agent_thought_chunk", content={"type": "text", "text": "Grok synthetic reasoning"})
         self.update("agent_message_chunk", content={"type": "text", "text": "Grok streaming "})
         if text in {"question","question-plan","plan-approval"}:
@@ -278,7 +307,9 @@ class FakeGrok:
         if text.startswith("approval"):
             call_id = "tool-" + uuid.uuid4().hex
             self.update("tool_call", toolCallId=call_id, title="Synthetic command", kind="execute",
-                        status="pending", rawInput={"command": "printf synthetic"})
+                        status="in_progress", rawInput={"command": "printf synthetic"},
+                        rawOutput={"output":["partial native stdout"],"exit_code":0},
+                        content=[{"type":"content","content":{"type":"text","text":"partial native stdout"}}])
             self.permission_id = "permission-" + uuid.uuid4().hex
             self.send({"jsonrpc": "2.0", "id": self.permission_id, "method": "session/request_permission",
                 "params": {"sessionId": self.sid, "toolCall": {"toolCallId": call_id, "title": "Synthetic permission"},
@@ -292,6 +323,16 @@ class FakeGrok:
                 output = "Grok native tool result" if allowed else "Grok tool denied"
                 self.update("tool_call_update", toolCallId=call_id, status="completed" if allowed else "failed",
                             rawOutput={"output": output}, content=[{"type": "content", "content": {"type": "text", "text": output}}])
+        if text == "steer-active":
+            deadline = time.monotonic() + 60
+            marker = Path(os.environ["GROK_SDK_FAKE_SAFE_POINT"])
+            while not marker.exists() and not self.cancel.is_set() and time.monotonic() < deadline:
+                self.cancel.wait(0.02)
+            if not self.cancel.is_set():
+                for ident,interjection in list(self.interjections.items()):
+                    if interjection["text"] in {"steer-native-reject","steer-native-disconnect"}: continue
+                    self.append("user",interjection["text"])
+                    self.update("agent_message_chunk",content={"type":"text","text":"Native safe point consumed: " + interjection["text"]})
         if text == "wait-for-cancel":
             self.cancel.wait(30)
         elif text == "detached":

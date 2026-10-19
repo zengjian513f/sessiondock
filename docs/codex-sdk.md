@@ -485,6 +485,10 @@ SDK mappings, not a PTY command parser. CLI account/plugin management commands
 remain outside this view.
 
 Validation:
+SDK 实时流启用时暂停额外的历史 watch，落盘历史仍由增量轮询追上；
+离开 SDK 后恢复当前会话 watch。此行为避免 HTTP/1 两个标签页占满连接池后
+撤销/停止请求无法发送，见[双标签页回归](../tests/sdk_multitab_browser.py)。
+
 [codex_sdk_browser.py](../tests/codex_sdk_browser.py) with
 [codex_sdk_fixtures.py](../tests/codex_sdk_fixtures.py), and
 [codex_sdk_create_browser.py](../tests/codex_sdk_create_browser.py) for node/Hub

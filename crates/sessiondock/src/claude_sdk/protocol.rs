@@ -77,7 +77,20 @@ fn block_row(message: &str, index: u64, block: &Value, native_id: Option<&str>) 
 }
 
 pub(super) fn observe(session: &Session, frame: Value) {
+    // Native SessionStart hooks run before --resume loads its persisted SID.
+    // These unprojected startup notifications carry a temporary process UUID;
+    // discard their telemetry without accepting any of its content or identity.
+    if frame["type"] == "system"
+        && frame["hook_event"] == "SessionStart"
+        && matches!(
+            frame["subtype"].as_str(),
+            Some("hook_started" | "hook_response")
+        )
+    {
+        return;
+    }
     let mut live = lock(&session.live);
+    live.idle_since = None;
     // A process is tied to one exact SID; don't let a foreign frame's content
     // or approval cross into the selected native session.
     if frame["session_id"]
@@ -86,6 +99,7 @@ pub(super) fn observe(session: &Session, frame: Value) {
     {
         live.error =
             Some("claude_sdk: native stream session_id differs from selected session".into());
+        live.error_kind = Some("transport");
         if let Some(stop) = &live.runtime_stop {
             stop.cancel();
         }
@@ -175,10 +189,10 @@ pub(super) fn observe(session: &Session, frame: Value) {
             }
         }
         "control_cancel_request" => {
-            if let Some(key) = frame["request_id"].as_str() {
-                if let Some(card) = live.requests.remove(key) {
-                    retire_dialog(&mut live, &card);
-                }
+            if let Some(key) = frame["request_id"].as_str()
+                && let Some(card) = live.requests.remove(key)
+            {
+                retire_dialog(&mut live, &card);
             }
         }
         "assistant" => {
@@ -225,10 +239,18 @@ pub(super) fn observe(session: &Session, frame: Value) {
             }
             if let Some(error) = frame.get("error").filter(|v| !v.is_null()) {
                 live.error = Some(text(error));
+                live.error_kind = Some("turn");
             }
         }
         "user" => {
             let message = &frame["message"];
+            if let Some(id) = frame["uuid"].as_str()
+                && let Some(row) = live.items.iter_mut().find(|row| {
+                    row["role"] == "user" && (row["id"] == id || row["native_id"] == id)
+                })
+            {
+                row["native_echo"] = json!(true);
+            }
             if let Some(blocks) = message["content"].as_array() {
                 for (index, block) in blocks.iter().enumerate() {
                     if block["type"] == "tool_result" {
@@ -256,7 +278,7 @@ pub(super) fn observe(session: &Session, frame: Value) {
                         if !duplicate {
                             upsert(
                                 &mut live,
-                                json!({"id":format!("{id}:{index}"),"native_id":id,"role":"user","text":content,"content":content}),
+                                json!({"id":format!("{id}:{index}"),"native_id":id,"native_echo":true,"role":"user","text":content,"content":content}),
                             );
                         }
                     }
@@ -265,7 +287,7 @@ pub(super) fn observe(session: &Session, frame: Value) {
                 let id = frame["uuid"].as_str().unwrap_or("native-user");
                 upsert(
                     &mut live,
-                    json!({"id":id,"native_id":id,"role":"user","content":content,"text":content}),
+                    json!({"id":id,"native_id":id,"native_echo":true,"role":"user","content":content,"text":content}),
                 );
             }
         }
@@ -360,6 +382,7 @@ pub(super) fn observe(session: &Session, frame: Value) {
                     .or_else(|| frame["result"].as_str().map(str::to_owned))
                     .unwrap_or_else(|| text(&frame["subtype"]));
                 live.error = Some(error.clone());
+                live.error_kind = Some("turn");
                 let id = frame["uuid"]
                     .as_str()
                     .map(str::to_owned)
@@ -378,6 +401,7 @@ pub(super) fn observe(session: &Session, frame: Value) {
                     live.error = Some(
                         "claude_sdk: native working directory differs from selected session".into(),
                     );
+                    live.error_kind = Some("transport");
                     if let Some(stop) = &live.runtime_stop {
                         stop.cancel();
                     }
@@ -402,12 +426,20 @@ pub(super) fn observe(session: &Session, frame: Value) {
                     live.compact = json!({"state":result,"error":frame["compact_error"]});
                     if result == "failed" {
                         live.error = frame["compact_error"].as_str().map(str::to_owned);
+                        live.error_kind = Some("turn");
                     }
                 }
             } else if frame["subtype"] == "compact_boundary" {
                 live.compact = json!({"state":"success","native":frame});
                 live.context_usage = Value::Null;
                 live.usage.as_object_mut().unwrap().remove("context");
+            } else if frame["subtype"] == "background_tasks_changed" {
+                live.background_tasks = frame["tasks"].as_array().cloned().unwrap_or_default();
+            } else if frame["subtype"] == "task_started" {
+                live.background_tasks.push(frame.clone());
+            } else if frame["subtype"] == "task_notification" {
+                live.background_tasks
+                    .retain(|task| task["task_id"] != frame["task_id"]);
             } else if frame["subtype"] == "session_state_changed" {
                 // Stream-json can continue background work after a result. The
                 // native state is observed separately from accepted input count.

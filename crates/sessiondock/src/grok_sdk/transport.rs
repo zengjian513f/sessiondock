@@ -38,7 +38,19 @@ impl Connection {
     ) -> Result<Arc<Self>, String> {
         let generation = {
             let mut state = live.lock().unwrap();
+            if state.idle_reclaimed {
+                state.items.clear();
+                state.idle_reclaimed = false;
+            }
+            state.idle_since = None;
+            state.native_tasks.clear();
+            state.incomplete_tasks = false;
             state.generation += 1;
+            // A resumed ACP process must report its actual native settings;
+            // do not retain selectors from a runtime that has been released.
+            state.config = Value::Null;
+            state.models = Value::Null;
+            state.modes = Value::Null;
             state.usage = Value::Null;
             state.context = Value::Null;
             state.extensions.clear();
@@ -142,13 +154,30 @@ impl Connection {
             state.running = false;
             state.prompt_started = false;
             state.requests.clear();
+            for receipt in state.steers.values_mut() {
+                if receipt["generation"] == generation && receipt["status"] != "rejected" {
+                    receipt["status"] = json!("connection_closed");
+                    receipt["consumed"] = Value::Null;
+                }
+            }
+            if state.idle_reclaimed {
+                state.error = None;
+                state.error_kind = None;
+                state.publish();
+                return;
+            }
             state.error = Some(reason.into());
+            state.error_kind = Some("transport");
             let sid = state.sid.clone();
             state.items.push(json!({"id":format!("grok:{sid}:transport:{generation}"),"role":"system",
                 "content":format!("{reason}；连接结束不会重放已接受的输入。运行中的原生请求可能已产生结果，请查看原生历史。"),"error":true}));
             state.publish();
         });
         Ok(connection)
+    }
+
+    pub fn has_pending(&self) -> bool {
+        !self.pending.lock().unwrap().is_empty()
     }
 
     pub fn send(&self, message: Value) -> Result<(), String> {

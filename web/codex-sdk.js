@@ -556,6 +556,10 @@ const CodexSdkView = {
       if (this.historyReady) {
         const ready = this.historyReady;
         try { await ready; }
+        catch (error) {
+          if (this.historyReady !== ready) return;
+          throw error;
+        }
         finally { if (this.historyReady === ready) this.historyReady = null; }
         if (!this.current(generation)) return;
       }

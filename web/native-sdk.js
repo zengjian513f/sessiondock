@@ -121,6 +121,14 @@ const NativeSdkView = {
         let packet;
         try { packet = JSON.parse(event.data); } catch { return; }
         if (packet.method === 'bridge/reset') { this.reconnect(); return; }
+        if (packet.type === 'input_queue') {
+          const stick = this.nearBottom();
+          this.raw.input_queue = packet.raw?.input_queue || [];
+          NativeSdkControls.paintQueue(this);
+          this.paintStatus();
+          if (stick) this.scrollBottom();
+          return;
+        }
         if (packet.type === 'snapshot' || packet.method === 'snapshot') {
           this.seq = packet.seq ?? this.seq;
           this.applySnapshot(packet.raw || {});
@@ -209,6 +217,13 @@ const NativeSdkView = {
       const selectors = ['.tool-out-actions .more','.tool-toggle','.tool-wrap'];
       const toolState = item.role === 'tool' && old ? selectors.map(selector => [...old.querySelectorAll(selector)].map(control => control.getAttribute(selector === '.tool-wrap' ? 'aria-pressed' : 'aria-expanded'))) : null;
       const node = msgNode(item); node.dataset.sdkItem = id;
+      if (item.role === 'tool' && ['pending','in_progress'].includes(item.status)) {
+        // Keep partial stdout rendered, but never label a partial rawOutput as
+        // completed just because it already contains a default exit_code:0.
+        const status = node.querySelector('.tool-status') || el('div','tool-status');
+        status.textContent = item.status === 'pending' ? '等待执行…' : '运行中…';
+        if (!status.parentElement) node.querySelector('.tool-entry')?.append(status);
+      }
       NativeSdkControls.decorate(this,node,item);
       if (old) old.replaceWith(node); else this.live.append(node);
       if (toolState) selectors.forEach((selector,group) => node.querySelectorAll(selector).forEach((control,index) => {
@@ -223,11 +238,17 @@ const NativeSdkView = {
     for (const [key,request] of requests) if (!this.requests.has(key)) this.live.append(this.requestCard(request));
     this.requests = requests;
     this.pane.querySelector('#sdk-stop').hidden = !this.running || this.capabilities.interrupt === false;
-    this.setNotice(raw.error ? `错误：${typeof raw.error === 'string' ? raw.error : raw.error.message || JSON.stringify(raw.error)}`
-      : requests.size ? '等待回答' : raw.status === 'compacting' || raw.compact?.state === 'compacting' ? '正在压缩上下文' : raw.retry ? `请求重试中${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}` : this.running ? '处理中' : '就绪', raw.error ? 'blocked' : '');
+    this.paintStatus();
     NativeSdkControls.paint(this);
     if (completed) { this.scheduleHistory(); void NativeSdkControls.loadUsage(this, false); }
     if (stick) this.scrollBottom();
+  },
+
+  paintStatus() {
+    const raw=this.raw || {},pending=(raw.input_queue || []).find(item=>item.operation!=='steer');
+    const paused=!this.running && !this.requests.size && ['failed','unknown'].includes(pending?.state);
+    this.setNotice(raw.error ? `错误：${typeof raw.error === 'string' ? raw.error : raw.error.message || JSON.stringify(raw.error)}`
+      : this.requests.size ? '等待回答' : raw.status === 'compacting' || raw.compact?.state === 'compacting' ? '正在压缩上下文' : raw.retry ? `请求重试中${raw.retry.attempt ? `（${raw.retry.attempt}）` : ''}` : this.running ? '处理中' : paused ? '队列暂停，请处理失败或待核对记录' : pending ? '等待发送' : '就绪', raw.error || paused ? 'blocked' : '');
   },
 
   paintHistory() {
@@ -334,8 +355,11 @@ const NativeSdkView = {
       const payload = await CodexSdkCompose.collect(this);
       if (!payload || !this.current(generation)) return;
       const request_id = await CodexSdkCompose.submission(payload,this.modelChoice,this.effortChoice,this.agent);
-      await this.request('api/native-sdk/turn', {uid:payload.uid,text:payload.text,attachments:payload.attachments,quotes:payload.quotes,
+      const response = await this.request('api/native-sdk/turn', {uid:payload.uid,text:payload.text,attachments:payload.attachments,quotes:payload.quotes,
         request_id,draft_revision:payload.draft_revision,model:this.modelChoice,effort:this.effortChoice});
+      if (!await CodexSdkCompose.accepted(this,payload,{raw:response.raw || response},request_id)) return;
+      if ((response.accepted ?? response.raw?.accepted) === false)
+        throw new Error(response.error || response.raw?.error || '这次提交未进入发送队列，请查看队列记录');
       await CodexSdkCompose.sent(this,payload);
     } catch (error) { if (this.current(generation)) this.setNotice(`发送失败：${error.message}`, 'blocked'); }
     finally { if (this.current(generation)) CodexSdkCompose.failed(this); button.disabled = false; }
@@ -377,8 +401,15 @@ const SdkView = new Proxy({
     this.close(); this.legacyViews.delete(viewKey(uid,agent));
     this.active = String(uid).startsWith('codex:') ? CodexSdkView : NativeSdkView;
     this.active.open(uid,pane,agent,options);
+    closeWatch();
   },
-  close() { CodexSdkView.close(); NativeSdkView.close(); },
+  close() {
+    const uid = this.active.uid, agent = this.active.agent;
+    CodexSdkView.close(); NativeSdkView.close();
+    if (uid) queueMicrotask(() => {
+      if (!this.active.pane && S.sel === uid && S.agent === agent) watchSession(uid, agent);
+    });
+  },
 }, {
   get(target,key,receiver) {
     if (key in target) return Reflect.get(target,key,receiver);

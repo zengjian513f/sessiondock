@@ -15,7 +15,7 @@ import re
 import tempfile
 import time
 
-from claude_sdk_fixtures import ClaudeFixture, native_uid, project_key
+from claude_sdk_fixtures import ClaudeFixture, MonotonicClock, native_uid, project_key
 from history_fixtures import BINARY
 
 
@@ -72,16 +72,17 @@ def wait_snapshot(page, uid, predicate):
     raise AssertionError("native snapshot condition not reached: " + json.dumps(last, ensure_ascii=False))
 
 
-def open_sdk(page, fixture, expect):
-    card = page.locator(f'#side .item[data-uid="{fixture.uid}"]')
+def open_sdk(page, fixture, expect, uid=None):
+    uid = uid or fixture.uid
+    card = page.locator(f'#side .item[data-uid="{uid}"]')
     if not card.is_visible() and page.locator('#detail .mobile-back').is_visible():
         page.locator('#detail .mobile-back').click()
-    page.locator(f'#side .item[data-uid="{fixture.uid}"]').click()
+    page.locator(f'#side .item[data-uid="{uid}"]').click()
     expect(page.locator("#a-sdk")).to_be_visible()
     page.locator("#a-sdk").click()
     expect(page.locator("#sdk-input")).to_be_visible()
     expect(page.locator("#sdk-send")).to_be_enabled()
-    page.wait_for_function("uid => NativeSdkView.connected && NativeSdkView.uid === uid",arg=fixture.uid)
+    page.wait_for_function("uid => NativeSdkView.connected && NativeSdkView.uid === uid",arg=uid)
 
 
 def send(page, text):
@@ -191,7 +192,7 @@ def browser_check(fixture, base, screenshots):
         assert any("Beta" in json.dumps(frame) for frame in fixture.frames("control_response"))
 
         send(page, 'elicitation')
-        form = page.locator('.sdk-request').filter(has_text='Synthetic MCP form')
+        form = page.locator('[data-sdk-request]').filter(has_text='Synthetic MCP form')
         expect(form).to_be_visible()
         form.get_by_label('Synthetic choice', exact=True).select_option('Beta')
         expect(form.get_by_label('Synthetic enabled', exact=True)).to_be_checked()
@@ -205,14 +206,14 @@ def browser_check(fixture, base, screenshots):
         assert {'action': 'accept', 'content': {'choice': 'Beta', 'enabled': False, 'count': 3}} in elicited, elicited
 
         send(page, 'elicitation-url')
-        form = page.locator('.sdk-request').filter(has_text='Synthetic MCP form')
+        form = page.locator('[data-sdk-request]').filter(has_text='Synthetic MCP form')
         expect(form.get_by_role('link', name='打开授权页面')).to_have_attribute('href', 'https://example.invalid/authorize')
         form.get_by_role('button', name='取消', exact=True).click()
         expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final elicitation-url')
         wait_snapshot(page, fixture.uid, lambda raw: not raw['running'])
 
         send(page, 'dialog')
-        dialog = page.locator('.sdk-request').filter(has_text='Synthetic fallback choice')
+        dialog = page.locator('[data-sdk-request]').filter(has_text='Synthetic fallback choice')
         expect(dialog).to_be_visible()
         dialog.get_by_role('button', name='修改输入', exact=True).click()
         expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final dialog')
@@ -264,6 +265,50 @@ def browser_check(fixture, base, screenshots):
         assert "synthetic native execution failure" in error["raw"]["error"]
         assert error['raw']['usage']['tokens'] == degraded['usage']['tokens'], error['raw']['usage']
         assert error['raw']['usage']['cost_usd'] == degraded['usage']['cost_usd'], error['raw']['usage']
+        assert error['raw']['error_kind'] == 'turn'
+
+        # Forking is a native lazy resume, frozen at a real chain UUID. The
+        # provider writes the branch on its first actual browser input.
+        source_text = fixture.path.read_text()
+        source_rows = [json.loads(line) for line in source_text.splitlines()]
+        page.locator('#sdk-more').click()
+        with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
+            page.locator('[data-sdk-action=fork]').click()
+        full = receipt(forked.value.json())
+        full_request = forked.value.request.post_data_json
+        full_path = fixture.path.with_name(full['session_id'] + '.jsonl')
+        assert full['uid'] != fixture.uid and not full_path.exists(), full
+        assert full['session']['sdk_fork']['resume_at'] == source_rows[-1]['uuid'], full
+        page.wait_for_function('uid => NativeSdkView.connected && NativeSdkView.uid === uid', arg=full['uid'])
+        send(page, 'browser full native fork')
+        expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final browser full native fork')
+        wait_snapshot(page, full['uid'], lambda raw: not raw['running'])
+        assert fixture.path.read_text() == source_text
+        full_rows = [json.loads(line) for line in full_path.read_text().splitlines()]
+        assert all(row['sessionId'] == full['session_id'] for row in full_rows)
+        assert [row['uuid'] for row in full_rows[:len(source_rows)]] == [row['uuid'] for row in source_rows]
+        assert receipt(post(page, 'fork', full_request))['uid'] == full['uid']
+        expect(page.locator('.sdk-history')).to_contain_text('earlier synthetic Claude answer')
+        capture(page, 'claude-sdk-mobile-dark-full-fork.png')
+
+        open_sdk(page, fixture, expect)
+        first_user = next(row for row in source_rows if row.get('message', {}).get('content') == 'hello from browser')
+        bubble = page.locator(f'.sdk-live [data-sdk-item="{first_user["uuid"]}"]')
+        bubble.locator('.sdk-bubble-toggle').click()
+        with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
+            bubble.get_by_role('button', name='从此处之前分支', exact=True).click()
+        partial = receipt(forked.value.json())
+        assert partial['session']['sdk_fork']['resume_at'] == first_user['parentUuid'], partial
+        page.wait_for_function('uid => NativeSdkView.connected && NativeSdkView.uid === uid', arg=partial['uid'])
+        send(page, 'browser native fork before message')
+        expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final browser native fork before message')
+        wait_snapshot(page, partial['uid'], lambda raw: not raw['running'])
+        partial_rows = [json.loads(line) for line in fixture.path.with_name(partial['session_id'] + '.jsonl').read_text().splitlines()]
+        assert any(row.get('uuid') == 'seed-u' for row in partial_rows)
+        assert not any(row.get('uuid') == first_user['uuid'] for row in partial_rows)
+        assert fixture.path.read_text() == source_text
+        assert len([row for row in fixture.frames('spawn') if '--fork-session' in row['args']]) == 2
+        open_sdk(page, fixture, expect)
 
         # Creation has a native UUID and real path-derived UID, but no placeholder.
         created = receipt(post(page, "create", {"source": "claude", "request_id": "create-one", "cwd": str(fixture.cwd),
@@ -279,6 +324,21 @@ def browser_check(fixture, base, screenshots):
         wait_snapshot(page, created["uid"], lambda raw: not raw["running"] and bool(raw["items"]))
         assert path.is_file()
         assert json.loads(path.read_text().splitlines()[0])["sessionId"] == created["session_id"]
+        page.reload(wait_until='networkidle')
+        open_sdk(page, fixture, expect, created['uid'])
+        first = next(row for row in snapshot(page, created['uid'])['raw']['items'] if row['role'] == 'user')
+        bubble = page.locator(f'.sdk-live [data-sdk-item="{first["id"]}"]')
+        bubble.locator('.sdk-bubble-toggle').click()
+        with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
+            bubble.get_by_role('button', name='从此处之前分支', exact=True).click()
+        empty = receipt(forked.value.json())
+        assert empty['session']['sdk_fork']['empty'] is True, empty
+        page.wait_for_function('uid => NativeSdkView.connected && NativeSdkView.uid === uid', arg=empty['uid'])
+        send(page, 'browser native fork before first message')
+        expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final browser native fork before first message')
+        wait_snapshot(page, empty['uid'], lambda raw: not raw['running'])
+        empty_rows = [json.loads(line) for line in path.with_name(empty['session_id'] + '.jsonl').read_text().splitlines()]
+        assert not any(row.get('message', {}).get('content') == 'created in SDK' for row in empty_rows)
 
         # Simulate an independently running TUI in the private proc tree. It is
         # observed and rejected, with no signals or replacement process.
@@ -298,16 +358,219 @@ def browser_check(fixture, base, screenshots):
         browser.close()
 
 
+def idle_check(fixture, base, clock):
+    from playwright.sync_api import sync_playwright, expect
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True, args=['--no-sandbox'])
+        control = browser.new_context(service_workers='block')
+
+        def wake():
+            assert control.request.get(base + '/api/health').ok
+            time.sleep(.1)
+
+        def open_page():
+            context = browser.new_context(viewport={'width':1280, 'height':900}, service_workers='block')
+            page = context.new_page()
+            page.goto(base, wait_until='networkidle')
+            open_sdk(page, fixture, expect)
+            return context, page
+
+        def loaded():
+            return fixture.uid in control.request.get(base + '/api/live').json()['sdk_uids']
+
+        context, page = open_page()
+        page.locator('#sdk-more').click()
+        page.locator('#native-sdk-permission_mode').select_option('plan')
+        expect(page.locator('#native-sdk-permission_mode')).to_have_value('plan')
+        page.locator('#native-sdk-fast_mode').select_option('true')
+        expect(page.locator('#native-sdk-fast_mode')).to_have_value('true')
+        page.locator('#sdk-more').click()
+        send(page, 'hold')
+        wait_snapshot(page, fixture.uid, lambda raw: raw['running'])
+        first_pid = fixture.frames('spawn')[-1]['pid']
+        context.close()
+        clock.advance(650)
+        wake()
+        assert loaded(), 'active native turn was reaped without a subscriber'
+        context, page = open_page()
+        page.locator('#sdk-stop').click()
+        expect(page.locator('.sdk-live')).to_contain_text('Claude interrupted')
+        wait_snapshot(page, fixture.uid, lambda raw: not raw['running'])
+
+        send(page, 'approval')
+        expect(page.locator('[data-sdk-request]')).to_be_visible()
+        context.close()
+        clock.advance(650)
+        wake()
+        assert loaded(), 'pending native approval was reaped'
+        context, page = open_page()
+        page.locator('[data-sdk-request]').get_by_role('button', name='拒绝', exact=True).click()
+        expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final approval')
+        wait_snapshot(page, fixture.uid, lambda raw: not raw['running'])
+
+        send(page, 'background')
+        wait_snapshot(page, fixture.uid, lambda raw: not raw['running'] and bool(raw['background_tasks']))
+        context.close()
+        clock.advance(650)
+        wake()
+        assert loaded(), 'native background task was reaped after the main result'
+        context, page = open_page()
+        send(page, 'finish-background')
+        wait_snapshot(page, fixture.uid, lambda raw: not raw['running'] and not raw['background_tasks'])
+        clock.advance(650)
+        wake()
+        assert loaded(), 'observed native runtime was reaped'
+        assert len(fixture.frames('spawn')) == 1
+        context.close()
+
+        # The first tick begins the subscriber-free idle period. The second
+        # jump crosses the unchanged production ten-minute deadline.
+        clock.advance(31)
+        wake()
+        clock.advance(601)
+        deadline = time.monotonic() + 8
+        while loaded() and time.monotonic() < deadline:
+            wake()
+        assert not loaded(), 'inactive native runtime was not reclaimed after ten minutes'
+        context, page = open_page()
+        assert len(fixture.frames('spawn')) == 2
+        resumed = fixture.frames('spawn')[-1]
+        assert resumed['pid'] != first_pid and resumed['sid'] == fixture.sid
+        assert '--resume=' + str(fixture.path) in resumed['args']
+        send(page, 'browser resumed after idle')
+        expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final browser resumed after idle')
+        resumed = wait_snapshot(page, fixture.uid, lambda raw: not raw['running'])['raw']
+        assert resumed['settings']['permission_mode'] == 'plan' and resumed['settings']['fast_mode_state'] == 'on', resumed['settings']
+        context.close()
+        control.close()
+        browser.close()
+
+
+def fork_restart_check(fixture, binary):
+    from playwright.sync_api import sync_playwright, expect
+    failure = fixture.root / 'fork-initialize-fail-once'
+    failure.write_text('synthetic transport failure')
+    launcher = json.loads(fixture.launcher.read_text())
+    launcher['profiles'][0]['env']['SESSIONDOCK_FAKE_FORK_FAIL_ONCE'] = str(failure)
+    fixture.launcher.write_text(json.dumps(launcher))
+    original = fixture.path.read_text()
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True, args=['--no-sandbox'])
+        with fixture.server(binary) as base:
+            context = browser.new_context(service_workers='block')
+            page = context.new_page()
+            page.goto(base, wait_until='networkidle')
+            open_sdk(page, fixture, expect)
+            page.locator('#sdk-more').click()
+            with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as failed:
+                page.locator('[data-sdk-action=fork]').click()
+            assert not failed.value.ok
+            count = len(fixture.frames('spawn'))
+            retried = post(page, 'fork', failed.value.request.post_data_json, ok=False)
+            assert 'already attempted' in json.dumps(retried), retried
+            assert len(fixture.frames('spawn')) == count, 'unknown native fork was dispatched twice'
+            expect(page.locator('.sdk-status')).to_contain_text('操作失败')
+            page.locator('#sdk-more').click()
+            with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
+                page.locator('[data-sdk-action=fork]').click()
+            assert forked.value.ok, forked.value.text()
+            created = receipt(forked.value.json())
+            request = forked.value.request.post_data_json
+            path = fixture.path.with_name(created['session_id'] + '.jsonl')
+            page.wait_for_function('uid => NativeSdkView.connected && NativeSdkView.uid === uid', arg=created['uid'])
+            assert not path.exists(), 'pending fork inserted a placeholder transcript'
+            context.close()
+        with fixture.server(binary) as base:
+            context = browser.new_context(service_workers='block')
+            page = context.new_page()
+            page.goto(base, wait_until='networkidle')
+            open_sdk(page, fixture, expect, created['uid'])
+            assert not path.exists()
+            before = len(fixture.frames('spawn'))
+            assert receipt(post(page, 'fork', request))['uid'] == created['uid']
+            assert len(fixture.frames('spawn')) == before, 'persisted fork receipt created another child'
+            resumed = fixture.frames('spawn')[-1]
+            assert resumed['sid'] == created['session_id'] and '--fork-session' in resumed['args']
+            assert '--resume=' + str(fixture.path) in resumed['args']
+            send(page, 'browser pending fork restored after restart')
+            expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final browser pending fork restored after restart')
+            wait_snapshot(page, created['uid'], lambda raw: not raw['running'])
+            rows = [json.loads(line) for line in path.read_text().splitlines()]
+            assert any(row.get('uuid') == 'seed-u' for row in rows)
+            assert fixture.path.read_text() == original
+            context.close()
+        browser.close()
+
+
+def startup_hooks_check(fixture, binary, foreign_kind):
+    from playwright.sync_api import sync_playwright, expect
+    launcher = json.loads(fixture.launcher.read_text())
+    launcher['profiles'][0]['env']['SESSIONDOCK_FAKE_STARTUP_HOOKS'] = '1'
+    fixture.launcher.write_text(json.dumps(launcher))
+    with fixture.server(binary) as base, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True, args=['--no-sandbox'])
+        page = browser.new_page(service_workers='block')
+        page.goto(base, wait_until='networkidle')
+        open_sdk(page, fixture, expect)
+        assert '--resume=' + str(fixture.path) in fixture.frames('spawn')[-1]['args']
+        send(page, 'browser startup hook resume')
+        expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final browser startup hook resume')
+        wait_snapshot(page, fixture.uid, lambda raw: not raw['running'])
+        assert 'startup-hook-must-not-project' not in page.locator('.sdk-pane').inner_text()
+        send(page, 'foreign-identity-' + foreign_kind)
+        expect(page.locator('.sdk-status')).to_contain_text('native stream session_id differs')
+        raw = wait_snapshot(page, fixture.uid, lambda raw: raw.get('error_kind') == 'transport')['raw']
+        assert raw['session_id'] == fixture.sid
+        assert not any('FOREIGN_NATIVE_CONTENT' in json.dumps(row) for row in raw['items'])
+        assert not raw['requests'], 'foreign approval crossed the native SID guard'
+        expect(page.locator('[data-sdk-request]')).to_have_count(0)
+        browser.close()
+
+
+def startup_failure_check(fixture, binary, screenshots=None):
+    from playwright.sync_api import sync_playwright, expect
+    launcher = json.loads(fixture.launcher.read_text())
+    launcher['profiles'][0]['env']['SESSIONDOCK_FAKE_STARTUP_FAILURE'] = '1'
+    fixture.launcher.write_text(json.dumps(launcher))
+    with fixture.server(binary) as base, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True, args=['--no-sandbox'])
+        page = browser.new_page(service_workers='block')
+        page.goto(base, wait_until='networkidle')
+        page.locator(f'#side .item[data-uid="{fixture.uid}"]').click()
+        page.locator('#a-sdk').click()
+        expect(page.locator('.sdk-status')).to_contain_text('command not found')
+        expect(page.locator('.sdk-status')).to_contain_text('[redacted]')
+        assert 'synthetic-startup-secret' not in page.locator('.sdk-status').inner_text()
+        assert not page.evaluate('NativeSdkView.connected')
+        assert not fixture.frames('user'), 'startup failure submitted a model prompt'
+        if screenshots:
+            screenshots.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(screenshots / 'claude-sdk-startup-error.png'), full_page=True)
+        browser.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
+    for kind in ('user', 'approval'):
+        with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-startup-hooks-') as temporary:
+            startup_hooks_check(ClaudeFixture(Path(temporary)), args.binary, kind)
+    with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-startup-') as temporary:
+        startup_failure_check(ClaudeFixture(Path(temporary)), args.binary, args.screenshots)
     with tempfile.TemporaryDirectory(prefix="sessiondock-claude-sdk-") as temporary:
         fixture = ClaudeFixture(Path(temporary))
         with fixture.server(args.binary) as base:
             browser_check(fixture, base, args.screenshots)
-    print("PASS Claude native SDK: browser send/stop, cumulative usage/context, settings, native compact, structured image, elicitation/dialog, retry/limits/degraded usage, reconnect/deduplication/create/writer refusal")
+    with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-idle-') as temporary:
+        fixture = ClaudeFixture(Path(temporary))
+        clock = MonotonicClock(Path(temporary))
+        with fixture.server(args.binary, extra_env=clock.env) as base:
+            idle_check(fixture, base, clock)
+    with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-fork-restart-') as temporary:
+        fork_restart_check(ClaudeFixture(Path(temporary)), args.binary)
+    print("PASS Claude native SDK: browser send/stop, usage/settings/compact/image/requests, native fork boundaries/source preservation/deduplication, ten-minute idle reclaim with active/request/task/subscriber guards and same-SID resume")
 
 
 if __name__ == "__main__":

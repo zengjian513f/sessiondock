@@ -24,6 +24,54 @@ import uuid
 from urllib.request import ProxyHandler, build_opener
 
 
+class MonotonicClock:
+    """Test-process clock shim; production retains its fixed ten-minute idle timer."""
+    def __init__(self, root):
+        root = Path(root)
+        self.offset = root / 'monotonic-offset'
+        self.offset.write_text('0')
+        source = root / 'monotonic-clock.c'
+        self.library = root / 'monotonic-clock.so'
+        source.write_text(r'''
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
+int clock_gettime(clockid_t clock, struct timespec *stamp) {
+    static int (*native_clock)(clockid_t, struct timespec *) = NULL;
+    if (!native_clock) native_clock = dlsym(RTLD_NEXT, "clock_gettime");
+    int result = native_clock(clock, stamp);
+    if (!result && clock == CLOCK_MONOTONIC) {
+        const char *path = getenv("SESSIONDOCK_TEST_CLOCK_OFFSET");
+        if (path) {
+            int fd = open(path, O_RDONLY);
+            if (fd >= 0) {
+                char value[32] = {0};
+                if (read(fd, value, sizeof(value) - 1) > 0) stamp->tv_sec += strtoll(value, NULL, 10);
+                close(fd);
+            }
+        }
+    }
+    return result;
+}
+''')
+        subprocess.run(['cc', '-shared', '-fPIC', '-O2', str(source), '-ldl', '-o', str(self.library)], check=True, timeout=15)
+        self.seconds = 0
+
+    @property
+    def env(self):
+        return {'LD_PRELOAD': str(self.library), 'SESSIONDOCK_TEST_CLOCK_OFFSET': str(self.offset)}
+
+    def advance(self, seconds):
+        self.seconds += seconds
+        # Atomic replacement prevents clock reads from seeing an empty file.
+        pending = self.offset.with_suffix('.next')
+        pending.write_text(str(self.seconds))
+        pending.replace(self.offset)
+
+
 def project_key(cwd):
     """Native 2.1.302 JS UTF-16 naming, including non-BMP and long cwd."""
     units = [int.from_bytes(part, "little") for part in
@@ -51,6 +99,7 @@ def native_uid(path):
 class ClaudeFixture:
     def __init__(self, root):
         self.root = Path(root)
+        self.lifecycle_initialized = False
         self.home = self.root / "cli-home"
         self.projects = self.home / ".claude/projects"
         self.cwd = self.root / "workspace"
@@ -73,7 +122,7 @@ class ClaudeFixture:
             "profiles": [{"id": "claude-fixture", "source": "claude", "executable": sys.executable,
                 "args": [str(Path(__file__).resolve()), "--fake-cli"], "env": {"HOME": str(self.home),
                     "CLAUDE_CONFIG_DIR": str(self.home / ".claude"), "SESSIONDOCK_FAKE_CLAUDE_LOG": str(self.received)},
-                "env_remove": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]}]}))
+                "env_remove": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "LD_PRELOAD", "SESSIONDOCK_TEST_CLOCK_OFFSET"]}]}))
 
     def frames(self, kind=None):
         rows = [json.loads(line) for line in self.received.read_text().splitlines()] if self.received.exists() else []
@@ -83,7 +132,9 @@ class ClaudeFixture:
     def server(self, binary, extra_env=None):
         from frontend_paths import frontend_dir
         from send_browser import initialize
-        initialize("--initialize-lifecycle", self.root / "lifecycle", Path(binary).resolve(strict=True))
+        if not self.lifecycle_initialized:
+            initialize("--initialize-lifecycle", self.root / "lifecycle", Path(binary).resolve(strict=True))
+            self.lifecycle_initialized = True
         from history_fixtures import REPO
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
@@ -136,11 +187,12 @@ def fake_cli():
     assert "--permission-prompt-tool=stdio" in args, args
     value = lambda flag: next((arg.split("=", 1)[1] for arg in args if arg.startswith(flag + "=")), None)
     resume = value("--resume")
-    sid = Path(resume).stem if resume else value("--session-id")
+    fork = "--fork-session" in args
+    sid = value("--session-id") if fork else Path(resume).stem if resume else value("--session-id")
     assert sid, "explicit native session identity required"
     cwd = str(Path.cwd())
     home = Path(os.environ["CLAUDE_CONFIG_DIR"])
-    path = Path(resume) if resume else home / "projects" / project_key(cwd) / (sid + ".jsonl")
+    path = Path(resume) if resume and not fork else home / "projects" / project_key(cwd) / (sid + ".jsonl")
     assert path.is_relative_to(home / "projects"), path
     assert not any(os.environ.get(key) for key in ("CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID"))
     log = Path(os.environ["SESSIONDOCK_FAKE_CLAUDE_LOG"])
@@ -151,7 +203,20 @@ def fake_cli():
     pending = {}
     inputs = queue.Queue()
     interrupted = threading.Event()
-    previous = json.loads(path.read_text().splitlines()[-1])["uuid"] if resume else None
+    previous = json.loads(path.read_text().splitlines()[-1])["uuid"] if path.is_file() else None
+
+    def materialize_fork():
+        nonlocal previous
+        if not fork or path.exists(): return
+        boundary = value('--resume-session-at')
+        assert boundary, 'fork snapshot must freeze a native chain UUID'
+        rows = [json.loads(line) for line in Path(resume).read_text().splitlines()]
+        index = next(i for i, row in enumerate(rows) if row.get('uuid') == boundary)
+        rows = rows[:index + 1]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        for row in rows: row['sessionId'] = sid
+        path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        previous = boundary
 
     def send(frame):
         with output_lock:
@@ -159,6 +224,7 @@ def fake_cli():
 
     def record(kind, identifier, message):
         nonlocal previous
+        materialize_fork()
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a") as stream:
             stream.write(json.dumps({"type": kind, "uuid": identifier, "parentUuid": previous,
@@ -211,6 +277,13 @@ def fake_cli():
             if isinstance(content, list):
                 assert any(block.get("type") == "image" and block["source"]["type"] == "base64" for block in content), content
                 content = " ".join(block.get("text", "") for block in content if block.get("type") == "text")
+            if content in ('foreign-identity-user', 'foreign-identity-approval'):
+                foreign = {"type": "user", "uuid": "foreign-user", "message": {"role": "user", "content": "FOREIGN_NATIVE_CONTENT"}} if content.endswith('user') else {
+                    "type": "control_request", "request_id": "foreign-approval", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "title": "FOREIGN_NATIVE_APPROVAL", "input": {"command": "must-not-execute"}}}
+                with output_lock:
+                    print(json.dumps({**foreign, "session_id": str(uuid.uuid4())}), flush=True)
+                time.sleep(5)
+                continue
             message_id = "msg-" + str(uuid.uuid4())
             record("user", frame["uuid"], frame["message"])
             send(frame)
@@ -242,6 +315,10 @@ def fake_cli():
                     "status": "allowed_warning", "rateLimitType": "five_hour", "utilization": .8, "resetsAt": 1900000000}})
             if content == "usage-unavailable": state["usage_available"] = False
             if content == "usage-available": state["usage_available"] = True
+            if content == 'background':
+                send({'type':'system','subtype':'background_tasks_changed','tasks':[{'task_id':'synthetic-background','task_type':'local_bash','description':'Synthetic native background job'}]})
+            if content == 'finish-background':
+                send({'type':'system','subtype':'background_tasks_changed','tasks':[]})
             stream_text("streaming Claude progress", message_id)
             if content == "hold":
                 interrupted.wait(30)
@@ -305,6 +382,20 @@ def fake_cli():
             subtype = request["subtype"]
             response = {}
             if subtype == "initialize":
+                if os.environ.get('SESSIONDOCK_FAKE_STARTUP_HOOKS'):
+                    temporary_sid = str(uuid.uuid4())
+                    for kind in ('hook_started', 'hook_response'):
+                        with output_lock:
+                            print(json.dumps({"type": "system", "subtype": kind, "hook_event": "SessionStart",
+                                "session_id": temporary_sid, "stdout": "startup-hook-must-not-project",
+                                "stderr": "startup-hook-must-not-project"}), flush=True)
+                if os.environ.get('SESSIONDOCK_FAKE_STARTUP_FAILURE'):
+                    print('claude: command not found; token=synthetic-startup-secret', file=sys.stderr, flush=True)
+                    os._exit(127)
+                fail_once = os.environ.get('SESSIONDOCK_FAKE_FORK_FAIL_ONCE')
+                if fork and fail_once and Path(fail_once).is_file():
+                    Path(fail_once).unlink()
+                    os._exit(7)
                 state["dialog_kinds"] = request.get("supportedDialogKinds", [])
                 response = {"models": [{"value": "fake-claude", "displayName": "Synthetic Claude", "supportsEffort": True, "supportedEffortLevels": ["low", "high"]}],
                     "commands": [{"name": "compact", "description": "Compact synthetic context"}], "pid": os.getpid(), "fast_mode_state": "off"}

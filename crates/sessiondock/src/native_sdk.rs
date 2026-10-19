@@ -1,8 +1,12 @@
 //! Shared SDK dispatch and private creation receipts. Each provider owns its
 //! native transport; this module never writes native session records.
+#[path = "native_sdk_queue.rs"]
+mod input_queue;
+pub(crate) use input_queue::Input as QueuedInput;
+
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{self, Write},
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -33,14 +37,14 @@ pub struct NativeSdks {
     receipts: Mutex<BTreeMap<String, Value>>,
     submissions: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<Submission>>>>,
     path: Option<PathBuf>,
+    input_queue: input_queue::Journal,
+    queue_workers: Mutex<BTreeSet<String>>,
+    queue_wake: tokio::sync::Notify,
+    shutdown: CancellationToken,
 }
 
 #[derive(Default)]
-pub(crate) struct Submission {
-    pub input: Option<Value>,
-    pub draft: Option<Value>,
-    pub result: Option<Value>,
-}
+pub(crate) struct Submission;
 
 impl NativeSdks {
     pub fn new(
@@ -81,13 +85,20 @@ impl NativeSdks {
             Some(Err(error)) if error.kind() != io::ErrorKind::NotFound => return Err(error),
             _ => BTreeMap::new(),
         };
-        Ok(Arc::new(Self {
+        let input_queue = input_queue::Journal::open(config.state_dir.as_ref())?;
+        let sdks = Arc::new(Self {
             providers,
             unavailable,
             receipts: Mutex::new(receipts),
             submissions: Mutex::new(BTreeMap::new()),
             path,
-        }))
+            input_queue,
+            queue_workers: Mutex::new(BTreeSet::new()),
+            queue_wake: tokio::sync::Notify::new(),
+            shutdown,
+        });
+        tokio::spawn(sdks.clone().run_input_queue());
+        Ok(sdks)
     }
 
     pub fn capabilities(&self) -> Value {
@@ -194,7 +205,7 @@ impl NativeSdks {
     }
 
     pub async fn call(
-        &self,
+        self: &Arc<Self>,
         source: &str,
         method: &str,
         target: Value,
@@ -221,11 +232,27 @@ impl NativeSdks {
                 );
             }
         }
-        let result = dispatch!(
+        let result = match dispatch!(
             bridge,
             bridge,
             bridge.call(method, target.clone(), input.clone()).await
-        )?;
+        ) {
+            Ok(result) => result,
+            Err(error)
+                if method == "open"
+                    && self
+                        .input_snapshot(&target)
+                        .as_array()
+                        .is_some_and(|rows| !rows.is_empty()) =>
+            {
+                return Ok(
+                    json!({"uid":target["uid"],"session_id":target["session_id"],"cwd":target["cwd"],
+                    "capabilities":{"send":true,"input_queue":true,"queue_cancel":true,"queue_retry":true},
+                    "raw":self.input_fallback(&target,&error)["raw"]}),
+                );
+            }
+            Err(error) => return Err(error),
+        };
         if matches!(method, "create" | "fork") {
             let uid = result["uid"].as_str().ok_or("SDK 未返回原生会话身份")?;
             let mut row = result
@@ -276,6 +303,15 @@ impl NativeSdks {
             self.save(&next)?;
             *rows = next;
         }
+        let mut result = result;
+        if method == "open" {
+            if !result["capabilities"].is_object() {
+                result["capabilities"] = json!({});
+            }
+            result["capabilities"]["input_queue"] = json!(true);
+            result["capabilities"]["queue_cancel"] = json!(true);
+            result["capabilities"]["queue_retry"] = json!(true);
+        }
         Ok(result)
     }
 
@@ -290,4 +326,467 @@ impl NativeSdks {
             .ok_or_else(|| format!("此机器未配置 {source} SDK 模式"))?;
         dispatch!(bridge, bridge, bridge.subscribe(key))
     }
+}
+
+impl NativeSdks {
+    pub(crate) fn begin_input(
+        &self,
+        target: &Value,
+        operation: &str,
+        draft: Value,
+    ) -> Result<QueuedInput, String> {
+        self.input_queue.begin(target, operation, draft)
+    }
+
+    pub(crate) fn input_receipt(input: &QueuedInput) -> Value {
+        input_queue::Journal::receipt(input)
+    }
+
+    pub(crate) fn input_scope(target: &Value) -> String {
+        input_queue::scope(target)
+    }
+
+    pub(crate) fn input_fallback(&self, target: &Value, error: &str) -> Value {
+        json!({"seq":0,"type":"snapshot","raw":{"session_id":target["session_id"],"running":false,"items":[],"requests":[],"error":error,"input_queue":self.input_snapshot(target)}})
+    }
+
+    pub(crate) fn input_snapshot(&self, target: &Value) -> Value {
+        self.input_queue.visible(&input_queue::scope(target))
+    }
+
+    pub(crate) fn input_events(&self, target: &Value) -> (Value, broadcast::Receiver<Arc<str>>) {
+        self.input_queue.subscribe(&input_queue::scope(target))
+    }
+
+    pub(crate) fn with_inputs(&self, target: &Value, mut snapshot: Value) -> Value {
+        if snapshot["type"] == "snapshot" {
+            snapshot["raw"]["input_queue"] = self.input_snapshot(target);
+        }
+        snapshot
+    }
+
+    pub(crate) fn input_preparation_failed(
+        &self,
+        target: &Value,
+        id: &str,
+        error: String,
+    ) -> Result<(), String> {
+        self.input_queue
+            .change(&input_queue::scope(target), id, |row| {
+                if row.state == "preparing" {
+                    row.state = "failed".into();
+                    row.error = Some(error);
+                }
+                Ok(())
+            })?;
+        Ok(())
+    }
+
+    pub(crate) fn prepare_input(
+        self: &Arc<Self>,
+        target: &Value,
+        id: &str,
+        input: Value,
+    ) -> Result<Value, String> {
+        let row = self
+            .input_queue
+            .change(&input_queue::scope(target), id, |row| {
+                if row.state == "preparing" {
+                    row.input = Some(input);
+                    row.state = "queued".into();
+                    row.error = None;
+                }
+                Ok(())
+            })?;
+        if row.operation == "turn" {
+            self.queue_wake.notify_one();
+        }
+        Ok(Self::input_receipt(&row))
+    }
+
+    pub(crate) async fn input_action(
+        self: &Arc<Self>,
+        target: &Value,
+        id: &str,
+        action: &str,
+        confirmed: bool,
+        request: &str,
+    ) -> Result<(Value, Option<Value>), String> {
+        let key = input_queue::scope(target);
+        if request.is_empty() {
+            return Err("队列操作缺少稳定 request_id".into());
+        }
+        let mut duplicate = false;
+        let row=self.input_queue.change(&key,id,|row| {
+            if row.actions.contains_key(request) {duplicate=true;return Ok(())}
+            if row.state=="cancelled" {
+                row.actions.insert(request.into(),json!({"action":action,"state":"cancelled","attempts":row.attempts}));
+                return Ok(())
+            }
+            if !matches!(row.state.as_str(),"queued"|"failed"|"unknown"|"preparing") {return Err("此输入已经交给原生运行，不能撤销或重新发送；停止任务须使用中断。".into())}
+            if row.state=="unknown"&&!confirmed {return Err("请先核对原生会话并明确确认未知投递的重复风险。".into())}
+            match action {
+                "cancel"=>{row.state="cancelled".into();row.error=None;},
+                "retry"=>{
+                    if row.operation!="turn" {return Err("原生引导操作不能转成普通输入重试；请核对后移除记录，再明确发起新的引导。".into())}
+                    row.delivery_id=crate::conversation::random_id().map_err(|error|error.message)?;
+                    row.attempts+=1;row.state=if row.input.is_some(){"queued"}else{"preparing"}.into();row.error=None;row.result=None;row.consumption="unverified".into();row.stop_requested=false;
+                },
+                _=>return Err("未知队列操作".into()),
+            }
+            row.actions.insert(request.into(),json!({"action":action,"state":row.state,"attempts":row.attempts}));
+            Ok(())
+        })?;
+        self.queue_wake.notify_one();
+        let draft =
+            (!duplicate && action == "retry" && row.input.is_none() && row.state == "preparing")
+                .then(|| row.draft.clone());
+        Ok((
+            json!({"input_queue":self.input_snapshot(target),"receipt":Self::input_receipt(&row),"native_preserved":true,"duplicate":duplicate}),
+            draft,
+        ))
+    }
+
+    /// Controls such as steer have their own operation identity and never enter
+    /// the ordinary turn worker or become automatic FIFO input on recovery.
+    pub(crate) async fn dispatch_input_control(
+        self: &Arc<Self>,
+        target: &Value,
+        id: &str,
+    ) -> Result<Value, String> {
+        let key = input_queue::scope(target);
+        let row = self.input_queue.change(&key, id, |row| {
+            if row.state != "queued" {
+                return Err("此原生操作已经处理或结果未确认，不会自动重发。".into());
+            }
+            row.state = "sending".into();
+            Ok(())
+        })?;
+        let mut input = row.input.clone().ok_or("原生操作缺少已准备输入")?;
+        input["request_id"] = json!(row.delivery_id);
+        let result = self
+            .provider_call(
+                row.target["source"].as_str().unwrap_or_default(),
+                &row.operation,
+                row.target.clone(),
+                input,
+            )
+            .await;
+        let saved = self.input_queue.change(&key, id, |row| {
+            match result {
+                Ok(result) => {
+                    row.result = Some(result);
+                    row.state = "completed".into();
+                }
+                Err(error) => {
+                    let native_reject =
+                        error.contains("code -32601") || error.contains("code -32602");
+                    row.state = if native_reject
+                        || (!uncertain(&error) && !error.contains("grok_sdk_native_error"))
+                    {
+                        "failed"
+                    } else {
+                        "unknown"
+                    }
+                    .into();
+                    row.error = Some(error);
+                }
+            }
+            Ok(())
+        })?;
+        Ok(Self::input_receipt(&saved))
+    }
+
+    pub(crate) fn input_stop_requested(
+        &self,
+        target: &Value,
+        requested: bool,
+    ) -> Result<(), String> {
+        let key = input_queue::scope(target);
+        if let Some(current) = self.input_queue.first(&key)
+            && matches!(current.state.as_str(), "sending" | "accepted")
+        {
+            self.input_queue.change(&key, &current.id, |row| {
+                row.stop_requested = requested;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    async fn provider_call(
+        &self,
+        source: &str,
+        method: &str,
+        target: Value,
+        input: Value,
+    ) -> Result<Value, String> {
+        let provider = self
+            .providers
+            .get(source)
+            .ok_or_else(|| format!("此机器未配置 {source} SDK 模式"))?;
+        dispatch!(provider, bridge, bridge.call(method, target, input).await)
+    }
+
+    async fn run_input_queue(self: Arc<Self>) {
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
+        loop {
+            tokio::select! {_=self.shutdown.cancelled()=>return,_=tick.tick()=>{},_=self.queue_wake.notified()=>{}}
+            for (key, target) in self.input_queue.runnable() {
+                if !self
+                    .queue_workers
+                    .lock()
+                    .expect("SDK queue workers")
+                    .insert(key.clone())
+                {
+                    continue;
+                }
+                let sdks = self.clone();
+                tokio::spawn(async move {
+                    sdks.clone().work_inputs(&key, target).await;
+                    sdks.queue_workers
+                        .lock()
+                        .expect("SDK queue workers")
+                        .remove(&key);
+                });
+            }
+        }
+    }
+
+    async fn work_inputs(self: Arc<Self>, key: &str, target: Value) {
+        let source = target["source"].as_str().unwrap_or_default();
+        let native_key = if target["agent"].as_str().unwrap_or_default().is_empty() {
+            target["uid"].as_str().unwrap_or_default().to_owned()
+        } else {
+            format!(
+                "{}:{}",
+                target["uid"].as_str().unwrap_or_default(),
+                target["agent"].as_str().unwrap_or_default()
+            )
+        };
+        let Some(first) = self.input_queue.first(key) else {
+            return;
+        };
+        if let Err(error) = self
+            .provider_call(source, "open", target.clone(), json!({}))
+            .await
+        {
+            let _ = self.input_queue.change(key, &first.id, |row| {
+                if row.state == "queued" {
+                    row.state = "failed".into();
+                    row.error = Some(error);
+                }
+                Ok(())
+            });
+            return;
+        }
+        // This receiver is also the provider's active-work lease. It is retained
+        // while waiting behind another turn, sending and observing the result.
+        let Ok((mut snapshot, mut events)) = self.subscribe(source, &native_key) else {
+            return;
+        };
+        loop {
+            if self.shutdown.is_cancelled() {
+                return;
+            }
+            let Some(mut row) = self.input_queue.first(key) else {
+                return;
+            };
+            if !matches!(row.state.as_str(), "queued" | "accepted") {
+                return;
+            }
+            let raw = &snapshot["raw"];
+            if row.state == "queued" {
+                let ready = source == "opencode"
+                    || (raw["running"] != true
+                        && raw["requests"].as_array().is_none_or(Vec::is_empty));
+                if ready {
+                    let sending = self.input_queue.change(key, &row.id, |entry| {
+                        if entry.state != "queued" {
+                            return Err("SDK queue changed".into());
+                        }
+                        entry.state = "sending".into();
+                        entry.error = None;
+                        Ok(())
+                    });
+                    let Ok(sending) = sending else { continue };
+                    row = sending;
+                    let Some(mut input) = row.input.clone() else {
+                        let _ = self.input_queue.change(key, &row.id, |entry| {
+                            entry.state = "failed".into();
+                            entry.error = Some("输入尚未完成准备，请明确重试。".into());
+                            Ok(())
+                        });
+                        return;
+                    };
+                    input["request_id"] = json!(row.delivery_id);
+                    let result = self
+                        .provider_call(source, "turn", target.clone(), input)
+                        .await;
+                    let saved = self.input_queue.change(key, &row.id, |entry| {
+                        match result {
+                            Ok(result) => {
+                                entry.result = Some(result);
+                                entry.state = "accepted".into();
+                            }
+                            Err(error) => {
+                                entry.state = if uncertain(&error) {
+                                    "unknown"
+                                } else {
+                                    "failed"
+                                }
+                                .into();
+                                entry.error = Some(error);
+                            }
+                        }
+                        Ok(())
+                    });
+                    if saved.is_err() {
+                        return;
+                    }
+                    match self.subscribe(source, &native_key) {
+                        Ok((current, receiver)) => {
+                            snapshot = current;
+                            events = receiver;
+                        }
+                        Err(_) => return,
+                    }
+                    continue;
+                }
+            } else {
+                let observed = observed_input(source, &row, raw);
+                if observed
+                    && row.consumption != "observed"
+                    && let Ok(current) = self.input_queue.change(key, &row.id, |entry| {
+                        entry.consumption = "observed".into();
+                        Ok(())
+                    })
+                {
+                    row = current;
+                }
+                let native_queued = source == "opencode"
+                    && raw["queue"].as_array().into_iter().flatten().any(|entry| {
+                        entry["id"]
+                            == row
+                                .result
+                                .as_ref()
+                                .map(|r| r["message_id"].clone())
+                                .unwrap_or(Value::Null)
+                    });
+                let native_admitted = source == "opencode"
+                    && raw["items"].as_array().into_iter().flatten().any(|item| {
+                        item["native_admitted"] == true
+                            && row.result.as_ref().is_some_and(|result| {
+                                result["message_id"].is_string()
+                                    && item["native_id"] == result["message_id"]
+                            })
+                    });
+                let done = if source == "opencode" {
+                    observed
+                        || native_queued
+                        || native_admitted
+                        || (raw["running"] != true
+                            && raw.get("error").is_some_and(|error| {
+                                !error.is_null() && error.as_str() != Some("")
+                            }))
+                } else {
+                    raw["running"] != true
+                };
+                if done {
+                    let error = raw
+                        .get("error")
+                        .filter(|error| !error.is_null() && error.as_str() != Some(""));
+                    let _ = self.input_queue.change(key, &row.id, |entry| {
+                        if let Some(error) = error {
+                            entry.state = if raw["error_kind"] == "interrupted"
+                                || (entry.stop_requested && raw["error_kind"] == "turn")
+                            {
+                                "completed"
+                            } else if raw["error_kind"] == "turn" {
+                                "failed"
+                            } else {
+                                "unknown"
+                            }
+                            .into();
+                            entry.error = Some(
+                                error
+                                    .as_str()
+                                    .map(str::to_owned)
+                                    .unwrap_or_else(|| error.to_string()),
+                            );
+                        } else {
+                            entry.state = "completed".into();
+                            if !observed {
+                                if native_queued {
+                                    entry.consumption = "native_queued".into();
+                                } else if native_admitted {
+                                    entry.consumption = "native_accepted".into();
+                                }
+                            }
+                        }
+                        Ok(())
+                    });
+                    continue;
+                }
+            }
+            tokio::select! {
+                _=self.shutdown.cancelled()=>return,
+                _=tokio::time::sleep(std::time::Duration::from_millis(350))=>{},
+                event=events.recv()=>match event {
+                    Ok(event)=>{if let Ok(value)=serde_json::from_str::<Value>(&event) && value["type"]=="snapshot"{snapshot=value;}},
+                    Err(broadcast::error::RecvError::Lagged(_))=>{match self.subscribe(source,&native_key){Ok((current,receiver))=>{snapshot=current;events=receiver;},Err(_)=>return}},
+                    Err(broadcast::error::RecvError::Closed)=>{
+                        let _=self.input_queue.change(key,&row.id,|entry|{if entry.state=="accepted"{entry.state="unknown".into();entry.error=Some("原生事件连接结束，投递结果未确认；不会自动重发。".into());}Ok(())});return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn uncertain(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    [
+        "disconnect",
+        "transport",
+        "timeout",
+        "shutdown",
+        "no_result",
+        "worker",
+        "broken pipe",
+        "unexpected eof",
+        "unknown",
+    ]
+    .iter()
+    .any(|term| error.contains(term))
+}
+
+fn observed_input(source: &str, row: &QueuedInput, raw: &Value) -> bool {
+    raw["items"].as_array().into_iter().flatten().any(|item| {
+        if item["role"] != "user" {
+            return false;
+        }
+        match source {
+            "agy" => {
+                item["request_id"] == row.delivery_id
+                    && item["native"]["step_type"] == "user_input"
+                    && item["native_id"].is_string()
+            }
+            "claude" => {
+                item["native_echo"] == true
+                    && row.result.as_ref().is_some_and(|result| {
+                        result["message_id"].is_string()
+                            && item["native_id"] == result["message_id"]
+                    })
+            }
+            "opencode" => {
+                item["delivery_state"] == "consumed"
+                    && row.result.as_ref().is_some_and(|result| {
+                        result["message_id"].is_string()
+                            && item["native_id"] == result["message_id"]
+                    })
+            }
+            _ => false,
+        }
+    })
 }

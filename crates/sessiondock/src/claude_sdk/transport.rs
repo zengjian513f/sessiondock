@@ -27,6 +27,12 @@ impl Bridge {
             // project with the same UUID. Native CLI owns all transcript writes.
             if session.path.is_file() {
                 command.arg(format!("--resume={}", session.path.to_string_lossy()));
+            } else if let Some((source, at)) = &session.fork {
+                command
+                    .arg(format!("--resume={}", source.to_string_lossy()))
+                    .arg("--fork-session")
+                    .arg(format!("--session-id={}", session.sid))
+                    .arg(format!("--resume-session-at={at}"));
             } else {
                 command.arg(format!("--session-id={}", session.sid));
             }
@@ -77,6 +83,8 @@ impl Bridge {
                 .ok_or("claude_sdk: stderr unavailable")?;
             let pid = child.id();
             let failed = CancellationToken::new();
+            let idle_stop = CancellationToken::new();
+            let (done, done_rx) = watch::channel(false);
             let (tx, rx) = mpsc::unbounded_channel();
             {
                 let mut live = lock(&session.live);
@@ -86,7 +94,16 @@ impl Bridge {
                 live.state_observed = false;
                 live.native_running = false;
                 live.runtime_stop = Some(failed.clone());
+                live.idle_stop = Some(idle_stop.clone());
+                live.runtime_done = Some(done_rx);
+                live.idle_since = None;
                 live.error = None;
+                live.error_kind = None;
+                live.background_tasks.clear();
+                if let Some(settings) = live.settings.as_object_mut() {
+                    settings.remove("fast_mode_state");
+                    settings.remove("fast_mode_disabled_reason");
+                }
                 live.streaming_blocks.clear();
                 live.stderr.clear();
             }
@@ -119,6 +136,7 @@ impl Bridge {
                                     live.error = Some(
                                         "claude_sdk: invalid native stream-json output".into(),
                                     );
+                                    live.error_kind = Some("transport");
                                     reader_session.publish(&mut live);
                                     reader_failed.cancel();
                                     break;
@@ -147,6 +165,7 @@ impl Bridge {
                     result=child.wait()=>result.ok(),
                     _=shutdown.cancelled()=>{deliberate=true; None},
                     _=session.stop.cancelled()=>{deliberate=true; None},
+                    _=idle_stop.cancelled()=>{deliberate=true; None},
                     _=failed.cancelled()=>None,
                 };
                 if status.is_none() && !deliberate {
@@ -196,6 +215,10 @@ impl Bridge {
                 live.ready = false;
                 live.native_running = false;
                 live.runtime_stop = None;
+                live.idle_stop = None;
+                live.runtime_done = None;
+                live.idle_since = None;
+                live.background_tasks.clear();
                 live.turns.clear();
                 live.requests.clear();
                 if !deliberate
@@ -206,20 +229,49 @@ impl Bridge {
                     live.error = Some(format!(
                         "claude_sdk_disconnected: native CLI exited; accepted input is not replayed. {diagnostic}"
                     ));
+                    live.error_kind = Some("transport");
                 }
+                // initialize is a control request too. Preserve the already
+                // redacted exit diagnostic when its waiter reports failure;
+                // otherwise ensure would replace it with a generic error.
+                let control_error = live.error.clone().unwrap_or_else(|| {
+                    "claude_sdk_disconnected: native CLI exited; request outcome unknown".into()
+                });
                 for (_, response) in std::mem::take(&mut live.controls) {
-                    let _ = response.send(Err(
-                        "claude_sdk_disconnected: native CLI exited; request outcome unknown"
-                            .into(),
-                    ));
+                    let _ = response.send(Err(control_error.clone()));
                 }
                 session.publish(&mut live);
+                let _ = done.send(true);
             });
         }
-        match session
+        let initialized = session
             .control(json!({"subtype":"initialize","hooks":null,"supportedDialogKinds":["refusal_fallback_prompt"]}))
-            .await
-        {
+            .await;
+        let initialized = match initialized {
+            Ok(mut initialized) => {
+                let settings = lock(&session.live).settings.clone();
+                async {
+                    // An idle child is resumed into a fresh native runtime.
+                    // Preserve this session's previously confirmed choices;
+                    // the CLI still applies its current policy restrictions.
+                    if let Some(mode) = settings["permission_mode"].as_str() {
+                        session.control(json!({"subtype":"set_permission_mode","mode":mode})).await?;
+                    }
+                    if let Some(fast) = settings["fast_mode"].as_bool() {
+                        session.control(json!({"subtype":"apply_flag_settings","settings":{"fastMode":fast}})).await?;
+                        // initialize predates this update; the next native
+                        // event supplies the new effective Fast state.
+                        if let Some(fields) = initialized.as_object_mut() {
+                            fields.remove("fast_mode_state");
+                            fields.remove("fast_mode_disabled_reason");
+                        }
+                    }
+                    Ok(initialized)
+                }.await
+            }
+            Err(error) => Err(error),
+        };
+        match initialized {
             Ok(initialized) => {
                 let mut live = lock(&session.live);
                 if live.outbound.is_none() {
@@ -227,7 +279,9 @@ impl Bridge {
                 }
                 live.models = initialized["models"].clone();
                 for field in ["fast_mode_state", "fast_mode_disabled_reason"] {
-                    if let Some(value) = initialized.get(field) { live.settings[field] = value.clone(); }
+                    if let Some(value) = initialized.get(field) {
+                        live.settings[field] = value.clone();
+                    }
                 }
                 if let Some(models) = live.models.as_array_mut() {
                     for model in models {
@@ -245,9 +299,14 @@ impl Bridge {
                 live.ready = true;
                 session.publish(&mut live);
                 drop(live);
-                for field in ["pending_permission_requests", "pending_user_dialog_requests"] {
+                for field in [
+                    "pending_permission_requests",
+                    "pending_user_dialog_requests",
+                ] {
                     if let Some(requests) = initialized[field].as_array() {
-                        for request in requests { protocol::observe(session, request.clone()); }
+                        for request in requests {
+                            protocol::observe(session, request.clone());
+                        }
                     }
                 }
                 Ok(())
@@ -258,6 +317,7 @@ impl Bridge {
                 // later open may retry this same selected session.
                 let mut live = lock(&session.live);
                 live.error = Some(error.clone());
+                live.error_kind = Some("transport");
                 if let Some(stop) = &live.runtime_stop {
                     stop.cancel();
                 }
@@ -276,7 +336,11 @@ impl Bridge {
             let sid = session.sid.to_ascii_lowercase();
             let cwd = session.cwd.to_string_lossy().into_owned();
             let path = session.path.to_string_lossy().into_owned();
-            let own_pid = lock(&session.live).pid;
+            let own_pids: std::collections::BTreeSet<_> = lock(&self.state)
+                .sessions
+                .values()
+                .filter_map(|session| lock(&session.live).pid)
+                .collect();
             let conflict = tokio::task::spawn_blocking(move || {
                 let scan = scan(
                     Arc::new(ProcTree::open(root)),
@@ -287,7 +351,7 @@ impl Bridge {
                     let mut current = pid;
                     let mut visited = std::collections::BTreeSet::new();
                     while current > 1 && visited.insert(current) {
-                        if Some(current) == own_pid {
+                        if own_pids.contains(&current) {
                             return true;
                         }
                         let Some(parent) = scan.tree.parent(current) else {

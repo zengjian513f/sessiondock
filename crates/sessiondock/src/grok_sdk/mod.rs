@@ -1,7 +1,9 @@
 //! Grok's native ACP bridge. Contract and protocol evidence: docs/grok-sdk.md.
 //! No HTTP, PTY keystrokes, native transcript writes or implicit CLI discovery.
 mod actions;
+mod idle;
 mod live;
+mod steering;
 mod transport;
 
 use crate::{
@@ -31,6 +33,7 @@ struct Session {
     live: Arc<Mutex<Live>>,
     connection: Arc<Connection>,
     turns: Arc<AsyncMutex<()>>,
+    steer_gate: AsyncMutex<()>,
 }
 
 pub struct Bridge {
@@ -111,7 +114,7 @@ pub fn new(config: &Config, shutdown: CancellationToken) -> io::Result<Option<Ar
         .grok_active
         .clone()
         .unwrap_or_else(|| home.join("active_sessions.json"));
-    Ok(Some(Arc::new(Bridge {
+    let bridge = Arc::new(Bridge {
         root,
         home,
         profile,
@@ -122,7 +125,9 @@ pub fn new(config: &Config, shutdown: CancellationToken) -> io::Result<Option<Ar
         attach: AsyncMutex::new(()),
         creates: AsyncMutex::new(HashMap::new()),
         mutations: AsyncMutex::new(HashMap::new()),
-    })))
+    });
+    bridge.start_idle_reaper();
+    Ok(Some(bridge))
 }
 
 impl Bridge {
@@ -161,7 +166,8 @@ impl Bridge {
             .get(key)
             .cloned()
             .ok_or("grok_sdk_not_open")?;
-        let live = session.live.lock().unwrap();
+        let mut live = session.live.lock().unwrap();
+        live.idle_since = None;
         // snapshot and receiver are established under the publication lock.
         Ok((live.snapshot(), live.events.subscribe()))
     }
@@ -210,6 +216,7 @@ impl Bridge {
                 | "rewind_points"
                 | "rewind"
                 | "shell"
+                | "steer"
         ) {
             return Err(format!("grok_sdk_unsupported_method: {method}"));
         }
@@ -231,6 +238,7 @@ impl Bridge {
             }
             "turn" => self.turn(session, &input, false).await,
             "shell" => self.turn(session, &input, true).await,
+            "steer" => self.steer(&session, &input).await,
             "usage" | "billing" | "rewind_points" => self.read_extension(&session, method).await,
             "settings" | "compact" | "fork" | "rewind" => {
                 self.mutate(session, method, &input).await
@@ -325,6 +333,7 @@ impl Bridge {
                 return Err("grok_sdk_identity_mismatch".into());
             }
             if session.connection.alive.load(Ordering::Acquire) {
+                session.live.lock().unwrap().idle_since = None;
                 return Ok(session);
             }
             // Keep the same live projection and receipt cache on transport
@@ -368,6 +377,7 @@ impl Bridge {
             let mut state = live.lock().unwrap();
             state.settings(&result);
             state.error = None;
+            state.error_kind = None;
             state.publish();
         }
         let session = Arc::new(Session {
@@ -378,6 +388,7 @@ impl Bridge {
             live,
             connection,
             turns: Arc::new(AsyncMutex::new(())),
+            steer_gate: AsyncMutex::new(()),
         });
         self.sessions.lock().unwrap().insert(key, session.clone());
         Ok(session)
@@ -432,7 +443,7 @@ impl Bridge {
             let uid = crate::sessions::uid_for("grok", &path);
             { let mut state = live.lock().unwrap(); state.sid = sid.clone(); state.settings(&result); }
             self.configure(&connection, &sid, input, &live).await?;
-            let session = Arc::new(Session { uid:uid.clone(), sid, cwd:actual_cwd, path, live:live.clone(), connection:connection.clone(), turns:Arc::new(AsyncMutex::new(())) });
+            let session = Arc::new(Session { uid:uid.clone(), sid, cwd:actual_cwd, path, live:live.clone(), connection:connection.clone(), turns:Arc::new(AsyncMutex::new(())), steer_gate:AsyncMutex::new(()) });
             self.sessions.lock().unwrap().insert(uid, session.clone());
             session.live.lock().unwrap().publish();
             let mut receipt = self.receipt(&session);
@@ -508,7 +519,7 @@ impl Bridge {
                 let result = connection
                     .request(
                         "session/set_config_option",
-                        json!({"sessionId":sid,"configId":config_id,"value":{"value":value}}),
+                        json!({"sessionId":sid,"configId":config_id,"value":value}),
                     )
                     .await?;
                 let mut state = live.lock().unwrap();
@@ -578,6 +589,7 @@ impl Bridge {
             state.cancel_requested = false;
             state.prompt_started = false;
             state.error = None;
+            state.error_kind = None;
             state.turn += 1;
             state.items.push(json!({"id":format!("grok:{}:user:{}",session.sid,request_id),"role":if shell {"tool"} else {"user"},"content":text,"tool_name":if shell {json!("shell")} else {Value::Null},"request_id":request_id}));
             state.publish();
@@ -626,7 +638,23 @@ impl Bridge {
                         state.usage["last_turn"] = live::scrub_usage(usage);
                     }
                 }
-                Err(error) => state.error = Some(error),
+                Err(error) => {
+                    state.error_kind = Some(
+                        if matches!(
+                            error.as_str(),
+                            "grok_sdk_disconnected"
+                                | "grok_sdk_shutdown"
+                                | "grok_sdk_read_failed"
+                                | "grok_sdk_write_failed"
+                                | "grok_sdk_invalid_protocol"
+                        ) {
+                            "transport"
+                        } else {
+                            "turn"
+                        },
+                    );
+                    state.error = Some(error);
+                }
             }
             state.publish();
         });
@@ -657,7 +685,12 @@ impl Bridge {
             return Ok(json!({"discarded":true,"native_preserved":true}));
         };
         let state = session.live.lock().unwrap();
-        if state.running || !state.requests.is_empty() {
+        if state.running
+            || !state.requests.is_empty()
+            || state.has_pending_steers()
+            || !state.native_tasks.is_empty()
+            || state.incomplete_tasks
+        {
             return Err("grok_sdk_busy".into());
         }
         session.connection.stop.cancel();
@@ -717,7 +750,7 @@ fn capabilities(live: &Live) -> Value {
         "images":live.images,"usage":supported("usage"),"billing":supported("billing"),
         "settings":!live.modes.is_null() || !live.config.is_null(),"mode":!live.modes.is_null(),
         "compact":supported("compact"),"fork":supported("fork"),"rewind_points":supported("rewind_points"),
-        "rewind":supported("rewind"),"shell":true,
+        "rewind":supported("rewind"),"shell":true,"steer":supported("steer"),
         "models":!live.models.is_null() || !live.config.is_null(),"effort":live.config.as_array().is_some_and(|options|options.iter().any(|o|o["id"] == "reasoning_effort")),
         "shared_tui":false,"transport":"grok-acp-stdio","limitations":["独立 TUI 无法共享本桥接的 ACP 进程；外部占用会话拒绝发送", "扩展按原生返回判断支持；未认证安装版只验证过握手", "连接丢失后不重放已接受的 turn", "原生 shell 按 CLI 的直接执行权限运行"]})
 }

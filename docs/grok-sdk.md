@@ -118,8 +118,67 @@ PID 为空的匹配原生活动标记也会报告冲突；已退出或 zombie PI
 - models 对已打开会话返回 `{models: availableModels, native, configOptions, capabilities}`。
   创建前可使用 target `{source: "grok", cwd}`，仅读 initialize.modelState，
   随后关闭该探测进程，不创建会话。没有原生模型数据时明确报 unsupported。
+  网页新建的 `/api/term/models?source=grok` 同样从当前 profile 的专用
+  `agent --no-leader stdio` 进程执行 initialize，读取原生 modelState；不依赖
+  `models_cache.json`，不加载会话、不发送 prompt。目录缓存十分钟，原生握手
+  最长等待十五秒，结束及超时均回收此探测进程组；Linux 父进程退出时也回收探测进程。
+  每个模型的推理强度来自其 `_meta.reasoningEfforts`。
+- `session/set_config_option.value` 使用原生字符串（例如 `"low"`），不是
+  `{value:"low"}`。安装版 1.0.62 对后者返回 -32602；真实 profile 验证了
+  grok-4.6 / low 设置及 configOptions 回执，未发模型请求。创建后设置失败可能
+  已生成空原生会话，不能把失败回包当作“没有创建”；验收按唯一 cwd登记并回收。
 - discard 只释放空闲桥接进程和本地连接；原生文件始终保留。
   正在运行或仍有审批时拒绝 discard。
+
+原生工具状态 `pending` / `in_progress` 优先于 rawOutput：安装版会在执行中
+附带默认 `exit_code:0` 和部分输出，这不是完成回执。桥接保留原始状态及
+部分 result；网页继续展示已到达输出，沿用现有工具状态样式显示等待/运行中。
+只有后续 completed /
+failed 事件才显示完成/出错，停止或 turn 结束不会推断工具已完成。
+
+## 显式原生引导与闲置回收
+
+`steer` 独立于普通 `turn`，接 `{request_id,text,images?}`，只在本桥接的原生 prompt
+已开始且仍运行时接收；普通发送继续串行等待，不隐式改变成引导。桥接发送
+`_x.ai/interject`，使用 `interjectionId=request_id`。非空结构化图片只在 initialize
+明确广告 image:true 时构造原生 `content` 文本/image 块；不接浏览器提供的任意
+原生 content 或本地文件路径。没有图片时发送向后兼容的 text wire。
+共享 HTTP 的可信附件发布及 image:false 路径降级沿用上述图片合同。
+
+原生 handler 将输入加入 interjection buffer，在模型/工具批次的安全点排入上下文。
+临近 turn 结束的竞态由原生处理：尚未 drain 的输入可能转为独立 fallback prompt，
+桥接不能承诺它一定进入正在显示的同一回合。原生 ACK 为 `{result:{status:"queued"}}`；
+`_x.ai/session/interjection` 广播发生在 actor enqueue 时，也不是模型消费确认。
+官方源码见固定版本 [interject handler](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/extensions/interject.rs)、
+[safe-point drain](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/session/acp_session_impl/interjection.rs)
+和 [actor enqueue](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs)。
+
+`raw.steers` 为独立回执数组，包含 request_id/interjection_id/session_id/text/status、
+accepted、native_received、consumed、generation/order 及可选静态 error。
+status 为 dispatching、native_queued、native_received、rejected、uncertain 或
+connection_closed。只有 queued ACK 才置 accepted:true；明确拒绝为 false；不确定为 null。
+原生广播置 native_received:true；consumed 始终保持 null，因为当前协议没有按该 ID
+确认 safe-point 消费的信号，不能根据模型输出、turn_end 或普通 user echo 猜测。
+同 request_id 在桥接生命周期内返回原回执/原错误；断线后不自动重发。
+`interjectionId` 是原生回显关联键，未证明是原生幂等键，不能靠它重试不确定写入。
+
+ACP child 在无订阅（包括共享持久队列 worker 持有的 receiver）、无运行中的桥接任务、
+无待答请求、turn gate 空闲且无未完成 RPC 后，连续闲置至少十分钟才释放。
+定时检查间隔为十五秒。已观察到的原生后台任务、子代理、定时任务、截断的后台任务列表、
+隐藏 native wake，以及当前 generation 尚不能证明终结的 steer 都阻止回收；
+不能因为原始 prompt RPC 已结束就假设这些工作已经完成。
+完整 background_tasks 快照替换对应后台任务集合，截断列表不被当作完整空闲证据。
+未决引导和隐藏 wake 目前保守保留 runtime，直到连接结束，不为了回收资源制造消费确认。
+
+回收只结束本桥接启动的 child，保留原生文件、会话 SID、内存去重回执及失败边界。
+再次打开精确 load 原 SID/cwd，清除上个已回收 runtime 的实时 items/统计；原生 replay
+继续留在普通历史，不自动发送旧 prompt 或 interjection。新连接的 error_kind 清空；
+明确的 prompt/configure 失败用 raw.error_kind:"turn"，EOF/传输失败用 "transport"。
+
+[生命周期浏览器用例](../tests/grok_sdk_lifecycle_browser.py) 真实点击原生引导对话框并
+验证回执/去重，以及订阅、运行、审批和后台任务的回收保护与同 SID 重开。
+十分钟计时通过只注入临时 HTTP 服务进程的 LD_PRELOAD monotonic clock 夹具加速，
+fake native CLI、浏览器及生产时长不被修改；生产没有测试 timeout override。
 
 新增 facade 方法及边界：
 

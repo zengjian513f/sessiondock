@@ -241,10 +241,10 @@ impl Bridge {
                 .controls
                 .insert(key, result.clone());
         }
-        if let Err(error) = self.refresh(session).await {
-            if let Ok(mut state) = session.state.lock() {
-                state.error(&error);
-            }
+        if let Err(error) = self.refresh(session).await
+            && let Ok(mut state) = session.state.lock()
+        {
+            state.error(&error);
         }
         session.wake.notify_one();
         Ok(result)

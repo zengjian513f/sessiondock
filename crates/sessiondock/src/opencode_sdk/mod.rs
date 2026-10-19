@@ -466,8 +466,21 @@ impl Bridge {
             .await;
             if let Ok(mut state) = task_session.state.lock() {
                 state.sending = state.sending.saturating_sub(1);
-                if let Err(error) = result {
-                    state.error(&error);
+                match result {
+                    Ok(_) => {
+                        // This is the native POST response, distinct from the
+                        // local asynchronous admission returned by turn(). A
+                        // concurrent poll can still contain pre-submit history.
+                        if let Some(item) = state
+                            .items
+                            .iter_mut()
+                            .find(|item| item["native_id"] == task_id)
+                        {
+                            item["native_admitted"] = json!(true);
+                        }
+                        state.publish();
+                    }
+                    Err(error) => state.error(&error),
                 }
             }
         });
@@ -695,7 +708,11 @@ impl Bridge {
             let projected = project::messages(&record);
             for item in projected {
                 if let Some(old) = state.items.iter_mut().find(|m| m["id"] == item["id"]) {
+                    let native_admitted = old["native_admitted"] == true;
                     *old = item;
+                    if native_admitted {
+                        old["native_admitted"] = json!(true);
+                    }
                 } else {
                     state.items.push(item);
                 }

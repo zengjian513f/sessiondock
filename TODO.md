@@ -23,10 +23,10 @@
 
 ## Native interaction semantics
 
-- [ ] 继续[五种 SDK 功能审计](docs/sdk-feature-audit.md)中剩余遗漏：持久输入队列、
-  失败重试/原生消费确认、Grok/Claude 闲置回收、Claude 原生分支、完整消息操作与
-  输入恢复、子代理专项验收。已补用量底栏、Agy effort/mode、命令分流、Grok 问答/
-  计划批准、Claude 图片/表单/设置/压缩及 OpenCode 队列/图片/会话操作。
+- [ ] 继续[五种 SDK 功能审计](docs/sdk-feature-audit.md)中剩余遗漏：完整消息操作/输入恢复、
+  子代理专项验收、原生消费证据与高级设置/动作。已补持久输入队列及失败恢复、
+  Grok 显式引导、Grok/Claude 闲置回收、Claude 原生分支；用量底栏、Agy effort/mode、
+  命令分流、问答/图片/表单/设置及原生会话操作的具体边界见审计表。
   “待”先核实原生语义；Grok 安装版 image:false 和 Agy headless 限制不伪造。
 
 - [ ] 跟进 BUG-20261018-122932-0e7a3c 另报的 SDK 等待现象：原生回复和工具调用
@@ -74,6 +74,13 @@
   Claude/Codex 可能回改旧消息，继续完整投影，不直接拼接旧事件。
 
 ## Validation stability
+
+- [ ] 定位 2026-10-19 真实 Codex 双标签页撤销的两次无响应超时：修复额外历史
+  SSE 后确认每页只剩两条流，后续四轮真实模型复测均成功；尚未重现原失败，
+  不能把连接池修复视作全部原因。保留原失败、请求与 pointer 事件记录。
+- [ ] 跟进同日 Agy 测试会话网页删除超时：原生启动遇工作区信任提示，新版
+  resume 菜单布局/搜索也与自动删除器预期有差异。本轮已通过原生当前会话
+  确认永久删除并验证原生索引/数据库/brain 和网页行消失；自动删除兼容性另验收。
 
 - [ ] 排查 `hub_pending_state_browser` 启动页等待 `networkidle` 的超时：
   BUG-20261008-120649-69fc59 修复验收时，工作区页面及未修改的 HEAD 页面均在

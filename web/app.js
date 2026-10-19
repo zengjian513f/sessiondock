@@ -2093,6 +2093,10 @@ function scheduleDiffRecovery(uid, agent = null) {
 
 function watchSession(uid, agent = S.agent) {
   closeWatch();
+  // SDK streams already carry live output. Keep the existing incremental
+  // polling for persisted history without a third long-lived HTTP/1 connection.
+  if (typeof SdkView !== 'undefined' && SdkView.pane
+      && SdkView.uid === uid && SdkView.agent === agent) return;
   if (SessionDockNetwork.paused) return;
   if (migrationReadPaused(uid, agent)) { renderMigrationReadFailure(uid, agent); return; }
   const e = cache.get(viewKey(uid, agent));
@@ -5967,7 +5971,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     // SDK connection can start now; history reuses this read once cached.
     if (!SessionContentView.kind && SdkView.defaultFor(uid, selectedAgent))
       SessionContentView.open('sdk', uid, selectedAgent, {historyReady});
-    else if (SessionContentView.kind === 'sdk' && SdkView.historyFailed) {
+    else if (SessionContentView.kind === 'sdk') {
       SdkView.historyReady = historyReady;
       SdkView.refreshHistory(SdkView.generation);
     }

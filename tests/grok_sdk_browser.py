@@ -49,6 +49,7 @@ def watch(page, uid):
       es.addEventListener('sdk', e => {
         const event=JSON.parse(e.data);
         if(event.type==='snapshot') {window.__grokSnapshot=event.raw;window.__grokSeqs.push(event.seq);}
+        else if(event.type==='input_queue' && window.__grokSnapshot) Object.assign(window.__grokSnapshot,event.raw);
       });
     }""", uid)
     page.wait_for_function("window.__grokSnapshot !== null")
@@ -61,8 +62,11 @@ def capture_state(page, screenshots, name, target=None, popover=False):
         if popover and page.locator("#sdk-usage-menu").is_visible():
             page.locator("#sdk-usage-toggle").click()
         page.set_viewport_size({"width":width,"height":900})
-        # Resize handlers settle asynchronously; selecting a sidebar row during
-        # that transition races the mobile pane becoming visible.
+        # Let the media-query handler choose the mobile list/detail scene.
+        page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+        if width < 500 and not page.evaluate("document.body.classList.contains('mobile-detail')"):
+            selected=page.evaluate("S.sel")
+            page.locator(f'#side .item[data-uid="{selected}"]').click()
         expect(page.locator("#sdk-input")).to_be_visible()
         if popover:
             page.locator("#sdk-usage-toggle").click()
@@ -93,6 +97,34 @@ def exercise(browser, base, fixture, screenshots):
     rows = page.evaluate("S.sessions")
     uid = next(row["uid"] for row in rows if row.get("session_id", row.get("sid")) == fixture.sid
                or row.get("title") == "Synthetic Grok SDK")
+    # The real installation has no models_cache.json. New-session controls must
+    # use initialize.modelState without creating/loading any native session.
+    assert not (fixture.home / "models_cache.json").exists()
+    page.locator("#new-session").click()
+    page.locator('label:has(input[name=new-source][value=grok])').click()
+    expect(page.locator("#new-model")).to_be_enabled()
+    assert not fixture.received("session/new") and not fixture.received("session/load")
+    assert not fixture.received("session/prompt")
+    page.locator("#new-model").click()
+    page.locator('#new-model-options [title="fake-other"]').click()
+    page.locator("#new-effort").select_option("low")
+    page.locator("#new-cwd").fill(str(fixture.work))
+    with page.expect_response(lambda response: response.url.endswith('/api/native-sdk/create')) as created:
+        page.locator("#new-session-go").click()
+    assert created.value.ok, created.value.text()
+    create_input = created.value.request.post_data_json
+    assert create_input["model"] == "fake-other" and create_input["effort"] == "low", create_input
+    receipt = created.value.json()
+    assert receipt["session_id"] != fixture.sid, receipt
+    expect(page.locator("#sdk-input")).to_be_visible()
+    created_raw = api(page,"open",{"uid":receipt["uid"]})["raw"]
+    options = {row["id"]:row["currentValue"] for row in created_raw["configOptions"]}
+    assert options == {"model":"fake-other","reasoning_effort":"low"}, options
+    configured = fixture.received("session/set_config_option")
+    assert [row["params"]["value"] for row in configured[-2:]] == ["fake-other","low"]
+    assert len(fixture.received("session/new")) == 1 and not fixture.received("session/prompt")
+    if screenshots:
+        page.screenshot(path=str(screenshots / "grok-native-catalog-create.png"),full_page=True)
     select(page, uid)
     opened = api(page, "open", {"uid": uid})
     assert opened["session_id"] == fixture.sid and opened["cwd"] == str(fixture.work), opened
@@ -116,6 +148,15 @@ def exercise(browser, base, fixture, screenshots):
         raise
     pending = page.evaluate("window.__grokSnapshot")
     assert pending["running"] and pending["requests"][0]["type"] == "approval"
+    native_tool = next(item for item in pending["items"] if item["role"] == "tool")
+    assert native_tool["status"] == "in_progress" and native_tool["tool_result"]["exit_code"] == 0
+    assert native_tool["result"]["text"] == "partial native stdout", "partial native output was lost"
+    tool_card = page.locator('.sdk-live .tool-msg').filter(has_text='Synthetic command')
+    expect(tool_card.locator('.tool-status')).to_have_text('运行中…')
+    expect(tool_card).not_to_contain_text('✓ 完成')
+    expect(tool_card.locator('.tool-out')).to_contain_text('partial native stdout')
+    if screenshots:
+        page.screenshot(path=str(screenshots / 'grok-tool-in-progress.png'),full_page=True)
     assert not [m for m in fixture.received() if isinstance(m.get("id"), str) and "method" not in m], "permission was auto-answered"
     assert sends and sends[-1].get("request_id"), "UI must retain submission identity"
     prompt_count = len(fixture.received("session/prompt"))
@@ -129,6 +170,8 @@ def exercise(browser, base, fixture, screenshots):
     assert tools[-1]["tool_input"] == {"command": "printf synthetic"}
     assert tools[-1]["tool_result"] == {"output": "Grok native tool result"}
     assert tools[-1]["result"]["error"] is False
+    expect(tool_card.locator('.tool-status')).to_contain_text('✓ 完成')
+    expect(tool_card.locator('.tool-out')).to_contain_text('Grok native tool result')
     expect(page.locator(".sdk-live")).to_contain_text("Grok final answer")
     if screenshots:
         for width in (1280,390,320):
@@ -207,9 +250,9 @@ def exercise(browser, base, fixture, screenshots):
 
     # Native compaction and direct shell use their own protocol operations.
     page.locator("#sdk-more").click()
-    with page.expect_response(lambda response: response.url.endswith("/api/native-sdk/compact") and response.request.method == "POST"):
+    with page.expect_response(lambda response: response.url.endswith("/api/native-sdk/compact") and response.request.method == "POST") as compact_response:
         page.locator('[data-sdk-action="compact"]').click()
-    expect(page.locator(".sdk-status")).to_contain_text("原生操作已接受")
+    assert compact_response.value.status < 300
     compact_body = next(body for method,body in reversed(operations) if method == "compact")
     count = len(fixture.received("x.ai/compact_conversation"))
     api(page,"compact",compact_body)
@@ -227,9 +270,9 @@ def exercise(browser, base, fixture, screenshots):
     page.locator("#sdk-more").click()
     page.locator('[data-sdk-action="rewind"]').click()
     page.get_by_role("combobox",name="回退消息",exact=True).select_option("0")
-    with page.expect_response(lambda response: response.url.endswith("/api/native-sdk/rewind") and response.request.method == "POST"):
+    with page.expect_response(lambda response: response.url.endswith("/api/native-sdk/rewind") and response.request.method == "POST") as rewind_response:
         page.get_by_role("button",name="回退",exact=True).click()
-    expect(page.locator(".sdk-status")).to_contain_text("原生操作已接受")
+    assert rewind_response.value.status < 300
     rewind = fixture.received("x.ai/rewind/execute")[-1]["params"]
     assert rewind["mode"] == "conversation_only" and rewind["force"] is False
     rewind_body = next(body for method,body in reversed(operations) if method == "rewind")
@@ -269,7 +312,8 @@ def exercise(browser, base, fixture, screenshots):
     page.wait_for_function("window.__grokSnapshot?.running === true")
     page.locator("#sdk-input").fill("FIFO queued while active")
     page.locator("#sdk-send").click()
-    expect(page.locator("#sdk-input")).to_have_value("FIFO queued while active")
+    page.wait_for_function("window.__grokSnapshot?.input_queue?.some(i=>i.text==='FIFO queued while active' && i.state==='queued')")
+    expect(page.locator("#sdk-input")).to_have_value("")
     page.locator("#sdk-stop").click()
     page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && window.__grokSnapshot.items.some(i=>i.content==='FIFO queued while active')")
     prompts = fixture.received("session/prompt")
@@ -286,14 +330,17 @@ def exercise(browser, base, fixture, screenshots):
     api(page, "turn", {"uid": uid, "request_id": "native-error", "text": "native-error"})
     page.wait_for_function("window.__grokSnapshot?.error?.includes('grok_sdk_native_error')")
     assert not snapshot(page, uid)["running"]
+    failed_card=page.locator('[data-queue-origin="bridge"]').filter(has_text="native-error")
+    failed_card.get_by_role("button",name="撤销",exact=True).click()
 
     # Native create identity, retry cache and model/effort without a PTY.
     create = {"source": "grok", "cwd": str(fixture.work), "request_id": "grok-create-retry",
               "model": "fake-other", "effort": "high"}
+    create_count = len(fixture.received("session/new"))
     created = api(page, "create", create)
     retried = api(page, "create", create)
     assert created["uid"] == retried["uid"] and created["session_id"] == retried["session_id"]
-    assert len(fixture.received("session/new")) == 1
+    assert len(fixture.received("session/new")) == create_count + 1
     new_sid = created["session_id"]
     assert created["session"]["source"] == "grok" and created["cwd"] == str(fixture.work)
     native = fixture.path.parent / new_sid
@@ -331,6 +378,10 @@ def exercise(browser, base, fixture, screenshots):
     page.wait_for_function("T.listLoaded")
     select(page,uid)
     watch(page,uid)
+    unknown_card=page.locator('[data-queue-origin="bridge"]').filter(has_text="disconnect")
+    unknown_card.get_by_role("button",name="移除记录",exact=True).click()
+    page.get_by_role("dialog").get_by_role("button",name="移除记录",exact=True).click()
+    expect(unknown_card).to_have_count(0)
     expect(page.locator("#native-media-note")).to_be_visible()
     expect(page.locator("#native-media-note")).to_contain_text("仅发送图片路径引用")
     page.locator("#sdk-add").click()
@@ -368,12 +419,12 @@ def exercise(browser, base, fixture, screenshots):
     process.mkdir()
     (process / "stat").write_text(f"{pid} (grok) S 1 " + "0 " * 30 + "\n")
     fixture.active.write_text(json.dumps({"sessions": [{"id": fixture.sid, "pid": pid}]}))
-    result = page.evaluate("""async uid => {
-      const r=await fetch('/api/native-sdk/turn',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({uid,text:'external writer',request_id:'busy'})});
-      return {status:r.status,body:await r.json()};
-    }""", uid)
-    assert result["status"] >= 400 and "grok_sdk_session_busy" in json.dumps(result)
+    count=len(fixture.received("session/prompt"))
+    page.locator("#sdk-input").fill("external writer")
+    page.locator("#sdk-send").click()
+    blocked=page.locator('[data-queue-origin="bridge"]').filter(has_text="external writer")
+    expect(blocked).to_contain_text("grok_sdk_session_busy")
+    assert len(fixture.received("session/prompt"))==count,"queue admission bypassed native writer protection"
     assert (process / "stat").exists()
     fixture.active.unlink()
     assert not failures, failures

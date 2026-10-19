@@ -1,6 +1,10 @@
 //! OpenCode v2's documented `api` machine client. No terminal input, database
 //! writes or private service-registration/credential-file reads.
-use std::{path::Path, process::Stdio, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 
 use serde_json::Value;
 use tokio::{io::AsyncReadExt, process::Command};
@@ -11,6 +15,34 @@ use crate::lifecycle::launcher::{CliProfile, DENIED_ENV};
 pub(super) struct Transport {
     pub profile: CliProfile,
     pub shutdown: CancellationToken,
+}
+
+// OpenCode's machine client can exit before a large pipe write drains. A
+// regular private file makes its stdout synchronous; retain it through wait,
+// read the complete response, and remove it on every return path.
+struct CapturedOutput(PathBuf);
+
+impl CapturedOutput {
+    fn create() -> Result<(Self, std::fs::File), String> {
+        let path = std::env::temp_dir().join(super::random_id("sessiondock-opencode-stdout-")?);
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options
+            .open(&path)
+            .map_err(|e| format!("OpenCode API stdout 文件不可用: {e}"))?;
+        Ok((Self(path), file))
+    }
+}
+
+impl Drop for CapturedOutput {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 impl Transport {
@@ -54,6 +86,7 @@ impl Transport {
         }
         let executable = std::fs::canonicalize(&self.profile.executable)
             .map_err(|e| format!("OpenCode CLI 不可用: {e}"))?;
+        let (capture, stdout) = CapturedOutput::create()?;
         let mut command = Command::new(executable);
         command.args(&self.profile.args).args(args);
         for name in &self.profile.env_remove {
@@ -66,7 +99,7 @@ impl Transport {
         command
             .current_dir(cwd)
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
+            .stdout(Stdio::from(stdout))
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         #[cfg(unix)]
@@ -76,12 +109,7 @@ impl Transport {
         let mut child = command
             .spawn()
             .map_err(|e| format!("OpenCode API 启动失败: {e}"))?;
-        let mut stdout = child.stdout.take().ok_or("OpenCode API stdout 不可用")?;
         let mut stderr = child.stderr.take().ok_or("OpenCode API stderr 不可用")?;
-        let out = tokio::spawn(async move {
-            let mut bytes = Vec::new();
-            stdout.read_to_end(&mut bytes).await.map(|_| bytes)
-        });
         let err = tokio::spawn(async move {
             let mut bytes = Vec::new();
             stderr.read_to_end(&mut bytes).await.map(|_| bytes)
@@ -102,9 +130,8 @@ impl Transport {
             let _ = child.kill().await;
             let _ = child.wait().await;
         }
-        let output = out
+        let output = tokio::fs::read(&capture.0)
             .await
-            .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
         let diagnostic = err
             .await
