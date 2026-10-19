@@ -89,6 +89,12 @@ done
 TURN = re.compile(r"\bturn-(working|waiting)\b")
 
 
+def resize(page, width, height=900):
+    page.set_viewport_size({'width': width, 'height': height})
+    # Responsive navigation changes which pane can receive a real click.
+    page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+
+
 def wait_xterm(page, text):
     page.wait_for_function(
         "text => [...T.views.values()].some(v => v.term?.buffer?.active && Array.from({length: v.term.buffer.active.length},"
@@ -232,14 +238,14 @@ def main(binary=BINARY, interrupt_only=False):
                         directory.mkdir(parents=True, exist_ok=True)
                         for width, theme in [(1280, "light"), (1280, "dark"),
                                              (390, "light"), (390, "dark")]:
-                            page.set_viewport_size({"width": width, "height": 900})
+                            resize(page, width)
                             page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
                             if not footer.is_visible():
                                 page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
                                 page.locator("#a-chat").click()
                             expect(footer).to_be_visible()
                             page.screenshot(path=str(directory / f"interrupted-{width}-{theme}.png"))
-                        page.set_viewport_size({"width": 1280, "height": 900})
+                        resize(page, 1280)
                         page.evaluate("theme => document.documentElement.dataset.theme = theme", "light")
                     page.reload(wait_until="networkidle")
                     expect(page.locator("#conversation-status .sdk-status")).to_have_text("已中断", timeout=20000)
@@ -626,8 +632,12 @@ def main(binary=BINARY, interrupt_only=False):
                         if phase:
                             expect(page.locator("#activity")).to_have_text("压缩中")
                             for width, theme in [(1280, 'dark'), (1280, 'light'), (390, 'dark'), (390, 'light')]:
-                                page.set_viewport_size({"width": width, "height": 900})
+                                resize(page, width)
                                 if width == 390 and not page.locator("#activity").is_visible():
+                                    if page.locator('#termpane').is_visible() and page.locator('#a-chat').is_visible():
+                                        page.locator('#a-chat').click()
+                                    if not page.locator('#side').is_visible() and page.locator('#detail .mobile-back:visible').count():
+                                        page.locator('#detail .mobile-back:visible').click()
                                     page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
                                 if width == 390 and page.locator("#termpane").is_visible():
                                     page.locator("#a-chat").click()
@@ -637,7 +647,7 @@ def main(binary=BINARY, interrupt_only=False):
                                 page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
                                 expect(page.locator("#activity")).to_be_visible()
                                 page.screenshot(path=f"/tmp/sessiondock-compacting-{width}-{theme}.png")
-                            page.set_viewport_size({"width": 1280, "height": 900})
+                            resize(page, 1280)
                             page.reload(wait_until="networkidle")
                             expect(page.locator("#activity")).to_have_text("压缩中", timeout=20000)
                         else:
@@ -710,7 +720,7 @@ def main(binary=BINARY, interrupt_only=False):
                     # both list and detail must retain the observed busy state.
                     for width in (608, 390, 320):
                         observed = page.evaluate("uid => cache.get(uid).cli.observed_at", codex_uid)
-                        page.set_viewport_size({"width": width, "height": 780})
+                        resize(page, width, 780)
                         if page.locator(".mobile-back").is_visible():
                             page.locator(".mobile-back").click()
                         expect(badge(codex_uid)).to_be_visible()
@@ -732,7 +742,7 @@ def main(binary=BINARY, interrupt_only=False):
                     assert header.evaluate("e => getComputedStyle(e).animationName") == "none"
                     assert header.evaluate("e => getComputedStyle(e).boxShadow") != "none"
                     page.emulate_media(reduced_motion="no-preference")
-                    page.set_viewport_size({"width": 1280, "height": 900})
+                    resize(page, 1280)
                     if not page.locator("#termpane").is_visible():
                         page.locator("#a-term").click()
                     wait_xterm(page, "RS_SHELL_READY")
