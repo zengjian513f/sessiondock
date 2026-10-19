@@ -68,8 +68,16 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     for selector in ('#sdk-model', '#sdk-effort', '#sdk-tier', '#sdk-mode', '#sdk-control-approval', '#sdk-control-sandbox'):
         assert not page.locator(selector + ' option[value=""]').count(), selector
         assert not any(word in page.locator(selector).text_content() for word in ('沿用', '未返回', 'Default')), selector
+    fake.set_settings('fake-sol', 'high')
+    model_picker = page.locator('#sdk-model')
+    expect(model_picker).to_have_value('fake-sol')
+    short_width = model_picker.bounding_box()['width']
+    assert 60 * scale / 100 < short_width < 130 * scale / 100, short_width
+    if screenshots:
+        page.screenshot(path=str(screenshots / f'{theme}-{scale}-short-models.png'))
     fake.set_settings('gpt-6.1-sol-realistic-long-model-name-2026-10-17', 'xhigh')
     expect(page.locator('#sdk-model')).to_have_value('gpt-6.1-sol-realistic-long-model-name-2026-10-17')
+    page.wait_for_function('width => document.querySelector("#sdk-model").getBoundingClientRect().width > width + 5', arg=short_width)
     fake.settings['serviceTier'] = 'ultrafast'
     fake.set_settings(fake.settings['model'], fake.settings['effort'])
     expect(page.locator('#sdk-tier')).to_have_value('ultrafast')
@@ -131,7 +139,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
             expect(details).to_be_hidden()
         assert page.locator('#sdk-model').bounding_box()['width'] <= 160 * scale / 100 + 2
         assert_inline_usage(page)
-        expect(page.locator('.sdk-status-row > .sdk-gauges .sdk-credits')).to_have_text('Credits 1,235')
+        expect(page.locator('.sdk-status-row > .sdk-gauges .sdk-credits')).to_have_text('🪙 1,235')
         expect(page.locator('.sdk-status-row > .sdk-gauges [data-gauge="5h"] b')).to_have_text('40%')
         page.locator('#sdk-more').click()
         menu = page.locator('#sdk-more-menu')
@@ -199,7 +207,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     page.set_viewport_size({'width': 1440, 'height': 900})
     rates = fake._bucket(); rates['secondary'] = None; rates['credits']['balance'] = '12345.6'
     asyncio.run_coroutine_threadsafe(fake.notify('account/rateLimits/updated', {'rateLimits': rates}), fake.loop).result(timeout=5)
-    expect(page.locator('.sdk-credits')).to_have_text('Credits 12,346')
+    expect(page.locator('.sdk-credits')).to_have_text('🪙 12,346')
     # Rolling notifications are sparse: null is unavailable, not a deletion.
     expect(page.locator('[data-gauge="7d"]')).to_be_visible()
     single_row(page)
@@ -212,7 +220,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     expect(page.locator('[data-gauge="7d"]')).to_be_hidden()
     single_row(page)
     asyncio.run_coroutine_threadsafe(fake.notify('account/rateLimits/updated', {'rateLimits': fake._bucket()}), fake.loop).result(timeout=5)
-    expect(page.locator('.sdk-credits')).to_have_text('Credits 1,235')
+    expect(page.locator('.sdk-credits')).to_have_text('🪙 1,235')
     single_row(page)
     assert not errors, errors
     notify('turn/completed', {'turn': {'id': 'layout-status-turn', 'status': 'completed', 'items': []}})

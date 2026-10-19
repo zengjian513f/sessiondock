@@ -68,7 +68,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     page.goto(base, wait_until='domcontentloaded')
     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
     expect(page.locator('#sdk-input')).to_be_visible()
-    expect(page.locator('.sdk-credits')).to_have_text('Credits 1,235')
+    expect(page.locator('.sdk-credits')).to_have_text('🪙 1,235')
     page.locator('#sdk-input').fill(PROMPT)
     page.locator('#sdk-send').click()
     tool = page.locator('[data-sdk-item="native-collab"]')
@@ -120,7 +120,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
         'secondary': {'usedPercent': 26, 'windowDurationMins': None, 'resetsAt': None}}})
     expect(page.locator('[data-gauge="7d"] b')).to_have_text('26%')
     expect(page.locator('[data-gauge="5h"] b')).to_have_text('40%')
-    expect(page.locator('.sdk-credits')).to_have_text('Credits 1,235')
+    expect(page.locator('.sdk-credits')).to_have_text('🪙 1,235')
     assert page.evaluate('CodexSdkView.limits.limitName') == 'Codex account'
     assert page.evaluate('CodexSdkView.limits.planType') == 'pro'
     assert page.evaluate('CodexSdkView.limits.normalModelSlug') == 'fake-sol'
@@ -132,7 +132,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
         'primary': {'usedPercent': 0}, 'secondary': None}})
     expect(page.locator('[data-gauge="5h"] b')).to_have_text('0%')
     expect(page.locator('[data-gauge="7d"] b')).to_have_text('26%')
-    expect(page.locator('.sdk-credits')).to_have_text('Credits 0')
+    expect(page.locator('.sdk-credits')).to_have_text('🪙 0')
     usage = page.locator('.sdk-gauges')
     if not usage.is_visible():
         toggle = page.locator('#sdk-usage-toggle')
@@ -155,7 +155,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(page.locator('#sdk-stop')).to_be_hidden()
     # An authoritative complete read can remove the absent secondary window.
     expect(page.locator('[data-gauge="7d"]')).to_be_hidden()
-    expect(page.locator('.sdk-credits')).to_have_text('Credits 1,235')
+    expect(page.locator('.sdk-credits')).to_have_text('🪙 1,235')
     assert not errors, errors
     context.close()
 

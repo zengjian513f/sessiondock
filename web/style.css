@@ -2562,6 +2562,8 @@ header .btn[data-session-docked] { display: none; }
 .sdk-pickers { display: flex; align-items: center; gap: 6px; }
 .sdk-pickers > .new-effort { position: relative; flex: none; min-width: 0; }
 .sdk-pickers > .sdk-model { width: var(--sdk-model-width, 160px); }
+.sdk-pickers > .sdk-model-fit { width: auto; }
+.sdk-pickers > .sdk-model-fit > select { width: auto; max-width: var(--sdk-model-width, 160px); }
 .sdk-pickers > .sdk-effort { width: var(--sdk-effort-width, 72px); }
 .native-sdk-pane { --sdk-model-width: clamp(72px, calc(100vw - 240px), 160px); }
 .sdk-pickers > .sdk-mode { width: 96px; }
@@ -2633,3 +2635,12 @@ header .btn[data-session-docked] { display: none; }
 .sdk-queued .queued-send-foot { font-size: 11px; line-height: 1.4; }
 .sdk-queue-actions { display: inline-flex; flex: none; gap: 6px; margin-left: auto; }
 .sdk-queued .queued-send-dismiss { color: var(--text); }
+
+/* Conversation mode uses the SDK status/usage strip without SDK controls. */
+#conversation-status { flex: none; padding: 6px 18px; border-top: 1px solid var(--border); background: var(--panel); }
+#conversation-status .sdk-gauges { flex-wrap: wrap; justify-content: flex-end; }
+#right.term-full #conversation-status, #right.terminal-first #conversation-status { display: none; }
+@media (max-width: 720px) {
+  #conversation-status { padding-inline: 8px; }
+  #conversation-status .sdk-gauges { gap: 4px 8px; }
+}

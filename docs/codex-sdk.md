@@ -399,13 +399,16 @@ before first SEND does not retain these unpersisted receipts.
   Revert uses the existing confirmation; cancelling it preserves history and draft.
   Fork preserves the source and opens the new branch. Missing native identities
   are never guessed from display text or context records.
+- The model picker fits the longest available model name, capped at 160px and
+  shrinking further when the toolbar is narrow. Switching between listed models
+  keeps its width stable; the selected full name remains in the tooltip.
 - Usage alongside the model/effort pickers, one `.sdk-bar` progress bar per
   gauge showing the **used** share (`100%` = full, red at ≥ 80 %): `5h` and `7d`
   from the account bucket (`rateLimitsByLimitId.codex`, else `rateLimits`),
   labelled by `windowDurationMins` (300 → 5h, 10080 → 7d; an account with a
-  single window shows only that one), and 上下文 (`last.totalTokens /
+  single window shows only that one), and `Ctx` (`last.totalTokens /
   modelContextWindow`). Tooltips give used/remaining percent, reset time and
-  token counts. `Credits N` is `credits.balance` (`无限` when unlimited). The
+  token counts. `🪙 N` is `credits.balance` (`无限` when unlimited). The
   row is hidden while nothing is known. On resume, the node reads the latest
   native `token_count.info` from the rollout returned by app-server, so context
   appears before the next message. It uses the last request's token usage,

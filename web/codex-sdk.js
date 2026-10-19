@@ -59,7 +59,7 @@ const CodexSdkView = {
           <button class="btn" id="sdk-usage-toggle" type="button" aria-expanded="false" aria-controls="sdk-usage-menu" hidden>用量</button>
           <div class="sdk-options">
             <div class="sdk-pickers">
-              <label class="new-effort sdk-model" title="模型"><span class="visually-hidden">模型</span><select id="sdk-model"><option value="" disabled hidden>模型</option></select></label>
+              <label class="new-effort sdk-model sdk-model-fit" title="模型"><span class="visually-hidden">模型</span><select id="sdk-model"><option value="" disabled hidden>模型</option></select></label>
               <label class="new-effort sdk-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="sdk-effort"><option value="" disabled hidden>推理强度</option></select></label>
               <button class="btn" id="sdk-more" type="button" title="会话操作" aria-label="会话操作" aria-expanded="false" aria-controls="sdk-more-menu">⋯</button>
               <div class="new-model-menu sdk-toolbar-menu" id="sdk-more-menu" popover="auto" aria-label="会话操作">
@@ -191,7 +191,7 @@ const CodexSdkView = {
     const row = this.pane.querySelector('.sdk-status-row'), gauges = this.pane.querySelector('.sdk-gauges');
     this.toolbarWidth = width ?? row.clientWidth;
     const visibleGauges = [...gauges.children].filter(node => !node.hidden);
-    const signature = `${this.toolbarWidth}:${visibleGauges.map(node => node.textContent).join('|')}`;
+    const signature = `${this.toolbarWidth}:${this.pane.querySelector('#sdk-model').textContent}:${visibleGauges.map(node => node.textContent).join('|')}`;
     if (signature === this.toolbarLayout) { this.updateStatusDisclosure(); return; }
     this.toolbarLayout = signature;
     this.closeToolbarMenus();
@@ -438,17 +438,18 @@ const CodexSdkView = {
     const size = usage?.modelContextWindow;
     const used = usage?.last?.totalTokens;
     if (size && used != null) {
-      this.gauge('context', '上下文', used / size * 100,
+      this.gauge('context', 'Ctx', used / size * 100,
         `上下文已用 ${Math.min(100, Math.round(used / size * 100))}%（${used.toLocaleString()} / ${size.toLocaleString()} tokens）`);
-    } else this.gauge('context', '上下文', NaN, '');
+    } else this.gauge('context', 'Ctx', NaN, '');
     const credits = bucket.credits;
     const creditNode = this.pane.querySelector('.sdk-credits');
     const balance = Number(credits?.balance);
     creditNode.hidden = !credits || (!credits.unlimited && !credits.hasCredits && !Number.isFinite(balance));
     if (!creditNode.hidden) {
-      creditNode.textContent = credits.unlimited ? 'Credits 无限'
-        : `Credits ${Number.isFinite(balance) ? balance.toLocaleString(undefined, {maximumFractionDigits: 0}) : credits.balance}`;
+      creditNode.textContent = credits.unlimited ? '🪙 无限'
+        : `🪙 ${Number.isFinite(balance) ? balance.toLocaleString(undefined, {maximumFractionDigits: 0}) : credits.balance}`;
       creditNode.title = '剩余 usage credits';
+      creditNode.setAttribute('aria-label', creditNode.textContent.replace('🪙', 'Credits'));
     }
     const cards = this.resetCards?.credits || [];
     const holder = this.pane.querySelector('.sdk-reset');
@@ -530,6 +531,7 @@ const CodexSdkView = {
     }
     this.selectValue(select, chosen, '推理强度');
     CodexSdkControls.paintTier(this);
+    this.layoutToolbar();
   },
 
   selectValue(select, value, label) {
