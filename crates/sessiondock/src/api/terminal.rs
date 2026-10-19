@@ -837,6 +837,8 @@ pub async fn list(
         .codex_sdk
         .as_ref()
         .map(|sdk| sdk.pending())
+        .transpose()
+        .map_err(super::codex_sdk::rpc)?
         .unwrap_or_default();
     sdk_sessions.extend(state.native_sdks.pending());
     let has_sdk_receipts = !sdk_sessions.is_empty();

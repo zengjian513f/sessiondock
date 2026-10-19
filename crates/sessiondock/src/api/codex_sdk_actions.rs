@@ -45,7 +45,11 @@ pub async fn fork(
         .ok_or_else(|| rpc(RpcError::Disconnected))?;
     let uid = crate::sessions::uid_for("codex", Path::new(path));
     state.reader.store.invalidate_inventory();
-    let mut session = sdk.pending().into_iter().find(|row| row["uid"] == uid);
+    let mut session = sdk
+        .pending()
+        .map_err(rpc)?
+        .into_iter()
+        .find(|row| row["uid"] == uid);
     if session.is_none() {
         let lookup = uid.clone();
         session = state

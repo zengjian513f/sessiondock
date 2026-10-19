@@ -16,7 +16,8 @@ impl CodexSdk {
             params["lastTurnId"] = json!(id);
         }
         let result = connection.request("thread/fork", params).await?;
-        self.inner.adopt_result(connection.generation(), result)
+        self.inner
+            .adopt_result(connection.generation(), result, None)
     }
 
     pub async fn list_turns(

@@ -227,16 +227,25 @@ node. Model discovery uses `model/list`; the selected effort rides in
 their existing launcher flow. Continuation launches retain their existing
 message/attachment contract during the transition.
 
-Like the CLI, a new thread initially has no native rollout. Its in-memory
+Like the CLI, a new thread initially has no native rollout. Its private
 create receipt supplies an empty SDK page and a sidebar row through
 `api/term/list.sdk_sessions`, including after a browser reload. The node keeps
 that thread loaded. First SEND calls `turn/start`; Codex owns the first native
 write. The UID derives from the daemon's rollout path and stays identical when
 the normal inventory replaces the receipt. No placeholder file, forced name
-or synthetic history is written. The receipt and same-`request_id` retry cache
-live for this SessionDock process; retries, including a lost HTTP response,
-reuse the completed attempt rather than starting another thread. A node restart
-before first SEND does not retain these unpersisted receipts.
+or synthetic history is written. DELTA (BUG-20261019-032629-1ba6cf): with a
+configured state directory, creation receipts and completed same-`request_id`
+results are saved before success in
+`codex-sdk-sessions.json`. A node update/restart before first SEND preserves
+the UID/SID and empty page; reattachment resumes that exact thread on the
+surviving daemon. Retries, including a lost HTTP response followed by a restart,
+reuse the completed attempt. Without a state directory these receipts remain
+memory-only. Native handoff and explicit discard durably retire the pending row,
+retaining request identity so neither a restart nor a retry resurrects it.
+No restart creates another thread or replays SEND. This does not restore an
+empty thread lost by the daemon itself or recover old, already-lost memory-only
+receipts (BUG-20261019-032629-1ba6cf).
+Browser regression: [creation retention](../tests/sdk_creation_retention_browser.py).
 
 ## View
 

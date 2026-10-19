@@ -142,7 +142,11 @@ pub async fn create(
         .ok_or_else(|| rpc(RpcError::Disconnected))?;
     let uid = crate::sessions::uid_for("codex", Path::new(path));
     state.reader.store.invalidate_inventory();
-    let session = sdk.pending().into_iter().find(|row| row["uid"] == uid);
+    let session = sdk
+        .pending()
+        .map_err(rpc)?
+        .into_iter()
+        .find(|row| row["uid"] == uid);
     Ok(Json(
         json!({"ok":true,"uid":uid,"session":session,"cwd":cwd,"thread_id":result["thread"]["id"],"raw":result}),
     ))

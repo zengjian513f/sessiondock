@@ -394,7 +394,7 @@ impl Conversations {
         if let Some(row) = self
             .codex_sdk
             .as_ref()
-            .and_then(|sdk| sdk.pending().into_iter().find(|row| row["uid"] == uid))
+            .and_then(|sdk| sdk.pending_session(uid))
         {
             return Ok(Identity {
                 key: self.store.canonical(uid),
