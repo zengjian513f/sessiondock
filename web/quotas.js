@@ -1,4 +1,4 @@
-/* Refresh on open; snapshots remain available while querying. No inferred reset. */
+/* Read the shared snapshot first; automatic refresh reuses the node cache. */
 async function initQuotas(container) {
   'use strict';
   const root = container.querySelector('#quota-agents');
@@ -149,7 +149,7 @@ async function initQuotas(container) {
           render();
           // Each node refreshes after its own cached read, without waiting for peers.
           if(!collect && !stopped) {
-            node.data=await request(base+'/refresh','POST');node.error=null;render();
+            node.data=await request(base+'/refresh?cached=true','POST');node.error=null;render();
           }
         }
         catch(error) {failures++;node.error=error.message;render();}

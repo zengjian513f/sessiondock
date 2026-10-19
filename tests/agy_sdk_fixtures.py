@@ -36,7 +36,13 @@ def option(name):
 record({'kind':'launch','argv':args,'cwd':os.getcwd(),'pid':os.getpid()})
 if '--version' in args:print('1.4.2');sys.exit(0)
 if option('-p')=='/usage':
-    emit({'status':'SUCCESS','num_turns':0,'command':{'name':'usage','data':{'groups':[{'name':'Agy Standard','buckets':[{'id':'standard','window':'5h','remaining_fraction':0.72,'reset_time':'2026-10-20T00:00:00Z'}]}]}}});sys.exit(0)
+    deadline=time.monotonic()+20
+    while (root/'quota-hold').exists():
+        if time.monotonic()>deadline:sys.exit(1)
+        threading.Event().wait(0.02)
+    if (root/'quota-fail').exists():sys.exit(1)
+    remaining=float((root/'quota-remaining').read_text()) if (root/'quota-remaining').exists() else 0.72
+    emit({'status':'SUCCESS','num_turns':0,'command':{'name':'usage','data':{'groups':[{'name':'Agy Standard','buckets':[{'id':'standard','window':'5h','remaining_fraction':remaining,'reset_time':'2026-10-20T00:00:00Z'}]}]}}});sys.exit(0)
 if 'models' in args:
     print('synthetic-agy-low\tSynthetic Agy Low\nsynthetic-agy-high\tSynthetic Agy High');sys.exit(0)
 assert not sys.stdin.isatty(), 'SDK must not use a PTY'

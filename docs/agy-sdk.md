@@ -122,7 +122,8 @@ snapshot 与 receiver 在同一发布锁中取得；每次发布完整快照：
 
 DELTA：SDK 底栏展示原生 result.usage 累计 Token，step_update.usage 在明细单独
 标注，不相加，也不伪装为上下文百分比。额度复用独立 print /usage collector，
-只查询 Agy；打开/手动刷新取额度，失败保留旧快照和时间，不开启模型 turn。
+只查询 Agy；打开先显示共享持久快照，再复用设置页的一分钟缓存及进行中的查询。
+手动刷新和 `/usage` 跳过有效期；失败保留旧快照和时间并缓存失败尝试，不开启模型 turn。
 原生目录提供 low/medium/high/xhigh/max 独立 effort。settings.mode 可显式选择
 accept-edits/auto/plan，显示下一轮生效，并以独立 --mode argv 传入，不制造在线控制 RPC。
 网页 /usage、/model、/effort 与正文分流，未知 slash 保留草稿，不破坏 NDJSON。

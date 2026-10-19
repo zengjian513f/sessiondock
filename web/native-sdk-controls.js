@@ -58,9 +58,16 @@ const NativeSdkControls = {
     view.loadingUsage=true;
     const button=view.pane?.querySelector('#native-usage-refresh'); if (button) button.disabled=true;
     try {
-      const response=await view.request('api/native-sdk/usage',{uid:view.uid,refresh});
+      let response=await view.request('api/native-sdk/usage',{uid:view.uid,refresh:refresh === 'auto' ? false : refresh});
       if (!view.current(generation)) return;
       view.usageData={...response,...response.raw};view.usageError=null;
+      this.paintUsage(view);
+      if (refresh === 'auto') {
+        response=await view.request('api/native-sdk/usage',{uid:view.uid,refresh});
+        if (!view.current(generation)) return;
+        view.usageData={...response,...response.raw};
+        this.paintUsage(view);
+      }
       if (view.capabilities.billing) {
         try { const billing=await view.request('api/native-sdk/billing',{uid:view.uid}); if (view.current(generation)) view.usageData.billing=billing.raw?.billing || billing.raw; }
         catch (error) { if (view.current(generation)) view.usageError=`额度：${error.message}`; }

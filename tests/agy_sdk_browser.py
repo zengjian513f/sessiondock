@@ -84,9 +84,67 @@ def exercise(browser, base, fixture, screenshots=None):
     errors = []
     page.on('pageerror', lambda error: errors.append(error.stack))
     try:
+        # A slow native query must not hide the shared persisted quota.
+        quota_dir = fixture.root / 'state/quotas'
+        quota_dir.mkdir(parents=True, exist_ok=True)
+        (quota_dir / 'agy.json').write_text(json.dumps({'source':'agy',
+            'captured_at':'2020-10-17T03:02:16Z','buckets':[{'id':'standard',
+            'group':'Agy Standard','window':'5h','remaining_percent':40}],'error':None}))
+        (fixture.root / 'quota-hold').touch()
+        def quota_calls():
+            return [event for event in fixture.events() if event['kind']=='launch' and '-p' in event['argv']]
         page.goto(base, wait_until='domcontentloaded')
         page.wait_for_function('T.listLoaded')
         uid = select_sdk(page)
+        expect(page.locator('.sdk-gauges')).to_contain_text('60%')
+        expect(page.locator('#native-usage-refresh')).to_be_disabled()
+        # Settings opened concurrently joins the same Agy query.
+        quotas = context.new_page()
+        quotas.goto(base + '/quotas.html')
+        expect(quotas.locator('section[data-source=agy]')).to_contain_text('60%')
+        expect(quotas.locator('#quota-refresh')).to_be_disabled()
+        if screenshots:
+            screenshots.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(screenshots / 'agy-sdk-cached-loading.png'), full_page=True)
+        (fixture.root / 'quota-hold').unlink()
+        expect(page.locator('.sdk-gauges')).to_contain_text('28%')
+        expect(quotas.locator('section[data-source=agy]')).to_contain_text('28%')
+        expect(quotas.locator('#quota-refresh')).to_be_enabled()
+        expect(page.locator('#native-usage-refresh')).to_be_enabled()
+        assert len(quota_calls()) == 1, 'settings and SDK must share the in-flight query'
+        quotas.reload()
+        expect(quotas.locator('#quota-refresh')).to_be_enabled()
+        page.reload()
+        expect(page.locator('.sdk-gauges')).to_contain_text('28%')
+        expect(page.locator('#native-usage-refresh')).to_be_enabled()
+        assert len(quota_calls()) == 1, 'fresh quota must survive page reloads without a CLI query'
+        # Explicit refresh updates the shared cache, including failure cooldown.
+        toggle_usage_details(page)
+        (fixture.root / 'quota-remaining').write_text('0.61')
+        page.locator('#native-usage-refresh').click()
+        expect(page.locator('.sdk-gauges')).to_contain_text('39%')
+        expect(page.locator('#native-usage-refresh')).to_be_enabled()
+        quotas.reload()
+        expect(quotas.locator('section[data-source=agy]')).to_contain_text('39%')
+        expect(quotas.locator('#quota-refresh')).to_be_enabled()
+        assert len(quota_calls()) == 2
+        (fixture.root / 'quota-fail').touch()
+        quotas.locator('#quota-refresh').click()
+        expect(quotas.locator('section[data-source=agy]')).to_contain_text('查询失败')
+        expect(quotas.locator('section[data-source=agy]')).to_contain_text('39%')
+        page.reload()
+        expect(page.locator('.sdk-gauges')).to_contain_text('39%')
+        expect(page.locator('#native-usage-refresh')).to_be_enabled()
+        toggle_usage_details(page)
+        expect(page.locator('#native-usage-detail')).to_contain_text('查询失败')
+        assert len(quota_calls()) == 3, 'automatic reads must reuse a recent failed attempt'
+        (fixture.root / 'quota-fail').unlink()
+        (fixture.root / 'quota-remaining').unlink()
+        page.locator('#native-usage-refresh').click()
+        expect(page.locator('.sdk-gauges')).to_contain_text('28%')
+        expect(page.locator('#native-usage-refresh')).to_be_enabled()
+        toggle_usage_details(page)
+        quotas.close()
         expect(page.locator('#native-media-note')).to_have_count(0)
         opened = post(page, base, 'open', {'uid': uid})
         assert opened['session_id'] == SID and opened['cwd'] == str(fixture.work)
