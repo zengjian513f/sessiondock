@@ -16,6 +16,25 @@ pub struct Target {
 }
 
 #[derive(Deserialize)]
+pub struct Rename {
+    uid: String,
+    #[serde(default)]
+    agent: String,
+    name: String,
+}
+
+pub async fn rename(
+    State(state): State<AppState>,
+    Json(body): Json<Rename>,
+) -> Result<Json<Value>, ApiError> {
+    let sdk = service(&state)?;
+    let id = thread_id(&state, &body.uid, &body.agent).await?;
+    let raw = sdk.rename_thread(&id, &body.name).await.map_err(rpc)?;
+    state.reader.store.invalidate_inventory();
+    Ok(Json(json!({"ok":true,"raw":raw})))
+}
+
+#[derive(Deserialize)]
 pub struct Fork {
     uid: String,
     #[serde(default)]

@@ -111,6 +111,15 @@ impl Receipts {
         .then(|| receipt.row.clone())
     }
 
+    pub fn set_name(&self, thread_id: &str, name: &str) -> Result<(), RpcError> {
+        self.update(|rows| {
+            for receipt in rows.values_mut().filter(|r| r.row["sid"] == thread_id) {
+                receipt.row["title"] = Value::String(name.to_owned());
+                receipt.result["thread"]["name"] = Value::String(name.to_owned());
+            }
+        })
+    }
+
     pub fn discard(&self, uid: &str) -> Result<(), RpcError> {
         self.update(|rows| {
             if let Some(receipt) = rows.get_mut(uid) {

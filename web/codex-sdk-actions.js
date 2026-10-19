@@ -41,7 +41,7 @@ const CodexSdkActions = {
 
   // Returns true only for these exact slash commands; quoted prose is chat.
   async command(view, text) {
-    const match = /^\/(fork|revert|compact|review)(?:\s+([\s\S]*))?$/.exec(text.trim());
+    const match = /^\/(fork|revert|compact|review|rename)(?:\s+([\s\S]*))?$/.exec(text.trim());
     if (!match) return false;
     if (this.pending) { view.setNotice('会话操作正在进行，请稍候。'); return true; }
     const action = match[1], argument = (match[2] || '').trim();
@@ -63,7 +63,30 @@ const CodexSdkActions = {
         await this.openFork(view, response);
         return true;
       }
-      if (action === 'revert') {
+      if (action === 'rename') {
+        let name = argument;
+        if (!name) {
+          const modal = this.form('重命名会话', '输入此 Codex 会话的新名称。', '保存');
+          const field = document.createElement('input');
+          field.className = 'new-model-search'; field.setAttribute('aria-label', '会话名称'); field.required = true;
+          field.value = view.summary?.resume?.thread?.name || '';
+          modal.fields.append(field);
+          modal.form.onsubmit = event => { event.preventDefault(); if (field.value.trim()) modal.finish(field.value.trim()); };
+          field.focus(); field.select();
+          name = await modal.answer;
+        }
+        if (!name || !current()) return true;
+        await view.request('api/codex-sdk/rename', {uid, name});
+        succeeded = true;
+        if (current()) view.setNotice('会话已重命名。');
+        await loadTermList(true);
+        await loadSessions(true, true);
+        const pending = view.pending(uid);
+        if (current() && !view.agent && pending) {
+          document.querySelector('#detail > .dhead')?.replaceWith(head(pending, 0));
+          layoutSessionHead();
+        }
+      } else if (action === 'revert') {
         const turn = argument || await this.chooseRevert(view, uid);
         if (!turn || !current()) return true;
         if (argument && !await appConfirm(`回退对话到此轮之前？\n\n将移除 ${turn} 及之后的对话，仅修改会话历史，不回滚工作区文件。`, {ok:'回退'})) return true;
