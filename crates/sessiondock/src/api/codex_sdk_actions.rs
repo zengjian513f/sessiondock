@@ -30,7 +30,7 @@ pub async fn fork(
 ) -> Result<Json<Value>, ApiError> {
     let sdk = service(&state)?;
     let id = thread_id(&state, &body.uid, &body.agent).await?;
-    let result = sdk
+    let mut result = sdk
         .fork_thread(&id, body.last_turn_id.as_deref())
         .await
         .map_err(rpc)?;
@@ -38,7 +38,10 @@ pub async fn fork(
         let child = result["thread"]["id"]
             .as_str()
             .ok_or_else(|| rpc(RpcError::Disconnected))?;
-        sdk.revert_thread(child, before).await.map_err(rpc)?;
+        let reverted = sdk.revert_thread(child, before).await.map_err(rpc)?;
+        // Native revert may rotate the child's rollout while retaining its
+        // thread ID. Navigate and restore the draft on the resulting version.
+        result["thread"] = reverted["thread"].clone();
     }
     let path = result["thread"]["path"]
         .as_str()

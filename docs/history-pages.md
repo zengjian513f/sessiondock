@@ -210,6 +210,14 @@ a generation with empty history, not a duplicate SID or an inherited prefix
 (BUG-20261017-000948-cf9aee). Its native filename/header identity must agree;
 unnamed duplicate files, reused rollout UUIDs and nonzero resets remain ambiguous.
 The independently read prefix checks the same filename/header identity.
+DELTA (BUG-20261019-074243-f51db5): rewinding inside inherited history can
+create a new immutable rollout of the same thread whose `history_base` names
+the same ancestor with a shorter ordinal/byte cut. These files are generations
+of one thread. The SDK message-fork endpoint returns the child path from the
+completed revert, so navigation and the restored draft use its current version.
+The old file remains readable. Regression: `tests/history_browser.py` and
+`tests/codex_sdk_message_actions_browser.py` cover the shorter prefix, one
+visible branch, source preservation, node/Hub navigation and draft reload.
 Missing or ambiguous physical dependencies surface the existing 501/409 errors.
 Both physical rows remain readable by uid, but older generations carry
 `continued_in` naming the latest one, so the list shows a single row (the
