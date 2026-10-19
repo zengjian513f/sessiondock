@@ -872,8 +872,12 @@ const CodexSdkView = {
     const observed = observedConversationActivity(this.historyData?.activity, this.uid, this.agent);
     // Idle describes the daemon's availability, not the preceding turn's
     // outcome. Prefer an observed native completion over older disk history.
+    const cliBusy = cache.get(viewKey(this.uid, this.agent))?.cli?.instance?.busy === true;
+    const unfinished = !active && !this.summary?.last_turn && status.type === 'idle'
+      && this.historyData?.activity?.state === 'working' && !cliBusy
+      && !S.liveWorking.has(this.uid);
     const interrupted = !active && (this.summary?.last_turn?.status === 'interrupted'
-      || (!this.summary?.last_turn && observed.activity?.state === 'aborted'));
+      || (!this.summary?.last_turn && observed.activity?.state === 'aborted') || unfinished);
     const compact = [...this.items.values()].findLast(item => item.type === 'contextCompaction');
     const parts = [];
     let kind = 'ready';
@@ -891,7 +895,9 @@ const CodexSdkView = {
       else if (compact?.status === 'inProgress') { parts.push('压缩中'); kind = 'maintenance'; }
       else if (active) { parts.push('处理中'); kind = 'working'; }
       else if (interrupted) {
-        parts.push('已中断' + (!this.summary?.last_turn && observed.activity?.reason ? '：' + observed.activity.reason : ''));
+        const reason = observed.activity?.state === 'aborted' ? observed.activity.reason
+          : unfinished ? 'SDK 已空闲，原生回合未写入结束事件' : '';
+        parts.push('已中断' + (reason ? '：' + reason : ''));
         kind = 'warning';
       }
       else if (compact?.status === 'completed') parts.push('压缩完成');

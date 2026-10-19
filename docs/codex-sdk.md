@@ -357,6 +357,10 @@ behavior; they do not require other sources to expose unsupported controls.
   [CLI state](cli-state.md) provide the same fallback as the conversation view,
   including a missing native ending followed by a newer ready/idle terminal.
   CLI-only changes refresh this status even when history is unchanged.
+  DELTA (BUG-20261019-160527-5d4657): when a native turn has no ending and
+  the attached SDK daemon reports idle with no active turn or newer outcome,
+  show 已中断 and explain that the native record ends there. This also works
+  without a CLI observation; it does not fabricate missing answer text.
   New turns and explicit successful completions supersede older interruptions;
   waiting, compaction and errors retain their precedence. The label does not
   attribute an interruption to a user. Coverage:
