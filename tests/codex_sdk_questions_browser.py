@@ -50,7 +50,7 @@ def main():
                     expect(card).to_contain_text(QUESTIONS[0]['title'])
                     expect(card.locator('input:checked')).to_have_count(0)
                     card.get_by_role('button', name='提交回答').click()
-                    expect(page.locator('.sdk-status')).to_contain_text('请回答每个问题')
+                    expect(page.locator('#sdk-status-menu')).to_contain_text('请回答每个问题')
                     assert not fake.methods('turn/steer')
                     card.get_by_label('只让最终回答完整显示，过程说明仍折叠', exact=True).check()
                     card.get_by_placeholder('输入答案', exact=True).fill('保留手动展开状态')
@@ -70,7 +70,7 @@ def main():
                     # A failed HTTP submit retains answers and can be retried.
                     page.route('**/api/codex-sdk/turn', lambda route: route.fulfill(status=503, content_type='application/json', body='{"error":"synthetic failure"}'), times=1)
                     card.get_by_role('button', name='提交回答').click()
-                    expect(page.locator('.sdk-status')).to_contain_text('回答失败')
+                    expect(page.locator('#sdk-status-menu')).to_contain_text('回答失败')
                     expect(card.get_by_placeholder('其他答案')).to_have_value('自定义选择')
                     card.get_by_role('button', name='提交回答').click()
                     steer = fake.wait_for(lambda: fake.methods('turn/steer'))[-1]['params']

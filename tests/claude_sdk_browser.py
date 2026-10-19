@@ -237,7 +237,7 @@ def browser_check(fixture, base, screenshots):
 
         send(page, 'retry')
         wait_snapshot(page, fixture.uid, lambda raw: (raw.get('retry') or {}).get('attempt') == 1)
-        expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('重试')
+        expect(page.locator('.sdk-pane #sdk-status-menu')).to_contain_text('重试')
         expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final retry')
         wait_snapshot(page, fixture.uid, lambda raw: not raw['running'])
 
@@ -471,7 +471,7 @@ def fork_restart_check(fixture, binary):
             retried = post(page, 'fork', failed.value.request.post_data_json, ok=False)
             assert 'already attempted' in json.dumps(retried), retried
             assert len(fixture.frames('spawn')) == count, 'unknown native fork was dispatched twice'
-            expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('操作失败')
+            expect(page.locator('.sdk-pane #sdk-status-menu')).to_contain_text('操作失败')
             page.locator('#sdk-more').click()
             with page.expect_response(lambda response: '/api/native-sdk/fork' in response.url) as forked:
                 page.locator('[data-sdk-action=fork]').click()
@@ -520,7 +520,7 @@ def startup_hooks_check(fixture, binary, foreign_kind):
         wait_snapshot(page, fixture.uid, lambda raw: not raw['running'])
         assert 'startup-hook-must-not-project' not in page.locator('.sdk-pane').inner_text()
         send(page, 'foreign-identity-' + foreign_kind)
-        expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('native stream session_id differs')
+        expect(page.locator('.sdk-pane #sdk-status-menu')).to_contain_text('native stream session_id differs')
         raw = wait_snapshot(page, fixture.uid, lambda raw: raw.get('error_kind') == 'transport')['raw']
         assert raw['session_id'] == fixture.sid
         assert not any('FOREIGN_NATIVE_CONTENT' in json.dumps(row) for row in raw['items'])
@@ -540,8 +540,8 @@ def startup_failure_check(fixture, binary, screenshots=None):
         page.goto(base, wait_until='networkidle')
         page.locator(f'#side .item[data-uid="{fixture.uid}"]').click()
         page.locator('#a-sdk').click()
-        expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('command not found')
-        expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('[redacted]')
+        expect(page.locator('.sdk-pane #sdk-status-menu')).to_contain_text('command not found')
+        expect(page.locator('.sdk-pane #sdk-status-menu')).to_contain_text('[redacted]')
         assert 'synthetic-startup-secret' not in page.locator('.sdk-pane .sdk-status').inner_text()
         assert not page.evaluate('NativeSdkView.connected')
         assert not fixture.frames('user'), 'startup failure submitted a model prompt'

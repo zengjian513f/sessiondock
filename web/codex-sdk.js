@@ -190,51 +190,14 @@ const CodexSdkView = {
     if (!this.pane) return;
     const row = this.pane.querySelector('.sdk-status-row'), gauges = this.pane.querySelector('.sdk-gauges');
     this.toolbarWidth = width ?? row.clientWidth;
-    const visibleGauges = [...gauges.children].filter(node => !node.hidden);
-    const signature = `${this.toolbarWidth}:${this.pane.querySelector('#sdk-model').textContent}:${visibleGauges.map(node => node.textContent).join('|')}`;
-    if (signature === this.toolbarLayout) { this.updateStatusDisclosure(); return; }
-    this.toolbarLayout = signature;
-    this.closeToolbarMenus();
     const pickers = this.pane.querySelector('.sdk-pickers'), more = this.pane.querySelector('#sdk-more-menu');
-    const trigger = this.pane.querySelector('#sdk-more'), usage = this.pane.querySelector('#sdk-usage-toggle');
-    const usageMenu = this.pane.querySelector('#sdk-usage-menu'), actions = this.pane.querySelector('#sdk-actions');
-    const mode = this.pane.querySelector('.sdk-mode'), tier = this.pane.querySelector('.sdk-tier');
-    const buttons = ['compact', 'fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
-    // Usage stays visible. When it cannot share the controls row, give it a
-    // wrapping line above the status instead of hiding it behind a button.
+    const usage = this.pane.querySelector('#sdk-usage-toggle');
     row.insertBefore(gauges, usage);
-    gauges.classList.remove('sdk-gauges-wrapped');
     usage.hidden = true;
-    if (mode) more.prepend(mode);
-    if (tier) pickers.insertBefore(tier, trigger);
-    for (const button of buttons) actions.append(button);
+    const buttons = ['compact', 'fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
     more.append(this.pane.querySelector('#sdk-permissions'), this.pane.querySelector('.sdk-reset'));
-    const fits = () => {
-      const bounds = row.getBoundingClientRect(), zoom = bounds.width / row.clientWidth;
-      const status = this.notice.getBoundingClientRect();
-      const controls = [this.notice, gauges, usage, ...pickers.children]
-        .filter(node => !node.hasAttribute('popover') && !node.classList.contains('sdk-gauges-wrapped') && node.getClientRects().length);
-      let right = bounds.left;
-      return status.width >= parseFloat(getComputedStyle(this.notice).minWidth) * zoom - 1
-        && row.scrollWidth <= row.clientWidth + 1
-        && controls.every(node => {
-          const box = node.getBoundingClientRect(), inside = box.left >= right - 1 && box.right <= bounds.right + 1;
-          right = box.right;
-          return inside;
-        });
-    };
-    for (const [model, effort] of [[160, 72], [100, 60], [64, 50]]) {
-      pickers.style.setProperty('--sdk-model-width', `${model}px`);
-      pickers.style.setProperty('--sdk-effort-width', `${effort}px`);
-      if (fits()) break;
-    }
-    if (!fits()) gauges.classList.add('sdk-gauges-wrapped');
-    if (!fits() && tier) more.prepend(tier);
-    for (const control of [tier, mode, ...buttons].filter(Boolean)) {
-      const parent = control.parentElement, next = control.nextSibling;
-      pickers.insertBefore(control, trigger);
-      if (!fits()) parent.insertBefore(control, next);
-    }
+    sdkLayoutFooter(this, ['.sdk-model', '.sdk-effort', '.sdk-tier', '.sdk-mode']
+      .map(selector => this.pane.querySelector(selector)).concat(buttons));
     this.updateStatusDisclosure();
   },
 
@@ -890,7 +853,7 @@ const CodexSdkView = {
 
   setNotice(text, kind = '', sticky = false) {
     if (!this.notice) return;
-    this.notice.firstElementChild.textContent = text;
+    this.notice.firstElementChild.textContent = sdkStatusSummary(text, kind);
     const details = this.pane.querySelector('#sdk-status-menu');
     details.textContent = text;
     if (!text && details.matches(':popover-open')) details.hidePopover();
@@ -904,14 +867,8 @@ const CodexSdkView = {
 
   updateStatusDisclosure() {
     if (!this.notice) return;
-    const clipped = !this.notice.hidden && this.notice.scrollWidth > this.notice.clientWidth + 1;
-    this.notice.disabled = !clipped;
-    if (clipped) this.notice.setAttribute('aria-haspopup', 'dialog');
-    else {
-      this.notice.removeAttribute('aria-haspopup');
-      const menu = this.pane.querySelector('#sdk-status-menu');
-      if (menu.matches(':popover-open')) menu.hidePopover();
-    }
+    this.notice.disabled = this.notice.hidden;
+    this.notice.setAttribute('aria-haspopup', 'dialog');
   },
 
   nearBottom() {
@@ -1376,3 +1333,38 @@ const CodexSdkQuestions = {
     }
   },
 };
+
+// Keep protocol detail intact; only the toolbar label is summarized.
+function sdkStatusSummary(text, kind) {
+  text = String(text || '');
+  if ([...text].length <= 6) return text;
+  const lead = text.split(/[：:，,。；;\s]/)[0];
+  if (lead && [...lead].length <= 6) return lead;
+  if (text.startsWith('不支持的命令')) return '命令不支持';
+  if (text.startsWith('队列暂停')) return '队列暂停';
+  return {blocked: '执行失败', retrying: '正在重试', working: '处理中',
+    waiting: '等待处理', maintenance: '压缩中', connecting: '连接中', ready: '就绪'}[kind] || '状态详情';
+}
+
+function sdkLayoutFooter(view, controls) {
+  const row = view.pane.querySelector('.sdk-status-row'), gauges = row.querySelector('.sdk-gauges');
+  const pickers = row.querySelector('.sdk-pickers'), menu = view.pane.querySelector('#sdk-more-menu');
+  const trigger = view.pane.querySelector('#sdk-more');
+  const signature = JSON.stringify([row.clientWidth, view.notice.textContent, gauges.textContent,
+    [...pickers.querySelectorAll('.sdk-policy')].map(n => n.textContent),
+    controls.filter(Boolean).map(n => [n.hidden, n.textContent, n.querySelector('select')?.value])]);
+  if (row.dataset.footerLayout === signature) return;
+  row.dataset.footerLayout = signature;
+  gauges.tabIndex = 0;
+  if (row.dataset.footerWidth && Number(row.dataset.footerWidth) !== row.clientWidth) view.closeToolbarMenus();
+  row.dataset.footerWidth = row.clientWidth;
+  // Start with status, usage and ⋯; optional controls never displace usage.
+  const overflow = control => control.classList.contains('sdk-action') ? view.pane.querySelector('#sdk-actions') : menu;
+  for (const control of controls.filter(Boolean)) overflow(control).append(control);
+  const fits = () => row.scrollWidth <= row.clientWidth + 1 && gauges.scrollWidth <= gauges.clientWidth + 1;
+  const anchor = pickers.querySelector('.sdk-policy') || trigger;
+  for (const control of controls.filter(Boolean)) {
+    pickers.insertBefore(control, anchor);
+    if (!fits()) { overflow(control).append(control); break; }
+  }
+}

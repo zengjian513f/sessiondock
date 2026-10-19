@@ -349,27 +349,29 @@ Browser regression: [creation retention](../tests/sdk_creation_retention_browser
   Status, model/effort/mode selectors, action icons and usage all
   share the toolbar above the input, with status left and usage/context immediately before the model picker when space permits;
   routine labels are 就绪 / 连接中 / 重连中 / 处理中 / 待批准 / 待回答 / 用量已满 /
-  系统错误. Status reserves a dot plus four character widths before optional controls,
+  系统错误. Status uses at most six characters and reserves its space before optional controls,
   including on narrow panes at 125% interface scale.
   It displays 就绪 when there is no active turn, waiting state or error.
-  Long status text has an ellipsis; only truncated status text can be clicked,
-  tapped or activated with Enter to open its full text in a popover. Fully
-  visible status text is passive. Escape or an outside click closes the popover.
+  Every status can be clicked, tapped or activated with Enter to open its full
+  detail, including the original error. Escape or an outside click closes it.
   DELTA: status text has a matching six-pixel dot using the shared
   [SDK status palette](native-sdk.md#配置与页面). Working, compaction,
   retry and connection dots breathe; reduced-motion preferences disable animation.
-- Model and effort stay directly accessible, with a bounded model width.
-  DELTA: usage is always visible without opening a button or menu. On narrow
-  panes it wraps onto a line above status/model controls; all known gauges remain
-  visible while routine status text retains its space. Compaction/fork/revert/review use header-style icon buttons with
+- DELTA (BUG-20261019-065056-5a1004): the toolbar always occupies one line.
+  Status comes first, then usage. Model, effort, tier, mode and action controls
+  move into ⋯ before taking space from usage. Remaining wide quota sets scroll
+  horizontally within the usage area; they never wrap above status. Model width
+  stays bounded. Compaction/fork/revert/review use header-style icon buttons with
   tooltips and accessible names; overflow entries retain their text in the ⋯ menu.
-  Approval and sandbox policies live in two checked submenus under ⋯. Selecting
+  Approval and sandbox policy buttons always stay in the toolbar, including narrow
+  panes. Wide panes show their current values; narrow panes use 审批 / 沙箱 with
+  the current values retained in tooltips and checked menus. Selecting
   an option applies that policy immediately; checks follow server-confirmed
   settings, including changes from another client. Failed changes retain the
   actual selection and display the error. No Apply button is needed.
   Controls move into overflow according to measured space for the entire row,
   including status and usage. Sidebar resizing and interface scaling recalculate
-  available space; model and effort remain directly accessible. Goal controls and `/goal` are removed.
+  available space; model and effort remain usable in ⋯. Goal controls and `/goal` are removed.
   Model/effort/mode selectors show actual values with hidden placeholders when
   not loaded. Modes are 执行模式 / 计划模式.
   Popovers use existing menu styling, stay inside the viewport and close on

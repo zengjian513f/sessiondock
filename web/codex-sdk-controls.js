@@ -67,15 +67,18 @@ const CodexSdkControls = {
       ['approval', typeof settings.approvalPolicy === 'string' ? settings.approvalPolicy : '', this.approvalNames],
       ['sandbox', settings.sandboxPolicy?.type || '', this.sandboxNames],
     ]) {
-      const trigger = dialog.querySelector(`#sdk-control-${kind}`);
+      const trigger = view.pane.querySelector(`#sdk-control-${kind}`);
       trigger.querySelector('small').textContent = names[value] || '未返回';
-      for (const button of dialog.querySelectorAll(`[data-policy="${kind}"]`)) {
+      trigger.title = `${kind === 'approval' ? '审批策略' : '沙箱策略'}：${names[value] || '未返回'}`;
+      trigger.setAttribute('aria-label', trigger.title);
+      for (const button of view.pane.querySelectorAll(`[data-policy="${kind}"]`)) {
         const checked = button.dataset.value === value;
         button.setAttribute('aria-checked', String(checked));
         button.querySelector('.group-menu-check').textContent = checked ? '✓' : '';
         button.disabled = !!state.saving;
       }
     }
+    view.layoutToolbar();
   },
 
   paintTier(view) {
@@ -147,9 +150,9 @@ const CodexSdkControls = {
       ['sandbox', '沙箱策略', {readOnly: '只读', workspaceWrite: '工作区写入', dangerFullAccess: '完全访问'}],
     ]) {
       const trigger = document.createElement('button');
-      trigger.id = `sdk-control-${kind}`; trigger.type = 'button'; trigger.className = 'new-model-option';
+      trigger.id = `sdk-control-${kind}`; trigger.type = 'button'; trigger.className = 'btn sdk-policy';
       trigger.setAttribute('aria-haspopup', 'menu'); trigger.setAttribute('aria-expanded', 'false');
-      trigger.innerHTML = `<span>${label}</span><small></small><span aria-hidden="true">›</span>`;
+      trigger.innerHTML = `<span class="sdk-policy-label">${kind === 'approval' ? '审批' : '沙箱'}</span><small></small><span class="sdk-policy-arrow" aria-hidden="true">▾</span>`;
       const menu = document.createElement('div');
       menu.id = `sdk-policy-${kind}`; menu.className = 'new-model-menu sdk-toolbar-menu';
       menu.setAttribute('popover', 'auto'); menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', label);
@@ -157,6 +160,7 @@ const CodexSdkControls = {
       menu.addEventListener('beforetoggle', event => trigger.setAttribute('aria-expanded', String(event.newState === 'open')));
       trigger.onclick = () => {
         if (menu.matches(':popover-open')) { menu.hidePopover(); return; }
+        view.closeToolbarMenus();
         menu.showPopover(); view.placeMenu(menu, trigger);
         menu.querySelector('[aria-checked="true"]')?.focus();
       };
@@ -183,16 +187,17 @@ const CodexSdkControls = {
           event.preventDefault(); buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
         }
       };
-      dialog.insertBefore(trigger, dialog.querySelector('#sdk-controls-result'));
-      dialog.append(menu);
+      const pickers = view.pane.querySelector('.sdk-pickers');
+      pickers.insertBefore(trigger, pickers.querySelector('#sdk-more'));
+      view.pane.querySelector('.sdk-status-row').append(menu);
     }
     this.paint(view);
   },
 
   show(view) {
-    const menu = view.pane.querySelector('#sdk-more-menu');
-    if (this.states.get(view)?.panel?.parentElement === menu && !menu.matches(':popover-open')) view.pane.querySelector('#sdk-more').click();
-    this.states.get(view)?.panel?.querySelector('#sdk-control-approval').focus();
+    const trigger = view.pane.querySelector('#sdk-control-approval');
+    if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click();
+    view.pane.querySelector('#sdk-policy-approval [aria-checked="true"]')?.focus();
   },
 
   async command(view, text) {

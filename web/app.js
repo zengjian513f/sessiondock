@@ -9591,6 +9591,7 @@ function renderActivity(activity) {
     row.id = 'conversation-status';
     const gauges = el('div', 'sdk-gauges');
     gauges.setAttribute('aria-label', '用量');
+    gauges.tabIndex = 0;
     row.append(gauges);
     box.after(row);
   }
@@ -9613,18 +9614,34 @@ function renderActivity(activity) {
     } else if (Number.isFinite(processStart) && Number.isFinite(activityAt)
         && activityAt < processStart - 2) activity = null;
   }
-  const labels = {working: 'Working…', waiting: '等待回答', aborted: '已中断', failed: '执行失败'};
-  const label = compacting ? '正在压缩上下文…' : labels[activity?.state]
+  const labels = {working: '处理中', waiting: '待回答', aborted: '已中断', failed: '执行失败'};
+  const label = compacting ? '压缩中' : labels[activity?.state]
     || (S.live.has(S.sel) && !S.agent ? '就绪' : '未运行');
-  const n = el('div', 'sdk-status');
+  const n = el('button', 'sdk-status');
+  n.type = 'button';
   n.id = compacting || labels[activity?.state] ? 'activity' : 'conversation-idle-status';
   n.dataset.state = compacting ? 'maintenance' : ({failed: 'blocked', aborted: 'warning'}[activity?.state]
     || (labels[activity?.state] ? activity.state : S.live.has(S.sel) && !S.agent ? 'ready' : 'idle'));
   n.classList.toggle('blocked', activity?.state === 'failed');
-  n.setAttribute('role', 'status');
-  n.setAttribute('aria-live', 'polite');
-  n.textContent = label;
-  n.title = activity?.reason || label;
+  const summary = el('span', '', label);
+  summary.setAttribute('role', 'status'); summary.setAttribute('aria-live', 'polite');
+  n.append(summary);
+  n.title = activity?.error || activity?.reason || label;
+  let details = row.querySelector('#conversation-status-menu');
+  if (!details) {
+    details = el('div', 'new-model-menu sdk-toolbar-menu sdk-status-menu');
+    details.id = 'conversation-status-menu'; details.setAttribute('popover', 'auto');
+    details.setAttribute('role', 'dialog'); details.setAttribute('aria-label', '完整状态');
+    row.append(details);
+    details.addEventListener('beforetoggle', event => row.querySelector('.sdk-status')?.setAttribute('aria-expanded', String(event.newState === 'open')));
+  }
+  details.textContent = n.title;
+  n.setAttribute('aria-controls', details.id); n.setAttribute('aria-haspopup', 'dialog');
+  n.setAttribute('aria-expanded', String(details.matches(':popover-open')));
+  n.onclick = () => {
+    if (details.matches(':popover-open')) details.hidePopover();
+    else { details.showPopover(); CodexSdkView.placeMenu(details, n); }
+  };
   row.prepend(n);
   renderConversationUsage(row, S.sel);
 }

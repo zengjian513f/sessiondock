@@ -116,11 +116,11 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
             const textWidth = ctx.measureText(el.selectedOptions[0].textContent).width;
             return textWidth + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) + (style.appearance === "none" ? 0 : 24) <= el.clientWidth;
         }"""), 'selected collaboration mode must fit without an ellipsis'
-        row = page.locator('.sdk-status-row')
+        row = page.locator('.sdk-pane .sdk-status-row')
         assert row.evaluate('el => el.scrollWidth <= el.clientWidth && el.offsetHeight <= 30')
 
     starts = len(fake.methods("turn/start"))
-    tier = page.get_by_role('combobox', name='服务档位')
+    tier = page.locator('#sdk-tier')
     def choose_tier(value):
         if not tier.is_visible(): page.locator('#sdk-more').click()
         tier.select_option(value)
@@ -140,7 +140,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     fake.reject_policy = True
     if not tier.is_visible(): page.locator('#sdk-more').click()
     tier.select_option('ultrafast')
-    expect(page.locator('.sdk-status')).to_contain_text('切换服务档位失败')
+    expect(page.locator('#sdk-status-menu')).to_contain_text('切换服务档位失败')
     expect(tier).to_have_value('priority')
     expect(tier).to_be_enabled()
     fake.reject_policy = False
@@ -171,13 +171,14 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(box).to_have_value("")
     if not page.locator('#sdk-control-approval').is_visible(): page.locator('#sdk-more').click()
     dialog = page.locator("#sdk-permissions")
-    expect(dialog).to_be_visible()
+    expect(page.locator('.sdk-pickers > #sdk-control-approval')).to_be_visible()
+    expect(page.locator('.sdk-pickers > #sdk-control-sandbox')).to_be_visible()
     expect(dialog.locator('#sdk-shell-command, #sdk-shell-run')).to_have_count(0)
     expect(dialog).not_to_contain_text('直接执行命令')
     expect(page.locator('#sdk-controls, [id^="sdk-goal-"]')).to_have_count(0)
     expect(dialog).not_to_contain_text('目标')
     expect(dialog.locator('#sdk-permission-save')).to_have_count(0)
-    dialog.locator('#sdk-control-approval').click()
+    page.locator('#sdk-control-approval').click()
     approval_menu = page.locator('#sdk-policy-approval')
     approval_menu.get_by_role('menuitemradio', name='不请求审批', exact=True).click()
     expect(approval_menu.get_by_role('menuitemradio', name='不请求审批', exact=True)).to_have_attribute('aria-checked', 'true')
@@ -185,27 +186,27 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     assert changed['approvalPolicy'] == 'never' and 'sandboxPolicy' not in changed
     fake.reject_policy = True
     approval_menu.get_by_role('menuitemradio', name='不可信命令需审批', exact=True).click()
-    expect(page.locator('.sdk-status')).to_contain_text('Synthetic policy rejected')
+    expect(page.locator('#sdk-status-menu')).to_contain_text('Synthetic policy rejected')
     expect(approval_menu.get_by_role('menuitemradio', name='不请求审批', exact=True)).to_have_attribute('aria-checked', 'true')
     fake.reject_policy = False
     page.keyboard.press('Escape')
-    dialog.locator('#sdk-control-sandbox').click()
+    page.locator('#sdk-control-sandbox').click()
     sandbox_menu = page.locator('#sdk-policy-sandbox')
     sandbox_menu.get_by_role('menuitemradio', name='工作区写入', exact=True).click()
     expect(sandbox_menu.get_by_role('menuitemradio', name='工作区写入', exact=True)).to_have_attribute('aria-checked', 'true')
     assert fake.settings['sandboxPolicy'] == {'type': 'workspaceWrite'}
     fake.external_settings()
-    expect(dialog.locator('#sdk-control-approval')).to_contain_text('按需审批')
+    expect(page.locator('#sdk-control-approval')).to_contain_text('按需审批')
     if screenshots:
         page.screenshot(path=str(screenshots / (label + '-settings.png')))
     page.locator('#sdk-input').click()
 
     send('/goal status')
-    expect(page.locator('.sdk-status')).to_contain_text('不支持的命令')
+    expect(page.locator('#sdk-status-menu')).to_contain_text('不支持的命令')
     expect(box).to_have_value('/goal status')
     assert not [row for row in fake.received if row.get('method', '').startswith('thread/goal/')]
     send('/help')
-    expect(page.locator('.sdk-status')).not_to_contain_text('/goal')
+    expect(page.locator('#sdk-status-menu')).not_to_contain_text('/goal')
     normal_color = box.evaluate('(el) => getComputedStyle(el).color')
     box.fill('!')
     expect(box).to_have_class('shell-mode')
@@ -214,7 +215,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(box).not_to_have_class('shell-mode')
     for empty in ["!", "/shell"]:
         send(empty)
-        expect(page.locator(".sdk-status")).to_contain_text("用法")
+        expect(page.locator("#sdk-status-menu")).to_contain_text("用法")
         expect(box).to_have_value(empty)
         expect(page.locator("#sdk-controls-dialog")).to_have_count(0)
     send("!printf 'synthetic output' | cat")
@@ -222,18 +223,18 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(page.locator(".sdk-live")).to_contain_text("synthetic shell output")
     assert fake.methods("thread/shellCommand")[-1]["params"]["command"] == "printf 'synthetic output' | cat"
     send("/shell synthetic-error")
-    expect(page.locator(".sdk-status")).to_contain_text("Synthetic shell failed")
+    expect(page.locator("#sdk-status-menu")).to_contain_text("Synthetic shell failed")
     expect(box).to_have_value("/shell synthetic-error")
     send("/unknown-control")
-    expect(page.locator(".sdk-status")).to_contain_text("不支持的命令")
+    expect(page.locator("#sdk-status-menu")).to_contain_text("不支持的命令")
     expect(box).to_have_value("/unknown-control")
     assert len(fake.methods("turn/start")) == starts, "a control became a model message"
     if screenshots:
         page.screenshot(path=str(screenshots / (label + "-shell-error.png")))
     send("/permissions")
-    expect(dialog).to_be_visible()
+    expect(page.locator("#sdk-policy-approval")).to_be_visible()
     expect(box).to_have_value("")
-    expect(dialog.locator('#sdk-control-approval')).to_contain_text('按需审批')
+    expect(page.locator('#sdk-control-approval')).to_contain_text('按需审批')
     page.keyboard.press('Escape')
     page.reload(wait_until="domcontentloaded")
     expect(page.locator("#sdk-input")).to_be_visible()
@@ -250,7 +251,7 @@ def exercise(browser, base, corpus, fake, width, theme, screenshots):
     expect(page.locator('#sdk-tier')).to_have_value('priority')
     expect(page.locator("#sdk-mode")).to_have_value("default")
     if not page.locator('#sdk-control-approval').is_visible(): page.locator('#sdk-more').click()
-    expect(dialog.locator('#sdk-control-sandbox')).to_contain_text('工作区写入')
+    expect(page.locator('#sdk-control-sandbox')).to_contain_text('工作区写入')
     page.keyboard.press('Escape')
     assert not errors, errors
     context.close()
@@ -274,7 +275,7 @@ def main():
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
                 try:
-                    for width, theme in ((1280, "light"), (390, "dark"), (1280, "dark"), (390, "light")):
+                    for width, theme in ((1280, "light"), (390, "dark"), (1280, "dark"), (390, "light"), (320, "light"), (320, "dark")):
                         exercise(browser, base, corpus, fake, width, theme, args.screenshots)
                 finally:
                     browser.close()

@@ -174,7 +174,7 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
         page.route('**/api/codex-sdk/turn', lambda route: route.fulfill(status=503,
             content_type='application/json', body=json.dumps({'ok':False, 'error':'fixture unavailable'})), times=1)
         page.locator('#sdk-send').click()
-        expect(page.locator('.sdk-status')).to_contain_text('fixture unavailable')
+        expect(page.locator('#sdk-status-menu')).to_contain_text('fixture unavailable')
         expect(page.locator('#sdk-input')).to_have_value(text)
         expect(page.locator('#sdk-compose-items .draft-card')).to_have_count(4)
         assert not rollout.exists()
