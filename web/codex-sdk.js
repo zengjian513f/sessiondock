@@ -751,6 +751,10 @@ const CodexSdkView = {
       }
       case 'thread/status/changed': if (this.summary) this.summary.status = raw.status; break;
       case 'thread/settings/updated': if (this.summary) this.summary.settings = raw.threadSettings; this.paintPickers(); break;
+      case 'thread/name/updated':
+        if (this.summary?.resume?.thread) this.summary.resume.thread.name = raw.threadName;
+        void loadSessions(true, true);
+        break;
       case 'thread/tokenUsage/updated': if (this.summary) this.summary.usage = raw.tokenUsage; break;
       case 'account/rateLimits/updated':
         // Rolling notifications are sparse: null means unavailable, including
@@ -1021,7 +1025,7 @@ const CodexSdkView = {
     if (!match) return false;
     const [, command, value] = match;
     switch (command) {
-      case 'help': this.setNotice('可用命令：/model [模型]、/effort [强度]、/plan、/default、/permissions、/shell 命令（或 !命令）、/fork、/revert、/compact、/review、/status、/stop、/new。'); break;
+      case 'help': this.setNotice('可用命令：/model [模型]、/effort [强度]、/plan、/default、/permissions、/shell 命令（或 !命令）、/rename [名称]、/fork、/revert、/compact、/review、/status、/stop、/new。'); break;
       case 'model': case 'effort': {
         const select = this.pane.querySelector(`#sdk-${command}`);
         if (value) {

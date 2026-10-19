@@ -287,6 +287,7 @@ pub fn router() -> Router<AppState> {
         .route("/codex-sdk/reset-credit", post(codex_sdk::reset_credit))
         .route("/codex-sdk/turns", post(codex_sdk_actions::turns))
         .route("/codex-sdk/fork", post(codex_sdk_actions::fork))
+        .route("/codex-sdk/rename", post(codex_sdk_actions::rename))
         .route("/codex-sdk/revert", post(codex_sdk_actions::revert))
         .route("/codex-sdk/compact", post(codex_sdk_actions::compact))
         .route("/codex-sdk/review", post(codex_sdk_actions::review))

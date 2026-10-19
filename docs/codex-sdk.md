@@ -164,6 +164,7 @@ always, per-node failures degrade per request with `501 codex_sdk_disabled`).
 | GET `/api/codex-sdk/limits?uid=` | `account/rateLimits/read`: windows, credits and earned reset cards (account-wide) |
 | POST `/api/codex-sdk/reset-credit` `{uid, credit_id?, idempotency_key}` | `account/rateLimitResetCredit/consume` for the chosen card, then a fresh read; returns `{outcome, limits}` |
 | POST `/api/codex-sdk/turns` `{uid, cursor?}` | `thread/turns/list`, newest first, with summary items and native pagination |
+| POST `/api/codex-sdk/rename` `{uid, agent?, name}` | `thread/name/set`; native name validation and persistence, then refresh the inventory and pending creation title |
 | POST `/api/codex-sdk/fork` `{uid, last_turn_id?, before_turn_id?}` | `thread/fork`; optional native child revert before a selected turn; returns the new identity and navigable session |
 | POST `/api/codex-sdk/revert` `{uid, before_turn_id}` | `thread/revert`; removes the selected turn and later conversation, without reverting workspace files |
 | POST `/api/codex-sdk/compact` `{uid}` | `thread/compact/start`; progress uses ordinary turn/item events |
@@ -510,7 +511,15 @@ Tab uses the shared [conversation path completion](conversation.md#路径补全)
 in ordinary text and shell input. Static command suggestions are removed.
 
 
-The composer recognizes `/fork`, `/revert`, `/compact`, `/review`, `/plan`,
+DELTA (BUG-20261019-105205-4cfaa3): `/rename 名称` calls native
+`thread/name/set`; bare `/rename` opens the shared name form. Native failure
+or cancellation retains the command. Success refreshes list/detail names,
+including creation receipts before the first rollout, without starting,
+steering or interrupting a model turn. `thread/name/updated.threadName`
+updates retained live snapshots and attached views. Covered by
+[codex_sdk_rename_browser.py](../tests/codex_sdk_rename_browser.py).
+
+The composer recognizes `/rename`, `/fork`, `/revert`, `/compact`, `/review`, `/plan`,
 `/default`, `/permissions`, `/approval`, `/sandbox`, `/shell` and
 `!command`; `/model`, `/effort`, `/status`, `/stop`, `/new` and `/help` use their
 corresponding SDK controls. Unrecognized slash commands stay in the draft and

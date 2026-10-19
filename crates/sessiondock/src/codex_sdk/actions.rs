@@ -4,6 +4,20 @@ use serde_json::{Value, json};
 use super::{CodexSdk, RpcError};
 
 impl CodexSdk {
+    pub async fn rename_thread(&self, thread_id: &str, name: &str) -> Result<Value, RpcError> {
+        self.inner.ensure(thread_id).await?;
+        let raw = self
+            .inner
+            .connection()
+            .await?
+            .request("thread/name/set", json!({"threadId":thread_id,"name":name}))
+            .await?;
+        // Before the first turn there is no rollout in the ordinary inventory.
+        // Only update that private creation receipt after native success.
+        self.inner.receipts.set_name(thread_id, name.trim())?;
+        Ok(raw)
+    }
+
     pub async fn fork_thread(
         &self,
         thread_id: &str,

@@ -364,7 +364,7 @@ impl State {
             "thread/tokenUsage/updated" => self.usage = params["tokenUsage"].clone(),
             "thread/name/updated" => {
                 if self.resume["thread"].is_object() {
-                    self.resume["thread"]["name"] = params["name"].clone();
+                    self.resume["thread"]["name"] = params["threadName"].clone();
                 }
             }
             "error" => {
