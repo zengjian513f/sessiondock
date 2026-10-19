@@ -153,7 +153,7 @@ unknown，不自动重发。
 | `unrevert` / `revert_commit` | DELETE revert 撤销暂存 / POST revert/commit 永久提交边界；提交须在 UI 明确区分 |
 | `compact({request_id,delivery?})` | POST compact，默认显式 steer；原生持久压缩请求，不发送“请总结”提示词 |
 | `shell({request_id,command})` | POST session shell；直接执行命令，原生 shell 消息投影保留输出、状态与退出码，不调用模型 |
-| `commands` / `command({request_id,name,text,files?,delivery?})` | 查询原生 command 目录 / 执行原生回调；默认 delivery queue，不把任意斜杠文本假装成已注册命令 |
+| `commands` / `command({request_id,name,text,delivery?})` | 查询原生 command 目录 / 执行原生回调；默认 delivery queue，不把任意斜杠文本假装成已注册命令 |
 | `agents` / `settings({native_agent?,permissions?})` | 查询原生 agent 目录，POST agent 切换后续 provider turn；PATCH session 的原生 Permission.Ruleset，不套用 Codex policy 枚举 |
 
 fork、shell、command、compact 在调用前按 request_id 在当前桥接进程预留回执，
@@ -163,11 +163,8 @@ fork、shell、command、compact 在调用前按 request_id 在当前桥接进�
 回执继续去重；不承诺未确认操作跨节点重启的 exactly-once。原生删除、永久回退
 提交与可撤销 discard 仍是不同操作。
 
-`turn.files` 与 `command.files` 使用 v2 `PromptInput.FileAttachment` 的
-`{uri,name?,description?,mention?}`；共享 HTTP 只从已授权发布的附件生成
-URI，不接受客户端任意路径。OpenAPI 只约束 uri 为字符串；file URI 和 data URL
-的实际读取、图片格式及模型媒体能力由原生服务决定并保留其错误，合成测试不代表
-所有 provider/模型都经过真实图片验收。普通文本路径引用仍可降级工作。
+图片与普通文件统一使用 SessionDock 附件发布后的文本路径引用。已移除 `turn.files`
+及 `command.files` 原生附件适配，不生成 data URI，不把图片字节附加到原生 prompt。
 
 ## 并存限制
 

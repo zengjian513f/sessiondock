@@ -192,10 +192,10 @@ def exercise(browser, base, fake, root, width, theme, screenshots, label):
         expect(page.locator('.sdk-queued')).to_have_count(0)
         params = fake.methods('turn/start')[-1]['params']
         native_input = params['input']
-        images = [item for item in native_input if item['type'] == 'localImage']
-        assert len(images) == 1, native_input
-        assert Path(images[0]['path']).is_file(), images
+        assert all(item['type'] == 'text' for item in native_input), native_input
+        assert list(work.rglob('屏幕截图-with-realistic-long-name.png'))
         prompt = '\n'.join(item.get('text', '') for item in native_input)
+        assert '屏幕截图-with-realistic-long-name.png' in prompt and 'sessiondock_attachments' in prompt
         assert text in prompt and 'analysis-input-' in prompt and 'dropped-project-file.csv' in prompt, prompt
         assert 'pasted-clipboard.png' not in prompt, prompt
         assert 'quoted research context from the shared draft' in prompt, prompt

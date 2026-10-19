@@ -258,6 +258,8 @@ impl Inner {
         steer: Option<String>,
     ) -> Result<(), RpcError> {
         let connection = self.connection().await?;
+        // Queued inputs from older releases retain their published path text.
+        item.input.retain(|part| part["type"] == "text");
         item.state = "sending".into();
         item.error = None;
         self.queue.update(live.id(), item.clone())?;
@@ -387,7 +389,6 @@ fn input_content(input: &[Value]) -> Vec<Value> {
         .iter()
         .map(|part| match part["type"].as_str() {
             Some("text") => json!({"type":"text", "text":part["text"]}),
-            Some("localImage") => json!({"type":"localImage", "path":part["path"]}),
             _ => part.clone(),
         })
         .collect()

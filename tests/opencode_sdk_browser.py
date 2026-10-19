@@ -276,20 +276,20 @@ def main():
                     send('error')
                     snapshot("r => !r.running && r.items.some(m => m.content === 'synthetic provider failure')")
 
-                    # A real staged image upload becomes structured native
-                    # multimodal input, rather than just a path in prompt text.
+                    # Image uploads follow the same text-path contract as ordinary files.
                     page.locator('#sdk-add').click()
                     with page.expect_file_chooser() as chooser:
                         page.locator('#sdk-attach-menu [data-attach="image"]').click()
                     chooser.value.set_files({'name': 'sdk-image.png', 'mimeType': 'image/png',
                                             'buffer': base64.b64decode(PNG)})
                     expect(page.locator('#sdk-compose-items')).to_contain_text('sdk-image.png')
-                    send('native structured image')
-                    snapshot("r => !r.running && r.items.some(m => m.content?.startsWith('native reply completed: native structured image'))")
+                    send('image attachment')
+                    snapshot("r => !r.running && r.items.some(m => m.content?.startsWith('native reply completed: image attachment'))")
                     image_prompt = next(r[2] for r in native.received if r[1].endswith('/prompt')
-                                        and r[0] == 'POST' and r[2]['text'].startswith('native structured image'))
-                    assert image_prompt['files'][0]['uri'].startswith('data:image/png;base64,')
-                    assert image_prompt['files'][0]['name'] == 'sdk-image.png'
+                                        and r[0] == 'POST' and r[2]['text'].startswith('image attachment'))
+                    assert 'files' not in image_prompt and 'images' not in image_prompt, image_prompt
+                    assert 'sdk-image.png' in image_prompt['text'] and 'sessiondock_attachments' in image_prompt['text']
+                    assert list(native.cwd.rglob('sdk-image.png'))
 
                     page.locator('#sdk-more').click()
                     page.locator('#native-sdk-native_agent').select_option('plan')
@@ -419,6 +419,7 @@ def main():
                         args.screenshot.parent.mkdir(parents=True, exist_ok=True)
                         for width in (1280,390,320):
                             page.set_viewport_size({'width':width,'height':900})
+                            expect(page.locator('#sdk-input:visible, #side .item.sel:visible').first).to_be_visible()
                             if width < 500 and not page.locator('#sdk-input').is_visible():
                                 selected = page.evaluate('S.sel')
                                 page.locator(f'#side .item[data-uid="{selected}"]').click()

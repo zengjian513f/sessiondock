@@ -156,7 +156,7 @@ fn capabilities() -> Value {
     json!({"send":true,"interrupt":true,"respond":true,"approval":true,"question":true,
         "models":true,"create":true,"resume":cfg!(target_os="linux"),"shared_tui":false,
         "subagents":false,"effort":true,"settings":true,"permission_mode":true,"fast_mode":true,
-        "images":true,"usage":true,"context_usage":true,"compact":true,
+        "usage":true,"context_usage":true,"compact":true,
         "fork":true,"fork_before":true,
         "mcp_elicitation":true,"user_dialog":true,
         "limitations":["Claude stream-json owns an independent CLI runtime; an active independent TUI cannot be attached or taken over.",
@@ -682,22 +682,7 @@ impl Bridge {
                         .as_str()
                         .ok_or("claude_sdk: text must be a string")?
                 };
-                let mut content = json!(text);
-                if method == "turn"
-                    && let Some(images) = input["images"].as_array().filter(|v| !v.is_empty())
-                {
-                    let mut blocks = vec![json!({"type":"text","text":text})];
-                    for image in images {
-                        let data = image["data"]
-                            .as_str()
-                            .ok_or("claude_sdk: image data must be base64 text")?;
-                        let mime = image["mimeType"]
-                            .as_str()
-                            .ok_or("claude_sdk: image mimeType is required")?;
-                        blocks.push(json!({"type":"image","source":{"type":"base64","media_type":mime,"data":data}}));
-                    }
-                    content = json!(blocks);
-                }
+                let content = json!(text);
                 let (model, effort) = {
                     let live = lock(&session.live);
                     (live.model.clone(), live.effort.clone())

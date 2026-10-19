@@ -26,21 +26,7 @@ impl Bridge {
             if !state.running || !state.prompt_started {
                 return Err("grok_sdk_steer_requires_active_turn".into());
             }
-            let mut params =
-                json!({"sessionId":session.sid,"text":text,"interjectionId":request_id});
-            if let Some(images) = input.get("images").filter(|v| !v.is_null()) {
-                let images = images.as_array().ok_or("grok_sdk_invalid_images")?;
-                if !images.is_empty() {
-                    if !state.images {
-                        return Err("grok_sdk_images_unsupported".into());
-                    }
-                    let mut content = vec![json!({"type":"text","text":text})];
-                    for image in images {
-                        content.push(json!({"type":"image","data":required(image,"data")?,"mimeType":required(image,"mimeType")?}));
-                    }
-                    params["content"] = json!(content);
-                }
-            }
+            let params = json!({"sessionId":session.sid,"text":text,"interjectionId":request_id});
             // Register before the transport can deliver an actor echo. Do not
             // retry an uncertain write: the native interjection id is an echo
             // correlation key, not a documented native idempotency guarantee.

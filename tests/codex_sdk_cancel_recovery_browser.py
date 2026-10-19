@@ -19,20 +19,11 @@ from playwright.sync_api import expect, sync_playwright
 from codex_sdk_actions_browser import environment
 from codex_sdk_browser import THREAD, build, server
 from codex_sdk_compose_browser import attach, saved
-from codex_sdk_queue_browser import QueueServer
+from codex_sdk_queue_browser import QueueServer, open_page
 from history_fixtures import BINARY
 from hub_fixtures import Hub, free_port
 from media_browser import PNG
 from node_auth_fixtures import TOKEN, node_env
-
-
-class AttachmentQueueServer(QueueServer):
-    async def _user_item(self, turn_id, text, suffix='user', content=None):
-        # QueueServer's text-only fixture omits localImage from its native
-        # echo. Real confirmation requires the entire submitted input.
-        if suffix == 'user':
-            content = self.methods('turn/start')[-1]['params']['input']
-        await super()._user_item(turn_id, text, suffix, content)
 
 
 def exercise(browser, base, fake, width, theme, screenshots, label):
@@ -157,8 +148,8 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         native = fake.methods('turn/start')[-1]['params']['input']
         prompt = '\n'.join(item.get('text', '') for item in native)
         assert text in prompt and quote in prompt and 'analysis-input-研究笔记.txt' in prompt
-        image = next(item for item in native if item['type'] == 'localImage')
-        assert Path(image['path']).is_file()
+        assert all(item['type'] == 'text' for item in native), native
+        assert 'sessiondock_attachments' in prompt and '.png' in prompt, prompt
         assert len(submissions) == 4 and len(fake.methods('turn/start')) == 2
         if screenshots:
             page.screenshot(path=str(screenshots / f'{label}-resent.png'))
@@ -173,6 +164,37 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         context.close()
 
 
+def legacy_attachment_queue(browser, binary):
+    """Retry a persisted pre-change image entry using only its published path text."""
+    with tempfile.TemporaryDirectory(prefix='sd-sdk-legacy-attachment-') as temporary:
+        root = Path(temporary)
+        corpus = build(root)
+        env = environment(root, binary)
+        image = root / 'sessiondock_attachments' / '1' / 'legacy-image.png'
+        image.parent.mkdir(parents=True)
+        image.write_bytes(base64.b64decode(PNG))
+        text = 'Review the saved attachment\n附件1: ./sessiondock_attachments/1/legacy-image.png'
+        (root / 'state' / 'codex-sdk-queue.json').write_text(json.dumps({THREAD: [{
+            'id': 'legacy-image', 'text': text,
+            'input': [{'type': 'text', 'text': text}, {'type': 'localImage', 'path': str(image)}],
+            'model': None, 'effort': None, 'state': 'failed', 'error': 'Previous service stopped',
+        }]}))
+        with QueueServer(root / 'app.sock', corpus.paths['sdk'], THREAD) as fake:
+            with server(corpus, binary, root / 'app.sock', env) as base:
+                context, page = open_page(browser, base, 390, 'dark')
+                row = page.locator('.sdk-queued').filter(has_text='legacy-image.png')
+                expect(row).to_be_visible()
+                row.locator('[data-queue-action="retry"]').click()
+                expect(page.locator('.sdk-live')).to_contain_text('Review the saved attachment')
+                native = fake.methods('turn/start')[-1]['params']['input']
+                assert native == [{'type': 'text', 'text': text}], native
+                assert image.is_file()
+                fake.complete()
+                expect(page.locator('.sdk-queued')).to_have_count(0)
+                context.close()
+        print('PASS old queued image retry retains attachment path and sends text only', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -185,6 +207,7 @@ def main():
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
         try:
+            legacy_attachment_queue(browser, args.binary)
             for mode, width, theme in [('node', 1280, 'light'), ('node', 390, 'dark'),
                                        ('hub', 1280, 'dark'), ('hub', 390, 'light')]:
                 with tempfile.TemporaryDirectory(prefix='sd-sdk-cancel-') as temporary:
@@ -197,7 +220,7 @@ def main():
                     corpus.paths['sdk'].write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in rows))
                     port = free_port()
                     env = {**environment(root, args.binary), **node_env(root, port, '127.0.0.0/8')}
-                    with AttachmentQueueServer(root / 'app.sock', corpus.paths['sdk'], THREAD) as fake:
+                    with QueueServer(root / 'app.sock', corpus.paths['sdk'], THREAD) as fake:
                         with server(corpus, args.binary, root / 'app.sock', env) as base:
                             hub = None
                             if mode == 'hub':

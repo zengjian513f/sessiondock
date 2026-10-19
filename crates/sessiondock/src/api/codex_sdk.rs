@@ -272,11 +272,6 @@ pub async fn turn(
     if !text.is_empty() {
         input.push(json!({"type":"text","text":text,"text_elements":[]}));
     }
-    for attachment in &attachments {
-        if attachment["kind"] == "image" {
-            input.push(json!({"type":"localImage","path":attachment["path"]}));
-        }
-    }
     let request_id = match body.request_id {
         Some(id) => id,
         None => crate::conversation::random_id().map_err(super::conversation::error)?,
