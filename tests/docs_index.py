@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Index docs/*.md as Markdown tables (title, summary, lines).
+"""Generate a categorized navigation index for current docs/*.md contracts.
 
 Prints the index to stdout. With --write, also writes docs/README.md as
 the last step. The generated README is excluded from the index.
@@ -15,21 +15,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 OUT = DOCS / "README.md"
-CLIP = 240
 FENCE_RE = re.compile(r"^(\s{0,3})(`{3,}|~{3,})")
 H1_RE = re.compile(r"^#\s+(.+?)\s*$")
-HEADING_RE = re.compile(r"^#{1,6}\s+")
 LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
-MEASUREMENTS = {"native-input.md", "performance.md", "append-cache.md"}
-PROCESS = {"delegation.md", "validation.md"}
-ORDER = ("合同与设计", "性能记录", "流程")
+GROUPS = {
+    "开发与交付": {"onboarding.md", "runbook-dev.md", "validation.md", "delegation.md", "adding-a-cli.md", "deployment.md", "release.md", "public-release.md", "deploy-hub.md", "deploy-macos.md", "deploy-windows.md", "replacement-checklist.md", "network-topology.md"},
+    "SDK、对话与界面": {"sdk-ui.md", "native-sdk.md", "sdk-feature-audit.md", "codex-sdk.md", "grok-sdk.md", "agy-sdk.md", "claude-sdk.md", "opencode-sdk.md", "conversation.md", "composer-input.md", "cli-state.md", "codex-commands.md", "quotas.md", "frontend-migration-surfaces.md", "question-card-regression-audit.md"},
+    "会话、历史与文件": {"read-model.md", "history-pages.md", "native-input.md", "append-cache.md", "native-tags.md", "session-clone.md", "session-move.md", "trash.md", "metadata.md", "media.md", "media-pagination-design.md", "files.md", "external-links.md", "delivery-scope.md", "agy.md", "opencode.md", "codex-names.md", "grok-metadata.md", "nesting-regression-audit.md"},
+    "终端与生命周期": set(),
+    "架构、接口与运行服务": {"architecture.md", "module-map.md", "environment.md", "error-codes.md", "route-ledger.md", "glossary.md", "capabilities.md", "hub.md", "diagnostics.md", "logging.md", "bug-report.md", "security-model.md", "processes.md", "process-links.md", "liveness.md"},
+    "历史资料（按需查阅）": {"perf-methodology.md", "performance.md", "process-launch-audit.md"},
+}
+ORDER = tuple(GROUPS)
 INTRO = """# 文档索引
 
-本文件由 `tests/docs_index.py` 生成，列出 `docs/*.md` 的标题、首段摘要与行数（不含本文件）。重新生成：
+开发从 [AGENTS.md](../AGENTS.md)、[开发手册](runbook-dev.md) 与受影响合同开始。
+当前行为写在专题合同，未完成工作只在 [TODO](../TODO.md)；交付结果、事故时间线和
+完整提交目录由 Git 历史保存，不作为当前规范。历史资料仅在相关任务时查阅。
 
-```sh
-python3 tests/docs_index.py --write
-```
+本索引只生成分类和标题，避免复制易过期的摘要、行数或功能状态。
+重新生成：`python3 tests/docs_index.py --write`。
 """
 
 
@@ -54,9 +59,12 @@ def plain(text: str) -> str:
 
 
 def classify(name: str) -> str:
-    if name in MEASUREMENTS:
-        return "性能记录"
-    return "流程" if name in PROCESS else "合同与设计"
+    for group, names in GROUPS.items():
+        if name in names:
+            return group
+    if name.startswith(("terminal-", "lifecycle-", "host-")) or name == "session-host.md":
+        return "终端与生命周期"
+    return "架构、接口与运行服务"
 
 
 def title_of(lines: list[str], fallback: str) -> str:
@@ -67,19 +75,6 @@ def title_of(lines: list[str], fallback: str) -> str:
     return fallback
 
 
-def first_paragraph(lines: list[str]) -> str:
-    buf: list[str] = []
-    started = False
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or HEADING_RE.match(line):
-            if started:
-                break
-            continue
-        started = True
-        buf.append(stripped)
-    text = plain(" ".join(buf))
-    return text if len(text) <= CLIP else text[:CLIP]
 
 
 def cell(text: str) -> str:
@@ -96,8 +91,6 @@ def collect() -> list[dict]:
         rows.append({
             "name": path.name,
             "title": title_of(vis, path.stem),
-            "summary": first_paragraph(vis),
-            "lines": len(text.splitlines()),
             "section": classify(path.name),
         })
     return rows
@@ -111,12 +104,12 @@ def render(rows: list[dict]) -> str:
             continue
         parts.append(f"## {section}")
         parts.append("")
-        parts.append("| Doc | Title | Summary | Lines |")
-        parts.append("| --- | --- | --- | --- |")
+        parts.append("| 文档 | 内容 |")
+        parts.append("| --- | --- |")
         for row in items:
             doc = f"[{row['name']}]({row['name']})"
             parts.append("| " + " | ".join(cell(value) for value in (
-                doc, row["title"], row["summary"], str(row["lines"]),
+                doc, row["title"],
             )) + " |")
         parts.append("")
     return "\n".join(parts).rstrip() + "\n"

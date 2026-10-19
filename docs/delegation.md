@@ -82,69 +82,20 @@ of the verification commands.
 5. 出现 `Memory flush started` 之类 grok 自身日志属正常；`GROK_EXIT` 非 0 或
    看门狗报停滞时读日志尾部判断是卡在权限还是任务本身。
 
-## 已委派记录
+## 产出归属
 
-| 日期 | 任务 | 结果 |
-| --- | --- | --- |
-| 2026-10-19 | Grok、Agy、OpenCode、Claude 原生 SDK 模式 | 按用户明确指令四路 `gpt-6.1-sol` high `codex exec` 在独立 worktree 产出，实际模型/effort 均核对；主审审阅并整合原生桥接、共享 HTTP/Hub、SDK 界面、创建回执、草稿、附件重试与受管状态。十套定向 Chromium 验收通过，覆盖原生发送/流式/工具/错误、各自支持的审批/问题、中断/恢复/去重、Hub、宽窄屏及明暗主题；亲自查看 SDK 详情截图。构建、fmt、文档检查通过；普通 Clippy 通过并报告六处既有告警，严格 `-D warnings` 仍受这六处阻塞。未使用账号或付费模型。提交、推送与 scoped 发布由主审负责。 |
-| 2026-10-07 | 第二批读路径优化：摘要字段投影、视图缓存锁范围、Agy 追加投影 | 按用户明确授权，三路 `gpt-6.1-sol` high `codex exec` 在独立 worktree 产出，实际 model/effort 均核对，耗时 470–813 秒；Codex 主审整合。小摘要保留快速解码，大记录完整验证但跳过无关子树；解析移到共享锁外，同 owner 排队，AST 回到全局预算；Agy 仅在前缀、summary 和媒体条件允许时续算。主审修正全局淘汰导致无关读取 503 的过度失效、收拢缓存插入参数，并修复测试目录初始化、错误展示断言、警告多元素选择、Playwright API 写法及多页面 HTTP/1 连接池饥饿。三路浏览器场景已实际通过，Agy 另通过分别禁用 AST / view 缓存的场景。全量门另暴露既有菜单实例替换测试的 CHECK 暂停竞态：改为拦截真实 SEND，再替换私有实例，保留后端拒绝、零输入和不重试断言，定向复验通过。无测量数据，不宣称提速比例。子任务仅做编译/静态检查，完整验证和提交、推送、部署由主审负责。 |
-| 2026-10-07 | 首批性能与重复代码整理：Claude owner 索引、metadata 解码复用、Agy mirror、侧栏删除/刷新、公共小原语、append-cache 文档 | 六路 grok-4.7 high headless 产出，人工审阅（Codex 主审）；按用户明确指定模型与编码范围，各自独立 worktree，实际 model/effort 均核对，耗时 631–1569 秒。主审修复 owner 引用类型和文件/目录冲突夹具、侧栏刷新触发方式及 Agy 元数据显示的异步断言，并将旧镜像的逐字节比较改为整块比较。公共函数提取保留差异实现，元数据复用既有内容指纹，原生 snapshot 与身份改写规则不变。主审统一完成 Rust 构建、fmt/Clippy、文档检查及 9 套定向 Chromium 验收。全量发布门另发现既有分页恢复用例未等 SSE 前缀重置就打开菜单；新旧产物单独重跑均通过，补齐可见正文等待后再次通过。最终同一产品产物的 145 项验收分批完成；另修正手机布局、SVG 几何、资源刷新和重启基线的浏览器等待，保留失败日志并补充停止/删除诊断。子任务不承担交付。 |
-| 2026-10-04 | Vue 第十七批侧栏自动订阅、搜索时序、Agy 对等接线、独立资源及元数据通知 | 限定任务通过 `gpt-6.1-sol` high `codex exec` 分批并行，核对实际 model/effort；子任务在既有 worktree 产出，主任务审阅合并。删除侧栏外部 render/paint 接线，行状态使用 computed，保留搜索 120ms 去抖与正则 50ms 批次；主审修复未读集合初始化丢失订阅、克隆父行通知、pending 实例隔离和卸载后布局任务。Agy 新建、历史和客户端矩阵接入 Vue；静态资产和共用模块移入 web，旧入口暂存至最终切换。快速星标切换暴露采样通知遗漏，节点及 Hub 在确认元数据写入后直接发出目录失效。最终新入口 33 套、旧入口 9 套 Chromium 通过，含 307 个菜单画面、1133 次原生动作、真实拖选及 5000 行折叠；新旧构建、类型检查、Rust release 构建和文档链接通过，未运行 unit 或真实 CLI。部署测试门另以新旧入口各两套 Chromium 验证 stage 绑定。 |
-| 2026-10-04 | Vue 第十六批输入区、暂停遮罩、安装状态和媒体重载收尾 | 输入区、浏览器、安装状态、媒体四项限定任务与两项只读审阅使用 `gpt-6.1-sol` high `codex exec` 分批并行，核对实际 model/effort；子任务在 worktree 产出，主任务在共享主工作区审阅合并。控件直接读取草稿、版本、终端和安装状态，删除重复刷新及隐藏按钮转发，保留题卡/附件身份、异步保存、原生事件和媒体请求互斥。最终新入口 23 套、旧入口 5 套 Chromium、两路构建及类型检查通过；新增迟到草稿/SEND 完成后的过期禁发、真实轮询就绪切换和安装按钮点击回归。浏览器旧刷新探针已改为 canonical 缓存写入；未运行 unit test。 |
-| 2026-10-04 | Vue 第十五批控制台与会话头派生、无用接口清理 | 三项限定任务使用 `gpt-6.1-sol` high `codex exec` 并行，另加同模型 high 只读审查，均核对实际 model/effort。主审接入派生状态并删除旧刷新调用，保留原始缓存、消息和终端实例身份；补齐控制台忙碌/错误集合的浅响应式归属及读取期间输入区隐藏。并行验证曾取得标题旧调用与新服务混用的中间快照，完整构建后消除 `initializeHeaderStatus` 异常；模型测试改为等待真实目录恢复后提交。最终私有构建上新入口 38 套、旧入口 7 套 Chromium 和两路构建/类型检查通过，含组件加载失败重试、父子会话、冻结、发送、终端选区及两路各 295 个原生菜单画面。并行 Agy 后端、图标和旧入口改动不纳入本批；未运行 unit test。 |
-| 2026-10-04 | Vue 第十四批主终端清理、卸载回归和剩余范围审查 | 四项限定任务使用 `gpt-6.1-sol` high `codex exec` 分批并行，核对实际 model/effort。主审整合主终端清理，补齐搜索 Worker、机器客户端读取/轮询、粘贴提示和菜单查找等待的归属；保留后台 CLI 及已接受写操作。最终新入口 28 套、旧入口 7 套 Chromium、两路私有构建和类型检查通过，含真实根卸载后的迟到列表/搜索/客户端读取、同步帧清理及后台更新完成。回显基准原先默认进入 Grid 却调用 xterm 接口，已显式选择并核对 xterm 后两路通过。首次源码快照读到并行侧栏编辑的中间态，重新取得完整快照后构建通过；未运行 unit test。 |
-| 2026-10-04 | Vue 第十三批标题派生、输入区和正文读取清理 | 三路 `gpt-6.1-sol` high `codex exec` 并行并核对实际 model/effort。主审接入标题动作/父链派生，补齐 listLoaded 浅订阅、待落盘成员变更和消息元数据更新；整合列表、正文、历史、同步、事件及审计清理，保留发送与保存。新入口 22 套、旧入口 6 套 Chromium、history parity、两路私有构建和类型检查通过，含实际根卸载后的读取、Worker/公式和已接受草稿保存。新草稿回归改用真实绑定后的 UID；临时运行器误列不存在的 watch 套件，已改用实际 UI events 套件并单独通过。未运行 unit test。 |
-| 2026-10-04 | Vue 第十二批侧栏派生数据与分组清理 | 按用户指令三路 `gpt-6.1-sol` high `codex exec` 并行，核对实际 model/effort。主审整合计数、来源/机器筛选计算和原地元数据浅通知，删除重复发布接线；分组清理保留已接受写入。新入口 15 套、旧入口 6 套 Chromium、两路私有构建和类型检查通过，新增真实隐藏操作的计数/原对象断言及根卸载后的迟到读取、已接受创建验证。只读审查明确后续终端、输入区、主应用清理和会话头派生范围，未运行 unit test。 |
-| 2026-10-04 | Vue 第十一批终端外层、时间轴/资源及模型/传输生命周期 | 按用户指令三路 `gpt-6.1-sol` high `codex exec` 并行，核对实际 model/effort。主审整合多选派生状态、逐 UID 勾选、浅终端列表和服务清理；将报告拖放交给组件并删除重复绑定。Chromium 暴露原地运行集合缺订阅，修复后验证停止重试；新回归按真实折叠范围、Vue 提交和网络续租完成时刻断言。最终新入口 22 套、旧入口 6 套 Chromium、两路私有构建和类型检查通过，含真实卸载后的迟到模型/迁移响应，未运行 unit test。 |
-| 2026-10-04 | Vue 第十批侧栏 DOM 状态、辅助页类型与标题身份回归 | 按用户指令三路 `gpt-6.1-sol` high `codex exec` 并行并核对实际 model/effort。主审整合同一视图标题身份、派生星标/过程按钮和标题监听清理，审阅侧栏缓存、辅助页类型及浏览器产出；修正派生列表的 computed 解包，以及复制按钮、嵌套夹具初始折叠和已有菜单顺序断言。最终新入口 19 套、旧入口 7 套 Chromium、历史 parity、两路私有构建和类型检查通过，未运行 unit test。 |
-| 2026-10-04 | Vue 第九批报告草稿、模型选择状态及剩余范围审查 | 按用户指令三路 `gpt-6.1-sol` high `codex exec` 并行，核对实际 model/effort。主审整合报告共享草稿、单一发送状态、编辑器 composable 和过期控件派生；审阅模型状态及浏览器产出，修正保存 POST 拦截、读取期间控件基线和模型副标题断言。最终新入口 10 套、旧入口 3 套 Chromium 通过，含附件引用持久化、错误恢复及三种异步过期竞争；两路私有构建和类型检查通过，未运行 unit test。 |
-| 2026-10-04 | Vue 第八批机器设置、Grid 生命周期与报告/模型只读审查 | 按用户指令三路 `gpt-6.1-sol` high `codex exec` 并行，核对实际 model/effort。主审删除顶栏 DOM 回读及隐藏按钮转发、死 search revision，连接辅助页字体清理；审阅全部产出，恢复名称保存失败的原回退语义，修复客户端矩阵初始空列表未订阅的问题，并校准真实 Vue 卸载探针。新旧入口使用私有构建，测试按实际入口识别脚本；最终新入口 15 套、旧入口 5 套 Chromium 通过。两路构建及类型检查通过，未运行 unit test。 |
-| 2026-10-04 | Vue 第七批环境通知状态、录制页状态/清理及初次读取浏览器回归 | 按用户指令使用 `gpt-6.1-sol` high `codex exec` 三路限定任务并行，核对实际 model/effort。主审统一详情页标题、读取/删除/固定/排队提示生命周期，保留正文宿主和异步选择检查，审阅并整合全部产出。录制切换用实际关闭事件验证，未强加原协议没有的关闭码。独立源码快照两路构建及类型检查通过；最终新入口 19 套、旧入口 3 套 Chromium 和 history parity 通过，未运行 unit test。 |
-| 2026-10-04 | Vue 第六批菜单、运行时通知、行内媒体主树接线与浏览器补充；剩余挂载和辅助页只读审查 | 按用户指令使用 `gpt-6.1-sol` high `codex exec`，五个限定编辑任务及两项只读审查分批并行，核对实际 model/effort。主审整合传输弹窗实例身份、主应用已有 disposer 和 AbortController，保留原通知外观覆盖；修正测试对永久隐藏卡片和全文 Markdown 重建的错误假设。最终新入口 13 套、旧入口 3 套 Chromium 通过，覆盖折叠清理、真实重试/重载、通知顺序与登录按钮；两路构建和类型检查通过，未运行 unit test。 |
-| 2026-10-04 | Vue 第五批正文组件订阅、主树注册表、媒体/取消回归和工具组真实用户路径 | 按用户指令使用 `gpt-6.1-sol` high `codex exec`，四个限定范围任务并行分批完成，核对实际 model/effort。主审整合 detached 准备/发布、增量提交、懒展开预算、滚动与卸载，删除正文 publish 和业务 DOM 属性；补充顶栏批量展开身份验证，并让工具组夹具保留稳定原生前缀以验证热增量。最终新入口 15 套、旧入口 5 套 Chromium 及 history parity 通过。分页测试补齐 Node 运行前提并保留真实 timer 校准；搜索测试等待刷新后的详情恢复再返回列表。两路构建及类型检查通过，未运行 unit test。 |
-| 2026-10-04 | Vue 第四批终端/正文只读审查、终端面板/菜单主树接线及浏览器回归补充 | 按用户指令使用 `gpt-6.1-sol` high `codex exec`，五个限定范围任务并行分批完成，核对实际 model/effort。主审整合 Vue 提交后的尺寸测量、菜单焦点、响应式时间轴/修饰键和卸载清理。新入口 11 套 Chromium 最终通过，旧入口受管终端、选区和编辑器 3 套通过；编辑器首次复验暴露手机顶栏折叠期间的测试入口竞态，改为实时可见入口定位后两路通过。两路构建及类型检查通过，未运行 unit test。 |
-| 2026-10-04 | Vue 第三批 overlay 主树接线、草稿/编辑器只读审查及编辑器浏览器回归 | 按用户指令使用 `gpt-6.1-sol` high `codex exec`，四个限定范围任务并行分批完成，核对实际 model/effort。主审修正 overlay 类型循环并整合共享浅草稿、输入历史和编辑器 composable。最终新入口 17 套 Chromium 通过，编辑器套件也在旧入口通过；IME 与手机软键盘仅验证合成事件/窄屏边界。两路构建及类型检查通过，未运行 unit test。 |
-| 2026-10-04 | Vue 第二批侧栏主树接线、手势清理、状态回读消除、时序审查与回归补充 | 按用户指令使用 `gpt-6.1-sol` high `codex exec`，两轮共五个限定范围任务，核对实际 model/effort。主审整合侧栏响应式投影、提交后滚动/测量、分组菜单生命周期并审阅全部改动。新入口 19 套 Chromium 通过，旧入口菜单、深链、活跃筛选 3 套通过；补充刷新焦点、真实视口定位及范围键盘操作。两路构建及类型检查通过，未运行 unit test。 |
-| 2026-10-04 | Vue 首批重构的静态根组件、搜索浏览器回归、状态/验证边界只读审查 | 按用户指令三路 `gpt-6.1-sol` high `codex exec` 并行；核对各自会话记录中的实际模型和 effort。主审审阅根组件及新增回归，独立完成搜索状态合并与集成。新入口 15 套 Chromium 验收通过，含桌面/手机取消迟到响应、正文身份、发送、草稿与 Hub 搜索；两路构建及类型检查通过，未运行 unit test。 |
-| 2026-10-03 | `docs/frontend-migration-surfaces.md` 与独立的 `tests/machine_controls_browser.py` | 两场 grok-4.7 high headless 产出，人工审阅。主审修正清单中的覆盖统计与机器筛选双击描述，并将调色板验收改为旧页面实际的改色后重载流程，修正 Playwright 断言参数。机器控件脚本在旧入口和独立 Vue 构建均通过；未运行 unit test。 |
-| 2026-10-03 | `tests/frontend_framework_browser.py`：Vue 设置迁移的独立 Chromium 用户操作脚本 | grok-4.7 high headless 产出，人工审阅（按本次用户明确指定模型）。主审修正设置/更多按钮的双匹配选择器，桌面 1280×900 和手机 390×844 的标签、控件、关闭/重开与刷新持久化均通过。两路 Sol 6.1 medium 分别产出构建部署接线和外观/功能设置组件，主审补充生产模式构建常量；五套实际浏览器验收及部署静态快照操作通过，未运行 unit test。 |
-| 2026-09-18 | `legacy-web/grid/facade.js`（xterm.js 兼容的 `GridTerm` 外观层）与 `tests/grid_facade_contract.mjs` | grok-4.6 headless 产出，人工审阅。691 s，rc=0，11 例合同测试通过；人工补充 `onClipboard`（OSC 52 经网格协议转发）。主页面 term.js 接线、设置项、录制网格回放、分页与超链接由主审实现。 |
-| 2026-09-18 | 服务端网格（wp-record）8 本任务书：`legacy-web/grid/{wire,model,render,input}.js` 四个 ES 模块与两份 node 合同测试、`legacy-web/grid.{html,js,css}` 页面、`crates/ptyhost/tests/host_grid.rs`、`tests/terminal_grid_browser.py`、`docs/terminal-grid.md` | grok-4.6 headless 产出，人工审阅。8/8 rc=0，单任务 450–1531 s（浏览器套件因滚动区行数期望反复调试最久）；人工审阅未改动模块与页面代码；协议、宿主接线、ptyhost-client `AttachMode`、sessiondock 透传、alacritty_terminal 模型切换由主审实现。 |
-| 2026-09-18 | 终端录制（wp-record）9 本任务书：`ptyhost-record` 的 format / sanitize / store / reader 四个模块、`legacy-web/records.{html,js,css}` 回放页、`crates/ptyhost/tests/host_record.rs`、`tests/term_records_http_suite.py`、`tests/terminal_records_browser.py`、`docs/terminal-records.md` | grok-4.6 headless 产出，人工审阅。9/9 rc=0，单任务 420–900 s，最多 3 路并行；人工修正：records.css 删去抄自 files.css 的无关选择器、records.js 的节点前缀改写以免路由台账误判、ptyhost-record 按 clippy 清理 5 处风格提示；grok 自行纠正了 sanitize 任务书里一处期望值笔误（普通字节 `b` 应保留）。ptyhost 录制接线、sessiondock 路由/流式回放、主页面入口由主审实现。 |
-| 2026-09-17 | 3 路：输入状态画面夹具、前端契约脚本、输入状态文档 | grok-4.6 headless 产出，人工审阅。修正夹具两处暂态预期、契约脚本对未规定默认码的断言及文档错误码说明；补充乱序响应回归。核心状态判定与发送改动由主审实现。 |
-| 2026-09-12 | `tests/run_validation.py` 串行验证运行器 | 约 6 分钟，233 行，一次通过，人工审阅未改动；`--list` 解析 35 套 |
-| 2026-09-12 | 第三～五波共 48 个任务（探针、走查套件、生成式参考文档、模块文档、HTTP 合同套件、替换辅助工具）| 全部 rc=0；每波审阅后分别提交（`ad853b6`、`20ded2c`、`5adf7a3`、`1d1abcd`）；仅两处人工修正（能力键比对读 lib.rs、`route_ledger` 识别 delete 路由）。载荷最高时 10 路并行，单任务 165–748 秒 |
-| 2026-09-12 | q80 `tests/send_http_suite.py`（第三十一/三十二批四条发送路由的 HTTP 合同，两家假 CLI，10 场景）| 1219 s 后 **max turns**（rc=1）：文件已写到 260 行、前 3 场景通过；人工收尾两处——假 Claude CLI 在 `--resume` 时改为从文件末尾记录续 `parentUuid`（否则第二个根不在活动时间线上、永不确认），以及 retry 对已确认行按实际契约期望 404 并补 `_build`；之后 10/10 通过。教训：10 个场景 + 两家 CLI 超出 60 轮预算，应拆成两本 |
-| 2026-09-12 | q79 `tests/check_config_suite.py`（`sessiondock --check-config` 的 18 例启动校验矩阵：bind、空/非目录根、私有目录重叠/嵌套、delivery/file roots/codex index 规则、symlink 别名在 validate 层放行）| 364 s，237 行，rc=0，一次通过；人工审阅未改动 |
-| 2026-09-12 | q78 `tests/session_stop_http_suite.py`（`session/stop` 的 HTTP 合同：能力、404/501/400、graceful < 2.4 s、request_id 重放/冲突、already_exited、live、无 lifecycle 501）| 398 s，215 行，rc=0，9 场景一次通过；人工审阅未改动 |
-| 2026-09-12 | q77 `docs/validation.md` 套件表按 `run_validation.py --list` 重生成（68 → 表 67 行，去掉一行并行子代理的辅助脚本）| 380 s，rc=0；命令列与 `--list` 无差异，人工只删一行 |
-| 2026-09-12 | q75 `tests/meta_import.py`（元数据离线转换并用临时服务验证）、q76 `tests/cutover_preflight.py`（封装 `sessiondock --check-config`） | 837 s / 747 s；rc=0；人工修正缺时间戳的 `starred:true`；见 replacement checklist §4 |
-| 2026-09-12 | q74 `tests/shadow_compare.py`（M8 生产只读影子比对工具，操作者手动运行；接力波最后一个任务）| 978 秒，260 行（任务书上限），rc=0；grok 自己把 336 行压到限内；合成语料 10 PASS/3 DELTA/0 DIFF、无 flag exit 2 复验通过；人工审阅未改动，记入 `docs/replacement-checklist.md` §3 |
-| 2026-09-12 | 8 个并行任务：`tests/bench_summary.py`、`tests/migration_history_status.py`（原 `plan_status.py`）、`docs/validation.md`、`tests/check_docs_links.py`、`tests/legacy_asset_diff.py`、`tests/route_ledger.py`、`tests/rss_watch.py`、`run_validation.py --json/--rerun-failed/--dry-run` | 165–454 秒各自完成，8/8 一次通过验证命令；人工审阅只改了 `docs/validation.md` 里对临时样例路径的引用。bench_summary 复算结果与第十九批手工表一致；check_docs_links 对仓库 89 个链接 0 坏链并能识别人工坏链 |
+每批在提交或 PR 说明记录实际客户端/模型、产出范围、主审修正与验证结果。
+Grok 产出使用“grok-4.6 headless 产出，人工审阅”；用户指定其他模型时记录实际值。
+既往批次的详细产出与审阅记录保存在 Git 历史，不继续在开发指南累计测试计数、
+耗时、临时失败和已删除文件的操作步骤。当前委派边界不因某次额外授权自动扩大。
 
 ## 历史踩坑
 
-仅在相关问题时查阅；这里记录当时的经过，不替代现行合同。
+仅在相关问题时查阅，不替代现行合同。
 
-### 测试清理（2026-10-06）
+- 旧非浏览器测试在 2026-10-06 退役；当前行为验证使用 Chromium。不要恢复旧测试
+  命令，也不要为迁就旧预期恢复已删除的拒绝规则。
+- 共享工作区曾把其他会话的未完成修改发上线；当前发布取已提交快照，按路径
+  显式指定额外文件，规则见[部署](deployment.md)。
 
-核查发现 15 项 Node 合同、21 项 `cargo test` 和 1 项 Python unittest 失败全是测试
-没跟上有意的改动，没有一项是程序 bug，真正的问题都由浏览器测试发现。随后删除
-Rust `#[test]` 模块、`crates/*/tests/*.rs`、`tests/*_contract.mjs`、Python unittest、
-HTTP-only `*_suite.py`、Python oracle `*_parity.py` 以及基准和探针脚本。
-
-### 共享工作区误发布
-
-2026-10-06 之前构建直接编译共享工作区，任何会话的未提交改动都会挡住部署，
-`--allow-dirty` 只能整体放行，结果把另一会话未完成的改动发上了线。
-
-### 并行经验（8 路）
-
-- 8 个 headless 进程同时跑没有问题：主要在等 API，CPU/内存可忽略；每个任务
-  书独立、产出文件互不相同，`git status` 审阅时不需要拆分。
-- 任务书里把样例输入放到 gitignored 的 `target/grok-samples/` 下，验证命令就
-  能是秒级且确定的；但文档类产出不要引用这些临时路径（审阅时要改）。
-- 用一个 `run_all.sh` 逐任务后台启动并写 `status.log`，配一个看门狗监视
-  "日志无增长 10 分钟"即可；全部 8 个在 3–8 分钟内完成。
-
-待评估的工具候选统一记录在 [TODO.md](../TODO.md)，本页的已委派记录保留历史原文。
+待评估工具只记录在 [TODO](../TODO.md)。

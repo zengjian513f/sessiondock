@@ -118,24 +118,17 @@ snapshot 与 receiver 在同一发布锁中取得；每次发布完整快照：
 [native_sdk_hub_browser.py](../tests/native_sdk_hub_browser.py)。
 完整验证命令与套件入口见[验证清单](validation.md)，协议实验的实机范围仍以上述证据为准。
 
-## 本轮补齐
+## 用量与设置
 
-DELTA：SDK 底栏展示原生 result.usage 累计 Token，step_update.usage 在明细单独
-标注，不相加，也不伪装为上下文百分比。额度复用独立 print /usage collector，
-只查询 Agy；打开先显示共享持久快照，再复用设置页的一分钟缓存及进行中的查询。
-手动刷新和 `/usage` 跳过有效期；失败保留旧快照和时间并缓存失败尝试，不开启模型 turn。
-原生目录提供 low/medium/high/xhigh/max 独立 effort。settings.mode 可显式选择
-accept-edits/auto/plan，显示下一轮生效，并以独立 --mode argv 传入，不制造在线控制 RPC。
-网页 /usage、/model、/effort 与正文分流，未知 slash 保留草稿，不破坏 NDJSON。
-图片文件沿用 SessionDock 普通附件，不提供独立的原生图像能力，也不常驻显示
-图片协议提示；headless 审批回传限制仍有效。
+DELTA：底栏展示原生 `result.usage` 累计 Token；`step_update.usage` 在明细单独
+标注，不相加，也不伪装为上下文百分比。额度使用独立 print `/usage` collector，
+不发送模型 turn；与设置页共享持久快照和查询，缓存与刷新条件见[额度合同](quotas.md)。
+打开先显示已有数据，不等待原生启动；明细及菜单条件见[SDK 界面合同](sdk-ui.md)。
 
-扩展 Chromium 覆盖 effort/mode 的实际 argv、累计用量/额度查询、slash 不入原生
-user 流，及 1280/390/320 明暗默认、用量和设置菜单；合成 CLI 不访问真实账户。
+原生目录提供 low/medium/high/xhigh/max 独立 effort。`settings.mode` 可显式选择
+accept-edits/auto/plan，标明下一轮生效，以独立 `--mode` argv 传入，不制造在线 RPC。
+网页 `/usage`、`/model`、`/effort` 与正文分流，未知 slash 保留草稿。
+图片沿用普通附件路径；headless 审批回传限制仍有效。
 
-DELTA：Agy 的 ⋯ 下拉直接展示用量，不再经过“用量明细”按钮。累计 Token、
-输入/输出、思考和缓存分列显示，账号额度按 Gemini、Claude/GPT 等原生组显示，
-组名只显示一次，组内按 5小时、7天排列。底栏与明细共用窗口名称，
-百分比最多一位小数，保留已用进度、剩余与重置时间；
-刷新与用量标题同行。`/usage` 打开同一下拉，错误保留旧额度与采集时间。
-覆盖：[Agy 用量下拉](../tests/agy_usage_browser.py)。
+[用量浏览器](../tests/agy_usage_browser.py)覆盖真实发送、零模型回合刷新、
+无 Token 与双额度组的组合、阻塞刷新、失败保留及宽窄屏明暗主题。

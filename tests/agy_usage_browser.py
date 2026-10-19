@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Agy usage directly in the conversation menu, using a private synthetic CLI."""
+"""Agy cached status and conditional token details, using a private synthetic CLI."""
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 from unittest.mock import patch
@@ -12,7 +13,7 @@ from agy_sdk_browser import select_sdk, send
 from agy_sdk_fixtures import AgyFixture
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from send_browser import initialize
-from sdk_usage_fixtures import assert_inline_usage
+from sdk_usage_fixtures import assert_inline_usage, refresh_usage
 
 
 def exercise(browser, base, fixture, screenshots):
@@ -22,115 +23,122 @@ def exercise(browser, base, fixture, screenshots):
     page.set_default_timeout(10000)
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
+    buckets = [
+        {'id':'gemini-weekly','group':'Gemini Models','window':'weekly','remaining_percent':68.25167536735535,'resets_at':'2026-10-23T22:06:57Z'},
+        {'id':'gemini-5h','group':'Gemini Models','window':'5h','remaining_percent':99.7},
+        {'id':'3p-weekly','group':'Claude and GPT models','window':'seven_day','remaining_percent':53.429800271987915},
+        {'id':'3p-5h','group':'Claude and GPT models','window':'5h','remaining_percent':100}]
+    quota={'source':'agy','captured_at':'2026-10-19T10:00:00Z','buckets':buckets}
+    context.route('**/api/quotas',lambda route:route.fulfill(json={'agents':[quota]}))
+    def grouped_quota(route):
+        response=route.fetch();data=response.json()
+        data.get('raw',data)['quota']=quota
+        route.fulfill(response=response,json=data)
+    context.route('**/api/native-sdk/usage',grouped_quota)
+    held_open=[]
+    context.route('**/api/native-sdk/open',lambda route:held_open.append(route))
     page.goto(base, wait_until='domcontentloaded')
     page.wait_for_function('T.listLoaded')
     select_sdk(page)
-    page.locator('#sdk-more').click()
-    detail = page.locator('#native-usage-detail')
-    expect(detail).to_be_visible()
-    expect(page.locator('#sdk-usage-toggle')).to_have_count(0)
-    expect(detail).to_contain_text('原生尚未提供用量数据')
-    expect(page.locator('#native-usage-refresh')).to_be_enabled()
-    page.screenshot(path=str(screenshots/'agy-usage-empty.png'))
+    footer=page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')
+    expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
+    assert held_open,'cold quota must render while native open is blocked'
+    for route in held_open:route.continue_()
+    context.unroute('**/api/native-sdk/open')
+    page.wait_for_function('!NativeSdkView.loadingUsage && !!NativeSdkView.raw.session_id')
+    # Screenshot 155 combination: no token data, four account windows, native
+    # model/mode not yet returned. The menu must not duplicate quota or an empty card.
+    if page.locator('#sdk-more').is_visible():page.locator('#sdk-more').click()
+    expect(page.locator('#sdk-more-menu .sdk-quota-group')).to_have_count(0)
+    expect(page.locator('#sdk-usage-menu')).to_be_hidden()
+    page.screenshot(path=str(screenshots/'agy-no-tokens-four-windows-1280-light.png'),full_page=True)
     page.keyboard.press('Escape')
-    send(page, '用量下拉实际发送 synthetic turn')
+    page.set_viewport_size({'width':390,'height':900})
+    page.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+    if not page.locator('#sdk-input').is_visible():
+        selected=page.evaluate('S.sel');page.locator(f'#side .item[data-uid="{selected}"]').click()
+    for theme in ('light','dark'):
+        page.emulate_media(color_scheme=theme)
+        if page.locator('#sdk-more').is_visible():page.locator('#sdk-more').click()
+        expect(page.locator('#sdk-usage-menu')).to_be_hidden()
+        page.screenshot(path=str(screenshots/f'agy-no-tokens-four-windows-390-{theme}.png'),full_page=True)
+        page.keyboard.press('Escape')
+    page.set_viewport_size({'width':1280,'height':900})
+    page.emulate_media(color_scheme='light')
+    send(page,'用量下拉实际发送 synthetic turn')
     expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply')
-    # Mirror the real four-bucket shape with deliberately different window spellings.
-    def grouped_quota(route):
-        response = route.fetch()
-        data = response.json()
-        data.get('raw', data)['quota']['buckets'] = [
-            {'id':'gemini-weekly','group':'Gemini Models','window':'weekly','remaining_percent':68.25167536735535,'resets_at':'2026-10-23T22:06:57Z'},
-            {'id':'gemini-5h','group':'Gemini Models','window':'5h','remaining_percent':99.99208450317384},
-            {'id':'3p-weekly','group':'Claude and GPT models','window':'seven_day','remaining_percent':53.429800271987915},
-            {'id':'3p-5h','group':'Claude and GPT models','window':'5h','remaining_percent':100}]
-        route.fulfill(response=response,json=data)
-    page.route('**/api/native-sdk/usage',grouped_quota)
-    page.locator('#sdk-more').click()
-    page.locator('#native-usage-refresh').click()
-    expect(detail).to_contain_text('Gemini')
-    page.keyboard.press('Escape')
     page.locator('#sdk-input').fill('保留草稿 retained draft')
-    for width in (1280, 390, 320):
-        page.set_viewport_size({'width': width, 'height': 900})
-        if width < 500 and not page.locator('#sdk-input').is_visible():
-            selected = page.evaluate('S.sel')
+    for width in (1280,390,320):
+        page.set_viewport_size({'width':width,'height':900})
+        page.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+        if width<500 and not page.locator('#sdk-input').is_visible():
+            selected=page.evaluate('S.sel')
             page.locator(f'#side .item[data-uid="{selected}"]').click()
-        for theme in ('light', 'dark'):
-            print(f'Agy usage: {width}px {theme}', flush=True)
+        for theme in ('light','dark'):
+            print(f'Agy usage: {width}px {theme}',flush=True)
             page.emulate_media(color_scheme=theme)
             page.locator('#sdk-more').click()
+            detail=page.locator('#native-usage-detail')
             expect(detail).to_be_visible()
             expect(detail.locator('.sdk-usage-total')).to_have_text('12,800')
-            expect(detail).to_contain_text('12,000')
-            expect(detail).to_contain_text('800')
-            expect(detail).to_contain_text('9,000')
-            expect(detail).to_contain_text('已用 32%')
-            expect(detail).to_contain_text('剩余 68.3%')
-            expect(detail.locator('.sdk-usage-quota-heading')).to_have_text(['Gemini','Claude/GPT'])
-            expect(detail.locator('.sdk-usage-window .sdk-gauge > span')).to_have_text(['5小时','7天','5小时','7天'])
-            footer = page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')
+            for text in ('12,000','800','9,000'):expect(detail).to_contain_text(text)
+            expect(detail).not_to_contain_text('账号额度')
+            expect(detail).not_to_contain_text('剩余')
             expect(footer.locator('.sdk-quota-name')).to_have_text(['Gemini','Claude/GPT'])
-            expect(footer).not_to_contain_text('weekly')
-            expect(detail).not_to_contain_text('675367')
+            expect(footer.locator('.sdk-quota-windows .sdk-gauge > span')).to_have_text(['5小时','7天','5小时','7天'])
+            for raw in ('weekly','seven_day','7d'):expect(footer).not_to_contain_text(raw)
+            expect(footer).to_have_attribute('title',re.compile('剩余 68.3%'))
             expect(page.locator('#native-sdk-mode')).to_be_visible()
-            menu = page.locator('#sdk-more-menu')
-            bounds = menu.bounding_box()
-            assert bounds['x'] >= 0 and bounds['y'] >= 0 and bounds['x']+bounds['width'] <= width+1, bounds
-            assert menu.evaluate('n => n.scrollWidth <= n.clientWidth+1')
-            page.screenshot(path=str(screenshots/f'agy-usage-{width}-{theme}.png'))
+            menu=page.locator('#sdk-more-menu');bounds=menu.bounding_box()
+            assert bounds['x']>=0 and bounds['y']>=0 and bounds['x']+bounds['width']<=width+1,bounds
+            assert menu.evaluate('n=>n.scrollWidth<=n.clientWidth+1')
+            page.screenshot(path=str(screenshots/f'agy-usage-{width}-{theme}.png'),full_page=True)
             page.keyboard.press('Escape')
-            expect(detail).to_be_hidden()
             assert_inline_usage(page)
-            page.screenshot(path=str(screenshots/f'agy-footer-{width}-{theme}.png'))
+            page.screenshot(path=str(screenshots/f'agy-footer-{width}-{theme}.png'),full_page=True)
             expect(page.locator('#sdk-input')).to_have_value('保留草稿 retained draft')
-    page.unroute('**/api/native-sdk/usage',grouped_quota)
-    # Refresh the real synthetic collector; it must not submit an inference turn.
-    page.locator('#sdk-more').click()
-    before = len(fixture.inputs())
+    context.unroute('**/api/native-sdk/usage',grouped_quota)
+    before=len(fixture.inputs())
     (fixture.root/'quota-hold').touch()
-    page.locator('#native-usage-refresh').click()
-    expect(page.locator('#native-usage-refresh')).to_be_disabled()
-    expect(detail).to_contain_text('剩余 68.3%')
-    page.screenshot(path=str(screenshots/'agy-usage-loading.png'))
+    refresh_usage(page)
+    page.wait_for_function('NativeSdkView.loadingUsage')
+    expect(footer).to_have_attribute('title',re.compile('剩余 68.3%'))
+    expect(page.locator('#native-usage-detail')).to_contain_text('12,800')
+    page.screenshot(path=str(screenshots/'agy-usage-loading.png'),full_page=True)
     (fixture.root/'quota-remaining').write_text('0.09')
     (fixture.root/'quota-hold').unlink()
-    expect(detail).to_contain_text('已用 91%')
-    expect(detail.locator('.sdk-gauge.low')).to_be_visible()
+    expect(footer).to_have_attribute('title',re.compile('剩余 9%'))
+    expect(footer.locator('.sdk-gauge.low')).to_be_visible()
+    page.wait_for_function('!NativeSdkView.loadingUsage')
     (fixture.root/'quota-fail').touch()
-    page.locator('#native-usage-refresh').click()
-    expect(detail).to_contain_text('查询失败')
-    expect(detail).to_contain_text('剩余 9%')
-    page.screenshot(path=str(screenshots/'agy-usage-failed.png'))
+    refresh_usage(page)
+    expect(footer).to_have_attribute('title',re.compile('查询失败'))
+    expect(footer).to_have_attribute('title',re.compile('剩余 9%'))
+    page.screenshot(path=str(screenshots/'agy-usage-failed.png'),full_page=True)
     (fixture.root/'quota-fail').unlink()
-    # Multiple native quota groups and long diagnostics must stay readable.
+    page.wait_for_function('!NativeSdkView.loadingUsage')
     def long_quota(route):
-        response = route.fetch()
-        data = response.json()
-        payload = data.get('raw', data)
-        payload['quota']['buckets'].append({'group': 'Claude / GPT Enterprise shared premium 模型额度长名称',
-            'window': 'weekly', 'remaining_percent': 0, 'resets_at': '2026-10-25T00:00:00Z'})
-        payload['quota']['buckets'].append({'group': '缺失额度字段', 'window': '5h'})
-        payload['quota']['error'] = 'Delayed native quota diagnostic. ' * 80
-        route.fulfill(response=response, json=data)
-    page.route('**/api/native-sdk/usage', long_quota, times=1)
-    page.locator('#native-usage-refresh').click()
-    expect(detail).to_contain_text('Enterprise shared premium')
-    expect(detail).to_contain_text('额度暂不可用')
-    expect(detail).to_contain_text('已用 100%')
-    page.locator('#native-usage-refresh').scroll_into_view_if_needed()
-    page.screenshot(path=str(screenshots/'agy-usage-long.png'))
-    page.locator('#native-usage-refresh').click()
-    expect(detail).not_to_contain_text('Delayed native quota diagnostic.')
-    page.keyboard.press('Escape')
-    page.locator('#sdk-input').fill('/usage')
-    page.locator('#sdk-send').click()
-    expect(page.locator('#sdk-input')).to_have_value('')
-    expect(detail).to_be_visible()
-    assert len(fixture.inputs()) == before, 'usage refresh must never submit a native turn'
+        response=route.fetch();data=response.json();payload=data.get('raw',data)
+        payload['quota']['buckets'].append({'group':'Claude / GPT Enterprise shared premium 模型额度长名称','window':'weekly','remaining_percent':0})
+        payload['quota']['buckets'].append({'group':'缺失额度字段','window':'5h'})
+        payload['quota']['error']='Delayed native quota diagnostic. '*80
+        route.fulfill(response=response,json=data)
+    context.route('**/api/native-sdk/usage',long_quota,times=1)
+    refresh_usage(page)
+    expect(footer).to_have_attribute('title',re.compile('Enterprise shared premium'))
+    expect(footer).not_to_contain_text('缺失额度字段')
+    expect(footer).to_contain_text('100%')
+    menu=page.locator('#sdk-more-menu')
+    expect(menu).to_be_visible()
+    assert menu.bounding_box()['height']<650,menu.bounding_box()
+    page.screenshot(path=str(screenshots/'agy-usage-long.png'),full_page=True)
+    page.wait_for_function('!NativeSdkView.loadingUsage')
+    refresh_usage(page)
+    expect(footer).not_to_have_attribute('title',re.compile('Delayed native quota diagnostic.'))
+    assert len(fixture.inputs())==before,'usage refresh must never submit a native turn'
     assert not errors, errors
     context.close()
-    print('PASS Agy usage: direct menu, tokens, quota groups, refresh/loading/failure, slash, 3 widths, light/dark', flush=True)
+    print('PASS Agy usage: conditional token details, inline quota, cached refresh/loading/failure, immediate slash, 3 widths, light/dark', flush=True)
 
 
 def main():

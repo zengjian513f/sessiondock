@@ -43,6 +43,9 @@ const CodexSdkView = {
     this.historyReady = historyReady;
     this.pendingAtOpen = !agent && !!this.pending(uid);
     const generation = ++this.generation;
+    const remembered=UsageUI.remembered(uid,agent);
+    this.limits=remembered?.limits || null;this.cachedUsage=remembered?.usage || null;
+    this.limitsRecordedAt=this.limits ? '' : null;
     pane.setAttribute('aria-label', 'Codex SDK');
     pane.classList.add('sdk-pane');
     pane.innerHTML = `<div class="sdk-view">
@@ -111,12 +114,32 @@ const CodexSdkView = {
     CodexSdkActions.mount(this);
     CodexSdkControls.mount(this);
     this.mountToolbar(generation);
+    this.paintPickers();
+    this.paintGauges();
+    // Disk quota reads do not depend on app-server startup or history loading.
+    const quotaRead=new AbortController();this.quotaRead=quotaRead;
+    void UsageUI.readQuota(uid,quotaRead.signal).then(quota=>{
+      if(!this.current(generation) || this.limitsFresh || this.limits || !quota)return;
+      const windows=(quota.buckets || []).filter(row=>row.id?.startsWith('codex:') && Number.isFinite(row.remaining_percent));
+      const credit=(quota.buckets || []).find(row=>['codex:credits','credits'].includes(row.id) && row.remaining_text!=null);
+      if(!windows.length && !credit)return;
+      this.limits={};
+      if(credit){
+        const unlimited=['不限量','无限','unlimited'].includes(String(credit.remaining_text).toLowerCase());
+        const balance=Number(credit.remaining_text);
+        if(unlimited || Number.isFinite(balance))this.limits.credits={unlimited,balance:unlimited ? null : balance,hasCredits:balance>0};
+      }
+      windows.slice(0,2).forEach((row,index)=>this.limits[index?'secondary':'primary']={usedPercent:100-row.remaining_percent,windowDurationMins:UsageUI.minutes(row.window),resetsAt:row.resets_at ? Date.parse(row.resets_at)/1000 : null});
+      this.limitsRecordedAt=quota.captured_at || '';this.paintGauges();
+    }).catch(()=>{});
     this.refreshHistory(generation);
     this.setNotice('连接中', 'connecting');
     this.start(generation);
   },
 
   close() {
+    if(this.uid)UsageUI.remember(this.uid,this.agent,{limits:this.limits,usage:this.summary && Object.hasOwn(this.summary,"usage") ? this.summary.usage : this.cachedUsage});
+    this.quotaRead?.abort();this.quotaRead=null;
     this.setConnected(false);
     if (this.input) PathCompletion.close(this.input);
     CodexSdkCompose.close(this);
@@ -139,7 +162,7 @@ const CodexSdkView = {
     this.limitsRead?.abort();
     this.limitsRead = null; this.limitsRetryTimer = 0; this.limitsRetryDelay = 1000;
     this.items.clear(); this.nodes.clear(); this.requests.clear();
-    this.turn = null; this.summary = null; this.limits = null; this.resetCards = null; this.limitsRecordedAt = null; this.limitsFresh = false;
+    this.turn = null; this.summary = null; this.cachedUsage = null; this.limits = null; this.resetCards = null; this.limitsRecordedAt = null; this.limitsFresh = false;
     this.models = []; this.modelChoice = this.effortChoice = null;
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
     this.uid = ''; this.agent = null; this.historyData = null; this.historyEntry = null;
@@ -229,6 +252,9 @@ const CodexSdkView = {
     try {
       const opened = await this.request('api/codex-sdk/open', {uid}, read.signal);
       if (!this.current(generation)) return;
+      // Stopping the conflicting CLI may mark this failed SDK pane stopped.
+      // A successful explicit/retry open is a new live attachment, not a SEND.
+      if(this.openFailed && this.stopped){this.stopped=false;this.pane.querySelector('#sdk-send').disabled=false;}
       this.summary = opened.raw || {};
       this.seedGauges();
     } catch (error) {
@@ -382,7 +408,7 @@ const CodexSdkView = {
       this.gauge(slot, label, window.usedPercent,
         `${label} 窗口已用 ${UsageUI.percent(window.usedPercent)}%，剩余 ${UsageUI.percent(Math.max(0,100-window.usedPercent))}%${reset}${recorded}`);
     }
-    const usage = this.summary?.usage;
+    const usage = this.summary && Object.hasOwn(this.summary,"usage") ? this.summary.usage : this.cachedUsage;
     const size = usage?.modelContextWindow;
     const used = usage?.last?.totalTokens;
     if (size && used != null) {
@@ -461,7 +487,7 @@ const CodexSdkView = {
     for (const model of this.models) modelSelect.append(new Option(model.model, model.model));
     if (modelName && ![...modelSelect.options].some(option => option.value === modelName))
       modelSelect.append(new Option(modelName, modelName));
-    this.selectValue(modelSelect, modelName, '模型');
+    this.selectValue(modelSelect, modelName, '选择模型');
     modelSelect.title = modelName;
     const select = this.pane.querySelector('#sdk-effort');
     const model = this.models.find(row => row.model === modelName);
@@ -477,7 +503,7 @@ const CodexSdkView = {
       if (switching && this.effortChoice === null) chosen = '';
       else select.append(new Option(UsageUI.effort(chosen), chosen));
     }
-    this.selectValue(select, chosen, '推理强度');
+    this.selectValue(select, chosen, '选择强度');
     CodexSdkControls.paintTier(this);
     this.layoutToolbar();
   },

@@ -45,10 +45,8 @@ takes Enter like the composer: Enter submits, Shift+Enter is a newline, and on
 a phone Enter is always a newline. There is no worker-specific
 profile and no model policy: the worker is the same session the user would
 start from the picker, launched with the repository as cwd. A source without a unique configured CLI answers
-`503 本机找不到 <source> 命令`. (An earlier build had shipped a per-source
-`bug_report_profiles` table pinned to the cheapest test model; that confused
-the real-CLI *test* rule of AGENTS.md with production and was removed. A
-leftover `bug_report_profiles` key in `launcher.json` is ignored.)
+`503 本机找不到 <source> 命令`. A leftover `bug_report_profiles` key in `launcher.json` is ignored; test-only
+model defaults never configure production report workers.
 
 ## Route contract (`POST /api/bug-report`)
 

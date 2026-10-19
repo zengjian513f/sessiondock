@@ -3,6 +3,7 @@
 import argparse
 from pathlib import Path
 import tempfile
+import re
 import time
 
 from playwright.sync_api import expect, sync_playwright
@@ -60,7 +61,7 @@ def exercise(browser, base, source, events, screenshots):
     page.locator('#sdk-more').click()
     detail = page.locator('#native-usage-detail')
     expect(detail).to_contain_text('4,000')
-    expect(detail).to_contain_text('42.5%')
+    expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title', re.compile('42.5%'))
 
     # Repeated failures retain known values, then recover with exponential backoff.
     state.update(failures=2, total=4567)
@@ -68,7 +69,7 @@ def exercise(browser, base, source, events, screenshots):
     page.locator('#native-usage-refresh').click()
     expect(detail).to_contain_text('temporarily unavailable')
     expect(detail).to_contain_text('4,000')
-    expect(detail).to_contain_text('42.5%')
+    expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title', re.compile('42.5%'))
     page.screenshot(path=str(screenshots/f'{source}-usage-failed-wide-light.png'))
     page.wait_for_function('NativeSdkView.usageData?.usage?.tokens?.total_tokens === 4567')
     assert reads[start+1] - reads[start] >= .8, reads[start:]
@@ -80,9 +81,9 @@ def exercise(browser, base, source, events, screenshots):
     state['billing_failures'] = 1
     page.locator('#native-usage-refresh').click()
     expect(detail).to_contain_text('billing temporarily unavailable')
-    expect(detail).to_contain_text('42.5%')
+    expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title', re.compile('42.5%'))
     page.wait_for_function('!NativeSdkView.loadingUsage && !NativeSdkView.usageError')
-    expect(detail).to_contain_text('42.5%')
+    expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title', re.compile('42.5%'))
     page.set_viewport_size({'width': 390, 'height': 900})
     page.emulate_media(color_scheme='dark')
     if not page.locator('#sdk-input').is_visible():
@@ -132,7 +133,14 @@ def exercise(browser, base, source, events, screenshots):
     assert page.evaluate('NativeSdkView.usageRead === null && NativeSdkView.usageRetryTimer === 0')
     state['hold'] = False
     state['total'] = 9999
+    opens=[]
+    context.route('**/api/native-sdk/open',lambda route: opens.append(route))
     page.locator('#a-sdk').click()
+    expect(page.locator('.native-sdk-pane .sdk-gauges')).to_contain_text('4,567')
+    expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title',re.compile('42.5%'))
+    page.wait_for_function('!!NativeSdkView.openRead')
+    assert opens
+    opens[0].fulfill(json={'ok':True,'capabilities':{'models':False,'billing':True}})
     page.wait_for_function('NativeSdkView.usageData?.usage?.tokens?.total_tokens === 9999')
     for route in held:
         route.fulfill(json={'ok': True, 'raw': {'usage': {'tokens': {'total_tokens': 1}}}})

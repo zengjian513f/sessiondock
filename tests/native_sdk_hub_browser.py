@@ -150,8 +150,9 @@ def exercise(browser, base, fixture, width, theme, screenshots):
     expect(page.locator('#sdk-input')).to_be_visible()
     with page.expect_response(lambda response: '/api/session/conversation' in response.url and response.request.method=='POST' and response.ok):
         page.locator('#sdk-input').fill('Hub empty create draft')
-    # Flush through the user blur/save path before reloading the receipt.
-    status.click()
+    # Short ready status is intentionally inert; use the actual keyboard blur.
+    expect(status).to_be_disabled()
+    page.locator('#sdk-input').press('Tab')
     page.reload(wait_until='domcontentloaded')
     expect(page.locator('#sdk-input')).to_have_value('Hub empty create draft')
     assert page.evaluate('S.sel') == receipt['uid']

@@ -17,15 +17,8 @@ parse has no raw record error (`Parsed.raw_error` is `None`), the cached
 committed offset equals the published one, and the new file is still at least
 that long. The entire previously committed byte prefix is then verified against
 the freshly read prefix. Verification is the content fingerprint
-(`crate::fingerprint`, a 128-bit non-cryptographic mix). The fingerprint
-module describes that mix as ~6 GB/s on one core; that figure is the module's
-own statement, not a measurement taken for this page. The fingerprint replaced
-SHA-256 on 2026-09-15 because hashing cost more than reading the file on
-gigabyte sessions. It covers every byte
-through that complete-line boundary. It replaced retained raw-byte comparison
-and never substitutes a sampled header hash. The fingerprint detects our own
-files changing under us — an actor who can rewrite the native root already
-owns the data, so a MAC would add nothing. Source/root/data/summary paths and
+(`crate::fingerprint`, a 128-bit non-cryptographic mix). It covers every byte through the complete-line boundary, never a sampled header.
+Source/root/data/summary paths and
 stable file identity (`file_identity`) must also agree. The 4 KiB public head,
 file size and mtime alone are never evidence of append-only contents.
 

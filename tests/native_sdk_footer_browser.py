@@ -198,12 +198,15 @@ def exercise(browser, base, source, screenshots, events):
                 page.wait_for_function('e => e.scrollLeft < 1', arg=gauges.element_handle())
             labels = pane.locator('.sdk-status-row .sdk-gauge > span').evaluate_all('nodes => nodes.map(n => n.getBoundingClientRect().width)')
             assert max(labels) <= 72.5, labels
-            expect(pane.locator('.sdk-status-row .sdk-gauge[title]').filter(has=page.locator('[role=progressbar]')).last).to_have_attribute('title', re.compile(long_quota))
+            expect(pane.locator('.sdk-status-row > .sdk-gauges .sdk-gauge[title]').filter(has=page.locator('[role=progressbar]')).last).to_have_attribute('title', re.compile(long_quota))
             toggle_usage_details(page)
             expect(page.locator('#native-usage-detail')).to_contain_text('123,456,789')
-            expect(page.locator('#native-usage-detail')).to_contain_text(long_quota)
-            expect(page.locator('#native-usage-detail')).to_contain_text('7天')
+            expect(page.locator('#native-usage-detail')).not_to_contain_text(long_quota)
+            expect(page.locator('#sdk-more-menu .sdk-quota-group')).to_have_count(0)
             expect(page.locator('#native-usage-detail')).not_to_contain_text('seven_day')
+            for gauge in page.locator('#native-usage-detail .sdk-gauge').all():
+                end=gauge.locator('b').bounding_box();bounds=gauge.bounding_box()
+                assert end['x']+end['width']<=bounds['x']+bounds['width']+1,(bounds,end)
             expect(page.locator('#sdk-usage-toggle')).to_have_count(0)
             expect(page.locator('#sdk-actions .btn')).to_have_count(0)
             expect(page.locator('.native-sdk-pane .sdk-action:visible')).to_have_count(3 if source=='opencode' else 2)

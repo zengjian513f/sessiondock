@@ -112,6 +112,6 @@ python3 deploy/deploy.py rollback --targets <name> --backup <SD_RUNTIME>\backup-
   SessionId 不为 0（桌面会话）、二进制版本标记等于 stage 日期版本、发布 web 时 `build` 等于该日期版本、probe 时的每个
   `ptyhost.exe` pid 仍在、host 记录数不少于之前；`etc\deployed-commit` 由 PowerShell `Set-Content` 写入。
 
-**状态（2026-09-15）**：这条自动化路径是按上述手工配方和转录记录写成的，只有
-`tests/deploy_native_handlers.py`（已于 2026-10-06 随非浏览器测试删除）里用假 Shell 钉住的命令序列做过离线验证；Windows 节点当时离线，
-**尚未在真实机器上跑过一次**。首次实跑前先 `--dry-run` 逐行核对打印出的三份 `.cmd`。
+自动化的离线计划不构成 Windows 实机验收。涉及此路径的变更先用 `--dry-run`
+核对命令，再按本节 verify 核对桌面 SessionId、进程、版本、健康和既有 ptyhost。
+受管终端路径与发布自动化是不同验证范围，不能互相代替。

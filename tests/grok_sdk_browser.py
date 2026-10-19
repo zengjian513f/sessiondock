@@ -7,6 +7,7 @@ builds or calls a real Grok/model. Run with --binary after the shared build.
 from __future__ import annotations
 
 import argparse
+import re
 import base64
 import json
 from pathlib import Path
@@ -240,7 +241,7 @@ def exercise(browser, base, fixture, screenshots):
     toggle_usage_details(page)
     page.locator("#native-usage-refresh").click()
     expect(page.locator("#native-usage-detail")).to_contain_text("1,500")
-    expect(page.locator("#native-usage-detail")).to_contain_text("42.5")
+    expect(page.locator(".native-sdk-pane .sdk-gauges")).to_have_attribute("title",re.compile("42.5"))
     assert fixture.received("x.ai/session/usage") and fixture.received("x.ai/billing")
     capture_state(page,screenshots,"usage",popover=True)
     page.keyboard.press("Escape")

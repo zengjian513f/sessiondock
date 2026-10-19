@@ -79,7 +79,8 @@ Claude 恢复已有子代理使用 `SendMessage.to`，该结构化目标随子�
 
 ## Codex 固定前缀
 
-移动要求逐字节复制；克隆会改变身份和路径，因此必须独立计算输出文件及其依赖边界。
+保留身份的移动逐字节复制；生成新身份的移动和克隆按最小修改规则处理，
+必须独立计算输出文件及其依赖边界。
 不能因新旧 UUID 恰好等长，就直接沿用旧偏移。
 
 - 以物理 rollout 为节点，先处理被依赖的历史，再处理引用它的历史。多代 rollout 和归档文件
@@ -95,21 +96,13 @@ Claude 恢复已有子代理使用 `SendMessage.to`，该结构化目标随子�
 - 克隆必须另行验证 `state`、历史投影及子代理图等该版本实际使用的持久化数据，
   不能直接复用移动实验脚本中的原 ID SQL 导入。
 
-### 新身份隔离实验
+### 原生历史边界
 
-`session_clone_codex_real.py`（已于 2026-10-06 随非浏览器测试删除）当时使用真实 Rust 计划/暂存器和**仅供测试的同 schema SQL
-导入器**，在临时 CLI home 验证 Codex 0.159.0、Luna low：父会话、分页 fork、归档兄弟、
-revert 的多代 rollout、fork of revert；新 ID 的完整分页内容、原生列表、当前文件指针、
-名称/置顶/项目关联，以及新旧两组分别续聊。目标无关会话保持不变，克隆期间源历史保持
-原样；每个数据库的事务回滚分别验证。证据输出为 `target/session-clone-codex-report.json`。
-
-实验确认原生数据库与 rollout 必须同步映射 thread、turn、item、路径及字节偏移。
-`thread_turns.rollout_end_ordinal` 是结束记录的 ordinal，而 `history_base` 使用排他边界，
-不能混用。revert 后投影游标可能仍指向旧 rollout，需要以物理文件、字节边界和 ordinal
-共同定位，不能总按当前 rollout 重算，也不能因新旧 UUID 等长而保留旧偏移。
-
-这项实验不覆盖 code-mode 子代理引用、跨版本数据库、同机共享存储发布或跨库崩溃恢复。
-后续生产接口与原生子代理验收见下文；生产导入不调用此实验 SQL。动态工具执行器的可用性单独提示。
+原生数据库与 rollout 的 thread、turn、item、路径及偏移必须同步映射。
+`thread_turns.rollout_end_ordinal` 是结束记录 ordinal，`history_base` 使用排他边界，
+不能混用。revert 后游标可能指向旧 rollout，需以物理文件、字节边界和 ordinal 定位，
+不能总按当前 rollout 重算，也不能因 UUID 等长保留旧偏移。当前验收范围见下文，
+不调用已删除的实验导入器；动态工具执行器单独提示未核验。
 
 ## 发布、失败与重试
 
@@ -176,7 +169,7 @@ Hub 页面上的同机复制也进入持久任务列表，显示节点实际的�
 不支持的来源或必要引用在计划阶段报错，不能只克隆组中的 Codex 部分。
 
 - `POST /api/session/clone/plan {uid, mode?: "clone"|"move", new_ids?: boolean}`：默认复制并改身份；移动默认保留身份，只允许跨节点。扫描活动与归档目录、各代 rollout 和原生代理工具引用，
-  固定新身份与原生数据库快照，验证并暂存重写结果。返回 `operation_id`、`phase`、
+  固定新身份与原生数据库快照并持久化预览；不复制或重写历史文件。返回 `operation_id`、`phase`、
   `target_uid`、`sessions`、`session_count`、`file_count`、`bytes`、`warnings`。
 - `POST /api/session/clone {uid, operation_id}`：核对原组关系、字节和元数据，拒绝运行中组，
   发布新文件及原生行，再验证新组。完成后重复提交返回同一结果，不覆盖已经续聊的新组。
@@ -240,7 +233,7 @@ Hub journal 位于节点注册文件同级的 `transfers/`，启动后可根据�
 [目标冲突处理](session-move.md#工作目录一致性的验证范围)。不同分支或当前 rollout 不同仍报冲突。
 操作 journal 登记复用数据及实际插入、替换的文件和元数据；补偿保留复用数据并恢复替换前的原值。
 保留身份复制在共享存储上不会形成独立副本，
-仍是同一份历史。选择身份开关后重新生成计划；旧节点若未确认支持保留身份，页面禁止提交。
+仍是同一份历史。身份开关只更新本地选择，确认执行时再按最终身份准备计划；旧节点若未确认支持保留身份，页面禁止提交。
 
 `session_bundle_browser.py` 覆盖共享存储中的两个节点进程和真正分离的 Linux 临时目录：
 从页面选择目标并复制三种来源的复杂分支/子代理、打开新历史、节点/Hub 重启后重试；

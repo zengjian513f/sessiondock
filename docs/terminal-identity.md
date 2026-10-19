@@ -5,19 +5,17 @@ authorizes one page/connection to write; an instance guard prevents that lease
 from accidentally reaching a new process behind the same terminal name. Neither
 PID existence nor a native SID alone proves a process incarnation.
 
-## Reproduced boundary
+## Guard boundary
 
 The original local protocol uses one JSON request per connection. After a valid
 Info probe, a same-name record/endpoint can change before the next attach/send.
-`tests/observation.rs` reproduces a previous successful probe followed by a raw
-name-only attach receiving `NEW_INSTANCE`. This is intentional evidence that the
-unbound compatibility API is not sufficient for session-associated controls.
+An unbound name-only attach may reach the replacement instance. The
+unbound compatibility API is therefore insufficient for session-associated controls.
 
 Adding an optional `expected_instance_id` to an existing `send`/`attach` is not
 sufficient: an old host ignores unknown JSON keys and can execute the operation
 before a client notices a missing guard acknowledgement. Even an earlier Info
-capability check cannot close the replacement race between connections. The
-second fake-peer regression demonstrates that downgrade boundary.
+capability check cannot close the replacement race between connections. This is the downgrade boundary.
 
 ## Backward-compatible envelope
 
@@ -120,21 +118,14 @@ console input/output, second-page takeover and Web restart using synthetic shell
 The selected conversation also follows `current_uid` when Codex rewinds into a
 new rollout of the same native thread on the same node. Such generations need
 no `forked_from_id`: the browser keeps the existing console view, socket and
-immutable guard, while switching its displayed UID. BUG-20261003-122322-60fcb2
-exposed the missing same-thread case: the live pane remained visible but the
-button reverted to takeover after list refresh. The browser suite rotates twice
+immutable guard, while switching its displayed UID. The browser suite rotates twice
 while the console is open, through both the node and Hub, then clicks between
 conversation and terminal without another claim or takeover.
 
 An independent fork may inherit an ancestor's console only when it is that
 console's current leaf. Clicking 终端 must not substitute the visible parent's
 thread, history or draft; a fork without its own console uses its own takeover
-flow. BUG-20261019-111304-7ce045 first opened a middle-history fork at
-11:12:17 UTC. At 11:12:26, `terminal.session_rebound` changed it to the parent
-on a terminal click, revealing the parent's final answer. Native history and
-the captured terminal agreed; no delivery directory existed, and the running
-lifecycle launch's host still declared the parent. The first identity mismatch
-was this browser transition, not a missing history append. The
+flow. The
 [SDK stop browser suite](../tests/codex_sdk_stop_browser.py) now opens both
 private consoles and switches back to SDK, checking separate UIDs, retained
 fork draft/history and exact parent/child stops through node and Hub.

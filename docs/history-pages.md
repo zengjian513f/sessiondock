@@ -339,34 +339,15 @@ bounded reload. It does not silently clear history or request unbounded history
 after a stale, evicted or expired grant. Responses from an old view/reset are
 discarded. Explicit reload must also avoid overwriting concurrent live updates.
 
-### Incident BUG-20261006-040019-6f5686
+### Window selection DELTA
 
-The first open at 03:54:26 UTC returned 205 events, but 173 of the last 200
-were silent Claude queue operations. Native inputs were intact and on the
-projected timeline; 14 of the 15 user bubbles were pushed into the gap before
-the browser rendered anything. Counting visible events restores all 15 inputs
-in this incident's opening window while retaining queue evidence and the same
-byte checkpoint. This window-selection DELTA leaves the full native projection
-unchanged. [The browser regression](../tests/history_pages_browser.py) opens a
-synthetic queue-heavy conversation and fills its gap, checking visible input
-and reply, retained queue records, exact reconstruction and unchanged cursors.
-
-### Incident BUG-20261006-133153-8673e6
-
-The 13:24:23 UTC opening response already omitted the latest user input; later
-append responses advanced normally. The native transcript and full projection
-retained all 74 user inputs. At the report checkpoint, the initial window held
-only the first input and a tail dominated by 86 tool call/result pairs. The
-latest input was 17 events before that tail, inside the 5,850-event history gap.
-The folded process made this look like missing conversation bubbles.
-
-The window now completes the turn crossing its 200-visible-event target, using
-the existing `turn_id` and the same JSON/media budget. This is an intentional
-window-selection DELTA; native lineage, full history, search and live checkpoints
-are unchanged. A turn exceeding the byte/media budget still spans the explicit
-history gap, and older turns remain pageable. The Chromium regression opens and
-reloads long Claude/Codex turns, expands their tool groups and fills older history
-without changing the live checkpoint.
+Opening windows count visible events rather than silent native queue records,
+then complete the turn crossing the visible-event target using existing turn
+identity and JSON/media budgets. Large turns can still span an explicit gap;
+older history remains pageable. Native projection, search and live checkpoints
+are unchanged. The [browser regression](../tests/history_pages_browser.py)
+opens queue-heavy and long-turn histories, expands tools, fills gaps and checks
+exact reconstruction without advancing the live checkpoint.
 
 ### Page grouping targets
 

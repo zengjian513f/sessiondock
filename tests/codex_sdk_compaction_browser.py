@@ -52,7 +52,7 @@ def main():
                         page.locator('#sdk-input').fill(text); page.locator('#sdk-send').click()
                         row = page.locator('.sdk-queued').filter(has_text=text)
                         expect(row).to_contain_text('正在发送')
-                        expect(page.locator('.sdk-status')).to_have_attribute('data-state', 'maintenance')
+                        expect(page.locator('.sdk-pane .sdk-status')).to_have_attribute('data-state', 'maintenance')
                         expect(page.locator('[data-sdk-item="compact"]')).to_have_count(0)
                         page.reload(wait_until='networkidle')
                         expect(row).to_contain_text(text)

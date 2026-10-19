@@ -185,7 +185,7 @@ const NativeSdkView = {
       const id = typeof row === 'string' ? row : row.id || row.model || row.modelId;
       if (id && ![...model.options].some(option=>option.value===id)) model.add(new Option(row.displayName || row.name || id, id));
     }
-    CodexSdkView.selectValue(model,this.modelChoice || this.nativeModel || '','模型');
+    CodexSdkView.selectValue(model,this.modelChoice || this.nativeModel || '','选择模型');
     model.title = model.selectedOptions[0]?.textContent || '模型';
     model.closest('label').hidden = !this.models.length && !this.modelChoice && !this.nativeModel;
     const selected = this.models.find(row => (row.id || row.model || row.modelId) === (this.modelChoice || this.nativeModel));
@@ -198,7 +198,7 @@ const NativeSdkView = {
       if(this.modelChoice && this.modelChoice!==this.nativeModel && !this.effortChoice)chosen='';
       else effort.add(new Option(UsageUI.effort(chosen),chosen));
     }
-    CodexSdkView.selectValue(effort,chosen,'强度');
+    CodexSdkView.selectValue(effort,chosen,'选择强度');
     effort.title = effort.selectedOptions[0]?.textContent || '强度';
     effort.closest('label').hidden = !efforts.length && !chosen;
     NativeSdkControls.layout(this);

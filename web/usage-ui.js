@@ -2,6 +2,21 @@
 
 // Shared labels and quota identity for SDK and conversation status bars.
 const UsageUI = {
+  sessions: new Map(),
+  accounts: new Map(),
+  accountKey(uid) { return `${HUB_MODE ? nodeOf(uid) : ''}:${String(uid).split(':')[0]}`; },
+  remembered(uid, agent) { return this.sessions.get(viewKey(uid,agent)); },
+  remember(uid, agent, data) { if(uid)this.sessions.set(viewKey(uid,agent),structuredClone(data)); },
+  quota(uid) { return this.accounts.get(this.accountKey(uid)); },
+  rememberQuota(uid, quota) { if(quota)this.accounts.set(this.accountKey(uid),quota); },
+  async readQuota(uid, signal) {
+    const node=HUB_MODE ? nodeOf(uid) : '';
+    const path=node ? `api/nodes/${encodeURIComponent(node)}/api/quotas` : 'api/quotas';
+    const response=await fetch(appUrl(path),{cache:'no-store',signal});
+    if(!response.ok)throw new Error('quota snapshot unavailable');
+    const data=await response.json();
+    return data.agents?.find(item=>item.source===String(uid).split(':')[0]);
+  },
   minutes(value) {
     if (typeof value === 'number') return value;
     const named = {five_hour:300, seven_day:10080, weekly:10080};
@@ -35,7 +50,8 @@ const UsageUI = {
     const value=Math.max(0,Math.min(100,used)),bar=el('i','sdk-bar'),fill=el('u','');
     fill.style.width=`${value}%`;bar.append(fill);
     for(const [key,text] of Object.entries({role:'progressbar','aria-label':`${label} 已用`,'aria-valuemin':'0','aria-valuemax':'100','aria-valuenow':String(value)}))bar.setAttribute(key,text);
-    node.append(el('span','',label),bar,el('b','',`${Math.round(value)}%`));node.classList.toggle('low',Math.round(value)>=80);
+    const display=value>0 && value<0.1 ? '<0.1%' : value<100 && value>99.9 ? '>99.9%' : `${this.percent(value)}%`;
+    node.append(el('span','',label),bar,el('b','',display));node.classList.toggle('low',value>=80);
     return node;
   },
   appendQuotas(holder,quota,source) {
