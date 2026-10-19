@@ -155,6 +155,22 @@ impl Bridge {
                 ("POST", format!("{base}/command"), Some(body))
             }
             "settings" => {
+                let current = session
+                    .state
+                    .lock()
+                    .map_err(|_| "OpenCode SDK state poisoned")?
+                    .raw["model"]
+                    .clone();
+                if let Some(model) = model(&input, Some(&current))? {
+                    self.transport
+                        .api(
+                            &session.cwd,
+                            "POST",
+                            &format!("{base}/model"),
+                            Some(json!({"model":model})),
+                        )
+                        .await?;
+                }
                 // Agent IDs and permissions are native values, never Codex policy enums.
                 if let Some(agent) = input.get("native_agent").filter(|v| !v.is_null()) {
                     self.transport

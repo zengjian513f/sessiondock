@@ -150,6 +150,17 @@ def exercise(browser, base, fixture, screenshots):
         raise
     pending = page.evaluate("window.__grokSnapshot")
     assert pending["running"] and pending["requests"][0]["type"] == "approval"
+    prompts_before_settings = len(fixture.received('session/prompt'))
+    if not page.locator('#sdk-model').is_visible():page.locator('#sdk-more').click()
+    page.locator('#sdk-model').select_option('fake-other')
+    expect(page.locator('#sdk-model')).to_be_enabled()
+    page.locator('#sdk-effort').select_option('high')
+    expect(page.locator('#sdk-send')).to_be_enabled()
+    changes = fixture.received('session/set_config_option')
+    assert any(row['params'].get('value') == 'fake-other' for row in changes)
+    assert changes[-1]['params']['value'] == 'high'
+    assert len(fixture.received('session/prompt')) == prompts_before_settings, 'live settings submitted another prompt'
+    page.keyboard.press('Escape')
     native_tool = next(item for item in pending["items"] if item["role"] == "tool")
     assert native_tool["status"] == "in_progress" and native_tool["tool_result"]["exit_code"] == 0
     assert native_tool["result"]["text"] == "partial native stdout", "partial native output was lost"

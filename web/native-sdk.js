@@ -31,7 +31,7 @@ const NativeSdkView = {
     this.nativeAgents = null; this.loadingUsage = false; this.raw = {}; this.usageData = {}; this.usageError = null;
     this.models = []; this.capabilities = {}; this.running = false; this.seq = -1;
     this.historyRenderedData = null; this.historyCut = null;
-    this.modelChoice = this.effortChoice = this.nativeModel = this.nativeEffort = null;
+    this.nativeModel = this.nativeEffort = null;
     const generation = ++this.generation;
     const name = SOURCES[String(uid).split(':')[0]]?.name || 'Agent';
     pane.setAttribute('aria-label', `${name} SDK`);
@@ -71,10 +71,14 @@ const NativeSdkView = {
     };
     pane.querySelector('#sdk-send').onclick = () => this.send();
     pane.querySelector('#sdk-stop').onclick = () => this.interrupt();
-    pane.querySelector('#sdk-model').onchange = event => {
-      this.modelChoice = event.target.value || null; this.effortChoice = null; this.paintPickers();
-    };
-    pane.querySelector('#sdk-effort').onchange = event => { this.effortChoice = event.target.value || null; };
+    for (const kind of ['model', 'effort']) {
+      pane.querySelector(`#sdk-${kind}`).onchange = async event => {
+        const generation = this.generation, value = event.target.value;
+        if (!value) return;
+        try { await NativeSdkControls.settings(this, {[kind]:value}); }
+        catch (error) { if (this.current(generation)) this.setNotice(`设置失败：${error.message}`, 'blocked'); }
+      };
+    }
     NativeSdkControls.mount(this);
     CodexSdkCompose.mount(this);
     void this.refreshHistory(generation);
@@ -105,6 +109,7 @@ const NativeSdkView = {
     this.pane.querySelector('#sdk-status-menu').textContent = text;
     CodexSdkView.updateStatusDisclosure.call(this);
     NativeSdkControls.layout(this);
+    sdkSyncSettings(this);
   },
 
   async start(generation, reconnecting = false) {
@@ -185,17 +190,18 @@ const NativeSdkView = {
       const id = typeof row === 'string' ? row : row.id || row.model || row.modelId;
       if (id && ![...model.options].some(option=>option.value===id)) model.add(new Option(row.displayName || row.name || id, id));
     }
-    CodexSdkView.selectValue(model,this.modelChoice || this.nativeModel || '','选择模型');
+    const modelName=sdkSettingValue(this,'model',this.nativeModel || '');
+    CodexSdkView.selectValue(model,modelName,'选择模型');
     model.title = model.selectedOptions[0]?.textContent || '模型';
-    model.closest('label').hidden = !this.models.length && !this.modelChoice && !this.nativeModel;
-    const selected = this.models.find(row => (row.id || row.model || row.modelId) === (this.modelChoice || this.nativeModel));
+    model.closest('label').hidden = !this.models.length && !modelName;
+    const selected = this.models.find(row => (row.id || row.model || row.modelId) === modelName);
     const efforts = selected?.supportedReasoningEfforts || selected?.efforts || [];
     const effort = this.pane.querySelector('#sdk-effort');
     effort.replaceChildren();
     for (const row of efforts) { const id = typeof row === 'string' ? row : row.reasoningEffort || row.id; if (id && ![...effort.options].some(option=>option.value===id)) effort.add(new Option(UsageUI.effort(id), id)); }
-    let chosen=this.effortChoice || this.nativeEffort || '';
+    let chosen=sdkSettingValue(this,'effort',this.nativeEffort || '');
     if(chosen && ![...effort.options].some(option=>option.value===chosen)){
-      if(this.modelChoice && this.modelChoice!==this.nativeModel && !this.effortChoice)chosen='';
+      if(modelName!==this.nativeModel && !this.settingChoices.has('effort'))chosen='';
       else effort.add(new Option(UsageUI.effort(chosen),chosen));
     }
     CodexSdkView.selectValue(effort,chosen,'选择强度');
@@ -258,6 +264,7 @@ const NativeSdkView = {
   paintStatus() {
     const raw=this.raw || {},pending=(raw.input_queue || []).find(item=>item.operation!=='steer');
     const send=this.pane.querySelector('#sdk-send');send.textContent=this.running?'排队':'发送';
+    sdkSyncSettings(this);
     send.title=this.running?'当前任务结束后发送；尚未投递的排队消息可撤销':'开始新回合';
     const retryReason=raw.retry?.error?.message || raw.retry?.message || raw.retry?.reason;
     const paused=!this.running && !this.requests.size && ['failed','unknown'].includes(pending?.state);
@@ -368,25 +375,22 @@ const NativeSdkView = {
     if (button.disabled) return;
     button.disabled = true;
     button.setAttribute('aria-busy','true');
-    const model=this.modelChoice,effort=this.effortChoice;
     try {
       if (await NativeSdkControls.command(this, this.input.value)) return;
       const payload = await CodexSdkCompose.collect(this);
       if (!payload || !this.current(generation)) return;
-      const request_id = await CodexSdkCompose.submission(payload,model,effort,this.agent);
+      const request_id = await CodexSdkCompose.submission(payload,null,null,this.agent);
       const response = await this.request('api/native-sdk/turn', {uid:payload.uid,text:payload.text,attachments:payload.attachments,quotes:payload.quotes,
-        request_id,draft_revision:payload.draft_revision,model,effort});
+        request_id,draft_revision:payload.draft_revision});
       if (!await CodexSdkCompose.accepted(this,payload,{raw:response.raw || response},request_id)) return;
       if ((response.accepted ?? response.raw?.accepted) === false)
         throw new Error(response.error || response.raw?.error || '这次提交未进入发送队列，请查看队列记录');
       if(this.current(generation)){
-        if(this.modelChoice===model)this.modelChoice=null;
-        if(this.effortChoice===effort)this.effortChoice=null;
         this.paintPickers();
       }
       await CodexSdkCompose.sent(this,payload);
     } catch (error) { if (this.current(generation)) this.setNotice(`发送失败：${error.message}`, 'blocked'); }
-    finally { if (this.current(generation)) CodexSdkCompose.failed(this); button.disabled = false;button.removeAttribute('aria-busy'); }
+    finally { if (this.current(generation)) CodexSdkCompose.failed(this); button.disabled = false;button.removeAttribute('aria-busy');if(this.current(generation))sdkSyncSettings(this); }
   },
   async interrupt() {
     const generation = this.generation;

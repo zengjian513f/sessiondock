@@ -3,6 +3,7 @@
 // Native capabilities share presentation, never another provider's wire semantics.
 const NativeSdkControls = {
   mount(view) {
+    view.settingChoices = new Map(); view.nativeSettingValues = new Map();
     view.usageRead=null;view.usageRetryTimer=0;view.usageRetryDelay=1000;
     view.usageData=UsageUI.remembered(view.uid,view.agent) || {};
     view.usageData.quota=UsageUI.quota(view.uid) || view.usageData.quota;
@@ -187,17 +188,33 @@ const NativeSdkControls = {
     if(view.capabilities.permission_mode)definitions.push(['permission_mode','权限模式',['default','acceptEdits','plan','dontAsk','auto','bypassPermissions'],raw.settings?.permission_mode]);
     if(view.capabilities.fast_mode)definitions.push(['fast_mode','Fast',['false','true'],raw.settings?.fast_mode==null?'':String(raw.settings.fast_mode)]);
     if(view.capabilities.settings && source==='opencode')definitions.push(['native_agent','代理',view.nativeAgents || raw.agents || [],raw.agent]);
-    const signature=JSON.stringify(definitions);if(holder.dataset.state===signature)return;holder.dataset.state=signature;
+    for(const definition of definitions){definition[3]=sdkSettingValue(view,definition[0],definition[3] || '');definition[4]=view.settingChoices.has(definition[0]);}
+    const signature=JSON.stringify(definitions);if(holder.dataset.state===signature){sdkSyncSettings(view);return;}holder.dataset.state=signature;
+    view.pane.querySelector('.sdk-status-row').dataset.footerLayout='';
     for(const control of view.nativeSettings || [])control.remove();view.nativeSettings=[];holder.replaceChildren();
-    for(const [key,title,options,current] of definitions) {
+    for(const [key,title,options,current,pending] of definitions) {
       const label=el('label','new-effort sdk-native-setting'),select=document.createElement('select');label.title=title;select.id=`native-sdk-${key}`;select.setAttribute('aria-label',title);
       const names=key==='fast_mode'?{false:'Fast 关闭',true:'Fast 开启'}:{default:key==='permission_mode'?'默认权限':'默认模式',acceptEdits:'允许编辑','accept-edits':'允许编辑',plan:'计划模式',auto:'自动模式',dontAsk:'不询问',bypassPermissions:'跳过审批',build:'构建',general:'通用',explore:'探索'};
       for(const option of options){const id=typeof option==='string'?option:option.id || option.name;select.add(new Option(names[id] || (typeof option==='string'?option:option.name || option.label || id),id));}
       if(current && ![...select.options].some(option=>option.value===current))select.add(new Option(names[current] || current,current));
       CodexSdkView.selectValue(select,current || '',`选择${title}`);select.title=`${title}：${select.selectedOptions[0]?.textContent || '未返回'}`;
+      select.disabled=pending;
       label.hidden=!options.length && !current;label.append(el('span','visually-hidden',title),select);holder.append(label);view.nativeSettings.push(label);
-      select.onchange=async()=>{const generation=view.generation;select.disabled=true;try{await view.request('api/native-sdk/settings',{uid:view.uid,[key]:key==='fast_mode'?select.value==='true':select.value,request_id:crypto.randomUUID()});if(view.current(generation))view.setNotice(source==='agy'?'设置将在下一轮生效':'设置已交给原生确认');}catch(error){if(view.current(generation))view.setNotice(`设置失败：${error.message}`,'blocked');}finally{if(view.current(generation)){select.disabled=false;holder.dataset.state='';this.paintSettings(view);this.layout(view);}}};
+      select.onchange=async()=>{
+        const generation=view.generation,value=select.value;
+        try{
+          await this.settings(view,{[key]:key==='fast_mode'?value==='true':value});
+        }catch(error){if(view.current(generation))view.setNotice(`设置失败：${error.message}`,'blocked');}
+      };
     }
+    sdkSyncSettings(view);
+  },
+  async settings(view, values) {
+    const generation=view.generation,choices=Object.fromEntries(Object.entries(values).map(([key,value])=>[key,String(value)]));
+    await sdkUpdateSettings(view,choices,()=>view.request('api/native-sdk/settings',{
+      uid:view.uid,...values,request_id:crypto.randomUUID(),
+    }),()=>{view.paintPickers();this.paintSettings(view);this.layout(view);});
+    if(view.current(generation))view.setNotice(view.uid.startsWith('agy:')?'设置已保存；当前运行回合保持原设置':'设置已交给原生确认');
   },
   paintQueue(view) {
     const holder=view.pane.querySelector('.sdk-queue');
@@ -281,7 +298,7 @@ const NativeSdkControls = {
     }else if(command==='stop'){await view.interrupt();success=true;}
     else if(['model','effort'].includes(command)){
       if(!arg)view.setNotice(`用法：/${command} 值`,'blocked');
-      else {view[command==='model'?'modelChoice':'effortChoice']=arg;view.paintPickers();view.setNotice('将在下一次发送时应用');success=true;}
+      else {await this.settings(view,{[command]:arg});success=true;}
     }else if(['fork','compact','revert','shell'].includes(command))success=await this.action(view,command,command==='shell'?{command:arg}:command==='fork'&&arg?{before:arg}:{});
     else view.setNotice(`此网页尚未映射 /${command}，输入已保留。普通文字请去掉开头的 /。`,'blocked');
     if(success && view.input?.value===text){view.input.value='';view.fitInput();CodexSdkCompose.input(view);}

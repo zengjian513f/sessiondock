@@ -95,6 +95,16 @@ impl Bridge {
         if let Some(result) = mutations.get(&key) {
             return result.clone();
         }
+        // Settings use ACP's own live controls, independently of prompt
+        // execution. Let the native peer decide which updates it can apply.
+        if method == "settings" {
+            self.check_conflict(&session.sid, &session.path, Some(session.connection.pid))
+                .await?;
+            let result = self.mutate_once(&session, method, input).await;
+            self.observe_extension(&session, method, &result);
+            mutations.insert(key, result.clone());
+            return result;
+        }
         let _operation = session
             .turns
             .clone()

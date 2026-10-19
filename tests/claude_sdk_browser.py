@@ -112,6 +112,13 @@ def browser_check(fixture, base, screenshots):
         page.goto(base, wait_until="networkidle")
         open_sdk(page, fixture, expect)
         assert len(fixture.frames("spawn")) == 1
+        page.locator('#sdk-model').select_option('fake-claude')
+        expect(page.locator('#sdk-model')).to_be_enabled()
+        page.locator('#sdk-effort').select_option('high')
+        expect(page.locator('#sdk-send')).to_be_enabled()
+        assert not fixture.frames('user'), 'selection submitted a native user message'
+        assert any(frame['request'].get('model') == 'fake-claude' for frame in fixture.frames('control_request'))
+        assert any(frame['request'].get('settings',{}).get('effortLevel') == 'high' for frame in fixture.frames('control_request'))
         send(page, "hello from browser")
         expect(page.locator(".sdk-live")).to_contain_text("Claude synthetic final hello from browser")
         final = wait_snapshot(page, fixture.uid, lambda raw: not raw["running"])

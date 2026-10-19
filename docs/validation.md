@@ -380,6 +380,14 @@ The table lists the suites `--list` reports plus the opt-in `*_real` browser sui
 | trash_browser | `python3 tests/trash_browser.py --binary target/release/sessiondock` | Real legacy page against the Rust session recycle bin. | binary, Chromium |
 | parent_trash_browser | `python3 tests/parent_trash_browser.py` | Deferred parent hide/restore/restart, inherited history, last-dependent collection, descendant warning/cancel/scope/liveness and Hub clear-all; immutable rollout generations and unrelated sessions preserved | binaries, Chromium |
 
+`python3 tests/codex_sdk_model_queue_browser.py` covers immediate Codex
+model/effort/mode/tier/permission changes without SEND, delayed native confirmation,
+rejection and queue/steer without stale overrides on node/Hub, desktop/mobile.
+`python3 tests/native_sdk_selection_browser.py` covers Grok/Agy/OpenCode/Claude
+immediate model/effort/mode/permission/Fast/agent changes and delayed confirmation,
+including rejection, preserved drafts and no stale send overrides, desktop/mobile.
+Both use private synthetic peers; `--screenshots DIR` records full pages.
+
 Shared helpers imported by browser suites live in `tests/*_fixtures.py`
 (extracted on 2026-10-06 from the removed HTTP/parity/real scripts); the runner
 skips them.

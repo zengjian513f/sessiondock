@@ -167,6 +167,9 @@ def main():
                     print('OpenCode SDK: native catalog beyond 600 KB pipe boundary fully reaches browser picker', flush=True)
                     page.locator('#sdk-model').select_option('synthetic/fake-opencode')
                     page.locator('#sdk-effort').select_option('high')
+                    expect(page.locator('#sdk-send')).to_be_enabled()
+                    assert native.sessions[SID]['model']['variant'] == 'high'
+                    assert not any(path.endswith('/prompt') for _,path,_ in native.received), 'selection submitted a prompt'
                     send('first SDK turn')
                     try:
                         snapshot("r => r.items.some(m => m.content === 'partial native reply')")

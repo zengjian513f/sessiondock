@@ -8,6 +8,7 @@ const CodexSdkControls = {
   approvalNames: {'on-request': '按需审批', untrusted: '不可信命令需审批', never: '不请求审批'},
 
   mount(view) {
+    view.settingChoices = new Map(); view.nativeSettingValues = new Map();
     const state = {uid: view.uid, generation: view.generation, panel: null};
     this.states.set(view, state);
     const pickers = view.pane.querySelector('.sdk-pickers');
@@ -59,7 +60,8 @@ const CodexSdkControls = {
     const settings = this.effective(view);
     const mode = view.pane.querySelector('#sdk-mode');
     if (mode) {
-      view.selectValue(mode, settings.collaborationMode?.mode || '', '模式');
+      view.selectValue(mode, sdkSettingValue(view, 'mode', settings.collaborationMode?.mode || ''), '模式');
+      mode.disabled = view.settingChoices.has('mode');
     }
     const dialog = state.panel;
     if (!dialog) return;
@@ -68,11 +70,12 @@ const CodexSdkControls = {
       ['sandbox', settings.sandboxPolicy?.type || '', this.sandboxNames],
     ]) {
       const select = view.pane.querySelector(`#sdk-control-${kind}`);
-      view.selectValue(select, value, '未返回');
-      select.title = `${kind === 'approval' ? '审批策略' : '沙箱策略'}：${names[value] || value || '未返回'}`;
-      select.disabled = !!state.saving;
+      view.selectValue(select, sdkSettingValue(view, kind, value), '未返回');
+      select.title = `${kind === 'approval' ? '审批策略' : '沙箱策略'}：${names[select.value] || select.value || '未返回'}`;
+      select.disabled = !!state.saving || view.settingChoices.has(kind);
     }
     view.layoutToolbar();
+    sdkSyncSettings(view);
   },
 
   paintTier(view) {
@@ -83,7 +86,8 @@ const CodexSdkControls = {
     // Native IDs can differ from their labels (e.g. priority is Fast).
     // Catalog defaults do not establish this thread's effective setting.
     const tiers = [{id: 'default', name: 'Normal', description: '普通服务档位'}, ...(model?.serviceTiers || [])];
-    const value = Object.hasOwn(settings, 'serviceTier') ? (settings.serviceTier || 'default') : '';
+    const value = sdkSettingValue(view, 'service_tier', Object.hasOwn(settings, 'serviceTier') ? (settings.serviceTier || 'default') : '');
+    select.disabled = view.settingChoices.has('service_tier');
     const signature = JSON.stringify([tiers, value]);
     if (select.dataset.options !== signature) {
       select.replaceChildren();
@@ -106,7 +110,13 @@ const CodexSdkControls = {
   },
 
   async settings(view, values) {
-    await this.request(view, 'settings', values);
+    const choices = {};
+    for (const key of ['model', 'effort']) if (key in values) choices[key] = values[key];
+    if ('mode' in values) choices.mode = values.mode;
+    if ('service_tier' in values) choices.service_tier = values.service_tier;
+    if ('approval_policy' in values) choices.approval = values.approval_policy;
+    if ('sandbox_policy' in values) choices.sandbox = values.sandbox_policy.type;
+    await sdkUpdateSettings(view, choices, () => this.request(view, 'settings', values), () => {view.paintPickers(); this.paint(view);});
     // Effective values are delivered by thread/settings/updated. No guessed
     // optimistic state: an app-server may reject or normalize a policy.
   },
@@ -155,7 +165,7 @@ const CodexSdkControls = {
         const value = select.value;
         state.saving = true; this.paint(view);
         await this.run(view, select, () => this.settings(view, kind === 'approval'
-          ? {approval_policy: value} : {sandbox_policy: {type: value}}), '权限设置已应用。');
+          ? {approval_policy: value} : {sandbox_policy: {type: value}}), '权限设置已提交。');
         if (!this.current(view, state)) return;
         state.saving = false; this.paint(view);
       };
@@ -218,3 +228,44 @@ const CodexSdkControls = {
     }
   },
 };
+
+// A settings receipt can precede its authoritative snapshot. Keep the requested
+// selection disabled until that snapshot confirms or normalizes it. Failures
+// restore the last native value; detached views cannot receive late results.
+function sdkSettingValue(view, key, current) {
+  view.nativeSettingValues.set(key, current);
+  const pending = view.settingChoices.get(key);
+  if (!pending) return current;
+  if (current === pending.value || (pending.original != null && pending.original !== '' && current !== pending.original)) pending.observed = true;
+  if (pending.accepted && pending.observed) { view.settingChoices.delete(key); return current; }
+  return pending.value;
+}
+
+async function sdkUpdateSettings(view, values, request, paint) {
+  if (view.settingChoices.size) throw new Error('设置正在等待原生确认，请稍后再修改');
+  const generation = view.generation, choices = view.settingChoices;
+  const updates = Object.entries(values).map(([key, value]) => {
+    const pending = {value, original:view.nativeSettingValues.get(key), accepted:false, observed:false};
+    choices.set(key, pending); return [key, pending];
+  });
+  paint();
+  try {
+    await request();
+    if (!view.current(generation)) return;
+    for (const [, pending] of updates) pending.accepted = true;
+  } catch (error) {
+    for (const [key, pending] of updates) if (choices.get(key) === pending) choices.delete(key);
+    throw error;
+  } finally { if (view.current(generation)) paint(); }
+}
+
+function sdkSyncSettings(view) {
+  if (!view.pane) return;
+  const pending = view.settingChoices.size > 0;
+  for (const select of view.pane.querySelectorAll('#sdk-model, #sdk-effort, #sdk-mode, #sdk-tier, #sdk-control-approval, #sdk-control-sandbox, select[id^="native-sdk-"]')) {
+    select.disabled = pending;
+    if (pending) select.setAttribute('aria-busy', 'true'); else select.removeAttribute('aria-busy');
+  }
+  const button = view.pane.querySelector('#sdk-send');
+  button.disabled = pending || !!view.stopped || !!CodexSdkCompose.states.get(view)?.sending;
+}
