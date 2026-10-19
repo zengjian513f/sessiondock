@@ -316,12 +316,13 @@ def browser_check(corpus, base, fake, screenshots=None):
 
             pane = open_sdk(page, corpus, expect)
             # Resume must show persisted context before any turn is submitted.
+            expect(pane.locator('.sdk-gauge[data-gauge="context"] > span')).to_have_text("Ctx")
             expect(pane.locator('.sdk-gauge[data-gauge="context"] b')).to_have_text("20%")
             # Failed HTTP and network reads recover without a turn, notification, or reload.
             expect(pane.locator('.sdk-gauge[data-gauge="5h"]')).to_be_hidden()
             expect(pane.locator('.sdk-credits')).to_be_hidden()
             expect(pane.locator('.sdk-gauge[data-gauge="5h"] b')).to_have_text("40%", timeout=10000)
-            expect(pane.locator('.sdk-credits')).to_have_text("Credits 1,235")
+            expect(pane.locator('.sdk-credits')).to_have_text("🪙 1,235")
             assert limits_reads[:3] == [503, "network", None], limits_reads
             assert not fake.methods("turn/start"), "reading usage must not start a model turn"
             page.reload(wait_until="networkidle")
@@ -357,7 +358,7 @@ def browser_check(corpus, base, fake, screenshots=None):
                         usage_toggle.click()
                     expect(pane.locator('.sdk-gauge[data-gauge="context"]')).to_be_visible()
                     expect(pane.locator('.sdk-gauge[data-gauge="5h"] b')).to_have_text("40%")
-                    expect(pane.locator('.sdk-credits')).to_have_text("Credits 1,235")
+                    expect(pane.locator('.sdk-credits')).to_have_text("🪙 1,235")
                     if usage_toggle.is_visible():
                         page.screenshot(path=str(screenshots / f"usage-{width}-{theme}.png"))
                         page.keyboard.press('Escape')
@@ -481,7 +482,7 @@ def browser_check(corpus, base, fake, screenshots=None):
                 card.get_by_role("button", name="批准", exact=True).click()
             # Refresh failure retains the last good values while retrying in the background.
             expect(pane.locator('.sdk-gauge[data-gauge="5h"] b')).to_have_text("40%")
-            expect(pane.locator('.sdk-credits')).to_have_text("Credits 1,235")
+            expect(pane.locator('.sdk-credits')).to_have_text("🪙 1,235")
             reply = fake.wait_for(lambda: [m for m in fake.responses() if m.get("result", {}).get("decision")])[0]
             assert reply["id"] == 0 and reply["result"] == {"decision": "accept"}, reply
             expect(live.locator(".sdk-request")).to_have_count(0)
@@ -493,7 +494,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(context_bar.locator("b")).to_have_text("25%")
             expect(context_bar.locator(".sdk-bar")).to_have_attribute("aria-valuenow", "25")
             with page.expect_response(lambda response: "/api/codex-sdk/limits?" in response.url and response.status == 200):
-                expect(pane.locator('.sdk-credits')).to_have_text("Credits 1,235")
+                expect(pane.locator('.sdk-credits')).to_have_text("🪙 1,235")
             # After completion the rollout holds the turn; it is shown exactly once.
             expect(history.locator('.msg[data-role="assistant"]').filter(has_text="All done after approval")).to_have_count(1)
             expect(pane.locator('.msg[data-role="assistant"]').filter(has_text="All done after approval")).to_have_count(1)
@@ -504,7 +505,7 @@ def browser_check(corpus, base, fake, screenshots=None):
             expect(five.locator("b")).to_have_text("40%")
             expect(five.locator(".sdk-bar")).to_have_attribute("aria-valuenow", "40")
             expect(week.locator("b")).to_have_text("25%")
-            expect(pane.locator(".sdk-credits")).to_have_text("Credits 1,235")
+            expect(pane.locator(".sdk-credits")).to_have_text("🪙 1,235")
             pane.locator('#sdk-more').click()
             reset = pane.locator("#sdk-reset-card")
             expect(reset.locator("option")).to_have_count(2)

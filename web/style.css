@@ -2562,6 +2562,8 @@ header .btn[data-session-docked] { display: none; }
 .sdk-pickers { display: flex; align-items: center; gap: 6px; }
 .sdk-pickers > .new-effort { position: relative; flex: none; min-width: 0; }
 .sdk-pickers > .sdk-model { width: var(--sdk-model-width, 160px); }
+.sdk-pickers > .sdk-model-fit { width: auto; }
+.sdk-pickers > .sdk-model-fit > select { width: auto; max-width: var(--sdk-model-width, 160px); }
 .sdk-pickers > .sdk-effort { width: var(--sdk-effort-width, 72px); }
 .native-sdk-pane { --sdk-model-width: clamp(72px, calc(100vw - 240px), 160px); }
 .sdk-pickers > .sdk-mode { width: 96px; }
