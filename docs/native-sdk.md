@@ -19,6 +19,10 @@ Grok、Agy、OpenCode 和 Claude 使用各自的原生机器接口，复用 Code
 可用性，Hub 根据所属节点的能力显示入口。SDK 配置不兼容时记录在
 `native_sdk_unavailable`，不阻止原有读模型和终端模式启动。
 `SESSIONDOCK_NATIVE_SDKS=off` 关闭这四种 SDK 桥接；Codex 保留自己的配置。
+SDK 能力同时遵守 launcher 的 CLI 安装探测；缺失文件、不可执行文件及返回
+126/127 的包装器均不能启用 SDK 或绕过新建限制。首次探测在节点开始服务前完成。
+本机和 Hub 的新建弹窗使用
+所属节点当前 `term/list.native_sdks`，修复 CLI 后随周期探测恢复，无须重启。
 普通 PTY 浏览器夹具显式关闭 SDK，SDK 夹具显式启用，避免假 CLI 被当成 SDK。
 
 DELTA：SDK 可用的来源默认打开 SDK；新建直接调用原生接口取得 SID，不创建

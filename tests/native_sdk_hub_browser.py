@@ -35,7 +35,7 @@ def exercise(browser, base, fixture, width, theme, screenshots):
     expect(page.locator('#sdk-input')).to_be_visible()
     uid = page.evaluate('S.sel')
     assert '~' in uid and uid != fixture.uid
-    status = page.locator('.sdk-status')
+    status = page.locator('#session-content-view .sdk-status')
     colors = {}
     def capture_status(state):
         expect(status).to_have_attribute('data-state', state)
@@ -47,7 +47,7 @@ def exercise(browser, base, fixture, width, theme, screenshots):
         assert visual['color'] == visual['dot'] and visual['width'] == '6px', visual
         assert visual['animation'] == ('sdk-status-breathe' if state in ('working','maintenance','retrying','connecting') else 'none'), visual
         colors[state] = visual['color']
-        assert page.locator('.sdk-status-row').evaluate('e => e.scrollWidth <= e.clientWidth + 1')
+        assert page.locator('#session-content-view .sdk-status-row').evaluate('e => e.scrollWidth <= e.clientWidth + 1')
         if screenshots:
             screenshots.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(screenshots/f'status-{width}-{theme}-{state}.png'),
@@ -119,7 +119,7 @@ def exercise(browser, base, fixture, width, theme, screenshots):
         with page.expect_response(lambda response: '/api/native-sdk/turn' in response.url and response.request.method=='POST') as sent:
             page.locator('#sdk-send').click()
     except Exception:
-        print('SDK attachment diagnostics',page.locator('.sdk-status').inner_text(),page.evaluate('''() => {
+        print('SDK attachment diagnostics',status.inner_text(),page.evaluate('''() => {
             const state=CodexSdkCompose.states.get(NativeSdkView),d=state?.draft;
             return {input:NativeSdkView.input?.value,sending:state?.sending,text:d?.text,loading:d?.loading,loadFailed:d?.loadFailed,
                 error:d?.storageError,files:d?.attachments?.map(a=>({name:a.name,staging:!!a.staging,error:a.uploadError,uploaded:a.uploaded}))};
@@ -151,7 +151,7 @@ def exercise(browser, base, fixture, width, theme, screenshots):
     with page.expect_response(lambda response: '/api/session/conversation' in response.url and response.request.method=='POST' and response.ok):
         page.locator('#sdk-input').fill('Hub empty create draft')
     # Flush through the user blur/save path before reloading the receipt.
-    page.locator('.sdk-status').click()
+    status.click()
     page.reload(wait_until='domcontentloaded')
     expect(page.locator('#sdk-input')).to_have_value('Hub empty create draft')
     assert page.evaluate('S.sel') == receipt['uid']

@@ -14,7 +14,7 @@ import tempfile
 from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
-from history_fixtures import BINARY, Corpus, claude_row, isolated_server
+from history_fixtures import BINARY, REPO, Corpus, claude_row, isolated_server
 from hub_fixtures import Hub, free_port, scoped
 from new_session_model_browser import open_dialog
 from node_auth_fixtures import TOKEN, node_env
@@ -36,21 +36,32 @@ XTERM = """() => [...T.views.values()].map(view => {
 }).join('\\n')"""
 
 
-def exercise(browser, base, root, uid, node_id=None):
-    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+def exercise(browser, base, root, uid, screenshots, phase, width, theme, node_id=None):
+    context = browser.new_context(viewport={"width": width, "height": 900},
+                                  color_scheme=theme, service_workers="block")
     errors = []
     page = context.new_page()
     page.on("pageerror", lambda error: errors.append(str(error)))
+    print(f'Running {phase} {"hub" if node_id else "node"} {width} {theme}', flush=True)
     try:
         page.goto(base, wait_until="networkidle")
         row_uid = scoped(node_id, uid) if node_id else uid
         page.locator(f'#side .item[data-uid="{row_uid}"]').first.click()
         expect(page.locator("#msgs")).to_contain_text("Preserved Claude history")
+        if page.locator('#detail .mobile-back').is_visible():
+            page.locator('#detail .mobile-back').click()
         open_dialog(page)
         if node_id:
             page.locator("#new-node").select_option(node_id)
+        page.screenshot(path=str(screenshots / f'{phase}-{"hub" if node_id else "node"}-{width}-{theme}.png'))
         for source in ("claude", "grok", "opencode", "agy"):
             expect(page.locator(f'input[name="new-source"][value="{source}"]')).to_be_disabled()
+        # A stale page or a direct caller must not bypass the disabled picker.
+        refused = context.request.post(base + '/api/native-sdk/create', data={
+            'source': 'claude', 'cwd': str(root / 'work'), 'request_id': f'missing-{phase}-{width}-{theme}',
+            **({'_node': node_id} if node_id else {})})
+        assert refused.status == 501, refused.text()
+        assert refused.json()['code'] == 'native_sdk_disabled', refused.text()
         for source in ("codex", "shell"):
             expect(page.locator(f'input[name="new-source"][value="{source}"]')).to_be_enabled()
         page.locator('input[name="new-source"][value="codex"]').check()
@@ -75,7 +86,10 @@ def exercise(browser, base, root, uid, node_id=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
-    binary = parser.parse_args().binary.resolve()
+    parser.add_argument("--screenshots", type=Path, default=REPO / 'target/unavailable-cli')
+    args = parser.parse_args()
+    binary = args.binary.resolve()
+    args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="sessiondock-unavailable-cli-") as temporary, private_hosts(Path(temporary)):
         root = Path(temporary)
         for name in ("host", "ledger", "bin", "home", "work", "state", "hub", "claude", "codex", "grok"):
@@ -83,6 +97,10 @@ def main():
         codex = root / "bin/codex"
         codex.write_text(FAKE_CODEX)
         codex.chmod(0o700)
+        # Match installations with an executable shell wrapper but no Claude CLI.
+        claude = root / 'bin/claude'
+        claude.write_text('#!/bin/sh\nexit 127\n')
+        claude.chmod(0o700)
         (root / "bin/opencode").symlink_to(root / "bin/removed-target")
         (root / "bin/agy").write_text("#!/bin/sh\nexit 0\n")
         (root / "bin/agy").chmod(0o600)
@@ -105,6 +123,7 @@ def main():
         original_history = native.read_bytes()
         node = SimpleNamespace(port=free_port(), name="FixtureNode", token=TOKEN)
         network = node_env(root, node.port, "127.0.0.0/8")
+        network.update(SESSIONDOCK_NATIVE_SDKS='on', SESSIONDOCK_CODEX_APP_SERVER='off')
         options = {"headless": True}
         if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
             options["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
@@ -120,15 +139,18 @@ def main():
                             pending = context.request.get(base + "/api/term/list").json()["pending"]
                             assert any(r["name"] == receipt["name"] and r["running"] for r in pending), pending
                             context.close()
-                        receipt = exercise(browser, base, root, corpus.uid("uninstalled-history"))
+                        for width, theme in ((1280, 'light'), (390, 'dark'), (1280, 'dark'), (390, 'light')):
+                            receipt = exercise(browser, base, root, corpus.uid("uninstalled-history"),
+                                               args.screenshots, phase, width, theme)
                         node.nid = (root / "ids/node-id").read_text().strip()
                         hub_root = root / "hub" / phase
                         hub_root.mkdir(mode=0o700)
                         hub = Hub(binary.with_name("sessiondock-hub"), hub_root, [node])
                         hub.start()
                         try:
-                            exercise(browser, f"http://127.0.0.1:{hub.port}", root,
-                                     corpus.uid("uninstalled-history"), node.nid)
+                            for width, theme in ((1280, 'light'), (390, 'dark'), (1280, 'dark'), (390, 'light')):
+                                exercise(browser, f"http://127.0.0.1:{hub.port}", root,
+                                         corpus.uid("uninstalled-history"), args.screenshots, phase, width, theme, node.nid)
                             _, health = hub.json("GET", "/api/nodes")
                             assert health["nodes"][0]["online"] is True, health
                         finally:
