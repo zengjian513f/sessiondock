@@ -97,7 +97,7 @@ BUG-20261011-082204-728fdf：Codex 原生 JSONL 在压缩结束时才写 `compac
 开始时只有普通 `task_started`。原有 CLI 观察仅传忙碌布尔值，且只匹配
 `Working`，丢失了终端已有的压缩阶段。现在同一次屏幕观察识别当前编辑区
 正上方的压缩状态，经 `cli.instance.phase` 随 CHECK、消息视图与仅 CLI 变化的
-SSE 推送；`busy` 同时为 true。会话模式复用现有活动行显示“正在压缩上下文…”，
+SSE 推送；`busy` 同时为 true。会话模式复用 SDK 状态栏，显示“压缩中”，
 结束或失去有效观察后恢复原有历史活动提示，不伪造历史消息或修改原生文件。
 旧节点缺字段时沿用原行为。当前仅支持 Codex 可识别的终端布局。
 [turn_state_browser.py](../tests/turn_state_browser.py) 覆盖开始、结束、刷新、

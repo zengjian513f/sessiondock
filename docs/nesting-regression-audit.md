@@ -1,13 +1,14 @@
-# 单一附属关系改动回归审查
+# 附属关系核验范围
 
-2026-10-01：逐项审查 `12c7a9f` 修改的 41 个文件，并保留后续修复。
-附属关系仍只有 `nest_parent`；原生 subagent 归属继续由原生历史提供。
-删除旧字段不意味着取消自动初始化、整组依赖或用户决定的持久化。
+现行附属关系只有 `nest_parent`；原生 subagent 归属仍由原生历史提供。
+自动初始化不覆盖用户显式挂载/解除决定，整组操作保留依赖闭包与阻碍项。
+当前数据合同见[元数据](metadata.md)，范围与原生文件见[克隆](session-clone.md)、
+[移动](session-move.md)。下表是相关浏览器路径索引，不是某次执行通过记录。
 
-| 回归 | 修复与验证 |
+| 范围 | 对应实现与浏览器路径 |
 | --- | --- |
-| 本地 exec / headless CLI 不再自动附属 | 保留 `52b44d7` 的恢复；`codex_exec_nest_browser.py` 验证 detached dispatcher、后台发现、扫描、退出和重启 |
-| OpenCode 不再识别启动附属 | 保留 `34c60a7`；`opencode_spawn_browser.py` 验证两类发起方、歧义目录、原生子代理和恢复旧会话 |
+| 本地 exec / headless CLI 不再自动附属 | `codex_exec_nest_browser.py` 验证 detached dispatcher、后台发现、扫描、退出和重启 |
+| OpenCode 不再识别启动附属 | `opencode_spawn_browser.py` 验证两类发起方、歧义目录、原生子代理和恢复旧会话 |
 | SSH 远程 CLI 不再写入附属关系 | 同时恢复 resource-agent 与兼容采集路径，只初始化尚未决定的父关系；`process_links_browser.py` 两种模式验证跨节点、同 SID 隔离、解除后重采样与重启 |
 | 整组操作静默忽略缺失或远程父会话 | 以 `nest_parent` 双向计算闭包，恢复阻碍项；`session_mixed_clone_browser.py` 从按钮发起两种失败计划 |
 | 部分移动清理漏掉新附属会话 | 恢复组外 `nest_parent` 引用检查，使用被捕获的身份，即使父文件已经进入回收站；`session_bundle_browser.py --peer lyra --move --preserve` 在三种来源的部分清理后新增附属会话，再从页面重试 |
@@ -17,20 +18,7 @@
 | 复制与移动丢失解除附属决定 | 同机重写、跨机导入及接收端合并携带私有初始化决定；`session_mixed_clone_browser.py` 与 `session_mixed_bundle_browser.py --peer lyra` 验证十四会话混合组、两种身份模式、源数据及目标关系 |
 | 前缀导入可以覆盖目标已有父关系 | 恢复目标父关系冲突检查；`session_prefix_browser.py --peer lyra` 用真实页面确认，验证三种来源都保留目标父关系和原历史 |
 
-`nest_initialized` 是此前本地恢复已使用的私有决定标记，API 不返回它，
-它不保存另一套父关系。显式挂载、解除附属和已初始化关系为 `true`；
-旧 `spawned_by` 迁移产生的 `false` 允许原生时间和续写校验，缺省不补造用户决定。
-已清除且没有持久记录的历史用户操作不能凭工作目录或时间猜测恢复。
-
-搜索修复 `ac6fc38` 保留。右键菜单仍保留所有现有动作的固定位置，
-不可用项灰显；只保留解除附属和附属到，不恢复多来源关系或取消独立动作。
-
-所有夹具都是临时目录和假 CLI / 假进程树，不启动模型，不使用生产会话。
-验证包括真实 Chromium 点击、打开历史、确认、失败重试及重启；
-恢复自动附属断言和错误时间夹具，不能用放宽断言代替修复。
-
-最终验证：Rust debug 构建通过；18 次 Chromium 套件运行及 3 次 HTTP 套件运行通过。
-浏览器包括上述清单、Hub、搜索、5000 会话折叠、同机克隆、迁移环境提示和会话停止。
-SSH 两采集模式分别运行；跨机夹具只使用私有临时目录。未运行单元测试或真实模型 CLI。
-文档链接、品牌检查和 `git diff --check` 通过。部署工具的构建阶段随后执行 release 构建；
-浏览器已在安装 Chromium 的机器独立执行，部署不重复在缺少 Chromium 的构建机运行测试门。
+`nest_initialized` 是私有决定标记，不是第二套父关系，API 不返回它。
+显式挂载/解除以及已初始化关系为 true；旧推断待原生时间/续写校验时为 false。
+缺省不补造用户决定，已丢失的历史操作不按目录或时间猜回。
+验证必须保留自动附属、错误时间及用户决定断言，不以放宽预期替代修复。

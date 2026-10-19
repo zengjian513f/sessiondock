@@ -47,7 +47,9 @@ def main():
                 page.route('**/api/quotas', lambda r: r.fulfill(json={'agents': [{'source': 'codex', 'captured_at': '2026-10-19T03:00:00Z', 'buckets': [
                     {'id':'codex:credits','group':'Codex credits','remaining_text':'1234.6'},
                     {'id':'reset-credits','group':'重置卡','remaining_text':'3 张','expires_at':'2026-11-01T00:00:00Z'},
-                    {'window': 300, 'remaining_percent': 74}, {'window': 10080, 'remaining_percent': 91}]}]}))
+                    {'group':'Codex','window': 300, 'remaining_percent': 74},
+                    {'group':'Codex','window': 10080, 'remaining_percent': 91},
+                    {'group':'专项模型','window':'weekly','remaining_percent':9}]}]}))
                 def history(route):
                     response = route.fetch()
                     data = response.json()
@@ -68,6 +70,9 @@ def main():
                     expect(footer.locator('.sdk-status')).to_have_text({'working': '处理中', 'waiting': '待回答', 'failed': '执行失败', 'idle': '就绪', 'compacting': '压缩中'}[status])
                     expect(footer.locator('.sdk-gauges')).to_contain_text('26%')
                     expect(footer.locator('.sdk-gauges')).to_contain_text('9%')
+                    expect(footer.locator('.sdk-quota-name')).to_have_text(['Codex','专项模型'])
+                    expect(footer.locator('.sdk-gauge > span')).to_have_text(['5小时','7天','7天'])
+                    expect(footer.locator('.sdk-gauge.low')).to_contain_text('91%')
                     expect(footer.locator('[data-balance="codex:credits"]')).to_have_text('🪙 1,235')
                     expect(footer.locator('[data-balance="reset-credits"]')).to_have_text('重置卡 3 张')
                     expect(footer.locator('[data-balance="reset-credits"]')).to_have_attribute('title', re.compile('最近到期'))
@@ -75,11 +80,13 @@ def main():
                     expect(page.locator('#msgs #activity')).to_have_count(0)
                     expect(page.locator('#msgs')).to_contain_text('Existing conversation content')
                     assert_single_status_row(footer)
-                    footer.locator('.sdk-status').click()
-                    expect(page.get_by_role('dialog', name='完整状态')).to_be_visible()
                     if status == 'failed':
+                        footer.locator('.sdk-status').click()
+                        expect(page.get_by_role('dialog', name='完整状态')).to_be_visible()
                         expect(page.get_by_role('dialog', name='完整状态')).to_contain_text('Detailed synthetic capacity error')
-                    page.keyboard.press('Escape')
+                        page.keyboard.press('Escape')
+                    else:
+                        expect(footer.locator('.sdk-status')).to_be_disabled()
                     page.screenshot(path=str(args.screenshots / f'{width}-{theme}-{status}.png'))
                 page.unroute('**/api/session/conversation/check')
                 page.route('**/api/session/conversation/check', lambda r: r.fulfill(json={'ok': False, 'input': {'state': 'blocked', 'code': 'cli_input_present', 'message': '终端已有输入；草稿已保留，请先处理终端输入'}}))

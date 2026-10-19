@@ -358,7 +358,7 @@ def main():
                     page.locator('#sdk-action-dialog button[type="submit"]').click()
                     snapshot('r => !!r.revert?.messageID')
                     action('revert_commit')
-                    page.get_by_role('button', name='提交回退', exact=True).click()
+                    page.get_by_role('dialog').get_by_role('button', name='提交回退', exact=True).click()
                     snapshot('r => r.revert === null')
                     assert all(record['id'] != boundary for record in native.messages[SID])
                     assert any(r[0] == 'POST' and r[1].endswith('/revert/commit') for r in native.received)
@@ -419,10 +419,13 @@ def main():
                         args.screenshot.parent.mkdir(parents=True, exist_ok=True)
                         for width in (1280,390,320):
                             page.set_viewport_size({'width':width,'height':900})
+                            page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
                             expect(page.locator('#sdk-input:visible, #side .item.sel:visible').first).to_be_visible()
                             if width < 500 and not page.locator('#sdk-input').is_visible():
                                 selected = page.evaluate('S.sel')
-                                page.locator(f'#side .item[data-uid="{selected}"]').click()
+                                row=page.locator(f'#side .item[data-uid="{selected}"]')
+                                if row.is_visible():row.click()
+                                if not page.locator('#sdk-input').is_visible():page.locator('#a-sdk').click()
                             expect(page.locator('#sdk-input')).to_be_visible()
                             for theme in ('light','dark'):
                                 page.emulate_media(color_scheme=theme)

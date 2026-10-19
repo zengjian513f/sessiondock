@@ -235,7 +235,7 @@ views; opening one loads its detail. Only the selected conversation subscribes
 to the separate `/api/watch` body stream.
 
 The current server observer shares cached metadata reads every two seconds
-per debug view, irrespective of subscriber count, and stops when the last
+per server event bus, irrespective of subscriber count, and stops when the last
 subscriber leaves. This is browser push, not a claim that external CLI files
 and processes already publish native lifecycle events. Changes are coalesced;
 unchanged snapshots produce no application event, with a 20-second SSE

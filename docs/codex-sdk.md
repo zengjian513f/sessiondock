@@ -49,9 +49,6 @@ browser ─HTTP/SSE─▶ SessionDock node ─WebSocket over Unix socket─▶ c
   and recovers the server snapshot without submitting another turn.
   A transient network/server failure during reconnect keeps retrying; a browser
   regression injects a 503 before allowing the real snapshot stream to recover.
-  BUG-20261018-040613-165ffa follow-up: browser audit selected another session
-  from 04:20:53 to 04:31:18 UTC, while this task's native record contains 73 tool
-  calls in that interval. This case did not kill execution on view detach.
   The browser regression closes the SDK view during a live turn, generates
   progress while detached and restores it without resume/unsubscribe/interrupt.
 
@@ -87,14 +84,7 @@ same report). Browser coverage:
 [codex_sdk_create_browser.py](../tests/codex_sdk_create_browser.py),
 [codex_sdk_terminal_browser.py](../tests/codex_sdk_terminal_browser.py).
 
-The separate SDK-stall observation reported with BUG-20261018-122932-0e7a3c
-does not establish execution waiting for PTY: the delivery receipt was sent,
-native input was recorded at 12:29:40.997 UTC, assistant output at
-12:29:52.909 and a tool call at 12:29:53.898. The browser clicked terminal
-at 12:29:53.936; ptyhost recorded its first attach at 12:29:54.269. Browser
-snapshots already showed SDK and working before the click. The audit did not
-record SDK packets, so exact SDK rendering latency remains undetermined.
-The terminal browser regression now requires SDK output and an approval card
+SDK execution does not depend on a PTY attachment. The terminal browser regression now requires SDK output and an approval card
 before any private PTY exists, then completes that same turn after switching
 views, with no second submission.
 
@@ -250,6 +240,10 @@ Browser regression: [creation retention](../tests/sdk_creation_retention_browser
 
 ## View
 
+Shared status, layout, conditional menus and immediate cached usage follow
+[the SDK UI contract](sdk-ui.md). The details below describe Codex protocol
+behavior; they do not require other sources to expose unsupported controls.
+
 - `#a-sdk` (chat bubble with brackets) sits first in the session view
   group and is shown for Codex main sessions and subagent views when the capability is
   declared (per owning node on the Hub). Opening or reloading a Codex main
@@ -261,9 +255,7 @@ Browser regression: [creation retention](../tests/sdk_creation_retention_browser
   stays inside the SDK surface instead of showing the console placeholder.
   The history consumer waits for that request's cache admission, so complete
   history is not fetched twice. A manual switch away while it loads is preserved.
-  BUG-20261018-040613-165ffa established a 5.9-second history request; this fixes
-  the delayed SDK entry. The collector contention fix and its measured limits
-  are recorded in [history opening phases](logging.md#history-opening-phases).
+
 - History is displayed independently of app-server open and the first SSE snapshot.
   The native JSONL head/tail window already read for `(uid, agent)` is reused on
   entry, including its omitted middle. SDK entry never silently fills this gap.
@@ -273,10 +265,7 @@ Browser regression: [creation retention](../tests/sdk_creation_retention_browser
   Fallback catch-up also requests a window if the native checkpoint resets.
   The snapshot reconciles live items
   against that history without a second read. Connection errors remain visible
-  alongside readable history. BUG-20261018-014447-60f001 recorded a 2,262 ms
-  initial history read followed by another identical 1,068,259-byte response;
-  SDK entry additionally awaited open and the snapshot. The audit did not time
-  SDK RPCs, so it does not establish their share of the reported delay.
+  alongside readable history.
   `codex_sdk_browser.py` holds open and SSE independently, checks readable history
   on failure, and asserts a single history read on complete-cache entry.
 - History: `fetchMessages(uid, {agent})` rendered by the same `planTurns` / `buildPlan`, so
@@ -366,30 +355,14 @@ Browser regression: [creation retention](../tests/sdk_creation_retention_browser
   attribute an interruption to a user. Coverage:
   [interrupted SDK browser suite](../tests/codex_sdk_interrupted_browser.py).
   Otherwise it displays 就绪 when there is no active turn, waiting state or error.
-  Every status can be clicked, tapped or activated with Enter to open its full
-  detail, including the original error. Escape or an outside click closes it.
-  DELTA: status text has a matching six-pixel dot using the shared
-  [SDK status palette](native-sdk.md#配置与页面). Working, compaction,
-  retry and connection dots breathe; reduced-motion preferences disable animation.
-- DELTA (BUG-20261019-065056-5a1004): the toolbar always occupies one line.
-  Status comes first, then usage. Model, effort, tier, mode and action controls
-  move into ⋯ before taking space from usage. Remaining wide quota sets scroll
-  horizontally within the usage area; they never wrap above status. Model width
-  stays bounded. Compaction/fork/revert/review use header-style icon buttons with
-  tooltips and accessible names; overflow entries retain their text in the ⋯ menu.
-  Approval and sandbox policy buttons always stay in the toolbar, including narrow
-  panes. Wide panes show their current values; narrow panes use 审批 / 沙箱 with
-  the current values retained in tooltips and checked menus. Selecting
-  an option applies that policy immediately; checks follow server-confirmed
-  settings, including changes from another client. Failed changes retain the
-  actual selection and display the error. No Apply button is needed.
-  Controls move into overflow according to measured space for the entire row,
-  including status and usage. Sidebar resizing and interface scaling recalculate
-  available space; model and effort remain usable in ⋯. Goal controls and `/goal` are removed.
-  Model/effort/mode selectors show actual values with hidden placeholders when
-  not loaded. Modes are 执行模式 / 计划模式.
-  Popovers use existing menu styling, stay inside the viewport and close on
-  resize, Escape or outside click. Long model names truncate within their selector.
+  Status details, colors, animation, single-line layout and overflow follow
+  [the shared UI contract](sdk-ui.md).
+- Model, effort, tier, mode, approval and sandbox use native system selects.
+  Policy selection applies immediately and follows server-confirmed settings,
+  including another client's changes; failures retain actual values and show
+  the error. No Apply button is needed. Modes are 执行模式 / 计划模式; unloaded
+  selectors use hidden placeholders. Tier IDs and native names are retained,
+  with 档位 as its unloaded label. Goal controls and `/goal` are removed.
 - Input queues are owned by the node, shared in SSE snapshots and `bridge/queue`
   events, and continue after a page closes. With `SESSIONDOCK_STATE_DIR` they
   persist in private `codex-sdk-queue.json`; without it they are memory-only.
@@ -410,9 +383,7 @@ Browser regression: [creation retention](../tests/sdk_creation_retention_browser
   matching native `item/completed` userMessage confirms it in the returned turn.
   Pre-input compaction can end or be interrupted without consuming that input.
   End/reset before confirmation retains its text and attachments as a failed entry
-  for explicit verification/retry, never automatic replay. BUG-20261018-015243-e40d02
-  showed sent receipts but four started/interrupted turns without native user
-  messages; the browser audit did not capture SDK RPCs or compaction events.
+  for explicit verification/retry, never automatic replay.
   [Compaction regression](../tests/codex_sdk_compaction_browser.py) covers both
   successful consumption and interruption/reload/restart before consumption.
 - User bubbles with a native turn identity have a ⋯ button on their left,
@@ -428,10 +399,10 @@ Browser regression: [creation retention](../tests/sdk_creation_retention_browser
   shrinking further when the toolbar is narrow. Switching between listed models
   keeps its width stable; the selected full name remains in the tooltip.
 - Usage alongside the model/effort pickers, one `.sdk-bar` progress bar per
-  gauge showing the **used** share (`100%` = full, red at ≥ 80 %): `5h` and `7d`
+  gauge showing the **used** share (`100%` = full, red at ≥ 80 %): `5小时` and `7天`
   from the account bucket (`rateLimitsByLimitId.codex`, else `rateLimits`),
-  labelled by `windowDurationMins` (300 → 5h, 10080 → 7d; an account with a
-  single window shows only that one), and `Ctx` (`last.totalTokens /
+  labelled by `windowDurationMins` (300 → 5小时, 10080 → 7天; an account with a
+  single window shows only that one), and `上下文` (`last.totalTokens /
   modelContextWindow`). Tooltips give used/remaining percent, reset time and
   token counts. `🪙 N` is `credits.balance` (`无限` when unlimited). The
   row is hidden while nothing is known. On resume, the node reads the latest

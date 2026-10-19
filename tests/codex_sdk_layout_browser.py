@@ -40,7 +40,7 @@ def single_row(page):
         assert control['right'] <= measurements['right'] + 1, measurements
         assert abs((control['top'] + control['bottom']) / 2 - (measurements['controls'][0]['top'] + measurements['controls'][0]['bottom']) / 2) <= 1, measurements
         previous = control['right']
-    for selector in ('#sdk-more', '#sdk-input', '#sdk-control-approval', '#sdk-control-sandbox'):
+    for selector in ('#sdk-more', '#sdk-input'):
         expect(page.locator(selector)).to_be_visible()
     assert page.locator('#sdk-input').bounding_box()['width'] > 80
 
@@ -109,20 +109,23 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
                 page.emulate_media(reduced_motion='no-preference')
             single_row(page)
             assert status.evaluate('e => e.scrollWidth <= e.clientWidth + 1'), (width, scale, label)
-            expect(status).to_be_enabled()
+            expect(status).to_be_disabled()
             if screenshots and label == '处理中' and width in (1440, 390, 320):
                 page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-working.png'))
         for kind in ('approval', 'sandbox'):
-            button = page.locator(f'.sdk-pickers > #sdk-control-{kind}')
-            expect(button).to_be_visible()
-            button.click()
-            policy = page.locator(f'#sdk-policy-{kind}')
-            expect(policy).to_be_visible()
-            expect(policy.locator('[aria-checked="true"]')).to_have_count(1)
-            within_viewport(page, policy)
+            select = page.locator(f'#sdk-control-{kind}')
+            if not select.is_visible():
+                page.locator('#sdk-more').click()
+            expect(select).to_be_visible()
+            assert select.evaluate('e => e instanceof HTMLSelectElement')
+            select.click()
+            expect(select.locator('option:checked')).to_have_count(1)
+            expect(page.locator(f'#sdk-policy-{kind}')).to_have_count(0)
+            within_viewport(page, select)
             if screenshots and width in (1440, 390, 320):
                 page.screenshot(path=str(screenshots / f'{theme}-{scale}-{width}-{kind}.png'))
             page.keyboard.press('Escape')
+            page.locator('#sdk-input').click()
         page.locator('#sdk-input').fill('/unsupported-command')
         page.locator('#sdk-send').click()
         status = page.locator('.sdk-pane .sdk-status')
@@ -147,6 +150,8 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         assert_inline_usage(page)
         expect(page.locator('.sdk-status-row > .sdk-gauges .sdk-credits')).to_have_text('🪙 1,235')
         expect(page.locator('.sdk-status-row > .sdk-gauges [data-gauge="5h"] b')).to_have_text('40%')
+        expect(page.locator('[data-gauge="5h"] > span')).to_have_text('5小时')
+        expect(page.locator('[data-gauge="7d"] > span')).to_have_text('7天')
         page.locator('#sdk-more').click()
         menu = page.locator('#sdk-more-menu')
         expect(menu).to_be_visible()
@@ -175,10 +180,10 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     dialog.get_by_role('button', name='取消', exact=True).click()
     page.locator('#sdk-more').click()
     dialog = page.locator('#sdk-permissions')
-    expect(dialog).to_be_visible()
+    expect(dialog).to_be_hidden()  # Empty permissions feedback is not a menu section.
     expect(dialog.locator('[id^="sdk-goal-"]')).to_have_count(0)
-    expect(page.locator('.sdk-pickers > #sdk-control-approval')).to_be_visible()
-    expect(page.locator('.sdk-pickers > #sdk-control-sandbox')).to_be_visible()
+    expect(page.locator('#sdk-control-approval')).to_be_visible()
+    expect(page.locator('#sdk-control-sandbox')).to_be_visible()
     expect(dialog.locator('#sdk-control-approval, #sdk-control-sandbox')).to_have_count(0)
     page.keyboard.press('Escape')
     page.locator('#sdk-more').click()
@@ -214,8 +219,13 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
     # Live gauge composition changes must reflow without a viewport resize.
     page.set_viewport_size({'width': 1440, 'height': 900})
     rates = fake._bucket(); rates['secondary'] = None; rates['credits']['balance'] = '12345.6'
+    rates['primary']['usedPercent']=40.5
     asyncio.run_coroutine_threadsafe(fake.notify('account/rateLimits/updated', {'rateLimits': rates}), fake.loop).result(timeout=5)
     expect(page.locator('.sdk-credits')).to_have_text('🪙 12,346')
+    progress=page.locator('[data-gauge="5h"] [role="progressbar"]')
+    expect(progress).to_have_attribute('aria-valuenow','40.5')
+    assert progress.locator('u').evaluate('e=>e.style.width')=='40.5%'
+    assert '40.5%' in page.locator('[data-gauge="5h"]').get_attribute('title')
     # Rolling notifications are sparse: null is unavailable, not a deletion.
     expect(page.locator('[data-gauge="7d"]')).to_be_visible()
     single_row(page)
@@ -239,7 +249,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
         single_row(page)
         expect(page.locator('.sdk-pane .sdk-status')).to_have_text('就绪')
         expect(page.locator('.sdk-pane .sdk-status')).to_be_visible()
-        expect(page.locator('.sdk-pane .sdk-status')).to_be_enabled()
+        expect(page.locator('.sdk-pane .sdk-status')).to_be_disabled()
         expect(page.locator('#sdk-send')).to_have_text('发送')
         expect(page.locator('#sdk-stop')).to_be_hidden()
         if screenshots:

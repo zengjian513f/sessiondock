@@ -39,11 +39,11 @@ point-in-time checks cannot prevent a malicious same-user rename race.
 
 IDs/nonces use 128 bits of operating-system randomness. A host name has the fixed
 `sessiondock-` prefix and a fresh random suffix; it is a routing label, not process
-identity. Future host operations must also guard the immutable instance_id.
+identity. Host operations also guard the immutable instance_id.
 
 `begin_start(PreparedAuthority)` consumes that non-Clone token, verifies its
 handle owner and exact record revision/state, and commits Starting **before**
-returning a non-Clone `StartAuthority`. A future launcher must own that token
+returning a non-Clone `StartAuthority`. The launcher must own that token
 before spawning and preserve its launch/instance identity. The current library
 does not execute the spawn or claim exactly-once external side effects.
 
@@ -76,12 +76,12 @@ commit before the handle becomes usable. Recovery never reissues spawn authority
 A crash in Prepared leaves a retained Prepared receipt with no new authority;
 an operator may cancel it and use a new request ID after resolving intent. A
 Starting/Uncertain creation must not be resubmitted as a new ID merely to retry a
-possibly successful spawn. Reconciliation with the exact launch/instance identity
-is future work. Running, Failed and Exited rows remain distinct on reopen; Running
+possibly successful spawn. This store does not observe external processes; reconciliation belongs to the
+coordinator and requires exact launch/instance identity. Running, Failed and Exited rows remain distinct on reopen; Running
 is a historical committed result, not a fresh liveness probe. No native UID/SID
 or parent/child session identity is inferred.
 
-The future launcher owns exactly one result per consumed StartAuthority. It must
+The launcher owns exactly one result per consumed StartAuthority. It must
 correlate real spawn/exit outcomes to the immutable instance, preserve the token
 until reporting the result, and treat any lost result as uncertainty. Record-ID
 exit/cancellation methods are trusted internal APIs; HTTP authorization and
@@ -154,7 +154,7 @@ time rather than an inode (as for the metadata store). Other targets return
 DurabilityUnavailable and do not fake a directory-sync guarantee. Linux tests
 do not certify macOS, network filesystems, storage hardware or power-loss behavior.
 The caller owns the durable lifecycle of the preexisting directory itself. All
-methods are synchronous; a future async service must perform filesystem calls,
+methods are synchronous; the async service performs filesystem calls,
 fsync, serialization and lock release in bounded blocking work, independently of
 HTTP cancellation.
 

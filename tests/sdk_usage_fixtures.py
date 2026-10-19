@@ -50,3 +50,11 @@ def toggle_usage_details(page):
     if menu.get_attribute('popover') is not None:
         page.get_by_role('button', name='用量明细', exact=True).click()
     expect(menu).to_be_visible()
+
+
+def refresh_usage(page):
+    """Use the visible composer; refreshing must not wait before clearing input."""
+    page.keyboard.press('Escape')
+    page.locator('#sdk-input').fill('/usage')
+    page.locator('#sdk-send').click()
+    expect(page.locator('#sdk-input')).to_have_value('')

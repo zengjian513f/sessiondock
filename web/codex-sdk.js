@@ -43,18 +43,21 @@ const CodexSdkView = {
     this.historyReady = historyReady;
     this.pendingAtOpen = !agent && !!this.pending(uid);
     const generation = ++this.generation;
+    const remembered=UsageUI.remembered(uid,agent);
+    this.limits=remembered?.limits || null;this.cachedUsage=remembered?.usage || null;
+    this.limitsRecordedAt=this.limits ? '' : null;
     pane.setAttribute('aria-label', 'Codex SDK');
     pane.classList.add('sdk-pane');
     pane.innerHTML = `<div class="sdk-view">
       <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div></div>
       <div id="sdk-composer">
         <div class="sdk-status-row">
-          <button class="sdk-status" type="button" aria-expanded="false" aria-controls="sdk-status-menu" aria-haspopup="dialog"><span role="status" aria-live="polite"></span></button>
+          <button class="sdk-status" type="button" disabled><span role="status" aria-live="polite"></span></button>
           <div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" role="dialog" aria-label="完整状态"></div>
           <div class="sdk-gauges" aria-label="用量">
+            <span class="sdk-gauge" data-gauge="context" hidden></span>
             <span class="sdk-gauge" data-gauge="5h" hidden></span>
             <span class="sdk-gauge" data-gauge="7d" hidden></span>
-            <span class="sdk-gauge" data-gauge="context" hidden></span>
             <span class="sdk-credits" hidden></span>
           </div>
           <button class="btn" id="sdk-usage-toggle" type="button" aria-expanded="false" aria-controls="sdk-usage-menu" hidden>用量</button>
@@ -111,12 +114,32 @@ const CodexSdkView = {
     CodexSdkActions.mount(this);
     CodexSdkControls.mount(this);
     this.mountToolbar(generation);
+    this.paintPickers();
+    this.paintGauges();
+    // Disk quota reads do not depend on app-server startup or history loading.
+    const quotaRead=new AbortController();this.quotaRead=quotaRead;
+    void UsageUI.readQuota(uid,quotaRead.signal).then(quota=>{
+      if(!this.current(generation) || this.limitsFresh || this.limits || !quota)return;
+      const windows=(quota.buckets || []).filter(row=>row.id?.startsWith('codex:') && Number.isFinite(row.remaining_percent));
+      const credit=(quota.buckets || []).find(row=>['codex:credits','credits'].includes(row.id) && row.remaining_text!=null);
+      if(!windows.length && !credit)return;
+      this.limits={};
+      if(credit){
+        const unlimited=['不限量','无限','unlimited'].includes(String(credit.remaining_text).toLowerCase());
+        const balance=Number(credit.remaining_text);
+        if(unlimited || Number.isFinite(balance))this.limits.credits={unlimited,balance:unlimited ? null : balance,hasCredits:balance>0};
+      }
+      windows.slice(0,2).forEach((row,index)=>this.limits[index?'secondary':'primary']={usedPercent:100-row.remaining_percent,windowDurationMins:UsageUI.minutes(row.window),resetsAt:row.resets_at ? Date.parse(row.resets_at)/1000 : null});
+      this.limitsRecordedAt=quota.captured_at || '';this.paintGauges();
+    }).catch(()=>{});
     this.refreshHistory(generation);
     this.setNotice('连接中', 'connecting');
     this.start(generation);
   },
 
   close() {
+    if(this.uid)UsageUI.remember(this.uid,this.agent,{limits:this.limits,usage:this.summary && Object.hasOwn(this.summary,"usage") ? this.summary.usage : this.cachedUsage});
+    this.quotaRead?.abort();this.quotaRead=null;
     this.setConnected(false);
     if (this.input) PathCompletion.close(this.input);
     CodexSdkCompose.close(this);
@@ -139,7 +162,7 @@ const CodexSdkView = {
     this.limitsRead?.abort();
     this.limitsRead = null; this.limitsRetryTimer = 0; this.limitsRetryDelay = 1000;
     this.items.clear(); this.nodes.clear(); this.requests.clear();
-    this.turn = null; this.summary = null; this.limits = null; this.resetCards = null; this.limitsRecordedAt = null; this.limitsFresh = false;
+    this.turn = null; this.summary = null; this.cachedUsage = null; this.limits = null; this.resetCards = null; this.limitsRecordedAt = null; this.limitsFresh = false;
     this.models = []; this.modelChoice = this.effortChoice = null;
     this.pane = this.box = this.history = this.live = this.notice = this.input = null;
     this.uid = ''; this.agent = null; this.historyData = null; this.historyEntry = null;
@@ -173,10 +196,13 @@ const CodexSdkView = {
 
   placeMenu(menu, button, preferredWidth = 300) {
     const box = button.getBoundingClientRect(), zoom = menu.currentCSSZoom || 1;
-    const edge = 8, gap = 6, width = Math.min(preferredWidth, innerWidth - edge * 2);
+    const edge = 8, gap = 6, limit = Math.min(preferredWidth, innerWidth - edge * 2);
+    const status = menu.classList.contains('sdk-status-menu');
+    menu.style.width = status ? 'max-content' : `${limit / zoom}px`;
+    if (status) menu.style.maxWidth = `${limit / zoom}px`;
+    const width = menu.getBoundingClientRect().width;
     const above = box.top - gap - edge, below = innerHeight - box.bottom - gap - edge;
     const up = above > below;
-    menu.style.width = `${width / zoom}px`;
     menu.style.maxHeight = `${Math.max(0, up ? above : below) / zoom}px`;
     menu.style.left = `${Math.max(edge, Math.min(box.right - width, innerWidth - edge - width)) / zoom}px`;
     menu.style.top = `${(up ? box.top - gap - menu.getBoundingClientRect().height : box.bottom + gap) / zoom}px`;
@@ -198,7 +224,8 @@ const CodexSdkView = {
     const buttons = ['compact', 'fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
     more.append(this.pane.querySelector('#sdk-permissions'), this.pane.querySelector('.sdk-reset'));
     sdkLayoutFooter(this, ['.sdk-model', '.sdk-effort', '.sdk-tier', '.sdk-mode']
-      .map(selector => this.pane.querySelector(selector)).concat(buttons));
+      .map(selector => this.pane.querySelector(selector))
+      .concat([...this.pane.querySelectorAll('.sdk-policy')], buttons));
     this.updateStatusDisclosure();
   },
 
@@ -225,6 +252,9 @@ const CodexSdkView = {
     try {
       const opened = await this.request('api/codex-sdk/open', {uid}, read.signal);
       if (!this.current(generation)) return;
+      // Stopping the conflicting CLI may mark this failed SDK pane stopped.
+      // A successful explicit/retry open is a new live attachment, not a SEND.
+      if(this.openFailed && this.stopped){this.stopped=false;this.pane.querySelector('#sdk-send').disabled=false;}
       this.summary = opened.raw || {};
       this.seedGauges();
     } catch (error) {
@@ -339,14 +369,9 @@ const CodexSdkView = {
     this.paintGauges();
   },
 
-  /** 窗口时长（分钟）→ 5h / 7d 等简称。 */
+  /** 与其它 agent 共用窗口名称。 */
   windowLabel(minutes) {
-    if (!Number.isFinite(minutes) || minutes <= 0) return '额度';
-    if (minutes === 300) return '5h';
-    if (minutes === 10080) return '7d';
-    if (minutes % 1440 === 0) return `${minutes / 1440}d`;
-    if (minutes % 60 === 0) return `${minutes / 60}h`;
-    return `${minutes}m`;
+    return UsageUI.window(minutes);
   },
 
   gauge(slot, label, used, title) {
@@ -354,24 +379,9 @@ const CodexSdkView = {
     if (!node) return;
     node.hidden = !Number.isFinite(used);
     if (node.hidden) return;
-    const value = Math.max(0, Math.min(100, Math.round(used)));
-    node.classList.toggle('low', value >= 80);
-    node.title = title;
-    node.replaceChildren();
-    const name = document.createElement('span');
-    name.textContent = label;
-    const bar = document.createElement('i');
-    bar.className = 'sdk-bar';
-    bar.setAttribute('role', 'progressbar');
-    bar.setAttribute('aria-label', `${label} 已用`);
-    bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
-    bar.setAttribute('aria-valuenow', String(value));
-    const fill = document.createElement('u');
-    fill.style.width = `${value}%`;
-    bar.append(fill);
-    const text = document.createElement('b');
-    text.textContent = `${value}%`;
-    node.append(name, bar, text);
+    const gauge=UsageUI.gauge(label,used,title);
+    node.classList.toggle('low',gauge.classList.contains('low'));node.title=title;
+    node.replaceChildren(...gauge.childNodes);
   },
 
   paintGauges() {
@@ -381,8 +391,8 @@ const CodexSdkView = {
     const slots = {'5h': null, '7d': null};
     const others = [];
     for (const window of windows) {
-      const label = this.windowLabel(window.windowDurationMins);
-      if (label in slots) slots[label] = window; else others.push(window);
+      const slot = {300:'5h',10080:'7d'}[window.windowDurationMins];
+      if (slot) slots[slot] = window; else others.push(window);
     }
     // 官方窗口是 5h 与 7d；其它时长的窗口借用空闲的格子，不丢信息。
     for (const window of others) {
@@ -396,15 +406,15 @@ const CodexSdkView = {
       const recorded = this.limitsRecordedAt != null
         ? `；上次记录${this.limitsRecordedAt ? ` ${new Date(this.limitsRecordedAt).toLocaleString()}` : ''}` : '';
       this.gauge(slot, label, window.usedPercent,
-        `${label} 窗口已用 ${Math.round(window.usedPercent)}%，剩余 ${Math.max(0, Math.round(100 - window.usedPercent))}%${reset}${recorded}`);
+        `${label} 窗口已用 ${UsageUI.percent(window.usedPercent)}%，剩余 ${UsageUI.percent(Math.max(0,100-window.usedPercent))}%${reset}${recorded}`);
     }
-    const usage = this.summary?.usage;
+    const usage = this.summary && Object.hasOwn(this.summary,"usage") ? this.summary.usage : this.cachedUsage;
     const size = usage?.modelContextWindow;
     const used = usage?.last?.totalTokens;
     if (size && used != null) {
-      this.gauge('context', 'Ctx', used / size * 100,
+      this.gauge('context', '上下文', used / size * 100,
         `上下文已用 ${Math.min(100, Math.round(used / size * 100))}%（${used.toLocaleString()} / ${size.toLocaleString()} tokens）`);
-    } else this.gauge('context', 'Ctx', NaN, '');
+    } else this.gauge('context', '上下文', NaN, '');
     const credits = bucket.credits;
     const creditNode = this.pane.querySelector('.sdk-credits');
     const balance = Number(credits?.balance);
@@ -477,7 +487,7 @@ const CodexSdkView = {
     for (const model of this.models) modelSelect.append(new Option(model.model, model.model));
     if (modelName && ![...modelSelect.options].some(option => option.value === modelName))
       modelSelect.append(new Option(modelName, modelName));
-    this.selectValue(modelSelect, modelName, '模型');
+    this.selectValue(modelSelect, modelName, '选择模型');
     modelSelect.title = modelName;
     const select = this.pane.querySelector('#sdk-effort');
     const model = this.models.find(row => row.model === modelName);
@@ -485,15 +495,15 @@ const CodexSdkView = {
     const switching = modelName !== currentModel;
     select.replaceChildren();
     for (const effort of model?.supportedReasoningEfforts || []) {
-      const option = new Option(({none:'无', minimal:'最低', low:'低', medium:'中', high:'高', xhigh:'极高'})[effort.reasoningEffort] || effort.reasoningEffort, effort.reasoningEffort);
+      const option = new Option(UsageUI.effort(effort.reasoningEffort), effort.reasoningEffort);
       option.title = effort.description || '';
       select.append(option);
     }
     if (chosen && ![...select.options].some(option => option.value === chosen)) {
       if (switching && this.effortChoice === null) chosen = '';
-      else select.append(new Option(({none:'无', minimal:'最低', low:'低', medium:'中', high:'高', xhigh:'极高'})[chosen] || chosen, chosen));
+      else select.append(new Option(UsageUI.effort(chosen), chosen));
     }
-    this.selectValue(select, chosen, '推理强度');
+    this.selectValue(select, chosen, '选择强度');
     CodexSdkControls.paintTier(this);
     this.layoutToolbar();
   },
@@ -903,8 +913,7 @@ const CodexSdkView = {
 
   updateStatusDisclosure() {
     if (!this.notice) return;
-    this.notice.disabled = this.notice.hidden;
-    this.notice.setAttribute('aria-haspopup', 'dialog');
+    sdkUpdateStatusDisclosure(this.notice, this.pane.querySelector('#sdk-status-menu'));
   },
 
   nearBottom() {
@@ -1370,6 +1379,22 @@ const CodexSdkQuestions = {
   },
 };
 
+// A complete short status is a label, not an invitation to repeat it in a menu.
+function sdkUpdateStatusDisclosure(notice, details) {
+  const full = details.textContent.trim(), summary = notice.textContent.trim();
+  const available = !notice.hidden && !!full
+    && (full !== summary || notice.scrollWidth > notice.clientWidth + 1);
+  notice.disabled = !available;
+  if (available) {
+    notice.setAttribute('aria-controls', details.id);
+    notice.setAttribute('aria-haspopup', 'dialog');
+    notice.setAttribute('aria-expanded', String(details.matches(':popover-open')));
+  } else {
+    if (details.matches(':popover-open')) details.hidePopover();
+    for (const attribute of ['aria-controls', 'aria-haspopup', 'aria-expanded']) notice.removeAttribute(attribute);
+  }
+}
+
 // Keep protocol detail intact; only the toolbar label is summarized.
 function sdkStatusSummary(text, kind) {
   text = String(text || '');
@@ -1387,7 +1412,7 @@ function sdkLayoutFooter(view, controls) {
   const pickers = row.querySelector('.sdk-pickers'), menu = view.pane.querySelector('#sdk-more-menu');
   const trigger = view.pane.querySelector('#sdk-more');
   const signature = JSON.stringify([row.clientWidth, view.notice.textContent, gauges.textContent,
-    [...pickers.querySelectorAll('.sdk-policy')].map(n => n.textContent),
+    [...menu.querySelectorAll('.sdk-control-note, .sdk-reset')].map(n => [n.hidden, n.textContent]),
     controls.filter(Boolean).map(n => [n.hidden, n.textContent, n.querySelector('select')?.value])]);
   if (row.dataset.footerLayout === signature) return;
   row.dataset.footerLayout = signature;
@@ -1395,12 +1420,35 @@ function sdkLayoutFooter(view, controls) {
   if (row.dataset.footerWidth && Number(row.dataset.footerWidth) !== row.clientWidth) view.closeToolbarMenus();
   row.dataset.footerWidth = row.clientWidth;
   // Start with status, usage and ⋯; optional controls never displace usage.
+  trigger.hidden = false;
   const overflow = control => control.classList.contains('sdk-action') ? view.pane.querySelector('#sdk-actions') : menu;
   for (const control of controls.filter(Boolean)) overflow(control).append(control);
   const fits = () => row.scrollWidth <= row.clientWidth + 1 && gauges.scrollWidth <= gauges.clientWidth + 1;
-  const anchor = pickers.querySelector('.sdk-policy') || trigger;
+  const anchor = trigger;
   for (const control of controls.filter(Boolean)) {
     pickers.insertBefore(control, anchor);
     if (!fits()) { overflow(control).append(control); break; }
+  }
+  const overflowPickers=controls.filter(control=>control?.matches('.new-effort') && control.parentElement===menu);
+  menu.prepend(...overflowPickers);
+  for(const control of controls.filter(control=>control?.matches('.new-effort'))){
+    const inMenu=control.parentElement===menu,select=control.querySelector('select');
+    let label=control.querySelector(':scope > .visually-hidden, :scope > .sdk-picker-label');
+    if(!label && select){label=el('span','',select.getAttribute('aria-label') || control.title);control.prepend(label);}
+    label?.classList.toggle('visually-hidden',!inMenu);label?.classList.toggle('sdk-picker-label',inMenu);
+  }
+  // Empty wrappers and hidden reset cards are not menu contents. The same
+  // contents decide both disclosure visibility and boundaries between groups.
+  const hasContent = node => !node.hidden && (node.matches('button, input, select, textarea')
+    || [...node.childNodes].some(child => child.nodeType === Node.TEXT_NODE
+      ? !!child.textContent.trim() : child.nodeType === Node.ELEMENT_NODE && hasContent(child)));
+  for (const group of menu.querySelectorAll(':scope > #sdk-actions, :scope > #sdk-permissions')) {
+    group.hidden = false;
+    group.hidden = !hasContent(group);
+  }
+  trigger.hidden = !hasContent(menu);
+  if (trigger.hidden && menu.matches(':popover-open')) {
+    menu.hidePopover();
+    view.input?.focus();
   }
 }

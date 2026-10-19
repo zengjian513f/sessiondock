@@ -48,6 +48,11 @@ def check(browser, binary, screenshots, width, theme):
         corpus = build(root)
         for name in ['work', 'host', 'ledger', 'state', 'proc']:
             (root / name).mkdir(mode=0o700)
+        quota_dir=root/'state/quotas';quota_dir.mkdir()
+        (quota_dir/'codex.json').write_text(json.dumps({'source':'codex',
+            'captured_at':'2026-10-19T10:00:00Z','buckets':[
+                {'id':'codex:primary','group':'codex','window':300,'remaining_percent':65},
+                {'id':'codex:credits','group':'Credits','remaining_text':'0'}]}))
         (root / 'proc/stat').write_text('btime 1700000000\n')
         cli = root / 'cli.py'
         cli.write_text(CLI)
@@ -74,12 +79,19 @@ def check(browser, binary, screenshots, width, theme):
                 page = context.new_page()
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
+                initial_limits=[]
+                page.route('**/api/codex-sdk/limits?*',lambda route:initial_limits.append(route))
                 on_popup(page, lambda dialog: dialog.accept())
                 try:
                     page.goto(base, wait_until='networkidle')
                     uid = corpus.uid('sdk')
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
                     expect(page.locator('#sdk-status-menu')).to_contain_text('独立运行')
+                    expect(page.locator('.sdk-pane [data-gauge="5h"] b')).to_have_text('35%')
+                    expect(page.locator('.sdk-pane .sdk-credits')).to_have_text('🪙 0')
+                    assert initial_limits,'cold disk quota must render before live limits'
+                    for route in initial_limits:route.continue_()
+                    page.unroute('**/api/codex-sdk/limits?*')
                     # Start the fixture TUI through the real launch path.
                     page.locator('#a-term').click()
                     page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
@@ -130,6 +142,24 @@ def check(browser, binary, screenshots, width, theme):
                     before = len(fake.methods('thread/resume'))
                     page.locator('#a-sdk').click()
                     assert len(fake.methods('thread/resume')) == before
+                    # Cached windows and context must render before either native
+                    # open or the account refresh returns on a same-page reopen.
+                    cached=page.locator('.sdk-pane .sdk-gauges > :not([hidden])').all_text_contents()
+                    held_open,held_limits=[],[]
+                    page.locator('#a-chat').click()
+                    page.route('**/api/codex-sdk/open',lambda route:held_open.append(route))
+                    page.route('**/api/codex-sdk/limits?*',lambda route:held_limits.append(route))
+                    page.locator('#a-sdk').click()
+                    expect(page.locator('.sdk-pane .sdk-gauges > :not([hidden])')).to_have_text(cached)
+                    page.wait_for_function('!!CodexSdkView.openRead && !!CodexSdkView.limitsRead')
+                    assert held_open and held_limits
+                    expect(page.locator('.sdk-gauge[data-gauge="context"]')).to_be_visible()
+                    if screenshots:
+                        page.screenshot(path=str(screenshots/f'cached-before-open-{width}-{theme}.png'),full_page=True)
+                    for route in held_open+held_limits:route.continue_()
+                    page.unroute('**/api/codex-sdk/open')
+                    page.unroute('**/api/codex-sdk/limits?*')
+                    page.wait_for_function('!CodexSdkView.openRead && !CodexSdkView.limitsRead')
                     # Leaving a busy view cancels its scheduled retry.
                     page.locator('#a-chat').click()
                     opens = []

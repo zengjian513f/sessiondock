@@ -624,7 +624,7 @@ def main(binary=BINARY, interrupt_only=False):
                                                arg=[codex_uid, phase], timeout=20000)
                         page.locator("#a-chat").click()
                         if phase:
-                            expect(page.locator("#activity")).to_have_text("正在压缩上下文…")
+                            expect(page.locator("#activity")).to_have_text("压缩中")
                             for width, theme in [(1280, 'dark'), (1280, 'light'), (390, 'dark'), (390, 'light')]:
                                 page.set_viewport_size({"width": width, "height": 900})
                                 if width == 390 and not page.locator("#activity").is_visible():
@@ -639,9 +639,9 @@ def main(binary=BINARY, interrupt_only=False):
                                 page.screenshot(path=f"/tmp/sessiondock-compacting-{width}-{theme}.png")
                             page.set_viewport_size({"width": 1280, "height": 900})
                             page.reload(wait_until="networkidle")
-                            expect(page.locator("#activity")).to_have_text("正在压缩上下文…", timeout=20000)
+                            expect(page.locator("#activity")).to_have_text("压缩中", timeout=20000)
                         else:
-                            expect(page.locator("#activity").filter(has_text="正在压缩上下文")).to_have_count(0)
+                            expect(page.locator("#activity").filter(has_text="压缩中")).to_have_count(0)
                     if not page.locator("#termpane").is_visible():
                         page.locator("#a-term").click()
                     print("PASS compaction in conversation mode, reload, completion and quoted/draft isolation")

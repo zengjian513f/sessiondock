@@ -9,6 +9,7 @@ and checks the native fixture's independently recorded input/argv/signal log.
 from __future__ import annotations
 
 import argparse
+import re
 import base64
 import json
 import os
@@ -19,7 +20,7 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 from playwright.sync_api import expect, sync_playwright
-from sdk_usage_fixtures import assert_inline_usage, toggle_usage_details
+from sdk_usage_fixtures import assert_inline_usage, toggle_usage_details, refresh_usage
 from agy_sdk_fixtures import AgyFixture, MODEL, SID, TITLE
 from history_fixtures import BINARY, REPO, Corpus, isolated_server
 from new_session_model_browser import open_dialog
@@ -97,7 +98,7 @@ def exercise(browser, base, fixture, screenshots=None):
         page.wait_for_function('T.listLoaded')
         uid = select_sdk(page)
         expect(page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')).to_contain_text('60%')
-        expect(page.locator('#native-usage-refresh')).to_be_disabled()
+        page.wait_for_function('NativeSdkView.loadingUsage')
         # Settings opened concurrently joins the same Agy query.
         quotas = context.new_page()
         quotas.goto(base + '/quotas.html')
@@ -110,20 +111,19 @@ def exercise(browser, base, fixture, screenshots=None):
         expect(page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')).to_contain_text('28%')
         expect(quotas.locator('section[data-source=agy]')).to_contain_text('28%')
         expect(quotas.locator('#quota-refresh')).to_be_enabled()
-        expect(page.locator('#native-usage-refresh')).to_be_enabled()
+        page.wait_for_function('!NativeSdkView.loadingUsage')
         assert len(quota_calls()) == 1, 'settings and SDK must share the in-flight query'
         quotas.reload()
         expect(quotas.locator('#quota-refresh')).to_be_enabled()
         page.reload()
         expect(page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')).to_contain_text('28%')
-        expect(page.locator('#native-usage-refresh')).to_be_enabled()
+        page.wait_for_function('!NativeSdkView.loadingUsage')
         assert len(quota_calls()) == 1, 'fresh quota must survive page reloads without a CLI query'
         # Explicit refresh updates the shared cache, including failure cooldown.
-        toggle_usage_details(page)
         (fixture.root / 'quota-remaining').write_text('0.61')
-        page.locator('#native-usage-refresh').click()
+        refresh_usage(page)
         expect(page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')).to_contain_text('39%')
-        expect(page.locator('#native-usage-refresh')).to_be_enabled()
+        page.wait_for_function('!NativeSdkView.loadingUsage')
         quotas.reload()
         expect(quotas.locator('section[data-source=agy]')).to_contain_text('39%')
         expect(quotas.locator('#quota-refresh')).to_be_enabled()
@@ -134,16 +134,16 @@ def exercise(browser, base, fixture, screenshots=None):
         expect(quotas.locator('section[data-source=agy]')).to_contain_text('39%')
         page.reload()
         expect(page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')).to_contain_text('39%')
-        expect(page.locator('#native-usage-refresh')).to_be_enabled()
+        page.wait_for_function('!NativeSdkView.loadingUsage')
         toggle_usage_details(page)
-        expect(page.locator('#native-usage-detail')).to_contain_text('查询失败')
+        expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title',re.compile('查询失败'))
         assert len(quota_calls()) == 3, 'automatic reads must reuse a recent failed attempt'
         (fixture.root / 'quota-fail').unlink()
         (fixture.root / 'quota-remaining').unlink()
-        page.locator('#native-usage-refresh').click()
+        refresh_usage(page)
         expect(page.locator('.native-sdk-pane .sdk-status-row > .sdk-gauges')).to_contain_text('28%')
-        expect(page.locator('#native-usage-refresh')).to_be_enabled()
-        toggle_usage_details(page)
+        page.wait_for_function('!NativeSdkView.loadingUsage')
+        page.keyboard.press('Escape')
         quotas.close()
         expect(page.locator('#native-media-note')).to_have_count(0)
         opened = post(page, base, 'open', {'uid': uid})
@@ -157,9 +157,9 @@ def exercise(browser, base, fixture, screenshots=None):
         page.locator('#sdk-model').select_option(MODEL)
         expect(page.locator('#sdk-effort')).to_be_visible()
         page.locator('#sdk-effort').select_option('high')
-        page.locator('#sdk-more').click()
+        if not page.locator('#native-sdk-mode').is_visible():page.locator('#sdk-more').click()
         page.locator('#native-sdk-mode').select_option('plan')
-        page.locator('#sdk-more').click()
+        page.keyboard.press('Escape')
         print('Agy: click SDK, type/send, sparse tool result, idempotent retry', flush=True)
         receipt = send(page, 'SDK 中文\nsecond line')
         expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: SDK 中文')
@@ -182,7 +182,7 @@ def exercise(browser, base, fixture, screenshots=None):
             route.fulfill(response=response, json=data)
         page.route('**/api/native-sdk/usage', expanded_usage, times=1)
         page.locator('#native-usage-refresh').click()
-        expect(page.locator('#native-usage-detail')).to_contain_text('72%')
+        expect(page.locator('.native-sdk-pane .sdk-gauges')).to_have_attribute('title',re.compile('72%'))
         expect(page.locator('#native-usage-detail')).to_contain_text('Delayed native quota diagnostic.')
         menu_box = page.locator('#sdk-more-menu').bounding_box()
         assert menu_box['y'] >= 0 and menu_box['y'] + menu_box['height'] <= 900, menu_box

@@ -77,7 +77,7 @@ DELTA（BUG-20261012-023202-d4294d）：新建会话自动接续到原生历史�
 
 - 界面缩放 `interfaceScale`：50–150，步长 1，默认 100。滑块、重置、主页面双指捏合共用同一数值。旧的 30–49 读出来按 50。捏合开始派发 `sessiondock-pinch-start`，取消进行中的终端选区且不复制。单指滚动保持浏览器原生。`#app` 使用 `touch-action: pan-x pan-y`。带 `data-pinch-owner` 的区域页面不接管。浏览器自己的页面缩放（`visualViewport.scale !== 1`）不当成键盘，也不因此改 PTY 行列。手势期间 `#scale-indicator` 显示百分比，松手后淡出，不挡输入。设置对话框尺寸不跟着滑块变。
 - 等宽字体 `font`：`ubuntu`（默认，Ubuntu Sans Mono）、`cascadia`、`system`、`consolas`。终端和工具输出共用。字体文件在 `web/fonts/`。`typography.js` 的 `apply` 在样式表之后执行。
-- 颜色 `theme`：`system`（默认，跟随 `prefers-color-scheme`）、`light`、`dark`。系统主题变化时若选择仍是 `system`，`applyTheme('system')` 再刷一次。浅色终端会改写 ANSI/OSC 颜色，见第 6 节。
+- 颜色 `theme`：`system`（默认，跟随 `prefers-color-scheme`）、`light`、`dark`。系统主题变化时若选择仍是 `system`，`applyTheme('system')` 再刷一次。浅色终端在渲染层转换深色前景/背景，不修改 PTY 字节或 CLI 配置；见[终端主题](terminal-grid.md)。
 - 「安装到桌面」按钮。见第 8 节。
 
 ### 功能
@@ -114,8 +114,9 @@ Hub 顶栏另有机器 chip，见第 2 节。节点离线、列表/运行状态/
 ### 弹窗外观
 
 `appAlert` / `appConfirm`（[`web/popup.js`](../web/popup.js)）用与新建会话、回收站相同的居中 `dialog.app-dialog`。消息含空行时第一行当标题。Esc 或 × 等于取消。带操作按钮的浮动卡（版本更新、登录环境、登录失效、缺陷报告回执、链接候选选择）进 `#float-stack`，不抢焦点。[`tests/popup_browser.py`](../tests/popup_browser.py)。
+DELTA（BUG-20261019-112505-a272c2）：浮动提示卡按内容收缩，最大 440px 且不超出容器；短回执不再固定占满宽卡，长文继续换行。实际提交回执覆盖见 [`tests/optional_report_browser.py`](../tests/optional_report_browser.py)。
 
-DELTA（BUG-20261016-083529-776b9e）：浮动卡宽度受缩放后的容器约束，高度按界面缩放折算；多个卡片超出可用高度时可滚动访问，顶部不裁切。窄卡片的环境变化表将机器名独占一行，长变量名换行。长错误确认框的正文与操作区可滚动访问；报告对话框的移动端高度约束不能覆盖缩放补偿，新建／报告的 CLI 选项在极窄表单中换行。会话操作／视图菜单按缩放折算可用高度；右键、文件、分组与工具栏子菜单统一在视口坐标中限位，再换算为 CSS 坐标；子菜单左右放不下时改放上下方，保持触发按钮可点击。诊断中的历史读取与 SSE 正常；675px 视口、125% 界面缩放可复现旧卡片实际宽 800px、左侧越界 62.5px，首次不一致发生在浮动卡布局。报告未记录实际缩放值，此组合是隔离复现条件。[`tests/overlay_layout_browser.py`](../tests/overlay_layout_browser.py) 覆盖明暗主题、手机／横屏／桌面、50–150% 缩放及对话框、模型菜单、重启进度和叠放提示。
+DELTA（BUG-20261016-083529-776b9e）：浮动卡宽度受缩放后的容器约束，高度按界面缩放折算；多个卡片超出可用高度时可滚动访问，顶部不裁切。窄卡片的环境变化表将机器名独占一行，长变量名换行。长错误确认框的正文与操作区可滚动访问；报告对话框的移动端高度约束不能覆盖缩放补偿，新建／报告的 CLI 选项在极窄表单中换行。会话操作／视图菜单按缩放折算可用高度；右键、文件、分组与工具栏子菜单统一在视口坐标中限位，再换算为 CSS 坐标；子菜单左右放不下时改放上下方，保持触发按钮可点击。[`tests/overlay_layout_browser.py`](../tests/overlay_layout_browser.py) 覆盖明暗主题、手机／横屏／桌面、50–150% 缩放及对话框、模型菜单、重启进度和叠放提示。
 
 ---
 
@@ -154,9 +155,9 @@ DELTA（BUG-20261016-083529-776b9e）：浮动卡宽度受缩放后的容器约�
 
 左栏宽度 `width`，默认 340，最小 200。拖 `#drag`，双击回到默认。资源列打开时视觉宽度再加 144，存的仍是不含这 144 的值（`setSideWidth`）。
 
-DELTA：会话模式复用 SDK 的底部状态／用量样式；Working、等待、失败等状态移出消息列表。用量只读当前节点的额度快照，无数据时明确显示暂无数据，不启动 SDK 会话。浏览器覆盖：[`tests/conversation_status_browser.py`](../tests/conversation_status_browser.py)。
+DELTA：会话模式复用 SDK 的底部状态／用量样式；处理中、待回答、失败等状态移出消息列表。窗口名称统一为“5小时 / 7天”，Agy 按模型额度组区分，不将不同组的同周期额度混为一项。用量只读当前节点的额度快照，无数据时明确显示暂无数据，不启动 SDK 会话。浏览器覆盖：[`tests/conversation_status_browser.py`](../tests/conversation_status_browser.py)。
 
-会话用量同时展示快照中的金币余额与重置卡数量，保留零值和无限额度；缺失字段不伪装为零，悬停可见记录时间和最近到期时间。窄屏自动换行，PTY 输入提示不覆盖用量。
+会话用量同时展示快照中的金币余额与重置卡数量，保留零值和无限额度；缺失字段不伪装为零，悬停可见记录时间和最近到期时间。底栏单行、超宽用量内部滚动，PTY 输入提示不覆盖用量；见[共用状态栏](sdk-ui.md)。
 
 会话状态栏与 composer 使用同一显示条件：未启动的会话和子代理不单独显示状态栏；终端全屏在所有屏宽隐藏 composer。运行中切换视图保留草稿，见 [`tests/conversation_composer_visibility_browser.py`](../tests/conversation_composer_visibility_browser.py)。
 
@@ -725,8 +726,8 @@ SSH 会话结束后，主控制台原地只读显示宿主退出时留下的最�
 
 按用户要求，正常 CLI 退出（含 Ctrl+D）、停止成功、此前已退出、整组复制／移动完成只更新原界面。停止／冻结／恢复／启动失败、单次停止结果不确定、主动打开／接管终端失败用现有 `appAlert` 确认框；后台自动重连不弹框。批量停止继续用按钮旁的进度和展开错误详情。
 
-控制台结构性不可用和筛选不可用复用原生 tooltip。终端连接状态、输出错误、文件粘贴进度放在终端内 `#term-output-notice`，按终端视图隔离；禁用文件粘贴和剪贴板读取失败显示四秒，上传完成或连接恢复后清除相应状态。输入就绪说明沿用 composer 上方行内提示，占正常布局，不盖正文、终端和发送按钮。已结束且可重新启动的草稿说明阻塞发送的原因，其他已结束会话沿用原来的 composer 隐藏行为。
+控制台结构性不可用和筛选不可用复用原生 tooltip。终端连接状态、输出错误、文件粘贴进度放在终端内 `#term-output-notice`，按终端视图隔离；禁用文件粘贴和剪贴板读取失败显示四秒，上传完成或连接恢复后清除相应状态。输入就绪说明按[输入提示条件](composer-input.md#delta输入状态提示)显示，不盖正文、终端和发送按钮。已结束且可重新启动的草稿说明阻塞发送的原因，其他已结束会话沿用原来的 composer 隐藏行为。
 
 无按钮的链接异常／移动／副本说明在详情标题下显示，切换会话清除；有候选按钮时保留全局浮层。版本更新、登录环境变化、登录失效、缺陷报告回执、冻结／休眠的恢复交互保持原样。
 
-DELTA（BUG-20261019-065056-5a1004）：SDK 与普通对话底栏始终单行，状态摘要最多 6 字，点击显示完整详情与错误原文。状态优先，其次用量，其余控件空间不足时收进 ⋯；超宽用量只在自身区域横向滚动。浏览器覆盖见 [`tests/codex_sdk_layout_browser.py`](../tests/codex_sdk_layout_browser.py)、[`tests/native_sdk_footer_browser.py`](../tests/native_sdk_footer_browser.py) 和 [`tests/conversation_status_browser.py`](../tests/conversation_status_browser.py)。
+DELTA（BUG-20261019-065056-5a1004）：SDK 与普通对话底栏始终单行，状态摘要最多 6 字，仅有额外信息或截断时开放详情；条件见[共用状态栏](sdk-ui.md)。状态优先，其次用量，其余控件空间不足时收进 ⋯；超宽用量只在自身区域横向滚动。浏览器覆盖见 [`tests/codex_sdk_layout_browser.py`](../tests/codex_sdk_layout_browser.py)、[`tests/native_sdk_footer_browser.py`](../tests/native_sdk_footer_browser.py) 和 [`tests/conversation_status_browser.py`](../tests/conversation_status_browser.py)。

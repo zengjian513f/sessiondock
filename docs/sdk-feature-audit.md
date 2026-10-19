@@ -1,16 +1,8 @@
-# 五种 SDK 功能与漏实现审计
+# 五种 SDK 能力对照
 
-2026-10-19，最初对照代码快照 `25178c71`，现已更新本轮补实现状态，以 SessionDock 已实现的 Codex SDK
-视图为基准，核对 Grok、Agy、OpenCode、Claude 的桥接、HTTP、网页和浏览器用例，
-再用官方文档、官方源码及固定版本接口证据判断可实现范围。
-本轮已交付部分原生接线与网页交互；仍未完成的项目统一登记在
-[TODO](../TODO.md)。表中“部/漏/待/限”保留真实边界，不表示已全量对齐。
-
-结论：四种新 SDK 已有主要会话闭环，但没有完整对齐 Codex。用量、队列管理、
-会话操作和设置中仍存在遗漏。Agy 用量底栏、effort、命令分流已补齐；
-Grok/Claude 问答、三家用量及部分原生会话操作也已接通。不能把 capability=false
-一概解释成产品永久不支持。图片按用户决定统一沿用原版附件路径，五种 SDK 的
-专用图像转换均已移除，这属于产品取舍，不再列为待补齐功能。
+本文对照当前已接能力及原生限制，不是逐次交付记录或全功能验收证明。
+协议细节由各来源合同维护，共同界面见[SDK 界面合同](sdk-ui.md)，
+尚未完成工作只在 [TODO](../TODO.md) 跟踪。能力相近也不意味着原生证据等价。
 
 ## 范围、版本和判定口径
 
@@ -21,11 +13,11 @@ stream-json。官方同名 SDK 包不一定使用同一协议，不能把别的 
 
 | 来源 | 本仓库核对版本 | 主要代码与合同 |
 | --- | --- | --- |
-| Codex | CLI 0.163.0；本次复读官方 app-server 文档 | [桥接](../crates/sessiondock/src/codex_sdk/mod.rs)、[视图](../web/codex-sdk.js)、[合同](codex-sdk.md) |
+| Codex | CLI 0.163.0；核对官方 app-server 文档 | [桥接](../crates/sessiondock/src/codex_sdk/mod.rs)、[视图](../web/codex-sdk.js)、[合同](codex-sdk.md) |
 | Grok | Build 1.0.62；官方源码固定到 `2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`，与安装版 build commit 不同 | [桥接](../crates/sessiondock/src/grok_sdk/mod.rs)、[投影](../crates/sessiondock/src/grok_sdk/live.rs)、[合同](grok-sdk.md) |
-| Agy | CLI 1.4.2；本次复读 headless、statusline、usage、conversation、SDK 文档及本机帮助 | [桥接](../crates/sessiondock/src/agy_sdk/mod.rs)、[传输](../crates/sessiondock/src/agy_sdk/transport.rs)、[合同](agy-sdk.md) |
+| Agy | CLI 1.4.2；核对 headless、statusline、usage、conversation、SDK 文档及本机帮助 | [桥接](../crates/sessiondock/src/agy_sdk/mod.rs)、[传输](../crates/sessiondock/src/agy_sdk/transport.rs)、[合同](agy-sdk.md) |
 | OpenCode | CLI 2.0.32；核对该安装版隔离服务导出的 OpenAPI，官网页面仍混有 v1 API | [桥接](../crates/sessiondock/src/opencode_sdk/mod.rs)、[投影](../crates/sessiondock/src/opencode_sdk/project.rs)、[合同](opencode-sdk.md) |
-| Claude | CLI 2.1.302 / Agent SDK 0.3.302 的官方包及类型；本次复读官方专题文档 | [桥接](../crates/sessiondock/src/claude_sdk/mod.rs)、[投影](../crates/sessiondock/src/claude_sdk/protocol.rs)、[合同](claude-sdk.md) |
+| Claude | CLI 2.1.302 / Agent SDK 0.3.302 的官方包及类型；核对官方专题文档 | [桥接](../crates/sessiondock/src/claude_sdk/mod.rs)、[投影](../crates/sessiondock/src/claude_sdk/protocol.rs)、[合同](claude-sdk.md) |
 
 符号含义：
 
@@ -55,7 +47,7 @@ stream-json。官方同名 SDK 包不一定使用同一协议，不能把别的 
 | A03 | 网页新建：cwd、目录缺失确认、模型/effort，返回稳定 UID/SID | 已 | 已 | 已 | 已 | 已；SID 由本地原生 UUID 规则预留 |
 | A04 | 无模型提示词换身份；不写 placeholder 或重序列化原生历史 | 已 | 已 | 已 | 已 | 已 |
 | A05 | 未落盘会话在侧栏显示，网页刷新可重开；落盘后交给 inventory | 已 | 已 | 已 | 已 | 已 |
-| A06 | 同一创建 request_id / 丢 HTTP 响应重试不重复新建 | 已；进程内 | 已；共享回执落盘 | 已；共享回执落盘 | 已；共享回执落盘 | 已；共享回执落盘 |
+| A06 | 同一创建 request_id / 丢 HTTP 响应重试不重复新建 | 已；有 state dir 时持久化 | 已；共享回执落盘 | 已；共享回执落盘 | 已；共享回执落盘 | 已；共享回执落盘 |
 | A07 | 精确恢复已选主会话 SID/cwd，不按标题猜配 | 已 | 已 | 已 | 已 | 已 |
 | A08 | 精确选择子代理自身会话并交互，不误发给父会话 | 已；独立文本输入 | 部；仅可恢复的原生 SID，缺专门子代理验收 | 部；同 SID 解析约定，缺专门子代理验收 | 部；独立子 SID 路径，缺专门子代理验收 | 限；子代理 transcript 不能独立 resume |
 | A09 | 与日常 TUI 共享一个存活 runtime、同一上下文和任务 | 已；同 daemon 才成立 | 限；当前 `--no-leader` 独立 runtime | 限；当前 headless 独立 runtime | 已；默认共享服务，standalone 不适用 | 限；当前 stdio 子进程独立 runtime |
@@ -204,17 +196,18 @@ Agy 官方还明确要求 `/model`、`/usage` 独立 print 执行，不能送进
 | G06 | 重置卡数量、到期、选择与确认兑换、幂等结果、刷新额度 | 已 | —；无同义重置卡证据 | —；无同义重置卡证据 | —；无同义重置卡证据 | —；无同义重置卡证据 |
 | G07 | 通知/每轮完成刷新额度；已知字段合并、不被空值擦除 | 已 | 部；回合完成主动读 usage/billing；采集失败保留 | 部；回合结果更新 Token；额度打开/显式刷新 | 待；账号额度未确认；token 刷新可补 | 已；rate_limit_event、每轮原生查询 |
 | G08 | 底栏 gauge、阈值色、tooltip；无数据时隐藏 | 已 | 已；使用原生单位与上下文 | 已；累计 Token/额度；不伪造上下文 | 已；Token/上下文；不伪造账号额度 | 已；Token/上下文及限额详情 |
-| G09 | 关键用量常显，窄屏自动换行；原生明细/刷新放入更多菜单 | 已 | 已；共用用量底栏 | 已；同左 | 已；同左 | 已；同左 |
+| G09 | 关键用量常显，底栏单行；超宽用量横向滚动，有数据才显示 Token 明细；额度不在菜单重复 | 已 | 已；共用用量底栏 | 已；同左 | 已；同左 | 已；同左 |
 
 四种新视图现共用 [Native SDK controls](../web/native-sdk-controls.js) 的用量底栏、
-明细与窄屏换行；各桥接仍保留本来源计量口径。缺数据不显示 0，不把累计值当上下文。
+明细与单行窄屏布局；各桥接仍保留本来源计量口径。用量独立读取失败保留旧值并自动退避重试，
+关闭页面取消读取及重试；billing 独立失败不擦除先前成功值。缺数据不显示 0，不把累计值当上下文。
 对照 [Codex 用量读取](../crates/sessiondock/src/codex_sdk/usage.rs)、
 [现有账号额度采集](../crates/sessiondock/src/quotas.rs)和[额度合同](quotas.md)。
 
 Agy 的 `step_update.usage` 是步骤统计，`result.usage` 是累计统计；两者不能再次
 累加，也不能把累计 total_tokens 当作当前上下文。statusLine 文档给出
 `context_window_size/used_percentage/current_usage`，但明确是 TUI 脚本回调，
-本次没有证明它在 headless 中触发。[Agy 用量输出](https://www.antigravity.google/docs/cli/headless/)
+尚无 headless 触发证据。[Agy 用量输出](https://www.antigravity.google/docs/cli/headless/)
 及 [statusLine 字段](https://www.antigravity.google/docs/cli/statusline/)支持这个区分。
 
 ### H．会话操作和一致性
@@ -242,8 +235,8 @@ Grok 回退默认 `RewindMode::All`，OpenCode revert 可涉及文件；实现�
 | --- | --- | --- | --- | --- | --- | --- |
 | I01 | Hub UID 命名空间、按所属节点代理、创建选节点 | 已 | 已 | 已 | 已 | 已 |
 | I02 | 窄屏/明暗主题、消息滚动跟随、同类按钮样式 | 已 | 已；基础视图已有覆盖 | 已 | 已 | 已 |
-| I03 | 按整行可用宽度移动动作/用量/模式/权限到 overflow | 已 | 漏；只有较简单的模型宽度限制 | 漏 | 漏 | 漏 |
-| I04 | 状态完整文字 popover、可访问标签和键盘操作 | 已；只在截断时可开 | 部；总可开，未复用相同判定 | 部 | 部 | 部 |
+| I03 | 单行保留状态/用量，模型/强度/模式/权限/动作按剩余空间进入 overflow | 已 | 已；共用底栏算法 | 已 | 已 | 已 |
+| I04 | 状态完整文字 popover、可访问标签和键盘操作 | 已；有额外信息或截断时可开 | 已；共用判定 | 已 | 已 | 已 |
 
 ## 官方资料确认的可实现项
 
@@ -356,23 +349,22 @@ Claude Code / Agent SDK 也可接 OpenRouter 的 Anthropic 兼容入口：
 `ANTHROPIC_BASE_URL=https://openrouter.ai/api`，用 OpenRouter key 设置
 `ANTHROPIC_AUTH_TOKEN`，并显式留空 `ANTHROPIC_API_KEY`。仅覆盖 URL 不能让
 订阅认证变成 OpenRouter key；OpenRouter 文档只保证 Anthropic 1P 兼容性。
-本轮保留现有 Claude 路由，未把此文档能力记为 Claude 经 OpenRouter 实测通过。
+现有 Claude 路由不能据此记为经 OpenRouter 实测通过。
 依据：[Claude Code 接入](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration)、
 [Agent SDK 接入](https://openrouter.ai/docs/guides/community/anthropic-agent-sdk)。
 
 ## Codex 自己也没有接全的能力
 
-Codex 是本次基准，不是“全部官方 API 都已实现”。以下独立于上面的已有功能基准：
+Codex 是功能对照基准，不是“全部官方 API 都已实现”。以下独立于上面的已有功能基准：
 
 | 功能 | Codex 当前状态 | 其他来源的相近状态 |
 | --- | --- | --- |
-| 未落盘新建回执跨节点服务重启保留 | 漏；目前仅内存 | 四来源共享创建回执已落盘，但 live/运行队列恢复仍不同 |
 | 子代理独立服务端草稿/附件身份 | 漏；目前文本-only，刻意不借父草稿 | Grok/Agy/OpenCode 同样未提供完整独立草稿附件；Claude 不独立恢复子代理 |
 | 输入/输出/缓存/思考 tokens 的详细面板和会话成本 | 部；usage 数据可得，底栏只有 context tooltip 等，没有完整细分面板 | 四来源已接 Token 明细，Grok/OpenCode/Claude 接本来源成本；范围/缺字段/陈旧时间仍各异 |
 | 账号累计 Token 活动/每日用量 | 漏；官方 account/usage/read，项目未接 | 不是 G01 的限额，也不是 G02 的上下文；其他来源未证明统一同义 API |
 | 后台 terminal 列表、逐个 terminate、clean | 漏；官方实验 API 可用，当前 SDK 未接 | 其他来源任务管理需分别设计，不把一般停止按钮当逐任务管理 |
 | 登录/账号切换、插件/MCP 管理、完整 skills 工具面板 | 未作为现有 SDK 视图功能实现，属于另一个产品范围 | 原生 CLI/SDK 有不同能力，不以继承 CLI 配置冒充网页管理面板 |
-| 目标 goal 控件和 /goal | 已明确移除，不能算本次漏实现 | 不应为追求表格对齐重新添加 |
+| 目标 goal 控件和 /goal | 已明确移除，不属于遗漏 | 不应为追求表格对齐重新添加 |
 | 非 Unix 的 Codex SDK 接入 | 未实现；现有 Unix socket 拓扑限制 | 其他来源平台范围不同，不以编译成功替代实机验证 |
 
 官方 [app-server 文档](https://learn.chatgpt.com/docs/app-server)列出上述候选 API；
@@ -380,108 +372,9 @@ Codex 是本次基准，不是“全部官方 API 都已实现”。以下独立
 [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk)偏自动化入口，不能混作当前
 app-server bridge 的完整方法表。
 
-## 已有验证与本次审计的边界
+## 验证边界
 
-本次复读了六份项目 SDK 合同、共用/各来源实现、Codex compose/controls/actions、
-quota collector，以及与各功能对应的浏览器套件。已有覆盖包括：
-
-- Codex：基础/创建/composer、队列与消费确认、压缩、恢复与断线、历史窗口和分页、
-  消息展开、审批/问题、状态/布局、设置/服务档位、会话动作/消息动作、子代理及终端并存。
-  入口见 [validation](validation.md) 中各 `codex_sdk_*_browser.py`。
-- 其他来源：[Grok](../tests/grok_sdk_browser.py)、[Agy](../tests/agy_sdk_browser.py)、
-  [OpenCode](../tests/opencode_sdk_browser.py)、[Claude](../tests/claude_sdk_browser.py)
-  主要覆盖 create/open/send/stream/tools/stop/reopen/去重/writer 冲突；审批和问题
-  仅按当前实现覆盖。
-- [共享 Hub suite](../tests/native_sdk_hub_browser.py)验证 namespace、创建、草稿、
-  附件、丢 ACK 和审批/问题控件，使用的是 Claude 合成对端；不能扩大为另外三个
-  来源都经过独立 Hub 实机验收。[额度 suite](../tests/quotas_browser.py)验证额度页；
-  四来源 SDK 底栏由各来源浏览器套件验证，不能用额度页测试代替。
-
-既有真实协议实验的范围也不同：Grok 验证未认证 initialize、创建认证失败及只读扩展 wire 识别；
-Agy 用真实 CLI 对 loopback 合成模型验证协议；OpenCode 用隔离原生服务验证
-OpenAPI 与空会话接口；Claude 用临时官方固定版本 CLI 对合成网关验证协议。
-历史实验中 Grok 1.0.62 的 initialize 确认 image:false；当时测试的结构化图片适配
-现已按产品决定移除，当前浏览器验收统一检查附件发布与文本路径。它们均不能扩大为真实账号、全部工具、后台任务和高级功能
-已验收，详情见各来源合同。
-
-第一批补实现扩展并重跑四来源 Chromium、共享 Hub、quota 回归，验证真实网页
-点击/输入/上传/回答/队列/会话操作，使用隔离合成原生对端；宽窄屏与明暗截图
-已人工查看。它们验证桥接与 UI，不替代真实账号/全部模型的生产协议验收。
-第二批完成四来源、共享 Hub、Grok 生命周期和持久队列七套 Chromium 验收，
-另通过历史读取/分页两套回归。覆盖双标签页真实撤销、失败与未知结果的明确重试、
-节点重启不重发、附件只发布一次、新草稿保留、Claude 原生分支及闲置重开。
-SDK 视图暂停额外历史长连接，修复 HTTP/1 双标签页操作阻塞；真实点击验证了
-离开 SDK 恢复历史 watch、跨会话不恢复旧连接。宽窄屏明暗截图已人工查看。
-已补持久队列/失败恢复、Grok/Claude 闲置回收与 Claude 原生分支；原生消费证据、
-完整历史消息操作/输入恢复、子代理专项验收及若干高级能力仍有边界。
-
-## 真实会话验收流程
-
-2026-10-19 本轮按用户明确要求，使用各机器现有 CLI、认证、配置和服务创建
-专属测试会话，不复制认证、不迁移登录、不更改日常默认模型。测试工作文件放在
-专属临时目录；这不等于隔离 CLI HOME。每次新建和 fork 都立即登记节点、来源、
-UID、原生 SID 与 cwd，失败创建留下的原生孤儿也纳入清理清单。
-
-1. 先只读核对该节点实际 CLI、版本、网页能力和模型目录。网页选择指定低成本
-   模型/effort，检查创建请求及原生实际模型；不自动换成更贵模型。目录错误、
-   启动失败、提供商拒绝分别记录，不能只凭 HTTP 200 认定可用。
-2. 从正常网页新建 SDK 会话，发送唯一标记与记忆口令，等真实模型回复；刷新后
-   保持同一原生 SID，再要求工具读取测试输入文件并生成含文件内容与记忆口令的
-   输出文件。对照原生历史、工具卡及磁盘结果，验证上下文、执行和展示。
-3. 新编辑草稿后刷新，检查草稿、历史和模型保持；查看真实 Token/上下文/额度
-   底栏与详情。分别检查宽屏、窄屏、明暗主题，缺原生字段不能当作数值零。
-4. 让真实工具执行一个有自动超时的测试命令，期间排入第二条输入。第二个
-   标签页撤销未投递项，检查两页同步、当前工具未误停、被撤销文件未生成；
-   显式 Stop 后检查真实任务结束、发送期间新增草稿保留。仅操作登记的测试任务。
-5. 对有能力的来源分别检查审批/问答、普通附件/图片、分支、对话回退、压缩及
-   引导。必须出现真实原生事件/结果才记通过；例如 compact 的准入成功不能
-   替代压缩完成，fork 返回 SID 也不能替代分支首次对话。原生不触发的项目记
-   未覆盖，不让合成夹具代替真实模型结果。
-6. 实测故障先留证，补针对性 Chromium 回归，审查、提交、发布后再走正常网页
-   复测。路由改写只可用于定位，不能计入正常路径验收。共享服务不为测试故意
-   崩溃或杀死其他会话；节点崩溃/断网等破坏性场景在临时服务回归中验证，明确
-   标为合成验证。
-7. 结束时停止自有任务，先删分支再删父会话，清除失败创建回执/孤儿；仅永久
-   清理这些 UID 返回的回收站条目。核对原生记录、网页列表及待落盘行都已消失，
-   再删除测试工作目录。保留脱敏结果和截图，不保留认证副本。
-
-每项结果分别标记“真实通过”“合成回归通过”“原生限制”“环境阻断”或
-“未覆盖”。本节流程不代表所有步骤、所有来源已经完成；最终实测结果另列，
-不能把前面的代码实现状态直接转换成真实验收通过。
-
-## 2026-10-19 当前环境实测结果
-
-本轮使用 Chromium 操作正式页面、现有原生 CLI 与真实提供商，未复制认证。
-下表只计实际出现的结果，不把协议夹具或请求准入替代模型执行完成。
-
-| 来源与实际模型 | 真实通过 | 限制、阻断与未覆盖 |
-| --- | --- | --- |
-| Codex `gpt-5.6-luna` / low | 正常网页新建、多轮记忆、刷新恢复、文件工具、用量、草稿；后续四轮双标签页撤销和 Stop 成功，被撤销输入未执行、新草稿保留 | 两次撤销无响应超时未能重现，保留待查；本轮未测审批、图片、分支/回退/压缩 |
-| Grok `grok-4.6` / low | 修复后正常模型目录/新建、多轮记忆、刷新、真实文件审批一次允许、Write/Read、Token/成本/上下文/额度、双标签页队列撤销、Stop、显式引导、原生 fork、压缩完成计数 | 引导只证明原生接收，consumed 仍为空；分支返回原生复制数量，本轮未验证分支首次模型回复；未测问答、图片及回退 |
-| Agy `gemini-3.8-flash-low` | 正常网页新建、多轮记忆、刷新、真实文件工具、草稿、双标签页队列撤销/Stop；当次 Token 底栏及真实额度刷新；异步用量菜单修复后按钮可点击 | Token 快照未承诺跨服务重启恢复；headless 审批/图片限制仍按合同；高级操作不因其他 SDK 通过而算通过 |
-| OpenCode `openrouter/google/gemini-2.5-flash-lite` / none | 模型目录修复后完整返回 765 个模型；真实 shell、fork、conversation-only revert stage/unrevert、原生 inbox 撤销；已 steer 项不再提供重复引导，窄屏用量可用 | 最初 free 模型拒绝非官方客户端；显式改选 Flash Lite 后原生报额度不足。未获得成功模型回复/模型工具；compact 虽准入但最终 quota error；STOP、审批/问答未覆盖 |
-| Claude `claude-haiku-4-5-20251001` / low | 使用有 CLI 的节点现有认证，原生报告 firstParty；真实多轮、Write/Read、刷新、AskUserQuestion、用量、队列撤销/Stop、完整 fork 和选点 fork 的真实后续回复、压缩边界 | 另一节点 CLI 缺失已正确展示启动诊断；普通工具审批未触发；sleep 被原生策略拒绝，Stop 验证不声称成功运行该命令；图片/MCP 未覆盖 |
-
-修复项包括 Grok 配置值格式与新建目录、OpenCode 大型 stdout 截断、Claude
-启动错误丢失/恢复前 SessionStart 遥测误判、SDK 额外历史 SSE、异步用量菜单
-定位、被替代历史读取的取消误报，以及运行中工具被误标完成。针对这些输入形状
-增加 Chromium 回归；共享服务恢复另走发布后的真实会话复验。
-
-未在共享生产环境故意杀 daemon、制造节点崩溃、断网或耗尽真实账号额度。
-重启/未知投递等故障注入保留为临时服务合成回归。未覆盖项与两类待定位问题
-见 [TODO](../TODO.md)，本轮结果不能解释为五种 SDK 的每个功能均已验收。
-
-交付代码为 `3f6d9b0b`、`e167c0f8`，已推送；三台 Linux 节点与 Hub 均发布、
-重启并通过健康检查。相关 Chromium 回归覆盖四来源 SDK、Grok 生命周期、
-新建模型选择、持久队列、双标签页、普通历史/分页及 SDK 历史分页；另通过
-Rust 构建/格式、JavaScript 语法及文档检查。发布后 Claude 原 SID 恢复得到
-真实 `CLAUDE_LIVE_RESUME_OK`，实际模型仍为 Haiku / low；Grok 当前压缩历史
-与原生记录一致，分支保留压缩前历史；本轮刷新/重选复验未再出现历史加载的
-`AbortError`。
-
-清理按登记身份完成：10 个原生测试会话（含分支与失败创建的 Grok 孤儿）及
-1 个未落盘 Claude 创建回执均已移除；仅清空这些会话返回的回收站条目。
-OpenCode 原生数据库、Agy 原生索引/数据库/brain、Claude/Grok/Codex 原生
-文件及网页列表/待落盘行均核对不存在。Codex 使用原生精确 SID 永久删除；
-Agy 网页删除超时后使用原生当前会话确认删除。两机测试工作目录已清理，
-本轮脱敏结果、失败记录和截图作为验收证据保留在仓库外。
+合成 Chromium 验证页面与桥接；真实原生 CLI、提供商、账号和模型结果必须分别
+记录。某来源通过不能代表其他来源，RPC 准入不能代表消费、压缩完成或分支后续对话。
+具体套件、隔离要求及真实 CLI 入口见[验证清单](validation.md)。逐次结果、临时
+环境阻断和清理经过保留在交付证据与 Git 历史，不作为当前能力矩阵的第二套状态。
