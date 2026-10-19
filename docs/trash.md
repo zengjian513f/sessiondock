@@ -41,6 +41,8 @@ versions cannot reappear afterward. Unrelated sessions are excluded.
 Pending manifests are authoritative. The list projects their visibility directly,
 including after service restart, without another state cache or native-file writes
 on ordinary reads.
+Older Codex entries without captured relationship rows use their retained native
+header in memory, so recoverable children from older releases also pin ancestors.
 Currently running sessions remain protected. Liveness uses fresh managed-host and native CLI observations over the
 same inventory. An absent managed receipt does not prevent deleting an inactive
 session. Hub requests preserve the caller's `force` argument.

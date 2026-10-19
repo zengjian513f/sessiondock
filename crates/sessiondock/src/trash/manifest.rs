@@ -250,9 +250,45 @@ impl Manifest {
         }
         let bytes = fs::read(&path)
             .map_err(|_| TrashError::new(503, "manifest_unreadable", "回收站清单暂时不可读取"))?;
-        let manifest: Self = serde_json::from_slice(&bytes)
+        let mut manifest: Self = serde_json::from_slice(&bytes)
             .map_err(|_| TrashError::new(409, "manifest_invalid", "回收站清单损坏"))?;
         manifest.validate()?;
+        // Old single-session entries predate captured relationship rows. Their
+        // retained Codex header still proves which ancestor history is needed.
+        // Project it in memory so recoverable children continue to pin parents.
+        if manifest.source == "codex" && manifest.sessions.is_empty() {
+            use std::io::BufRead;
+            if let Some(file) = manifest
+                .files
+                .iter()
+                .find(|file| file.origin == manifest.origin)
+            {
+                let path = if file.in_trash {
+                    entry_dir.join(FILES_DIR).join(&file.name)
+                } else {
+                    file.origin.clone()
+                };
+                if let Ok(file) = fs::File::open(path) {
+                    for line in io::BufReader::new(file).lines().map_while(Result::ok) {
+                        let Ok(row) = serde_json::from_str::<serde_json::Value>(&line) else {
+                            continue;
+                        };
+                        if row["type"] != "session_meta" {
+                            continue;
+                        }
+                        let header = &row["payload"];
+                        if header["id"].as_str() == Some(manifest.sid.as_str()) {
+                            manifest.sessions.push(serde_json::json!({
+                                "uid": manifest.uid, "source": manifest.source, "sid": manifest.sid,
+                                "title": manifest.title, "path": manifest.origin,
+                                "forked_from_id": header["forked_from_id"], "history_base": header["history_base"],
+                            }));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
         Ok(manifest)
     }
 
