@@ -78,6 +78,8 @@ QueueFake(parse(sys.argv[1:])).run()
                 native = root / 'claude/project-history' / (receipt['declared_sid'] + '.jsonl')
 
                 def send(text):
+                    if not page.locator('#composer').is_visible():
+                        page.locator('#a-chat').click()
                     page.locator('#cinput').fill(text)
                     expect(page.locator('#csend')).to_be_enabled()
                     with page.expect_response(lambda r: r.url.endswith('/conversation/send')) as response:
@@ -110,8 +112,15 @@ QueueFake(parse(sys.argv[1:])).run()
                 assert not page.locator('#msgs .msg[data-role=user]:not(.queued-send)').filter(has_text=text).count()
                 for width, theme in [(1280, 'light'), (675, 'light'), (1280, 'dark'), (675, 'dark')]:
                     page.set_viewport_size({'width': width, 'height': 900 if width == 1280 else 542})
+                    # Let the responsive media-query navigation finish before
+                    # choosing between its mutually exclusive list/detail panes.
+                    page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
                     page.evaluate('(theme) => { document.documentElement.dataset.theme = theme; }', theme)
+                    if page.locator('#termpane').is_visible() and page.locator('#a-chat').is_visible():
+                        page.locator('#a-chat').click()
                     if not bubble(request).is_visible():
+                        if not page.locator('#side').is_visible() and page.locator('#detail .mobile-back:visible').count():
+                            page.locator('#detail .mobile-back:visible').click()
                         page.locator('#side .item').filter(has_text='Bootstrap queue return observation').click()
                     expect(bubble(request)).to_be_visible()
                     page.screenshot(path=str(screenshots / f'{width}-{theme}.png'))

@@ -83,10 +83,15 @@ async fn wait_screen(
     accept: impl Fn(&crate::delivery::driver::ScreenCapture) -> bool,
 ) -> Result<(), String> {
     loop {
-        if let Some(frame) = screen(client).await
-            && accept(&frame)
-        {
-            return Ok(());
+        if let Some(frame) = screen(client).await {
+            if crate::bridge::menus::agy::screen_prompt(&frame.text)
+                .is_some_and(|prompt| prompt["menu_type"] == "folder_trust")
+            {
+                return Err("Agy 正在等待工作目录信任确认。请先启动此会话，自行选择是否信任目录；确认后停止会话，再重试删除。本次未提交删除确认。".into());
+            }
+            if accept(&frame) {
+                return Ok(());
+            }
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

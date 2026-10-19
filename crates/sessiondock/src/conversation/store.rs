@@ -23,7 +23,7 @@ struct Document {
     /// Sent text the CLI has not echoed as a native record yet, per identity
     /// key, in send order (docs/cli-state.md).
     queued: BTreeMap<String, Vec<QueuedSend>>,
-    /// Consumed native evidence (merged echoes and editable queue pops),
+    /// Consumed native evidence (Claude/merged echoes and editable queue pops),
     /// surviving restarts. Keep the original on-disk field name.
     merged_echoes: BTreeMap<String, HashSet<String>>,
 }
@@ -457,7 +457,7 @@ impl Store {
                 row.state != "rejected"
                     && echoes.iter().any(|echo| {
                         echo.ts.is_none_or(|at| at >= row.sent_at - 5.0)
-                            && (echo.hash == row.echo_hash
+                            && (echo.matches(uid, row)
                                 || (uid.starts_with("codex:")
                                     && !echo.enqueue
                                     && echo.ts.is_some()

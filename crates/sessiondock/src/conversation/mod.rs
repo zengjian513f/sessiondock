@@ -246,7 +246,7 @@ impl Conversations {
                 if used[index] || echo.enqueue || echo.ts.is_some_and(|at| at < row.sent_at - 5.0) {
                     return None;
                 }
-                if echo.hash == row.echo_hash {
+                if echo.matches(uid, row) {
                     return Some((index, start + 1));
                 }
                 // Codex flushes pending steers as one newline-joined user
@@ -272,7 +272,10 @@ impl Conversations {
             if let Some((index, end)) = hit {
                 used[index] = true;
                 retired_text = Some(echoes[index].text.as_str());
-                if end > start + 1 {
+                // Full-view Claude recovery rereads old exact echoes too.
+                // Persist their consumption so they cannot settle a later
+                // identical SEND inside the allowed clock-skew window.
+                if end > start + 1 || (uid.starts_with("claude:") && echoes[index].ts.is_some()) {
                     merged.push(echo_ids[index].clone());
                 }
                 retired.extend(queued[start..end].iter().map(|row| row.request_id.clone()));
@@ -283,7 +286,7 @@ impl Conversations {
             if let Some((index, echo)) = echoes.iter().enumerate().find(|(index, echo)| {
                 !used[*index]
                     && echo.enqueue
-                    && echo.hash == row.echo_hash
+                    && echo.matches(uid, row)
                     && echo.ts.is_none_or(|at| at >= row.sent_at - 5.0)
             }) {
                 used[index] = true;

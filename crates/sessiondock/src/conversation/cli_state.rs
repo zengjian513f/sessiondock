@@ -468,6 +468,10 @@ impl super::Conversations {
         let Ok((echoes, returned)) = native else {
             return Ok(());
         };
+        // A consumed input can precede the opening history window, including
+        // after an explicit rewind retains that prefix. Reconcile the complete
+        // native view even when there is no editable-queue pop.
+        self.retire_echoes(&identity.uid, &echoes);
         if !returned.iter().any(|(hash, at)| {
             pending
                 .iter()
@@ -477,7 +481,6 @@ impl super::Conversations {
         }
         // A real prompt echo wins over queue metadata, including an echo in an
         // older page. Enqueue records establish which SEND the pop belongs to.
-        self.retire_echoes(&identity.uid, &echoes);
         let mut consumed = self.store.merged_echoes(&identity.key);
         let mut marks = Vec::new();
         for row in self.store.queued(&identity.key) {
@@ -726,6 +729,17 @@ pub struct Echo {
     pub text: String,
     pub ts: Option<f64>,
     pub enqueue: bool,
+}
+
+impl Echo {
+    pub fn matches(&self, uid: &str, row: &QueuedSend) -> bool {
+        self.hash == row.echo_hash
+            || (uid.starts_with("claude:")
+                && self.ts.is_some()
+                && row.text.contains('\t')
+                && echo_hash(&row.text) == row.echo_hash
+                && self.text.trim() == row.text.replace('\t', "    ").trim())
+    }
 }
 
 /// SHA-256 of the JSON string of the trimmed text: the frontend and the
