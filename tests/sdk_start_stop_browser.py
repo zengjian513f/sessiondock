@@ -90,7 +90,9 @@ def exercise(browser, base, source, screenshots, label):
                 if request.method == 'POST' and request.url.split('?')[0].endswith('/open') else None)
         # Keep a neighbouring row so sorting is checked as well as timestamps.
         def sessions(route):
-            response = route.fetch()
+            # Force a full inventory so signature-only poll replies cannot
+            # bypass the synthetic neighbouring row while mirrors warm up.
+            response = route.fetch(url=route.request.url.split('?')[0]+'?force=1')
             data = response.json()
             rows = data.get('sessions', [])
             if rows:
@@ -103,6 +105,7 @@ def exercise(browser, base, source, screenshots, label):
         page.route(re.compile(r'/api/sessions(?:\?|$)'), sessions)
         page.goto(base, wait_until='networkidle')
         page.wait_for_function('T.listLoaded')
+        page.wait_for_function("S.sessions.some(row => row.uid.endsWith('-comparison'))")
         row = page.locator(f'#side .item[data-uid^="{source}:"]:not([data-uid$="-comparison"])').first
         if not row.is_visible(): page.locator(f'#chips button[data-source="{source}"]').click()
         uid = row.get_attribute('data-uid')
@@ -123,7 +126,8 @@ def exercise(browser, base, source, screenshots, label):
         expect(page.locator('.sdk-history')).to_be_visible()
         expect(page.locator('#sdk-composer')).to_be_hidden()
         assert not opens, opens
-        assert page.evaluate('S.sessions.map(row => [row.uid, row.updated])') == before
+        after = page.evaluate('S.sessions.map(row => [row.uid, row.updated])')
+        assert after == before, {'before':before, 'after':after, 'opens':opens}
         assert page.locator('#side .item').evaluate_all('(rows) => rows.map(row => row.dataset.uid)') == order
 
         def power():
