@@ -1,8 +1,9 @@
 """Private, synthetic Claude stream-json peer for browser integration tests.
 
 Run through a launcher profile: python3 claude_sdk_fixtures.py --fake-cli.
-It speaks the official SDK's NDJSON control protocol, never imports an SDK,
-contacts a provider, starts a PTY, or reads the user's CLI home.
+The peer speaks the official SDK's NDJSON control protocol, never imports an
+SDK, contacts a provider or reads the user's CLI home. The console helper uses
+a private PTY with a fixed synthetic shell loop.
 """
 # run_validation: skip
 from __future__ import annotations
@@ -174,6 +175,43 @@ class ClaudeFixture:
                 except subprocess.TimeoutExpired:
                     child.kill()
                     child.wait(timeout=5)
+
+
+@contextmanager
+def managed_console(fixture):
+    """A real private PTY with synthetic Claude identity and fixed shell input."""
+    import shutil
+    from history_fixtures import REPO
+    from private_hosts import private_hosts
+    from spawned_by_fixtures import START, proc_pid
+    from terminal_browser import SHELL_SCRIPT, stop
+    metadata = {'source': 'claude', 'sid': fixture.sid, 'uid': fixture.uid,
+                'instance_id': 'synthetic-' + uuid.uuid4().hex}
+    environment = {key: value for key, value in os.environ.items()
+                   if key in {'PATH', 'LANG', 'LC_ALL', 'LC_CTYPE'}}
+    environment['TERM'] = 'xterm-256color'
+    with private_hosts(fixture.root):
+        process = subprocess.Popen([str(REPO / 'target/debug/ptyhost'), '--dir', str(fixture.root / 'host'),
+            'run', '--name', 'claude-view-console', '--cwd', str(fixture.cwd), '--meta', json.dumps(metadata),
+            '--', '/bin/sh', '-c', SHELL_SCRIPT], env=environment,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        record_path = fixture.root / 'host/claude-view-console.json'
+        try:
+            deadline = time.monotonic() + 5
+            while not record_path.exists():
+                assert process.poll() is None, 'private console exited during startup'
+                assert time.monotonic() < deadline, 'private console startup timeout'
+                time.sleep(.03)
+            record = json.loads(record_path.read_text())
+            pid = record['pid']
+            START[pid] = 10000
+            proc_pid(fixture.root / 'proc', pid, 'claude', ['claude', '--resume', fixture.sid], 1,
+                     cwd=str(fixture.cwd), fds={3: fixture.path})
+            yield
+        finally:
+            stop(process)
+            if 'pid' in locals():
+                shutil.rmtree(fixture.root / 'proc' / str(pid))
 
 
 def fake_cli():
