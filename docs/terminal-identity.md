@@ -126,6 +126,19 @@ button reverted to takeover after list refresh. The browser suite rotates twice
 while the console is open, through both the node and Hub, then clicks between
 conversation and terminal without another claim or takeover.
 
+An independent fork may inherit an ancestor's console only when it is that
+console's current leaf. Clicking 终端 must not substitute the visible parent's
+thread, history or draft; a fork without its own console uses its own takeover
+flow. BUG-20261019-111304-7ce045 first opened a middle-history fork at
+11:12:17 UTC. At 11:12:26, `terminal.session_rebound` changed it to the parent
+on a terminal click, revealing the parent's final answer. Native history and
+the captured terminal agreed; no delivery directory existed, and the running
+lifecycle launch's host still declared the parent. The first identity mismatch
+was this browser transition, not a missing history append. The
+[SDK stop browser suite](../tests/codex_sdk_stop_browser.py) now opens both
+private consoles and switches back to SDK, checking separate UIDs, retained
+fork draft/history and exact parent/child stops through node and Hub.
+
 ## Output completion is separate from identity
 
 An exact instance guard identifies a stream but does not guarantee complete PTY

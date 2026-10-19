@@ -402,7 +402,7 @@ function linkedTermSession(uid, { followReplacement = false } = {}) {
   const leafOf = target => {
     target = followContinuedSession(target);
     // Explicit SDK forks leave the parent's console on its own thread.
-    return typeof forkLeafUid === 'function' && hiddenForkParent(sessionTermMeta(target))
+    return typeof forkLeafUid === 'function' && sessionTermMeta(target)?.fork_parent_visible !== true
       ? forkLeafUid(target) : target;
   };
   const exact = exactFor(uid);
@@ -419,7 +419,9 @@ function linkedTermSession(uid, { followReplacement = false } = {}) {
     if (!inherited.length) continue;
     if (inherited.length !== 1) return null;
     const leaf = leafOf(row.uid);
-    return leaf === uid || followReplacement ? {name: inherited[0].name, uid: leaf} : null;
+    // An independent fork cannot borrow its visible parent's console. Only
+    // that console's current leaf may inherit it, even on an explicit click.
+    return leaf === uid ? {name: inherited[0].name, uid: leaf} : null;
   }
   return null;
 }
