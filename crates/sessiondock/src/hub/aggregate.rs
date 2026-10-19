@@ -792,8 +792,14 @@ pub async fn purge_all(
     registry: &Registry,
     client: &Client,
     query: &Params,
+    body: &Value,
 ) -> Result<Value, AggregateError> {
     let nodes = selected(registry, query)?;
+    let groups = if body["uids"].as_array().is_some_and(|uids| !uids.is_empty()) {
+        group_uids(body, "没有确认的父子会话")?
+    } else {
+        IndexMap::new()
+    };
     let mut removed = Vec::new();
     let mut freed = Vec::new();
     let mut errors = Vec::new();
@@ -803,7 +809,7 @@ pub async fn purge_all(
             client,
             node,
             "/api/trash/purge",
-            json!({"all": true}),
+            json!({"all": true,"uids":groups.get(&node.id).cloned().unwrap_or_default()}),
         )
         .await
         {

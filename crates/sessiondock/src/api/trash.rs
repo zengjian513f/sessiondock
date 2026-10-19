@@ -122,6 +122,26 @@ pub(super) async fn observe_liveness(
             );
         }
     }
+    if let Some(sdk) = &state.codex_sdk {
+        let loaded = sdk.live_threads().await;
+        for row in rows {
+            if row["source"] == "codex"
+                && row["sid"]
+                    .as_str()
+                    .is_some_and(|sid| loaded.iter().any(|id| id == sid))
+            {
+                liveness.states.insert(
+                    row["uid"].as_str().unwrap_or_default().to_owned(),
+                    RunState::Running("sdk_thread".into()),
+                );
+            }
+        }
+    }
+    for uid in state.native_sdks.loaded_uids() {
+        liveness
+            .states
+            .insert(uid, RunState::Running("sdk_thread".into()));
+    }
     Ok(liveness)
 }
 
@@ -179,6 +199,7 @@ async fn run_delete(
         .await?;
     if !outcome.deleted.is_empty() {
         retire_deleted_launches(state, &outcome.deleted, &catalog).await;
+        state.ui_events.publish_sessions();
     }
     Ok(outcome)
 }
@@ -333,6 +354,7 @@ async fn delete_native(
             bytes: 0,
             run_state: note,
             forced: false,
+            deferred: false,
         });
     }
     outcome
@@ -497,7 +519,7 @@ pub async fn delete_session(
     let status = match refused.code {
         "not_found" => StatusCode::NOT_FOUND,
         "agy_delete_unsupported" => StatusCode::CONFLICT,
-        "fork_parent_protected"
+        "already_trashed"
         | "session_running"
         | "changed_since_inventory"
         | "destination_exists"
@@ -594,8 +616,21 @@ pub async fn list(
         .filter(|limit| *limit > 0)
         .unwrap_or(LIST_DEFAULT);
     let cursor = query.cursor;
+    let rows = state
+        .reader
+        .run_wait(&state.shutdown, |store| {
+            Ok(store.list(true)?["sessions"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default())
+        })
+        .await?;
     let listing = tokio::task::spawn_blocking(move || {
-        trash.list(limit, (!cursor.is_empty()).then_some(cursor.as_str()))
+        trash.list_with_dependencies(
+            limit,
+            (!cursor.is_empty()).then_some(cursor.as_str()),
+            &rows,
+        )
     })
     .await
     .map_err(|_| {
@@ -632,6 +667,7 @@ pub async fn restore(
             Ok(restored)
         })
         .await??;
+    state.ui_events.publish_sessions();
     let mut value = serde_json::to_value(&restored).map_err(|_| encoding())?;
     value["ok"] = json!(true);
     Ok(Json(value))
@@ -644,6 +680,7 @@ pub struct PurgeBody {
     ids: Option<Vec<String>>,
     all: bool,
     days: Option<u64>,
+    uids: Vec<String>,
 }
 
 pub async fn purge(
@@ -670,18 +707,15 @@ pub async fn purge(
             "需要 id/ids，或 all:true / days:N（二者不能同时给出）",
         ));
     }
-    let outcome = tokio::task::spawn_blocking(move || match days {
-        Some(days) => trash.purge_older_than(days),
-        None => trash.purge_ids(&ids),
-    })
-    .await
-    .map_err(|_| {
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "trash_failed",
-            "回收站任务失败",
-        )
-    })??;
+    let (rows, liveness) = frozen_liveness(&state).await?;
+    let outcome = state
+        .reader
+        .run_wait(&state.shutdown, move |store| {
+            let outcome = trash.purge_confirmed(&rows, &liveness, &ids, days, &body.uids);
+            let _ = store.list(true);
+            Ok(outcome)
+        })
+        .await??;
     if single.is_some() && !explicit_list && outcome.removed == 0 {
         // A single missing id is answered with 404; keep that for legacy.
         if let Some(first) = outcome.failed.first()
@@ -693,6 +727,9 @@ pub async fn purge(
                 "回收站条目不存在",
             ));
         }
+    }
+    if outcome.removed > 0 {
+        state.ui_events.publish_sessions();
     }
     let mut value = serde_json::to_value(&outcome).map_err(|_| encoding())?;
     value["ok"] = json!(true);

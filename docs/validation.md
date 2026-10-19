@@ -386,6 +386,7 @@ The table lists the suites `--list` reports plus the opt-in `*_real` browser sui
 | tool_group_fold_browser | `python3 tests/tool_group_fold_browser.py --binary target/release/sessiondock` | Real clicks and native fixture appends: streaming/final/idle sealing, user-opened group identity, result pairing once, refold and lazy result media. | binary, Chromium | 8s |
 | rich_tools_browser | `python3 tests/rich_tools_browser.py --binary target/release/sessiondock` | Rich tool cards/split view in Chromium; oversize warning; recorded commands never executed | binary, Chromium | 10s |
 | trash_browser | `python3 tests/trash_browser.py --binary target/release/sessiondock` | Real legacy page against the Rust session recycle bin. | binary, Chromium | n/a |
+| parent_trash_browser | `python3 tests/parent_trash_browser.py` | Deferred parent hide/restore/restart, inherited history, last-dependent collection, descendant warning/cancel/scope/liveness and Hub clear-all; immutable rollout generations and unrelated sessions preserved | binaries, Chromium | n/a |
 
 Shared helpers imported by browser suites live in `tests/*_fixtures.py`
 (extracted on 2026-10-06 from the removed HTTP/parity/real scripts); the runner

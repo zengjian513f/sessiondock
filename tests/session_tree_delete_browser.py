@@ -81,7 +81,7 @@ def main():
                             expect(page.locator('#a-more')).to_be_focused()
                         page.set_viewport_size({'width':1280,'height':900})
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
-                    expect(page.locator('#a-session-action')).to_have_attribute('aria-label','隐藏父会话')
+                    expect(page.locator('#a-session-action')).to_have_attribute('aria-label','删除当前会话')
                     page.set_viewport_size({'width':390 if restart else 1280,'height':900})
                     print('PASS deletion scopes labelled with distinct icons at desktop and mobile widths',flush=True)
                     # Real process observations disable both entry points, including

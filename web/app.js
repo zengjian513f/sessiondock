@@ -1656,7 +1656,7 @@ function applyMigrationMeta(uid, agent, entry, meta) {
   if (!meta
       || meta.uid !== uid || (meta.agent_id || null) !== agent) return;
   const key = m => JSON.stringify([m.title, m.parent_title, m.sid, m.agent_type,
-    m.cwd, m.model, !!m.starred, m.fork_parent_visible,
+    m.cwd, m.model, !!m.starred, m.fork_parent_visible, m.pending_delete,
     m.source === 'agy' ? (m.migration_warnings || []) : null,
     m.nest_parent || null, m.group || null,
     (m.agent_items || []).map(a => [a.id, a.title, a.type])]);
@@ -2643,7 +2643,7 @@ function indexedSessions() {
 const sessionContinued = session =>
   !!(session?.continued_in && indexedSessions().byUid.has(session.continued_in));
 const hiddenForkParent = session => !!session?.fork_parent && !session.fork_parent_visible;
-const sessionHidden = session => hiddenForkParent(session) || sessionContinued(session);
+const sessionHidden = session => !!session?.pending_delete || hiddenForkParent(session) || sessionContinued(session);
 // 沿 forked_from_id 往上追整条父会话链（近的在前）。只在同来源、同机器内按
 // 原生 sid 匹配；记录已不存在的一级保留占位并到此为止。
 function forkAncestors(session) {
@@ -3241,7 +3241,7 @@ addEventListener('sessiondock-network-resumed', async () => {
 });
 
 function visible() {
-  const eligible = s => (S.results !== null || sidebarChildVisible(s)) && (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
+  const eligible = s => !s.pending_delete && (S.results !== null || sidebarChildVisible(s)) && (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
     && nodeSelected(s) && (globalThis.SessionDockGroups?.matches(s) ?? true);
   let pool = (S.results || sidebarSessions()).filter(eligible);
   if (S.activeOnly) {
@@ -4041,8 +4041,7 @@ function openItemMenu(uid, x, y) {
     detach: !nestable || !nested ? '此会话当前没有附属关系。' : '',
     attach: !nestable ? '此会话当前不能设置附属关系。' : '',
     'delete-tree': treeDeleteUnavailable(row),
-    delete: parent ? '分叉父会话可隐藏，不能直接删除。'
-      : ((!row?.pending && running && !unusedLaunch) || shellRunning)
+    delete: ((!row?.pending && running && !unusedLaunch) || shellRunning)
         ? '请先停止会话再删除。' : '',
     group: !SessionDockCapabilities.allows('metadata') || !row || row.pending || !globalThis.SessionDockGroups?.available
       ? '此会话当前不能保存分组。' : '',
@@ -7186,6 +7185,7 @@ function renderForkChainMenu() {
   const chain = current ? forkAncestors(current) : [];
   const children = current ? forkChildren(current) : [];
   const chainRow = (level, row) => {
+    if (row.pending_delete) return `<div class="chain-row gone" role="none"><span><small>${level} · 待删除，可从回收站恢复</small><b>${esc(row.title || row.sid)}</b></span></div>`;
     const shown = !row.fork_parent || !!row.fork_parent_visible;
     const when = `${esc(fmtTime(row.created))} → ${esc(fmtTime(row.updated))}`;
     return `<div class="chain-row${shown ? ' shown' : ''}" role="none" data-uid="${esc(row.uid)}">
@@ -7410,15 +7410,6 @@ function renderSessionAction(m, button = $('#a-session-action')) {
   paintSessionRunControl(heading?.querySelector('#a-session-toggle'), m);
   if (!button || m.uid !== S.sel) return;
   setControlUnavailable(button, '');
-  if (m.fork_parent) {
-    const shown = !!m.fork_parent_visible;
-    const label = shown ? '隐藏父会话' : '显示父会话';
-    button.innerHTML = uiIcon('eye-off');
-    button.title = button.ariaLabel = label;
-    labelSessionAction(button);
-    button.onclick = () => setForkParentVisibility([m.uid], !shown, button);
-    return;
-  }
   const launch = unusedNewAssignedLaunch(m);
   button.innerHTML = uiIcon('trash');
   button.title = button.ariaLabel = '删除当前会话';
@@ -7561,7 +7552,7 @@ async function del(m) {
   if (SdkView.pending(m.uid)) return deleteSessions([m.uid]);
   const opencode = m.source === 'opencode';
   const agy = m.source === 'agy';
-  if (!await appConfirm(`删除会话「${m.title}」?\n\n${opencode ? opencodeDeleteNote() : agy ? agyDeleteNote() : trashLocationNote()}`)) return;
+  if (!await appConfirm(`删除会话「${m.title}」?\n\n${opencode ? opencodeDeleteNote() : agy ? agyDeleteNote() : (m.fork_parent || forkChildren(m).length) ? '父会话将标记待删除并隐藏，可从回收站恢复。子会话仍可使用；最后一个子会话彻底删除后，父会话也会彻底删除。' : trashLocationNote()}`)) return;
   closeWatch();                         // 先停 SSE，避免文件移走后 EventSource 自动重连 404
   const { response, data } = await requestSessionDelete(m.uid);
   if (!response.ok) {
@@ -7577,7 +7568,7 @@ async function del(m) {
   if (opencode || agy) {
     $('#detail').innerHTML = `<div class="empty">会话已从 ${agy ? 'Agy' : 'OpenCode'} 删除</div>`;
   } else {
-    $('#detail').innerHTML = `<div class="empty">已移入回收站<br><code>${esc(data.trash)}</code>`
+    $('#detail').innerHTML = `<div class="empty">${data.deferred ? '已标记待删除；子会话依赖的历史暂时保留，可从回收站恢复。' : '已移入回收站'}<br><code>${esc(data.trash)}</code>`
       + `<br><button type="button" class="btn" id="detail-open-trash">打开回收站</button></div>`;
     $('#detail-open-trash').onclick = openTrash;
   }
@@ -10666,12 +10657,23 @@ function renderTrash(info) {
 }
 
 
-function trashTreeSize(it) { return new Set((it.sessions || []).map(m => `${m.source}:${m.sid}`)).size; }
+function trashTreeSize(it) { const count = new Set((it.sessions || []).map(m => `${m.source}:${m.sid}`)).size; return count > 1 ? count : 0; }
+function trashCascadeUids(items) {
+  return [...new Set(items.filter(it => it.deferred).flatMap(it => [...(it.sessions || []), ...(it.cascade_sessions || [])].map(row => row.uid)))];
+}
+function trashCascadeWarning(items) {
+  const key = row => `${nodeOf(row.uid) || ''}:${row.source}:${row.sid}`;
+  const children = [...new Map(items.filter(it => it.deferred).flatMap(it => {
+    const parents = new Set((it.sessions || []).map(key));
+    return (it.cascade_sessions || []).filter(row => !parents.has(key(row)));
+  }).map(row => [key(row), row])).values()];
+  return children.length ? `\n\n还将连同 ${children.length} 个子会话一起彻底删除（包括仍在列表和回收站中的子会话）：\n${children.map(row => '• ' + (row.title || row.sid)).join('\n')}` : '';
+}
 
 function trashRow(it) {
   const badge = SOURCES[it.source] ? icon(it.source) : '';
   const where = it.restorable
-    ? `<div class="trash-origin" title="${esc(it.origin)}">${trashTreeSize(it) ? '恢复整棵树到各自原路径' : '恢复到 ' + esc(shortCwd(it.origin, 200))}</div>`
+    ? `<div class="trash-origin" title="${esc(it.origin)}">${it.deferred ? '父会话可恢复；子会话彻底删除后自动清理' : trashTreeSize(it) ? '恢复整棵树到各自原路径' : '恢复到 ' + esc(shortCwd(it.origin, 200))}</div>`
     : `<div class="trash-origin warn">${esc(it.reason || '无法恢复')}</div>`;
   return `<div class="trash-item" data-id="${esc(it.id)}">
     <div class="trash-main">
@@ -10679,13 +10681,13 @@ function trashRow(it) {
       <div class="trash-meta">
         <span>${esc(fmtTime(it.deleted_at))} 删除</span>
         <span>${fmtSize(it.size)}</span>
-        ${it.sessions?.length ? `<span>会话树 · ${trashTreeSize(it)} 个会话</span>` : ''}
+        ${it.deferred ? '<span>待删除 · 保留子会话依赖的历史</span>' : trashTreeSize(it) ? `<span>会话树 · ${trashTreeSize(it)} 个会话</span>` : ''}
         <span class="trash-cwd" title="${esc(it.cwd)}">${esc(nodeDirectory(it, 34))}</span>
       </div>
       ${where}
     </div>
     <div class="trash-acts">
-      <button type="button" class="btn" data-act="restore"${it.restorable ? '' : ' disabled'}>${it.sessions?.length ? '恢复整棵树' : '恢复'}</button>
+      <button type="button" class="btn" data-act="restore"${it.restorable ? '' : ' disabled'}>${trashTreeSize(it) ? '恢复整棵树' : '恢复'}</button>
       <button type="button" class="btn danger" data-act="purge">彻底删除</button>
     </div>
   </div>`;
@@ -10734,25 +10736,28 @@ $('#trash-list').onclick = async e => {
     return;
   }
   const subject = trashTreeSize(item) ? `会话树「${item.title}」（${trashTreeSize(item)} 个会话）` : `「${item.title}」`;
-  if (!await appConfirm(`彻底删除${subject}?\n\n文件将从磁盘移除, 不可恢复。`)) return;
-  const d = await trashPost('api/trash/purge', { id: item.id }, btn);
+  if (!await appConfirm(`彻底删除${subject}?\n\n文件将从磁盘移除, 不可恢复。${trashCascadeWarning([item])}`)) return;
+  const d = await trashPost('api/trash/purge', { id: item.id, uids: trashCascadeUids([item]) }, btn);
   if (!d) return;
   if (await loadTrash({ keepNote: true })) {
-    setTrashNote(`已彻底删除「${item.title}」, 释放 ${fmtSize(d.freed || 0)}`);
+    const failed = (d.errors || []).length;
+    setTrashNote(failed ? `彻底删除失败：${d.errors.join('；')}` : `已彻底删除「${item.title}」, 释放 ${fmtSize(d.freed || 0)}`, !!failed);
   }
+  await loadSessions(true);
 };
 
 async function purgeAllTrash() {
   if (!trashItems.length || trashBusy) return;
-  if (!await appConfirm(`清空回收站?\n\n将从磁盘彻底删除 ${trashItems.length} 个${trashItems.some(trashTreeSize) ? '回收站条目（包含完整会话树）' : '会话'}, 不可恢复。`)) return;
+  if (!await appConfirm(`清空回收站?\n\n将从磁盘彻底删除 ${trashItems.length} 个${trashItems.some(trashTreeSize) ? '回收站条目（包含完整会话树）' : '会话'}, 不可恢复。${trashCascadeWarning(trashItems)}`)) return;
   const d = await trashPost('api/trash/purge' + (HUB_MODE ? '?nodes=' + trashScope.join(',') : ''),
-    { all: true }, $('#trash-purge-all'));
+    { all: true, uids: trashCascadeUids(trashItems) }, $('#trash-purge-all'));
   if (!d) return;
   const failed = (d.errors || []).length;
   if (await loadTrash({ keepNote: true })) {
     setTrashNote(`已彻底删除 ${d.removed || 0} 个会话, 释放 ${fmtSize(d.freed || 0)}`
       + (failed ? `; ${failed} 个失败: ${d.errors[0]}` : ''), !!failed);
   }
+  await loadSessions(true);
 }
 
 $('#trash').onclick = openTrash;

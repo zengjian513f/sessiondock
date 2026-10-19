@@ -475,6 +475,7 @@ impl TransferService {
                 let now = crate::trash::manifest::now_unix();
                 Manifest {
                     sessions: Vec::new(),
+                    deferred: false,
                     version: 1,
                     entry_id,
                     uid: member.uid.clone(),
