@@ -15,6 +15,7 @@ import tempfile
 from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
+from sdk_usage_fixtures import assert_inline_usage, toggle_usage_details
 
 from browser_runtime import wait_for_async
 from history_fixtures import BINARY, Corpus, isolated_server
@@ -186,11 +187,11 @@ def main():
                     assert final['raw']['usage']['tokens']['cache']['read'] == 600
                     assert final['raw']['usage']['cost_usd'] == 0.0125
                     assert final['raw']['usage']['context']['used_tokens'] == 2100
-                    page.locator('#sdk-usage-toggle').click()
+                    toggle_usage_details(page)
                     expect(page.locator('#native-usage-detail')).to_contain_text('1,200')
                     expect(page.locator('#native-usage-detail')).to_contain_text('0.0125')
                     expect(page.locator('#native-usage-detail')).to_contain_text('上下文')
-                    page.locator('#sdk-usage-toggle').click()
+                    toggle_usage_details(page)
 
                     # Queue entries are native durable inbox items. Steering only
                     # changes delivery, while cancel removes undelivered input.
@@ -424,11 +425,14 @@ def main():
                             expect(page.locator('#sdk-input')).to_be_visible()
                             for theme in ('light','dark'):
                                 page.emulate_media(color_scheme=theme)
+                                assert_inline_usage(page)
                                 page.screenshot(path=str(args.screenshot.with_name(f'opencode-{width}-{theme}.png')),full_page=True)
                                 for toggle, label in (('#sdk-usage-toggle', 'usage'), ('#sdk-more', 'actions')):
-                                    page.locator(toggle).click()
+                                    if label == 'usage': toggle_usage_details(page)
+                                    else: page.locator(toggle).click()
                                     page.screenshot(path=str(args.screenshot.with_name(f'opencode-{width}-{theme}-{label}.png')), full_page=True)
-                                    page.locator(toggle).click()
+                                    if label == 'usage': toggle_usage_details(page)
+                                    else: page.locator(toggle).click()
                     if args.hub_binary:
                         exercise_hub_fork(browser, native, node_port, args.hub_binary, root, args.screenshot)
                     assert not errors, errors

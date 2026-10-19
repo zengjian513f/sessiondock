@@ -14,6 +14,7 @@ import tempfile
 from types import SimpleNamespace
 
 from playwright.sync_api import expect, sync_playwright
+from sdk_usage_fixtures import assert_inline_usage, toggle_usage_details
 
 from codex_sdk_browser import server
 from grok_sdk_fixtures import GrokFixture
@@ -60,7 +61,7 @@ def capture_state(page, screenshots, name, target=None, popover=False):
         return
     for width in (1280,390,320):
         if popover and page.locator("#sdk-usage-menu").is_visible():
-            page.locator("#sdk-usage-toggle").click()
+            toggle_usage_details(page)
         page.set_viewport_size({"width":width,"height":900})
         # Let the media-query handler choose the mobile list/detail scene.
         page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
@@ -69,7 +70,7 @@ def capture_state(page, screenshots, name, target=None, popover=False):
             page.locator(f'#side .item[data-uid="{selected}"]').click()
         expect(page.locator("#sdk-input")).to_be_visible()
         if popover:
-            page.locator("#sdk-usage-toggle").click()
+            toggle_usage_details(page)
         if target is not None:
             target.scroll_into_view_if_needed()
         for theme in ("light","dark"):
@@ -235,7 +236,7 @@ def exercise(browser, base, fixture, screenshots):
     assert "costUsdTicks" not in snapshot(page,uid)["usage"]["last_turn"]
 
     # Read the native process ledger and account billing through the toolbar.
-    page.locator("#sdk-usage-toggle").click()
+    toggle_usage_details(page)
     page.locator("#native-usage-refresh").click()
     expect(page.locator("#native-usage-detail")).to_contain_text("1,500")
     expect(page.locator("#native-usage-detail")).to_contain_text("42.5")
@@ -405,7 +406,7 @@ def exercise(browser, base, fixture, screenshots):
     page.locator("#sdk-input").fill("disable-extensions")
     page.locator("#sdk-send").click()
     page.wait_for_function("window.__grokSnapshot && !window.__grokSnapshot.running && window.__grokSnapshot.items.some(i=>i.content==='disable-extensions')")
-    page.locator("#sdk-usage-toggle").click()
+    toggle_usage_details(page)
     page.locator("#native-usage-refresh").click()
     expect(page.locator("#native-usage-detail")).to_contain_text("grok_sdk_native_error")
     unsupported = api(page,"open",{"uid":uid})

@@ -2524,7 +2524,7 @@ header .btn[data-session-docked] { display: none; }
 #session-content-view.sdk-pane { flex-direction: column; }
 .sdk-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .sdk-view > .sdk-msgs { flex: 1; min-height: 0; }
-.sdk-status-row { font: 12px/20px var(--sans); display: flex; align-items: center; gap: 10px; min-width: 0; }
+.sdk-status-row { font: 12px/20px var(--sans); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
 .sdk-status-row > .sdk-status[hidden] { display: block; visibility: hidden; }
 .sdk-status-row > .sdk-status { flex: 1 1 0; }
 .sdk-status-row > .sdk-options { flex: none; }
@@ -2541,6 +2541,7 @@ header .btn[data-session-docked] { display: none; }
 /* 状态居左；用量紧邻模型选择器；放不下的控件进入菜单。 */
 .sdk-options { display: flex; align-items: center; }
 .sdk-gauges { display: flex; align-items: center; gap: 10px; flex: none; min-width: 0; color: var(--muted); font-size: 12px; }
+.sdk-status-row > .sdk-gauges-wrapped { order: -1; flex-basis: 100%; flex-wrap: wrap; gap: 4px 10px; }
 .sdk-gauges:not(:has(> :not([hidden]))) { display: none; }
 .sdk-status-row [hidden], .sdk-options [hidden] { display: none; }
 .sdk-gauge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }

@@ -200,10 +200,11 @@ const CodexSdkView = {
     const usageMenu = this.pane.querySelector('#sdk-usage-menu'), actions = this.pane.querySelector('#sdk-actions');
     const mode = this.pane.querySelector('.sdk-mode'), tier = this.pane.querySelector('.sdk-tier');
     const buttons = ['compact', 'fork', 'revert', 'review'].map(action => this.pane.querySelector(`[data-sdk-action="${action}"]`)).filter(Boolean);
-    // Start with only the essential controls. Every promotion must fit the
-    // entire row, including status and usage, at the current interface scale.
-    usageMenu.append(gauges);
-    usage.hidden = !visibleGauges.length;
+    // Usage stays visible. When it cannot share the controls row, give it a
+    // wrapping line above the status instead of hiding it behind a button.
+    row.insertBefore(gauges, usage);
+    gauges.classList.remove('sdk-gauges-wrapped');
+    usage.hidden = true;
     if (mode) more.prepend(mode);
     if (tier) pickers.insertBefore(tier, trigger);
     for (const button of buttons) actions.append(button);
@@ -212,7 +213,7 @@ const CodexSdkView = {
       const bounds = row.getBoundingClientRect(), zoom = bounds.width / row.clientWidth;
       const status = this.notice.getBoundingClientRect();
       const controls = [this.notice, gauges, usage, ...pickers.children]
-        .filter(node => !node.hasAttribute('popover') && node.getClientRects().length);
+        .filter(node => !node.hasAttribute('popover') && !node.classList.contains('sdk-gauges-wrapped') && node.getClientRects().length);
       let right = bounds.left;
       return status.width >= parseFloat(getComputedStyle(this.notice).minWidth) * zoom - 1
         && row.scrollWidth <= row.clientWidth + 1
@@ -227,14 +228,8 @@ const CodexSdkView = {
       pickers.style.setProperty('--sdk-effort-width', `${effort}px`);
       if (fits()) break;
     }
-    // At the narrowest pane/scale, usage must yield before the status text.
-    if (!fits()) { more.prepend(gauges); usage.hidden = true; }
+    if (!fits()) gauges.classList.add('sdk-gauges-wrapped');
     if (!fits() && tier) more.prepend(tier);
-    if (visibleGauges.length) {
-      const fallback = gauges.parentElement;
-      row.insertBefore(gauges, usage); usage.hidden = true;
-      if (!fits()) { fallback.append(gauges); usage.hidden = fallback === more; }
-    }
     for (const control of [tier, mode, ...buttons].filter(Boolean)) {
       const parent = control.parentElement, next = control.nextSibling;
       pickers.insertBefore(control, trigger);

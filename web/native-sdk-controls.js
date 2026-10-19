@@ -5,7 +5,7 @@ const NativeSdkControls = {
   mount(view) {
     const row = view.pane.querySelector('.sdk-status-row');
     const gauges = el('div','sdk-gauges'); gauges.setAttribute('aria-label','用量');
-    const usage = el('button','btn','用量'); usage.id = 'sdk-usage-toggle'; usage.type = 'button';
+    const usage = el('button','btn','用量明细'); usage.id = 'sdk-usage-toggle'; usage.type = 'button';
     const more = el('button','btn','⋯'); more.id = 'sdk-more'; more.type = 'button'; more.setAttribute('aria-label','会话操作');
     const menu = el('div','new-model-menu sdk-toolbar-menu'); menu.id = 'sdk-more-menu'; menu.setAttribute('popover','auto'); menu.setAttribute('aria-label','会话操作');
     const usageMenu = el('div','new-model-menu sdk-toolbar-menu sdk-usage-menu'); usageMenu.id = 'sdk-usage-menu'; usageMenu.setAttribute('popover','auto'); usageMenu.setAttribute('aria-label','用量');
@@ -14,12 +14,20 @@ const NativeSdkControls = {
     refresh.onclick = () => this.loadUsage(view,true);
     usageMenu.append(detail,refresh);
     row.insertBefore(gauges,row.querySelector('.sdk-options'));
-    row.insertBefore(usage,row.querySelector('.sdk-options'));
+    menu.append(usage);
     view.pane.querySelector('.sdk-pickers').append(more,menu,usageMenu);
     for (const [button,popover] of [[more,menu],[usage,usageMenu]]) {
       button.setAttribute('aria-expanded','false'); button.setAttribute('aria-controls',popover.id);
+      button.setAttribute('popovertarget',popover.id);
       popover.addEventListener('beforetoggle',event => button.setAttribute('aria-expanded',String(event.newState === 'open')));
-      button.onclick = () => { if (popover.matches(':popover-open')) popover.hidePopover(); else {popover.showPopover(); CodexSdkView.placeMenu(popover,button);} };
+      button.onclick = event => {
+        event.preventDefault();
+        if (popover.matches(':popover-open')) popover.hidePopover();
+        else {
+          if (button === usage && menu.matches(':popover-open')) menu.hidePopover();
+          popover.showPopover(); CodexSdkView.placeMenu(popover,button === usage ? more : button);
+        }
+      };
     }
     const actions = el('div',''); actions.id = 'sdk-actions'; menu.append(actions);
     for (const [method,label] of [['fork','分支会话'],['steer','引导当前任务'],['compact','压缩上下文'],['revert','回退对话'],['unrevert','撤销回退'],['revert_commit','提交回退'],['rewind','回退对话'],['shell','运行命令'],['command','原生命令'],['permissions','权限规则']]) {
@@ -35,14 +43,13 @@ const NativeSdkControls = {
     if (!view.pane) return;
     const row=view.pane.querySelector('.sdk-status-row'),gauges=view.pane.querySelector('.sdk-gauges'),menu=view.pane.querySelector('#sdk-usage-menu');
     if (!gauges || !menu) return;
-    // A stable breakpoint avoids oscillation when moving gauges changes intrinsic width.
-    const compact=row.clientWidth < 760;
-    if (compact) { if (gauges.parentElement !== menu) menu.prepend(gauges); }
-    else if (gauges.parentElement !== row) row.insertBefore(gauges,row.querySelector('#sdk-usage-toggle'));
     const effort=view.pane.querySelector('.sdk-effort'),more=view.pane.querySelector('#sdk-more-menu');
     if (row.clientWidth < 400) { if (effort.parentElement !== more) more.prepend(effort); }
     else if (effort.parentElement !== view.pane.querySelector('.sdk-pickers')) view.pane.querySelector('.sdk-pickers').insertBefore(effort,view.pane.querySelector('#sdk-more'));
-    for (const [popover,trigger] of [[menu,'#sdk-usage-toggle'],[more,'#sdk-more']])
+    const gaugeWidth=[...gauges.children].reduce((sum,node)=>sum+node.offsetWidth,0)+Math.max(0,gauges.childElementCount-1)*10;
+    const required=gaugeWidth+view.pane.querySelector('.sdk-options').offsetWidth+parseFloat(getComputedStyle(view.notice).minWidth)+20;
+    gauges.classList.toggle('sdk-gauges-wrapped',required > row.clientWidth);
+    for (const [popover,trigger] of [[menu,'#sdk-more'],[more,'#sdk-more']])
       if (popover.matches(':popover-open')) CodexSdkView.placeMenu(popover,view.pane.querySelector(trigger));
   },
   async loadUsage(view,refresh) {
