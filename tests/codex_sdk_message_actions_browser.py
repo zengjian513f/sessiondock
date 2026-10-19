@@ -15,6 +15,10 @@ from history_fixtures import BINARY, codex_row, encoded
 from hub_fixtures import Hub, free_port
 from node_auth_fixtures import TOKEN, node_env
 
+TURN3 = '01a1a000-0000-7000-8000-000000000003'
+LATER_QUESTION = '第三轮：这是分支点之后的对话，不能进入新分支'
+LATER_ANSWER = '第三轮回答 Later conversation must remain only in the source'
+
 TEXT = ('第二轮 remove this question · 请检查真实长度的项目路径 /workspace/projects/sessiondock/long-project-name\n保留中文、换行及 `quoted code`，重新编辑后发送。'
         + '\n\n'.join(f'\n第 {i} 段：检查多行绿气泡的消息操作按钮在展开和收起后仍然居中。' for i in range(16)))
 FORK = '01a1adc0-0000-7000-8000-000000000099'
@@ -118,6 +122,8 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     expect(page.locator('#sdk-input')).to_have_value(TEXT)
     expect(page.locator('.sdk-history')).to_contain_text('retained answer')
     expect(page.locator('.sdk-history')).not_to_contain_text('remove this answer')
+    expect(page.locator('.sdk-history')).not_to_contain_text(LATER_QUESTION)
+    expect(page.locator('.sdk-history')).not_to_contain_text(LATER_ANSWER)
     if screenshots: page.screenshot(path=str(screenshots/f'{label}-forked.png'))
     assert fake.methods('thread/fork')[-1]['params']['lastTurnId'] == TURN2
     assert fake.methods('thread/revert')[-1]['params'] == {'threadId': FORK, 'beforeTurnId': TURN2}
@@ -125,9 +131,15 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     page.reload(wait_until='networkidle')
     expect(page.locator('#side .item')).to_have_count(2)
     expect(page.locator('#sdk-input')).to_have_value(TEXT)
+    expect(page.locator('.sdk-history')).to_contain_text('retained answer')
+    expect(page.locator('.sdk-history')).not_to_contain_text('remove this answer')
+    expect(page.locator('.sdk-history')).not_to_contain_text(LATER_QUESTION)
+    expect(page.locator('.sdk-history')).not_to_contain_text(LATER_ANSWER)
     if width < 500: page.get_by_role('button', name='返回会话列表', exact=True).click()
     page.locator(f'#side .item[data-uid="{source}"]').click()
     expect(page.locator('.sdk-history')).to_contain_text('remove this answer')
+    expect(page.locator('.sdk-history')).to_contain_text(LATER_QUESTION)
+    expect(page.locator('.sdk-history')).to_contain_text(LATER_ANSWER)
     page.locator('#sdk-input').fill('原本尚未发送的草稿')
     popup = menu(); popup.get_by_role('button', name='回退', exact=True).click()
     page.locator('dialog[open]').get_by_role('button', name='取消', exact=True).click()
@@ -183,6 +195,12 @@ def main():
                     if row.get('payload', {}).get('role') == 'user' and turn:
                         for part in row['payload']['content']:
                             if part.get('text') == '第二轮 remove this question': part['text'] = TEXT
+                rows += [codex_row('turn_context', {'turn_id': TURN3}),
+                         codex_row('response_item', {'type': 'message', 'role': 'user', 'turn_id': TURN3,
+                             'content': [{'type': 'input_text', 'text': LATER_QUESTION}]}),
+                         codex_row('response_item', {'type': 'message', 'role': 'assistant', 'turn_id': TURN3,
+                             'content': [{'type': 'output_text', 'text': LATER_ANSWER}]})]
+                for ordinal, row in enumerate(rows): row['ordinal'] = ordinal
                 path.write_bytes(b''.join(encoded(row) for row in rows))
                 stop = next(i for i, row in enumerate(rows) if row.get('type') == 'turn_context' and row['payload']['turn_id'] == TURN2)
                 retained = b''.join(encoded(row) for row in rows[:stop])
