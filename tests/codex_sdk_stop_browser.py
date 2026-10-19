@@ -25,10 +25,14 @@ LATER = '分支点之后的第三轮 Later question'
 
 
 class StopServer(MessageServer):
-    def __init__(self, socket, source, retained, other):
+    def __init__(self, socket, source, retained, other, case="normal"):
         super().__init__(socket, source, retained)
         self.paths[OTHER] = other
-        self.loaded = set()
+        self.loaded = set() if case == 'normal' else {THREAD, OTHER}
+        self.bad_history = set() if case == 'normal' else {THREAD}
+        self.unloaded = {THREAD} if case == 'unloaded' else set()
+        self.active = {THREAD} if case == 'unreadable' else set()
+        self.fail_interrupt = False
 
     async def _handle(self, writer, message):
         method, params = message.get('method'), message.get('params') or {}
@@ -36,11 +40,24 @@ class StopServer(MessageServer):
             await self.send(writer, {'id': message['id'], 'result': {'data': sorted(self.loaded)}})
             return
         if method == 'thread/resume':
+            if params['threadId'] in self.bad_history:
+                await self.send(writer, {'id': message['id'], 'error': {'code': -32602,
+                    'message': f"invalid paginated history lineage for {params['threadId']}: missing source rollout"}})
+                return
             self.loaded.add(params['threadId'])
+        if method == 'turn/interrupt':
+            assert params['turnId'] == '', params
+            if params['threadId'] in self.unloaded or self.fail_interrupt:
+                await self.send(writer, {'id': message['id'], 'error': {'code': -32602,
+                    'message': 'thread not loaded' if params['threadId'] in self.unloaded else 'synthetic interrupt failure'}})
+            else:
+                self.active.discard(params['threadId'])
+                await self.send(writer, {'id': message['id'], 'result': {}})
+            return
         if method == 'thread/unsubscribe':
             # Keep loaded/list deliberately stale: a native daemon may retain
             # an unsubscribed thread during its unload grace period.
-            await self.send(writer, {'id': message['id'], 'result': {'status': 'unsubscribed'}})
+            await self.send(writer, {'id': message['id'], 'result': {'status': 'notLoaded' if params['threadId'] in self.unloaded else 'unsubscribed'}})
             return
         await super()._handle(writer, message)
         if method == 'thread/fork': self.loaded.add(FORK)
@@ -121,17 +138,80 @@ def exercise(browser, base, corpus, fake, proc, screenshots, label):
     print('PASS ' + label + ': middle fork excludes later messages; exact parent PTY/SDK stop; independent branch stop; daemon retained', flush=True)
 
 
+def unreadable_history(browser, base, fake, screenshots, label, case):
+    context = browser.new_context(viewport={'width': 390 if 'narrow' in label else 1280, 'height': 900},
+                                  color_scheme='dark' if 'dark' in label else 'light', service_workers='block')
+    context.route('**/*', lambda r: r.continue_() if r.request.url.startswith(base + '/') else r.abort())
+    page = context.new_page()
+    popups = []
+    on_popup(page, lambda d: (popups.append(d.message), d.accept()))
+    page.goto(base, wait_until='networkidle')
+    source, other = page.evaluate("ids => ids.map(id => S.sessions.find(row => row.sid === id).uid)", [THREAD, OTHER])
+    with page.expect_response(lambda r: r.url.endswith('/api/codex-sdk/open')) as opened:
+        page.locator(f'#side .item[data-uid="{source}"]').click()
+    assert opened.value.status != 200 and 'missing source rollout' in opened.value.text()
+    page.wait_for_function('!CodexSdkView.connected')
+    expect(page.locator('.sdk-history')).to_contain_text('retained answer')
+    resumes = len(fake.methods('thread/resume'))
+    def stop():
+        # Exercise the same sidebar menu as the reported failure.
+        if 'narrow' in label and page.locator('.mobile-back').first.is_visible():
+            page.locator('.mobile-back').first.click()
+        page.locator(f'#side .item[data-uid="{source}"]').click(button='right')
+        with page.expect_response(lambda r: r.url.endswith('/api/session/stop')) as reply:
+            page.locator('#item-menu [data-act="stop"]').click()
+        return reply.value
+    if case == 'unreadable':
+        fake.fail_interrupt = True
+        failed = stop()
+        assert failed.status != 200 and 'synthetic interrupt failure' in failed.text(), failed.text()
+        expect(page.locator('dialog.app-popup[open]')).to_have_count(0)
+        live = page.request.get(base + '/api/live?force=1').json()
+        assert source in live['sdk_uids'], live
+        assert any('synthetic interrupt failure' in message for message in popups), popups
+        fake.fail_interrupt = False
+    stopped = stop()
+    assert stopped.status == 200 and stopped.json()['stopped'], stopped.text()
+    assert len(fake.methods('thread/resume')) == resumes, fake.received
+    assert fake.methods('turn/interrupt')[-1]['params'] == {'threadId': THREAD, 'turnId': ''}
+    assert fake.methods('thread/unsubscribe')[-1]['params'] == {'threadId': THREAD}
+    assert THREAD not in fake.active
+    live = page.request.get(base + '/api/live?force=1').json()
+    assert source not in live['uids'] and other in live['sdk_uids'], live
+    if 'narrow' in label:
+        # Returning to the mobile list closes the SDK view. Its sidebar action
+        # must offer start after a stop, without reopening unreadable history.
+        page.locator(f'#side .item[data-uid="{source}"]').click(button='right')
+        expect(page.locator('#item-menu [data-act="stop"]')).to_have_text('启动会话')
+    else:
+        expect(page.locator('.sdk-pane .sdk-status')).to_contain_text('会话已停止')
+        expect(page.locator('.sdk-pane #sdk-send')).to_be_disabled()
+    assert not any(m.get('method') in ('turn/interrupt','thread/unsubscribe') and
+                   m.get('params',{}).get('threadId') == OTHER for m in fake.received)
+    if screenshots: page.screenshot(path=str(screenshots / f'{label}-stopped.png'))
+    if 'narrow' in label: page.keyboard.press('Escape')
+    # A failed explicit reopen cannot revive the daemon's stale loaded entry.
+    with page.expect_response(lambda r: r.url.endswith('/api/codex-sdk/open')) as reopened:
+        page.locator(f'#side .item[data-uid="{source}"]').click()
+    assert reopened.value.status != 200, reopened.value.text()
+    live = page.request.get(base + '/api/live?force=1').json()
+    assert source not in live['uids'] and other in live['sdk_uids'], live
+    context.close()
+    print(f'PASS {label}: unreadable history cannot block stop; no resume, exact interrupt/unsubscribe, unrelated thread retained; {case}', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
     parser.add_argument('--screenshots', type=Path)
+    parser.add_argument('--case', action='append', choices=('normal','unreadable','unloaded'))
     args = parser.parse_args()
     if args.screenshots: args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sd-sdk-stop-') as temporary, sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
-            for mode, size, theme in [('node', 'wide', 'light'), ('hub', 'narrow', 'dark')]:
-                label = f'{mode}-{size}-{theme}'
+            for mode, size, theme, case in [(m,s,t,c) for m,s,t in [('node','wide','light'),('hub','wide','light'),('hub','narrow','dark')] for c in (args.case or ('normal','unreadable','unloaded'))]:
+                label = f'{mode}-{size}-{theme}-{case}'
                 root = Path(temporary) / label
                 root.mkdir()
                 corpus, _ = build(root)
@@ -151,6 +231,9 @@ def main():
                 # An unrelated thread on the same daemon need not be listed.
                 other = root / 'other.jsonl'
                 other.write_bytes(encoded(codex_row('session_meta', {'id': OTHER})))
+                if case != 'normal':
+                    other = corpus.put('other', 'codex', [codex_row('session_meta', {'id': OTHER}),
+                        codex_message('user', 'Unrelated loaded thread')], [])
                 env = environment(root, args.binary)
                 config = root / 'launcher.json'
                 settings = json.loads(config.read_text())
@@ -162,16 +245,19 @@ def main():
                 proc_pid(proc, 400, 'codex', ['codex', 'app-server'], 1, fds={3: path})
                 port = free_port()
                 env.update(node_env(root, port, '127.0.0.0/8'))
-                with private_hosts(root), StopServer(root / 'app.sock', path, retained, other) as fake, server(corpus, args.binary, root / 'app.sock', env) as base:
+                with private_hosts(root), StopServer(root / 'app.sock', path, retained, other, case) as fake, server(corpus, args.binary, root / 'app.sock', env) as base:
                     if mode == 'hub':
                         hub_root = root / 'hub'
                         hub_root.mkdir()
                         hub = Hub(args.binary.with_name('sessiondock-hub').resolve(), hub_root,
                                   [SimpleNamespace(name='StopNode', token=TOKEN, port=port)])
                         hub.start()
-                        try: exercise(browser, f'http://127.0.0.1:{hub.port}', corpus, fake, proc, args.screenshots, label)
+                        try:
+                            if case == 'normal': exercise(browser, f'http://127.0.0.1:{hub.port}', corpus, fake, proc, args.screenshots, label)
+                            else: unreadable_history(browser, f'http://127.0.0.1:{hub.port}', fake, args.screenshots, label, case)
                         finally: hub.stop()
-                    else: exercise(browser, base, corpus, fake, proc, args.screenshots, label)
+                    elif case == 'normal': exercise(browser, base, corpus, fake, proc, args.screenshots, label)
+                    else: unreadable_history(browser, base, fake, args.screenshots, label, case)
         finally: browser.close()
 
 

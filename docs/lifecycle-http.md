@@ -421,8 +421,16 @@ thread, pauses its queued inputs and notifies attached pages to stop reconnectin
 The existing guarded stop also closes that session's TUI, when present. Other
 threads and the daemon remain running. Native unload grace periods do not
 keep a stopped bridge thread marked live; explicitly reopening SDK resumes it.
+Stop never calls `thread/resume` or reads native history. It uses the native
+empty-turn interrupt to cancel that exact thread's startup/current work, then
+unsubscribes; `notLoaded` confirms an already-unloaded thread. Other interrupt
+failures remain failures. This also handles a stale loaded/list after an older
+release moved only the latest rollout generation into trash: a missing rollout
+must not prevent stopping. The HTTP stop receipt updates the selected SDK view
+even if its unreadable history prevented an event stream from attaching.
 `tests/codex_sdk_stop_browser.py` covers a middle-message fork, subsequent
-parent/branch stops and shared-daemon preservation through node and Hub browsers.
+parent/branch stops, unreadable history after a bridge restart, active startup,
+unload races and shared-daemon preservation through node and Hub browsers.
 
 Browser leases: stop neither needs nor fails on a browser
 terminal lease. The EOF keys are server-originated host input; the WebSocket

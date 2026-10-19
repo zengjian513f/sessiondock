@@ -53,7 +53,7 @@ def run(browser, binary, root, screenshots, mode):
             env['SESSIONDOCK_PROC_ROOT']=str(root/'proc')
             base,_=stack.enter_context(isolated_server(corpus,binary,state_dir=root/'state' if mode=='hub' else None,trash_dir=trash,extra_env=env))
             if mode=='hub':
-                if hub is None: hub=Hub(binary.resolve().with_name('sessiondock-hub'),hubroot,[node])
+                if hub is None: hub=Hub(binary.with_name('sessiondock-hub').resolve(),hubroot,[node])
                 hub.start();stack.callback(hub.stop);node.nid=(root/'ids/node-id').read_text().strip()
                 base=f'http://127.0.0.1:{hub.port}'
             context=browser.new_context(viewport={'width':1280 if mode=='node' else 390,'height':900},service_workers='block',color_scheme='light' if mode=='node' else 'dark');stack.callback(context.close)
@@ -112,6 +112,11 @@ def run(browser, binary, root, screenshots, mode):
                 # A second tree exercises explicit cascade, cancellation,
                 # running-child refusal and Hub clear-all confirmation.
                 fixture(root);page.reload(wait_until='networkidle');delete('b')
+                # The actual report also has a child trashed by the older
+                # single-generation implementation, before sessions were saved.
+                legacy=next(trash.glob('*/manifest.json'))
+                old_manifest=json.loads(legacy.read_text());old_manifest.pop('sessions',None)
+                legacy.write_text(json.dumps(old_manifest))
                 # A different native session now occupies a trashed child's
                 # old path. Purging the old tree must preserve that session.
                 corpus.paths['b'].write_bytes(encoded(batch35_meta('replacement-unrelated'))+encoded(codex_message('user','Replacement unrelated conversation')))

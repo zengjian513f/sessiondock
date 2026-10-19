@@ -7514,6 +7514,11 @@ async function requestSessionStop(m) {
   const result = await response.json();
   if (!response.ok || result.error) throw new Error(result.error || response.status);
   if (sessionStopCapable() && result.stopped) S.live.delete(m.uid);
+  // An unreadable native rollout may have prevented the SDK event stream
+  // from attaching. The successful stop receipt also closes that view.
+  if (result.stopped && typeof CodexSdkView !== 'undefined'
+      && CodexSdkView.uid === m.uid && !CodexSdkView.agent)
+    CodexSdkView.applyEvent('bridge/stopped', {});
   return result;
 }
 

@@ -352,12 +352,12 @@ impl CodexSdk {
     /// Resume `thread_id` on the shared connection (once per connection) and
     /// return the thread metadata the daemon reported.
     pub async fn open(&self, thread_id: &str) -> Result<Value, RpcError> {
+        let thread = self.inner.ensure(thread_id).await?;
         self.inner
             .stopped
             .lock()
             .expect("stopped")
             .remove(thread_id);
-        let thread = self.inner.ensure(thread_id).await?;
         Ok(thread.summary())
     }
 
@@ -365,30 +365,34 @@ impl CodexSdk {
     pub async fn stop_thread(&self, thread_id: &str) -> Result<(), RpcError> {
         let lock = self.inner.queue.lock(thread_id);
         let _dispatch = lock.lock().await;
-        let thread = self.inner.ensure(thread_id).await?;
-        let connection = self.inner.connection().await?;
-        if let Some(turn_id) = thread.active_turn() {
-            connection
-                .request(
-                    "turn/interrupt",
-                    json!({"threadId":thread_id,"turnId":turn_id}),
-                )
-                .await?;
-        }
-        connection
+        // Stopping must not resume or parse history. The latest rollout may
+        // already be in trash while the daemon still reports the thread loaded.
+        let connection = self.inner.connection_mode(false).await?;
+        // The native empty-turn interrupt cancels the exact loaded thread's
+        // startup/current work without requiring a recovered turn or history.
+        let interrupted = connection
+            .request("turn/interrupt", json!({"threadId":thread_id,"turnId":""}))
+            .await;
+        let result = connection
             .request("thread/unsubscribe", json!({"threadId":thread_id}))
             .await?;
+        if result["status"] != "notLoaded" {
+            interrupted?;
+        }
         self.inner
             .stopped
             .lock()
             .expect("stopped")
             .insert(thread_id.to_owned());
-        self.inner
+        if let Some(thread) = self
+            .inner
             .threads
             .lock()
             .expect("threads")
-            .remove(thread_id);
-        thread.apply("bridge/stopped", json!({}));
+            .remove(thread_id)
+        {
+            thread.apply("bridge/stopped", json!({}));
+        }
         Ok(())
     }
 
