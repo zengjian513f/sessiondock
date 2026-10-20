@@ -61,6 +61,11 @@ def exercise(browser, base, source, shots, label):
         choose_mode(page, source, 'cli')
         expect(page.locator('#agent-start-settings [data-agent-start-mode]')).to_have_count(5)
         assert page.locator('#agent-start-settings').evaluate("group => !!(document.querySelector('#setting-console-paste-files').compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING)")
+        choices = page.locator('#agent-start-settings .setting-row')
+        boxes = [choices.nth(i).bounding_box() for i in range(5)]
+        assert abs(boxes[0]['y'] - boxes[1]['y']) < 1, boxes
+        assert boxes[1]['x'] > boxes[0]['x'], boxes
+        assert boxes[2]['y'] > boxes[0]['y'], boxes
         page.locator('#agent-start-settings-title').scroll_into_view_if_needed()
         page.screenshot(path=str(shots/f'{label}-{source}-{width}-settings.png'))
         page.locator('#agent-start-settings [data-agent-start-mode]').last.scroll_into_view_if_needed()
