@@ -57,16 +57,16 @@
 //!   appear on the detail view only. Unknown-kind counts are exact for files the tail covers whole
 //!   (≤ 512 KiB) and partial otherwise; they count records regardless of the
 //!   active lineage. Complete native files are opened on demand.
-//! - Corrections of the old rows: Codex main `updated` is the
-//!   file mtime (whole seconds), a Codex rollout
+//! - Corrections of the old rows: Codex `updated` is the latest
+//!   conversation activity timestamp (or creation time), a Codex rollout
 //!   without a user message is titled `(无标题) <stem[:16]>`, Claude titles
 //!   follow `_title_from_text` (first plain line, 90 chars) and custom titles
 //!   are kept verbatim, Claude `cwd` falls back to the tail majority and then
 //!   the project directory name.
 //! - Native ids and conflicts come from the head/tail records seen.
 //! - A Codex head is 120 pieces, a Claude head 40.
-//! - Current Claude/Codex models and Codex turn state use a scalar scan
-//!   (`native_state`): backwards to the latest model/boundary on cold reads,
+//! - Current Claude/Codex models and Codex turn/activity state use a scalar scan
+//!   (`native_state`): backwards to the latest model/boundary/activity on cold reads,
 //!   only new complete lines on append.
 //!   Metadata windows cannot close a turn merely by losing its start event.
 
@@ -1448,6 +1448,10 @@ fn read_candidate(
             Ok(scan) => {
                 summary.model = scan.model.clone();
                 if candidate.source == "codex" {
+                    summary.updated = scan
+                        .activity_at
+                        .clone()
+                        .unwrap_or_else(|| summary.created.clone());
                     if let Some(agent) = &mut summary.agent {
                         agent.open_turn = matches!(scan.turn, Some("working" | "waiting"));
                         agent.turn_at = scan.turn_at.clone();
