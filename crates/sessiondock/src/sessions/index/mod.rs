@@ -483,6 +483,7 @@ impl Index {
             grok: freeze(roots.grok),
             opencode: freeze(roots.opencode),
             agy: freeze(roots.agy),
+            kiro: freeze(roots.kiro),
         };
         Self {
             roots,
@@ -798,6 +799,7 @@ impl Index {
             ("grok", &self.roots.grok),
             ("opencode", &self.roots.opencode),
             ("agy", &self.roots.agy),
+            ("kiro", &self.roots.kiro),
         ] {
             let Some(root) = configured else { continue };
             let dir = match Dir::open_ambient_dir(root, ambient_authority()) {
@@ -820,6 +822,7 @@ impl Index {
                 "claude" => walk.claude(&dir)?,
                 "codex" => walk.codex(&dir, PathBuf::new())?,
                 "opencode" | "agy" => walk.database_mirror(&dir, source)?,
+                "kiro" => walk.kiro(&dir)?,
                 _ => walk.grok(&dir)?,
             }
         }
@@ -1146,6 +1149,132 @@ impl Walk<'_> {
         }
         Ok(())
     }
+
+    /// Kiro sessions under `<root>`:
+    /// 1. V3 KAS direct: `<root>/<sess_id>/session.json` (+ optional `messages.jsonl`)
+    /// 2. V3 KAS bucket: `<root>/<workspace_hash>/<sess_id>/session.json` (+ optional `messages.jsonl`)
+    /// 3. V2 legacy CLI: `<root>/cli/<uuid>.json` (+ optional `<uuid>.jsonl`)
+    /// 4. V2 direct: `<root>/<uuid>.json` (+ optional `<uuid>.jsonl`)
+    fn kiro(&mut self, root: &Dir) -> Result<(), SessionError> {
+        // Direct V2 JSON files in `<root>/<uuid>.json`
+        self.kiro_v2_files(root, self.root);
+
+        for child in subdirectories(root, self.root) {
+            let Ok(child_dir) = root.open_dir_nofollow(&child) else {
+                continue;
+            };
+            let child_path = self.root.join(&child);
+            if child == "cli" {
+                self.kiro_v2_files(&child_dir, &child_path);
+            }
+            // Check if `<root>/<child>/session.json` exists (Direct V3 layout)
+            let direct_session_json = child_path.join("session.json");
+            if let Ok(summary) = file_metadata(&direct_session_json)
+                && summary.is_file()
+            {
+                let (data, stamp) = kiro_v3_data_file(&child_path);
+                self.found.push(Discovered {
+                    source: "kiro",
+                    root: self.root.to_path_buf(),
+                    summary_path: Some(direct_session_json.clone()),
+                    data,
+                    path: direct_session_json,
+                    stamp,
+                    summary_stamp: Some(Stamp::of(&summary)),
+                    agent_id: None,
+                });
+                continue;
+            }
+            // Otherwise treat `<child>` as a workspace bucket `<root>/<bucket>/<sess_id>/session.json`
+            // (including `<root>/cli/<sess_id>/session.json`)
+            for session in subdirectories(&child_dir, &child_path) {
+                let Ok(_session_dir) = child_dir.open_dir_nofollow(&session) else {
+                    continue;
+                };
+                let session_dir_path = child_path.join(&session);
+                let session_json = session_dir_path.join("session.json");
+                let Ok(summary) = file_metadata(&session_json) else {
+                    continue;
+                };
+                if !summary.is_file() {
+                    continue;
+                }
+                let (data, stamp) = kiro_v3_data_file(&session_dir_path);
+                self.found.push(Discovered {
+                    source: "kiro",
+                    root: self.root.to_path_buf(),
+                    summary_path: Some(session_json.clone()),
+                    data,
+                    path: session_json,
+                    stamp,
+                    summary_stamp: Some(Stamp::of(&summary)),
+                    agent_id: None,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn kiro_v2_files(&mut self, dir: &Dir, dir_path: &Path) {
+        let Ok(entries) = dir.entries() else {
+            return;
+        };
+        let mut names: Vec<std::ffi::OsString> = entries
+            .filter_map(|e| e.ok().map(|e| e.file_name()))
+            .collect();
+        names.sort();
+        for name in names {
+            let Some(name_str) = name.to_str() else {
+                continue;
+            };
+            if !name_str.ends_with(".json")
+                || name_str == "session.json"
+                || name_str == "index.json"
+                || name_str.ends_with(".meta.json")
+            {
+                continue;
+            }
+            let json_path = dir_path.join(&name);
+            let Ok(summary) = file_metadata(&json_path) else {
+                continue;
+            };
+            if !summary.is_file() {
+                continue;
+            }
+            let stem = &name_str[..name_str.len() - ".json".len()];
+            let data = dir_path.join(format!("{stem}.jsonl"));
+            let stamp = file_metadata(&data)
+                .ok()
+                .filter(|meta| meta.is_file())
+                .map(|meta| Stamp::of(&meta));
+            self.found.push(Discovered {
+                source: "kiro",
+                root: self.root.to_path_buf(),
+                summary_path: Some(json_path.clone()),
+                data,
+                path: json_path,
+                stamp,
+                summary_stamp: Some(Stamp::of(&summary)),
+                agent_id: None,
+            });
+        }
+    }
+}
+
+fn kiro_v3_data_file(session_dir: &Path) -> (PathBuf, Option<Stamp>) {
+    let messages = session_dir.join("messages.jsonl");
+    if let Ok(meta) = file_metadata(&messages)
+        && meta.is_file()
+    {
+        return (messages, Some(Stamp::of(&meta)));
+    }
+    let events = session_dir.join("events.jsonl");
+    if let Ok(meta) = file_metadata(&events)
+        && meta.is_file()
+    {
+        return (events, Some(Stamp::of(&meta)));
+    }
+    (messages, None)
 }
 
 /// The bytes of every regular
@@ -1357,7 +1486,11 @@ fn read_candidate(
 ) -> Option<ReadOutcome> {
     let data = match candidate.stamp {
         Some(_) => match read_data(&candidate.root, &candidate.data) {
-            FileRead::Vanished if matches!(candidate.source, "grok" | "opencode" | "agy") => None,
+            FileRead::Vanished
+                if matches!(candidate.source, "grok" | "opencode" | "agy" | "kiro") =>
+            {
+                None
+            }
             FileRead::Vanished => return None,
             FileRead::Unreadable => {
                 let summary = unreadable(candidate);
@@ -1386,12 +1519,14 @@ fn read_candidate(
                 "OpenCode summary.json "
             } else if candidate.source == "agy" {
                 "Agy summary.json "
+            } else if candidate.source == "kiro" {
+                "Kiro session.json "
             } else {
                 "子代理元数据 (meta.json) "
             };
             match read_sidecar(&candidate.root, path, label) {
                 SidecarRead::Vanished
-                    if matches!(candidate.source, "grok" | "opencode" | "agy") =>
+                    if matches!(candidate.source, "grok" | "opencode" | "agy" | "kiro") =>
                 {
                     return None;
                 }

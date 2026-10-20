@@ -34,7 +34,8 @@ function agentStartMode(source) {
   return store.get('agentStartMode.' + source, 'sdk') === 'cli' || source === 'shell' ? 'cli' : 'sdk';
 }
 function agentSdkAvailable(source, node = '') {
-  const cap = HUB_MODE ? Nodes.capabilities[node] || {} : SessionDockCapabilities.config;
+  const cap = HUB_MODE ? Nodes.capabilities[node] || {}
+    : (typeof T !== 'undefined' && T.listLoaded && !T.listError ? T : SessionDockCapabilities.config);
   return source === 'codex' ? cap.codex_sdk === true : cap.native_sdks?.[source] === true;
 }
 function agentStartUnavailable(source, node = '') {
@@ -43,15 +44,50 @@ function agentStartUnavailable(source, node = '') {
   const cap = HUB_MODE ? Nodes.capabilities[node] || {} : T;
   return cap.sources?.[source] ? '' : `本机找不到 ${source} 命令`;
 }
-function newCodexSdkEnabled() { return newNodeCapabilities().codex_sdk === true; }
+function newCodexSdkEnabled() { return agentSdkAvailable('codex', newNodeId()); }
 function newSdkEnabled(source) {
-  if (agentStartMode(source) !== 'sdk') return false;
-  if (source === 'codex') return newCodexSdkEnabled();
-  return newNodeCapabilities().native_sdks?.[source] === true;
+  return agentStartMode(source) === 'sdk' && agentSdkAvailable(source, newNodeId());
 }
 function anyNewSdkEnabled() {
-  return ['codex','claude','grok','opencode','agy'].some(newSdkEnabled);
+  return ['codex','claude','grok','opencode','agy','kiro'].some(newSdkEnabled);
 }
+function sessionHasRunningSdk(uid) {
+  if (!uid) return false;
+  if (typeof S !== 'undefined' && S.liveSdk?.has(uid)) return true;
+  return typeof T !== 'undefined' && Array.isArray(T.sdkSessions)
+    && T.sdkSessions.some(row => row.uid === uid && row.running !== false);
+}
+function findTermForSession(uid) {
+  if (!uid || typeof T === 'undefined') return null;
+  const name = typeof takenOver === 'function' ? takenOver(uid) : null;
+  return (name && (T.list || []).find(row => row.name === name && row.running !== false && !row.stale))
+    || (T.list || []).find(row => row.uid === uid && row.running !== false && !row.stale)
+    || null;
+}
+function nativeSdkAvailableFor(sourceOrUid, agent = null) {
+  const value = String(sourceOrUid || '');
+  if (value.includes(':')) {
+    return typeof NativeSdkView !== 'undefined' && NativeSdkView.available(value, agent);
+  }
+  const source = typeof sessionSourceOf === 'function' ? sessionSourceOf(sourceOrUid) : value;
+  return agentSdkAvailable(source, newNodeId());
+}
+function syncSessionViewBar(uid = typeof S !== 'undefined' ? S.sel : '') {
+  const chat = document.querySelector('#a-chat');
+  if (chat) {
+    const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(uid) : sessionSourceOf(uid) !== 'kiro';
+    chat.hidden = !hasChat;
+    chat.style.display = hasChat ? '' : 'none';
+    if (!hasChat) {
+      chat.classList.remove('on');
+      chat.setAttribute('aria-pressed', 'false');
+    }
+  }
+  if (typeof renderTakeoverBtn === 'function') renderTakeoverBtn();
+}
+Object.assign(globalThis, {
+  sessionHasRunningSdk, findTermForSession, nativeSdkAvailableFor, syncSessionViewBar,
+});
 function sessionTerminalEnabled(uid) {
   return typeof T !== 'undefined' && (HUB_MODE ? !!Nodes.capabilities[nodeOf(uid)]?.enabled : T.enabled);
 }
@@ -66,8 +102,11 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
   if (ConsoleUI.busy.has(uid)) return '正在打开控制台，请等待当前连接请求完成。';
   if (T.listError) return T.listError;
   if (!T.listLoaded) return '正在读取控制台状态，请稍后重试。';
-  if (['claude', 'grok', 'agy'].includes(String(uid).split(':')[0]) && S.liveSdk.has(uid))
-    return '此会话正在 SDK 模式运行，请先停止会话，再启动 CLI。';
+  const sourceOfUid = typeof sessionSourceOf === 'function' ? sessionSourceOf(uid) : String(uid).split(':')[0];
+  if (['claude', 'grok', 'agy', 'kiro'].includes(sourceOfUid) && (S.liveSdk.has(uid) || sessionHasRunningSdk(uid)))
+    return sourceOfUid === 'kiro'
+      ? 'SDK 会话运行中，请先停止 SDK 会话再切换到 CLI 终端'
+      : '此会话正在 SDK 模式运行，请先停止会话，再启动 CLI。';
   const nid = nodeOf(uid), node = Nodes.list.find(n => n.id === nid);
   const cap = HUB_MODE ? Nodes.capabilities[nid] : T;
   if (HUB_MODE) {
@@ -264,20 +303,30 @@ function bindConsoleButton(button, uid, agent = null) {
   if (!button) return;
   const group = button.closest('.session-views');
   if (group) {
-    group.querySelector('#a-chat').onclick = () => {
-      if (S.sel !== uid || S.agent !== agent) return;
-      SdkView.legacyViews.add(viewKey(uid, agent));
-      SdkView.selectMode(uid, agent, 'chat');
-      SessionContentView.close();
-      if (MOBILE.matches && !sessionTerminalFirst(uid)) closeTermPane();
-      else {
-        T.mode = 'collapsed';
-        store.set('termmode', T.mode);
-        rememberTermLayout();
-        layoutTermPane();
-        renderTakeoverBtn();
+    const chat = group.querySelector('#a-chat');
+    const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(uid) : sessionSourceOf(uid) !== 'kiro';
+    if (chat) {
+      chat.hidden = !hasChat;
+      chat.style.display = hasChat ? '' : 'none';
+      if (!hasChat) {
+        chat.classList.remove('on');
+        chat.setAttribute('aria-pressed', 'false');
       }
-    };
+      chat.onclick = () => {
+        if (!hasChat || S.sel !== uid || S.agent !== agent) return;
+        SdkView.legacyViews?.add(viewKey(uid, agent));
+        SdkView.selectMode(uid, agent, 'chat');
+        SessionContentView.close();
+        if (MOBILE.matches && !sessionTerminalFirst(uid)) closeTermPane();
+        else {
+          T.mode = 'collapsed';
+          store.set('termmode', T.mode);
+          rememberTermLayout();
+          layoutTermPane();
+          renderTakeoverBtn();
+        }
+      };
+    }
     const info = group.querySelector('#a-info');
     const infoReason = String(uid).startsWith('tmux:') || SdkView.pending(uid) ? '会话尚未落盘，暂时没有会话信息。'
       : agent ? '请切换到主会话查看会话信息。'
@@ -297,7 +346,7 @@ function bindConsoleButton(button, uid, agent = null) {
   button.onclick = async () => {
     const reason = consoleUnavailableReason(uid, agent, false);
     if (reason) { paintConsoleAvailability(button, uid, agent); return; }
-    SdkView.legacyViews.add(viewKey(uid, agent));
+    SdkView.legacyViews?.add(viewKey(uid, agent));
     SdkView.selectMode(uid, agent, 'terminal');
     SessionContentView.close();
     // 上次连接失败不再拦一道确认框：点击直接重新接入并显示 pty，失败时明确提示原因。

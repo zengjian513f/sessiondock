@@ -18,8 +18,12 @@ use super::{launcher::CliProfile, model::Source};
 const OPENCODE_MODELS_TIMEOUT: Duration = Duration::from_secs(15);
 /// Agy may fetch its account's available models.
 const AGY_MODELS_TIMEOUT: Duration = Duration::from_secs(15);
+/// Kiro may fetch its account's available models.
+const KIRO_MODELS_TIMEOUT: Duration = Duration::from_secs(15);
 /// Agy's documented `--effort` levels; model compatibility stays with the CLI.
 const AGY_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+/// Kiro's documented `--effort` (`--thinking-effort`) levels.
+const KIRO_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 /// Claude's documented `--effort` levels.
 const CLAUDE_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 /// Claude's `--model` aliases for the latest model of each family.
@@ -56,7 +60,7 @@ pub struct Catalog {
 pub fn supports_effort(source: Source) -> bool {
     matches!(
         source,
-        Source::Claude | Source::Codex | Source::Grok | Source::Agy
+        Source::Claude | Source::Codex | Source::Grok | Source::Agy | Source::Kiro
     )
 }
 
@@ -67,6 +71,7 @@ pub fn catalog(profile: &CliProfile) -> Catalog {
         Source::Grok => grok(profile),
         Source::Opencode => opencode(profile),
         Source::Agy => agy(profile),
+        Source::Kiro => kiro(profile),
         Source::Shell => Catalog::default(),
     };
     if catalog.efforts.is_empty() {
@@ -95,7 +100,10 @@ pub struct CatalogCache {
 }
 
 fn slow(source: Source) -> bool {
-    matches!(source, Source::Agy | Source::Opencode | Source::Grok)
+    matches!(
+        source,
+        Source::Agy | Source::Opencode | Source::Grok | Source::Kiro
+    )
 }
 
 impl CatalogCache {
@@ -562,6 +570,92 @@ pub(crate) fn agy_variant(id: &str) -> bool {
         .is_some_and(|(_, suffix)| EFFORT_ORDER.contains(&suffix))
 }
 
+/// `kiro-cli chat --list-models -f json`: JSON model catalog (`models` +
+/// `default_model`) with Kiro's `--effort` levels (`low`, `medium`, `high`,
+/// `xhigh`, `max`).
+fn kiro(profile: &CliProfile) -> Catalog {
+    let cwd = cli_home(profile, "HOME", "");
+    let args: &[&str] = if profile.args.iter().any(|arg| arg == "chat") {
+        &["--list-models", "-f", "json"]
+    } else {
+        &["chat", "--list-models", "-f", "json"]
+    };
+    let output = run_bounded(profile, &cwd, args, KIRO_MODELS_TIMEOUT).unwrap_or_default();
+    kiro_json(&output)
+}
+
+pub(crate) fn kiro_json(output: &str) -> Catalog {
+    let efforts: Vec<String> = KIRO_EFFORTS
+        .iter()
+        .map(|effort| (*effort).to_owned())
+        .collect();
+    let trimmed = output.trim();
+    let value: Option<serde_json::Value> = serde_json::from_str(trimmed).ok().or_else(|| {
+        let start = trimmed.find(['{', '['])?;
+        serde_json::from_str(&trimmed[start..]).ok()
+    });
+    let Some(value) = value else {
+        return Catalog {
+            models: Vec::new(),
+            efforts,
+            default_model: None,
+        };
+    };
+    let list = value
+        .get("models")
+        .or_else(|| value.get("availableModels"))
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| value.as_array());
+    let mut seen = std::collections::BTreeSet::new();
+    let models = list
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let id = text(item, "model_id")
+                .or_else(|| text(item, "id"))
+                .or_else(|| text(item, "modelId"))?;
+            if !valid_choice(&id) || !seen.insert(id.clone()) {
+                return None;
+            }
+            let name = text(item, "model_name")
+                .or_else(|| text(item, "name"))
+                .or_else(|| text(item, "display_name"))
+                .unwrap_or_else(|| id.clone());
+            let model_efforts = item
+                .get("efforts")
+                .or_else(|| item.get("supportedEfforts"))
+                .and_then(serde_json::Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .filter(|e| valid_choice(e))
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|arr| !arr.is_empty())
+                .unwrap_or_else(|| efforts.clone());
+            let default_effort = text(item, "default_effort")
+                .or_else(|| text(item, "defaultEffort"))
+                .filter(|e| model_efforts.contains(e));
+            Some(Model {
+                id,
+                name,
+                efforts: model_efforts,
+                default_effort,
+            })
+        })
+        .collect();
+    let default_model = text(&value, "default_model")
+        .or_else(|| text(&value, "defaultModel"))
+        .or_else(|| text(&value, "currentModelId"))
+        .filter(|m| valid_choice(m));
+    Catalog {
+        models,
+        efforts,
+        default_model,
+    }
+}
+
 /// `opencode models`: one `provider/model` per line. OpenCode selects a
 /// reasoning variant per model, so no effort is offered.
 fn opencode(profile: &CliProfile) -> Catalog {
@@ -647,7 +741,11 @@ fn run_bounded(
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
-            Ok(Some(status)) if profile.source == Source::Agy && !status.success() => return None,
+            Ok(Some(status))
+                if matches!(profile.source, Source::Agy | Source::Kiro) && !status.success() =>
+            {
+                return None;
+            }
             Ok(Some(_)) => break,
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
             _ => {

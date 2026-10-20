@@ -11,6 +11,10 @@
   });
   const uid = new URLSearchParams(location.search).get('uid') || '';
   const kinds = {continues:'接续', branches:'任务分支', references:'引用'};
+  const sourceLabels = {claude:'Claude', codex:'Codex', grok:'Grok', opencode:'OpenCode', agy:'Agy', kiro:'Kiro'};
+  const badgeClasses = {claude:'b-claude', codex:'b-codex', grok:'b-grok', opencode:'b-opencode', agy:'b-agy', kiro:'b-kiro'};
+  const kiroIcon = `<svg class="source-icon" data-source="kiro" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2.5c-4.7 0-8.5 3.6-8.5 8.2v8.1c0 .9 1 1.4 1.7.8l2.1-1.7c.5-.4 1.2-.4 1.7 0l1.9 1.5c.6.5 1.6.5 2.2 0l1.9-1.5c.5-.4 1.2-.4 1.7 0l2.1 1.7c.7.6 1.7.1 1.7-.8v-8.1c0-4.6-3.8-8.2-8.5-8.2zm-3.1 7.2a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8zm6.2 0a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8z"/></svg>`;
+  const sourceIcon = source => source === 'kiro' ? kiroIcon : SessionDockCard.icon(source);
   let data, candidates = [], direction = 'predecessor', sequence = 0, saving = false;
   const infoUrl = target => `session-info.html?${new URLSearchParams({uid: target, ...(embedded ? {embedded: '1'} : {})})}`;
   const conversationUrl = target => `./?${new URLSearchParams({sid: target})}`;
@@ -25,13 +29,14 @@
     const label = item.title || item.sid || item.session_uid;
     const title = item.available ? `<a class="si-relation-title t" title="${esc(label)}" href="${esc(infoUrl(item.uid))}">${esc(label)}</a>` : `<span class="si-relation-title t">${esc(label)}</span>`;
     const meta = `${item.node_name || item.node_id || '本机'} · ${kinds[item.kind] || item.kind} · ${direct ? '直接' : `间接 ${item.distance} 层`}`;
-    return `<article class="si-relation sd-session-card" data-uid="${esc(item.uid)}" data-side="${side}">
-      <span class="ico">${SessionDockCard.icon(item.source)}</span><div class="body">
+    const badgeClass = badgeClasses[item.source] || `b-${item.source || 'unknown'}`;
+    return `<article class="si-relation sd-session-card ${esc(badgeClass)}" data-uid="${esc(item.uid)}" data-side="${side}">
+      <span class="ico">${sourceIcon(item.source)}</span><div class="body">
       ${title}
       <div class="m" title="${esc(meta)}">${esc(meta)}${(item.path_status || item.status) === 'candidate' ? ' · <span class="si-candidate">待核实</span>' : ''}${item.available ? '' : ' · 会话不可用'}</div>
       <details class="si-more"><summary aria-label="关系详情与操作" title="关系详情与操作"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></summary>
       <div class="si-relation-detail">
-      <div class="cwd card-path">${esc(item.source)} · ${esc(item.sid || item.session_uid)}</div>
+      <div class="cwd card-path">${esc(sourceLabels[item.source] || item.source)} · ${esc(item.sid || item.session_uid)}</div>
       ${item.artifact ? `<div class="si-artifact">${esc(item.artifact)}</div>` : ''}
       ${item.evidence ? `<details class="si-evidence"><summary>关系依据</summary><pre>${esc(item.evidence)}</pre></details>` : ''}
       <div class="si-actions">${item.available ? `<a href="${esc(conversationUrl(item.uid))}">打开会话</a>` : ''}
@@ -42,7 +47,7 @@
     document.title = `${row.title || row.sid} · 会话信息`;
     $('#info-open').href = conversationUrl(uid); $('#info-open').hidden = false;
     const facts = [['机器', row.node_name || row.node_id || '本机'], ['Agent', row.source], ['UUID', row.sid], ['目录', row.cwd || '—'], ['创建时间', row.created || '—'], ['更新时间', row.updated || '—']];
-    $('#info-summary').innerHTML = `<h2>${esc(row.title || row.sid)}</h2><dl class="si-facts">${facts.map(([k,v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>`;
+    $('#info-summary').innerHTML = `<h2>${esc(row.title || row.sid)}</h2><dl class="si-facts">${facts.map(([k,v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>`;
     $('#info-summary').hidden = false; $('#info-relations').hidden = false; $('#info-hints').hidden = !row.relations_top_level;
     for (const [side, all, direct] of [['predecessor', data.ancestors, data.predecessors], ['successor', data.descendants, data.successors]]) {
       $(`#${side}-count`).textContent = `${all.length} · 直接 ${direct.length}`;

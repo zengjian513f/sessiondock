@@ -246,8 +246,8 @@ async function fetchTermList(node = '', force = false) {
     T.sources = data.sources || {};
     T.sdkSessions = data.sdk_sessions || [];
     T.resume_sources = data.resume_sources || {};
-    T.codex_sdk = data.codex_sdk === true;
-    T.native_sdks = data.native_sdks || {};
+    T.codex_sdk = (data.codex_sdk ?? SessionDockCapabilities.config.codex_sdk) === true;
+    T.native_sdks = data.native_sdks || SessionDockCapabilities.config.native_sdks || {};
     T.bug_report = data.bug_report === true;
     T.bug_report_worker = data.bug_report_worker === true;
     syncBugReportAvailability();
@@ -655,7 +655,7 @@ function syncBugReportAvailability() {
 }
 syncBugReportAvailability();
 
-const BUG_REPORT_SOURCES = { claude: 'Claude', codex: 'Codex', grok: 'Grok', opencode: 'OpenCode', agy: 'Agy' };
+const BUG_REPORT_SOURCES = { claude: 'Claude', codex: 'Codex', grok: 'Grok', opencode: 'OpenCode', agy: 'Agy', kiro: 'Kiro' };
 
 function bugReportSource() {
   return $('#bug-report-source input:checked')?.value || 'codex';
@@ -2161,10 +2161,11 @@ async function openPendingSession(info, {historyMode = 'push'} = {}) {
   const retained = T.views?.get(pending.name)?.keepOutput || T.views?.get(pending.name)?.ended;
   const remembered = T.openViews.has(pending.name) && running;
   const finalScreen = pending.source === 'shell' && pending.final_screen && !running;
+  const noChat = typeof sessionHasChatView === 'function' && !sessionHasChatView(pending.source);
   // 已结束但留有最终画面的 SSH 会话：控制台面板里只读显示它。
-  if ((pending.source === 'shell' || sessiondockCli(pending.source)?.nativeHistory === false)
+  if ((pending.source === 'shell' || sessiondockCli(pending.source)?.nativeHistory === false || noChat)
       && (running || retained || pending.final_screen))
-    await openTermPane(pending.name, true, remembered ? null : (finalScreen ? 'full' : 'collapsed'));
+    await openTermPane(pending.name, true, noChat ? 'full' : (remembered ? null : (finalScreen ? 'full' : 'collapsed')));
   else if (remembered)
     await openTermPane(pending.name);
   resolveNewSession(pending);
@@ -2247,8 +2248,9 @@ async function resolveNewSession(info) {
     }
     // Following a CLI's first native record keeps the user's current surface.
     // Runtime discovery must not turn its composer into a fullscreen terminal.
-    SdkView.legacyViews.add(viewKey(linked.uid));
-    (SdkView.selectMode || SdkView.rememberMode).call(SdkView, linked.uid, null, reopen ? 'terminal' : 'chat');
+    SdkView.legacyViews?.add(viewKey(linked.uid));
+    const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(linked.uid) : true;
+    SdkView.selectMode(linked.uid, null, reopen ? 'terminal' : (hasChat ? 'chat' : defaultSessionView(linked.uid)));
     T.uid = linked.uid;
     await openSession(linked.uid, null, {follow: true, historyMode: 'replace'});
     if (S.sel === linked.uid && !S.agent && reopen && terminalLinked) await openTermPane(current.name);
@@ -2438,16 +2440,21 @@ function renderTakeoverBtn() {
   const contentView = SessionContentView.sync();
   const sdk = $('#a-sdk');
   if (sdk) sdk.hidden = !SdkView.available(S.sel, S.agent);
-  const terminalVisible = !contentView && paneOpen && (T.mode === 'full' || (MOBILE.matches && !sessionTerminalFirst(S.sel)));
+  const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(S.sel) : sessionSourceOf(S.sel) !== 'kiro';
+  const terminalVisible = !contentView && paneOpen && (T.mode === 'full' || !hasChat || (MOBILE.matches && !sessionTerminalFirst(S.sel)));
+  const terminalSelected = terminalVisible || (!hasChat && !contentView);
   b.innerHTML = uiIcon('terminal');
   b.title = b.ariaLabel = '终端';
   b.setAttribute('aria-expanded', String(terminalVisible));
-  b.setAttribute('aria-pressed', String(terminalVisible));
-  b.classList.toggle('on', terminalVisible);
+  b.setAttribute('aria-pressed', String(terminalSelected));
+  b.classList.toggle('on', terminalSelected);
   const chat = $('#a-chat');
   if (chat) {
-    chat.setAttribute('aria-pressed', String(!contentView && !terminalVisible));
-    chat.classList.toggle('on', !contentView && !terminalVisible);
+    chat.hidden = !hasChat;
+    chat.style.display = hasChat ? '' : 'none';
+    const chatActive = hasChat && !contentView && !terminalVisible;
+    chat.setAttribute('aria-pressed', String(chatActive));
+    chat.classList.toggle('on', chatActive);
   }
   paintConsoleAvailability(b, S.sel, S.agent);
   renderComposer();
@@ -3176,9 +3183,10 @@ async function openTermPane(name, autoFocus = true, requestedMode = null, auto =
     // 新接管或从未保存过布局的会话默认只显示终端；分屏只能由拖动产生。
     T.mode = 'full';
   }
+  if (!sessionHasChatView(T.uid || S.sel)) T.mode = 'full';
   rememberTermOpen(name, true);
   rememberTermLayout(name);
-  if (!auto) SdkView.selectMode(T.uid, null, T.mode === 'collapsed' ? 'chat' : 'terminal');
+  if (!auto) SdkView.selectMode(T.uid, null, T.mode === 'collapsed' && sessionHasChatView(T.uid) ? 'chat' : 'terminal');
   const pane = $('#termpane');
   pane.classList.remove('hidden');
   layoutTermPane();
@@ -3212,8 +3220,8 @@ async function openTermPane(name, autoFocus = true, requestedMode = null, auto =
 function toggleTermPane(name) {
   const pane = $('#termpane');
   auditTermPane('toggle', {target: name});
-  if (pane.classList.contains('hidden')) {
-    return openTermPane(name, true, MOBILE.matches ? null : 'full');
+  if (pane.classList.contains('hidden') || !sessionHasChatView(T.uid || S.sel)) {
+    return openTermPane(name, true, MOBILE.matches && sessionHasChatView(T.uid || S.sel) ? null : 'full');
   }
   if (typeof sessionTerminalFirst === 'function' && sessionTerminalFirst()) {
     T.mode = T.mode === 'full' ? 'collapsed' : 'full';
@@ -3253,6 +3261,7 @@ function revealConversationForPrompt(uid, prompt) {
     return false;
   }
   if (S.sel !== uid || S.agent) return false;
+  if (!sessionHasChatView(uid)) return false;
   if (typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid)) return false;
   const pane = $('#termpane');
   if (!pane || pane.classList.contains('hidden')) return false;
@@ -4902,16 +4911,17 @@ function sessionComposerEnded(uid = S.sel) {
 
 function renderComposer() {
   const shell = typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(S.sel);
-  const enabled=conversationSendEnabled() || shell;
+  const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(S.sel) : sessionSourceOf(S.sel) !== 'kiro';
+  const enabled=(conversationSendEnabled() || shell) && (hasChat || shell);
   const name = enabled && sessionTerminalEnabled(S.sel) ? takenOver(S.sel) : null;
   const pending = enabled && String(S.sel || '').startsWith('tmux:');
   const receipt = pending && (T.pending || []).find(row => pendingUid(row.name) === S.sel);
-  const restartable = conversationSendEnabled() && !shell
+  const restartable = conversationSendEnabled() && !shell && hasChat
     && ['exited', 'failed'].includes(receipt?.state)
     && receipt?.binding?.state !== 'confirmed';
   // Keep the conversation editor visible. Subagents share S.sel with their
   // parent, so their disabled editor must not load the parent's draft.
-  const show = !!S.sel && (!shell || !S.agent
+  const show = !!S.sel && (hasChat || shell) && (!shell || !S.agent
     && (restartable || (!sessionComposerEnded(S.sel) && !!(name || pending))));
   const box = $('#composer');
   box.classList.toggle('hidden', !show);

@@ -146,6 +146,10 @@ fn owned(row: &Row, ids: &BTreeSet<String>) -> bool {
 }
 /// Read native data from explicit homes only. Related persistent stores that
 /// need a separate adapter are surfaced, never silently discarded.
+pub fn kiro_transfer_unsupported() -> TransferError {
+    TransferError::new("unsupported_source", "Kiro 会话暂不支持跨机迁移或复制")
+}
+
 pub fn capture(home: &Path, plan: &ClonePlan) -> Result<Native, TransferError> {
     let ids: BTreeSet<_> = plan.identities.threads.keys().cloned().collect();
     let mut files = std::fs::read_dir(home)?

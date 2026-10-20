@@ -607,6 +607,7 @@ fn source_of(scope: &crate::sessions::NativeScope) -> Option<Source> {
         "grok" => Some(Source::Grok),
         "opencode" => Some(Source::Opencode),
         "agy" => Some(Source::Agy),
+        "kiro" => Some(Source::Kiro),
         _ => None,
     }
 }
@@ -653,6 +654,15 @@ pub async fn create(
                     StatusCode::CONFLICT,
                     "launch_source",
                     "续接会话的数据源与请求来源不一致",
+                ));
+            }
+            if body.source == Source::Kiro
+                && state.native_sdks.loaded_uids().contains(&scope.uid)
+            {
+                return Err(ApiError::new(
+                    StatusCode::CONFLICT,
+                    "sdk_session_busy",
+                    "该 Kiro 会话正在 SDK 模式中运行，请先停止 SDK 会话再切换到 CLI 终端。",
                 ));
             }
             Some((scope.session_id, scope.uid))
@@ -768,6 +778,13 @@ pub async fn takeover(
     crate::terminal::terminal_size(body.cols.unwrap_or(120), body.rows.unwrap_or(32))?;
     let (scope, cwd) = resolve_resume(&state, body.uid).await?;
     let source = source_of(&scope).ok_or_else(invalid)?;
+    if source == Source::Kiro && state.native_sdks.loaded_uids().contains(&scope.uid) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "sdk_session_busy",
+            "该 Kiro 会话正在 SDK 模式中运行，请先停止 SDK 会话再切换到 CLI 终端。",
+        ));
+    }
     if matches!(source, Source::Claude | Source::Grok | Source::Agy)
         && state.native_sdks.loaded_uids().contains(&scope.uid)
     {

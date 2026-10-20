@@ -2,8 +2,27 @@
 
 // Native providers share the SDK surface, draft/upload store and history
 // renderer. Protocol translation and process ownership stay on the node.
+const NATIVE_SDK_SOURCES = Object.freeze({
+  claude: {source: 'claude', title: 'Claude', emptyTitle: '新建 Claude 会话', busyCode: 'native_sdk_session_busy'},
+  grok: {source: 'grok', title: 'Grok', emptyTitle: '新建 Grok 会话', busyCode: 'native_sdk_session_busy'},
+  opencode: {source: 'opencode', title: 'OpenCode', emptyTitle: '新建 OpenCode 会话', busyCode: 'native_sdk_session_busy'},
+  agy: {source: 'agy', title: 'Agy', emptyTitle: '新建 Agy 会话', busyCode: 'native_sdk_session_busy'},
+  kiro: {source: 'kiro', title: 'Kiro', emptyTitle: '新建 Kiro 会话', busyCode: 'kiro_sdk_session_busy'},
+});
+
 const NativeSdkView = {
   ...SdkUI.methods,
+  sources: NATIVE_SDK_SOURCES,
+  create(source) {
+    const spec = NATIVE_SDK_SOURCES[source] || {
+      source,
+      title: (typeof SOURCES !== 'undefined' && SOURCES[source]?.name) || source,
+      emptyTitle: `新建 ${(typeof SOURCES !== 'undefined' && SOURCES[source]?.name) || source} 会话`,
+      busyCode: source === 'kiro' ? 'kiro_sdk_session_busy' : 'native_sdk_session_busy',
+    };
+    const cli = typeof SESSIONDOCK_CLIS !== 'undefined' ? SESSIONDOCK_CLIS[source] : null;
+    return cli ? Object.assign(cli, spec) : spec;
+  },
   uid: '', agent: null, pane: null, generation: 0, connected: false,
   available(uid, agent) {
     const source = String(uid || '').split(':')[0];
@@ -24,7 +43,8 @@ const NativeSdkView = {
     this.historyRenderedData = null; this.historyCut = null;
     this.nativeModel = this.nativeEffort = null;
     const generation = ++this.generation;
-    const name = SOURCES[String(uid).split(':')[0]]?.name || 'Agent';
+    const source = String(uid).split(':')[0];
+    const name = SOURCES[source]?.name || NATIVE_SDK_SOURCES[source]?.title || 'Agent';
     pane.classList.add('native-sdk-pane');
     SdkUI.mount(this, {name, readOnly, historyReady,
       settings: (view, values) => NativeSdkControls.settings(view, values)});
@@ -58,6 +78,12 @@ const NativeSdkView = {
     try {
       const data = await this.request('api/native-sdk/open', {uid:this.uid}, read.signal);
       if (!this.current(generation)) return;
+      if (String(this.uid).startsWith('kiro:') && typeof findTermForSession === 'function'
+          && findTermForSession(this.uid) && !S.liveSdk.has(this.uid) && !data?.capabilities && !data?.raw?.capabilities) {
+        const busyError = new Error('CLI 终端会话正在运行，请先停止 CLI 终端会话后再启动 SDK 模式。');
+        busyError.code = 'kiro_sdk_session_busy';
+        throw busyError;
+      }
       this.capabilities = data.capabilities || data.raw?.capabilities || {};
       this.openFailed = false;
       void this.loadModels(generation);
@@ -92,8 +118,18 @@ const NativeSdkView = {
     } catch (error) {
       if (this.current(generation)) {
         this.openFailed = true;
-        this.setNotice(`无法打开 SDK 模式：${error.message}`, 'blocked');
-        if (reconnecting || error.code === 'native_sdk_session_busy') this.reconnect();
+        const kiroBusy = error.code === 'kiro_sdk_session_busy'
+          || (String(this.uid).startsWith('kiro:')
+            && (error.code === 'native_sdk_session_busy'
+              || (typeof findTermForSession === 'function' && !!findTermForSession(this.uid))));
+        if (kiroBusy) {
+          this.readOnly = true;
+          this.syncComposer?.();
+          this.setNotice('CLI 终端会话正在运行，请先停止 CLI 终端会话后再启动 SDK 模式。', 'blocked');
+        } else {
+          this.setNotice(`无法打开 SDK 模式：${error.message}`, 'blocked');
+          if (reconnecting || error.code === 'native_sdk_session_busy') this.reconnect();
+        }
       }
     } finally { if (this.openRead === read) this.openRead = null; }
   },
@@ -190,7 +226,10 @@ const NativeSdkView = {
     }
     this.openFailed = !!raw.error;
     this.capabilities = {...this.capabilities, ...raw.capabilities};
-    this.items = (raw.items || []).map(nativeSdkMessage);
+    const rawItems = Array.isArray(raw.items) ? raw.items : [];
+    this.items = (this.uid.startsWith('kiro:')
+      ? rawItems.filter(item => !(item?.role === 'system' && (item.kind === 'compact' || item.type === 'compact')))
+      : rawItems).map(nativeSdkMessage);
     this.setConnected(true);
     this.paintHistory();
     const ids = new Set();
@@ -346,7 +385,10 @@ const NativeSdkView = {
     if (request.type === 'user_dialog' && typeof result === 'string') result={behavior:'completed',result};
     const generation = this.generation;
     card.querySelectorAll('button,input,textarea').forEach(control => { control.disabled = true; });
-    try { await this.request('api/native-sdk/respond', {uid:this.uid,key:request.key,result}); }
+    try {
+      await this.request('api/native-sdk/respond', {uid:this.uid,key:request.key,result});
+      card.classList.add('sdk-answered');
+    }
     catch (error) {
       if (this.current(generation)) {
         card.querySelectorAll('button,input,textarea').forEach(control => { control.disabled = false; });
@@ -408,21 +450,40 @@ function nativeSdkMessage(item) {
 function savedSessionView(uid, agent) {
   const key = viewKey(uid, agent);
   const saved = store.get('sessionViews', {})?.[key];
+  const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(uid) : sessionSourceOf(uid) !== 'kiro';
+  if (!hasChat) return ['sdk', 'terminal'].includes(saved) ? saved : null;
   return ['sdk', 'chat', 'terminal'].includes(saved) ? saved : null;
 }
 function rememberSessionView(uid, agent, mode) {
+  const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(uid) : sessionSourceOf(uid) !== 'kiro';
+  const normalized = !hasChat && mode === 'chat' ? defaultSessionView(uid) : mode;
   const saved = store.get('sessionViews', {}) || {};
-  saved[viewKey(uid, agent)] = mode;
+  saved[viewKey(uid, agent)] = normalized;
   store.set('sessionViews', saved);
 }
 function defaultSessionView(uid) {
-  return agentStartMode(String(uid).split(':')[0]) === 'sdk' ? 'sdk' : 'chat';
+  const source = typeof sessionSourceOf === 'function' ? sessionSourceOf(uid) : String(uid || '').split(':')[0];
+  const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(source) : source !== 'kiro';
+  if (!hasChat) {
+    if (typeof sessionHasRunningSdk === 'function' && sessionHasRunningSdk(uid)) return 'sdk';
+    if (typeof findTermForSession === 'function' && findTermForSession(uid)) return 'terminal';
+    const key = typeof viewKey === 'function' ? viewKey(uid, null) : String(uid || '');
+    const explicit = (typeof SdkView !== 'undefined' && SdkView.views?.get(key)) || savedSessionView(uid, null);
+    if (explicit === 'sdk' || explicit === 'terminal') return explicit;
+    const sdkAvail = String(uid || '').includes(':') && typeof SdkView !== 'undefined'
+      ? SdkView.available(uid, null)
+      : (typeof nativeSdkAvailableFor === 'function' ? nativeSdkAvailableFor(source) : false);
+    if (agentStartMode(source) === 'cli' || !sdkAvail) return 'terminal';
+    return 'sdk';
+  }
+  return agentStartMode(source) === 'sdk' ? 'sdk' : 'chat';
 }
 
 const SdkView = new Proxy({
   active: CodexSdkView,
   awaitingRunning: false,
   legacyViews: CodexSdkView.legacyViews,
+  selectController: null,
   available(uid, agent) { return CodexSdkView.available(uid,agent) || NativeSdkView.available(uid,agent); },
   views: new Map(),
   selection: null,
@@ -430,18 +491,31 @@ const SdkView = new Proxy({
     return this.selection?.key === viewKey(uid, agent) ? this.selection.mode : null;
   },
   selectMode(uid, agent, mode) {
+    const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(uid) : sessionSourceOf(uid) !== 'kiro';
+    const nextMode = !hasChat && mode === 'chat' ? defaultSessionView(uid) : mode;
     const key = viewKey(uid, agent);
-    this.views.set(key, mode);
-    rememberSessionView(uid, agent, mode);
-    if (!agent) this.selection = {...(this.selection?.key === key ? this.selection : {}), key, mode};
+    this.views.set(key, nextMode);
+    rememberSessionView(uid, agent, nextMode);
+    if (!agent) this.selection = {...(this.selection?.key === key ? this.selection : {}), key, mode: nextMode};
   },
   async selectFor(uid, agent) {
+    this.selectController?.abort();
+    this.selectController = null;
+    const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(uid) : sessionSourceOf(uid) !== 'kiro';
+    const key = viewKey(uid, agent);
     if (agent || (!this.available(uid, agent) && (!HUB_MODE || Nodes.capabilities[nodeOf(uid)]))) {
-      this.selection = null; return;
+      if (!hasChat && !agent) {
+        const mode = 'terminal';
+        this.selection = {key, mode, runningSdk: false};
+        return mode;
+      }
+      this.selection = null;
+      return;
     }
-    const key = viewKey(uid, agent), candidate = this.views.get(key) || savedSessionView(uid, agent);
+    const rawCandidate = this.views.get(key) || savedSessionView(uid, agent);
+    const candidate = !hasChat && rawCandidate === 'chat' ? null : rawCandidate;
     const selection = this.selection = {key, mode: 'loading'};
-    const controller = new AbortController();
+    const controller = this.selectController = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12000);
     try {
       const query = new URLSearchParams({force: '1'});
@@ -454,23 +528,42 @@ const SdkView = new Proxy({
         typeof T === 'undefined' ? Promise.resolve() : loadTermList(true),
       ]);
       if (this.selection !== selection || S.sel !== uid || S.agent !== agent) return;
-      if (!this.available(uid, agent)) { this.selection = null; return; }
+      if (!this.available(uid, agent)) {
+        if (!hasChat && !agent) {
+          this.selection = {key, mode: 'terminal', runningSdk: false};
+          return 'terminal';
+        }
+        this.selection = null;
+        return;
+      }
       const state = live.status === 'fulfilled' ? live.value : null;
       const name = typeof T === 'undefined' ? null : takenOver(uid);
-      const console = name && (T.list || []).find(row => row.name === name && row.running !== false && !row.stale);
-      const sdk = state?.sdk_uids?.includes(uid);
+      const console = (name && (T.list || []).find(row => row.name === name && row.running !== false && !row.stale))
+        || (typeof findTermForSession === 'function' ? findTermForSession(uid) : null);
+      const sdk = state?.sdk_uids?.includes(uid) || (typeof sessionHasRunningSdk === 'function' && sessionHasRunningSdk(uid));
       const external = state?.uids?.includes(uid) && !sdk;
       const unknown = !Array.isArray(state?.uids) || state.errors?.some(error => error.node_id === nodeOf(uid));
       selection.runningSdk = !unknown && sdk === true;
-      // A previous view is only a candidate. Current server ownership decides
-      // whether it can still accept input, including across clients/reloads.
-      selection.mode = console ? (candidate === 'sdk' && sdk ? 'sdk' : candidate === 'chat' ? 'chat' : 'terminal')
-        : sdk ? 'sdk' : external || unknown || terminalListUncertain(uid) ? 'chat' : candidate || defaultSessionView(uid);
-    } finally { clearTimeout(timer); }
+      if (!hasChat) {
+        selection.mode = sdk ? 'sdk'
+          : console ? 'terminal'
+          : candidate || defaultSessionView(uid);
+      } else {
+        // A previous view is only a candidate. Current server ownership decides
+        // whether it can still accept input, including across clients/reloads.
+        selection.mode = console ? (candidate === 'sdk' && sdk ? 'sdk' : candidate === 'chat' ? 'chat' : 'terminal')
+          : sdk ? 'sdk' : external || unknown || terminalListUncertain(uid) ? 'chat' : candidate || defaultSessionView(uid);
+      }
+      return selection.mode;
+    } finally {
+      clearTimeout(timer);
+      if (this.selectController === controller) this.selectController = null;
+    }
   },
   defaultFor(uid, agent) {
     if (!this.available(uid,agent)) return false;
-    return agent ? !this.legacyViews.has(viewKey(uid,agent)) : this.preferredMode(uid,agent) === 'sdk';
+    return agent ? (this.views.get(viewKey(uid, agent)) || savedSessionView(uid, agent) || 'sdk') === 'sdk'
+      : this.preferredMode(uid,agent) === 'sdk';
   },
   pending(uid) { return SdkUI.methods.pending(uid); },
   syncRunning() {
@@ -537,4 +630,27 @@ const SdkView = new Proxy({
     else target.active[key] = value;
     return true;
   },
+});
+
+const _sessionViewMode = new Proxy({}, {
+  get(_target, prop) {
+    if (typeof prop !== 'string') return undefined;
+    const key = typeof viewKey === 'function' ? viewKey(prop, null) : prop;
+    return SdkView.views.get(key) || savedSessionView(prop, null) || undefined;
+  },
+  set(_target, prop, value) {
+    if (typeof prop === 'string') {
+      if (value == null) SdkView.views.delete(typeof viewKey === 'function' ? viewKey(prop, null) : prop);
+      else SdkView.selectMode(prop, null, value);
+    }
+    return true;
+  },
+  deleteProperty(_target, prop) {
+    if (typeof prop === 'string') SdkView.views.delete(typeof viewKey === 'function' ? viewKey(prop, null) : prop);
+    return true;
+  },
+});
+Object.assign(globalThis, {
+  NATIVE_SDK_SOURCES, NativeSdkView, SdkView, defaultSessionView, _sessionViewMode,
+  KiroCli: NativeSdkView.create('kiro'),
 });

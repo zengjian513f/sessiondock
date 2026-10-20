@@ -26,6 +26,7 @@ pub mod grok_sdk;
 pub mod hub;
 pub mod hub_config;
 pub mod integrations;
+pub mod kiro_sdk;
 pub(crate) mod json_compat;
 pub mod lifecycle;
 pub mod list_sync;
@@ -351,12 +352,14 @@ fn build_app(
                     &config.roots.claude,
                     &config.roots.codex,
                     &config.roots.grok,
+                    &config.roots.kiro,
                 ]
                 .into_iter()
                 .flatten()
                 .map(std::path::PathBuf::as_path),
             )
-            .with_agy_home(config.agy_home.clone()),
+            .with_agy_home(config.agy_home.clone())
+            .with_kiro_root(config.roots.kiro.clone()),
         ))
     });
     capabilities["live"] = serde_json::json!(proc_scan.is_some());

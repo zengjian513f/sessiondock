@@ -20,8 +20,8 @@ H1_RE = re.compile(r"^#\s+(.+?)\s*$")
 LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 GROUPS = {
     "开发与交付": {"onboarding.md", "runbook-dev.md", "validation.md", "delegation.md", "adding-a-cli.md", "deployment.md", "release.md", "public-release.md", "deploy-hub.md", "deploy-macos.md", "deploy-windows.md", "replacement-checklist.md", "network-topology.md"},
-    "SDK、对话与界面": {"sdk-ui.md", "native-sdk.md", "sdk-feature-audit.md", "codex-sdk.md", "grok-sdk.md", "agy-sdk.md", "claude-sdk.md", "opencode-sdk.md", "conversation.md", "composer-input.md", "cli-state.md", "codex-commands.md", "quotas.md", "frontend-migration-surfaces.md", "question-card-regression-audit.md"},
-    "会话、历史与文件": {"read-model.md", "history-pages.md", "native-input.md", "append-cache.md", "native-tags.md", "session-clone.md", "session-move.md", "trash.md", "metadata.md", "media.md", "media-pagination-design.md", "files.md", "external-links.md", "delivery-scope.md", "agy.md", "opencode.md", "codex-names.md", "grok-metadata.md", "nesting-regression-audit.md"},
+    "SDK、对话与界面": {"sdk-ui.md", "native-sdk.md", "sdk-feature-audit.md", "codex-sdk.md", "grok-sdk.md", "agy-sdk.md", "claude-sdk.md", "opencode-sdk.md", "kiro-sdk.md", "conversation.md", "composer-input.md", "cli-state.md", "codex-commands.md", "quotas.md", "frontend-migration-surfaces.md", "question-card-regression-audit.md"},
+    "会话、历史与文件": {"read-model.md", "history-pages.md", "native-input.md", "append-cache.md", "native-tags.md", "session-clone.md", "session-move.md", "trash.md", "metadata.md", "media.md", "media-pagination-design.md", "files.md", "external-links.md", "delivery-scope.md", "agy.md", "opencode.md", "kiro.md", "codex-names.md", "grok-metadata.md", "nesting-regression-audit.md"},
     "终端与生命周期": set(),
     "架构、接口与运行服务": {"architecture.md", "module-map.md", "environment.md", "error-codes.md", "route-ledger.md", "glossary.md", "capabilities.md", "hub.md", "diagnostics.md", "logging.md", "bug-report.md", "security-model.md", "processes.md", "process-links.md", "liveness.md"},
     "历史资料（按需查阅）": {"perf-methodology.md", "performance.md", "process-launch-audit.md", "history-incidents.md"},

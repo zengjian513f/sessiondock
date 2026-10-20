@@ -155,26 +155,51 @@ class AgyCli extends SessionDockCli {
   }
 }
 
+// Kiro 仅提供 SDK 与 CLI 终端两种模式，不使用 PTY 屏幕解析对话视图。
+class KiroCli extends SessionDockCli {
+  constructor() {
+    super('kiro', 'Kiro', 'i-kiro', 'var(--kiro)');
+  }
+}
+
 const SESSIONDOCK_CLIS = Object.freeze({
   claude: new ClaudeCli(),
   codex: new CodexCli(),
   grok: new GrokCli(),
   agy: new AgyCli(),
   opencode: new OpencodeCli(),
+  kiro: new KiroCli(),
 });
 
-function sessiondockCli(sourceOrUid) {
+function sessionSourceOf(sourceOrUid) {
+  if (!sourceOrUid) return '';
+  if (typeof sourceOrUid === 'object') {
+    if (sourceOrUid.source) return String(sourceOrUid.source);
+    sourceOrUid = sourceOrUid.uid || '';
+  }
   const value = String(sourceOrUid || '');
   let source = value.split(':', 1)[0];
-  // 首条原生记录落盘前，新建会话的 uid 是 tmux:sessiondock-<cli>-...。
-  // 这个阶段也必须使用对应 CLI 的发送确认策略。
   if (source === 'tmux') {
-    source = value.match(/^tmux:sessiondock-(claude|codex|grok|opencode|agy)-/)?.[1] || source;
+    source = value.match(/^tmux:sessiondock-(claude|codex|grok|opencode|agy|kiro)-/)?.[1] || source;
   }
+  return source;
+}
+
+function sessionHasChatView(sourceOrUid) {
+  return sessionSourceOf(sourceOrUid) !== 'kiro';
+}
+
+function sessiondockCli(sourceOrUid) {
+  const source = sessionSourceOf(sourceOrUid);
   return SESSIONDOCK_CLIS[source] || null;
 }
 
 // 供 app.js、term.js 以及 headless 回归共同使用。
 Object.assign(globalThis, {
-  SessionDockCli, ClaudeCli, CodexCli, GrokCli, OpencodeCli, AgyCli, SESSIONDOCK_CLIS, sessiondockCli,
+  SessionDockCli, ClaudeCli, CodexCli, GrokCli, OpencodeCli, AgyCli, KiroCli,
+  SESSIONDOCK_CLIS, sessionSourceOf, sessionHasChatView, sessiondockCli,
 });
+if (typeof window !== 'undefined') {
+  window.KiroCli = typeof NativeSdkView !== 'undefined' && typeof NativeSdkView.create === 'function'
+    ? NativeSdkView.create('kiro') : SESSIONDOCK_CLIS.kiro;
+}

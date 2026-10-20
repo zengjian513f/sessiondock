@@ -416,6 +416,9 @@ impl TransferService {
             ));
         }
         let group = self.group_in(selected, snapshot)?;
+        if group.members.iter().any(|m| m.source == "kiro") {
+            return Err(native::kiro_transfer_unsupported());
+        }
         let mut codex_group = group.clone();
         codex_group.members.retain(|m| m.source == "codex");
         let mut file_group = group.clone();

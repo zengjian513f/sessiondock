@@ -2929,8 +2929,9 @@ function pruneLazyRows() {
     S.sessions = S.sessions.filter(sidebarChildVisible);
   } while (S.sessions.length !== previous);
   S.sessions = S.sessions.map(s => {
-    if (S.lazyOpen.has(s.uid) || !s.agent_items) return s;
-    const {agent_items, ...main} = s;
+    const normalized = s.source === 'kiro' && !s.title ? {...s, title: '新建 Kiro 会话'} : s;
+    if (S.lazyOpen.has(normalized.uid) || !normalized.agent_items) return normalized;
+    const {agent_items, ...main} = normalized;
     return main;
   });
 }
@@ -7069,11 +7070,12 @@ function head(m, total) {
   h.dataset.uid = m.uid;
   const tmuxLive = S.liveTmux.has(m.uid);
   const hasAgents = (m.agent_items || []).length > 0;
+  const displayTitle = m.title || (m.source === 'kiro' ? '新建 Kiro 会话' : '');
   const titleView = hasAgents ? `
     <button class="session-view-switch" id="a-view-switch" type="button"
       title="切换主会话/子代理" aria-label="切换主会话/子代理" aria-expanded="false">
-      <span>${esc(m.title)}</span><i>⌄</i>
-    </button>` : `<span>${esc(m.title)}</span>`;
+      <span>${esc(displayTitle)}</span><i>⌄</i>
+    </button>` : `<span>${esc(displayTitle)}</span>`;
   const menuView = hasAgents ? `
     <div class="session-view-menu" id="session-view-menu" hidden role="menu">${sessionViewRows(m)}</div>` : '';
   h.innerHTML = `
@@ -7432,11 +7434,12 @@ async function toggleSessionRun(row, button = null, intent = null, composerMode 
     }
     return;
   }
-  if (sessionRunActive(row) && !(composerMode === 'sdk' && SdkView.openFailed)) {
+  if (sessionRunActive(row) && !(composerMode === 'sdk' && (SdkView.openFailed || !S.liveSdk.has(row.uid)))) {
     if (!composerMode) await openSession(row.uid, row.agent_id || null);
     return;
   }
-  const mode = composerMode || agentStartMode(row.source);
+  const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(row.source) : row.source !== 'kiro';
+  const mode = composerMode || (!hasChat && S.sel === row.uid && SessionContentView.kind === 'sdk' ? 'sdk' : agentStartMode(row.source));
   if (sessionRunUnavailable(row, mode)) {paintSessionRunControl(button, row); return;}
   ConsoleUI.busy.add(row.uid);
   ConsoleUI.errors.delete(row.uid);
@@ -11676,7 +11679,7 @@ async function openExternalSession(spec, historyMode = 'replace') {
     return true;
   }
   let route = routeSession(spec), sidebarCatalog = null;
-  if (!route && /^(codex|claude|grok|opencode|agy):/.test(spec)) {
+  if (!route && /^(codex|claude|grok|opencode|agy|kiro):/.test(spec)) {
     await waitForTermList();
     if (sequence !== deepLinkSequence || href !== location.href || selected !== S.sel) return true;
     const pendingRoute = routeSession(spec, T.sdkSessions || []);
@@ -11757,7 +11760,7 @@ loadSessions(!!DEEP_SID).then(async ok => {
   const restoreDetail = !MOBILE.matches || store.get('mobilePage', 'list') === 'detail';
   if (restoreDetail && last && S.sessions.some(s => s.uid === last)) {
     openSession(last, savedAgent?.uid === last ? savedAgent.id : null);
-  } else if (restoreDetail && /^(codex|claude|grok|opencode|agy):/.test(last || '')) {
+  } else if (restoreDetail && /^(codex|claude|grok|opencode|agy|kiro):/.test(last || '')) {
     await waitForTermList();
     if (S.sel || store.get('sel', null) !== last) return;
     if (SdkView.pending(last)) await openSession(last, null, {historyMode:'replace'});
@@ -11899,7 +11902,7 @@ function renderSessionGroupMembers(dialog, data, uid) {
       const name = document.createElement('div'); name.className = 'transfer-session-name'; name.textContent = member.title || member.sid; name.title = name.textContent;
       title.append(name);
       const detail = document.createElement('div'); detail.className = 'transfer-session-detail'; detail.textContent = member.cwd || member.sid; detail.title = `${member.sid}${member.cwd ? '\n'+member.cwd : ''}`; title.append(detail);
-      const source = document.createElement('td'); source.textContent = {codex:'Codex',claude:'Claude',grok:'Grok'}[member.source] || member.source;
+      const source = document.createElement('td'); source.textContent = SOURCES[member.source]?.name || {codex:'Codex',claude:'Claude',grok:'Grok',kiro:'Kiro'}[member.source] || member.source;
       const relation = document.createElement('td');
       const badge = document.createElement('span'); badge.className = 'transfer-badge';
       badge.textContent = member.selected ? '所选会话' : member.agent ? '子代理' : member.relations.has('fork') ? '分支关联' : '关联历史';

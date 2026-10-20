@@ -172,7 +172,10 @@ pub fn prepare<'a>(request: &'a Value, metadata: &Value) -> Result<Prepared<'a>,
     let source = request["expected_source"].as_str().ok_or(ERROR)?;
     if instance.len() < 16
         || !identifier(instance, 128)
-        || !matches!(source, "claude" | "codex" | "grok" | "opencode" | "agy")
+        || !matches!(
+            source,
+            "claude" | "codex" | "grok" | "opencode" | "agy" | "kiro"
+        )
         || metadata["instance_id"] != instance
         || metadata["source"] != source
     {
@@ -256,7 +259,7 @@ fn prepare_launch<'a>(request: &'a Value, metadata: &Value) -> Result<Prepared<'
         || !identifier(launch, 128)
         || !matches!(
             source,
-            "claude" | "codex" | "grok" | "opencode" | "agy" | "shell"
+            "claude" | "codex" | "grok" | "opencode" | "agy" | "kiro" | "shell"
         )
         || metadata["instance_id"] != instance
         || metadata["source"] != source

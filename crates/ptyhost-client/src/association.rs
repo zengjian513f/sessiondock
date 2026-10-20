@@ -14,6 +14,7 @@ pub enum Source {
     Shell,
     Opencode,
     Agy,
+    Kiro,
 }
 
 impl Source {
@@ -25,6 +26,7 @@ impl Source {
             "shell" => Some(Self::Shell),
             "opencode" => Some(Self::Opencode),
             "agy" => Some(Self::Agy),
+            "kiro" => Some(Self::Kiro),
             _ => None,
         }
     }
@@ -37,6 +39,7 @@ impl Source {
             Self::Shell => "shell",
             Self::Opencode => "opencode",
             Self::Agy => "agy",
+            Self::Kiro => "kiro",
         }
     }
 }

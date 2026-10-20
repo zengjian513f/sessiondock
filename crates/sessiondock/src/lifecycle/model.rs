@@ -16,6 +16,44 @@ pub enum Source {
     Shell,
     Opencode,
     Agy,
+    Kiro,
+}
+
+impl Source {
+    pub const ALL: [Self; 7] = [
+        Self::Claude,
+        Self::Codex,
+        Self::Grok,
+        Self::Shell,
+        Self::Opencode,
+        Self::Agy,
+        Self::Kiro,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Grok => "grok",
+            Self::Shell => "shell",
+            Self::Opencode => "opencode",
+            Self::Agy => "agy",
+            Self::Kiro => "kiro",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "claude" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            "grok" => Some(Self::Grok),
+            "shell" => Some(Self::Shell),
+            "opencode" => Some(Self::Opencode),
+            "agy" => Some(Self::Agy),
+            "kiro" => Some(Self::Kiro),
+            _ => None,
+        }
+    }
 }
 
 /// Private persisted intent data, not authority to bind a native session.
@@ -47,6 +85,7 @@ impl BindingSpec {
             Source::Grok => "grok:",
             Source::Opencode => "opencode:",
             Source::Agy => "agy:",
+            Source::Kiro => "kiro:",
             Source::Shell => return Err(Error::InvalidSpec),
         };
         if self.sid.is_empty()
@@ -141,7 +180,12 @@ impl Launch {
             // (the launcher creates that session first); Codex discovers its
             // thread identity after launch. OpenCode records from before
             // pre-creation stay pending and must still load.
-            Self::NewPending => matches!(source, Source::Codex | Source::Opencode | Source::Agy),
+            Self::NewPending => {
+                matches!(
+                    source,
+                    Source::Codex | Source::Opencode | Source::Agy | Source::Kiro
+                )
+            }
             Self::NewAssigned => matches!(source, Source::Claude | Source::Grok | Source::Opencode),
             Self::Resume { sid, uid } => native_sid(sid) && native_uid(source, uid),
         };
@@ -161,6 +205,7 @@ pub fn native_uid(source: Source, text: &str) -> bool {
         Source::Grok => "grok:",
         Source::Opencode => "opencode:",
         Source::Agy => "agy:",
+        Source::Kiro => "kiro:",
         Source::Shell => return false,
     };
     text.strip_prefix(prefix)
@@ -197,7 +242,7 @@ impl LaunchSpec {
     pub fn profile_new(source: Source, adapter_id: String, cwd: &Path) -> Result<Self, Error> {
         let launch = if source == Source::Shell {
             Launch::Fixed
-        } else if !matches!(source, Source::Codex | Source::Agy) {
+        } else if !matches!(source, Source::Codex | Source::Agy | Source::Kiro) {
             Launch::NewAssigned
         } else {
             Launch::NewPending

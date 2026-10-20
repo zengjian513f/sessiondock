@@ -17,6 +17,7 @@ pub(crate) mod agy;
 pub(super) mod claude;
 pub(super) mod codex;
 pub(super) mod grok;
+pub mod kiro;
 pub(crate) mod opencode;
 
 use std::collections::BTreeSet;
@@ -206,6 +207,7 @@ pub fn summarize(input: &Input<'_>) -> RowSummary {
         "codex" => codex::summarize(input),
         "opencode" => opencode::summarize(input),
         "agy" => agy::summarize(input),
+        "kiro" => kiro::summarize(input),
         _ => grok::summarize(input),
     }
 }
@@ -838,6 +840,32 @@ pub fn skipped_warnings(source: &str, records: &Records) -> Vec<String> {
                 | "agent-switched" | "location-switched" | "compaction" => {}
                 other => skipped.note("OpenCode 记录类型", other),
             },
+            "kiro" => {
+                let kiro_kind = value
+                    .get("kind")
+                    .or_else(|| value.get("message").and_then(|m| m.get("kind")))
+                    .or_else(|| value.get("type"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                match kiro_kind {
+                    "user"
+                    | "assistant"
+                    | "tool_call"
+                    | "tool_result"
+                    | "session_start"
+                    | "error"
+                    | "tombstone"
+                    | "system"
+                    | "checkpoint"
+                    | "Prompt"
+                    | "AssistantMessage"
+                    | "ToolResults"
+                    | "System"
+                    | "Metadata"
+                    | "" => {}
+                    other => skipped.note("Kiro 记录类型", other),
+                }
+            }
             _ => match kind {
                 "reasoning" | "tool_result" | "user" | "assistant" | "system" => {}
                 other => skipped.note("Grok 记录类型", other),
