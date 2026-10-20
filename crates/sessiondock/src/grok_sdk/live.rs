@@ -109,13 +109,14 @@ impl Live {
         }).collect();
         let mut raw = json!({"session_id":self.sid,"running":self.running,"items":items,"requests":requests,
             "native_tasks":self.native_tasks,"native_tasks_incomplete":self.incomplete_tasks,"steers":steers,"idle_reclaimed":self.idle_reclaimed,"configOptions":self.config,"modes":self.modes,"mode":self.modes["currentModeId"],
+            "model":self.models["currentModelId"],
             "usage":self.usage,"billing":self.billing,"context_usage":self.context,"extension_support":self.extensions});
         for (id, name) in [("model", "model"), ("reasoning_effort", "effort")] {
-            if let Some(option) = self
-                .config
-                .as_array()
-                .and_then(|options| options.iter().find(|o| o["id"] == id))
-            {
+            if let Some(option) = self.config.as_array().and_then(|options| {
+                options
+                    .iter()
+                    .find(|o| o["id"] == id && o["currentValue"].is_string())
+            }) {
                 raw[name] = option["currentValue"].clone();
             }
         }

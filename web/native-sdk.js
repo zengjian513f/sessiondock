@@ -136,6 +136,9 @@ const NativeSdkView = {
     const namedModel=this.uid.startsWith('agy:') ? this.models.find(row=>(row.displayName || row.name)===modelName) : null;
     const modelId=namedModel?.id || modelName;
     ConversationUI.selectValue(model,modelId,'选择模型');
+    if (this.raw?.model_observed && modelName === this.nativeModel && model.selectedOptions[0]) {
+      model.selectedOptions[0].textContent += '（上次使用）';
+    }
     model.title = model.selectedOptions[0]?.textContent || '模型';
     model.closest('label').hidden = !this.models.length && !modelName;
     const selected = this.models.find(row => (row.id || row.model || row.modelId) === modelId);
@@ -157,12 +160,13 @@ const NativeSdkView = {
   applySnapshot(raw) {
     const stick = this.nearBottom();
     const completed = this.running && !raw.running;
+    const observedModelChanged = this.raw?.model_observed !== raw.model_observed;
     this.raw = raw;
     this.running = !!raw.running;
     const model = typeof raw.model === 'string' ? raw.model : raw.model?.providerID && raw.model?.id
       ? `${raw.model.providerID}/${raw.model.id}` : raw.model?.id || raw.model?.modelID || null;
     const effort = raw.effort || null;
-    if (model !== this.nativeModel || effort !== this.nativeEffort) {
+    if (model !== this.nativeModel || effort !== this.nativeEffort || observedModelChanged) {
       this.nativeModel = model; this.nativeEffort = effort; this.paintPickers();
     }
     this.openFailed = !!raw.error;

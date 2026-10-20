@@ -52,6 +52,11 @@
 
 ## 快照与回答
 
+恢复已有会话时，SDK 模型栏在原生 `system/init` 或回答报告模型前显示 read-model
+确认的最后一个主会话模型，并标注“上次使用”；忽略 `<synthetic>` 和子代理记录。该历史证据只用于显示，
+不会变成 `--model` 或 `set_model`，原生实时模型到达后优先显示实时值。
+没有历史或实时证据时仍显示“选择模型”，不从模型目录推测默认模型。
+
 主会话订阅 key 是完整 `target.uid`。`uid+":"+agent` 保留为共享 facade 的
 子代理命名约定，但 Claude 不支持独立恢复子代理 transcript，明确返回
 `claude_sdk_unsupported`，`subagents:false`，不会误发给父会话。

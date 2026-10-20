@@ -37,7 +37,8 @@ async fn target(state: &AppState, uid: &str, agent: &str) -> Result<Value, ApiEr
     state.reader.run(move |store| {
         let scope = store.native_scope(&uid, &agent)?;
         let snapshot = store.snapshot(&uid, &agent)?;
-        Ok(json!({"uid":uid,"session_id":scope.session_id,"cwd":snapshot.metadata()["cwd"],"source":scope.source,"agent":agent}))
+        Ok(json!({"uid":uid,"session_id":scope.session_id,"cwd":snapshot.metadata()["cwd"],"source":scope.source,"agent":agent,
+            "observed_model":snapshot.metadata()["model"]}))
     }).await
 }
 

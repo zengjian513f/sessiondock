@@ -115,6 +115,8 @@ PID 为空的匹配原生活动标记也会报告冲突；已退出或 zombie PI
   或原生 `{outcome: {outcome: "selected", optionId}}`；取消为
   `{outcome: "cancelled"}`。未知选项和失效 key 明确报错。
 - models 对已打开会话返回 `{models: availableModels, native, configOptions, capabilities}`。
+  快照模型优先使用 `configOptions` 的 model 当前值；没有该项时使用会话
+  `models.currentModelId`，不能因为模型目录和设置选项分开返回而丢失当前模型。
   创建前可使用 target `{source: "grok", cwd}`，仅读 initialize.modelState，
   随后关闭该探测进程，不创建会话。没有原生模型数据时明确报 unsupported。
   网页新建的 `/api/term/models?source=grok` 同样从当前 profile 的专用

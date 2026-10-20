@@ -51,6 +51,7 @@ struct Session {
     sid: String,
     cwd: PathBuf,
     path: PathBuf,
+    observed_model: Option<String>,
     fork: Option<(PathBuf, String)>,
     fork_metadata: Value,
     runtime: RwLock<()>,
@@ -248,6 +249,7 @@ impl Session {
             sid,
             cwd,
             path,
+            observed_model: None,
             fork: None,
             fork_metadata: Value::Null,
             runtime: RwLock::new(()),
@@ -303,7 +305,8 @@ impl Session {
     fn snapshot(&self, live: &Live) -> Value {
         json!({"seq":live.seq,"type":"snapshot","raw":{
             "session_id":self.sid,"running":!live.turns.is_empty() || live.native_running,"items":live.items,
-            "requests":live.requests.values().collect::<Vec<_>>(),"model":live.model,"effort":live.effort,
+            "requests":live.requests.values().collect::<Vec<_>>(),"model":live.model.as_ref().or(self.observed_model.as_ref()),"effort":live.effort,
+            "model_observed":live.model.is_none() && self.observed_model.is_some(),
             "settings":live.settings,"usage":live.usage,"model_usage":live.model_usage,
             "context_usage":live.context_usage,"rate_limits":live.rate_limits,
             "usage_errors":live.usage_errors,"status":live.status,"retry":live.retry,"compact":live.compact,
@@ -496,13 +499,14 @@ impl Bridge {
         let path = path.ok_or(
             "claude_sdk: inventory identity no longer exists under the configured native root",
         )?;
-        let session = Arc::new(Session::new(
-            uid.into(),
-            sid.into(),
-            cwd,
-            path,
-            &Value::Null,
-        ));
+        let mut session = Session::new(uid.into(), sid.into(), cwd, path, &Value::Null);
+        // Historical evidence is display-only until stream-json reports the
+        // runtime's model. Never turn a resumed transcript into a CLI override.
+        session.observed_model = target["observed_model"]
+            .as_str()
+            .filter(|model| !model.is_empty() && *model != "<synthetic>")
+            .map(str::to_owned);
+        let session = Arc::new(session);
         state.sessions.insert(uid.into(), session.clone());
         Ok(session)
     }

@@ -157,6 +157,8 @@ class FakeGrok:
                 self.update("agent_message_chunk", content={"type": "text", "text": "Replay is ordinary history"},
                             _meta={"isReplay": True})
             settings = {} if json.loads(Path(os.environ["GROK_SDK_FAKE_CAPABILITY"]).read_text()).get("omit_settings") else self.settings()
+            if json.loads(Path(os.environ["GROK_SDK_FAKE_CAPABILITY"]).read_text()).get("omit_model_option") and settings:
+                settings["configOptions"] = [option for option in settings["configOptions"] if option["id"] != "model"]
             self.reply(message, {**settings, "sessionId": self.sid,
                                 "_meta": {"currentWorkingDirectory": self.cwd}})
         elif method == "x.ai/interject":
