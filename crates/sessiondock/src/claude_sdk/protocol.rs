@@ -159,6 +159,13 @@ pub(super) fn observe_at(session: &Session, frame: Value, offset: Option<u64>) {
                         live.ready = true;
                     }
                     Some("set_model") => live.model = request["model"].as_str().map(str::to_owned),
+                    Some("interrupt") => {
+                        live.interrupt_requested = true;
+                        // A result can precede its control response. Record the
+                        // explicit native acknowledgement without claiming work
+                        // has stopped while native running evidence remains.
+                        live.last_turn = json!({"status":"interrupted"});
+                    }
                     Some("set_permission_mode") => {
                         live.settings["permission_mode"] = request["mode"].clone()
                     }
@@ -429,6 +436,11 @@ pub(super) fn observe_at(session: &Session, frame: Value, offset: Option<u64>) {
                 live.usage["last_turn"] = frame["usage"].clone();
             }
             live.retry = Value::Null;
+            live.last_turn = json!({"status":if live.interrupt_requested {
+                "interrupted"
+            } else if frame["is_error"] == true || frame["subtype"].as_str().is_some_and(|s| s != "success") {
+                "failed"
+            } else {"completed"},"id":frame["uuid"]});
             live.turns.pop_front();
             if !live.state_observed {
                 live.native_running = false;
@@ -444,7 +456,11 @@ pub(super) fn observe_at(session: &Session, frame: Value, offset: Option<u64>) {
                     .or_else(|| frame["result"].as_str().map(str::to_owned))
                     .unwrap_or_else(|| text(&frame["subtype"]));
                 live.error = Some(error.clone());
-                live.error_kind = Some("turn");
+                live.error_kind = Some(if live.interrupt_requested {
+                    "interrupted"
+                } else {
+                    "turn"
+                });
                 let id = frame["uuid"]
                     .as_str()
                     .map(str::to_owned)

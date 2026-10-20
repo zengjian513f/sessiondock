@@ -5940,7 +5940,6 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   S.sel = uid;
   S.agent = selectedAgent;
   SessionContentView.sync();
-  if (SessionContentView.kind === 'sdk') SdkView.retryOpen();
   renderNetworkNotice();
   syncSessionNotices();
   clearUnread(uid);
@@ -5949,6 +5948,13 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   revealSessionInSidebar(uid, selectedAgent, sidebarCatalog);
   paintSidebarSelection(uid, selectedAgent);
   updateSessionUrl(uid, selectedAgent, historyMode);
+
+  if (!follow) await SdkView.selectFor(uid, selectedAgent);
+  if (S.sel !== uid || S.agent !== selectedAgent || inflight !== ac) return;
+  if (SessionContentView.kind === 'sdk') {
+    if (SdkView.defaultFor(uid, selectedAgent)) SdkView.retryOpen();
+    else SessionContentView.close();
+  }
 
   const key = viewKey(uid, selectedAgent);
   const sdkPending = !selectedAgent && SdkView.pending(uid);

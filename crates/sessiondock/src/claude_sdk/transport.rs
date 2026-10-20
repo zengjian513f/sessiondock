@@ -243,15 +243,17 @@ impl Bridge {
                 live.background_tasks.clear();
                 live.turns.clear();
                 live.requests.clear();
-                if !deliberate
-                    && live.error.is_none()
-                    && (unfinished || status.is_none_or(|s| !s.success()))
-                {
+                if !deliberate && (unfinished || status.is_none_or(|s| !s.success())) {
                     let diagnostic = live.stderr.back().cloned().unwrap_or_default();
-                    live.error = Some(format!(
+                    let error = format!(
                         "claude_sdk_disconnected: native CLI exited; accepted input is not replayed. {diagnostic}"
-                    ));
-                    live.error_kind = Some("transport");
+                    );
+                    live.runtime_error = Some(error.clone());
+                    if live.last_turn.is_null() && live.error.is_none() {
+                        live.last_turn = json!({"status":"incomplete","error":error});
+                        live.error = Some(error);
+                        live.error_kind = Some("transport");
+                    }
                 }
                 // initialize is a control request too. Preserve the already
                 // redacted exit diagnostic when its waiter reports failure;

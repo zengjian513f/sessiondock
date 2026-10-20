@@ -884,7 +884,7 @@ pub async fn list(
     let mut response = json!({"enabled":false, "transport_enabled":state.terminal.is_some(),
         "unavailable_reason":"没有通过完整会话 UID 和实例校验的运行中终端；创建和 CLI 接管尚未启用。",
         "sources":{},"home":home,"sessions":[],"pending":[],"hosts":[],
-        "codex_sdk": state.codex_sdk.is_some(),
+        "codex_sdk": state.codex_sdk_available(),
         "native_sdks": state.native_sdks.capabilities(),
         "conversation_send": state.conversations.is_some(),
         "conversation_path_completion": state.conversations.is_some(),

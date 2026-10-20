@@ -64,7 +64,7 @@ def exercise(browser, base, fixture, width, theme, screenshots):
     assert status.evaluate("e => getComputedStyle(e, '::before').animationName") == 'none'
     page.emulate_media(reduced_motion='no-preference')
     page.locator('#sdk-stop').click()
-    expect(status).to_have_text('就绪')
+    expect(status).to_have_text('已中断')
     status_send('retry')
     capture_status('retrying')
     expect(status).to_have_text('就绪', timeout=15000)
@@ -75,7 +75,7 @@ def exercise(browser, base, fixture, width, theme, screenshots):
         capture_status('maintenance')
     finally:
         compact_gate.unlink(missing_ok=True)
-    expect(status).to_have_text('就绪', timeout=15000)
+    expect(status).to_have_attribute('data-state','ready', timeout=15000)
     expect(page.locator('.sdk-msgs')).not_to_contain_text('上下文已压缩')
     status_send('/unsupported-status-command')
     capture_status('blocked')

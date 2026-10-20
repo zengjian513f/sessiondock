@@ -111,6 +111,12 @@ struct Live {
     compact: Value,
     background_tasks: Vec<Value>,
     error: Option<String>,
+    #[serde(default)]
+    runtime_error: Option<String>,
+    #[serde(default)]
+    last_turn: Value,
+    #[serde(default)]
+    interrupt_requested: bool,
     #[serde(deserialize_with = "hosted_error_kind")]
     error_kind: StaticErrorKind,
     // Diagnostic tail is private and redacted, never returned in snapshots.
@@ -182,7 +188,7 @@ fn capabilities() -> Value {
     json!({"send":true,"interrupt":true,"respond":true,"approval":true,"question":true,
         "models":true,"create":true,"resume":cfg!(target_os="linux"),"shared_tui":false,
         "subagents":false,"effort":true,"settings":true,"permission_mode":true,"fast_mode":true,
-        "usage":true,"context_usage":true,"compact":true,
+        "usage":true,"context_usage":true,"compact":true,"rename":true,
         "fork":true,"fork_before":true,
         "mcp_elicitation":true,"user_dialog":true,
         "limitations":["Claude stream-json owns an independent CLI runtime; an active independent TUI cannot be attached or taken over.",
@@ -293,6 +299,9 @@ impl Session {
                 compact: Value::Null,
                 background_tasks: vec![],
                 error: None,
+                runtime_error: None,
+                last_turn: Value::Null,
+                interrupt_requested: false,
                 error_kind: None,
                 stderr: VecDeque::new(),
                 streaming_message: String::new(),
@@ -311,6 +320,7 @@ impl Session {
             "context_usage":live.context_usage,"rate_limits":live.rate_limits,
             "usage_errors":live.usage_errors,"status":live.status,"retry":live.retry,"compact":live.compact,
             "background_tasks":live.background_tasks,"error":live.error,"error_kind":live.error_kind,
+            "last_turn":live.last_turn,"runtime_error":live.runtime_error,
             "capabilities":capabilities()}})
     }
 
@@ -621,6 +631,13 @@ impl Bridge {
         }
         let _operation = session.operations.lock().await;
         match method {
+            "rename" => {
+                self.ensure(&session).await?;
+                let title = input["title"]
+                    .as_str()
+                    .ok_or("claude_sdk: title required")?;
+                session.control(json!({"subtype":"rename_session","title":title,"source":"host","session_id":session.sid})).await
+            }
             "fork" => self.fork_session(&session, &input).await,
             "discard" => {
                 let active = {
@@ -803,9 +820,15 @@ impl Bridge {
                 live.items.push(json!({"id":message_id,"native_id":message_id,"role":"user","content":text,"text":text,"request_id":request_id}));
                 if method == "compact" {
                     live.compact = json!({"state":"requested","request_id":request_id});
+                } else {
+                    live.compact = Value::Null;
                 }
+                live.retry = Value::Null;
                 live.error = None;
                 live.error_kind = None;
+                live.runtime_error = None;
+                live.last_turn = Value::Null;
+                live.interrupt_requested = false;
                 session.publish(&mut live);
                 live.save_checkpoint()
                     .map_err(|e| format!("claude_sdk_checkpoint: {e}"))?;

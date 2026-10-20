@@ -59,6 +59,7 @@ ACP JSON-RPC wire 的自定义方法必须带前导下划线，即 `_x.ai/...`�
 | `x.ai/session/usage` / `x.ai/session/info` / `x.ai/billing` | 进程累计用量、独立的原生上下文估计、账号额度 |
 | `x.ai/compact_conversation` / `x.ai/session/fork` | 原生压缩及分支，不用模型提示词模拟 |
 | `x.ai/rewind/points` / `x.ai/rewind/execute` | 原生 prompt index；明确 conversation_only、force:false |
+| `x.ai/session/rename` | `{sessionId,cwd,title}`；网页 `/rename` 改原生标题，不改写会话文件 |
 
 ## 启用与进程归属
 

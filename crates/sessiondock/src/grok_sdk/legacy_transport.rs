@@ -168,11 +168,12 @@ impl Connection {
                 state.publish();
                 return;
             }
-            state.error = Some(reason.into());
-            state.error_kind = Some("transport");
-            let sid = state.sid.clone();
-            state.items.push(json!({"id":format!("grok:{sid}:transport:{generation}"),"role":"system",
-                "content":format!("{reason}；连接结束不会重放已接受的输入。运行中的原生请求可能已产生结果，请查看原生历史。"),"error":true}));
+            state.runtime_error = Some(reason.into());
+            if state.error.is_none() && state.last_turn.is_null() {
+                state.last_turn = json!({"status":"incomplete","error":reason});
+                state.error = Some(reason.into());
+                state.error_kind = Some("transport");
+            }
             state.publish();
         });
         Ok(connection)

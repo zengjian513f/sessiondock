@@ -95,6 +95,16 @@ pub struct AppState {
     pub shell_env: Option<Arc<crate::shell_env::ShellEnv>>,
 }
 
+impl AppState {
+    pub fn codex_sdk_available(&self) -> bool {
+        self.codex_sdk.is_some()
+            && !self
+                .lifecycle
+                .as_ref()
+                .is_some_and(|service| service.cli_missing(crate::lifecycle::model::Source::Codex))
+    }
+}
+
 #[derive(Clone)]
 pub struct Reader {
     pub store: Arc<SessionStore>,

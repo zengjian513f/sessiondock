@@ -50,6 +50,7 @@ struct Data {
     effort: Option<String>,
     error: Option<String>,
     error_kind: Option<&'static str>,
+    last_turn: Value,
     diagnostics: String,
     usage: Value,
     step_usage: Value,
@@ -491,6 +492,7 @@ impl Bridge {
                 effort,
                 error: None,
                 error_kind: None,
+                last_turn: Value::Null,
                 diagnostics: String::new(),
                 usage: Value::Null,
                 step_usage: Value::Null,
@@ -593,7 +595,7 @@ impl Live {
     fn raw(&self, data: &Data) -> Value {
         json!({"session_id":self.sid,"cwd":self.cwd,"running":data.outstanding>0,
             "items":data.items,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
-            "error":data.error,"error_kind":data.error_kind,"diagnostics":data.diagnostics,"capabilities":capabilities(),
+            "error":data.error,"error_kind":data.error_kind,"last_turn":data.last_turn,"diagnostics":data.diagnostics,"capabilities":capabilities(),
             "usage":data.usage,"step_usage":data.step_usage,"settings":{"mode":data.mode,"applies":"next_turn"},
             "modes":[{"id":"accept-edits","name":"接受编辑"},{"id":"auto","name":"自动"},{"id":"plan","name":"计划"}]})
     }
@@ -783,6 +785,12 @@ async fn actor(
                         "failed"
                     });
                 }
+                data.last_turn = json!({"id":turn.id,"status":match &outcome {
+                    Ok(()) => "completed",
+                    Err(error) if error.starts_with("agy_sdk_interrupted") || error.starts_with("agy_sdk_native_INTERRUPTED") => "interrupted",
+                    Err(_) if conflict => "unknown",
+                    Err(_) => "failed",
+                }});
                 if let Err(error) = outcome {
                     data.error_kind = Some(if conflict {
                         "uncertain"

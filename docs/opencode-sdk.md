@@ -147,6 +147,7 @@ unknown，不自动重发。
 
 | facade 操作 | 原生语义 |
 | --- | --- |
+| `rename({title})` | PATCH session 的原生 title；网页刷新原生镜像列表 |
 | `fork({request_id,before?})` | POST fork；省略 before 复制全部投影历史，before 为原生消息 ID，复制该消息之前的历史；返回独立 SID/UID 和 create 同形的 session |
 | `revert({message_id})` | POST revert/stage，始终 `files:false`，只暂存可撤销的对话边界，不恢复工作区文件 |
 | `unrevert` / `revert_commit` | DELETE revert 撤销暂存 / POST revert/commit 永久提交边界；提交须在 UI 明确区分 |

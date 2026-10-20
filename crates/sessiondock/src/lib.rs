@@ -321,7 +321,12 @@ fn build_app(
     )
     .map(|endpoint| codex_sdk::CodexSdk::new(endpoint, shutdown.clone(), config.state_dir.clone()))
     .transpose()?;
-    capabilities["codex_sdk"] = serde_json::json!(codex_sdk.is_some());
+    capabilities["codex_sdk"] = serde_json::json!(
+        codex_sdk.is_some()
+            && !lifecycle
+                .as_ref()
+                .is_some_and(|service| service.cli_missing(lifecycle::model::Source::Codex))
+    );
     capabilities["native_sdks"] = native_sdks.capabilities();
     capabilities["native_sdk_unavailable"] = native_sdks.unavailable();
     // Explicit private trash directory only; routes stay 501 without it.

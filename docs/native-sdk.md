@@ -29,10 +29,12 @@ DELTA：SDK 可用的来源默认打开 SDK；新建直接调用原生接口取�
 PTY。原生 CLI 是否立即落盘由各协议决定。已配置的普通对话和终端入口仍可手动
 选择。恢复只使用 inventory 或创建回执中的原生 SID/cwd，不按标题或目录猜配。
 Claude 的原生子代理归档不能作为独立 SDK 会话，隐藏其入口。
-DELTA（Claude 视图恢复）：按主会话 UID 在浏览器保存最近选择的 SDK、对话或终端，
-切换会话及刷新后恢复，Hub 的节点命名空间分别保存。没有记录时先等待终端发现；
-已有受管终端沿用其布局，已观察到独立 CLI 时显示对话，其余仍默认 SDK。
-恢复视图不自动接管、结束 CLI 或释放 SDK；终端已退出时保留普通历史和终端入口。
+DELTA（视图与后端运行状态）：Codex、Claude、Grok、Agy、OpenCode 每次选择会话时，
+先读取服务器的 SDK 归属和终端状态，再检查本页上次视图是否仍可用。
+CLI 终端存活时保留对话／终端；只有 SDK 存活时切换到 SDK；只有 CLI 存活时不连接 SDK。
+独立 CLI 没有可接入的终端时显示普通对话；没有运行实例时沿用可用 SDK 的默认入口。
+CLI 与 SDK 均可用时保留候选视图。浏览器旧的 Claude 模式记忆不再读取或写入，
+新客户端也按服务器现状选择。读取状态失败时不自动连接 SDK；切换不接管或结束任何进程。
 
 输入共用服务端草稿。失败保留输入，成功只清本次提交，发送期间的新编辑保留。
 DELTA：五种 SDK 的文件与图片统一沿用原版 SessionDock 附件逻辑：发送时发布到
@@ -53,6 +55,26 @@ DELTA：五种 SDK 的文件与图片统一沿用原版 SessionDock 附件逻辑
 [SDK 界面合同](sdk-ui.md)，各来源只在自己的协议合同记录差异。
 压缩进度与结果使用状态栏，不创建实时压缩气泡；SDK 历史不重复显示
 `event_kind:compact` 提示，保留原生历史、分页和普通对话记录。
+
+DELTA：四来源的 `last_turn` 与运行实例状态独立；原生中断、失败和未完成结果在
+重开时继续显示，不能因实例闲置而改成成功。Grok/Claude 的 `runtime_error`
+只补充实例退出原因，不覆盖已收到的回合结果；无结果时标记未完成。
+Grok `retry_state` 与 OpenCode 最新 assistant 的 `retry` 进入状态栏，输出恢复或
+回合结束后清除；压缩通知/记录只更新状态与上下文，不生成系统气泡。
+历史与 live 只按原生身份对齐：Claude UUID、OpenCode message ID、Agy step index、
+Grok prompt index。缺少可关联身份时保留历史，不使用相同文本推测边界。
+Grok 普通 ACP prompt 尚未提供与 chat_history prompt index 的可靠关联，不能把
+网页 request ID 或同文匹配冒充该身份，也不据此宣称已验证原生消费。
+
+历史和 live 的用户消息共用按能力开放的分支菜单；Grok/OpenCode 还提供对话回退。
+操作使用该消息的原生身份，成功后追加原输入并保留已有草稿，不自动发送。
+Claude 仅分支，Agy 不显示未经原生支持的会话动作。`/new` 打开共用新建弹窗；
+`/rename 名称` 走原生改名，缺能力或失败保留输入。新建 SDK 模型目录与已打开
+会话使用同一原生来源；无 UID 查询不创建会话或模型回合。
+
+Grok `model_changed.model_id/reasoning_effort` 和 configOptions 更新有效选择；
+OpenCode 读取原生 session model/variant，Claude 使用 init/assistant 与控制回执。
+Agy 保留 init/原生历史模型证据和下一轮设置，未知的有效 effort 不伪造回读。
 
 网页离开、SSE 断开或切换视图不取消已接受工作；重开取桥接快照，不重发输入。
 五种 SDK 使用实时流与增量轮询同步落盘历史，不额外占用历史 watch 长连接。
@@ -90,7 +112,8 @@ DELTA：五种 SDK 的文件与图片统一沿用原版 SessionDock 附件逻辑
 | POST `/api/native-sdk/stop` | `{uid, agent?}`；取消待投递输入并停止所选桥接，保留原生历史和共享服务 |
 | POST `/api/native-sdk/interrupt` | `{uid, agent?}`；原生中断，只针对桥接所属任务 |
 | POST `/api/native-sdk/respond` | `{uid, agent?, key, result}`；回答该会话仍未解决的原生审批或问题 |
-| POST `/api/native-sdk/models` | `{uid, agent?}`；原生模型目录 |
+| POST `/api/native-sdk/models` | `{uid, agent?}` 或新建前的 `{source, cwd?}`；原生模型目录，Hub 加 `_node` |
+| POST `/api/native-sdk/rename` | `{uid, title}`；Grok/Claude/OpenCode 原生改名，Agy 不声明此能力 |
 | POST `/api/native-sdk/usage` | 原生 Token/上下文；Agy/Claude 合并已有 quota；`refresh:true` 仅查询本来源 |
 | POST `/api/native-sdk/settings` | 来源自己的模型/effort/模式/权限/Fast；OpenCode `native_agent` 与身份字段 `agent` 分开 |
 | POST `/api/native-sdk/fork` | Grok/OpenCode/Claude 原生分支，返回稳定身份；成功网页回执持久化、Hub 命名空间处理 |

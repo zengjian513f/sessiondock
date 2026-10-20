@@ -16,8 +16,8 @@ import re
 import tempfile
 import time
 
-from claude_sdk_fixtures import ClaudeFixture, MonotonicClock, managed_console, native_uid, project_key
-from history_fixtures import BINARY, REPO
+from claude_sdk_fixtures import ClaudeFixture, MonotonicClock, native_uid, project_key
+from history_fixtures import BINARY
 
 
 def post(page, method, body, *, ok=True):
@@ -567,131 +567,11 @@ def startup_failure_check(fixture, binary, screenshots=None):
         browser.close()
 
 
-def view_mode_check(fixture, base, screenshots, label):
-    """Restore actual user choices without opening a competing SDK runtime."""
-    from playwright.sync_api import sync_playwright, expect
-    from popups import on_popup
-    other_sid = '7335eb0f-98c5-421b-b72a-d1abae633f80'
-    other_path = fixture.path.with_name(other_sid + '.jsonl')
-    other_path.write_text(fixture.path.read_text().replace(fixture.sid, other_sid)
-                          .replace('earlier synthetic Claude prompt', '另一条 Claude SDK 会话 · independent preference'))
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
-        try:
-            for width, theme in [(1280, 'light'), (390, 'dark'), (1280, 'dark'), (390, 'light')]:
-                print(f'Claude view restore: {label} {width} {theme}', flush=True)
-                context = browser.new_context(viewport={'width': width, 'height': 900},
-                                              color_scheme=theme, service_workers='block')
-                page = context.new_page()
-                # Each context controls only this fixture's private PTY.
-                on_popup(page, lambda popup: popup.accept()
-                         if popup.type == "confirm" and "是否抢占终端" in popup.message
-                         else popup.dismiss())
-                errors, opens = [], []
-                page.on('pageerror', lambda error: errors.append(str(error)))
-                page.on('request', lambda request: opens.append(request.post_data_json)
-                        if request.method == 'POST' and '/api/native-sdk/open' in request.url else None)
-                # Keep console discovery pending until the user has opened the
-                # row: a slow first list must not trigger SDK auto-connection.
-                pending_lists = []
-                page.route('**/api/term/list*', lambda route: pending_lists.append(route))
-                page.goto(base, wait_until='domcontentloaded')
-                row = page.locator('#side .item[data-uid^="claude:"]').filter(has_text='earlier synthetic Claude prompt')
-                row.click()
-                expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
-                assert not opens, opens
-                for route in pending_lists:
-                    route.continue_()
-                page.unroute('**/api/term/list*')
-                expect(page.locator('#a-term')).to_have_attribute('aria-pressed', 'true')
-                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN && !ConsoleUI.busy.has(S.sel)')
-                uid = page.evaluate('S.sel')
-                assert ('~' in uid) == (label == 'hub'), uid
-                assert not opens, opens
-
-                def capture(mode):
-                    if screenshots:
-                        screenshots.mkdir(parents=True, exist_ok=True)
-                        page.screenshot(path=str(screenshots / f'claude-view-{label}-{width}-{theme}-{mode}.png'))
-
-                def choose(target):
-                    if page.locator('#detail .mobile-back').is_visible():
-                        page.locator('#detail .mobile-back').click()
-                    page.locator(f'#side .item[data-uid="{target}"]').click()
-
-                # Explicit terminal choice survives refresh without SDK open.
-                page.locator('#a-term').click()
-                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN && !ConsoleUI.busy.has(S.sel)')
-                page.reload(wait_until='networkidle')
-                expect(page.locator('#a-term')).to_have_attribute('aria-pressed', 'true')
-                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN && !ConsoleUI.busy.has(S.sel)')
-                capture('terminal')
-                assert not opens, opens
-                page.locator('#a-chat').click()
-                page.reload(wait_until='networkidle')
-                expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
-                expect(page.locator('#msgs')).to_contain_text('earlier synthetic Claude answer')
-                capture('chat')
-                assert not opens, opens
-
-                if page.locator('#detail .mobile-back').is_visible():
-                    page.locator('#detail .mobile-back').click()
-                page.locator('#side .item[data-uid^="claude:"]').filter(has_text='另一条 Claude SDK 会话').click()
-                start_sdk_if_needed(page)
-                expect(page.locator('#sdk-input')).to_be_visible()
-                other_uid = page.evaluate('S.sel')
-                page.wait_for_function('NativeSdkView.connected')
-                page.reload(wait_until='networkidle')
-                expect(page.locator('#sdk-input')).to_be_enabled()
-                capture('sdk')
-                choose(uid)
-                expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
-                page.locator('#a-term').click()
-                expect(page.locator('#a-term')).to_have_attribute('aria-pressed', 'true')
-                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN && !ConsoleUI.busy.has(S.sel)')
-                choose(other_uid)
-                expect(page.locator('#sdk-input')).to_be_visible()
-                choose(uid)
-                expect(page.locator('#a-term')).to_have_attribute('aria-pressed', 'true')
-                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN && !ConsoleUI.busy.has(S.sel)')
-                assert not [body for body in opens if body['uid'] == uid], opens
-                assert not errors, errors
-                context.close()
-        finally:
-            browser.close()
-
-
-def view_modes(binary, screenshots, hub_binary):
-    from hub_fixtures import Hub, free_port
-    from node_auth_fixtures import TOKEN, node_env
-    from types import SimpleNamespace
-    for label in ('node', 'hub'):
-        with tempfile.TemporaryDirectory(prefix='sessiondock-claude-views-') as temporary:
-            root = Path(temporary)
-            fixture = ClaudeFixture(root)
-            with managed_console(fixture):
-                port = free_port()
-                with fixture.server(binary, node_env(root, port, '127.0.0.0/8')) as base:
-                    if label == 'node':
-                        view_mode_check(fixture, base, screenshots, label)
-                    else:
-                        hub_root = root / 'hub'; hub_root.mkdir()
-                        hub = Hub(hub_binary.resolve(), hub_root,
-                                  [SimpleNamespace(name='ClaudeViews', token=TOKEN, port=port)])
-                        hub.start()
-                        try:
-                            view_mode_check(fixture, f'http://127.0.0.1:{hub.port}', screenshots, label)
-                        finally:
-                            hub.stop()
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
-    parser.add_argument("--hub-binary", type=Path, default=REPO / "target/debug/sessiondock-hub")
     parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
-    view_modes(args.binary, args.screenshots, args.hub_binary)
     for kind in ('user', 'approval'):
         with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-startup-hooks-') as temporary:
             startup_hooks_check(ClaudeFixture(Path(temporary)), args.binary, kind)
@@ -708,7 +588,7 @@ def main():
             idle_check(fixture, base, clock)
     with tempfile.TemporaryDirectory(prefix='sessiondock-claude-sdk-fork-restart-') as temporary:
         fork_restart_check(ClaudeFixture(Path(temporary)), args.binary)
-    print("PASS Claude native SDK: node/Hub view restoration, browser send/stop, usage/settings/compact/image/requests, native fork boundaries/source preservation/deduplication, ten-minute idle reclaim with active/request/task/subscriber guards and same-SID resume")
+    print("PASS Claude native SDK: browser send/stop, usage/settings/compact/image/requests, native fork boundaries/source preservation/deduplication, ten-minute idle reclaim with active/request/task/subscriber guards and same-SID resume")
 
 
 if __name__ == "__main__":

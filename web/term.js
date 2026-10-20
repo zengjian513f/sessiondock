@@ -174,9 +174,9 @@ function mergeUnavailableTermRows(rows, previous, errors) {
 
 let termListBootstrap = null;
 let termListStarted = false;
-function loadTermList() {
+function loadTermList(force = false) {
   if (SessionDockNetwork.paused) return Promise.resolve();
-  if (termListBootstrap) return termListBootstrap;
+  if (termListBootstrap) return force ? termListBootstrap.then(() => loadTermList(true)) : termListBootstrap;
   // A linked/reloaded conversation needs its own machine's observation, not
   // the slowest member of the fleet. Complete the inventory afterwards.
   const node = !termListStarted && HUB_MODE
@@ -184,8 +184,8 @@ function loadTermList() {
   termListStarted = true;
   const first = /^[a-f0-9]{32}$/.test(node) ? node : '';
   const request = (first
-    ? fetchTermList(first).then(() => fetchTermList())
-    : fetchTermList()).finally(() => {
+    ? fetchTermList(first, force).then(() => fetchTermList('', force))
+    : fetchTermList('', force)).finally(() => {
       if (T.listRequest === request) T.listRequest = null;
       if (termListBootstrap === request) termListBootstrap = null;
     });
@@ -193,7 +193,7 @@ function loadTermList() {
   T.listRequest = request;
   return request;
 }
-async function fetchTermList(node = '') {
+async function fetchTermList(node = '', force = false) {
   const requestSeq = ++termListRequestSeq;
   const openEpoch = termOpenEpoch;
   const fingerprint = () => [
@@ -211,7 +211,10 @@ async function fetchTermList(node = '') {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12000);
   try {
-    const response = await fetch(appUrl('api/term/list' + (node ? '?nodes=' + node : '')), {signal:controller.signal});
+    const query = new URLSearchParams();
+    if (node) query.set('nodes', node);
+    if (force) query.set('force', '1');
+    const response = await fetch(appUrl('api/term/list' + (query.size ? '?' + query : '')), {signal:controller.signal});
     transient = response.status === 429 || response.status >= 500;
     data = await response.json();
     if (!response.ok || data.error) throw new Error(
@@ -228,8 +231,8 @@ async function fetchTermList(node = '') {
   // 请求在终端打开/切换之前发出时，它的“没有该视图”结论已经过期。丢弃
   // 整份结果并立刻重取，不能先销毁刚打开的常驻终端视图再补回来。
   if (openEpoch !== termOpenEpoch) {
-    if (termListBootstrap) await fetchTermList(node);
-    else void loadTermList();
+    if (termListBootstrap) await fetchTermList(node, force);
+    else void loadTermList(force);
     return;
   }
   T.listLoaded = true;
@@ -551,7 +554,7 @@ async function takeover(uid, btn) {
     // Starting from the session menu bypasses the terminal button's view
     // switch. Select the terminal before discovery can restore the SDK pane.
     SdkView.legacyViews.add(viewKey(uid));
-    SdkView.rememberMode(uid, null, 'terminal');
+    SdkView.selectMode(uid, null, 'terminal');
     SessionContentView.close();
     await loadTermList();
     // The receipt is ready, but the fresh instance reaches the console
@@ -1553,6 +1556,21 @@ function agyModelCatalog(catalog) {
   return {...catalog, models, efforts};
 }
 
+function nativeSdkModelCatalog(raw, source) {
+  const options=raw?.configOptions || [];
+  const choices=Array.isArray(raw) ? raw : raw?.data || raw?.models?.availableModels || raw?.models
+    || options.find(option=>option.id==='model')?.options || [];
+  const models=(Array.isArray(choices)?choices:[]).map(model=>typeof model==='string'?{id:model,name:model}:{
+    ...model,id:model.id || model.modelId || model.value || model.model,
+    name:model.displayName || model.name || model.id || model.value,
+    efforts:model.efforts || model.supportedEffortLevels || model.variants
+      || model._meta?.reasoningEfforts?.map(option=>typeof option==='string'?option:option.value || option.id)
+      || options.find(option=>option.id==='reasoning_effort')?.options?.map(option=>option.value),
+  }).filter(model=>model.id && !model.hidden);
+  const catalog={models,efforts:[...new Set(models.flatMap(model=>model.efforts || []))]};
+  return source==='agy'?agyModelCatalog(catalog):catalog;
+}
+
 function fetchModelCatalog(node, source) {
   const key = (HUB_MODE ? node + '|' : '') + source + '|' + agentStartMode(source);
   if (!modelCatalogs.has(key)) {
@@ -1561,8 +1579,14 @@ function fetchModelCatalog(node, source) {
         const params = new URLSearchParams({source, ...(HUB_MODE ? {node} : {})});
         const sdk = agentStartMode(source) === 'sdk' && source === 'codex' && SessionDockCapabilities.config.codex_sdk === true
           && (!HUB_MODE || Nodes.capabilities[node]?.codex_sdk === true);
-        const response = await fetch(appUrl(`${sdk ? 'api/codex-sdk/models' : 'api/term/models'}?${params}`), {cache: 'no-store'});
+        const native = agentStartMode(source) === 'sdk' && SessionDockCapabilities.config.native_sdks?.[source] === true
+          && (!HUB_MODE || Nodes.capabilities[node]?.native_sdks?.[source] === true);
+        const response = native
+          ? await fetch(appUrl('api/native-sdk/models'),{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({source,...(HUB_MODE?{_node:node}:{})}),cache:'no-store'})
+          : await fetch(appUrl(`${sdk ? 'api/codex-sdk/models' : 'api/term/models'}?${params}`), {cache: 'no-store'});
         const data = response.ok ? await response.json() : null;
+        if(native)return data ? nativeSdkModelCatalog(data.raw || data,source) : null;
         if (sdk && Array.isArray(data?.raw?.data)) {
           const models = data.raw.data.filter(row => !row.hidden).map(row => ({id: row.model,
             name: row.displayName || row.model, default_effort: row.defaultReasoningEffort,
@@ -3070,8 +3094,8 @@ function restoreTermPane(uid, agent = null) {
   if (!uid || agent || S.sel !== uid || !sessionTerminalEnabled(uid) || !$('#a-term')) return;
   const name = takenOver(uid);
   const preferred = SdkView.preferredMode(uid, agent);
+  if (preferred === 'loading' || preferred === 'chat') return;
   if (!name || (!T.openViews.has(name) && preferred !== 'terminal')) return;
-  if (preferred === 'chat' && MOBILE.matches) return;
   T.uid = uid;
   const prompt = cache.get(viewKey(uid))?.prompt || null;
   // 刷新页面时可能先恢复了一个仍在等待回答的原生题目，再恢复终端布局。
@@ -3094,12 +3118,13 @@ function restoreTermPane(uid, agent = null) {
   if (revealConversationForPrompt(uid, prompt)) return;
   // loadTermList 和会话 reset 都会走这里。已打开时无需反复 fit/聚焦；首次
   // 自动恢复也只恢复视图，不应抢走用户正在使用的搜索框或输入框。
-  if (!$('#termpane').classList.contains('hidden') && T.name === name) {
+  if (!$('#termpane').classList.contains('hidden') && T.name === name
+      && (preferred !== 'terminal' || T.mode === 'full')) {
     renderTakeoverBtn();
     return;
   }
   auditTermPane('restore', {target: name});
-  openTermPane(name, false, preferred === 'chat' ? 'collapsed' : null, true);
+  openTermPane(name, false, preferred === 'terminal' ? 'full' : null, true);
 }
 
 /** Only hosts with the server-side screen model serve a live console. A running
@@ -3149,7 +3174,7 @@ async function openTermPane(name, autoFocus = true, requestedMode = null, auto =
   }
   rememberTermOpen(name, true);
   rememberTermLayout(name);
-  if (!auto) SdkView.rememberMode(T.uid, null, T.mode === 'collapsed' ? 'chat' : 'terminal');
+  if (!auto) SdkView.selectMode(T.uid, null, T.mode === 'collapsed' ? 'chat' : 'terminal');
   const pane = $('#termpane');
   pane.classList.remove('hidden');
   layoutTermPane();
@@ -6340,7 +6365,7 @@ function finishTermDrag(e) {
   rememberTermLayout();
   renderTakeoverBtn();
   fitTerm();
-  SdkView.rememberMode(T.uid, null, T.mode === 'collapsed' ? 'chat' : 'terminal');
+  SdkView.selectMode(T.uid, null, T.mode === 'collapsed' ? 'chat' : 'terminal');
 }
 document.addEventListener('pointerup', finishTermDrag);
 document.addEventListener('pointercancel', finishTermDrag);

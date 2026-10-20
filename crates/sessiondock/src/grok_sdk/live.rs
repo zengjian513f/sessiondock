@@ -31,10 +31,20 @@ pub(super) struct Live {
     pub requests: HashMap<String, Value>,
     pub receipts: HashMap<String, Value>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub runtime_error: Option<String>,
+    #[serde(default)]
+    pub last_turn: Value,
+    #[serde(default)]
+    pub retry: Value,
+    #[serde(default)]
+    pub compact: Value,
     #[serde(deserialize_with = "deserialize_error_kind")]
     pub error_kind: ErrorKind,
     pub config: Value,
     pub models: Value,
+    #[serde(default)]
+    pub effort: Value,
     pub modes: Value,
     pub usage: Value,
     pub billing: Value,
@@ -72,9 +82,14 @@ impl Live {
             requests: HashMap::new(),
             receipts: HashMap::new(),
             error: None,
+            runtime_error: None,
+            last_turn: Value::Null,
+            retry: Value::Null,
+            compact: Value::Null,
             error_kind: None,
             config: Value::Null,
             models: Value::Null,
+            effort: Value::Null,
             modes: Value::Null,
             usage: Value::Null,
             billing: Value::Null,
@@ -108,8 +123,9 @@ impl Live {
             item
         }).collect();
         let mut raw = json!({"session_id":self.sid,"running":self.running,"items":items,"requests":requests,
+            "last_turn":self.last_turn,"runtime_error":self.runtime_error,"retry":self.retry,"compact":self.compact,
             "native_tasks":self.native_tasks,"native_tasks_incomplete":self.incomplete_tasks,"steers":steers,"idle_reclaimed":self.idle_reclaimed,"configOptions":self.config,"modes":self.modes,"mode":self.modes["currentModeId"],
-            "model":self.models["currentModelId"],
+            "model":self.models["currentModelId"],"effort":self.effort,
             "usage":self.usage,"billing":self.billing,"context_usage":self.context,"extension_support":self.extensions});
         for (id, name) in [("model", "model"), ("reasoning_effort", "effort")] {
             if let Some(option) = self.config.as_array().and_then(|options| {
@@ -159,6 +175,18 @@ impl Live {
         if let Some(models) = result.get("models") {
             self.models = models.clone();
         }
+    }
+    pub fn finish_prompt(&mut self, result: &Result<Value, String>) {
+        self.retry = Value::Null;
+        self.last_turn = match result {
+            Ok(value) => json!({"status":match value["stopReason"].as_str() {
+                Some("cancelled") => "interrupted",
+                Some("max_tokens" | "max_turn_requests" | "refusal") => "incomplete",
+                Some("end_turn") => "completed",
+                _ => "unknown",
+            },"stop_reason":value["stopReason"],"id":self.turn}),
+            Err(error) => json!({"status":"failed","error":error,"id":self.turn}),
+        };
     }
     pub fn receive(&mut self, message: &Value) -> Option<Value> {
         let params = &message["params"];
@@ -281,8 +309,14 @@ impl Live {
             self.idle_since = None;
         }
         match update["sessionUpdate"].as_str().unwrap_or("") {
-            "agent_message_chunk" => self.chunk("assistant", &update["content"]),
-            "agent_thought_chunk" => self.chunk("thinking", &update["content"]),
+            "agent_message_chunk" => {
+                self.retry = Value::Null;
+                self.chunk("assistant", &update["content"]);
+            }
+            "agent_thought_chunk" => {
+                self.retry = Value::Null;
+                self.chunk("thinking", &update["content"]);
+            }
             "user_message_chunk" => {
                 // Grok may echo the accepted prompt. Keep the bridge's stable
                 // request-id user row instead of showing it twice.
@@ -390,6 +424,26 @@ impl Live {
                 }
             }
             "config_option_update" => self.config = update["configOptions"].clone(),
+            "model_changed" => {
+                if let Some(model) = update["model_id"].as_str() {
+                    if !self.models.is_object() {
+                        self.models = json!({});
+                    }
+                    self.models["currentModelId"] = json!(model);
+                    self.effort = update["reasoning_effort"].clone();
+                    if let Some(options) = self.config.as_array_mut() {
+                        for option in options {
+                            match option["id"].as_str() {
+                                Some("model") => option["currentValue"] = json!(model),
+                                Some("reasoning_effort") => {
+                                    option["currentValue"] = self.effort.clone()
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
             "current_mode_update" => self.modes["currentModeId"] = update["currentModeId"].clone(),
             "turn_completed" => {
                 if let Some(usage) = update.get("usage").filter(|v| !v.is_null()) {
@@ -401,12 +455,29 @@ impl Live {
                 self.requests
                     .retain(|_, r| r["native"]["toolCallId"] != update["tool_call_id"]);
             }
-            "auto_compact_started"
-            | "auto_compact_completed"
-            | "auto_compact_failed"
-            | "retry_state"
-            | "image_dropped"
-            | "image_compressed" => {
+            "auto_compact_started" => {
+                self.compact = json!({"state":"compacting","native":update});
+            }
+            "auto_compact_completed" => {
+                self.compact = json!({"state":"success","native":update});
+                self.context = Value::Null;
+            }
+            "auto_compact_failed" => {
+                self.compact = json!({"state":"failed","error":update["error"]});
+            }
+            "retry_state" => {
+                if update["type"] == "retrying" {
+                    self.retry = update.clone();
+                } else if matches!(update["type"].as_str(), Some("failed" | "exhausted")) {
+                    self.retry = Value::Null;
+                    self.error = update["message"]
+                        .as_str()
+                        .or_else(|| update["reason"].as_str())
+                        .map(str::to_owned);
+                    self.error_kind = Some("turn");
+                }
+            }
+            "image_dropped" | "image_compressed" => {
                 self.segment += 1;
                 self.items.push(
                     json!({"id":format!("grok:{}:status:{}:{}",self.sid,self.turn,self.segment),

@@ -183,6 +183,11 @@ class FakeGrok:
             self.mode = params["modeId"]
             self.reply(message, self.settings())
             self.update("current_mode_update",currentModeId=self.mode)
+        elif method == "x.ai/session/rename":
+            summary=json.loads((self.path/"summary.json").read_text())
+            summary["generated_title"]=params["title"]
+            (self.path/"summary.json").write_text(json.dumps(summary))
+            self.reply(message,{})
         elif method in {"x.ai/session/usage","x.ai/session/info","x.ai/billing","x.ai/rewind/points","x.ai/compact_conversation","x.ai/rewind/execute","x.ai/session/fork"}:
             if not self.extensions:
                 self.error(message,-32601,"Synthetic unsupported extension")
@@ -259,6 +264,21 @@ class FakeGrok:
 
     def prompt(self, message):
         text = message["params"]["prompt"][0]["text"]
+        if text == "generalize-error-exit":
+            self.error(message, -32000, "Synthetic retained native failure")
+            time.sleep(.1)
+            os._exit(17)
+        if text == "generalize-progress":
+            gate=self.log.with_name("generalize-release")
+            for phase in ("retry","compact","model"):
+                if phase=="retry":self.update("retry_state",type="retrying",attempt=2,maxRetries=4,reason="synthetic capacity retry")
+                elif phase=="compact":self.update("auto_compact_started",tokens_used=1500,context_window=128000,reason="synthetic threshold")
+                else:
+                    self.update("auto_compact_completed",tokens_after=300)
+                    self.update("model_changed",model_id="fake-other",reasoning_effort="high")
+                deadline=time.monotonic()+20
+                while time.monotonic()<deadline and not self.cancel.wait(.02):
+                    if gate.exists() and gate.read_text()==phase:break
         if text == "native-error":
             self.error(message, -32000, "Synthetic model failure")
             return
@@ -347,6 +367,9 @@ class FakeGrok:
             self.append("assistant", "Grok final answer")
             self.reply(message, {"stopReason": "end_turn","_meta":{"usage":{"inputTokens":100,"outputTokens":20,
                 "totalTokens":120,"costUsdTicks":999,"usageIsIncomplete":True,"costIsPartial":True}}})
+            if text=="generalize-success-exit":
+                time.sleep(.1)
+                os._exit(17)
 
     def run(self):
         for line in sys.stdin:

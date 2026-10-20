@@ -51,6 +51,17 @@ impl Bridge {
             None
         };
         let base = format!("/api/session/{}", encoded(&session.sid));
+        if method == "rename" {
+            return self
+                .transport
+                .api(
+                    &session.cwd,
+                    "PATCH",
+                    &base,
+                    Some(json!({"title":string(&input,"title")?})),
+                )
+                .await;
+        }
         if method == "fork" {
             let request = string(&input, "request_id")?;
             let receipt = format!("fork:{}:{request}", session.uid);

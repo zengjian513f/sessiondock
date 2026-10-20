@@ -98,16 +98,9 @@ pub(super) fn messages(record: &Value) -> Vec<Value> {
                 "content":record["output"]["output"],"error":record["exit"].as_i64().is_some_and(|v| v != 0)},
             "output":record["output"]["output"]}),
         ),
-        "compaction" => emit(
-            "",
-            "system",
-            json!(match record["status"].as_str() {
-                Some("running") => "OpenCode 正在压缩上下文",
-                Some("completed") => "OpenCode 上下文压缩完成",
-                _ => "OpenCode 上下文压缩失败",
-            }),
-            json!({"compaction":record,"error":record["error"]}),
-        ),
+        // Compaction belongs to the status bar. Persisted history remains
+        // authoritative and is not changed by this live projection.
+        "compaction" => {}
         "idle" if record["outcome"] == "failed" => emit(
             "",
             "system",

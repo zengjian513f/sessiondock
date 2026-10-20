@@ -23,6 +23,13 @@ use crate::{
 };
 
 pub(super) fn service(state: &AppState) -> Result<Arc<CodexSdk>, ApiError> {
+    if !state.codex_sdk_available() {
+        return Err(ApiError::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "codex_sdk_disabled",
+            "此机器未启用 Codex SDK 模式，或配置的客户端未安装、无法执行",
+        ));
+    }
     state.codex_sdk.clone().ok_or_else(|| {
         ApiError::new(
             StatusCode::NOT_IMPLEMENTED,
