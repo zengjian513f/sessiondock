@@ -20,9 +20,15 @@ class SelectionServer(QueueServer):
     async def _handle(self, writer, message):
         if message.get('method') == 'thread/loaded/list':
             await self.send(writer, {'id':message['id'], 'result':{'data':[THREAD], 'nextCursor':None}})
+        elif message.get('method') == 'turn/settings/update':
+            # Native default: this separate experimental operation is unavailable.
+            await self.send(writer, {'id':message['id'], 'error':{'code':-32600,
+                'message':'turn settings updates require the step_model_switching feature'}})
         elif message.get('method') == 'thread/settings/update' and self.hold_controls and not self.reject_policy:
             await self.send(writer, {'id':message['id'], 'result':{}})
         else:
+            if message.get('method') == 'turn/start':
+                self.active_settings = self.settings.copy()
             await super()._handle(writer, message)
 
     def publish(self, changes=None):
@@ -80,14 +86,29 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
         box.fill(text); send.click(); expect(box).to_have_value('')
     submit('working with immediately selected model ' + label)
     expect(send).to_have_text('排队')
+    active_turn = fake.turn
+    assert fake.active_settings['model'] == 'fake-luna'
     submit('queued before another model change ' + label)
+    box.fill('运行中切模型时保留的草稿 / ' + label)
     control = page.locator('#sdk-model')
     if not control.is_visible(): page.locator('#sdk-more').click()
-    control.select_option('fake-sol')
+    with page.expect_response('**/api/codex-sdk/controls/settings') as response:
+        control.select_option('fake-sol')
+    assert response.value.ok, response.value.text()
     expect(control).to_be_enabled()
+    expect(control).to_have_value('fake-sol')
+    expect(box).to_have_value('运行中切模型时保留的草稿 / ' + label)
     assert fake.settings['model'] == 'fake-sol'
-    assert fake.methods('turn/settings/update')[-1]['params']['turnId'] == fake.turn
-    assert fake.active_settings['model'] == 'fake-sol'
+    assert fake.turn == active_turn and fake.active_settings['model'] == 'fake-luna'
+    assert not fake.methods('turn/settings/update')
+    # A genuine rejection during a turn restores the confirmed selection.
+    fake.reject_policy = True
+    control.select_option('fake-luna')
+    expect(page.locator('#sdk-status-menu')).to_contain_text('Synthetic policy rejected')
+    expect(control).to_have_value('fake-sol'); expect(control).to_be_enabled()
+    assert fake.settings['model'] == 'fake-sol' and fake.turn == active_turn
+    if screenshots: page.screenshot(path=str(screenshots/f'{label}-running-rejected.png'))
+    fake.reject_policy = False
     page.keyboard.press('Escape')
     queued = page.locator('.sdk-queued').filter(has_text='queued before')
     queued.locator('[data-queue-action="steer"]').click()
@@ -96,19 +117,57 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
     submit('next ordinary turn uses current native settings ' + label)
     fake.complete()
     expect(page.locator('.sdk-live')).to_contain_text('next ordinary turn')
+    assert fake.active_settings['model'] == 'fake-sol'
     for row in fake.methods('turn/start'):
         assert 'model' not in row['params'] and 'effort' not in row['params'], row
     assert fake.settings['model'] == 'fake-sol' and fake.settings['effort'] == 'medium'
     starts = len(fake.methods('turn/start'))
     box.fill('/effort high'); send.click(); expect(box).to_have_value('')
     expect(page.locator('#sdk-effort')).to_have_value('high')
-    assert fake.settings['effort'] == 'high' and fake.active_settings['effort'] == 'high'
+    assert fake.settings['effort'] == 'high' and fake.active_settings['effort'] == 'medium'
+    for command, selector, value in [
+        ('/model fake-luna', '#sdk-model', 'fake-luna'),
+        ('/model fake-sol', '#sdk-model', 'fake-sol'),
+    ]:
+        with page.expect_response('**/api/codex-sdk/controls/settings') as response:
+            box.fill(command); send.click()
+        assert response.value.ok, response.value.text()
+        expect(box).to_have_value(''); expect(page.locator(selector)).to_have_value(value)
+    tier = page.locator('#sdk-tier')
+    if not tier.is_visible(): page.locator('#sdk-more').click()
+    with page.expect_response('**/api/codex-sdk/controls/settings') as response:
+        tier.select_option('priority')
+    assert response.value.ok, response.value.text()
+    expect(tier).to_be_enabled(); expect(tier).to_have_value('priority')
+    assert fake.settings['serviceTier'] == 'priority'
+    assert fake.active_settings['serviceTier'] == 'default'
+    page.keyboard.press('Escape')
     assert len(fake.methods('turn/start')) == starts, 'slash setting became a prompt'
     if screenshots: page.screenshot(path=str(screenshots/f'{label}-confirmed.png'))
+    # Native settings confirmation can arrive after the current turn ends.
+    fake.hold_controls = True
+    control = page.locator('#sdk-model')
+    if not control.is_visible(): page.locator('#sdk-more').click()
+    with page.expect_response('**/api/codex-sdk/controls/settings') as response:
+        control.select_option('fake-luna')
+    assert response.value.ok, response.value.text()
+    expect(control).to_be_disabled()
     fake.complete(); expect(send).to_have_text('发送')
+    fake.publish(fake.methods('thread/settings/update')[-1]['params'])
+    expect(control).to_be_enabled(); expect(control).to_have_value('fake-luna')
+    fake.hold_controls = False
+    page.keyboard.press('Escape')
+    submit('next turn observes confirmed settings ' + label)
+    expect(send).to_have_text('排队')
+    assert fake.active_settings['model'] == 'fake-luna'
+    assert fake.active_settings['effort'] == 'high'
+    assert fake.active_settings['serviceTier'] == 'priority'
+    fake.complete(); expect(send).to_have_text('发送')
+    assert not fake.methods('turn/settings/update')
+    assert not fake.methods('turn/interrupt')
     page.reload(wait_until='networkidle')
     if not page.locator('#sdk-input').is_visible(): page.locator('#a-sdk').click()
-    expect(page.locator('#sdk-model')).to_have_value('fake-sol')
+    expect(page.locator('#sdk-model')).to_have_value('fake-luna')
     expect(page.locator('#sdk-effort')).to_have_value('high')
     assert not errors, errors
     context.close()
@@ -118,8 +177,12 @@ def exercise(browser, base, fake, width, theme, screenshots, label):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--hub-binary', type=Path)
     parser.add_argument('--screenshots', type=Path)
     args = parser.parse_args()
+    hub_binary = args.hub_binary or args.binary.with_name('sessiondock-hub')
+    if not args.hub_binary and not hub_binary.is_file():
+        hub_binary = Path(__file__).resolve().parents[1] / 'target/release/sessiondock-hub'
     if args.screenshots: args.screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sd-sdk-immediate-') as tmp, sync_playwright() as pw:
         root = Path(tmp); corpus = build(root); port = free_port()
@@ -129,7 +192,7 @@ def main():
             with SelectionServer(root/'app.sock',corpus.paths['sdk'],THREAD) as fake:
                 with server(corpus,args.binary,root/'app.sock',env) as base:
                     hub_root = root/'hub'; hub_root.mkdir()
-                    hub = Hub(args.binary.with_name('sessiondock-hub').resolve(),hub_root,
+                    hub = Hub(hub_binary.resolve(),hub_root,
                               [SimpleNamespace(name='ModelNode',token=TOKEN,port=port)])
                     hub.start()
                     try:

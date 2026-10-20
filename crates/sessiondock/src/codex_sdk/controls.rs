@@ -43,22 +43,10 @@ impl CodexSdk {
         if let Some(tier) = service_tier {
             params["serviceTier"] = json!(tier);
         }
-        let raw = connection
-            .request("thread/settings/update", params.clone())
-            .await?;
-        if let Some(turn) = thread.active_turn() {
-            let mut active = json!({"threadId":thread_id,"turnId":turn});
-            for key in ["model", "effort", "serviceTier"] {
-                if let Some(value) = params.get(key) {
-                    active[key] = value.clone();
-                }
-            }
-            if active.as_object().is_some_and(|fields| fields.len() > 2) {
-                let result = connection.request("turn/settings/update", active).await?;
-                return Ok(json!({"thread":raw,"turn":result}));
-            }
-        }
-        Ok(raw)
+        // Match the TUI: thread settings can change while a turn is running.
+        // turn/settings/update is a separate, feature-gated experiment; calling
+        // it after this succeeds can report failure for an already applied change.
+        connection.request("thread/settings/update", params).await
     }
 
     /// Native CLI `!command` semantics: evaluated by the configured shell,
