@@ -59,7 +59,12 @@ def exercise(browser, base, source, shots, label):
         page.wait_for_function('T.listLoaded')
         from session_start_fixtures import choose_mode
         choose_mode(page, source, 'cli')
+        expect(page.locator('#agent-start-settings [data-agent-start-mode]')).to_have_count(5)
+        assert page.locator('#agent-start-settings').evaluate("group => !!(document.querySelector('#setting-console-paste-files').compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING)")
+        page.locator('#agent-start-settings-title').scroll_into_view_if_needed()
         page.screenshot(path=str(shots/f'{label}-{source}-{width}-settings.png'))
+        page.locator('#agent-start-settings [data-agent-start-mode]').last.scroll_into_view_if_needed()
+        page.screenshot(path=str(shots/f'{label}-{source}-{width}-settings-bottom.png'))
         page.locator('#settings-dialog .modal-close').click()
         row = page.locator(f'#side .item[data-uid^="{source}:"]').first
         if not row.is_visible(): page.locator(f'#chips button[data-source="{source}"]').click()
