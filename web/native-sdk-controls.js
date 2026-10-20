@@ -222,13 +222,16 @@ const NativeSdkControls = {
     const nativeRows=view.raw?.queue || [],bridgeRows=view.raw?.input_queue || [],steers=view.raw?.steers || [];
     const signature=JSON.stringify([nativeRows,bridgeRows,steers]);if(holder.dataset.state===signature)return;holder.dataset.state=signature;holder.replaceChildren();
     const generation=view.generation,uid=view.uid;
-    const labels={preparing:'准备输入',queued:'排队中',sending:'正在提交',accepted:'原生已接收',failed:'发送失败',unknown:'发送结果待核对'};
+    const labels={preparing:'准备输入',queued:'排队中',sending:'正在提交',accepted:'原生已接收',failed:'发送失败',unknown:'处理结果待核对'};
+    const unknownReason=item=>item.observed_consumed || item.consumption==='observed'
+      ? '原生已读取这条输入，但执行结果尚未确认。'
+      : '尚未确认原生是否收到或处理了这条输入。';
     const cardFor=(item,title)=>{const card=el('div','msg sdk-request'),body=el('div','mb');card.dataset.queueId=item.id;body.append(el('p','sdk-request-title',title),el('pre','',item.text || item.prompt?.text || item.id));card.append(body);holder.append(card);return body;};
     const actionsFor=body=>{let actions=body.querySelector('.sdk-request-actions');if(!actions){actions=el('div','sdk-request-actions');body.append(actions);}return actions;};
     const operation=(body,item,method,title,extra={})=>{
       const button=el('button','btn',title);button.type='button';actionsFor(body).append(button);
       button.onclick=async()=>{
-        if(method==='queue_retry' && item.state==='unknown' && !await appConfirm('上次输入可能已由原生处理。请先核对会话历史；再次发送可能重复执行。确认重新发送？',{ok:'重新发送'}))return;
+        if(method==='queue_retry' && item.state==='unknown' && !await appConfirm(`重新发送这条输入？\n\n${unknownReason(item)}重新发送会再次提交整条输入，可能重复执行。请先核对会话历史。`,{ok:'重新发送'}))return;
         if(method==='queue_cancel' && item.state==='unknown' && !await appConfirm('请先核对会话历史。移除此记录不会停止原生任务，后续排队输入将继续。',{ok:'移除记录'}))return;
         if(!view.current(generation))return;
         holder._nativeQueueBusy=true;
@@ -247,8 +250,8 @@ const NativeSdkControls = {
       }
       const body=cardFor(item,labels[item.state] || item.state);body.parentElement.dataset.queueOrigin='bridge';
       if(item.error)body.append(el('p','sdk-control-note',item.error));
-      if(item.state==='unknown')body.append(el('p','sdk-control-note',item.operation==='steer'?'引导处理结果尚未确认。请核对历史；移除记录不会停止原生任务。':'原生处理结果尚未确认，后续输入暂停。核对历史后可重试或移除此记录。'));
-      if(['failed','unknown'].includes(item.state) && item.operation!=='steer')operation(body,item,'queue_retry','重试');
+      if(item.state==='unknown')body.append(el('p','sdk-control-note',item.operation==='steer'?'引导处理结果尚未确认。请核对历史；移除记录不会停止原生任务。':`${unknownReason(item)}后续输入已暂停。核对历史后，可移除记录以继续，或重新发送这条输入。`));
+      if(['failed','unknown'].includes(item.state) && item.operation!=='steer')operation(body,item,'queue_retry',item.state==='unknown'?'重新发送':'重试');
       if(['queued','failed','unknown'].includes(item.state))operation(body,item,'queue_cancel',item.state==='unknown'?'移除记录':'撤销');
       if(['failed','unknown'].includes(item.state) && item.text){const restore=el('button','btn','恢复文字');restore.type='button';restore.onclick=()=>{if(!view.current(generation))return;view.input.value=[view.input.value,item.text].filter(Boolean).join('\n');view.fitInput();CodexSdkCompose.input(view);view.input.focus();view.setNotice('文字已追加到输入框；队列记录保留');};actionsFor(body).append(restore);}
     }
