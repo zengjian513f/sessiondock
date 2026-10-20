@@ -228,10 +228,9 @@ impl ProcessConfig {
                 self.redact(&String::from_utf8_lossy(&output.stderr))
             ));
         }
-        let models:Vec<_>=String::from_utf8_lossy(&output.stdout).lines().filter_map(|line| {
-            let (id,label)=line.split_once('\t')?;
-            if id.is_empty(){return None;}
-            Some(json!({"id":id,"model":id,"name":label.trim(),"displayName":label.trim(),"efforts":["low","medium","high","xhigh","max"]}))
+        let catalog = crate::lifecycle::models::agy_lines(&String::from_utf8_lossy(&output.stdout));
+        let models: Vec<_> = catalog.models.iter().map(|model| {
+            json!({"id":model.id,"model":model.id,"name":model.name,"displayName":model.name,"efforts":model.efforts})
         }).collect();
         Ok(json!({"models":models,"data":models,"capabilities":super::capabilities()}))
     }
@@ -305,7 +304,11 @@ impl Native {
         if let Some(model) = model {
             command.arg("--model").arg(model);
         }
-        if let Some(effort) = effort {
+        // Concrete catalog variants already fix effort, including persisted
+        // settings or queued turns created by an older frontend.
+        if let Some(effort) =
+            effort.filter(|_| model.is_none_or(|id| !crate::lifecycle::models::agy_variant(id)))
+        {
             command.arg("--effort").arg(effort);
         }
         if let Some(mode) = mode {

@@ -525,7 +525,7 @@ fn agy(profile: &CliProfile) -> Catalog {
     agy_lines(&output)
 }
 
-fn agy_lines(output: &str) -> Catalog {
+pub(crate) fn agy_lines(output: &str) -> Catalog {
     let efforts: Vec<String> = AGY_EFFORTS
         .iter()
         .map(|effort| (*effort).to_owned())
@@ -539,11 +539,7 @@ fn agy_lines(output: &str) -> Catalog {
                 return None;
             }
             let name = name.trim();
-            let variant = id
-                .strip_suffix("-thinking")
-                .unwrap_or(id)
-                .rsplit_once('-')
-                .is_some_and(|(_, suffix)| EFFORT_ORDER.contains(&suffix));
+            let variant = agy_variant(id);
             Some(Model {
                 id: id.to_owned(),
                 name: if name.is_empty() { id } else { name }.to_owned(),
@@ -557,6 +553,13 @@ fn agy_lines(output: &str) -> Catalog {
         efforts,
         default_model: None,
     }
+}
+
+pub(crate) fn agy_variant(id: &str) -> bool {
+    id.strip_suffix("-thinking")
+        .unwrap_or(id)
+        .rsplit_once('-')
+        .is_some_and(|(_, suffix)| EFFORT_ORDER.contains(&suffix))
 }
 
 /// `opencode models`: one `provider/model` per line. OpenCode selects a

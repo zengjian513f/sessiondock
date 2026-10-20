@@ -169,14 +169,15 @@ def exercise(browser, base, fixture, screenshots=None):
         models = post(page, base, 'models', {'uid': uid})
         assert MODEL in [row['id'] for row in models['models']], models
         assert not fixture.inputs(), 'open/model discovery must not submit a prompt'
-        page.locator('#sdk-model').select_option(MODEL)
+        page.locator('#sdk-model').select_option('synthetic-agy')
+        expect(page.locator('#sdk-model')).to_be_enabled()
         expect(page.locator('#sdk-effort')).to_be_visible()
         page.locator('#sdk-effort').select_option('high')
         if not page.locator('#native-sdk-mode').is_visible():page.locator('#sdk-more').click()
         page.locator('#native-sdk-mode').select_option('plan')
         expect(page.locator('#sdk-send')).to_be_enabled()
         assert not fixture.inputs(), 'selection must save settings without submitting a prompt'
-        page.wait_for_function('model => NativeSdkView.nativeModel === model && NativeSdkView.nativeEffort === "high"', arg=MODEL)
+        page.wait_for_function('model => NativeSdkView.nativeModel === model && NativeSdkView.nativeEffort === null', arg='synthetic-agy-high')
         page.keyboard.press('Escape')
         print('Agy: click SDK, type/send, sparse tool result, idempotent retry', flush=True)
         receipt = send(page, 'SDK 中文\nsecond line')
@@ -185,8 +186,8 @@ def exercise(browser, base, fixture, screenshots=None):
         idle(page)
         post(page, base, 'turn', {'uid': uid, 'text': 'SDK 中文\nsecond line', 'request_id': receipt['request_id']})
         assert len(fixture.inputs('SDK 中文\nsecond line')) == 1
-        assert fixture.inputs('SDK 中文\nsecond line')[0]['model'] == MODEL
-        assert fixture.inputs('SDK 中文\nsecond line')[0]['effort'] == 'high'
+        assert fixture.inputs('SDK 中文\nsecond line')[0]['model'] == 'synthetic-agy-high'
+        assert fixture.inputs('SDK 中文\nsecond line')[0]['effort'] is None
         assert fixture.inputs('SDK 中文\nsecond line')[0]['mode'] == 'plan'
         toggle_usage_details(page)
         expect(page.locator('#native-usage-detail')).to_contain_text('12,800')
@@ -270,11 +271,11 @@ def exercise(browser, base, fixture, screenshots=None):
         # Only an explicit setting change rebuilds the native argv/runtime.
         if not page.locator('#sdk-effort').is_visible():page.locator('#sdk-more').click()
         page.locator('#sdk-effort').select_option('low')
-        page.wait_for_function('NativeSdkView.nativeEffort === "low"')
+        page.wait_for_function('NativeSdkView.nativeModel === "synthetic-agy-low" && NativeSdkView.nativeEffort === null')
         page.keyboard.press('Escape')
         send(page,'after explicit effort change');idle(page)
         changed=fixture.inputs('after explicit effort change')[0]
-        assert changed['pid']!=first_pid and changed['effort']=='low'
+        assert changed['pid']!=first_pid and changed['model']==MODEL and changed['effort'] is None
         notices=page.locator('.sdk-live').inner_text().count('Native runtime restarted')
         send(page,'same runtime after explicit setting');idle(page)
         assert fixture.inputs('same runtime after explicit setting')[0]['pid']==changed['pid']

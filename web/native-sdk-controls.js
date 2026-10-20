@@ -201,6 +201,7 @@ const NativeSdkControls = {
     sdkSyncSettings(view);
   },
   async settings(view, values) {
+    values = view.modelSettings(values);
     const generation=view.generation,choices=Object.fromEntries(Object.entries(values).map(([key,value])=>[key,String(value)]));
     await sdkUpdateSettings(view,choices,()=>view.request('api/native-sdk/settings',{
       uid:view.uid,...values,request_id:crypto.randomUUID(),
