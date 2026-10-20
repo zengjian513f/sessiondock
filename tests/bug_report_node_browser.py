@@ -638,6 +638,11 @@ def main():
                     page.wait_for_function(
                         ('S.sessions.length === 3 && Nodes.list.length === 3 && !!Nodes.capabilities["' + NID["b"] + '"]'))
 
+                    # These fake nodes provide CLI launchers, not SDK servers.
+                    from session_start_fixtures import choose_mode
+                    for source in ('claude', 'codex'):
+                        choose_mode(page, source, 'cli')
+                        page.locator('#settings-dialog .modal-close').click()
                     check_shared_draft_recovery(page, boundary)
                     check_draft_follows_machine(page, boundary)
                     check_report_drag_selection(page)
@@ -739,6 +744,36 @@ def main():
                     page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
                     boundary.calls.clear()
 
+                    # Feature requests cross machines without collecting the origin's diagnostics.
+                    for width, theme in [(1280, 'light'), (390, 'dark')]:
+                        page.set_viewport_size({"width": width, "height": 900})
+                        page.emulate_media(color_scheme=theme)
+                        open_report(page)
+                        page.select_option('#bug-report-node', NID['b'])
+                        page.locator('#bug-report-type label:has(input[value=feature])').click()
+                        page.locator('#bug-report-description').fill('功能需求：输入区常驻，不可用控件置灰。')
+                        page.locator('#bug-report-file').set_input_files({
+                            'name': 'reference.png', 'mimeType': 'image/png', 'buffer': PNG})
+                        wait_drafts(page)
+                        shots = REPO / 'target/validation/report-feature'
+                        shots.mkdir(parents=True, exist_ok=True)
+                        page.screenshot(path=str(shots / f'hub-{width}-{theme}.png'))
+                        page.locator('#bug-report-go').click()
+                        page.wait_for_function("!document.querySelector('#bug-report-dialog').open")
+                        assert [p for p, _ in boundary.calls] == ['bug-report'], boundary.calls
+                        body = boundary.calls[0][1]
+                        assert body['report_type'] == 'feature' and body['_node'] == NID['b']
+                        assert body['uid'] == '' and body['origin']['uid'] == sel
+                        assert not any(key in body for key in ('snapshot', 'captured', 'terminal_name'))
+                        assert len(body['attachments']) == 1
+                        page.locator('#bug-report-toast').get_by_role('button', name='忽略', exact=True).click()
+                        boundary.calls.clear()
+                    page.set_viewport_size({"width": 1280, "height": 900})
+                    page.emulate_media(color_scheme='light')
+                    open_report(page)
+                    page.locator('#bug-report-type label:has(input[value=bug])').click()
+                    page.locator('#bug-report-dialog .modal-close').click()
+
                     # 2b. One report, not one per machine (BUG-20260930-110656-a65368): an
                     #     unsent draft reopens on the machine holding it, whichever machine's
                     #     session is open; once emptied, the picker follows the session again.
@@ -810,7 +845,7 @@ def main():
                     page.select_option("#bug-report-node", NID["b"])
                     assert page.evaluate("document.querySelector('#bug-report-source input[value=codex]').disabled")
                     assert page.evaluate("document.querySelector('#bug-report-source input[value=codex]').title") \
-                        == "NodeB找不到 codex 命令"
+                        == "本机找不到 codex 命令"
                     assert not page.evaluate("document.querySelector('#bug-report-source input[value=claude]').disabled")
                     page.select_option("#bug-report-node", NID["a"])
                     assert not page.evaluate("document.querySelector('#bug-report-source input[value=codex]').disabled")

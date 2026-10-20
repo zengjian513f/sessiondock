@@ -64,9 +64,19 @@ model defaults never configure production report workers.
 ## Route contract (`POST /api/bug-report`)
 
 The dialog starts with a report-type selector: 功能需求 first, 缺陷报告 selected by default.
-`report_type: "feature"` is preserved in the manifest and replay payload and creates a
-`功能需求: …` worker title and task. Missing/other values retain the bug-report behavior.
-Report IDs and bundle paths keep the existing `BUG-…` format for both types.
+DELTA: `report_type: "feature"` creates a `功能需求: …` worker title and task from
+only the description and attachments. It skips local and remote diagnostic capture,
+browser snapshots, audit-window queries, terminal reads and Git environment collection,
+even if an older caller sends diagnostic fields. Its private submission directory keeps
+`description.md`, `worker-prompt.md`, `manifest.json` and any attachment copies;
+diagnostic file references are empty and the event count/window are zero. The task does
+not ask the worker to locate diagnostics or request them from the user. Capture-only
+nodes show “保存需求” and “需求已保存” for this type. Drafts, attachment publication,
+replay and SDK/CLI handoff use the common submission path.
+
+The type is preserved in the manifest, replay payload and response. Missing/other
+values retain the bug-report behavior. Internal report IDs and storage paths keep the
+existing `BUG-…` format for both types; this identifier does not imply diagnostic capture.
 
 Body: `{report_type, description (required, ≤ 50000 chars), uid, page_id|_page_id,
 _trace_id, _build, source ∈ claude|codex|grok|opencode|agy (default codex), model, effort, terminal_name,
@@ -110,8 +120,11 @@ When the problem's machine is offline or the capture fails, the page sends
 `captured: {error}` instead: the report is still saved, `origin.capture_error`
 records why, and the prompt says the bundle only has the browser snapshot and
 the worker machine's audit rows. Attachments are uploaded to the worker's
-machine (they live in its repository). The prompt of a remote worker also
-tells it that the session's native JSONL and ledgers are not on its machine.
+machine (they live in its repository). Bug-report prompts explicitly name the worker host as the location of the saved
+bundle and direct the worker to read that local absolute path. The problem host is
+separately named as the location for additional native JSONL/ledger inspection;
+those ledgers are not claimed to be copied into the bundle. Feature requests skip
+both capture steps, including when the selected session belongs to another node.
 
 | Status | When |
 | --- | --- |

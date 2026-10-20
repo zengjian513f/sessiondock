@@ -665,7 +665,8 @@ function syncBugReportSources() {
   const worker = bugReportWorkerEnabled();
   $('#bug-report-source').hidden = !worker;
   $('#bug-report-form .new-choice').hidden = !worker;
-  $('#bug-report-go').textContent = worker ? '发送' : '保存诊断';
+  $('#bug-report-go').textContent = worker ? '发送'
+    : ($('#bug-report-type input:checked')?.value === 'feature' ? '保存需求' : '保存诊断');
   const remembered = store.get('bugReportSource', 'codex');
   let checked = null;
   for (const input of $('#bug-report-source').querySelectorAll('input')) {
@@ -722,14 +723,14 @@ function bugReportNodeName(id = bugReportNode()) {
   return HUB_MODE ? Nodes.list.find(n => n.id === id)?.name || '' : '';
 }
 
-function showBugReportToast(report, worker) {
+function showBugReportToast(report, worker, reportType = 'bug') {
   const toast = $('#bug-report-toast');
   clearTimeout(bugReportToastTimer);
   toast.replaceChildren();
   const text = document.createElement('span');
   const label = BUG_REPORT_SOURCES[worker?.source] || '处理';
   const where = worker?.node_name ? `到 ${worker.node_name}` : '';
-  text.textContent = worker ? `${report} 已保存${where}，${label} 处理会话正在启动` : `${report} 诊断已保存`;
+  text.textContent = worker ? `${report} 已保存${where}，${label} 处理会话正在启动` : `${report} ${reportType === 'feature' ? '需求' : '诊断'}已保存`;
   const dismiss = () => {
     clearTimeout(bugReportToastTimer);
     toast.classList.add('hidden');
@@ -981,6 +982,7 @@ $('#bug-report-node').onchange = () => {
   $('#bug-report-error').textContent = notice;
   autoGrow($('#bug-report-description'));
 };
+$('#bug-report-type').addEventListener('change', syncBugReportSources);
 $('#bug-report-source').addEventListener('change', () => {
   store.set('bugReportSource', bugReportSource());
   if (bugReportWorkerEnabled()) BugReportModels.refresh();
@@ -1067,7 +1069,7 @@ function completeBugReportSubmission(data,node) {
   if (store.get('bugReportDraftNode', '') === node) store.set('bugReportDraftNode', '');
   store.set('reportDraftId.'+node,crypto.randomUUID());bindBugReportDraft();
   $('#bug-report-description').value='';
-  showBugReportToast(data.report_id,data.worker);$('#bug-report-dialog').close();
+  showBugReportToast(data.report_id,data.worker,data.report_type);$('#bug-report-dialog').close();
   void loadTermList();
 }
 
@@ -1103,9 +1105,9 @@ $('#bug-report-form').onsubmit = async event => {
   $('#bug-report-add').disabled = true;
   error.textContent = '';
   renderBugReportItems();
-  const snapshot = browserStateSnapshot('bug-report');
+  const snapshot = report_type === 'feature' ? null : browserStateSnapshot('bug-report');
   browserAuditEvent('bug_report.requested', {
-    ...snapshot.data, report_type, attachments: attachments.length,
+    ...(snapshot?.data || {}), report_type, attachments: attachments.length,
     worker_node: node, origin_node: origin.node_id || '', remote,
   });
   try {
@@ -1135,7 +1137,7 @@ $('#bug-report-form').onsubmit = async event => {
     }
     const terminalName = takenOver(S.sel) || (T.uid === S.sel ? T.name : '') || '';
     let captured = null;
-    if (remote) {
+    if (remote && report_type !== 'feature') {
       setSendButtonBusy(button, '抓取中');
       captured = await captureBugReportContext(origin.node_id, S.sel || '', terminalName);
     }
@@ -1155,7 +1157,8 @@ $('#bug-report-form').onsubmit = async event => {
       ...(HUB_MODE ? {_node: node} : {}),
       draft_uid:BUG_REPORT_DRAFT_UID,draft_revision:reportDraft.revision,request_id:reportDraft.requestId,
       description, report_type, uid: remote ? '' : (S.sel || ''), page_id: TERM_PAGE_ID, source, ...choice,
-      terminal_name: remote ? '' : terminalName, snapshot, attachments: uploaded,
+      ...(report_type === 'feature' ? {} : {terminal_name: remote ? '' : terminalName, snapshot}),
+      attachments: uploaded,
       origin, ...(captured ? {captured} : {}),
       cols: Math.max(80, T.term?.cols || 120), rows: Math.max(24, T.term?.rows || 36),
     });

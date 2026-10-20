@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Chromium: default report controls hidden; capture-only reports never launch a CLI."""
+import argparse
 import json
 import tempfile
 from pathlib import Path
@@ -10,6 +11,9 @@ from bug_report_node_browser import open_report, wait_drafts
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--binary', type=Path, default=REPO/'target/release/sessiondock')
+    args = parser.parse_args()
     screenshots = REPO / 'target/validation/public-optional/reports'
     screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sd-optional-report-') as tmp, sync_playwright() as pw:
@@ -20,7 +24,7 @@ def main():
         corpus = Corpus(plain)
         sid = '11111111-1111-4111-8111-111111111111'
         corpus.put(sid, 'claude', [claude_row(sid, 'user', 'row-user', None, 'Public standalone fixture')], ['Public standalone fixture'])
-        with isolated_server(corpus, REPO / 'target/release/sessiondock') as (base, _):
+        with isolated_server(corpus, args.binary) as (base, _):
             page = browser.new_page()
             page.goto(base, wait_until='networkidle')
             page.locator('#side .item').first.click()
@@ -30,7 +34,7 @@ def main():
         capture = root / 'capture'
         capture.mkdir()
         config = prepare(capture)
-        with isolated_server(Corpus(capture), REPO / 'target/release/sessiondock',
+        with isolated_server(Corpus(capture), args.binary,
                 state_dir=capture / 'state', host_dir=capture / 'host',
                 lifecycle_dir=capture / 'ledger', launcher_config=config,
                 audit_dir=capture / 'audit', extra_env={
@@ -53,16 +57,25 @@ def main():
                 expect(page.locator(f'#bug-report-type input[value={report_type}]')).to_be_checked()
                 expect(page.locator('#bug-report-source')).to_be_hidden()
                 expect(page.locator('#bug-report-model')).to_be_hidden()
-                expect(page.locator('#bug-report-go')).to_have_text('保存诊断')
-                page.locator('#bug-report-description').fill('公开版诊断：缺少外部组件时保存上下文，不启动处理会话。')
+                expect(page.locator('#bug-report-go')).to_have_text('保存需求' if report_type == 'feature' else '保存诊断')
+                page.locator('#bug-report-description').fill('功能需求：输入区一直显示，不可用控件置灰。' if report_type == 'feature' else '缺陷报告：会话消息未刷新。')
                 wait_drafts(page)
                 page.screenshot(path=str(screenshots / f'capture-{width}-{theme}.png'))
+                if report_type == 'bug':
+                    def remote_capture(route):
+                        body = route.request.post_data_json
+                        body.update(origin={'node_name': 'Origin', 'uid': 'codex:remote'},
+                                    captured={'hostname': 'origin-host', 'session': {'uid': 'codex:remote'},
+                                              'events': [{'event': 'origin.capture'}],
+                                              'terminal_capture': 'origin terminal frame'})
+                        route.continue_(post_data=json.dumps(body))
+                    page.route('**/api/bug-report', remote_capture)
                 with page.expect_response(lambda r: r.url.endswith('/api/bug-report')) as saved:
                     page.locator('#bug-report-go').click()
                 result = saved.value.json()
                 assert saved.value.status == 201, result
                 assert result['worker'] is None, result
-                expect(page.locator('#bug-report-toast')).to_contain_text('诊断已保存')
+                expect(page.locator('#bug-report-toast')).to_contain_text('需求已保存' if report_type == 'feature' else '诊断已保存')
                 expect(page.locator('#bug-report-toast button', has_text='打开')).to_have_count(0)
                 toast = page.locator('#bug-report-toast')
                 assert toast.evaluate('e => e.scrollWidth <= e.clientWidth'), 'receipt text must wrap inside the card'
@@ -75,6 +88,22 @@ def main():
                 prompt = (Path(result['path']) / 'worker-prompt.md').read_text()
                 assert prompt.startswith('功能需求:' if report_type == 'feature' else 'BUG:'), prompt
                 assert ('处理 sessiondock 功能需求' if report_type == 'feature' else '处理 sessiondock 缺陷报告') in prompt
+                diagnostic_files = ['browser-state.json', 'events.jsonl', 'environment.json']
+                if report_type == 'feature':
+                    assert all(not (Path(result['path']) / f).exists() for f in diagnostic_files + ['terminal.txt'])
+                    assert manifest['events_file'] == manifest['browser_state_file'] == manifest['terminal_file'] == ''
+                    assert manifest['event_count'] == manifest['event_window_seconds'] == 0
+                    assert manifest['session'] == {}
+                    assert 'manifest.json' not in prompt and '问题机器：' not in prompt
+                    assert '诊断包：' not in prompt and '直接依据上述描述和附件实现' in prompt
+                else:
+                    assert all((Path(result['path']) / f).is_file() for f in diagnostic_files)
+                    assert f"诊断包所在机器：处理会话本机（主机 {manifest['hostname']}）" in prompt
+                    assert '问题机器：Origin（主机 origin-host）' in prompt
+                    assert '不要去问题机器寻找这个诊断包目录' in prompt
+                    assert (Path(result['path'])/'terminal.txt').read_text() == 'origin terminal frame'
+                    assert json.loads((Path(result['path'])/'events.jsonl').read_text().splitlines()[0])['event'] == 'origin.capture'
+                assert result['report_type'] == report_type
                 assert context.request.get(base + '/api/term/list').json()['pending'] == []
                 assert not errors, errors
                 context.close()

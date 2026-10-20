@@ -162,6 +162,7 @@ The table lists the suites `--list` reports plus the opt-in `*_real` browser sui
 | bug_report_node_browser | `python3 tests/bug_report_node_browser.py` | Hub report dialog machine selection, named source buttons, two-up attachments on a 390px phone, disabled CLI choices and cross-machine capture/submit bodies against fake nodes; no CLI or real histories | hub binary, Chromium |
 | bug_report_identity_browser | `python3 tests/bug_report_identity_browser.py` | Identical report titles, shared-daemon writer, delayed native history, current and old receipts with lost status cards, restart and terminal/history clicks; no duplicate SEND | binary, ptyhost, Chromium |
 | optional_report_browser | `python3 tests/optional_report_browser.py` | Disabled report controls and capture-only submissions, wide/light and mobile/dark; no CLI launch. | binary, Chromium |
+| feature_report_browser | `python3 tests/feature_report_browser.py --binary target/release/sessiondock` | Feature-only storage, legacy diagnostic-field suppression, attachment publication, request replay and first SDK SEND across five sources on node/Hub; bug-worker regression. | binary, hub, sdkhost, fake SDKs, Chromium |
 | bug_report_codex_browser_real | `python3 tests/bug_report_codex_browser_real.py` | Operator-only real Codex report dialog, native rename and first task confirmation; isolated home, Luna low, unchanged everyday defaults. | Codex CLI, ptyhost, Chromium |
 | sessions_visibility_browser | `python3 tests/sessions_visibility_browser.py --binary target/release/sessiondock` | Chromium node/Hub list, open, search and SSE with obsolete registry/URL parameters; all data temporary. | binary, hub binary, Playwright |
 | files_browser | `python3 tests/files_browser.py --binary target/release/sessiondock` | Conversation references and the title bar directory open FileDock with the exact node/path (the directory is plain text without FileDock); missing-reference errors and direct directory entry, desktop/mobile. | binary, Chromium |
@@ -417,6 +418,11 @@ node captures diagnostics, then opens the retained worker after restart and
 checks the preserved prompt, idempotent report replay and one bundle/launch.
 
 ## Adding a suite
+
+`tests/sdkhost_install_browser.py` 用私有部署目录和假 Claude CLI，验证 Unix
+节点缺少 sdkhost 时发布在上传前失败，以及仅补装宿主后本机/Hub 新建模型目录
+可重试、选择模型与强度。覆盖宽屏明色、窄屏暗色；不创建原生模型回合。
+`--sdkhost PATH` 指定待验证的宿主产物，`--screenshots DIR` 保存完整页面。
 
 `frontend_search_state_browser` 使用合成会话和隔离服务，通过桌面及手机实际输入、
 点击和重载验证搜索的单一状态：本地筛选/全文结果切换、各选项请求与持久化、Esc
