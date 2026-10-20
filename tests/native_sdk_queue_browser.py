@@ -668,9 +668,10 @@ def restart_idle_registry(browser, fixture):
             context.close()
 
 
-def restart_historical_result(browser, fixture):
+def restart_historical_result(browser, fixture, screenshots=None, *, persisted_state='completed',
+                              mismatched_delivery=False):
     with fixture.server() as base:
-        context, page, _ = open_page(browser, base, fixture, accept_popups=False)
+        context, page, uid = open_page(browser, base, fixture, accept_popups=False)
         try:
             old = send(page, '__RECOVERED_STREAM__')
             state(page, old['request_id'], 'unknown')
@@ -683,20 +684,52 @@ def restart_historical_result(browser, fixture):
             pid = fixture.native_pid()
         finally:
             context.close()
+    # Reproduce an older bridge's durable verdict while retaining the real
+    # synthetic host output/binding. Never alter production or native records.
+    journal_path = fixture.root / 'state/native-sdk-inputs.json'
+    journal = json.loads(journal_path.read_text())
+    entry = next(row for rows in journal.values() for row in rows
+                 if row['request_id'] == current['request_id'])
+    entry['state'] = persisted_state
+    if persisted_state != 'completed':
+        entry['error'] = 'agy_sdk_native_ERROR: The stream was interrupted. Please continue the task you were working on.'
+    if mismatched_delivery:
+        entry['delivery_id'] = 'different-native-delivery'
+    saved_entry = json.loads(json.dumps(entry))
+    journal_path.write_text(json.dumps(journal))
     with fixture.server() as base:
-        context, page, _ = open_page(browser, base, fixture, accept_popups=False)
+        context, page, uid = open_page(browser, base, fixture, accept_popups=False)
         try:
             expect(page.locator('.sdk-live')).to_contain_text('历史错误未污染本轮')
             page.wait_for_function('NativeSdkView.raw?.running === false')
             assert not page.evaluate('NativeSdkView.raw.error')
             assert fixture.native_pid() == pid and fixture.alive(pid)
             assert fixture.inputs('__HISTORICAL_ERROR__') == ['__HISTORICAL_ERROR__']
+            if mismatched_delivery:
+                state(page, current['request_id'], 'unknown')
+                blocked = send(page, 'must wait for matching delivery')
+                state(page, blocked['request_id'], 'queued')
+                assert fixture.entry(current['request_id']) == saved_entry
+                assert not fixture.inputs('must wait for matching delivery')
+                pictures(page, uid, screenshots, 'agy-unmatched-completion', all_sizes=True)
+                print('Agy: another delivery completion cannot resolve unknown input or release FIFO', flush=True)
+                return
+            page.wait_for_function('request => !NativeSdkView.raw?.input_queue?.some(row => row.request_id === request)',
+                                   arg=current['request_id'])
             assert fixture.entry(current['request_id'])['state'] == 'completed'
+            final_entry = fixture.entry(current['request_id'])
+            assert final_entry['error'] is None
+            for key in ('request_id', 'delivery_id', 'draft', 'input', 'consumption', 'attempts', 'actions'):
+                assert final_entry[key] == saved_entry[key], key
+            assert fixture.entry(old['request_id'])['state'] == 'cancelled'
+            replay(page, base, 'turn', current)
+            assert fixture.inputs('__HISTORICAL_ERROR__') == ['__HISTORICAL_ERROR__']
+            pictures(page, uid, screenshots, f'agy-reconciled-{persisted_state}', all_sizes=True)
             following = send(page, 'after historical result restart')
             expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: after historical result restart')
             gone(page, following['request_id'])
             assert fixture.native_pid() == pid
-            print('Agy: historical-error completion and runtime survive service restart without resend', flush=True)
+            print(f'Agy: {persisted_state} historical-error receipt reconciled on restart, same runtime and no resend', flush=True)
         finally:
             context.close()
 
@@ -758,8 +791,12 @@ def main():
             restart_idle_registry(browser, fixtures['claude'])
             restart_idle_registry(browser, fixtures['grok'])
             restart_idle_registry(browser, fixtures['agy'])
-            fixtures['historical-agy'] = NativeQueueFixture(root / 'historical-agy', 'agy', args.binary, args.host_binary)
-            restart_historical_result(browser, fixtures['historical-agy'])
+            for persisted_state, mismatch in (('completed', False), ('unknown', False),
+                                              ('failed', False), ('unknown', True)):
+                name = f'historical-agy-{persisted_state}-{mismatch}'
+                fixtures[name] = NativeQueueFixture(root / name, 'agy', args.binary, args.host_binary)
+                restart_historical_result(browser, fixtures[name], args.screenshots,
+                                          persisted_state=persisted_state, mismatched_delivery=mismatch)
             check_recovery_logs(fixtures)
         finally:
             browser.close()

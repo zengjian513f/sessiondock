@@ -277,7 +277,10 @@ impl Journal {
                 let row = rows
                     .iter()
                     .find(|row| row.operation == "turn" && !terminal(row))?;
-                matches!(row.state.as_str(), "queued" | "accepted" | "recovering")
+                (matches!(row.state.as_str(), "queued" | "accepted" | "recovering")
+                    || (row.state == "unknown"
+                        && row.consumption == "observed"
+                        && row.target["source"] == "agy"))
                     .then(|| (key.clone(), row.target.clone()))
             })
             .collect()
