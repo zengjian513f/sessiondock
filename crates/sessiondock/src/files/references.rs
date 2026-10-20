@@ -25,6 +25,9 @@ static MEDIA_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
 });
 static FILE_URL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)\bfile://[^\s<>`\"'，。；、！？()\[\]{}]+"#).unwrap());
+static ATTACHMENT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^附件[1-9][0-9]*: (\./sessiondock_attachments/[0-9]+/[^\r\n]+|\.\\sessiondock_attachments\\[0-9]+\\[^\r\n]+)\r?$").unwrap()
+});
 
 /// Decode a local media path.
 pub(crate) fn normalize_media_ref(raw: &str) -> Result<String, FileError> {
@@ -224,6 +227,11 @@ impl ReferenceIndex {
     fn scan(&mut self, value: &str) -> Result<(), FileError> {
         if !self.complete {
             return Ok(());
+        }
+        // SEND writes one complete path per numbered line. Tokenizing those
+        // lines by whitespace loses filenames with spaces and Windows paths.
+        for capture in ATTACHMENT.captures_iter(value) {
+            self.insert(&capture[1])?;
         }
         if self.media {
             for url in FILE_URL.find_iter(value) {
