@@ -422,28 +422,39 @@ function nativeSdkMessage(item) {
 
 // Existing history/navigation code talks to the selected view through this
 // facade. Codex-specific commands and protocol rendering keep their own view.
+function savedSessionView(uid, agent) {
+  const key = viewKey(uid, agent);
+  const saved = store.get('sessionViews', {})?.[key]
+    ?? (String(uid).startsWith('claude:') ? store.get('claudeSessionViews', {})?.[key] : null);
+  return ['sdk', 'chat', 'terminal'].includes(saved) ? saved : null;
+}
+function rememberSessionView(uid, agent, mode) {
+  const saved = store.get('sessionViews', {}) || {};
+  saved[viewKey(uid, agent)] = mode;
+  store.set('sessionViews', saved);
+}
+function defaultSessionView(uid) {
+  return agentStartMode(String(uid).split(':')[0]) === 'sdk' ? 'sdk' : 'chat';
+}
+
 const SdkView = new Proxy({
   active: CodexSdkView,
   legacyViews: CodexSdkView.legacyViews,
   available(uid, agent) { return CodexSdkView.available(uid,agent) || NativeSdkView.available(uid,agent); },
   preferredMode(uid, agent) {
-    if (!String(uid).startsWith('claude:') || agent) return null;
-    // Read lazily: this script loads before the shared preference store.
-    const saved = store.get('claudeSessionViews', {})?.[viewKey(uid, agent)];
-    if (['sdk', 'chat', 'terminal'].includes(saved)) return saved;
+    const saved = savedSessionView(uid, agent);
+    if (saved) return saved;
+    if (!String(uid).startsWith('claude:') || agent) return defaultSessionView(uid);
     // Discovery may still be in flight on reload. Do not start a competing
     // SDK process before we know whether this session already has a console.
     if (typeof T === 'undefined' || !T.listLoaded) return 'chat';
     const name = takenOver(uid);
     if (name) return T.openViews.get(name)?.mode === 'collapsed' ? 'chat' : 'terminal';
     if (S.live.has(uid) && !S.liveSdk.has(uid)) return 'chat';
-    return 'sdk';
+    return defaultSessionView(uid);
   },
   rememberMode(uid, agent, mode) {
-    if (!String(uid).startsWith('claude:') || agent) return;
-    const saved = store.get('claudeSessionViews', {}) || {};
-    saved[viewKey(uid, agent)] = mode;
-    store.set('claudeSessionViews', saved);
+    rememberSessionView(uid, agent, mode);
   },
   defaultFor(uid, agent) {
     const mode = this.preferredMode(uid, agent);

@@ -66,6 +66,9 @@ def exercise(browser, base, source, shots, label):
         assert abs(boxes[0]['y'] - boxes[1]['y']) < 1, boxes
         assert boxes[1]['x'] > boxes[0]['x'], boxes
         assert boxes[2]['y'] > boxes[0]['y'], boxes
+        selects = [choices.nth(i).locator('select').bounding_box() for i in range(5)]
+        assert selects[0]['x'] == selects[2]['x'] == selects[4]['x'], selects
+        assert selects[1]['x'] == selects[3]['x'], selects
         if width > 480:
             for i in range(5):
                 label_box = choices.nth(i).locator('span').bounding_box()

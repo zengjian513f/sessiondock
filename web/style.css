@@ -500,7 +500,7 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 }
 #agent-start-settings .setting-group-title { grid-column: 1 / -1; margin-bottom: 2px; }
 #agent-start-settings .setting-row {
-  grid-template-columns: max-content 80px; justify-content: start; gap: 8px; padding: 0; border: 0;
+  grid-template-columns: 68px 80px; justify-content: start; gap: 8px; padding: 0; border: 0;
 }
 #agent-start-settings select { padding: 5px 7px; font-size: 13px; }
 @media (max-width: 480px) {

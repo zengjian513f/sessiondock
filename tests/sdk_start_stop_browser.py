@@ -38,6 +38,29 @@ def exercise(browser, base, source, screenshots, label):
         row = page.locator(f'#side .item[data-uid^="{source}:"]:not([data-uid$="-comparison"])').first
         if not row.is_visible(): page.locator(f'#chips button[data-source="{source}"]').click()
         uid = row.get_attribute('data-uid')
+        from session_start_fixtures import choose_mode
+        def set_mode(mode):
+            if page.locator('#detail .mobile-back').is_visible(): page.locator('#detail .mobile-back').click()
+            choose_mode(page, source, mode)
+            page.locator('#settings-dialog .modal-close').click()
+        set_mode('cli')
+        row.click()
+        expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
+        assert not opens
+        set_mode('sdk')
+        page.reload(wait_until='networkidle')
+        expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
+        expect(page.locator('#sdk-composer')).to_be_hidden()
+        set_mode('cli')
+        page.reload(wait_until='networkidle')
+        expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
+        page.locator('#a-chat').click()
+        set_mode('sdk')
+        page.reload(wait_until='networkidle')
+        expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
+        assert not opens
+        page.locator('#a-sdk').click()
+        if page.locator('#detail .mobile-back').is_visible(): page.locator('#detail .mobile-back').click()
         before = page.evaluate('S.sessions.map(row => [row.uid, row.updated])')
         order = page.locator('#side .item').evaluate_all('(rows) => rows.map(row => row.dataset.uid)')
         row.click()
