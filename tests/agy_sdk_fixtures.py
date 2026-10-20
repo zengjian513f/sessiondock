@@ -115,6 +115,15 @@ for line in sys.stdin:
     if text=='__ERROR__':
         print('synthetic transport diagnostic api_key='+os.environ['AGY_SDK_FAKE_KEY'],file=sys.stderr,flush=True)
         result('ERROR',error='synthetic native error');continue
+    if text in ('__HISTORICAL_ERROR__', '__HISTORICAL_WITH_CURRENT_ERROR__'):
+        if text=='__HISTORICAL_WITH_CURRENT_ERROR__':
+            native_record('ERROR_MESSAGE','Current turn failed',error='synthetic current turn failure')
+            step('error_message',state='DONE');advance()
+        answer='本轮完整回复：历史错误未污染本轮。'
+        native_record('PLANNER_RESPONSE',answer)
+        step('agent_response',state='DONE');advance()
+        result('ERROR',answer+'\n','The stream was interrupted. Please continue the task you were working on.')
+        continue
     if text in ('__RECOVERED_STREAM__', '__UNRECOVERED_STREAM__') or text.startswith('好，请在独立工作区'):
         error='The stream was interrupted. Please continue the task you were working on.'
         native_record('PLANNER_RESPONSE','正在核对审计结果。')

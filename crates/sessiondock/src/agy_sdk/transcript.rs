@@ -51,12 +51,19 @@ pub(super) async fn conflicting_result(
     let mut error_seen = false;
     let mut final_response = None;
     let mut error_steps = Vec::new();
+    let mut prior_error_step = None;
+    let mut other_error_seen = false;
     let mut last_step = None;
-    for record in records(&bytes).filter(|record| {
-        record["step_index"]
-            .as_u64()
-            .is_some_and(|index| index > user_index)
-    }) {
+    for record in records(&bytes) {
+        let Some(index) = record["step_index"].as_u64() else {
+            continue;
+        };
+        if index <= user_index {
+            if record["type"] == "ERROR_MESSAGE" {
+                prior_error_step = (record["error"] == STREAM_ERROR).then_some(index);
+            }
+            continue;
+        }
         // Never borrow a later input's answer to resolve this turn.
         if record["type"] == "USER_INPUT" {
             return json!({"conflict":false,"reason":"later_user_input",
@@ -67,7 +74,12 @@ pub(super) async fn conflicting_result(
         if record["type"] == "ERROR_MESSAGE" && record["error"] == STREAM_ERROR {
             error_seen = true;
             error_steps.push(record["step_index"].as_u64());
-        } else if error_seen && record["type"] == "PLANNER_RESPONSE" && record["status"] == "DONE" {
+        } else if record["type"] == "ERROR_MESSAGE" {
+            other_error_seen = true;
+        } else if (error_seen || prior_error_step.is_some())
+            && record["type"] == "PLANNER_RESPONSE"
+            && record["status"] == "DONE"
+        {
             final_response = record["content"]
                 .as_str()
                 .filter(|text| !text.trim().is_empty())
@@ -79,11 +91,17 @@ pub(super) async fn conflicting_result(
             .as_str()
             .is_some_and(|response| response.trim_end().ends_with(text.trim_end()))
     });
-    json!({"conflict":matches,"reason":if matches {"recovered_response_with_stale_error"}
-        else if !error_seen {"missing_native_error"}
+    let historical_error =
+        matches && !error_seen && !other_error_seen && prior_error_step.is_some();
+    json!({"conflict":matches && error_seen && !other_error_seen,
+        "historical_error":historical_error,
+        "reason":if other_error_seen {"different_current_error"}
+        else if historical_error {"historical_error_after_completed_response"}
+        else if matches {"recovered_response_with_stale_error"}
+        else if !error_seen && prior_error_step.is_none() {"missing_native_error"}
         else if final_response.is_none() {"missing_final_response"}
         else {"response_mismatch"},
-        "user_step":user_index,"error_steps":error_steps,"last_step":last_step,
+        "user_step":user_index,"error_steps":error_steps,"prior_error_step":prior_error_step,"last_step":last_step,
         "final_response_bytes":final_response.as_ref().map(String::len),
         "response_suffix_matches":matches})
 }

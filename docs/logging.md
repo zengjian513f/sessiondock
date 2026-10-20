@@ -113,6 +113,9 @@ Agy logs completed user/assistant/error step boundaries, not token deltas.
 `result` includes native status, output byte count, whether SessionDock sent an
 interrupt, and the transcript reconciliation reason: user/error/final step
 indices, missing or unreadable evidence, or the existing response-tail match.
+`historical_error` and `effective_status` distinguish a proven earlier-turn
+error from the current turn's completed native response; the raw `status` stays
+available. The evidence carries `prior_error_step` separately from current errors.
 `interrupt`, `kill_requested`, `kill_signal`, `output_closed`, `read_failed`,
 `terminate` and `turn_finished`
 distinguish explicit signals, transport failures and retained runtimes.

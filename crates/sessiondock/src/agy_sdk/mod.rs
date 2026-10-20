@@ -956,18 +956,24 @@ async fn execute(
                         let status=value["status"].as_str().unwrap_or("INVALID");
                         let evidence=transcript::conflicting_result(process,live,turn,value).await;
                         let conflict=!interrupted && evidence["conflict"]==true;
+                        let historical_error=!interrupted && evidence["historical_error"]==true;
                         log_turn(if status=="SUCCESS" {"info"} else {"warn"},"agy.sdk.result",live,turn,json!({
                             "native_pid":native.pid(),"stdout_offset":native.stdout_offset,
                             "status":match status {"SUCCESS"|"ERROR"|"INTERRUPTED"=>status,_=>"INVALID"},
                             "error_present":value["error"].is_string(),
                             "response_bytes":value["response"].as_str().map(str::len).unwrap_or(0),
                             "interrupted":interrupted,"saw_assistant":saw_assistant,
-                            "conflict":conflict,"evidence":evidence}));
+                            "conflict":conflict,"historical_error":historical_error,
+                            "effective_status":if status=="SUCCESS" || historical_error {"SUCCESS"} else {"ERROR"},
+                            "evidence":evidence}));
+                        if historical_error {
+                            live.diagnostic(format!("\nAgy result.status=ERROR (prior turn; current native response completed): {}\n",process.redact(value["error"].as_str().unwrap_or_default())));
+                        }
                         if conflict {
                             live.diagnostic(format!("\nAgy result.status=ERROR: {}\n",process.redact(value["error"].as_str().unwrap_or_default())));
                             return Err("agy_sdk_result_conflict: 输入已被原生读取，中断后已有完整回复，但原生最终回执仍报告旧中断；请核对会话结果，不要直接重发。".into());
                         }
-                        result=Some(if status=="SUCCESS" {Ok(())} else {Err(format!("agy_sdk_native_{status}: {}",process.redact(value["error"].as_str().unwrap_or(status))))});
+                        result=Some(if status=="SUCCESS" || historical_error {Ok(())} else {Err(format!("agy_sdk_native_{status}: {}",process.redact(value["error"].as_str().unwrap_or(status))))});
                         if turn.persistent {
                             if interrupted { return Err("agy_sdk_interrupted: 已中断当前 Agy 回合。".into()); }
                             return result.take().unwrap();

@@ -668,6 +668,39 @@ def restart_idle_registry(browser, fixture):
             context.close()
 
 
+def restart_historical_result(browser, fixture):
+    with fixture.server() as base:
+        context, page, _ = open_page(browser, base, fixture, accept_popups=False)
+        try:
+            old = send(page, '__RECOVERED_STREAM__')
+            state(page, old['request_id'], 'unknown')
+            card(page, old['request_id']).get_by_role('button', name='移除记录', exact=True).click()
+            page.get_by_role('dialog').get_by_role('button', name='移除记录', exact=True).click()
+            current = send(page, '__HISTORICAL_ERROR__')
+            expect(page.locator('.sdk-live')).to_contain_text('历史错误未污染本轮')
+            gone(page, current['request_id'])
+            assert fixture.entry(current['request_id'])['state'] == 'completed'
+            pid = fixture.native_pid()
+        finally:
+            context.close()
+    with fixture.server() as base:
+        context, page, _ = open_page(browser, base, fixture, accept_popups=False)
+        try:
+            expect(page.locator('.sdk-live')).to_contain_text('历史错误未污染本轮')
+            page.wait_for_function('NativeSdkView.raw?.running === false')
+            assert not page.evaluate('NativeSdkView.raw.error')
+            assert fixture.native_pid() == pid and fixture.alive(pid)
+            assert fixture.inputs('__HISTORICAL_ERROR__') == ['__HISTORICAL_ERROR__']
+            assert fixture.entry(current['request_id'])['state'] == 'completed'
+            following = send(page, 'after historical result restart')
+            expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: after historical result restart')
+            gone(page, following['request_id'])
+            assert fixture.native_pid() == pid
+            print('Agy: historical-error completion and runtime survive service restart without resend', flush=True)
+        finally:
+            context.close()
+
+
 def check_recovery_logs(fixtures):
     for source in ('grok', 'agy', 'claude'):
         records = [json.loads(line)
@@ -725,6 +758,8 @@ def main():
             restart_idle_registry(browser, fixtures['claude'])
             restart_idle_registry(browser, fixtures['grok'])
             restart_idle_registry(browser, fixtures['agy'])
+            fixtures['historical-agy'] = NativeQueueFixture(root / 'historical-agy', 'agy', args.binary, args.host_binary)
+            restart_historical_result(browser, fixtures['historical-agy'])
             check_recovery_logs(fixtures)
         finally:
             browser.close()

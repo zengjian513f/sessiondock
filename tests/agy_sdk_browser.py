@@ -357,7 +357,7 @@ def exercise(browser, base, fixture, screenshots=None):
         expect(page.locator(f'[data-queue-id="{failed["id"]}"]')).to_have_count(0)
 
         print('Agy: recovered stream with stale ERROR receipt is not a failed send', flush=True)
-        for marker, conflict in [('好，请在独立工作区修复审计发现的问题，完成复审与验证；不要重复执行已经完成的任务，并保留当前会话。', True), ('__UNRECOVERED_STREAM__', False)]:
+        for marker, conflict in [('__HISTORICAL_ERROR__', False), ('好，请在独立工作区修复审计发现的问题，完成复审与验证；不要重复执行已经完成的任务，并保留当前会话。', True), ('__UNRECOVERED_STREAM__', False), ('__HISTORICAL_WITH_CURRENT_ERROR__', False)]:
             send(page, marker)
             idle(page)
             page.wait_for_function("text=>NativeSdkView.raw.input_queue?.some(row=>row.text===text && row.state==='unknown')", arg=marker)
@@ -396,6 +396,26 @@ def exercise(browser, base, fixture, screenshots=None):
                 idle(page)
                 assert fixture.inputs(marker)[-1]['pid'] == fixture.inputs('after conflicting result')[-1]['pid']
                 assert len(fixture.inputs(marker)) == 1
+                print('Agy: completed native turn ignores proven earlier-turn ERROR and keeps its runtime', flush=True)
+                receipt = send(page, '__HISTORICAL_ERROR__')
+                expect(page.locator('.sdk-live')).to_contain_text('本轮完整回复：历史错误未污染本轮。')
+                idle(page)
+                raw = page.evaluate('NativeSdkView.raw')
+                assert not raw.get('error'), raw.get('error')
+                assert not any(row['request_id'] == receipt['request_id'] for row in raw['input_queue'])
+                assert 'prior turn; current native response completed' in raw['diagnostics']
+                assert fixture.inputs(marker)[-1]['pid'] == fixture.inputs('__HISTORICAL_ERROR__')[-1]['pid']
+                if screenshots:
+                    for width, theme in [(1440, 'dark'), (675, 'light')]:
+                        page.set_viewport_size({'width':width,'height':900})
+                        page.emulate_media(color_scheme=theme)
+                        page.screenshot(path=str(screenshots/f'agy-historical-result-{width}-{theme}.png'),full_page=True)
+                    page.set_viewport_size({'width':1440,'height':900})
+                    page.emulate_media(color_scheme='dark')
+                send(page, 'next round after historical error')
+                expect(page.locator('.sdk-live')).to_contain_text('Synthetic Agy reply: next round after historical error')
+                idle(page)
+                assert fixture.inputs(marker)[-1]['pid'] == fixture.inputs('next round after historical error')[-1]['pid']
         fixture.occupy()
         before = len(fixture.inputs())
         send(page, 'must not take over')
@@ -487,7 +507,7 @@ def check_diagnostic_logs(fixture):
     assert all(row.get('aggregation') == 'none' and 'repeat_count' not in row for row in events)
     encoded = json.dumps(events, ensure_ascii=False)
     for private in (fixture.env['AGY_SDK_FAKE_KEY'], '__UNRECOVERED_STREAM__',
-                    '最终结果：所有指定检查通过', 'synthetic native error',
+                    '最终结果：所有指定检查通过', '历史错误未污染本轮', 'synthetic native error',
                     'The stream was interrupted. Please continue the task you were working on.'):
         assert private not in encoded, f'private native content escaped into metadata logs: {private}'
     results = [row for row in events if row['event'] == 'agy.sdk.result']
@@ -520,6 +540,15 @@ def check_diagnostic_logs(fixture):
         else:
             assert any(row['event'] == 'agy.sdk.terminate' for row in trace)
     assert any(row['status'] == 'SUCCESS' for row in results), 'normal result tracing missing'
+    inherited = next(row for row in results if row['evidence']['reason'] == 'historical_error_after_completed_response')
+    assert inherited['status'] == 'ERROR' and inherited['effective_status'] == 'SUCCESS'
+    assert inherited['historical_error'] and not inherited['conflict']
+    assert inherited['evidence']['error_steps'] == []
+    assert inherited['evidence']['prior_error_step'] < inherited['evidence']['user_step'] < inherited['evidence']['last_step']
+    assert any(row['event'] == 'native_sdk.input_transition' and row['delivery_id'] == inherited['delivery_id']
+               and row['to'] == 'completed' and row['consumption'] == 'observed' for row in events)
+    assert any(row['evidence']['reason'] == 'missing_native_error' and row['effective_status'] == 'ERROR' for row in results)
+    assert any(row['evidence']['reason'] == 'different_current_error' and row['effective_status'] == 'ERROR' for row in results)
     assert any(row['event'] == 'agy.sdk.interrupt' and row['sent'] for row in events), 'SIGINT tracing missing'
     print('Agy: persisted request/delivery/runtime/step/result/queue trace and metadata-only logging verified', flush=True)
 
