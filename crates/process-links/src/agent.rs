@@ -87,6 +87,7 @@ pub struct Resources {
 fn response<T: serde::de::DeserializeOwned>(
     path: &Path,
     request: &Request,
+    bindings_only: bool,
 ) -> std::io::Result<Option<T>> {
     use std::io::{BufRead, BufReader, BufWriter, Write};
     use std::os::unix::net::UnixStream;
@@ -97,7 +98,21 @@ fn response<T: serde::de::DeserializeOwned>(
     // serde emits punctuation and short fields separately. Buffer the catalog
     // instead of making thousands of one-byte socket writes per observation.
     let mut writer = BufWriter::new(&mut stream);
-    serde_json::to_writer(&mut writer, request)?;
+    #[derive(Serialize)]
+    struct Message<'a> {
+        #[serde(flatten)]
+        request: &'a Request,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        bindings_only: bool,
+    }
+    // Older collectors ignore this optional projection and return the full report.
+    serde_json::to_writer(
+        &mut writer,
+        &Message {
+            request,
+            bindings_only,
+        },
+    )?;
     writer.write_all(b"\n")?;
     writer.flush()?;
     drop(writer);
@@ -119,7 +134,7 @@ fn response<T: serde::de::DeserializeOwned>(
 }
 #[cfg(unix)]
 pub fn request(path: &Path, request: &Request) -> std::io::Result<serde_json::Value> {
-    response(path, request).map(|result| result.unwrap_or(serde_json::Value::Null))
+    response(path, request, false).map(|result| result.unwrap_or(serde_json::Value::Null))
 }
 
 #[cfg(not(unix))]
@@ -136,7 +151,8 @@ pub fn request_typed<T: serde::de::DeserializeOwned>(
     path: &Path,
     request: &Request,
 ) -> std::io::Result<T> {
-    response(path, request)?.ok_or_else(|| std::io::Error::other("agent response has no result"))
+    response(path, request, false)?
+        .ok_or_else(|| std::io::Error::other("agent response has no result"))
 }
 #[cfg(not(unix))]
 pub fn request_typed<T: serde::de::DeserializeOwned>(_: &Path, _: &Request) -> std::io::Result<T> {
@@ -147,8 +163,9 @@ pub fn request_typed<T: serde::de::DeserializeOwned>(_: &Path, _: &Request) -> s
 }
 
 /// Local liveness/catalog consumers need bindings, not historical TCP evidence.
-/// Skipped fields are still parsed/validated, but never allocated as Values or
-/// connection records. The full report remains available to the coordinator.
+/// Request the small wire projection; older collectors may still send full
+/// reports, whose extra fields are validated and skipped without allocation.
+/// The full report remains available to the coordinator.
 pub fn bindings(path: &Path, request: &Request) -> std::io::Result<Report> {
     #[derive(Deserialize)]
     struct Bindings {
@@ -159,6 +176,10 @@ pub fn bindings(path: &Path, request: &Request) -> std::io::Result<Report> {
         sampled_at: f64,
         bindings: Vec<Binding>,
     }
+    #[cfg(unix)]
+    let result: Bindings = response(path, request, true)?
+        .ok_or_else(|| std::io::Error::other("agent response has no result"))?;
+    #[cfg(not(unix))]
     let result: Bindings = request_typed(path, request)?;
     Ok(Report {
         version: result.version,
