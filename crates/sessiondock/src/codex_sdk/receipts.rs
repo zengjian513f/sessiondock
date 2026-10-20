@@ -96,6 +96,24 @@ impl Receipts {
             .collect())
     }
 
+    pub fn live_uids(&self, loaded: &[String]) -> Vec<String> {
+        self.rows
+            .lock()
+            .expect("SDK receipts")
+            .iter()
+            .filter(|(_, receipt)| {
+                receipt.row["sid"]
+                    .as_str()
+                    .is_some_and(|sid| loaded.iter().any(|id| id == sid))
+                    && (receipt.pending
+                        || receipt.row["path"]
+                            .as_str()
+                            .is_some_and(|path| std::path::Path::new(path).is_file()))
+            })
+            .map(|(uid, _)| uid.clone())
+            .collect()
+    }
+
     pub fn thread(&self, uid: &str) -> Option<String> {
         let rows = self.rows.lock().expect("SDK receipts");
         let receipt = rows.get(uid).filter(|receipt| receipt.pending)?;

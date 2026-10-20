@@ -763,8 +763,10 @@ async fn handle(
     } else {
         (None, None)
     };
-    if path == "/api/term/create"
-        && let Some(body) = body.as_mut()
+    if matches!(
+        path.as_str(),
+        "/api/term/create" | "/api/codex-sdk/create" | "/api/native-sdk/create"
+    ) && let Some(body) = body.as_mut()
     {
         crate::hub::relations::prepare_continuation(registry, client, body).await?;
     }

@@ -6,6 +6,7 @@
 
 mod audit;
 mod bug_report;
+mod bug_report_sdk;
 pub(crate) mod cleanup;
 mod codex_sdk;
 mod codex_sdk_actions;

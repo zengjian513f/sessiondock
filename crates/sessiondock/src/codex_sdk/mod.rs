@@ -324,6 +324,12 @@ impl CodexSdk {
 
     /// Start receipts only, never invented native files or history. A native
     /// rollout takes over this identity as soon as the daemon writes it.
+    /// Creation receipts bridge the interval between first native write and
+    /// inventory discovery without dropping the running session from /live.
+    pub fn live_session_uids(&self, loaded: &[String]) -> Vec<String> {
+        self.inner.receipts.live_uids(loaded)
+    }
+
     pub fn pending(&self) -> Result<Vec<Value>, RpcError> {
         self.inner.receipts.pending()
     }

@@ -173,6 +173,9 @@ def main():
                         errors = []
                         page.on("pageerror", lambda error: errors.append(str(error)))
                         page.goto(base, wait_until="networkidle")
+                        from session_start_fixtures import choose_mode
+                        choose_mode(page, 'claude', 'cli')
+                        page.locator('#settings-dialog .modal-close').click()
                         try:
                             receipts.append(follow(page, root, base, root / "work",
                                 '执行 /synthetic/prompts/fast_seed_to_endpoint.md 首条消息',

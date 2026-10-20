@@ -212,3 +212,53 @@ pub(super) async fn record_continuations(
         })
         .await
 }
+
+/// SDK creation already has a stable UID before the first native message.
+/// Keep continuation metadata under that identity while inventory catches up.
+pub(super) async fn sdk_continuation(
+    state: &AppState,
+    uid: Option<String>,
+    remote: Option<Predecessor>,
+    authenticated_hub: bool,
+) -> Result<Option<Predecessor>, ApiError> {
+    if let Some(edge) = remote {
+        if !authenticated_hub {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "relations_remote_hub",
+                "跨机器关系需要通过 Hub 验证",
+            ));
+        }
+        return Ok(Some(edge));
+    }
+    let Some(uid) = uid else {
+        return Ok(None);
+    };
+    state
+        .reader
+        .run(move |store| {
+            let inventory = store.list(true)?;
+            let source = inventory["sessions"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["uid"] == uid))
+                .ok_or_else(|| crate::sessions::SessionError {
+                    status: 404,
+                    message: "前序会话不存在".into(),
+                })?;
+            Ok(Some(relations::descriptor(source, source)))
+        })
+        .await
+}
+
+pub(super) fn record_sdk_continuation(
+    state: &AppState,
+    uid: &str,
+    edge: Option<Predecessor>,
+) -> Result<(), ApiError> {
+    if let (Some(store), Some(edge)) = (&state.metadata, edge) {
+        metadata::update(store, &state.ui_events, |store| {
+            Ok(store.initialize_continuation(uid, edge)?)
+        })?;
+    }
+    Ok(())
+}

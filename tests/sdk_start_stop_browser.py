@@ -38,6 +38,29 @@ def exercise(browser, base, source, screenshots, label):
         row = page.locator(f'#side .item[data-uid^="{source}:"]:not([data-uid$="-comparison"])').first
         if not row.is_visible(): page.locator(f'#chips button[data-source="{source}"]').click()
         uid = row.get_attribute('data-uid')
+        from session_start_fixtures import choose_mode
+        def set_mode(mode):
+            if page.locator('#detail .mobile-back').is_visible(): page.locator('#detail .mobile-back').click()
+            choose_mode(page, source, mode)
+            page.locator('#settings-dialog .modal-close').click()
+        set_mode('cli')
+        row.click()
+        expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
+        assert not opens
+        set_mode('sdk')
+        page.reload(wait_until='networkidle')
+        expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
+        expect(page.locator('#sdk-composer')).to_be_hidden()
+        set_mode('cli')
+        page.reload(wait_until='networkidle')
+        expect(page.locator('#a-sdk')).to_have_attribute('aria-pressed', 'true')
+        page.locator('#a-chat').click()
+        set_mode('sdk')
+        page.reload(wait_until='networkidle')
+        expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
+        assert not opens
+        page.locator('#a-sdk').click()
+        if page.locator('#detail .mobile-back').is_visible(): page.locator('#detail .mobile-back').click()
         before = page.evaluate('S.sessions.map(row => [row.uid, row.updated])')
         order = page.locator('#side .item').evaluate_all('(rows) => rows.map(row => row.dataset.uid)')
         row.click()
@@ -69,10 +92,7 @@ def exercise(browser, base, source, screenshots, label):
         if page.locator('#detail .mobile-back').is_visible(): page.locator('#detail .mobile-back').click()
         row.click(button='right')
         page.locator('#item-menu [data-act="stop"]').click()
-        expect(page.locator('#session-start-menu')).to_be_visible()
-        page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-start-menu.png'))
-        page.locator('#session-start-menu [data-start-mode="sdk"]').click()
-        expect(page.locator('#session-start-menu')).to_be_hidden()
+
         expect(page.locator('#sdk-input')).to_be_visible()
         page.wait_for_function('SdkView.connected')
         expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')
@@ -88,15 +108,46 @@ def exercise(browser, base, source, screenshots, label):
                 assert 'sdk_session_busy' in response.text(), response.text()
             expect(page.locator('#sdk-input')).to_be_visible()
         page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-started.png'))
+        # Reload may render history before discovery reports the running SDK.
+        # Deliver that observation later, without a second session click/start.
+        with page.expect_response(lambda response: response.request.method == 'POST'
+                                  and response.url.endswith('/api/session/conversation')):
+            page.locator('#sdk-input').fill('draft survives delayed SDK discovery')
+        live_route = re.compile(r'/api/live(?:\?|$)')
+        page.route(live_route, lambda route: route.fulfill(json={
+            'uids': [], 'sdk_uids': [], 'tmux_uids': [], 'working_uids': []}))
+        page.reload(wait_until='networkidle')
+        expect(page.locator('.sdk-history')).to_be_visible()
+        expect(page.locator('#sdk-composer')).to_be_hidden()
+        count = len(opens)
+        page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-discovery-pending.png'))
+        page.unroute(live_route)
+        page.evaluate('refreshLive(true)')
+        expect(page.locator('#sdk-input')).to_be_visible()
+        page.wait_for_function('SdkView.connected')
+        expect(page.locator('#sdk-input')).to_have_value('draft survives delayed SDK discovery')
+        assert len(opens) == count + 1, opens
+        page.evaluate('refreshLive(true)')
+        assert len(opens) == count + 1, opens
+        page.screenshot(path=str(screenshots/f'{label}-{source}-{width}-reconnected.png'))
         # A second page attaches to the live SDK; stopping must also close its stream.
         second = context.new_page()
         second.goto(page.url, wait_until='networkidle')
         second.wait_for_function('SdkView.connected')
+        running_snapshot = page.request.get(base+'/api/live?force=1').json()
         power()
         expect(page.locator('#sdk-composer')).to_be_hidden()
         expect(second.locator('#sdk-composer')).to_be_hidden()
         expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '启动会话')
         assert uid not in page.request.get(base+'/api/live?force=1').json().get('sdk_uids', [])
+        # A late pre-stop observation must not reconnect a stopped view.
+        stopped_opens = len(opens)
+        page.route(live_route, lambda route: route.fulfill(json=running_snapshot))
+        page.evaluate('refreshLive(true)')
+        expect(page.locator('#sdk-composer')).to_be_hidden()
+        assert len(opens) == stopped_opens, opens
+        page.unroute(live_route)
+        page.evaluate('refreshLive(true)')
         count = len(opens)
         page.reload(wait_until='networkidle')
         expect(page.locator('#sdk-composer')).to_be_hidden()

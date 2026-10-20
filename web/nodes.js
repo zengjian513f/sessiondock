@@ -29,9 +29,24 @@ function nodeDirectoryMarkup(row, length = 999) {
 function newNodeId() { return HUB_MODE ? document.querySelector('#new-node')?.value || '' : ''; }
 function newDirsKey() { return HUB_MODE ? 'newDirs.' + newNodeId() : 'newDirs'; }
 function newNodeCapabilities() { return HUB_MODE ? Nodes.capabilities[newNodeId()] || {} : T; }
+// A launch preference is independent of the view currently displaying history.
+function agentStartMode(source) {
+  return store.get('agentStartMode.' + source, 'sdk') === 'cli' || source === 'shell' ? 'cli' : 'sdk';
+}
+function agentSdkAvailable(source, node = '') {
+  const cap = HUB_MODE ? Nodes.capabilities[node] || {} : SessionDockCapabilities.config;
+  return source === 'codex' ? cap.codex_sdk === true : cap.native_sdks?.[source] === true;
+}
+function agentStartUnavailable(source, node = '') {
+  if (agentStartMode(source) === 'sdk')
+    return agentSdkAvailable(source, node) ? '' : `${SOURCES[source]?.name || source} SDK 不可用，请在设置中选择 CLI 或配置 SDK。`;
+  const cap = HUB_MODE ? Nodes.capabilities[node] || {} : T;
+  return cap.sources?.[source] ? '' : `本机找不到 ${source} 命令`;
+}
 function newCodexSdkEnabled() { return SessionDockCapabilities.config.codex_sdk === true
   && (!HUB_MODE || newNodeCapabilities().codex_sdk === true); }
 function newSdkEnabled(source) {
+  if (agentStartMode(source) !== 'sdk') return false;
   if (source === 'codex') return newCodexSdkEnabled();
   return newNodeCapabilities().native_sdks?.[source] === true;
 }
@@ -495,8 +510,7 @@ function refreshNewNodeFields() {
   cwdCompletion.common = commonSessionDirs();
   cwdCompletion.commonLoading = true;
   for (const input of document.querySelectorAll('input[name="new-source"]')) {
-    input.disabled = !(!newContinueOrigin && newSdkEnabled(input.value))
-      && !cap.sources?.[input.value] || (input.value === 'shell' && !!newContinueOrigin);
+    input.disabled = !!agentStartUnavailable(input.value, node) || (input.value === 'shell' && !!newContinueOrigin);
     const name = SOURCES[input.value]?.name || (input.value === 'shell' ? 'SSH' : input.value);
     input.closest('label').title = input.disabled ? `${name}：此机器未安装或未配置该客户端` : name;
   }

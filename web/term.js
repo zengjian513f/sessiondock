@@ -664,13 +664,11 @@ function syncBugReportSources() {
   $('#bug-report-form .new-choice').hidden = !worker;
   $('#bug-report-go').textContent = worker ? '发送' : '保存诊断';
   const remembered = store.get('bugReportSource', 'codex');
-  const sources = HUB_MODE ? Nodes.capabilities[bugReportNode()]?.sources : T.sources;
-  const known = sources && Object.keys(sources).length;
   let checked = null;
   for (const input of $('#bug-report-source').querySelectorAll('input')) {
-    const missing = known && !sources[input.value];
+    const missing = agentStartUnavailable(input.value, bugReportNode());
     input.disabled = !!missing;
-    input.title = missing ? `${bugReportNodeName() || '本机'}找不到 ${input.value} 命令` : '';
+    input.title = missing || '';
     if (input.value === remembered && !missing) checked = input;
   }
   const fallback = checked || [...$('#bug-report-source').querySelectorAll('input')]
@@ -740,6 +738,13 @@ function showBugReportToast(report, worker) {
   open.onclick = async () => {
     dismiss();
     await loadTermList();
+    if (worker.mode === 'sdk') {
+      if (worker.session) T.sdkSessions = [...T.sdkSessions.filter(row => row.uid !== worker.uid), worker.session];
+      await refreshLive(true);
+      await openSession(worker.uid);
+      SessionContentView.open('sdk', worker.uid, null);
+      return;
+    }
     const pending = (T.pending || []).find(item => item.name === worker.name) || worker;
     await openPendingSession(pending);
   };
@@ -1104,7 +1109,7 @@ $('#bug-report-form').onsubmit = async event => {
     bugReportDraftObject().text = reportText;
     await hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
     const pending=bugReportDraftObject();
-    const priorPayload=JSON.stringify({description,report_type,source:bugReportSource(),...BugReportModels.choice(),
+    const priorPayload=JSON.stringify({description,report_type,source:bugReportSource(),mode:agentStartMode(bugReportSource()),...BugReportModels.choice(),
       attachments:attachments.map(a=>({upload_id:a.uploaded?.upload_id,number:a.number})),origin});
     if (pending.requestId && pending.requestText===priorPayload) {
       const previous=await priorComposerSubmission(BUG_REPORT_DRAFT_UID,pending.requestId,true);
@@ -1135,7 +1140,7 @@ $('#bug-report-form').onsubmit = async event => {
     const source = bugReportSource();
     store.set('bugReportSource', source);
     const reportDraft=bugReportDraftObject();
-    const choice = BugReportModels.choice();
+    const choice = {...BugReportModels.choice(),mode:agentStartMode(source)};
     const requestText=JSON.stringify({description,report_type,source,...choice,attachments:uploaded,origin});
     if (reportDraft.requestText!==requestText || !reportDraft.requestId) {
       reportDraft.requestText=requestText;reportDraft.requestId=crypto.randomUUID();
@@ -1549,12 +1554,12 @@ function agyModelCatalog(catalog) {
 }
 
 function fetchModelCatalog(node, source) {
-  const key = (HUB_MODE ? node + '|' : '') + source;
+  const key = (HUB_MODE ? node + '|' : '') + source + '|' + agentStartMode(source);
   if (!modelCatalogs.has(key)) {
     modelCatalogs.set(key, (async () => {
       try {
         const params = new URLSearchParams({source, ...(HUB_MODE ? {node} : {})});
-        const sdk = source === 'codex' && SessionDockCapabilities.config.codex_sdk === true
+        const sdk = agentStartMode(source) === 'sdk' && source === 'codex' && SessionDockCapabilities.config.codex_sdk === true
           && (!HUB_MODE || Nodes.capabilities[node]?.codex_sdk === true);
         const response = await fetch(appUrl(`${sdk ? 'api/codex-sdk/models' : 'api/term/models'}?${params}`), {cache: 'no-store'});
         const data = response.ok ? await response.json() : null;
@@ -2211,6 +2216,10 @@ async function resolveNewSession(info) {
       rememberTermOpen(current.name, false);
       disposeTermView(current.name);
     }
+    // Following a CLI's first native record keeps the user's current surface.
+    // Runtime discovery must not turn its composer into a fullscreen terminal.
+    SdkView.legacyViews.add(viewKey(linked.uid));
+    (SdkView.selectMode || SdkView.rememberMode).call(SdkView, linked.uid, null, reopen ? 'terminal' : 'chat');
     T.uid = linked.uid;
     await openSession(linked.uid, null, {follow: true, historyMode: 'replace'});
     if (S.sel === linked.uid && !S.agent && reopen && terminalLinked) await openTermPane(current.name);
@@ -2224,7 +2233,7 @@ async function resolveNewSession(info) {
 
 let newCreateAttempt = null;
 function newSessionRequestId(source, cwd) {
-  const key = JSON.stringify([newNodeId(), source, cwd, NewModels.model, NewModels.effort]);
+  const key = JSON.stringify([newNodeId(), source, agentStartMode(source), cwd, NewModels.model, NewModels.effort]);
   if (newCreateAttempt?.key !== key) newCreateAttempt = {key,
     rows: termRows(),
     id: requestId()};
@@ -2248,6 +2257,8 @@ async function createNewSession(e) {
   error.textContent = '';
   if (!source) { error.textContent = '没有可用的会话类型'; return; }
   if (!cwd) { error.textContent = '请选择启动目录'; return; }
+  const unavailable = agentStartUnavailable(source, newNodeId());
+  if (unavailable) { error.textContent = unavailable; return; }
   newSessionCreating = true;
   go.disabled = true;
   go.textContent = '创建中…';
@@ -2257,7 +2268,7 @@ async function createNewSession(e) {
     const request = { source, cwd, cols: 120, rows: newCreateAttempt.rows,
       request_id: requestId, ...(origin ? {continuation_uid:origin.uid} : {}), ...(HUB_MODE ? {_node: newNodeId()} : {}),
       ...NewModels.choice() };
-    const sdk = newSdkEnabled(source) && !origin;
+    const sdk = agentStartMode(source) === 'sdk';
     const endpoint = sdk ? (source === 'codex' ? 'api/codex-sdk/create' : 'api/native-sdk/create') : 'api/term/create';
     let d = await post(endpoint, request);
     if (d.needs_create) {
@@ -2272,16 +2283,9 @@ async function createNewSession(e) {
     if (d.error) { error.textContent = d.error; return; }
     const recent = [d.cwd, ...store.get(dirsKey, []).filter(x => x !== d.cwd)].slice(0, 8);
     store.set(dirsKey, recent);
-    if (sdk) {
-      if (d.session) T.sdkSessions = [...T.sdkSessions.filter(row => row.uid !== d.uid), d.session];
-      $('#new-session-dialog').close();
-      SdkView.legacyViews.delete(d.uid);
-      await openSession(d.uid);
-      void loadSessions(true, true);
-      return;
-    }
+    if (sdk && d.session) T.sdkSessions = [...T.sdkSessions.filter(row => row.uid !== d.uid), d.session];
     if (origin) {
-      const uid = pendingUid(d.name);
+      const uid = sdk ? d.uid : pendingUid(d.name);
       const draft = composerDraft(uid);
       await hydrateComposerDraft(uid, true);
       if (draft.loadFailed) throw new Error(draft.storageError || '接续消息读取失败');
@@ -2297,6 +2301,24 @@ async function createNewSession(e) {
           + `\n\n${description.trim() || '请接续该会话继续处理。'}`;
       }
       if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '接续消息保存失败');
+    }
+    if (sdk) {
+      $('#new-session-dialog').close();
+      SdkView.legacyViews.delete(d.uid);
+      ConsoleUI.busy.add(d.uid);
+      try {
+        await openSession(d.uid);
+        await SdkView.startSession(d.uid);
+        if (origin) {
+          await CodexSdkCompose.states.get(SdkView.active)?.ready;
+          await SdkView.send();
+        }
+      } finally {
+        ConsoleUI.busy.delete(d.uid);
+        refreshSessionRunControls();
+      }
+      void loadSessions(true, true);
+      return;
     }
     $('#new-session-dialog').close();
     await openPendingSession(d);

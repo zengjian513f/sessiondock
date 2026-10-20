@@ -422,36 +422,63 @@ function nativeSdkMessage(item) {
 
 // Existing history/navigation code talks to the selected view through this
 // facade. Codex-specific commands and protocol rendering keep their own view.
+function savedSessionView(uid, agent) {
+  const key = viewKey(uid, agent);
+  const saved = store.get('sessionViews', {})?.[key]
+    ?? (String(uid).startsWith('claude:') ? store.get('claudeSessionViews', {})?.[key] : null);
+  return ['sdk', 'chat', 'terminal'].includes(saved) ? saved : null;
+}
+function rememberSessionView(uid, agent, mode) {
+  const saved = store.get('sessionViews', {}) || {};
+  saved[viewKey(uid, agent)] = mode;
+  store.set('sessionViews', saved);
+}
+function defaultSessionView(uid) {
+  return agentStartMode(String(uid).split(':')[0]) === 'sdk' ? 'sdk' : 'chat';
+}
+
 const SdkView = new Proxy({
   active: CodexSdkView,
+  awaitingRunning: false,
   legacyViews: CodexSdkView.legacyViews,
   available(uid, agent) { return CodexSdkView.available(uid,agent) || NativeSdkView.available(uid,agent); },
   preferredMode(uid, agent) {
-    if (!String(uid).startsWith('claude:') || agent) return null;
-    // Read lazily: this script loads before the shared preference store.
-    const saved = store.get('claudeSessionViews', {})?.[viewKey(uid, agent)];
-    if (['sdk', 'chat', 'terminal'].includes(saved)) return saved;
+    const saved = savedSessionView(uid, agent);
+    if (saved) return saved;
+    if (!String(uid).startsWith('claude:') || agent) return defaultSessionView(uid);
     // Discovery may still be in flight on reload. Do not start a competing
     // SDK process before we know whether this session already has a console.
     if (typeof T === 'undefined' || !T.listLoaded) return 'chat';
     const name = takenOver(uid);
     if (name) return T.openViews.get(name)?.mode === 'collapsed' ? 'chat' : 'terminal';
     if (S.live.has(uid) && !S.liveSdk.has(uid)) return 'chat';
-    return 'sdk';
+    return defaultSessionView(uid);
   },
   rememberMode(uid, agent, mode) {
-    if (!String(uid).startsWith('claude:') || agent) return;
-    const saved = store.get('claudeSessionViews', {}) || {};
-    saved[viewKey(uid, agent)] = mode;
-    store.set('claudeSessionViews', saved);
+    rememberSessionView(uid, agent, mode);
   },
   defaultFor(uid, agent) {
     const mode = this.preferredMode(uid, agent);
     return this.available(uid,agent) && (mode ? mode === 'sdk' : !this.legacyViews.has(viewKey(uid,agent)));
   },
   pending(uid) { return CodexSdkView.pending(uid); },
+  syncRunning() {
+    const view = this.active;
+    if (!this.awaitingRunning || !view.pane || !view.readOnly || view.agent || view.uid !== S.sel || S.agent
+        || SessionContentView.kind !== 'sdk' || !S.liveSdk.has(view.uid)) return;
+    // Discovery can arrive after history was opened read-only on reload.
+    // Attach to the observed running instance without replacing history/drafts.
+    view.readOnly = false;
+    view.pane.querySelector('#sdk-composer').hidden = false;
+    void view.start(view.generation);
+  },
+  retryOpen() {
+    this.syncRunning();
+    this.active.retryOpen();
+  },
   open(uid,pane,agent,options) {
     this.close(); this.legacyViews.delete(viewKey(uid,agent));
+    this.awaitingRunning = true;
     this.rememberMode(uid, agent, 'sdk');
     this.active = String(uid).startsWith('codex:') ? CodexSdkView : NativeSdkView;
     const running = !agent && S.liveSdk.has(uid);
@@ -461,10 +488,10 @@ const SdkView = new Proxy({
   async startSession(uid, agent = null) {
     if (SessionContentView.kind !== 'sdk' || this.uid !== uid || this.agent !== agent)
       SessionContentView.open('sdk', uid, agent);
-    const pane = this.pane;
-    this.active.open(uid, pane, agent, {readOnly: true});
-    this.active.readOnly = false;
-    pane.querySelector('#sdk-composer').hidden = false;
+    if (this.active.readOnly) {
+      this.active.readOnly = false;
+      this.pane.querySelector('#sdk-composer').hidden = false;
+    }
     await this.active.start(this.active.generation);
     await refreshLive(true);
     refreshSessionRunControls();
@@ -472,6 +499,8 @@ const SdkView = new Proxy({
   stopped(uid, selectedAgent = null) {
     if (!selectedAgent) { S.liveSdk.delete(uid); S.live.delete(uid); }
     if (this.uid === uid && this.agent === selectedAgent && this.pane) {
+      // This is an intentional stop, not initial discovery still in flight.
+      this.awaitingRunning = false;
       const pane = this.pane, agent = this.agent;
       this.active.open(uid, pane, agent, {readOnly: true});
     }

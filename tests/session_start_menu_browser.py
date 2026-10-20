@@ -1,4 +1,4 @@
-"""Explicit CLI context submenu: all five sources through private real PTYs."""
+"""Configured CLI start: all five sources through private real PTYs."""
 import argparse
 from pathlib import Path
 import tempfile
@@ -57,26 +57,41 @@ def exercise(browser, base, source, shots, label):
                 if r.method == 'POST' and '/api/term/takeover' in r.url else None)
         page.goto(base, wait_until='networkidle')
         page.wait_for_function('T.listLoaded')
+        from session_start_fixtures import choose_mode
+        choose_mode(page, source, 'cli')
+        expect(page.locator('#agent-start-settings [data-agent-start-mode]')).to_have_count(5)
+        assert page.locator('#agent-start-settings').evaluate("group => !!(document.querySelector('#setting-console-paste-files').compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING)")
+        choices = page.locator('#agent-start-settings .setting-row')
+        boxes = [choices.nth(i).bounding_box() for i in range(5)]
+        assert abs(boxes[0]['y'] - boxes[1]['y']) < 1, boxes
+        assert boxes[1]['x'] > boxes[0]['x'], boxes
+        assert boxes[2]['y'] > boxes[0]['y'], boxes
+        selects = [choices.nth(i).locator('select').bounding_box() for i in range(5)]
+        assert selects[0]['x'] == selects[2]['x'] == selects[4]['x'], selects
+        assert selects[1]['x'] == selects[3]['x'], selects
+        if width > 480:
+            for i in range(5):
+                label_box = choices.nth(i).locator('span').bounding_box()
+                select = choices.nth(i).locator('select').bounding_box()
+                assert 7 <= select['x'] - label_box['x'] - label_box['width'] <= 9, (label_box, select)
+
+        page.locator('#agent-start-settings-title').scroll_into_view_if_needed()
+        page.screenshot(path=str(shots/f'{label}-{source}-{width}-settings.png'))
+        page.locator('#agent-start-settings [data-agent-start-mode]').last.scroll_into_view_if_needed()
+        page.screenshot(path=str(shots/f'{label}-{source}-{width}-settings-bottom.png'))
+        page.locator('#settings-dialog .modal-close').click()
         row = page.locator(f'#side .item[data-uid^="{source}:"]').first
         if not row.is_visible(): page.locator(f'#chips button[data-source="{source}"]').click()
         uid = row.get_attribute('data-uid')
         row.click(button='right')
         start = page.locator('#item-menu [data-act="stop"]')
-        # Keyboard entry, return, mouse entry and dismissal preserve the parent.
-        start.focus(); page.keyboard.press('ArrowRight')
-        expect(page.locator('#session-start-menu')).to_be_visible()
-        expect(page.locator('[data-start-mode="sdk"]')).to_have_attribute('aria-disabled', 'true')
-        page.keyboard.press('Escape')
-        expect(page.locator('#session-start-menu')).to_be_hidden()
-        expect(page.locator('#item-menu')).to_be_visible()
         group = page.locator('#item-menu [data-act="group"]')
         cross_submenu(page, group, page.locator('#session-group-menu'), page.locator('#session-group-menu-add'))
         page.locator('#item-menu [data-act="copy-identity"]').hover()
         expect(page.locator('#session-group-menu')).to_be_hidden()
-        cross_submenu(page, start, page.locator('#session-start-menu'), page.locator('[data-start-mode="cli"]'))
         page.screenshot(path=str(shots/f'{label}-{source}-{width}-cli-menu.png'))
         with page.expect_response(lambda r: '/api/term/takeover' in r.url) as response:
-            page.locator('[data-start-mode="cli"]').click()
+            start.click()
         assert response.value.ok, response.value.text()
         page.wait_for_function(r"""() => [...T.views.values()].some(view => {
           const b = view.term?.buffer?.active;
@@ -116,6 +131,6 @@ def main():
                     try: exercise(browser,f'http://127.0.0.1:{hub.port}',source,args.screenshots,'hub')
                     finally: hub.stop()
         finally: browser.close()
-    print('PASS five-source CLI submenu: node/Hub, wide/narrow, keyboard, explicit launch, terminal and stop')
+    print('PASS five-source CLI preference: node/Hub, wide/narrow, group submenu hover, launch, terminal and stop')
 
 if __name__=='__main__': main()

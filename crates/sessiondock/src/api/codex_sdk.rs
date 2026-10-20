@@ -4,7 +4,7 @@
 use std::{convert::Infallible, path::Path, sync::Arc, time::Duration};
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Query, State},
     http::StatusCode,
     response::{
@@ -112,12 +112,15 @@ pub struct Create {
     cwd: String,
     #[serde(default)]
     create_cwd: bool,
+    continuation_uid: Option<String>,
+    remote_continuation: Option<crate::metadata::Predecessor>,
     model: Option<String>,
     effort: Option<String>,
 }
 
 pub async fn create(
     State(state): State<AppState>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     Json(body): Json<Create>,
 ) -> Result<Json<Value>, ApiError> {
     let sdk = service(&state)?;
@@ -136,11 +139,19 @@ pub async fn create(
     if let Some(effort) = body.effort.filter(|s| !s.is_empty()) {
         params["config"] = json!({"model_reasoning_effort":effort});
     }
+    let continuation = super::relations::sdk_continuation(
+        &state,
+        body.continuation_uid,
+        body.remote_continuation,
+        hub.is_some(),
+    )
+    .await?;
     let result = sdk.create(&body.request_id, params).await.map_err(rpc)?;
     let path = result["thread"]["path"]
         .as_str()
         .ok_or_else(|| rpc(RpcError::Disconnected))?;
     let uid = crate::sessions::uid_for("codex", Path::new(path));
+    super::relations::record_sdk_continuation(&state, &uid, continuation)?;
     state.reader.store.invalidate_inventory();
     let session = sdk
         .pending()
