@@ -27,7 +27,7 @@ def single_row(page):
     }""")
     measurements = page.locator('.sdk-pane .sdk-status-row').evaluate("""row => {
       const bounds = row.getBoundingClientRect();
-      const controls = [...row.querySelectorAll(':scope > .sdk-status, :scope > .sdk-gauges, :scope > #sdk-usage-toggle, .sdk-pickers > label, .sdk-pickers > button')]
+      const controls = [...row.querySelectorAll(':scope > .footer-session-toggle, :scope > .sdk-status, :scope > .sdk-gauges, :scope > #sdk-usage-toggle, .sdk-pickers > label, .sdk-pickers > button')]
         .filter(node => node.getClientRects().length && !node.hidden)
         .map(node => { const r = node.getBoundingClientRect(); return {id: node.id || node.className,
           left:r.left, right:r.right, top:r.top, bottom:r.bottom}; });
@@ -206,7 +206,7 @@ def exercise(browser, base, corpus, fake, theme, scale, screenshots):
 
     # Actual sidebar resizing must preserve status/usage without a viewport resize.
     if scale == 100:
-        page.set_viewport_size({'width': 1280, 'height': 900})
+        page.set_viewport_size({'width': 1440, 'height': 900})
         single_row(page)
         prior_width = page.locator('.sdk-pane .sdk-status-row').bounding_box()['width']
         exposed = page.locator('.sdk-pickers > [data-sdk-action], .sdk-pickers > .sdk-policy').count()

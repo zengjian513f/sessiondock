@@ -11,7 +11,8 @@ const SdkUI = {
       <div class="msgs sdk-msgs" aria-live="polite"><div class="sdk-history"></div><div class="sdk-live"></div><div class="sdk-queue"></div></div>
       <div id="sdk-composer">
         <div class="sdk-status-row">
-          <button class="sdk-status" data-state="connecting" type="button" disabled><span role="status" aria-live="polite">连接中</span></button>
+          <button class="btn footer-session-toggle" type="button" aria-label="启动会话" title="启动会话"></button>
+          <button class="sdk-status" data-state="${readOnly ? 'idle' : 'connecting'}" type="button" disabled><span role="status" aria-live="polite">${readOnly ? '未运行' : '连接中'}</span></button>
           <div class="new-model-menu sdk-toolbar-menu sdk-status-menu" id="sdk-status-menu" popover="auto" role="dialog" aria-label="完整状态"></div>
           <div class="sdk-gauges" aria-label="用量"></div>
           <div class="sdk-options"><div class="sdk-pickers">
@@ -33,7 +34,9 @@ const SdkUI = {
     view.live = pane.querySelector('.sdk-live');
     view.notice = pane.querySelector('.sdk-status');
     view.input = pane.querySelector('#sdk-input');
-    pane.querySelector('#sdk-composer').hidden = readOnly;
+    pane.querySelector('#sdk-composer').hidden = false;
+    view.input.disabled = true;
+    pane.querySelector('#sdk-send').disabled = true;
     view.input.oninput = () => { view.fitInput(); CodexSdkCompose.input(view); };
     view.input.onblur = () => PathCompletion.close(view.input);
     view.input.onkeydown = event => {
@@ -97,6 +100,7 @@ const SdkUI = {
     },
     setNotice(text, kind = '', sticky = false) {
       if (!this.notice) return;
+      if (this.readOnly && kind === 'connecting') { text = '未运行'; kind = 'idle'; }
       this.notice.querySelector('[role=status]').textContent = ConversationUI.statusSummary(text, kind);
       this.notice.title = text;
       this.notice.hidden = !text;
@@ -215,6 +219,7 @@ const SdkUI = {
 
     setConnected(connected) {
       this.connected = connected;
+      if (this.pane) sdkSyncSettings(this);
       if (!this.uid || this.agent) return;
       paintItemStatus(document.querySelector(`.item[data-uid="${CSS.escape(this.uid)}"]`));
       if (S.sel === this.uid) paintHeaderTurn();

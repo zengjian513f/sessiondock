@@ -4905,17 +4905,17 @@ function renderComposer() {
   const restartable = conversationSendEnabled() && !shell
     && ['exited', 'failed'].includes(receipt?.state)
     && receipt?.binding?.state !== 'confirmed';
-  // A subagent view shares S.sel with its parent but has no CLI of its own, so
-  // neither the parent's editor nor its input notice belongs there.
-  const show = !S.agent
-    && (restartable || (!sessionComposerEnded(S.sel) && !!(name || pending)));
+  // Keep the conversation editor visible. Subagents share S.sel with their
+  // parent, so their disabled editor must not load the parent's draft.
+  const show = !!S.sel && (!shell || !S.agent
+    && (restartable || (!sessionComposerEnded(S.sel) && !!(name || pending))));
   const box = $('#composer');
   box.classList.toggle('hidden', !show);
   $('#conversation-status')?.classList.toggle('hidden', !show);
   const first = typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(S.sel);
   $('#right')?.classList.toggle('shell-session', !!shell);
   $('#right')?.classList.toggle('terminal-first', !!first);
-  switchComposerDraft(show ? S.sel : null);
+  switchComposerDraft(show && !S.agent ? S.sel : null);
   if (show) { syncComposerMode(); renderComposerInputStatus(); }
   if (first && typeof layoutTermPane === 'function') layoutTermPane();
 }
@@ -5160,7 +5160,13 @@ function syncComposerSendState() {
   const blocked = composerUsesInputStatus()
     ? !composerInputAllowsSend(draft?.inputStatus) : !!activeCliQuestion(composerUid);
   $('#csend').disabled = (typeof staleBuildShown !== 'undefined' && staleBuildShown)
+    || !composerUid || !takenOver(composerUid) || !conversationSendEnabled() && !sessionIsPtyOnly(composerUid)
     || composerSending || !!draft?.loading || sessionComposerEnded(composerUid) || blocked;
+  $('#cesc').disabled = !composerUid || !takenOver(composerUid) || sessionComposerEnded(composerUid);
+  if (!composerUid || !conversationSendEnabled() && !sessionIsPtyOnly(composerUid)) {
+    $('#cinput').disabled = true;
+    $('#cadd').disabled = true;
+  }
 }
 
 function composerInputNotice(status) {
@@ -5196,7 +5202,9 @@ function renderComposerInputStatus() {
   const node = $('#composer-input-status');
   const draft = composerDrafts.get(composerDraftOwner(composerUid));
   const receipt = (T.pending || []).find(row => pendingUid(row.name) === composerUid);
-  const lifecycle = sessionComposerEnded(composerUid)
+  const lifecycle = composerUid && !takenOver(composerUid) && !receipt
+    ? {state:'starting', message:'会话未在终端运行，点击状态栏电源按钮启动；草稿可继续编辑'}
+    : sessionComposerEnded(composerUid)
     ? {state:'starting', message:'会话已结束，重新启动后可继续发送；输入已保留'}
     : receipt && pendingPhase(receipt) === 'starting' && !takenOver(composerUid)
       ? {state:'starting', message:'会话正在启动；输入已保留'} : null;

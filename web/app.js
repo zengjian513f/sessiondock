@@ -7371,7 +7371,7 @@ function sessionStopUnavailable(row) {
 }
 function sessionRunUnavailable(row) {
   if (!row) return '会话状态尚未读取。';
-  if (typeof ConsoleUI !== 'undefined' && ConsoleUI.busy.has(row.uid)) return '正在启动或连接会话，请稍候。';
+  if (typeof ConsoleUI !== 'undefined' && ConsoleUI.busy.has(row.uid)) return '正在切换会话运行状态，请稍候。';
   if (sessionRunActive(row)) return sessionStopUnavailable(row);
   if (row.pending) return row.source === 'shell'
     ? '已结束的 SSH 会话不能续接，请新建 SSH 会话。'
@@ -7408,14 +7408,24 @@ function refreshSessionRunControls() {
   // Missing from that projection does not mean its running host has stopped.
   if (row && button?.closest('.dhead')?.dataset.uid === S.sel)
     paintSessionRunControl(button, row);
+  for (const control of document.querySelectorAll('.footer-session-toggle'))
+    paintSessionRunControl(control, row);
   if (menuUid) paintSessionRunControl($('#item-menu [data-act="stop"]'), sessionRunRow(menuUid));
 }
 async function toggleSessionRun(row, button = null, intent = null) {
+  if (!row || ConsoleUI.busy.has(row.uid)) return;
   // A live refresh can change the row after the control was painted. Keep the
   // action the user clicked; stop is idempotent if the instance already exited.
   if (intent === 'stop' || (intent !== 'start' && sessionRunActive(row))) {
-    if (row.pending) await stopPendingSession(row, button);
-    else await stopSession(row, button);
+    ConsoleUI.busy.add(row.uid);
+    refreshSessionRunControls();
+    try {
+      if (row.pending) await stopPendingSession(row, button);
+      else await stopSession(row, button);
+    } finally {
+      ConsoleUI.busy.delete(row.uid);
+      refreshSessionRunControls();
+    }
     return;
   }
   if (sessionRunActive(row)) {
@@ -9692,6 +9702,9 @@ function renderActivity(activity) {
     gauges.setAttribute('aria-label', '用量');
     gauges.tabIndex = 0;
     row.append(gauges);
+    const power = el('button', 'btn footer-session-toggle');
+    power.type = 'button';
+    row.append(power);
     box.after(row);
   }
   row.classList.toggle('hidden', $('#composer').classList.contains('hidden'));
@@ -9721,6 +9734,10 @@ function renderActivity(activity) {
   details.textContent = n.title;
   ConversationUI.bindPopover(n, details, row);
   row.prepend(n);
+  const power = row.querySelector('.footer-session-toggle');
+  row.prepend(power);
+  paintSessionRunControl(power, S.agent
+    ? {...sessionRunRow(S.sel), uid: S.sel, agent_id: S.agent} : sessionRunRow(S.sel));
   renderConversationUsage(row, S.sel);
   ConversationUI.updateStatusDisclosure(n, details);
 }

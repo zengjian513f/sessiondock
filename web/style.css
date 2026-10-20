@@ -1983,6 +1983,9 @@ body.stale-build #composer-input-status { display: none; }
 }
 /* 发送中只把「发送」藏起来叠一个转圈，文案仍占位，按钮宽度不变。 */
 .cbtns .btn.go { position: relative; }
+.composer-row .btn:disabled, .composer-row textarea:disabled {
+  color: var(--muted); opacity: .5; cursor: default;
+}
 .cbtns .btn.go[aria-busy="true"] { color: transparent; opacity: 1; }
 .cbtns .btn.go[aria-busy="true"]:hover { background: var(--panel-2); color: transparent; }
 .cbtns .btn.go[aria-busy="true"]::after {
@@ -2542,6 +2545,11 @@ header .btn[data-session-docked] { display: none; }
 .sdk-status-row > .sdk-gauges > * { flex-shrink: 0; }
 .sdk-status-row .sdk-quota-group, .sdk-status-row .sdk-quota-windows { flex-wrap: nowrap; max-width: none; }
 .sdk-status-row > #sdk-usage-toggle { font: inherit; flex: none; height: 24px; padding: 0 6px; }
+.sdk-status-row > .footer-session-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; width: 24px; height: 24px; min-height: 24px; padding: 0;
+}
+.footer-session-toggle.danger { color: var(--danger); }
 .sdk-status { --sdk-status-color: var(--muted); position: relative; min-width: 5em;
   padding: 0 0 0 12px; border: 0; background: transparent; text-align: left; cursor: default;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sdk-status-color); font: inherit; }
@@ -2607,7 +2615,7 @@ header .btn[data-session-docked] { display: none; }
 .sdk-toolbar-menu .new-effort { flex: none; min-width: 0; }
 #sdk-actions { display: grid; gap: 2px; }
 #sdk-actions .sdk-action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-#sdk-actions .sdk-action:disabled { color: var(--muted); opacity: .55; cursor: default; background: transparent; }
+.sdk-action:disabled { color: var(--muted); opacity: .55; cursor: default; background: transparent; }
 .sdk-toolbar-menu .sdk-gauges { flex-direction: column; align-items: stretch; gap: 10px; }
 .sdk-toolbar-menu .sdk-gauge { display: grid; grid-template-columns: 3.5em minmax(0, 1fr) max-content; gap: 8px; }
 .sdk-toolbar-menu .sdk-bar { width: 100%; }
