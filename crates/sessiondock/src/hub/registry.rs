@@ -1363,7 +1363,9 @@ fn now() -> f64 {
 /// `hub-cache/<nid>.sessions.json` = `{stamp, data}`, 0600, temp + rename.
 fn write_snapshot_file(dir: &Path, nid: &str, stamp: f64, data: &Value) -> io::Result<()> {
     fs::create_dir_all(dir)?;
-    let temp = dir.join(format!("{nid}.sessions.tmp"));
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp = dir.join(format!("{nid}.sessions.tmp-{}-{seq}", std::process::id()));
     #[derive(Serialize)]
     struct Snapshot<'a> {
         stamp: f64,
@@ -1371,11 +1373,17 @@ fn write_snapshot_file(dir: &Path, nid: &str, stamp: f64, data: &Value) -> io::R
     }
     // JSON serialization emits many tiny writes. Buffer them and borrow the
     // payload instead of cloning the entire session list into another Value.
-    let mut file = BufWriter::new(private_create(&temp)?);
-    serde_json::to_writer(&mut file, &Snapshot { stamp, data })?;
-    file.flush()?;
-    drop(file);
-    fs::rename(&temp, dir.join(format!("{nid}.sessions.json")))
+    let result = (|| -> io::Result<()> {
+        let mut file = BufWriter::new(private_create(&temp)?);
+        serde_json::to_writer(&mut file, &Snapshot { stamp, data })?;
+        file.flush()?;
+        drop(file);
+        fs::rename(&temp, dir.join(format!("{nid}.sessions.json")))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
 }
 
 /// `os.open(O_WRONLY|O_CREAT|O_TRUNC, 0o600)`.

@@ -12,8 +12,7 @@ mod write;
 
 use serde_json::{Value, json};
 use std::{
-    cell::Cell,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     path::PathBuf,
 };
 
@@ -23,9 +22,9 @@ pub(crate) use media::ScopedFiles;
 pub use references::clean_ref;
 pub(crate) use references::normalize_media_ref;
 pub(crate) use response::{CheckedImage, disposition};
-pub use response::{CheckedReader, FileBody, FileResponse, ReadOptions};
+pub use response::{FileBody, FileResponse, ReadOptions};
+pub use write::WriteService;
 pub(crate) use write::move_recycle_entry;
-pub use write::{WriteService, validate_name};
 
 pub const MAX_PATH_BYTES: usize = 4096;
 pub const MAX_PREVIEW_BYTES: usize = 1024 * 1024;
@@ -94,13 +93,13 @@ pub struct FileScope<'a> {
 pub struct FileService {
     grants: grants::Grants,
     /// Media reference indexes keyed by view revision (`files/media.rs`).
-    media_indexes: std::sync::Mutex<Vec<(String, std::sync::Arc<references::ReferenceIndex>)>>,
+    media_indexes: std::sync::Mutex<VecDeque<(String, std::sync::Arc<references::ReferenceIndex>)>>,
 }
 impl FileService {
     pub fn open(_roots: Vec<PathBuf>) -> Result<Self, FileError> {
         Ok(Self {
             grants: grants::Grants::default(),
-            media_indexes: std::sync::Mutex::new(Vec::new()),
+            media_indexes: std::sync::Mutex::new(VecDeque::new()),
         })
     }
 
@@ -116,31 +115,19 @@ impl FileService {
         boundary::open_target(boundary::volume_root(&path)?, path)
     }
 
-    fn probe(
-        &self,
-        scope: &FileScope<'_>,
-        raw: &str,
-        probes: &Cell<usize>,
-    ) -> Result<ResolvedTarget, FileError> {
-        probes.set(probes.get() + 1);
-        self.candidate(scope, raw)
-    }
     fn directories(
         &self,
         scope: &FileScope<'_>,
         index: &references::ReferenceIndex,
         needed: bool,
-        probes: &Cell<usize>,
     ) -> Result<Vec<PathBuf>, FileError> {
         let mut directories = BTreeSet::new();
         if needed {
             for raw in &index.directories {
-                match self.probe(scope, raw, probes) {
-                    Ok(target) if target.kind() == "directory" => {
-                        directories.insert(target.path().to_path_buf());
-                    }
-                    Err(error) if error.status == 413 => return Err(error),
-                    _ => {}
+                if let Ok(target) = self.candidate(scope, raw)
+                    && target.kind() == "directory"
+                {
+                    directories.insert(target.path().to_path_buf());
                 }
             }
         }
@@ -153,10 +140,9 @@ impl FileService {
         index: &references::ReferenceIndex,
         raw: &str,
         directories: &[PathBuf],
-        probes: &Cell<usize>,
     ) -> Result<ResolvedTarget, FileError> {
         let reference = clean_ref(raw)?;
-        self.resolve_reference(scope, index, &reference, directories, probes)
+        self.resolve_reference(scope, index, &reference, directories)
     }
 
     fn resolve_reference(
@@ -165,7 +151,6 @@ impl FileService {
         index: &references::ReferenceIndex,
         reference: &str,
         directories: &[PathBuf],
-        probes: &Cell<usize>,
     ) -> Result<ResolvedTarget, FileError> {
         if !index.refs.contains(reference) {
             return Err(FileError::new(
@@ -176,11 +161,11 @@ impl FileService {
         }
         let basename = !reference.contains(['/', '\\']);
         if !basename {
-            return self.probe(scope, reference, probes);
+            return self.candidate(scope, reference);
         }
         // A bare filename is a relative path first. Historical references in
         // other projects must not make an existing cwd file ambiguous.
-        match self.probe(scope, reference, probes) {
+        match self.candidate(scope, reference) {
             Ok(target) => return Ok(target),
             Err(error) if error.status == 404 || error.code == "file_cwd_unavailable" => {}
             Err(error) => return Err(error),
@@ -188,7 +173,7 @@ impl FileService {
         let mut candidates: BTreeMap<PathBuf, ResolvedTarget> = BTreeMap::new();
         // Without a cwd match, consider all branch references, not the first one.
         for other in index.basenames.get(reference).into_iter().flatten() {
-            if let Ok(target) = self.probe(scope, other, probes) {
+            if let Ok(target) = self.candidate(scope, other) {
                 candidates.insert(target.path().to_path_buf(), target);
                 if candidates.len() > 1 {
                     return Err(FileError::new(
@@ -202,7 +187,7 @@ impl FileService {
         for directory in directories {
             let child = directory.join(reference);
             if let Some(child) = child.to_str()
-                && let Ok(target) = self.probe(scope, child, probes)
+                && let Ok(target) = self.candidate(scope, child)
             {
                 candidates.insert(target.path().to_path_buf(), target);
                 if candidates.len() > 1 {
@@ -228,14 +213,9 @@ impl FileService {
     ) -> Result<ResolvedTarget, FileError> {
         references::validate_scope(scope)?;
         let index = references::ReferenceIndex::new(scope.messages)?;
-        let probes = Cell::new(0);
-        let directories = self.directories(
-            scope,
-            &index,
-            !clean_ref(reference)?.contains(['/', '\\']),
-            &probes,
-        )?;
-        let anchor = self.resolve(scope, &index, reference, &directories, &probes)?;
+        let directories =
+            self.directories(scope, &index, !clean_ref(reference)?.contains(['/', '\\']))?;
+        let anchor = self.resolve(scope, &index, reference, &directories)?;
         let Some(raw) = navigation.filter(|value| !value.is_empty()) else {
             return Ok(anchor);
         };
@@ -272,14 +252,12 @@ impl FileService {
             );
         }
         let index = references::ReferenceIndex::new(scope.messages)?;
-        let probes = Cell::new(0);
         let directories = self.directories(
             scope,
             &index,
             requested
                 .iter()
                 .any(|reference| !reference.contains(['/', '\\'])),
-            &probes,
         )?;
         let mut resolved = serde_json::Map::new();
         let mut targets = Vec::new();
@@ -289,13 +267,12 @@ impl FileService {
             if !seen.insert(reference) {
                 continue;
             }
-            match self.resolve(scope, &index, reference, &directories, &probes) {
+            match self.resolve(scope, &index, reference, &directories) {
                 Ok(target) => {
                     let path = boundary::wire_path(target.path())?;
                     resolved.insert(reference.clone(), json!(path));
                     targets.push(json!({"ref":reference,"path":path,"kind":target.kind()}));
                 }
-                Err(error) if error.status == 413 => return Err(error),
                 Err(error) => errors.push(json!({"ref":reference,"status":error.status,"code":error.code,"error":error.message})),
             }
         }

@@ -31,18 +31,24 @@ struct Journal {
 pub(super) fn save(path: &Path, value: &impl serde::Serialize) -> io::Result<()> {
     use std::io::Write;
     let tmp = path.with_extension("tmp");
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+    let result = (|| -> io::Result<()> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp)?;
+        serde_json::to_writer(&mut file, value)?;
+        file.flush()?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
     }
-    let mut file = options.open(&tmp)?;
-    serde_json::to_writer(&mut file, value)?;
-    file.flush()?;
-    file.sync_all()?;
-    std::fs::rename(tmp, path)
+    result
 }
 pub(super) fn private_dir(path: &Path) -> io::Result<()> {
     std::fs::create_dir_all(path)?;
@@ -300,10 +306,23 @@ impl Connection {
         let mut state = self.live.lock().unwrap();
         state.stdout_offset = next;
         if message.get("method").is_some() {
+            let is_chunk = matches!(
+                message["params"]["update"]["sessionUpdate"].as_str(),
+                Some("agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk")
+            );
+            let prev_seq = state.seq;
             if let Some(response) = state.receive(message) {
                 self.send(response)?;
             }
-            state.save_checkpoint().map_err(error)?;
+            if state.seq == prev_seq {
+                if is_chunk {
+                    state.save_checkpoint_throttled().map_err(error)?;
+                } else {
+                    state.save_checkpoint().map_err(error)?;
+                }
+            } else if let Some(err) = state.last_checkpoint_error.clone() {
+                return Err(err);
+            }
             return Ok(());
         }
         let Some(id) = message["id"].as_u64() else {
@@ -394,7 +413,9 @@ impl Connection {
         }
         state.completed_rpcs.insert(id);
         state.publish();
-        state.save_checkpoint().map_err(error)?;
+        if let Some(err) = state.last_checkpoint_error.clone() {
+            return Err(err);
+        }
         drop(state);
         if let Some(reply) = self.pending.lock().unwrap().remove(&id) {
             let _ = reply.send(result);
@@ -437,11 +458,12 @@ async fn run(
         let output=client.read(Stream::Stdout,read_offset).await.map_err(error)?;read_offset=output.next_offset;buffer.extend_from_slice(&output.bytes);
         while let Some(length)=buffer.iter().position(|b|*b==b'\n').map(|p|p+1).or_else(||(output.eof&&!buffer.is_empty()).then_some(buffer.len())){
             let line:Vec<_>=buffer.drain(..length).collect();let next=read_offset-buffer.len()as u64;
-            if line.iter().all(u8::is_ascii_whitespace){let mut state=connection.live.lock().unwrap();state.stdout_offset=next;state.save_checkpoint().map_err(error)?;continue;}
+            if line.iter().all(u8::is_ascii_whitespace){let mut state=connection.live.lock().unwrap();state.stdout_offset=next;state.save_checkpoint_throttled().map_err(error)?;continue;}
             let message:Value=serde_json::from_slice(&line).map_err(|_|"grok_sdk_invalid_protocol".to_owned())?;connection.observe(&message,next)?;
         }
+        if output.eof{connection.live.lock().unwrap().save_checkpoint().map_err(error)?;}
         let status=client.status().await.map_err(error)?;
-        if read_offset>=status.stdout_len && let Some(reply)=caught_up.take(){let _=reply.send(Ok(()));}
+        if read_offset>=status.stdout_len && let Some(reply)=caught_up.take(){connection.live.lock().unwrap().save_checkpoint().map_err(error)?;let _=reply.send(Ok(()));}
         if output.eof && status.exit.is_some(){return Err("grok_sdk_disconnected".into());}
         if read_offset<status.stdout_len{continue;}
         tokio::select!{_=shutdown.cancelled()=>{detached=true;return Ok(());},_=connection.wake.notified()=>{},_=tokio::time::sleep(std::time::Duration::from_millis(20))=>{}}

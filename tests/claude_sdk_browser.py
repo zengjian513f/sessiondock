@@ -74,10 +74,7 @@ def wait_snapshot(page, uid, predicate):
 
 
 def start_sdk_if_needed(page):
-    page.wait_for_function("""() => document.querySelector('#sdk-input')?.offsetParent
-      || document.querySelector('#a-session-toggle')?.title === '启动会话'""")
-    if not page.locator('#sdk-input').is_visible():
-        page.locator('#a-session-toggle').click()
+    page.locator('#sdk-input').click()
 
 
 def open_sdk(page, fixture, expect, uid=None):

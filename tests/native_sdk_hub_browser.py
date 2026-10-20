@@ -40,12 +40,15 @@ def exercise(browser, base, fixture, width, theme, screenshots):
     status = page.locator('#session-content-view .sdk-status')
     colors = {}
     def capture_status(state):
-        expect(status).to_have_attribute('data-state', state)
-        visual = status.evaluate("""e => {
+        # Live snapshots can arrive between two browser round trips. Capture
+        # the requested state and its computed style atomically.
+        visual = page.wait_for_function("""state => {
+          const e = document.querySelector('#session-content-view .sdk-status');
+          if (!e || e.dataset.state !== state) return false;
           const dot = getComputedStyle(e, '::before');
           return {color:getComputedStyle(e).color, dot:dot.backgroundColor,
             animation:dot.animationName, width:dot.width};
-        }""")
+        }""", arg=state).json_value()
         assert visual['color'] == visual['dot'] and visual['width'] == '6px', visual
         assert visual['animation'] == ('sdk-status-breathe' if state in ('working','maintenance','retrying','connecting') else 'none'), visual
         colors[state] = visual['color']
@@ -76,6 +79,8 @@ def exercise(browser, base, fixture, width, theme, screenshots):
     finally:
         compact_gate.unlink(missing_ok=True)
     expect(status).to_have_attribute('data-state','ready', timeout=15000)
+    expect(page.locator('.sdk-live')).to_contain_text('Claude synthetic final /compact')
+    page.wait_for_function('!NativeSdkView.running && NativeSdkView.raw.last_turn?.status === "completed"')
     expect(page.locator('.sdk-msgs')).not_to_contain_text('上下文已压缩')
     status_send('/unsupported-status-command')
     capture_status('blocked')

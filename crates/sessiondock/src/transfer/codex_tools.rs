@@ -132,7 +132,7 @@ fn rewrite_value(
 
 /// Report a concrete unsupported reference without copying potentially sensitive
 /// tool input into diagnostics. The staging manifest is never a publish permit.
-pub(super) fn audit(row: &Value, map: &IdentityMap) -> Option<String> {
+pub(super) fn audit(row: &mut Value, map: &IdentityMap) -> Option<String> {
     if row["type"] != "response_item" {
         return None;
     }
@@ -140,9 +140,7 @@ pub(super) fn audit(row: &Value, map: &IdentityMap) -> Option<String> {
     if (p["type"] == "custom_tool_call" && p["name"] == "exec")
         || p["type"] == "custom_tool_call_output"
     {
-        return super::code_mode::rewrite(&mut row.clone(), map)
-            .err()
-            .map(|e| e.message);
+        return super::code_mode::rewrite(row, map).err().map(|e| e.message);
     }
     // Shell commands, MCP payloads and other tool prose may quote a UUID.
     // Only typed native identity slots are relationships; do not reject or
@@ -156,12 +154,27 @@ pub(super) fn references(
     calls: &std::collections::BTreeMap<String, String>,
 ) -> Vec<String> {
     let mut refs = Vec::new();
-    let _ = super::codex_ids::visit(&mut row.clone(), &mut |kind, id| {
-        if matches!(kind, super::codex_ids::Identity::Thread) {
-            refs.push(id.to_owned());
-        }
-        Ok(id.into())
-    });
+    let skip_visit = matches!(row["type"].as_str(), Some("session_meta" | "turn_context"))
+        || (row["type"] == "response_item"
+            && matches!(
+                row["payload"]["type"].as_str(),
+                Some(
+                    "message"
+                        | "reasoning"
+                        | "function_call"
+                        | "function_call_output"
+                        | "custom_tool_call"
+                        | "custom_tool_call_output"
+                )
+            ));
+    if !skip_visit {
+        let _ = super::codex_ids::visit(&mut row.clone(), &mut |kind, id| {
+            if matches!(kind, super::codex_ids::Identity::Thread) {
+                refs.push(id.to_owned());
+            }
+            Ok(id.into())
+        });
+    }
     if row["type"] != "response_item" {
         return refs;
     }

@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 use crate::json_compat::unquote;
+use crate::sessions::text::{clip, normalized};
 
 /// Sidebar title when Grok has not written `generated_title` or
 /// `session_summary`. Matches the pending-session label so a freshly
@@ -43,58 +44,6 @@ pub(super) fn validate(summary: &Value) -> Result<(), String> {
 
 fn nonempty(value: &Value) -> Option<&str> {
     value.as_str().filter(|s| !s.is_empty())
-}
-fn normalized(value: &Value) -> Value {
-    if !super::truthy(value) {
-        return Value::Null;
-    }
-    let date = if let Some(number) = value.as_f64() {
-        let millis = if number > 1e11 {
-            number
-        } else {
-            number * 1000.0
-        };
-        if millis.is_finite() && millis >= i64::MIN as f64 && millis < i64::MAX as f64 {
-            chrono::DateTime::from_timestamp_millis(millis.floor() as i64)
-        } else {
-            None
-        }
-    } else if let Some(text) = value.as_str() {
-        chrono::DateTime::parse_from_rfc3339(text)
-            .ok()
-            .map(|dt| dt.to_utc())
-            .or_else(|| {
-                ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M:%S%.f"]
-                    .iter()
-                    .find_map(|format| {
-                        chrono::NaiveDateTime::parse_from_str(text, format)
-                            .ok()
-                            .map(|dt| dt.and_utc())
-                    })
-            })
-            .or_else(|| {
-                chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d")
-                    .ok()
-                    .and_then(|date| date.and_hms_opt(0, 0, 0))
-                    .map(|dt| dt.and_utc())
-            })
-    } else {
-        None
-    };
-    date.map(|dt| json!(dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)))
-        .unwrap_or(Value::Null)
-}
-fn clip(title: &str) -> String {
-    let normalized = title
-        .split(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c))
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    if normalized.chars().count() > 110 {
-        normalized.chars().take(110).collect::<String>() + "…"
-    } else {
-        normalized
-    }
 }
 
 pub(super) fn metadata(path: &Path, summary: &Value, fallback: &str) -> Value {
@@ -134,6 +83,6 @@ pub(super) fn metadata(path: &Path, summary: &Value, fallback: &str) -> Value {
     if updated.is_null() {
         updated = json!(fallback);
     }
-    json!({"sid":sid,"title":clip(title),"cwd":cwd,"created":created,"updated":updated,
+    json!({"sid":sid,"title":clip(title, 110),"cwd":cwd,"created":created,"updated":updated,
         "model":summary["current_model_id"],"branch":summary["agent_name"]})
 }

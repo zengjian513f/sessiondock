@@ -5,22 +5,19 @@
 //! dim suggestions, cursor position) and Codex's composer the way
 //! `codex_bridge.composer_state` does (status footer or cursor-anchored block,
 //! `›`/`»` marker, dim placeholder, braille particle glyphs blanked), pastes
-//! text, presses keys, and acquires or verifies the instance lease in the same
-//! registry the browser uses. It never reads native history, never decides
-//! that a prompt was accepted, and never retries a write whose outcome is
-//! unknown.
+//! text, and presses keys against the verified instance target resolved from
+//! the runtime catalog or launch service. It never reads native history, never
+//! decides that a prompt was accepted, and never retries a write whose outcome
+//! is unknown.
 
-use std::{net::IpAddr, net::Ipv4Addr, sync::Arc};
+use std::{net::IpAddr, sync::Arc};
 
 use futures_util::future::BoxFuture;
 use ptyhost_client::BoundTarget;
 use regex::Regex;
-use sha2::{Digest, Sha256};
 use std::sync::LazyLock;
 
-use crate::terminal::{
-    ExpectedTarget, InputPayload, TerminalError, TerminalService, UnleasedTarget,
-};
+use crate::terminal::{InputPayload, TerminalError, TerminalService, UnleasedTarget};
 
 /// What a composer capture shows: an empty prompt, text in it, or no
 /// recognized composer.
@@ -30,12 +27,6 @@ pub enum ComposerState {
     Editing,
     Unknown,
 }
-
-/// Page identity under which the server claims a server-held lease (the value
-/// predates the conversation service and stays stable). It is a registry page
-/// ID like any browser page, so a page holding the lease sees the ordinary
-/// conflict and can force it like any takeover.
-pub const SERVER_PAGE: &str = "sessiondock-delivery-executor";
 
 /// Managed instance resolved from the runtime catalog. Never
 /// built from a display name, cwd, time or PID.
@@ -50,11 +41,6 @@ pub struct DeliveryTarget {
 }
 
 /// A browser page's own lease for the instance, as sent with the request.
-/// Used only when it authorizes; otherwise the server claims for itself.
-/// A console opened on a launched (pending) instance holds a launch lease
-/// (`launch_id` present); the server still resolves the native identity
-/// through the runtime catalog and only borrows the page's write authority
-/// for that exact process instance.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PageLease {
     pub page: String,
@@ -63,19 +49,13 @@ pub struct PageLease {
     pub launch_id: Option<String>,
 }
 
-/// Lease under which one server operation performs its host requests.
-/// `owned` leases were claimed by the server and are released afterwards;
-/// page leases are borrowed and never released by the server. Conversation
-/// handles instead hold a verified target and never enter the browser registry.
+/// Verified conversation target under which one server operation performs its
+/// host requests without entering the browser lease registry.
 pub struct LeaseHandle {
     pub name: String,
     pub uid: String,
     pub instance_id: String,
-    launch_id: Option<String>,
-    page: String,
-    token: String,
-    owned: bool,
-    conversation: Option<ConversationTarget>,
+    conversation: ConversationTarget,
 }
 
 enum ConversationTarget {
@@ -92,42 +72,13 @@ impl ConversationTarget {
     }
 }
 
-impl LeaseHandle {
-    pub fn owned(&self) -> bool {
-        self.owned
-    }
-    pub fn page(&self) -> &str {
-        &self.page
-    }
-    fn expected(&self) -> ExpectedTarget<'_> {
-        match &self.launch_id {
-            Some(launch) => ExpectedTarget::Launch {
-                launch,
-                instance: &self.instance_id,
-            },
-            None => ExpectedTarget::Native {
-                uid: &self.uid,
-                instance: &self.instance_id,
-            },
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DriverError {
     pub status: u16,
     pub code: &'static str,
     pub message: String,
-    /// The host may have executed the request (timeout/EOF after submission).
-    pub ambiguous: bool,
     /// Display-only owner of a conflicting lease.
     pub owner_ip: Option<IpAddr>,
-}
-
-impl DriverError {
-    pub fn ownership(&self) -> bool {
-        self.code == "terminal_ownership"
-    }
 }
 
 impl From<TerminalError> for DriverError {
@@ -135,7 +86,6 @@ impl From<TerminalError> for DriverError {
         Self {
             status: error.status,
             code: error.code,
-            ambiguous: error.code == "terminal_input_ambiguous",
             message: error.message,
             owner_ip: None,
         }
@@ -164,24 +114,14 @@ pub struct ScreenCapture {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ComposerView {
     pub state: ComposerState,
-    /// Nonreversible fingerprint of screen + cursor; this is
-    /// the draft consent token and the domain's frame token.
-    pub screen_token: String,
-    /// Fingerprint of the composer rows + cursor only, used by the driver's
-    /// own compare-and-act before a write when unrelated rows (spinners,
-    /// footers) changed but the editor did not.
-    pub composer_token: Option<String>,
+    /// Whether the composer block was positively recognized on screen.
+    pub recognized: bool,
     /// Visible editor text (soft-wrapped rows joined), when the composer is
     /// recognized.
     pub text: Option<String>,
-    pub busy: bool,
     /// The TUI still shows the transient paste-burst indicator; Enter must not
     /// be sent until it clears or the key is swallowed into the paste.
     pub pasting: bool,
-    /// The host reported bytes not yet applied to its screen model; the
-    /// capture must not be treated as an idle/known composer.
-    pub lagging: bool,
-    pub dropped: Option<u64>,
 }
 
 static ANSI: LazyLock<Regex> = LazyLock::new(|| {
@@ -460,45 +400,35 @@ fn locate(clean_lines: &[String], cursor: (u16, u16)) -> Option<ComposerBlock> {
 }
 
 /// `empty`, `editing` or `unknown`, plus the visible
-/// editor text and a composer-only fingerprint when the block is recognized.
+/// editor text when the block is recognized.
 pub fn inspect(capture: &ScreenCapture) -> ComposerView {
-    let screen_token = screen_fingerprint(&capture.text, capture.cursor);
     let lagging = capture.lag.is_some_and(|lag| lag > 0);
-    let busy = busy_screen(&capture.text);
     let pasting = PASTING.is_match(&strip_ansi(&capture.text));
-    let unknown = |busy| ComposerView {
+    let unknown = || ComposerView {
         state: ComposerState::Unknown,
-        screen_token: screen_token.clone(),
-        composer_token: None,
+        recognized: false,
         text: None,
-        busy,
         pasting,
-        lagging,
-        dropped: capture.dropped,
     };
     if lagging {
-        return unknown(busy);
+        return unknown();
     }
     let normalized = capture.text.replace('\r', "");
     let raw_lines: Vec<&str> = normalized.lines().collect();
     let clean_lines: Vec<String> = raw_lines.iter().map(|line| strip_ansi(line)).collect();
     let Some(block) = locate(&clean_lines, capture.cursor) else {
-        return unknown(busy);
+        return unknown();
     };
     let block_raw = raw_lines[block.prompt_y..block.lower].join("\n");
     let styled = styled_chars(&block_raw);
     let Some(marker_at) = styled.iter().position(|(ch, _)| *ch == '❯') else {
-        return unknown(busy);
+        return unknown();
     };
     let content: Vec<(char, bool)> = styled[marker_at + 1..]
         .iter()
         .copied()
         .filter(|(ch, _)| !ch.is_whitespace())
         .collect();
-    let composer_token = Some(composer_fingerprint(
-        &clean_lines[block.prompt_y..block.lower],
-        capture.cursor,
-    ));
     let text = composer_text(&clean_lines[block.prompt_y..block.lower], block.marker);
     let (cursor_x, cursor_y) = (capture.cursor.0 as usize, capture.cursor.1 as usize);
     let state = if content.is_empty() {
@@ -516,13 +446,9 @@ pub fn inspect(capture: &ScreenCapture) -> ComposerView {
     };
     ComposerView {
         state,
-        screen_token,
-        composer_token,
+        recognized: true,
         text: Some(text),
-        busy,
         pasting,
-        lagging,
-        dropped: capture.dropped,
     }
 }
 
@@ -791,19 +717,13 @@ fn locate_codex(
 /// composer-only fingerprint when the block is recognized. A lagging capture
 /// is never a known composer.
 pub fn inspect_codex(capture: &ScreenCapture) -> ComposerView {
-    let screen_token = screen_fingerprint(&capture.text, capture.cursor);
     let lagging = capture.lag.is_some_and(|lag| lag > 0);
-    let busy = codex_busy_screen(&capture.text);
     let pasting = PASTING.is_match(&strip_ansi(&capture.text));
     let unknown = || ComposerView {
         state: ComposerState::Unknown,
-        screen_token: screen_token.clone(),
-        composer_token: None,
+        recognized: false,
         text: None,
-        busy,
         pasting,
-        lagging,
-        dropped: capture.dropped,
     };
     if lagging {
         return unknown();
@@ -847,16 +767,9 @@ pub fn inspect_codex(capture: &ScreenCapture) -> ComposerView {
         } else {
             ComposerState::Empty
         },
-        screen_token,
-        composer_token: Some(composer_fingerprint(
-            &clean_lines[start..=end],
-            capture.cursor,
-        )),
+        recognized: true,
         text: Some(text.trim().to_owned()),
-        busy,
         pasting,
-        lagging,
-        dropped: capture.dropped,
     }
 }
 
@@ -939,24 +852,6 @@ fn locate_scrolled_codex(
     Some((start, end))
 }
 
-/// Fingerprint: sha256 of `x\0y\0screen`.
-pub fn screen_fingerprint(screen: &str, cursor: (u16, u16)) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(format!("{}\0{}\0", cursor.0, cursor.1).as_bytes());
-    hasher.update(screen.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
-fn composer_fingerprint(rows: &[String], cursor: (u16, u16)) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(format!("composer\0{}\0{}\0", cursor.0, cursor.1).as_bytes());
-    for row in rows {
-        hasher.update(row.trim_end().as_bytes());
-        hasher.update(b"\n");
-    }
-    format!("{:x}", hasher.finalize())
-}
-
 /// Whitespace-insensitive equality used to accept a soft-wrapped composer as
 /// showing exactly the payload. Internal whitespace differences (wrap points,
 /// NBSP rendering) are ignored; every other character must match in order.
@@ -978,14 +873,6 @@ pub fn paste_placeholder(text: &str) -> bool {
 /// exists; tests provide fakes. Every method must be safe to call only under
 /// the caller's per-session serialization.
 pub trait TerminalDriver: Send + Sync {
-    /// Borrow the page's lease when it authorizes this exact instance;
-    /// otherwise claim a server-held lease without force. A lease held by any
-    /// other page is the documented ownership conflict.
-    fn acquire<'a>(
-        &'a self,
-        target: &'a DeliveryTarget,
-        page: Option<&'a PageLease>,
-    ) -> BoxFuture<'a, Result<LeaseHandle, DriverError>>;
     fn capture<'a>(
         &'a self,
         lease: &'a LeaseHandle,
@@ -1000,8 +887,6 @@ pub trait TerminalDriver: Send + Sync {
         lease: &'a LeaseHandle,
         keys: &'a [&'static str],
     ) -> BoxFuture<'a, Result<(), DriverError>>;
-    /// Release an owned lease; borrowed page leases are left untouched.
-    fn release<'a>(&'a self, lease: LeaseHandle) -> BoxFuture<'a, ()>;
 }
 
 /// Production driver over the explicit-directory terminal service.
@@ -1016,14 +901,9 @@ impl HostTerminalDriver {
 
     /// Includes scrollback so a local status card is visible on short PTYs.
     pub(crate) async fn capture_history(&self, lease: &LeaseHandle) -> Result<String, DriverError> {
-        let target = lease.conversation.as_ref().ok_or_else(|| TerminalError {
-            status: 409,
-            code: "terminal_unavailable",
-            message: "缺少会话终端目标".into(),
-        })?;
         Ok(self
             .terminal
-            .capture_history_unleased(target.as_unleased())
+            .capture_history_unleased(lease.conversation.as_unleased())
             .await?
             .text)
     }
@@ -1034,11 +914,7 @@ impl HostTerminalDriver {
             name: target.name.clone(),
             uid: target.uid.clone(),
             instance_id: target.instance_id.clone(),
-            launch_id: None,
-            page: String::new(),
-            token: String::new(),
-            owned: false,
-            conversation: Some(ConversationTarget::Native(target.bound.clone())),
+            conversation: ConversationTarget::Native(target.bound.clone()),
         }
     }
 
@@ -1047,116 +923,21 @@ impl HostTerminalDriver {
             name: target.name().into(),
             uid: format!("tmux:{}", target.name()),
             instance_id: target.instance_id().into(),
-            launch_id: Some(target.launch_id().into()),
-            page: String::new(),
-            token: String::new(),
-            owned: false,
-            conversation: Some(ConversationTarget::Launch(target)),
-        }
-    }
-
-    async fn claim_server_lease(
-        &self,
-        target: &DeliveryTarget,
-    ) -> Result<LeaseHandle, DriverError> {
-        let response = self
-            .terminal
-            .claim_bound(
-                &target.bound,
-                SERVER_PAGE,
-                IpAddr::V4(Ipv4Addr::LOCALHOST),
-                false,
-            )
-            .await
-            .map_err(|error| {
-                if error.code == "terminal_ownership" {
-                    // A launch (pending-console) lease held by some page is
-                    // the same documented conflict; the registry never
-                    // downgrades or replaces it without force.
-                    DriverError {
-                        status: 409,
-                        code: "terminal_ownership",
-                        message: "终端控制权正由其他页面的控制台租约持有；请从持有控制台的页面发送，或先释放/接管该控制台".into(),
-                        ambiguous: false,
-                        owner_ip: None,
-                    }
-                } else {
-                    error.into()
-                }
-            })?;
-        match response.into_server_token() {
-            Ok(token) => Ok(LeaseHandle {
-                name: target.name.clone(),
-                uid: target.uid.clone(),
-                instance_id: target.instance_id.clone(),
-                launch_id: None,
-                page: SERVER_PAGE.to_owned(),
-                token,
-                owned: true,
-                conversation: None,
-            }),
-            Err(owner) => Err(DriverError {
-                status: 409,
-                code: "terminal_ownership",
-                message: format!(
-                    "终端控制权正由其他页面持有（{}）；请从持有控制台的页面发送，或先释放/接管该控制台",
-                    owner.describe()
-                ),
-                ambiguous: false,
-                owner_ip: Some(owner.ip),
-            }),
+            conversation: ConversationTarget::Launch(target),
         }
     }
 }
 
 impl TerminalDriver for HostTerminalDriver {
-    fn acquire<'a>(
-        &'a self,
-        target: &'a DeliveryTarget,
-        page: Option<&'a PageLease>,
-    ) -> BoxFuture<'a, Result<LeaseHandle, DriverError>> {
-        Box::pin(async move {
-            if let Some(page) = page.filter(|page| page.instance_id == target.instance_id) {
-                let handle = LeaseHandle {
-                    name: target.name.clone(),
-                    uid: target.uid.clone(),
-                    instance_id: target.instance_id.clone(),
-                    launch_id: page.launch_id.clone(),
-                    page: page.page.clone(),
-                    token: page.token.clone(),
-                    owned: false,
-                    conversation: None,
-                };
-                // A capture both validates the lease and warms nothing: the
-                // caller captures again for its own inspection.
-                match self
-                    .terminal
-                    .capture_screen(&handle.name, &handle.page, &handle.token, handle.expected())
-                    .await
-                {
-                    Ok(_) => return Ok(handle),
-                    Err(error) if error.code == "terminal_ownership" => {}
-                    Err(error) => return Err(error.into()),
-                }
-            }
-            self.claim_server_lease(target).await
-        })
-    }
-
     fn capture<'a>(
         &'a self,
         lease: &'a LeaseHandle,
     ) -> BoxFuture<'a, Result<ScreenCapture, DriverError>> {
         Box::pin(async move {
-            let reply = if let Some(target) = &lease.conversation {
-                self.terminal
-                    .capture_screen_unleased(target.as_unleased())
-                    .await?
-            } else {
-                self.terminal
-                    .capture_screen(&lease.name, &lease.page, &lease.token, lease.expected())
-                    .await?
-            };
+            let reply = self
+                .terminal
+                .capture_screen_unleased(lease.conversation.as_unleased())
+                .await?;
             Ok(ScreenCapture {
                 text: reply.text,
                 cursor: (reply.cursor[0], reply.cursor[1]),
@@ -1174,20 +955,9 @@ impl TerminalDriver for HostTerminalDriver {
         text: &'a str,
     ) -> BoxFuture<'a, Result<(), DriverError>> {
         Box::pin(async move {
-            if let Some(target) = &lease.conversation {
-                return self
-                    .terminal
-                    .send_input_unleased(target.as_unleased(), InputPayload::Paste(text.to_owned()))
-                    .await
-                    .map(|_| ())
-                    .map_err(DriverError::from);
-            }
             self.terminal
-                .send_input(
-                    &lease.name,
-                    &lease.page,
-                    &lease.token,
-                    lease.expected(),
+                .send_input_unleased(
+                    lease.conversation.as_unleased(),
                     InputPayload::Paste(text.to_owned()),
                 )
                 .await
@@ -1202,37 +972,14 @@ impl TerminalDriver for HostTerminalDriver {
         keys: &'a [&'static str],
     ) -> BoxFuture<'a, Result<(), DriverError>> {
         Box::pin(async move {
-            if let Some(target) = &lease.conversation {
-                return self
-                    .terminal
-                    .send_input_unleased(
-                        target.as_unleased(),
-                        InputPayload::Keys(keys.iter().copied().map(str::to_owned).collect()),
-                    )
-                    .await
-                    .map(|_| ())
-                    .map_err(DriverError::from);
-            }
             self.terminal
-                .send_input(
-                    &lease.name,
-                    &lease.page,
-                    &lease.token,
-                    lease.expected(),
+                .send_input_unleased(
+                    lease.conversation.as_unleased(),
                     InputPayload::Keys(keys.iter().copied().map(str::to_owned).collect()),
                 )
                 .await
                 .map(|_| ())
                 .map_err(DriverError::from)
-        })
-    }
-
-    fn release<'a>(&'a self, lease: LeaseHandle) -> BoxFuture<'a, ()> {
-        Box::pin(async move {
-            if lease.owned {
-                self.terminal
-                    .cancel_reservation(&lease.name, &lease.page, &lease.token);
-            }
         })
     }
 }

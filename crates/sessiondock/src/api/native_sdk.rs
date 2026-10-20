@@ -390,6 +390,7 @@ pub async fn events(
     let stream = async_stream::stream! {
         yield Ok::<_,Infallible>(Event::default().event("sdk").data(snapshot.to_string()));
         let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,

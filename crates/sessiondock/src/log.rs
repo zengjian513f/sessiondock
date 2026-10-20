@@ -7,7 +7,7 @@
 //! string, status, duration and the page's trace/page ids.
 
 use std::sync::OnceLock;
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 #[path = "../../runtime_log.rs"]
 mod runtime;
 
@@ -52,18 +52,24 @@ pub async fn shutdown() -> bool {
         .unwrap_or(false)
 }
 
+fn ensure_initialized() {
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        let directory = match std::env::var_os("SESSIONDOCK_RUNTIME_LOG_DIR") {
+            Some(value) if value == "-" => None,
+            Some(value) => Some(std::path::PathBuf::from(value)),
+            None => std::env::var_os("SESSIONDOCK_STATE_DIR")
+                .map(|p| std::path::PathBuf::from(p).join("runtime-logs")),
+        };
+        runtime::init(directory, "server", json!({}));
+    });
+}
+
 pub fn emit(level: &str, event: &str, mut fields: Value) {
-    let directory = match std::env::var_os("SESSIONDOCK_RUNTIME_LOG_DIR") {
-        Some(value) if value == "-" => None,
-        Some(value) => Some(std::path::PathBuf::from(value)),
-        None => std::env::var_os("SESSIONDOCK_STATE_DIR")
-            .map(|p| std::path::PathBuf::from(p).join("runtime-logs")),
-    };
-    runtime::init(directory, "server", json!({}));
+    ensure_initialized();
     if !fields.is_object() {
         fields = json!({"data": fields});
     }
-    fields["ts"] = json!(crate::audit::query::rfc3339(SystemTime::now()));
     runtime::emit(level, event, fields);
 }
 

@@ -61,7 +61,7 @@ const SdkUI = {
   closeToolbar(view) {
     view.toolbarObserver?.disconnect(); view.toolbarObserver = null;
     view.toolbarBindings?.abort(); view.toolbarBindings = null;
-    view.toolbarWidth = null; view.toolbarLayout = null;
+    view.toolbarWidth = null;
     view.closeToolbarMenus();
   },
 
@@ -260,6 +260,42 @@ const SdkUI = {
       if (this.box) this.box.scrollTop = this.box.scrollHeight;
     },
 
+  },
+  appendQuestionFields(body, questions, {namePrefix, codex = false, formatAnswer}) {
+    return questions.map((field, index) => {
+      const group = document.createElement('fieldset');
+      group.className = 'sdk-question';
+      const title = codex ? field.question : (field.question || field.title || field.key || '回答');
+      const legend = document.createElement('legend');
+      legend.textContent = [field.header, title].filter(Boolean).join(' · ');
+      group.append(legend);
+      const multiple = !codex && Boolean(field.multiSelect || field.multiple || field.type === 'array');
+      const name = codex ? `${namePrefix}-${field.id}` : `${namePrefix}-${index}`;
+      for (const option of field.options || []) {
+        const label = document.createElement('label'), input = document.createElement('input');
+        const value = codex ? option.label : (typeof option === 'string' ? option : option.value ?? option.label ?? option.id);
+        input.type = multiple ? 'checkbox' : 'radio';
+        input.name = name;
+        input.value = String(value);
+        label.append(input, ` ${codex ? option.label : (typeof option === 'string' ? option : option.label || option.title || String(value))}`);
+        if (option.description) label.title = option.description;
+        group.append(label);
+      }
+      let other = null;
+      if (!codex || field.isOther || !(field.options || []).length) {
+        other = document.createElement('input');
+        other.type = codex && field.isSecret ? 'password' : 'text';
+        other.placeholder = (field.options || []).length ? '其他答案' : '输入答案';
+        if (!codex) other.setAttribute('aria-label', title);
+        group.append(other);
+      }
+      body.append(group);
+      return () => {
+        const picked = [...group.querySelectorAll('input:checked')].map(input => input.value);
+        const typed = other?.value.trim() || '';
+        return formatAnswer(field, index, {picked, typed, multiple});
+      };
+    });
   },
   layoutFooter(view, controls) {
     const row = view.pane.querySelector('.sdk-status-row'), gauges = row.querySelector('.sdk-gauges');

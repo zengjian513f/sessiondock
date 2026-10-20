@@ -124,7 +124,8 @@ def argv_for(t: Target, inner: str) -> list[str]:
     argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
     if t.ssh_port is not None:
         argv += ["-p", str(t.ssh_port)]
-    return argv + list(t.ssh_opts) + [t.ssh, inner]
+    remote = inner if t.kind == "windows-node" else "sh -c " + shlex.quote(inner)
+    return argv + list(t.ssh_opts) + [t.ssh, remote]
 
 
 def _nz(v: object | None) -> str:

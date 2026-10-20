@@ -30,6 +30,7 @@ pub(crate) use records::scanner as native_json;
 pub(crate) use records::string_reader::JsonStringReader;
 mod scope;
 pub(crate) mod sidebar;
+pub(crate) mod text;
 pub(crate) use scope::CatalogEntry as NativeCatalogEntry;
 
 use std::collections::{BTreeMap, BTreeSet};

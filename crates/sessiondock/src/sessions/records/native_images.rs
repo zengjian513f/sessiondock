@@ -193,7 +193,7 @@ pub(crate) fn prepare_with_replay(
             open: &mut open,
             codex: source == "codex",
         }
-        .walk(node, &mut path, tool, 0, 0, None)?;
+        .walk(node, &mut path, tool, 0, None)?;
     }
     root.materialize_spans(&mut materialize)?;
     Ok((
@@ -219,7 +219,6 @@ where
         path: &mut Vec<PathPart>,
         tool: bool,
         depth: usize,
-        envelopes: usize,
         origin: Option<(&DecodePlan, u64)>,
     ) -> Result<(), String> {
         // A multi-part Codex output (`[header, chunk, chunk, …]`) is not one
@@ -248,7 +247,7 @@ where
                 })?;
             }
             let origin = Some((&parsed.plan, parsed.candidate_start));
-            self.walk(node, path, tool, depth, envelopes, origin)?;
+            self.walk(node, path, tool, depth, origin)?;
             // A nested span addresses decoded parent text. Replay its entire
             // validated plan instead of treating it as a physical file offset.
             node.materialize_spans(&mut |span| {
@@ -293,7 +292,7 @@ where
         if let Node::Array(values) = node {
             for (index, value) in values.iter_mut().enumerate() {
                 path.push(PathPart::Index(index));
-                self.walk(value, path, tool, depth + 1, envelopes, origin)?;
+                self.walk(value, path, tool, depth + 1, origin)?;
                 path.pop();
             }
             return Ok(());
@@ -303,7 +302,7 @@ where
             && matches!(get(node, "content"), Some(Node::Array(values)) if
             matches!(get(node, "isError"), Some(Node::Bool(_))) || (!values.is_empty() && values.iter().all(|v| image(v) || matches!(kind(v), "text" | "input_text" | "output_text" | "summary_text"))));
         let child = if kind(node) == "tool_result" || mcp {
-            Some(("content", true, envelopes))
+            Some(("content", true))
         } else if tool
             && get(node, "output").is_some()
             && get(node, "wall_time_seconds").is_some()
@@ -311,16 +310,16 @@ where
                 .iter()
                 .any(|key| get(node, key).is_some())
         {
-            Some(("output", true, envelopes + 1))
+            Some(("output", true))
         } else {
             None
         };
-        if let Some((key, child_tool, envelopes)) = child
+        if let Some((key, child_tool)) = child
             && let Node::Object(values) = node
             && let Some(value) = values.get_mut(key)
         {
             path.push(PathPart::Key(key.into()));
-            self.walk(value, path, child_tool, depth + 1, envelopes, origin)?;
+            self.walk(value, path, child_tool, depth + 1, origin)?;
             path.pop();
         }
         Ok(())

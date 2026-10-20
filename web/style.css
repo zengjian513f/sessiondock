@@ -2623,7 +2623,6 @@ header .btn[data-session-docked] { display: none; }
 #sdk-actions { display: grid; gap: 2px; }
 #sdk-actions .sdk-action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sdk-action:disabled { color: var(--muted); opacity: .55; cursor: default; background: transparent; }
-.sdk-toolbar-menu .sdk-gauges { flex-direction: column; align-items: stretch; gap: 10px; }
 .sdk-toolbar-menu .sdk-gauge { display: grid; grid-template-columns: 3.5em minmax(0, 1fr) max-content; gap: 8px; }
 .sdk-toolbar-menu .sdk-bar { width: 100%; }
 .sdk-reset { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
@@ -2647,9 +2646,6 @@ header .btn[data-session-docked] { display: none; }
 .sdk-toolbar-menu > .new-effort > select { flex: none; width: 128px; box-sizing: border-box; height: 28px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
 .sdk-native-menu > #sdk-actions:has(> :not([hidden])) { padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
 .sdk-native-menu > #native-sdk-settings { gap: 2px; }
-.sdk-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; font-size: 12px; }
-.sdk-setting-row > .new-effort { width: 128px; min-width: 0; margin-left: auto; }
-.sdk-setting-row select { width: 100%; box-sizing: border-box; height: 28px; padding: 3px 6px; font: inherit; }
 .sdk-inline-usage { display: grid; gap: 12px; min-width: 0; }
 .sdk-usage-heading, .sdk-usage-metric { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .sdk-usage-heading h3 { margin: 0; font-size: 13px; }
@@ -2663,8 +2659,6 @@ header .btn[data-session-docked] { display: none; }
 .sdk-usage-metric { min-width: 0; font-size: 12px; color: var(--muted); gap: 6px; overflow-wrap: anywhere; }
 .sdk-usage-metric b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
 .sdk-control-section h3 { margin: 0; font-size: 13px; }
-.sdk-control-row { display: flex; gap: 6px; flex-wrap: wrap; }
-.sdk-control-row .new-effort { flex: 1 1 160px; }
 .sdk-control-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .sdk-control-error { color: #e5484d; }
 .sdk-request .mb pre { white-space: pre-wrap; word-break: break-word; }

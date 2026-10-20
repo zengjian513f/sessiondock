@@ -350,7 +350,10 @@ impl LiveState {
             .or_else(|| u.get("options"))
             .and_then(|v| v.as_array())
             && !arr.is_empty()
-            && arr[0].get("id").or_else(|| arr[0].get("configId")).is_some()
+            && arr[0]
+                .get("id")
+                .or_else(|| arr[0].get("configId"))
+                .is_some()
         {
             self.apply_config_options(arr);
             return;
@@ -430,8 +433,7 @@ impl LiveState {
     pub(super) fn finish_turn(&mut self, result: &Value) {
         self.running = false;
         let stop = result["stopReason"].as_str().unwrap_or("end_turn");
-        let is_interrupted =
-            self.interrupted_turn || stop == "cancelled" || stop == "interrupted";
+        let is_interrupted = self.interrupted_turn || stop == "cancelled" || stop == "interrupted";
         self.last_turn = Some(json!({
             "status": if is_interrupted { "interrupted" } else { "completed" },
             "stopReason": stop,
@@ -451,8 +453,7 @@ impl LiveState {
                 .rev()
                 .take_while(|item| item["role"] != "user")
                 .any(|item| {
-                    item["role"] == "assistant"
-                        && !item["text"].as_str().unwrap_or("").is_empty()
+                    item["role"] == "assistant" && !item["text"].as_str().unwrap_or("").is_empty()
                 });
             if !has_assistant_text {
                 self.append_chunk("assistant", &text, None);
@@ -499,10 +500,7 @@ impl LiveState {
 
     pub(super) fn handle_notification(&mut self, method: &str, params: &Value) {
         match method {
-            "_kiro.dev/metadata"
-            | "_kiro/metadata"
-            | "kiro/metadata"
-            | "session/metadata"
+            "_kiro.dev/metadata" | "_kiro/metadata" | "kiro/metadata" | "session/metadata"
             | "usage/update" => {
                 self.apply_metadata(params);
                 self.publish();
@@ -693,10 +691,7 @@ impl LiveState {
             self.model = Some(m.to_string());
             self.model_observed = false;
         }
-        if let Some(e) = u["effortLevel"]
-            .as_str()
-            .filter(|s| !s.trim().is_empty())
-        {
+        if let Some(e) = u["effortLevel"].as_str().filter(|s| !s.trim().is_empty()) {
             self.effort = Some(e.to_string());
         }
         if let Some(mode) = u["currentModeId"]

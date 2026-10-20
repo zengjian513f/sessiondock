@@ -128,6 +128,13 @@ fn top_level_error() -> ApiError {
     )
 }
 
+static DOCUMENTS_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"[^\s<>\"'`，。；（）()\[\]]+\.md\b"#).expect("document pattern")
+});
+static IDENTIFIERS_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b").expect("UUID pattern")
+});
+
 /// Discovery starts with a top-level session's opening user messages, not its children.
 pub async fn hints(
     State(state): State<AppState>,
@@ -138,15 +145,13 @@ pub async fn hints(
         let row = inventory["sessions"].as_array().and_then(|rows| rows.iter().find(|r| r["uid"] == query.uid)).ok_or_else(missing)?;
         if !relations::top_level(row) { return Err(top_level_error()); }
         let snapshot = store.snapshot(&query.uid, "")?;
-        let documents = regex::Regex::new(r#"[^\s<>\"'`，。；（）()\[\]]+\.md\b"#).expect("document pattern");
-        let identifiers = regex::Regex::new(r"(?i)\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b").expect("UUID pattern");
         let messages: Vec<_> = snapshot.view.events().enumerate().filter(|(_, e)| e.message["role"] == "user")
             .filter(|(_, e)| !["# AGENTS.md", "<environment_context>", "<turn_aborted>", "<permissions instructions>"].iter().any(|prefix| e.message["text"].as_str().unwrap_or("").trim_start().starts_with(prefix)))
             .take(5).map(|(ordinal, event)| {
                 let text = event.message["text"].as_str().unwrap_or("");
                 json!({"ordinal": ordinal, "id": event.message["id"], "ts": event.message["ts"], "text": text,
-                    "documents": documents.find_iter(text).map(|m| m.as_str()).collect::<Vec<_>>(),
-                    "session_ids": identifiers.find_iter(text).map(|m| m.as_str()).collect::<Vec<_>>()})
+                    "documents": DOCUMENTS_RE.find_iter(text).map(|m| m.as_str()).collect::<Vec<_>>(),
+                    "session_ids": IDENTIFIERS_RE.find_iter(text).map(|m| m.as_str()).collect::<Vec<_>>()})
             }).collect();
         Ok(json!({"uid": query.uid, "messages": messages}))
     }).await

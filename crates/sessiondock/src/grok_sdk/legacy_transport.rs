@@ -25,9 +25,6 @@ pub(crate) struct Connection {
     pub done: CancellationToken,
     pub pid: u32,
     pub generation: u64,
-    // Diagnostics never enter HTTP responses or logs. Keep redacted stderr for
-    // local debugging without forwarding credential-bearing CLI error bodies.
-    _diagnostics: Arc<Mutex<Vec<String>>>,
 }
 
 impl Connection {
@@ -82,7 +79,6 @@ impl Connection {
         let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
         let pending = Arc::new(Mutex::new(HashMap::<u64, oneshot::Sender<Reply>>::new()));
         let alive = Arc::new(AtomicBool::new(true));
-        let diagnostics = Arc::new(Mutex::new(Vec::new()));
         let done = CancellationToken::new();
         let connection = Arc::new(Self {
             outgoing: tx.clone(),
@@ -93,16 +89,14 @@ impl Connection {
             done: done.clone(),
             pid,
             generation,
-            _diagnostics: diagnostics.clone(),
         });
         tokio::spawn(async move {
             let mut stderr_open = true;
             let reason = loop {
                 tokio::select! {
                     _ = stop.cancelled() => break "grok_sdk_shutdown",
-                    line = stderr.next_line(), if stderr_open => match line {
-                        Ok(Some(line)) => diagnostics.lock().unwrap().push(redact(&line)),
-                        _ => stderr_open = false,
+                    line = stderr.next_line(), if stderr_open => if line.ok().flatten().is_none() {
+                        stderr_open = false;
                     },
                     line = stdout.next_line() => match line {
                         Ok(Some(line)) => {
@@ -116,9 +110,6 @@ impl Connection {
                             } else if let Some(id) = message["id"].as_u64()
                                 && let Some(reply) = pending.lock().unwrap().remove(&id) {
                                     let result = if message.get("error").is_some() {
-                                        // Native text/data can contain provider headers or credentials.
-                                        // Keep its diagnostic after redaction; expose the numeric code.
-                                        diagnostics.lock().unwrap().push(redact(&message["error"].to_string()));
                                         if message["error"]["message"] == "Authentication required" {
                                             Err("grok_sdk_auth_required: Grok 原生认证不可用；请先在 CLI 配置认证，本桥接不启动登录流程".into())
                                         } else {
@@ -139,10 +130,6 @@ impl Connection {
                 }
             };
             alive.store(false, Ordering::Release);
-            diagnostics.lock().unwrap().push(format!(
-                "exit: {:?}",
-                child.try_wait().map(|s| s.and_then(|s| s.code()))
-            ));
             let _ = child.start_kill();
             let _ = child.wait().await;
             done.cancel();
@@ -213,31 +200,5 @@ impl Connection {
             return Err(error);
         }
         Ok(rx)
-    }
-}
-
-fn redact(line: &str) -> String {
-    // Do not try to enumerate every credential spelling in arbitrary stderr.
-    // Preserve diagnostic category/location; suppress values on sensitive lines.
-    let lower = line.to_ascii_lowercase();
-    if [
-        "token",
-        "secret",
-        "password",
-        "authorization",
-        "api_key",
-        "api-key",
-        "bearer",
-        "credential",
-        "sk-",
-        "xai-",
-        "key=",
-    ]
-    .iter()
-    .any(|word| lower.contains(word))
-    {
-        "[credential-bearing diagnostic redacted]".into()
-    } else {
-        line.to_owned()
     }
 }

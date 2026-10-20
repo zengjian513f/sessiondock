@@ -19,7 +19,7 @@ impl Bridge {
         method: &str,
         input: Value,
     ) -> Result<Value, String> {
-        self.check_runtime(&session.sid, &session.cwd)?;
+        self.check_runtime(&session.sid, &session.cwd).await?;
         let _operation = session.operation.lock().await;
         if method == "usage" {
             self.refresh(session).await?;

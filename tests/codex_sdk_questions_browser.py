@@ -37,6 +37,8 @@ def main():
                     page.goto(base, wait_until='networkidle')
                     page.locator(f'#side .item[data-uid="{corpus.uid("sdk")}"]').click()
                     expect(page.locator('#sdk-input')).to_be_visible()
+                    page.locator('#sdk-input').click()
+                    page.wait_for_function('CodexSdkView.connected')
                     page.locator('#sdk-input').fill('question scenario')
                     page.locator('#sdk-send').click()
                     fake.wait_for(lambda: fake.turn)

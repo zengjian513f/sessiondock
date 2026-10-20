@@ -27,17 +27,28 @@ impl TransferService {
             let mut finished = std::collections::BTreeSet::new();
             loop {
                 tokio::select! { _ = shutdown.cancelled() => break, _ = interval.tick() => {} }
-                let Ok(entries) = fs::read_dir(&self.directory) else {
+                let Ok(mut entries) = tokio::fs::read_dir(&self.directory).await else {
                     continue;
                 };
-                for entry in entries.flatten() {
+                loop {
+                    let entry = match entries.next_entry().await {
+                        Ok(Some(entry)) => entry,
+                        Ok(None) => break,
+                        Err(_) => continue,
+                    };
                     let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
                         continue;
                     };
                     if finished.contains(&id) {
                         continue;
                     }
-                    let Ok(op) = self.load(&id) else { continue };
+                    let service = self.clone();
+                    let load_id = id.clone();
+                    let Ok(Ok(op)) =
+                        tokio::task::spawn_blocking(move || service.load(&load_id)).await
+                    else {
+                        continue;
+                    };
                     if matches!(
                         op.phase.as_str(),
                         "complete" | "aborted" | "exported" | "retired"
@@ -57,20 +68,20 @@ impl TransferService {
                     {
                         continue;
                     }
-                    let age = self
+                    let foreground_age = self
                         .foreground
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
                         .get(&id)
-                        .map(Instant::elapsed)
-                        .or_else(|| {
-                            fs::metadata(entry.path().join("operation.json"))
-                                .ok()?
-                                .modified()
-                                .ok()?
-                                .elapsed()
-                                .ok()
-                        });
+                        .map(Instant::elapsed);
+                    let age = match foreground_age {
+                        Some(age) => Some(age),
+                        None => tokio::fs::metadata(entry.path().join("operation.json"))
+                            .await
+                            .ok()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.elapsed().ok()),
+                    };
                     if age.is_none_or(|age| age < Duration::from_secs(60)) {
                         continue;
                     }

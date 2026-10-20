@@ -98,6 +98,8 @@ def exercise(browser, base, source, peer, screenshots, label):
         expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
         assert len(opens) == count, opens
         state['mode'] = 'error'
+        # A failed forced read must not resurrect stale browser SDK ownership.
+        page.evaluate('uid => S.liveSdk.add(uid)', uid)
         choose()
         expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
         assert len(opens) == count, opens

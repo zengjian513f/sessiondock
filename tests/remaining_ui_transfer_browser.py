@@ -57,6 +57,12 @@ def main():
     response=route.fetch(timeout=60000)
     if len(received)==1:route.abort('connectionreset')
     else:route.fulfill(response=response)
+   # A surviving progress reply can correctly recover a lost commit reply.
+   # Drop both channels until the user retries to exercise uncertain retry.
+   def lose_progress(route):
+    if len(received)==1:route.abort('connectionreset')
+    else:route.continue_()
+   page.route('**/api/session/*/progress',lose_progress)
    page.route('**/api/session/clone',lose)
    dialog.locator('.clone-confirm').click();expect(dialog.locator('.clone-confirm')).to_contain_text('重试',timeout=30000)
    dialog.locator('.clone-confirm').click();expect(dialog).to_have_count(0,timeout=30000)

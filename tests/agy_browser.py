@@ -119,6 +119,7 @@ def check_phone(page):
 
 def check_unavailable(browser, base):
     context = browser.new_context(service_workers='block')
+    context.add_init_script("localStorage.setItem('sessiondock.agentStartMode.agy', JSON.stringify('cli'))")
     intercepted, creates, errors = [], [], []
     def unavailable(route):
         response = route.fetch()
@@ -154,6 +155,7 @@ def check_unavailable(browser, base):
 
 def run(browser, base, root):
     context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
+    context.add_init_script("localStorage.setItem('sessiondock.agentStartMode.agy', JSON.stringify('cli'))")
     context.route('**/*', lambda r: r.continue_() if r.request.url.startswith(base + '/') else r.abort())
     page = context.new_page()
     errors = []

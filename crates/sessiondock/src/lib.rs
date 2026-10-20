@@ -7,49 +7,49 @@
 //! The hub binary has its own configuration and router:
 //! `hub_config::HubConfig` + `hub_api::hub_app`.
 
-pub mod agy_sdk;
+pub(crate) mod agy_sdk;
 mod api;
 mod assets;
 pub mod audit;
 pub mod bridge;
 pub mod bug_report;
-pub mod claude_sdk;
+pub(crate) mod claude_sdk;
 mod cleanup;
-pub mod codex_sdk;
+pub(crate) mod codex_sdk;
 pub mod config;
-pub mod conversation;
-pub mod delivery;
+pub(crate) mod conversation;
+pub(crate) mod delivery;
 mod error;
-pub mod files;
-pub mod fingerprint;
-pub mod grok_sdk;
+pub(crate) mod files;
+pub(crate) mod fingerprint;
+pub(crate) mod grok_sdk;
 pub mod hub;
 pub mod hub_config;
-pub mod integrations;
-pub mod kiro_sdk;
+pub(crate) mod integrations;
 pub(crate) mod json_compat;
+pub(crate) mod kiro_sdk;
 pub mod lifecycle;
-pub mod list_sync;
+pub(crate) mod list_sync;
 pub mod log;
-pub mod media;
-pub mod metadata;
+pub(crate) mod media;
+pub(crate) mod metadata;
 mod native_replay;
-pub mod native_sdk;
+pub(crate) mod native_sdk;
 mod observe;
-pub mod opencode_sdk;
-pub mod polls;
+pub(crate) mod opencode_sdk;
+pub(crate) mod polls;
 pub mod quota_statusline;
-pub mod quotas;
-pub mod runtime;
-pub mod search;
+pub(crate) mod quotas;
+pub(crate) mod runtime;
+pub(crate) mod search;
 mod security;
 pub mod sessions;
 pub mod shell_env;
 mod state;
-pub mod terminal;
+pub(crate) mod terminal;
 pub mod transfer;
-pub mod trash;
-pub mod ui_events;
+pub(crate) mod trash;
+pub(crate) mod ui_events;
 
 use std::{io, sync::Arc};
 
@@ -674,4 +674,4 @@ fn build_app(
     })
 }
 
-pub mod session_links;
+pub(crate) mod session_links;

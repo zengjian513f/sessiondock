@@ -279,10 +279,28 @@ impl Client {
         request: Request,
         connect_error: io::Error,
     ) -> io::Result<T> {
-        let status: Status =
+        let mut status: Status =
             serde_json::from_slice(&tokio::fs::read(self.dir.join("status.json")).await?)?;
         let value = match request {
-            Request::Status if status.exit.is_some() => serde_json::to_value(status)?,
+            Request::Status if status.exit.is_some() => {
+                if !status.stdout_eof {
+                    status.stdout_len = status.stdout_len.max(
+                        tokio::fs::metadata(self.dir.join("stdout"))
+                            .await
+                            .map(|m| m.len())
+                            .unwrap_or(status.stdout_len),
+                    );
+                }
+                if !status.stderr_eof {
+                    status.stderr_len = status.stderr_len.max(
+                        tokio::fs::metadata(self.dir.join("stderr"))
+                            .await
+                            .map(|m| m.len())
+                            .unwrap_or(status.stderr_len),
+                    );
+                }
+                serde_json::to_value(status)?
+            }
             Request::Read { stream, offset } => {
                 use tokio::io::{AsyncReadExt, AsyncSeekExt};
                 let mut file = tokio::fs::File::open(self.dir.join(match stream {
@@ -290,14 +308,24 @@ impl Client {
                     Stream::Stderr => "stderr",
                 }))
                 .await?;
-                file.seek(std::io::SeekFrom::Start(offset)).await?;
-                let mut bytes = vec![0; 65536];
-                let n = file.read(&mut bytes).await?;
-                bytes.truncate(n);
-                let eof = match stream {
-                    Stream::Stdout => status.stdout_eof,
-                    Stream::Stderr => status.stderr_eof,
+                let (mut len, eof) = match stream {
+                    Stream::Stdout => (status.stdout_len, status.stdout_eof),
+                    Stream::Stderr => (status.stderr_len, status.stderr_eof),
                 };
+                if !eof {
+                    len = len.max(file.metadata().await.map(|m| m.len()).unwrap_or(len));
+                }
+                let buf = if offset < len {
+                    file.seek(std::io::SeekFrom::Start(offset)).await?;
+                    let cap = (len - offset).min(65536) as usize;
+                    let mut buf = vec![0u8; cap];
+                    let n = file.read(&mut buf).await?;
+                    buf.truncate(n);
+                    buf
+                } else {
+                    Vec::new()
+                };
+                let n = buf.len();
                 if n == 0 {
                     if let Some(error) = &status.output_error {
                         return Err(io::Error::other(error.clone()));
@@ -307,7 +335,7 @@ impl Client {
                     }
                 }
                 serde_json::to_value(ReadResult {
-                    bytes,
+                    bytes: buf,
                     next_offset: offset + n as u64,
                     eof: n == 0 && eof,
                 })?

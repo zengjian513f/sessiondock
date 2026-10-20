@@ -55,6 +55,9 @@ impl Live {
     fn publish(&mut self) {
         self.raw["items"] = json!(self.items);
         self.raw["requests"] = json!(self.requests);
+        self.publish_raw();
+    }
+    fn publish_raw(&mut self) {
         self.seq += 1;
         let _ = self.tx.send(Arc::from(self.snapshot().to_string()));
     }
@@ -98,7 +101,7 @@ pub fn new(
         ));
     }
     Ok(Some(Arc::new(Bridge {
-        transport: Transport { profile, shutdown },
+        transport: Transport::new(profile, shutdown),
         root: root.clone(),
         proc_root: config.proc_root.clone(),
         sessions: Mutex::new(HashMap::new()),
@@ -117,7 +120,7 @@ impl Bridge {
         let Some(session) = session else {
             return Ok(false);
         };
-        self.check_runtime(&session.sid, &session.cwd)?;
+        self.check_runtime(&session.sid, &session.cwd).await?;
         let _guard = session.operation.lock().await;
         self.transport
             .api(
@@ -222,7 +225,7 @@ impl Bridge {
                 match method {
                     "turn" => self.turn(session, input).await,
                     "interrupt" => {
-                        self.check_runtime(&session.sid, &session.cwd)?;
+                        self.check_runtime(&session.sid, &session.cwd).await?;
                         let _guard = session.operation.lock().await;
                         self.transport.api(&session.cwd,"POST",&format!("/api/session/{}/interrupt?resume=false",encoded(&session.sid)),None).await
                     }
@@ -245,7 +248,7 @@ impl Bridge {
         if !cwd.is_dir() {
             return Err("OpenCode cwd 不是目录".into());
         }
-        self.check_runtime("", &cwd)?;
+        self.check_runtime("", &cwd).await?;
         let mut creates = self.creates.lock().await;
         if let Some(value) = creates.get(request) {
             if value["cwd"] != json!(cwd) {
@@ -330,7 +333,7 @@ impl Bridge {
         }
         let sid = string(target, "session_id")?;
         let cwd = Path::new(string(target, "cwd")?);
-        self.check_runtime(sid, cwd)?;
+        self.check_runtime(sid, cwd).await?;
         let info = self
             .transport
             .api(cwd, "GET", &format!("/api/session/{}", encoded(sid)), None)
@@ -443,7 +446,7 @@ impl Bridge {
             .ok_or("OpenCode SDK 缺少 text 字符串")?
             .to_owned();
         let delivery = actions::delivery(&input, "queue")?;
-        self.check_runtime(&session.sid, &session.cwd)?;
+        self.check_runtime(&session.sid, &session.cwd).await?;
         // Reserve native operation order before acknowledging. An interrupt
         // following an accepted turn cannot overtake its prompt admission.
         let operation = session.operation.clone().lock_owned().await;
@@ -527,7 +530,7 @@ impl Bridge {
     }
 
     async fn respond(&self, session: &Session, input: Value) -> Result<Value, String> {
-        self.check_runtime(&session.sid, &session.cwd)?;
+        self.check_runtime(&session.sid, &session.cwd).await?;
         let key = string(&input, "key")?;
         let request = {
             session
@@ -834,66 +837,80 @@ impl Bridge {
             },"at":info["data"]["time"]["idle"]}),
             None => Value::Null,
         };
-        if state.raw["items"] != json!(state.items)
-            || state.raw["requests"] != json!(state.requests)
+        let next_items = json!(state.items);
+        let next_requests = json!(state.requests);
+        if state.raw["items"] != next_items
+            || state.raw["requests"] != next_requests
             || state.raw != before
         {
-            state.publish();
+            state.raw["items"] = next_items;
+            state.raw["requests"] = next_requests;
+            state.publish_raw();
         }
         Ok(())
     }
 
     /// A default TUI joins the shared service. Private runtimes cannot be
     /// interrupted/controlled through it. Never kill or take over those writers.
-    fn check_runtime(&self, sid: &str, cwd: &Path) -> Result<(), String> {
+    async fn check_runtime(&self, sid: &str, cwd: &Path) -> Result<(), String> {
         #[cfg(target_os = "linux")]
         {
-            let entries = std::fs::read_dir(&self.proc_root)
-                .map_err(|e| format!("无法核实 OpenCode 原生 writer: {e}"))?;
-            for entry in entries.flatten() {
-                if entry.file_name().to_string_lossy().parse::<u32>().is_err() {
-                    continue;
+            let proc_root = self.proc_root.clone();
+            let sid = sid.to_owned();
+            let cwd = cwd.to_path_buf();
+            tokio::task::spawn_blocking(move || {
+                let entries = std::fs::read_dir(&proc_root)
+                    .map_err(|e| format!("无法核实 OpenCode 原生 writer: {e}"))?;
+                for entry in entries.flatten() {
+                    if entry.file_name().to_string_lossy().parse::<u32>().is_err() {
+                        continue;
+                    }
+                    let path = entry.path();
+                    let Ok(bytes) = std::fs::read(path.join("cmdline")) else {
+                        continue;
+                    };
+                    let args: Vec<_> = bytes
+                        .split(|b| *b == 0)
+                        .filter_map(|b| std::str::from_utf8(b).ok())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if !args.iter().take(3).any(|a| {
+                        Path::new(a)
+                            .file_name()
+                            .is_some_and(|n| n == "opencode" || n == "opencode.exe")
+                    }) {
+                        continue;
+                    }
+                    let independent = args.iter().any(|a| {
+                        *a == "--standalone" || *a == "--server" || a.starts_with("--server=")
+                    });
+                    if !independent {
+                        continue;
+                    }
+                    let same_sid = !sid.is_empty()
+                        && (args
+                            .windows(2)
+                            .any(|a| (a[0] == "--session" || a[0] == "-s") && a[1] == sid)
+                            || args
+                                .iter()
+                                .any(|a| a.strip_prefix("--session=") == Some(sid.as_str())));
+                    let same_cwd = std::fs::read_link(path.join("cwd"))
+                        .ok()
+                        .is_some_and(|p| p == cwd);
+                    if same_sid || same_cwd {
+                        return Err("此 OpenCode 会话可能由独立 --standalone/--server runtime 写入；SDK 仅共享默认原生服务，不接管或终止独立 TUI".into());
+                    }
                 }
-                let path = entry.path();
-                let Ok(bytes) = std::fs::read(path.join("cmdline")) else {
-                    continue;
-                };
-                let args: Vec<_> = bytes
-                    .split(|b| *b == 0)
-                    .filter_map(|b| std::str::from_utf8(b).ok())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                if !args.iter().take(3).any(|a| {
-                    Path::new(a)
-                        .file_name()
-                        .is_some_and(|n| n == "opencode" || n == "opencode.exe")
-                }) {
-                    continue;
-                }
-                let independent = args.iter().any(|a| {
-                    *a == "--standalone" || *a == "--server" || a.starts_with("--server=")
-                });
-                if !independent {
-                    continue;
-                }
-                let same_sid = !sid.is_empty()
-                    && (args
-                        .windows(2)
-                        .any(|a| (a[0] == "--session" || a[0] == "-s") && a[1] == sid)
-                        || args
-                            .iter()
-                            .any(|a| a.strip_prefix("--session=") == Some(sid)));
-                let same_cwd = std::fs::read_link(path.join("cwd"))
-                    .ok()
-                    .is_some_and(|p| p == cwd);
-                if same_sid || same_cwd {
-                    return Err("此 OpenCode 会话可能由独立 --standalone/--server runtime 写入；SDK 仅共享默认原生服务，不接管或终止独立 TUI".into());
-                }
-            }
+                Ok(())
+            })
+            .await
+            .map_err(|e| format!("无法核实 OpenCode 原生 writer: {e}"))?
         }
         #[cfg(not(target_os = "linux"))]
-        let _ = (sid, cwd);
-        Ok(())
+        {
+            let _ = (sid, cwd);
+            Ok(())
+        }
     }
 }
 

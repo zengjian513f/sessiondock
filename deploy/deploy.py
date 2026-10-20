@@ -67,7 +67,6 @@ BUILD_TREE = STAGE_ROOT / "tree"
 BUILD_TARGET = STAGE_ROOT / "cargo-target"
 # The frontend is web/, served exactly as committed.
 DIRTY_SCOPE = ["crates", "web", "Cargo.toml", "Cargo.lock"]
-WEB_EXCLUDES = ["node_modules", ".DS_Store", "*.swp"]
 GOOD = {"OK", "PLANNED", "SKIPPED"}
 COLUMNS = ("target", "kind", "result", "build", "version", "ptyhost", "s", "backup")
 PRINT_LOCK = threading.Lock()

@@ -128,7 +128,13 @@ impl SessionRoots {
     }
 
     fn agy_conversations(&self) -> Option<PathBuf> {
-        Some(self.agy_home.as_ref()?.canonicalize().ok()?.join("conversations"))
+        Some(
+            self.agy_home
+                .as_ref()?
+                .canonicalize()
+                .ok()?
+                .join("conversations"),
+        )
     }
 
     fn agy_sid_in(directory: &Path, target: &Path) -> Option<String> {
@@ -782,8 +788,9 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         let Ok(fds) = std::fs::read_dir(directory.join("fd")) else {
             continue;
         };
-        let agy_conversations =
-            (main && cli_family(argv0) == Some("agy")).then(|| roots.agy_conversations()).flatten();
+        let agy_conversations = (main && cli_family(argv0) == Some("agy"))
+            .then(|| roots.agy_conversations())
+            .flatten();
         let is_kiro_proc = cli_family(argv0) == Some("kiro") || lower.contains("kiro");
         for entry in fds.flatten() {
             let Ok(target) = std::fs::read_link(entry.path()) else {
@@ -1362,10 +1369,6 @@ impl ProcScanner {
 
     pub fn root(&self) -> &Path {
         &self.root
-    }
-
-    pub fn ttl(&self) -> Duration {
-        self.ttl
     }
 
     pub fn supported() -> bool {

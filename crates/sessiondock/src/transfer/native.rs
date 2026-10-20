@@ -286,6 +286,7 @@ fn mapped(row: &mut Row, field: &str, ids: &BTreeMap<String, String>) -> Result<
 fn boundary(
     plan: &ClonePlan,
     staged: &StagedClone,
+    cache: &mut BTreeMap<PathBuf, Vec<u8>>,
     sid: &str,
     offset: u64,
     ordinal: u64,
@@ -302,7 +303,10 @@ fn boundary(
         let Some(next) = output.boundaries.get(&offset) else {
             continue;
         };
-        let raw = std::fs::read(&file.source)?;
+        if !cache.contains_key(&file.source) {
+            cache.insert(file.source.clone(), std::fs::read(&file.source)?);
+        }
+        let raw = &cache[&file.source];
         let Some(bytes) = (if end {
             raw.get(..offset as usize)
         } else {
@@ -310,8 +314,22 @@ fn boundary(
         }) else {
             continue;
         };
-        let mut lines = bytes.split(|c| *c == b'\n').filter(|s| !s.is_empty());
-        let line = if end { lines.next_back() } else { lines.next() };
+        let line = if end {
+            bytes.iter().rposition(|c| *c != b'\n').map(|last| {
+                let prefix = &bytes[..=last];
+                let start = prefix
+                    .iter()
+                    .rposition(|c| *c == b'\n')
+                    .map_or(0, |i| i + 1);
+                &prefix[start..]
+            })
+        } else {
+            bytes.iter().position(|c| *c != b'\n').map(|first| {
+                let rest = &bytes[first..];
+                let len = rest.iter().position(|c| *c == b'\n').unwrap_or(rest.len());
+                &rest[..len]
+            })
+        };
         if let Some(line) = line {
             let v: Value = serde_json::from_slice(line)?;
             if v["ordinal"].as_u64() == Some(ordinal) {
@@ -341,6 +359,7 @@ pub fn rewrite(
     }
     let mut result = source.clone();
     let map = &plan.identities;
+    let mut cache = BTreeMap::new();
     for db in &mut result.databases {
         for table in &mut db.tables {
             let progress =
@@ -460,7 +479,7 @@ pub fn rewrite(
                         ) {
                             row.insert(
                                 byte.into(),
-                                boundary(plan, staged, &sid, b, o, end)?.into(),
+                                boundary(plan, staged, &mut cache, &sid, b, o, end)?.into(),
                             );
                         }
                     }
@@ -470,7 +489,8 @@ pub fn rewrite(
                     let o = row["next_rollout_ordinal"].as_u64().unwrap();
                     row.insert(
                         "next_rollout_byte_offset".into(),
-                        boundary(plan, staged, &sid, b, o.saturating_sub(1), true)?.into(),
+                        boundary(plan, staged, &mut cache, &sid, b, o.saturating_sub(1), true)?
+                            .into(),
                     );
                 }
             }
@@ -678,9 +698,6 @@ struct Receipt {
 }
 /// Each database commits independently; the durable caller journal compensates
 /// across databases. Inserts never replace another session's rows.
-pub fn insert(native: &Native, operation: &str) -> Result<(), TransferError> {
-    insert_copy(native, operation, false)
-}
 pub fn insert_copy(native: &Native, operation: &str, reuse: bool) -> Result<(), TransferError> {
     insert_with_prefix(native, operation, reuse, None)
 }

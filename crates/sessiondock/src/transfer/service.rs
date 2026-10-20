@@ -400,9 +400,6 @@ impl TransferService {
                 && (op.phase != "exporting" || op.export_lease_until > super::bundle::now())
         }))
     }
-    pub fn plan(&self, selected: &str) -> Result<Operation, TransferError> {
-        self.plan_copy(selected, true, &self.inventory_snapshot()?)
-    }
     pub fn plan_copy(
         &self,
         selected: &str,

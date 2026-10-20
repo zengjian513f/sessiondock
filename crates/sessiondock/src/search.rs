@@ -60,7 +60,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::sessions::{SessionError, ViewSnapshot};
-pub use cache::Cached;
 pub use prefilter::Prefilter;
 
 const HIT_CAP: usize = 200;

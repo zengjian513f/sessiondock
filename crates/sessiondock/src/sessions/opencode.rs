@@ -77,11 +77,16 @@ struct Mirrored {
     exported: Exported,
 }
 
+#[cfg(not(windows))]
+type DatabaseIdentity = (u64, u64);
+#[cfg(windows)]
+type DatabaseIdentity = String;
+
 pub struct Mirror {
     database: PathBuf,
     root: PathBuf,
     connection: Option<Connection>,
-    database_identity: Option<String>,
+    database_identity: Option<DatabaseIdentity>,
     data_version: Option<i64>,
     sessions: HashMap<String, Mirrored>,
     polls: u32,
@@ -148,7 +153,7 @@ impl Mirror {
         #[cfg(not(windows))]
         let identity = {
             use std::os::unix::fs::MetadataExt;
-            format!("{}:{}", metadata.dev(), metadata.ino())
+            (metadata.dev(), metadata.ino())
         };
         #[cfg(windows)]
         let identity = {

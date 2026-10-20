@@ -7,7 +7,7 @@ use std::{borrow::Cow, io};
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{Stamp, StampedSource, TAIL_BYTES};
+use super::{DataFile, Stamp, StampedSource, TAIL_BYTES};
 
 #[derive(Clone)]
 pub(super) struct Scan {
@@ -84,12 +84,13 @@ impl Record {
 }
 
 pub(super) fn read(
-    file: &mut dyn StampedSource,
-    stamp: Stamp,
+    data: &DataFile<'_>,
+    mut open: impl FnMut() -> io::Result<std::fs::File>,
     previous: Option<&Scan>,
     source: &str,
     sidecar: bool,
 ) -> io::Result<Scan> {
+    let stamp = data.stamp;
     // Same-size rewrites, truncations and inode changes must not inherit state.
     let previous = previous.filter(|scan| {
         (scan.stamp.dev, scan.stamp.ino) == (stamp.dev, stamp.ino)
@@ -105,12 +106,34 @@ pub(super) fn read(
     let mut turn_at = None;
     let mut model = None;
     let mut activity_at = None;
+    let mut opened: Option<std::fs::File> = None;
     'chunks: while position > floor {
         let start = position.saturating_sub(TAIL_BYTES).max(floor);
-        let bytes = file.read_range(start, position - start)?;
-        if bytes.len() as u64 != position - start {
-            return Err(io::Error::other("Native state scan changed during read"));
-        }
+        let bytes: Cow<'_, [u8]> = if start >= data.tail_start {
+            let offset = (start - data.tail_start) as usize;
+            let len = (position - start) as usize;
+            let end_offset = offset.saturating_add(len);
+            if end_offset > data.tail.len() {
+                return Err(io::Error::other("Native state scan changed during read"));
+            }
+            Cow::Borrowed(&data.tail[offset..end_offset])
+        } else {
+            let file = match &mut opened {
+                Some(file) => file,
+                None => {
+                    let mut file = open()?;
+                    if file.stamp() != Some(data.stamp) {
+                        return Err(io::Error::other("Native state scan changed during read"));
+                    }
+                    opened.insert(file)
+                }
+            };
+            let bytes = file.read_range(start, position - start)?;
+            if bytes.len() as u64 != position - start {
+                return Err(io::Error::other("Native state scan changed during read"));
+            }
+            Cow::Owned(bytes)
+        };
         let mut end = bytes.len();
         loop {
             let lf = memchr::memrchr(b'\n', &bytes[..end]);

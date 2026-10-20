@@ -8,85 +8,12 @@ use serde_json::Value;
 use super::{
     AgentMeta, CODEX_HEAD_LINES, CodexMeta, Input, Records, RowSummary, clip, committed_end,
     cursor_head, flatten_text, is_codex_protocol_injection, is_injected, iso_seconds,
-    latest_timestamp, native_identity, norm_ts, py_strip, skipped_warnings, text_if_truthy,
-    title_from_text, truthy,
+    native_identity, norm_ts, py_strip, skipped_warnings, text_if_truthy, title_from_text, truthy,
 };
 use crate::sessions::providers::Skipped;
 
 fn first_truthy<'a>(values: impl IntoIterator<Item = &'a Value>) -> Option<String> {
     values.into_iter().find_map(text_if_truthy)
-}
-
-/// Turn state: the latest `event_msg` whose
-/// kind is a turn boundary (`_CODEX_TURN_OPEN`; other kinds such as
-/// `token_count` are passed over) says whether the turn is still open;
-/// no such record means closed. Subagents share the parent process, so
-/// this is the only liveness fact a rollout carries.
-fn open_turn(records: &Records) -> bool {
-    records
-        .tail
-        .records
-        .iter()
-        .rev()
-        .chain(records.head.records.iter().rev())
-        .filter(|record| record.value["type"] == "event_msg")
-        .find_map(
-            |record| match record.value["payload"]["type"].as_str().unwrap_or("") {
-                "task_started" | "turn_started" => Some(true),
-                "task_complete" | "turn_complete" | "turn_aborted" => Some(false),
-                _ => None,
-            },
-        )
-        .unwrap_or(false)
-}
-
-/// Main-rollout turn state for the list: the latest turn-boundary
-/// `event_msg` read the way the parser reads it (`task_started` → `working`,
-/// `task_complete` → `idle` or `failed`, `turn_aborted` → `aborted`); an open
-/// turn whose newest response item is a question tool call is `waiting`.
-fn main_turn(records: &Records) -> Option<&'static str> {
-    let mut asking = None;
-    for record in records
-        .tail
-        .records
-        .iter()
-        .rev()
-        .chain(records.head.records.iter().rev())
-    {
-        let payload = &record.value["payload"];
-        match record.value["type"].as_str() {
-            Some("response_item") => {
-                asking.get_or_insert_with(|| {
-                    matches!(
-                        payload["type"].as_str(),
-                        Some("function_call" | "custom_tool_call")
-                    ) && payload["name"]
-                        .as_str()
-                        .is_some_and(crate::sessions::providers::question_tool)
-                });
-            }
-            Some("event_msg") => match payload["type"].as_str().unwrap_or("") {
-                "task_started" | "turn_started" => {
-                    return Some(if asking == Some(true) {
-                        "waiting"
-                    } else {
-                        "working"
-                    });
-                }
-                "task_complete" | "turn_complete" => {
-                    return Some(if truthy(&payload["error"]) {
-                        "failed"
-                    } else {
-                        "idle"
-                    });
-                }
-                "turn_aborted" => return Some("aborted"),
-                _ => {}
-            },
-            _ => {}
-        }
-    }
-    None
 }
 
 pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
@@ -215,12 +142,8 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         ),
     };
     let mtime = iso_seconds(data.stamp.mtime_ns);
-    let created = norm_ts(&meta["timestamp"]).unwrap_or_else(|| mtime.clone());
-    let updated = if is_subagent {
-        latest_timestamp(&records).unwrap_or_else(|| mtime.clone())
-    } else {
-        mtime
-    };
+    let created = norm_ts(&meta["timestamp"]).unwrap_or(mtime);
+    let updated = created.clone();
     let mut warnings = skipped_warnings("codex", &records);
     if duplicate_meta > 0 {
         warnings.insert(0, Skipped::duplicate_codex_meta_warning(duplicate_meta));
@@ -242,19 +165,9 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         .unwrap_or_else(|| sid.clone()),
         kind: first_truthy([&meta["agent_role"], &spawn["agent_role"]])
             .unwrap_or_else(|| "subagent".to_owned()),
-        open_turn: open_turn(&records),
+        open_turn: false,
         turn_at: None,
     });
-    let model = records
-        .tail
-        .records
-        .iter()
-        .rev()
-        .chain(records.head.records.iter().rev())
-        .find_map(|record| {
-            crate::sessions::providers::native_model(input.source, &record.value, false)
-        })
-        .unwrap_or(Value::Null);
     let committed = committed_end(data);
     RowSummary {
         sid,
@@ -263,7 +176,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         created,
         updated,
         size: data.stamp.size,
-        model,
+        model: Value::Null,
         branch: Value::Null,
         codex: Some(CodexMeta {
             start_ordinal: records
@@ -300,10 +213,6 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         committed,
         cursor_head: committed.and_then(|end| cursor_head(data, end)),
         background: 0,
-        turn: if is_subagent {
-            None
-        } else {
-            main_turn(&records)
-        },
+        turn: None,
     }
 }

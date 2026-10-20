@@ -38,10 +38,9 @@ def api(page, method, body):
 def select(page, uid):
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     page.locator("#a-sdk").click()
-    page.wait_for_function("document.querySelector('#sdk-input')?.getClientRects().length || (document.querySelector('#a-session-toggle')?.getAttribute('aria-label') === '启动会话' && !document.querySelector('#a-session-toggle').disabled)")
-    if not page.locator('#sdk-input').is_visible():
-        page.locator('#a-session-toggle[aria-label="启动会话"]').click()
     expect(page.locator("#sdk-input")).to_be_visible()
+    page.locator('#sdk-input').click()
+    page.wait_for_function('NativeSdkView.connected')
 
 
 def snapshot(page, uid):

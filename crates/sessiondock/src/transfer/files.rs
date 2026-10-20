@@ -655,7 +655,6 @@ impl Plan {
                     {
                         mint(&source, agent, &mut plan.sessions, new_ids)?;
                     }
-                    collect_tools(&row, &source, &mut plan.tool_names);
                     if source == "grok" {
                         collect_tools(
                             &row,
@@ -769,6 +768,20 @@ impl Plan {
         } else {
             &local_names
         };
+        let paths = self
+            .files
+            .iter()
+            .filter(|f| f.provider == *source)
+            .map(|f| {
+                (
+                    f.source.to_string_lossy().into_owned(),
+                    self.roots[source]
+                        .join(&f.target)
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
         let mut rewritten = rows.into_iter();
         let records: Vec<&[u8]> = if file.format == "json" {
             vec![raw]
@@ -790,7 +803,7 @@ impl Plan {
             }
             session_ids(&mut row, source, &self.sessions);
             rewrite_tools(&mut row, source, &self.sessions, names)?;
-            self.tool_paths(&mut row, source);
+            Self::tool_paths(&mut row, &paths);
             if source == "grok" {
                 rewrite_checkpoint_paths(&mut row, &self.records);
             }
@@ -802,21 +815,7 @@ impl Plan {
         }
         Ok(output)
     }
-    fn tool_paths(&self, row: &mut Value, source: &str) {
-        let paths = self
-            .files
-            .iter()
-            .filter(|f| f.provider == source)
-            .map(|f| {
-                (
-                    f.source.to_string_lossy().into_owned(),
-                    self.roots[source]
-                        .join(&f.target)
-                        .to_string_lossy()
-                        .into_owned(),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
+    fn tool_paths(row: &mut Value, paths: &BTreeMap<String, String>) {
         fn result(value: &mut Value, paths: &BTreeMap<String, String>) {
             if let Some(object) = value.as_object_mut() {
                 for name in [
@@ -866,7 +865,7 @@ impl Plan {
             }
         }
         if let Some(output) = row.get_mut("toolUseResult") {
-            result(output, &paths);
+            result(output, paths);
         }
         if let Some(content) = row
             .get_mut("message")
@@ -875,7 +874,7 @@ impl Plan {
         {
             for item in content {
                 if item["type"] == "tool_result" {
-                    result(&mut item["content"], &paths);
+                    result(&mut item["content"], paths);
                 }
             }
         }

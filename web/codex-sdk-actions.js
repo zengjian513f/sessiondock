@@ -126,7 +126,7 @@ const CodexSdkActions = {
   async openFork(view, response) {
     const sourceUid = view.uid, sourceAgent = view.agent;
     if (response.session) T.sdkSessions = [...T.sdkSessions.filter(row => row.uid !== response.uid), response.session];
-    CodexSdkView.legacyViews.delete(response.uid);
+    SdkView.selectMode(response.uid, null, 'sdk');
     // Native forks are normally persisted immediately, so hydrate their
     // inventory before opening instead of treating them as empty starts.
     if (!response.session?.sdk_pending) await loadSessions(true, true);
@@ -139,26 +139,11 @@ const CodexSdkActions = {
   },
 
   decorate(view, node, message) {
-    if (message?.role !== 'user' || !message.turn_id || node.querySelector('.sdk-bubble-toggle')) return;
-    node.classList.add('sdk-user-actions');
-    const toggle = document.createElement('button');
-    toggle.type = 'button'; toggle.className = 'sdk-bubble-toggle'; toggle.textContent = '⋯';
-    toggle.setAttribute('aria-label', '消息操作'); toggle.setAttribute('aria-expanded', 'false');
-    const menu = document.createElement('div');
-    menu.className = 'new-model-menu sdk-bubble-menu'; menu.setAttribute('popover', 'auto');
-    menu.setAttribute('aria-label', '消息操作');
-    menu.addEventListener('beforetoggle', event => toggle.setAttribute('aria-expanded', String(event.newState === 'open')));
-    for (const [action, label] of [['revert', '回退'], ['fork', '分支']]) {
-      const button = document.createElement('button');
-      button.type = 'button'; button.className = 'new-model-option'; button.textContent = label;
-      button.onclick = () => { menu.hidePopover(); void this.messageAction(view, message, action); };
-      menu.append(button);
-    }
-    toggle.onclick = () => {
-      if (menu.matches(':popover-open')) { menu.hidePopover(); return; }
-      view.closeToolbarMenus(); menu.showPopover(); view.placeMenu(menu, toggle, 180);
-    };
-    node.append(toggle, menu);
+    if (message?.role !== 'user' || !message.turn_id) return;
+    SdkUI.decorateUserBubble(view, node, [
+      ['回退', () => this.messageAction(view, message, 'revert')],
+      ['分支', () => this.messageAction(view, message, 'fork')],
+    ]);
   },
 
   async restoreInput(view, text) {

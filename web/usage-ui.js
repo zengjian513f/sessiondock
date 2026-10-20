@@ -6,7 +6,13 @@ const UsageUI = {
   accounts: new Map(),
   accountKey(uid) { return `${HUB_MODE ? nodeOf(uid) : ''}:${String(uid).split(':')[0]}`; },
   remembered(uid, agent) { return this.sessions.get(viewKey(uid,agent)); },
-  remember(uid, agent, data) { if(uid)this.sessions.set(viewKey(uid,agent),structuredClone(data)); },
+  remember(uid, agent, data) {
+    if (!uid) return;
+    const key = viewKey(uid, agent);
+    this.sessions.delete(key);
+    if (this.sessions.size >= 500) this.sessions.delete(this.sessions.keys().next().value);
+    this.sessions.set(key, structuredClone(data));
+  },
   quota(uid) { return this.accounts.get(this.accountKey(uid)); },
   rememberQuota(uid, quota) { if(quota)this.accounts.set(this.accountKey(uid),quota); },
   async readQuota(uid, signal) {
@@ -37,7 +43,7 @@ const UsageUI = {
   percent(value) { return value.toLocaleString(undefined,{maximumFractionDigits:1}); },
   time(value) { return new Date(value).toLocaleString(undefined,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}); },
   countdown(value) {
-    const end = typeof value === 'number' ? value : Date.parse(value);
+    const end = typeof value === 'number' ? (value < 1e11 ? value * 1000 : value) : Date.parse(value);
     if (!Number.isFinite(end)) return 'N/A';
     const remaining = end - Date.now();
     if (remaining <= 0) return '已到期';

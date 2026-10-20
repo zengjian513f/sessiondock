@@ -31,15 +31,6 @@ pub enum AttachMode {
     Grid,
 }
 
-impl AttachMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Bytes => "bytes",
-            Self::Grid => "grid",
-        }
-    }
-}
-
 /// Nonzero PTY dimensions. Browser hidden-view/minimum-size policy belongs above this crate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct TerminalSize {

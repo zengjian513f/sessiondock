@@ -472,10 +472,8 @@ impl super::Parser<'_> {
                         .unwrap_or("")
                         .trim();
                     if !target_id.is_empty()
-                        && let Some(pos) = self
-                            .kiro_history
-                            .iter()
-                            .position(|(id, _)| id == target_id)
+                        && let Some(pos) =
+                            self.kiro_history.iter().position(|(id, _)| id == target_id)
                     {
                         let event_idx = self.kiro_history[pos].1;
                         self.events.truncate(event_idx);
@@ -574,8 +572,14 @@ impl super::Parser<'_> {
                 }
 
                 // V2 toolUse / tool_uses fields on AssistantMessage
-                for key in ["toolUse", "tool_use", "toolUses", "tool_uses", "toolCalls", "tool_calls"]
-                {
+                for key in [
+                    "toolUse",
+                    "tool_use",
+                    "toolUses",
+                    "tool_uses",
+                    "toolCalls",
+                    "tool_calls",
+                ] {
                     if let Some(val) = data.get(key) {
                         if let Some(arr) = val.as_array() {
                             for call in arr {
@@ -601,8 +605,7 @@ impl super::Parser<'_> {
                 if let Some(a) = record.get("assistant") {
                     let a_text = if let Some(s) = a.as_str() {
                         s.trim().to_owned()
-                    } else if let Some(s) = a.pointer("/Response/content").and_then(Value::as_str)
-                    {
+                    } else if let Some(s) = a.pointer("/Response/content").and_then(Value::as_str) {
                         s.trim().to_owned()
                     } else {
                         extract_content_text(a)
@@ -689,10 +692,9 @@ impl super::Parser<'_> {
             .or_else(|| data.get("is_error"))
             .and_then(Value::as_bool)
             .unwrap_or(false)
-            || data
-                .get("status")
-                .and_then(Value::as_str)
-                .is_some_and(|s| s.eq_ignore_ascii_case("error") || s.eq_ignore_ascii_case("failed"));
+            || data.get("status").and_then(Value::as_str).is_some_and(|s| {
+                s.eq_ignore_ascii_case("error") || s.eq_ignore_ascii_case("failed")
+            });
 
         let mut text = extract_content_text(data);
         if text.is_empty() {
@@ -741,8 +743,9 @@ impl super::Parser<'_> {
                 if let Some(err_val) = result_obj.get("Error").or_else(|| result_obj.get("error")) {
                     let err_text = extract_v2_value_text(err_val);
                     results_by_id.insert(id.clone(), (err_text, true));
-                } else if let Some(ok_val) =
-                    result_obj.get("Success").or_else(|| result_obj.get("success"))
+                } else if let Some(ok_val) = result_obj
+                    .get("Success")
+                    .or_else(|| result_obj.get("success"))
                 {
                     let ok_text = extract_v2_value_text(ok_val);
                     results_by_id.insert(id.clone(), (ok_text, false));

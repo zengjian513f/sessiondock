@@ -230,17 +230,25 @@ pub fn sanitize(value: &Value, depth: usize) -> Value {
 }
 
 fn secret_key(key: &str) -> bool {
-    let folded: String = key
-        .chars()
-        .map(|c| {
-            if c == '_' {
-                '-'
-            } else {
-                c.to_ascii_lowercase()
-            }
-        })
-        .collect();
-    SECRET_KEYS.contains(&folded.as_str())
+    let folded: std::borrow::Cow<'_, str> = if key
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        std::borrow::Cow::Borrowed(key)
+    } else {
+        std::borrow::Cow::Owned(
+            key.chars()
+                .map(|c| {
+                    if c == '_' {
+                        '-'
+                    } else {
+                        c.to_ascii_lowercase()
+                    }
+                })
+                .collect(),
+        )
+    };
+    SECRET_KEYS.contains(&folded.as_ref())
 }
 
 fn rfc3339(now: SystemTime) -> String {

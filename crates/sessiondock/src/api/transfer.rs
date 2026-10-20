@@ -714,13 +714,15 @@ impl std::io::Read for ChannelReader {
                 return Ok(n);
             }
             crate::transfer::coordination::check().map_err(std::io::Error::other)?;
-            match self.receiver.try_recv() {
-                Ok(Ok(bytes)) => self.current = std::io::Cursor::new(bytes),
-                Ok(Err(e)) => return Err(std::io::Error::other(e)),
-                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return Ok(0),
-                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
-                    std::thread::sleep(std::time::Duration::from_millis(20))
-                }
+            let next = tokio::runtime::Handle::current().block_on(tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                self.receiver.recv(),
+            ));
+            match next {
+                Ok(Some(Ok(bytes))) => self.current = std::io::Cursor::new(bytes),
+                Ok(Some(Err(e))) => return Err(std::io::Error::other(e)),
+                Ok(None) => return Ok(0),
+                Err(_) => continue,
             }
         }
     }

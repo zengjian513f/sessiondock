@@ -186,44 +186,51 @@ fn json_declares_id(path: &Path, target_sid: &str) -> bool {
 pub fn summarize(input: &Input<'_>) -> RowSummary {
     let default_sid = infer_default_sid(input.path);
     let (summary, summary_stamp) = match &input.sidecar {
-        Some(SidecarBytes::Bytes { bytes, stamp }) => match serde_json::from_slice::<Value>(bytes) {
-            Ok(Value::Object(map)) => (Value::Object(map), *stamp),
-            Ok(_) => {
-                return unsupported(
-                    default_sid,
-                    input.data.as_ref().map(|d| d.stamp).unwrap_or(*stamp),
-                    "Kiro session.json 顶层不是 JSON 对象".to_owned(),
-                );
+        Some(SidecarBytes::Bytes { bytes, stamp }) => {
+            match serde_json::from_slice::<Value>(bytes) {
+                Ok(Value::Object(map)) => (Value::Object(map), *stamp),
+                Ok(_) => {
+                    return unsupported(
+                        default_sid,
+                        input.data.as_ref().map(|d| d.stamp).unwrap_or(*stamp),
+                        "Kiro session.json 顶层不是 JSON 对象".to_owned(),
+                    );
+                }
+                Err(error) => {
+                    return unsupported(
+                        default_sid,
+                        input.data.as_ref().map(|d| d.stamp).unwrap_or(*stamp),
+                        format!("Kiro session.json 解析失败: {error}"),
+                    );
+                }
             }
-            Err(error) => {
-                return unsupported(
-                    default_sid,
-                    input.data.as_ref().map(|d| d.stamp).unwrap_or(*stamp),
-                    format!("Kiro session.json 解析失败: {error}"),
-                );
-            }
-        },
+        }
         Some(SidecarBytes::Failed { stamp, reason }) => {
+            let fallback_stamp =
+                input
+                    .data
+                    .as_ref()
+                    .map(|d| d.stamp)
+                    .or(*stamp)
+                    .unwrap_or(super::Stamp {
+                        size: 0,
+                        mtime_ns: 0,
+                        dev: 0,
+                        ino: 0,
+                    });
+            return unsupported(default_sid, fallback_stamp, reason.clone());
+        }
+        None => {
             let fallback_stamp = input
                 .data
                 .as_ref()
                 .map(|d| d.stamp)
-                .or(*stamp)
                 .unwrap_or(super::Stamp {
                     size: 0,
                     mtime_ns: 0,
                     dev: 0,
                     ino: 0,
                 });
-            return unsupported(default_sid, fallback_stamp, reason.clone());
-        }
-        None => {
-            let fallback_stamp = input.data.as_ref().map(|d| d.stamp).unwrap_or(super::Stamp {
-                size: 0,
-                mtime_ns: 0,
-                dev: 0,
-                ino: 0,
-            });
             return unsupported(
                 default_sid,
                 fallback_stamp,

@@ -411,39 +411,54 @@ fn prune_segment(path: &Path, cutoff: SystemTime) -> io::Result<SystemTime> {
             .map(SystemTime::from)
             .unwrap_or(modified)
     };
-    let mut next = SystemTime::now() + RETENTION;
-    let mut found = false;
-    for line in BufReader::new(File::open(path)?).split(b'\n') {
-        let at = timestamp(&line?);
-        if at < cutoff {
-            found = true;
-        } else {
-            next = next.min(at + RETENTION);
-        }
-    }
-    if !found {
-        return Ok(next);
-    }
     let temporary = path.with_extension("jsonl.retention-tmp");
     let result = (|| {
-        let input = BufReader::new(File::open(path)?);
-        let mut options = OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut output = BufWriter::new(options.open(&temporary)?);
+        let mut next = SystemTime::now() + RETENTION;
+        let mut output: Option<BufWriter<File>> = None;
+        let mut prefix_bytes = 0u64;
         let mut retained = false;
-        for line in input.split(b'\n') {
-            let line = line?;
-            if timestamp(&line) >= cutoff {
-                output.write_all(&line)?;
-                output.write_all(b"\n")?;
+        let mut reader = BufReader::new(File::open(path)?);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            let read = reader.read_until(b'\n', &mut line)?;
+            if read == 0 {
+                break;
+            }
+            let trimmed = line.strip_suffix(b"\n").unwrap_or(&line);
+            let at = timestamp(trimmed);
+            if at < cutoff {
+                if output.is_none() {
+                    let mut options = OpenOptions::new();
+                    options.write(true).create(true).truncate(true);
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::OpenOptionsExt;
+                        options.mode(0o600);
+                    }
+                    let mut writer = BufWriter::new(options.open(&temporary)?);
+                    if prefix_bytes > 0 {
+                        std::io::copy(
+                            &mut std::io::Read::take(File::open(path)?, prefix_bytes),
+                            &mut writer,
+                        )?;
+                    }
+                    output = Some(writer);
+                }
+            } else {
+                next = next.min(at + RETENTION);
                 retained = true;
+                if let Some(writer) = &mut output {
+                    writer.write_all(trimmed)?;
+                    writer.write_all(b"\n")?;
+                } else {
+                    prefix_bytes += read as u64;
+                }
             }
         }
+        let Some(mut output) = output else {
+            return Ok(next);
+        };
         output.flush()?;
         if retained {
             // Rewriting must not renew the age of malformed retained bytes.

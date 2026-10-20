@@ -8,6 +8,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY
 from native_sdk_footer_browser import provider
 from sdk_selection_fixtures import snapshots
+from sdk_ui_fixtures import start_sdk
 
 TEXT = '全面审计sessiondock的代码，找出所有的dead code，重复逻辑，还有性能优化点，等等。可开多个subagent去做。'
 
@@ -39,11 +40,7 @@ def exercise(browser, base, source, events, width, theme, screenshots):
     if not row.is_visible(): page.locator(f'#chips button[data-source="{source}"]').click()
     row.click()
     page.locator('#a-sdk').click()
-    power = page.locator('#a-session-toggle')
-    if not power.is_visible(): page.locator('#a-more').click()
-    power.click()
-    expect(page.locator('#sdk-input')).to_be_visible()
-    expect(page.locator('#sdk-input')).to_be_enabled()
+    start_sdk(page)
     page.locator('#sdk-input').fill(TEXT)
     with page.expect_response('**/api/native-sdk/turn'): page.locator('#sdk-send').click()
     publish()

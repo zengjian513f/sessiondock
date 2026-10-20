@@ -109,7 +109,7 @@ fn classify_with(source: &str, capture: &ScreenCapture, draft_allowed: bool) -> 
                 driver::inspect_codex(capture)
             };
             (
-                editor.composer_token.is_some(),
+                editor.recognized,
                 editor.pasting,
                 editor.state == driver::ComposerState::Editing,
             )
@@ -228,8 +228,8 @@ where
         // may be identical to this SEND, but changing from suggestion to real
         // input is consumption evidence (BUG-20261012-080313-6f05f9). Conversely,
         // an unchanged suggestion must never settle the paste early.
-        if view.state == driver::ComposerState::Editing {
-            view.composer_token.and(view.text)
+        if view.state == driver::ComposerState::Editing && view.recognized {
+            view.text
         } else {
             None
         }

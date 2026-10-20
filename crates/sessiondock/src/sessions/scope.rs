@@ -87,36 +87,14 @@ pub(super) fn kiro_native_identity(
     }
 }
 
-pub(super) fn native_identity(
-    source: &str,
-    records: &[(Value, u64)],
+/// The scope rules over declared ID values from the records seen.
+pub(crate) fn declared_identity<'a>(
+    records: impl Iterator<Item = &'a Value>,
 ) -> (Result<String, SessionError>, Vec<String>) {
-    if !matches!(source, "claude" | "codex") {
-        return (
-            Err(SessionError::new(501, "此数据源尚不支持原生操作范围")),
-            Vec::new(),
-        );
-    }
-    let mut identity = None;
+    let mut identity: Option<String> = None;
     let mut declared = BTreeSet::new();
     let mut error = None;
-    let mut codex_meta_seen = false;
-    for (record, _) in records {
-        let value = if source == "claude" {
-            record.get("sessionId")
-        } else if record["type"] == "session_meta" {
-            // The first session_meta is
-            // the only identity; old-style forks and subagent rollouts copy
-            // their ancestors' metas after it, and those ids are not this file's.
-            if codex_meta_seen {
-                continue;
-            }
-            codex_meta_seen = true;
-            record["payload"].get("id")
-        } else {
-            continue;
-        };
-        let Some(value) = value else { continue };
+    for value in records {
         let Some(id) = value.as_str().filter(|id| !id.trim().is_empty()) else {
             error.get_or_insert_with(|| {
                 SessionError::new(501, "原生会话 ID 无效，不能确定操作范围")
@@ -124,16 +102,41 @@ pub(super) fn native_identity(
             continue;
         };
         declared.insert(id.to_owned());
-        if identity.is_some_and(|previous| previous != id) {
+        if identity.as_deref().is_some_and(|previous| previous != id) {
             error.get_or_insert_with(|| SessionError::new(409, "原生记录包含冲突的会话 ID"));
         }
-        identity.get_or_insert(id);
+        identity.get_or_insert_with(|| id.to_owned());
     }
     let identity = match error {
         Some(error) => Err(error),
-        None => identity.map(str::to_owned).ok_or_else(|| {
+        None => identity.ok_or_else(|| {
             SessionError::new(501, "原生记录缺少明确会话 ID，不能用文件名或显示名称推断")
         }),
     };
     (identity, declared.into_iter().collect())
+}
+
+pub(super) fn native_identity(
+    source: &str,
+    records: &[(Value, u64)],
+) -> (Result<String, SessionError>, Vec<String>) {
+    match source {
+        "claude" => declared_identity(records.iter().filter_map(|(r, _)| r.get("sessionId"))),
+        "codex" => declared_identity(
+            records
+                .iter()
+                .find(|(r, _)| r["type"] == "session_meta")
+                .and_then(|(r, _)| r["payload"].get("id"))
+                .into_iter(),
+        ),
+        "kiro" => declared_identity(records.iter().filter_map(|(r, _)| {
+            r.get("session_id")
+                .or_else(|| r.get("sessionId"))
+                .or_else(|| r.get("payload").and_then(|p| p.get("sessionId")))
+        })),
+        _ => (
+            Err(SessionError::new(501, "此数据源尚不支持原生操作范围")),
+            Vec::new(),
+        ),
+    }
 }

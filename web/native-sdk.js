@@ -339,32 +339,15 @@ const NativeSdkView = {
     };
     const fields = request.questions || request.fields;
     if (request.type === 'question' && fields?.length) {
-      const readers = fields.map((field,index) => {
-        const group = document.createElement('fieldset'); group.className = 'sdk-question';
-        const title = field.question || field.title || field.key || '回答';
-        group.append(el('legend','',[field.header,title].filter(Boolean).join(' · ')));
-        const multiple = field.multiSelect || field.multiple || field.type === 'array';
-        for (const option of field.options || []) {
-          const label = document.createElement('label'), input = document.createElement('input');
-          const value = typeof option === 'string' ? option : option.value ?? option.label ?? option.id;
-          input.type = multiple ? 'checkbox' : 'radio'; input.name = `native-${request.key}-${index}`;
-          input.value = String(value);
-          label.append(input, ` ${typeof option === 'string' ? option : option.label || option.title || String(value)}`);
-          if (option.description) label.title = option.description;
-          group.append(label);
-        }
-        const other = document.createElement('input'); other.type = 'text';
-        other.placeholder = (field.options || []).length ? '其他答案' : '输入答案';
-        other.setAttribute('aria-label',title); group.append(other); body.append(group);
-        return () => {
-          const picked = [...group.querySelectorAll('input:checked')].map(input => input.value);
-          const typed = other.value.trim();
-          let value = multiple ? (typed ? [...picked,typed] : picked) : typed || picked[0] || '';
+      const readers = SdkUI.appendQuestionFields(body, fields, {
+        namePrefix: `native-${request.key}`,
+        formatAnswer: (field, index, {picked, typed, multiple}) => {
+          let value = multiple ? (typed ? [...picked, typed] : picked) : typed || picked[0] || '';
           if (request.questions && Array.isArray(value) && !this.uid.startsWith('grok:')) value = value.join(', ');
           if (field.type === 'number' || field.type === 'integer') value = value === '' ? '' : Number(value);
           if (field.type === 'boolean') value = value === 'true';
-          return [field.key || field.question || String(index),value];
-        };
+          return [field.key || field.question || String(index), value];
+        },
       });
       add('提交', () => {
         const answers = Object.fromEntries(readers.map(read => read()));
@@ -482,7 +465,6 @@ function defaultSessionView(uid) {
 const SdkView = new Proxy({
   active: CodexSdkView,
   awaitingRunning: false,
-  legacyViews: CodexSdkView.legacyViews,
   selectController: null,
   available(uid, agent) { return CodexSdkView.available(uid,agent) || NativeSdkView.available(uid,agent); },
   views: new Map(),
@@ -540,9 +522,9 @@ const SdkView = new Proxy({
       const name = typeof T === 'undefined' ? null : takenOver(uid);
       const console = (name && (T.list || []).find(row => row.name === name && row.running !== false && !row.stale))
         || (typeof findTermForSession === 'function' ? findTermForSession(uid) : null);
-      const sdk = state?.sdk_uids?.includes(uid) || (typeof sessionHasRunningSdk === 'function' && sessionHasRunningSdk(uid));
-      const external = state?.uids?.includes(uid) && !sdk;
       const unknown = !Array.isArray(state?.uids) || state.errors?.some(error => error.node_id === nodeOf(uid));
+      const sdk = !unknown && state.sdk_uids?.includes(uid) === true;
+      const external = state?.uids?.includes(uid) && !sdk;
       selection.runningSdk = !unknown && sdk === true;
       if (!hasChat) {
         selection.mode = sdk ? 'sdk'
@@ -581,7 +563,7 @@ const SdkView = new Proxy({
     this.active.retryOpen();
   },
   open(uid,pane,agent,options) {
-    this.close(); this.legacyViews.delete(viewKey(uid,agent));
+    this.close();
     this.awaitingRunning = true;
     this.selectMode(uid, agent, 'sdk');
     this.active = String(uid).startsWith('codex:') ? CodexSdkView : NativeSdkView;

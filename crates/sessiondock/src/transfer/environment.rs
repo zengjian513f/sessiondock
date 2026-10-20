@@ -115,7 +115,7 @@ impl Snapshot {
         // Never enumerate it or follow unrelated project links.
 
         for path in dependencies {
-            result.walk(path, false, &mut seen).map_err(|mut error| {
+            result.walk(path, &mut seen).map_err(|mut error| {
                 error.message = format!("外部历史依赖 {}：{}", path.display(), error.message);
                 error
             })?;
@@ -123,17 +123,12 @@ impl Snapshot {
         result.recheck()?;
         Ok(result)
     }
-    fn walk(
-        &mut self,
-        path: &Path,
-        tree: bool,
-        seen: &mut BTreeSet<(PathBuf, bool)>,
-    ) -> Result<(), TransferError> {
+    fn walk(&mut self, path: &Path, seen: &mut BTreeSet<PathBuf>) -> Result<(), TransferError> {
         super::coordination::check()?;
         if workspace_upload(path) {
             return Ok(());
         }
-        if !seen.insert((path.to_owned(), tree)) {
+        if !seen.insert(path.to_owned()) {
             return Ok(());
         }
         let meta = fs::symlink_metadata(path)?;
@@ -156,7 +151,7 @@ impl Snapshot {
             // canonicalize detects dangling links and link-only loops. Directory
             // cycles terminate through `seen`; their link target is still recorded.
             let resolved = path.canonicalize()?;
-            self.walk(&resolved, false, seen)?;
+            self.walk(&resolved, seen)?;
         } else if meta.is_dir() {
             content.kind = "directory".into();
             let mut children = fs::read_dir(path)?
@@ -167,7 +162,7 @@ impl Snapshot {
                 if child.file_name().is_some_and(|name| name == ".git") {
                     continue;
                 }
-                self.walk(&child, tree, seen)?;
+                self.walk(&child, seen)?;
             }
         } else if meta.is_file() {
             content.kind = "file".into();
@@ -197,16 +192,7 @@ impl Snapshot {
         if stamp(&fs::symlink_metadata(path)?) != before {
             return Err(stale());
         }
-        if tree {
-            self.entries.insert(
-                path.strip_prefix(&self.cwd)
-                    .map_err(|_| TransferError::new("move_path", "工作目录扫描越界"))?
-                    .to_owned(),
-                content,
-            );
-        } else {
-            self.dependencies.insert(path.into(), content);
-        }
+        self.dependencies.insert(path.into(), content);
         Ok(())
     }
     pub fn recheck(&self) -> Result<(), TransferError> {

@@ -175,7 +175,9 @@ def main():
                         expect(page.locator("#new-session")).to_be_hidden()
                         expect(page.locator("#a-term")).to_be_visible()
                         expect(page.locator("#a-term")).to_have_attribute("data-unavailable","false")
-                        expect(page.locator("#composer")).to_be_hidden()
+                        expect(page.locator("#composer")).to_be_visible()
+                        expect(page.locator("#composer textarea")).to_be_disabled()
+                        expect(page.locator("#csend")).to_be_disabled()
                         listed=context.request.get(base+"/api/term/list?force=1").json()
                         original=next(row for row in listed["sessions"] if row["name"]=="synthetic-identity-host")
                         assert original["uid"]==guard_uid and original["current_uid"]==uid, original

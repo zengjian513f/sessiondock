@@ -207,8 +207,8 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
     # 6. Permission approval card (`session/request_permission`)
     page.locator("#sdk-input").fill("permission-test")
     page.locator("#sdk-send").click()
-    page.wait_for_function("window.__kiroSnapshot?.requests?.length === 1")
-    perm_card = page.locator(".sdk-request").first
+    page.wait_for_function("window.__kiroSnapshot?.requests?.some(request => request.type === 'approval')")
+    perm_card = page.locator(".sdk-live [data-sdk-request]").filter(has_text="Execute bash command")
     expect(perm_card).to_be_visible()
     if screenshots:
         page.screenshot(path=str(screenshots / "kiro-sdk-permission.png"), full_page=True)
@@ -218,12 +218,27 @@ def exercise(browser, base: str, fixture: KiroFixture, screenshots: Path | None)
         "window.__kiroSnapshot.items.some(i => i.content?.includes('Permission granted and command executed.'))"
     )
     expect(page.locator(".sdk-live")).to_contain_text("Permission granted and command executed.")
+    try:
+        expect(perm_card).to_have_count(0)
+    except AssertionError:
+        print("Kiro approval reconciliation", page.evaluate("""() => ({
+          seq: NativeSdkView.seq,
+          rawRequests: NativeSdkView.raw?.requests,
+          requestMap: [...NativeSdkView.requests],
+          watchedRequests: window.__kiroSnapshot?.requests,
+          cards: [...document.querySelectorAll('[data-sdk-request]')].map(card => ({
+            key: card.dataset.sdkRequest, html: card.outerHTML,
+          })),
+        })"""), flush=True)
+        print("Kiro native prompts", fixture.received("session/prompt"), flush=True)
+        print("Kiro browser errors", failures, flush=True)
+        raise
 
     # 7. Question card (`_kiro/userInput`)
     page.locator("#sdk-input").fill("question-test")
     page.locator("#sdk-send").click()
-    page.wait_for_function("window.__kiroSnapshot?.requests?.length === 1")
-    q_card = page.locator(".sdk-request").first
+    page.wait_for_function("window.__kiroSnapshot?.requests?.some(request => request.type === 'question')")
+    q_card = page.locator(".sdk-live [data-sdk-request]").filter(has_text="Kiro Question")
     expect(q_card).to_be_visible()
     q_card.get_by_label("ACP V3", exact=False).first.check()
     if screenshots:

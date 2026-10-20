@@ -17,18 +17,18 @@ use tokio_util::sync::CancellationToken;
 enum Provider {
     Grok(Arc<crate::grok_sdk::Bridge>),
     Agy(Arc<crate::agy_sdk::Bridge>),
-    Kiro(Arc<crate::kiro_sdk::Bridge>),
     OpenCode(Arc<crate::opencode_sdk::Bridge>),
     Claude(Arc<crate::claude_sdk::Bridge>),
+    Kiro(Arc<crate::kiro_sdk::Bridge>),
 }
 macro_rules! dispatch {
     ($provider:expr, $bridge:ident, $body:expr) => {
         match $provider {
             Provider::Grok($bridge) => $body,
             Provider::Agy($bridge) => $body,
-            Provider::Kiro($bridge) => $body,
             Provider::OpenCode($bridge) => $body,
             Provider::Claude($bridge) => $body,
+            Provider::Kiro($bridge) => $body,
         }
     };
 }
@@ -38,7 +38,7 @@ pub struct NativeSdks {
     lifecycle: Option<Arc<crate::lifecycle::service::LifecycleService>>,
     unavailable: BTreeMap<&'static str, String>,
     receipts: Mutex<BTreeMap<String, Value>>,
-    submissions: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<Submission>>>>,
+    submissions: Mutex<BTreeMap<String, std::sync::Weak<tokio::sync::Mutex<Submission>>>>,
     path: Option<PathBuf>,
     bindings: Mutex<BTreeMap<String, Value>>,
     binding_path: Option<PathBuf>,
@@ -81,9 +81,9 @@ impl NativeSdks {
         }
         register!("grok", grok_sdk, Grok);
         register!("agy", agy_sdk, Agy);
-        register!("kiro", kiro_sdk, Kiro);
         register!("opencode", opencode_sdk, OpenCode);
         register!("claude", claude_sdk, Claude);
+        register!("kiro", kiro_sdk, Kiro);
         let path = config
             .state_dir
             .as_ref()
@@ -139,8 +139,8 @@ impl NativeSdks {
             "claude" => crate::lifecycle::model::Source::Claude,
             "grok" => crate::lifecycle::model::Source::Grok,
             "agy" => crate::lifecycle::model::Source::Agy,
-            "kiro" => crate::lifecycle::model::Source::Kiro,
             "opencode" => crate::lifecycle::model::Source::Opencode,
+            "kiro" => crate::lifecycle::model::Source::Kiro,
             _ => return false,
         };
         self.lifecycle
@@ -157,12 +157,14 @@ impl NativeSdks {
         request: &str,
     ) -> Arc<tokio::sync::Mutex<Submission>> {
         let key = json!([target["source"], target["uid"], target["agent"], request]).to_string();
-        self.submissions
-            .lock()
-            .expect("SDK submissions")
-            .entry(key)
-            .or_default()
-            .clone()
+        let mut submissions = self.submissions.lock().expect("SDK submissions");
+        if let Some(lock) = submissions.get(&key).and_then(std::sync::Weak::upgrade) {
+            return lock;
+        }
+        submissions.retain(|_, v| v.strong_count() > 0);
+        let lock = Arc::new(tokio::sync::Mutex::new(Submission));
+        submissions.insert(key, Arc::downgrade(&lock));
+        lock
     }
 
     pub fn loaded_uids(&self) -> Vec<String> {
@@ -244,6 +246,20 @@ impl NativeSdks {
                 receipt["sdk_persisted"] = json!(true);
                 changed = true;
             }
+            if let (Some(source), Some(sid)) = (
+                row["source"].as_str(),
+                row["sid"].as_str().filter(|s| !s.is_empty()),
+            ) {
+                for receipt in next.values_mut() {
+                    if receipt["sdk_persisted"] != true
+                        && receipt["source"].as_str() == Some(source)
+                        && receipt["sid"].as_str() == Some(sid)
+                    {
+                        receipt["sdk_persisted"] = json!(true);
+                        changed = true;
+                    }
+                }
+            }
         }
         if changed {
             self.save(&next)?;
@@ -274,6 +290,9 @@ impl NativeSdks {
             file.sync_all()?;
             std::fs::rename(&temporary, path)
         })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
         result.map_err(|error| format!("SDK 创建回执保存失败：{error}"))
     }
 

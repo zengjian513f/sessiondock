@@ -434,8 +434,19 @@ async fn write_input(
     failed.cancel();
 }
 
+static REDACT_PATTERNS: std::sync::LazyLock<Vec<regex::Regex>> = std::sync::LazyLock::new(|| {
+    [
+        r#"(?i)\bBearer\s+[^\s"']+"#,
+        r"\bsk-[A-Za-z0-9_-]+",
+        r"(?i)(?:api[_-]?key|token|password|secret)\s*[:=]\s*[^\s,;]+",
+    ]
+    .into_iter()
+    .map(|pattern| regex::Regex::new(pattern).expect("valid claude redaction regex"))
+    .collect()
+});
+
 pub(super) fn diagnostic_secrets(profile: &CliProfile) -> Vec<String> {
-    std::env::vars()
+    let mut secrets: Vec<String> = std::env::vars()
         .chain(profile.env.clone())
         .filter_map(|(name, value)| {
             let name = name.to_ascii_uppercase();
@@ -445,7 +456,10 @@ pub(super) fn diagnostic_secrets(profile: &CliProfile) -> Vec<String> {
                     .any(|key| name.contains(key)))
             .then_some(value)
         })
-        .collect()
+        .collect();
+    secrets.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    secrets.dedup();
+    secrets
 }
 
 pub(super) fn redact(mut text: String, secrets: &[String]) -> String {
@@ -453,14 +467,8 @@ pub(super) fn redact(mut text: String, secrets: &[String]) -> String {
         text = text.replace(secret, "[redacted]");
     }
     // Unknown secret-shaped values in SDK/HTTP diagnostics are redacted too.
-    for pattern in [
-        r#"(?i)\bBearer\s+[^\s"']+"#,
-        r"\bsk-[A-Za-z0-9_-]+",
-        r"(?i)(?:api[_-]?key|token|password|secret)\s*[:=]\s*[^\s,;]+",
-    ] {
-        if let Ok(regex) = regex::Regex::new(pattern) {
-            text = regex.replace_all(&text, "[redacted]").into_owned();
-        }
+    for regex in &*REDACT_PATTERNS {
+        text = regex.replace_all(&text, "[redacted]").into_owned();
     }
     text
 }

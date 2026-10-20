@@ -17,6 +17,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_fixtures import BINARY, REPO
 from native_sdk_queue_fixtures import NativeQueueFixture
 from popups import on_popup
+from sdk_ui_fixtures import start_sdk
 
 
 
@@ -43,20 +44,7 @@ def open_page(browser, base, fixture, *, accept_popups=True):
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     if not page.locator('#sdk-input').is_visible():
         page.locator('#a-sdk').click()
-    # Selecting SDK can now show read-only history; use the same explicit
-    # session start control as a user, without restarting an attached runtime.
-    page.wait_for_function('''() => {
-        const input = document.querySelector('#sdk-input');
-        const start = document.querySelector('#a-session-toggle');
-        return !!input?.getClientRects().length ||
-            (!!start?.getClientRects().length && !start.disabled &&
-             start.getAttribute('aria-label') === '启动会话');
-    }''')
-    if not page.locator('#sdk-input').is_visible():
-        page.locator('#a-session-toggle[aria-label="启动会话"]').click()
-    expect(page.locator('#sdk-input')).to_be_visible()
-    expect(page.locator('#sdk-input')).to_be_enabled()
-    page.wait_for_function('NativeSdkView.connected')
+    start_sdk(page)
     return context, page, uid
 
 
@@ -233,6 +221,8 @@ def cancelled_draft(browser, fixture, screenshots):
             expect(page.locator('#sdk-input')).to_have_value('lost ACK attachment 中文')
             click_action(page, original_id, 'queue_cancel', '撤销')
             gone(page, original_id)
+            expect(page.locator('#sdk-input')).to_have_value('lost ACK attachment 中文')
+            expect(page.locator('#sdk-compose-items')).to_contain_text('queue-研究记录.txt')
             old = send(page, 'lost ACK attachment 中文')
             assert old['request_id'] == original_id
             expect(page.locator('#sdk-input')).to_have_value('lost ACK attachment 中文')
@@ -386,7 +376,8 @@ def restart_output(browser, fixture):
             stop_pid = fixture.native_pid()
             expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')
             page.locator('#a-session-toggle').click()
-            expect(page.locator('#sdk-composer')).to_be_hidden()
+            expect(page.locator('#sdk-composer')).to_be_visible()
+            expect(page.locator('#sdk-send')).to_be_disabled()
             fixture.wait_exited(stop_pid)
             print('Agy: output while node offline replayed, HTTP retry deduplicated, explicit session stop ends native child', flush=True)
         finally:
@@ -605,7 +596,8 @@ def stop_inherited_pipes(browser, fixture):
             host_pid = int((path.parent / 'host.pid').read_text())
             expect(page.locator('#a-session-toggle')).to_have_attribute('aria-label', '停止会话')
             page.locator('#a-session-toggle').click()
-            expect(page.locator('#sdk-composer')).to_be_hidden()
+            expect(page.locator('#sdk-composer')).to_be_visible()
+            expect(page.locator('#sdk-send')).to_be_disabled()
             fixture.wait_exited(child['pid'])
             fixture.wait_exited(host_pid)
             if (path.parent / 'status.json').exists():

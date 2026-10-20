@@ -13,6 +13,10 @@ type ErrorKind = Option<&'static str>;
 pub(super) struct Live {
     #[serde(skip)]
     pub checkpoint: Option<std::path::PathBuf>,
+    #[serde(skip)]
+    pub last_checkpoint: Option<Instant>,
+    #[serde(skip)]
+    pub last_checkpoint_error: Option<String>,
     #[serde(default)]
     pub host_key: Option<String>,
     #[serde(default)]
@@ -69,6 +73,8 @@ impl Live {
         let (events, _) = broadcast::channel(256);
         Self {
             checkpoint: None,
+            last_checkpoint: None,
+            last_checkpoint_error: None,
             host_key: None,
             stdout_offset: 0,
             setup_pending: false,
@@ -151,17 +157,42 @@ impl Live {
                 )
         })
     }
-    pub fn save_checkpoint(&self) -> std::io::Result<()> {
+    pub fn save_checkpoint(&mut self) -> std::io::Result<()> {
         if let Some(path) = &self.checkpoint {
             super::transport::save(path, self)?;
+            self.last_checkpoint = Some(Instant::now());
+        }
+        Ok(())
+    }
+    pub fn save_checkpoint_throttled(&mut self) -> std::io::Result<()> {
+        if self
+            .last_checkpoint
+            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(250))
+        {
+            self.save_checkpoint()?;
         }
         Ok(())
     }
     pub fn publish(&mut self) {
+        self.publish_with(true);
+    }
+    pub fn publish_throttled(&mut self) {
+        self.publish_with(false);
+    }
+    fn publish_with(&mut self, force_checkpoint: bool) {
         self.seq += 1;
-        if let Err(error) = self.save_checkpoint() {
-            self.error = Some(format!("grok_sdk_checkpoint: {error}"));
+        let res = if force_checkpoint {
+            self.save_checkpoint()
+        } else {
+            self.save_checkpoint_throttled()
+        };
+        if let Err(error) = res {
+            let msg = format!("grok_sdk_checkpoint: {error}");
+            self.last_checkpoint_error = Some(msg.clone());
+            self.error = Some(msg);
             self.error_kind = Some("transport");
+        } else {
+            self.last_checkpoint_error = None;
         }
         let _ = self.events.send(Arc::from(self.snapshot().to_string()));
     }
@@ -493,7 +524,14 @@ impl Live {
             }
             _ => return None,
         }
-        self.publish();
+        if matches!(
+            update["sessionUpdate"].as_str(),
+            Some("agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk")
+        ) {
+            self.publish_throttled();
+        } else {
+            self.publish();
+        }
         None
     }
     fn chunk(&mut self, role: &str, content: &Value) {
@@ -503,8 +541,11 @@ impl Live {
         let id = format!("grok:{}:{}:{}:{}", self.sid, self.turn, self.segment, role);
         let text = content_text(content);
         if let Some(last) = self.items.last_mut().filter(|i| i["id"] == id) {
-            let old = last["content"].as_str().unwrap_or("");
-            last["content"] = json!(format!("{old}{text}"));
+            if let Some(Value::String(s)) = last.get_mut("content") {
+                s.push_str(&text);
+            } else {
+                last["content"] = json!(text);
+            }
             if let Some(blocks) = last["native_content"].as_array_mut() {
                 blocks.push(content.clone());
             }

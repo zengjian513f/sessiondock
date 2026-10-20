@@ -9,7 +9,7 @@ mod unix {
     use std::{collections::HashMap, io, os::unix::fs::OpenOptionsExt, path::PathBuf, sync::Arc};
     use tokio::{
         io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
-        sync::Mutex,
+        sync::{Mutex, Notify},
     };
     struct State {
         dir: PathBuf,
@@ -53,6 +53,7 @@ mod unix {
         mut reader: R,
         path: PathBuf,
         state: Shared,
+        notify: Arc<Notify>,
         stdout: bool,
     ) -> io::Result<()> {
         let f = std::fs::OpenOptions::new()
@@ -68,16 +69,23 @@ mod unix {
             }
             file.write_all(&bytes[..n]).await?;
             file.flush().await?;
-            let mut s = state.lock().await;
-            if stdout {
-                s.status.stdout_len += n as u64;
-            } else {
-                s.status.stderr_len += n as u64;
+            {
+                let mut s = state.lock().await;
+                if stdout {
+                    s.status.stdout_len += n as u64;
+                } else {
+                    s.status.stderr_len += n as u64;
+                }
             }
+            notify.notify_waiters();
         }
         file.sync_data().await
     }
-    async fn handle(request: Request, state: &Shared) -> io::Result<serde_json::Value> {
+    async fn handle(
+        request: Request,
+        state: &Shared,
+        notify: &Arc<Notify>,
+    ) -> io::Result<serde_json::Value> {
         match request {
             Request::Status => Ok(serde_json::to_value(&state.lock().await.status)?),
             Request::Receipt { id } => {
@@ -136,47 +144,48 @@ mod unix {
             }
             Request::Read { stream, offset } => {
                 let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(250);
-                loop {
-                    let ready = {
+                let (len, exited) = loop {
+                    let notified = notify.notified();
+                    let (len, eof) = {
                         let s = state.lock().await;
-                        (match stream {
-                            Stream::Stdout => s.status.stdout_eof,
-                            Stream::Stderr => s.status.stderr_eof,
-                        }) || match stream {
-                            Stream::Stdout => s.status.stdout_len,
-                            Stream::Stderr => s.status.stderr_len,
-                        } > offset
-                    };
-                    if ready || tokio::time::Instant::now() >= deadline {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                }
-                let (path, exited) = {
-                    let s = state.lock().await;
-                    (
-                        s.dir.join(match stream {
-                            Stream::Stdout => "stdout",
-                            Stream::Stderr => "stderr",
-                        }),
                         match stream {
-                            Stream::Stdout => s.status.stdout_eof,
-                            Stream::Stderr => s.status.stderr_eof,
-                        },
-                    )
+                            Stream::Stdout => (s.status.stdout_len, s.status.stdout_eof),
+                            Stream::Stderr => (s.status.stderr_len, s.status.stderr_eof),
+                        }
+                    };
+                    if offset < len || eof {
+                        break (len, eof);
+                    }
+                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                    if remaining.is_zero()
+                        || tokio::time::timeout(remaining, notified).await.is_err()
+                    {
+                        break (len, eof);
+                    }
                 };
-                let mut file = tokio::fs::File::open(path).await?;
-                file.seek(std::io::SeekFrom::Start(offset)).await?;
-                let mut bytes = vec![0; 65536];
-                let n = file.read(&mut bytes).await?;
-                bytes.truncate(n);
+                let buf = if offset < len {
+                    let path = state.lock().await.dir.join(match stream {
+                        Stream::Stdout => "stdout",
+                        Stream::Stderr => "stderr",
+                    });
+                    let mut file = tokio::fs::File::open(path).await?;
+                    file.seek(std::io::SeekFrom::Start(offset)).await?;
+                    let cap = (len - offset).min(65536) as usize;
+                    let mut buf = vec![0u8; cap];
+                    let n = file.read(&mut buf).await?;
+                    buf.truncate(n);
+                    buf
+                } else {
+                    Vec::new()
+                };
+                let n = buf.len();
                 if n == 0
                     && let Some(error) = &state.lock().await.status.output_error
                 {
                     return Err(io::Error::other(error.clone()));
                 }
                 Ok(serde_json::to_value(ReadResult {
-                    bytes,
+                    bytes: buf,
                     next_offset: offset + n as u64,
                     eof: exited && n == 0,
                 })?)
@@ -231,6 +240,7 @@ mod unix {
             i32,
             tokio::sync::oneshot::Sender<io::Result<()>>,
         )>();
+        let notify = Arc::new(Notify::new());
         let state = Arc::new(Mutex::new(State {
             dir: dir.clone(),
             status: Status {
@@ -266,9 +276,10 @@ mod unix {
             ),
         ] {
             let state = state.clone();
+            let notify = notify.clone();
             let path = dir.join(if stdout { "stdout" } else { "stderr" });
             tokio::spawn(async move {
-                let result = drain(reader, path, state.clone(), stdout).await;
+                let result = drain(reader, path, state.clone(), notify.clone(), stdout).await;
                 let mut s = state.lock().await;
                 if stdout {
                     s.status.stdout_eof = true;
@@ -281,6 +292,8 @@ mod unix {
                 if let Err(error) = persist(&s) {
                     eprintln!("sdkhost status persistence: {error}");
                 }
+                drop(s);
+                notify.notify_waiters();
             });
         }
         let waiting = state.clone();
@@ -374,6 +387,7 @@ mod unix {
                 continue;
             }
             let shared = state.clone();
+            let notify = notify.clone();
             tokio::spawn(async move {
                 let mut socket = BufReader::new(socket);
                 let mut line = Vec::new();
@@ -383,7 +397,7 @@ mod unix {
                 let request = serde_json::from_slice::<Request>(&line);
                 let remove = matches!(request, Ok(Request::Remove));
                 let response = match request {
-                    Ok(r) => match handle(r, &shared).await {
+                    Ok(r) => match handle(r, &shared, &notify).await {
                         Ok(value) => Response {
                             value: Some(value),
                             error: None,

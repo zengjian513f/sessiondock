@@ -554,7 +554,6 @@ async function takeover(uid, btn, keepConversation = false) {
     // Starting from the session menu bypasses the terminal button's view
     // switch. Select the terminal before discovery can restore the SDK pane.
     if (!keepConversation) {
-      SdkView.legacyViews.add(viewKey(uid));
       SdkView.selectMode(uid, null, 'terminal');
       SessionContentView.close();
     }
@@ -2248,7 +2247,6 @@ async function resolveNewSession(info) {
     }
     // Following a CLI's first native record keeps the user's current surface.
     // Runtime discovery must not turn its composer into a fullscreen terminal.
-    SdkView.legacyViews?.add(viewKey(linked.uid));
     const hasChat = typeof sessionHasChatView === 'function' ? sessionHasChatView(linked.uid) : true;
     SdkView.selectMode(linked.uid, null, reopen ? 'terminal' : (hasChat ? 'chat' : defaultSessionView(linked.uid)));
     T.uid = linked.uid;
@@ -2335,7 +2333,7 @@ async function createNewSession(e) {
     }
     if (sdk) {
       $('#new-session-dialog').close();
-      SdkView.legacyViews.delete(d.uid);
+      SdkView.selectMode(d.uid, null, 'sdk');
       ConsoleUI.busy.add(d.uid);
       try {
         await openSession(d.uid);
@@ -4429,13 +4427,15 @@ function adoptServerDraft(draft, row, uid) {
 let composerFollowBusy = false, composerFollowedAt = 0, composerFollowPushed = false;
 /** An idle page follows a newer server draft: the device that is typing wins
  *  and the others catch up. Nothing is adopted over unsaved local edits.
+ *  A pending SDK submission retains its draft until the sender observes its
+ *  receipt; a lost HTTP reply must not let the consumed server row erase it.
  *  `revision` is the server revision a poll reported; null forces a read,
  *  throttled to once a second. */
 async function followServerDraft(uid, revision = null) {
   if (SessionDockNetwork.paused) return false;
   const owner = composerDraftOwner(uid), draft = composerDrafts.get(owner);
   if (!draft || !conversationSendEnabled() || draft.loading || draft.loadFailed || draft.handedOffSession
-      || composerSending || composerFollowBusy || composerSaving.has(draft) || composerPendingSaves.has(draft)
+      || draft.sdkSubmission || composerSending || composerFollowBusy || composerSaving.has(draft) || composerPendingSaves.has(draft)
       || draft.editVersion !== draft.savedVersion) return false;
   if (revision !== null && revision <= draft.revision) return false;
   if (revision === null && performance.now() - composerFollowedAt < 1000) return false;
@@ -4445,7 +4445,7 @@ async function followServerDraft(uid, revision = null) {
     const row = await readServerComposerDraft(uid);
     composerFollowedAt = performance.now();
     if (!row || row.revision <= draft.revision || draft.editVersion !== version
-        || composerSaving.has(draft) || composerSending) return false;
+        || draft.sdkSubmission || composerSaving.has(draft) || composerSending) return false;
     adoptServerDraft(draft, row, uid);
     refreshComposerDraft(owner); syncComposerUnloadProtection();
     return true;

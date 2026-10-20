@@ -91,8 +91,19 @@ pub(super) fn observe_at(session: &Session, frame: Value, offset: Option<u64>) {
             Some("hook_started" | "hook_response")
         )
     {
+        if let Some(offset) = offset {
+            let mut live = lock(&session.live);
+            live.stdout_offset = offset;
+            if let Err(error) = live.save_checkpoint() {
+                live.last_checkpoint_error = Some(format!("claude_sdk_checkpoint: {error}"));
+            } else {
+                live.last_checkpoint_error = None;
+            }
+        }
         return;
     }
+    let is_delta =
+        frame["type"] == "stream_event" && frame["event"]["type"] == "content_block_delta";
     let mut live = lock(&session.live);
     if let Some(offset) = offset {
         live.stdout_offset = offset;
@@ -398,13 +409,16 @@ pub(super) fn observe_at(session: &Session, frame: Value, offset: Option<u64>) {
                                 _ => ("", None),
                             };
                             if let Some(part) = part {
-                                let mut next = block[field].as_str().unwrap_or("").to_owned();
-                                next.push_str(part);
-                                block[field] = json!(next);
+                                if let Some(Value::String(s)) = block.get_mut(field) {
+                                    s.push_str(part);
+                                } else {
+                                    block[field] = json!(part);
+                                }
                                 let mut row = block_row(&message, index, block, None);
                                 if field == "partial_json" {
-                                    row["text"] = json!(next);
-                                    row["content"] = json!(next);
+                                    let next = block[field].clone();
+                                    row["text"] = next.clone();
+                                    row["content"] = next;
                                 }
                                 upsert(&mut live, row);
                             }
@@ -547,7 +561,11 @@ pub(super) fn observe_at(session: &Session, frame: Value, offset: Option<u64>) {
         }
         _ => {}
     }
-    session.publish(&mut live);
+    if is_delta {
+        session.publish_throttled(&mut live);
+    } else {
+        session.publish(&mut live);
+    }
 }
 
 /// The caller answers one native card. Permission suggestions are displayed

@@ -13,11 +13,8 @@ const CodexSdkView = {
   limits: null, resetCards: null, redeemKeys: new Map(),
   limitsRead: null, limitsRetryTimer: 0, limitsRetryDelay: 1000, limitsRecordedAt: null, limitsFresh: false,
   openRead: null, openFailed: false, openRetryTimer: 0, openRetryDelay: 1000,
-  toolbarObserver: null, toolbarBindings: null, toolbarWidth: null, toolbarLayout: null,
+  toolbarObserver: null, toolbarBindings: null, toolbarWidth: null,
   pendingAtOpen: false,
-  legacyViews: new Set(),
-
-  defaultFor(uid, agent) { return this.available(uid, agent) && !this.legacyViews.has(viewKey(uid, agent)); },
 
   available(uid, agent) {
     return SessionDockCapabilities.config.codex_sdk === true
@@ -25,14 +22,7 @@ const CodexSdkView = {
       && String(uid || '').startsWith('codex:') && !String(uid).startsWith('tmux:');
   },
 
-  unavailableReason(uid, agent) {
-    if (SessionDockCapabilities.config.codex_sdk !== true) return '此服务未启用 Codex SDK 模式。';
-    if (!String(uid || '').startsWith('codex:')) return 'SDK 模式只支持 Codex 会话。';
-    return '';
-  },
-
   open(uid, pane, agent = null, {historyReady = null, readOnly = false} = {}) {
-    this.legacyViews.delete(viewKey(uid, agent));
     this.close();
     this.stopped = false;
     this.uid = uid; this.agent = agent; this.pane = pane;
@@ -86,7 +76,7 @@ const CodexSdkView = {
   },
 
   close() {
-    if(this.uid)UsageUI.remember(this.uid,this.agent,{limits:this.limits,usage:this.summary && Object.hasOwn(this.summary,"usage") ? this.summary.usage : this.cachedUsage});
+    if(this.uid)UsageUI.remember(this.uid,this.agent,{limits:this.limits,usage:this.summary && Object.hasOwn(this.summary,'usage') ? this.summary.usage : this.cachedUsage});
     this.quotaRead?.abort();this.quotaRead=null;
     this.setConnected(false);
     if (this.input) PathCompletion.close(this.input);
@@ -794,21 +784,25 @@ const CodexSdkView = {
   },
 
   async interrupt() {
+    const generation = this.generation;
     try {
       await this.request('api/codex-sdk/interrupt', {uid: this.uid});
     } catch (error) {
-      this.setNotice(`中断失败：${error.message}`, 'blocked');
+      if (this.current(generation)) this.setNotice(`中断失败：${error.message}`, 'blocked');
     }
   },
 
   async answer(request, result, card) {
+    const generation = this.generation;
     card.querySelectorAll('button, input, textarea').forEach(control => { control.disabled = true; });
     try {
       await this.request('api/codex-sdk/respond', {uid: this.uid, key: request.key, result});
       card.classList.add('sdk-answered');
     } catch (error) {
-      card.querySelectorAll('button, input, textarea').forEach(control => { control.disabled = false; });
-      this.setNotice(`回答失败：${error.message}`, 'blocked');
+      if (this.current(generation)) {
+        card.querySelectorAll('button, input, textarea').forEach(control => { control.disabled = false; });
+        this.setNotice(`回答失败：${error.message}`, 'blocked');
+      }
     }
   },
 };
@@ -970,36 +964,13 @@ function requestCard(request, submit) {
       break;
     case 'item/tool/requestUserInput': {
       line('Codex 需要你回答', 'sdk-request-title');
-      const readers = [];
-      for (const question of params.questions || []) {
-        const group = document.createElement('fieldset');
-        group.className = 'sdk-question';
-        const legend = document.createElement('legend');
-        legend.textContent = [question.header, question.question].filter(Boolean).join(' · ');
-        group.append(legend);
-        const name = `sdk-q-${request.key}-${question.id}`;
-        for (const option of question.options || []) {
-          const label = document.createElement('label');
-          const radio = document.createElement('input');
-          radio.type = 'radio'; radio.name = name; radio.value = option.label;
-          label.append(radio, ` ${option.label}`);
-          if (option.description) label.title = option.description;
-          group.append(label);
-        }
-        let other = null;
-        if (question.isOther || !(question.options || []).length) {
-          other = document.createElement('input');
-          other.type = question.isSecret ? 'password' : 'text';
-          other.placeholder = (question.options || []).length ? '其他答案' : '输入答案';
-          group.append(other);
-        }
-        body.append(group);
-        readers.push(() => {
-          const picked = group.querySelector('input[type=radio]:checked')?.value;
-          const typed = other?.value.trim();
-          return [question.id, {answers: typed ? [typed] : picked ? [picked] : []}];
-        });
-      }
+      const readers = SdkUI.appendQuestionFields(body, params.questions || [], {
+        namePrefix: `sdk-q-${request.key}`,
+        codex: true,
+        formatAnswer(question, _index, {picked, typed}) {
+          return [question.id, {answers: typed ? [typed] : picked.length ? [picked[0]] : []}];
+        },
+      });
       button('提交', () => ({answers: Object.fromEntries(readers.map(read => read()))}), true);
       break;
     }
@@ -1007,10 +978,15 @@ function requestCard(request, submit) {
       line(`${params.serverName || 'MCP'} 请求确认`, 'sdk-request-title');
       line(params.message);
       if (params.url) {
-        const link = document.createElement('a');
-        link.href = params.url; link.target = '_blank'; link.rel = 'noopener';
-        link.textContent = params.url;
-        body.append(link);
+        try {
+          const url = new URL(params.url);
+          if (['http:', 'https:'].includes(url.protocol)) {
+            const link = document.createElement('a');
+            link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
+            link.textContent = params.url;
+            body.append(link);
+          }
+        } catch {}
         button('已完成', {action: 'accept', content: null}, true);
       } else {
         pre(SDK_JSON(params.requestedSchema));
@@ -1096,6 +1072,7 @@ const CodexSdkQuestions = {
         card.querySelectorAll('button, input').forEach(control => { control.disabled = true; });
         try {
           const response = await view.request('api/codex-sdk/turn', {uid: view.uid, request_id: requestId, text});
+          if (this.answered.size >= 500) this.answered.delete(this.answered.values().next().value);
           this.answered.add(key);
           card.classList.add('sdk-answered');
           card.querySelector('button').textContent = '已提交';

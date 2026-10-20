@@ -393,6 +393,7 @@ struct Discovered {
     summary_path: Option<PathBuf>,
     stamp: Option<Stamp>,
     summary_stamp: Option<Stamp>,
+    events_stamp: Option<Stamp>,
     agent_id: Option<String>,
 }
 
@@ -401,14 +402,7 @@ impl Discovered {
         CacheKey {
             stamp: self.stamp,
             summary_stamp: self.summary_stamp,
-            events_stamp: if self.source == "grok" {
-                file_metadata(&self.path.join("events.jsonl"))
-                    .ok()
-                    .filter(|meta| meta.is_file())
-                    .map(|meta| Stamp::of(&meta))
-            } else {
-                None
-            },
+            events_stamp: self.events_stamp,
         }
     }
 }
@@ -440,10 +434,6 @@ struct State {
     names: Option<Arc<names::NameIndex>>,
     snapshot: Option<Arc<IndexSnapshot>>,
     checked: Option<Instant>,
-    /// Test/benchmark observability: files whose summary was (re)read.
-    reads: usize,
-    /// Test/benchmark observability: owner files whose stop scan advanced.
-    stop_scans: usize,
 }
 
 pub struct Index {
@@ -590,7 +580,6 @@ impl Index {
             }
         }
         let results = self.read_all(&pending, &state.cache);
-        state.reads += pending.len();
         let mut cache = reused;
         let mut transient = Vec::new();
         for (candidate, outcome) in pending.iter().zip(results) {
@@ -766,7 +755,6 @@ impl Index {
                 scan => pending.push((owner, stamp, scan.unwrap_or_default())),
             }
         }
-        state.stop_scans += pending.len();
         let scanned = parallel_map(self.workers, pending, |(owner, stamp, mut scan)| {
             agent_stops::update(&mut scan, &owner.root, &owner.data, stamp);
             (owner, scan)
@@ -996,6 +984,7 @@ impl Walk<'_> {
                     summary_path: None,
                     stamp: Some(stamp),
                     summary_stamp: None,
+                    events_stamp: None,
                     agent_id: None,
                 });
             }
@@ -1034,6 +1023,7 @@ impl Walk<'_> {
                         summary_path: summary_stamp.map(|_| agents_path.join(&sidecar)),
                         stamp: Some(stamp),
                         summary_stamp,
+                        events_stamp: None,
                         agent_id: Some(id.to_owned()),
                     });
                 }
@@ -1058,6 +1048,7 @@ impl Walk<'_> {
                 summary_path: None,
                 stamp: Some(stamp),
                 summary_stamp: None,
+                events_stamp: None,
                 agent_id: None,
             });
         }
@@ -1098,6 +1089,10 @@ impl Walk<'_> {
                     // inaccessible, or non-file chat is an empty history.
                     _ => None,
                 };
+                let events_stamp = file_metadata(&path.join("events.jsonl"))
+                    .ok()
+                    .filter(|meta| meta.is_file())
+                    .map(|meta| Stamp::of(&meta));
                 self.found.push(Discovered {
                     source: "grok",
                     root: self.root.to_path_buf(),
@@ -1106,6 +1101,7 @@ impl Walk<'_> {
                     path,
                     stamp: chat,
                     summary_stamp: Some(Stamp::of(&summary)),
+                    events_stamp,
                     agent_id: None,
                 });
             }
@@ -1143,6 +1139,7 @@ impl Walk<'_> {
                     path,
                     stamp,
                     summary_stamp: Some(Stamp::of(&summary)),
+                    events_stamp: None,
                     agent_id: None,
                 });
             }
@@ -1181,6 +1178,7 @@ impl Walk<'_> {
                     path: direct_session_json,
                     stamp,
                     summary_stamp: Some(Stamp::of(&summary)),
+                    events_stamp: None,
                     agent_id: None,
                 });
                 continue;
@@ -1208,6 +1206,7 @@ impl Walk<'_> {
                     path: session_json,
                     stamp,
                     summary_stamp: Some(Stamp::of(&summary)),
+                    events_stamp: None,
                     agent_id: None,
                 });
             }
@@ -1255,6 +1254,7 @@ impl Walk<'_> {
                 path: json_path,
                 stamp,
                 summary_stamp: Some(Stamp::of(&summary)),
+                events_stamp: None,
                 agent_id: None,
             });
         }
@@ -1568,17 +1568,15 @@ fn read_candidate(
     });
     let mut turn_scan = None;
     if matches!(candidate.source, "codex" | "claude")
-        && let Some((_, _, _, stamp)) = &data
+        && let Some(data_file) = &data_file
     {
-        let scan = open_indexed(&candidate.root, &candidate.data).and_then(|mut file| {
-            native_state::read(
-                &mut file,
-                *stamp,
-                previous_turn,
-                candidate.source,
-                summary.agent.is_some(),
-            )
-        });
+        let scan = native_state::read(
+            data_file,
+            || open_indexed(&candidate.root, &candidate.data),
+            previous_turn,
+            candidate.source,
+            summary.agent.is_some(),
+        );
         match scan {
             Ok(scan) => {
                 summary.model = scan.model.clone();
