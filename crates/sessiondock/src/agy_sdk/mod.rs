@@ -640,12 +640,29 @@ async fn actor(
                                 }
                             }
                         }
-                        Ok(None)|Err(_)=>{
-                            runtime.native=None;
+                        ended @ (Ok(None)|Err(_))=>{
+                            let mut native=runtime.native.take().unwrap();
+                            let status=match native.exit_status().await {
+                                Ok(Some(status))=>status.to_string(),
+                                Ok(None)=>"原生进程尚未退出".into(),
+                                Err(error)=>process.redact(&error),
+                            };
+                            let reason=match ended {
+                                Err(error)=>format!("读取原生输出失败：{}",process.redact(&error.to_string())),
+                                _=>"原生输出已结束".into(),
+                            };
+                            let error=format!("agy_sdk_runtime_closed: {reason}（{status}）；下次发送将启动同一会话的新运行实例。");
+                            live.diagnostic(native.diagnostics().await);
                             let mut data=live.data.lock().unwrap();
                             data.runtime=None;
-                            data.error=Some("agy_sdk_runtime_closed: 原生输出已结束；下次发送将启动同一会话的新运行实例。".into());
-                            data.error_kind=Some("transport");
+                            data.diagnostics.push_str(&format!("\n{error}\n"));
+                            // EOF describes the runtime, not the completed turn.
+                            // In particular, replaying an old exited host must
+                            // retain its conflicting-result evidence and kind.
+                            if data.error.is_none() {
+                                data.error=Some(error);
+                                data.error_kind=Some("transport");
+                            }
                             live.publish(&mut data);
                         }
                     }
