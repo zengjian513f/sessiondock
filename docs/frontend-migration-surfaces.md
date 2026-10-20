@@ -331,6 +331,12 @@ Agy 设置通知默认收为旧值 → 新值的一行摘要，完整说明按�
 
 Markdown（`md` / `blocks` / `inline`）和公式（`renderFormulae`，按需加载 KaTeX）。公式库失败时正文仍在。审阅到的脚本头没有单独点名 KaTeX 渲染，标为缺口。原生标签族：[`tests/native_tags_browser.py`](../tests/native_tags_browser.py)、[`tests/history_browser.py`](../tests/history_browser.py)。
 
+DELTA（BUG-20261020-081844-534008）：正文增量更新保留同位置、同内容及语言的代码围栏
+节点、高亮、语言标签和滚动位置；后续文字增长不再使已完成代码反复退回纯文本。
+代码内容或语言改变时重新渲染。沿用按内容收缩的气泡宽度，不固定生成中的气泡大小。
+五种 SDK 的增量事件、宽窄屏及明暗主题覆盖见
+[`tests/sdk_shared_ui_browser.py`](../tests/sdk_shared_ui_browser.py)。
+
 DELTA（BUG-20261012-054602-f0bb43）：Markdown 同类列表条目之间的空行不再切断列表，
 有序列表按首项编号连续计数（包括原文每项都写 `1.` 的形式），保留非 1 的起始编号。
 普通段落、标题、代码围栏或有序/无序类型切换仍结束列表；不跨消息续号。
