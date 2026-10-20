@@ -56,7 +56,6 @@ mod unix {
         stdout: bool,
     ) -> io::Result<()> {
         let f = std::fs::OpenOptions::new()
-            .write(true)
             .append(true)
             .mode(0o600)
             .open(path)?;
@@ -171,10 +170,10 @@ mod unix {
                 let mut bytes = vec![0; 65536];
                 let n = file.read(&mut bytes).await?;
                 bytes.truncate(n);
-                if n == 0 {
-                    if let Some(error) = &state.lock().await.status.output_error {
-                        return Err(io::Error::other(error.clone()));
-                    }
+                if n == 0
+                    && let Some(error) = &state.lock().await.status.output_error
+                {
+                    return Err(io::Error::other(error.clone()));
                 }
                 Ok(serde_json::to_value(ReadResult {
                     bytes,

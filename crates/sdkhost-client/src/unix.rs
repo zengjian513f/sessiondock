@@ -320,10 +320,10 @@ impl Client {
                 };
                 let mut found = None;
                 for line in log.split(|b| *b == b'\n') {
-                    if let Ok(row) = serde_json::from_slice::<serde_json::Value>(line) {
-                        if row.get("id").and_then(|v| v.as_str()) == Some(id.as_str()) {
-                            found = row.get("receipt").cloned();
-                        }
+                    if let Ok(row) = serde_json::from_slice::<serde_json::Value>(line)
+                        && row.get("id").and_then(|v| v.as_str()) == Some(id.as_str())
+                    {
+                        found = row.get("receipt").cloned();
                     }
                 }
                 found.unwrap_or(serde_json::Value::Null)

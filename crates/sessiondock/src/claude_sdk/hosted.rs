@@ -358,6 +358,8 @@ impl Bridge {
     }
 }
 
+// Keep the owned lifecycle handles explicit at this single task-spawn boundary.
+#[allow(clippy::too_many_arguments)]
 async fn run(
     client: Arc<Client>,
     session: Arc<Session>,
@@ -406,14 +408,14 @@ async fn run(
                 if receipt.state != "written" {
                     return Err(format!("claude_sdk_write_uncertain: {}", receipt.state));
                 }
-                if entry.frame["type"] == "control_response" {
-                    if let Some(id) = entry.frame["response"]["request_id"].as_str() {
-                        let mut live = lock(&session.live);
-                        if let Some(card) = live.requests.remove(id) {
-                            protocol::retire_dialog(&mut live, &card);
-                        }
-                        live.save_checkpoint().map_err(error)?;
+                if entry.frame["type"] == "control_response"
+                    && let Some(id) = entry.frame["response"]["request_id"].as_str()
+                {
+                    let mut live = lock(&session.live);
+                    if let Some(card) = live.requests.remove(id) {
+                        protocol::retire_dialog(&mut live, &card);
                     }
+                    live.save_checkpoint().map_err(error)?;
                 }
                 sent += 1;
             }
@@ -477,31 +479,31 @@ async fn run(
                 }
             }
             let status = client.status().await.map_err(error)?;
-            if read_offset >= status.stdout_len && !(status.stdout_eof && status.exit.is_some()) {
-                if let Some(reply) = caught_up.take() {
-                    let _ = reply.send(Ok(()));
-                }
+            if read_offset >= status.stdout_len
+                && !(status.stdout_eof && status.exit.is_some())
+                && let Some(reply) = caught_up.take()
+            {
+                let _ = reply.send(Ok(()));
             }
             if status.stdout_eof
                 && read_offset >= status.stdout_len
                 && buffer.is_empty()
                 && stderr_offset >= status.stderr_len
+                && let Some(exit) = status.exit
             {
-                if let Some(exit) = status.exit {
-                    if !deliberate && !exit.success() {
-                        return Err(format!(
-                            "claude_sdk_disconnected: native CLI exit code {:?}, signal {:?}; {}",
-                            exit.code,
-                            exit.signal,
-                            lock(&session.live)
-                                .stderr
-                                .back()
-                                .cloned()
-                                .unwrap_or_default()
-                        ));
-                    }
-                    return Ok(());
+                if !deliberate && !exit.success() {
+                    return Err(format!(
+                        "claude_sdk_disconnected: native CLI exit code {:?}, signal {:?}; {}",
+                        exit.code,
+                        exit.signal,
+                        lock(&session.live)
+                            .stderr
+                            .back()
+                            .cloned()
+                            .unwrap_or_default()
+                    ));
                 }
+                return Ok(());
             }
             if read_offset < status.stdout_len || stderr_offset < status.stderr_len {
                 continue;
@@ -537,11 +539,13 @@ async fn run(
         live.requests.clear();
         live.background_tasks.clear();
     }
-    if !detached && !exited && !deliberate {
-        if let Err(error) = &outcome {
-            live.error = Some(error.clone());
-            live.error_kind = Some("transport");
-        }
+    if !detached
+        && !exited
+        && !deliberate
+        && let Err(error) = &outcome
+    {
+        live.error = Some(error.clone());
+        live.error_kind = Some("transport");
     }
     let control_error = live
         .error

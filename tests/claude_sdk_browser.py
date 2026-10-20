@@ -570,6 +570,7 @@ def startup_failure_check(fixture, binary, screenshots=None):
 def view_mode_check(fixture, base, screenshots, label):
     """Restore actual user choices without opening a competing SDK runtime."""
     from playwright.sync_api import sync_playwright, expect
+    from popups import on_popup
     other_sid = '7335eb0f-98c5-421b-b72a-d1abae633f80'
     other_path = fixture.path.with_name(other_sid + '.jsonl')
     other_path.write_text(fixture.path.read_text().replace(fixture.sid, other_sid)
@@ -582,6 +583,10 @@ def view_mode_check(fixture, base, screenshots, label):
                 context = browser.new_context(viewport={'width': width, 'height': 900},
                                               color_scheme=theme, service_workers='block')
                 page = context.new_page()
+                # Each context controls only this fixture's private PTY.
+                on_popup(page, lambda popup: popup.accept()
+                         if popup.type == "confirm" and "是否抢占终端" in popup.message
+                         else popup.dismiss())
                 errors, opens = [], []
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 page.on('request', lambda request: opens.append(request.post_data_json)
@@ -616,8 +621,10 @@ def view_mode_check(fixture, base, screenshots, label):
 
                 # Explicit terminal choice survives refresh without SDK open.
                 page.locator('#a-term').click()
+                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
                 page.reload(wait_until='networkidle')
                 expect(page.locator('#a-term')).to_have_attribute('aria-pressed', 'true')
+                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
                 capture('terminal')
                 assert not opens, opens
                 page.locator('#a-chat').click()
@@ -641,10 +648,12 @@ def view_mode_check(fixture, base, screenshots, label):
                 expect(page.locator('#a-chat')).to_have_attribute('aria-pressed', 'true')
                 page.locator('#a-term').click()
                 expect(page.locator('#a-term')).to_have_attribute('aria-pressed', 'true')
+                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
                 choose(other_uid)
                 expect(page.locator('#sdk-input')).to_be_visible()
                 choose(uid)
                 expect(page.locator('#a-term')).to_have_attribute('aria-pressed', 'true')
+                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
                 assert not [body for body in opens if body['uid'] == uid], opens
                 assert not errors, errors
                 context.close()

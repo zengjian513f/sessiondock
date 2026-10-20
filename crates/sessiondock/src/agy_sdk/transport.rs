@@ -255,7 +255,19 @@ impl Drop for Native {
     }
 }
 
+// Launch fields mirror the native CLI; lifecycle and host binding are explicit.
+type NativeStreams = (
+    Option<Child>,
+    Option<sdkhost_client::Client>,
+    Option<ChildStdin>,
+    std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>,
+    Option<JoinHandle<String>>,
+    Option<JoinHandle<()>>,
+    u32,
+);
+
 impl Native {
+    #[allow(clippy::too_many_arguments)]
     pub async fn start(
         process: Arc<ProcessConfig>,
         sid: Option<&str>,
@@ -292,78 +304,66 @@ impl Native {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let (child, host, input, stdout, stderr, pump, pid): (
-            Option<Child>,
-            Option<sdkhost_client::Client>,
-            Option<ChildStdin>,
-            std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>,
-            Option<JoinHandle<String>>,
-            Option<JoinHandle<()>>,
-            u32,
-        ) = if let (Some(dir), Some((key, recovering))) = (&process.host_dir, binding) {
-            let host = if recovering {
-                sdkhost_client::Client::attach(dir, key).await
-            } else {
-                sdkhost_client::Client::launch_or_attach(dir, key, &command).await
-            }
-            .map_err(|error| format!("agy_sdk_host: {error}"))?;
-            let pid = host
-                .status()
-                .await
-                .map_err(|e| format!("agy_sdk_host: {e}"))?
-                .pid;
-            let (reader, mut writer) = tokio::io::duplex(65536);
-            let stream_host = host.clone();
-            let pump = tokio::spawn(async move {
-                let mut offset = 0;
-                loop {
-                    match stream_host
+        let (child, host, input, stdout, stderr, pump, pid): NativeStreams =
+            if let (Some(dir), Some((key, recovering))) = (&process.host_dir, binding) {
+                let host = if recovering {
+                    sdkhost_client::Client::attach(dir, key).await
+                } else {
+                    sdkhost_client::Client::launch_or_attach(dir, key, &command).await
+                }
+                .map_err(|error| format!("agy_sdk_host: {error}"))?;
+                let pid = host
+                    .status()
+                    .await
+                    .map_err(|e| format!("agy_sdk_host: {e}"))?
+                    .pid;
+                let (reader, mut writer) = tokio::io::duplex(65536);
+                let stream_host = host.clone();
+                let pump = tokio::spawn(async move {
+                    let mut offset = 0;
+                    while let Ok(chunk) = stream_host
                         .read(sdkhost_client::Stream::Stdout, offset)
                         .await
                     {
-                        Ok(chunk) => {
-                            offset = chunk.next_offset;
-                            if writer.write_all(&chunk.bytes).await.is_err() || chunk.eof {
-                                break;
-                            }
+                        offset = chunk.next_offset;
+                        if writer.write_all(&chunk.bytes).await.is_err() || chunk.eof {
+                            break;
                         }
-                        Err(_) => break,
                     }
-                }
-            });
-            (
-                None,
-                Some(host),
-                None,
-                Box::pin(reader),
-                None,
-                Some(pump),
-                pid,
-            )
-        } else {
-            let mut child = command
-                .spawn()
-                .map_err(|error| format!("agy_sdk_spawn: {error}"))?;
-            let pid = child.id().ok_or("agy_sdk_child_missing")?;
-            let input = child.stdin.take();
-            let stdout = child.stdout.take().ok_or("agy_sdk_stdout_missing")?;
-            let mut stderr = child.stderr.take().ok_or("agy_sdk_stderr_missing")?;
-            let redactor = process.clone();
-            let stderr = tokio::spawn(async move {
-                let mut bytes = Vec::new();
-                let _ = stderr.read_to_end(&mut bytes).await;
-                redactor.redact(&String::from_utf8_lossy(&bytes))
-            });
-            (
-                Some(child),
-                None,
-                input,
-                Box::pin(stdout),
-                Some(stderr),
-                None,
-                pid,
-            )
-        };
+                });
+                (
+                    None,
+                    Some(host),
+                    None,
+                    Box::pin(reader),
+                    None,
+                    Some(pump),
+                    pid,
+                )
+            } else {
+                let mut child = command
+                    .spawn()
+                    .map_err(|error| format!("agy_sdk_spawn: {error}"))?;
+                let pid = child.id().ok_or("agy_sdk_child_missing")?;
+                let input = child.stdin.take();
+                let stdout = child.stdout.take().ok_or("agy_sdk_stdout_missing")?;
+                let mut stderr = child.stderr.take().ok_or("agy_sdk_stderr_missing")?;
+                let redactor = process.clone();
+                let stderr = tokio::spawn(async move {
+                    let mut bytes = Vec::new();
+                    let _ = stderr.read_to_end(&mut bytes).await;
+                    redactor.redact(&String::from_utf8_lossy(&bytes))
+                });
+                (
+                    Some(child),
+                    None,
+                    input,
+                    Box::pin(stdout),
+                    Some(stderr),
+                    None,
+                    pid,
+                )
+            };
         process.owned.lock().unwrap().insert(pid);
         let mut native = Self {
             child,

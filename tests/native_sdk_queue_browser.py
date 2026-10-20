@@ -13,7 +13,7 @@ import tempfile
 import time
 
 from playwright.sync_api import expect, sync_playwright
-from history_fixtures import BINARY
+from history_fixtures import BINARY, REPO
 from native_sdk_queue_fixtures import NativeQueueFixture
 from popups import on_popup
 
@@ -519,7 +519,7 @@ def restart_idle_registry(browser, fixture):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
-    parser.add_argument('--host-binary', type=Path, default=BINARY.parent / 'ptyhost')
+    parser.add_argument('--host-binary', type=Path, default=REPO / 'target/debug/ptyhost')
     parser.add_argument('--screenshots', type=Path)
     args = parser.parse_args()
     if args.screenshots:

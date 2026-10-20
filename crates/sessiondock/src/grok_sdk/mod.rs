@@ -495,10 +495,10 @@ impl Bridge {
             return Err("grok_sdk_identity_mismatch".into());
         }
         let old = self.sessions.lock().unwrap().get(&key).cloned();
-        if let Some(previous) = &old {
-            if !previous.connection.alive.load(Ordering::Acquire) {
-                previous.connection.done.cancelled().await;
-            }
+        if let Some(previous) = &old
+            && !previous.connection.alive.load(Ordering::Acquire)
+        {
+            previous.connection.done.cancelled().await;
         }
         let live = old
             .as_ref()
@@ -538,14 +538,13 @@ impl Bridge {
             "_meta":{"yoloMode":false,"autoMode":false}}),
                 )
                 .await;
-            let result = match loaded {
+            match loaded {
                 Ok(result) => result,
                 Err(error) => {
                     connection.stop.cancel();
                     return Err(error);
                 }
-            };
-            result
+            }
         };
         if result["_meta"]["currentWorkingDirectory"]
             .as_str()
@@ -854,10 +853,10 @@ impl Bridge {
                     state.running = false;
                     state.prompt_started = false;
                     state.requests.clear();
-                    if let Ok(result) = &result {
-                        if let Some(usage) = result["_meta"].get("usage") {
-                            state.usage["last_turn"] = live::scrub_usage(usage);
-                        }
+                    if let Ok(result) = &result
+                        && let Some(usage) = result["_meta"].get("usage")
+                    {
+                        state.usage["last_turn"] = live::scrub_usage(usage);
                     }
                     state.publish();
                 }

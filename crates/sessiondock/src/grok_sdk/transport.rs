@@ -369,22 +369,21 @@ impl Connection {
                     }
                 }
                 "_x.ai/interject" => {
-                    if let Some(request_id) = entry.frame["params"]["interjectionId"].as_str() {
-                        if let Some(receipt) = state.steers.get_mut(request_id) {
-                            match &result {
-                                Ok(result)
-                                    if result.get("result").unwrap_or(result)["status"]
-                                        == "queued" =>
-                                {
-                                    receipt["accepted"] = json!(true);
-                                    if receipt["native_received"] != true {
-                                        receipt["status"] = json!("native_queued");
-                                    }
+                    if let Some(request_id) = entry.frame["params"]["interjectionId"].as_str()
+                        && let Some(receipt) = state.steers.get_mut(request_id)
+                    {
+                        match &result {
+                            Ok(result)
+                                if result.get("result").unwrap_or(result)["status"] == "queued" =>
+                            {
+                                receipt["accepted"] = json!(true);
+                                if receipt["native_received"] != true {
+                                    receipt["status"] = json!("native_queued");
                                 }
-                                _ => {
-                                    receipt["accepted"] = Value::Null;
-                                    receipt["status"] = json!("uncertain");
-                                }
+                            }
+                            _ => {
+                                receipt["accepted"] = Value::Null;
+                                receipt["status"] = json!("uncertain");
                             }
                         }
                     }
@@ -441,8 +440,8 @@ async fn run(
             let message:Value=serde_json::from_slice(&line).map_err(|_|"grok_sdk_invalid_protocol".to_owned())?;connection.observe(&message,next)?;
         }
         let status=client.status().await.map_err(error)?;
-        if read_offset>=status.stdout_len{if let Some(reply)=caught_up.take(){let _=reply.send(Ok(()));}}
-        if output.eof{if status.exit.is_some(){return Err("grok_sdk_disconnected".into());}}
+        if read_offset>=status.stdout_len && let Some(reply)=caught_up.take(){let _=reply.send(Ok(()));}
+        if output.eof && status.exit.is_some(){return Err("grok_sdk_disconnected".into());}
         if read_offset<status.stdout_len{continue;}
         tokio::select!{_=shutdown.cancelled()=>{detached=true;return Ok(());},_=connection.wake.notified()=>{},_=tokio::time::sleep(std::time::Duration::from_millis(20))=>{}}
     }}.await;

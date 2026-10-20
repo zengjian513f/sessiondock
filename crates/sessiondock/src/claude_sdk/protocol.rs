@@ -124,56 +124,53 @@ pub(super) fn observe_at(session: &Session, frame: Value, offset: Option<u64>) {
             if let Some(request) = response["request_id"]
                 .as_str()
                 .and_then(|id| live.control_requests.remove(id))
+                && response["subtype"] != "error"
             {
-                if response["subtype"] != "error" {
-                    match request["subtype"].as_str() {
-                        Some("initialize") => {
-                            let initialized = &response["response"];
-                            live.models = initialized["models"].clone();
-                            if let Some(models) = live.models.as_array_mut() {
-                                for model in models {
-                                    for (native, normalized) in [
-                                        ("value", "id"),
-                                        ("displayName", "name"),
-                                        ("supportedEffortLevels", "efforts"),
-                                    ] {
-                                        if model[normalized].is_null() {
-                                            model[normalized] = model[native].clone();
-                                        }
+                match request["subtype"].as_str() {
+                    Some("initialize") => {
+                        let initialized = &response["response"];
+                        live.models = initialized["models"].clone();
+                        if let Some(models) = live.models.as_array_mut() {
+                            for model in models {
+                                for (native, normalized) in [
+                                    ("value", "id"),
+                                    ("displayName", "name"),
+                                    ("supportedEffortLevels", "efforts"),
+                                ] {
+                                    if model[normalized].is_null() {
+                                        model[normalized] = model[native].clone();
                                     }
                                 }
                             }
-                            for field in ["fast_mode_state", "fast_mode_disabled_reason"] {
-                                if let Some(value) = initialized.get(field) {
-                                    live.settings[field] = value.clone();
-                                }
-                            }
-                            for field in [
-                                "pending_permission_requests",
-                                "pending_user_dialog_requests",
-                            ] {
-                                live.initialization_requests.extend(
-                                    initialized[field].as_array().into_iter().flatten().cloned(),
-                                );
-                            }
-                            live.ready = true;
                         }
-                        Some("set_model") => {
-                            live.model = request["model"].as_str().map(str::to_owned)
-                        }
-                        Some("set_permission_mode") => {
-                            live.settings["permission_mode"] = request["mode"].clone()
-                        }
-                        Some("apply_flag_settings") => {
-                            if let Some(value) = request["settings"].get("fastMode") {
-                                live.settings["fast_mode"] = value.clone();
-                            }
-                            if let Some(value) = request["settings"]["effortLevel"].as_str() {
-                                live.effort = Some(value.into());
+                        for field in ["fast_mode_state", "fast_mode_disabled_reason"] {
+                            if let Some(value) = initialized.get(field) {
+                                live.settings[field] = value.clone();
                             }
                         }
-                        _ => {}
+                        for field in [
+                            "pending_permission_requests",
+                            "pending_user_dialog_requests",
+                        ] {
+                            live.initialization_requests.extend(
+                                initialized[field].as_array().into_iter().flatten().cloned(),
+                            );
+                        }
+                        live.ready = true;
                     }
+                    Some("set_model") => live.model = request["model"].as_str().map(str::to_owned),
+                    Some("set_permission_mode") => {
+                        live.settings["permission_mode"] = request["mode"].clone()
+                    }
+                    Some("apply_flag_settings") => {
+                        if let Some(value) = request["settings"].get("fastMode") {
+                            live.settings["fast_mode"] = value.clone();
+                        }
+                        if let Some(value) = request["settings"]["effortLevel"].as_str() {
+                            live.effort = Some(value.into());
+                        }
+                    }
+                    _ => {}
                 }
             }
             if let Some(id) = response["request_id"].as_str()
