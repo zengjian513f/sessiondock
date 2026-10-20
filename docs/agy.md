@@ -66,7 +66,11 @@ agy 默认数据目录为 `~/.gemini/antigravity-cli/`，SessionDock 不自动�
 `sessiondock-agy-mirror`。新建私有目录/文件采用 0700/0600。列表、历史分页、
 增量视图、搜索和媒体复用文件读模型，不复制镜像冒充原生恢复载体。
 列表标题优先使用目录标题，否则取首条 user 正文，再回退 `Agy 会话`；cwd 解码
-workspace 的 file URI。当前目录查询没有模型字段，列表不能据启动 argv 猜造模型；
+workspace 的 file URI。目录查询没有模型字段；模型来自完整 transcript 中最近一次
+`USER_INPUT` 外层附加的 `USER_SETTINGS_CHANGE` 模型通知，用户正文与工具引用不参与。
+DELTA（BUG-20261020-082043-e49ea2）：该名称写入私有摘要，供列表、顶部及历史元信息
+共用；追加、改写或恢复文件时重新解析，完整 transcript 暂缺时保留缓存模型。
+无通知时保持未知，不据启动 argv 或模型目录的顺序猜造模型。
 原生 `parent_conversation_id` 经镜像 `parent_id` 进入归属图：子会话按同来源 SID
 解析父会话，沿父链归入根会话的 `agent_items`，复用现有子代理折叠、历史、搜索与分页。
 子代理身份为自己的 UUID，标题优先目录标题、其次 agent name；只有明确的

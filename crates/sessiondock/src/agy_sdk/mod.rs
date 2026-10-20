@@ -45,6 +45,8 @@ struct Data {
     outstanding: usize,
     active: Option<String>,
     model: Option<String>,
+    // Observed native state is presentation evidence, not a launch override.
+    observed_model: Option<String>,
     effort: Option<String>,
     error: Option<String>,
     error_kind: Option<&'static str>,
@@ -346,7 +348,9 @@ impl Bridge {
                     .into(),
             );
         }
+        let observed_model = transcript::model(&self.process, &sid).await;
         let live = self.install(key, sid, cwd, None, None)?;
+        live.observe_model(observed_model);
         if let Some(mut binding) = binding {
             let mut data = live.data.lock().unwrap();
             // Concurrent opens share the installed actor and its receipt.
@@ -453,6 +457,7 @@ impl Bridge {
                 outstanding: 0,
                 active: None,
                 model,
+                observed_model: None,
                 effort,
                 error: None,
                 error_kind: None,
@@ -514,6 +519,7 @@ impl Bridge {
         .await?;
         let sid = native.sid.clone();
         let native_cwd = native.cwd.clone();
+        let observed_model = native.model.clone();
         let diagnostics = native.close(self.shutdown.clone()).await?;
         if !self.process.native_path(&sid).is_file() {
             return Err("agy_sdk_native_missing_after_create".into());
@@ -523,6 +529,7 @@ impl Bridge {
         let path = self.mirror.join("cli").join(&sid);
         let uid = crate::sessions::uid_for("agy", &path);
         let live = self.install(uid.clone(), sid.clone(), native_cwd.clone(), model, effort)?;
+        live.observe_model(observed_model);
         live.diagnostic(diagnostics);
         let data = live.data.lock().unwrap();
         let receipt = json!({"uid":uid,"session_id":sid,"cwd":native_cwd,
@@ -543,9 +550,19 @@ impl Bridge {
 }
 
 impl Live {
+    fn observe_model(&self, model: Option<String>) {
+        if let Some(model) = model {
+            let mut data = self.data.lock().unwrap();
+            if data.observed_model.as_ref() != Some(&model) {
+                data.observed_model = Some(model);
+                self.publish(&mut data);
+            }
+        }
+    }
+
     fn raw(&self, data: &Data) -> Value {
         json!({"session_id":self.sid,"cwd":self.cwd,"running":data.outstanding>0,
-            "items":data.items,"requests":[],"model":data.model,"effort":data.effort,
+            "items":data.items,"requests":[],"model":data.model.as_ref().or(data.observed_model.as_ref()),"effort":data.effort,
             "error":data.error,"error_kind":data.error_kind,"diagnostics":data.diagnostics,"capabilities":capabilities(),
             "usage":data.usage,"step_usage":data.step_usage,"settings":{"mode":data.mode,"applies":"next_turn"},
             "modes":[{"id":"accept-edits","name":"接受编辑"},{"id":"auto","name":"自动"},{"id":"plan","name":"计划"}]})
@@ -791,6 +808,7 @@ async fn execute(
             )
             .await?,
         );
+        live.observe_model(slot.as_ref().unwrap().model.clone());
     }
     let native = slot.as_mut().unwrap();
     let outcome=async {

@@ -104,6 +104,13 @@ snapshot 与 receiver 在同一发布锁中取得；每次发布完整快照：
 {"seq":1,"type":"snapshot","raw":{"session_id":"native SID","cwd":"workspace","running":true,"items":[],"requests":[],"model":null,"effort":null,"error":null,"diagnostics":"","capabilities":{}}}
 ```
 
+DELTA（BUG-20261020-082043-e49ea2）：未显式选模型时，恢复读取该 SID 完整原生
+transcript 中最近一次模型设置通知；运行后消费原生 `init.model`（若提供）和后续
+user_input 对应的设置通知。真实 headless 在未传 `--model` 时可能省略 `init.model`，
+不能据此清空已知模型。底栏按目录名称匹配 ID，目录失败仍显示已确认名称；
+没有原生证据时继续保留未知。观测值不写入启动 override，不因补齐显示重建进程。
+顶部与列表从同一原生设置通知生成会话摘要；用户正文、工具输出里的引用不是设置证据。
+
 `items` 仅为当前桥接接受/观察的实时消息，与普通历史区独立。原生步骤消息的
 稳定 ID 为 `agy:<SID>:step:<step_index>`；接受的用户输入 ID 使用 request_id，
 收到原生 user_input 时另加 native_id。序号在当前 live session 内递增。
@@ -138,3 +145,5 @@ accept-edits/auto/plan，标明下一轮生效，以独立 `--mode` argv 传入�
 
 [用量浏览器](../tests/agy_usage_browser.py)覆盖真实发送、零模型回合刷新、
 无 Token 与双额度组的组合、阻塞刷新、失败保留及宽窄屏明暗主题。
+[模型浏览器](../tests/agy_model_browser.py)覆盖顶部、列表和底栏的模型名称、
+原生默认值、实时更新、刷新、服务重启复接、目录失败与显式切换。

@@ -132,10 +132,13 @@ const NativeSdkView = {
       if (id && ![...model.options].some(option=>option.value===id)) model.add(new Option(row.displayName || row.name || id, id));
     }
     const modelName=sdkSettingValue(this,'model',this.nativeModel || '');
-    ConversationUI.selectValue(model,modelName,'选择模型');
+    // Agy's native settings notices name the model rather than its catalog ID.
+    const namedModel=this.uid.startsWith('agy:') ? this.models.find(row=>(row.displayName || row.name)===modelName) : null;
+    const modelId=namedModel?.id || modelName;
+    ConversationUI.selectValue(model,modelId,'选择模型');
     model.title = model.selectedOptions[0]?.textContent || '模型';
     model.closest('label').hidden = !this.models.length && !modelName;
-    const selected = this.models.find(row => (row.id || row.model || row.modelId) === modelName);
+    const selected = this.models.find(row => (row.id || row.model || row.modelId) === modelId);
     const efforts = selected?.supportedReasoningEfforts || selected?.efforts || [];
     const effort = this.pane.querySelector('#sdk-effort');
     effort.replaceChildren();

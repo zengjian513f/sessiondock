@@ -96,7 +96,7 @@ pub(in crate::sessions) fn codex_title_content(content: &Value) -> Value {
 
 /// Read a complete sequence of plain tag/value fields. Text outside that
 /// sequence, malformed tags and unknown structures remain available verbatim.
-pub(super) fn fields(mut text: &str) -> Option<Vec<(&str, &str)>> {
+pub(in crate::sessions) fn fields(mut text: &str) -> Option<Vec<(&str, &str)>> {
     let mut result = Vec::new();
     while !text.trim().is_empty() {
         text = text.trim_start();
