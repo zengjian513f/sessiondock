@@ -88,6 +88,8 @@ DELTA：重新打开 SDK 时，先同步展示本页该 `(节点、UID、agent)`
 保留所选值与草稿，暂时禁用设置和 SEND；失败回到已确认值。普通发送不携带旧设置覆盖，
 运行中变更的原生边界见[多来源 SDK 合同](native-sdk.md)。
 运行中普通发送显示“排队”。队列操作期间保持禁用控件，返回后绘制最新快照。
+原生 SDK 的已接收回执使用右侧轻量状态文字，不再以左侧卡片重复发送正文；
+接收不代表处理或完成。失败、结果待核对及可撤销队列仍保留正文与恢复操作。
 
 ## 验收入口
 
@@ -96,6 +98,7 @@ DELTA：重新打开 SDK 时，先同步展示本页该 `(节点、UID、agent)`
 实际打开、操作并亲自查看整页。记录最终版本与截图，历史 PASS 不证明后续改动。
 
 - [原生底栏](../tests/native_sdk_footer_browser.py)：四来源宽窄屏、主题、设置与动作。
+- [发送回执](../tests/native_sdk_receipt_browser.py)：四来源实际发送、轻量接收状态、失败恢复与撤销。
 - [读取恢复](../tests/native_sdk_recovery_browser.py)：四来源阻塞打开时缓存可见、退避和隔离。
 - [Agy 用量](../tests/agy_usage_browser.py)：无 Token＋双额度组、直接明细、刷新与失败。
 - [Codex 布局](../tests/codex_sdk_layout_browser.py)、[恢复](../tests/codex_sdk_recovery_browser.py)。
