@@ -150,6 +150,8 @@ class LinuxNodeHandler(TargetHandler):
     def plan(self) -> list[str]:
         before = self.before or ProbeResult(False)
         out = []
+        if self.kind == "linux-node":
+            out.append("check native SDK input ledger before staging and backup; defer while sending/accepted work exists")
         for name in self.binaries():
             want = self.a.version
             have = before.binary_versions.get(name, "")
@@ -170,7 +172,36 @@ class LinuxNodeHandler(TargetHandler):
         return out
 
     # -- stage / backup / swap / restart ----------------------------------------------
+    def check_native_work(self) -> None:
+        """Do not knowingly restart a node that owns an unfinished SDK turn.
+
+        This is a preflight observation, not an admission lock. Keep it before
+        backup so a refusal cannot trigger the restart in automatic rollback.
+        """
+        if self.kind != "linux-node":
+            return
+        script = '''import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+if not path.exists():
+    sys.exit(0)
+rows = json.loads(path.read_text())
+active = [row for queue in rows.values() for row in queue
+          if row.get("state") in ("sending", "accepted")]
+if active:
+    print("Native SDK work is unfinished; deployment deferred before backup/swap/restart:")
+    for row in active:
+        target = row.get("target", {})
+        print(target.get("source", ""), target.get("uid", ""),
+              row.get("request_id", ""), row["state"])
+    sys.exit(1)
+'''
+        self.sh.run(
+            f"python3 -c {q(script)} {q(self.path('state', 'native-sdk-inputs.json'))}",
+            timeout=30, check=True,
+        )
+
     def stage(self) -> None:
+        self.check_native_work()
         try:
             for name in self.binaries():
                 local = self.a.binaries.get(name)
@@ -200,6 +231,7 @@ class LinuxNodeHandler(TargetHandler):
         return names
 
     def backup(self) -> str:
+        self.check_native_work()
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         bdir = self.path(f"backup-deploy-{self.a.short}-{stamp}")
         copies = " && ".join(

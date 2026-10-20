@@ -504,3 +504,27 @@ cumulative-summary retry and bounded shutdown additionally use the existing
 creates multiple hosts through Chromium, measures per-host scan bytes, injects
 atomic replacement/removal failure, verifies recovery and protected fixtures,
 and reconnects after node restart before checking exited-host maintenance.
+## BUG-20261020-033847-a2d757
+
+2026-10-20 的 Agy SDK 报告已读取 manifest、browser-state、environment 和全部
+980 条浏览器审计事件；没有 terminal.txt 或附件。浏览器 03:28 UTC 显示 SDK 活跃，
+03:31:57 已不活跃，相关 HTTP 请求成功，没有用户停止事件；ResizeObserver 通知
+不能解释执行中断。该 SDK 会话不走 PTY lifecycle 账本。
+
+原生 transcript 与镜像最后保留 03:30:04 的“等待子代理与后台任务”回复，前一步
+工具仍为 RUNNING；镜像 03:30:24 更新为 IDLE。持久输入账本保留消费证据
+`observed`、`stop_requested=false`，最终为 `unknown`，错误明确记录服务重启后
+投递结果未确认。systemd 记录 03:30:35 停止、03:30:37 启动，随后 03:31:25
+再次停止、03:31:32 启动，与部署备份时间相符。
+
+首个已证实的跨层问题是部署在尚未确认 SDK 输入结束时重启了节点服务。
+Agy bridge 的 shutdown 会结束自己持有的 Child；实时快照不跨服务重启。
+现有证据不能还原原生进程的精确退出时刻/退出码，也不能把原生 IDLE 等同于
+审计任务和子代理汇总完成，因此不宣称已证实 CLI 自身崩溃或 OOM。
+
+[部署检查](deployment.md)现在在 Linux staging 和 backup 前检查在途原生输入，
+阻止已知活跃工作被正常发布打断。临时目录的隔离 run_push 验收覆盖 sending、
+accepted、staging 后新增工作、终态/排队回执、缺失/损坏账本、Hub 和 dry-run；
+拒绝路径没有 swap、restart 或 rollback。部署语法、文档链接、AGENTS 检查及
+deploy dry-run 通过。本次仅改部署脚本和文档，未做生产重启或付费 CLI 重放。
+跨重启持续执行及检查之后的并发准入尚未解决，保留在 [TODO](../TODO.md)。
