@@ -13,13 +13,16 @@ from grok_sdk_fixtures import GrokFixture
 from history_fixtures import REPO, Corpus, isolated_server
 from node_auth_fixtures import node_env
 from hub_fixtures import free_port
+from kiro_sdk_fixtures import KiroFixture
 from opencode_sdk_fixtures import FakeOpenCode
 from send_browser import initialize
+from sdkhost_fixtures import stop_private_sdkhosts
 
 
 @contextmanager
 def provider(source, root, binary):
     extra = node_env(root, free_port(), '127.0.0.0/8')
+    extra['SESSIONDOCK_CODEX_ROOT'] = str(root/'codex')
     if source == 'claude':
         peer = ClaudeFixture(root)
         with peer.server(binary, extra) as base:
@@ -49,6 +52,21 @@ def provider(source, root, binary):
                     state_dir=root/'state', launcher_config=peer.launcher,
                     extra_env={**peer.extra_env, **extra}) as (base, _):
                 yield base, peer, extra
+    elif source == 'kiro':
+        for name in ('claude', 'codex', 'grok', 'state'):
+            (root/name).mkdir()
+        peer = KiroFixture(root, host_binary=binary.resolve().with_name('ptyhost'))
+        initialize('--initialize-lifecycle', root/'ledger', binary.resolve())
+        try:
+            with server(SimpleNamespace(root=root), binary, 'off', {
+                **peer.env, **extra, 'SESSIONDOCK_NATIVE_SDKS': 'auto',
+                'SESSIONDOCK_LIFECYCLE_DIR': str(root/'ledger'),
+                'SESSIONDOCK_PTYHOST_DIR': str(peer.host_dir),
+                'SESSIONDOCK_STATE_DIR': str(root/'state'),
+            }) as base:
+                yield base, peer, extra
+        finally:
+            stop_private_sdkhosts(root)
     else:
         for name in ('claude', 'codex', 'grok', 'host', 'state', 'proc'):
             (root/name).mkdir()

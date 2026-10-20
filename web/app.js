@@ -5768,7 +5768,7 @@ function ensureConsolePlaceholder(title = '控制台') {
   if ($('#a-term')) return;
   const heading = el('div', 'dhead');
   heading.innerHTML = `<div class="dtitle"><button class="mobile-back" type="button"
-    title="返回会话列表" aria-label="返回会话列表">←</button><h2>${esc(title)}</h2>
+    title="返回会话列表" aria-label="返回会话列表">←</button><h2><span>${esc(title)}</span></h2>
     <div class="dhead-actions">${consoleButtonMarkup()}</div></div>`;
   heading.querySelector('.mobile-back').onclick = showMobileList;
   $('#detail').prepend(heading);
@@ -5927,7 +5927,6 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   }
   browserAuditEvent('session.opened', {agent: selectedAgent || '', cached: cache.has(viewKey(uid, selectedAgent))},
     {uid});
-  showMobileDetail();
   inflight?.abort();            // 连点列表时, 放弃上一个还没回来的请求
   const ac = inflight = new AbortController();
   closeWatch();
@@ -5950,6 +5949,17 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   paintSidebarSelection(uid, selectedAgent);
   updateSessionUrl(uid, selectedAgent, historyMode);
 
+  if (!follow) {
+    // Retire the previous view before ownership discovery can yield, including
+    // cache hits. Selection, visible title and actions must name the same view.
+    disposeMessageObservers($('#msgs'));
+    $('#detail').innerHTML = '<div class="spin">正在读取会话…</div>';
+    const row = S.sessions.find(row => row.uid === uid);
+    const title = selectedAgent ? row?.agent_items?.find(item => item.id === selectedAgent)?.title : row?.title;
+    ensureConsolePlaceholder(title || '控制台');
+    auditDetailRendered('loading');
+  }
+  showMobileDetail();
   if (!follow) await SdkView.selectFor(uid, selectedAgent);
   if (S.sel !== uid || S.agent !== selectedAgent || inflight !== ac) return;
   if (SessionContentView.kind === 'sdk') {
@@ -5977,12 +5987,6 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     return;
   }
 
-  if (!follow) {
-    $('#detail').innerHTML = '<div class="spin">正在读取会话…</div>';
-    ensureConsolePlaceholder(SdkView.defaultFor(uid, selectedAgent)
-      ? S.sessions.find(row => row.uid === uid)?.title || 'Codex SDK' : '控制台');
-    auditDetailRendered('loading');
-  }
   // Following a launch is background synchronization of the page already on
   // screen. Keep its header/composer intact until the native view is ready.
   let res;
